@@ -559,17 +559,17 @@ export const calculateLinkBudget = async (
 
 export interface PositionerResult {
   ok: boolean
-  azimuth: number
-  elevation: number
+  azimuth: number | null
+  elevation: number | null
   reason?: string | null
   message?: string | null
 }
 
 export interface PositionerSweepPoint {
   target: number
-  actual_azimuth: number
-  actual_elevation: number
-  within_tolerance: boolean
+  actual_azimuth: number | null
+  actual_elevation: number | null
+  within_tolerance: boolean | null
 }
 
 export interface PositionerSweepResult {

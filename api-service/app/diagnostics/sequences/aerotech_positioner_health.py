@@ -16,12 +16,11 @@ SCPI's ``SYST:ERR?`` query:
 * ``%<data>``  ACK — command succeeded; ``<data>`` is the optional
   return value for query commands.
 * ``!<...>``   NAK — invalid syntax / unsupported command / parameter
-  error. ``RealAerotechDriver._send`` already translates this to
-  ``AerotechError``.
+  error. ``RealAerotechDriver._send`` translates this to the dedicated
+  ``AerotechCommandRejected`` exception.
 * ``#<...>``   FAULT — command was accepted *but* executing it
-  triggered a controller-level axis fault. The driver does NOT raise
-  on ``#`` (see ``aerotech_positioner.py:172`` — only ``!`` raises),
-  so this probe inspects the raw response itself.
+  triggered a controller-level task fault. The real driver raises a
+  dedicated task-fault exception so writes cannot mistake it for success.
 
 Mapping AeroBasic → the same bucket system the SCPI probes use keeps
 the GUI uniform:
@@ -29,7 +28,7 @@ the GUI uniform:
   ACK / parses to number ......... SUPPORTED
   ``#`` prefix returned .......... SUPPORTED_BUT_FAULT (header
                                    recognised, controller in fault)
-  AerotechError raised ........... UNSUPPORTED (NAK — bad command)
+  AerotechCommandRejected raised . UNSUPPORTED (NAK — bad command)
   timeout / unexpected ........... UNKNOWN
 
 Why this is read-only
@@ -41,9 +40,7 @@ or hitting a probe arm. The probe stays on pure feedback queries:
 ``PFBK`` (position), ``VFBK`` (velocity), ``AXISSTATUS`` (status
 bitmask), ``AXISFAULT`` (fault bitmask).
 
-The probe **does not call** ``driver.connect()`` either — the driver's
-``connect`` issues ``ACKNOWLEDGEALL`` + ``ENABLE`` on its way in, both
-of which mutate axis state. The probe assumes the HAL session already
+The probe **does not call** ``driver.connect()`` either. It assumes the HAL session already
 came up at startup; if it didn't, it reports "driver not connected"
 and bails so the operator can fix the IP / firewall / Socket2 toggle
 and reload HAL.
@@ -51,7 +48,7 @@ and reload HAL.
 from __future__ import annotations
 
 import asyncio
-import re
+import math
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -61,20 +58,12 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
     SequenceStepResult,
 )
+from app.hal.aerotech_positioner import (
+    AerotechCommandRejected,
+    AerotechTaskFault,
+)
 from app.services.diagnostic_context import DiagnosticContext
-
-
-# ---------------------------------------------------------------------------
-# AeroBasic AXISSTATUS bitmask — only the bits we surface in the probe
-# report. Definitions match ``aerotech_positioner.py:67-75`` (AxisStatusBit).
-# ---------------------------------------------------------------------------
-_STATUS_BITS: List[Tuple[int, str]] = [
-    (0,  "Enabled"),
-    (1,  "Homed"),
-    (2,  "InPosition"),
-    (3,  "MoveActive"),
-    (10, "Fault"),
-]
+from app.services.instrument_hal_service import is_mock_driver
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +73,20 @@ _STATUS_BITS: List[Tuple[int, str]] = [
 #
 # Tuple: (name, command_template, is_critical, description)
 #
-# *Critical* commands are those without which we couldn't run a probe-loss
-# or commissioning sweep: PFBK gives us position-feedback proof, AXISSTATUS
-# is needed for the WAIT-INPOS loop, AXISFAULT tells us "is the controller
-# safe to drive". Y-axis variants stay non-critical because some chambers
-# only have azimuth.
+# *Critical* commands are those used by the supported local truth chain:
+# PFBK gives position feedback, VFBK proves zero velocity, and AXISFAULT is
+# retained as a raw diagnostic value.  AXISSTATUS remains read-only evidence,
+# but the checked-in guide does not define bit assignments, so this probe
+# never interprets its bits.
 # ---------------------------------------------------------------------------
 AEROBASIC_READONLY: List[Tuple[str, str, bool, str]] = [
-    ("PFBK_AZ",      "PFBK({az})",        True,  "azimuth position feedback (deg)"),
-    ("PFBK_EL",      "PFBK({el})",        False, "elevation position feedback (deg, skipped if single-axis)"),
-    ("AXISSTAT_AZ",  "AXISSTATUS({az})",  True,  "azimuth status bitmask"),
-    ("AXISSTAT_EL",  "AXISSTATUS({el})",  False, "elevation status bitmask"),
+    ("PFBK_AZ",      "PFBK({az})",        True,  "azimuth position feedback (controller user units)"),
+    ("PFBK_EL",      "PFBK({el})",        False, "elevation position feedback (controller user units, skipped if single-axis)"),
+    ("AXISSTAT_AZ",  "AXISSTATUS({az})",  False, "azimuth raw status bitmask (bit meanings unverified)"),
+    ("AXISSTAT_EL",  "AXISSTATUS({el})",  False, "elevation raw status bitmask (bit meanings unverified)"),
     ("AXISFAULT_AZ", "AXISFAULT({az})",   True,  "azimuth fault bitmask (0 = healthy)"),
     ("AXISFAULT_EL", "AXISFAULT({el})",   False, "elevation fault bitmask"),
-    ("VFBK_AZ",      "VFBK({az})",        False, "azimuth velocity feedback (≈0 at rest)"),
+    ("VFBK_AZ",      "VFBK({az})",        True,  "azimuth velocity feedback (controller user units/s; exact 0 proves stopped)"),
     ("VFBK_EL",      "VFBK({el})",        False, "elevation velocity feedback"),
 ]
 
@@ -109,34 +98,27 @@ _EXPECTED_UNSUPPORTED: frozenset[str] = frozenset()
 
 
 def _decode_status_bits(value: int) -> str:
-    """Human-readable bit summary, e.g. '0x90480005 (Enabled, InPosition)'.
+    """Render the raw unsigned word without inventing undocumented labels.
 
-    AeroBasic returns the bitmask as a large ASCII float (Ensemble's 32-bit
-    status word has the sign bit set for axes in normal operation —
-    "ServoEnabled" lives in the high half). Python's ``int(float(...))``
-    of that float carries the sign through, so we mask back to 32-bit
-    unsigned before printing — otherwise hex renders as ``0x-6FB7FFFB``
-    which the operator can't visually intersect with a bit table.
+    Historical controllers can return the raw word in signed decimal form.
+    Python's ``int(float(...))`` carries that sign through, so mask to the
+    existing 32-bit display width before printing.  This is presentation only:
+    no bit is assigned a semantic label without a checked-in vendor table.
     """
     u32 = value & 0xFFFFFFFF
-    flags = [name for bit, name in _STATUS_BITS if u32 & (1 << bit)]
-    return f"0x{u32:08X}" + (f" ({', '.join(flags)})" if flags else "")
+    return f"0x{u32:08X} (raw; bit meanings unverified)"
 
 
 def _categorize(response: Optional[str], exception: Optional[BaseException]) -> str:
     """Map (response, raised exception) → status bucket."""
     if exception is not None:
-        # Driver translates NAK (! prefix) → AerotechError. Timeout →
-        # asyncio.TimeoutError. Connection drop → AerotechError("Not
-        # connected") or AerotechError("Connection lost ... reconnect
-        # failed").
-        if isinstance(exception, asyncio.TimeoutError):
-            return "UNKNOWN"
-        msg = str(exception)
-        if "Not connected" in msg or "reconnect failed" in msg.lower():
-            return "UNKNOWN"
-        # AerotechError on ! prefix = controller rejected the command.
-        return "UNSUPPORTED"
+        if isinstance(exception, AerotechTaskFault):
+            return "SUPPORTED_BUT_FAULT"
+        if isinstance(exception, AerotechCommandRejected):
+            return "UNSUPPORTED"
+        # Timeout, transport loss, and any unexpected driver error do not
+        # prove that the command header is unsupported.
+        return "UNKNOWN"
     if response is None:
         return "UNKNOWN"
     # Empty string means the driver got EOF on readline (controller-side
@@ -156,19 +138,26 @@ def _categorize(response: Optional[str], exception: Optional[BaseException]) -> 
     return "SUPPORTED"
 
 
-_FLOAT_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
-
-
 def _parse_number(raw: str) -> Optional[float]:
-    """Pull the first numeric token out of an AeroBasic reply.
-    Returns None when the reply is non-numeric (e.g. empty ACK)."""
-    m = _FLOAT_RE.search(raw or "")
-    if not m:
-        return None
+    """Accept only one complete finite numeric controller response."""
     try:
-        return float(m.group(0))
-    except ValueError:
+        value = float(raw.strip())
+    except (AttributeError, TypeError, ValueError):
         return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def _parse_bitmask(raw: str) -> Optional[int]:
+    """Accept only a complete finite non-negative integer response."""
+    try:
+        value = float(raw.strip())
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0 or not value.is_integer():
+        return None
+    return int(value)
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +237,20 @@ async def _probe_one(
         detail_parts[0] += " ★"
     if status == "SUPPORTED" and response is not None:
         num = _parse_number(response)
-        if num is not None and ("AXISSTATUS" in command or "AXISFAULT" in command):
-            detail_parts.append(_decode_status_bits(int(num)))
+        if "AXISSTATUS" in command or "AXISFAULT" in command:
+            bitmask = _parse_bitmask(response)
+            if bitmask is None:
+                status = "UNKNOWN"
+                detail_parts[0] = "UNKNOWN" + (" ★" if is_critical else "")
+                detail_parts.append(f"invalid bitmask raw={response!r}")
+            else:
+                detail_parts.append(_decode_status_bits(bitmask))
         elif num is not None:
             detail_parts.append(f"= {num:.4f}")
         else:
-            detail_parts.append(f"raw={response!r}")
+            status = "UNKNOWN"
+            detail_parts[0] = "UNKNOWN" + (" ★" if is_critical else "")
+            detail_parts.append(f"invalid numeric raw={response!r}")
     elif status == "SUPPORTED_BUT_FAULT":
         detail_parts.append(f"controller fault: {response!r}")
     elif status == "UNSUPPORTED":
@@ -298,6 +295,15 @@ async def _run_aerobasic_surface(
         "el_axis": el,
         "single_axis": single_axis,
         "axes_present": list(getattr(driver, "_axes_present", []) or []),
+        "degree_units_verified": (
+            (getattr(driver, "config", {}) or {}).get("motion_truth_units_verified")
+            is True
+            and str(
+                (getattr(driver, "config", {}) or {}).get(
+                    "motion_truth_user_units", ""
+                )
+            ).strip().lower() == "degree"
+        ),
     }
 
     # Filter Y-axis probes out when the controller is single-axis: emitting
@@ -307,6 +313,8 @@ async def _run_aerobasic_surface(
         c for c in AEROBASIC_READONLY
         if not (single_axis and c[0].endswith("_EL"))
     ]
+    elevation_truth_names = {"PFBK_EL", "VFBK_EL", "AXISFAULT_EL"}
+    elevation_present = el in set(extras["axes_present"])
 
     log(
         f"  · Phase A: probing {len(commands)} read-only commands"
@@ -322,17 +330,20 @@ async def _run_aerobasic_surface(
     aborted_early = False
 
     for name, template, is_critical, desc in commands:
+        effective_critical = is_critical or (
+            elevation_present and name in elevation_truth_names
+        )
         command = template.format(az=az, el=el)
         step, status, response = await _probe_one(
             driver,
             name=name,
             command=command,
-            is_critical=is_critical,
+            is_critical=effective_critical,
             description=desc,
         )
         counts[status] = counts.get(status, 0) + 1
 
-        if not step.success and is_critical:
+        if not step.success and effective_critical:
             critical_failures.append(name)
 
         if status == "UNKNOWN":
@@ -347,25 +358,33 @@ async def _run_aerobasic_surface(
             num = _parse_number(response)
             if num is not None:
                 if name == "PFBK_AZ":
-                    extras["azimuth_deg"] = num
+                    extras["position_az_controller_units"] = num
+                    if extras["degree_units_verified"]:
+                        extras["azimuth_deg"] = num
                 elif name == "PFBK_EL":
-                    extras["elevation_deg"] = num
+                    extras["position_el_controller_units"] = num
+                    if extras["degree_units_verified"]:
+                        extras["elevation_deg"] = num
                 elif name == "AXISSTAT_AZ":
-                    extras["axis_status_az"] = int(num)
+                    extras["axis_status_az"] = _parse_bitmask(response)
                 elif name == "AXISSTAT_EL":
-                    extras["axis_status_el"] = int(num)
+                    extras["axis_status_el"] = _parse_bitmask(response)
                 elif name == "AXISFAULT_AZ":
-                    extras["axis_fault_az"] = int(num)
+                    extras["axis_fault_az"] = _parse_bitmask(response)
                 elif name == "AXISFAULT_EL":
-                    extras["axis_fault_el"] = int(num)
+                    extras["axis_fault_el"] = _parse_bitmask(response)
                 elif name == "VFBK_AZ":
-                    extras["velocity_az_deg_s"] = num
+                    extras["velocity_az_controller_units_s"] = num
+                    if extras["degree_units_verified"]:
+                        extras["velocity_az_deg_s"] = num
                 elif name == "VFBK_EL":
-                    extras["velocity_el_deg_s"] = num
+                    extras["velocity_el_controller_units_s"] = num
+                    if extras["degree_units_verified"]:
+                        extras["velocity_el_deg_s"] = num
 
         emit = (
             include_supported
-            or is_critical
+            or effective_critical
             or status in ("SUPPORTED_BUT_FAULT", "UNSUPPORTED", "UNKNOWN")
         )
         if emit:
@@ -474,7 +493,7 @@ async def run(
     # MockPositioner and tell the operator nothing about the real
     # turntable. (Same gate the SCPI Console uses against MockBaseStation.)
     cls_name = type(pos).__name__
-    if cls_name.startswith("Mock"):
+    if is_mock_driver(pos):
         return SequenceRunResult(
             success=False,
             summary=(
@@ -494,8 +513,9 @@ async def run(
             ),
         )
 
-    # Driver must have an open TCP session. We don't call connect()
-    # ourselves — it issues ACKNOWLEDGEALL + ENABLE, mutating axis state.
+    # Driver must have an open TCP session. We don't call connect() ourselves:
+    # lifecycle ownership belongs to HAL reload, while this sequence is only a
+    # read-only observer of the already-open transport.
     if getattr(pos, "_writer", None) is None:
         return SequenceRunResult(
             success=False,
@@ -550,6 +570,7 @@ async def run(
         and functional_failures == 0
         and not extras.get("phase_a_aborted")
         and not axis_in_fault
+        and counts.get("SUPPORTED_BUT_FAULT", 0) == 0
     )
 
     if extras.get("phase_a_aborted"):
@@ -562,10 +583,18 @@ async def run(
     elif success:
         az_pos = extras.get("azimuth_deg")
         el_pos = extras.get("elevation_deg")
-        pos_str = (
-            f"position: az={az_pos:.2f}°" + (f" el={el_pos:.2f}°" if el_pos is not None else "")
-            if az_pos is not None else "position not read"
-        )
+        if extras.get("degree_units_verified"):
+            pos_str = (
+                f"position: az={az_pos:.2f}°"
+                + (f" el={el_pos:.2f}°" if el_pos is not None else "")
+                if az_pos is not None else "position not read"
+            )
+        else:
+            raw_az = extras.get("position_az_controller_units")
+            pos_str = (
+                f"position raw={raw_az:.4f} controller-user-units (unit unverified)"
+                if raw_az is not None else "position not read"
+            )
         total_probed = sum(counts.values())
         summary = (
             f"Aerotech health OK — {pos_str}, no axis fault, "

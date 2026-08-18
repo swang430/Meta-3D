@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Set
 import pytest
 
 from app.hal.aerotech_positioner import (
+    AerotechCommandRejected,
     AerotechError,
-    AxisStatusBit,
     RealAerotechDriver,
 )
 
@@ -35,7 +35,7 @@ class FakeController:
 
     The axis universe (``known_axes``) is the single source of truth for
     what NAKs and what ACKs. Commands that name an unknown axis raise
-    ``AerotechError`` — same shape as the real driver's ``_send`` on a NAK.
+    ``AerotechCommandRejected`` — same shape as the real driver's NAK path.
 
     AXISSTATUS responds with a configurable ``axis_status`` int so tests
     can fake "still moving" vs "settled" without poking the driver.
@@ -58,25 +58,45 @@ class FakeController:
             if cmd.startswith(f"{prefix}(") and cmd.endswith(")"):
                 axis = cmd[len(prefix) + 1:-1]
                 if axis not in self.known_axes:
-                    raise AerotechError(f"AeroBasic error for '{cmd}': !")
-                if prefix in ("PFBK", "VFBK"):
+                    raise AerotechCommandRejected(
+                        f"AeroBasic error for '{cmd}': !"
+                    )
+                if prefix == "PFBK":
                     return f"{self._positions[axis]:.4f}"
+                if prefix == "VFBK":
+                    return "0.0000"
                 if prefix == "AXISSTATUS":
                     return str(self.axis_status)
                 # AXISFAULT
                 return str(self.fault)
+        if cmd.startswith("WAIT INPOS "):
+            axis = cmd.removeprefix("WAIT INPOS ")
+            if axis not in self.known_axes:
+                raise AerotechCommandRejected(
+                    f"AeroBasic error for '{cmd}': !"
+                )
+            return ""
         # ENABLE / DISABLE / HOME / ABORT / MOVEABS — accept any axis list
         # that consists only of known axes; NAK if any axis is unknown.
         for prefix in ("ENABLE", "DISABLE", "HOME", "ABORT", "MOVEABS"):
             if cmd.startswith(prefix + " "):
                 rest = cmd[len(prefix) + 1:]
-                # MOVEABS is "MOVEABS X 0.0000 Y 1.0000" — pick axis names
-                # by position 0/2/... (every other token).
+                # The checked-in guide supports the single-axis form
+                # ``MOVEABS X <target> XF<feed>``.
                 tokens = rest.split()
-                axes_named = tokens[0::2] if prefix == "MOVEABS" else tokens
+                axes_named = tokens[:1] if prefix == "MOVEABS" else tokens
                 for a in axes_named:
                     if a not in self.known_axes:
                         raise AerotechError(f"AeroBasic error for '{cmd}': !")
+                # Happy-path controller: accepted motion updates encoder
+                # feedback. P1-56 stuck-encoder cases use their own scripted
+                # controller so the legacy single/dual-axis tests keep
+                # describing a normally moving device.
+                if prefix == "HOME":
+                    for axis in axes_named:
+                        self._positions[axis] = 0.0
+                elif prefix == "MOVEABS":
+                    self._positions[tokens[0]] = float(tokens[1])
                 return ""
         if cmd == "ACKNOWLEDGEALL":
             return ""
@@ -98,12 +118,30 @@ class StubbedDriver(RealAerotechDriver):
         self._reader = object()  # type: ignore[assignment]
         self._writer = object()  # type: ignore[assignment]
 
-    async def _send(self, cmd: str) -> str:
+    async def _send(
+        self,
+        cmd: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            raise AerotechError("operator stop requested")
         return await self._fake.respond(cmd)
 
 
 def _make_driver(known_axes=("X", "Y"), config=None) -> "tuple[StubbedDriver, FakeController]":
-    cfg = config or {}
+    cfg = {
+        "motion_truth_units_verified": True,
+        "motion_truth_user_units": "degree",
+        "motion_truth_min_deg": 0.0,
+        "motion_truth_max_deg": 360.0,
+        "motion_truth_xf_speed": 5.0,
+        **(config or {}),
+    }
     fake = FakeController(known_axes=known_axes)
     return StubbedDriver("aerotech-test", cfg, fake), fake
 
@@ -159,45 +197,30 @@ class TestMoveToSingleAxis:
     async def test_send_moveabs_only_for_x(self):
         d, fake = _make_driver(known_axes=("X",))
         d._axes_present = ["X"]  # simulate post-connect state
-        # _wait_for_settle polls AXISSTATUS — make it settled immediately
-        # so move_to returns instead of hitting the 60s settle timeout.
-        fake.axis_status = 1 << AxisStatusBit.IN_POSITION
         d.poll_interval_s = 0.001
-        assert await d.move_to(180.0, 30.0) is True
+        assert await d.move_to(180.0, 0.0) is True
 
         moveabs = [c for c in fake.sent if c.startswith("MOVEABS")]
         assert len(moveabs) == 1
-        # Single-axis: MOVEABS X 180.0000  (no Y)
-        assert moveabs[0] == "MOVEABS X 180.0000"
+        # Single-axis: explicit, site-attested feed (no Y).
+        assert moveabs[0] == "MOVEABS X 180.0000 XF5.0000"
         # And no Y-axis PFBK after the move either.
         assert "PFBK(Y)" not in fake.sent
 
     @pytest.mark.asyncio
-    async def test_elevation_ignored_with_warning(self, caplog):
-        import logging
-        caplog.set_level(logging.WARNING, logger="app.hal.aerotech_positioner")
+    async def test_nonzero_elevation_is_rejected_before_io(self):
         d, fake = _make_driver(known_axes=("X",))
         d._axes_present = ["X"]
-        fake.axis_status = 1 << AxisStatusBit.IN_POSITION
-        d.poll_interval_s = 0.001
-        await d.move_to(45.0, 30.0)  # non-zero el on single-axis box
-        # Operator should see something in the log so they don't think
-        # they commanded 3D motion.
-        assert any(
-            "elevation=30.00" in rec.getMessage() and "ignored" in rec.getMessage()
-            for rec in caplog.records
-        )
+        assert await d.move_to(45.0, 30.0) is False
+        assert not any(c.startswith("MOVEABS") for c in fake.sent)
 
     @pytest.mark.asyncio
-    async def test_dual_axis_still_sends_both(self):
+    async def test_dual_axis_motion_is_fail_closed_without_vendor_command_evidence(self):
         d, fake = _make_driver(known_axes=("X", "Y"))
         d._axes_present = ["X", "Y"]
-        fake.axis_status = 1 << AxisStatusBit.IN_POSITION
-        d.poll_interval_s = 0.001
-        assert await d.move_to(180.0, 45.0) is True
+        assert await d.move_to(180.0, 45.0) is False
         moveabs = [c for c in fake.sent if c.startswith("MOVEABS")]
-        # AeroBasic MOVEABS is axis-position interleaved, NOT axes-then-positions.
-        assert moveabs == ["MOVEABS X 180.0000 Y 45.0000"]
+        assert moveabs == []
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +241,12 @@ class TestPerAxisMethodsRespectAxesPresent:
         assert "PFBK(Y)" not in fake.sent
 
     @pytest.mark.asyncio
-    async def test_disconnect_single_axis_disables_only_x(self):
+    async def test_disconnect_is_transport_only_without_unsourced_disable(self):
         d, fake = _make_driver(known_axes=("X",))
         d._axes_present = ["X"]
         await d.disconnect()
         disables = [c for c in fake.sent if c.startswith("DISABLE")]
-        assert disables == ["DISABLE X"]
+        assert disables == []
 
     @pytest.mark.asyncio
     async def test_stop_single_axis_aborts_only_x(self):
@@ -237,26 +260,19 @@ class TestPerAxisMethodsRespectAxesPresent:
     async def test_reset_single_axis_homes_only_x(self):
         d, fake = _make_driver(known_axes=("X",))
         d._axes_present = ["X"]
-        # Set status to "settled" so _wait_for_settle returns immediately
-        fake.axis_status = (
-            (1 << AxisStatusBit.IN_POSITION)
-        )
         d.poll_interval_s = 0.001
         await d.reset()
         homes = [c for c in fake.sent if c.startswith("HOME")]
         assert homes == ["HOME X"]
 
     @pytest.mark.asyncio
-    async def test_wait_for_settle_single_axis_queries_only_x(self):
+    async def test_wait_for_settle_uses_sourced_wait_inpos_only_for_x(self):
         d, fake = _make_driver(known_axes=("X",))
         d._axes_present = ["X"]
-        fake.axis_status = (1 << AxisStatusBit.IN_POSITION)  # settled
         d.poll_interval_s = 0.001
         await d._wait_for_settle()
-        # Only X status was polled — never Y.
-        status_queries = [c for c in fake.sent if c.startswith("AXISSTATUS(")]
-        assert all("X" in q for q in status_queries)
-        assert not any("AXISSTATUS(Y)" in q for q in status_queries)
+        assert "WAIT INPOS X" in fake.sent
+        assert not any(c.startswith("AXISSTATUS(") for c in fake.sent)
 
 
 # ---------------------------------------------------------------------------
@@ -275,13 +291,17 @@ class TestCapabilitiesReflectActualAxes:
         assert "single-axis" in cap.description
         assert "elevation_range" not in cap.parameters
         assert cap.parameters["azimuth_range"] == [0, 360]
+        assert cap.parameters["position_unit"] == "degree"
+        assert cap.supported is True
         assert cap.parameters["axes_present"] == ["X"]
 
     @pytest.mark.asyncio
-    async def test_dual_axis_keeps_3d_positioning(self):
+    async def test_dual_axis_is_read_only_without_sourced_motion_contract(self):
         d, _ = _make_driver(known_axes=("X", "Y"))
         d._axes_present = ["X", "Y"]
         caps = await d.get_capabilities()
         assert caps[0].name == "3d_positioning"
-        assert caps[0].parameters["elevation_range"] == [-90, 90]
+        assert caps[0].supported is False
+        assert caps[0].parameters["position_unit"] == "unknown"
+        assert "elevation_range" not in caps[0].parameters
         assert caps[0].parameters["axes_present"] == ["X", "Y"]

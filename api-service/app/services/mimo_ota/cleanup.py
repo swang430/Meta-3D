@@ -14,7 +14,12 @@ from typing import Any, List
 logger = logging.getLogger(__name__)
 
 
-async def cleanup_chamber_instruments(hal: Any, execution_id: Any) -> List[str]:
+async def cleanup_chamber_instruments(
+    hal: Any,
+    execution_id: Any,
+    *,
+    expected_operator_stop_generation: int | None = None,
+) -> List[str]:
     """Stop signaling, home positioner, stop emulation, disconnect drivers.
 
     Returns the list of warnings encountered (so the caller can surface them
@@ -49,18 +54,52 @@ async def cleanup_chamber_instruments(hal: Any, execution_id: Any) -> List[str]:
     positioner = hal.drivers.get("positioner")
     if positioner is not None:
         # Best-effort home before disconnect — operator-friendly between runs.
+        safe_to_disconnect = False
         try:
-            await positioner.move_to(0.0, 0.0)
+            move_kwargs = (
+                {
+                    "expected_operator_stop_generation":
+                        expected_operator_stop_generation
+                }
+                if expected_operator_stop_generation is not None
+                else {}
+            )
+            home_confirmed = await positioner.move_to(0.0, 0.0, **move_kwargs)
+            if home_confirmed:
+                safe_to_disconnect = True
+            else:
+                msg = (
+                    "positioner.move_to(home) 被拒；编码器未证明回零，"
+                    "cleanup 改为确认急停后再决定是否断开"
+                )
+                warnings.append(msg)
+                logger.warning("[%s] %s", execution_id, msg)
         except Exception as e:  # noqa: BLE001
             msg = f"positioner.move_to(home) failed during cleanup: {e}"
             warnings.append(msg)
             logger.warning("[%s] %s", execution_id, msg)
-        try:
-            await positioner.disconnect()
-        except Exception as e:  # noqa: BLE001
-            msg = f"positioner.disconnect failed during cleanup: {e}"
-            warnings.append(msg)
-            logger.warning("[%s] %s", execution_id, msg)
+        if not safe_to_disconnect:
+            try:
+                safe_to_disconnect = await positioner.stop()
+            except Exception as e:  # noqa: BLE001
+                msg = f"positioner.stop failed during cleanup: {e}"
+                warnings.append(msg)
+                logger.error("[%s] %s", execution_id, msg)
+            if not safe_to_disconnect:
+                msg = (
+                    "positioner 停止未确认；为保留 ABORT/VFBK 控制通道，"
+                    "cleanup 不断开转台会话，需人工核对"
+                )
+                warnings.append(msg)
+                logger.error("[%s] %s", execution_id, msg)
+
+        if safe_to_disconnect:
+            try:
+                await positioner.disconnect()
+            except Exception as e:  # noqa: BLE001
+                msg = f"positioner.disconnect failed during cleanup: {e}"
+                warnings.append(msg)
+                logger.warning("[%s] %s", execution_id, msg)
 
     emulator = hal.drivers.get("channelEmulator")
     if emulator is not None and hasattr(emulator, "stop_emulation"):

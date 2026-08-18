@@ -322,6 +322,19 @@ class InstrumentTestLease:
         async with self._coordinated():
             yield
 
+    @asynccontextmanager
+    async def positioner_operation_guard(
+        self, purpose: str
+    ) -> AsyncIterator[None]:
+        """让完整转台动作与 destructive diagnostic / HAL reload 串行。
+
+        急停不使用本 guard：ABORT 必须能在一个长时间 MOVE/HOME 仍持有操作锁时
+        抢占；底层每条 AeroBasic TX/RX 自身仍由驱动通信锁串行化。
+        """
+        async with self._coordinated():
+            logger.debug("[instrument-lease] 取得转台操作锁: %s", purpose)
+            yield
+
 
 def _get_hal_service():
     # 延迟导入，避免 HAL service 初始化本模块时形成循环依赖。
@@ -371,4 +384,10 @@ async def park_idle_instruments() -> bool:
 @asynccontextmanager
 async def hal_mutation_guard() -> AsyncIterator[None]:
     async with _LEASE.hal_mutation_guard():
+        yield
+
+
+@asynccontextmanager
+async def positioner_operation_guard(purpose: str) -> AsyncIterator[None]:
+    async with _LEASE.positioner_operation_guard(purpose):
         yield

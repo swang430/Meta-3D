@@ -47,7 +47,9 @@ export function PositionerControlPanel() {
     try {
       const r = await fn()
       if (r.ok) {
-        setPos({ az: r.azimuth, el: r.elevation })
+        if (typeof r.azimuth === 'number' && typeof r.elevation === 'number') {
+          setPos({ az: r.azimuth, el: r.elevation })
+        }
         notifications.show({ color: 'green', message: r.message || `${label} 成功` })
       } else {
         notifications.show({
@@ -200,10 +202,27 @@ export function PositionerControlPanel() {
               {sweep.points.map((p) => (
                 <Table.Tr key={p.target}>
                   <Table.Td>{p.target.toFixed(1)}</Table.Td>
-                  <Table.Td>{p.actual_azimuth.toFixed(2)}</Table.Td>
                   <Table.Td>
-                    <Badge color={p.within_tolerance ? 'green' : 'red'} variant="light">
-                      {p.within_tolerance ? '✓ 到位' : '✗ 超差'}
+                    {typeof p.actual_azimuth === 'number'
+                      ? p.actual_azimuth.toFixed(2)
+                      : '未知'}
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge
+                      color={
+                        p.within_tolerance === true
+                          ? 'green'
+                          : p.within_tolerance === false
+                            ? 'red'
+                            : 'gray'
+                      }
+                      variant="light"
+                    >
+                      {p.within_tolerance === true
+                        ? '✓ 到位'
+                        : p.within_tolerance === false
+                          ? '✗ 超差'
+                          : '未知'}
                     </Badge>
                   </Table.Td>
                 </Table.Tr>

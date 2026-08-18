@@ -225,8 +225,7 @@ class TestSpatialCorrelationMock:
 
 
 class TestSpatialCorrelationReal:
-    """A2-2 real path: positioner moves SGH between two antenna positions,
-    SA captures IQ at each, Pearson correlation vs theoretical Laplacian."""
+    """Real path stays closed until a verified linear-stage API exists."""
 
     @pytest.mark.asyncio
     async def test_real_path_drives_positioner_twice_and_captures_iq(
@@ -247,26 +246,19 @@ class TestSpatialCorrelationReal:
         hal.drivers["positioner"] = positioner
 
         svc = ChannelCalibrationService(db)
-        cal = await svc.run_spatial_correlation_calibration(
-            scenario_type="UMa",
-            scenario_condition="NLOS",
-            fc_ghz=3.5,
-            antenna_spacing_wavelengths=0.5,
-            antenna_spacing_m=0.043,  # 0.5λ at 3.5 GHz
-            calibrated_by="test",
-            use_mock=False,
-            num_iq_samples=500,
-        )
-        # Positioner moved twice (two antenna positions)
-        assert positioner.move_to.await_count == 2
-        first = positioner.move_to.await_args_list[0]
-        second = positioner.move_to.await_args_list[1]
-        assert first.kwargs["azimuth"] == pytest.approx(0.0)
-        assert second.kwargs["azimuth"] == pytest.approx(4.3, abs=0.01)  # 0.043 m → 4.3 cm
-        # SA captured IQ twice
-        assert sa.capture_iq.await_count == 2
-        # Identical IQ → magnitude correlation ≈ 1
-        assert cal.measured_correlation_magnitude == pytest.approx(1.0, abs=0.01)
+        with pytest.raises(RuntimeError, match="linear stage API in metres"):
+            await svc.run_spatial_correlation_calibration(
+                scenario_type="UMa",
+                scenario_condition="NLOS",
+                fc_ghz=3.5,
+                antenna_spacing_wavelengths=0.5,
+                antenna_spacing_m=0.043,
+                calibrated_by="test",
+                use_mock=False,
+                num_iq_samples=500,
+            )
+        positioner.move_to.assert_not_awaited()
+        sa.capture_iq.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_real_path_no_positioner_raises(self, db, monkeypatch):
@@ -275,7 +267,7 @@ class TestSpatialCorrelationReal:
         _patched_hal(monkeypatch, sa=sa)  # no positioner
 
         svc = ChannelCalibrationService(db)
-        with pytest.raises(RuntimeError, match="positioner"):
+        with pytest.raises(RuntimeError, match="linear stage API in metres"):
             await svc.run_spatial_correlation_calibration(
                 scenario_type="UMa", scenario_condition="NLOS",
                 fc_ghz=3.5, antenna_spacing_wavelengths=0.5,
@@ -298,7 +290,7 @@ class TestSpatialCorrelationReal:
         )
 
         svc = ChannelCalibrationService(db)
-        with pytest.raises(RuntimeError, match="antenna_spacing_m"):
+        with pytest.raises(RuntimeError, match="linear stage API in metres"):
             await svc.run_spatial_correlation_calibration(
                 scenario_type="UMa", scenario_condition="NLOS",
                 fc_ghz=3.5, antenna_spacing_wavelengths=0.5,

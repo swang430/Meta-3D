@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging_config import current_execution_id
 from app.db.database import SessionLocal, get_db
+from app.hal.positioner import retain_positioner_stop_generation
 from app.models.calibration import CalibrationCertificate
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
@@ -46,6 +47,13 @@ COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
 # 本模块建行时写的 marker (create_session / run_adhoc_phase) —— 与
 # COMMISSIONING_CHAINS 同源, 单列是为了让 _resolve_execution 的收窄谓词
 # 有名字可读。
+
+
+def _current_positioner_driver():
+    """Read the current HAL positioner without importing HAL during module load."""
+    from app.services.instrument_hal_service import get_hal_service
+
+    return get_hal_service().drivers.get("positioner")
 
 
 def reset_stale_running_commissioning_executions() -> None:
@@ -763,11 +771,12 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
-    async with instrument_test_lease(
-        f"commissioning-phase:{session_id}:{phase_name}"
-    ):
-        with _execution_marked_running(db, execution):
-            result = await dispatch_step(ctx)
+    with _execution_marked_running(db, execution):
+        with retain_positioner_stop_generation(_current_positioner_driver()):
+            async with instrument_test_lease(
+                f"commissioning-phase:{session_id}:{phase_name}"
+            ):
+                result = await dispatch_step(ctx)
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -898,10 +907,11 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     status_value = "failed"
     try:
         ctx = _build_context(db, execution, test_case, step)
-        async with instrument_test_lease(
-            f"commissioning-adhoc:{req.phase_name}"
-        ):
-            result = await dispatch_step(ctx)
+        with retain_positioner_stop_generation(_current_positioner_driver()):
+            async with instrument_test_lease(
+                f"commissioning-adhoc:{req.phase_name}"
+            ):
+                result = await dispatch_step(ctx)
         status_value = result.status.value
         error_message = result.error_message
     except Exception as e:  # noqa: BLE001
@@ -1032,21 +1042,22 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
-        with _execution_marked_running(db, execution):
-            for step in descriptors:
-                ctx = _build_context(db, execution, test_case, step)
-                result = await dispatch_step(ctx)
-                if result.status.value == "failed":
-                    aborted_at = step.type
-                    abort_message = result.error_message
-                    logger.warning(
-                        "[%s] run-all aborted at %s: %s",
-                        session_id,
-                        step.type,
-                        result.error_message,
-                    )
-                    break
+    with _execution_marked_running(db, execution):
+        with retain_positioner_stop_generation(_current_positioner_driver()):
+            async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
+                for step in descriptors:
+                    ctx = _build_context(db, execution, test_case, step)
+                    result = await dispatch_step(ctx)
+                    if result.status.value == "failed":
+                        aborted_at = step.type
+                        abort_message = result.error_message
+                        logger.warning(
+                            "[%s] run-all aborted at %s: %s",
+                            session_id,
+                            step.type,
+                            result.error_message,
+                        )
+                        break
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表

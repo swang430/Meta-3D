@@ -116,11 +116,11 @@ def _make_sa_gaussian_pattern(
 def _make_positioner(*, move_ok=True, log=None):
     pos = MagicMock()
     if log is None:
-        async def _move(azimuth, elevation):
+        async def _move(azimuth, elevation, **_kwargs):
             return move_ok
         pos.move_to = AsyncMock(side_effect=_move)
     else:
-        async def _move(azimuth, elevation):
+        async def _move(azimuth, elevation, **_kwargs):
             log.append((float(azimuth), float(elevation)))
             return move_ok
         pos.move_to = AsyncMock(side_effect=_move)
@@ -367,7 +367,7 @@ class TestRealPatternMeasurement:
         # Wire angle log: positioner.move_to populates angle_log so SA knows
         # which (az, el) we're at. Order of mock side-effects: positioner first,
         # then SA acquires (5x), positioner again, etc.
-        async def _move_logging(azimuth, elevation):
+        async def _move_logging(azimuth, elevation, **_kwargs):
             angle_log.append((float(azimuth), float(elevation)))
             return True
         pos.move_to = AsyncMock(side_effect=_move_logging)

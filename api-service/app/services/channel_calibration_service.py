@@ -925,11 +925,13 @@ class ChannelCalibrationService:
         执行空间相关性校准
 
         use_mock=True (默认): 用 theoretical_correlation 合成 h1/h2 复数样本.
-        use_mock=False: positioner 移到两个天线位置, 各点 SA 抓 IQ, 算
-        Pearson 相关性 vs 理论 Laplacian. 前置 CE 已加载 CDL 模型.
+        use_mock=False: 当前 fail-closed；现有 positioner 是旋转 degree 轴，
+        无法证明其能完成米制线性天线间距。须先接入经过验证的线性平移载体，
+        才能在两个物理位置采集 IQ 并形成正式相关性结论。
 
-        antenna_spacing_m 必须给 (use_mock=False 时), positioner 才知道两个
-        位置的物理偏移; mock 路径不需要.
+        ``antenna_spacing_m`` 只是未来线性载体的应用层距离参数；
+        当前 PositionerDriver 只接受 degree 角度，real 路径会在任何
+        转台 I/O 前 fail-closed，不会把该值伪装成角度下发。
         """
         # 获取参考角度扩展
         key = (scenario_type, scenario_condition)
@@ -951,49 +953,11 @@ class ChannelCalibrationService:
                 (np.random.randn(num_samples) + 1j * np.random.randn(num_samples))
             )
         else:
-            # 真测: positioner 移 SGH/天线 1 → SA IQ capture → 移到天线 2
-            # 位置 → SA IQ capture → 算 Pearson 相关性 vs 理论 Laplacian.
-            from app.services.instrument_hal_service import get_hal_service
-            hal = get_hal_service()
-            sa = hal.drivers.get("signalAnalyzer")
-            positioner = hal.drivers.get("positioner")
-            if sa is None:
-                raise RuntimeError(
-                    "Spatial correlation use_mock=False needs signalAnalyzer "
-                    "driver bound (must implement capture_iq)."
-                )
-            if positioner is None:
-                raise RuntimeError(
-                    "Spatial correlation use_mock=False needs positioner driver "
-                    "bound (moves SGH/antenna between two element positions)."
-                )
-            if antenna_spacing_m is None:
-                raise RuntimeError(
-                    "Spatial correlation use_mock=False needs antenna_spacing_m "
-                    "(positioner offset between the two virtual element positions)."
-                )
-
-            center_hz = fc_ghz * 1e9
-            sample_rate_hz = 10e6
-            spacing_cm = antenna_spacing_m * 100.0
-
-            # Position 1 — antenna at origin
-            ok = await positioner.move_to(azimuth=0.0, elevation=0.0)
-            if not ok:
-                raise RuntimeError("positioner.move_to(0, 0) failed; aborting")
-            i1, q1 = await sa.capture_iq(center_hz, sample_rate_hz, num_iq_samples)
-            h1 = np.array(i1) + 1j * np.array(q1)
-
-            # Position 2 — antenna offset by antenna_spacing
-            ok = await positioner.move_to(azimuth=spacing_cm, elevation=0.0)
-            if not ok:
-                raise RuntimeError(
-                    f"positioner.move_to({spacing_cm}, 0) failed; aborting"
-                )
-            i2, q2 = await sa.capture_iq(center_hz, sample_rate_hz, num_iq_samples)
-            h2 = np.array(i2) + 1j * np.array(q2)
-
-            num_samples = len(h1)
+            raise RuntimeError(
+                "Real spatial-correlation calibration requires a verified "
+                "linear stage API in metres; rotational "
+                "PositionerDriver.move_to(degrees) must not consume antenna_spacing_m"
+            )
 
         # 计算测量相关性
         meas_mag, meas_phase, ci_width = calculate_measured_correlation(h1, h2)

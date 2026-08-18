@@ -41,6 +41,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.logging_config import close_execution_log, current_execution_id
 from app.db.database import SessionLocal
+from app.hal.positioner import retain_positioner_stop_generation
 from app.models.test_plan import (
     TestCase,
     TestExecution,
@@ -56,6 +57,7 @@ from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     instrument_test_lease,
 )
+from app.services.instrument_hal_service import get_hal_service
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 logger = logging.getLogger(__name__)
@@ -208,7 +210,12 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     # ⚠ 必须在 `create_task` **之前** —— 子任务继承的是创建那一刻的上下文。
     current_execution_id.set(str(execution.id))
 
-    task = asyncio.get_running_loop().create_task(_run_case(execution.id))
+    positioner = get_hal_service().drivers.get("positioner")
+    # create_task inherits ContextVars at this exact point.  Capture before the
+    # request returns 202 so an operator stop while the task is still waiting
+    # for scheduler time / the instrument lease remains visible in MEASURE.
+    with retain_positioner_stop_generation(positioner):
+        task = asyncio.get_running_loop().create_task(_run_case(execution.id))
     key = str(execution.id)
     _RUNNING_TASKS[key] = task
     task.add_done_callback(lambda _t, _k=key: _RUNNING_TASKS.pop(_k, None))

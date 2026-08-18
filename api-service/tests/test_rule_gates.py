@@ -469,7 +469,7 @@ def test_g3_override_test_table_covers_all_flags():
 #   这是本门的已知边界, F64R-12 修存量时会自然消解。
 # 修复存量时把对应条目**下调/删除** — 棘轮只进不退。
 _SILENT_SWALLOW_BASELINE = {
-    "aerotech_positioner.py": {"_silent_reconnect": 2, "disconnect": 1},
+    "aerotech_positioner.py": {"_silent_reconnect": 1},
     "cmw500_base_station.py": {
         "get_throughput_metrics": 4, "get_ue_info": 1, "start_signaling": 1,
     },

@@ -7,7 +7,9 @@ Provides abstract interface and mock implementation for 3D/2D OTA positioners (t
 import asyncio
 import logging
 import random
-from typing import Dict, Any, Tuple
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, Optional, Tuple
 from datetime import datetime
 
 from app.hal.base import (
@@ -20,8 +22,36 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+# One operation-lifecycle baseline.  Formal background tasks set this before
+# task creation; commissioning owners set it before waiting for the instrument
+# lease.  Later MEASURE/cleanup work therefore cannot adopt an intervening
+# operator stop as a new baseline.
+current_positioner_operation_stop_generation: ContextVar[Optional[int]] = (
+    ContextVar("positioner_operation_stop_generation", default=None)
+)
+
+
+@contextmanager
+def retain_positioner_stop_generation(
+    positioner: Any,
+) -> Iterator[Optional[int]]:
+    """Retain one operation's stop generation across awaits and phases."""
+    reader = getattr(positioner, "operator_stop_generation", None)
+    generation = reader() if callable(reader) else None
+    token = current_positioner_operation_stop_generation.set(generation)
+    try:
+        yield generation
+    finally:
+        current_positioner_operation_stop_generation.reset(token)
+
+
 class EtsPositionerScpi:
-    """EMCenter 转台命令真值；real 与 mock 使用同一组常量。"""
+    """Legacy representative strings; real EMCenter motion must not send them.
+
+    The checked-in EMCenter manual documents the RF-switch platform, not a
+    positioner motion protocol.  These constants remain only for the mock
+    driver's synthetic exchange trace until vendor evidence is available.
+    """
 
     IDN = "*IDN?"
     RST = "*RST"
@@ -37,7 +67,26 @@ class PositionerDriver(InstrumentDriver):
     Typically used to rotate the DUT (azimuth) and test antennas (elevation).
     """
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
+    def note_operator_stop(self) -> None:
+        """Publish operator emergency-stop intent to every multi-step consumer.
+
+        Internal safety cleanup calls ``stop()`` directly and deliberately does
+        not advance this generation.  A new operation snapshots the generation,
+        so a historical stop request does not permanently disable the driver.
+        """
+        self._operator_stop_generation = self.operator_stop_generation() + 1
+
+    def operator_stop_generation(self) -> int:
+        """Return the process-local operator-stop generation for this driver."""
+        return int(getattr(self, "_operator_stop_generation", 0))
+
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
         """
         Command the positioner to move to absolute coordinates.
         Args:
@@ -58,6 +107,14 @@ class PositionerDriver(InstrumentDriver):
         """
         Immediately stop all axis motion.
         """
+        raise NotImplementedError
+
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        """Home while honoring the caller's operator-stop generation."""
         raise NotImplementedError
 
 
@@ -102,11 +159,30 @@ class MockPositioner(PositionerDriver):
             }
         )
 
-    async def reset(self) -> bool:
-        await self.move_to(0, 0)
-        return True
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        return await self.move_to(
+            0,
+            0,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            return False
         self._set_status(InstrumentStatus.BUSY)
         await asyncio.sleep(min(abs(self._azimuth - azimuth) / 10.0, 5.0))
         self._azimuth = azimuth
