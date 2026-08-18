@@ -21,6 +21,19 @@ test('live response envelopes and nested view models expose their required field
     typeBlock('ChamberConfiguration'),
     /\n\s*probe_distribution:\s*'ring'\s*\|\s*'multi-ring'\s*\|\s*'custom'/,
   )
+
+  const model = typeBlock('InstrumentModel')
+  assert.match(model, /\n\s*bandwidth\?:\s*string\s*\|\s*null/)
+  assert.match(model, /\n\s*channels\?:\s*string\s*\|\s*null/)
+
+  const connection = typeBlock('InstrumentConnection')
+  for (const field of ['endpoint', 'controller', 'notes']) {
+    assert.match(connection, new RegExp(`\\n\\s*${field}\\?:\\s*string\\s*\\|\\s*null`))
+  }
+  assert.match(
+    connection,
+    /\n\s*connection_params\?:\s*Record<string,\s*any>\s*\|\s*null/,
+  )
 })
 
 test('chamber create payload only requires the two live request fields', () => {

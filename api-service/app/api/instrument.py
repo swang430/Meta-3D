@@ -10,7 +10,7 @@ from uuid import UUID
 import logging
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 class FEInstrumentModel(BaseModel):
     """对应前端 InstrumentModel 类型"""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     id: str
     vendor: str
     model: str
@@ -60,11 +62,13 @@ class FEInstrumentModel(BaseModel):
     model_capabilities: List[str] = []
     bandwidth: Optional[str] = None
     channels: Optional[str] = None
-    status: str  # 'available' | 'offline' | 'reserved' | 'maintenance'
+    status: Literal["available", "pending_dev"]
 
 
 class FEInstrumentConnection(BaseModel):
     """对应前端 InstrumentConnection 类型"""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     id: Optional[str] = None  # DB InstrumentConnection UUID, 供 SCD 等按 connection 关联的 API 用
     endpoint: Optional[str] = None
     controller: Optional[str] = None
@@ -80,7 +84,7 @@ class FEInstrumentCategory(BaseModel):
     key: str
     label: str
     description: str
-    tags: Optional[List[str]] = None
+    tags: List[str] = []
     selectedModelId: Optional[str] = None
     connection: FEInstrumentConnection
     models: List[FEInstrumentModel]
@@ -2983,16 +2987,18 @@ class DriverReadinessRowResponse(BaseModel):
     band_label / product_family from P3-4's SYST:INFO? parse; other
     drivers return ``{}`` until they override ``readiness_metadata()``).
     """
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     category: str
     model: str
     endpoint: str
-    status: str  # "ok" | "warn" | "fail" | "skipped" — warn: 驱动可用但默认配置没落上 (P0-2 D5)
+    status: Literal["ok", "warn", "fail", "skipped"]
     detail: str
     extras: Dict[str, Any] = {}
     # P1-11: when status=="fail", "network" (TCP unreachable — likely
     # wrong subnet) vs "scpi" (TCP reached, *IDN?/connect failed). None
     # whenever status != "fail".
-    fail_kind: Optional[str] = None
+    fail_kind: Optional[Literal["network", "scpi"]] = None
 
 
 class SubnetReachabilityResponse(BaseModel):
@@ -3010,6 +3016,8 @@ class SubnetReachabilityResponse(BaseModel):
     the subnet is then 未探测/unknown and ``reachable`` is meaningless (don't
     render it as reachable). Tri-state: ``!probed`` = unknown; ``probed &&
     reachable`` = reachable; ``probed && !reachable`` = unreachable."""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     cidr: str
     reachable: bool
     instrument_count: int
@@ -3022,10 +3030,12 @@ class LabProfileReadinessResponse(BaseModel):
     """Active LabProfile state. ``status`` ∈
     {"ok", "inactive", "missing", "ambiguous"} — see
     ``app.services.readiness.LabProfileReadiness`` for semantics."""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     profile_id: Optional[str] = None
     profile_name: Optional[str] = None
     is_active: bool
-    status: str
+    status: Literal["ok", "inactive", "missing", "ambiguous"]
     detail: str
 
 
@@ -3035,9 +3045,11 @@ class CalibrationReadinessResponse(BaseModel):
     "no lab to even look at a cert through" from "lab exists but
     has no cert bound" so the GUI can suggest the right next step
     (set up lab vs run calibration)."""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     certificate_number: Optional[str] = None
     valid_until_iso: Optional[str] = None
-    status: str
+    status: Literal["valid", "expired", "missing", "no_lab"]
     days_remaining: Optional[int] = None
     detail: str
 
@@ -3049,7 +3061,9 @@ class DutAttachReadinessResponse(BaseModel):
     the readiness shape is forward-compatible with future sensing
     work — swapping in a real implementation won't break the
     openapi contract or GUI consumers."""
-    status: str
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    status: Literal["not_implemented"]
     detail: str
 
 
