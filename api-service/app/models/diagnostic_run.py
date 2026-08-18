@@ -95,8 +95,8 @@ class DiagnosticRun(Base):
     # First ~2KB of stdout / SCPI response / executor result; truncated on write.
     output_excerpt = Column(Text)
 
-    # Existing shared structured metadata for SCPI and commissioning runs.
-    # Complete sequence evidence has its own versioned envelope below.
+    # Existing shared structured metadata retained across diagnostic kinds.
+    # A sequence's complete evidence has its own versioned envelope below.
     result_extra = Column(_JSON_PG_OR_SQLITE)
 
     # Complete sequence-only evidence envelope. This deliberately does not
