@@ -7,10 +7,35 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 import logging
+from pydantic import ValidationError
 
 from app.models.test_plan import TestCase
+from app.schemas.mimo_ota.config import (
+    MIMO_OTA_TEST_TYPE,
+    canonicalize_mimo_ota_configuration_payload,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class MIMOOTACarrierTruthError(ValueError):
+    """MIMO OTA 顶层镜像与 PCell 真值不一致或配置无效。"""
+
+
+def _is_mimo_ota_test_type(test_type: object) -> bool:
+    return getattr(test_type, "value", test_type) == MIMO_OTA_TEST_TYPE
+
+
+def _canonicalize_test_case_configuration(
+    test_type: object,
+    configuration: dict,
+) -> dict:
+    if not _is_mimo_ota_test_type(test_type):
+        return configuration
+    try:
+        return canonicalize_mimo_ota_configuration_payload(configuration)
+    except ValidationError as exc:
+        raise MIMOOTACarrierTruthError(str(exc)) from exc
 
 
 # ARCH-1 S4b: 计划链拆除。原有 7 个 Service 类只留 TestCaseService ——
@@ -33,6 +58,10 @@ class TestCaseService:
         **kwargs
     ) -> TestCase:
         """Create a new test case"""
+        configuration = _canonicalize_test_case_configuration(
+            test_type,
+            configuration,
+        )
         test_case = TestCase(
             name=name,
             test_type=test_type,
@@ -84,6 +113,25 @@ class TestCaseService:
         test_case = self.get_test_case(db, test_case_id)
         if not test_case:
             return None
+
+        final_test_type = kwargs.get("test_type", test_case.test_type)
+        configuration_supplied = (
+            "configuration" in kwargs and kwargs["configuration"] is not None
+        )
+        retyped_to_mimo_ota = (
+            _is_mimo_ota_test_type(final_test_type)
+            and not _is_mimo_ota_test_type(test_case.test_type)
+        )
+        if configuration_supplied or retyped_to_mimo_ota:
+            candidate_configuration = (
+                kwargs["configuration"]
+                if configuration_supplied
+                else test_case.configuration
+            )
+            kwargs["configuration"] = _canonicalize_test_case_configuration(
+                final_test_type,
+                candidate_configuration,
+            )
 
         for key, value in kwargs.items():
             # P2-24: PATCH {lab_profile_id: null} 是显式解除绑定，不是“字段未给”。

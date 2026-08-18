@@ -79,14 +79,34 @@ REGISTERED DEVIATIONS (登记过的偏差)
 ═══════════════════════════════════════════════════════════════════════════
 """
 import math
+from copy import deepcopy
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 # Canonical TestCase.test_type value
 MIMO_OTA_TEST_TYPE = "MIMO_OTA"
+
+_PCELL_MIRROR_FIELDS = (
+    "frequency_hz",
+    "bandwidth_mhz",
+    "subcarrier_spacing_khz",
+)
+_PCELL_MIRROR_ADAPTERS = {
+    "frequency_hz": TypeAdapter(float),
+    "bandwidth_mhz": TypeAdapter(float),
+    "subcarrier_spacing_khz": TypeAdapter(int),
+}
 
 
 class MIMOOTAStepType(str, Enum):
@@ -577,6 +597,61 @@ class MIMOOTAConfiguration(BaseModel):
     # Lets tests pin one phase without rewriting the whole config.
     step_overrides: Optional[dict] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reconcile_primary_carrier_mirrors(cls, raw: Any) -> Any:
+        """让 PCell 成为运行参数真值，同时保留旧顶层镜像兼容。
+
+        显式给出两份且不一致时必须拒绝，避免 UXM/F64/波形/校准分别读取
+        不同工作点。旧数据缺顶层镜像时只从 PCell 回填；没有 CC 时仍由
+        after validator 从旧顶层字段构造单 PCell。
+        """
+        if not isinstance(raw, dict):
+            return raw
+
+        data = deepcopy(raw)
+        carriers = data.get("component_carriers")
+        if not isinstance(carriers, (list, tuple)) or not carriers:
+            return data
+        pcell = carriers[0]
+        if isinstance(pcell, ComponentCarrierConfig):
+            pcell = pcell.model_dump(mode="python")
+        if not isinstance(pcell, dict):
+            return data
+
+        for field in _PCELL_MIRROR_FIELDS:
+            if field in pcell:
+                raw_pcell_value = pcell[field]
+            else:
+                field_info = ComponentCarrierConfig.model_fields[field]
+                if field_info.is_required():
+                    continue
+                raw_pcell_value = field_info.get_default(call_default_factory=True)
+            if field not in data:
+                data[field] = raw_pcell_value
+                continue
+            try:
+                top_value = _PCELL_MIRROR_ADAPTERS[field].validate_python(data[field])
+                pcell_value = _PCELL_MIRROR_ADAPTERS[field].validate_python(
+                    raw_pcell_value
+                )
+            except ValidationError:
+                # 具体类型/范围错误交给字段自身校验，避免在这里改写错误语义。
+                continue
+            if top_value != pcell_value:
+                raise ValueError(
+                    f"{field} conflicts with component_carriers[0].{field}; "
+                    "PCell is the MIMO OTA operating-point truth"
+                )
+        return data
+
+    @property
+    def primary_carrier(self) -> ComponentCarrierConfig:
+        """返回规范化后的 PCell；after validator 保证它一定存在。"""
+        if not self.component_carriers:  # pragma: no cover - schema invariant
+            raise RuntimeError("MIMO OTA configuration has no primary carrier")
+        return self.component_carriers[0]
+
     @field_validator("azimuths_deg")
     @classmethod
     def _validate_azimuths(cls, values: List[float]) -> List[float]:
@@ -640,3 +715,17 @@ class MIMOOTAConfiguration(BaseModel):
                     "produced channel_InX_OutY.asc files."
                 )
         return self
+
+
+def canonicalize_mimo_ota_configuration_payload(payload: dict) -> dict:
+    """校验并只规范化载波真值字段，保留稀疏 JSON 与前向兼容扩展。"""
+    validated = MIMOOTAConfiguration.model_validate(payload)
+    canonical = deepcopy(payload)
+    primary = validated.primary_carrier
+    for field in _PCELL_MIRROR_FIELDS:
+        canonical[field] = getattr(primary, field)
+    canonical["component_carriers"] = [
+        carrier.model_dump(mode="json")
+        for carrier in (validated.component_carriers or [])
+    ]
+    return canonical

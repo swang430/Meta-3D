@@ -15,10 +15,8 @@ def _freq_bw_from_configuration(cfg, cur_freq, cur_bw):
     行列只当无 configuration 值时的历史兜底。bool/非正数/字符串形态不接管。
 
     取值顺序 = **与执行同源** (Codex #262 R1 P1): 执行侧权威 PCell 是
-    component_carriers[0] (measure Phase 2g; factory model_dump 落库自带 CC,
-    且 MIMOOTAConfiguration 的 validator 在 CC 非空时**忽略顶层频率**) ——
-    GUI 只改顶层时若显示跟着顶层, 就是宣称新频率而硬件跑旧 PCell, 把实验级
-    错配藏起来。故 CC[0] > 顶层 > 行列。"""
+    component_carriers[0]。P1-55 起 schema/service 会拒绝显式镜像分叉并补齐缺失
+    镜像；这里仍保持 CC[0] > 顶层 > 行列，以便旧只读数据也从同一真值显示。"""
     if isinstance(cfg, dict):
         source = cfg
         ccs = cfg.get("component_carriers")

@@ -82,6 +82,7 @@ def build_mimo_ota_test_case(
     # Build & validate the MIMOOTAConfiguration with user overrides applied
     overrides = config_overrides or {}
     config = MIMOOTAConfiguration.model_validate(overrides)
+    primary_carrier = config.primary_carrier
 
     # Derive convenience columns from the validated config
     test_case = TestCase(
@@ -91,8 +92,8 @@ def build_mimo_ota_test_case(
         configuration=config.model_dump(mode="json"),
         pass_criteria=config.pass_criteria.model_dump(mode="json"),
         channel_model=config.cdl_model_name,
-        frequency_mhz=config.frequency_hz / 1e6,
-        bandwidth_mhz=config.bandwidth_mhz,
+        frequency_mhz=primary_carrier.frequency_hz / 1e6,
+        bandwidth_mhz=primary_carrier.bandwidth_mhz,
         tx_power_dbm=config.target_tx_power_dbm,
         test_duration_sec=(
             (config.measurement_duration_s + config.settling_time_s)
