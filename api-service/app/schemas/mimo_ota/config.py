@@ -611,9 +611,11 @@ class MIMOOTAConfiguration(BaseModel):
 
         data = deepcopy(raw)
         carriers = data.get("component_carriers")
-        if not isinstance(carriers, list) or not carriers:
+        if not isinstance(carriers, (list, tuple)) or not carriers:
             return data
         pcell = carriers[0]
+        if isinstance(pcell, ComponentCarrierConfig):
+            pcell = pcell.model_dump(mode="python")
         if not isinstance(pcell, dict):
             return data
 

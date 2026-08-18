@@ -18,7 +18,8 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = 暂停（P1-54 ✅ PR #348；等待用户确认后再开始 P1-55，WIP=0）**。P2-26 已由 PR #347
+**Current Focus = P1-55「PCell 载波真值源收敛」（设计、TDD 实现完成，回归/内审中，WIP=1）**。P1-54
+已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
 已有的 `kpi_valid` 真值推进 `ThroughputMetrics`、`to_dict()`、MEASURE、ANALYSIS 与报告：
 真实零吞吐仍是有效样本，缺测/NaN/查询失败保持 `None/UNKNOWN`，不得再以默认 `0.0`
@@ -50,7 +51,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ✅ PR #347 |
 | **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | ✅ PR #348 |
-| **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ⏸ P1-54 合并后暂停，待用户确认 |
+| **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | 🟡 TDD 实现完成，回归/内审中 |
 | **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ⬜ 本地片待做；现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
 | **P2-28** | 诊断序列持久化完整 raw 或可靠 trace pointer | ⬜ |
@@ -304,7 +305,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-26 已由 PR #347（merge `ef50070`）收口。P1-54 已完成 `kpi_valid` nullable 契约、UXM 可信生产、CMW500 无手册契约时的 fail-closed 证据保留、MEASURE/ANALYSIS/报告正式 allowlist 与历史报告吞吐 trust 门；内审发现的“不完整方位子集误标可信”P1 已按 TDD 收窄为请求方位必须全部完成且均有可信吞吐；PR #348 R2 的 CMW500 无出处 tuple 被误升可信 P1 已按 TDD 尾修并通过 fresh 内审 P1/P2/P3=0，按两轮上限不发 R3。相关与完整 rule gates 221 passed，尾修 focused+rule gates 71 passed，GUI production build、compileall、单一 Alembic head、diff-check 通过。当前按用户要求暂停，WIP=0。P1-55 为顶层配置与 `component_carriers[0]` 真值收敛；P1-56 为转台动作真值门/诊断载体，本地片完成后现场实证仍保持 Hardware Blocked；两者均未自动启动。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → P1-55 🟡 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-55 已完成设计与 TDD 实现：写入门拒绝显式顶层/PCell 分叉、缺镜像从 PCell 回填，执行/校准/波形/参考测量与 GUI 均消费同一 PCell；当前回归/内审中，WIP=1。P1-56 为转台动作真值门/诊断载体，本地片完成后现场实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3853,8 +3854,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-03 during P1-26, Codex #271 P1]` **跨频段改频后 `CC[0].band` 与新频不符 —— 但 GUI 不该自己删 band** —— P1-26 让频率框同步 `CC[0].frequency_hz`；操作员若跨频段改频，`CC[0].band` 会留成旧值（`uxm_base_station.py` 只在 `"band" not in config` 时才按频率推断，显式 band 压过推断）。本片一度改成「改频顺带删 band」让驱动重推，**被 Codex P1 否掉并撤回**：`FREQ_TO_BAND_MAP` 只有 7 个区间且**未命中硬回落 `("N78","TDD")`**，而这张表 per-lab 可被 `InstrumentCategory.config` 覆盖 —— **前端没有资格判断「推断能不能成功」**。实例：N3 载波（下行 1805–1880；表里那条 1710–1785 是 N3 **上行**）改个频率 → 删 band → 回落 N78/TDD → **频段与双工一起错且静默**；保留 band 时跨频段改频得到「旧 band + 新 ARFCN」，由仪器拒绝 —— **响亮好过静默**，代价不对称。正解 = 后端在 validator 层校 `band ↔ frequency`（表在后端、可被 lab 覆盖，判断也该在那里），或表单暴露 band 选择让操作员显式改。⚠️ **不要把 `FREQ_TO_BAND_MAP` 复制进 GUI** —— 那是又一个会漂的镜像站点。
 
-- `[discovered 2026-08-03 during P1-26 内审 F4]` **[→ P1-55；P1-54 合并后暂停，待用户确认] 顶层 `frequency_hz` 与 `component_carriers[0]` 分叉时执行侧零告警 —— 权威收敛点仍允许写入分叉** —— P1-26 只收了 **GUI 写侧**一条路；裸 `PATCH /test-plans/cases/{id}` 的 `configuration` 是 `Dict[str, Any]`、`update_test_case` 是 `setattr` 整体替换，**全链零校验**（内审实跑：写入 `顶层=3.6e9 / CC[0]=3.5e9` 返回 **200**）。而两边**都是活跃消费源**：UXM 小区 / SCell / F64 中心频 / 一致性网参考取 **CC[0]**，而 `.asc` 波形合成（`measure.py` 的 `sim_rules["frequency_hz"]=config.frequency_hz`）、路损校准查表、探头方向图增益、`reference.py` 取**顶层** → 分叉时四方各按各的跑，且一致性网的参考就是 CC[0]，**一句告警都没有**。同一个 dict 里 `center_frequency_mhz` 已被 Codex #193 换源到 pcell并写了注释，**`frequency_hz` 那行是漏掉的孪生行**。P1-55 将统一 PATCH/显示/执行真值源，并按全集逐站收口。
-- `[discovered 2026-08-03 during P1-26 内审 F5]` **[→ P1-55；P1-54 合并后暂停，待用户确认] `MIMOOTAConfigForm` 显示端读顶层，与执行/列表（CC[0]）不同源** —— 频率/带宽/SCS 三个输入框的 `value=` 都取顶层。任何由上一条路径造出的 `top≠CC[0]` 行，操作员打开编辑器看到顶层值、列表与硬件是 CC[0] 值，**不做任何编辑动作**就得到 P1-26 要治的同一种误导。P1-55 将显示端与写入/执行端一并收敛为同一权威 carrier 真值。
+- `[discovered 2026-08-03 during P1-26 内审 F4]` **[→ P1-55，本 PR 实现完成、回归/内审中] 顶层 `frequency_hz` 与 `component_carriers[0]` 分叉时执行侧零告警** —— P1-55 已把 schema/service 设为共同写入门：显式冲突在提交前 422，缺失兼容镜像从 PCell 回填；MIMO factory、PRECHECK、REFERENCE、MEASURE 的工作点统一经 `primary_carrier` 消费，历史冲突也会在执行加载时 fail-loud。
+- `[discovered 2026-08-03 during P1-26 内审 F5]` **[→ P1-55，本 PR 实现完成、回归/内审中] `MIMOOTAConfigForm` 显示端读顶层，与执行/列表（CC[0]）不同源** —— P1-55 已提取共享 GUI helper：三个控件从 PCell 显示，编辑同步兼容镜像与 PCell、保留全部 SCell；服务端继续作为最终冲突门。
 - `[discovered 2026-08-03 during P1-26 内审 F6]` **P1-26 的三个同步站点无会红的门** —— 频率/带宽/SCS 三个 `onChange` 全靠人肉挂 `updateCarrierField`，把其中一行改回 `update(` → `npm run build` 绿、后端全量绿、**无人发现**。GUI 无单测基建（无 vitest/jest、`src` 下零 `*.test.*`），但**Python 侧已有扫这个文件的先例**：`api-service/tests/test_rule_gates.py` 的 G5/G7 就在读 `gui/src/**.tsx`，`tests/test_cdl_model_parser.py` 把本表单的 `CDL_OPTIONS` 钉住 —— 所以**不必引入新依赖**。修法 = 不变量档断言"频率/带宽/SCS 三个 onChange 站点必须走 `updateCarrierField`"，并配"改回 `update(` 会红"的变异实跑。归 P3-18（门/测试精化批）。
 
 - `[discovered 2026-08-03 用户提出]` **[→ 提升 P1-30，SCPI 往返部分已 ✅ 完成；其余仍 open]** **日志能力复查 —— 现在的 log 大量是"示意式"的，撑不起调试复现** —— 用户原话：「从 log 层面能够复现，或者说给测试调试人员提供你自己在调试时的线索；而现在 log 中大量的内容是示意式的（**并不清楚是不是事实，也不清楚是不是完整，还有可能有些内容没有打印到 log**）」。

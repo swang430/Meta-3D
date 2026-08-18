@@ -15,7 +15,7 @@ from app.db.database import Base
 from app.api.test_plan import create_test_case as create_test_case_endpoint
 from app.api.test_plan import update_test_case as update_test_case_endpoint
 from app.models.test_plan import TestCase
-from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.schemas.mimo_ota.config import ComponentCarrierConfig, MIMOOTAConfiguration
 from app.schemas.test_plan import TestCaseCreate, TestCaseUpdate
 from app.services.test_plan_service import TestCaseService
 
@@ -58,6 +58,16 @@ def test_missing_legacy_mirrors_are_filled_from_pcell():
     assert config.bandwidth_mhz == PCELL["bandwidth_mhz"]
     assert config.subcarrier_spacing_khz == PCELL["subcarrier_spacing_khz"]
     assert config.primary_carrier.frequency_hz == PCELL["frequency_hz"]
+
+
+def test_internal_component_carrier_model_cannot_bypass_conflict_gate():
+    with pytest.raises(ValidationError, match=r"frequency_hz.*component_carriers\[0\]"):
+        MIMOOTAConfiguration.model_validate(
+            {
+                "frequency_hz": 3_600_000_000.0,
+                "component_carriers": (ComponentCarrierConfig(**PCELL),),
+            }
+        )
 
 
 def test_legacy_top_level_only_builds_one_pcell():
