@@ -1,5 +1,5 @@
 """Test Plan and Test Case Pydantic schemas"""
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
@@ -178,6 +178,8 @@ class ExecutionHistoryItem(BaseModel):
       GUI 显示 "—"; 只有 case-runner 行有数值。
     - validation_pass: None = 未判定 (执行中 / 未做判定), 不是"失败"。
     """
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     id: UUID
     case_name: Optional[str] = None  # 快照 TestCase 名; join 不到 (快照被删) 时 None
     source_test_case_id: Optional[str] = None  # case-runner 行才有, 徽标挂回原用例用

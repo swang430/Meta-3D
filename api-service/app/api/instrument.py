@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Optional, List, Dict, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.database import get_db
 from app.hal.base import (
@@ -74,6 +74,8 @@ class FEInstrumentConnection(BaseModel):
 
 class FEInstrumentCategory(BaseModel):
     """对应前端 InstrumentCategory 类型"""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     categoryId: Optional[str] = None  # DB UUID, 供拓扑编辑器等关联查询
     key: str
     label: str
@@ -3058,6 +3060,8 @@ class HALReadinessResponse(BaseModel):
     lifespan startup hasn't run, or a reload is mid-flight). The
     GUI should render "HAL not ready" rather than treating the
     placeholder sub-sections as the live state."""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     available: bool
     drivers: List[DriverReadinessRowResponse]
     lab_profile: LabProfileReadinessResponse
