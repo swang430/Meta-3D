@@ -156,6 +156,11 @@ fail-closed；这不是把 Aerotech 证据推广到另一驱动。
   的动作会 snapshot 当前 generation，仍可正常运行。MIMO、方向图与 cleanup 在一次多步操作
   开始时保留同一 generation，急停后后续点和自动回零均不得重启。静区与空间相关因线性单位
   API 缺失已在更早位置 fail-closed，不再调用旋转转台。
+- generation 基线由执行所有者在**正式受理/等待仪器租约前**建立：TestCase 正式执行在创建
+  后台 task 前建立并由 task 继承；commissioning run-all 在整条五相位链开始时建立；单阶段与
+  adhoc 在各自 phase 请求进入租约前建立。所有入口均用同一 ContextVar 传入 MEASURE/cleanup，
+  并在正常、异常和取消出口恢复上下文；等待租约期间执行行已经是 running，HAL reload 不能
+  静默换掉 driver-local generation 真值。
 - TCP 静默重连只恢复 transport，不发送 ACK/ENABLE 等写命令；只读查询可在重连后重试一次，
   HOME/MOVE/ENABLE/ABORT 等非幂等写若在收发中断线，结果保持 UNKNOWN 并禁止重放。
 - `connect()` 只做 transport 建立与只读轴发现；`disconnect()` 只关闭 transport。清错、使能和

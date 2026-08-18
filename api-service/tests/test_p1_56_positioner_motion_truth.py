@@ -365,6 +365,94 @@ async def test_formal_motion_does_not_restart_after_stop_during_preflight(
 
 
 @pytest.mark.asyncio
+async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
+    monkeypatch,
+):
+    """A stop during PRECHECK/REFERENCE must still cancel later MEASURE motion."""
+    from contextlib import asynccontextmanager
+
+    import app.hal.positioner as positioner_module
+    import app.services.test_case_runner as runner
+    from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+    assert hasattr(
+        positioner_module,
+        "current_positioner_operation_stop_generation",
+    ), "formal-case lifecycle has no retained operator-stop baseline"
+    assert (
+        "current_positioner_operation_stop_generation"
+        in __import__("inspect").getsource(MeasureExecutor.execute)
+    ), "MEASURE does not consume the formal-case lifecycle baseline"
+    launch_source = __import__("inspect").getsource(
+        runner.launch_test_case_execution
+    )
+    assert launch_source.index(
+        "retain_positioner_stop_generation"
+    ) < launch_source.index("create_task("), (
+        "formal-case baseline must be retained before the background task is created"
+    )
+
+    generation = 7
+    observed: list[int | None] = []
+
+    class Positioner:
+        def operator_stop_generation(self) -> int:
+            return generation
+
+    class DB:
+        def close(self) -> None:
+            return None
+
+    @asynccontextmanager
+    async def lease(_purpose: str):
+        yield
+
+    async def run_case_loop(_db, _execution_id) -> None:
+        observed.append(
+            positioner_module.current_positioner_operation_stop_generation.get()
+        )
+
+    monkeypatch.setattr(runner, "SessionLocal", DB)
+    monkeypatch.setattr(runner, "instrument_test_lease", lease)
+    monkeypatch.setattr(runner, "_run_case_loop", run_case_loop)
+    monkeypatch.setattr(
+        runner,
+        "get_hal_service",
+        lambda: SimpleNamespace(drivers={"positioner": Positioner()}),
+        raising=False,
+    )
+
+    token = positioner_module.current_positioner_operation_stop_generation.set(7)
+    try:
+        # Models an operator stop after the HTTP request accepted the run and
+        # created its task, but before that task receives scheduler time.
+        generation = 8
+        await runner._run_case("00000000-0000-0000-0000-000000000156")
+    finally:
+        positioner_module.current_positioner_operation_stop_generation.reset(token)
+
+    assert observed == [7]
+    assert positioner_module.current_positioner_operation_stop_generation.get() is None
+
+
+def test_commissioning_entrypoints_retain_stop_generation_before_lease():
+    """All live commissioning owners establish the baseline before waiting."""
+    import inspect
+
+    from app.api import commissioning
+
+    for owner in (
+        commissioning.run_phase,
+        commissioning.run_adhoc_phase,
+        commissioning.run_all_phases,
+    ):
+        source = inspect.getsource(owner)
+        assert source.index(
+            "retain_positioner_stop_generation"
+        ) < source.index("instrument_test_lease("), owner.__name__
+
+
+@pytest.mark.asyncio
 async def test_move_fails_when_controller_settles_but_encoder_does_not_move():
     driver = _driver(0.0, 0.0)
 

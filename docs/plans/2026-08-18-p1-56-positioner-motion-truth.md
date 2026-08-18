@@ -109,6 +109,9 @@
   AXISSTATUS raw；诊断在 ENABLE 前判完目标；EMCenter 转台因仓内零动作协议证据而整体
   fail-closed；silent reconnect/断线重试也在每次真实 TX 前重验 stop generation。以上均以
   行为 RED→GREEN 收口。
+- R2 尾修：stop generation 不再到 MEASURE 才建立。正式 TestCase 在 create_task 前建立并
+  继承；commissioning run-all、单阶段、adhoc 均在等待 instrument lease 前建立，run-all 的
+  PRECHECK/REFERENCE/MEASURE/cleanup 共用同一基线；上下文由统一 scope 在所有出口 reset。
 - 动作入口全集尾修：AeroBasic `#` task-fault 显式失败；silent reconnect 只恢复 transport，
   非幂等写断线后不重放；connect/disconnect 不夹带无出处写；健康诊断用权威 mock 判据并严格
   解析 bitmask，未证明单位的反馈只保留 raw controller units；诊断 XF 只能取站点批准值。

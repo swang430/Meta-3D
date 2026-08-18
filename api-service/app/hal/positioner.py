@@ -7,7 +7,9 @@ Provides abstract interface and mock implementation for 3D/2D OTA positioners (t
 import asyncio
 import logging
 import random
-from typing import Dict, Any, Tuple, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, Optional, Tuple
 from datetime import datetime
 
 from app.hal.base import (
@@ -18,6 +20,29 @@ from app.hal.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# One operation-lifecycle baseline.  Formal background tasks set this before
+# task creation; commissioning owners set it before waiting for the instrument
+# lease.  Later MEASURE/cleanup work therefore cannot adopt an intervening
+# operator stop as a new baseline.
+current_positioner_operation_stop_generation: ContextVar[Optional[int]] = (
+    ContextVar("positioner_operation_stop_generation", default=None)
+)
+
+
+@contextmanager
+def retain_positioner_stop_generation(
+    positioner: Any,
+) -> Iterator[Optional[int]]:
+    """Retain one operation's stop generation across awaits and phases."""
+    reader = getattr(positioner, "operator_stop_generation", None)
+    generation = reader() if callable(reader) else None
+    token = current_positioner_operation_stop_generation.set(generation)
+    try:
+        yield generation
+    finally:
+        current_positioner_operation_stop_generation.reset(token)
 
 
 class EtsPositionerScpi:

@@ -459,6 +459,9 @@ class MeasureExecutor(IStepExecutor):
             select_active_probe_id,
         )
         from app.hal.channel_emulator import ChannelLoadMode
+        from app.hal.positioner import (
+            current_positioner_operation_stop_generation,
+        )
         from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
         from app.hal.scpi_evidence import EvidenceLevel, capture_scpi_exchanges
         from app.services.execution_scpi_evidence import (
@@ -569,9 +572,12 @@ class MeasureExecutor(IStepExecutor):
         stop_generation_reader = getattr(
             positioner, "operator_stop_generation", None
         )
-        motion_stop_generation = (
-            stop_generation_reader() if callable(stop_generation_reader) else None
+        retained_stop_generation = (
+            current_positioner_operation_stop_generation.get()
         )
+        motion_stop_generation = retained_stop_generation
+        if motion_stop_generation is None and callable(stop_generation_reader):
+            motion_stop_generation = stop_generation_reader()
         motion_stop_kwargs = (
             {"expected_operator_stop_generation": motion_stop_generation}
             if motion_stop_generation is not None
