@@ -22,7 +22,7 @@ from typing import BinaryIO, List, NamedTuple, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.config import settings
 from app.core.logging_config import active_execution_log_ids
@@ -43,6 +43,8 @@ class LogFileInfo(BaseModel):
 
 class LogEntry(BaseModel):
     """解析后的单条日志"""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     ts: str
     level: str
     logger: str
@@ -56,6 +58,8 @@ class LogEntry(BaseModel):
 
 class LogTailResponse(BaseModel):
     """尾读响应"""
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     filename: str
     total_lines_read: int
     filtered_count: int

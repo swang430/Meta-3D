@@ -148,6 +148,11 @@ class ChamberConfigurationUpdate(BaseModel):
 
 class ChamberConfigurationResponse(ChamberConfigurationBase):
     """暗室配置响应"""
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_serialization_defaults_required=True,
+    )
+
     id: UUID
     is_active: bool = Field(
         description=(
@@ -167,10 +172,6 @@ class ChamberConfigurationResponse(ChamberConfigurationBase):
     # 计算属性
     supported_tests: List[str] = Field(default_factory=list, description="支持的测试类型列表")
     max_ul_radius_m: Optional[float] = Field(None, description="上行链路支持的最大半径 (m)")
-
-    class Config:
-        from_attributes = True
-
 
 class ChamberFromPresetRequest(BaseModel):
     """从预设创建暗室配置请求"""

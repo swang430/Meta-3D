@@ -1,5 +1,5 @@
 """Probe Pydantic schemas"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
@@ -76,6 +76,11 @@ class BulkProbeRequest(BaseModel):
 
 class ProbeResponse(BaseModel):
     """Probe response"""
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_serialization_defaults_required=True,
+    )
+
     id: UUID
     probe_number: int
     name: Optional[str]
@@ -98,10 +103,6 @@ class ProbeResponse(BaseModel):
     created_at: UTCDateTime
     updated_at: Optional[UTCDateTime]
     created_by: Optional[str]
-
-    class Config:
-        from_attributes = True
-
 
 class ProbesListResponse(BaseModel):
     """List of probes response"""

@@ -9,7 +9,7 @@
 # _live_route_table 的集合包含自检 (会红并指出取数源失效), 不靠版本号。
 fastapi>=0.115.0,<0.142.0
 uvicorn[standard]>=0.34.0
-pydantic>=2.0.0
+pydantic>=2.4.0  # json_schema_serialization_defaults_required entered ConfigDict in 2.4
 pydantic-settings>=2.0.0
 
 # Database

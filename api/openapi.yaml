@@ -1008,6 +1008,9 @@ components:
     InstrumentCategory:
       type: object
       properties:
+        categoryId:
+          type: string
+          nullable: true
         key:
           type: string
         label:
@@ -1027,7 +1030,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/InstrumentModel'
-      required: [key, label, description, selectedModelId, connection, models]
+        isActive:
+          type: boolean
+          default: true
+        usagePhase:
+          type: array
+          items:
+            type: string
+          default: []
+        driverMode:
+          type: string
+          default: auto
+      required: [categoryId, key, label, description, tags, selectedModelId, connection, models, isActive, usagePhase, driverMode]
     InstrumentModel:
       type: object
       properties:
@@ -1069,23 +1083,22 @@ components:
           nullable: true
         status:
           type: string
-          enum: [available, reserved, maintenance, offline, pending_dev]
+          enum: [available, pending_dev]
           description: |
             Catalog availability status.
             - `available`: real driver class registered + HAL can bring it up
             - `pending_dev`: catalog row exists but no real driver class
               is registered yet (`_convert_model` in `app/api/instrument.py`
               maps to this when `get_real_driver_class()` returns None).
-              Distinct from `offline` (which means "driver registered but
-              not currently reachable") — operators picking a model need to
-              see these as two different states so they don't try to
-              connect to a model that fundamentally has no driver.
-            - `offline` / `reserved` / `maintenance`: operational states
-              for driver-backed models.
-      required: [id, vendor, model, summary, interfaces, capabilities, status]
+              Operators picking a model must see this distinctly so they do
+              not try to connect to a model that has no registered driver.
+      required: [id, vendor, model, summary, interfaces, capabilities, model_capabilities, bandwidth, channels, status]
     InstrumentConnection:
       type: object
       properties:
+        id:
+          type: string
+          nullable: true
         endpoint:
           type: string
           nullable: true
@@ -1095,6 +1108,11 @@ components:
         notes:
           type: string
           nullable: true
+        connection_params:
+          type: object
+          nullable: true
+          additionalProperties: true
+      required: [id, endpoint, controller, notes, connection_params]
       additionalProperties: false
     HALReadinessResponse:
       type: object
@@ -1127,7 +1145,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, generated_at_iso]
+      required: [available, drivers, lab_profile, calibration, dut_attach, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:
@@ -1162,7 +1180,7 @@ components:
             Field values may be null when a driver field is unpopulated.
           additionalProperties: true
           default: {}
-      required: [category, model, endpoint, status, detail]
+      required: [category, model, endpoint, status, detail, fail_kind, extras]
     LabProfileReadiness:
       type: object
       description: |
@@ -1183,7 +1201,7 @@ components:
           enum: [ok, inactive, missing, ambiguous]
         detail:
           type: string
-      required: [is_active, status, detail]
+      required: [profile_id, profile_name, is_active, status, detail]
     CalibrationReadiness:
       type: object
       description: |
@@ -1206,7 +1224,7 @@ components:
           nullable: true
         detail:
           type: string
-      required: [status, detail]
+      required: [certificate_number, valid_until_iso, status, days_remaining, detail]
     DutAttachReadiness:
       type: object
       description: |
@@ -1218,6 +1236,7 @@ components:
       properties:
         status:
           type: string
+          enum: [not_implemented]
         detail:
           type: string
       required: [status, detail]
@@ -1249,7 +1268,7 @@ components:
         probed:
           type: boolean
           description: 'P1-13: was any instrument on this subnet actually network-probed? false → 未探测/unknown.'
-      required: [cidr, reachable, instrument_count, unreachable_count, probed]
+      required: [cidr, reachable, instrument_count, unreachable_count, hint, probed]
     TestExecutionItem:
       type: object
       description: |
@@ -1299,7 +1318,18 @@ components:
           nullable: true
       required:
         - id
+        - case_name
+        - source_test_case_id
         - status
+        - phases_total
+        - phases_done
+        - phases_failed
+        - duration_sec
+        - started_at
+        - completed_at
+        - executed_by
+        - error_message
+        - validation_pass
     TestExecutionListResponse:
       type: object
       properties:
@@ -1484,7 +1514,7 @@ components:
         raw:
           type: string
           nullable: true
-      required: [ts, level, logger, hal_mode, session_id, execution_id, instrument_id, msg]
+      required: [ts, level, logger, hal_mode, session_id, execution_id, instrument_id, msg, raw]
     SystemLogTailResponse:
       type: object
       properties:
