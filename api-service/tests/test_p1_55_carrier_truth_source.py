@@ -187,6 +187,24 @@ def test_service_rejects_conflicting_mimo_update_without_mutating_row(db):
     assert row.configuration == original
 
 
+def test_service_cannot_retype_a_conflicting_free_form_case_to_mimo(db):
+    conflict = {
+        "frequency_hz": 3_600_000_000.0,
+        "component_carriers": [deepcopy(PCELL)],
+    }
+    row = _create_case(db, test_type="Custom", configuration=conflict)
+
+    with pytest.raises(
+        (ValueError, ValidationError),
+        match="frequency_hz.*component_carriers",
+    ):
+        TestCaseService().update_test_case(db, row.id, test_type="MIMO_OTA")
+
+    db.refresh(row)
+    assert row.test_type == "Custom"
+    assert row.configuration == conflict
+
+
 def test_non_mimo_configuration_remains_free_form(db):
     payload = {
         "frequency_hz": 3_600_000_000.0,

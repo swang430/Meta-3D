@@ -24,7 +24,10 @@ export function primaryCarrierValue(
   const pcell = Array.isArray(config.component_carriers)
     ? config.component_carriers[0]
     : undefined
-  return pcell?.[key] ?? config[key]
+  const value = pcell ? pcell[key] : config[key]
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined
 }
 
 /** Update the legacy mirror and PCell together without touching any SCell. */

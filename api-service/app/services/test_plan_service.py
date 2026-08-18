@@ -114,11 +114,23 @@ class TestCaseService:
         if not test_case:
             return None
 
-        if "configuration" in kwargs and kwargs["configuration"] is not None:
-            final_test_type = kwargs.get("test_type", test_case.test_type)
+        final_test_type = kwargs.get("test_type", test_case.test_type)
+        configuration_supplied = (
+            "configuration" in kwargs and kwargs["configuration"] is not None
+        )
+        retyped_to_mimo_ota = (
+            _is_mimo_ota_test_type(final_test_type)
+            and not _is_mimo_ota_test_type(test_case.test_type)
+        )
+        if configuration_supplied or retyped_to_mimo_ota:
+            candidate_configuration = (
+                kwargs["configuration"]
+                if configuration_supplied
+                else test_case.configuration
+            )
             kwargs["configuration"] = _canonicalize_test_case_configuration(
                 final_test_type,
-                kwargs["configuration"],
+                candidate_configuration,
             )
 
         for key, value in kwargs.items():

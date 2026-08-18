@@ -59,3 +59,19 @@ test('legacy config without carriers continues to edit the top-level mirror', as
     { frequency_hz: 3_600_000_000 },
   )
 })
+
+test('an invalid PCell value never falls back to a stale top-level mirror', async () => {
+  if (!existsSync(helperUrl)) return
+  const { primaryCarrierValue } = await import(helperUrl.href)
+
+  assert.equal(
+    primaryCarrierValue(
+      {
+        frequency_hz: 3_600_000_000,
+        component_carriers: [{ frequency_hz: Number.NaN }],
+      },
+      'frequency_hz',
+    ),
+    undefined,
+  )
+})
