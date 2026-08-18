@@ -49,6 +49,24 @@ def test_explicit_top_level_carrier_conflict_is_rejected(
         MIMOOTAConfiguration.model_validate(payload)
 
 
+def test_explicit_top_level_scs_conflicts_with_omitted_pcell_default():
+    pcell_without_scs = {
+        "frequency_hz": PCELL["frequency_hz"],
+        "bandwidth_mhz": PCELL["bandwidth_mhz"],
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match=r"subcarrier_spacing_khz.*component_carriers\[0\]",
+    ):
+        MIMOOTAConfiguration.model_validate(
+            {
+                "subcarrier_spacing_khz": 15,
+                "component_carriers": [pcell_without_scs],
+            }
+        )
+
+
 def test_missing_legacy_mirrors_are_filled_from_pcell():
     config = MIMOOTAConfiguration.model_validate(
         {"component_carriers": [deepcopy(PCELL)]}

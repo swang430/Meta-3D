@@ -620,14 +620,21 @@ class MIMOOTAConfiguration(BaseModel):
             return data
 
         for field in _PCELL_MIRROR_FIELDS:
-            if field not in pcell:
-                continue
+            if field in pcell:
+                raw_pcell_value = pcell[field]
+            else:
+                field_info = ComponentCarrierConfig.model_fields[field]
+                if field_info.is_required():
+                    continue
+                raw_pcell_value = field_info.get_default(call_default_factory=True)
             if field not in data:
-                data[field] = pcell[field]
+                data[field] = raw_pcell_value
                 continue
             try:
                 top_value = _PCELL_MIRROR_ADAPTERS[field].validate_python(data[field])
-                pcell_value = _PCELL_MIRROR_ADAPTERS[field].validate_python(pcell[field])
+                pcell_value = _PCELL_MIRROR_ADAPTERS[field].validate_python(
+                    raw_pcell_value
+                )
             except ValidationError:
                 # 具体类型/范围错误交给字段自身校验，避免在这里改写错误语义。
                 continue
