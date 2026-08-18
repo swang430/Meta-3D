@@ -6,7 +6,7 @@ import type {
 
 export type DiagnosticSequenceEvidenceView =
   | { kind: 'complete'; result: SequenceRunResponse }
-  | { kind: 'legacy'; summary: string }
+  | { kind: 'legacy'; notice: string; excerpt: string | null }
 
 
 export function evidenceViewFromDiagnosticRun(
@@ -15,7 +15,8 @@ export function evidenceViewFromDiagnosticRun(
   if (!run.sequence_evidence) {
     return {
       kind: 'legacy',
-      summary: '旧记录未持久化完整证据',
+      notice: '旧记录未持久化完整证据',
+      excerpt: run.output_excerpt ?? null,
     }
   }
 

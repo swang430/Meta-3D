@@ -44,7 +44,8 @@ test('legacy rows remain explicitly unavailable and never parse the excerpt', ()
 
   assert.deepEqual(view, {
     kind: 'legacy',
-    summary: '旧记录未持久化完整证据',
+    notice: '旧记录未持久化完整证据',
+    excerpt: 'summary: fake\nraw: should-not-be-parsed',
   })
 })
 
@@ -56,5 +57,6 @@ test('recent runs fetch detail and expose a full-evidence action', () => {
   assert.match(panelSource, /getDiagnosticRun/)
   assert.match(panelSource, /查看完整证据/)
   assert.match(panelSource, /evidenceViewFromDiagnosticRun/)
-  assert.match(panelSource, /旧记录未持久化完整证据/)
+  assert.match(panelSource, /setHistoryNotice\(view\.notice\)/)
+  assert.match(panelSource, /historyRequestGeneration/)
 })

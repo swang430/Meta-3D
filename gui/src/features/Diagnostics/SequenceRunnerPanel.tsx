@@ -4,12 +4,12 @@
  * Operators picked a sequence (.py file under app/diagnostics/sequences/),
  * pick a LabProfile, fill the metadata-declared params, hit Run. Result
  * panel shows live log + per-step ✓/✗ + summary, plus a Recent Runs feed
- * (last 20 in this kind) so re-running yesterday's diagnostic is one click.
+ * (last 20 in this kind) so reopening yesterday's diagnostic evidence is one click.
  *
  * Intentionally not a TestPlan replacement — every run lands in
  * diagnostic_runs but never as TestExecution / cert.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Stack,
   Paper,
@@ -146,6 +146,8 @@ export function SequenceRunnerPanel() {
   const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null)
   const [historyResult, setHistoryResult] = useState<SequenceRunResponse | null>(null)
   const [historyNotice, setHistoryNotice] = useState<string | null>(null)
+  const [historyExcerpt, setHistoryExcerpt] = useState<string | null>(null)
+  const historyRequestGeneration = useRef(0)
 
   const selectedSequence = useMemo(
     () => sequences.find((s) => s.key === selectedKey) || null,
@@ -220,25 +222,36 @@ export function SequenceRunnerPanel() {
   useEffect(refreshRecent, [])
 
   const handleViewEvidence = async (runId: string) => {
+    const requestGeneration = ++historyRequestGeneration.current
     setHistoryLoadingId(runId)
+    setHistoryResult(null)
     setHistoryNotice(null)
+    setHistoryExcerpt(null)
     try {
       const detail = await getDiagnosticRun(runId)
+      if (requestGeneration !== historyRequestGeneration.current) return
       const view = evidenceViewFromDiagnosticRun(detail)
       if (view.kind === 'complete') {
         setHistoryResult(view.result)
+        setHistoryExcerpt(null)
       } else {
         setHistoryResult(null)
-        setHistoryNotice('旧记录未持久化完整证据')
+        setHistoryNotice(view.notice)
+        setHistoryExcerpt(view.excerpt)
       }
     } catch (e: unknown) {
+      if (requestGeneration !== historyRequestGeneration.current) return
       const detail =
         (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (e as Error)?.message ||
         '读取完整证据失败'
+      setHistoryResult(null)
       setHistoryNotice(typeof detail === 'string' ? detail : JSON.stringify(detail))
+      setHistoryExcerpt(null)
     } finally {
-      setHistoryLoadingId(null)
+      if (requestGeneration === historyRequestGeneration.current) {
+        setHistoryLoadingId(null)
+      }
     }
   }
 
@@ -445,9 +458,12 @@ export function SequenceRunnerPanel() {
       {(historyResult || historyNotice) && (
         <Paper p="md" withBorder>
           {historyNotice ? (
-            <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="历史证据不可用">
-              {historyNotice}
-            </Alert>
+            <Stack gap="xs">
+              <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="历史证据不可用">
+                {historyNotice}
+              </Alert>
+              {historyExcerpt !== null && <Code block>{historyExcerpt}</Code>}
+            </Stack>
           ) : historyResult && (
             <SequenceEvidenceResult result={historyResult} title="历史完整证据" />
           )}
