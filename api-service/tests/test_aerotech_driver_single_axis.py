@@ -108,7 +108,18 @@ class StubbedDriver(RealAerotechDriver):
         self._reader = object()  # type: ignore[assignment]
         self._writer = object()  # type: ignore[assignment]
 
-    async def _send(self, cmd: str) -> str:
+    async def _send(
+        self,
+        cmd: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            raise AerotechError("operator stop requested")
         return await self._fake.respond(cmd)
 
 

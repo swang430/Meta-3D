@@ -33,7 +33,18 @@ class ScriptedMotionDriver(RealAerotechDriver):
         self._responses = defaultdict(list, responses)
         self.sent: list[str] = []
 
-    async def _send(self, command: str) -> str:
+    async def _send(
+        self,
+        command: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            raise AerotechOperatorStopRequested("operator stop requested")
         self.sent.append(command)
         queue = self._responses[command]
         if queue:
@@ -78,6 +89,38 @@ async def test_operator_stop_is_rechecked_inside_the_motion_tx_lock():
 
     with pytest.raises(AerotechOperatorStopRequested):
         await send_task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "forbidden_prefix"),
+    [("move", "MOVEABS "), ("home", "HOME ")],
+)
+async def test_formal_motion_does_not_restart_after_stop_during_preflight(
+    operation: str,
+    forbidden_prefix: str,
+):
+    driver = _driver(0.0, 90.0)
+    original_feedback = driver._read_motion_feedback
+    first_feedback = True
+
+    async def stop_after_preflight_feedback():
+        nonlocal first_feedback
+        feedback = await original_feedback()
+        if first_feedback:
+            first_feedback = False
+            driver.note_operator_stop()
+        return feedback
+
+    driver._read_motion_feedback = stop_after_preflight_feedback  # type: ignore[method-assign]
+
+    if operation == "move":
+        result = await driver.move_to(90.0, 0.0)
+    else:
+        result = await driver.reset()
+
+    assert result is False
+    assert not any(command.startswith(forbidden_prefix) for command in driver.sent)
 
 
 @pytest.mark.asyncio

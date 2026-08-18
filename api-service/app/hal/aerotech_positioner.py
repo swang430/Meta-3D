@@ -888,6 +888,7 @@ class RealAerotechDriver(PositionerDriver):
         """回原点"""
         from app.services.instrument_test_lease import positioner_operation_guard
 
+        operator_stop_generation = self.operator_stop_generation()
         command_accepted = False
         async with positioner_operation_guard("aerotech-positioner:home"):
             try:
@@ -897,9 +898,10 @@ class RealAerotechDriver(PositionerDriver):
                 before = await self._read_motion_feedback()
                 self._sync_cached_feedback(before)
                 command_accepted = True
-                await self._send(AeroBasicCmd.HOME.format(
-                    axes=" ".join(self._axes_present)
-                ))
+                await self._send(
+                    AeroBasicCmd.HOME.format(axes=" ".join(self._axes_present)),
+                    expected_operator_stop_generation=operator_stop_generation,
+                )
                 await self._wait_for_settle()
                 after = await self._read_motion_feedback()
                 self._sync_cached_feedback(after)
@@ -908,6 +910,11 @@ class RealAerotechDriver(PositionerDriver):
                 self._set_status(InstrumentStatus.READY)
                 self._clear_error()
                 return True
+            except AerotechOperatorStopRequested as e:
+                command_accepted = False
+                logger.warning("[Aerotech] Home blocked by operator stop: %s", e)
+                self._set_status(InstrumentStatus.ERROR, str(e))
+                return False
             except asyncio.CancelledError:
                 if command_accepted:
                     await self._finish_motion_safety_cleanup(reason="HOME cancelled")
@@ -945,6 +952,7 @@ class RealAerotechDriver(PositionerDriver):
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
 
+        operator_stop_generation = self.operator_stop_generation()
         command_accepted = False
         async with positioner_operation_guard("aerotech-positioner:move"):
             try:
@@ -986,7 +994,10 @@ class RealAerotechDriver(PositionerDriver):
                         f" {self.el_axis} {target_elevation:.4f}"
                     )
                 command_accepted = True
-                await self._send(cmd_str)
+                await self._send(
+                    cmd_str,
+                    expected_operator_stop_generation=operator_stop_generation,
+                )
 
             # 等待到位
                 await self._wait_for_settle()
@@ -1013,6 +1024,11 @@ class RealAerotechDriver(PositionerDriver):
                 self._clear_error()
                 return True
 
+            except AerotechOperatorStopRequested as e:
+                command_accepted = False
+                logger.warning("[Aerotech] Move blocked by operator stop: %s", e)
+                self._set_status(InstrumentStatus.ERROR, str(e))
+                return False
             except asyncio.CancelledError:
                 if command_accepted:
                     await self._finish_motion_safety_cleanup(reason="MOVEABS cancelled")

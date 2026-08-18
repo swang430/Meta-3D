@@ -137,8 +137,10 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 - ABORT 的 ACK 不是停止成功；只有全部实际轴严格 AXISSTATUS 均清除 `MOVE_ACTIVE` 才返回
   True/释放动作互斥。无需 `IN_POSITION`，因为急停后的轴不保证到位。
 - 人工 `/positioner/stop` 与内部安全 cleanup 必须区分：只有人工急停推进 driver 上的共享 stop
-  generation；破坏性诊断把 generation 前置条件与实际 MOVE TX 放进同一个驱动通信锁临界区。
-  无论人工 ABORT 在 MOVE 前还是后取得发送顺序，急停完成后都不得排队重启转台。
+  generation；破坏性诊断及正式 `move_to()` / `reset()` 都在动作入口 snapshot generation，
+  并把前置条件与实际 MOVE/HOME TX 放进同一个驱动通信锁临界区。无论人工 ABORT 在动作
+  前置回读期间还是命令发送后取得顺序，急停完成后都不得排队重启转台；历史急停之后新发起
+  的动作会 snapshot 当前 generation，仍可正常运行。
 - 急停停止确认与位置反馈是两个独立事实。ABORT 已确认但 PFBK 失败时，REST 仍可报告停止
   成功，但方位/俯仰必须为 `null`，GUI 保留上一次已知位置，不得用 `0°` 伪装未知位置。
 - sweep 的到位判词同样是三态：位置可信且到位为 true，位置可信但超差为 false，PFBK
@@ -169,4 +171,6 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 16. generation 必须在实际发送锁内复核；人工 stop 已推进 generation 后，排队中的诊断 MOVE
     不得在 ABORT 之后发出。
 17. sweep PFBK 失败时到位判词为 null/灰色“未知”，不能显示红色“超差”。
-18. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。
+18. 正式 `move_to()` 与 `reset()` 在 preflight/PFBK 期间发生人工急停时，也必须在 TX 前拒绝
+    后续 MOVEABS/HOME；不得只保护诊断序列。
+19. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。

@@ -98,5 +98,5 @@
 ## 内审尾修补充
 
 - 人工 stop generation 的最终裁决必须与 MOVE TX 共用驱动通信锁，消除“ABORT 完成后排队
-  MOVE 又启动”的竞争窗口。
+  MOVE 又启动”的竞争窗口；该门同时覆盖诊断 MOVE、正式 `move_to()` MOVEABS 与 `reset()` HOME。
 - sweep PFBK 不可得时，坐标与 `within_tolerance` 同时为 null，GUI 显示灰色“未知”。
