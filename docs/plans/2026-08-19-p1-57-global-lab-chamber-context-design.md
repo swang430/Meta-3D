@@ -138,6 +138,27 @@
 - LabProfile wizard/manager 中创建或编辑 LabProfile 的 chamber binding；
 - 历史 execution/report/calibration 的已记录 lab/chamber identity。
 
+### 7.1 开工实证（2026-08-19，Claude 按计划执行的全集搜索）
+
+`rg "fetchLabProfiles|selectedLab(Profile)?Id|selectedLabId|lastLab|LAST_LAB|fetchActiveChamber|selectedChamberId" gui/src` 命中文件与裁决：
+
+| 文件 | 命中 | 裁决 |
+|---|---|---|
+| `features/TopologyEditor/TopologyEditor.tsx` | 25 | 运行态 → Task 4 |
+| `components/ChamberConfigCard.tsx` | 23 | 运行态 → Task 5 |
+| `components/OTAMapper/ProbeArraySelector.tsx` | 18 | 运行态 → Task 6 |
+| `features/ProbeCalibration/components/RFChainDiagramPanel.tsx` | 14 | 运行态 → Task 6 |
+| `App.tsx`（ProbeManager） | 14 | 运行态 → Task 5 |
+| `components/Commissioning/index.tsx` | 7 | 运行态 → Task 5 |
+| `features/Diagnostics/SequenceRunnerPanel.tsx` | 6 | 运行态 → Task 6 |
+| `features/Diagnostics/CommissioningAdhocPanel.tsx` | 6 | 运行态 → Task 6 |
+| `components/TestPlanManagement/TestCaseEditModal.tsx` | 10 | **记录绑定，保留** |
+| `components/TestPlanManagement/TestCaseCreateModal.tsx` | 6 | **记录绑定，保留** |
+| `features/TestManagement/testCaseLabProfileBinding.ts` | 4 | **记录绑定，保留** |
+| `api/labProfileService.ts` / `api/service.ts` | 3+1 | API 层定义，非选择状态 |
+
+与 §7 预判清单一致，无新增站点。topology 链（api/schema/service）28 处命中，Task 3 处理。
+
 ## 8. 错误与展示
 
 - 多活动 LabProfile 未选择：所有暗室依赖页面显示统一“请选择当前 LabProfile”，不发请求。
