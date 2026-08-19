@@ -7,6 +7,10 @@ chamber_id required at the API layer for new imports + active saves.
 
 (Endpoint was renamed from /import/caict-default to /import/from-template as
 part of moving site-specific topology code out of the commercial codebase.)
+
+P1-57 起：请求真值换成 lab_profile_id（暗室由 LabProfile 派生），chamber_id
+只剩一致性断言；legacy NULL-chamber 行在 lab 作用域下不可达（不迁移不删除）。
+本文件里被取代的两条旧契约（PATCH 绑定孤儿行）改写为「409 且行不变」。
 """
 from __future__ import annotations
 
@@ -82,6 +86,16 @@ def chamber(db):
     return c
 
 
+@pytest.fixture
+def lab(db, chamber):
+    from app.models.lab_profile import LabProfile
+    l = LabProfile(name="P1 Lab", chamber_config_id=chamber.id, is_active=True)
+    db.add(l)
+    db.commit()
+    db.refresh(l)
+    return l
+
+
 class TestImportFromTemplateRequiresChamber:
     def test_import_without_chamber_id_returns_422(self):
         # FastAPI returns 422 for missing required query param.
@@ -94,36 +108,38 @@ class TestImportFromTemplateRequiresChamber:
         )
         assert resp.status_code == 422
 
-    def test_import_with_unknown_chamber_id_returns_422(self):
+    def test_import_with_contradicting_chamber_id_returns_422(self, lab):
+        # P1-57：chamber_id 只是一致性断言输入 —— 跟 lab 派生的暗室不一致就 422
         resp = client.post(
             "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
+                "lab_profile_id": str(lab.id),
                 "chamber_id": str(uuid.uuid4()),
                 "template_id": "caict_v4",
             },
         )
         assert resp.status_code == 422
-        assert "Chamber" in resp.json()["detail"]
+        assert "不一致" in resp.json()["detail"]
 
-    def test_import_with_unknown_template_returns_404(self, chamber):
+    def test_import_with_unknown_template_returns_404(self, lab):
         resp = client.post(
             "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
-                "chamber_id": str(chamber.id),
+                "lab_profile_id": str(lab.id),
                 "template_id": "no_such_template",
             },
         )
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"].lower()
 
-    def test_import_with_valid_chamber_and_template_succeeds(self, chamber):
+    def test_import_with_valid_chamber_and_template_succeeds(self, chamber, lab):
         resp = client.post(
             "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
-                "chamber_id": str(chamber.id),
+                "lab_profile_id": str(lab.id),
                 "template_id": "caict_v4",
             },
         )
@@ -136,7 +152,7 @@ class TestImportFromTemplateRequiresChamber:
         assert resp.status_code == 200
         assert "caict_v4" in resp.json()
 
-    def test_templates_endpoint_empty_when_dev_fixtures_absent(self, monkeypatch, tmp_path, chamber):
+    def test_templates_endpoint_empty_when_dev_fixtures_absent(self, monkeypatch, tmp_path, lab):
         # Simulates the commercial-deploy invariant: .dockerignore strips
         # scripts/dev-fixtures/ out of the production image, so _TEMPLATES_DIR
         # resolves to a non-existent directory. The registry must report empty
@@ -157,7 +173,7 @@ class TestImportFromTemplateRequiresChamber:
             "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
-                "chamber_id": str(chamber.id),
+                "lab_profile_id": str(lab.id),
                 "template_id": "caict_v4",
             },
         )
@@ -166,7 +182,7 @@ class TestImportFromTemplateRequiresChamber:
 
 
 class TestActiveTopologyRequiresChamber:
-    def test_patch_active_topology_to_null_chamber_returns_422(self, db, chamber):
+    def test_patch_active_topology_to_null_chamber_returns_422(self, db, chamber, lab):
         topo = SwitchTopology(
             switch_category_id=uuid.uuid4(),
             chamber_id=chamber.id,
@@ -180,19 +196,18 @@ class TestActiveTopologyRequiresChamber:
         db.commit()
         db.refresh(topo)
 
-        # Operator tries to clear chamber_id — backend must refuse because
-        # the topology stays active and downstream consumers couldn't resolve it.
+        # P1-57：chamber 由 LabProfile 派生 —— 清空 = 改绑，一律 422
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
+            params={"lab_profile_id": str(lab.id)},
             json={"chamber_id": None},
         )
         assert resp.status_code == 422
         assert "chamber_id" in resp.json()["detail"]
 
-    def test_patch_legacy_inactive_topology_without_chamber_allowed(self, db):
-        # Legacy rows from before P1 may have chamber_id=NULL. Editing them
-        # while inactive shouldn't be blocked — only reactivation must come
-        # with a chamber binding.
+    def test_patch_legacy_null_chamber_row_is_unreachable(self, db, lab):
+        # P1-57 取代旧契约「inactive legacy 行可改名」：legacy NULL-chamber 行
+        # 在任何 lab 作用域下不可达（409），也不被改动 —— 不迁移、不删除。
         topo = SwitchTopology(
             switch_category_id=uuid.uuid4(),
             chamber_id=None,
@@ -208,12 +223,16 @@ class TestActiveTopologyRequiresChamber:
 
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
+            params={"lab_profile_id": str(lab.id)},
             json={"name": "renamed"},
         )
-        assert resp.status_code == 200
-        assert resp.json()["name"] == "renamed"
+        assert resp.status_code == 409
+        db.refresh(topo)
+        assert topo.name == "legacy"
 
-    def test_patch_assigns_chamber_to_legacy_topology(self, db, chamber):
+    def test_patch_cannot_adopt_legacy_topology_into_lab(self, db, chamber, lab):
+        # P1-57 取代旧契约「PATCH 可给孤儿行绑 chamber」：作用域检查在先，
+        # 改绑之路整个关掉 —— chamber 只能来自 LabProfile 派生。
         topo = SwitchTopology(
             switch_category_id=uuid.uuid4(),
             chamber_id=None,
@@ -229,117 +248,69 @@ class TestActiveTopologyRequiresChamber:
 
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
+            params={"lab_profile_id": str(lab.id)},
             json={"chamber_id": str(chamber.id)},
         )
-        assert resp.status_code == 200
-        assert resp.json()["chamber_id"] == str(chamber.id)
+        assert resp.status_code == 409
+        db.refresh(topo)
+        assert topo.chamber_id is None
 
 
 class TestListFilterByChamber:
-    """Two chambers can each own their own topology row. The list endpoint
-    must support filtering by chamber_id so TopologyEditor can pull the
-    chamber-specific row without sweeping in others'."""
+    """P1-57 起列表按 lab 作用域：每个 lab 只看到自己暗室的行；
+    无 lab_profile_id 的「全量列表」不复存在（旧契约已被取代）。"""
 
-    def test_chamber_id_filter_returns_only_matching_chamber(self, db, chamber):
-        """Two topologies for the same switch, different chambers — filter
-        by chamber must narrow to one."""
-        # Second chamber for the same switch
+    def test_lab_scope_narrows_to_own_chamber(self, db, chamber, lab):
+        from app.models.lab_profile import LabProfile
         chamber_b = create_chamber_from_preset(ChamberType.TYPE_C.value, name="Chamber-B")
         db.add(chamber_b)
         db.commit()
         db.refresh(chamber_b)
+        lab_b = LabProfile(name="Lab-B", chamber_config_id=chamber_b.id, is_active=True)
+        db.add(lab_b)
+        db.commit()
+        db.refresh(lab_b)
 
         switch_cat_id = uuid.uuid4()
-        topo_a = SwitchTopology(
-            switch_category_id=switch_cat_id,
-            chamber_id=chamber.id,
-            name="topo-for-A",
-            nodes=[], connections=[], operating_modes=[],
-            is_active=True,
-        )
-        topo_b = SwitchTopology(
-            switch_category_id=switch_cat_id,
-            chamber_id=chamber_b.id,
-            name="topo-for-B",
-            nodes=[], connections=[], operating_modes=[],
-            is_active=True,
-        )
-        db.add(topo_a)
-        db.add(topo_b)
+        for name, cid in (("topo-for-A", chamber.id), ("topo-for-B", chamber_b.id)):
+            db.add(SwitchTopology(
+                switch_category_id=switch_cat_id, chamber_id=cid, name=name,
+                nodes=[], connections=[], operating_modes=[], is_active=True,
+            ))
         db.commit()
 
-        # No filter: both rows visible.
-        all_resp = client.get(
-            "/api/v1/switch-topologies",
-            params={"switch_category_id": str(switch_cat_id)},
-        )
-        assert all_resp.status_code == 200
-        assert all_resp.json()["total"] == 2
+        a = client.get("/api/v1/switch-topologies", params={
+            "switch_category_id": str(switch_cat_id),
+            "lab_profile_id": str(lab.id),
+        }).json()
+        assert a["total"] == 1 and a["items"][0]["name"] == "topo-for-A"
 
-        # Filter by chamber A: only topo-for-A.
-        a_resp = client.get(
-            "/api/v1/switch-topologies",
-            params={
-                "switch_category_id": str(switch_cat_id),
-                "chamber_id": str(chamber.id),
-            },
-        )
-        assert a_resp.status_code == 200
-        a_items = a_resp.json()["items"]
-        assert len(a_items) == 1
-        assert a_items[0]["name"] == "topo-for-A"
-        assert a_items[0]["chamber_id"] == str(chamber.id)
+        b = client.get("/api/v1/switch-topologies", params={
+            "switch_category_id": str(switch_cat_id),
+            "lab_profile_id": str(lab_b.id),
+        }).json()
+        assert b["total"] == 1 and b["items"][0]["name"] == "topo-for-B"
 
-        # Filter by chamber B: only topo-for-B.
-        b_resp = client.get(
-            "/api/v1/switch-topologies",
-            params={
-                "switch_category_id": str(switch_cat_id),
-                "chamber_id": str(chamber_b.id),
-            },
-        )
-        assert b_resp.status_code == 200
-        b_items = b_resp.json()["items"]
-        assert len(b_items) == 1
-        assert b_items[0]["name"] == "topo-for-B"
-        assert b_items[0]["chamber_id"] == str(chamber_b.id)
+        # 兼容参数与派生暗室一致时照常工作
+        compat = client.get("/api/v1/switch-topologies", params={
+            "switch_category_id": str(switch_cat_id),
+            "lab_profile_id": str(lab.id),
+            "chamber_id": str(chamber.id),
+        })
+        assert compat.status_code == 200 and compat.json()["total"] == 1
 
-    def test_chamber_id_filter_excludes_legacy_null_chamber_rows(self, db, chamber):
-        """Legacy rows with chamber_id=NULL must NOT match a chamber filter,
-        since SQL '= chamber_uuid' excludes NULL by definition."""
+    def test_lab_scope_excludes_legacy_null_chamber_rows(self, db, chamber, lab):
         switch_cat_id = uuid.uuid4()
-        legacy = SwitchTopology(
-            switch_category_id=switch_cat_id,
-            chamber_id=None,
-            name="legacy-null",
-            nodes=[], connections=[], operating_modes=[],
-            is_active=True,
-        )
-        bound = SwitchTopology(
-            switch_category_id=switch_cat_id,
-            chamber_id=chamber.id,
-            name="bound",
-            nodes=[], connections=[], operating_modes=[],
-            is_active=True,
-        )
-        db.add(legacy)
-        db.add(bound)
+        for name, cid in (("legacy-null", None), ("bound", chamber.id)):
+            db.add(SwitchTopology(
+                switch_category_id=switch_cat_id, chamber_id=cid, name=name,
+                nodes=[], connections=[], operating_modes=[], is_active=True,
+            ))
         db.commit()
 
-        # No filter: both visible.
-        no_filter = client.get(
-            "/api/v1/switch-topologies",
-            params={"switch_category_id": str(switch_cat_id)},
-        ).json()
-        assert no_filter["total"] == 2
-
-        # With chamber filter: only the bound one.
-        with_filter = client.get(
-            "/api/v1/switch-topologies",
-            params={
-                "switch_category_id": str(switch_cat_id),
-                "chamber_id": str(chamber.id),
-            },
-        ).json()
-        assert with_filter["total"] == 1
-        assert with_filter["items"][0]["name"] == "bound"
+        scoped = client.get("/api/v1/switch-topologies", params={
+            "switch_category_id": str(switch_cat_id),
+            "lab_profile_id": str(lab.id),
+        }).json()
+        assert scoped["total"] == 1
+        assert scoped["items"][0]["name"] == "bound"

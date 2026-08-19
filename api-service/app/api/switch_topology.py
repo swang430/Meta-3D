@@ -21,9 +21,55 @@ from app.schemas.switch_topology import (
     CalibrationMatrixResponse,
 )
 from app.services.topology_service import TopologyService
+from app.services.chamber_resolution import resolve_current_chamber
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# P1-57：除 /templates 外，所有端点的暗室真值 = lab_profile_id →
+# resolve_current_chamber()。后端不再相信客户端自由提交的 chamber_id ——
+# 那正是「拓扑编辑器能把拓扑写进另一个暗室」的口子。
+# ---------------------------------------------------------------------------
+
+def _resolve_scope(db: Session, lab_profile_id: UUID):
+    """lab_profile_id → 绑定的暗室；解析失败一律 422（fail-closed，不回退）。"""
+    try:
+        return resolve_current_chamber(db, lab_profile_id)
+    except ValueError as exc:
+        # missing / inactive lab、无 chamber 绑定、绑定指向缺失暗室 —— 都是
+        # 调用方上下文坏了，不是服务器错误。
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _assert_chamber_consistent(requested: Optional[UUID], resolved_id: UUID) -> None:
+    """兼容期仍收 chamber_id 时只做一致性断言 —— 不一致必须在任何写入前失败。"""
+    if requested is not None and requested != resolved_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"chamber_id {requested} 与当前 LabProfile 绑定的暗室 "
+                f"{resolved_id} 不一致 —— 暗室由 LabProfile 派生，请先切换到"
+                "绑定目标暗室的 LabProfile。"
+            ),
+        )
+
+
+def _load_scoped_topology(db: Session, topology_id: UUID, chamber_id: UUID) -> SwitchTopology:
+    """按 id 取行并校验属于当前 lab 的暗室；别的暗室的行一律 409。"""
+    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
+    if not topology:
+        raise HTTPException(status_code=404, detail="Switch topology not found")
+    if topology.chamber_id != chamber_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Topology {topology_id} 属于另一个暗室（{topology.chamber_id}），"
+                "当前 LabProfile 无权操作 —— 请先切换到绑定该暗室的 LabProfile。"
+            ),
+        )
+    return topology
 
 
 # ---------------------------------------------------------------------------
@@ -106,30 +152,30 @@ def _load_template(template_id: str) -> Callable[[], dict]:
 
 @router.get("", response_model=SwitchTopologyListResponse)
 def list_switch_topologies(
+    lab_profile_id: UUID = Query(
+        ...,
+        description="当前 LabProfile —— 暗室由它派生（P1-57），列表只含该暗室的行。",
+    ),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     is_active: Optional[bool] = Query(None),
     switch_category_id: Optional[UUID] = Query(None),
     chamber_id: Optional[UUID] = Query(
         None,
-        description=(
-            "Filter by chamber. Each (switch_category_id, chamber_id) pair has its "
-            "own topology row — TopologyEditor uses this to pull the chamber-specific "
-            "wiring without sweeping in other chambers' rows. Legacy rows with "
-            "chamber_id=NULL are excluded when this filter is set."
-        ),
+        description="兼容参数：如提供必须等于 LabProfile 派生的暗室，否则 422。",
     ),
     db: Session = Depends(get_db)
 ):
-    """List all switch topologies"""
-    query = db.query(SwitchTopology)
+    """List switch topologies in the current lab's chamber"""
+    chamber = _resolve_scope(db, lab_profile_id)
+    _assert_chamber_consistent(chamber_id, chamber.id)
+
+    query = db.query(SwitchTopology).filter(SwitchTopology.chamber_id == chamber.id)
 
     if is_active is not None:
         query = query.filter(SwitchTopology.is_active == is_active)
     if switch_category_id:
         query = query.filter(SwitchTopology.switch_category_id == switch_category_id)
-    if chamber_id:
-        query = query.filter(SwitchTopology.chamber_id == chamber_id)
 
     total = query.count()
     topologies = query.order_by(SwitchTopology.created_at.desc()).offset(skip).limit(limit).all()
@@ -145,11 +191,16 @@ def create_switch_topology(
     request: SwitchTopologyCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new switch topology"""
-    # Define default if this is marked as default
+    """Create a new switch topology in the current lab's chamber"""
+    chamber = _resolve_scope(db, request.lab_profile_id)
+    _assert_chamber_consistent(request.chamber_id, chamber.id)
+
+    # Define default if this is marked as default —— 只在本暗室范围内让位，
+    # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
     if request.is_default:
         db.query(SwitchTopology).filter(
             SwitchTopology.switch_category_id == request.switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
             SwitchTopology.is_default == True
         ).update({"is_default": False})
 
@@ -160,7 +211,7 @@ def create_switch_topology(
 
     topology = SwitchTopology(
         switch_category_id=request.switch_category_id,
-        chamber_id=request.chamber_id,
+        chamber_id=chamber.id,
         name=request.name,
         description=request.description,
         version=request.version,
@@ -204,7 +255,10 @@ def list_topology_templates():
 @router.post("/import/from-template", response_model=SwitchTopologyResponse)
 def import_topology_from_template(
     switch_category_id: UUID,
-    chamber_id: UUID,
+    lab_profile_id: UUID = Query(
+        ...,
+        description="当前 LabProfile —— 导入目标暗室由它派生（P1-57）。",
+    ),
     template_id: str = Query(
         ...,
         description=(
@@ -213,40 +267,52 @@ def import_topology_from_template(
             "export ``generate_topology_record() -> dict``."
         ),
     ),
+    chamber_id: Optional[UUID] = Query(
+        None,
+        description="兼容参数：如提供必须等于 LabProfile 派生的暗室，否则 422。",
+    ),
+    replace_existing: bool = Query(
+        False,
+        description=(
+            "重导入：先删除同一 (switch_category_id, 派生暗室) 的既有行再导入。"
+            "P1-57 之前这个删除在 GUI 客户端做（先删后验 —— lab/模板解析失败时"
+            "行已经没了）；收进服务端后保证完整解析成功才动行。"
+        ),
+    ),
     db: Session = Depends(get_db),
 ):
     """Import a topology structure from a named template file.
 
-    chamber_id is required: a topology models physical cabling inside a
-    specific chamber, so importing one without binding it leaves a row that
-    no consumer (calibration / measure / analysis) can resolve.
+    导入目标暗室 = lab_profile_id 派生（不再收裸 chamber_id 当真值）。
+    解析顺序是硬约束：lab → chamber → 模板全部成功之后才碰任何既有行。
 
     Templates are loaded dynamically from
     ``api-service/scripts/dev-fixtures/topology-templates/<template_id>.py``
     by ``importlib`` — commercial deploys that don't ship dev-fixtures will
     see an empty registry and get 404.
     """
-    from app.models.chamber import ChamberConfiguration
-    chamber = db.query(ChamberConfiguration).filter(
-        ChamberConfiguration.id == chamber_id
-    ).first()
-    if chamber is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Chamber {chamber_id} not found — pick an existing chamber before importing topology",
-        )
+    chamber = _resolve_scope(db, lab_profile_id)
+    _assert_chamber_consistent(chamber_id, chamber.id)
 
     generate = _load_template(template_id)
     topo_data = generate()
 
+    if replace_existing:
+        # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
+        db.query(SwitchTopology).filter(
+            SwitchTopology.switch_category_id == switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
+        ).delete()
+
     db.query(SwitchTopology).filter(
         SwitchTopology.switch_category_id == switch_category_id,
+        SwitchTopology.chamber_id == chamber.id,
         SwitchTopology.is_default == True
     ).update({"is_default": False})
 
     topology = SwitchTopology(
         switch_category_id=switch_category_id,
-        chamber_id=chamber_id,
+        chamber_id=chamber.id,
         **topo_data
     )
     topology.update_statistics()
@@ -255,8 +321,8 @@ def import_topology_from_template(
     db.commit()
     db.refresh(topology)
     logger.info(
-        "Imported topology from template '%s' for switch category %s into chamber %s",
-        template_id, switch_category_id, chamber_id,
+        "Imported topology from template '%s' for switch category %s into chamber %s (replace=%s)",
+        template_id, switch_category_id, chamber.id, replace_existing,
     )
     return topology
 
@@ -264,29 +330,30 @@ def import_topology_from_template(
 @router.get("/{topology_id}", response_model=SwitchTopologyResponse)
 def get_switch_topology(
     topology_id: UUID,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Get a specific switch topology by ID"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
-    return topology
+    """Get a specific switch topology by ID (scoped to the current lab's chamber)"""
+    chamber = _resolve_scope(db, lab_profile_id)
+    return _load_scoped_topology(db, topology_id, chamber.id)
 
 
 @router.patch("/{topology_id}", response_model=SwitchTopologyResponse)
 def update_switch_topology(
     topology_id: UUID,
     request: SwitchTopologyUpdate,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Update an existing switch topology"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
+    """Update an existing switch topology (scoped to the current lab's chamber)"""
+    chamber = _resolve_scope(db, lab_profile_id)
+    topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     if request.is_default and not topology.is_default:
+        # 默认位让位只在本暗室内 —— 不从 lab A 顺手改 chamber B 的行
         db.query(SwitchTopology).filter(
             SwitchTopology.switch_category_id == topology.switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
             SwitchTopology.is_default == True
         ).update({"is_default": False})
 
@@ -300,30 +367,17 @@ def update_switch_topology(
     if "operating_modes" in update_data:
         update_data["operating_modes"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["operating_modes"]]
 
-    # P1: enforce chamber_id on active topologies so calibration/measure/analysis
-    # downstream consumers can always resolve a chamber. If the request is
-    # explicitly setting chamber_id we validate it exists; if it leaves the
-    # current value alone, only fail when both stored and requested are NULL
-    # AND the topology will end up active.
-    final_chamber_id = update_data.get("chamber_id", topology.chamber_id)
-    final_is_active = update_data.get("is_active", topology.is_active)
-    if final_is_active and final_chamber_id is None:
+    # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
+    # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；
+    # 想把拓扑放进另一个暗室 = 先切到绑定那个暗室的 LabProfile 再建/导。
+    if "chamber_id" in update_data and update_data["chamber_id"] != chamber.id:
         raise HTTPException(
             status_code=422,
             detail=(
-                "Active SwitchTopology requires chamber_id. Bind the topology "
-                "to a chamber before saving, or mark it inactive."
+                "chamber_id 由当前 LabProfile 派生，不接受改绑。"
+                f"当前暗室：{chamber.id}，请求值：{update_data['chamber_id']}。"
             ),
         )
-    if "chamber_id" in update_data and update_data["chamber_id"] is not None:
-        from app.models.chamber import ChamberConfiguration
-        if not db.query(ChamberConfiguration).filter(
-            ChamberConfiguration.id == update_data["chamber_id"]
-        ).first():
-            raise HTTPException(
-                status_code=422,
-                detail=f"Chamber {update_data['chamber_id']} not found",
-            )
 
     for key, value in update_data.items():
         setattr(topology, key, value)
@@ -340,12 +394,12 @@ def update_switch_topology(
 @router.delete("/{topology_id}", status_code=204)
 def delete_switch_topology(
     topology_id: UUID,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Delete a switch topology"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
+    """Delete a switch topology (scoped to the current lab's chamber)"""
+    chamber = _resolve_scope(db, lab_profile_id)
+    topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     db.delete(topology)
     db.commit()
@@ -360,12 +414,12 @@ def delete_switch_topology(
 def resolve_topology_paths(
     topology_id: UUID,
     mode: str,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
     """Resolve all active signal paths for a specific operating mode"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
+    chamber = _resolve_scope(db, lab_profile_id)
+    topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     svc = TopologyService(topology.__dict__)
     
@@ -394,12 +448,12 @@ def resolve_topology_paths(
 def get_topology_calibration_matrix(
     topology_id: UUID,
     mode: str,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
     """Generate the calibration compensation matrix for a specific operating mode"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
+    chamber = _resolve_scope(db, lab_profile_id)
+    topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     svc = TopologyService(topology.__dict__)
     
@@ -413,12 +467,12 @@ def get_topology_calibration_matrix(
 @router.get("/{topology_id}/validate")
 def validate_topology(
     topology_id: UUID,
+    lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
     """Validate a topology for broken links and issues"""
-    topology = db.query(SwitchTopology).filter(SwitchTopology.id == topology_id).first()
-    if not topology:
-        raise HTTPException(status_code=404, detail="Switch topology not found")
+    chamber = _resolve_scope(db, lab_profile_id)
+    topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     svc = TopologyService(topology.__dict__)
     issues = svc.validate()
