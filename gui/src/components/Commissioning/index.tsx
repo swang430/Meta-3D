@@ -90,7 +90,7 @@ export function CommissioningSandbox() {
   const noActiveLab = !labsLoading && !labsError && activeLabs.length === 0
   useOperationalLabSwitchGuard(
     'commissioning',
-    session ? '暗室首测会话进行中 —— 请先完成或重置会话再切换 LabProfile' : null,
+    session ? '暗室首测会话进行中 —— 请先点「结束会话」再切换 LabProfile' : null,
   )
   // Bumped on every explicit retry attempt (button click) so the init
   // effect re-fires even when labId hasn't changed.
@@ -814,6 +814,7 @@ export function CommissioningSandbox() {
         
         {/* Debug Controls */}
         <Group justify="space-between">
+          <Group gap="xs">
           <Button
             variant="light"
             color="gray"
@@ -823,6 +824,20 @@ export function CommissioningSandbox() {
           >
             重置会话
           </Button>
+          {/* 外审 R1：guard 要求「结束会话」，就必须真有这个出口 ——
+              「重置会话」是立即重建（session 永不为 null），guard 永远解不开，
+              操作员只能离开页面才能切 LabProfile。结束 = 回到会话前表单。 */}
+          <Button
+            variant="subtle"
+            color="red"
+            onClick={() => {
+              setSession(null)
+              setActiveStep(0)
+            }}
+          >
+            结束会话
+          </Button>
+          </Group>
           <Button variant="light" color="grape" onClick={handleRunAll}>一键执行全流程(Mock)</Button>
         </Group>
 

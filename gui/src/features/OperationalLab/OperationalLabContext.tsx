@@ -65,6 +65,10 @@ export function OperationalLabProvider({ children }: { children: ReactNode }) {
   // 一次性初始化：白名单恢复 / 旧 key 迁移。决策在纯函数里，这儿只做 IO。
   useEffect(() => {
     if (initialized.current || !query.isSuccess) return
+    // 外审 R1：0 个活动 lab = 无可决策（首启向导流程中）——**不落闩**，
+    // 也不动旧 key。等向导建出第一个 lab、invalidate 重拉后本 effect 重跑，
+    // 「恰好 1 个 → 自动选择」才能生效；否则操作员建完 lab 仍要手选/刷新。
+    if (activeLabs.length === 0) return
     initialized.current = true
     const decision = decideOperationalLabSelection({
       activeLabs,

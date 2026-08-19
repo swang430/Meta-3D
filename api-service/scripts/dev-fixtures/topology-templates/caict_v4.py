@@ -7,8 +7,8 @@
 * 水平环 (16 探头, MIMO OTA): CE F64 → EMCenter 集成 PA → 直连, 不经过 Switch.
 * 垂直环 (24 探头, TRP/TIS/Passive): UXM RF5 或 VNA → EMCenter Switch → V/H split.
 
-由 ``/api/v1/switch-topologies/import/from-template?template_id=caict_v4``
-端点通过 ``importlib.util.spec_from_file_location`` 在运行时按文件路径加载.
+由 ``/api/v1/switch-topologies/import/from-template?switch_category_id=<uuid>&lab_profile_id=<uuid>&template_id=caict_v4``
+端点（P1-57 起 lab_profile_id 必填, 目标暗室由 LabProfile 派生）通过 ``importlib.util.spec_from_file_location`` 在运行时按文件路径加载.
 模板必须导出 ``generate_topology_record() -> Dict[str, Any]``.
 
 新场地接入流程: 拷贝本文件改名 (如 ``foo_lab_v1.py``), 改 ``CAICT_*`` 常量与

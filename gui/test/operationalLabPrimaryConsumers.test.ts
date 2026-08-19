@@ -59,3 +59,11 @@ test('Commissioning 不把「列表加载失败」当成「尚无 LabProfile」'
   assert.match(line, /labsError|error/,
     'noActiveLab 的判定没排除加载失败 —— 瞬断会被当成 0 个 LabProfile')
 })
+
+test('Commissioning 的 guard 有真实的释放出口（结束会话）', () => {
+  // 外审 R1：「重置会话」是立即重建（session 永不为 null），guard 永远解不开。
+  const s = read('src/components/Commissioning/index.tsx')
+  assert.match(s, /结束会话/)
+  assert.match(s, /setSession\(null\)/,
+    '没有把 session 置回 null 的出口 —— 操作员只能离开页面才能切 LabProfile')
+})

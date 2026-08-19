@@ -66,3 +66,15 @@ test('selector 同时展示 LabProfile 与派生暗室，三种异常态分开',
   assert.match(s, /请选择当前 LabProfile/)   // 多项未选
   assert.match(s, /未绑定暗室/)              // 绑定缺失 fail-closed 展示
 })
+
+test('0 个活动 lab 不落一次性闩 —— 首启向导建完第一个 lab 后自动选择要能生效', () => {
+  // 外审 R1：闩在 0-labs 时落下，向导建完 lab 后 effect 拒绝重跑，
+  // 操作员必须手选或刷新 —— 「恰好 1 个 → 自动选择」被闩死。
+  const s = ctx()
+  const effect = s.slice(s.indexOf('if (initialized.current || !query.isSuccess) return'))
+  const zeroGate = effect.search(/activeLabs\.length === 0\) return/)
+  const latch = effect.search(/initialized\.current = true/)
+  assert.ok(zeroGate > -1, '没有 0-labs 的早退')
+  assert.ok(latch > -1)
+  assert.ok(zeroGate < latch, '0-labs 早退必须发生在落闩之前')
+})
