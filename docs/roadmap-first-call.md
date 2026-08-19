@@ -4023,6 +4023,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
   ③ **警示要挂在真正走得通的出口上** —— 试过三个出口，**一个都不通**：(a) `GET /reports/{id}` 的 JSON 字段 —— 归档报告在 GUI 里进不了 `ReportViewer`（`ReportsPage.tsx:93` 挂 `<ReportList />` 不传 `onView`，而「查看」按钮由 `{onView && ...}` 守着），照不到人；(b) `/download` 的响应头 —— 被前端 `downloadReport()` 的 `response.data` 当场丢掉；(c) 改成 409 拦下载 —— 文件是拦住了，但 axios `responseType:'blob'` 把错误体也变成 Blob，`ReportList.tsx` 只显示 `error.message`（"Request failed with status code 409"），**操作员看不到为什么**。
   **附带的独立缺陷（可单独做）**：GUI 缺「查看归档报告」入口（上面 ③a），从报告列表只能下载不能看。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
 
+- `[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。
+
 ---
 
 ## 📊 Summary
