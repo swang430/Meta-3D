@@ -62,10 +62,10 @@ import { DashboardCockpit } from './features/Dashboard'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
-import { OperationalLabSelector } from './features/OperationalLab'
+import { OperationalLabSelector, useOperationalLab } from './features/OperationalLab'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
-import { fetchLabProfiles, type LabProfileSummary } from './api/labProfileService'
+import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
@@ -2601,21 +2601,9 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   })
 
   const probes = useMemo(() => data?.probes ?? [], [data])
-  const { data: activeLabProfiles = [] } = useQuery({
-    queryKey: ['lab-profiles'],
-    queryFn: () => fetchLabProfiles(true),
-  })
-  const [selectedLabProfileId, setSelectedLabProfileId] = useState<string>()
-  useEffect(() => {
-    if (activeLabProfiles.length === 1) {
-      setSelectedLabProfileId(activeLabProfiles[0].id)
-    } else if (
-      selectedLabProfileId
-      && !activeLabProfiles.some((lab: LabProfileSummary) => lab.id === selectedLabProfileId)
-    ) {
-      setSelectedLabProfileId(undefined)
-    }
-  }, [activeLabProfiles, selectedLabProfileId])
+  // P1-57：LabProfile 选择收敛到全局上下文（header 唯一选择器），
+  // 本页只读 —— 原来这里的页面级 selectedLabProfileId 是三套平行真值之一。
+  const { selectedLabProfileId } = useOperationalLab()
 
   // 暗室 id→name 映射: probe_number 按 chamber 局部编号 (1..N), 全局标识 = 暗室名 + #探头号。
   // 只精确拉取 probes 实际引用的 chamber (按 id), 不受暗室总数/分页 (默认 limit 20) 影响。
@@ -2649,7 +2637,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     error: activeChamberError,
   } = useQuery({
     queryKey: ['chamber', 'active', selectedLabProfileId],
-    queryFn: () => fetchActiveChamber(selectedLabProfileId),
+    queryFn: () => fetchActiveChamber(selectedLabProfileId ?? undefined),
     enabled: !!selectedLabProfileId,
     retry: 1,
   })
@@ -3009,12 +2997,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   return (
     <Stack gap="xl">
       {/* 暗室配置卡片 - CAL-00.1 新增 */}
-      <ChamberConfigCard
-        onNavigate={(s) => onNavigate(s as SectionKey)}
-        labProfiles={activeLabProfiles}
-        selectedLabProfileId={selectedLabProfileId}
-        onLabProfileChange={(id) => setSelectedLabProfileId(id ?? undefined)}
-      />
+      <ChamberConfigCard onNavigate={(s) => onNavigate(s as SectionKey)} />
 
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">

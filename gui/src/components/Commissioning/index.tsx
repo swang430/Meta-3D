@@ -5,14 +5,8 @@ import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
 import * as api from './api'
 import type { SessionResponse, LabResolutionDetail } from './api'
-import { fetchLabProfiles, type LabProfileSummary } from '../../api/labProfileService'
+import { useOperationalLab, useOperationalLabSwitchGuard } from '../../features/OperationalLab'
 import { fetchChannelAssets, type ChannelAsset } from '../../api/channelAssetService'
-
-// Remember the operator's last commissioning-lab choice so the next
-// session-create defaults to it. Per-browser; not per-user (no auth
-// context in this app yet). Same namespace pattern as the P1-1
-// preflight modal's `mimo.preflight.lastLabId`.
-const LAST_LAB_LS_KEY = 'mimo.commissioning.lastLabId'
 
 const PHASE_STEPS = [
   { id: 'precheck', label: '系统预检', desc: '仪表状态与校准验证' },
@@ -80,47 +74,29 @@ export function CommissioningSandbox() {
   // files (typically produced by ChannelEgine app.py Streamlit on the same host).
   const [ascSourcePath, setAscSourcePath] = useState<string>('')
 
-  // Lab-resolution state — see api.ts LabResolutionDetail.
-  // `labId` is the currently selected lab (sent on session create);
-  // `pickerLabs` holds the candidate list when backend returns 422
-  // kind="ambiguous", so the operator can pick without leaving the page;
-  // `noActiveLab` flips true on kind="none" so we route the operator
-  // to the LabProfile wizard instead of looping init forever.
-  const [labId, setLabId] = useState<string | null>(
-    () => localStorage.getItem(LAST_LAB_LS_KEY),
+  // P1-57：LabProfile 来自全局上下文（header 唯一选择器）。本页不再自选、
+  // 不再读写 localStorage —— 旧 key 已由全局上下文一次性迁移并删除。
+  // 会话创建后 lab/chamber 事实锁进 session.config；切换由 guard 阻断。
+  const {
+    selectedLabProfileId: labId,
+    selectedLabProfile,
+    chamberName,
+    activeLabs,
+    loading: labsLoading,
+  } = useOperationalLab()
+  const noActiveLab = !labsLoading && activeLabs.length === 0
+  useOperationalLabSwitchGuard(
+    'commissioning',
+    session ? '暗室首测会话进行中 —— 请先完成或重置会话再切换 LabProfile' : null,
   )
-  const [pickerLabs, setPickerLabs] = useState<Array<{ id: string; name: string }>>([])
-  const [noActiveLab, setNoActiveLab] = useState(false)
-  const [labChoiceMade, setLabChoiceMade] = useState(false)
   // Bumped on every explicit retry attempt (button click) so the init
-  // effect re-fires even when labChoiceMade and labId haven't changed.
+  // effect re-fires even when labId hasn't changed.
   // Without this, a transient failure (500, network blip, explicit lab
-  // rejected by backend) would leave the page stuck — labChoiceMade
-  // stays true, the button's setLabChoiceMade(true) is a no-op, and
+  // rejected by backend) would leave the page stuck — the deps
+  // stays unchanged, and
   // the effect's deps don't change so nothing re-runs. Codex P2 on PR #27.
   const [initAttempt, setInitAttempt] = useState(0)
 
-  // Pre-load active labs so the Select can render its options even
-  // before a 422 surfaces a candidate list (single-active case still
-  // benefits from showing the operator which lab they're targeting).
-  useEffect(() => {
-    fetchLabProfiles(true)
-      .then((labs: LabProfileSummary[]) => {
-        setPickerLabs(labs.map((l) => ({ id: l.id, name: l.name })))
-        if (labs.length === 0) {
-          setNoActiveLab(true)
-        }
-        // Drop a stale localStorage selection if the lab is no longer active.
-        if (labId && !labs.some((l) => l.id === labId)) {
-          setLabId(null)
-        }
-      })
-      .catch(() => {
-        // Lab fetch failure is non-fatal — the create call will still
-        // surface the right error if needed.
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   useEffect(() => {
     fetchChannelAssets({ includeInactive: false })
@@ -157,11 +133,6 @@ export function CommissioningSandbox() {
       })
       setSession(res.data)
       setActiveStep(0)
-      setPickerLabs([])
-      setNoActiveLab(false)
-      if (labId) {
-        localStorage.setItem(LAST_LAB_LS_KEY, labId)
-      }
       notifications.show({ title: '首测会话已创建', message: `ID: ${res.data.session_id}`, color: 'blue' })
     } catch (error: unknown) {
       const err = asHttpError(error)
@@ -172,16 +143,14 @@ export function CommissioningSandbox() {
       if (status === 422 && detail && typeof detail === 'object' && 'kind' in detail) {
         const lrd = detail as LabResolutionDetail
         if (lrd.kind === 'ambiguous') {
-          setPickerLabs(lrd.active_labs)
-          setNoActiveLab(false)
+          // 全局上下文送了显式 lab_profile_id 时不该出现；万一出现，
+          // 指向唯一的选择入口（header），本页不再自带 picker。
           notifications.show({
-            title: '请选择 LabProfile',
-            message: `当前 DB 有 ${lrd.active_labs.length} 个活动 LabProfile，请选定一个再继续`,
+            title: '请选择当前 LabProfile',
+            message: `当前 DB 有 ${lrd.active_labs.length} 个活动 LabProfile —— 请用顶部选择器选定后重试`,
             color: 'yellow',
           })
         } else if (lrd.kind === 'none') {
-          setNoActiveLab(true)
-          setPickerLabs([])
           notifications.show({
             title: '尚无 LabProfile',
             message: '请先通过首次启动向导创建 LabProfile',
@@ -202,7 +171,7 @@ export function CommissioningSandbox() {
     // RF 工作点现在是会话创建前的必审输入，因此不再因“已有默认 lab / 切换
     // engine”自动创建。只有操作员点击「启动首测会话」使 initAttempt 递增才执行。
     if (initAttempt === 0) return
-    if (!labChoiceMade && !labId) return
+    if (!labId) return
     // external_asc 必须先有 ASC 路径才能建会话 (后端校验)。engineMode 在 deps 里,
     // 切到 external_asc 会触发本 effect; 若此时路径还没填, 不要 auto-fire 一个注定
     // 422 的 createSession。等操作员填好路径点「启动」(bump initAttempt) 再建。
@@ -217,11 +186,6 @@ export function CommissioningSandbox() {
     // 不得静默创建一个操作员尚未确认的硬件工作点。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initAttempt])
-
-  const handleLabSelect = (value: string | null) => {
-    setLabId(value)
-    setLabChoiceMade(true)
-  }
 
   const handleRunPhase = async (phaseId: string) => {
     if (!session) return
@@ -282,23 +246,22 @@ export function CommissioningSandbox() {
             </Alert>
           )}
 
-          {!noActiveLab && pickerLabs.length > 1 && !labChoiceMade && (
-            <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="请选择 LabProfile">
-              当前 DB 有 {pickerLabs.length} 个活动 LabProfile —— 后端无法自动判定本次首测对应哪一个，请显式选择。
+          {!noActiveLab && !labId && (
+            <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="请选择当前 LabProfile">
+              当前有多个活动 LabProfile —— 请用顶部的全局选择器选定本次首测的实验室。
             </Alert>
           )}
 
           <Paper withBorder p="md" radius="md">
             <Stack gap="md">
               <Group align="flex-end">
-                <Select
-                  label="LabProfile"
-                  description="本次首测会话绑定到这个 lab；默认取上次选择"
-                  placeholder="选择 LabProfile..."
-                  data={pickerLabs.map((l) => ({ value: l.id, label: l.name }))}
-                  value={labId}
-                  onChange={handleLabSelect}
-                  disabled={pickerLabs.length === 0}
+                <TextInput
+                  label="LabProfile / 暗室"
+                  description="来自顶部全局选择器；会话创建后锁进 session.config"
+                  value={selectedLabProfile
+                    ? `${selectedLabProfile.name}${chamberName ? ` / ${chamberName}` : '（未绑定暗室）'}`
+                    : '未选择'}
+                  readOnly
                   w={400}
                 />
                 <Select
@@ -321,7 +284,7 @@ export function CommissioningSandbox() {
                 <Button
                   loading={loading}
                   disabled={
-                    (!labId && pickerLabs.length !== 1) ||
+                    !labId ||
                     // 2026-05-18 P0-7: external_asc 必须给路径才能启动会话
                     (engineMode === 'external_asc' && !ascSourcePath.trim()) ||
                     // GCM 冷启动必须能解析本次 .smu；不能再借用 F64 遗留场景。
@@ -330,14 +293,9 @@ export function CommissioningSandbox() {
                     !Number.isFinite(bandwidthMhz) || bandwidthMhz <= 0
                   }
                   onClick={() => {
-                    // If exactly one lab and operator hasn't picked, auto-fill.
-                    if (!labId && pickerLabs.length === 1) {
-                      setLabId(pickerLabs[0].id)
-                    }
-                    setLabChoiceMade(true)
                     // Bump the attempt counter so the init effect re-fires
-                    // even when labChoiceMade is already true and labId hasn't
-                    // changed — i.e., retry after a transient failure on the
+                    // even when labId hasn't changed — i.e., retry after a
+                    // transient failure on the
                     // same lab. Without this the button is a dead end after
                     // the first failure. Codex P2 on PR #27.
                     setInitAttempt((n) => n + 1)
@@ -527,17 +485,14 @@ export function CommissioningSandbox() {
                 onChange={(val) => val && setEngineMode(val)}
                 w={360}
               />
-              <Select
-                label="LabProfile"
-                description="切换需重置会话"
-                data={pickerLabs.map((l) => ({ value: l.id, label: l.name }))}
-                value={labId}
-                onChange={(v) => {
-                  setLabId(v)
-                  if (v) localStorage.setItem(LAST_LAB_LS_KEY, v)
-                }}
-                disabled={pickerLabs.length === 0}
-                w={260}
+              <TextInput
+                label="LabProfile / 暗室"
+                description="会话进行中锁定；切换请先重置会话"
+                value={selectedLabProfile
+                  ? `${selectedLabProfile.name}${chamberName ? ` / ${chamberName}` : ''}`
+                  : '未选择'}
+                readOnly
+                w={280}
               />
             </Group>
             <Group gap="xs">
