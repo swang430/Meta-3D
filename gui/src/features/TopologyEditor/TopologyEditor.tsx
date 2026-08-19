@@ -42,12 +42,12 @@ import {
   IconRefresh,
 } from '@tabler/icons-react';
 
+import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalLab';
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
 import { nodePortsToSelectOptions } from './nodePortHelpers';
 import { switchTopologyService } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection } from '../../api/switchTopologyService';
-import { fetchChamberConfigurations } from '../../api/service';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
 
@@ -59,11 +59,6 @@ interface SwitchOption {
   key: string;
 }
 
-interface ChamberOption {
-  value: string;
-  label: string;
-}
-
 interface TopologyEditorProps {
   switchCategoryId?: string;
 }
@@ -72,11 +67,13 @@ interface TopologyEditorProps {
 
 interface TopologyFlowProps {
   topology: SwitchTopology;
-  selectedChamberId: string;
+  labProfileId: string;
   onTopologyUpdated: (t: SwitchTopology) => void;
+  /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
+  onDirtyChange: (dirty: boolean) => void;
 }
 
-const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange }: TopologyFlowProps) => {
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
   );
@@ -95,6 +92,12 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
     nodesDataRef.current = topology.nodes.map(n => ({ ...n }));
     setDirty(false);
   }, [topology.id]);
+
+  // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
+  useEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
 
   const initialNodes: Node[] = React.useMemo(() => {
     const currentMode = topology.operating_modes.find(m => m.id === activeMode);
@@ -231,24 +234,11 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
     if (!topology.id) return;
-    // P1: block save when chamber binding is missing — backend returns 422
-    // for active topologies anyway, but failing in the UI gives a clearer
-    // message and avoids a doomed network round-trip.
-    if (!selectedChamberId) {
-      notifications.show({
-        title: '需要先选择目标暗室',
-        message: '保存前必须为该拓扑绑定一个暗室。请使用顶部的暗室下拉。',
-        color: 'orange',
-        icon: <IconAlertTriangle size={16} />,
-        autoClose: 5000,
-      });
-      return;
-    }
     setSaving(true);
 
     try {
       // 1. Validate first
-      const validation = await switchTopologyService.validateTopology(topology.id);
+      const validation = await switchTopologyService.validateTopology(topology.id, labProfileId);
       const errors = (validation.issues || []).filter((i: any) => i.severity === 'error');
       const warnings = (validation.issues || []).filter((i: any) => i.severity === 'warning');
 
@@ -275,8 +265,8 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
       }
 
       // 2. Build update payload with current positions + edited connections.
-      // P1: chamber_id is always included so a re-save fixes any legacy row
-      // that was orphaned before this constraint existed.
+      // P1-57：不再提交 chamber_id —— 暗室由后端从 lab_profile_id 派生，
+      // 客户端提交只会造出"写进错暗室"的口子。
       const updatedNodes = nodesDataRef.current.map(n => {
         const rfNode = nodes.find(rn => rn.id === n.id);
         return {
@@ -286,13 +276,12 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
       });
 
       const payload = {
-        chamber_id: selectedChamberId,
         nodes: updatedNodes,
         connections: connectionsRef.current,
       };
 
       // 3. PATCH to backend
-      const updated = await switchTopologyService.updateTopology(topology.id, payload);
+      const updated = await switchTopologyService.updateTopology(topology.id, labProfileId, payload);
 
       setDirty(false);
       onTopologyUpdated(updated);
@@ -307,7 +296,7 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
       logFrontendEvent({
         action: 'switch_topology.saved',
         component: 'TopologyEditor',
-        message: `topology=${topology.id} chamber=${selectedChamberId} nodes=${updatedNodes.length} conns=${connectionsRef.current.length}`,
+        message: `topology=${topology.id} lab=${labProfileId} nodes=${updatedNodes.length} conns=${connectionsRef.current.length}`,
       });
     } catch (err: any) {
       const detail = err.response?.data?.detail || err.message;
@@ -327,7 +316,7 @@ const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: Topolo
     } finally {
       setSaving(false);
     }
-  }, [topology, nodes, onTopologyUpdated, selectedChamberId]);
+  }, [topology, nodes, onTopologyUpdated, labProfileId]);
 
   const activeModeObj = topology.operating_modes.find(m => m.id === activeMode);
 
@@ -514,13 +503,16 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
-  // P1: chamber binding is mandatory — the topology models cabling inside a
-  // specific chamber, so importing without one leaves calibration / measure
-  // unable to resolve a chamber. Selector lives next to the switch selector.
-  const [availableChambers, setAvailableChambers] = useState<ChamberOption[]>([]);
-  const [selectedChamberId, setSelectedChamberId] = useState<string>('');
-  const [chambersLoading, setChambersLoading] = useState(true);
-  const [chambersError, setChambersError] = useState<string | null>(null);
+  // P1-57：暗室不再由本页选择 —— 唯一真值 = 全局 LabProfile → 派生暗室。
+  // 想编辑另一个暗室的拓扑，先在顶部切到绑定它的 LabProfile。
+  const { selectedLabProfileId: labProfileId, chamberId, chamberName } = useOperationalLab();
+
+  // dirty 时阻断 LabProfile 切换（未保存的接线不能静默丢，也绝不自动改绑）
+  const [flowDirty, setFlowDirty] = useState(false);
+  useOperationalLabSwitchGuard(
+    'topology-editor',
+    flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
+  );
 
   const [topology, setTopology] = useState<SwitchTopology | null>(null);
   const [topoLoading, setTopoLoading] = useState(false);
@@ -549,20 +541,11 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     return availableTemplates[0];
   }, [availableTemplates]);
 
-  // Reimport: delete old topology and import fresh V4.0
+  // P1-57 重导入：单次调用，replace_existing 由服务端处理 ——
+  // lab/暗室/模板完整解析成功之后才删同 (switch, 派生暗室) 的旧行。
+  // （原先是客户端先删后导：解析失败时行已经白白没了。）
   const handleReimport = useCallback(async () => {
-    if (!selectedSwitchId) return;
-    if (!selectedChamberId) {
-      notifications.show({
-        title: '需要先选择目标暗室',
-        message: '导入拓扑前必须绑定一个暗室,以便后续校准/测量能够解析。',
-        color: 'orange',
-        icon: <IconAlertTriangle size={16} />,
-      });
-      return;
-    }
-    // Resolve the template *before* deleting the existing topology, so a
-    // commercial-deploy 404 doesn't leave the chamber with no wiring at all.
+    if (!selectedSwitchId || !labProfileId) return;
     const templateId = pickDefaultTemplate();
     if (!templateId) {
       notifications.show({
@@ -575,28 +558,11 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     }
     setReimporting(true);
     try {
-      // Delete only the topology for THIS (switch, chamber) pair — leave
-      // other chambers' topologies alone. Each chamber owns its own row.
-      const resp = await switchTopologyService.getTopologies(
-        selectedSwitchId,
-        selectedChamberId,
-      );
-      const items = resp.items || (Array.isArray(resp) ? resp : []);
-      for (const item of items) {
-        if (item.id) {
-          try {
-            await apiClient.delete(`/switch-topologies/${item.id}`);
-          } catch { /* ignore deletion errors */ }
-        }
-      }
-
-      // Import fresh default for this chamber. template_id is whichever
-      // template the deployment ships; pickDefaultTemplate() prefers
-      // 'caict_v4' when present.
       const imported = await switchTopologyService.importFromTemplate(
         selectedSwitchId,
-        selectedChamberId,
+        labProfileId,
         templateId,
+        true,
       );
       setTopology(imported);
       notifications.show({
@@ -609,12 +575,13 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       logFrontendEvent({
         action: 'switch_topology.reimported',
         component: 'TopologyEditor',
-        message: `switch=${selectedSwitchId} chamber=${selectedChamberId} topology=${imported.id}`,
+        message: `switch=${selectedSwitchId} lab=${labProfileId} topology=${imported.id}`,
       });
     } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message;
       notifications.show({
         title: '重导入失败',
-        message: err.response?.data?.detail || err.message,
+        message: typeof detail === 'string' ? detail : JSON.stringify(detail),
         color: 'red',
         icon: <IconX size={16} />,
         autoClose: 5000,
@@ -622,7 +589,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     } finally {
       setReimporting(false);
     }
-  }, [selectedSwitchId, selectedChamberId, pickDefaultTemplate]);
+  }, [selectedSwitchId, labProfileId, pickDefaultTemplate]);
+
 
   // Fetch instrument catalog
   useEffect(() => {
@@ -657,55 +625,21 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   }, []);
 
   // Fetch chamber list (P1 — required for binding any topology).
+  // P1-57：按 (switch, 全局 lab) 拉取该 lab 派生暗室的拓扑行。
+  // 不再从最新 topology 行反向播种暗室 —— 那正是"编辑器自成一套暗室真值"的来源。
+  // lab 切换时本 effect 重跑：先清掉旧暗室的 topology，再加载新作用域。
   useEffect(() => {
-    setChambersLoading(true);
-    setChambersError(null);
-    fetchChamberConfigurations()
-      .then((res) => {
-        const items = res?.items || [];
-        const opts: ChamberOption[] = items.map((c) => ({
-          value: c.id,
-          label: c.name || `Chamber ${c.id?.slice(0, 8)}`,
-        }));
-        setAvailableChambers(opts);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch chambers:', err);
-        setChambersError(`无法加载暗室列表: ${err.message}`);
-      })
-      .finally(() => setChambersLoading(false));
-  }, []);
-
-  // Fetch topology for the (switch, chamber) pair. Each chamber holds its own
-  // topology row — the model design (switch_topology.py) is explicit:
-  //   "每条记录代表一个 Switch 实例在特定暗室中的完整接线配置".
-  // First mount (no chamber yet) fetches by switch alone and seeds the chamber
-  // dropdown from whichever topology sorts first. After that, any chamber pick
-  // fetches the chamber-specific row; if none exists, auto-import default for
-  // that chamber WITHOUT touching other chambers' topologies.
-  useEffect(() => {
-    if (!selectedSwitchId) return;
+    if (!selectedSwitchId || !labProfileId) return;
 
     setTopoLoading(true);
     setTopoError(null);
     setTopology(null);
 
-    switchTopologyService.getTopologies(selectedSwitchId, selectedChamberId || undefined)
+    switchTopologyService.getTopologies(labProfileId, selectedSwitchId)
       .then(resp => {
         const items = resp.items || (Array.isArray(resp) ? resp : []);
         if (items.length > 0) {
-          const t = items[0];
-          setTopology(t);
-          // Seed chamber dropdown from topology on first mount. After the user
-          // has picked a chamber, the query is already chamber-filtered so
-          // chamber_id matches selectedChamberId by construction.
-          if (t.chamber_id && !selectedChamberId) {
-            setSelectedChamberId(t.chamber_id);
-          }
-          return;
-        }
-        if (!selectedChamberId) {
-          // No topology AND no chamber chosen — defer auto-import.
+          setTopology(items[0]);
           return;
         }
         // The template list resolves once per mount via a separate effect.
@@ -724,7 +658,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         }
         return switchTopologyService.importFromTemplate(
           selectedSwitchId,
-          selectedChamberId,
+          labProfileId,
           templateId,
         )
           .then(imported => setTopology(imported))
@@ -745,7 +679,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         setTopoError(`加载拓扑失败: ${err.response?.data?.detail || err.message}`);
       })
       .finally(() => setTopoLoading(false));
-  }, [selectedSwitchId, selectedChamberId, availableTemplates, pickDefaultTemplate]);
+  }, [selectedSwitchId, labProfileId, availableTemplates, pickDefaultTemplate]);
 
   return (
     <Stack gap="lg" h="100%">
@@ -758,30 +692,15 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Group>
 
           <Group gap="md" align="center">
-            {/* P1: chamber binding (required). Without it, save / import are
-                blocked because the topology has no chamber to attach cabling
-                to — calibration / measure can't resolve a topology that
-                isn't bound to a specific chamber row. */}
-            {chambersLoading ? (
-              <Group gap="xs">
-                <Loader size="xs" />
-                <Text size="sm" c="dimmed">加载暗室…</Text>
-              </Group>
-            ) : availableChambers.length > 0 ? (
-              <Select
-                label="目标暗室"
-                value={selectedChamberId || null}
-                onChange={(val) => val && setSelectedChamberId(val)}
-                data={availableChambers}
-                placeholder="选择目标暗室..."
-                w={220}
-                required
-                allowDeselect={false}
-                error={!selectedChamberId ? '保存前必填' : undefined}
-              />
+            {/* P1-57：暗室不再由本页选择 —— 只读展示全局上下文派生的暗室。
+                想编辑别的暗室，去顶部切 LabProfile。 */}
+            {chamberName ? (
+              <Badge color="brand" variant="light" size="lg">
+                当前暗室：{chamberName}
+              </Badge>
             ) : (
               <Badge color="orange" variant="light" size="lg">
-                未配置任何暗室
+                当前 LabProfile 未绑定暗室
               </Badge>
             )}
             {catalogLoading ? (
@@ -813,8 +732,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 leftSection={<IconRefresh size={14} />}
                 loading={reimporting}
                 onClick={handleReimport}
-                disabled={!selectedChamberId}
-                title={!selectedChamberId ? '请先选择目标暗室' : undefined}
+                disabled={!chamberId}
+                title={!chamberId ? '当前 LabProfile 未绑定暗室' : undefined}
               >
                 重导入默认拓扑
               </Button>
@@ -829,13 +748,6 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Alert>
         )}
 
-        {/* P1: chamber-binding status hint when topology already exists but
-            had no chamber attached (legacy row from before this constraint). */}
-        {topology && !topology.chamber_id && selectedChamberId && (
-          <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />} mt="sm">
-            当前拓扑未绑定暗室。点击"保存拓扑"会将其绑定到所选暗室。
-          </Alert>
-        )}
 
 
         {catalogError && (
@@ -844,22 +756,27 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Alert>
         )}
 
-        {chambersError && (
-          <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} mt="sm">
-            {chambersError}
-          </Alert>
-        )}
       </Card>
 
       {/* Topology Canvas Area */}
       <div style={{ height: 'calc(100vh - 250px)', minHeight: 500 }}>
-        {!selectedChamberId ? (
+        {!labProfileId ? (
           <Center h="100%">
             <Stack align="center" gap="sm">
               <IconTopologyRing size={48} color="var(--mantine-color-gray-4)" />
               <Text c="dimmed" ta="center">
-                请先在上方选择目标暗室。<br />
-                拓扑必须绑定到一个具体暗室,以便后续校准/测量解析。
+                请选择当前 LabProfile。<br />
+                拓扑属于 LabProfile 绑定的暗室 —— 在顶部选择后这里会加载对应接线。
+              </Text>
+            </Stack>
+          </Center>
+        ) : !chamberId ? (
+          <Center h="100%">
+            <Stack align="center" gap="sm">
+              <IconTopologyRing size={48} color="var(--mantine-color-gray-4)" />
+              <Text c="dimmed" ta="center">
+                当前 LabProfile 未绑定暗室。<br />
+                请到 LabProfile 管理里为它绑定暗室后再编辑拓扑。
               </Text>
             </Stack>
           </Center>
@@ -896,8 +813,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           <ReactFlowProvider>
             <TopologyFlow
               topology={topology}
-              selectedChamberId={selectedChamberId}
+              labProfileId={labProfileId}
               onTopologyUpdated={(updated) => setTopology(updated)}
+              onDirtyChange={setFlowDirty}
             />
           </ReactFlowProvider>
         ) : (

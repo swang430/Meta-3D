@@ -61,28 +61,27 @@ export interface SwitchTopology {
 }
 
 export const switchTopologyService = {
-  async getTopologies(categoryId?: string, chamberId?: string) {
-    // Each (switch_category_id, chamber_id) pair has its own topology row.
-    // Pass both when known to load the chamber-specific topology; pass switch
-    // only on first mount before chamber is known (returns whichever topology
-    // sorts first, used to seed the chamber dropdown).
-    const params = new URLSearchParams();
+  // P1-57：每个数据方法都携带 lab_profile_id —— 后端由它派生暗室，
+  // 不再相信客户端自由提交的 chamber_id（那正是"拓扑写进错暗室"的口子）。
+
+  async getTopologies(labProfileId: string, categoryId?: string) {
+    const params = new URLSearchParams({ lab_profile_id: labProfileId });
     if (categoryId) params.append('switch_category_id', categoryId);
-    if (chamberId) params.append('chamber_id', chamberId);
-    const url = params.toString()
-      ? `/switch-topologies?${params.toString()}`
-      : '/switch-topologies';
-    const response = await apiClient.get(url);
+    const response = await apiClient.get(`/switch-topologies?${params.toString()}`);
     return response.data;
   },
 
-  async getTopology(id: string) {
-    const response = await apiClient.get(`/switch-topologies/${id}`);
+  async getTopology(id: string, labProfileId: string) {
+    const response = await apiClient.get(`/switch-topologies/${id}`, {
+      params: { lab_profile_id: labProfileId },
+    });
     return response.data;
   },
 
-  async updateTopology(id: string, data: Partial<SwitchTopology>) {
-    const response = await apiClient.patch(`/switch-topologies/${id}`, data);
+  async updateTopology(id: string, labProfileId: string, data: Partial<SwitchTopology>) {
+    const response = await apiClient.patch(`/switch-topologies/${id}`, data, {
+      params: { lab_profile_id: labProfileId },
+    });
     return response.data;
   },
 
@@ -93,27 +92,28 @@ export const switchTopologyService = {
 
   async importFromTemplate(
     switchCategoryId: string,
-    chamberId: string,
+    labProfileId: string,
     templateId: string,
+    replaceExisting = false,
   ) {
-    // chamber_id is required by the backend so the imported topology binds to
-    // an existing chamber row instead of leaving a referentially-broken stub.
-    // template_id resolves a file under scripts/dev-fixtures/topology-templates/
-    // — commercial deploys without dev-fixtures will see an empty template list
-    // (listTemplates returns []) and operators build from scratch in the editor.
+    // replace_existing=true 时由服务端先完整解析 lab/暗室/模板、成功后才
+    // 删除同 (switch, 派生暗室) 的旧行 —— 取代原来 GUI 的先删后导。
     const params = new URLSearchParams({
       switch_category_id: switchCategoryId,
-      chamber_id: chamberId,
+      lab_profile_id: labProfileId,
       template_id: templateId,
+      replace_existing: String(replaceExisting),
     });
     const response = await apiClient.post(
       `/switch-topologies/import/from-template?${params.toString()}`
     );
     return response.data;
   },
-  
-  async validateTopology(id: string) {
-    const response = await apiClient.get(`/switch-topologies/${id}/validate`);
+
+  async validateTopology(id: string, labProfileId: string) {
+    const response = await apiClient.get(`/switch-topologies/${id}/validate`, {
+      params: { lab_profile_id: labProfileId },
+    });
     return response.data;
   }
 };
