@@ -9,6 +9,7 @@ import '@mantine/notifications/styles.css'
 import './index.css'
 import App from './App.tsx'
 import { AppErrorBoundary, installGlobalErrorHandlers } from './observability'
+import { OperationalLabProvider } from './features/OperationalLab'
 // import { setupMockServer } from './api/mockServer.ts'
 
 // Disable mock server to use real backend API
@@ -38,7 +39,9 @@ createRoot(document.getElementById('root')!).render(
         <ModalsProvider>
           <Notifications position="top-right" limit={3} />
           <AppErrorBoundary>
-            <App />
+            <OperationalLabProvider>
+              <App />
+            </OperationalLabProvider>
           </AppErrorBoundary>
         </ModalsProvider>
       </MantineProvider>

@@ -62,6 +62,7 @@ import { DashboardCockpit } from './features/Dashboard'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
+import { OperationalLabSelector } from './features/OperationalLab'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
 import { fetchLabProfiles, type LabProfileSummary } from './api/labProfileService'
@@ -823,6 +824,7 @@ function App() {
             </Text>
           </Stack>
           <Group gap="sm">
+            <OperationalLabSelector />
             <Tooltip label={isDark ? '切换至浅色模式' : '切换至深色模式'} position="bottom">
               <ActionIcon
                 variant="light"
