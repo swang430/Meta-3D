@@ -84,7 +84,12 @@ export function CommissioningSandbox() {
     activeLabs,
     loading: labsLoading,
     error: labsError,
+    beginWork,
+    activeWork,
   } = useOperationalLab()
+  // 外审 R3：在途硬件工作的唯一真值 = provider 的登记表（页面卸载不消失、
+  // 并发各自计数，共享布尔会被先落定的那个提前放行）。本页是目前唯一登记方。
+  const hardwareBusy = activeWork.length > 0
   // 内审 F1：列表**加载失败**不得当成「0 个 LabProfile」（设计 §8）——
   // 否则瞬断会引操作员去建重复 LabProfile。失败时 error 非空，这里不判 0。
   const noActiveLab = !labsLoading && !labsError && activeLabs.length === 0
@@ -116,6 +121,7 @@ export function CommissioningSandbox() {
 
   // Initialization
   const initSession = async () => {
+    const releaseWork = beginWork('commissioning', '首测会话正在创建（硬件初始化中）')
     try {
       setLoading(true)
       const res = await api.createSession({
@@ -166,6 +172,7 @@ export function CommissioningSandbox() {
       const msg = typeof detail === 'string' ? detail : err.message ?? '未知错误'
       notifications.show({ title: '初始化失败', message: String(msg), color: 'red' })
     } finally {
+      releaseWork()
       setLoading(false)
     }
   }
@@ -192,6 +199,7 @@ export function CommissioningSandbox() {
 
   const handleRunPhase = async (phaseId: string) => {
     if (!session) return
+    const releaseWork = beginWork('commissioning', `相位 ${phaseId} 正在驱动硬件`)
     try {
       setLoading(true)
       await api.runPhase(session.session_id, phaseId)
@@ -208,12 +216,14 @@ export function CommissioningSandbox() {
       const detail = err.response?.data?.detail || err.message
       notifications.show({ title: '执行失败', message: String(detail).substring(0, 200), color: 'red' })
     } finally {
+      releaseWork()
       setLoading(false)
     }
   }
 
   const handleRunAll = async () => {
     if (!session) return
+    const releaseWork = beginWork('commissioning', '全流程正在驱动硬件')
     try {
       setLoading(true)
       // Step through automatically or just call runAll
@@ -226,6 +236,7 @@ export function CommissioningSandbox() {
       const detail = err.response?.data?.detail || err.message
       notifications.show({ title: '执行全流程失败', message: String(detail).substring(0, 200), color: 'red' })
     } finally {
+      releaseWork()
       setLoading(false)
     }
   }
@@ -557,6 +568,7 @@ export function CommissioningSandbox() {
               variant="light"
               loading={selfcheckLoading}
               onClick={async () => {
+                const releaseWork = beginWork('commissioning', '设备自检正在驱动硬件')
                 setSelfcheckLoading(true)
                 try {
                   const res = await api.deviceSelfcheck()
@@ -564,6 +576,7 @@ export function CommissioningSandbox() {
                 } catch {
                   setSelfcheck(null)
                 } finally {
+                  releaseWork()
                   setSelfcheckLoading(false)
                 }
               }}
@@ -630,6 +643,7 @@ export function CommissioningSandbox() {
                 loading={attachLoading}
                 disabled={!dutImsi.trim()}
                 onClick={async () => {
+                  const releaseWork = beginWork('commissioning', 'DUT 登记正在读写 UXM')
                   setAttachLoading(true)
                   setAttachError(null)
                   try {
@@ -646,6 +660,7 @@ export function CommissioningSandbox() {
                         ?.data?.detail
                     setAttachError(detail || (e as Error)?.message || '登记失败')
                   } finally {
+                    releaseWork()
                     setAttachLoading(false)
                   }
                 }}
@@ -839,14 +854,13 @@ export function CommissioningSandbox() {
               setAttachError(null)
               setSelfcheck(null)
             }}
-            disabled={loading || attachLoading || selfcheckLoading}
-            title={(loading || attachLoading || selfcheckLoading)
-              ? '有请求仍在驱动硬件 —— 等它结束再退出会话' : undefined}
+            disabled={hardwareBusy}
+            title={hardwareBusy ? '有请求仍在驱动硬件 —— 等它结束再退出会话' : undefined}
           >
             结束会话
           </Button>
           </Group>
-          <Button variant="light" color="grape" onClick={handleRunAll}>一键执行全流程(Mock)</Button>
+          <Button variant="light" color="grape" onClick={handleRunAll} disabled={hardwareBusy}>一键执行全流程(Mock)</Button>
         </Group>
 
       </Stack>

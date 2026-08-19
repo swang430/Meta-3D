@@ -45,6 +45,17 @@ export interface OperationalLabContextValue {
   requestLabChange: (nextId: string) => LabChangeResult
   /** 危险页面只上报阻断理由（reason=null 即解除），不自动保存/丢弃。 */
   registerSwitchGuard: (key: string, reason: string | null) => void
+  /**
+   * 外审 R3：登记一段**在途硬件工作**（一次 runPhase / attach / 自检…）。
+   * 跟 registerSwitchGuard 的关键区别：**不随组件卸载消失** —— 请求发出后
+   * 操作员切走页面，axios 仍在驱动旧会话，切 LabProfile 必须仍被挡住。
+   * 只有返回的 release()（在请求的 finally 里调）才解除；请求必然落定，
+   * 所以登记必然被释放。每次调用独立计数 —— 两个并发请求各自持有登记，
+   * 先落定的那个不会提前放行（共享布尔就是这么漏的）。
+   */
+  beginWork: (key: string, reason: string) => () => void
+  /** 当前在途工作的理由列表（空 = 无在途）。 */
+  activeWork: string[]
 }
 
 const Ctx = createContext<OperationalLabContextValue | null>(null)
@@ -88,9 +99,29 @@ export function OperationalLabProvider({ children }: { children: ReactNode }) {
     else guards.current.set(key, reason)
   }, [])
 
+  // 在途工作登记：ref 是判定真值（同步、闭包安全），state 只为让消费者重渲染。
+  const workRef = useRef(new Map<string, string>())
+  const workSeq = useRef(0)
+  const [activeWork, setActiveWork] = useState<string[]>([])
+  const beginWork = useCallback((key: string, reason: string) => {
+    const id = `${key}#${++workSeq.current}`
+    workRef.current.set(id, reason)
+    setActiveWork(Array.from(workRef.current.values()))
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      workRef.current.delete(id)
+      setActiveWork(Array.from(workRef.current.values()))
+    }
+  }, [])
+
   const requestLabChange = useCallback(
     (nextId: string): LabChangeResult => {
-      const blockers = Array.from(guards.current.values())
+      const blockers = [
+        ...guards.current.values(),
+        ...workRef.current.values(),   // 在途硬件工作 —— 页面卸载也挡
+      ]
       if (blockers.length > 0) return { ok: false, blockers }
       const hit = activeLabs.find((l) => l.id === nextId && l.is_active)
       if (!hit) return { ok: false, blockers: ['目标 LabProfile 不在活动列表里'] }
@@ -117,8 +148,10 @@ export function OperationalLabProvider({ children }: { children: ReactNode }) {
       chamberName: selectedLabProfile?.chamber_name ?? null,
       requestLabChange,
       registerSwitchGuard,
+      beginWork,
+      activeWork,
     }),
-    [activeLabs, query.isLoading, query.isError, query.error, selectedLabProfile, requestLabChange, registerSwitchGuard],
+    [activeLabs, query.isLoading, query.isError, query.error, selectedLabProfile, requestLabChange, registerSwitchGuard, beginWork, activeWork],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

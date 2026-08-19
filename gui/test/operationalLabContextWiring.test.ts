@@ -78,3 +78,17 @@ test('0 个活动 lab 不落一次性闩 —— 首启向导建完第一个 lab 
   assert.ok(latch > -1)
   assert.ok(zeroGate < latch, '0-labs 早退必须发生在落闩之前')
 })
+
+test('在途工作登记不随组件卸载消失 —— 只有 release() 能解除', () => {
+  // 外审 R3：切走页面会卸载 guard，而 axios 仍在驱动旧会话。
+  // beginWork 的条目必须活到请求落定（finally 里 release），跟组件生命周期无关。
+  const s = ctx()
+  assert.match(s, /const beginWork = useCallback/)
+  const fn = s.slice(s.indexOf('const beginWork'), s.indexOf('const selectedLabProfile'))
+  assert.doesNotMatch(fn, /useEffect/,
+    'beginWork 的登记挂了 effect 清理 —— 卸载会提前释放，在途窗口重现')
+  // requestLabChange 必须把在途工作也算进阻断
+  const rlc = s.slice(s.indexOf('const requestLabChange'))
+  assert.match(rlc, /workRef\.current\.values\(\)/,
+    '切换判定没合并在途工作登记')
+})

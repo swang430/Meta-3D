@@ -4,6 +4,7 @@
  * 相对校准（快速校准）功能入口
  */
 import { useState, useEffect } from 'react';
+import { useOperationalLab } from '../../features/OperationalLab';
 import {
     Paper,
     Text,
@@ -62,8 +63,9 @@ export function BaselineCalibrationCard() {
     const [frequency, setFrequency] = useState<number>(3500);
     const [quickResult, setQuickResult] = useState<QuickCalibrationResult | null>(null);
 
-    // Mock chamber ID - 实际应从 context 获取
-    const chamberId = '00000000-0000-0000-0000-000000000001';
+    // P1-57（外审 R3）：暗室由全局 LabProfile 派生（原来写死全零 UUID，
+    // 状态读的、快捷校准写的都是一个不存在的暗室）。缺绑定 → 不发请求。
+    const { chamberId, beginWork } = useOperationalLab();
 
     const fetchBaselines = async () => {
         setLoading(true);
@@ -81,10 +83,14 @@ export function BaselineCalibrationCard() {
     };
 
     useEffect(() => {
+        if (!chamberId) { setBaselines([]); return }
         fetchBaselines();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chamberId]);
 
     const handleQuickCalibration = async () => {
+        if (!chamberId) return;
+        const releaseWork = beginWork('calibration', '相对校准（quick）正在驱动硬件');
         setLoading(true);
         setQuickResult(null);
         try {
@@ -113,11 +119,14 @@ export function BaselineCalibrationCard() {
                 color: 'red',
             });
         } finally {
+            releaseWork();
             setLoading(false);
         }
     };
 
     const handleDriftCheck = async () => {
+        if (!chamberId) return;
+        const releaseWork = beginWork('calibration', '漂移检测正在驱动硬件');
         setLoading(true);
         try {
             const res = await fetch(
@@ -140,6 +149,7 @@ export function BaselineCalibrationCard() {
                 color: 'red',
             });
         } finally {
+            releaseWork();
             setLoading(false);
         }
     };
@@ -156,6 +166,17 @@ export function BaselineCalibrationCard() {
         }
         return <Badge color="green" size="xs">有效</Badge>;
     };
+
+    if (!chamberId) {
+        // fail-closed：没有派生暗室就不读不写，明说原因而不是渲染空列表
+        return (
+            <Paper p="md" withBorder>
+                <Alert color="yellow" title="当前 LabProfile 未绑定暗室">
+                    相对校准需要明确的目标暗室 —— 请在顶部选择绑定暗室的 LabProfile。
+                </Alert>
+            </Paper>
+        );
+    }
 
     return (
         <Paper p="md" withBorder>

@@ -4,6 +4,7 @@
  * Step-by-step wizard for executing system calibration
  */
 import { useState } from 'react';
+import { useOperationalLab } from '../../features/OperationalLab';
 import {
   Modal,
   Stepper,
@@ -48,6 +49,10 @@ interface CalibrationWizardProps {
 }
 
 export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
+  // P1-57（外审 R3）：暗室由全局 LabProfile 派生 —— 原来这里写死
+  // 'b7cd8de0-…'，那是 P1-28 审计里**已经不存在的孤儿暗室**，
+  // 路损/链路/基线校准一直写进一个被删掉的暗室 id。
+  const { chamberId: operationalChamberId, beginWork } = useOperationalLab();
   const [active, setActive] = useState(0);
   const [calibrationType, setCalibrationType] = useState<string>('trp');
   const [isExecuting, setIsExecuting] = useState(false);
@@ -80,6 +85,9 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
 
   const executeCalibration = async () => {
+    // 内审 F1：校准是分钟级的硬件工作（真实模式驱动 CE+SA）——
+    // 在途时必须挡住 LabProfile 切换，跟 Commissioning 同一张登记表。
+    const releaseWork = beginWork('calibration', `校准（${calibrationType}）正在驱动硬件`);
     setIsExecuting(true);
     setExecutionProgress(0);
 
@@ -221,8 +229,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         result = await executeRepeatabilityTest(request);
 
       } else if (calibrationType === 'path_loss' || calibrationType === 'uplink_chain' || calibrationType === 'downlink_chain') {
-        // 路径校准 - 调用路径校准 API
-        const chamberId = 'b7cd8de0-da25-473a-9618-4f0795046326'; // TODO: 从 context 获取
+        // 路径校准 - 调用路径校准 API（暗室来自全局 LabProfile，缺绑定就地失败）
+        if (!operationalChamberId) {
+          throw new Error('当前 LabProfile 未绑定暗室 —— 请先在顶部选择绑定目标暗室的 LabProfile');
+        }
+        const chamberId = operationalChamberId;
 
         let calibrationEndpoint: string;
         let requestBody: Record<string, any>;
@@ -273,7 +284,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
       } else if (calibrationType.startsWith('baseline_')) {
         // 相对校准基线 - 调用基线创建 API
         const baselineType = calibrationType.replace('baseline_', '');
-        const chamberId = 'b7cd8de0-da25-473a-9618-4f0795046326'; // TODO: 从 context 获取
+        if (!operationalChamberId) {
+          throw new Error('当前 LabProfile 未绑定暗室 —— 请先在顶部选择绑定目标暗室的 LabProfile');
+        }
+        const chamberId = operationalChamberId;
 
         setExecutionProgress(40);
 
@@ -318,6 +332,8 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         color: 'red',
         icon: <IconAlertCircle size={16} />,
       });
+    } finally {
+      releaseWork();
     }
   };
 
