@@ -49,3 +49,13 @@ test('Commissioning 有会话时注册切换阻断', () => {
   const seg = s.slice(i, i + 300)
   assert.match(seg, /session/, 'guard 没跟 session 状态挂钩')
 })
+
+test('Commissioning 不把「列表加载失败」当成「尚无 LabProfile」', () => {
+  // 内审 F1（设计 §8）：失败时引导操作员去建重复 LabProfile 比不提示更糟。
+  const s = read('src/components/Commissioning/index.tsx')
+  const i = s.indexOf('noActiveLab =')
+  assert.ok(i > -1)
+  const line = s.slice(i, s.indexOf('\n', i))
+  assert.match(line, /labsError|error/,
+    'noActiveLab 的判定没排除加载失败 —— 瞬断会被当成 0 个 LabProfile')
+})

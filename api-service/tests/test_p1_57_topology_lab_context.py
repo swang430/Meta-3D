@@ -346,3 +346,97 @@ class TestLegacyRowsUntouched:
         )
         assert str(orphan.id) not in [it["id"] for it in r.json().get("items", [])]
         assert db.query(SwitchTopology).filter_by(id=orphan.id).first() is not None
+
+
+class TestChamberScopeOfWrites:
+    """内审 F2：三处「只动本暗室」的写点补行为门（M1/M2/M3 变异此前全绿）。"""
+
+    def _seed_two_chambers(self, world, switch_id):
+        db = world["db"]
+        a_row = _mk_row(db, switch_id, world["chamber_a"].id, "A-existing")
+        b_row = SwitchTopology(
+            switch_category_id=switch_id, chamber_id=world["chamber_b"].id,
+            name="B-default", is_active=True, is_default=True,
+            nodes=[], connections=[], operating_modes=[],
+        )
+        db.add(b_row); db.commit(); db.refresh(b_row)
+        return a_row, b_row
+
+    def test_replace_existing_only_deletes_own_chamber_rows(self, world, monkeypatch):
+        """M2（数据删除路径）：replace 只删同 (switch, 派生暗室) 的行 ——
+        去掉 chamber 过滤会把别的暗室同类目行全删。"""
+        import app.api.switch_topology as topology_api
+
+        db = world["db"]
+        switch_id = world["switch_id"]
+        a_row, b_row = self._seed_two_chambers(world, switch_id)
+        # 先存纯值 —— 删除后再访问 ORM 实例属性会触发刷新并抛 ObjectDeletedError
+        a_id, b_id = a_row.id, b_row.id
+
+        # 不依赖磁盘模板：monkeypatch 一个最小模板
+        monkeypatch.setattr(
+            topology_api, "_load_template",
+            lambda _tid: (lambda: {
+                "name": "Fresh", "is_active": True, "is_default": False,
+                "nodes": [], "connections": [], "operating_modes": [],
+            }),
+        )
+        r = client.post(
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(switch_id),
+                "lab_profile_id": str(world["lab_a"].id),
+                "template_id": "whatever",
+                "replace_existing": "true",
+            },
+        )
+        assert r.status_code == 200, r.text
+        # 本暗室旧行没了，新行落在派生暗室
+        # （列查询绕开 identity map —— 实体查询会对已删行抛 ObjectDeletedError）
+        db.expire_all()
+        assert db.query(SwitchTopology.id).filter(
+            SwitchTopology.id == a_id).first() is None
+        assert r.json()["chamber_id"] == str(world["chamber_a"].id)
+        # ⭐ 别的暗室的行一根手指都没碰
+        assert db.query(SwitchTopology.id).filter(
+            SwitchTopology.id == b_id).first() is not None
+
+    def test_import_default_demote_is_chamber_scoped(self, world, monkeypatch):
+        """M1：import 的 is_default 让位不许波及别的暗室。"""
+        import app.api.switch_topology as topology_api
+
+        db = world["db"]
+        switch_id = world["switch_id"]
+        _a, b_default = self._seed_two_chambers(world, switch_id)
+        monkeypatch.setattr(
+            topology_api, "_load_template",
+            lambda _tid: (lambda: {
+                "name": "Fresh-Default", "is_active": True, "is_default": True,
+                "nodes": [], "connections": [], "operating_modes": [],
+            }),
+        )
+        r = client.post(
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(switch_id),
+                "lab_profile_id": str(world["lab_a"].id),
+                "template_id": "whatever",
+            },
+        )
+        assert r.status_code == 200, r.text
+        db.refresh(b_default)
+        assert b_default.is_default is True, "import 的默认位让位波及了别的暗室"
+
+    def test_patch_default_demote_is_chamber_scoped(self, world):
+        """M3：PATCH 置 is_default 时的让位只在本暗室内。"""
+        db = world["db"]
+        switch_id = world["switch_id"]
+        a_row, b_default = self._seed_two_chambers(world, switch_id)
+        r = client.patch(
+            f"/api/v1/switch-topologies/{a_row.id}",
+            params={"lab_profile_id": str(world["lab_a"].id)},
+            json={"is_default": True},
+        )
+        assert r.status_code == 200, r.text
+        db.refresh(b_default)
+        assert b_default.is_default is True, "PATCH 的默认位让位波及了别的暗室"

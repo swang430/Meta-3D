@@ -83,8 +83,11 @@ export function CommissioningSandbox() {
     chamberName,
     activeLabs,
     loading: labsLoading,
+    error: labsError,
   } = useOperationalLab()
-  const noActiveLab = !labsLoading && activeLabs.length === 0
+  // 内审 F1：列表**加载失败**不得当成「0 个 LabProfile」（设计 §8）——
+  // 否则瞬断会引操作员去建重复 LabProfile。失败时 error 非空，这里不判 0。
+  const noActiveLab = !labsLoading && !labsError && activeLabs.length === 0
   useOperationalLabSwitchGuard(
     'commissioning',
     session ? '暗室首测会话进行中 —— 请先完成或重置会话再切换 LabProfile' : null,
