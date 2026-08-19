@@ -67,3 +67,19 @@ test('Commissioning 的 guard 有真实的释放出口（结束会话）', () =>
   assert.match(s, /setSession\(null\)/,
     '没有把 session 置回 null 的出口 —— 操作员只能离开页面才能切 LabProfile')
 })
+
+test('「结束会话」在硬件请求在途时禁用 —— 不许边跑边释放 guard', () => {
+  // 外审 R2 P1：runPhase/runAll 在途时点结束，请求继续驱动硬件而 guard 已释放，
+  // 旧请求回来还会把 session 塞回新 lab 上下文。
+  const s = read('src/components/Commissioning/index.tsx')
+  // 锚在最后一处「结束会话」（按钮文本）—— 前面还有 guard 文案与提示语
+  const i = s.lastIndexOf('结束会话')
+  assert.ok(i > -1)
+  const btn = s.slice(s.lastIndexOf('<Button', i), i)
+  // 内审 F1：共享 loading 只覆盖 init/runPhase/runAll —— attachDut / 自检
+  // 走独立 loading，三个都得挡（漏一个就是可趁的在途窗口）
+  for (const flag of ['loading', 'attachLoading', 'selfcheckLoading']) {
+    assert.match(btn, new RegExp(`disabled=\\{[^}]*${flag}`),
+      `结束会话的禁用没覆盖 ${flag} —— 该路径在途时 guard 可被释放`)
+  }
+})

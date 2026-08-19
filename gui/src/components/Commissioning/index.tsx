@@ -490,7 +490,7 @@ export function CommissioningSandbox() {
               />
               <TextInput
                 label="LabProfile / 暗室"
-                description="会话进行中锁定；切换请先重置会话"
+                description="会话进行中锁定；切换请先点「结束会话」"
                 value={selectedLabProfile
                   ? `${selectedLabProfile.name}${chamberName ? ` / ${chamberName}` : ''}`
                   : '未选择'}
@@ -833,7 +833,15 @@ export function CommissioningSandbox() {
             onClick={() => {
               setSession(null)
               setActiveStep(0)
+              // 内审 F2：会话级展示状态一并清掉 —— 否则下一个 lab 的新会话
+              // 会直接顶着上一个会话的 DUT 登记/自检结论
+              setAttachResult(null)
+              setAttachError(null)
+              setSelfcheck(null)
             }}
+            disabled={loading || attachLoading || selfcheckLoading}
+            title={(loading || attachLoading || selfcheckLoading)
+              ? '有请求仍在驱动硬件 —— 等它结束再退出会话' : undefined}
           >
             结束会话
           </Button>
