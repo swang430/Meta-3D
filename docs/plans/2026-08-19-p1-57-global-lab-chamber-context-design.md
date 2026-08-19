@@ -1,6 +1,6 @@
 # P1-57：全局 LabProfile / 当前暗室上下文统一设计
 
-**状态**：设计已确认，等待 Claude 按实施计划执行
+**状态**：已按计划实施完毕（2026-08-19，Task 1–6 全部落地，见文末实施记录），待审
 **可观察故障**：同一次人工操作中，「探头与暗室配置」显示 `CAICT-16-Probe-Dual`，
 「射频拓扑编辑器」却独立选中 `CAICT-5-13`，「暗室首测」又独立记住
 `CAICT-Lab-1`。操作员无法确认后续保存、校准或首测究竟作用于哪个暗室。
@@ -178,3 +178,32 @@
 7. 切换后旧暗室的 topology/probe/calibration 缓存不在新页面闪现或被保存。
 8. TestCase 的历史/显式 LabProfile 绑定不被全局切换静默改写。
 9. 全仓不再有运行态页面以 page-local LabProfile/chamber selector 形成平行真值源。
+
+
+---
+
+## 10. 实施记录（2026-08-19，Claude）
+
+| Task | commit | 落地物 |
+|---|---|---|
+| 1 选择状态机 | `78fe9fb` | `operationalLabSelection.ts` 纯函数 + 11 条契约测试 |
+| 2 Provider/选择器/guard | `c8172f3` | `OperationalLabContext.tsx` / `OperationalLabSelector.tsx`，main.tsx 挂载，App header 渲染 |
+| 3 topology API 换真值 | `57a418e` | 全端点 lab_profile_id；跨暗室 409；PATCH 禁改绑；import 服务端 replace_existing |
+| 4 TopologyEditor | `bf833e8` | 删「目标暗室」下拉与播种；dirty guard；重导入单次调用 |
+| 5 探头/首测 | `a2f2ed2` | ProbeManager/ChamberConfigCard/Commissioning 收编；重绑后刷新全局上下文 |
+| 6 其余消费者 | `2646c43` | OTAMapper/两个诊断面板/RFChain 收编 + 全仓 fetchLabProfiles ⊆ allowlist 门 |
+
+**与设计稿的偏差（如实记录）**：
+- §4 初始化表补了一格实测语义：持久化值失效后若只剩一个活动项，按「恰好 1 个」
+  规则自动选择（测试 `持久化值停用后只剩唯一活动项` 钉住）。
+- import 端点保留可选 `chamber_id` 兼容参数（仅一致性断言）；`replace_existing`
+  是新增 query 参数，GUI 重导入走它，初次导入不走。
+- PATCH 对 legacy NULL-chamber 行的旧契约（可改名 / 可绑定）被作用域检查取代 ——
+  两条旧测试改写为「409 且行不变」（`test_switch_topology_chamber_binding.py`）。
+- openapi.yaml 未动：checked-in 契约里本没有 switch-topologies 面（grep 0 命中），
+  G11 子集门不受影响。
+
+**验证**：GUI 契约测试 34 条全绿；`npm run build` 通过；`compileall` / `git diff --check`
+通过；后端 topology 新门 22 条 + 改写旧门 11 条 + P1-28/lab_resolution/rule_gates 回归全绿。
+手工验收（设计 §9 的 1–9 条）**未做**，留给用户在真实环境执行 —— 需要两个绑定
+不同暗室的活动 LabProfile，且不能在用户测试会话期间起第二个后端进程。
