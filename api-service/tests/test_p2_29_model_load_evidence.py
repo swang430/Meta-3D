@@ -1,0 +1,256 @@
+"""P2-29：ASC/B2 正式模型加载证据 hook。
+
+治的缺口（P1-47C 按设计保留的）：`f64.model_loaded` 对三管线都是必填，
+但归档只在 GCM 分支触发、且 ASC/B2 加载序列缺两条证据探针 ——
+ASC/B2 的正式执行 formal_acceptance 恒 false。
+
+手册依据（NotebookLM 2026-08-20，原文非推断）：状态机与文件来源无关
+（AN §2.1 + UR §20.4.3.14，「手册未说明」按来源区分）；判成功流程不分
+文件类型（AN §2.2.2/§2.2.4）；加载未 GO = STOPPED（AN §2.1 原文）。
+"""
+from __future__ import annotations
+
+import pathlib
+import re
+
+import pytest
+
+from app.hal.scpi_evidence import (
+    EvidenceLevel,
+    EvidenceVerdict,
+    InstrumentEnvironment,
+    ScpiExchangeRef,
+)
+from app.services.execution_scpi_evidence import (
+    finalize_execution_scpi_evidence,
+    record_f64_command_capture,
+    register_required_scpi_evidence,
+)
+# 复用 47C 的 DB 脚手架（fixture 靠导入进本模块命名空间生效），别再抄一份
+from tests.test_p1_47c_execution_scpi_evidence import (  # noqa: F401
+    _db_schema,
+    _execution,
+    db,
+)
+from app.core.logging_config import current_execution_id
+
+
+@pytest.fixture(autouse=True)
+def _isolate_execution_contextvar():
+    """47C 的 _execution 帮手会 set current_execution_id 且从不还原 ——
+    泄漏会把后续无关测试的日志行标上本文件的 execution UUID
+    （p2_29 + p1_36 合跑实证复现）。本文件自净：每条测试后复位。
+    47C 自身与更早的泄漏源（commissioning 端点测试）是遗留问题，另行记录。"""
+    token = current_execution_id.set("-")
+    yield
+    current_execution_id.reset(token)
+
+_HAL = pathlib.Path(__file__).resolve().parents[1] / "app/hal/propsim_f64.py"
+_MEASURE = (pathlib.Path(__file__).resolve().parents[1]
+            / "app/services/mimo_ota/executors/measure.py")
+
+
+# ── 行为门：真 builder（子类只覆写环境快照，recipe/scope/判定全走生产代码）──
+
+class _LiveEnvF64:
+    def __init__(self):
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        self._real = RealPropsimF64Driver(
+            "channelEmulator", {"ip": "127.0.0.1", "port": 3334}
+        )
+
+    def capture_evidence_environment(self):
+        return InstrumentEnvironment(
+            instrument_id="channelEmulator",
+            instrument="f64",
+            model="PROPSIM F64",
+            firmware_version="2.0",
+            captured_from_live_connection=True,
+        )
+
+    def build_p0_5_command_evidence(self, **kwargs):
+        from app.hal.scpi_evidence import build_f64_evidence, scope_for_evidence
+        scope = scope_for_evidence(
+            kwargs["evidence_key"], self.capture_evidence_environment()
+        )
+        return build_f64_evidence(scope=scope, **kwargs)
+
+
+def _wire_window(execution, *, load_file, with_state=True, with_model_state=True):
+    """ASC/B2 加载事务的 wire 形态：drain → FILE → OPC → ERR → 探针×2。"""
+    rows = [("pre", "SYST:ERR?", "query", "response", '0,"No error"'),
+            ("file", f"CALC:FILT:FILE {load_file}", "command", "ok", None),
+            ("opc", "*OPC?", "query", "response", "1"),
+            ("err", "SYST:ERR?", "query", "response", '0,"No error"')]
+    if with_model_state:
+        rows.append(("model-state", "DIAG:SIMU:MODEL:STATE?", "query",
+                     "response", "model=loaded"))
+    if with_state:
+        rows.append(("state", "DIAG:SIMU:STATE?", "query", "response", "STOPPED"))
+    return [ScpiExchangeRef(exchange_id=eid, instrument_id="channelEmulator",
+                            operation=op, command=cmd,
+                            execution_id=str(execution.id), capture_id="p2-29",
+                            sequence=i, result_type=rt, response=resp)
+            for i, (eid, cmd, op, rt, resp) in enumerate(rows)]
+
+
+@pytest.mark.parametrize("load_file", [
+    # 内审 F1：wire operand 是驱动构造的**远端路径**（FTP 目录 + 反斜杠），
+    # 不是 TestCase 里的裸文件名 —— 门必须按真实形态构造，
+    # 上一版 requested 和 operand 传同一个变量，自洽掩盖了两端不同源。
+    r"UserData\asc_runtime_20260821\runtime_emulation.smu",   # ASC
+    r"UserData\b2_payload\b2_parametric_tdl.smu",             # B-2
+])
+def test_asc_b2_wire_window_reaches_applied(db, load_file):
+    """ASC/B2 的完整加载事务经真 builder 到 APPLIED。
+    requested 必须来自驱动真值（= 发进 CALC:FILT:FILE 的那个串），
+    不是 config 的意图值 —— 后者在 ASC/B2 下常为 None/裸名，会谎报 rejected。"""
+    execution = _execution(db)
+    # 意图值先注册（加载前的 fail-closed 声明）——
+    register_required_scpi_evidence(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested=None,
+        required_evidence_level=EvidenceLevel.APPLIED)
+    # —— 加载成功后按 measure.py 的新契约：用驱动真值幂等更新再归档
+    register_required_scpi_evidence(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested=load_file,
+        required_evidence_level=EvidenceLevel.APPLIED)
+    record_f64_command_capture(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested=load_file,
+        driver=_LiveEnvF64(), exchanges=_wire_window(execution, load_file=load_file))
+    summary = finalize_execution_scpi_evidence(execution)
+    item = summary.items[0]
+    assert item.evidence_level == EvidenceLevel.APPLIED, item.reason
+    assert item.verdict == EvidenceVerdict.PASSED, item.reason
+    assert summary.formal_acceptance is True
+
+
+def test_missing_state_probe_stays_below_applied(db):
+    """fail-closed 回归：少 STATE? 探针就到不了 APPLIED —— 这正是改动前
+    ASC/B2 的处境，也是「探针行被删」时兜底的行为门。"""
+    execution = _execution(db)
+    register_required_scpi_evidence(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested="runtime_emulation.smu",
+        required_evidence_level=EvidenceLevel.APPLIED)
+    record_f64_command_capture(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested="runtime_emulation.smu",
+        driver=_LiveEnvF64(),
+        exchanges=_wire_window(execution, load_file="runtime_emulation.smu",
+                               with_state=False))
+    summary = finalize_execution_scpi_evidence(execution)
+    assert summary.items[0].evidence_level != EvidenceLevel.APPLIED
+    assert summary.formal_acceptance is False
+
+
+# ── 源码门：探针位置与归档条件（让「删一行/改回 GCM-only」当场红）──
+
+def _branch(src: str, anchor: str) -> str:
+    """取成功分支：从 anchor 到它后面第一个 _readback_topology() 调用。"""
+    i = src.index(anchor)
+    j = src.index("await self._readback_topology()", i)
+    return src[i:j]
+
+
+def test_asc_and_b2_success_branches_carry_both_probes():
+    """ASC 与 B2 成功分支必须在拓扑回读前带两条证据探针（与 GCM preflight 对称）。
+    让它红的改法：删掉任一 `_query_model_state_for_evidence` / `_query_simulation_state`。"""
+    src = _HAL.read_text(encoding="utf-8")
+    for anchor in ("self._active_pipeline = F64Pipeline.ASC_RUNTIME",
+                   "self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL"):
+        seg = _branch(src, anchor)
+        for probe in ("_query_model_state_for_evidence()",
+                      "_query_simulation_state()"):
+            assert probe in seg, (
+                f"{anchor.split('.')[-1]} 分支缺 {probe} —— 证据窗口拼不齐，"
+                "该管线的 f64.model_loaded 永远到不了 APPLIED")
+
+
+def test_intent_requested_mismatching_wire_is_not_passed(db):
+    """防错配保护不许被放宽（内审 F1 的反向门）：requested 与 wire operand
+    不一致（正是改动前 ASC/B2 的病）→ 绝不能 PASSED。GCM「选 A 加载了 B」
+    靠的就是这道比对。"""
+    execution = _execution(db)
+    register_required_scpi_evidence(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested="intent.smu",
+        required_evidence_level=EvidenceLevel.APPLIED)
+    record_f64_command_capture(
+        execution, requirement_id="f64.model_loaded",
+        evidence_key="f64.model_load", requested="intent.smu",
+        driver=_LiveEnvF64(),
+        exchanges=_wire_window(
+            execution, load_file=r"UserData\other\actually_loaded.smu"))
+    summary = finalize_execution_scpi_evidence(execution)
+    assert summary.items[0].verdict != EvidenceVerdict.PASSED
+    assert summary.formal_acceptance is False
+
+
+def test_requested_resolver_prefers_driver_truth():
+    """行为门（直接调生产函数，注释喂不饱它）：加载成功取驱动真值，
+    失败/缺真值保持意图值。上一版是存在性门 —— 注释里的 token 就能让它绿，
+    两条变异实跑全被绕过，故换行为档。"""
+    from app.services.mimo_ota.executors.measure import resolve_model_load_requested
+
+    class _E:
+        _loaded_emulation_file = "UserData\\asc\\runtime_emulation.smu"
+
+    class _ENone:
+        _loaded_emulation_file = None
+
+    assert (resolve_model_load_requested(_E(), True, "intent.smu")
+            == _E._loaded_emulation_file)
+    assert resolve_model_load_requested(_E(), False, "intent.smu") == "intent.smu"
+    assert resolve_model_load_requested(_ENone(), True, "intent.smu") == "intent.smu"
+    assert resolve_model_load_requested(object(), True, None) is None
+
+
+def test_measure_wires_resolver_and_reregisters():
+    """结构门（正则锚代码形态，token 藏进注释 / 挂 if False 都过不去）。
+    让它红的改法：requested 改回直传 / re-register 条件改假。"""
+    import re
+    src = _MEASURE.read_text(encoding="utf-8")
+    i = src.index('requirement_id="f64.model_loaded"')
+    j = src.index("record_f64_command_capture(", i)
+    gate = src[i:j]
+    assert re.search(
+        r"_model_load_requested = resolve_model_load_requested\(", gate), (
+        "归档的 requested 没走 resolver —— ASC/B2 会谎报 requested_command_mismatch")
+    assert re.search(
+        r"if gen_ok and _model_load_requested != resolved_emulation_file:"
+        r"[\s\S]{0,240}?register_required_scpi_evidence\(", gate), (
+        "真值≠意图时没有幂等更新 requirement —— finalize 判 mandatory_requested_mismatch")
+    k = src.index("record_f64_command_capture(", i)
+    call = src[k:k + 600].split("driver=")[0]
+    assert "requested=_model_load_requested" in call, (
+        "record 的 requested 又改回了别的来源")
+
+
+def test_probe_order_matches_recipe():
+    """内审 F2：探针顺序也钉住 —— 真实执行下 model_state 必须先于
+    simulation_state（exchange_stage_order 判定），交换顺序会掉 UNKNOWN。"""
+    src = _HAL.read_text(encoding="utf-8")
+    for anchor in ("self._active_pipeline = F64Pipeline.ASC_RUNTIME",
+                   "self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL"):
+        seg = _branch(src, anchor)
+        assert seg.index("_query_model_state_for_evidence()") < seg.index(
+            "_query_simulation_state()"), (
+            f"{anchor.split('.')[-1]} 分支探针顺序反了 —— 证据会判 "
+            "exchange_stage_order_mismatch 掉 UNKNOWN")
+
+
+def test_measure_record_hook_not_gated_on_engine_mode():
+    """归档条件必须按驱动能力判，不按管线枚举 —— 三管线同一 FILE 事务。
+    让它红的改法：把条件改回 `engine_mode == EngineMode.GCM_NATIVE and ...`。"""
+    src = _MEASURE.read_text(encoding="utf-8")
+    # 锚在 f64.model_loaded 首次注册点到首个归档调用之间的整段（窗口按语义取，
+    # 不按固定字节数 —— 上一版 600 字回看被后插的代码顶出去过一次）
+    i = src.index('requirement_id="f64.model_loaded"')
+    j = src.index("record_f64_command_capture(", i)
+    gate = src[i:j]
+    assert 'hasattr(emulator, "build_p0_5_command_evidence")' in gate
+    assert not re.search(r"engine_mode\s*==\s*EngineMode\.GCM_NATIVE\s*\n?\s*and\s*hasattr",
+                         gate), "归档 hook 又被锁回 GCM-only —— ASC/B2 抓了交换不落证"

@@ -306,6 +306,19 @@ def _validate_port_preset(
     return None
 
 
+
+def resolve_model_load_requested(emulator, gen_ok: bool, intent):
+    """f64.model_loaded 归档用的 requested 真值（P2-29，内审 F1）。
+
+    加载成功 → 驱动真值 `_loaded_emulation_file`（= 发进 CALC:FILT:FILE 的串，
+    ASC/B2 是驱动构造的远端路径，config 意图值与之必然不等，直传会把成功的
+    加载谎报成 rejected）。加载失败/读不到 → 保持意图值，fail-closed。
+    """
+    loaded = getattr(emulator, "_loaded_emulation_file", None) if gen_ok else None
+    return loaded if loaded else intent
+
+
+
 @register_executor(MIMOOTAStepType.MEASURE.value)
 class MeasureExecutor(IStepExecutor):
     """Drive the chamber + base station through the azimuth grid, collect KPIs."""
@@ -1029,9 +1042,10 @@ class MeasureExecutor(IStepExecutor):
                         f"改用 MIMO-First ASC 引擎, 或清空自定义 CDL 选择。"
                     ),
                 )
-            # 三种信道管线都必须证明 F64 已加载本次模型。当前正式 recipe 只对
-            # GCM 的 FILE 路径完成绑定；ASC/B2 先保留 missing/unknown，不能因
-            # 分支不同而从 mandatory 集合消失后假绿。
+            # 三种信道管线都必须证明 F64 已加载本次模型。P2-29 起三管线统一
+            # 归档：加载走同一条 CALC:FILT:FILE 事务（手册确认判成功流程与状态机
+            # 均与文件来源无关，AN §2.2.2/§2.1 + UR §20.4.3.14），驱动侧三路
+            # 都带 MODEL:STATE?/STATE? 探针，recipe 原样复用、零新目录条目。
             register_required_scpi_evidence(
                 context.test_execution,
                 requirement_id="f64.model_loaded",
@@ -1042,16 +1056,37 @@ class MeasureExecutor(IStepExecutor):
             context.db.commit()
             with capture_scpi_exchanges() as channel_load_exchanges:
                 gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
-            if (
-                engine_mode == EngineMode.GCM_NATIVE
-                and hasattr(emulator, "build_p0_5_command_evidence")
-            ):
+            # P2-29: 归档条件按驱动能力判（有 build 能力 = F64 语义驱动），
+            # 不按管线枚举 —— 用 engine_mode 当判据曾把 ASC/B2 锁在 unknown。
+            if hasattr(emulator, "build_p0_5_command_evidence"):
                 try:
+                    # requested 换判据来源（内审 F1）：ASC/B2 下 config.emulation_file
+                    # 常为 None/被忽略，而 wire operand 是驱动内部构造的远端路径
+                    # （FTP 目录 + 反斜杠），两端必然不等 → builder 会把成功的加载
+                    # 谎报成 rejected（requested_command_mismatch）。加载成功后取
+                    # **驱动真值** `_loaded_emulation_file`（它就是发进 CALC:FILT:FILE
+                    # 的那个串），register 幂等更新后再归档 —— GCM 两端本就同源，
+                    # 行为不变；「选 A 实际加载 B」的防错配仍由 builder 对比
+                    # requested vs wire 保住（真值若与 wire 脱钩照样抓）。
+                    # 加载失败/读不到真值 → 保持意图值，fail-closed 不变。
+                    _model_load_requested = resolve_model_load_requested(
+                        emulator, gen_ok, resolved_emulation_file
+                    )
+                    # 真值与意图不同（ASC/B2 的常态）才需要幂等更新 requirement；
+                    # GCM 两端同源、register 里已是同值，跳过等价。
+                    if gen_ok and _model_load_requested != resolved_emulation_file:
+                        register_required_scpi_evidence(
+                            context.test_execution,
+                            requirement_id="f64.model_loaded",
+                            evidence_key="f64.model_load",
+                            requested=_model_load_requested,
+                            required_evidence_level=EvidenceLevel.APPLIED,
+                        )
                     record_f64_command_capture(
                         context.test_execution,
                         requirement_id="f64.model_loaded",
                         evidence_key="f64.model_load",
-                        requested=resolved_emulation_file,
+                        requested=_model_load_requested,
                         driver=emulator,
                         exchanges=channel_load_exchanges,
                     )

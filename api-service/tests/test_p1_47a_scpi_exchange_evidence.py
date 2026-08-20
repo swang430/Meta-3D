@@ -779,24 +779,26 @@ async def test_aerotech_cancelled_and_timeout_leave_terminal_evidence(scpi_captu
 async def test_aerotech_reconnect_cancel_closes_half_initialized_transport(
     monkeypatch,
 ):
+    # P2-29 顺带修（chore）：ef33d00 (P1-56) 把 _silent_reconnect 改成只重开
+    # TCP、不再发 ACK/ENABLE 握手（非幂等命令不许重放）——本测试原来把同步点
+    # 挂在被移除的 _tx_rx 握手上，entered 永不触发 → **确定性挂死整个套件**
+    # （单跑/合跑/全量一律卡在 84%，CPU 0%）。按现契约重写：可取消的等待点
+    # 只剩 open_connection；取消必须向上冒泡，旧坏 writer 已在重连前关闭、
+    # reader/writer 保持 None（不留半初始化传输）。
     entered = asyncio.Event()
-    writer = _Writer()
-    writer.closed = False
-    writer.close = lambda: setattr(writer, "closed", True)
+    stale_writer = _Writer()
+    stale_writer.closed = False
+    stale_writer.close = lambda: setattr(stale_writer, "closed", True)
     driver = _aerotech(_Reader())
-    driver._reader = None
-    driver._writer = None
+    driver._reader = _Reader()
+    driver._writer = stale_writer
 
-    async def fake_open_connection(_host, _port):
-        return _Reader(), writer
-
-    async def blocked_handshake(_cmd):
+    async def blocked_open_connection(_host, _port):
         entered.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+    monkeypatch.setattr(asyncio, "open_connection", blocked_open_connection)
     monkeypatch.setattr(driver, "_enable_tcp_keepalive", lambda _writer: None)
-    monkeypatch.setattr(driver, "_tx_rx", blocked_handshake)
 
     task = asyncio.create_task(driver._silent_reconnect())
     await entered.wait()
@@ -804,7 +806,8 @@ async def test_aerotech_reconnect_cancel_closes_half_initialized_transport(
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert writer.closed is True
+    # 旧坏传输在重连动身前就该关掉；取消后不得留下半初始化的新传输。
+    assert stale_writer.closed is True
     assert driver._reader is None
     assert driver._writer is None
 

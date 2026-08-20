@@ -4029,6 +4029,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。
 
+- `[discovered 2026-08-21 during P2-29 全量回归]` **全量测试自 2026-08-18 起在本机挂死 + 一条遗留顺序失败（P2，两件事）** —— ① `ef33d00`（P1-56）移除 Aerotech 静默重连的握手后，P1-47A 的 `test_aerotech_reconnect_cancel_closes_half_initialized_transport` 把同步点挂在被移除的 `_tx_rx` 上 → **确定性死锁**（单跑/合跑/全量一律卡 84%，CPU 0%）——即 08-18 后没有任何人真正跑完过全量；**已在 P2-29 分支按现契约重写该测试（顺带修，`538e51b`）**。② 修活之后暴露：全量里 `test_p1_36_execution_id::test_no_execution_means_default_not_empty` 失败 —— `current_execution_id` 上下文变量被按字母序更早的文件（commissioning 端点测试，`api/commissioning.py:539` 的 `set`）泄漏，「无关日志行应为 `-`」被标上别人的 execution UUID；**main 基线复现同一条失败**（跳过死锁测试后 1 failed / 4059 passed），与 P2-29 无关。47C 的 `_execution` 帮手同样 set 后不还原（P2-29 的测试文件已自净，`af77111` 的 fixture 可直接抄）。修法待 triage：给泄漏源补 token reset，或做成全套件 autouse 隔离 fixture；顺手可加一道「测试文件不得裸 set 该变量不还原」的门。
+
 ---
 
 ## 📊 Summary
