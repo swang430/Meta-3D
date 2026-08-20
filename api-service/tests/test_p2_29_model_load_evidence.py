@@ -229,7 +229,7 @@ def test_measure_wires_resolver_and_reregisters():
         "record 的 requested 又改回了别的来源")
 
 
-def test_probe_order_matches_recipe(db=None):
+def test_probe_order_matches_recipe():
     """内审 F2：探针顺序也钉住 —— 真实执行下 model_state 必须先于
     simulation_state（exchange_stage_order 判定），交换顺序会掉 UNKNOWN。"""
     src = _HAL.read_text(encoding="utf-8")
