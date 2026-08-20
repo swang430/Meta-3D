@@ -26,21 +26,15 @@ import {
     fetchChamberCalibration,
 } from '../api/service'
 import { CreateChamberForm } from './CreateChamberForm'
-import type { LabProfileSummary } from '../api/labProfileService'
+import { useOperationalLab } from '../features/OperationalLab'
 
 type ChamberConfigCardProps = {
     onNavigate?: (section: string) => void
-    labProfiles: LabProfileSummary[]
-    selectedLabProfileId?: string
-    onLabProfileChange: (labProfileId: string | null) => void
 }
 
-export function ChamberConfigCard({
-    onNavigate,
-    labProfiles,
-    selectedLabProfileId,
-    onLabProfileChange,
-}: ChamberConfigCardProps) {
+export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
+    // P1-57：LabProfile 由全局上下文提供（header 唯一选择器），本卡只读。
+    const { selectedLabProfileId, selectedLabProfile, chamberName } = useOperationalLab()
     const queryClient = useQueryClient()
     const [createModalOpen, setCreateModalOpen] = useState(false)
     const [selectedPreset, _setSelectedPreset] = useState<string>('type_a')
@@ -62,7 +56,7 @@ export function ChamberConfigCard({
         error: activeChamberError,
     } = useQuery({
         queryKey: ['chamber', 'active', selectedLabProfileId],
-        queryFn: () => fetchActiveChamber(selectedLabProfileId),
+        queryFn: () => fetchActiveChamber(selectedLabProfileId ?? undefined),
         enabled: !!selectedLabProfileId,
         retry: 1,
     })
@@ -80,7 +74,7 @@ export function ChamberConfigCard({
     // invalidateQueries(['chambers']) 按前缀仍能命中 ['chambers','all']。
     const { data: chambersData } = useQuery({
         queryKey: ['chambers', 'all', selectedLabProfileId],
-        queryFn: () => fetchAllChamberConfigurations(selectedLabProfileId),
+        queryFn: () => fetchAllChamberConfigurations(selectedLabProfileId ?? undefined),
     })
 
     // 获取预设模板
@@ -107,6 +101,10 @@ export function ChamberConfigCard({
             queryClient.setQueryData(['chamber', 'active', labProfileId], newChamber)
             queryClient.invalidateQueries({ queryKey: ['chamber', 'active', labProfileId] })
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
+            // P1-57：chamber 绑定变了 = 全局上下文的派生暗室变了 ——
+            // 刷新 lab-profiles 前缀（含 header 选择器用的 operational-context 键），
+            // 否则顶部还显示旧暗室名。
+            queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
         },
     })
 
@@ -315,19 +313,18 @@ export function ChamberConfigCard({
                         </Group>
                     </Group>
 
-                    <Select
-                        label="LabProfile"
-                        description="当前暗室属于所选 LabProfile；多个活动实验室时必须明确选择"
-                        placeholder="选择 LabProfile"
-                        data={labProfiles.map((lab) => ({ value: lab.id, label: lab.name }))}
-                        value={selectedLabProfileId ?? null}
-                        onChange={onLabProfileChange}
-                        disabled={labProfiles.length <= 1}
-                    />
+                    {/* P1-57：LabProfile 只在 header 全局选择器切换，本卡只读展示 */}
+                    {selectedLabProfile && (
+                        <Alert color="blue" variant="light">
+                            当前：{selectedLabProfile.name}
+                            {chamberName ? ` / ${chamberName}` : '（未绑定暗室）'}
+                            —— 切换 LabProfile 请使用顶部选择器。
+                        </Alert>
+                    )}
 
                     {!selectedLabProfileId && (
-                        <Alert color="yellow" title="请选择 LabProfile">
-                            当前有多个活动 LabProfile，未选择前不能读取或切换“当前暗室”。
+                        <Alert color="yellow" title="请选择当前 LabProfile">
+                            请在顶部选择当前 LabProfile，未选择前不能读取或切换“当前暗室”。
                         </Alert>
                     )}
 

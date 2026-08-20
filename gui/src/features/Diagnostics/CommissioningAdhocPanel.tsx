@@ -12,6 +12,7 @@
  * regular commissioning sessions list.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { useOperationalLab } from '../OperationalLab'
 import {
   Stack,
   Paper,
@@ -42,8 +43,6 @@ import {
 import { notifications } from '@mantine/notifications'
 
 import {
-  fetchLabProfiles,
-  type LabProfileSummary,
 } from '../../api/labProfileService'
 import {
   fetchHALTraceTail,
@@ -81,9 +80,9 @@ const PHASE_OVERRIDE_TEMPLATES: Record<CommissioningPhaseName, string> = {
 }
 
 export function CommissioningAdhocPanel() {
-  const [labs, setLabs] = useState<LabProfileSummary[]>([])
-  const [labsLoading, setLabsLoading] = useState(true)
-  const [selectedLabId, setSelectedLabId] = useState<string>('')
+  // P1-57：LabProfile 由全局上下文提供，本面板只读（header 唯一选择器）。
+  const { selectedLabProfileId, selectedLabProfile, chamberName, loading: labsLoading } = useOperationalLab()
+  const selectedLabId = selectedLabProfileId ?? ''
 
   const [phase, setPhase] = useState<CommissioningPhaseName>('precheck')
   const [phaseOverridesText, setPhaseOverridesText] = useState<string>(
@@ -98,19 +97,6 @@ export function CommissioningAdhocPanel() {
 
   const [trace, setTrace] = useState<HALTraceTailResponse | null>(null)
   const [traceLoading, setTraceLoading] = useState(false)
-
-  useEffect(() => {
-    setLabsLoading(true)
-    fetchLabProfiles()
-      .then((data) => {
-        setLabs(data)
-        if (data.length > 0) setSelectedLabId(data[0].id)
-      })
-      .catch(() => {
-        /* best-effort; SequenceRunnerPanel covers the same notif */
-      })
-      .finally(() => setLabsLoading(false))
-  }, [])
 
   useEffect(() => {
     setPhaseOverridesText(PHASE_OVERRIDE_TEMPLATES[phase])
@@ -228,16 +214,13 @@ export function CommissioningAdhocPanel() {
               {labsLoading ? (
                 <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">加载...</Text></Group>
               ) : (
-                <Select
+                <TextInput
                   label="LabProfile"
-                  data={labs.map((l) => ({
-                    value: l.id,
-                    label: l.chamber_name ? `${l.name} — ${l.chamber_name}` : l.name,
-                  }))}
-                  value={selectedLabId || null}
-                  onChange={(v) => v && setSelectedLabId(v)}
-                  required
-                  allowDeselect={false}
+                  description="来自顶部全局选择器"
+                  value={selectedLabProfile
+                    ? (chamberName ? `${selectedLabProfile.name} — ${chamberName}` : selectedLabProfile.name)
+                    : '未选择'}
+                  readOnly
                 />
               )}
               <Select

@@ -10,6 +10,7 @@
  * diagnostic_runs but never as TestExecution / cert.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useOperationalLab } from '../OperationalLab'
 import {
   Stack,
   Paper,
@@ -43,8 +44,6 @@ import {
 import { notifications } from '@mantine/notifications'
 
 import {
-  fetchLabProfiles,
-  type LabProfileSummary,
 } from '../../api/labProfileService'
 import {
   listDiagnosticSequences,
@@ -125,9 +124,10 @@ function SequenceEvidenceResult({
 }
 
 export function SequenceRunnerPanel() {
-  const [labs, setLabs] = useState<LabProfileSummary[]>([])
-  const [labsLoading, setLabsLoading] = useState(true)
-  const [selectedLabId, setSelectedLabId] = useState<string>('')
+  // P1-57：LabProfile 由全局上下文提供，本面板只读。序列一律带全局
+  // lab_profile_id —— 直连 IP 类序列会忽略它，带上无害。
+  const { selectedLabProfileId, selectedLabProfile, chamberName, loading: labsLoading } = useOperationalLab()
+  const selectedLabId = selectedLabProfileId ?? ''
 
   const [sequences, setSequences] = useState<DiagnosticSequenceMetadata[]>([])
   const [seqLoading, setSeqLoading] = useState(true)
@@ -154,23 +154,8 @@ export function SequenceRunnerPanel() {
     [sequences, selectedKey],
   )
 
-  // Initial load: labs + sequences in parallel.
+  // Initial load: sequences (labs 来自全局上下文，不再自拉)。
   useEffect(() => {
-    setLabsLoading(true)
-    fetchLabProfiles()
-      .then((data) => {
-        setLabs(data)
-        if (data.length > 0) setSelectedLabId(data[0].id)
-      })
-      .catch((e: unknown) => {
-        notifications.show({
-          title: '加载 LabProfile 失败',
-          message: (e as Error)?.message || String(e),
-          color: 'red',
-        })
-      })
-      .finally(() => setLabsLoading(false))
-
     setSeqLoading(true)
     listDiagnosticSequences()
       .then((data) => {
@@ -369,17 +354,13 @@ export function SequenceRunnerPanel() {
                 <Text size="sm" c="dimmed">加载 LabProfile...</Text>
               </Group>
             ) : (
-              <Select
+              <TextInput
                 label="LabProfile"
-                description="多数序列需要绑定 lab 才能找到仪器 endpoint; 直连 IP 类可留空"
-                data={labs.map((l) => ({
-                  value: l.id,
-                  label: l.chamber_name ? `${l.name} — ${l.chamber_name}` : l.name,
-                }))}
-                value={selectedLabId || null}
-                onChange={(v) => setSelectedLabId(v || '')}
-                placeholder="选择 LabProfile..."
-                clearable
+                description="来自顶部全局选择器；序列按它解析仪器 endpoint"
+                value={selectedLabProfile
+                  ? (chamberName ? `${selectedLabProfile.name} — ${chamberName}` : selectedLabProfile.name)
+                  : '未选择'}
+                readOnly
               />
             )}
             {seqLoading ? (

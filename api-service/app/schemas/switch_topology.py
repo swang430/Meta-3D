@@ -65,6 +65,8 @@ class SwitchTopologyBase(BaseModel):
 class SwitchTopologyCreate(SwitchTopologyBase):
     switch_category_id: UUID
     chamber_id: Optional[UUID] = None
+    # P1-57：请求真值。暗室由它派生；chamber_id 只是兼容期一致性断言输入。
+    lab_profile_id: UUID
 
 
 class SwitchTopologyUpdate(BaseModel):

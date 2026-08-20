@@ -34,7 +34,8 @@ def generate_topology_record() -> dict:
     """Returns kwargs ready for SwitchTopology(**record)."""
 ```
 
-The API endpoint `POST /switch-topologies/import/from-template?template_id=<filename>`
+The API endpoint `POST /switch-topologies/import/from-template?switch_category_id=<uuid>&lab_profile_id=<uuid>&template_id=<filename>`
+(P1-57 起 `lab_profile_id` 必填 —— 目标暗室由 LabProfile 派生，不再接受裸 `chamber_id`；重导入加 `replace_existing=true`)
 loads these via `importlib.util.spec_from_file_location` at runtime, so:
 
 - Commercial deploys that don't ship `scripts/dev-fixtures/` see

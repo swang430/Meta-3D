@@ -18,7 +18,7 @@ import {
   generateThreeRingProbeArray
 } from '../../services/channelEngine'
 import { fetchActiveChamber } from '../../api/service'
-import { fetchLabProfiles } from '../../api/labProfileService'
+import { useOperationalLab } from '../../features/OperationalLab'
 import { dbProbesToProbeArrayConfig, validateProbeInChamber } from '../../utils/probeConverter'
 
 // 前端直接请求探头数据（按 chamber_id 过滤）
@@ -41,21 +41,8 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
     chamberId: string
   } | null>(null)
   const [loadingFromDB, setLoadingFromDB] = useState(false)
-  const { data: activeLabProfiles = [] } = useQuery({
-    queryKey: ['lab-profiles'],
-    queryFn: () => fetchLabProfiles(true),
-  })
-  const [selectedLabProfileId, setSelectedLabProfileId] = useState<string>()
-  useEffect(() => {
-    if (activeLabProfiles.length === 1) {
-      setSelectedLabProfileId(activeLabProfiles[0].id)
-    } else if (
-      selectedLabProfileId
-      && !activeLabProfiles.some((lab) => lab.id === selectedLabProfileId)
-    ) {
-      setSelectedLabProfileId(undefined)
-    }
-  }, [activeLabProfiles, selectedLabProfileId])
+  // P1-57：LabProfile 由全局上下文提供（header 唯一选择器），本组件只读。
+  const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
 
   // 获取所选 LabProfile 绑定的当前暗室
   const {
@@ -64,7 +51,7 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
     isError: isActiveChamberError,
   } = useQuery({
     queryKey: ['chamber', 'active', selectedLabProfileId],
-    queryFn: () => fetchActiveChamber(selectedLabProfileId),
+    queryFn: () => fetchActiveChamber(selectedLabProfileId ?? undefined),
     enabled: !!selectedLabProfileId,
     retry: 1,
   })
@@ -253,19 +240,16 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
     <Stack gap="md">
       <Title order={4}>2. 探头阵列配置</Title>
 
-      <Select
-        label="LabProfile"
-        description="实际探头配置从所选实验室绑定的暗室加载"
-        placeholder="选择 LabProfile"
-        data={activeLabProfiles.map((lab) => ({ value: lab.id, label: lab.name }))}
-        value={selectedLabProfileId ?? null}
-        onChange={(id) => setSelectedLabProfileId(id ?? undefined)}
-        disabled={activeLabProfiles.length <= 1}
-      />
+      {/* P1-57：LabProfile 只在 header 全局选择器切换，这里只读展示 */}
+      {selectedLabProfile && (
+        <Text size="sm" c="dimmed">
+          当前 LabProfile：<strong>{selectedLabProfile.name}</strong> —— 探头配置从它绑定的暗室加载
+        </Text>
+      )}
 
-      {!selectedLabProfileId && activeLabProfiles.length > 1 && (
-        <Alert color="yellow" title="请选择 LabProfile">
-          多个活动 LabProfile 不能共用一个隐式“当前暗室”。
+      {!selectedLabProfileId && (
+        <Alert color="yellow" title="请选择当前 LabProfile">
+          请在顶部选择当前 LabProfile —— 多个活动实验室不能共用一个隐式“当前暗室”。
         </Alert>
       )}
 

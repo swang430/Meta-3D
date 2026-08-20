@@ -13,6 +13,7 @@
  * etc.) so failures are visible *before* the backend job starts.
  */
 import { useEffect, useState } from 'react'
+import { useOperationalLab } from '../../OperationalLab'
 import {
   Stack,
   Paper,
@@ -43,10 +44,8 @@ import {
 import { notifications } from '@mantine/notifications'
 
 import {
-  fetchLabProfiles,
   fetchRFChains,
   startPathLossCalibrationForLab,
-  type LabProfileSummary,
   type RFChainResolutionResponse,
 } from '../../../api/labProfileService'
 import { logFrontendEvent } from '../../../observability/frontendLogger'
@@ -59,11 +58,13 @@ const OPERATING_MODE_OPTIONS = [
 ]
 
 export function RFChainDiagramPanel() {
-  const [labs, setLabs] = useState<LabProfileSummary[]>([])
-  const [labsLoading, setLabsLoading] = useState(true)
-  const [labsError, setLabsError] = useState<string | null>(null)
-
-  const [selectedLabId, setSelectedLabId] = useState<string>('')
+  // P1-57：LabProfile 由全局上下文提供，本面板只读 ——
+  // 原来这里「拉到列表就自动选第一项」正是禁掉的猜测行为。
+  const { selectedLabProfileId, selectedLabProfile, chamberName, loading: labsLoading, error: labsError } = useOperationalLab()
+  const selectedLabId = selectedLabProfileId ?? ''
+  // 「重新解析」用单调计数器触发（不是清空再设回 —— latch 布尔/状态抖动那套
+  // 在全局上下文下也没有 setter 可用）。
+  const [resolveAttempt, setResolveAttempt] = useState(0)
   const [operatingMode, setOperatingMode] = useState<string>('mimo_ota')
 
   const [resolution, setResolution] = useState<RFChainResolutionResponse | null>(null)
@@ -76,20 +77,6 @@ export function RFChainDiagramPanel() {
   const [sghGainDbi, setSghGainDbi] = useState<number>(10)
   const [calibratedBy, setCalibratedBy] = useState<string>('')
   const [starting, setStarting] = useState(false)
-
-  useEffect(() => {
-    setLabsLoading(true)
-    fetchLabProfiles()
-      .then((data) => {
-        setLabs(data)
-        if (data.length > 0 && !selectedLabId) {
-          setSelectedLabId(data[0].id)
-        }
-      })
-      .catch((e) => setLabsError((e as Error)?.message || '加载 LabProfile 失败'))
-      .finally(() => setLabsLoading(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // Auto-resolve whenever (lab, mode) changes — feedback should be live.
   useEffect(() => {
@@ -109,7 +96,7 @@ export function RFChainDiagramPanel() {
         setResolution(null)
       })
       .finally(() => setResolving(false))
-  }, [selectedLabId, operatingMode])
+  }, [selectedLabId, operatingMode, resolveAttempt])
 
   const handleStart = async () => {
     if (!selectedLabId || !calibratedBy) return
@@ -196,18 +183,13 @@ export function RFChainDiagramPanel() {
                 <Text size="sm" c="dimmed">加载 LabProfile...</Text>
               </Group>
             ) : (
-              <Select
+              <TextInput
                 label="LabProfile"
-                description="生产部署中由运维一次性配好 (chamber + 仪表绑定 + active cert)"
-                data={labs.map((l) => ({
-                  value: l.id,
-                  label: l.chamber_name ? `${l.name} — ${l.chamber_name}` : l.name,
-                }))}
-                value={selectedLabId || null}
-                onChange={(v) => v && setSelectedLabId(v)}
-                placeholder="选择 LabProfile..."
-                required
-                allowDeselect={false}
+                description="来自顶部全局选择器"
+                value={selectedLabProfile
+                  ? (chamberName ? `${selectedLabProfile.name} — ${chamberName}` : selectedLabProfile.name)
+                  : '未选择'}
+                readOnly
               />
             )}
             <Select
@@ -251,12 +233,7 @@ export function RFChainDiagramPanel() {
               variant="subtle"
               size="xs"
               leftSection={<IconRefresh size={14} />}
-              onClick={() => {
-                // Force a refetch by re-applying the same selection.
-                const cur = selectedLabId
-                setSelectedLabId('')
-                setTimeout(() => setSelectedLabId(cur), 0)
-              }}
+              onClick={() => setResolveAttempt((n) => n + 1)}
               disabled={resolving}
             >
               重新解析

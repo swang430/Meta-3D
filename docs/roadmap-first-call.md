@@ -18,7 +18,11 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = 暂停（P2-28 已由 PR #352 完成，WIP=0；P2-29 等待用户明确继续）**。P2-28 已采用结构化 `sequence_evidence` 方案：与审计行同生命周期保存版本、`summary/log/steps.raw/extra/duration`，列表仍只给 2KB 摘要，详情按 id 读取，GUI 最近运行可重新打开；旧行明确为完整证据不可用且只展示原摘要，不从摘要猜测 raw，也不依赖会轮转的日志指针。相关后端与完整 rule gates 223 passed、GUI 契约 3 passed、production build、compileall、单一 Alembic head 与 diff-check 通过；fresh 内审 P1/P2/P3=0；Codex R1/R2 分别覆盖 `e48d44f`/`dca063d` 且均无重大问题。按用户要求，P2-28 合并后暂停，不自动创建 P2-29 分支。设计与计划见 [`P2-28 设计`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence-design.md) / [`P2-28 计划`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence.md)。P1-55
+**Current Focus = P2-29「ASC/B2 正式模型加载证据 hook」（2026-08-20 用户指示继续，设计中）**。
+
+> **~~P1-57~~ ✅ 2026-08-20 由 PR #353 完成**（全局 LabProfile / 当前暗室上下文统一）。运行态唯一真值 = 全局显式 LabProfile → `chamber_config_id` → 暗室；顶部唯一选择器，拓扑/探头/首测/OTA Mapper/诊断/RF chain/校准页全部收编（校准页原来写死 **P1-28 已删除的孤儿暗室 id**，外审 R3 抓出）；topology API 按 `lab_profile_id` 走 `resolve_current_chamber()`；未保存拓扑与在途硬件工作（provider 级登记，页面卸载不消失）阻断切换。外审 R1 3P2 / R2 1P1+2P2 / R3 3P1 全修；R4 因 Codex 额度改由 Gemini 承担，无 P1 级发现（1 条 medium：模板导入无条件让位默认拓扑 —— 属 main 遗留、影响面今日为零，按 R2+ 规则只报告不修，记录在 PR 对话）。验证：后端相关 + 全部规则门 127 passed、GUI 契约 42 条、build、compileall、diff-check 全过；手工验收环境（worktree 服务 + 双 lab 场景说明）已交付用户，用户指示继续下一项。
+
+P2-28 已由 PR #352 完成并合并。P1-55
 已由 PR #349（merge `b6f631a`）完成顶层配置与 `component_carriers[0]` 真值源收敛；P1-54
 已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
@@ -40,7 +44,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
-P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**。
+P2-28 → ~~P1-57~~ ✅ → **P2-29**  → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**。
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
@@ -56,7 +60,8 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ✅ PR #350（本地半完成；R2 P1 尾修未获外审覆盖，fresh 内审 P1=0、相关回归通过）；物理现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ✅ PR #351 |
 | **P2-28** | 诊断序列完整证据持久化 | ✅ PR #352；R1/R2 均无重大问题 |
-| **P2-29** | ASC/B2 正式模型加载证据 hook | ⬜ |
+| **~~P1-57~~** | 全局 LabProfile / 当前暗室上下文统一；拓扑、探头与首测不得各自选暗室 | ✅ PR #353（R1–R3 全修；R4 Gemini 无 P1） |
+| **P2-29** | ASC/B2 正式模型加载证据 hook | 🔄 设计中（2026-08-20 开工） |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ⬜ |
 | **P2-31** | P2-18 剩余交付片：SMB 信道资产扫描 + EMQuest 表导入自动化 | ⬜ |
 | **P2-32** | QZ/方向图/多频 warning 的 real API、GUI、DB、报告闭环 | ⬜ |
@@ -306,7 +311,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → ~~P2-27~~ ✅ → ~~P2-28~~ ✅ → **P2-29 ⏸** → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-28 已由 PR #352 收口：相关后端与完整 rule gates 223 passed、GUI 契约 3 passed/build、compileall、单一 Alembic head、diff-check 通过，fresh 内审 P1/P2/P3=0，R1/R2 均无重大问题。当前 WIP=0；按用户要求暂停，不创建 P2-29 分支，等待明确继续。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → ~~P2-27~~ ✅ → ~~P2-28~~ ✅ → ~~P1-57~~ ✅ → **P2-29 🔄**  → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-57 已由 PR #353 完成（状态细节看顶部 Current Focus）；P2-29 于 2026-08-20 开工，当前 WIP=1。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4021,6 +4026,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
   ② **判据别取客户端能写的数据** —— 换成 `road_test_execution_id` 之后，判「新/旧」仍看 `content_data`，而 `POST /reports` 允许调用方塞任意 `content_data`：加一个 `pass_rate: null` 就能自称「已标注」绕过警示。真值源必须是服务端拥有的执行记录，不是报告创建者的自述。
   ③ **警示要挂在真正走得通的出口上** —— 试过三个出口，**一个都不通**：(a) `GET /reports/{id}` 的 JSON 字段 —— 归档报告在 GUI 里进不了 `ReportViewer`（`ReportsPage.tsx:93` 挂 `<ReportList />` 不传 `onView`，而「查看」按钮由 `{onView && ...}` 守着），照不到人；(b) `/download` 的响应头 —— 被前端 `downloadReport()` 的 `response.data` 当场丢掉；(c) 改成 409 拦下载 —— 文件是拦住了，但 axios `responseType:'blob'` 把错误体也变成 Blob，`ReportList.tsx` 只显示 `error.message`（"Request failed with status code 409"），**操作员看不到为什么**。
   **附带的独立缺陷（可单独做）**：GUI 缺「查看归档报告」入口（上面 ③a），从报告列表只能下载不能看。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
+
+- `[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。
 
 ---
 
