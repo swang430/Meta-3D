@@ -32,6 +32,18 @@ from tests.test_p1_47c_execution_scpi_evidence import (  # noqa: F401
     _execution,
     db,
 )
+from app.core.logging_config import current_execution_id
+
+
+@pytest.fixture(autouse=True)
+def _isolate_execution_contextvar():
+    """47C 的 _execution 帮手会 set current_execution_id 且从不还原 ——
+    泄漏会把后续无关测试的日志行标上本文件的 execution UUID
+    （p2_29 + p1_36 合跑实证复现）。本文件自净：每条测试后复位。
+    47C 自身与更早的泄漏源（commissioning 端点测试）是遗留问题，另行记录。"""
+    token = current_execution_id.set("-")
+    yield
+    current_execution_id.reset(token)
 
 _HAL = pathlib.Path(__file__).resolve().parents[1] / "app/hal/propsim_f64.py"
 _MEASURE = (pathlib.Path(__file__).resolve().parents[1]
