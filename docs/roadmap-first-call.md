@@ -22,6 +22,8 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 
 > **~~P2-29~~ ✅ 2026-08-21 由 PR #354 完成**（ASC/B2 正式模型加载证据 hook）。零新 SCPI：四条管线（GCM/ASC/B2/external_asc）统一走 CALC:FILT:FILE 事务证据；驱动 ASC/B2 成功分支补 MODEL:STATE?/STATE? 探针（手册确认状态机与文件来源无关：AN §2.1 + UR §20.4.3.14，NotebookLM 原文查证）；归档 requested 换驱动真值 `_loaded_emulation_file`（内审 F1 P1：意图值直传会把成功的加载谎报成 rejected —— 比诚实 unknown 更糟）。验证：全量 4068 passed（唯一失败与 main 基线同条 —— Discovered 里的 contextvar 泄漏，相对 main 零新失败）、变异 8+ 条实跑红、相关组 199 passed。**顺带修**：08-18 起挂死一切全量运行的 47a 死锁测试已按现契约重写（此前全量在本机根本跑不完）。外审由 Gemini 承担（Codex 额度尽）：R1 一条已修，R2 两条 medium（测试风格：未用的驱动实例化残留、函数内重复 import）按 R2+ 规则**报备不修**。ASC/B2 真机证据链保持 Hardware Blocked，与 P0-5 复验同窗口。
 
+> **~~P1-57~~ ✅ 2026-08-20 由 PR #353 完成**（全局 LabProfile / 当前暗室上下文统一）。运行态唯一真值 = 全局显式 LabProfile → `chamber_config_id` → 暗室；顶部唯一选择器，拓扑/探头/首测/OTA Mapper/诊断/RF chain/校准页全部收编（校准页原来写死 **P1-28 已删除的孤儿暗室 id**，外审 R3 抓出）；topology API 按 `lab_profile_id` 走 `resolve_current_chamber()`；未保存拓扑与在途硬件工作（provider 级登记，页面卸载不消失）阻断切换。外审 R1 3P2 / R2 1P1+2P2 / R3 3P1 全修；R4 因 Codex 额度改由 Gemini 承担，无 P1 级发现（1 条 medium：模板导入无条件让位默认拓扑 —— 属 main 遗留、影响面今日为零，按 R2+ 规则只报告不修，记录在 PR 对话）。验证：后端相关 + 全部规则门 127 passed、GUI 契约 42 条、build、compileall、diff-check 全过；手工验收环境（worktree 服务 + 双 lab 场景说明）已交付用户，用户指示继续下一项。
+
 P2-28 已由 PR #352 完成并合并。P1-55
 已由 PR #349（merge `b6f631a`）完成顶层配置与 `component_carriers[0]` 真值源收敛；P1-54
 已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
