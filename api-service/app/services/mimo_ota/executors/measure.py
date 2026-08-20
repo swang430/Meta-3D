@@ -1029,9 +1029,10 @@ class MeasureExecutor(IStepExecutor):
                         f"改用 MIMO-First ASC 引擎, 或清空自定义 CDL 选择。"
                     ),
                 )
-            # 三种信道管线都必须证明 F64 已加载本次模型。当前正式 recipe 只对
-            # GCM 的 FILE 路径完成绑定；ASC/B2 先保留 missing/unknown，不能因
-            # 分支不同而从 mandatory 集合消失后假绿。
+            # 三种信道管线都必须证明 F64 已加载本次模型。P2-29 起三管线统一
+            # 归档：加载走同一条 CALC:FILT:FILE 事务（手册确认判成功流程与状态机
+            # 均与文件来源无关，AN §2.2.2/§2.1 + UR §20.4.3.14），驱动侧三路
+            # 都带 MODEL:STATE?/STATE? 探针，recipe 原样复用、零新目录条目。
             register_required_scpi_evidence(
                 context.test_execution,
                 requirement_id="f64.model_loaded",
@@ -1042,10 +1043,9 @@ class MeasureExecutor(IStepExecutor):
             context.db.commit()
             with capture_scpi_exchanges() as channel_load_exchanges:
                 gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
-            if (
-                engine_mode == EngineMode.GCM_NATIVE
-                and hasattr(emulator, "build_p0_5_command_evidence")
-            ):
+            # P2-29: 归档条件按驱动能力判（有 build 能力 = F64 语义驱动），
+            # 不按管线枚举 —— 用 engine_mode 当判据曾把 ASC/B2 锁在 unknown。
+            if hasattr(emulator, "build_p0_5_command_evidence"):
                 try:
                     record_f64_command_capture(
                         context.test_execution,

@@ -1670,6 +1670,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     # pipeline 在回读**之前**置 (与 ASC 路对称): 否则 metrics 可能读到
                     # "旧 pipeline + 新拓扑"的错配快照。
                     self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
+                    # P2-29: 与 GCM/ASC 同一对证据探针 —— 三路对称, 依据同 ASC 分支注释。
+                    await self._query_model_state_for_evidence()
+                    await self._query_simulation_state()
                     # F64R-2: B-2 路同样落本仿真拓扑 (三路对称) —— 否则残留上一步的口数
                     # 去配这个模型。手册确认 .rtc/.tap 也须编译成 .smu 下发, 回读通用。
                     await self._readback_topology()
@@ -2560,6 +2563,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     # 上一 GCM 步残留的 programmed/readback, 否则切 ASC 后 identity 谎报旧真频。
                     self._center_freq_programmed = False
                     self._readback_center_freq_mhz = None
+                    # P2-29: 与 GCM preflight 同一对证据探针 (MODEL:STATE? + STATE?),
+                    # 让本次 FILE 事务的证据窗口拼得齐 (f64.model_load recipe 的
+                    # readback/state 两环)。手册确认状态机与文件来源无关 (AN §2.1 +
+                    # UR §20.4.3.14, 「手册未说明」按来源区分), 加载未 GO = STOPPED。
+                    # 探针失败只留 unknown, 不改加载业务契约 (与 GCM 现状一致)。
+                    await self._query_model_state_for_evidence()
+                    await self._query_simulation_state()
                     # F64R-2: ASC 路同样落**本仿真**的拓扑 —— 不接的话会留着上一个仿真(如
                     # GCM 步的 32 探头)的口数去配这个 runtime_emulation.smu (可能只有 2 口),
                     # 按 32 口狂发 = stale 拓扑比没有更危险。手册确认 .asc/.rtc 都要编译成
