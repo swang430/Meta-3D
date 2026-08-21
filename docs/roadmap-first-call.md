@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前状态（现场链事实截至 2026-08-07；本地队列截至 2026-08-21）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态（现场链事实截至 2026-08-07；本地队列截至 2026-08-22）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制，但现场身份、坐标偏置与正式
 TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P0-8
@@ -18,7 +18,22 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-40「开发环境 DB / 日志沉积治理」（R1 P2 已修，Codex R2；2026-08-22）**。
+**Current Focus = P2-37「UE L3 报告队列有界消费」（开发完成，待外审；2026-08-22）**。
+
+> **P2-37 开发证据**：后台 connected 监控不再读取未展示的全量 UE L3 队列；正式
+> MIMO OTA 窗口只有在全局 report clear 命令存在、传输成功且设备错误队列确认接受后，
+> 才在窗口末读取 L3。clear 缺失/异常/被拒时只将 L3 保持 UNKNOWN，其他可信 KPI 继续；
+> 未新增 SCPI，未确认单位的 L3 仍只进 `kpi_raw_unverified`。RED 覆盖后台旧读取和正式
+> clear 四类失败，GREEN focused **109 passed**、相关链与完整 rule gates **226 passed**、
+> 全后端 **4193 passed / 5 skipped**，`compileall`、`diff-check` 通过；fresh 内审
+> **P1/P2/P3=0**。设计与证据见
+> [`P2-37 设计`](plans/2026-08-22-p2-37-ue-l3-bounded-consumption-design.md)。
+
+> **~~P2-40~~ ✅ 2026-08-22 由 PR #364 完成**：只读 inventory 与测试 SQLite
+> 临时目录隔离已由 merge commit `65765ce` 合入；Codex R2 覆盖最终 HEAD 且无 P1，
+> 仅提示实际隔离前必须重新确认 open state。代码与 PR 均未移动、备份、删除任何 DB、日志、
+> volume 或 worktree；20 个零 schema SQLite 的可恢复隔离仍停在用户独立批准点，不属于
+> P2-37。
 
 > **~~P2-39~~ ✅ 2026-08-21 由 PR #363 完成**：pytest 在导入 `app.main`
 > 前无条件将 `LOG_DIR` 换到进程级 `TemporaryDirectory`，生产日志链零改动；子进程回归证明
@@ -37,7 +52,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > [`P2-40 计划`](plans/2026-08-21-p2-40-dev-artifact-governance-plan.md)。本 PR 只建立只读
 > manifest 与阻止测试 SQLite 继续沉积；任何备份、隔离、删除或 prune 均停在精确批准点。
 
-> **P2-40 开发证据（尚未合并，不提前打 ✅）**：只读 inventory 已覆盖注册 worktree、
+> **P2-40 合并前开发证据快照（实际清理仍未执行）**：只读 inventory 已覆盖注册 worktree、
 > 显式日志根、三层 SQLite 白名单与 Docker volume/mount/size；未知身份默认 protect，关闭日志
 > 也只进入 review。真实 dry-run 共识别 filesystem 383 项 / 3,037,840,761 bytes：protect
 > 339 项（含 10 个确定活跃日志，以及目录级 `lsof` 非零时 328 个不猜 closed 的 UNKNOWN 日志）、
@@ -104,7 +119,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
 P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ →
-~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → P2-40 →
+~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → ~~P2-40~~ ✅ →
 P2-37 → P2-38 → P2-36 → P2-31 → P3-22**。
 
 | ID | 正式条目 | 当前状态 |
@@ -134,10 +149,10 @@ P2-37 → P2-38 → P2-36 → P2-31 → P3-22**。
 | **P2-35** | `current_execution_id` 测试间泄漏隔离 | ✅ PR #357 |
 | **P2-36** | 执行历史一键跳本次执行日志（P1-36 串链只差入口） | ⬜（2026-08-21 自 Discovered 8-05 提升） |
 | **P1-59** | CA 多小区正式吞吐使用聚合真值；PCell-only 不得冒充 CA 总吞吐 | ✅ PR #362（R5 覆盖最终 HEAD，无 P1）；逐 SCell 激活态回读现场证据仍 Hardware Blocked |
-| **P2-37** | UE L3 报告队列有界消费，避免后台监控响应/日志无界增长 | ⬜ |
+| **P2-37** | UE L3 报告队列有界消费，避免后台监控响应/日志无界增长 | 🟡 开发完成，待外审 |
 | **P2-38** | Dashboard readiness 显式消费顶部选定 LabProfile | ⬜ |
 | **P2-39** | pytest 与运行日志目录隔离，测试不得轮转删除历史仪器证据 | ✅ PR #363；merge `9417fee` |
-| **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | 🟡 PR #364；R1 P2 已修，Codex R2，实际清理另候批准 |
+| **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；实际隔离另候批准 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ⬜ |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
@@ -381,7 +396,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-40 ⏭ → P2-37 → P2-38 → P2-36 → P2-31 → P3-22**，当前 WIP=1（P2-40 PR #364 R2，实际清理另候批准）。P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-37 ⏭ → P2-38 → P2-36 → P2-31 → P3-22**，当前 WIP=1。P2-40 代码已合并，实际隔离仍在独立批准点；P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3941,7 +3956,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（**= P1-31**，2026-08-04 已完成；当前执行片见顶部 Current Focus）。
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **UE L3 测量报告 `FETCh?` 不带 `<Integer>` = 每轮取回整个队列，且全程没人清队列** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」队列由 `BSE:CONFig:MEASurement:REPort ON` 持续排队，另有**独立**的 `:CLEAr` 才清 —— 代码只写 ON。**⚠️ 2026-08-04 更新（#277 R3）**：`MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"` 已加进 `UxmLteNrIratProfile`（手册有据：Imm Action / 无 `<cell>` 绑定 = 全局），且 `uxm_kpi_readback` 序列已在观测窗口**之前**清一次；**但监控路 `get_metrics()` 仍未清、仍不带 `<Integer>`，本条对它依然成立**。后果：监控路 `get_metrics()` 每轮把开测以来的**全部** L3 报告拉一遍，响应无界增长 → VISA 越读越慢/超时、`scpi.log` 被截断成没用的片段、`json.loads` 开销 O(n)，而代码只用其中**一份**。另：取 `reports[-1]` 假设"最新在末尾"，**手册没写返回顺序**，这个假设未经核验 —— **NotebookLM 2026-08-04 三问确认**：带 `<Integer>` 取最新还是最旧、多份的排列顺序、以及 FETCh 是不是消费式（取完即移除），**手册三项全未说明**；旁证是手册对 **RAR 报告**与 **UAI 报告**都明写 "Querying the results will remove items from storage"，唯独 UE 测量报告只字未提。修法 = **先清队列再取**（`:CLEAr` 现已定义，`uxm_kpi_readback` 已这么做），`? 1` 仍需先在真机上确认它取的是哪一份。
+- `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **[→ P2-37 🟡 开发完成，待外审] UE L3 测量报告 `FETCh?` 不带 `<Integer>` 会取回全部可用报告** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」；报告队列另有独立的 `:CLEAr`。P2-37 已让后台 connected 监控完全停止读取未展示的 UE L3 队列；正式吞吐窗口在等待前用已有且有出处的 `MEAS_UE_REPORT_CLEAR` 建立边界，清理命令缺失、传输异常或错误队列拒绝时只阻断 L3 读取，普通 KPI 仍可采集。因窗口时长有限，正式响应不再随进程寿命无界增长；原始 L3 仍只进入 `kpi_raw_unverified`，不进入工程字段、KPI 或报告判定。手册仍未说明多份报告顺序、`? 1` 选择哪份以及查询是否消费队列，因此不采用 `? 1` 猜测；RSRP/RSRQ/SINR 的单位与码点口径继续由 P1-31 的现场诊断确认。
 
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F7]` **CA/多小区下 `BTHRoughput:CLEar` 清全部小区，而吞吐量只读 PCell** —— `CLEar` 不带 cell（技术层全局），而 `MEAS_TPUT_DL_OTA` 读的是 `OTA:{cell}?` = PCell。SCell 是活跃配置（`executors/measure.py` 会 `add_secondary_cell` + `activate_secondary_cells`）→ CA 下报出的"吞吐量"只有 PCell 一份，**系统性低估交付 KPI**，并被 `analysis.py` 的 `throughput_pass` 直接消费。手册有 `...:DL:THRoughput:OTA:ALL?`，注明「return **sum of all NR cells** results」。修法 = 有 SCell 时换 `OTA:ALL?`，或至少在 `measurement.log` 标 `pcell_only=true`。
 
