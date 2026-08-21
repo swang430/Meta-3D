@@ -159,6 +159,25 @@ git -C .. diff --check
 R1 P1 的 TDD 证据：同一条定点测试修前为 `1 failed`（实际返回 `True`），修后为
 `1 passed` 且断言 query/write/error-drain 均未发生。fresh 尾审 P1/P2/P3=0。
 
+## R2 P1 尾修验证（2026-08-21）
+
+R2 指出报告虽然已按 scope 保持 UNKNOWN，但 Analysis 和执行历史仍只消费旧
+`throughput_verified` / `validation_pass`，可把同一份旧 CA PCell-only 证据重新发布为
+PASS/FAIL。修复将载波数、measure 顶层 scope、逐方位 validity/scope 收敛到共享判据，
+正式报告、Analysis 与历史列表三条消费路径全部复用；非 MIMO 历史语义不变。以下结果
+运行于代码/测试提交 `b057c4c` 的精确内容；其后只追加本验证记录。
+
+TDD RED：两条定点用例修前均失败，分别观察到 Analysis=`PASS`、历史=`true`；GREEN 后
+均保持 UNKNOWN/`null`。当前 HEAD 的验证结果：
+
+```text
+相关链 + 完整 rule gates：296 passed, 670 warnings in 5.28s
+全后端：4168 passed, 5 skipped, 4285 warnings in 91.72s
+compileall：通过
+diff-check：通过
+fresh 尾审：P1/P2/P3=0
+```
+
 ## 非目标
 
 - 不改变 BLER/CQI/RI 的聚合口径；
