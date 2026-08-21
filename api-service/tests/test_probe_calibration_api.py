@@ -29,17 +29,14 @@ from app.models.chamber import ChamberConfiguration
 TEST_CHAMBER_ID = UUID("aaaaaaaa-0000-0000-0000-000000000053")
 
 
-# 创建测试数据库
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_probe_calibration.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 由模块级 pytest 临时目录持有；导入测试模块不得在调用目录创建 SQLite。
+engine = None
+TestingSessionLocal = None
 
 
 def override_get_db():
     """Override database dependency for testing"""
+    assert TestingSessionLocal is not None
     try:
         db = TestingSessionLocal()
         yield db
@@ -61,8 +58,15 @@ client = TestClient(app)
 
 
 @pytest.fixture(scope="module", autouse=True)
-def setup_database():
+def setup_database(tmp_path_factory):
     """Setup test database"""
+    global engine, TestingSessionLocal
+    db_path = tmp_path_factory.mktemp("probe-calibration-api") / "probe_calibration.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     # Create all tables
     Base.metadata.create_all(bind=engine)
     with TestingSessionLocal() as db:
@@ -77,11 +81,15 @@ def setup_database():
     yield
     # Drop all tables after tests
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+    engine = None
+    TestingSessionLocal = None
 
 
 @pytest.fixture
 def db_session():
     """Create a database session for a test"""
+    assert TestingSessionLocal is not None
     db = TestingSessionLocal()
     try:
         yield db

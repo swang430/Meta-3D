@@ -458,8 +458,11 @@ GUI 遵循 **API优先架构**，包含以下层次：
   - 新增 SQLAlchemy 模型应使用 PG 兼容类型（`postgresql.UUID`、`JSONB` 等）
 - **测试可以使用 SQLite**（隔离与速度优先）
   - `sqlite:///:memory:` 用于纯内存隔离测试
-  - `sqlite:///./test_*.db` 用于文件隔离测试，产物已在 `.gitignore` 中忽略
-  - `api-service/*.db` 与 `*.db.bak` 是本地 stale 开发产物，可安全清理
+  - 需要多连接共享文件的测试必须使用 pytest `tmp_path` / `tmp_path_factory`；禁止
+    `sqlite:///./test_*.db` 这类随调用目录沉积的固定相对路径
+  - **不得**按 `api-service/*.db`、`*.db.bak` 或文件后缀通配清理。本地 DB 只有在 P2-40
+    只读 inventory 同时证明“精确已知测试产生方 + 空 schema + Git ignored/untracked + closed”后，
+    才能进入隔离候选；未知/非空/占用中/探测失败一律保护，且任何移动或删除仍须用户明确批准
 
 ## 开发工作流
 

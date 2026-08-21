@@ -52,25 +52,32 @@ TEST_CHAMBER_ID = uuid4()
 
 # ==================== 测试数据库设置 ====================
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_probe_calibration_service.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = None
+TestingSessionLocal = None
 
 
 @pytest.fixture(scope="module", autouse=True)
-def setup_database():
+def setup_database(tmp_path_factory):
     """Setup test database"""
+    global engine, TestingSessionLocal
+    db_path = tmp_path_factory.mktemp("probe-calibration-service") / "probe_calibration.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+    engine = None
+    TestingSessionLocal = None
 
 
 @pytest.fixture
 def db_session():
     """Create a database session for a test"""
+    assert TestingSessionLocal is not None
     db = TestingSessionLocal()
     try:
         yield db
