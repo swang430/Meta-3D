@@ -37,6 +37,15 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > [`P2-40 计划`](plans/2026-08-21-p2-40-dev-artifact-governance-plan.md)。本 PR 只建立只读
 > manifest 与阻止测试 SQLite 继续沉积；任何备份、隔离、删除或 prune 均停在精确批准点。
 
+> **P2-40 开发证据（尚未合并，不提前打 ✅）**：只读 inventory 已覆盖注册 worktree、
+> 显式日志根、三层 SQLite 白名单与 Docker volume/mount/size；未知身份默认 protect，关闭日志
+> 也只进入 review。真实 dry-run 共识别 filesystem 383 项 / 3,037,840,761 bytes：protect
+> 11 项（含 10 个活跃日志）、review 352 项、候选 20 项 / 21,299,200 bytes；候选全部为精确
+> 产生方 + 空 schema + closed 的四类测试 SQLite。Docker 2 个 mounted volume 保护，14 个
+> unmounted anonymous volume / 520.5 MB 只 review。四个测试产生方已换到 pytest 临时目录，
+> 子进程 RED 留 4 个 DB，GREEN 留 0 个；完整相关 **224 passed**。所有现存文件、日志、
+> volume 与 worktree 均未移动或删除；批准单与恢复方案记录在 P2-40 设计。
+
 > **~~P1-59~~ ✅ 2026-08-21 由 PR #362 完成**：正式测量新增显式
 > `pcell` / `nr_all_cells` scope；CA 只允许使用 Keysight 手册有出处的
 > `DL/UL ...OTA:ALL?`，PCell query 不再作为回退。SCell inherit、能力缺失、部分添加、

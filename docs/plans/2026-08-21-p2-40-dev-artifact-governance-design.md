@@ -132,3 +132,86 @@ PR 合并后重新生成 manifest，并单独向用户展示：
 - 不删除旧 worktree，也不判断用户是否仍需要某条分支；
 - 不清理测试冗余；测试保护矩阵与重复断言收敛属于后续 P3-22；
 - 不按目录或文件名把厂商资料、现场证据、手工测试数据归类为开发沉积。
+
+## 实施与 dry-run 证据（当前代码提交 `664ef3a`）
+
+### 只读能力
+
+- `scripts/dev_artifact_inventory.py` 只调用 Git、`lsof` 与 Docker 的只读查询；CLI 没有
+  `execute` / `delete` / `move` / `prune` 选项。
+- 文件扫描只覆盖注册 worktree 的 `api-service/logs`，以及 worktree 根、
+  `api-service` 根和 `api-service/app` 根的 SQLite 后缀文件；不递归进入
+  `Instrument_API_Doc` 或其他用户资料目录，也不跟随 symlink。
+- SQLite 使用 header + `mode=ro` schema 检查；只有四个精确旧测试产生方、空 schema、
+  ignored/untracked、且 `lsof` 明确 closed 时才成为 `quarantine_candidate`。
+- macOS `lsof +D` 会在返回码 1 时仍给出有效 `n<path>` 记录；实现保留这种正面打开证据，
+  真实运行识别到 10 个打开中的日志，而不是把它们误列为 closed。
+- Docker 只读读取 volume inspect、容器反向引用与 `docker system df -v` 大小；mounted volume
+  一律保护，unmounted anonymous 只进入 `review`，绝不成为自动候选。
+
+### 真实 manifest（2026-08-22 00:03 +08:00）
+
+运行命令：
+
+```bash
+cd api-service
+.venv/bin/python scripts/dev_artifact_inventory.py --repo-root .. --format json \
+  > /tmp/meta3d-p2-40-manifest.json
+.venv/bin/python scripts/dev_artifact_inventory.py --repo-root .. --format markdown \
+  > /tmp/meta3d-p2-40-manifest.md
+```
+
+结果：
+
+| 范围 | disposition | 数量 | 字节 |
+|---|---|---:|---:|
+| filesystem | `protect` | 11 | 24,862,025 |
+| filesystem | `review` | 352 | 2,991,679,536 |
+| filesystem | `quarantine_candidate` | 20 | 21,299,200 |
+| Docker volume | `protect` | 2 | 166,950,000 |
+| Docker volume | `review` | 14 | 520,500,000 |
+
+filesystem 共 383 项 / 3,037,840,761 字节；11 个 protect 中有 10 个是运行进程仍打开的
+主工作区日志，另一个是身份不足的空 `api-service/app/mimo_ota.db`。352 个 closed 日志仍只列
+`review`，没有因关闭状态自动晋级。20 个候选全部是四个已定位测试模块留下的空 schema
+SQLite：主工作区根和 `api-service` 各 4 份、P1-59 worktree 4 份、P2-39 worktree 4 份、
+Claude `loving-torvalds-ae273b` worktree 4 份；每一份均为 closed 且有独立 SHA-256 复核，
+但本轮没有移动或删除。
+
+Docker 的两个 protect 是正在挂载的 `meta3d_postgres_data`（79.65 MB）与
+`gaokao_postgres_data`（87.30 MB）。14 个 review 全是 2026-08-02 创建且当前未挂载的
+anonymous volume：12 个约 43.33–43.51 MB、2 个 0 B；anonymous 标签不足以证明其中数据
+属于 Meta-3D，因此不进入本次候选。
+
+manifest 校验：
+
+- JSON：`49a80dce1ab918f55b3270111564c196f3a7183dad2be3e6cb3bd44977ef01c9`
+  （275,988 bytes）；
+- Markdown：`ac63d841f43ff8f847cd03cf987788bbf78f1ebece5cf1b97365ec3137eeba09`
+  （73,269 bytes）。
+
+### 产生方收口
+
+四个校准测试已改为 pytest 临时 SQLite：function scope 使用 `tmp_path`，三个 module scope
+使用各自 `tmp_path_factory` 目录，并在 teardown dispose engine。子进程 RED 在受保护 cwd
+留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **224 passed**。
+
+### 拟提交用户批准的可恢复操作（尚未执行）
+
+外部隔离根拟定为：
+
+`/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40/`
+
+批准后首轮只做以下可恢复动作：
+
+1. 重新生成 manifest，确认 20 个候选仍为 closed / empty schema，路径、size、mtime 未漂移；
+2. 生成 `checksums.sha256` 与 `moves.json`，逐条记录 source、quarantine target、size、mtime、
+   SHA-256；
+3. 按 `moves.json` 原子移动这 20 个 SQLite 到隔离根，保留原 worktree 相对层级；恢复时按
+   同一 manifest 反向移动，并复核 SHA-256；
+4. 活跃 `meta3d_postgres_data` 在任何 DB 操作前先用 `pg_dump -Fc` 备份到
+   `/Users/simon/Meta3D-Artifacts/backups/`，记录 dump SHA-256，并通过临时恢复库执行
+   `pg_restore --list` / 恢复验证；
+5. 所有日志和 14 个 anonymous volume 本轮继续原地保留，不纳入移动单。
+
+隔离观察与最终删除是第二个独立批准点；本 PR、当前 dry-run 以及第一次批准都不直接删除。
