@@ -48,7 +48,7 @@
 | outcome | 含义 | 落库？ |
 |---|---|---|
 | `published` | 新告警行已 commit | ✅ 总是写（覆盖旧 `failed` 记录 = 真实状态推进） |
-| `duplicate` | 生命周期去重命中（该执行已有告警） | ✅ 仅补缺（行上已有形状合法的记录时不覆盖 —— 守「不得重新 active」禁令的记录侧对偶） |
+| `duplicate` | 生命周期去重命中（该执行已有告警） | ✅ 保留已有 `published` / `duplicate`；旧 `failed` 或畸形记录推进为 `duplicate` 并写真实 `alert_id`（现存 Alert 已证伪“发布失败”） |
 | `failed` | 告警写入异常（告警表故障等） | ✅ 总是写（error 摘要截断 500 字符；完整 traceback 只进日志） |
 | `skipped_missing` | 执行行不存在 | ❌ 没有行可落 |
 | `skipped_not_failed` | 状态非 failed（防御分支） | ❌ 可从行自身重derive，非事件结果 |
@@ -69,7 +69,13 @@ duplicate 补缺覆盖「产线上线早于契约」的历史窗口），跳过�
   从结构上消掉「新调用点漏记」这一类漏。
 - **绝不反噬**（硬约束）：记录事务任何异常 → rollback + log，不向调用方泄漏；
   全程不触碰 `TestExecution.status`（G10 门零新增写点）。告警 commit 成功后记录
-  写失败 → 告警仍在、行呈「未记录」——宁可未记录，不许错记。
+  写失败 → 告警仍在、行呈「未记录」——宁可未记录，不许错记。rollback / close
+  自身失败同样只留日志，不能覆盖已经确定的 outcome；rollback 未成功的 session
+  不得再用于记录事务，避免把 pending Alert 与 `failed` 一起提交。历史 `config`
+  若不是对象则原样保留并跳过记录，不得为了新增键抹掉整份既有 JSON/SCPI 证据。
+- **commit 后零 ORM 回读**：Alert UUID 在 commit 前显式分配并冻结为普通值；commit
+  成功后日志只用函数参数。连接若在 commit 确认后断开，不能因过期对象 refresh 失败
+  把已经存在的 Alert 重新分类成 `failed`。
 
 ### 3.3 读方语义（谁消费；白名单）
 

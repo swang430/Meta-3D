@@ -11,7 +11,9 @@
    - outcome 常量 + `RECORDED_OUTCOMES` 白名单 + `CONFIG_RECORD_KEY`；
    - `emit_execution_failed_alert` 返回 outcome 字符串（拆掉 bool 混叠）；
    - `_record_publish_outcome(...)`：告警事务后的第二个独立事务，best-effort，
-     异常吞 + log；duplicate 仅补缺；绝不触碰 status；
+     异常（含 rollback / close）吞 + log；duplicate 保留 published/duplicate、
+     但把旧 failed/畸形记录推进为 duplicate；rollback 失败的 session 不复用；
+     非对象 config 原样保留；绝不触碰 status；
    - `resolve_recorded_outcome(config)`：白名单读方，畸形/缺失 → None（未记录）。
 3. **GREEN-2** 读方接线：
    - `schemas/test_plan.py::ExecutionHistoryItem` 加 `failure_alert_outcome:

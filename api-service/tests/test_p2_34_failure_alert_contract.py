@@ -5,7 +5,7 @@
 - 门B 发布失败 → 执行终态不反噬 + 失败本身可观察（记录 outcome=failed + error）；
 - 门B2 记录也写不进 → 不抛异常、终态不变、行保持未记录；
 - 门C 历史行 / 畸形记录 → 未记录（None），绝不折叠成 published；
-- 门D 生命周期去重保持，duplicate 仅补缺不覆盖 published 记录；
+- 门D 生命周期去重保持；duplicate 保留 published/duplicate，推进 failed/畸形记录；
 - 门E 跳过类各归各的 outcome，VRT 行 config 零污染。
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -132,6 +132,48 @@ def test_publish_failure_keeps_terminal_state_and_is_observable(db, monkeypatch)
     assert item.failure_alert_outcome == alerts.OUTCOME_FAILED
 
 
+def test_alert_commit_and_rollback_failure_never_commits_pending_alert_with_failed(
+    db, monkeypatch
+):
+    """fresh 内审 P1：rollback 未清掉 pending Alert 时不得复用 session 记 failed。"""
+    execution = _execution(db)
+    execution_id = execution.id
+
+    def _first_commit_and_rollback_failing_session():
+        session = TestingSessionLocal()
+        real_commit = session.commit
+        real_rollback = session.rollback
+        commit_calls = {"n": 0}
+        rollback_calls = {"n": 0}
+
+        def _commit():
+            commit_calls["n"] += 1
+            if commit_calls["n"] == 1:
+                raise RuntimeError("alert commit transport lost before send")
+            real_commit()
+
+        def _rollback():
+            rollback_calls["n"] += 1
+            if rollback_calls["n"] == 1:
+                raise RuntimeError("rollback transport lost")
+            real_rollback()
+
+        session.commit = _commit
+        session.rollback = _rollback
+        return session
+
+    monkeypatch.setattr(
+        alerts, "SessionLocal", _first_commit_and_rollback_failing_session
+    )
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_FAILED
+    assert db.query(Alert).count() == 0
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
 def test_record_write_failure_is_swallowed_and_row_stays_unrecorded(db, monkeypatch):
     """门B2：DB 全炸（告警 + 记录两个事务都失败）。"""
     execution = _execution(db)
@@ -200,6 +242,84 @@ def test_record_failure_does_not_reverse_published_alert(db, monkeypatch):
     assert item.failure_alert_outcome is None
 
 
+def test_record_rollback_failure_does_not_reclassify_published_alert(
+    db, monkeypatch
+):
+    """fresh 内审 P1：记录 commit+rollback 都炸，也不能落回外层错记 failed。"""
+    execution = _execution(db)
+    execution_id = execution.id
+
+    def _record_commit_and_first_rollback_failing_session():
+        session = TestingSessionLocal()
+        real_commit = session.commit
+        real_rollback = session.rollback
+        commit_calls = {"n": 0}
+        rollback_calls = {"n": 0}
+
+        def _commit():
+            commit_calls["n"] += 1
+            if commit_calls["n"] == 2:
+                raise RuntimeError("config column locked")
+            real_commit()
+
+        def _rollback():
+            rollback_calls["n"] += 1
+            if rollback_calls["n"] == 1:
+                raise RuntimeError("rollback transport lost")
+            real_rollback()
+
+        session.commit = _commit
+        session.rollback = _rollback
+        return session
+
+    monkeypatch.setattr(
+        alerts,
+        "SessionLocal",
+        _record_commit_and_first_rollback_failing_session,
+    )
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_PUBLISHED
+    assert db.query(Alert).count() == 1
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
+def test_post_commit_refresh_failure_cannot_reclassify_published_alert(
+    db, monkeypatch
+):
+    """fresh 内审 P1：Alert commit 后断线，已发布事实不能被 ORM refresh 推翻。"""
+    execution = _execution(db)
+    execution_id = execution.id
+
+    def _post_commit_reads_failing_session():
+        session = TestingSessionLocal()
+        real_commit = session.commit
+        alert_committed = {"value": False}
+
+        def _commit():
+            real_commit()
+            alert_committed["value"] = True
+
+        def _forbid_post_commit_orm_read(_execute_state):
+            if alert_committed["value"]:
+                raise RuntimeError("post-commit connection lost")
+
+        session.commit = _commit
+        event.listen(session, "do_orm_execute", _forbid_post_commit_orm_read)
+        return session
+
+    monkeypatch.setattr(alerts, "SessionLocal", _post_commit_reads_failing_session)
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_PUBLISHED
+    assert db.query(Alert).count() == 1
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
 def test_outer_guard_returns_failed_without_raising(db, monkeypatch):
     """门B4：告警链在查询阶段就炸（外层 except 路径）→ 不抛、返回 failed、会话关闭。
 
@@ -235,6 +355,128 @@ def test_outer_guard_returns_failed_without_raising(db, monkeypatch):
     assert row.status == "failed"
     assert db.query(Alert).count() == 0
     assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
+def test_outer_alert_lookup_failure_is_recorded_when_execution_store_is_writable(
+    db, monkeypatch
+):
+    """门B5（Codex R1 P1）：告警查询炸、执行行仍可写 → failed 必须落库。
+
+    生产调用方不会消费返回值；如果外层 except 只返回 failed，历史接口就会把本次
+    发布尝试永久显示为“未记录”。这里让 Alert 查询单独失败，同时保留
+    TestExecution 查询与 config 事务可写，覆盖真实的部分表故障形态。
+    """
+    execution = _execution(db)
+    execution_id = execution.id
+
+    def _alert_lookup_failing_session():
+        session = TestingSessionLocal()
+        real_query = session.query
+
+        def _query(*entities, **kwargs):
+            if entities and entities[0] is Alert.id:
+                raise RuntimeError("alerts table unavailable")
+            return real_query(*entities, **kwargs)
+
+        session.query = _query
+        return session
+
+    monkeypatch.setattr(alerts, "SessionLocal", _alert_lookup_failing_session)
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_FAILED
+
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert db.query(Alert).count() == 0
+    record = (row.config or {}).get(alerts.CONFIG_RECORD_KEY)
+    assert isinstance(record, dict)
+    assert record["outcome"] == alerts.OUTCOME_FAILED
+    assert "alerts table unavailable" in record["error"]
+    assert "alert_id" not in record
+
+
+def test_outer_rollback_failure_is_swallowed_without_reusing_dirty_session(
+    db, monkeypatch
+):
+    execution = _execution(db)
+    execution_id = execution.id
+
+    def _lookup_and_first_rollback_failing_session():
+        session = TestingSessionLocal()
+        real_query = session.query
+        real_rollback = session.rollback
+        rollback_calls = {"n": 0}
+
+        def _query(*entities, **kwargs):
+            if entities and entities[0] is Alert.id:
+                raise RuntimeError("alerts table unavailable")
+            return real_query(*entities, **kwargs)
+
+        def _rollback():
+            rollback_calls["n"] += 1
+            if rollback_calls["n"] == 1:
+                raise RuntimeError("rollback transport lost")
+            real_rollback()
+
+        session.query = _query
+        session.rollback = _rollback
+        return session
+
+    monkeypatch.setattr(
+        alerts, "SessionLocal", _lookup_and_first_rollback_failing_session
+    )
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_FAILED
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
+def test_session_close_failure_never_overrides_published_outcome(db, monkeypatch):
+    execution = _execution(db)
+
+    def _close_failing_session():
+        session = TestingSessionLocal()
+
+        def _close():
+            raise RuntimeError("close transport lost")
+
+        session.close = _close
+        return session
+
+    monkeypatch.setattr(alerts, "SessionLocal", _close_failing_session)
+
+    outcome = alerts.emit_execution_failed_alert(execution.id)
+    assert outcome == alerts.OUTCOME_PUBLISHED
+    assert db.query(Alert).count() == 1
+    record = (_reload(db, execution.id).config or {})[alerts.CONFIG_RECORD_KEY]
+    assert record["outcome"] == alerts.OUTCOME_PUBLISHED
+
+
+def test_session_factory_failure_is_best_effort_failed(monkeypatch):
+    def _factory_failure():
+        raise RuntimeError("session factory unavailable")
+
+    monkeypatch.setattr(alerts, "SessionLocal", _factory_failure)
+
+    outcome = alerts.emit_execution_failed_alert(uuid.uuid4())
+    assert outcome == alerts.OUTCOME_FAILED
+
+
+def test_non_object_historical_config_is_never_overwritten_by_alert_record(db):
+    """fresh 内审 P1：brownfield 非对象 JSON 是证据，不能为了留痕整份抹掉。"""
+    legacy_evidence = ["raw-scpi-evidence", {"response": "-113"}]
+    execution = _execution(db, config=legacy_evidence)
+
+    outcome = alerts.emit_execution_failed_alert(execution.id)
+    assert outcome == alerts.OUTCOME_PUBLISHED
+    assert db.query(Alert).count() == 1
+
+    row = _reload(db, execution.id)
+    assert row.status == "failed"
+    assert row.config == legacy_evidence
 
 
 # ─────────────────────────── 门C：历史行 = 未记录，绝不折叠成成功 ───────────────────────────
@@ -311,6 +553,58 @@ def test_duplicate_does_not_overwrite_published_record(db):
 
     record = (_reload(db, execution.id).config or {}).get(alerts.CONFIG_RECORD_KEY)
     assert record == first_record  # published 记录原样保留，不被 duplicate 覆盖
+
+
+@pytest.mark.parametrize(
+    "malformed_record",
+    [{}, {"outcome": "exploded"}],
+)
+def test_duplicate_replaces_malformed_historical_record(db, malformed_record):
+    """Codex R1 P2：畸形 dict 仍是未记录，不能挡住 duplicate 的安全回填。"""
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+    alert = db.query(Alert).one()
+
+    row = _reload(db, execution.id)
+    cfg = dict(row.config or {})
+    cfg[alerts.CONFIG_RECORD_KEY] = malformed_record
+    row.config = cfg
+    db.commit()
+
+    outcome = alerts.emit_execution_failed_alert(execution.id)
+    assert outcome == alerts.OUTCOME_DUPLICATE
+    assert db.query(Alert).count() == 1
+
+    record = (_reload(db, execution.id).config or {})[alerts.CONFIG_RECORD_KEY]
+    assert record["outcome"] == alerts.OUTCOME_DUPLICATE
+    assert record["alert_id"] == str(alert.id)
+    assert record.get("recorded_at")
+
+
+def test_duplicate_advances_prior_failed_record_when_alert_now_exists(db):
+    """fresh 内审 P1：现存 Alert 证伪旧 failed，结果必须推进且带真实关联。"""
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+    alert = db.query(Alert).one()
+
+    row = _reload(db, execution.id)
+    cfg = dict(row.config or {})
+    cfg[alerts.CONFIG_RECORD_KEY] = {
+        "outcome": alerts.OUTCOME_FAILED,
+        "recorded_at": "2026-08-21T00:00:00+00:00",
+        "error": "OperationalError: commit acknowledgement lost",
+    }
+    row.config = cfg
+    db.commit()
+
+    outcome = alerts.emit_execution_failed_alert(execution.id)
+    assert outcome == alerts.OUTCOME_DUPLICATE
+    assert db.query(Alert).count() == 1
+
+    record = (_reload(db, execution.id).config or {})[alerts.CONFIG_RECORD_KEY]
+    assert record["outcome"] == alerts.OUTCOME_DUPLICATE
+    assert record["alert_id"] == str(alert.id)
+    assert "error" not in record
 
 
 # ─────────────────────────── 门E：跳过类不落库、VRT 零污染 ───────────────────────────

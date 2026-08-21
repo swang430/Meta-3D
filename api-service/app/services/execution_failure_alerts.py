@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -46,6 +46,28 @@ RECORDED_OUTCOMES = frozenset({OUTCOME_PUBLISHED, OUTCOME_DUPLICATE, OUTCOME_FAI
 CONFIG_RECORD_KEY = "failure_alert"
 
 _ERROR_SUMMARY_LIMIT = 500  # 摘要进 JSONB；完整 traceback 只进日志
+
+
+def _rollback_best_effort(db: Any, execution_id: UUID, context: str) -> bool:
+    """尝试回滚并返回 session 是否可安全复用。"""
+    if db is None:
+        return False
+    try:
+        db.rollback()
+        return True
+    except Exception:  # noqa: BLE001 - rollback 失败不能改写已确定的发布结果
+        logger.exception("执行 %s 的%s回滚失败（发布结果不受影响）", execution_id, context)
+        return False
+
+
+def _close_best_effort(db: Any, execution_id: UUID) -> None:
+    """关闭故障只留日志，不能覆盖函数已经确定的 outcome。"""
+    if db is None:
+        return
+    try:
+        db.close()
+    except Exception:  # noqa: BLE001 - close 失败不能泄漏到正式执行链
+        logger.exception("执行 %s 的告警会话关闭失败（发布结果不受影响）", execution_id)
 
 
 def resolve_recorded_outcome(config: Any) -> Optional[str]:
@@ -81,9 +103,10 @@ def _record_publish_outcome(
 
     绝不触碰 ``TestExecution.status``；任何异常只 rollback + log，不向调用方
     泄漏 —— 记录写入失败跟告警写入失败一样，不得反噬执行终态。
-    duplicate 仅补缺（行上已有形状合法的记录时保留原记录 —— 守「已处置的
-    告警不得重新 active」禁令的记录侧对偶）；published / failed 总是写
-    （重试成功 / 再次失败是真实的状态推进）。
+    duplicate 保留已有 published/duplicate；旧 failed 或畸形记录会推进为
+    duplicate 并关联真实 Alert（现存告警已证伪“发布失败”）。published / failed
+    总是写（重试成功 / 再次失败是真实的状态推进）。非对象 config 视为历史证据，
+    原样保留并跳过记录，绝不为新增键抹掉整份 JSON。
     """
     try:
         execution = (
@@ -93,10 +116,18 @@ def _record_publish_outcome(
         )
         if execution is None:
             return
-        cfg = dict(execution.config) if isinstance(execution.config, dict) else {}
-        if outcome == OUTCOME_DUPLICATE and isinstance(
-            cfg.get(CONFIG_RECORD_KEY), dict
-        ):
+        if execution.config is not None and not isinstance(execution.config, dict):
+            logger.warning(
+                "执行 %s 的 config 不是对象，保留原始证据并跳过告警结果记录",
+                execution_id,
+            )
+            return
+        cfg = dict(execution.config or {})
+        recorded_outcome = resolve_recorded_outcome(cfg)
+        if outcome == OUTCOME_DUPLICATE and recorded_outcome in {
+            OUTCOME_PUBLISHED,
+            OUTCOME_DUPLICATE,
+        }:
             return
         record: dict[str, Any] = {
             "outcome": outcome,
@@ -111,7 +142,7 @@ def _record_publish_outcome(
         flag_modified(execution, "config")
         db.commit()
     except Exception:  # noqa: BLE001 - 记录失败不得反噬执行终态与告警结果
-        db.rollback()
+        _rollback_best_effort(db, execution_id, "告警结果记录事务")
         logger.exception(
             "执行 %s 的告警发布结果记录写入失败（执行终态与告警结果不受影响）",
             execution_id,
@@ -125,8 +156,10 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
     操作员已 acknowledge/resolve/dismiss 的同一执行不得因调用方重试而
     重新变成 active。
     """
-    db = SessionLocal()
+    db: Any = None
     try:
+        db = SessionLocal()
+        record_session_usable = True
         execution = (
             db.query(TestExecution)
             .filter(TestExecution.id == execution_id)
@@ -154,12 +187,14 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
             outcome = OUTCOME_DUPLICATE
             alert_id = str(existing[0])
         else:
-            config = execution.config or {}
+            config = execution.config if isinstance(execution.config, dict) else {}
             reason = execution.error_message or config.get("error_message")
             message = f"执行 {execution.id} 已失败"
             if reason:
                 message += f"：{reason}"
+            new_alert_id = uuid4()
             alert = Alert(
+                id=new_alert_id,
                 title="正式测试执行失败",
                 message=message,
                 severity=AlertSeverity.ERROR.value,
@@ -174,7 +209,9 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                 db.add(alert)
                 db.commit()
             except Exception as exc:  # noqa: BLE001 - 告警失败不得改写真实执行终态
-                db.rollback()
+                record_session_usable = _rollback_best_effort(
+                    db, execution_id, "告警写入事务"
+                )
                 logger.exception(
                     "执行 %s 的失败告警写入失败（执行终态保持 failed）", execution_id
                 )
@@ -182,16 +219,30 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                 error_summary = f"{type(exc).__name__}: {exc}"[:_ERROR_SUMMARY_LIMIT]
             else:
                 outcome = OUTCOME_PUBLISHED
-                alert_id = str(alert.id)
-                logger.info("已发布执行失败告警: execution=%s", execution.id)
+                alert_id = str(new_alert_id)
+                logger.info("已发布执行失败告警: execution=%s", execution_id)
 
-        _record_publish_outcome(db, execution_id, outcome, alert_id, error_summary)
+        if record_session_usable:
+            _record_publish_outcome(
+                db, execution_id, outcome, alert_id, error_summary
+            )
         return outcome
-    except Exception:  # noqa: BLE001 - 告警链任何故障都不得反噬执行终态
-        db.rollback()
+    except Exception as exc:  # noqa: BLE001 - 告警链任何故障都不得反噬执行终态
+        record_session_usable = _rollback_best_effort(
+            db, execution_id, "告警发布外层事务"
+        )
+        error_summary = f"{type(exc).__name__}: {exc}"[:_ERROR_SUMMARY_LIMIT]
+        if db is not None and record_session_usable:
+            _record_publish_outcome(
+                db,
+                execution_id,
+                OUTCOME_FAILED,
+                alert_id=None,
+                error_summary=error_summary,
+            )
         logger.exception(
             "执行 %s 的失败告警发布异常（执行终态保持 failed）", execution_id
         )
         return OUTCOME_FAILED
     finally:
-        db.close()
+        _close_best_effort(db, execution_id)
