@@ -64,7 +64,7 @@ test('轮询错误时不发布缓存中的旧 readiness 绿灯', () => {
   const component = source.slice(source.indexOf('export function ZoneReadiness'))
   const render = component.slice(component.indexOf('return ('))
 
-  assert.match(component, /const readiness\s*=\s*!isFetching\s*&&\s*!error\s*&&\s*selectedLabProfileId\s*\?\s*data\s*:\s*undefined/)
+  assert.match(component, /const readiness\s*=\s*fetchStatus\s*===\s*'idle'\s*&&\s*!error\s*&&\s*selectedLabProfileId\s*\?\s*data\s*:\s*undefined/)
   assert.doesNotMatch(render, /\{data\s*&&/)
   assert.match(source, /就绪状态读取失败 · 不可开测/)
 })
@@ -72,7 +72,15 @@ test('轮询错误时不发布缓存中的旧 readiness 绿灯', () => {
 test('切回已有缓存的 LabProfile 时必须等本次刷新完成后才发布', () => {
   const source = read('src/features/Dashboard/ZoneReadiness.tsx')
 
-  assert.match(source, /const\s*\{[^}]*isFetching[^}]*\}\s*=\s*useQuery\(/s)
-  assert.match(source, /const readiness\s*=\s*!isFetching\s*&&/)
+  assert.match(source, /const\s*\{[^}]*fetchStatus[^}]*\}\s*=\s*useQuery\(/s)
+  assert.match(source, /const readiness\s*=\s*fetchStatus\s*===\s*'idle'\s*&&/)
   assert.match(source, /正在确认所选 LabProfile 的最新就绪状态/)
+})
+
+test('离线重试暂停时不得把旧缓存恢复成绿色结论', () => {
+  const source = read('src/features/Dashboard/ZoneReadiness.tsx')
+
+  assert.match(source, /fetchStatus\s*===\s*'paused'/)
+  assert.match(source, /网络不可用，无法确认最新就绪状态 · 不可开测/)
+  assert.doesNotMatch(source, /const readiness\s*=\s*!isFetching/)
 })

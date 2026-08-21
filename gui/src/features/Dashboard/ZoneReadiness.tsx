@@ -263,15 +263,16 @@ function SubnetSection({ report }: { report: HALReadinessResponse }) {
 
 export function ZoneReadiness() {
   const { selectedLabProfileId, loading: labLoading } = useOperationalLab()
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, fetchStatus, error } = useQuery({
     queryKey: ['cockpit', 'readiness', selectedLabProfileId ?? 'unselected'],
     queryFn: () => fetchReadiness(selectedLabProfileId!),
     enabled: !labLoading && Boolean(selectedLabProfileId),
     refetchInterval: 10_000,
   })
-  // A key switch or failed refresh can leave React Query's last successful data
-  // in cache. Publish only after the selected key's current fetch has settled.
-  const readiness = !isFetching && !error && selectedLabProfileId ? data : undefined
+  // A key switch, failed refresh, or offline-paused refresh can leave React Query's
+  // last successful data in cache. Publish only after the selected key is idle.
+  const readiness =
+    fetchStatus === 'idle' && !error && selectedLabProfileId ? data : undefined
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -302,7 +303,7 @@ export function ZoneReadiness() {
           </Alert>
         )}
 
-        {isLoading && (
+        {isLoading && fetchStatus !== 'paused' && (
           <Group gap="xs">
             <Loader size="sm" />
             <Text size="sm" c="dimmed">
@@ -311,13 +312,19 @@ export function ZoneReadiness() {
           </Group>
         )}
 
-        {isFetching && !isLoading && selectedLabProfileId && (
+        {fetchStatus === 'fetching' && !isLoading && selectedLabProfileId && (
           <Group gap="xs">
             <Loader size="sm" />
             <Text size="sm" c="dimmed">
               正在确认所选 LabProfile 的最新就绪状态……
             </Text>
           </Group>
+        )}
+
+        {fetchStatus === 'paused' && selectedLabProfileId && (
+          <Alert color="red" variant="light" title="网络不可用，无法确认最新就绪状态 · 不可开测">
+            当前无法刷新所选 LabProfile 的 readiness；恢复联网并成功刷新前不会发布缓存结论。
+          </Alert>
         )}
 
         {error && (
