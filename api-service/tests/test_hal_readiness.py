@@ -404,6 +404,81 @@ class TestReadinessEndpoint:
     response models without losing fields or breaking the openapi
     schema generated TypeScript depends on."""
 
+    @staticmethod
+    def _stub_hal(report: ReadinessReport):
+        return type("StubHal", (), {"last_readiness_report": report})()
+
+    def test_explicit_profile_replaces_stale_hal_lab_and_calibration(self, db):
+        cert_a = _make_cert(
+            db, number="CAL-A", valid_until=datetime(2099, 1, 1),
+        )
+        cert_b = _make_cert(
+            db, number="CAL-B", valid_until=datetime(2099, 1, 1),
+        )
+        lab_a = _make_lab(db, name="Lab-A", cert=cert_a)
+        lab_b = _make_lab(db, name="Lab-B", cert=cert_b)
+        stale_lab = build_lab_profile_readiness(db, lab_a.id)
+        stale_report = ReadinessReport(
+            drivers=[],
+            lab_profile=stale_lab,
+            calibration=build_calibration_readiness(db, stale_lab),
+            dut_attach=build_dut_attach_readiness(),
+            generated_at_iso=NOW.isoformat(),
+        )
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=self._stub_hal(stale_report),
+        ):
+            resp = client.get(
+                "/api/v1/instruments/hal/readiness",
+                params={"lab_profile_id": str(lab_b.id)},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["lab_profile"]["profile_id"] == str(lab_b.id)
+        assert body["lab_profile"]["profile_name"] == "Lab-B"
+        assert body["calibration"]["certificate_number"] == "CAL-B"
+
+    @pytest.mark.parametrize("kind", ["missing", "inactive"])
+    def test_explicit_invalid_profile_returns_422_without_fallback(self, db, kind):
+        _make_lab(db, name="Active-Fallback", is_active=True)
+        if kind == "inactive":
+            requested_id = _make_lab(
+                db, name="Inactive-Requested", is_active=False,
+            ).id
+        else:
+            requested_id = uuid.uuid4()
+
+        resp = client.get(
+            "/api/v1/instruments/hal/readiness",
+            params={"lab_profile_id": str(requested_id)},
+        )
+
+        assert resp.status_code == 422
+        assert str(requested_id) in resp.json()["detail"]
+
+    def test_explicit_profile_stays_visible_when_hal_is_unavailable(self, db):
+        cert = _make_cert(
+            db, number="CAL-LIVE", valid_until=datetime(2099, 1, 1),
+        )
+        lab = _make_lab(db, name="Live-Selected-Lab", cert=cert)
+
+        with patch("app.services.instrument_hal_service.get_hal_service", return_value=None):
+            resp = client.get(
+                "/api/v1/instruments/hal/readiness",
+                params={"lab_profile_id": str(lab.id)},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["available"] is False
+        assert body["drivers"] == []
+        assert body["subnets"] == []
+        assert body["lab_profile"]["profile_id"] == str(lab.id)
+        assert body["calibration"]["certificate_number"] == "CAL-LIVE"
+
     def test_endpoint_returns_unavailable_when_hal_not_initialized(self):
         """Fresh process / no HAL init → the endpoint returns a
         shaped placeholder, not a 404. GUI consumers can then render
@@ -418,10 +493,11 @@ class TestReadinessEndpoint:
         body = resp.json()
         assert body["available"] is False
         assert body["drivers"] == []
-        # Sub-sections still shaped, with placeholder details that name
-        # the "HAL not initialised" cause (rather than fake-OK).
+        # DB-only sections stay live even though the HAL-owned driver
+        # snapshot is unavailable. With an empty DB they truthfully report
+        # first-launch state rather than a second HAL placeholder.
         assert body["lab_profile"]["status"] == "missing"
-        assert "not initialis" in body["lab_profile"]["detail"].lower()
+        assert "wizard" in body["lab_profile"]["detail"].lower()
         assert body["calibration"]["status"] == "no_lab"
         assert body["dut_attach"]["status"] == "not_implemented"
         assert body["generated_at_iso"]  # truthy ISO string
@@ -429,7 +505,9 @@ class TestReadinessEndpoint:
     def test_endpoint_serializes_full_snapshot_when_available(self, db):
         """HAL has been initialised and stored a snapshot → endpoint
         returns the full payload with all sub-sections."""
-        cert = _make_cert(db, valid_until=NOW + timedelta(days=10))
+        cert = _make_cert(
+            db, number="CAL-LIVE-SNAPSHOT", valid_until=datetime(2099, 1, 1),
+        )
         _make_lab(db, cert=cert)
 
         report = ReadinessReport(
@@ -485,7 +563,8 @@ class TestReadinessEndpoint:
         assert body["lab_profile"]["status"] == "ok"
         assert body["lab_profile"]["profile_name"] == "CAICT-Lab-1"
         assert body["calibration"]["status"] == "valid"
-        assert body["calibration"]["days_remaining"] == 10
+        assert body["calibration"]["certificate_number"] == "CAL-LIVE-SNAPSHOT"
+        assert body["calibration"]["days_remaining"] > 0
         assert body["dut_attach"]["status"] == "not_implemented"
         assert body["generated_at_iso"] == NOW.isoformat()
         # P1-11: subnets key is always present (empty list here since the
