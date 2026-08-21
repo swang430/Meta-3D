@@ -433,8 +433,11 @@ def test_isolating_a_request_clears_the_other_filters():
     若不清掉那些过滤，后端返回交集，按钮承诺的 INFO/HAL/SCPI 上下文全没了。
     按钮名与实际行为不符，正是本片在治的母题。
 
-    变异：把 `isolateRequest` 里的 `setLevelFilter('ALL')` 或
+    变异：把 `isolateRequest` 里的 `setSelectedLevels([])` 或
     `setKeyword('')` 删掉 → 本门红。
+
+    P2-33 把级别过滤改成多选：清空动作从 `setLevelFilter('ALL')` 变成
+    `setSelectedLevels([])`（空数组 = 全部），判据 token 随之更新，意图不变。
     """
     src = _strip_ts_comments((_REPO_ROOT / _LOG_VIEWER).read_text(encoding="utf-8"))
     m = re.search(r"const isolateRequest\s*=\s*\([^)]*\)\s*=>\s*\{(.+?)\n\s{2}\}", src, re.S)
@@ -451,7 +454,7 @@ def test_isolating_a_request_clears_the_other_filters():
         assert helper, "调了 clearTextFilters 但找不到它的定义 —— 本门失效"
         body = body + helper.group(1)
     for needed, why in (
-        ("setLevelFilter('ALL')", "没清 level，返回的是交集不是整条链"),
+        ("setSelectedLevels([])", "没清 level，返回的是交集不是整条链"),
         ("setKeyword('')", "没清 keyword，返回的是交集不是整条链"),
     ):
         assert needed in body, f"「只看这一次请求」这条路上缺 {needed} —— {why}"
