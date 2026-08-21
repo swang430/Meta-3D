@@ -138,6 +138,30 @@ def test_irat_real_unsupported_critical_still_fails_closed():
         assert name not in result.summary
 
 
+def test_5gnr_real_unsupported_critical_fails_without_other_factors():
+    """门②b：真缺失是 success 的**独立**失败因子 —— 变异 M2 的专属探针。
+
+    IRAT 上门②a 的 success=False 有 unverified_actions 兜底，M2（success
+    放行 critical_unsupported）在那里逃逸；5G_NR_Test 无 mandatory ACTION、
+    无其它失败因子，本场景的 False 只由 unsupported 撑起 → M2 一动即红。
+    """
+    broken = seq._to_probe_command(
+        Uxm5GNRTestAppProfile.CELL_BAND, Uxm5GNRTestAppProfile)
+    assert broken == "CONFig:NR5G:CELL0:BAND?"
+
+    def err_for(probe_cmd):
+        if probe_cmd == broken:
+            return '-113,"Undefined header"'
+        return '0,"No error"'
+
+    result = _run(_ScriptedBs(Uxm5GNRTestAppProfile, err_for))
+
+    assert result.extra["critical_unverified_actions"] == []
+    assert result.extra["critical_unsupported"] == ["CELL_BAND"]
+    assert result.success is False
+    assert "BLOCKER" in result.summary
+
+
 def test_critical_partition_invariants_per_profile():
     """门③（不变量）：判定集 ⊆ 当前方言实际会被普查遍历的命令集。
 
