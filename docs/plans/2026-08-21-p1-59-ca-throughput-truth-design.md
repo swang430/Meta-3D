@@ -205,3 +205,26 @@ compileall：通过
 diff-check：通过
 fresh 尾审：P1/P2/P3=0
 ```
+
+## R4 P1 尾修验证（2026-08-21）
+
+R4 指出两种真实 UXM profile 已知缺少逐 SCell 激活态权威回读，却仍会先执行全部
+`add_secondary_cell()` 写入，直到 activation 阶段才阻断；这让一个本来已知不可能放行的
+CA 用例无谓改变仪器状态，并依赖尚未证明完整的清理链。
+
+代码/测试提交 `919bff9` 改成显式白名单能力：`BaseStationDriver` 默认
+`SCELL_ACTIVATION_READBACK_AUTHORITATIVE=False`，所有真实驱动因此在首次 SCell 写入前
+失败；只有完整掌握 in-memory SCell 集合且能精确核对预期 index 的 `MockBaseStation`
+显式为 `True`，其数值仍由既有 simulated provenance 门排除在正式 KPI 外。未来真实驱动
+只有补齐带厂商出处的独立激活态回读后才可显式放行。
+
+TDD RED 修前观察到 `added` 已含一个 SCell；GREEN 后 `added=[]` 且 add 从未调用。
+
+```text
+定点 RED → GREEN：1 failed → 1 passed（扩展定点 7 passed）
+相关及安全对称链：349 passed, 676 warnings in 5.47s
+全后端：4171 passed, 5 skipped, 4290 warnings in 92.69s
+compileall：通过
+diff-check：通过
+fresh 尾审：P1/P2/P3=0
+```
