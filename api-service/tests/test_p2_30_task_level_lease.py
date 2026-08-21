@@ -20,8 +20,10 @@
   A. 一次作业 `acquires == 1 and releases == 1`（任务级恰一次真取放）；
   B. 每次点级测量发生时 depth >= 1（所有点都在作业级租约持有期间）。
 
-变异（摘掉任一入口的外层租约）→ 对应测试的断言 A 变红
-（该入口退化回逐点取放，acquires == 点数 != 1）。
+变异（摘掉任一入口的外层租约）→ 对应测试的断言 A 变红：
+方向图 / XPD 桩在 primitive 上，退化回逐点取放 acquires == 点数 != 1；
+path-loss 三入口桩在 `_real_path_loss_measurement_via_ce_sa`（内层 wrapper 不跑），
+红的形态是 acquires == releases == 0（内审 F4 实跑纠正叙述，门的判据不变）。
 """
 from __future__ import annotations
 

@@ -10,7 +10,7 @@ Roadmap：P2-30（来源 = roadmap `[discovered 2026-08-08 during 现场分支�
   - `instrument_test_lease.py::hold()` docstring（189-206 行）：嵌套按引用计数处理，
     只有最外层真正取/放控制权；内层要的控制权不能比外层宽，否则 fail-loud。
   - `path_loss_calibration_service.py::acquire_sa_power_via_ce_tone` docstring
-    （853-856 行）：「调用方要减少 socket 建拆开销时，直接在作业入口（一次探头
+    （改动前 853-856 行，改后 888-891 行）：「调用方要减少 socket 建拆开销时，直接在作业入口（一次探头
     方向图 / 一次 QZ 校验 / 一次 path-loss 作业）外面再包一圈租约即可，本方法
     这圈会自动变成 no-op。」—— 本片就是把这句话落地。
   - 目标文件禁令 grep（`绝不|不许|禁止|must not|别把`）命中 3 条，均与本改动
@@ -50,12 +50,14 @@ Roadmap：P2-30（来源 = roadmap `[discovered 2026-08-08 during 现场分支�
 | 2 | QZ 校验 | `quiet_zone_validation_service.py::run_xpd_validation` | co + cross 两次 | real 分支（else 块）内包住两次调用 |
 | 3 | path-loss | `path_loss_calibration_service.py::ProbePathLossCalibrationService.start_calibration` | probe × pol 逐组 | mock/real 同循环 → `nullcontext`/租约条件包住循环 |
 | 4 | path-loss | 同文件 `start_calibration_for_lab_profile` | 逐 chain | 同 #3 条件包 |
-| 5 | path-loss | 同文件 `MultiFrequencyPathLossService._real_frequency_sweep_via_ce_sa` | 逐频点 | real-only 函数，函数内包住频点循环 |
+| 5 | path-loss | 同文件 `MultiFrequencyPathLossService.calibrate_frequency_sweep` | 逐 probe × 逐频点 | 条件包（同 #3，`nullcontext`/租约），包在 probe 循环外 —— 整个扫频作业 1 次而非每探头 1 次；`_real_frequency_sweep_via_ce_sa` 内层不再另包（嵌套本就 no-op） |
 | 6 | QZ 校验 | `run_field_uniformity_validation` | real 分支 fail-closed **直接 raise**（等 XY 平移台 API），不达 primitive | **不包** —— 包了反而在 raise 前多做一次真实 acquire/release，行为倒退（Y > X） |
 
 任务书说的「三个作业入口（measure_probe_pattern / QZ 校验 / path-loss 作业）」
 按**作业类**计；`measure_probe_pattern` 在当前代码里的实名是
-`_real_pattern_measurements`，path-loss 类有 3 个活入口（#3 chamber-keyed 旧门、
+`_real_pattern_measurements`（⚠ 内审 F1：它是 (probe, pol) 层的入口，不是多探头作业入口 ——
+`execute_pattern_calibration` 的 probe×pol 循环仍按组数真建拆；今天无生产调用方，
+`/pattern/start` 直接写 mock 数据，报告一次留 triage），path-loss 类有 3 个活入口（#3 chamber-keyed 旧门、
 #4 lab-profile 正门、#5 扫频），故障同源、修法同形（一行 `async with`），全属
 「path-loss 作业」这一类。只做其中一个会把同一故障留在同文件另两个活入口上。
 
@@ -124,6 +126,6 @@ M1–M5 = 分别摘掉 5 个入口的外层租约（还原为直跑循环）→ 
 ## 验收
 
 - 新测试 5 条全绿；变异 M1–M5 全红；
-- 全量 `pytest -q` 除已知基线失败
+- 全量 `pytest -q` 零失败、无豁免（原已知基线失败
   `tests/test_p1_36_execution_id.py::test_no_execution_means_default_not_empty`
-  （main 同款，另片在修）外零失败。
+  已由 P2-35 #357 治掉，本片并入 main 后 4076 passed / 0 failed）。
