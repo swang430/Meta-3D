@@ -504,7 +504,10 @@ paths:
           in: query
           schema:
             type: string
-          description: Fuzzy match against msg + logger
+          description: >-
+            Fuzzy match against msg + logger + the same-line `exception` field
+            (where JsonFormatter puts tracebacks) + RAW continuation lines of the
+            group; a hit anywhere returns the whole group (parent + continuations).
         - name: session_id
           in: query
           schema:
@@ -562,6 +565,7 @@ paths:
           in: query
           schema:
             type: string
+          description: Same scope as /tail keyword (msg + logger + same-line exception + RAW continuations; whole group returned)
         - name: session_id
           in: query
           schema:

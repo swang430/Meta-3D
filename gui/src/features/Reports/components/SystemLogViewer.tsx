@@ -21,6 +21,7 @@ import {
   Tooltip,
   Code,
   SegmentedControl,
+  Chip,
   Loader,
   Alert,
   Menu,
@@ -68,10 +69,23 @@ const LEVEL_COLORS: Record<string, string> = {
   RAW: 'dark',
 }
 
-// P1-35：「仅异常」不是一个后端 level，是**几个 level 的并集**（见 fetchLogs）。
-// 用哨兵值而不是字面量 'ISSUES'，免得哪天有人真加了个叫 ISSUES 的级别撞上。
-const ISSUES = '__ISSUES__'
+// P1-35 定义的「仅异常」级别集；P2-33 起它是**多选快捷键的预设**，
+// 不再对应任何哨兵值。消费时只准整体取（Array.from），不得中途切筛 ——
+// `.slice(0, 1)` 会静默退化成只看 WARNING（test_p1_35 立门实证）。
 const ISSUE_LEVELS = ['WARNING', 'ERROR', 'CRITICAL'] as const
+
+// P2-33：级别过滤改**多选** —— 单选没有任何一档能表达「去掉 DEBUG 心跳但
+// 保留 INFO 及以上」（实测最近 400 行里 253 行是 DEBUG 心跳）。空选 = 全部。
+// 后端 `level` 收逗号集合（P1-35），一次请求即可 —— 不做前端并流（导出是
+// 下载链接、天然合不了流）。⚠ 集合语义不是门槛：别改成 `>=`，
+// ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交。
+const LEVEL_CHOICES: Array<{ value: string; label: string }> = [
+  { value: 'DEBUG', label: '🔍 DEBUG' },
+  { value: 'INFO', label: 'ℹ️ INFO' },
+  { value: 'WARNING', label: '⚠️ WARN' },
+  { value: 'ERROR', label: '❌ ERROR' },
+  { value: 'CRITICAL', label: '🟣 CRIT' },
+]
 
 /**
  * 屏幕与「导出过滤结果」共用的**唯一**一处过滤条件构造。
@@ -80,22 +94,18 @@ const ISSUE_LEVELS = ['WARNING', 'ERROR', 'CRITICAL'] as const
  * 表达式，于是「改一处忘另一处」有两个入口 —— 而这正是 P1-34 内审 F3
  * 的母题（屏幕 5 条、导出全量）。合成一份之后，那类分叉**结构上不可能**。
  *
- * `level` 归一化尤其重要：`ISSUES` 是**前端哨兵值**，绝不能发给后端
- * （后端精确匹配 → 0 行）。
+ * `level` 归一化只在这里发生：空选 = 全部（不发参数），
+ * 非空 = 逗号集合。多选模型没有哨兵态 —— 「哨兵值漏发给后端 →
+ * 精确匹配 0 行」这一类风险从源头消失（P2-33）。
  */
 function buildLogQuery(opts: {
-  levelFilter: string
+  levels: string[]
   keyword: string
   sessionFilter: string | null
   executionFilter: string | null
 }): Record<string, string> {
   const q: Record<string, string> = {}
-  const level =
-    opts.levelFilter === ISSUES
-      ? ISSUE_LEVELS.join(',')
-      : opts.levelFilter === 'ALL'
-        ? null
-        : opts.levelFilter
+  const level = opts.levels.length > 0 ? opts.levels.join(',') : null
   if (level) q.level = level
   if (opts.keyword.trim()) q.keyword = opts.keyword.trim()
   if (opts.sessionFilter) q.session_id = opts.sessionFilter
@@ -154,7 +164,8 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const historyModeRef = useRef(false)
 
   // Filters
-  const [levelFilter, setLevelFilter] = useState<string>('ALL')
+  // P2-33: 级别过滤是多选集合；空数组 = 全部（见 LEVEL_CHOICES 的注释）。
+  const [selectedLevels, setSelectedLevels] = useState<string[]>([])
   const [keyword, setKeyword] = useState('')
   const [maxLines] = useState(200)
   // P1-34「只看这一次请求」——把一次操作串成一条链。
@@ -192,7 +203,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   //   只能沿一个方向到达 —— 而两个徽章都显示着，用户没法预期哪个会被清。
   //   两条链本就可以叠加（后端支持同时传），叠加时读作"这次执行里的这个请求"。
   const clearTextFilters = () => {
-    setLevelFilter('ALL')
+    setSelectedLevels([])
     setKeyword('')
   }
 
@@ -300,14 +311,13 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     setLoading(true)
     setError(null)
     try {
-      // P1-35「仅异常」：后端 `level` 是**精确相等**不是门槛，所以没有任何
-      // 单值能表达「WARNING 及以上」。解法是后端收**逗号集合**，一个请求
-      // 搞定 —— 不做前端并流：「导出过滤结果」是下载链接、天然合不了流，
-      // 前端并流会让屏幕与导出必然分叉（P1-34 内审 F3 的母题）。
+      // 后端 `level` 是**精确相等**不是门槛，收逗号集合（P1-35），多选也是
+      // 一个请求搞定 —— 不做前端并流：「导出过滤结果」是下载链接、天然
+      // 合不了流，前端并流会让屏幕与导出必然分叉（P1-34 内审 F3 的母题）。
       const params = {
         filename: selectedFile,
         lines: maxLines,
-        ...buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
+        ...buildLogQuery({ levels: selectedLevels, keyword, sessionFilter, executionFilter }),
       }
 
       const res = await apiClient.get('/system-logs/tail', { params })
@@ -329,7 +339,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     } finally {
       if (requestGeneration === requestGenerationRef.current) setLoading(false)
     }
-  }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter, executionFilter])
+  }, [selectedFile, selectedLevels, keyword, maxLines, sessionFilter, executionFilter])
 
   // ── Explicit older page ──
   const loadOlder = useCallback(async () => {
@@ -352,7 +362,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
         filename: selectedFile,
         lines: maxLines,
         cursor,
-        ...buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
+        ...buildLogQuery({ levels: selectedLevels, keyword, sessionFilter, executionFilter }),
       }
       const res = await apiClient.get('/system-logs/history', { params })
       if (requestGeneration !== requestGenerationRef.current) return
@@ -378,7 +388,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     historyLoading,
     selectedFile,
     maxLines,
-    levelFilter,
+    selectedLevels,
     keyword,
     sessionFilter,
     executionFilter,
@@ -527,22 +537,39 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
               disabled={filesLoading}
             />
 
-            <SegmentedControl
-              value={levelFilter}
-              onChange={setLevelFilter}
-              data={[
-                { value: 'ALL', label: '全部' },
-                // 故障分诊的默认落点：WARNING 及以上一次看全。
-                // 单选 ERROR 会漏掉 WARNING，单选 WARNING 会漏掉 ERROR ——
-                // 后端 level 是精确相等，没有任何单档能给出「及以上」。
-                { value: ISSUES, label: '🚨 仅异常' },
-                { value: 'ERROR', label: '❌ ERROR' },
-                { value: 'WARNING', label: '⚠️ WARN' },
-                { value: 'INFO', label: 'ℹ️ INFO' },
-                { value: 'DEBUG', label: '🔍 DEBUG' },
-              ]}
-              size="xs"
-            />
+            {/* P2-33: 级别过滤是多选 —— 单选没有任何一档能表达「去掉 DEBUG
+                心跳但保留 INFO 及以上」。空选 = 全部；「仅异常」是一键预设
+                （WARNING/ERROR/CRITICAL 全选），不再是独立档位。 */}
+            <Chip.Group multiple value={selectedLevels} onChange={setSelectedLevels}>
+              <Group gap={4} wrap="nowrap">
+                {LEVEL_CHOICES.map((f) => (
+                  <Chip
+                    key={f.value}
+                    value={f.value}
+                    size="xs"
+                    color={LEVEL_COLORS[f.value] || 'gray'}
+                  >
+                    {f.label}
+                  </Chip>
+                ))}
+              </Group>
+            </Chip.Group>
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="orange"
+              onClick={() => setSelectedLevels(Array.from(ISSUE_LEVELS))}
+            >
+              🚨 仅异常
+            </Button>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              disabled={selectedLevels.length === 0}
+              onClick={() => setSelectedLevels([])}
+            >
+              全部
+            </Button>
 
             <SegmentedControl
               value={sortDesc ? 'desc' : 'asc'}
@@ -625,7 +652,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                 // 「导出的就是屏幕上这些」。内审 F1：两份逐字相同的三元，
                 // 给「改一处忘另一处」留了两个入口。
                 const params = new URLSearchParams(
-                  buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
+                  buildLogQuery({ levels: selectedLevels, keyword, sessionFilter, executionFilter }),
                 )
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
