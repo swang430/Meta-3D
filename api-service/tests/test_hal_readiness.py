@@ -198,6 +198,31 @@ class TestLabProfileReadiness:
         assert "Lab-A-first-alpha" in section.detail
         assert "Lab-B-second-alpha" in section.detail
 
+    def test_explicit_active_profile_wins_when_multiple_are_active(self, db):
+        _make_lab(db, name="Lab-A", is_active=True)
+        chosen = _make_lab(db, name="Lab-B", is_active=True)
+
+        section = build_lab_profile_readiness(db, chosen.id)
+
+        assert section.status == "ok"
+        assert section.profile_id == str(chosen.id)
+        assert section.profile_name == "Lab-B"
+        assert section.is_active is True
+
+    def test_explicit_inactive_profile_is_rejected_without_fallback(self, db):
+        _make_lab(db, name="Active-Fallback", is_active=True)
+        inactive = _make_lab(db, name="Inactive-Requested", is_active=False)
+
+        with pytest.raises(ValueError, match="inactive"):
+            build_lab_profile_readiness(db, inactive.id)
+
+    def test_explicit_missing_profile_is_rejected_without_fallback(self, db):
+        _make_lab(db, name="Active-Fallback", is_active=True)
+        missing_id = uuid.uuid4()
+
+        with pytest.raises(ValueError, match=str(missing_id)):
+            build_lab_profile_readiness(db, missing_id)
+
 
 class TestCalibrationReadiness:
     """Pin the four status branches: no_lab / missing / valid / expired.
