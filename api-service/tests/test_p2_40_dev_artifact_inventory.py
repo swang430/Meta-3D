@@ -193,6 +193,39 @@ def test_docker_unavailable_is_explicit_and_safe(tmp_path: Path) -> None:
     assert not any(item["disposition"] == "quarantine_candidate" for item in manifest["docker_volumes"])
 
 
+def test_docker_inventory_records_read_only_size_evidence() -> None:
+    module = _load_module()
+
+    def docker_fixture(args):
+        command = tuple(args)
+        if command == ("docker", "volume", "ls", "-q"):
+            return SimpleNamespace(returncode=0, stdout="meta3d_postgres_data\n", stderr="")
+        if command[:3] == ("docker", "system", "df"):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "VOLUME NAME             LINKS     SIZE\n"
+                    "meta3d_postgres_data    1         79.65MB\n"
+                ),
+                stderr="",
+            )
+        if command[:3] == ("docker", "volume", "inspect"):
+            return SimpleNamespace(
+                returncode=0,
+                stdout='{"CreatedAt":"2026-08-02T09:05:03Z","Labels":null}\n',
+                stderr="",
+            )
+        if command[:2] == ("docker", "ps"):
+            return SimpleNamespace(returncode=0, stdout="meta3d_db\n", stderr="")
+        raise AssertionError(command)
+
+    volumes = module._collect_docker_volumes(docker_fixture)
+
+    assert volumes[0]["size_display"] == "79.65MB"
+    assert volumes[0]["bytes"] == 79_650_000
+    assert "docker_system_df" in volumes[0]["identity_evidence"]
+
+
 def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     log = tmp_path / "app.log"

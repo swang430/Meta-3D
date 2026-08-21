@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -290,12 +291,38 @@ def classify_docker_volume(volume: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _size_bytes(value: str) -> int | None:
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(B|kB|MB|GB|TB)", value)
+    if not match:
+        return None
+    scale = {"B": 1, "kB": 1_000, "MB": 1_000_000, "GB": 1_000_000_000, "TB": 1_000_000_000_000}
+    return int(float(match.group(1)) * scale[match.group(2)])
+
+
+def _docker_volume_sizes(command_runner: CommandRunner, names: set[str]) -> dict[str, tuple[str, int]]:
+    code, output = _command_output(command_runner, ["docker", "system", "df", "-v"])
+    if code != 0:
+        return {}
+    sizes: dict[str, tuple[str, int]] = {}
+    for line in output.splitlines():
+        columns = line.split()
+        if len(columns) < 3 or columns[0] not in names:
+            continue
+        display = columns[-1]
+        byte_count = _size_bytes(display)
+        if byte_count is not None:
+            sizes[columns[0]] = (display, byte_count)
+    return sizes
+
+
 def _collect_docker_volumes(command_runner: CommandRunner) -> list[dict[str, Any]]:
     code, output = _command_output(command_runner, ["docker", "volume", "ls", "-q"])
     if code != 0:
         raise RuntimeError("docker volume ls failed")
+    names = sorted(filter(None, output.splitlines()))
+    sizes = _docker_volume_sizes(command_runner, set(names))
     volumes: list[dict[str, Any]] = []
-    for name in sorted(filter(None, output.splitlines())):
+    for name in names:
         inspect_code, inspect_output = _command_output(
             command_runner,
             ["docker", "volume", "inspect", name, "--format", "{{json .}}"],
@@ -315,17 +342,17 @@ def _collect_docker_volumes(command_runner: CommandRunner) -> list[dict[str, Any
             metadata = json.loads(inspect_output)
         except json.JSONDecodeError:
             metadata = {}
-        volumes.append(
-            classify_docker_volume(
-                {
-                    "created_at": metadata.get("CreatedAt"),
-                    "labels": metadata.get("Labels") or {},
-                    "mounted_by": sorted(filter(None, mount_output.splitlines())),
-                    "name": name,
-                    "probe_state": "available" if metadata else "malformed",
-                }
-            )
-        )
+        volume = {
+            "created_at": metadata.get("CreatedAt"),
+            "labels": metadata.get("Labels") or {},
+            "mounted_by": sorted(filter(None, mount_output.splitlines())),
+            "name": name,
+            "probe_state": "available" if metadata else "malformed",
+        }
+        if name in sizes:
+            volume["size_display"], volume["bytes"] = sizes[name]
+            volume["identity_evidence"] = ["docker_system_df"]
+        volumes.append(classify_docker_volume(volume))
     return volumes
 
 
