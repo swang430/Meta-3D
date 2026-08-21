@@ -114,3 +114,6 @@ AGENTS.md 逐项复核命令产生/消费全集、错误队列归属和模拟/�
 - 全后端：**4193 passed / 5 skipped**；`compileall`、`git diff --check` 通过。
 - fresh 内审：功能 **P1/P2/P3=0**；另发现并修正 roadmap 中 P2-40 已合并与
   “尚未合并”并存的现行文档镜像冲突。
+- 合并前独立审查：功能 **P1=0**；发现并收口 1 组现行事实镜像 P2——roadmap 不再声称
+  后台仍无界读取，`BaseStationDriver` 也不再建议真实仪器照搬无手册依据的
+  `TSTatistics:STARt/STOP`，而是要求各驱动只采用自身有出处的窗口能力。

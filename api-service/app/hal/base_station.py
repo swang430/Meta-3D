@@ -301,13 +301,13 @@ class BaseStationDriver(InstrumentDriver):
         """
         采集一个独立的 MAC 统计窗口 (Phase 2d 同步语义)。
 
-        语义 = "重置/开始统计 → 等待 window_s 秒 → 读一次 → 停止统计"。
+        语义 = "建立独立统计边界 → 等待 window_s 秒 → 读一次"。
         每次调用对应一个独立的 i.i.d. 样本; 调用方循环 N 次得到 N 个独立样本,
         std/mean 才有意义。区别于 get_throughput_metrics() 的滑动窗口语义。
 
         默认实现 = sleep + 单次 get_throughput_metrics() — 适用于 mock 或
-        没有 START/STOP SCPI 的简单仿真器。真硬件 (UXM) 应 override 为
-        BTHRoughput:DL:TSTatistics:STARt → sleep → query → STOP 序列。
+        不提供独立窗口控制的简单仿真器。真硬件必须按各自有厂商出处的能力
+        override；无法确认窗口边界时应保守返回未验证值，不得照搬其他方言。
 
         Args:
             window_s: 窗口长度 (秒); 对应 stat_count 子帧数 (1ms/subframe)
