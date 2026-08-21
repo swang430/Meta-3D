@@ -422,7 +422,9 @@ class MeasureExecutor(IStepExecutor):
             })
 
         try:
-            activated = await activate_secondary_cells()
+            activated = await activate_secondary_cells(
+                expected_indices=[item["cc_index"] for item in added],
+            )
         except Exception as exc:  # noqa: BLE001
             return added, f"SCell 激活异常：{exc}"
         if activated is not True:

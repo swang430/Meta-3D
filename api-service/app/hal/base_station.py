@@ -393,8 +393,12 @@ class BaseStationDriver(InstrumentDriver):
         """
         raise NotImplementedError
 
-    async def activate_secondary_cells(self) -> bool:
-        """激活所有已 add 的 SCell, 触发 UE 端 SCellActivation MAC CE。"""
+    async def activate_secondary_cells(
+        self,
+        *,
+        expected_indices: Optional[List[int]] = None,
+    ) -> bool:
+        """激活已 add 的 SCell；可要求仪器清单精确匹配预期集合。"""
         raise NotImplementedError
 
     async def remove_all_secondary_cells(self) -> bool:
@@ -649,10 +653,22 @@ class MockBaseStation(BaseStationDriver):
         )
         return True
 
-    async def activate_secondary_cells(self) -> bool:
+    async def activate_secondary_cells(
+        self,
+        *,
+        expected_indices: Optional[List[int]] = None,
+    ) -> bool:
         scells = getattr(self, "_scells", {}) or {}
+        actual = sorted(scells.keys())
+        if expected_indices is not None and actual != sorted(expected_indices):
+            logger.warning(
+                "[MockBS] SCell set mismatch: expected=%s actual=%s",
+                sorted(expected_indices),
+                actual,
+            )
+            return False
         logger.info("[MockBS] Activating %d SCell(s): %s",
-                    len(scells), sorted(scells.keys()))
+                    len(scells), actual)
         return True
 
     async def remove_all_secondary_cells(self) -> bool:

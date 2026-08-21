@@ -3428,7 +3428,35 @@ class RealUxmDriver(BaseStationDriver):
             logger.error("[UXM] add_secondary_cell: cc_index must be ≥ 1 (PCell is 0)")
             return False
         cell = self._cell_id
+        required_templates = {
+            "SCELL_CONF_FREQ": self._cmds.SCELL_CONF_FREQ,
+            "SCELL_CONF_BW": self._cmds.SCELL_CONF_BW,
+            "SCELL_CONF_SCS": self._cmds.SCELL_CONF_SCS,
+            "SCELL_ADD": self._cmds.SCELL_ADD,
+        }
+        if cc_config.get("band"):
+            required_templates["SCELL_CONF_BAND"] = self._cmds.SCELL_CONF_BAND
+        missing = sorted(
+            name for name, template in required_templates.items()
+            if not isinstance(template, str) or not template
+        )
+        if missing:
+            logger.error(
+                "[UXM/%s] SCell %d 未下发：当前 profile 缺少 %s；禁止按别的"
+                "方言猜命令。",
+                self._cmds.PROFILE_NAME,
+                cc_index,
+                ", ".join(missing),
+            )
+            return False
         try:
+            baseline_errors = self._drain_errors()
+            if self._error_queue_unusable(baseline_errors):
+                logger.error("[UXM] SCell add 错误门不可用: %s", baseline_errors[-1])
+                return False
+            if baseline_errors:
+                logger.info("[UXM] SCell add 前已清理历史错误: %s", baseline_errors)
+
             freq_mhz = float(cc_config.get("frequency_mhz", 0))
             bw_mhz = float(cc_config.get("bandwidth_mhz", 100))
             scs_khz = int(cc_config.get("scs_khz", 30))
@@ -3451,6 +3479,14 @@ class RealUxmDriver(BaseStationDriver):
                 cell=cell, idx=cc_index
             ))
             self._query(self._cmds.OPC)
+            command_errors = self._drain_errors()
+            if command_errors:
+                logger.error(
+                    "[UXM] SCell %d 配置/添加被仪器拒绝或错误门不可用: %s",
+                    cc_index,
+                    command_errors,
+                )
+                return False
             logger.info(
                 "[UXM] SCell %d added: freq=%.1f MHz BW=%.0f MHz scs=%dkHz band=%s",
                 cc_index, freq_mhz, bw_mhz, scs_khz, band or "auto",
@@ -3460,23 +3496,65 @@ class RealUxmDriver(BaseStationDriver):
             logger.error("[UXM] SCell %d add failed: %s", cc_index, e)
             return False
 
-    async def activate_secondary_cells(self) -> bool:
-        """Phase 2g: query SCell list, activate each one. UE receives
-        SCellActivation MAC CE on the next subframe.
+    async def activate_secondary_cells(
+        self,
+        *,
+        expected_indices: Optional[List[int]] = None,
+    ) -> bool:
+        """核对 SCell 清单后发送激活动作，并消费仪器错误队列。
+
+        ``*OPC?`` 只表示命令执行完毕，不代表没有错误；只有清单精确匹配且
+        激活动作后的错误队列干净才返回 True。当前手册没有独立的 active-state
+        readback，因此这里不宣称 UE 已实际启用载波，只证明仪器接受了本次动作。
         """
         cell = self._cell_id
-        try:
-            scell_resp = self._query(
-                self._cmds.SCELL_LIST_QUERY.format(cell=cell)
+        list_query = self._cmds.SCELL_LIST_QUERY
+        activate_template = self._cmds.SCELL_ACTIVATE
+        if not list_query or not activate_template:
+            logger.error(
+                "[UXM/%s] SCell 激活未执行：当前 profile 缺少清单或激活命令。",
+                self._cmds.PROFILE_NAME,
             )
-            if not scell_resp or not scell_resp.strip():
-                logger.warning("[UXM] No SCells configured to activate")
-                return True
-            indices = [int(s) for s in scell_resp.strip().split(",") if s.strip().isdigit()]
+            return False
+        try:
+            baseline_errors = self._drain_errors()
+            if self._error_queue_unusable(baseline_errors):
+                logger.error("[UXM] SCell list 错误门不可用: %s", baseline_errors[-1])
+                return False
+            if baseline_errors:
+                logger.info("[UXM] SCell list 前已清理历史错误: %s", baseline_errors)
+
+            scell_resp = self._query(
+                list_query.format(cell=cell)
+            )
+            list_errors = self._drain_errors()
+            if list_errors:
+                logger.error("[UXM] SCell 清单查询失败: %s", list_errors)
+                return False
+            tokens = [part.strip() for part in (scell_resp or "").split(",")]
+            if not tokens or any(not token.isdigit() for token in tokens):
+                logger.error("[UXM] SCell 清单不可解析: %r", scell_resp)
+                return False
+            indices = [int(token) for token in tokens]
+            if expected_indices is not None and sorted(indices) != sorted(expected_indices):
+                logger.error(
+                    "[UXM] SCell 清单不匹配: expected=%s actual=%s",
+                    sorted(expected_indices),
+                    sorted(indices),
+                )
+                return False
             for idx in indices:
-                self._write(self._cmds.SCELL_ACTIVATE.format(cell=cell, idx=idx))
+                self._write(activate_template.format(cell=cell, idx=idx))
             self._query(self._cmds.OPC)
-            logger.info("[UXM] Activated %d SCell(s): %s", len(indices), indices)
+            activation_errors = self._drain_errors()
+            if activation_errors:
+                logger.error("[UXM] SCell 激活动作被拒绝: %s", activation_errors)
+                return False
+            logger.info(
+                "[UXM] Activation command accepted for %d SCell(s): %s",
+                len(indices),
+                indices,
+            )
             return True
         except Exception as e:  # noqa: BLE001
             logger.error("[UXM] SCell activation failed: %s", e)
