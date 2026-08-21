@@ -104,6 +104,23 @@ schema 1 不包含口径证明，不能区分单载波真值与 CA PCell-only �
 
 因此所有未知、旧记录、缺命令、部分添加和未确认激活均选择 fail-closed。
 
+## 实现期内审补充：SCell 写入不能只信布尔值
+
+第一次实现虽然让上游消费了 `add_secondary_cell()` / `activate_secondary_cells()` 的
+布尔返回，但真实 UXM 驱动仍有两条假成功路径：空 SCell 清单返回 `True`，以及写完只等
+`*OPC?` 而不读取错误队列。实现期 fresh review 已按 TDD 收口：
+
+- add 前验证当前 profile 的完整命令模板，缺任一项零 I/O 失败；
+- add 前清历史错误、写后消费错误队列，任何拒绝或错误门不可用均失败；
+- activate 要求仪器 SCell 清单与本次请求 index 集合精确一致；
+- 激活动作后消费错误队列；`*OPC?` 不单独作为成功依据；
+- 当前手册没有 active-state 独立回读，所以返回值只表示仪器接受本次动作，不声称 UE
+  已实际启用载波。
+
+当前 `UxmLteNrIratProfile` 有来源的命令面只足以查询聚合吞吐，不足以完成本片要求的
+逐 SCell 配置/激活真值；因此 IRAT CA 在补齐厂商出处与现场兼容性证据前明确失败。此处
+选择“无报告”而非“PCell-only 假报告”，现场半保持 Hardware Blocked。
+
 ## 验收
 
 1. 单载波仍发送 per-cell DL/UL query，scope=`pcell`；
