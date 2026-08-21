@@ -151,7 +151,7 @@ PR 合并后重新生成 manifest，并单独向用户展示：
 - Docker 只读读取 volume inspect、容器反向引用与 `docker system df -v` 大小；mounted volume
   一律保护，unmounted anonymous 只进入 `review`，绝不成为自动候选。
 
-### 真实 manifest（2026-08-22 00:03 +08:00）
+### 真实 manifest（2026-08-22 00:17 +08:00）
 
 运行命令：
 
@@ -198,6 +198,10 @@ manifest 校验：
 四个校准测试已改为 pytest 临时 SQLite：function scope 使用 `tmp_path`，三个 module scope
 使用各自 `tmp_path_factory` 目录，并在 teardown dispose engine。子进程 RED 在受保护 cwd
 留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **229 passed**。
+
+最终验证：P2-40、四组校准与完整 rule gates **282 passed**；全后端
+**4188 passed / 5 skipped**；`compileall`、`diff-check` 通过。fresh 内审最初的
+2 P1 / 3 P2 已全部按 TDD 与单一真值源收口，复审 **P1/P2/P3=0**。
 
 ### 拟提交用户批准的可恢复操作（尚未执行）
 
