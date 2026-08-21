@@ -41,4 +41,3 @@ P2-36 不需要再次开发。它描述的可观察故障已由 P1-39 / PR #292 
 - 核对过滤键始终使用完整 execution ID；
 - `git diff --check` 通过；
 - docs-only diff 经 fresh 内审与 Codex 外审后合并。
-

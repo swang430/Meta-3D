@@ -3855,7 +3855,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | 执行失败告警发布结果 | ✅ **P2-34 / PR #361** |
 | P3-14 频率输入/显示粒度与 TestCase 摘要换源 | ✅ **P3-14 / PR #262** |
 | P1-55 顶层与 PCell 真值分叉 | ✅ **P1-55 / PR #349** |
-| 执行历史一键跳日志 | 保留 **P2-36** |
+| 执行历史一键跳日志 | ✅ **P1-39 / PR #292** 已交付；P2-36 重复项已关闭 |
 | SMB / EMQuest 自动化 | 保留并收窄 **P2-31 = SMB `.smu` 工程扫描**；EMQuest 10-band 表已交付 |
 | QZ / Pattern / Multi real warning 闭环 | → 功能启用池（原 P2-32，不进当前执行队列） |
 | 失效校准导入/导出、两套 UXM 诊断 error reader | → 非阻塞维护池（原 P3-20/P3-21） |
