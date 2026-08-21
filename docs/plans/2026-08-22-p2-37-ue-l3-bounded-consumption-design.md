@@ -96,3 +96,21 @@ AGENTS.md 逐项复核命令产生/消费全集、错误队列归属和模拟/�
 - 不新增或猜测带数量参数的 SCPI；
 - 不改 CMW500、Mock 或独立诊断序列的语义；
 - 不处理 P2-40 的清理候选。
+
+## 开发与验证证据
+
+- RED：后台 connected 监控修前仍发送全量 L3 `FETCh?`；正式窗口的 clear 顺序、
+  clear 缺失、传输异常和设备拒绝四种场景修前均失败。
+- GREEN：提交 `7a8781b` 让后台监控显式跳过 L3；提交 `52b165b` 让正式窗口仅在
+  clear 命令存在、传输成功且错误队列确认设备接受后读取 L3。
+- 产生/消费全集复核：生产路径只有后台 `get_metrics()`、正式
+  `measure_throughput_window()` 与独立 `uxm_kpi_readback` 诊断序列；MIMO OTA
+  `measure.py` 只通过正式窗口消费真实 UXM，未发现第四条活跃入口。
+- 未新增 SCPI；L3 原始值继续只进入 `kpi_raw_unverified`，`rsrp_dbm`、`sinr_db`、
+  `kpi_valid`、Analysis 与报告语义均未放宽。
+- focused：`test_uxm_kpi_readback.py` + `test_uxm_kpi_readback_sequence.py`
+  **109 passed**。
+- 相关链与完整 rule gates：**226 passed**。
+- 全后端：**4193 passed / 5 skipped**；`compileall`、`git diff --check` 通过。
+- fresh 内审：功能 **P1/P2/P3=0**；另发现并修正 roadmap 中 P2-40 已合并与
+  “尚未合并”并存的现行文档镜像冲突。
