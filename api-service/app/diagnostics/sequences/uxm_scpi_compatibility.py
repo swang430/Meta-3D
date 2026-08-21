@@ -51,8 +51,13 @@ code categorized:
 * ``-113`` / ``-114`` ........... UNSUPPORTED (driver needs alias)
 * anything else ................. UNKNOWN (surfaced raw)
 
-The 22 "critical" commands (cell config + MIMO + throughput) are
-tagged so the operator sees immediately whether to proceed or escalate.
+"Critical" commands (cell config + MIMO + throughput + 生产 MAC 契约)
+are tagged so the operator sees immediately whether to proceed or
+escalate. ⭐ P1-58：判定集**按当前方言 profile 派生**（全局能力清单 ∩
+profile 实际定义）—— 全局清单是跨方言并集，任何单一方言都不可能全部
+定义；「本方言 profile 没有的命令」不是失败，是如实披露
+（`critical_not_in_profile`，未探测、无结论 ≠ 已验证不支持，口径见
+`uxm_command_profiles.py` 尾部注释）。
 
 Safety
 ------
@@ -167,9 +172,35 @@ _CORE_CRITICAL_NAMES = frozenset({
 })
 
 # 手册确认“无对应命令”的项无论哪一侧误加，都必须从判定集显式排除。
+# ⚠ 这是**跨方言的能力并集**（5G_NR_Test 与 LTE_NR_IRAT 各自命令面的 critical
+#   合在一起），不是任何单一方言的应有命令清单 —— 拿它直接当判定集对单方言
+#   profile 逐条要求，必然恒失败（IRAT 恒缺 4 条、5G 恒缺 20 条，P1-58 病根）。
+#   判定一律先过 _critical_partition() 按当前方言收敛。
 _CRITICAL_NAMES = (
     _CORE_CRITICAL_NAMES | _MAC_CRITICAL_NAMES
 ) - _NO_EQUIVALENT_NAMES
+
+
+def _critical_partition(
+    profile: Union[type, UxmTestApp],
+) -> Tuple[frozenset, List[str]]:
+    """P1-58：把全局 critical 能力清单按**当前方言 profile 的实际赋值**二分。
+
+    返回 ``(applicable, not_in_profile)``：
+
+    * ``applicable`` —— profile 定义为 str 的部分 = 本方言真正的判定集，
+      普查会遍历到它们（判据与 ``_all_commands`` 的 str 过滤同源）；
+    * ``not_in_profile`` —— 其余部分，**如实披露、不算失败**。
+      措辞口径（``uxm_command_profiles.py`` 尾部注释 + NotebookLM 2026-08-21
+      手册核对）：未定义 = 本方言 profile 没有该能力的已查证命令形式，
+      **未探测、无结论 ≠ 已验证不支持**，两个方向都不下仪器断言。
+    """
+    applicable = frozenset(
+        name for name in _CRITICAL_NAMES
+        if isinstance(getattr(profile, name, None), str)
+    )
+    not_in_profile = sorted(_CRITICAL_NAMES - applicable)
+    return applicable, not_in_profile
 
 
 # ---------------------------------------------------------------------------
@@ -401,10 +432,18 @@ async def run(
 
     profile = _profile_for_driver(bs)
     all_cmds = _all_commands(profile)
+    # P1-58: 判定集按当前方言收敛；未定义的一半如实披露、不算失败。
+    critical_applicable, critical_not_in_profile = _critical_partition(profile)
     log(
         f"  · probing {len(all_cmds)} commands from profile "
         f"{profile.PROFILE_NAME} (driver={type(bs).__name__}) ..."
     )
+    if critical_not_in_profile:
+        log(
+            f"  · {len(critical_not_in_profile)} 条 critical 能力未在方言 "
+            f"{profile.PROFILE_NAME} 的 profile 中定义（未探测、无结论，"
+            f"不代表仪器不支持）: {critical_not_in_profile}"
+        )
 
     steps: List[SequenceStepResult] = []
     results_by_name: Dict[str, SequenceStepResult] = {}
@@ -463,7 +502,7 @@ async def run(
 
         status = _categorize_status(err_code)
         counts[status] = counts.get(status, 0) + 1
-        is_critical = name in _CRITICAL_NAMES
+        is_critical = name in critical_applicable
 
         # Step success is meaningful only for UNSUPPORTED-on-critical:
         # the GUI's red/green per step should highlight just the real
@@ -509,7 +548,7 @@ async def run(
         else:
             status = inferred_status
         counts[status] = counts.get(status, 0) + 1
-        is_critical = name in _CRITICAL_NAMES
+        is_critical = name in critical_applicable
         is_unverified_action = status == "INFERRED_ONLY"
         step_ok = status == "SUPPORTED" and not is_unverified_action
         if is_unverified_action and is_critical:
@@ -552,24 +591,15 @@ async def run(
             f"{sorted(critical_unverified_actions)}"
         )
 
-    # ⚠ Codex #275 P2: critical 清单里的命令若在**本方言上是 None**,
-    # _all_commands() 会按"这个 Test App 不暴露该命令"的契约把它过滤掉 ——
-    # 于是它既没被探测、也不算 critical_unsupported, 总结却报 success。
-    # 那是**假的全绿**: 报一个从没探过的命令为已支持。
-    # 未定义 ≠ 已验证不支持, 必须单独报出来并让整轮不成功。
-    critical_undefined = sorted(
-        name for name in _CRITICAL_NAMES
-        if not isinstance(getattr(profile, name, None), str)
-    )
-    if critical_undefined:
-        log(
-            f"  ✗ CRITICAL 未在方言 {profile.PROFILE_NAME} 中定义 "
-            f"(既没探测也没结论): {critical_undefined}"
-        )
-
+    # ⚠ Codex #275 P2 的「假全绿」防线（不把没探测过的命令报成已验证）在
+    # P1-58 **换实现保留**：「本方言 profile 未定义」不再是失败因子 —— 全局
+    # critical 清单是跨方言并集，拿它逐条要求单方言 profile 会让任何方言恒
+    # 失败（IRAT 恒缺 4 条、5G 恒缺 20 条，序列作为现场健康检查完全失效）。
+    # 改为三处如实披露（探测前 log / extra.critical_not_in_profile / 成功
+    # summary），且成功总结只声称 applicable 口径，绝不冒充全局 N 条全部支持。
+    # fail-closed 三因子保持原样：实测 UNSUPPORTED / INFERRED_ONLY / 早退。
     success = (
         (not critical_unsupported)
-        and (not critical_undefined)
         and (not critical_unverified_actions)
         and (not aborted_early)
     )
@@ -579,19 +609,24 @@ async def run(
             f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
             f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
         )
-    elif (not critical_unsupported and not critical_undefined
-          and not critical_unverified_actions):
+    elif success:
         summary = (
-            f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported on "
-            f"profile {profile.PROFILE_NAME} "
+            f"All {len(critical_applicable)} applicable critical SCPI commands "
+            f"supported on profile {profile.PROFILE_NAME} "
             f"({counts.get('UNSUPPORTED', 0)} non-critical unsupported, "
             f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
         )
+        if critical_not_in_profile:
+            summary += (
+                f"；另有 {len(critical_not_in_profile)} 条 critical 能力"
+                f"未在本方言 profile 定义（未探测、无结论，不代表仪器不支持）: "
+                f"{critical_not_in_profile}"
+            )
     else:
-        # ⚠ Codex #275 R2 P2: 上一轮我只把 critical_undefined 接进了 success,
-        # 忘了 summary —— success=False 而总结仍写 "All N critical supported",
+        # ⚠ Codex #275 R2 P2: 上一轮我只把失败因子接进了 success, 忘了
+        # summary —— success=False 而总结仍写 "All N critical supported",
         # **自相矛盾**; 报告体里两个字段互相打架比单纯报错更难查。
-        # ⚠ 两种情况**可以同时成立**(5G 方言上就是), 所以一起报而不是二选一 ——
+        # ⚠ 两种失败**可以同时成立**, 所以一起报而不是二选一 ——
         #   分支排他会让先命中的那种把另一种从总结里挤掉。
         parts = []
         if critical_unsupported:
@@ -599,12 +634,6 @@ async def run(
                 f"{len(critical_unsupported)} 条 critical 命令在方言 "
                 f"{profile.PROFILE_NAME} 上**实测不支持**, 需要厂商别名: "
                 f"{sorted(critical_unsupported)}"
-            )
-        if critical_undefined:
-            parts.append(
-                f"{len(critical_undefined)} 条 critical 命令**未在方言 "
-                f"{profile.PROFILE_NAME} 中定义** —— 既没探测也没结论, "
-                f"不能当作已支持: {critical_undefined}"
             )
         if critical_unverified_actions:
             parts.append(
@@ -623,6 +652,9 @@ async def run(
             "counts": counts,
             "critical_unsupported": sorted(critical_unsupported),
             "critical_unverified_actions": sorted(critical_unverified_actions),
+            # P1-58: 如实披露（不是失败）—— critical 能力清单里本方言 profile
+            # 未定义的部分；未探测、无结论 ≠ 已验证不支持。
+            "critical_not_in_profile": critical_not_in_profile,
             "total_probed": len(all_cmds),
             "include_supported": include_supported,
             "aborted_early": aborted_early,
