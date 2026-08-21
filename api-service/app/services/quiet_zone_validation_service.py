@@ -263,27 +263,39 @@ class QuietZoneValidationService:
                 p_co_dbm = -85.0 + float(np.random.normal(0, 0.2))
                 p_cross_dbm = -85.0 - 30.0 + float(np.random.normal(0, 0.2))
             else:
+                # Lazy import — 与 primitive 内层同源，mock 路径不触碰租约模块。
+                from app.services.instrument_test_lease import instrument_test_lease
+
                 pl_service = ProbePathLossCalibrationService(self.db, use_mock=False)
-                p_co_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                    frequency_mhz=frequency_mhz,
-                    ce_tx_power_dbm=ce_tx_power_dbm,
-                    ce_port=ce_port_co,
-                    route_target=route_target_co,
-                    probe_id=probe_id,
-                    polarization=PolarizationType.V,
-                    warning_sink=warnings,
-                    warning_label="XPD co-pol",
-                )
-                p_cross_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                    frequency_mhz=frequency_mhz,
-                    ce_tx_power_dbm=ce_tx_power_dbm,
-                    ce_port=ce_port_cross,
-                    route_target=route_target_cross,
-                    probe_id=probe_id,
-                    polarization=PolarizationType.H,
-                    warning_sink=warnings,
-                    warning_label="XPD cross-pol",
-                )
+                # P2-30: 作业级租约 —— co + cross 两次采集共用一次真取/放；
+                # 内层 primitive 的租约圈在嵌套下自动 no-op（hold() 引用计数）。
+                # 控制权参数与内层一致（F64 有、UXM 无、监控关）。
+                async with instrument_test_lease(
+                    f"qz-xpd:probe{probe_id}",
+                    control_f64=True,
+                    control_uxm=False,
+                    enable_monitoring=False,
+                ):
+                    p_co_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
+                        frequency_mhz=frequency_mhz,
+                        ce_tx_power_dbm=ce_tx_power_dbm,
+                        ce_port=ce_port_co,
+                        route_target=route_target_co,
+                        probe_id=probe_id,
+                        polarization=PolarizationType.V,
+                        warning_sink=warnings,
+                        warning_label="XPD co-pol",
+                    )
+                    p_cross_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
+                        frequency_mhz=frequency_mhz,
+                        ce_tx_power_dbm=ce_tx_power_dbm,
+                        ce_port=ce_port_cross,
+                        route_target=route_target_cross,
+                        probe_id=probe_id,
+                        polarization=PolarizationType.H,
+                        warning_sink=warnings,
+                        warning_label="XPD cross-pol",
+                    )
         except Exception as e:  # noqa: BLE001
             logger.error("[QZ XPD] measurement failed: %s", e)
             return CalibrationResult(

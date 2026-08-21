@@ -337,90 +337,109 @@ class ProbePathLossCalibrationService:
         # acquire 残留被本轮第一个探头错误吸收
         self._last_acquire_warnings = []
 
-        # 遍历每个探头
-        for probe_id in probe_ids:
-            probe_data = {
-                "path_loss_db": 0.0,
-                "uncertainty_db": 0.5,
-                "pol_v_db": None,
-                "pol_h_db": None
-            }
+        import contextlib
+        from app.services.instrument_test_lease import instrument_test_lease
 
-            for pol in polarizations:
-                try:
-                    if self.use_mock:
-                        measurement = self._mock_path_loss_measurement(
-                            probe_id, pol, frequency_mhz,
-                            chamber.chamber_radius_m, sgh_gain_dbi,
-                            chamber.probe_gain_dbi
+        # P2-30: 作业级租约（条件 = 会走 CE+SA 路径）—— 整个 probe×pol 循环
+        # 只真取/放一次 F64 控制权；循环内单点测量自带的租约圈在嵌套下自动
+        # no-op（hold() 引用计数），此前 32 探头 × 2 极化 = 64 次 socket 建拆。
+        # mock 与 legacy VNA 分支拿 nullcontext，行为零变化；条件错配的最坏
+        # 后果只是退化回逐点取放（内层 wrapper 自己的租约圈保持不动）。
+        job_lease = (
+            instrument_test_lease(
+                f"path-loss-calibration:{frequency_mhz:g}MHz",
+                control_f64=True,
+                control_uxm=False,
+                enable_monitoring=False,
+            )
+            if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None
+            else contextlib.nullcontext()
+        )
+        async with job_lease:
+            # 遍历每个探头
+            for probe_id in probe_ids:
+                probe_data = {
+                    "path_loss_db": 0.0,
+                    "uncertainty_db": 0.5,
+                    "pol_v_db": None,
+                    "pol_h_db": None
+                }
+
+                for pol in polarizations:
+                    try:
+                        if self.use_mock:
+                            measurement = self._mock_path_loss_measurement(
+                                probe_id, pol, frequency_mhz,
+                                chamber.chamber_radius_m, sgh_gain_dbi,
+                                chamber.probe_gain_dbi
+                            )
+                        elif chamber.cable_sgh_to_sa_loss_db is not None:
+                            # CE+SA primary path (no VNA, no relay swaps).
+                            # cable_loss_db comes from chamber, ce_tx_power_dbm uses
+                            # a sensible default (-20 dBm) which sits comfortably
+                            # above SA noise floor and below CE OTA-port saturation.
+                            measurement = await self._real_path_loss_measurement_via_ce_sa(
+                                probe_id=probe_id,
+                                polarization=pol,
+                                frequency_mhz=frequency_mhz,
+                                ce_tx_power_dbm=-20.0,
+                                sgh_gain_dbi=sgh_gain_dbi,
+                                probe_gain_dbi=chamber.probe_gain_dbi,
+                                cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                            )
+                        else:
+                            # Legacy VNA + manual cable_loss path. Kept for chambers
+                            # without CE+SA wiring; deprecated, will be removed once
+                            # all production chambers populate cable_sgh_to_sa_loss_db.
+                            measurement = await self._real_path_loss_measurement(
+                                probe_id, pol, frequency_mhz, vna_id,
+                                sgh_gain_dbi, chamber.probe_gain_dbi, cable_loss_db
+                            )
+
+                        # 存储极化数据
+                        if pol == PolarizationType.V:
+                            probe_data["pol_v_db"] = measurement.path_loss_db
+                        else:
+                            probe_data["pol_h_db"] = measurement.path_loss_db
+
+                        # 更新不确定度
+                        probe_data["uncertainty_db"] = max(
+                            probe_data["uncertainty_db"],
+                            measurement.uncertainty_db
                         )
-                    elif chamber.cable_sgh_to_sa_loss_db is not None:
-                        # CE+SA primary path (no VNA, no relay swaps).
-                        # cable_loss_db comes from chamber, ce_tx_power_dbm uses
-                        # a sensible default (-20 dBm) which sits comfortably
-                        # above SA noise floor and below CE OTA-port saturation.
-                        measurement = await self._real_path_loss_measurement_via_ce_sa(
-                            probe_id=probe_id,
-                            polarization=pol,
-                            frequency_mhz=frequency_mhz,
-                            ce_tx_power_dbm=-20.0,
-                            sgh_gain_dbi=sgh_gain_dbi,
-                            probe_gain_dbi=chamber.probe_gain_dbi,
-                            cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+
+                        # 检查不确定度
+                        if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
+                            warnings.append(
+                                f"Probe {probe_id} pol {pol.value}: uncertainty "
+                                f"{measurement.uncertainty_db:.2f} dB exceeds threshold"
+                            )
+
+                    except Exception as e:
+                        logger.error(f"Path loss measurement failed for probe {probe_id}: {e}")
+                        # agent #206 F3: 失败提前返回也收割清理警告 — acquire 的
+                        # finally 可能刚 append 了 stop_tx/clear_passthrough 失败
+                        self._harvest_acquire_warnings(
+                            warnings, f"probe {probe_id} pol {pol.value}"
                         )
-                    else:
-                        # Legacy VNA + manual cable_loss path. Kept for chambers
-                        # without CE+SA wiring; deprecated, will be removed once
-                        # all production chambers populate cable_sgh_to_sa_loss_db.
-                        measurement = await self._real_path_loss_measurement(
-                            probe_id, pol, frequency_mhz, vna_id,
-                            sgh_gain_dbi, chamber.probe_gain_dbi, cable_loss_db
+                        return CalibrationResult(
+                            success=False,
+                            message=f"Measurement failed for probe {probe_id}: {str(e)}",
+                            warnings=warnings,
                         )
 
-                    # 存储极化数据
-                    if pol == PolarizationType.V:
-                        probe_data["pol_v_db"] = measurement.path_loss_db
-                    else:
-                        probe_data["pol_h_db"] = measurement.path_loss_db
-
-                    # 更新不确定度
-                    probe_data["uncertainty_db"] = max(
-                        probe_data["uncertainty_db"],
-                        measurement.uncertainty_db
-                    )
-
-                    # 检查不确定度
-                    if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
-                        warnings.append(
-                            f"Probe {probe_id} pol {pol.value}: uncertainty "
-                            f"{measurement.uncertainty_db:.2f} dB exceeds threshold"
-                        )
-
-                except Exception as e:
-                    logger.error(f"Path loss measurement failed for probe {probe_id}: {e}")
-                    # agent #206 F3: 失败提前返回也收割清理警告 — acquire 的
-                    # finally 可能刚 append 了 stop_tx/clear_passthrough 失败
+                    # agent #206 F1: legacy 路径对称补收割 (同 for_lab_profile 的
+                    # chain 版) — 清理失败进证书 warnings, 不再只沉驱动日志
                     self._harvest_acquire_warnings(
                         warnings, f"probe {probe_id} pol {pol.value}"
                     )
-                    return CalibrationResult(
-                        success=False,
-                        message=f"Measurement failed for probe {probe_id}: {str(e)}",
-                        warnings=warnings,
-                    )
 
-                # agent #206 F1: legacy 路径对称补收割 (同 for_lab_profile 的
-                # chain 版) — 清理失败进证书 warnings, 不再只沉驱动日志
-                self._harvest_acquire_warnings(
-                    warnings, f"probe {probe_id} pol {pol.value}"
-                )
+                # 计算平均路损
+                valid_losses = [v for v in [probe_data["pol_v_db"], probe_data["pol_h_db"]] if v is not None]
+                if valid_losses:
+                    probe_data["path_loss_db"] = statistics.mean(valid_losses)
 
-            # 计算平均路损
-            valid_losses = [v for v in [probe_data["pol_v_db"], probe_data["pol_h_db"]] if v is not None]
-            if valid_losses:
-                probe_data["path_loss_db"] = statistics.mean(valid_losses)
-
-            probe_path_losses[str(probe_id)] = probe_data
+                probe_path_losses[str(probe_id)] = probe_data
 
         # 计算统计数据
         all_losses = [float(d["path_loss_db"]) for d in probe_path_losses.values() if d["path_loss_db"]]
@@ -540,106 +559,122 @@ class ProbePathLossCalibrationService:
         # agent #206 F2: 入口清零防跨轮残留 (同 start_calibration)
         self._last_acquire_warnings = []
 
-        for chain in resolution.chains:
-            try:
-                pol_enum = PolarizationType(chain.polarization)
-            except ValueError:
-                warnings.append(
-                    f"chain {chain.chain_id}: unknown polarization {chain.polarization!r}, skipped"
-                )
-                continue
+        import contextlib
+        from app.services.instrument_test_lease import instrument_test_lease
 
-            try:
-                if self.use_mock:
-                    measurement = self._mock_path_loss_measurement(
-                        chain.probe_id, pol_enum, frequency_mhz,
-                        chamber.chamber_radius_m, sgh_gain_dbi, chamber.probe_gain_dbi,
-                    )
-                    measurement_path = "mock"
-                elif chamber.cable_sgh_to_sa_loss_db is not None:
-                    # CE+SA primary path with topology-driven auto-routing.
-                    # ce_port + chain_id flow from RFChainSpec, so the right
-                    # probe lights up and (if rfSwitch bound) the matrix is
-                    # driven automatically. Measurement returns end-to-end
-                    # path-loss including the chain's own cable.
-                    measurement = await self._real_path_loss_measurement_via_ce_sa(
-                        probe_id=chain.probe_id,
-                        polarization=pol_enum,
-                        frequency_mhz=frequency_mhz,
-                        ce_tx_power_dbm=-20.0,
-                        sgh_gain_dbi=sgh_gain_dbi,
-                        probe_gain_dbi=chamber.probe_gain_dbi,
-                        cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
-                        ce_port=chain.ce_port,
-                        route_target=chain.chain_id,
-                    )
-                    measurement_path = "ce_sa"
-                else:
-                    measurement = await self._real_path_loss_measurement(
-                        chain.probe_id, pol_enum, frequency_mhz, vna_id,
-                        sgh_gain_dbi, chamber.probe_gain_dbi, chain.cable_loss_db,
-                    )
-                    measurement_path = "vna"
-            except Exception as e:
-                logger.error(
-                    "Path-loss measurement failed for chain %s probe %d %s: %s",
-                    chain.chain_id, chain.probe_id, chain.polarization, e,
-                )
-                # agent #206 F3: 失败返回也收割 — 本 chain 的清理失败不丢
-                self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
-                return CalibrationResult(
-                    success=False,
-                    message=f"Measurement failed for chain {chain.chain_id}: {e}",
-                    warnings=warnings,
-                )
-
-            # Per-probe aggregate (legacy structure — keeps get_path_loss_for_probe working).
-            pid_key = str(chain.probe_id)
-            entry = probe_path_losses.setdefault(
-                pid_key,
-                {"path_loss_db": 0.0, "uncertainty_db": 0.5, "pol_v_db": None, "pol_h_db": None},
+        # P2-30: 作业级租约（同 start_calibration，条件 = 会走 CE+SA 路径）——
+        # 整个 chain 循环只真取/放一次 F64 控制权。
+        job_lease = (
+            instrument_test_lease(
+                f"path-loss-calibration:lab:{operating_mode}",
+                control_f64=True,
+                control_uxm=False,
+                enable_monitoring=False,
             )
-            if pol_enum == PolarizationType.V:
-                entry["pol_v_db"] = measurement.path_loss_db
-            else:
-                entry["pol_h_db"] = measurement.path_loss_db
-            entry["uncertainty_db"] = max(entry["uncertainty_db"], measurement.uncertainty_db)
-            valid_losses = [v for v in (entry["pol_v_db"], entry["pol_h_db"]) if v is not None]
-            if valid_losses:
-                entry["path_loss_db"] = float(statistics.mean(valid_losses))
+            if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None
+            else contextlib.nullcontext()
+        )
+        async with job_lease:
+            for chain in resolution.chains:
+                try:
+                    pol_enum = PolarizationType(chain.polarization)
+                except ValueError:
+                    warnings.append(
+                        f"chain {chain.chain_id}: unknown polarization {chain.polarization!r}, skipped"
+                    )
+                    continue
 
-            # Per-chain breakdown — measurement semantics differ by path:
-            #   - VNA / mock: returns spatial loss only (cable already subtracted),
-            #     so total_insertion = space + cable.
-            #   - CE+SA: returns end-to-end including the chain cable, so the
-            #     measurement IS total_insertion; space_loss = total - cable.
-            # Both paths produce the same fields for downstream consumers.
-            if measurement_path == "ce_sa":
-                total_insertion_loss_db = float(measurement.path_loss_db)
-                space_loss_db = total_insertion_loss_db - float(chain.cable_loss_db)
-            else:
-                space_loss_db = float(measurement.path_loss_db)
-                total_insertion_loss_db = space_loss_db + float(chain.cable_loss_db)
-            path_loss_db_by_rf_chain[chain.chain_id] = {
-                "probe_id": chain.probe_id,
-                "polarization": chain.polarization,
-                "ce_port": chain.ce_port,
-                "space_loss_db": space_loss_db,
-                "cable_loss_db": float(chain.cable_loss_db),
-                "total_insertion_loss_db": total_insertion_loss_db,
-                "uncertainty_db": float(measurement.uncertainty_db),
-                "measurement_path": measurement_path,
-            }
+                try:
+                    if self.use_mock:
+                        measurement = self._mock_path_loss_measurement(
+                            chain.probe_id, pol_enum, frequency_mhz,
+                            chamber.chamber_radius_m, sgh_gain_dbi, chamber.probe_gain_dbi,
+                        )
+                        measurement_path = "mock"
+                    elif chamber.cable_sgh_to_sa_loss_db is not None:
+                        # CE+SA primary path with topology-driven auto-routing.
+                        # ce_port + chain_id flow from RFChainSpec, so the right
+                        # probe lights up and (if rfSwitch bound) the matrix is
+                        # driven automatically. Measurement returns end-to-end
+                        # path-loss including the chain's own cable.
+                        measurement = await self._real_path_loss_measurement_via_ce_sa(
+                            probe_id=chain.probe_id,
+                            polarization=pol_enum,
+                            frequency_mhz=frequency_mhz,
+                            ce_tx_power_dbm=-20.0,
+                            sgh_gain_dbi=sgh_gain_dbi,
+                            probe_gain_dbi=chamber.probe_gain_dbi,
+                            cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                            ce_port=chain.ce_port,
+                            route_target=chain.chain_id,
+                        )
+                        measurement_path = "ce_sa"
+                    else:
+                        measurement = await self._real_path_loss_measurement(
+                            chain.probe_id, pol_enum, frequency_mhz, vna_id,
+                            sgh_gain_dbi, chamber.probe_gain_dbi, chain.cable_loss_db,
+                        )
+                        measurement_path = "vna"
+                except Exception as e:
+                    logger.error(
+                        "Path-loss measurement failed for chain %s probe %d %s: %s",
+                        chain.chain_id, chain.probe_id, chain.polarization, e,
+                    )
+                    # agent #206 F3: 失败返回也收割 — 本 chain 的清理失败不丢
+                    self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
+                    return CalibrationResult(
+                        success=False,
+                        message=f"Measurement failed for chain {chain.chain_id}: {e}",
+                        warnings=warnings,
+                    )
 
-            if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
-                warnings.append(
-                    f"chain {chain.chain_id} probe {chain.probe_id} {chain.polarization}: "
-                    f"uncertainty {measurement.uncertainty_db:.2f} dB exceeds threshold"
+                # Per-probe aggregate (legacy structure — keeps get_path_loss_for_probe working).
+                pid_key = str(chain.probe_id)
+                entry = probe_path_losses.setdefault(
+                    pid_key,
+                    {"path_loss_db": 0.0, "uncertainty_db": 0.5, "pol_v_db": None, "pol_h_db": None},
                 )
+                if pol_enum == PolarizationType.V:
+                    entry["pol_v_db"] = measurement.path_loss_db
+                else:
+                    entry["pol_h_db"] = measurement.path_loss_db
+                entry["uncertainty_db"] = max(entry["uncertainty_db"], measurement.uncertainty_db)
+                valid_losses = [v for v in (entry["pol_v_db"], entry["pol_h_db"]) if v is not None]
+                if valid_losses:
+                    entry["path_loss_db"] = float(statistics.mean(valid_losses))
 
-            # Codex #206 R3: acquire 的清理失败 (tone 停不掉 / CE 留直通) 并入
-            # 证书 warnings — 操作员可见, 不再只沉驱动日志
-            self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
+                # Per-chain breakdown — measurement semantics differ by path:
+                #   - VNA / mock: returns spatial loss only (cable already subtracted),
+                #     so total_insertion = space + cable.
+                #   - CE+SA: returns end-to-end including the chain cable, so the
+                #     measurement IS total_insertion; space_loss = total - cable.
+                # Both paths produce the same fields for downstream consumers.
+                if measurement_path == "ce_sa":
+                    total_insertion_loss_db = float(measurement.path_loss_db)
+                    space_loss_db = total_insertion_loss_db - float(chain.cable_loss_db)
+                else:
+                    space_loss_db = float(measurement.path_loss_db)
+                    total_insertion_loss_db = space_loss_db + float(chain.cable_loss_db)
+                path_loss_db_by_rf_chain[chain.chain_id] = {
+                    "probe_id": chain.probe_id,
+                    "polarization": chain.polarization,
+                    "ce_port": chain.ce_port,
+                    "space_loss_db": space_loss_db,
+                    "cable_loss_db": float(chain.cable_loss_db),
+                    "total_insertion_loss_db": total_insertion_loss_db,
+                    "uncertainty_db": float(measurement.uncertainty_db),
+                    "measurement_path": measurement_path,
+                }
+
+                if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
+                    warnings.append(
+                        f"chain {chain.chain_id} probe {chain.probe_id} {chain.polarization}: "
+                        f"uncertainty {measurement.uncertainty_db:.2f} dB exceeds threshold"
+                    )
+
+                # Codex #206 R3: acquire 的清理失败 (tone 停不掉 / CE 留直通) 并入
+                # 证书 warnings — 操作员可见, 不再只沉驱动日志
+                self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
 
         all_losses = [
             float(d["total_insertion_loss_db"]) for d in path_loss_db_by_rf_chain.values()
@@ -1849,66 +1884,82 @@ class MultiFrequencyPathLossService:
         calibration_ids = []
         warnings: List[str] = []
 
-        for probe_id in probe_ids:
-            try:
-                if self.use_mock:
-                    path_losses, uncertainties = self._mock_frequency_sweep(
-                        probe_id, polarization, frequency_points,
-                        chamber.chamber_radius_m, chamber.probe_gain_dbi
-                    )
-                elif chamber.cable_sgh_to_sa_loss_db is not None:
-                    # CE+SA real sweep — delegates each frequency point to
-                    # ProbePathLossCalibrationService._real_path_loss_measurement
-                    # _via_ce_sa, so D/B capability dispatch, BSE preference,
-                    # finally-stop, etc., are handled identically to single-freq.
-                    path_losses, uncertainties = await self._real_frequency_sweep_via_ce_sa(
+        import contextlib
+        from app.services.instrument_test_lease import instrument_test_lease
+
+        # P2-30: 作业级租约（同上，条件 = 会走 CE+SA 路径）—— 整个
+        # probe × 频点扫频只真取/放一次 F64 控制权。
+        job_lease = (
+            instrument_test_lease(
+                f"path-loss-sweep:{freq_start_mhz:g}-{freq_stop_mhz:g}MHz",
+                control_f64=True,
+                control_uxm=False,
+                enable_monitoring=False,
+            )
+            if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None
+            else contextlib.nullcontext()
+        )
+        async with job_lease:
+            for probe_id in probe_ids:
+                try:
+                    if self.use_mock:
+                        path_losses, uncertainties = self._mock_frequency_sweep(
+                            probe_id, polarization, frequency_points,
+                            chamber.chamber_radius_m, chamber.probe_gain_dbi
+                        )
+                    elif chamber.cable_sgh_to_sa_loss_db is not None:
+                        # CE+SA real sweep — delegates each frequency point to
+                        # ProbePathLossCalibrationService._real_path_loss_measurement
+                        # _via_ce_sa, so D/B capability dispatch, BSE preference,
+                        # finally-stop, etc., are handled identically to single-freq.
+                        path_losses, uncertainties = await self._real_frequency_sweep_via_ce_sa(
+                            probe_id=probe_id,
+                            polarization=polarization,
+                            frequency_points=frequency_points,
+                            sgh_gain_dbi=sgh_gain_dbi,
+                            probe_gain_dbi=chamber.probe_gain_dbi,
+                            cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                            warnings=warnings,
+                        )
+                    else:
+                        return CalibrationResult(
+                            success=False,
+                            message=(
+                                f"Multi-freq real sweep requires CE+SA wiring: set "
+                                f"chamber.cable_sgh_to_sa_loss_db (commissioning measured) "
+                                f"on chamber {chamber_id}, or call with use_mock=True."
+                            ),
+                        )
+
+                    calibration = MultiFrequencyPathLoss(
+                        chamber_id=chamber_id,
+                        use_mock=self.use_mock,
                         probe_id=probe_id,
-                        polarization=polarization,
-                        frequency_points=frequency_points,
-                        sgh_gain_dbi=sgh_gain_dbi,
-                        probe_gain_dbi=chamber.probe_gain_dbi,
-                        cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
-                        warnings=warnings,
+                        polarization=polarization.value,
+                        freq_start_mhz=freq_start_mhz,
+                        freq_stop_mhz=freq_stop_mhz,
+                        freq_step_mhz=freq_step_mhz,
+                        num_points=num_points,
+                        frequency_points_mhz=frequency_points,
+                        path_loss_db=path_losses,
+                        uncertainty_db=uncertainties,
+                        calibrated_at=datetime.utcnow(),
+                        calibrated_by=calibrated_by,
+                        valid_until=datetime.utcnow() + timedelta(days=MULTI_FREQ_VALIDITY_DAYS),
+                        status=CalibrationStatus.VALID.value
                     )
-                else:
+
+                    self.db.add(calibration)
+                    self.db.flush()
+                    calibration_ids.append(str(calibration.id))
+
+                except Exception as e:
+                    logger.error(f"Multi-freq calibration failed for probe {probe_id}: {e}")
                     return CalibrationResult(
                         success=False,
-                        message=(
-                            f"Multi-freq real sweep requires CE+SA wiring: set "
-                            f"chamber.cable_sgh_to_sa_loss_db (commissioning measured) "
-                            f"on chamber {chamber_id}, or call with use_mock=True."
-                        ),
+                        message=f"Calibration failed for probe {probe_id}: {str(e)}",
+                        warnings=warnings,
                     )
-
-                calibration = MultiFrequencyPathLoss(
-                    chamber_id=chamber_id,
-                    use_mock=self.use_mock,
-                    probe_id=probe_id,
-                    polarization=polarization.value,
-                    freq_start_mhz=freq_start_mhz,
-                    freq_stop_mhz=freq_stop_mhz,
-                    freq_step_mhz=freq_step_mhz,
-                    num_points=num_points,
-                    frequency_points_mhz=frequency_points,
-                    path_loss_db=path_losses,
-                    uncertainty_db=uncertainties,
-                    calibrated_at=datetime.utcnow(),
-                    calibrated_by=calibrated_by,
-                    valid_until=datetime.utcnow() + timedelta(days=MULTI_FREQ_VALIDITY_DAYS),
-                    status=CalibrationStatus.VALID.value
-                )
-
-                self.db.add(calibration)
-                self.db.flush()
-                calibration_ids.append(str(calibration.id))
-
-            except Exception as e:
-                logger.error(f"Multi-freq calibration failed for probe {probe_id}: {e}")
-                return CalibrationResult(
-                    success=False,
-                    message=f"Calibration failed for probe {probe_id}: {str(e)}",
-                    warnings=warnings,
-                )
 
         self.db.commit()
 
