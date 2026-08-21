@@ -11,7 +11,7 @@ Filters worth supporting on day one:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,6 +41,11 @@ class DiagnosticRunSummary(BaseModel):
     # customer-facing list views (EquipmentManager SCPI history) can show
     # the response inline without a per-row detail roundtrip.
     output_excerpt: Optional[str] = None
+    # 序列完整证据仍只在详情返回；列表只透出一个经过白名单收窄的判决，
+    # 让“最近运行”不把 UNDETERMINED/BLOCKER/ABORTED 折叠成普通失败。
+    sequence_verdict: Optional[
+        Literal["SUCCESS", "UNDETERMINED", "BLOCKER", "ABORTED"]
+    ] = None
 
 
 class DiagnosticRunDetail(DiagnosticRunSummary):
@@ -53,6 +58,27 @@ class DiagnosticRunDetail(DiagnosticRunSummary):
 class DiagnosticRunListResponse(BaseModel):
     items: List[DiagnosticRunSummary]
     total: int
+
+
+_SEQUENCE_VERDICTS = {"SUCCESS", "UNDETERMINED", "BLOCKER", "ABORTED"}
+
+
+def _sequence_verdict(row: DiagnosticRun) -> Optional[str]:
+    """Read only the server-persisted sequence evidence, never infer a verdict."""
+    if row.kind != DiagnosticKind.SCPI_SEQUENCE.value:
+        return None
+    evidence = row.sequence_evidence
+    if not isinstance(evidence, dict):
+        return None
+    extra = evidence.get("extra")
+    if not isinstance(extra, dict):
+        return None
+    verdict = extra.get("verdict")
+    return (
+        verdict
+        if isinstance(verdict, str) and verdict in _SEQUENCE_VERDICTS
+        else None
+    )
 
 
 @router.get("", response_model=DiagnosticRunListResponse)
@@ -115,6 +141,7 @@ def list_diagnostic_runs(
                 run_by=r.run_by,
                 error_message=r.error_message,
                 output_excerpt=r.output_excerpt,
+                sequence_verdict=_sequence_verdict(r),
             )
             for r in rows
         ],
@@ -141,5 +168,6 @@ def get_diagnostic_run(run_id: UUID, db: Session = Depends(get_db)):
         output_excerpt=row.output_excerpt,
         result_extra=row.result_extra,
         sequence_evidence=row.sequence_evidence,
+        sequence_verdict=_sequence_verdict(row),
         hal_trace_log_path=row.hal_trace_log_path,
     )

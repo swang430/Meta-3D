@@ -1,5 +1,6 @@
 import type {
   DiagnosticRunDetail,
+  DiagnosticRunSummary,
   SequenceRunResponse,
 } from '../../api/diagnosticService'
 
@@ -7,6 +8,45 @@ import type {
 export type DiagnosticSequenceEvidenceView =
   | { kind: 'complete'; result: SequenceRunResponse }
   | { kind: 'legacy'; notice: string; excerpt: string | null }
+
+
+export interface DiagnosticSequenceVerdictView {
+  label: 'success' | 'failure' | 'undetermined' | 'blocker' | 'aborted'
+  color: 'green' | 'orange' | 'yellow' | 'red'
+  notificationTitle: string
+}
+
+
+export function sequenceVerdictView(
+  result: Pick<SequenceRunResponse, 'success' | 'extra'>,
+): DiagnosticSequenceVerdictView {
+  switch (result.extra.verdict) {
+    case 'SUCCESS':
+      return result.success
+        ? { label: 'success', color: 'green', notificationTitle: '序列执行成功' }
+        : { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' }
+    case 'UNDETERMINED':
+      return { label: 'undetermined', color: 'yellow', notificationTitle: '序列结果未判定' }
+    case 'BLOCKER':
+      return { label: 'blocker', color: 'red', notificationTitle: '序列存在阻塞项' }
+    case 'ABORTED':
+      return { label: 'aborted', color: 'orange', notificationTitle: '序列已中止' }
+    default:
+      return result.success
+        ? { label: 'success', color: 'green', notificationTitle: '序列执行成功' }
+        : { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' }
+  }
+}
+
+
+export function diagnosticRunVerdictView(
+  run: Pick<DiagnosticRunSummary, 'success' | 'sequence_verdict'>,
+): DiagnosticSequenceVerdictView {
+  return sequenceVerdictView({
+    success: run.success,
+    extra: run.sequence_verdict ? { verdict: run.sequence_verdict } : {},
+  })
+}
 
 
 export function evidenceViewFromDiagnosticRun(

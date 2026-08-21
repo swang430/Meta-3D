@@ -694,33 +694,45 @@ class TestUxmScpiCompatibilitySequence:
         assert body["extra"]["counts"]["UNSUPPORTED"] == 0
         # With include_supported=False and zero unsupported, steps stay empty.
         assert body["steps"] == []
-        # ⚠ 2026-08-03 (Codex #275 P2): 本用例跑在 **5G_NR_Test 方言**上
-        # (探测命令是 `CONFig:NR5G:CELL0:BAND?` —— 无前缀 + CELL0)。
-        # KPI 回读整批换命令后, MEAS_TPUT_* / MEAS_BLER_* / MEAS_UE_REPORT_JSON
-        # 这批 critical 命令在该方言里**尚未定义**(手册只给了 BSE: 变体,
-        # 无前缀形式没有依据, 按禁盲试不猜)。
-        # 未定义 ≠ 已验证支持 —— 以前它们被 _all_commands() 静默过滤掉、
-        # 总结照报 success, 那是**假的全绿**。现在必须报不成功。
+        # ⚠ P1-58: 本用例跑在 **5G_NR_Test 方言**上（探测命令是
+        # `CONFig:NR5G:CELL0:BAND?` —— 无前缀 + CELL0），该方言 profile 里
+        # 有一批 critical 能力未定义（手册只给了 BSE: 变体，按禁盲试不猜）。
+        # 判定集改按当前方言 profile 派生后：固件对已定义命令全 clean、且
+        # 该方言无 mandatory ACTION → 零实测失败因子，**不是 BLOCKER**；
+        # 但未定义 = 未经查证、从未探测 → 判 **UNDETERMINED**，success 仍 False
+        # （Codex #358 R1 P1：不能把没探测过的报成健康；GUI 拿 success 画绿牌）。
         assert body["success"] is False
-        assert "未定义" in body["summary"] or "critical" in body["summary"]
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["critical_unsupported"] == []
+        assert body["extra"]["critical_not_in_profile"], (
+            "本用例前提：5G 方言里确实有 critical 能力未在 profile 定义"
+        )
+        # 总结如实：applicable 口径 + 披露未定义能力，不冒充全局清单全绿，也不报 BLOCKER
+        assert body["summary"].startswith("UNDETERMINED")
+        assert "applicable" in body["summary"]
+        assert "未在本方言 profile 定义" in body["summary"]
+        assert "BLOCKER" not in body["summary"]
 
-    def test_critical_undefined_in_profile_is_not_reported_green(
+    def test_critical_not_in_profile_is_disclosed_not_failed(
         self, lab_with_bs, monkeypatch
     ):
-        """⭐ critical 清单里在本方言为 None 的命令必须**报出来并致不成功**。
+        """⭐ P1-58：critical 清单里在本方言为 None 的命令**如实披露、不报成仪器拒绝**。
 
         `_all_commands()` 按"该 Test App 不暴露此命令"的契约过滤掉 None ——
-        于是这类命令既没被探测、也不算 critical_unsupported，而总结却按
-        `len(_CRITICAL_NAMES)` 报"全部 critical 已支持"：**报一个从没探过的
-        命令为已支持**。现场拿它当验收就会得到假绿。
+        这类命令没被探测。Codex #275 P2 的防线（不把没探测过的报成已验证）
+        保留并升级成四态：未定义 ≠ BLOCKER（不是仪器拒绝），但也 ≠ 健康 ——
+        判 UNDETERMINED、success=False（Codex #358 R1 P1）；全局 critical 清单
+        是跨方言并集，单一方言不可能全部定义，所以披露必须逐条、口径必须如实。
 
-        变异：把 success 的 `and (not critical_undefined)` 去掉 → 红。
+        变异：披露归零（extra 不放 critical_not_in_profile）→ 红；
+        判定集回退全局清单（applicable=_CRITICAL_NAMES）→ 披露断言红。
         """
         from app.diagnostics.sequences import uxm_scpi_compatibility as seq
         from app.hal.uxm_command_profiles import Uxm5GNRTestAppProfile
 
-        undefined = [n for n in seq._CRITICAL_NAMES
-                     if not isinstance(getattr(Uxm5GNRTestAppProfile, n, None), str)]
+        undefined = sorted(
+            n for n in seq._CRITICAL_NAMES
+            if not isinstance(getattr(Uxm5GNRTestAppProfile, n, None), str))
         assert undefined, "本用例前提：5G 方言里确实有 critical 命令未定义"
 
         bs = self._build_bs(lambda cmd: '0,"No error"')
@@ -730,9 +742,14 @@ class TestUxmScpiCompatibilitySequence:
             json={"lab_profile_id": str(lab_with_bs.id)},
         )
         body = resp.json()
-        assert body["success"] is False, (
-            f"{len(undefined)} 条 critical 命令在方言里未定义却报了 success"
-        )
+        # 未定义 ≠ 仪器拒绝（不是 BLOCKER），但也 ≠ 健康：UNDETERMINED
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["critical_unsupported"] == []
+        # 但必须逐条披露，且总结不得冒充全局清单全绿
+        assert body["extra"]["critical_not_in_profile"] == undefined
+        assert str(len(undefined)) in body["summary"]
+        assert f"All {len(seq._CRITICAL_NAMES)} " not in body["summary"]
 
     def test_critical_unsupported_fails_with_blocker(self, lab_with_bs, monkeypatch):
         broken = "CONFig:NR5G:CELL0:BAND?"  # _to_probe_command(CELL_BAND)
@@ -772,10 +789,9 @@ class TestUxmScpiCompatibilitySequence:
         # 本用例的题眼：-220 归到 SUPPORTED_BUT_STATE，不算 blocker
         assert body["extra"]["counts"]["SUPPORTED_BUT_STATE"] > 0
         assert body["extra"]["counts"]["UNSUPPORTED"] == 0
-        # ⚠ success 在 5G 方言上恒 False（critical KPI 命令未定义），
-        # 与本用例要验的"-220 不是 blocker"无关 —— 见
-        # test_critical_undefined_in_profile_is_not_reported_green。
-        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+        # （P1-58 后 success 不再被「方言未定义」压成恒 False；本用例只守
+        # "-220 不是 blocker"，success 的完整判定见
+        # test_critical_not_in_profile_is_disclosed_not_failed。）
 
     def test_fails_clean_when_no_driver_loaded(self, lab_with_bs, monkeypatch):
         """HAL has the binding but the driver class failed to init."""

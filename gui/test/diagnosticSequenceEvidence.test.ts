@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { evidenceViewFromDiagnosticRun } from '../src/features/Diagnostics/sequenceEvidence.ts'
+import {
+  diagnosticRunVerdictView,
+  evidenceViewFromDiagnosticRun,
+  sequenceVerdictView,
+} from '../src/features/Diagnostics/sequenceEvidence.ts'
 
 
 test('historical complete evidence converts to the live result shape verbatim', () => {
@@ -59,4 +63,61 @@ test('recent runs fetch detail and expose a full-evidence action', () => {
   assert.match(panelSource, /evidenceViewFromDiagnosticRun/)
   assert.match(panelSource, /setHistoryNotice\(view\.notice\)/)
   assert.match(panelSource, /historyRequestGeneration/)
+})
+
+test('sequence verdict view keeps undetermined distinct from failure', () => {
+  assert.deepEqual(
+    sequenceVerdictView({ success: false, extra: { verdict: 'UNDETERMINED' } }),
+    {
+      label: 'undetermined',
+      color: 'yellow',
+      notificationTitle: '序列结果未判定',
+    },
+  )
+  assert.deepEqual(
+    sequenceVerdictView({ success: false, extra: { verdict: 'BLOCKER' } }),
+    {
+      label: 'blocker',
+      color: 'red',
+      notificationTitle: '序列存在阻塞项',
+    },
+  )
+})
+
+test('sequence verdict view preserves legacy boolean fallback', () => {
+  assert.deepEqual(
+    sequenceVerdictView({ success: true, extra: {} }),
+    { label: 'success', color: 'green', notificationTitle: '序列执行成功' },
+  )
+  assert.deepEqual(
+    sequenceVerdictView({ success: false, extra: {} }),
+    { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' },
+  )
+})
+
+test('sequence verdict view never lets an inconsistent SUCCESS override false', () => {
+  assert.deepEqual(
+    sequenceVerdictView({ success: false, extra: { verdict: 'SUCCESS' } }),
+    { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' },
+  )
+})
+
+test('recent run verdict view preserves persisted undetermined state', () => {
+  assert.deepEqual(
+    diagnosticRunVerdictView({ success: false, sequence_verdict: 'UNDETERMINED' }),
+    {
+      label: 'undetermined',
+      color: 'yellow',
+      notificationTitle: '序列结果未判定',
+    },
+  )
+})
+
+test('recent run rows consume the persisted verdict instead of only success', () => {
+  const panelSource = readFileSync(
+    new URL('../src/features/Diagnostics/SequenceRunnerPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  assert.match(panelSource, /diagnosticRunVerdictView\(r\)/)
+  assert.doesNotMatch(panelSource, /color=\{r\.success \? 'green' : 'red'\}/)
 })
