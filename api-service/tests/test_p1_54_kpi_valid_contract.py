@@ -285,10 +285,14 @@ def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
         "measurement_verified": True,
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
                 "throughput_mbps": 0.0,
+                "throughput_valid": True,
+                "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
                 "sinr_db": 30.0,
                 "rank_indicator": 2.0,
@@ -341,7 +345,7 @@ def test_report_keeps_explicitly_trusted_throughput():
     )
 
     assert content["formal_throughput_verified"] is True
-    assert content["throughput_trust_schema_version"] == 1
+    assert content["throughput_trust_schema_version"] == 2
     assert content["overall_result"] == "passed"
     assert content["table_data"][0]["Throughput (Mbps)"] == "0.0"
 
@@ -350,8 +354,13 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
     path_loss_only = {"calibration_trust_schema_version": 1}
     fully_sanitized = {
         "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+    }
+    old_throughput_scope = {
+        "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 1,
     }
 
     assert report_has_provenance_trust(path_loss_only) is False
+    assert report_has_provenance_trust(old_throughput_scope) is False
     assert report_has_provenance_trust(fully_sanitized) is True

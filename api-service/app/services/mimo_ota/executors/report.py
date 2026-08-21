@@ -16,8 +16,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.models.report import ReportFormat, ReportType
+from app.hal.base_station import ThroughputMetrics
 from app.services.mimo_ota.executors._helpers import write_phase_result
-from app.services.report_service import ReportService
+from app.services.report_service import (
+    ReportService,
+    THROUGHPUT_TRUST_SCHEMA_VERSION,
+)
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -289,6 +293,35 @@ def _build_mimo_ota_content_data(
     # 也可能正是把缺测默认 0.0 当样本的旧数据，所以只能 fail-closed；不能从
     # 数值是否为 0、analysis 旧 verdict 或 measurement_verified 反推可信性。
     _throughput_verified = measure.get("throughput_verified")
+    carrier_aggregation = measure.get("carrier_aggregation")
+    carrier_count = (
+        carrier_aggregation.get("num_component_carriers")
+        if isinstance(carrier_aggregation, dict)
+        else None
+    )
+    if type(carrier_count) is int and carrier_count == 1:
+        required_throughput_scope = ThroughputMetrics.SCOPE_PCELL
+    elif type(carrier_count) is int and carrier_count > 1:
+        required_throughput_scope = ThroughputMetrics.SCOPE_NR_ALL_CELLS
+    else:
+        required_throughput_scope = None
+
+    # P1-59: P1-54 的布尔值只能证明“读到了一个有限吞吐值”，不能证明
+    # CA 执行读的是全部 NR cells 而非 PCell。正式报告必须同时核对载波数量、
+    # measure 顶层范围和每个方位的同行范围；历史记录缺任一证据都 fail-closed。
+    throughput_scope_verified = (
+        required_throughput_scope is not None
+        and measure.get("throughput_scope") == required_throughput_scope
+        and bool(azimuth_results)
+        and all(
+            isinstance(row, dict)
+            and row.get("throughput_valid") is True
+            and row.get("throughput_scope") == required_throughput_scope
+            for row in azimuth_results
+        )
+    )
+    if _throughput_verified is True and not throughput_scope_verified:
+        _throughput_verified = False
 
     # A formal KPI/report verdict requires explicit proof that the applied
     # path-loss certificate was real *and* every azimuth contributed a trusted
@@ -431,8 +464,13 @@ def _build_mimo_ota_content_data(
         "report_family": "mimo_ota",
         "calibration_trust_schema_version": 1,
         "formal_path_loss_verified": _pl_verified is True,
-        "throughput_trust_schema_version": 1,
+        "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,
+        "throughput_scope": (
+            required_throughput_scope
+            if _throughput_verified is True
+            else ThroughputMetrics.SCOPE_UNKNOWN
+        ),
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": (

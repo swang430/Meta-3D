@@ -162,11 +162,15 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
             "throughput_verified": True,
+            "throughput_scope": "pcell",
+            "carrier_aggregation": {"num_component_carriers": 1},
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
                 "rsrp_dbm": -70.0,
                 "sinr_db": 20.0,
                 "throughput_mbps": 500.0,
+                "throughput_valid": True,
+                "throughput_scope": "pcell",
                 "rank_indicator": 4.0,
             }],
         },
@@ -260,7 +264,7 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 1,
+            "throughput_trust_schema_version": 2,
             "formal_path_loss_verified": False,
             "overall_result": "unknown",
         },
@@ -371,7 +375,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1,
-                "throughput_trust_schema_version": 1,
+                "throughput_trust_schema_version": 2,
             },
             execution_ids=[recoverable_execution_id],
         ),
@@ -485,7 +489,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": True,
-                "throughput_trust_schema_version": 1,
+                "throughput_trust_schema_version": 2,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -494,7 +498,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1.0,
-                "throughput_trust_schema_version": 1,
+                "throughput_trust_schema_version": 2,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -503,7 +507,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1,
-                "throughput_trust_schema_version": 1,
+                "throughput_trust_schema_version": 2,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -763,7 +767,7 @@ def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 1,
+            "throughput_trust_schema_version": 2,
         },
     )
     report_db.add_all([execution, report])
@@ -1569,7 +1573,7 @@ def test_mimo_generation_value_error_after_claim_is_not_misreported_as_conflict(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 1,
+            "throughput_trust_schema_version": 2,
         },
         generated_by="mimo_ota.executors.report",
         test_execution_ids=[],

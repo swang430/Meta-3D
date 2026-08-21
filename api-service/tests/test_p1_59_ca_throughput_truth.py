@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,8 @@ from app.hal.base_station import ThroughputMetrics
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import UxmLteNrIratProfile
 from app.services.mimo_ota.executors.measure import MeasureExecutor
+from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.report_service import report_has_provenance_trust
 
 
 @pytest.fixture
@@ -311,3 +314,113 @@ def test_completed_scan_with_wrong_scope_is_not_throughput_verified() -> None:
         [{"throughput_valid": True, "throughput_scope": "pcell"}],
         required_scope=ThroughputMetrics.SCOPE_NR_ALL_CELLS,
     ) is False
+
+
+def _report_execution(
+    *,
+    carrier_count: int,
+    top_scope: str | None,
+    azimuth_scope: str | None,
+) -> SimpleNamespace:
+    azimuth = {
+        "azimuth_deg": 0.0,
+        "throughput_mbps": 123.0,
+        "throughput_valid": True,
+        "rsrp_dbm": -80.0,
+        "sinr_db": 30.0,
+        "rank_indicator": 2.0,
+    }
+    if azimuth_scope is not None:
+        azimuth["throughput_scope"] = azimuth_scope
+    measure = {
+        "measurement_verified": True,
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+        "throughput_verified": True,
+        "carrier_aggregation": {"num_component_carriers": carrier_count},
+        "azimuth_results": [azimuth],
+    }
+    if top_scope is not None:
+        measure["throughput_scope"] = top_scope
+    return SimpleNamespace(
+        id="p1-59-report",
+        measurements={
+            "phases": {
+                "measure": measure,
+                "analysis": {"verdict": "PASS"},
+            }
+        },
+        status="completed",
+        duration_sec=1.0,
+        started_at=datetime(2026, 8, 21),
+        completed_at=datetime(2026, 8, 21),
+        validation_pass=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "carrier_count,top_scope,azimuth_scope",
+    [
+        (2, ThroughputMetrics.SCOPE_PCELL, ThroughputMetrics.SCOPE_PCELL),
+        (2, None, None),
+        (1, ThroughputMetrics.SCOPE_NR_ALL_CELLS,
+         ThroughputMetrics.SCOPE_NR_ALL_CELLS),
+    ],
+)
+def test_report_rejects_missing_or_wrong_carrier_scope(
+    carrier_count: int,
+    top_scope: str | None,
+    azimuth_scope: str | None,
+) -> None:
+    content = _build_mimo_ota_content_data(
+        _report_execution(
+            carrier_count=carrier_count,
+            top_scope=top_scope,
+            azimuth_scope=azimuth_scope,
+        ),
+        datetime(2026, 8, 21),
+    )
+
+    assert content["formal_throughput_verified"] is False
+    assert content["overall_result"] == "unknown"
+    assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+
+
+@pytest.mark.parametrize(
+    "carrier_count,scope",
+    [
+        (1, ThroughputMetrics.SCOPE_PCELL),
+        (2, ThroughputMetrics.SCOPE_NR_ALL_CELLS),
+    ],
+)
+def test_report_accepts_only_scope_matching_the_carrier_count(
+    carrier_count: int,
+    scope: str,
+) -> None:
+    content = _build_mimo_ota_content_data(
+        _report_execution(
+            carrier_count=carrier_count,
+            top_scope=scope,
+            azimuth_scope=scope,
+        ),
+        datetime(2026, 8, 21),
+    )
+
+    assert content["formal_throughput_verified"] is True
+    assert content["throughput_trust_schema_version"] == 2
+    assert content["throughput_scope"] == scope
+    assert content["table_data"][0]["Throughput (Mbps)"] == "123.0"
+
+
+def test_historical_throughput_trust_schema_one_is_fail_closed() -> None:
+    schema_one = {
+        "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 1,
+    }
+    schema_two = {
+        "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+    }
+
+    assert report_has_provenance_trust(schema_one) is False
+    assert report_has_provenance_trust(schema_two) is True

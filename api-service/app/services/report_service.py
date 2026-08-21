@@ -48,10 +48,11 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "formal_path_loss_verified",
     "throughput_trust_schema_version",
     "formal_throughput_verified",
+    "throughput_scope",
     "vrt_archive_trust_schema_version",
 })
 
-THROUGHPUT_TRUST_SCHEMA_VERSION = 1
+THROUGHPUT_TRUST_SCHEMA_VERSION = 2
 THROUGHPUT_TRUST_FIELD = "throughput_trust_schema_version"
 VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
 VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
