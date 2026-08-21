@@ -171,6 +171,11 @@ class BaseStationDriver(InstrumentDriver):
       - get_throughput_metrics(): 轮询读取 MAC 吞吐量 + BLER + CQI
     """
 
+    # Formal CA is opt-in: a driver may only allow SCell writes when it can
+    # independently confirm the requested active SCell set. Real drivers keep
+    # the fail-closed default until a vendor-documented readback is available.
+    SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
+
     # ===================================================================
     # 小区配置
     # ===================================================================
@@ -457,7 +462,12 @@ class BaseStationDriver(InstrumentDriver):
 # ===========================================================================
 
 class MockBaseStation(BaseStationDriver):
-    """Mock Base Station Emulator for development"""
+    """Mock Base Station Emulator for development."""
+
+    # The mock owns its complete in-memory SCell state and can compare the
+    # requested index set exactly. Simulated measurements are still excluded
+    # from formal KPI by the existing provenance gate.
+    SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
 
     driver_source = "mock"
     simulated = True

@@ -263,6 +263,7 @@ async def test_ca_requires_both_driver_capabilities(
 @pytest.mark.asyncio
 async def test_any_scell_add_failure_blocks_activation_and_sampling() -> None:
     driver = SimpleNamespace(
+        SCELL_ACTIVATION_READBACK_AUTHORITATIVE=True,
         add_secondary_cell=AsyncMock(side_effect=[True, False]),
         activate_secondary_cells=AsyncMock(return_value=True),
     )
@@ -282,6 +283,7 @@ async def test_any_scell_add_failure_blocks_activation_and_sampling() -> None:
 @pytest.mark.asyncio
 async def test_scell_activation_false_blocks_sampling() -> None:
     driver = SimpleNamespace(
+        SCELL_ACTIVATION_READBACK_AUTHORITATIVE=True,
         add_secondary_cell=AsyncMock(return_value=True),
         activate_secondary_cells=AsyncMock(return_value=False),
     )
@@ -303,6 +305,7 @@ async def test_ca_driver_exception_is_an_actionable_blocker(
     failure_stage: str,
 ) -> None:
     driver = SimpleNamespace(
+        SCELL_ACTIVATION_READBACK_AUTHORITATIVE=True,
         add_secondary_cell=AsyncMock(
             side_effect=RuntimeError("add exploded")
             if failure_stage == "add"
@@ -333,6 +336,7 @@ async def test_ca_driver_exception_is_an_actionable_blocker(
 @pytest.mark.asyncio
 async def test_all_scells_must_activate_before_all_nr_scope_is_allowed() -> None:
     driver = SimpleNamespace(
+        SCELL_ACTIVATION_READBACK_AUTHORITATIVE=True,
         add_secondary_cell=AsyncMock(return_value=True),
         activate_secondary_cells=AsyncMock(return_value=True),
     )
@@ -371,6 +375,26 @@ async def test_real_uxm_activation_blocks_without_authoritative_active_state_rea
     driver._query.assert_not_called()
     driver._write.assert_not_called()
     driver._drain_errors.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_real_uxm_ca_blocks_before_first_scell_write_without_readback() -> None:
+    driver = RealUxmDriver(
+        "uxm-5g",
+        {"ip": "10.0.0.2", "uxm_profile": "5g"},
+    )
+    driver.add_secondary_cell = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell()],
+        inherit=False,
+        execution_id="ca-no-readback",
+    )
+
+    assert added == []
+    assert blocker and "激活态权威回读" in blocker
+    driver.add_secondary_cell.assert_not_awaited()
 
 
 @pytest.mark.asyncio

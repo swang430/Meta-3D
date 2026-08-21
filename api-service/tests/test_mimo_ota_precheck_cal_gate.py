@@ -338,6 +338,7 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
 
     class _PartialCaBaseStation:
         MIMO_PORT_PRESETS = {}
+        SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
 
         def __init__(self) -> None:
             self.add_calls = 0

@@ -399,6 +399,18 @@ class MeasureExecutor(IStepExecutor):
             return [], (
                 "baseStation driver 缺少 activate_secondary_cells，不能确认正式 CA。"
             )
+        if (
+            getattr(
+                base_station,
+                "SCELL_ACTIVATION_READBACK_AUTHORITATIVE",
+                False,
+            )
+            is not True
+        ):
+            return [], (
+                "baseStation driver 缺少逐 SCell 激活态权威回读；"
+                "已在首次 SCell 写入前阻断正式 CA。"
+            )
 
         added: List[Dict[str, Any]] = []
         for cc_idx, scell in enumerate(scells, start=1):
