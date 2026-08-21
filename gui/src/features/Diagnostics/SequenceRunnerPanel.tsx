@@ -54,7 +54,11 @@ import {
   type SequenceRunResponse,
   type DiagnosticRunSummary,
 } from '../../api/diagnosticService'
-import { evidenceViewFromDiagnosticRun, sequenceVerdictView } from './sequenceEvidence'
+import {
+  diagnosticRunVerdictView,
+  evidenceViewFromDiagnosticRun,
+  sequenceVerdictView,
+} from './sequenceEvidence'
 import { logFrontendEvent } from '../../observability/frontendLogger'
 
 type ParamValue = number | string | boolean
@@ -479,32 +483,35 @@ export function SequenceRunnerPanel() {
         ) : (
           <ScrollArea h={Math.min(280, 40 + recentRuns.length * 28)}>
             <Stack gap={4}>
-              {recentRuns.map((r) => (
-                <Group key={r.id} gap="xs" wrap="nowrap">
-                  <Badge color={r.success ? 'green' : 'red'} size="xs" variant="filled">
-                    {r.success ? '✓' : '✗'}
-                  </Badge>
-                  <Code style={{ flexShrink: 0 }}>{r.target_name}</Code>
-                  {r.duration_ms != null && (
-                    <Badge variant="light" size="xs">{r.duration_ms} ms</Badge>
-                  )}
-                  <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-                    {new Date(r.run_at).toLocaleString()}
-                  </Text>
-                  {r.run_by && (
-                    <Text size="xs" c="dimmed" ml="auto">@ {r.run_by}</Text>
-                  )}
-                  <Button
-                    variant="subtle"
-                    size="compact-xs"
-                    leftSection={<IconEye size={13} />}
-                    loading={historyLoadingId === r.id}
-                    onClick={() => handleViewEvidence(r.id)}
-                  >
-                    查看完整证据
-                  </Button>
-                </Group>
-              ))}
+              {recentRuns.map((r) => {
+                const verdictView = diagnosticRunVerdictView(r)
+                return (
+                  <Group key={r.id} gap="xs" wrap="nowrap">
+                    <Badge color={verdictView.color} size="xs" variant="filled">
+                      {verdictView.label}
+                    </Badge>
+                    <Code style={{ flexShrink: 0 }}>{r.target_name}</Code>
+                    {r.duration_ms != null && (
+                      <Badge variant="light" size="xs">{r.duration_ms} ms</Badge>
+                    )}
+                    <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                      {new Date(r.run_at).toLocaleString()}
+                    </Text>
+                    {r.run_by && (
+                      <Text size="xs" c="dimmed" ml="auto">@ {r.run_by}</Text>
+                    )}
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconEye size={13} />}
+                      loading={historyLoadingId === r.id}
+                      onClick={() => handleViewEvidence(r.id)}
+                    >
+                      查看完整证据
+                    </Button>
+                  </Group>
+                )
+              })}
             </Stack>
           </ScrollArea>
         )}

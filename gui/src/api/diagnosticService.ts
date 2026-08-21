@@ -58,6 +58,7 @@ export interface DiagnosticRunSummary {
   run_by?: string | null
   error_message?: string | null
   output_excerpt?: string | null
+  sequence_verdict?: 'SUCCESS' | 'UNDETERMINED' | 'BLOCKER' | 'ABORTED' | null
 }
 
 export interface DiagnosticRunDetail extends DiagnosticRunSummary {

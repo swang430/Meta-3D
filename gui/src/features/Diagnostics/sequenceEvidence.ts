@@ -1,5 +1,6 @@
 import type {
   DiagnosticRunDetail,
+  DiagnosticRunSummary,
   SequenceRunResponse,
 } from '../../api/diagnosticService'
 
@@ -35,6 +36,16 @@ export function sequenceVerdictView(
         ? { label: 'success', color: 'green', notificationTitle: '序列执行成功' }
         : { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' }
   }
+}
+
+
+export function diagnosticRunVerdictView(
+  run: Pick<DiagnosticRunSummary, 'success' | 'sequence_verdict'>,
+): DiagnosticSequenceVerdictView {
+  return sequenceVerdictView({
+    success: run.success,
+    extra: run.sequence_verdict ? { verdict: run.sequence_verdict } : {},
+  })
 }
 
 

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  diagnosticRunVerdictView,
   evidenceViewFromDiagnosticRun,
   sequenceVerdictView,
 } from '../src/features/Diagnostics/sequenceEvidence.ts'
@@ -99,4 +100,24 @@ test('sequence verdict view never lets an inconsistent SUCCESS override false', 
     sequenceVerdictView({ success: false, extra: { verdict: 'SUCCESS' } }),
     { label: 'failure', color: 'orange', notificationTitle: '序列报告失败' },
   )
+})
+
+test('recent run verdict view preserves persisted undetermined state', () => {
+  assert.deepEqual(
+    diagnosticRunVerdictView({ success: false, sequence_verdict: 'UNDETERMINED' }),
+    {
+      label: 'undetermined',
+      color: 'yellow',
+      notificationTitle: '序列结果未判定',
+    },
+  )
+})
+
+test('recent run rows consume the persisted verdict instead of only success', () => {
+  const panelSource = readFileSync(
+    new URL('../src/features/Diagnostics/SequenceRunnerPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  assert.match(panelSource, /diagnosticRunVerdictView\(r\)/)
+  assert.doesNotMatch(panelSource, /color=\{r\.success \? 'green' : 'red'\}/)
 })

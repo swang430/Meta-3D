@@ -151,7 +151,10 @@ UNDETERMINED。今天 IRAT = BLOCKER（2 条 ACTION）、5G_NR_Test = UNDETERMIN
 | `api-service/tests/test_diagnostic_sequences.py` | 顺带 | 3 个用例是旧行为的直接断言，不改则恒红 |
 | `api-service/tests/test_uxm_scpi_compatibility.py` | 顺带（仅核对） | 预期零 diff；若需动即停下报告 |
 | `gui/src/features/Diagnostics/sequenceEvidence.ts` | **修** | 四态到 badge/notification 的单一映射，旧序列回退布尔值 |
-| `gui/src/features/Diagnostics/SequenceRunnerPanel.tsx` | **修** | 即时结果与历史完整证据共同消费四态 |
+| `api-service/app/api/diagnostic_run.py` | **修**（R2 尾修） | 列表摘要从服务端持久化的 `sequence_evidence.extra.verdict` 白名单透出四态，不从摘要或布尔值猜测 |
+| `api-service/tests/test_diagnostic_context.py` | **修**（R2 新门） | `UNDETERMINED` 在最近运行摘要中原样保留 |
+| `gui/src/api/diagnosticService.ts` | **修**（R2 尾修） | 最近运行契约接收 nullable `sequence_verdict` |
+| `gui/src/features/Diagnostics/SequenceRunnerPanel.tsx` | **修** | 即时结果、历史完整证据与最近运行共同消费四态 |
 | `gui/test/diagnosticSequenceEvidence.test.ts` | **修**（新门） | `UNDETERMINED` 不折叠成 failure，旧序列 fallback 不变 |
 | `docs/plans/2026-08-21-p1-58-*.md` ×2 | 修（流程件） | 本稿 + plan |
 

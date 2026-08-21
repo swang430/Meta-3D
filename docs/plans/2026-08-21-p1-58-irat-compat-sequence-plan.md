@@ -47,3 +47,11 @@
 - [ ] 措辞恒「未定义/未探测/无结论」，绝不写「不支持」
 - [ ] `test_immediate_apply_actions_*`（P1-46 门）保持零 diff 全绿
 - [ ] 变异还原后 `git status` 干净、测试复绿
+
+## R2 尾修记录（2026-08-21）
+
+最终外审 R2 指出“最近运行”仍只消费 `success`，刷新后会把已持久化的
+`UNDETERMINED` 折叠成红色失败。尾修按 TDD 增加轻量 `sequence_verdict` 摘要字段：
+后端只从服务端持久化的 `sequence_evidence.extra.verdict` 精确白名单取值，前端与即时结果
+复用同一四态映射；旧记录无该字段时继续保守回退布尔值。该 P1 修复必须触发 R3，直到
+覆盖最新 HEAD 的 Codex 外审无 P1 后才可合并。

@@ -262,6 +262,59 @@ class TestDiagnosticRunListAPI:
         assert body["total"] == 1
         assert body["items"][0]["target_name"] == "bad"
 
+    def test_sequence_summary_preserves_persisted_four_state_verdict(self, db, lab):
+        """最近运行不能把已持久化的未判定折叠成普通失败。"""
+        ctx = build_diagnostic_context(db, lab_profile_id=lab.id)
+        ctx.record_run(
+            db,
+            kind=DiagnosticKind.SCPI_SEQUENCE,
+            target_name="uxm_scpi_compatibility",
+            success=False,
+            result_extra={"verdict": "UNDETERMINED"},
+            sequence_evidence={
+                "schema_version": 1,
+                "summary": "critical capability was not probed",
+                "duration_ms": 1,
+                "log": [],
+                "steps": [],
+                "extra": {"verdict": "UNDETERMINED"},
+            },
+        )
+
+        resp = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": DiagnosticKind.SCPI_SEQUENCE.value},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["items"][0]["sequence_verdict"] == "UNDETERMINED"
+
+    def test_sequence_summary_rejects_malformed_historical_verdict(self, db, lab):
+        """畸形历史 JSON 不得毒化最近运行整页，也不得冒充四态判决。"""
+        ctx = build_diagnostic_context(db, lab_profile_id=lab.id)
+        ctx.record_run(
+            db,
+            kind=DiagnosticKind.SCPI_SEQUENCE,
+            target_name="legacy_malformed",
+            success=False,
+            sequence_evidence={
+                "schema_version": 1,
+                "summary": "legacy",
+                "duration_ms": 1,
+                "log": [],
+                "steps": [],
+                "extra": {"verdict": ["UNDETERMINED"]},
+            },
+        )
+
+        resp = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": DiagnosticKind.SCPI_SEQUENCE.value},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["items"][0]["sequence_verdict"] is None
+
     def test_unknown_kind_returns_422(self):
         resp = client.get("/api/v1/diagnostic-runs", params={"kind": "not_a_kind"})
         assert resp.status_code == 422
