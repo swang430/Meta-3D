@@ -141,15 +141,15 @@ def _sqlite_evidence(path: Path) -> tuple[list[str], bool]:
                 return ["sqlite_invalid"], False
         uri = f"file:{path.as_posix()}?mode=ro"
         with sqlite3.connect(uri, uri=True) as db:
-            tables = tuple(
-                row[0]
+            schema_objects = tuple(
+                (row[0], row[1])
                 for row in db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    "SELECT type, name FROM sqlite_schema ORDER BY type, name"
                 )
             )
     except (OSError, sqlite3.DatabaseError):
         return ["sqlite_invalid"], False
-    if tables:
+    if schema_objects:
         return ["sqlite_valid", "sqlite_schema_nonempty"], False
     return ["sqlite_valid", "sqlite_schema_empty"], True
 

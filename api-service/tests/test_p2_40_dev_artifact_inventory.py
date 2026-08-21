@@ -133,6 +133,27 @@ def test_known_empty_test_sqlite_requires_every_identity_signal(tmp_path: Path) 
     assert entries[nonempty.name]["disposition"] == "protect"
 
 
+def test_known_test_sqlite_with_view_is_not_empty(tmp_path: Path, monkeypatch) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    api = repo / "api-service"
+    api.mkdir()
+    database = api / "test_channel_calibration.db"
+    _sqlite(database)
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE VIEW irreplaceable_definition AS SELECT 42 AS value")
+        db.commit()
+    monkeypatch.setattr(module, "detect_open_state", lambda _path: "closed")
+
+    manifest = module.build_inventory(repo, include_docker=False)
+    entry = next(item for item in manifest["artifacts"] if item["path"] == str(database.resolve()))
+
+    assert entry["disposition"] == "protect"
+    assert "sqlite_schema_nonempty" in entry["identity_evidence"]
+
+
 def test_invalid_and_open_state_unknown_sqlite_are_protected(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     repo = tmp_path / "repo"
