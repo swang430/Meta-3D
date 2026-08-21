@@ -165,30 +165,31 @@ cd api-service
 
 | 范围 | disposition | 数量 | 字节 |
 |---|---|---:|---:|
-| filesystem | `protect` | 11 | 24,862,025 |
-| filesystem | `review` | 352 | 2,991,679,536 |
+| filesystem | `protect` | 339 | 2,765,027,261 |
+| filesystem | `review` | 24 | 251,514,300 |
 | filesystem | `quarantine_candidate` | 20 | 21,299,200 |
-| Docker volume | `protect` | 2 | 166,950,000 |
+| Docker volume | `protect` | 2 | 166,990,000 |
 | Docker volume | `review` | 14 | 520,500,000 |
 
-filesystem 共 383 项 / 3,037,840,761 字节；11 个 protect 中有 10 个是运行进程仍打开的
-主工作区日志，另一个是身份不足的空 `api-service/app/mimo_ota.db`。352 个 closed 日志仍只列
-`review`，没有因关闭状态自动晋级。20 个候选全部是四个已定位测试模块留下的空 schema
-SQLite：主工作区根和 `api-service` 各 4 份、P1-59 worktree 4 份、P2-39 worktree 4 份、
-Claude `loving-torvalds-ae273b` worktree 4 份；每一份均为 closed 且有独立 SHA-256 复核，
-但本轮没有移动或删除。
+filesystem 共 383 项 / 3,037,840,761 字节。目录级 `lsof` 返回了 10 个确定仍被运行进程打开的
+主工作区日志，但同时以非零状态结束；因此其余 328 个未命中日志一律保持 `unknown` 并进入
+protect，而不是被猜成 closed。另有一个身份不足的空 `api-service/app/mimo_ota.db` 受保护。
+24 个有完整 closed 证据的旧 worktree 日志仍只列 `review`，没有因关闭状态自动晋级。20 个
+候选全部是四个已定位测试模块留下的空 schema SQLite：主工作区根和 `api-service` 各 4 份、
+P1-59 worktree 4 份、P2-39 worktree 4 份、Claude `loving-torvalds-ae273b` worktree 4 份；
+每一份均为 closed 且有独立 SHA-256 复核，但本轮没有移动或删除。
 
-Docker 的两个 protect 是正在挂载的 `meta3d_postgres_data`（79.65 MB）与
+Docker 的两个 protect 是正在挂载的 `meta3d_postgres_data`（79.69 MB）与
 `gaokao_postgres_data`（87.30 MB）。14 个 review 全是 2026-08-02 创建且当前未挂载的
 anonymous volume：12 个约 43.33–43.51 MB、2 个 0 B；anonymous 标签不足以证明其中数据
 属于 Meta-3D，因此不进入本次候选。
 
 manifest 校验：
 
-- JSON：`49a80dce1ab918f55b3270111564c196f3a7183dad2be3e6cb3bd44977ef01c9`
-  （275,988 bytes）；
-- Markdown：`ac63d841f43ff8f847cd03cf987788bbf78f1ebece5cf1b97365ec3137eeba09`
-  （73,269 bytes）。
+- JSON：`875bd0e718ff517b07eb7cf0e87d1e78a38f52c8465722ce4939bfed8f5e80ec`
+  （273,979 bytes）；
+- Markdown：`a993a155bf0f77e28275eca45e62b5b2943507616bc6689780330a7df9b7793a`
+  （71,260 bytes）。
 
 ### 产生方收口
 

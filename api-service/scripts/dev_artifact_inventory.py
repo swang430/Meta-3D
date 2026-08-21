@@ -110,14 +110,19 @@ def detect_open_states(
         return {path: "unknown" for path in resolved}
     # macOS lsof can return 1 for +D while still emitting valid matches (for
     # example when one process exits during the directory walk).  Valid name
-    # records are positive evidence and must not be discarded with the status.
+    # records are positive evidence and must not be discarded with the status,
+    # but a non-zero walk cannot prove that unmatched files are closed.
     if result.stdout:
         open_paths = {
             Path(line[1:]).resolve()
             for line in result.stdout.splitlines()
             if line.startswith("n/")
         }
-        return {path: "open" if path in open_paths else "closed" for path in resolved}
+        unmatched_state = "closed" if result.returncode == 0 else "unknown"
+        return {
+            path: "open" if path in open_paths else unmatched_state
+            for path in resolved
+        }
     if result.returncode == 1:
         return {path: "closed" for path in resolved}
     return {path: "unknown" for path in resolved}

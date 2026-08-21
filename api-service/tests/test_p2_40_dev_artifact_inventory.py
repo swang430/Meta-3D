@@ -229,7 +229,9 @@ def test_docker_inventory_records_read_only_size_evidence() -> None:
 def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     log = tmp_path / "app.log"
+    unmatched_log = tmp_path / "unmatched.log"
     log.write_text("evidence", encoding="utf-8")
+    unmatched_log.write_text("evidence", encoding="utf-8")
 
     monkeypatch.setattr(
         module.subprocess,
@@ -241,7 +243,10 @@ def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monke
         ),
     )
 
-    assert module.detect_open_states([log], directory=tmp_path)[log.resolve()] == "open"
+    states = module.detect_open_states([log, unmatched_log], directory=tmp_path)
+
+    assert states[log.resolve()] == "open"
+    assert states[unmatched_log.resolve()] == "unknown"
 
 
 def test_calibration_tests_leave_no_sqlite_in_calling_directory(tmp_path: Path) -> None:
