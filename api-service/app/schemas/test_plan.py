@@ -177,6 +177,9 @@ class ExecutionHistoryItem(BaseModel):
     - phases_*: None = 该执行链不记相位进度 (commissioning / plan-runner 行),
       GUI 显示 "—"; 只有 case-runner 行有数值。
     - validation_pass: None = 未判定 (执行中 / 未做判定), 不是"失败"。
+    - failure_alert_outcome (P2-34): published | duplicate | failed;
+      None = 未记录 (P2-34 之前的历史行 / 记录写入失败 / 非失败或非正式行)
+      —— None 不是"告警已发布", 读方只能显示"未记录"。
     """
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
@@ -193,6 +196,7 @@ class ExecutionHistoryItem(BaseModel):
     executed_by: Optional[str] = None  # 来源列: test_case_runner / test_plan_runner / commissioning_*
     error_message: Optional[str] = None
     validation_pass: Optional[bool] = None
+    failure_alert_outcome: Optional[str] = None
 
 
 class ExecutionHistoryListResponse(BaseModel):

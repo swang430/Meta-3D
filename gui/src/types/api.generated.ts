@@ -899,7 +899,7 @@ export interface paths {
                     lines?: number;
                     /** @description Comma-separated set of levels (e.g. `WARNING,ERROR,CRITICAL`). Exact membership match, NOT a threshold — ZoneLogsAlerts' cross-stream dedup relies on level streams being disjoint; do not change to >=. */
                     level?: string;
-                    /** @description Fuzzy match against msg + logger */
+                    /** @description Fuzzy match against msg + logger + the same-line `exception` field (where JsonFormatter puts tracebacks) + RAW continuation lines of the group; a hit anywhere returns the whole group (parent + continuations). */
                     keyword?: string;
                     /** @description Exact match on the per-request correlation id */
                     session_id?: string;
@@ -955,6 +955,7 @@ export interface paths {
                     lines?: number;
                     /** @description Comma-separated exact-match level set */
                     level?: string;
+                    /** @description Same scope as /tail keyword (msg + logger + same-line exception + RAW continuations; whole group returned) */
                     keyword?: string;
                     session_id?: string;
                     execution_id?: string;
@@ -1453,6 +1454,8 @@ export interface components {
             executed_by: string | null;
             error_message: string | null;
             validation_pass: boolean | null;
+            /** @description P2-34: execution-failure alert publication outcome recorded on this row (published | duplicate | failed). null = not recorded (rows predating P2-34 / record write failed / not applicable) — null does NOT mean the alert was published. */
+            failure_alert_outcome: string | null;
         };
         TestExecutionListResponse: {
             total: number;

@@ -22,7 +22,7 @@ from typing import BinaryIO, List, NamedTuple, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from app.config import settings
 from app.core.logging_config import active_execution_log_ids
@@ -54,6 +54,17 @@ class LogEntry(BaseModel):
     instrument_id: str = "-"
     msg: str
     raw: Optional[str] = None  # 原始 JSON 行（供详情展开）
+    # P2-33（内审 F1）：生产日志的 traceback **不是** RAW 续行 —— `JsonFormatter`
+    # 把 `formatException` 的结果放进同一行 JSON 的 "exception" 键（16 天 269k 行
+    # 实测：RAW 续行 0 条、带 exception 字段 150 条）。关键词搜索必须能触到它，
+    # 否则搜异常类名恒为 0 命中。不进响应契约也不进 schema（`raw` 已带全文供
+    # 详情展开），只供 `_keyword_hit` 读取。
+    _exception_text: str = PrivateAttr(default="")
+
+    @property
+    def exception_text(self) -> str:
+        """同一行 JSON 里的 traceback 文本；非 JSON 行 / 无异常时为空串。"""
+        return self._exception_text
 
 
 class LogTailResponse(BaseModel):
@@ -134,6 +145,20 @@ _ACTIVE_LOG_NAMES = {
 }
 
 
+def _keyword_hit(entry: LogEntry, kw_lower: str) -> bool:
+    """关键词判定的**唯一**一份实现（模糊匹配 msg、logger 与同行 exception 文本）。
+
+    单条谓词与组谓词都调它 —— 两处各写一份迟早漂（P1-34 内审 F3 的母题）。
+    exception 文本是 traceback 在生产日志里的真实落点（见 `LogEntry._exception_text`）；
+    RAW 续行路径是另一条腿，由 `_group_matches` 扫续行覆盖。
+    """
+    return (
+        kw_lower in entry.msg.lower()
+        or kw_lower in entry.logger.lower()
+        or kw_lower in entry.exception_text.lower()
+    )
+
+
 def _entry_matches(
     entry: LogEntry,
     level: Optional[str],
@@ -142,10 +167,7 @@ def _entry_matches(
     hal_mode: Optional[str] = None,
     execution_id: Optional[str] = None,
 ) -> bool:
-    """日志过滤谓词 —— `/tail`、`/history` 与 `/export` **共用这一份**。
-
-    ⚠ P1-35 之前 `/export` 自己抄了一份，两处会漂（P1-34 内审 F3 抓到的
-    「屏幕 5 条、导出全量」就是同一个母题）。要改过滤语义只改这里。
+    """单条日志过滤谓词 —— 组语义见 `_group_matches`（三入口共用的那份）。
 
     `level` 支持**逗号分隔的多个级别**（如 `WARNING,ERROR,CRITICAL`）——
     因为后端是**精确相等**不是门槛，没有任何单值能表达「WARNING 及以上」，
@@ -159,8 +181,7 @@ def _entry_matches(
         if entry.level.upper() not in wanted:
             return False
     if keyword:
-        kw_lower = keyword.lower()
-        if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
+        if not _keyword_hit(entry, keyword.lower()):
             return False
     if session_id and entry.session_id != session_id:
         return False
@@ -168,6 +189,42 @@ def _entry_matches(
         return False
     if hal_mode and entry.hal_mode.lower() != hal_mode.lower():
         return False
+    return True
+
+
+def _group_matches(
+    parent: LogEntry,
+    continuations: List[LogEntry],
+    level: Optional[str],
+    keyword: Optional[str],
+    session_id: Optional[str],
+    hal_mode: Optional[str] = None,
+    execution_id: Optional[str] = None,
+) -> bool:
+    """组过滤谓词 —— `/tail`、`/history` 与 `/export` **共用这一份**。
+
+    ⚠ P1-35 之前 `/export` 自己抄了一份，两处会漂（P1-34 内审 F3 抓到的
+    「屏幕 5 条、导出全量」就是同一个母题）。要改过滤语义只改这里。
+
+    组 = 一条结构化父记录 + 它的 RAW traceback 续行。语义（P2-33）：
+    - **非关键词维度（level / session / execution / hal_mode）只看父记录** ——
+      续行的 level 恒为 RAW、无 session，拿它们判会把整组误伤；
+    - **关键词由父记录或组内任一续行满足** —— 报错正文
+      （`ValueError: broken`）通常只在续行里，只查父记录会让它不可搜
+      （Codex #303 R1）。
+
+    `continuations` 的顺序无关紧要（关键词是存在性判断）；调用方传入的
+    列表可能随后被复用/清空，本函数必须同步消费、不得保存引用。
+    """
+    if not _entry_matches(
+        parent, level, None, session_id, hal_mode, execution_id,
+    ):
+        return False
+    if keyword:
+        kw_lower = keyword.lower()
+        return _keyword_hit(parent, kw_lower) or any(
+            _keyword_hit(entry, kw_lower) for entry in continuations
+        )
     return True
 
 
@@ -316,6 +373,10 @@ def _scan_reverse_entries(
     最坏开销同时按行数与 byte_limit 字节有界。若预算内连一个安全换行
     边界都找不到，明确拒绝损坏/巨行文件，不能返回假成功或生成不前进的游标。
 
+    `predicate(parent, continuations)` 是**组谓词**（P2-33）：父记录连同
+    它已积累的 RAW 续行一起交给谓词，关键词才能命中 traceback 正文。
+    传入的续行列表调用后会被复用/清空，谓词必须同步消费、不得保存引用。
+
     返回 (匹配条目按时间正序, 实际扫描的非空行数, 下一位置, 是否还有更早内容)。
     字节位置只会落在行首；历史页因此可以从上次停止处继续，不重新扫描文件尾。
     """
@@ -372,7 +433,7 @@ def _scan_reverse_entries(
                 if _is_raw_entry(entry):
                     pending_continuations.append(entry)
                 else:
-                    if predicate(entry):
+                    if predicate(entry, pending_continuations):
                         # ``matched`` is in newest→oldest scan order; append
                         # Rn..R1 then parent so final reverse becomes P,R1..Rn.
                         matched.extend(_inherit_parent_context(pending_continuations, entry))
@@ -420,7 +481,7 @@ def _scan_reverse_entries(
                 if _is_raw_entry(entry):
                     pending_continuations.append(entry)
                 else:
-                    if predicate(entry):
+                    if predicate(entry, pending_continuations):
                         matched.extend(_inherit_parent_context(pending_continuations, entry))
                         matched.append(entry)
                         matched_groups += 1
@@ -428,7 +489,9 @@ def _scan_reverse_entries(
 
     # A file/page that begins with unparented RAW data keeps the legacy
     # standalone behavior; level filters still exclude it as RAW.
-    if pending_continuations and any(predicate(entry) for entry in pending_continuations):
+    if pending_continuations and any(
+        predicate(entry, []) for entry in pending_continuations
+    ):
         matched.extend(pending_continuations)
 
     matched.reverse()
@@ -439,7 +502,7 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
     """尝试将一行日志解析为 LogEntry"""
     try:
         obj = json.loads(line)
-        return LogEntry(
+        entry = LogEntry(
             ts=obj.get("ts", ""),
             level=obj.get("level", "UNKNOWN"),
             logger=obj.get("logger", ""),
@@ -450,6 +513,12 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
             msg=obj.get("msg", line),
             raw=line,
         )
+        # P2-33：同行 "exception" 键 = JsonFormatter 放 traceback 的地方，
+        # 只收 str（畸形值按"没有"处理，不让一行坏数据毒掉整页）。
+        exc = obj.get("exception")
+        if isinstance(exc, str) and exc:
+            entry._exception_text = exc
+        return entry
     except (json.JSONDecodeError, ValueError):
         # 非 JSON 行（如 Python traceback 续行）
         return LogEntry(
@@ -509,7 +578,7 @@ def tail_log_file(
     filename: str = Query(default="app.log", description="日志文件名"),
     lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg 和 logger 字段）"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg、logger、同行 exception 字段的 traceback，以及 RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
 ):
@@ -530,8 +599,9 @@ def tail_log_file(
             stream,
             stat.st_size,
             max_entries=lines,
-            predicate=lambda e: _entry_matches(
-                e, level, keyword, session_id, execution_id=execution_id),
+            predicate=lambda parent, continuations: _group_matches(
+                parent, continuations, level, keyword, session_id,
+                execution_id=execution_id),
             scan_limit=_TAIL_SCAN_LIMIT,
             byte_limit=_REVERSE_SCAN_BYTE_LIMIT,
         )
@@ -556,7 +626,7 @@ def read_log_history(
     filename: str = Query(default="app.log", description="日志文件名"),
     lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合；精确匹配"),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（范围同 /tail：msg、logger、同行 exception 字段、RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤"),
 ):
@@ -572,8 +642,9 @@ def read_log_history(
             stream,
             stat.st_size,
             max_entries=lines,
-            predicate=lambda e: _entry_matches(
-                e, level, keyword, session_id, execution_id=execution_id,
+            predicate=lambda parent, continuations: _group_matches(
+                parent, continuations, level, keyword, session_id,
+                execution_id=execution_id,
             ),
             before_offset=cursor_state.offset,
             scan_limit=_HISTORY_SCAN_LIMIT,
@@ -616,7 +687,7 @@ def download_log_file(filename: str):
 def export_filtered_logs(
     filename: str,
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（范围同 /tail：msg、logger、同行 exception 字段、RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 过滤"),
     hal_mode: Optional[str] = Query(default=None, description="按 HAL 模式过滤 (mock/real)"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
@@ -637,8 +708,9 @@ def export_filtered_logs(
                 if not group:
                     return []
                 parent = group[0][1]
-                if not _entry_matches(
-                    parent, level, keyword, session_id, hal_mode, execution_id,
+                if not _group_matches(
+                    parent, [entry for _raw, entry in group[1:]],
+                    level, keyword, session_id, hal_mode, execution_id,
                 ):
                     return []
                 return [raw for raw, _entry in group]

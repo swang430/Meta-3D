@@ -304,6 +304,8 @@ export interface TestExecutionRecord {
   // 结果
   error_message: string | null
   validation_pass: boolean | null
+  // P2-34: 告警发布结果 published | duplicate | failed; null = 未记录 (≠ 已发布)
+  failure_alert_outcome: string | null
 }
 
 // ==================== API Request/Response Types ====================
