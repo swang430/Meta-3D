@@ -75,6 +75,17 @@ class ThroughputMetrics:
     适合实时曲线, 不适合当结论)。两者都存, 因为一个回答"这次测出来多少",
     另一个回答"现在跑到多少"。
     """
+    SCOPE_UNKNOWN = "unknown"
+    SCOPE_PCELL = "pcell"
+    SCOPE_NR_ALL_CELLS = "nr_all_cells"
+    SCOPE_SIMULATED = "simulated"
+    VALID_SCOPES = frozenset({
+        SCOPE_UNKNOWN,
+        SCOPE_PCELL,
+        SCOPE_NR_ALL_CELLS,
+        SCOPE_SIMULATED,
+    })
+
     def __init__(
         self,
         dl_throughput_mbps: Optional[float] = None,
@@ -90,6 +101,7 @@ class ThroughputMetrics:
         dl_throughput_current_mbps: Optional[float] = None,
         ul_throughput_current_mbps: Optional[float] = None,
         kpi_valid: Optional[Dict[str, bool]] = None,
+        throughput_scope: str = SCOPE_UNKNOWN,
     ):
         self.dl_throughput_mbps = dl_throughput_mbps
         self.ul_throughput_mbps = ul_throughput_mbps
@@ -103,6 +115,11 @@ class ThroughputMetrics:
         self.sinr_db = sinr_db
         self.dl_throughput_current_mbps = dl_throughput_current_mbps
         self.ul_throughput_current_mbps = ul_throughput_current_mbps
+        self.throughput_scope = (
+            throughput_scope
+            if throughput_scope in self.VALID_SCOPES
+            else self.SCOPE_UNKNOWN
+        )
         # 显式白名单：真实 0.0 是有效值；缺测 None 不是。真实驱动可以用
         # ``kpi_valid`` 覆盖/补充其余 KPI 的解析真值，正式调用方不得从数值大小猜。
         self.kpi_valid: Dict[str, bool] = {
@@ -133,6 +150,7 @@ class ThroughputMetrics:
             "rsrp_dbm": self.rsrp_dbm,
             "sinr_db": self.sinr_db,
             "kpi_valid": dict(self.kpi_valid),
+            "throughput_scope": self.throughput_scope,
         }
 
 
@@ -253,7 +271,11 @@ class BaseStationDriver(InstrumentDriver):
     # 测量
     # ===================================================================
 
-    async def get_throughput_metrics(self) -> ThroughputMetrics:
+    async def get_throughput_metrics(
+        self,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> ThroughputMetrics:
         """
         轮询读取 MAC 层吞吐量指标。
 
@@ -265,7 +287,12 @@ class BaseStationDriver(InstrumentDriver):
         """
         raise NotImplementedError
 
-    async def measure_throughput_window(self, window_s: float) -> ThroughputMetrics:
+    async def measure_throughput_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> ThroughputMetrics:
         """
         采集一个独立的 MAC 统计窗口 (Phase 2d 同步语义)。
 
@@ -285,7 +312,9 @@ class BaseStationDriver(InstrumentDriver):
         """
         import asyncio as _asyncio
         await _asyncio.sleep(max(window_s, 0.0))
-        return await self.get_throughput_metrics()
+        return await self.get_throughput_metrics(
+            throughput_scope=throughput_scope,
+        )
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """
@@ -549,7 +578,11 @@ class MockBaseStation(BaseStationDriver):
     async def get_cell_state(self) -> CellState:
         return self._cell_state
 
-    async def get_throughput_metrics(self) -> ThroughputMetrics:
+    async def get_throughput_metrics(
+        self,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_SIMULATED,
+    ) -> ThroughputMetrics:
         if not self._cell_running:
             return ThroughputMetrics()
         return ThroughputMetrics(
@@ -561,6 +594,7 @@ class MockBaseStation(BaseStationDriver):
             rank_indicator=min(self._mimo_layers, random.randint(1, 2)),
             mcs_dl=random.randint(24, 27),
             mcs_ul=random.randint(20, 24),
+            throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

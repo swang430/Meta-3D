@@ -577,7 +577,11 @@ class RealCmw500Driver(BaseStationDriver):
     # 4. 吞吐量与 BLER 测量
     # ===================================================================
 
-    async def get_throughput_metrics(self) -> ThroughputMetrics:
+    async def get_throughput_metrics(
+        self,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> ThroughputMetrics:
         """
         轮询读取 MAC 层吞吐量指标。
 
@@ -591,7 +595,9 @@ class RealCmw500Driver(BaseStationDriver):
         单位与不可用 sentinel。响应仅保留为诊断证据；四个正式吞吐字段均保持
         ``None`` / ``kpi_valid=False``，直到该契约有厂商出处后再接线。
         """
-        metrics = ThroughputMetrics()
+        metrics = ThroughputMetrics(
+            throughput_scope=ThroughputMetrics.SCOPE_UNKNOWN,
+        )
         valid: Dict[str, bool] = {
             "dl_throughput": False,
             "ul_throughput": False,
