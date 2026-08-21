@@ -130,7 +130,8 @@ class LabProfileReadiness:
     """Aggregated state of the active ``LabProfile`` row.
 
     ``status`` semantics:
-    - ``"ok"`` — exactly one ``is_active=True`` row found, has a name.
+    - ``"ok"`` — an explicit active row was selected, or omission found
+      exactly one ``is_active=True`` row; the selected row has a name.
     - ``"inactive"`` — rows exist but none is active. Operator created
       profiles then turned them all off; HAL has nothing to bind to.
     - ``"missing"`` — no ``LabProfile`` rows at all. Fresh install — the

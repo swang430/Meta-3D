@@ -23,8 +23,8 @@ test('Dashboard readiness 消费顶部唯一 LabProfile 真源并按选择隔离
   assert.match(source, /useOperationalLab/)
   assert.match(source, /const\s*\{[^}]*selectedLabProfileId[^}]*loading[^}]*\}\s*=\s*useOperationalLab\(\)/s)
   assert.match(source, /queryKey:\s*\['cockpit',\s*'readiness',\s*selectedLabProfileId/)
-  assert.match(source, /queryFn:\s*\(\)\s*=>\s*fetchReadiness\(selectedLabProfileId\s*\?\?\s*undefined\)/)
-  assert.match(source, /enabled:\s*!labLoading/)
+  assert.match(source, /queryFn:\s*\(\)\s*=>\s*fetchReadiness\(selectedLabProfileId!\)/)
+  assert.match(source, /enabled:\s*!labLoading\s*&&\s*Boolean\(selectedLabProfileId\)/)
   assert.doesNotMatch(source, /fetchLabProfiles|useState\([^)]*LabProfile/)
 })
 
@@ -36,4 +36,35 @@ test('HAL unavailable 只把 HAL-owned 区域标为不可用，不否定实时 L
   assert.match(dashboard, /LabProfile 与校准状态仍来自实时配置/)
   assert.doesNotMatch(dashboard, /以下为占位状态，不代表实时设备/)
   assert.doesNotMatch(service, /sub-sections carry\s+\* placeholder values/)
+})
+
+test('HAL unavailable 必须进入总判阻塞，不能只显示提示后仍发布可开测', () => {
+  const source = read('src/features/Dashboard/ZoneReadiness.tsx')
+  const verdict = source.slice(
+    source.indexOf('function buildVerdict'),
+    source.indexOf('function SubnetSection'),
+  )
+
+  assert.match(verdict, /available:\s*boolean/)
+  assert.match(verdict, /if\s*\(!available\)[\s\S]*canStart:\s*false/)
+  assert.match(source, /buildVerdict\(buildCells\(readiness\),\s*readiness\.available\)/)
+})
+
+test('顶部没有显式 LabProfile 时不发隐式请求并显示阻断', () => {
+  const source = read('src/features/Dashboard/ZoneReadiness.tsx')
+
+  assert.match(source, /enabled:\s*!labLoading\s*&&\s*Boolean\(selectedLabProfileId\)/)
+  assert.match(source, /queryFn:\s*\(\)\s*=>\s*fetchReadiness\(selectedLabProfileId!\)/)
+  assert.match(source, /请先在顶部选择当前 LabProfile/)
+  assert.doesNotMatch(source, /selectedLabProfileId\s*\?\?\s*undefined/)
+})
+
+test('轮询错误时不发布缓存中的旧 readiness 绿灯', () => {
+  const source = read('src/features/Dashboard/ZoneReadiness.tsx')
+  const component = source.slice(source.indexOf('export function ZoneReadiness'))
+  const render = component.slice(component.indexOf('return ('))
+
+  assert.match(component, /const readiness\s*=\s*!error\s*&&\s*selectedLabProfileId\s*\?\s*data\s*:\s*undefined/)
+  assert.doesNotMatch(render, /\{data\s*&&/)
+  assert.match(source, /就绪状态读取失败 · 不可开测/)
 })

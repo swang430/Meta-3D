@@ -3070,10 +3070,9 @@ class DutAttachReadinessResponse(BaseModel):
 class HALReadinessResponse(BaseModel):
     """Composite snapshot returned by ``GET /instruments/hal/readiness``.
 
-    ``available=False`` means HAL hasn't initialised yet (the
-    lifespan startup hasn't run, or a reload is mid-flight). The
-    GUI should render "HAL not ready" rather than treating the
-    placeholder sub-sections as the live state."""
+    ``available=False`` means HAL-owned driver/subnet state is unavailable
+    (the lifespan startup hasn't run, or a reload is mid-flight).
+    Request-time LabProfile and calibration sections remain live DB truth."""
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     available: bool
