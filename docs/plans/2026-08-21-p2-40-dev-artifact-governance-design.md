@@ -135,7 +135,7 @@ PR 合并后重新生成 manifest，并单独向用户展示：
 - 不清理测试冗余；测试保护矩阵与重复断言收敛属于后续 P3-22；
 - 不按目录或文件名把厂商资料、现场证据、手工测试数据归类为开发沉积。
 
-## 实施与 dry-run 证据（代码提交 `8484cbe`）
+## 实施与 dry-run 证据（代码提交 `fb86d67`）
 
 ### 只读能力
 
@@ -144,22 +144,25 @@ PR 合并后重新生成 manifest，并单独向用户展示：
 - 文件扫描只覆盖注册 worktree 的 `api-service/logs`，以及 worktree 根、
   `api-service` 根和 `api-service/app` 根的 SQLite 后缀文件；不递归进入
   `Instrument_API_Doc` 或其他用户资料目录，也不跟随 symlink。
-- SQLite 使用 header + `mode=ro` schema 检查；只有四个精确旧测试产生方、空 schema、
+- SQLite 使用 header + `mode=ro` 全 `sqlite_schema` 对象检查（table/index/view/trigger 任一
+  存在均非空）；只有四个精确旧测试产生方、零 schema 对象、
   ignored/untracked、且 `lsof` 明确 closed 时才成为 `quarantine_candidate`。
 - macOS `lsof +D` 会在返回码 1 时仍给出有效 `n<path>` 记录；实现保留这种正面打开证据，
   真实运行识别到 10 个打开中的日志，而不是把它们误列为 closed。
 - Docker 只读读取 volume inspect、容器反向引用与 `docker system df -v` 大小；mounted volume
   一律保护，unmounted anonymous 只进入 `review`，绝不成为自动候选。
 
-### 真实 manifest（2026-08-22 00:17 +08:00）
+### 真实 manifest（2026-08-22 00:29 +08:00）
 
 运行命令：
 
 ```bash
 cd api-service
-.venv/bin/python scripts/dev_artifact_inventory.py --repo-root .. --format json \
+.venv/bin/python scripts/dev_artifact_inventory.py \
+  --repo-root /Users/simon/Tools/MIMO-First --format json \
   > /tmp/meta3d-p2-40-manifest.json
-.venv/bin/python scripts/dev_artifact_inventory.py --repo-root .. --format markdown \
+.venv/bin/python scripts/dev_artifact_inventory.py \
+  --repo-root /Users/simon/Tools/MIMO-First --format markdown \
   > /tmp/meta3d-p2-40-manifest.md
 ```
 
@@ -188,7 +191,7 @@ anonymous volume：12 个约 43.33–43.51 MB、2 个 0 B；anonymous 标签不�
 
 manifest 校验：
 
-- JSON：`47255e0e29b06c2866ccf860b5862159259a8fad812509f7e20f88a75aeae85c`
+- JSON：`5bf478c9e91202e6765d8f9b5154d024b3000c4583f5700d0264392af2f3d9ac`
   （273,978 bytes）；
 - Markdown：`a993a155bf0f77e28275eca45e62b5b2943507616bc6689780330a7df9b7793a`
   （71,260 bytes）。
@@ -197,11 +200,12 @@ manifest 校验：
 
 四个校准测试已改为 pytest 临时 SQLite：function scope 使用 `tmp_path`，三个 module scope
 使用各自 `tmp_path_factory` 目录，并在 teardown dispose engine。子进程 RED 在受保护 cwd
-留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **229 passed**。
+留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **230 passed**。
 
-最终验证：P2-40、四组校准与完整 rule gates **282 passed**；全后端
-**4188 passed / 5 skipped**；`compileall`、`diff-check` 通过。fresh 内审最初的
-2 P1 / 3 P2 已全部按 TDD 与单一真值源收口，复审 **P1/P2/P3=0**。
+最终验证：P2-40、四组校准与完整 rule gates **283 passed**；全后端
+**4189 passed / 5 skipped**；`compileall`、`diff-check` 通过。fresh 内审最初的
+2 P1 / 3 P2 与 R1 的 view-only schema 漏判均已按 TDD 与单一真值源收口，尾修复审
+**P1/P2/P3=0**。
 
 ### 拟提交用户批准的可恢复操作（尚未执行）
 

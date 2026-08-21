@@ -44,8 +44,9 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > review 24 项、候选 20 项 / 21,299,200 bytes；候选全部为精确
 > 产生方 + 空 schema + closed 的四类测试 SQLite。Docker 2 个 mounted volume 保护，14 个
 > unmounted anonymous volume / 520.5 MB 只 review。四个测试产生方已换到 pytest 临时目录，
-> 子进程 RED 留 4 个 DB，GREEN 留 0 个；四模块+inventory **229 passed**，相关+规则门
-> **282 passed**，全后端 **4188 passed / 5 skipped**；fresh 内审 **P1/P2/P3=0**。所有现存文件、日志、
+> 子进程 RED 留 4 个 DB，GREEN 留 0 个；R1 指出的 view-only schema 漏判已收窄为检查全部
+> `sqlite_schema` 对象。四模块+inventory **230 passed**，相关+规则门 **283 passed**，
+> 全后端 **4189 passed / 5 skipped**；尾修 fresh 内审 **P1/P2/P3=0**。所有现存文件、日志、
 > volume 与 worktree 均未移动或删除；批准单与恢复方案记录在 P2-40 设计。
 
 > **~~P1-59~~ ✅ 2026-08-21 由 PR #362 完成**：正式测量新增显式
