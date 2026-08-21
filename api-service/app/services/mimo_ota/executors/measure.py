@@ -71,6 +71,10 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+class _CaSetupBlocked(RuntimeError):
+    """Carry a CA setup blocker through cleanup before building the result."""
+
+
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
     """Only an explicitly real certificate may be labelled verified."""
     return use_mock is False
@@ -694,6 +698,7 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # UXM signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
+        ca_setup_blocker: Optional[str] = None
         uxm_config_capture_manager = None
         uxm_config_exchanges = []
         try:
@@ -786,10 +791,11 @@ class MeasureExecutor(IStepExecutor):
                 execution_id=context.test_execution.id,
             )
             if ca_blocker:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=ca_blocker,
-                )
+                # Do not construct the failure result until cleanup has run:
+                # a partial SCell add can leave residual cells, and a rejected
+                # removal must be visible to the operator rather than lost by
+                # returning from inside this try block.
+                raise _CaSetupBlocked(ca_blocker)
             throughput_scope = (
                 ThroughputMetrics.SCOPE_NR_ALL_CELLS
                 if scells
@@ -2462,6 +2468,8 @@ class MeasureExecutor(IStepExecutor):
                 result_payload["emulation_file_source"] = (
                     "testcase" if config.emulation_file else "driver_default"
                 )
+        except _CaSetupBlocked as exc:
+            ca_setup_blocker = str(exc)
         finally:
             if uxm_config_capture_manager is not None:
                 uxm_config_capture_manager.__exit__(None, None, None)
@@ -2469,6 +2477,24 @@ class MeasureExecutor(IStepExecutor):
                 hal,
                 context.test_execution.id,
                 expected_operator_stop_generation=motion_stop_generation,
+            )
+
+        if ca_setup_blocker is not None:
+            error_message = ca_setup_blocker
+            if cleanup_warnings:
+                error_message = (
+                    f"{error_message} 清理未完整确认："
+                    f"{'; '.join(cleanup_warnings)}"
+                )
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                measurements=(
+                    {"cleanup_warnings": cleanup_warnings}
+                    if cleanup_warnings
+                    else {}
+                ),
+                warnings=cleanup_warnings or None,
+                error_message=error_message,
             )
 
         if cleanup_warnings:

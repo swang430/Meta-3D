@@ -48,7 +48,7 @@ from app.models.probe_calibration import (
     CalibrationStatus,
     ProbePathLossCalibration,
 )
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 from app.services.channel_engine_client import ChannelEngineClient
 from app.services.mimo_ota import build_mimo_ota_test_case
 from app.services.mimo_ota.executors.measure import (
@@ -318,6 +318,96 @@ async def test_direct_measure_rejects_inactive_asset_before_hardware_connect(
 
     assert result.status == StepExecutionStatus.FAILED
     assert "已退役" in (result.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
+    db,
+    lab,
+    hal_with_mocks,
+):
+    class _Positioner:
+        async def connect(self):
+            return True
+
+        async def move_to(self, *_args, **_kwargs):
+            return True
+
+        async def disconnect(self):
+            return True
+
+    class _PartialCaBaseStation:
+        MIMO_PORT_PRESETS = {}
+
+        def __init__(self) -> None:
+            self.add_calls = 0
+
+        async def connect(self):
+            return True
+
+        async def set_cell_config(self, _config):
+            return True
+
+        async def add_secondary_cell(self, _index, _config):
+            self.add_calls += 1
+            return self.add_calls == 1
+
+        async def activate_secondary_cells(self, **_kwargs):
+            raise AssertionError("partial add must block activation")
+
+        async def remove_all_secondary_cells(self):
+            return False
+
+        async def stop_signaling(self):
+            return True
+
+        async def disconnect(self):
+            return True
+
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=False,
+        frequency_hz=3.5e9,
+    )
+    test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+    test_case.configuration = {
+        **test_case.configuration,
+        "component_carriers": [
+            {
+                "frequency_hz": 3.5e9,
+                "bandwidth_mhz": 100.0,
+                "subcarrier_spacing_khz": 30,
+                "band": "n78",
+            },
+            {
+                "frequency_hz": 3.7e9,
+                "bandwidth_mhz": 100.0,
+                "subcarrier_spacing_khz": 30,
+                "band": "n78",
+            },
+            {
+                "frequency_hz": 3.8e9,
+                "bandwidth_mhz": 100.0,
+                "subcarrier_spacing_khz": 30,
+                "band": "n78",
+            },
+        ],
+    }
+    db.commit()
+    hal_with_mocks.drivers["positioner"] = _Positioner()
+    hal_with_mocks.drivers["baseStation"] = _PartialCaBaseStation()
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    assert "SCell 2 添加失败" in (result.error_message or "")
+    assert "remove_all_secondary_cells" in (result.error_message or "")
+    assert any(
+        "remove_all_secondary_cells" in warning
+        for warning in result.warnings
+    )
 
 
 # ---------------------------------------------------------------------------

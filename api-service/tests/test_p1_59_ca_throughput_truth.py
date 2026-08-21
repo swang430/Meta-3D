@@ -19,6 +19,7 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import UxmLteNrIratProfile
 from app.diagnostics.sequences import uxm_scpi_compatibility
 from app.api.test_execution import _formal_validation_pass
+from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
@@ -187,6 +188,20 @@ def _scell(frequency_hz: float = 3.7e9) -> SimpleNamespace:
         subcarrier_spacing_khz=30,
         band="n78",
     )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_surfaces_rejected_scell_removal() -> None:
+    base_station = SimpleNamespace(
+        remove_all_secondary_cells=AsyncMock(return_value=False),
+        stop_signaling=AsyncMock(return_value=True),
+        disconnect=AsyncMock(return_value=True),
+    )
+    hal = SimpleNamespace(drivers={"baseStation": base_station})
+
+    warnings = await cleanup_chamber_instruments(hal, "p1-59-cleanup")
+
+    assert any("remove_all_secondary_cells" in warning for warning in warnings)
 
 
 @pytest.mark.asyncio
