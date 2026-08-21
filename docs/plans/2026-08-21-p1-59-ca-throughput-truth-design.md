@@ -134,10 +134,30 @@ CA 在补齐厂商出处与现场兼容性证据前统一明确失败。此处�
 
 ## 开发完成验证（2026-08-21）
 
-- P1-59 相关回归：316 passed；
-- 全后端：4170 passed、5 skipped；
-- `compileall`、`git diff --check`：通过；
-- fresh 内审：P1/P2/P3=0。
+以下结果运行于代码提交 `93acacc` 的精确产品/测试内容；其后只追加本验证记录：
+
+```text
+cd api-service
+/Users/simon/Tools/MIMO-First/api-service/.venv/bin/python -m pytest -q \
+  tests/test_p1_59_ca_throughput_truth.py \
+  tests/test_uxm_kpi_readback.py \
+  tests/test_p1_54_kpi_valid_contract.py \
+  tests/test_mimo_ota_report_verified_backcompat.py \
+  tests/test_uxm_scpi_compatibility.py \
+  tests/test_p1_47b_instrument_evidence.py \
+  tests/test_measure_input_and_param_branches.py \
+  tests/test_mimo_ota_precheck_cal_gate.py \
+  tests/test_rule_gates.py
+结尾：279 passed, 649 warnings in 5.38s
+
+/Users/simon/Tools/MIMO-First/api-service/.venv/bin/python -m compileall -q app tests
+git -C .. diff --check
+/Users/simon/Tools/MIMO-First/api-service/.venv/bin/python -m pytest -q -o log_cli=false
+结尾：4166 passed, 5 skipped, 4285 warnings in 89.49s
+```
+
+R1 P1 的 TDD 证据：同一条定点测试修前为 `1 failed`（实际返回 `True`），修后为
+`1 passed` 且断言 query/write/error-drain 均未发生。fresh 尾审 P1/P2/P3=0。
 
 ## 非目标
 
