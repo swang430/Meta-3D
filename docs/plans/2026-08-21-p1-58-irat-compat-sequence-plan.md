@@ -6,15 +6,17 @@
 ## 步骤
 
 1. **RED** —— 新建 `api-service/tests/test_p1_58_irat_compat_sequence.py`（四门：
-   ①a IRAT 未定义不判失败 / ①b 5GNR 全 clean 变绿 / ② 真缺失仍失败且 BLOCKER 不夹带
+   ①a IRAT 未定义不冒充实测失败 / ①b 5GNR 全 clean 但存在未定义 critical 时保持
+   `UNDETERMINED` 非绿 / ② 真缺失仍失败且 BLOCKER 不夹带
    未定义名字 / ③ partition 不变量）。实跑，确认 ①a ①b ②后半 ③ 红、② 前半绿
    （守既有 fail-closed，价值由变异 M2 证明）。
 2. **GREEN** —— 改 `uxm_scpi_compatibility.py`：
    - 加 `_critical_partition(profile)`；
    - `is_critical` 两处换 `critical_applicable`；
    - `critical_undefined` 失败因子 → `critical_not_in_profile` 披露
-     （log 信息行 + `extra` 字段 + 成功 summary 附披露；BLOCKER 分支不再有未定义段落）；
-   - `success` 三因子；summary 分支条件改用 `elif success:`；
+     （log 信息行 + `extra` 字段 + summary 披露；BLOCKER 失败清单不混入未定义项）；
+   - `success` 同时要求未定义清单为空；summary/`extra.verdict` 明确四态
+     `ABORTED / BLOCKER / UNDETERMINED / SUCCESS`；
    - docstring「The 22 "critical" commands」句更新为按方言派生的表述。
    同步改造 `test_diagnostic_sequences.py` 三个既有用例。实跑两个测试文件全绿。
 3. **全量**（改动收口后、内审风格纪律：跑完不再碰文件）：
@@ -28,6 +30,15 @@
    M1 判据回退全局清单 → ①a/③ 红；M2 真缺失放行 → ② 红；M3 披露归零 → ①a 红。
 6. 变异后把两个目标测试文件再实跑一遍确认还原正确，push 分支（**不开 PR**）。
 7. 报告（NotebookLM 记录 / 方案 / 文件清单 / 门与变异输出 / 全量尾行 / 未做事项）。
+
+## R1 尾修
+
+- Codex R1 P1：初版让 5GNR 的未探测 critical 穿过 `success=True`，会在 GUI 上假绿。
+  后端按上述四态收窄；GUI 再通过 `sequenceVerdictView()` 消费同一 `extra.verdict`，
+  `UNDETERMINED` 显示黄色 `undetermined`，不再折叠成绿色 success 或笼统 failure。
+- Codex R1 P2：设计稿补齐厂商手册原件文件、章节、行号与查无命中的反向 grep 证据。
+- GUI RED：`diagnosticSequenceEvidence.test.ts` 在 helper 不存在时以缺少导出失败；GREEN 后
+  6 passed，production build 通过。
 
 ## 核对项
 

@@ -54,7 +54,7 @@ import {
   type SequenceRunResponse,
   type DiagnosticRunSummary,
 } from '../../api/diagnosticService'
-import { evidenceViewFromDiagnosticRun } from './sequenceEvidence'
+import { evidenceViewFromDiagnosticRun, sequenceVerdictView } from './sequenceEvidence'
 import { logFrontendEvent } from '../../observability/frontendLogger'
 
 type ParamValue = number | string | boolean
@@ -66,12 +66,13 @@ function SequenceEvidenceResult({
   result: SequenceRunResponse
   title: string
 }) {
+  const verdictView = sequenceVerdictView(result)
   return (
     <Stack gap="sm">
       <Group gap="sm">
         <Title order={5}>{title}</Title>
-        <Badge color={result.success ? 'green' : 'orange'}>
-          {result.success ? 'success' : 'failure'}
+        <Badge color={verdictView.color}>
+          {verdictView.label}
         </Badge>
         <Badge variant="light">{result.duration_ms} ms</Badge>
         <Code>{result.diagnostic_run_id.slice(0, 8)}...</Code>
@@ -252,16 +253,17 @@ export function SequenceRunnerPanel() {
         run_by: runBy || undefined,
       })
       setLastResult(resp)
+      const verdictView = sequenceVerdictView(resp)
       notifications.show({
-        title: resp.success ? '序列执行成功' : '序列报告失败',
+        title: verdictView.notificationTitle,
         message: resp.summary,
-        color: resp.success ? 'green' : 'orange',
+        color: verdictView.color,
         icon: resp.success ? <IconCheck size={18} /> : <IconAlertTriangle size={18} />,
       })
       logFrontendEvent({
         action: 'diagnostic_sequence.run',
         component: 'SequenceRunnerPanel',
-        message: `key=${selectedKey} success=${resp.success} duration=${resp.duration_ms}ms lab=${selectedLabId || '-'}`,
+        message: `key=${selectedKey} verdict=${verdictView.label} success=${resp.success} duration=${resp.duration_ms}ms lab=${selectedLabId || '-'}`,
       })
       refreshRecent()
     } catch (e: unknown) {

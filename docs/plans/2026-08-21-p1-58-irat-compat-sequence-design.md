@@ -70,6 +70,10 @@ def _critical_partition(profile):
 - **判决四态**透出在 `extra["verdict"]` 与 summary 前缀：`ABORTED` / `BLOCKER`（有实测
   失败因子；未定义只作披露后缀，不混进失败清单）/ `UNDETERMINED`（无实测失败、但有未定义
   critical → 未探测、不能判健康）/ `SUCCESS`（全定义且全支持）；
+- **界面消费同一四态**：`SequenceRunnerPanel` 通过纯函数 `sequenceVerdictView()` 读取
+  `extra.verdict`；`UNDETERMINED` 显示黄色 `undetermined`，`BLOCKER` 显示红色 `blocker`。
+  `SUCCESS` 还必须与 `success=true` 一致才可显示绿色；字段矛盾时按非绿保守回退。
+  其它既有序列没有该字段时继续按 `success` 布尔值回退，避免把新契约外推到零证据路径；
 - 成功 summary 从「All 36 critical supported」改为「All N **applicable** critical
   supported on profile X」+ 未定义条数披露 —— #275 P2 那道「不撒谎」防线的真实意图
   （不把没探测过的报成已验证）**换实现保留**，不是拆除。
@@ -146,6 +150,9 @@ UNDETERMINED。今天 IRAT = BLOCKER（2 条 ACTION）、5G_NR_Test = UNDETERMIN
 | `api-service/tests/test_p1_58_irat_compat_sequence.py` | **修**（新门） | 上表四门 |
 | `api-service/tests/test_diagnostic_sequences.py` | 顺带 | 3 个用例是旧行为的直接断言，不改则恒红 |
 | `api-service/tests/test_uxm_scpi_compatibility.py` | 顺带（仅核对） | 预期零 diff；若需动即停下报告 |
+| `gui/src/features/Diagnostics/sequenceEvidence.ts` | **修** | 四态到 badge/notification 的单一映射，旧序列回退布尔值 |
+| `gui/src/features/Diagnostics/SequenceRunnerPanel.tsx` | **修** | 即时结果与历史完整证据共同消费四态 |
+| `gui/test/diagnosticSequenceEvidence.test.ts` | **修**（新门） | `UNDETERMINED` 不折叠成 failure，旧序列 fallback 不变 |
 | `docs/plans/2026-08-21-p1-58-*.md` ×2 | 修（流程件） | 本稿 + plan |
 
 越界候选（**不做**，进报告）：5GNR profile `MIMO_TX/RX_ANT_PORT` 手册查无、roadmap
