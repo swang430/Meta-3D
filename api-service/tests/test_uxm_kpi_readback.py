@@ -136,12 +136,18 @@ class TestMonitoringStateGate:
         _stub_io(drv, {
             "BSE:STATus:NR5G:CELL1?": "CONNected",
             "DL:THRoughput:OTA": "1,2e6,2e6,2e6,2e6,2e6",
+            "MEASurement:JSON:REPort:FETCh": (
+                '{"MeasurementReports":[{"CellReports":[{"RSRP":72}]}]}'
+            ),
         }, trace)
 
         result = asyncio.run(drv.get_metrics())
 
         queries = [cmd for op, cmd in trace if op == "Q"]
         assert "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:CELL1?" in queries
+        assert not any(
+            "MEASurement:JSON:REPort:FETCh" in cmd for cmd in queries
+        ), "后台监控没有 L3 原始值消费方，不得每轮读取从开测以来的完整报告队列"
         assert result.metrics["cell_state"] == "CONN"
         assert result.metrics["dl_throughput_mbps"] == pytest.approx(2.0)
 

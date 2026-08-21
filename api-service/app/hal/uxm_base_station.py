@@ -3078,6 +3078,7 @@ class RealUxmDriver(BaseStationDriver):
         self,
         *,
         throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        _read_ue_report: bool = True,
     ) -> ThroughputMetrics:
         """
         读取仪表与终端上报的 KPI。
@@ -3215,7 +3216,11 @@ class RealUxmDriver(BaseStationDriver):
 
         # ── UE 上报的 RSRP / RSRQ / SINR (L3 测量报告 JSON) ─────
         valid["rsrp"] = valid["sinr"] = False
-        if self._cmds.MEAS_UE_REPORT_JSON:
+        if not _read_ue_report:
+            logger.debug(
+                "[UXM] UE 测量报告: 当前调用方不消费原始 L3 证据，跳过全量队列读取"
+            )
+        elif self._cmds.MEAS_UE_REPORT_JSON:
             try:
                 rep_raw = self._query(
                     self._cmds.MEAS_UE_REPORT_JSON.format(cell=cell)
@@ -3577,7 +3582,7 @@ class RealUxmDriver(BaseStationDriver):
         # get_throughput_metrics()，不受本监控门影响。
         live_state = await self.get_cell_state()
         tput = (
-            await self.get_throughput_metrics()
+            await self.get_throughput_metrics(_read_ue_report=False)
             if live_state == CellState.CONNECTED
             else ThroughputMetrics()
         )
