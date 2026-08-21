@@ -5,6 +5,7 @@ Shared test fixtures for integration tests
 """
 
 import os
+import tempfile
 
 # ⭐ 必须在 `from app.main import app` **之前** —— `settings` 是模块级单例，
 #    导入那一刻就把 `.env` 读定了，之后再改环境变量没用。
@@ -27,6 +28,12 @@ import os
 # 显式 `USE_MOCK_INSTRUMENTS=false pytest ...` 即可。
 # G17 门（test_rule_gates.py）盯着这行的存在与**位置**。
 os.environ.setdefault("USE_MOCK_INSTRUMENTS", "true")
+
+# P2-39：pytest 不能继承调用方的运行日志目录。app.main 在导入时就初始化全部
+# TimedRotatingFileHandler，所以必须在导入前无条件换源；setdefault 会允许测试进程
+# 继续打开并轮转用户的历史仪器证据。模块级引用让目录覆盖完整 pytest 进程生命周期。
+_PYTEST_LOG_ROOT = tempfile.TemporaryDirectory(prefix="meta3d-pytest-logs-")
+os.environ["LOG_DIR"] = _PYTEST_LOG_ROOT.name
 
 import pytest
 from fastapi.testclient import TestClient
