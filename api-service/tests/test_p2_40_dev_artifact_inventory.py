@@ -81,6 +81,33 @@ def test_inventory_only_scans_explicit_roots_and_never_follows_symlinks(tmp_path
     assert str((repo / "Instrument_API_Doc" / "manual-evidence.db").resolve()) not in paths
 
 
+def test_log_rotation_during_scan_is_recorded_as_protected_probe_drift(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    log = repo / "api-service" / "logs" / "rotating.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("runtime evidence\n", encoding="utf-8")
+
+    def rotate_after_discovery(paths, *, directory=None):
+        resolved = {path.resolve(): "closed" for path in paths}
+        log.unlink()
+        return resolved
+
+    monkeypatch.setattr(module, "detect_open_states", rotate_after_discovery)
+
+    manifest = module.build_inventory(repo, include_docker=False)
+    entry = next(item for item in manifest["artifacts"] if item["path"] == str(log.resolve()))
+
+    assert entry["disposition"] == "protect"
+    assert entry["open_state"] == "unknown"
+    assert entry["probe_state"] == "snapshot_changed"
+    assert entry["bytes"] is None
+
+
 def test_known_empty_test_sqlite_requires_every_identity_signal(tmp_path: Path) -> None:
     module = _load_module()
     repo = tmp_path / "repo"
@@ -224,6 +251,27 @@ def test_docker_inventory_records_read_only_size_evidence() -> None:
     assert volumes[0]["size_display"] == "79.65MB"
     assert volumes[0]["bytes"] == 79_650_000
     assert "docker_system_df" in volumes[0]["identity_evidence"]
+
+
+def test_docker_non_object_inspect_is_malformed_and_protected() -> None:
+    module = _load_module()
+
+    def docker_fixture(args):
+        command = tuple(args)
+        if command == ("docker", "volume", "ls", "-q"):
+            return SimpleNamespace(returncode=0, stdout="anonymous\n", stderr="")
+        if command[:3] == ("docker", "system", "df"):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:3] == ("docker", "volume", "inspect"):
+            return SimpleNamespace(returncode=0, stdout="[]\n", stderr="")
+        if command[:2] == ("docker", "ps"):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    volumes = module._collect_docker_volumes(docker_fixture)
+
+    assert volumes[0]["probe_state"] == "malformed"
+    assert volumes[0]["disposition"] == "protect"
 
 
 def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monkeypatch) -> None:

@@ -170,7 +170,32 @@ def _artifact_entry(
 ) -> dict[str, Any]:
     root = Path(str(worktree["path"])).resolve()
     path = path.resolve()
-    stat = path.stat()
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        probe_state = "snapshot_changed" if isinstance(exc, FileNotFoundError) else "stat_failed"
+        evidence = [
+            "probe_stat_failed",
+            f"worktree_head:{worktree.get('head') or 'unknown'}",
+        ]
+        if kind == "log":
+            evidence.append("explicit_log_root")
+        return {
+            "bytes": None,
+            "disposition": "protect",
+            "git_state": "unknown",
+            "identity_evidence": sorted(evidence),
+            "kind": kind,
+            "mtime_ns": None,
+            "open_state": "unknown",
+            "path": os.fspath(path),
+            "probe_error": type(exc).__name__,
+            "probe_state": probe_state,
+            "reason": "artifact changed or became unreadable during the read-only scan",
+            "worktree_branch": worktree.get("branch"),
+            "worktree_head": worktree.get("head"),
+            "worktree_path": os.fspath(root),
+        }
     open_state = open_state or detect_open_state(path)
     git_state = _git_state(root, path)
     evidence = [f"git_{git_state}", f"worktree_head:{worktree.get('head') or 'unknown'}"]
@@ -350,12 +375,15 @@ def _collect_docker_volumes(command_runner: CommandRunner) -> list[dict[str, Any
             )
             continue
         try:
-            metadata = json.loads(inspect_output)
+            parsed_metadata = json.loads(inspect_output)
         except json.JSONDecodeError:
-            metadata = {}
+            parsed_metadata = None
+        metadata = parsed_metadata if isinstance(parsed_metadata, dict) else {}
+        raw_labels = metadata.get("Labels")
+        labels = raw_labels if isinstance(raw_labels, dict) else {}
         volume = {
             "created_at": metadata.get("CreatedAt"),
-            "labels": metadata.get("Labels") or {},
+            "labels": labels,
             "mounted_by": sorted(filter(None, mount_output.splitlines())),
             "name": name,
             "probe_state": "available" if metadata else "malformed",

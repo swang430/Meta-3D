@@ -67,14 +67,6 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > `compileall`、`diff-check` 通过；fresh 尾审 **P1/P2/P3=0**。逐 SCell 激活态与 IRAT
 > 完整配置/激活命令的现场真值仍保持 Hardware Blocked，不猜测补全。
 
-> **P2-39 开发证据（尚未合并，不提前打 ✅）**：pytest 在导入 `app.main` 之前无条件
-> 把 `LOG_DIR` 换到进程级 `TemporaryDirectory`；生产 `settings`、`setup_logging()`、
-> 九类文件 handler 和系统日志 API 保持同一条真实链。子进程 RED 实证修前会改写、轮转
-> 调用方预置的受保护目录；GREEN 后目录文件、字节、大小和 mtime 全部不变。顺序门还实跑
-> `setdefault` 变异为红，禁止调用方把 pytest 指回运行日志。验证：日志相关 **66 passed**、
-> 完整 rule gates **53 passed**、全后端 **4172 passed / 5 skipped**，且全量前后运行日志
-> manifest 完全一致；`compileall`、`diff-check` 通过；fresh 内审 **P1/P2/P3=0**。
-
 > **2026-08-21 并行批次收口 + Discovered 价值复核（用户批准）**：第一波
 > P1-58 / P2-35 / P2-30 / P2-33 / P2-34 已全部合并（PR #358 / #357 / #359 /
 > #360 / #361）。第二波不再机械照旧编号施工：保留并收窄 P2-31，保留 P2-36；
@@ -387,7 +379,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-39 ⏭ → P2-40 → P2-37 → P2-38 → P2-36 → P2-31 → P3-22**，当前 WIP=1（P2-39 准备外审）。P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-40 ⏭ → P2-37 → P2-38 → P2-36 → P2-31 → P3-22**，当前 WIP=1（P2-40 fresh 内审中，实际清理另候批准）。P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
