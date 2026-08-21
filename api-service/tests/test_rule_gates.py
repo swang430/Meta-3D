@@ -2315,8 +2315,10 @@ def test_g17_tests_never_bring_up_hal_in_real_mode():
 
 
 def test_g17_isolation_precedes_app_import_in_conftest():
-    """⭐ 顺序不变量 —— `settings` 是模块级单例，导入 `app.main` 那一刻就把
-    `.env` 读定了。隔离必须排在它**之前**，否则设了也白设。
+    """⭐ 顺序不变量 —— HAL 与日志换源都必须早于应用导入。
+
+    `settings` 是模块级单例，导入 `app.main` 那一刻就把 `.env` 读定了。
+    隔离必须排在它**之前**，否则设了也白设。
 
     上面那条断言的是"结果对"，这条锁的是"为什么对" —— 只有结果门时，
     把隔离挪到 app 导入之后，结果门在**单跑本文件**时可能仍绿（别的模块
@@ -2341,10 +2343,19 @@ def test_g17_isolation_precedes_app_import_in_conftest():
         return hits[0]
 
     isolation = _lineno('os.environ.setdefault("USE_MOCK_INSTRUMENTS"')
+    log_isolation = _lineno('os.environ["LOG_DIR"] = ')
     app_import = _lineno("from app.main import app")
     assert isolation < app_import, (
         "conftest.py 里 HAL 模式隔离排在 `from app.main import app` 之后 —— "
         "settings 单例那时已经把 .env 读定了，设了也白设"
+    )
+    assert log_isolation < app_import, (
+        "conftest.py 里 pytest 日志换源排在 `from app.main import app` 之后 —— "
+        "测试进程会先打开并轮转用户的运行日志"
+    )
+    assert 'os.environ.setdefault("LOG_DIR"' not in src, (
+        "pytest 日志隔离使用了 setdefault —— 调用方预置运行日志目录时仍会被放行；"
+        "必须无条件覆盖为进程级临时目录"
     )
 
 
