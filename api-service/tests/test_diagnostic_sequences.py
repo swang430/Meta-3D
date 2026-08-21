@@ -698,27 +698,31 @@ class TestUxmScpiCompatibilitySequence:
         # `CONFig:NR5G:CELL0:BAND?` —— 无前缀 + CELL0），该方言 profile 里
         # 有一批 critical 能力未定义（手册只给了 BSE: 变体，按禁盲试不猜）。
         # 判定集改按当前方言 profile 派生后：固件对已定义命令全 clean、且
-        # 该方言无 mandatory ACTION → **success=True**；未定义能力如实披露
-        # （extra + summary），不再当失败因子（旧行为让任何方言恒 False，
-        # 序列作为现场健康检查完全失效 —— 即 P1-58 要修的故障）。
-        assert body["success"] is True
+        # 该方言无 mandatory ACTION → 零实测失败因子，**不是 BLOCKER**；
+        # 但未定义 = 未经查证、从未探测 → 判 **UNDETERMINED**，success 仍 False
+        # （Codex #358 R1 P1：不能把没探测过的报成健康；GUI 拿 success 画绿牌）。
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["critical_unsupported"] == []
         assert body["extra"]["critical_not_in_profile"], (
             "本用例前提：5G 方言里确实有 critical 能力未在 profile 定义"
         )
-        # 总结只声称 applicable 口径 + 如实披露，不冒充全局清单全绿
+        # 总结如实：applicable 口径 + 披露未定义能力，不冒充全局清单全绿，也不报 BLOCKER
+        assert body["summary"].startswith("UNDETERMINED")
         assert "applicable" in body["summary"]
         assert "未在本方言 profile 定义" in body["summary"]
+        assert "BLOCKER" not in body["summary"]
 
     def test_critical_not_in_profile_is_disclosed_not_failed(
         self, lab_with_bs, monkeypatch
     ):
-        """⭐ P1-58：critical 清单里在本方言为 None 的命令**如实披露、不算失败**。
+        """⭐ P1-58：critical 清单里在本方言为 None 的命令**如实披露、不报成仪器拒绝**。
 
         `_all_commands()` 按"该 Test App 不暴露此命令"的契约过滤掉 None ——
         这类命令没被探测。Codex #275 P2 的防线（不把没探测过的报成已验证）
-        换实现保留：总结只声称 applicable 口径 + extra/summary 双披露；
-        旧实现（未定义 → success 恒 False）会让**任何**方言恒失败 ——
-        全局 critical 清单是跨方言并集，单一方言不可能全部定义。
+        保留并升级成四态：未定义 ≠ BLOCKER（不是仪器拒绝），但也 ≠ 健康 ——
+        判 UNDETERMINED、success=False（Codex #358 R1 P1）；全局 critical 清单
+        是跨方言并集，单一方言不可能全部定义，所以披露必须逐条、口径必须如实。
 
         变异：披露归零（extra 不放 critical_not_in_profile）→ 红；
         判定集回退全局清单（applicable=_CRITICAL_NAMES）→ 披露断言红。
@@ -738,8 +742,10 @@ class TestUxmScpiCompatibilitySequence:
             json={"lab_profile_id": str(lab_with_bs.id)},
         )
         body = resp.json()
-        # 未定义 ≠ 失败：clean 固件 + 无 mandatory ACTION → 成功
-        assert body["success"] is True
+        # 未定义 ≠ 仪器拒绝（不是 BLOCKER），但也 ≠ 健康：UNDETERMINED
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["critical_unsupported"] == []
         # 但必须逐条披露，且总结不得冒充全局清单全绿
         assert body["extra"]["critical_not_in_profile"] == undefined
         assert str(len(undefined)) in body["summary"]

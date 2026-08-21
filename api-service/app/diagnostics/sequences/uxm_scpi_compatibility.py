@@ -55,9 +55,12 @@ code categorized:
 are tagged so the operator sees immediately whether to proceed or
 escalate. ⭐ P1-58：判定集**按当前方言 profile 派生**（全局能力清单 ∩
 profile 实际定义）—— 全局清单是跨方言并集，任何单一方言都不可能全部
-定义；「本方言 profile 没有的命令」不是失败，是如实披露
-（`critical_not_in_profile`，未探测、无结论 ≠ 已验证不支持，口径见
-`uxm_command_profiles.py` 尾部注释）。
+定义；「本方言 profile 没有的命令」**不是仪器拒绝**（不进 BLOCKER 失败清单），
+而是如实披露（`critical_not_in_profile`，未探测、无结论 ≠ 已验证不支持，
+口径见 `uxm_command_profiles.py` 尾部注释）—— 但它也 **≠ 健康**：判决四态
+BLOCKER > UNDETERMINED（无实测失败但有未定义 critical，success=False）>
+SUCCESS，另有 ABORTED；透出在 `extra["verdict"]` 与 summary 前缀
+（Codex #358 R1 P1：GUI 拿 success 画绿牌，没探测过的不能报绿）。
 
 Safety
 ------
@@ -592,42 +595,38 @@ async def run(
         )
 
     # ⚠ Codex #275 P2 的「假全绿」防线（不把没探测过的命令报成已验证）在
-    # P1-58 **换实现保留**：「本方言 profile 未定义」不再是失败因子 —— 全局
-    # critical 清单是跨方言并集，拿它逐条要求单方言 profile 会让任何方言恒
-    # 失败（IRAT 恒缺 4 条、5G 恒缺 20 条，序列作为现场健康检查完全失效）。
-    # 改为三处如实披露（探测前 log / extra.critical_not_in_profile / 成功
-    # summary），且成功总结只声称 applicable 口径，绝不冒充全局 N 条全部支持。
-    # fail-closed 三因子保持原样：实测 UNSUPPORTED / INFERRED_ONLY / 早退。
+    # P1-58 保留并**升级成四态判决**（Codex #358 R1 P1）：
+    #   · BLOCKER      —— 有实测失败因子：实测 UNSUPPORTED / mandatory ACTION
+    #                     仅有邻居推断（P1-46）/ 早退；
+    #   · UNDETERMINED —— 没有任何实测失败，但有 critical 能力在本方言 profile
+    #                     里未定义（profile 口径：None = **未经查证**，不是"本方言
+    #                     没有这个能力"）→ 从未被探测，**不能判健康**；success=False。
+    #   · SUCCESS      —— 全部 critical 能力都在 profile 定义且全部实测支持。
+    # 「未定义」不再被报成 BLOCKER / "仪器拒绝"（那是 P1-58 治的假故障：全局
+    # critical 清单是跨方言并集，IRAT 恒缺 4 条、5G 恒缺 20 条），但它也**不能**
+    # 让 success 变 True —— GUI 直接拿 success 画绿牌，而生产驱动
+    # configure_mac_throughput_test 遇到同一批 None 会拒绝配置：健康检查报绿、
+    # 生产路径拒绝，那是假绿。四态通过 extra["verdict"] 与 summary 前缀透出。
     success = (
         (not critical_unsupported)
         and (not critical_unverified_actions)
         and (not aborted_early)
+        and (not critical_not_in_profile)
     )
     if aborted_early:
+        verdict = "ABORTED"
         summary = (
             f"ABORTED: {_MAX_CONSECUTIVE_TIMEOUTS} consecutive VISA timeouts on "
             f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
             f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
         )
-    elif success:
-        summary = (
-            f"All {len(critical_applicable)} applicable critical SCPI commands "
-            f"supported on profile {profile.PROFILE_NAME} "
-            f"({counts.get('UNSUPPORTED', 0)} non-critical unsupported, "
-            f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
-        )
-        if critical_not_in_profile:
-            summary += (
-                f"；另有 {len(critical_not_in_profile)} 条 critical 能力"
-                f"未在本方言 profile 定义（未探测、无结论，不代表仪器不支持）: "
-                f"{critical_not_in_profile}"
-            )
-    else:
+    elif critical_unsupported or critical_unverified_actions:
         # ⚠ Codex #275 R2 P2: 上一轮我只把失败因子接进了 success, 忘了
         # summary —— success=False 而总结仍写 "All N critical supported",
         # **自相矛盾**; 报告体里两个字段互相打架比单纯报错更难查。
         # ⚠ 两种失败**可以同时成立**, 所以一起报而不是二选一 ——
         #   分支排他会让先命中的那种把另一种从总结里挤掉。
+        verdict = "BLOCKER"
         parts = []
         if critical_unsupported:
             parts.append(
@@ -642,6 +641,30 @@ async def run(
                 f"{sorted(critical_unverified_actions)}"
             )
         summary = "BLOCKER: " + "; ".join(parts)
+        if critical_not_in_profile:
+            # 披露但**不**混进失败清单：它们没被探测过，不是"仪器拒绝"。
+            summary += (
+                f"；另有 {len(critical_not_in_profile)} 条 critical 能力未在本方言 "
+                f"profile 定义（未探测、无结论）: {critical_not_in_profile}"
+            )
+    elif critical_not_in_profile:
+        verdict = "UNDETERMINED"
+        summary = (
+            f"UNDETERMINED: {len(critical_applicable)} 条 applicable critical 在方言 "
+            f"{profile.PROFILE_NAME} 上全部实测支持，但另有 "
+            f"{len(critical_not_in_profile)} 条 critical 能力未在本方言 profile 定义"
+            f"（未探测、无结论，不能判健康；≠ 已验证不支持）: {critical_not_in_profile}"
+            f"（{counts.get('UNSUPPORTED', 0)} non-critical unsupported, "
+            f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK）"
+        )
+    else:
+        verdict = "SUCCESS"
+        summary = (
+            f"All {len(critical_applicable)} critical SCPI commands "
+            f"supported on profile {profile.PROFILE_NAME} "
+            f"({counts.get('UNSUPPORTED', 0)} non-critical unsupported, "
+            f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
+        )
 
     return SequenceRunResult(
         success=success,
@@ -649,11 +672,14 @@ async def run(
         steps=steps,
         extra={
             "profile": profile.PROFILE_NAME,
+            # 四态判决（Codex #358 R1 P1）：SUCCESS / UNDETERMINED / BLOCKER / ABORTED；
+            # success 只在 SUCCESS 为 True。
+            "verdict": verdict,
             "counts": counts,
             "critical_unsupported": sorted(critical_unsupported),
             "critical_unverified_actions": sorted(critical_unverified_actions),
-            # P1-58: 如实披露（不是失败）—— critical 能力清单里本方言 profile
-            # 未定义的部分；未探测、无结论 ≠ 已验证不支持。
+            # P1-58: 如实披露 —— critical 能力清单里本方言 profile 未定义的部分；
+            # 未探测、无结论 ≠ 已验证不支持，**也 ≠ 健康**（非空 → UNDETERMINED）。
             "critical_not_in_profile": critical_not_in_profile,
             "total_probed": len(all_cmds),
             "include_supported": include_supported,

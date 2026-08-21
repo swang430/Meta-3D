@@ -6,8 +6,13 @@
 
 修法（设计稿 docs/plans/2026-08-21-p1-58-irat-compat-sequence-design.md）：
 判定集 = 全局 critical 能力清单 ∩ 当前 profile 实际定义（str）；未定义的一半
-降为如实披露（extra["critical_not_in_profile"] + summary），不再参与 success。
-fail-closed 三因子（实测 UNSUPPORTED / INFERRED_ONLY / aborted_early）原样保留。
+**不再被报成 BLOCKER / "仪器拒绝"**，而是如实披露（extra["critical_not_in_profile"]
++ summary）。但它也不能让 success 变 True（Codex #358 R1 P1：profile 口径 None =
+未经查证；GUI 拿 success 画绿牌；生产驱动对同一批 None 会拒绝配置）—— 判决四态：
+BLOCKER（实测 UNSUPPORTED / INFERRED_ONLY / 早退）> UNDETERMINED（无实测失败但有
+未定义 critical，不能判健康）> SUCCESS（全定义且全支持）；ABORTED 另列。
+⚠ 在 P1-46 拍板（CONFIG_APPLY / QCONFIG_APPLY_ALL 只读普查验证不了）下，SUCCESS
+在生产 profile 上结构性不可达：定义它们 → BLOCKER，不定义 → UNDETERMINED。
 
 措辞边界（uxm_command_profiles.py:627-648 权威口径 + NotebookLM 2026-08-21 查证）：
 「未定义」≠「已验证不支持」—— 两个方向都无手册原文，序列与本文件都不下仪器断言。
@@ -29,6 +34,26 @@ def _not_in_profile(profile) -> list:
         n for n in seq._CRITICAL_NAMES
         if not isinstance(getattr(profile, n, None), str)
     )
+
+
+def _fully_defined_profile():
+    """把 5G_NR_Test profile 里 critical 清单中为 None 的能力全部补成**假的**可探测命令。
+
+    只用于证明判决逻辑本身可达 SUCCESS / 隔离单一失败因子；这些命令形式不是手册
+    查证过的，**绝不能**流入生产 profile（禁盲试）。
+    """
+    # critical 本身 + 动作命令做邻居推断要用的只读邻居（否则 ACTION 会因
+    # "neighbor not probed" 记成 UNKNOWN → 假的 unsupported）
+    needed = set(seq._CRITICAL_NAMES) | {
+        q for q in seq._ACTION_NEIGHBOR_QUERY.values() if q
+    }
+    attrs = {
+        n: f"CONFig:P158TEST:{n}"
+        for n in needed
+        if not isinstance(getattr(Uxm5GNRTestAppProfile, n, None), str)
+    }
+    attrs["PROFILE_NAME"] = "P158_FULLY_DEFINED"
+    return type("_FullyDefinedProfile", (Uxm5GNRTestAppProfile,), attrs)
 
 
 class _ScriptedBs:
@@ -61,7 +86,7 @@ def _run(bs, params=None):
 
 
 def test_irat_missing_profile_commands_are_disclosed_not_failed():
-    """门①a：IRAT 下「方言 profile 没有的 critical 命令」不再判失败。
+    """门①a：IRAT 下「方言 profile 没有的 critical 命令」不再被报成 BLOCKER 的失败项。
 
     2026-08-21 现状该清单是 4 条：APP_SELECT / MIMO_RX_ANT_PORT /
     MIMO_TX_ANT_PORT / PDSCH_AMC_ENABLE（断言按 profile 派生，不抄名单）。
@@ -72,43 +97,75 @@ def test_irat_missing_profile_commands_are_disclosed_not_failed():
 
     result = _run(_ScriptedBs(UxmLteNrIratProfile))
 
-    # 如实披露（不是失败）：extra 携带派生清单
+    # 如实披露：extra 携带派生清单
     assert result.extra["critical_not_in_profile"] == expected
-    # 未定义的不进任何失败因子
+    # 未定义的不进任何**实测**失败因子
     assert result.extra["critical_unsupported"] == []
     assert not (set(expected) & set(result.extra["critical_unverified_actions"]))
-    # 失败因子只剩 P1-46 拍板的 INFERRED_ONLY fail-closed（本片不动它）：
+    # 实测失败因子只剩 P1-46 拍板的 INFERRED_ONLY fail-closed（本片不动它）：
     # IRAT 定义了 CONFIG_APPLY / QCONFIG_APPLY_ALL 两条 mandatory ACTION，
-    # 只读普查验证不了动作本身 → success 仍 False，但原因收窄且如实。
+    # 只读普查验证不了动作本身 → BLOCKER，success False，但原因收窄且如实。
     assert result.extra["critical_unverified_actions"] == [
         "CONFIG_APPLY", "QCONFIG_APPLY_ALL",
     ]
     assert result.success is False
-    # BLOCKER 总结不再点名未定义命令、不再带「未在方言 X 中定义」失败段落
+    assert result.extra["verdict"] == "BLOCKER"
+    blocker_part, _, disclosure = result.summary.partition("；另有")
+    assert blocker_part.startswith("BLOCKER")
+    # BLOCKER 段不点名未定义命令（它们不是"仪器拒绝"）；披露段必须在且点名
     for name in expected:
-        assert name not in result.summary
-    assert "未在方言" not in result.summary
+        assert name not in blocker_part
+        assert name in disclosure
+    assert "未探测、无结论" in disclosure
 
 
-def test_5gnr_clean_firmware_reaches_green_end_to_end():
-    """门①b：5G_NR_Test 全 clean 时序列终于能成功。
+def test_5gnr_clean_firmware_is_undetermined_not_green():
+    """门①b：5G_NR_Test 全 clean → **UNDETERMINED**，不是 BLOCKER、也不是绿。
 
-    该方言未定义任何 mandatory ACTION（CONFIG_APPLY / QCONFIG_APPLY_ALL 均
-    None）→ 修后无任何失败因子。修前 20 条「未定义」恒致 False —— 本门红。
+    该方言无 mandatory ACTION、已定义命令全 clean → 零实测失败因子；但 20 条
+    critical 能力在 profile 里是 None（= 未经查证，从未探测）—— 健康检查不能
+    因此报绿（Codex #358 R1 P1）。修前（P1-58 之前）这里是 BLOCKER 且把 20 条
+    当"不支持"列进失败段落；本片初版又把它判成了 success=True（假绿）。
+    变异：success 放行 not_in_profile → 红；verdict 把 UNDETERMINED 写成 SUCCESS → 红。
     """
     expected = _not_in_profile(Uxm5GNRTestAppProfile)
     assert expected, "本用例前提：5G 方言里确实有 critical 命令未在 profile 定义"
 
     result = _run(_ScriptedBs(Uxm5GNRTestAppProfile))
 
-    assert result.success is True
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
     assert result.extra["critical_unsupported"] == []
     assert result.extra["critical_unverified_actions"] == []
     assert result.extra["critical_not_in_profile"] == expected
-    # 成功总结如实：报 applicable 口径 + 披露未定义能力，不冒充全局全绿
+    assert result.summary.startswith("UNDETERMINED")
     assert "BLOCKER" not in result.summary
-    assert "未在本方言 profile 定义" in result.summary
-    assert str(len(expected)) in result.summary
+    assert "不能判健康" in result.summary and str(len(expected)) in result.summary
+    # 措辞边界：不对仪器下"不支持"断言
+    assert "实测不支持" not in result.summary
+
+
+def test_success_is_reachable_when_everything_defined_and_clean(monkeypatch):
+    """门①c：判决逻辑本身可达 SUCCESS —— 防"恒 False"的退化写法。
+
+    用补满的 profile（critical 全部定义）+ 全 clean 固件；并临时清空 P1-46 的
+    mandatory-direct-evidence 集（否则 CONFIG_APPLY / QCONFIG_APPLY_ALL 一被定义
+    就 BLOCKER）。⚠ 这正说明：**P1-46 拍板不变时，生产 profile 上 SUCCESS 不可达**
+    —— 不是本片引入，是如实状态，需用户拍板（改策略 / 另建能直接验证 apply 的剧本）。
+    变异：verdict 分支把 SUCCESS 写成 UNDETERMINED → 红。
+    """
+    monkeypatch.setattr(
+        seq, "_MANDATORY_ACTIONS_REQUIRING_DIRECT_EVIDENCE", frozenset())
+    profile = _fully_defined_profile()
+    assert _not_in_profile(profile) == []
+
+    result = _run(_ScriptedBs(profile))
+
+    assert result.success is True
+    assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["critical_not_in_profile"] == []
+    assert result.summary.startswith(f"All {len(seq._CRITICAL_NAMES)} critical")
+    assert "UNDETERMINED" not in result.summary and "BLOCKER" not in result.summary
 
 
 def test_irat_real_unsupported_critical_still_fails_closed():
@@ -130,23 +187,26 @@ def test_irat_real_unsupported_critical_still_fails_closed():
     result = _run(_ScriptedBs(UxmLteNrIratProfile, err_for))
 
     assert result.success is False
-    assert "BLOCKER" in result.summary
-    assert "CELL_BAND" in result.summary
+    assert result.extra["verdict"] == "BLOCKER"
+    blocker_part, _, disclosure = result.summary.partition("；另有")
+    assert blocker_part.startswith("BLOCKER") and "CELL_BAND" in blocker_part
     assert result.extra["critical_unsupported"] == ["CELL_BAND"]
-    # 真缺失照报；「方言没有的」不得混进同一份失败清单
+    # 真缺失照报；「方言没有的」不得混进失败清单（只许出现在披露段）
     for name in _not_in_profile(UxmLteNrIratProfile):
-        assert name not in result.summary
+        assert name not in blocker_part
 
 
-def test_5gnr_real_unsupported_critical_fails_without_other_factors():
+def test_real_unsupported_critical_fails_without_other_factors(monkeypatch):
     """门②b：真缺失是 success 的**独立**失败因子 —— 变异 M2 的专属探针。
 
-    IRAT 上门②a 的 success=False 有 unverified_actions 兜底，M2（success
-    放行 critical_unsupported）在那里逃逸；5G_NR_Test 无 mandatory ACTION、
-    无其它失败因子，本场景的 False 只由 unsupported 撑起 → M2 一动即红。
+    IRAT 上门②的 False 有 unverified_actions 兜底、5G 上有 not_in_profile 兜底，
+    M2（success 放行 critical_unsupported）在那两处都会逃逸。这里用补满 profile +
+    清空 mandatory 动作集，把其它因子全部拿掉：本场景的 False 只由 unsupported 撑起。
     """
-    broken = seq._to_probe_command(
-        Uxm5GNRTestAppProfile.CELL_BAND, Uxm5GNRTestAppProfile)
+    monkeypatch.setattr(
+        seq, "_MANDATORY_ACTIONS_REQUIRING_DIRECT_EVIDENCE", frozenset())
+    profile = _fully_defined_profile()
+    broken = seq._to_probe_command(profile.CELL_BAND, profile)
     assert broken == "CONFig:NR5G:CELL0:BAND?"
 
     def err_for(probe_cmd):
@@ -154,11 +214,13 @@ def test_5gnr_real_unsupported_critical_fails_without_other_factors():
             return '-113,"Undefined header"'
         return '0,"No error"'
 
-    result = _run(_ScriptedBs(Uxm5GNRTestAppProfile, err_for))
+    result = _run(_ScriptedBs(profile, err_for))
 
     assert result.extra["critical_unverified_actions"] == []
+    assert result.extra["critical_not_in_profile"] == []
     assert result.extra["critical_unsupported"] == ["CELL_BAND"]
     assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
     assert "BLOCKER" in result.summary
 
 
