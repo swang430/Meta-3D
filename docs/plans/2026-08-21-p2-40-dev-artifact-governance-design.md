@@ -15,7 +15,7 @@
 | P1-59 worktree 日志 | 15 个文件，约 242 MB | 来源可定位，但可能含回归/仪器证据；进入人工复核，不自动清 |
 | Claude worktree 日志 | 9 个文件，约 11 MB | 同上 |
 | 四组固定路径测试 SQLite | 主工作区、API 目录和旧 worktree 均有副本，单份约 1 MB | schema 已被测试 teardown 清空且产生方可定位；修复产生方后列入可恢复隔离候选 |
-| 活跃 `meta3d_postgres_data` | Docker volume 约 79.69 MB，容器健康且正在挂载 | 正式开发库，必须备份并保护 |
+| 活跃 `meta3d_postgres_data` | Docker volume 约 79.7 MB，容器健康且正在挂载 | 正式开发库，必须备份并保护 |
 | 匿名 Docker volumes | 14 个未挂载 volume，其中 12 个约 43 MB | 标签只能证明 anonymous，不能证明属于 Meta-3D；身份未知，默认保护 |
 | 注册 worktree | Codex `.worktrees` 约 1.9 GB，Claude worktrees 约 732 MB | Git 元数据是归属真值；不把整个 worktree 当清理目标 |
 
@@ -135,7 +135,7 @@ PR 合并后重新生成 manifest，并单独向用户展示：
 - 不清理测试冗余；测试保护矩阵与重复断言收敛属于后续 P3-22；
 - 不按目录或文件名把厂商资料、现场证据、手工测试数据归类为开发沉积。
 
-## 实施与 dry-run 证据（当前代码提交 `664ef3a`）
+## 实施与 dry-run 证据（代码提交 `8484cbe`）
 
 ### 只读能力
 
@@ -170,7 +170,7 @@ cd api-service
 | filesystem | `protect` | 339 | 2,765,027,261 |
 | filesystem | `review` | 24 | 251,514,300 |
 | filesystem | `quarantine_candidate` | 20 | 21,299,200 |
-| Docker volume | `protect` | 2 | 166,990,000 |
+| Docker volume | `protect` | 2 | 167,000,000 |
 | Docker volume | `review` | 14 | 520,500,000 |
 
 filesystem 共 383 项 / 3,037,840,761 字节。目录级 `lsof` 返回了 10 个确定仍被运行进程打开的
@@ -181,15 +181,15 @@ protect，而不是被猜成 closed。另有一个身份不足的空 `api-servic
 P1-59 worktree 4 份、P2-39 worktree 4 份、Claude `loving-torvalds-ae273b` worktree 4 份；
 每一份均为 closed 且有独立 SHA-256 复核，但本轮没有移动或删除。
 
-Docker 的两个 protect 是正在挂载的 `meta3d_postgres_data`（79.69 MB）与
+Docker 的两个 protect 是正在挂载的 `meta3d_postgres_data`（79.7 MB）与
 `gaokao_postgres_data`（87.30 MB）。14 个 review 全是 2026-08-02 创建且当前未挂载的
 anonymous volume：12 个约 43.33–43.51 MB、2 个 0 B；anonymous 标签不足以证明其中数据
 属于 Meta-3D，因此不进入本次候选。
 
 manifest 校验：
 
-- JSON：`875bd0e718ff517b07eb7cf0e87d1e78a38f52c8465722ce4939bfed8f5e80ec`
-  （273,979 bytes）；
+- JSON：`47255e0e29b06c2866ccf860b5862159259a8fad812509f7e20f88a75aeae85c`
+  （273,978 bytes）；
 - Markdown：`a993a155bf0f77e28275eca45e62b5b2943507616bc6689780330a7df9b7793a`
   （71,260 bytes）。
 
@@ -197,7 +197,7 @@ manifest 校验：
 
 四个校准测试已改为 pytest 临时 SQLite：function scope 使用 `tmp_path`，三个 module scope
 使用各自 `tmp_path_factory` 目录，并在 teardown dispose engine。子进程 RED 在受保护 cwd
-留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **224 passed**。
+留下 4 个 `test_*.db`；GREEN 后为 0。四个完整模块加 inventory 测试 **229 passed**。
 
 ### 拟提交用户批准的可恢复操作（尚未执行）
 

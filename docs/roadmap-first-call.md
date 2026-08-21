@@ -31,7 +31,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > **P2-40 当前只读实证（未执行任何清理）**：主工作区日志 338 个文件 / 约 2.6 GB，
 > 其中当前日志仍被运行服务打开；P1-59 worktree 约 242 MB，Claude worktree 约 11 MB；
 > 四组校准测试在不同 cwd 留下多份约 1 MB 的空 schema SQLite；活跃
-> `meta3d_postgres_data` 约 79.69 MB，必须备份保护；另有 14 个未挂载匿名 Docker
+> `meta3d_postgres_data` 约 79.7 MB，必须备份保护；另有 14 个未挂载匿名 Docker
 > volume，仅凭匿名标签无法证明属于本项目，暂列人工复核而非清理候选。设计与实施计划见
 > [`P2-40 设计`](plans/2026-08-21-p2-40-dev-artifact-governance-design.md) 和
 > [`P2-40 计划`](plans/2026-08-21-p2-40-dev-artifact-governance-plan.md)。本 PR 只建立只读
@@ -44,7 +44,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > review 24 项、候选 20 项 / 21,299,200 bytes；候选全部为精确
 > 产生方 + 空 schema + closed 的四类测试 SQLite。Docker 2 个 mounted volume 保护，14 个
 > unmounted anonymous volume / 520.5 MB 只 review。四个测试产生方已换到 pytest 临时目录，
-> 子进程 RED 留 4 个 DB，GREEN 留 0 个；完整相关 **224 passed**。所有现存文件、日志、
+> 子进程 RED 留 4 个 DB，GREEN 留 0 个；四模块+inventory **229 passed**。所有现存文件、日志、
 > volume 与 worktree 均未移动或删除；批准单与恢复方案记录在 P2-40 设计。
 
 > **~~P1-59~~ ✅ 2026-08-21 由 PR #362 完成**：正式测量新增显式
