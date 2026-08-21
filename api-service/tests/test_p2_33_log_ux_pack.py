@@ -181,14 +181,124 @@ def client():
 
 
 def _write_traceback_scene(log_dir: Path) -> None:
-    """父 INFO + 两条 RAW 续行（关键词只在续行里）+ 一条更新的无关行。"""
+    """一条更早的无关行 + 父 INFO + 两条 RAW 续行（关键词只在续行里）+ 一条更新的无关行。
+
+    更早的那行是内审 F2 补的：没有它父记录落在文件第 1 行，只会走反向扫描的
+    ``position == 0`` 文件头分支，主循环分支（生产里几乎全部情况）把续行传 ``[]``
+    都不会红。
+    """
     lines = [
+        _json_line("INFO", "older unrelated line"),
         _json_line("INFO", "request failed", session_id="sess-aaaa"),
         "Traceback (most recent call last):",
         "ValueError: broken pipe on probe 7",
         _json_line("INFO", "unrelated newest line"),
     ]
     (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _real_exception_line(marker: str) -> str:
+    """用**生产** `JsonFormatter` 真实生成一条 `logger.exception(...)` 行。
+
+    内审 F1：生产日志的 traceback 不是 RAW 续行，而是同一行 JSON 的 ``"exception"``
+    键（16 天 269k 行实测：RAW 续行 0 条、带 exception 字段 150 条）。手写 RAW 场景
+    证明不了生产形态，这里必须让格式器自己产出那一行。
+    """
+    from app.core.logging_config import JsonFormatter
+
+    logger = logging.getLogger("app.hal.vx11_probe")
+    try:
+        raise ConnectionError(f"RPC lost: {marker}")
+    except ConnectionError:
+        import sys
+        record = logger.makeRecord(
+            logger.name, logging.ERROR, __file__, 1,
+            "Failed to open VX11 connection", (), sys.exc_info(),
+        )
+    line = JsonFormatter().format(record)
+    obj = json.loads(line)
+    assert "\n" not in line.strip() and "exception" in obj and marker in obj["exception"], (
+        "前提自检：格式器必须把 traceback 放进同一行的 exception 键（否则本门测错了形态）"
+    )
+    return line
+
+
+def _write_json_exception_scene(log_dir: Path, marker: str) -> None:
+    """更早无关行 + 真实 logger.exception 行（traceback 只在 exception 键里）+ 更新无关行。"""
+    lines = [
+        _json_line("INFO", "older unrelated line"),
+        _real_exception_line(marker),
+        _json_line("INFO", "unrelated newest line"),
+    ]
+    (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+class TestKeywordMatchesSameLineExceptionField:
+    """行为门（内审 F1）：关键词只出现在同行 JSON 的 exception 键里时，三入口都必须命中。
+
+    变异：`_keyword_hit` 去掉 `exception_text` 那一腿 → 本类三条正向门全红；
+    `_parse_log_line` 不填 `_exception_text` → 同样全红。
+    """
+
+    MARKER = "rpc-marker-7f3a"
+
+    def test_tail_finds_keyword_inside_exception_field(self, client, log_dir):
+        _write_json_exception_scene(log_dir, self.MARKER)
+
+        resp = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "keyword": self.MARKER})
+        assert resp.status_code == 200
+        entries = resp.json()["entries"]
+        assert [e["msg"] for e in entries] == ["Failed to open VX11 connection"], (
+            "traceback 在同行 exception 键里 —— 搜异常正文必须命中那条父记录（生产形态）"
+        )
+        # 异常类名同样可搜（操作员最常输入的就是它）
+        resp = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "keyword": "ConnectionError"})
+        assert [e["msg"] for e in resp.json()["entries"]] == ["Failed to open VX11 connection"]
+
+    def test_history_finds_keyword_inside_exception_field(self, client, log_dir):
+        _write_json_exception_scene(log_dir, self.MARKER)
+        cursor = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1,
+        }).json()["older_cursor"]
+        assert cursor
+
+        resp = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 200,
+            "keyword": self.MARKER,
+        })
+        assert resp.status_code == 200
+        assert [e["msg"] for e in resp.json()["entries"]] == ["Failed to open VX11 connection"]
+
+    def test_export_finds_keyword_inside_exception_field(self, client, log_dir):
+        _write_json_exception_scene(log_dir, self.MARKER)
+
+        resp = client.get(f"{EXPORT_URL}/app.log", params={"keyword": self.MARKER})
+        assert resp.status_code == 200
+        rows = [l for l in resp.text.splitlines() if l.strip()]
+        assert len(rows) == 1 and "Failed to open VX11 connection" in rows[0], (
+            "导出与屏幕同一份谓词：exception 键里的关键词也要导出那条原始行"
+        )
+        assert not any("unrelated" in r for r in rows)
+
+    def test_exception_text_stays_out_of_response_contract(self, client, log_dir):
+        """结构门：exception 文本只用于匹配，不新增响应字段（raw 已带全文供详情展开）。"""
+        _write_json_exception_scene(log_dir, self.MARKER)
+
+        resp = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "keyword": self.MARKER})
+        entry = resp.json()["entries"][0]
+        assert "exception" not in entry and "exception_text" not in entry
+        assert self.MARKER in entry["raw"], "详情展开靠 raw 看 traceback，这条路不能断"
+
+    def test_absent_keyword_matches_nothing_in_exception_scene(self, client, log_dir):
+        """反向门：有 exception 键不等于命中。"""
+        _write_json_exception_scene(log_dir, self.MARKER)
+
+        resp = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "keyword": "nonexistent-kw"})
+        assert resp.json()["entries"] == []
 
 
 class TestKeywordMatchesContinuation:

@@ -1,7 +1,7 @@
 /**
  * P2-8 ④ 实时日志 + 紧凑告警计数 — bottom wide bar.
  *
- * 左 日志: GET /system-logs/tail — level 多选过滤 (INFO/WARN/ERROR) +
+ * 左 日志: GET /system-logs/tail — level 多选过滤 (INFO/WARN/ERROR/CRITICAL, P2-33 补 CRITICAL) +
  *   关键字搜索 + 自动滚动开关 + filename 下拉. Polls ~3s (pausable via
  *   自动刷新 toggle) + 手动刷新按钮.
  * 告警计数: GET /dashboard/alerts/summary 放在日志标题栏. Polls ~10s.
@@ -179,7 +179,7 @@ function LogPanel() {
         .filter((r): r is PromiseFulfilledResult<SystemLogTailResponse> => r.status === 'fulfilled')
         .map((r) => r.value)
       const key = (e: SystemLogEntry) => `${e.ts}|${e.logger}|${e.msg}`
-      // 只做跨流去重 (内审 F4): boost 两流按 level 天然不相交, 流内重复必是
+      // 只做跨流去重 (内审 F4): boost 三流 (WARNING/ERROR/CRITICAL) 按 level 天然不相交, 流内重复必是
       // 真实重复行, 不互相吞
       const seen = new Set(main.entries.map(key))
       // cutoff 取主流首条带 ts 的行 (Codex #258: 窗口首行可能是 RAW 连续行

@@ -15,7 +15,8 @@
    同步更新 `test_p1_35` 两门（ISSUE_LEVELS 用法、哨兵 → join 恰一处）。
 6. **变异实跑**：四条各至少一变异（设计稿列的），确认门红后还原（git 快照对照）。
 7. **全量**：`cd api-service && .venv/bin/python -m pytest -q --color=no -p no:cacheprovider`；
-   已知失败 `test_p1_36_execution_id::test_no_execution_means_default_not_empty` 除外零失败。
+   零失败（原先的已知失败 `test_p1_36_execution_id::test_no_execution_means_default_not_empty`
+   已由 P2-35 #357 治掉，本片并入 main 后全量无豁免）。
 8. **build**：`cd gui && npm run build`。
 9. **镜像 grep**（③⁺）：`CRITICAL`、`仅异常`、`ISSUES`、`SegmentedControl`、`级别过滤`、
    `suppressed` 等关键词全仓扫，命中处逐一问"现在还成立吗"。

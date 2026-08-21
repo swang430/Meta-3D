@@ -73,6 +73,20 @@ window=1s, 假时钟)`，同秒发 3 条同文本 INFO（第 3 条应被抑制�
 （初版写的"非关键词维度改成父或续行任一满足"实跑是**等价变异**：续行 level 恒为
 RAW，永远匹配不上 ERROR，门不红不是门失效 —— 2026-08-21 收尾时实跑纠正。）
 
+**②′ 内审 F1（P1）补：生产 traceback 的真实落点是同一行 JSON 的 `exception` 键，不是 RAW 续行。**
+`JsonFormatter` 把 `formatException` 结果放进 `log_entry["exception"]`，不产生任何非 JSON 续行
+（主仓 16 天 `app.log*` 269,139 行 + 244 个 `exec-*.log` 只读统计：RAW 续行 **0** 条、带
+`"exception":` 字段 **150** 条）。所以上面的续行修法对真实日志是空转，"搜异常类名 0 命中"原样存在。
+修法（换判据来源，不改契约）：`LogEntry` 加 `PrivateAttr` `_exception_text`（不进响应、不进 schema，
+`raw` 已带全文供详情展开），`_parse_log_line` 只收 str 填入，`_keyword_hit` 多看这一腿；三入口
+仍走同一份 `_group_matches`。RAW 续行那条腿保留（它对中段父记录也正确，只是不是生产形态）。
+**门**：`TestKeywordMatchesSameLineExceptionField` 用生产 `JsonFormatter` 真实生成 `logger.exception`
+行（带前提自检：traceback 必须在同行 exception 键里），三入口正向 + 契约不变 + 反向各一条。
+**变异**：`_keyword_hit` 去掉 exception 腿 → 4 红；`_parse_log_line` 不填 → 4 红。
+**内审 F2 顺带**：两个场景都在父记录前放一行更早的无关行，让父记录落进反向扫描**主循环**分支
+（此前父记录在文件第 1 行只走 `position == 0` 文件头分支，主循环把续行传 `[]` 三门全绿）；
+复验：主循环传 `[]` → 3 红。
+
 ---
 
 ## ③ 两个日志面板对「异常」两个定义，主控台漏 CRITICAL
@@ -153,6 +167,7 @@ buildLogQuery 外再拼一份 level 参数 → 恰 3 调门红。
 - RED → GREEN：`api-service/tests/test_p2_33_log_ux_pack.py`（四条各至少一个行为/不变量门）；
 - 变异实跑：每条至少一变异让门变红（快照还原、`assert` 命中）；
 - 全量：`cd api-service && .venv/bin/python -m pytest -q --color=no -p no:cacheprovider`
-  （已知失败 `test_p1_36_execution_id::test_no_execution_means_default_not_empty` 不属本片；除它零失败）；
+  零失败、无豁免（原已知失败 `test_p1_36_execution_id::test_no_execution_means_default_not_empty`
+  已由 P2-35 #357 治掉）；
 - GUI：`cd gui && npm run build`；
 - G14/G15 必须保持绿。

@@ -22,7 +22,7 @@ from typing import BinaryIO, List, NamedTuple, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from app.config import settings
 from app.core.logging_config import active_execution_log_ids
@@ -54,6 +54,17 @@ class LogEntry(BaseModel):
     instrument_id: str = "-"
     msg: str
     raw: Optional[str] = None  # 原始 JSON 行（供详情展开）
+    # P2-33（内审 F1）：生产日志的 traceback **不是** RAW 续行 —— `JsonFormatter`
+    # 把 `formatException` 的结果放进同一行 JSON 的 "exception" 键（16 天 269k 行
+    # 实测：RAW 续行 0 条、带 exception 字段 150 条）。关键词搜索必须能触到它，
+    # 否则搜异常类名恒为 0 命中。不进响应契约也不进 schema（`raw` 已带全文供
+    # 详情展开），只供 `_keyword_hit` 读取。
+    _exception_text: str = PrivateAttr(default="")
+
+    @property
+    def exception_text(self) -> str:
+        """同一行 JSON 里的 traceback 文本；非 JSON 行 / 无异常时为空串。"""
+        return self._exception_text
 
 
 class LogTailResponse(BaseModel):
@@ -135,11 +146,17 @@ _ACTIVE_LOG_NAMES = {
 
 
 def _keyword_hit(entry: LogEntry, kw_lower: str) -> bool:
-    """关键词判定的**唯一**一份实现（模糊匹配 msg 与 logger）。
+    """关键词判定的**唯一**一份实现（模糊匹配 msg、logger 与同行 exception 文本）。
 
     单条谓词与组谓词都调它 —— 两处各写一份迟早漂（P1-34 内审 F3 的母题）。
+    exception 文本是 traceback 在生产日志里的真实落点（见 `LogEntry._exception_text`）；
+    RAW 续行路径是另一条腿，由 `_group_matches` 扫续行覆盖。
     """
-    return kw_lower in entry.msg.lower() or kw_lower in entry.logger.lower()
+    return (
+        kw_lower in entry.msg.lower()
+        or kw_lower in entry.logger.lower()
+        or kw_lower in entry.exception_text.lower()
+    )
 
 
 def _entry_matches(
@@ -485,7 +502,7 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
     """尝试将一行日志解析为 LogEntry"""
     try:
         obj = json.loads(line)
-        return LogEntry(
+        entry = LogEntry(
             ts=obj.get("ts", ""),
             level=obj.get("level", "UNKNOWN"),
             logger=obj.get("logger", ""),
@@ -496,6 +513,12 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
             msg=obj.get("msg", line),
             raw=line,
         )
+        # P2-33：同行 "exception" 键 = JsonFormatter 放 traceback 的地方，
+        # 只收 str（畸形值按"没有"处理，不让一行坏数据毒掉整页）。
+        exc = obj.get("exception")
+        if isinstance(exc, str) and exc:
+            entry._exception_text = exc
+        return entry
     except (json.JSONDecodeError, ValueError):
         # 非 JSON 行（如 Python traceback 续行）
         return LogEntry(
