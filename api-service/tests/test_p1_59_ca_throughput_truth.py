@@ -18,9 +18,12 @@ from app.hal.scpi_evidence import (
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import UxmLteNrIratProfile
 from app.diagnostics.sequences import uxm_scpi_compatibility
+from app.api.test_execution import _formal_validation_pass
+from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.report_service import report_has_provenance_trust
+from app.services.test_execution import StepExecutionStatus
 
 
 @pytest.fixture
@@ -428,6 +431,94 @@ def test_completed_scan_with_wrong_scope_is_not_throughput_verified() -> None:
         [{"throughput_valid": True, "throughput_scope": "pcell"}],
         required_scope=ThroughputMetrics.SCOPE_NR_ALL_CELLS,
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_analysis_rejects_legacy_ca_verdict_without_scope_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.mimo_ota.executors import analysis as analysis_module
+
+    measure = {
+        "measurement_verified": True,
+        "frequency_consistency": {"fully_verified": True},
+        "path_loss_verified": True,
+        "throughput_verified": True,
+        "carrier_aggregation": {"num_component_carriers": 2},
+        "azimuth_results": [
+            {
+                "azimuth_deg": 0.0,
+                "throughput_mbps": 350.0,
+                "throughput_valid": True,
+                "rsrp_dbm": -80.0,
+                "sinr_db": 30.0,
+                "rank_indicator": 2.0,
+            }
+        ],
+    }
+    config = SimpleNamespace(
+        theoretical_peak_throughput_mbps=450.0,
+        pass_criteria=SimpleNamespace(
+            min_throughput_ratio=0.5,
+            min_throughput_mbps=300.0,
+            max_rsrp_variance_db=8.0,
+            min_sinr_db=10.0,
+            min_avg_rank_indicator=1.5,
+        ),
+    )
+    execution = SimpleNamespace(
+        id="p1-59-analysis-legacy-ca",
+        validation_pass=True,
+        validation_details={"verdict": "PASS"},
+    )
+    context = SimpleNamespace(
+        test_execution=execution,
+        db=SimpleNamespace(commit=lambda: None),
+    )
+
+    monkeypatch.setattr(analysis_module, "load_mimo_ota_config", lambda _: config)
+    monkeypatch.setattr(
+        analysis_module,
+        "read_phase_result",
+        lambda _execution, phase: (
+            measure if phase == "measure" else {"quiet_zone_pass": True}
+        ),
+    )
+    monkeypatch.setattr(analysis_module, "write_phase_result", lambda *_: None)
+
+    result = await AnalysisExecutor().execute(context)
+
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert result.measurements["verdict"] == "UNKNOWN"
+    assert result.measurements["throughput_verified"] is False
+    assert execution.validation_pass is None
+
+
+def test_history_rejects_legacy_ca_verdict_without_scope_proof() -> None:
+    execution = SimpleNamespace(
+        config={
+            "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
+        },
+        measurements={
+            "phases": {
+                "measure": {
+                    "path_loss_verified": True,
+                    "path_loss_calibration_use_mock": False,
+                    "throughput_verified": True,
+                    "carrier_aggregation": {"num_component_carriers": 2},
+                    "azimuth_results": [
+                        {
+                            "throughput_mbps": 350.0,
+                            "throughput_valid": True,
+                        }
+                    ],
+                }
+            }
+        },
+        validation_pass=True,
+    )
+
+    assert _formal_validation_pass(execution) is None
 
 
 def _report_execution(

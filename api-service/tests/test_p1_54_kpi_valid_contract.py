@@ -238,10 +238,14 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
         "frequency_consistency": {"fully_verified": True},
         "path_loss_verified": True,
         "throughput_verified": True,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
                 "throughput_mbps": 350.0,
+                "throughput_valid": True,
+                "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
                 "sinr_db": 30.0,
                 "rank_indicator": 2.0,

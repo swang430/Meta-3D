@@ -239,6 +239,13 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
         "phases": {"measure": {
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
+            "throughput_verified": True,
+            "throughput_scope": "pcell",
+            "carrier_aggregation": {"num_component_carriers": 1},
+            "azimuth_results": [{
+                "throughput_valid": True,
+                "throughput_scope": "pcell",
+            }],
         }}
     }
     db.commit()

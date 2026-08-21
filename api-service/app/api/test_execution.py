@@ -13,6 +13,7 @@ from app.schemas.test_plan import (
 )
 from app.models.test_plan import TestCase, TestExecution
 from app.services.execution_failure_alerts import resolve_recorded_outcome
+from app.services.mimo_ota.throughput_trust import throughput_scope_is_verified
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -56,6 +57,11 @@ def _formal_validation_pass(
     if not (
         measure.get("path_loss_verified") is True
         and measure.get("path_loss_calibration_use_mock") is False
+    ):
+        return None
+    if not (
+        measure.get("throughput_verified") is True
+        and throughput_scope_is_verified(measure)
     ):
         return None
     return execution.validation_pass

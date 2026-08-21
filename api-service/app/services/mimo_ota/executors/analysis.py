@@ -11,6 +11,7 @@ from app.services.mimo_ota.executors._helpers import (
     read_phase_result,
     write_phase_result,
 )
+from app.services.mimo_ota.throughput_trust import throughput_scope_is_verified
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -54,7 +55,10 @@ class AnalysisExecutor(IStepExecutor):
         )
         simulated_measurement = measure.get("measurement_verified") is False
         path_loss_unverified = measure.get("path_loss_verified") is not True
-        throughput_unverified = measure.get("throughput_verified") is not True
+        throughput_unverified = not (
+            measure.get("throughput_verified") is True
+            and throughput_scope_is_verified(measure)
+        )
         if (
             simulated_measurement
             or frequency_identity_unverified
