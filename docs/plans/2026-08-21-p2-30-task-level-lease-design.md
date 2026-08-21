@@ -61,6 +61,14 @@ Roadmap：P2-30（来源 = roadmap `[discovered 2026-08-08 during 现场分支�
 #4 lab-profile 正门、#5 扫频），故障同源、修法同形（一行 `async with`），全属
 「path-loss 作业」这一类。只做其中一个会把同一故障留在同文件另两个活入口上。
 
+**外层租约自身的取/放失败**（Codex #359 R1 P2 / 内审 F2）：path-loss 三个入口（#3/#4/#5）
+把 `async with job_lease` 整块套进 `try/except Exception`，失败转成既有的
+`CalibrationResult(success=False, message, warnings)` —— 保住 `/start`、`/start-for-lab` 既定的
+`{message, warnings}` 形状与已累计的清理失败告警，不让全局 handler 的 409 把它们换形。
+证书照旧不落库。XPD 已有同款 `try/except`；方向图的逐 (probe,pol) `try` 也接得住。
+门：`test_path_loss_job_lease_acquire_failure_returns_result` / `…release_failure_keeps_accumulated_warnings`
+/ lab-profile、扫频各一条；变异：外层 except 不接住 → 2 红，except 丢 warnings → 1 红。
+
 统一参数（与内层那圈完全一致，嵌套宽窄校验恒过）：
 
 ```python

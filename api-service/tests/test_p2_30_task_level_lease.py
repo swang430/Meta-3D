@@ -388,3 +388,206 @@ async def test_frequency_sweep_holds_one_task_level_lease(
     assert all(d >= 1 for d in depths), (
         f"有频点测量发生在作业级租约之外: depths={depths}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. 外层租约取/放失败走既有结果路径（Codex #359 R1 P2 / 内审 F2）
+# ---------------------------------------------------------------------------
+
+
+class _FailingLease(_CountingLease):
+    """最外层取/放失败的租约桩：`fail_on="acquire"` 进入时抛，`"release"` 退出时抛。
+
+    抛的是 hold() 真实会抛的 `InstrumentTestLeaseError`（acquire_remote_control /
+    release_to_local_control 返回 False 的包装形态）。嵌套圈照常 no-op。
+    """
+
+    def __init__(self, fail_on: str) -> None:
+        super().__init__()
+        self.fail_on = fail_on
+
+    @asynccontextmanager
+    async def __call__(self, purpose: str, **kwargs):
+        from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+        self.enters += 1
+        self.purposes.append(purpose)
+        outermost = self.depth == 0
+        if outermost and self.fail_on == "acquire":
+            raise InstrumentTestLeaseError(f"测试 {purpose!r} 无法取得 F64 Remote 控制")
+        if outermost:
+            self.acquires += 1
+        self.depth += 1
+        try:
+            yield
+        finally:
+            self.depth -= 1
+            if self.depth == 0:
+                self.releases += 1
+                if self.fail_on == "release":
+                    raise InstrumentTestLeaseError(
+                        f"测试 {purpose!r} 结束后未能确认 F64 控制会话释放"
+                    )
+
+
+def _failing_lease(monkeypatch, fail_on: str) -> _FailingLease:
+    stub = _FailingLease(fail_on)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", stub
+    )
+    return stub
+
+
+def _stub_noisy_single_point(monkeypatch, lease: _CountingLease) -> list[int]:
+    """同 `_stub_single_point_measurement`，但不确定度超阈值 → 作业会累计 warnings。"""
+    from app.services import path_loss_calibration_service as pl_mod
+
+    depths: list[int] = []
+
+    async def _measure(self, probe_id, polarization, frequency_mhz, **_kw):
+        depths.append(lease.depth)
+        return pl_mod.PathLossMeasurement(
+            probe_id=probe_id,
+            polarization=polarization.value,
+            path_loss_db=50.0,
+            uncertainty_db=pl_mod.PATH_LOSS_UNCERTAINTY_THRESHOLD_DB + 0.7,
+        )
+
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "_real_path_loss_measurement_via_ce_sa",
+        _measure,
+    )
+    return depths
+
+
+@pytest.mark.asyncio
+async def test_path_loss_job_lease_acquire_failure_returns_result(db, chamber, monkeypatch):
+    """行为门：外层租约取不到 → 返回 `CalibrationResult(success=False)`，不抛。
+
+    此前（本片初版）异常从 `async with` 进入处直接冒出 → 全局 handler 409
+    `{"detail"}`，与 `/start` 既定的 `{message, warnings}` 形状不一致。
+    变异：去掉外层 try/except → 本门抛 `InstrumentTestLeaseError` 红。
+    """
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lease = _failing_lease(monkeypatch, "acquire")
+    depths = _stub_single_point_measurement(monkeypatch, lease)
+
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+    result = await svc.start_calibration(
+        chamber_id=chamber.id,
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+        probe_ids=[0, 1],
+        polarizations=[PolarizationType.V, PolarizationType.H],
+    )
+
+    assert isinstance(result, pl_mod.CalibrationResult)
+    assert result.success is False
+    assert "lease" in result.message.lower() and "Remote" in result.message
+    assert depths == [], "取不到租约就不许开始任何点级测量"
+    assert db.query(pl_mod.ProbePathLossCalibration).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_path_loss_job_release_failure_keeps_accumulated_warnings(
+    db, chamber, monkeypatch
+):
+    """行为门：作业全部测完后释放失败 → 仍走结果路径，且**已累计的 warnings 随结果上 wire**
+    （agent #206 / Codex #206 R3：清理失败不许只沉日志）。
+
+    变异：外层 except 里不带 `warnings=warnings` → 本门红。
+    """
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lease = _failing_lease(monkeypatch, "release")
+    depths = _stub_noisy_single_point(monkeypatch, lease)
+
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+    result = await svc.start_calibration(
+        chamber_id=chamber.id,
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V, PolarizationType.H],
+    )
+
+    assert len(depths) == 2, "测量本身应全部完成，失败发生在释放时"
+    assert result.success is False
+    assert "释放" in result.message or "lease" in result.message.lower()
+    uncertainty_warnings = [w for w in result.warnings if "uncertainty" in w]
+    assert len(uncertainty_warnings) == 2, (
+        f"作业期间累计的不确定度告警必须随失败结果返回，实际 warnings={result.warnings}"
+    )
+    assert db.query(pl_mod.ProbePathLossCalibration).count() == 0, "释放失败不落证书（与旧行为一致）"
+
+
+@pytest.mark.asyncio
+async def test_lab_profile_job_lease_release_failure_returns_result(db, chamber, monkeypatch):
+    """行为门（#4 入口同款）：lab-profile 正门释放失败 → 结果路径 + warnings 保留。"""
+    from app.models.lab_profile import LabProfile
+    from app.services import path_loss_calibration_service as pl_mod
+    from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
+
+    lease = _failing_lease(monkeypatch, "release")
+    depths = _stub_noisy_single_point(monkeypatch, lease)
+
+    lab = LabProfile(name="P2-30 Lab Profile F2", chamber_config_id=chamber.id)
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    resolution = RFChainResolution(
+        lab_profile_id=lab.id,
+        chamber_id=chamber.id,
+        topology_id=None,
+        topology_name="p2-30-topo",
+        operating_mode="mimo_4x4",
+        chains=[
+            RFChainSpec(chain_id="c0", ce_port="B1.1", probe_id=0, polarization="V"),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_a, **_k: resolution,
+    )
+
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+    result = await svc.start_calibration_for_lab_profile(
+        lab_profile_id=lab.id,
+        operating_mode="mimo_4x4",
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert isinstance(result, pl_mod.CalibrationResult) and result.success is False
+    assert len(depths) == 1
+    assert any("uncertainty" in w for w in result.warnings), result.warnings
+
+
+@pytest.mark.asyncio
+async def test_frequency_sweep_lease_acquire_failure_returns_result(db, chamber, monkeypatch):
+    """行为门（#5 入口同款）：扫频作业取不到租约 → 结果路径，不抛。"""
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lease = _failing_lease(monkeypatch, "acquire")
+    depths = _stub_single_point_measurement(monkeypatch, lease)
+
+    svc = pl_mod.MultiFrequencyPathLossService(db, use_mock=False)
+    result = await svc.calibrate_frequency_sweep(
+        chamber_id=chamber.id,
+        probe_ids=[0],
+        polarization=PolarizationType.V,
+        freq_start_mhz=3400.0,
+        freq_stop_mhz=3600.0,
+        freq_step_mhz=100.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert isinstance(result, pl_mod.CalibrationResult) and result.success is False
+    assert "lease" in result.message.lower()
+    assert depths == []
