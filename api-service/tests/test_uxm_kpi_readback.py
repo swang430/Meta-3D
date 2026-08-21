@@ -413,6 +413,103 @@ class TestWindowUsesClearNotNonexistentStartStop:
         assert "TSTatistics:STOP" not in joined
 
 
+class TestFormalUeReportWindow:
+    """正式窗口必须先可信清空 UE report 队列，再允许全量 FETCh。"""
+
+    @staticmethod
+    def _responses():
+        return {
+            "SYSTem:ERRor?": '0,"No error"',
+            "THRoughput:OTA": "1,2e6,2e6,2e6,2e6,2e6",
+            "MEASurement:JSON:REPort:FETCh": (
+                '{"MeasurementReports":[{"CellReports":[{"RSRP":72}]}]}'
+            ),
+        }
+
+    def test_clear_precedes_formal_l3_fetch(self, drv):
+        trace: list[tuple[str, str]] = []
+        _stub_io(drv, self._responses(), trace)
+
+        asyncio.run(drv.measure_throughput_window(0.0))
+
+        clear_at = next(
+            i for i, (op, cmd) in enumerate(trace)
+            if op == "W" and "MEASurement:REPort:CLEAr" in cmd
+        )
+        fetch_at = next(
+            i for i, (op, cmd) in enumerate(trace)
+            if op == "Q" and "MEASurement:JSON:REPort:FETCh" in cmd
+        )
+        assert clear_at < fetch_at
+
+    def test_missing_clear_suppresses_only_l3_fetch(self, drv):
+        trace: list[tuple[str, str]] = []
+        drv._cmds.MEAS_UE_REPORT_CLEAR = None
+        _stub_io(drv, self._responses(), trace)
+
+        metrics = asyncio.run(drv.measure_throughput_window(0.0))
+
+        assert metrics.dl_throughput_mbps == pytest.approx(2.0)
+        assert metrics.kpi_valid["rsrp"] is False
+        assert not any(
+            "MEASurement:JSON:REPort:FETCh" in cmd
+            for op, cmd in trace if op == "Q"
+        )
+
+    def test_clear_write_exception_suppresses_l3_fetch(self, drv):
+        trace: list[tuple[str, str]] = []
+        responses = self._responses()
+
+        def _do_q(cmd, **kw):
+            trace.append(("Q", cmd))
+            return next((value for frag, value in responses.items() if frag in cmd), "")
+
+        def _do_w(cmd, **kw):
+            trace.append(("W", cmd))
+            if "MEASurement:REPort:CLEAr" in cmd:
+                raise OSError("clear transport failed")
+
+        drv._do_query = _do_q  # type: ignore[assignment]
+        drv._do_write = _do_w  # type: ignore[assignment]
+
+        metrics = asyncio.run(drv.measure_throughput_window(0.0))
+
+        assert metrics.dl_throughput_mbps == pytest.approx(2.0)
+        assert not any(
+            "MEASurement:JSON:REPort:FETCh" in cmd
+            for op, cmd in trace if op == "Q"
+        )
+
+    def test_clear_rejection_suppresses_l3_fetch(self, drv):
+        trace: list[tuple[str, str]] = []
+        error_replies = iter((
+            '0,"No error"',
+            '-113,"Undefined header"',
+            '0,"No error"',
+        ))
+        responses = self._responses()
+
+        def _do_q(cmd, **kw):
+            trace.append(("Q", cmd))
+            if "SYSTem:ERRor?" in cmd:
+                return next(error_replies)
+            return next((value for frag, value in responses.items() if frag in cmd), "")
+
+        def _do_w(cmd, **kw):
+            trace.append(("W", cmd))
+
+        drv._do_query = _do_q  # type: ignore[assignment]
+        drv._do_write = _do_w  # type: ignore[assignment]
+
+        metrics = asyncio.run(drv.measure_throughput_window(0.0))
+
+        assert metrics.dl_throughput_mbps == pytest.approx(2.0)
+        assert not any(
+            "MEASurement:JSON:REPort:FETCh" in cmd
+            for op, cmd in trace if op == "Q"
+        )
+
+
 # ── 门⑤ UE L3 测量报告解析（行为） ──────────────────────────────
 
 class TestUeMeasurementReportParsing:

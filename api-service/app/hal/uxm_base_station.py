@@ -3293,6 +3293,51 @@ class RealUxmDriver(BaseStationDriver):
 
         return metrics
 
+    def _clear_ue_report_window(self) -> bool:
+        """可信清空全局 UE report 队列，为下一次正式读取建立窗口。
+
+        ``FETCh?`` 省略数量时会返回全部可用报告；手册又没有承诺读取会
+        消费队列。因此 clear 缺失、传输失败或设备拒绝时必须跳过 L3 读取，
+        不能退回无界历史。其他 KPI 不依赖这条队列，仍可继续读取。
+        """
+        clear_cmd = self._cmds.MEAS_UE_REPORT_CLEAR
+        if not clear_cmd:
+            logger.warning(
+                "[UXM] 本方言无 MEASurement:REPort:CLEAr — "
+                "本次跳过 UE L3 报告读取，禁止回退到无界历史队列"
+            )
+            return False
+        try:
+            baseline_errors = self._drain_errors()
+            if self._error_queue_unusable(baseline_errors):
+                logger.warning(
+                    "[UXM] UE L3 报告窗口未建立：clear 前错误门不可用: %s",
+                    baseline_errors[-1],
+                )
+                return False
+            if baseline_errors:
+                logger.info(
+                    "[UXM] UE L3 clear 前已排空历史错误: %s",
+                    baseline_errors,
+                )
+
+            self._write(clear_cmd)
+            command_errors = self._drain_errors()
+            if command_errors:
+                logger.warning(
+                    "[UXM] UE L3 报告队列 clear 未获设备接受: %s；"
+                    "本次跳过 L3 读取",
+                    command_errors,
+                )
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[UXM] UE L3 报告队列 clear 失败: %s；本次跳过 L3 读取",
+                exc,
+            )
+            return False
+
     async def measure_throughput_window(
         self,
         window_s: float,
@@ -3310,6 +3355,7 @@ class RealUxmDriver(BaseStationDriver):
         `BTHRoughput:CLEar`: 它清空当前累积, **测量在跑时会自动重新开始** ——
         正好就是"重新起一个窗口"的语义, 且只需一条命令。
         """
+        ue_report_window_ready = self._clear_ue_report_window()
         clear_cmd = self._cmds.MEAS_BTHROUGHPUT_CLEAR
         if not clear_cmd:
             # 方言没有清零命令 —— 退化成直接读累积值, 并**明说**这一点,
@@ -3321,6 +3367,7 @@ class RealUxmDriver(BaseStationDriver):
             await asyncio.sleep(max(window_s, 0.0))
             return await self.get_throughput_metrics(
                 throughput_scope=throughput_scope,
+                _read_ue_report=ue_report_window_ready,
             )
 
         try:
@@ -3332,6 +3379,7 @@ class RealUxmDriver(BaseStationDriver):
         await asyncio.sleep(max(window_s, 0.0))
         return await self.get_throughput_metrics(
             throughput_scope=throughput_scope,
+            _read_ue_report=ue_report_window_ready,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
