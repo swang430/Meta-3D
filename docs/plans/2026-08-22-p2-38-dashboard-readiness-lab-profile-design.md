@@ -72,9 +72,11 @@ ambiguous / ok 兼容语义。
 ## 失败与保守方向
 
 - 显式 ID 已停用/删除：返回 422，Dashboard 显示读取失败；不得回退别的实验室形成假绿。
-- 顶部尚未选中：GUI 允许无参数兼容请求；多活动 Lab 仍显示 ambiguous，不猜第一项。
-- HAL 未初始化：驱动段不可用，但所选 LabProfile 与校准仍显示数据库真值；总判仍被 HAL 未就绪
-  banner 明确阻断，不把占位驱动当实时状态。
+- 顶部尚未选中：Dashboard 禁用查询并明确显示“不可开测”；无参数四态只保留给脚本与旧调用方，
+  显式选择消费者不得借兼容路径回退到另一活动 LabProfile。
+- HAL 未初始化：驱动段不可用，但所选 LabProfile 与校准仍显示数据库真值；`available=false`
+  直接进入红色“不可开测”总判，不只依赖提示 banner。
+- 已成功后轮询失败：不再渲染 React Query 缓存中的旧 Lab/校准与绿色总判。
 - 切换 LabProfile：React Query key 变化，旧 Lab 的响应不能覆盖新 Lab。
 - LabProfile 绑定暗室缺失：顶部选择器继续用 P1-57 的 `chamber_config_id/chamber_name` 明确显示
   “未绑定暗室”；本片不重复新增第二套 chamber 字段或状态枚举。
@@ -98,3 +100,15 @@ ambiguous / ok 兼容语义。
 - 不新增页面级 LabProfile 选择器；
 - 不改变 LabProfile→暗室的 P1-57 真值链；
 - 不执行 P2-40 的任何备份、隔离、移动或删除。
+
+## 实施与验证（2026-08-22）
+
+- 后端显式 ID 复用 active 白名单解析；Lab/校准按请求重建，drivers/subnets/DUT 保持 HAL 快照；
+- Dashboard 只有在顶部存在显式选择时才请求，query key 与参数均含同一 ID；HAL unavailable、
+  无选择、422/传输错误三类路径全部 fail-closed，不发布缓存旧绿；
+- live OpenAPI、`api/openapi.yaml` 与生成 TypeScript 已同步；
+- focused readiness / resolver / OpenAPI / 完整 rule gates：**116 passed**；GUI 契约：
+  **21 passed**；全后端：**4201 passed / 5 skipped**；production build、`compileall`、
+  `diff-check` 通过；
+- 首轮 fresh 内审发现 3 条功能 P1，均按 TDD 修复；修后 fresh 内审 **P1=0、P2=1、P3=1**。
+  P2 为本设计/计划旧镜像，已在当前提交同步；P3 为可选组件运行时测试建议，按规则不阻塞。

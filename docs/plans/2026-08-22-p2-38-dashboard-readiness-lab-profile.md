@@ -155,7 +155,7 @@ export const fetchReadiness = async (
 }
 ```
 
-In `ZoneReadiness`, consume `selectedLabProfileId` and `loading` from `useOperationalLab()`, use `['cockpit', 'readiness', selectedLabProfileId ?? 'implicit']`, pass the ID to `fetchReadiness`, and disable the query only while the operational-lab list is loading.
+In `ZoneReadiness`, consume `selectedLabProfileId` and `loading` from `useOperationalLab()`, use `['cockpit', 'readiness', selectedLabProfileId ?? 'unselected']`, pass the explicit ID to `fetchReadiness`, and enable the query only when loading has completed **and** an explicit selection exists. When no selection exists, render a fail-closed blocker; the no-argument backend path is compatibility-only and must not be used by this Dashboard consumer. If a refresh errors, suppress cached readiness data so a stale green verdict cannot remain visible.
 
 **Step 4: Verify GREEN plus P1-57 inventory**
 
