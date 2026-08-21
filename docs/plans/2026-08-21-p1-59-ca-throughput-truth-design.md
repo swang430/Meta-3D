@@ -131,6 +131,13 @@ schema 1 不包含口径证明，不能区分单载波真值与 CA PCell-only �
 6. 新报告 trust schema=2，旧 schema=1 不再被视为可信；
 7. compatibility、相关回归、完整 rule gates、compileall、diff-check 全绿。
 
+## 开发完成验证（2026-08-21）
+
+- P1-59 相关回归：316 passed；
+- 全后端：4170 passed、5 skipped；
+- `compileall`、`git diff --check`：通过；
+- fresh 内审：P1/P2/P3=0。
+
 ## 非目标
 
 - 不改变 BLER/CQI/RI 的聚合口径；
