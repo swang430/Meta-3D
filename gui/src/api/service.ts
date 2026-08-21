@@ -72,8 +72,10 @@ export const replaceProbes = async (
  * `available=false` means HAL has not initialised yet; sub-sections carry
  * placeholder values and the GUI should render "HAL 未就绪".
  */
-export const fetchReadiness = async (): Promise<HALReadinessResponse> => {
-  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness')
+export const fetchReadiness = async (labProfileId?: string): Promise<HALReadinessResponse> => {
+  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness', {
+    params: labProfileId ? { lab_profile_id: labProfileId } : undefined,
+  })
   return response.data
 }
 

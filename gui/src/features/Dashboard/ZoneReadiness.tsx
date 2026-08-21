@@ -25,6 +25,7 @@ import {
   IconNetwork,
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
+import { useOperationalLab } from '../OperationalLab'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -258,9 +259,11 @@ function SubnetSection({ report }: { report: HALReadinessResponse }) {
 }
 
 export function ZoneReadiness() {
+  const { selectedLabProfileId, loading: labLoading } = useOperationalLab()
   const { data, isLoading, error } = useQuery({
-    queryKey: ['cockpit', 'readiness'],
-    queryFn: fetchReadiness,
+    queryKey: ['cockpit', 'readiness', selectedLabProfileId ?? 'implicit'],
+    queryFn: () => fetchReadiness(selectedLabProfileId ?? undefined),
+    enabled: !labLoading,
     refetchInterval: 10_000,
   })
 
