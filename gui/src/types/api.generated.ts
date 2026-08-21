@@ -1454,6 +1454,8 @@ export interface components {
             executed_by: string | null;
             error_message: string | null;
             validation_pass: boolean | null;
+            /** @description P2-34: execution-failure alert publication outcome recorded on this row (published | duplicate | failed). null = not recorded (rows predating P2-34 / record write failed / not applicable) — null does NOT mean the alert was published. */
+            failure_alert_outcome: string | null;
         };
         TestExecutionListResponse: {
             total: number;

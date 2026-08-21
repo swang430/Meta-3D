@@ -127,6 +127,7 @@ const testExecutions: TestExecutionListResponse = {
       executed_by: 'test_case_runner',
       error_message: null,
       validation_pass: true,
+      failure_alert_outcome: null,
     },
     {
       id: 'exec-3000',
@@ -142,6 +143,7 @@ const testExecutions: TestExecutionListResponse = {
       executed_by: 'test_case_runner',
       error_message: 'probe #17 反馈延迟超阈值，measure 相位中止',
       validation_pass: false,
+      failure_alert_outcome: null,
     },
     {
       // 暗室首测链的行: 不记相位进度 (phases_* = null → GUI 显示 "—")
@@ -158,6 +160,7 @@ const testExecutions: TestExecutionListResponse = {
       executed_by: 'commissioning_api',
       error_message: null,
       validation_pass: null,
+      failure_alert_outcome: null,
     },
   ],
 }
