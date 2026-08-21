@@ -10,8 +10,8 @@
  * Honesty notes:
  * - DUT-attach is a backend placeholder (status always "not_implemented");
  *   this cell renders gray "未实现" — never fake green/red.
- * - When `available=false` HAL hasn't initialised; we render a "HAL 未就绪"
- *   banner rather than treating the placeholder sub-sections as live.
+ * - When `available=false` HAL hasn't initialised; the driver/subnet snapshot
+ *   is unavailable, while LabProfile/calibration remain live DB truth.
  * - Polls ~10s (readiness changes slowly).
  */
 import { useQuery } from '@tanstack/react-query'
@@ -25,6 +25,7 @@ import {
   IconNetwork,
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
+import { useOperationalLab } from '../OperationalLab'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -186,7 +187,10 @@ function buildCells(report: HALReadinessResponse): Cell[] {
 // 总判: 任一红 → 不可开测 + 原因; 否则可开测。
 // 文案风格跟 commissioning precheck FAIL 一致。DUT 灰色不阻断开测
 // (后端未实现感知，缺这一格不应误判为"不可开测")。
-function buildVerdict(cells: Cell[]): { canStart: boolean; text: string } {
+function buildVerdict(cells: Cell[], available: boolean): { canStart: boolean; text: string } {
+  if (!available) {
+    return { canStart: false, text: '🔴 不可开测：HAL 未就绪' }
+  }
   const blockers = cells.filter((c) => c.light === 'red')
   if (blockers.length > 0) {
     const reason = blockers.map((c) => `${c.title}（${c.valueText}）`).join('、')
@@ -258,11 +262,17 @@ function SubnetSection({ report }: { report: HALReadinessResponse }) {
 }
 
 export function ZoneReadiness() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['cockpit', 'readiness'],
-    queryFn: fetchReadiness,
+  const { selectedLabProfileId, loading: labLoading } = useOperationalLab()
+  const { data, isLoading, fetchStatus, error } = useQuery({
+    queryKey: ['cockpit', 'readiness', selectedLabProfileId ?? 'unselected'],
+    queryFn: () => fetchReadiness(selectedLabProfileId!),
+    enabled: !labLoading && Boolean(selectedLabProfileId),
     refetchInterval: 10_000,
   })
+  // A key switch, failed refresh, or offline-paused refresh can leave React Query's
+  // last successful data in cache. Publish only after the selected key is idle.
+  const readiness =
+    fetchStatus === 'idle' && !error && selectedLabProfileId ? data : undefined
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -274,20 +284,26 @@ export function ZoneReadiness() {
               系统就绪
             </Text>
           </Group>
-          {data && (
+          {readiness && (
             <Badge
               size="lg"
               color={
-                buildVerdict(buildCells(data)).canStart ? 'green' : 'red'
+                buildVerdict(buildCells(readiness), readiness.available).canStart ? 'green' : 'red'
               }
               variant="filled"
             >
-              {buildVerdict(buildCells(data)).text}
+              {buildVerdict(buildCells(readiness), readiness.available).text}
             </Badge>
           )}
         </Group>
 
-        {isLoading && (
+        {!labLoading && !selectedLabProfileId && (
+          <Alert color="red" variant="light" title="未选择 LabProfile · 不可开测">
+            请先在顶部选择当前 LabProfile；未选择时不会读取或发布系统就绪结论。
+          </Alert>
+        )}
+
+        {isLoading && fetchStatus !== 'paused' && (
           <Group gap="xs">
             <Loader size="sm" />
             <Text size="sm" c="dimmed">
@@ -296,21 +312,36 @@ export function ZoneReadiness() {
           </Group>
         )}
 
+        {fetchStatus === 'fetching' && !isLoading && selectedLabProfileId && (
+          <Group gap="xs">
+            <Loader size="sm" />
+            <Text size="sm" c="dimmed">
+              正在确认所选 LabProfile 的最新就绪状态……
+            </Text>
+          </Group>
+        )}
+
+        {fetchStatus === 'paused' && selectedLabProfileId && (
+          <Alert color="red" variant="light" title="网络不可用，无法确认最新就绪状态 · 不可开测">
+            当前无法刷新所选 LabProfile 的 readiness；恢复联网并成功刷新前不会发布缓存结论。
+          </Alert>
+        )}
+
         {error && (
-          <Alert color="red" variant="light" title="就绪状态读取失败">
+          <Alert color="red" variant="light" title="就绪状态读取失败 · 不可开测">
             无法获取 HAL 就绪快照：{(error as Error).message}
           </Alert>
         )}
 
-        {data && !data.available && (
+        {readiness && !readiness.available && (
           <Alert color="orange" variant="light" title="HAL 未就绪">
-            HAL 尚未初始化（启动未完成或正在重新加载），以下为占位状态，不代表实时设备。
+            仪表驱动和子网状态暂不可用（启动未完成或正在重新加载）；LabProfile 与校准状态仍来自实时配置。
           </Alert>
         )}
 
-        {data && (
+        {readiness && (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-            {buildCells(data).map((cell) => (
+            {buildCells(readiness).map((cell) => (
               <Card key={cell.key} withBorder radius="sm" padding="sm">
                 <Stack gap={6}>
                   <Group justify="space-between" wrap="nowrap">
@@ -331,10 +362,10 @@ export function ZoneReadiness() {
           </SimpleGrid>
         )}
 
-        {data && data.subnets && data.subnets.length > 0 && (
+        {readiness && readiness.subnets && readiness.subnets.length > 0 && (
           <>
             <Divider my={4} />
-            <SubnetSection report={data} />
+            <SubnetSection report={readiness} />
           </>
         )}
       </Stack>

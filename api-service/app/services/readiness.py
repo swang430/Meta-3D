@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 
 from app.models.calibration import CalibrationCertificate
 from app.models.lab_profile import LabProfile
+from app.services.lab_resolution import resolve_lab_profile
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,8 @@ class LabProfileReadiness:
     """Aggregated state of the active ``LabProfile`` row.
 
     ``status`` semantics:
-    - ``"ok"`` — exactly one ``is_active=True`` row found, has a name.
+    - ``"ok"`` — an explicit active row was selected, or omission found
+      exactly one ``is_active=True`` row; the selected row has a name.
     - ``"inactive"`` — rows exist but none is active. Operator created
       profiles then turned them all off; HAL has nothing to bind to.
     - ``"missing"`` — no ``LabProfile`` rows at all. Fresh install — the
@@ -202,11 +204,28 @@ class ReadinessReport:
     subnets: List[SubnetReachability] = field(default_factory=list)
 
 
-def build_lab_profile_readiness(db: Session) -> LabProfileReadiness:
-    """Inspect ``lab_profiles`` and classify the system's lab state.
+def build_lab_profile_readiness(
+    db: Session,
+    lab_profile_id: Optional[uuid.UUID] = None,
+) -> LabProfileReadiness:
+    """Inspect ``lab_profiles`` and classify the requested lab state.
+
+    An explicit ID is the browser workspace truth and is resolved through the
+    shared active-profile whitelist.  Omitting it preserves the legacy
+    unique-active classification for scripts and first-launch flows.
 
     Pure SQL — no HAL coupling so tests can call this with a fixture DB.
     """
+    if lab_profile_id is not None:
+        chosen = resolve_lab_profile(db, lab_profile_id)
+        return LabProfileReadiness(
+            profile_id=str(chosen.id),
+            profile_name=chosen.name,
+            is_active=True,
+            status="ok",
+            detail=f"selected active LabProfile {chosen.name!r}",
+        )
+
     profiles = db.query(LabProfile).all()
     if not profiles:
         return LabProfileReadiness(

@@ -69,11 +69,13 @@ export const replaceProbes = async (
 
 /**
  * ① 系统就绪带 — composite HAL readiness snapshot.
- * `available=false` means HAL has not initialised yet; sub-sections carry
- * placeholder values and the GUI should render "HAL 未就绪".
+ * `available=false` means HAL-owned driver/subnet data is unavailable;
+ * request-time LabProfile and calibration sections remain live.
  */
-export const fetchReadiness = async (): Promise<HALReadinessResponse> => {
-  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness')
+export const fetchReadiness = async (labProfileId?: string): Promise<HALReadinessResponse> => {
+  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness', {
+    params: labProfileId ? { lab_profile_id: labProfileId } : undefined,
+  })
   return response.data
 }
 

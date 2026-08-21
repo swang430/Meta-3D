@@ -3070,10 +3070,9 @@ class DutAttachReadinessResponse(BaseModel):
 class HALReadinessResponse(BaseModel):
     """Composite snapshot returned by ``GET /instruments/hal/readiness``.
 
-    ``available=False`` means HAL hasn't initialised yet (the
-    lifespan startup hasn't run, or a reload is mid-flight). The
-    GUI should render "HAL not ready" rather than treating the
-    placeholder sub-sections as the live state."""
+    ``available=False`` means HAL-owned driver/subnet state is unavailable
+    (the lifespan startup hasn't run, or a reload is mid-flight).
+    Request-time LabProfile and calibration sections remain live DB truth."""
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     available: bool
@@ -3088,22 +3087,43 @@ class HALReadinessResponse(BaseModel):
 
 
 @router.get("/instruments/hal/readiness", response_model=HALReadinessResponse)
-def get_hal_readiness():
+def get_hal_readiness(
+    lab_profile_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "当前浏览器显式选择的 LabProfile；省略时保留唯一 active lab 兼容语义"
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
     """P3-5: composite "is the chamber actually ready?" snapshot.
 
-    Bundles the per-driver readiness rows (previously only logged at
-    startup) with active LabProfile state, active calibration
-    certificate validity, and a DUT-attach placeholder. Operator can
+    Bundles the HAL-owned per-driver snapshot with request-time LabProfile
+    state, calibration certificate validity, and a DUT-attach placeholder.
+    When ``lab_profile_id`` is explicit, the Lab/calibration sections are
+    scoped to that exact active profile; omission keeps unique-active
+    compatibility. Operator can
     Slack-paste a single JSON or open one GUI panel instead of grep-
     ing log files for HAL init + checking LabProfile separately +
     looking up cert expiry by hand.
 
-    Returns ``available=false`` with empty/placeholder sub-sections
-    when HAL hasn't initialised yet (lifespan not run, mid-reload).
-    GUI should treat that as "not ready" rather than rendering the
-    placeholder values as live.
+    Returns ``available=false`` with empty HAL-owned driver/subnet sections
+    when HAL hasn't initialised yet (lifespan not run, mid-reload). The
+    DB-only LabProfile/calibration sections remain live in that state.
     """
     from app.services.instrument_hal_service import get_hal_service
+    from app.services.readiness import (
+        build_calibration_readiness,
+        build_lab_profile_readiness,
+    )
+
+    try:
+        lab_section = build_lab_profile_readiness(db, lab_profile_id)
+    except ValueError as exc:
+        # An explicit stale/inactive selection is a caller-visible conflict.
+        # Never fall back to another active LabProfile and risk a false green.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    calibration_section = build_calibration_readiness(db, lab_section)
 
     hal = get_hal_service()
     report = hal.last_readiness_report if hal else None
@@ -3116,13 +3136,18 @@ def get_hal_readiness():
             available=False,
             drivers=[],
             lab_profile=LabProfileReadinessResponse(
-                is_active=False,
-                status="missing",
-                detail="HAL not initialised yet",
+                profile_id=lab_section.profile_id,
+                profile_name=lab_section.profile_name,
+                is_active=lab_section.is_active,
+                status=lab_section.status,
+                detail=lab_section.detail,
             ),
             calibration=CalibrationReadinessResponse(
-                status="no_lab",
-                detail="HAL not initialised yet",
+                certificate_number=calibration_section.certificate_number,
+                valid_until_iso=calibration_section.valid_until_iso,
+                status=calibration_section.status,
+                days_remaining=calibration_section.days_remaining,
+                detail=calibration_section.detail,
             ),
             dut_attach=DutAttachReadinessResponse(
                 status="not_implemented",
@@ -3147,18 +3172,18 @@ def get_hal_readiness():
             for r in report.drivers
         ],
         lab_profile=LabProfileReadinessResponse(
-            profile_id=report.lab_profile.profile_id,
-            profile_name=report.lab_profile.profile_name,
-            is_active=report.lab_profile.is_active,
-            status=report.lab_profile.status,
-            detail=report.lab_profile.detail,
+            profile_id=lab_section.profile_id,
+            profile_name=lab_section.profile_name,
+            is_active=lab_section.is_active,
+            status=lab_section.status,
+            detail=lab_section.detail,
         ),
         calibration=CalibrationReadinessResponse(
-            certificate_number=report.calibration.certificate_number,
-            valid_until_iso=report.calibration.valid_until_iso,
-            status=report.calibration.status,
-            days_remaining=report.calibration.days_remaining,
-            detail=report.calibration.detail,
+            certificate_number=calibration_section.certificate_number,
+            valid_until_iso=calibration_section.valid_until_iso,
+            status=calibration_section.status,
+            days_remaining=calibration_section.days_remaining,
+            detail=calibration_section.detail,
         ),
         dut_attach=DutAttachReadinessResponse(
             status=report.dut_attach.status,

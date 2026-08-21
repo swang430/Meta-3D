@@ -538,13 +538,12 @@ export interface paths {
         };
         /**
          * HAL composite readiness snapshot (P3-5)
-         * @description Returns the snapshot built during the last HAL initialise / reload:
-         *     per-driver rows (category, model, endpoint, status, detail, plus
-         *     driver-specific `extras` like F64 firmware_version), the active
-         *     LabProfile state, the active calibration certificate validity,
-         *     and a DUT-attach placeholder. `available=false` means HAL is not
-         *     initialised yet — the sub-sections carry placeholders, the GUI
-         *     should render "HAL not ready" rather than consuming them as live.
+         * @description Returns HAL-owned per-driver rows from the last initialise / reload
+         *     together with request-time LabProfile and calibration readiness.
+         *     An explicit `lab_profile_id` selects that exact active profile;
+         *     omitting it keeps the unique-active compatibility behaviour.
+         *     `available=false` means HAL-owned driver/subnet data is unavailable,
+         *     while the database-only LabProfile and calibration sections remain live.
          *     Sibling HAL endpoints (`/hal/status`, `/hal/reload`, `/hal/switch`)
          *     are not currently in this contract; the GUI consumes them via
          *     inline-typed `axios.get`. Bringing them under generated types is
@@ -552,7 +551,10 @@ export interface paths {
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Current browser-selected active LabProfile; no implicit fallback when supplied. */
+                    lab_profile_id?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
