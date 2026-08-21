@@ -149,6 +149,65 @@ def _record_publish_outcome(
         )
 
 
+def _reconcile_ambiguous_alert_commit(
+    execution_id: UUID,
+    alert_id: UUID,
+    commit_error_summary: str,
+) -> str:
+    """用新会话查证结果未知的 Alert COMMIT，并在同一新会话记录真值。
+
+    ``commit()`` 抛错不能证明事务未提交：数据库可能已经落行，只是确认包在
+    返回客户端前丢失。旧 session 的事务状态也不再可信，因此只按预先冻结的
+    ``alert_id`` 在新连接上查权威行。存在可确定为 published；一次查不到仍可能
+    早于原事务最终提交，跟新连接不可用一样只能保持历史**未记录**，不得猜成
+    failed。
+    """
+    verify_db: Any = None
+    try:
+        verify_db = SessionLocal()
+        committed = (
+            verify_db.query(Alert.id)
+            .filter(
+                Alert.id == alert_id,
+                Alert.alert_type == EXECUTION_FAILED_ALERT_TYPE,
+                Alert.related_entity_type == "test_execution",
+                Alert.related_entity_id == execution_id,
+            )
+            .first()
+        )
+        if committed is None:
+            logger.warning(
+                "执行 %s 的告警 COMMIT 结果暂不可见，历史保持未记录：%s",
+                execution_id,
+                commit_error_summary,
+            )
+            return OUTCOME_FAILED
+        outcome = OUTCOME_PUBLISHED
+        resolved_alert_id: Optional[str] = str(alert_id)
+        error_summary: Optional[str] = None
+        logger.info(
+            "执行 %s 的告警 COMMIT 确认丢失，但已按冻结 ID 查证发布成功",
+            execution_id,
+        )
+        _record_publish_outcome(
+            verify_db,
+            execution_id,
+            outcome,
+            resolved_alert_id,
+            error_summary,
+        )
+        return outcome
+    except Exception:  # noqa: BLE001 - 查证失败必须保持未记录，不能猜事务结果
+        _rollback_best_effort(verify_db, execution_id, "告警 COMMIT 查证事务")
+        logger.exception(
+            "执行 %s 的告警 COMMIT 结果无法查证，发布历史保持未记录",
+            execution_id,
+        )
+        return OUTCOME_FAILED
+    finally:
+        _close_best_effort(verify_db, execution_id)
+
+
 def emit_execution_failed_alert(execution_id: UUID) -> str:
     """为一个新进入 failed 的正式执行创建告警，并记录发布结果。
 
@@ -160,6 +219,7 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
     try:
         db = SessionLocal()
         record_session_usable = True
+        outcome_already_recorded = False
         execution = (
             db.query(TestExecution)
             .filter(TestExecution.id == execution_id)
@@ -209,20 +269,24 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                 db.add(alert)
                 db.commit()
             except Exception as exc:  # noqa: BLE001 - 告警失败不得改写真实执行终态
-                record_session_usable = _rollback_best_effort(
-                    db, execution_id, "告警写入事务"
-                )
+                _rollback_best_effort(db, execution_id, "告警写入事务")
                 logger.exception(
-                    "执行 %s 的失败告警写入失败（执行终态保持 failed）", execution_id
+                    "执行 %s 的失败告警 COMMIT 未获确认（执行终态保持 failed）",
+                    execution_id,
                 )
-                outcome = OUTCOME_FAILED
                 error_summary = f"{type(exc).__name__}: {exc}"[:_ERROR_SUMMARY_LIMIT]
+                outcome = _reconcile_ambiguous_alert_commit(
+                    execution_id,
+                    new_alert_id,
+                    error_summary,
+                )
+                outcome_already_recorded = True
             else:
                 outcome = OUTCOME_PUBLISHED
                 alert_id = str(new_alert_id)
                 logger.info("已发布执行失败告警: execution=%s", execution_id)
 
-        if record_session_usable:
+        if record_session_usable and not outcome_already_recorded:
             _record_publish_outcome(
                 db, execution_id, outcome, alert_id, error_summary
             )

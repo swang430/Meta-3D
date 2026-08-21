@@ -49,7 +49,7 @@
 |---|---|---|
 | `published` | 新告警行已 commit | ✅ 总是写（覆盖旧 `failed` 记录 = 真实状态推进） |
 | `duplicate` | 生命周期去重命中（该执行已有告警） | ✅ 保留已有 `published` / `duplicate`；旧 `failed` 或畸形记录推进为 `duplicate` 并写真实 `alert_id`（现存 Alert 已证伪“发布失败”） |
-| `failed` | 告警写入异常（告警表故障等） | ✅ 总是写（error 摘要截断 500 字符；完整 traceback 只进日志） |
+| `failed` | COMMIT 之前已确定的告警链异常（查询、消息准备等） | ✅ 写（error 摘要截断 500 字符；完整 traceback 只进日志）；任何 COMMIT 异常都视为结果未知、不落库 |
 | `skipped_missing` | 执行行不存在 | ❌ 没有行可落 |
 | `skipped_not_failed` | 状态非 failed（防御分支） | ❌ 可从行自身重derive，非事件结果 |
 | `skipped_not_formal` | 非正式源（VRT / 调试 / plan-runner），按 P3-19 设计排除 | ❌ 同上；且不污染 VRT 行的 config |
@@ -76,6 +76,10 @@ duplicate 补缺覆盖「产线上线早于契约」的历史窗口），跳过�
 - **commit 后零 ORM 回读**：Alert UUID 在 commit 前显式分配并冻结为普通值；commit
   成功后日志只用函数参数。连接若在 commit 确认后断开，不能因过期对象 refresh 失败
   把已经存在的 Alert 重新分类成 `failed`。
+- **COMMIT 结果不猜测**：`commit()` 抛错可能是写入前失败，也可能是数据库已落行但
+  确认包丢失。旧 session 不再可信，必须用新连接按冻结的 Alert UUID 与执行关联查证：
+  行存在记 `published`；一次查不到仍可能早于原事务最终提交，跟新连接不可用一样都
+  保持「未记录」，不得猜成 `failed`。
 
 ### 3.3 读方语义（谁消费；白名单）
 
@@ -99,9 +103,12 @@ duplicate 补缺覆盖「产线上线早于契约」的历史窗口），跳过�
 
 - **门A** 失败→发布成功：返回 `published`；Alert 行在；`config["failure_alert"]`
   含 outcome/alert_id（指向真实告警行）/recorded_at；历史行透出 `published`。
-- **门B** 发布失败：告警 commit 炸 → 返回 `failed`；执行 status 仍 `failed`（不反噬）；
-  Alert 计数 0；记录 outcome==`failed` 且 error 摘要非空；历史行透出 `failed`。
+- **门B** COMMIT 抛错且新连接暂未看到 Alert → 返回 `failed`；执行 status 仍 `failed`
+  （不反噬）；历史保持未记录，不能把一次「查不到」永久写成失败。COMMIT 前已确定的
+  外层异常仍记录 outcome==`failed` 与 error 摘要。
 - **门B2** 记录也写不进（DB 全炸）：不抛异常、返回 `failed`、执行终态不变、行保持未记录。
+- **门B5** COMMIT 确认丢失：若冻结 UUID 对应 Alert 已存在，返回并记录 `published`；
+  若暂时不存在或新连接无法查证，返回 `failed` 但历史保持未记录，绝不永久错记失败。
 - **门C** 历史行语义：config 无键 → 历史行字段为 None（未记录）；畸形形状
   （非 dict / outcome 越界值）→ 同样 None；**绝不**折叠成 `published`。
 - **门D** 去重保持：已处置告警再调 → `duplicate`、不重开告警；行无记录时补记

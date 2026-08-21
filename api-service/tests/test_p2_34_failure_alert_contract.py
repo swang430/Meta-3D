@@ -94,26 +94,32 @@ def test_published_outcome_recorded_on_execution_row(db, source):
 # ─────────────────────────── 门B：发布失败可观察且不反噬 ───────────────────────────
 
 
-def _first_commit_failing_session():
-    """第一个 commit（告警事务）炸，之后（记录事务）正常。"""
-    session = TestingSessionLocal()
-    real_commit = session.commit
+def _first_commit_failing_factory():
+    """跨新旧会话仅第一个 commit（告警事务）炸，之后恢复。"""
     calls = {"n": 0}
 
-    def _commit():
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("alerts table unavailable")
-        real_commit()
+    def _factory():
+        session = TestingSessionLocal()
+        real_commit = session.commit
 
-    session.commit = _commit
-    return session
+        def _commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("alerts table unavailable")
+            real_commit()
+
+        session.commit = _commit
+        return session
+
+    return _factory
 
 
-def test_publish_failure_keeps_terminal_state_and_is_observable(db, monkeypatch):
+def test_commit_exception_without_visible_alert_keeps_history_unrecorded(
+    db, monkeypatch
+):
     execution = _execution(db)
     execution_id = execution.id
-    monkeypatch.setattr(alerts, "SessionLocal", _first_commit_failing_session)
+    monkeypatch.setattr(alerts, "SessionLocal", _first_commit_failing_factory())
 
     outcome = alerts.emit_execution_failed_alert(execution_id)
     assert outcome == alerts.OUTCOME_FAILED
@@ -121,15 +127,9 @@ def test_publish_failure_keeps_terminal_state_and_is_observable(db, monkeypatch)
     row = _reload(db, execution_id)
     assert row.status == "failed"  # 执行结论不反噬
     assert db.query(Alert).count() == 0
-
-    record = (row.config or {}).get(alerts.CONFIG_RECORD_KEY)
-    assert isinstance(record, dict)
-    assert record["outcome"] == alerts.OUTCOME_FAILED
-    assert record.get("error")  # 失败原因摘要可观察
-    assert "alert_id" not in record  # 没有告警行就不许假装有
-
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
     item = _to_history_item(row, case_name=None)
-    assert item.failure_alert_outcome == alerts.OUTCOME_FAILED
+    assert item.failure_alert_outcome is None
 
 
 def test_alert_commit_and_rollback_failure_never_commits_pending_alert_with_failed(
@@ -317,6 +317,87 @@ def test_post_commit_refresh_failure_cannot_reclassify_published_alert(
     assert db.query(Alert).count() == 1
     row = _reload(db, execution_id)
     assert row.status == "failed"
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
+def test_commit_ack_loss_reconnects_and_records_existing_alert_as_published(
+    db, monkeypatch
+):
+    """R2 P1：COMMIT 已落库但确认包丢失时，必须按冻结 alert_id 查证真值。
+
+    若直接把 ``commit()`` 抛错当发布失败，历史会永久写成 failed，而告警行实际
+    已存在。查证必须使用新会话，不能信任提交结果未知的旧连接。
+    """
+    execution = _execution(db)
+    execution_id = execution.id
+    factory_calls = {"n": 0}
+
+    def _commit_ack_lost_then_fresh_sessions():
+        factory_calls["n"] += 1
+        session = TestingSessionLocal()
+        if factory_calls["n"] == 1:
+            real_commit = session.commit
+            commit_calls = {"n": 0}
+
+            def _commit_then_drop_ack():
+                commit_calls["n"] += 1
+                real_commit()
+                if commit_calls["n"] == 1:
+                    raise RuntimeError("commit acknowledgement lost")
+
+            session.commit = _commit_then_drop_ack
+        return session
+
+    monkeypatch.setattr(alerts, "SessionLocal", _commit_ack_lost_then_fresh_sessions)
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+
+    assert factory_calls["n"] >= 2, "提交结果未知时必须用新连接查证"
+    assert outcome == alerts.OUTCOME_PUBLISHED
+    alert = db.query(Alert).one()
+    row = _reload(db, execution_id)
+    record = (row.config or {}).get(alerts.CONFIG_RECORD_KEY)
+    assert record["outcome"] == alerts.OUTCOME_PUBLISHED
+    assert record["alert_id"] == str(alert.id)
+
+
+def test_commit_ack_loss_with_unavailable_verifier_keeps_history_unrecorded(
+    db, monkeypatch
+):
+    """查证连接也不可用时宁可未记录，不得把结果未知猜成 failed。"""
+    execution = _execution(db)
+    execution_id = execution.id
+    factory_calls = {"n": 0}
+
+    def _ambiguous_commit_then_unavailable_verifier():
+        factory_calls["n"] += 1
+        session = TestingSessionLocal()
+        if factory_calls["n"] == 1:
+            real_commit = session.commit
+
+            def _commit_then_drop_ack():
+                real_commit()
+                raise RuntimeError("commit acknowledgement lost")
+
+            session.commit = _commit_then_drop_ack
+        else:
+            def _query_unavailable(*_args, **_kwargs):
+                raise RuntimeError("verification connection unavailable")
+
+            session.query = _query_unavailable
+        return session
+
+    monkeypatch.setattr(
+        alerts,
+        "SessionLocal",
+        _ambiguous_commit_then_unavailable_verifier,
+    )
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+
+    assert outcome == alerts.OUTCOME_FAILED
+    assert db.query(Alert).count() == 1
+    row = _reload(db, execution_id)
     assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
 
 
