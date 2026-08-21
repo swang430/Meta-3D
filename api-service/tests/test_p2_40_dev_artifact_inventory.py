@@ -249,6 +249,40 @@ def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monke
     assert states[unmatched_log.resolve()] == "unknown"
 
 
+def test_lsof_error_without_matches_is_unknown(tmp_path: Path, monkeypatch) -> None:
+    module = _load_module()
+    database = tmp_path / "test_channel_calibration.db"
+    _sqlite(database)
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="lsof: status error on target: Permission denied\n",
+        ),
+    )
+
+    assert module.detect_open_state(database) == "unknown"
+
+
+def test_git_probe_failure_is_not_reported_as_untracked(tmp_path: Path, monkeypatch) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    database = repo / "test_channel_calibration.db"
+    _sqlite(database)
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=128),
+    )
+
+    assert module._git_state(repo, database) == "unknown"
+
+
 def test_calibration_tests_leave_no_sqlite_in_calling_directory(tmp_path: Path) -> None:
     api_root = Path(__file__).resolve().parents[1]
     protected_cwd = tmp_path / "protected-cwd"

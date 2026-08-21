@@ -66,13 +66,19 @@ def _git_state(worktree: Path, path: Path) -> str:
     )
     if ignored.returncode == 0:
         return "ignored"
+    if ignored.returncode != 1:
+        return "unknown"
     tracked = subprocess.run(
         ["git", "-C", os.fspath(worktree), "ls-files", "--error-unmatch", "--", relative],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return "tracked" if tracked.returncode == 0 else "untracked"
+    if tracked.returncode == 0:
+        return "tracked"
+    if tracked.returncode == 1:
+        return "untracked"
+    return "unknown"
 
 
 def detect_open_state(path: Path) -> str:
@@ -123,7 +129,7 @@ def detect_open_states(
             path: "open" if path in open_paths else unmatched_state
             for path in resolved
         }
-    if result.returncode == 1:
+    if result.returncode == 1 and not result.stderr.strip():
         return {path: "closed" for path in resolved}
     return {path: "unknown" for path in resolved}
 

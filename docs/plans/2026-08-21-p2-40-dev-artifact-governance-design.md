@@ -15,7 +15,7 @@
 | P1-59 worktree 日志 | 15 个文件，约 242 MB | 来源可定位，但可能含回归/仪器证据；进入人工复核，不自动清 |
 | Claude worktree 日志 | 9 个文件，约 11 MB | 同上 |
 | 四组固定路径测试 SQLite | 主工作区、API 目录和旧 worktree 均有副本，单份约 1 MB | schema 已被测试 teardown 清空且产生方可定位；修复产生方后列入可恢复隔离候选 |
-| 活跃 `meta3d_postgres_data` | Docker volume 约 79.65 MB，容器健康且正在挂载 | 正式开发库，必须备份并保护 |
+| 活跃 `meta3d_postgres_data` | Docker volume 约 79.69 MB，容器健康且正在挂载 | 正式开发库，必须备份并保护 |
 | 匿名 Docker volumes | 14 个未挂载 volume，其中 12 个约 43 MB | 标签只能证明 anonymous，不能证明属于 Meta-3D；身份未知，默认保护 |
 | 注册 worktree | Codex `.worktrees` 约 1.9 GB，Claude worktrees 约 732 MB | Git 元数据是归属真值；不把整个 worktree 当清理目标 |
 
@@ -69,16 +69,18 @@
 
 ## Manifest 契约
 
-每个条目至少包含：
+filesystem 条目至少包含：
 
-- 绝对路径或 Docker volume id；
-- `kind`、字节数、mtime；
-- worktree path / branch / HEAD / dirty 状态；
-- Git 状态（tracked / ignored / untracked / outside）；
+- 绝对路径、`kind`、字节数与 mtime；
+- worktree path / branch / HEAD，以及 manifest 的 worktree 清单所记录的 dirty 状态；
+- Git 状态（tracked / ignored / untracked / unknown）；
 - 身份证据数组，而不是单一推断标签；
 - `disposition`：`protect` / `review` / `quarantine_candidate`；
-- 裁决理由与恢复前置条件；
-- 当前是否被进程或容器占用；无法检测时显式 `unknown`。
+- 裁决理由与当前打开状态；无法检测时显式 `unknown`。
+
+Docker 条目使用 volume id、创建时间、labels、容器反向引用和可用时的只读 size 证据；探测
+失败或畸形记录显式降级，不用缺失字段猜身份。恢复前置条件与逐文件校验和只在合并后的批准单
+中生成，因为本 PR 没有任何可执行的隔离或恢复动作。
 
 JSON 用稳定 key 和排序，便于前后 diff；Markdown 只从同一内存模型渲染，不维护第二份分类
 逻辑。脚本不接受删除、移动或 Docker prune 参数。
