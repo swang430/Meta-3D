@@ -18,15 +18,17 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-38「Dashboard readiness 显式消费顶部选定 LabProfile」（开发、回归与 fresh 内审完成，待外审；2026-08-22）**。
+**Current Focus = P2-38「Dashboard readiness 显式消费顶部选定 LabProfile」（R1 P1 已修，待 R2；2026-08-22）**。
 
 > **P2-38 开发证据**：Dashboard 只有在顶部存在显式 LabProfile 选择时才读取 readiness，
 > 查询参数与 React Query key 共同使用该 ID；后端通过 active 白名单精确解析，按请求重建
 > LabProfile 与校准段，missing/inactive 返回 422 且不回退。HAL unavailable、无显式选择、
-> 轮询错误保留旧缓存三类假绿路径均已 fail-closed。focused readiness / resolver / OpenAPI /
-> 完整 rule gates **116 passed**，GUI 契约 **21 passed**，全后端
+> 轮询错误保留旧缓存三类假绿路径均已 fail-closed。Codex R1 进一步指出切回已有 query key
+> 时会短暂发布缓存旧绿；现只在 `fetchStatus === 'idle'` 时发布结论，`fetching` 与离线
+> `paused` 均明确阻断。focused readiness / resolver / OpenAPI / 完整 rule gates **116 passed**，
+> GUI 契约 **23 passed**，全后端
 > **4201 passed / 5 skipped**，production build、`compileall`、`diff-check` 通过；修后 fresh
-> 内审 **P1=0**（P2=1 文档旧镜像已同步；P3=1 组件运行测试建议按规则不阻塞）。设计与证据见
+> 尾审 **P1=0、P2=0**（P3=1 组件运行测试建议按规则不阻塞）。设计与证据见
 > [`P2-38 设计`](plans/2026-08-22-p2-38-dashboard-readiness-lab-profile-design.md)。
 
 > **~~P2-37~~ ✅ 2026-08-22 由 PR #365 完成**：后台 connected 监控不再读取未展示的

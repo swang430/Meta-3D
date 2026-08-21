@@ -105,10 +105,13 @@ ambiguous / ok 兼容语义。
 
 - 后端显式 ID 复用 active 白名单解析；Lab/校准按请求重建，drivers/subnets/DUT 保持 HAL 快照；
 - Dashboard 只有在顶部存在显式选择时才请求，query key 与参数均含同一 ID；HAL unavailable、
-  无选择、422/传输错误三类路径全部 fail-closed，不发布缓存旧绿；
+  无选择、422/传输错误三类路径全部 fail-closed，不发布缓存旧绿；Codex R1 指出的切回已有
+  query key 瞬时缓存假绿已收口为仅在 `fetchStatus === 'idle'` 时发布，后台刷新与离线暂停
+  都保持不可开测；
 - live OpenAPI、`api/openapi.yaml` 与生成 TypeScript 已同步；
 - focused readiness / resolver / OpenAPI / 完整 rule gates：**116 passed**；GUI 契约：
-  **21 passed**；全后端：**4201 passed / 5 skipped**；production build、`compileall`、
+  **23 passed**；全后端：**4201 passed / 5 skipped**；production build、`compileall`、
   `diff-check` 通过；
 - 首轮 fresh 内审发现 3 条功能 P1，均按 TDD 修复；修后 fresh 内审 **P1=0、P2=1、P3=1**。
-  P2 为本设计/计划旧镜像，已在当前提交同步；P3 为可选组件运行时测试建议，按规则不阻塞。
+  P2 为本设计/计划旧镜像，已在当前提交同步；R1 尾修独立内审 **P1=0、P2=0、P3=1**；
+  P3 为可选组件运行时测试建议，按规则不阻塞。
