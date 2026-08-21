@@ -333,47 +333,8 @@ async def test_all_scells_must_activate_before_all_nr_scope_is_allowed() -> None
     )
 
 
-@pytest.mark.parametrize("listed", ["", "1", "1,3"])
 @pytest.mark.asyncio
-async def test_real_uxm_activation_rejects_missing_or_wrong_scell_set(
-    listed: str,
-) -> None:
-    driver = RealUxmDriver(
-        "uxm-5g",
-        {"ip": "10.0.0.2", "uxm_profile": "5g"},
-    )
-    driver._query = MagicMock(return_value=listed)  # type: ignore[method-assign]
-    driver._write = MagicMock()  # type: ignore[method-assign]
-    driver._drain_errors = MagicMock(return_value=[])  # type: ignore[method-assign]
-
-    activated = await driver.activate_secondary_cells(expected_indices=[1, 2])
-
-    assert activated is False
-    driver._write.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_real_uxm_activation_consumes_write_rejection() -> None:
-    driver = RealUxmDriver(
-        "uxm-5g",
-        {"ip": "10.0.0.2", "uxm_profile": "5g"},
-    )
-    driver._query = MagicMock(  # type: ignore[method-assign]
-        side_effect=["1,2", "1"],
-    )
-    driver._write = MagicMock()  # type: ignore[method-assign]
-    driver._drain_errors = MagicMock(  # type: ignore[method-assign]
-        side_effect=[[], [], ['-221,"Settings conflict"']],
-    )
-
-    activated = await driver.activate_secondary_cells(expected_indices=[1, 2])
-
-    assert activated is False
-    assert driver._write.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_real_uxm_activation_accepts_only_exact_set_and_clean_error_queue() -> None:
+async def test_real_uxm_activation_blocks_without_authoritative_active_state_readback() -> None:
     driver = RealUxmDriver(
         "uxm-5g",
         {"ip": "10.0.0.2", "uxm_profile": "5g"},
@@ -388,8 +349,10 @@ async def test_real_uxm_activation_accepts_only_exact_set_and_clean_error_queue(
 
     activated = await driver.activate_secondary_cells(expected_indices=[1, 2])
 
-    assert activated is True
-    assert driver._write.call_count == 2
+    assert activated is False
+    driver._query.assert_not_called()
+    driver._write.assert_not_called()
+    driver._drain_errors.assert_not_called()
 
 
 @pytest.mark.asyncio

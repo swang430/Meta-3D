@@ -3501,64 +3501,20 @@ class RealUxmDriver(BaseStationDriver):
         *,
         expected_indices: Optional[List[int]] = None,
     ) -> bool:
-        """核对 SCell 清单后发送激活动作，并消费仪器错误队列。
+        """当前 UXM 方言缺少逐 SCell 激活态权威回读，正式 CA 保持阻断。
 
-        ``*OPC?`` 只表示命令执行完毕，不代表没有错误；只有清单精确匹配且
-        激活动作后的错误队列干净才返回 True。当前手册没有独立的 active-state
-        readback，因此这里不宣称 UE 已实际启用载波，只证明仪器接受了本次动作。
+        配置清单与错误队列只能证明仪器接受了命令，不能证明 UE 实际激活了
+        ``expected_indices`` 中的每个 SCell。两种现有 profile 都没有带厂商出处的
+        逐 SCell active-state query，因此在补齐该证据前不发送激活动作，也绝不把
+        命令接受等同于 CA 已建立。
         """
-        cell = self._cell_id
-        list_query = self._cmds.SCELL_LIST_QUERY
-        activate_template = self._cmds.SCELL_ACTIVATE
-        if not list_query or not activate_template:
-            logger.error(
-                "[UXM/%s] SCell 激活未执行：当前 profile 缺少清单或激活命令。",
-                self._cmds.PROFILE_NAME,
-            )
-            return False
-        try:
-            baseline_errors = self._drain_errors()
-            if self._error_queue_unusable(baseline_errors):
-                logger.error("[UXM] SCell list 错误门不可用: %s", baseline_errors[-1])
-                return False
-            if baseline_errors:
-                logger.info("[UXM] SCell list 前已清理历史错误: %s", baseline_errors)
-
-            scell_resp = self._query(
-                list_query.format(cell=cell)
-            )
-            list_errors = self._drain_errors()
-            if list_errors:
-                logger.error("[UXM] SCell 清单查询失败: %s", list_errors)
-                return False
-            tokens = [part.strip() for part in (scell_resp or "").split(",")]
-            if not tokens or any(not token.isdigit() for token in tokens):
-                logger.error("[UXM] SCell 清单不可解析: %r", scell_resp)
-                return False
-            indices = [int(token) for token in tokens]
-            if expected_indices is not None and sorted(indices) != sorted(expected_indices):
-                logger.error(
-                    "[UXM] SCell 清单不匹配: expected=%s actual=%s",
-                    sorted(expected_indices),
-                    sorted(indices),
-                )
-                return False
-            for idx in indices:
-                self._write(activate_template.format(cell=cell, idx=idx))
-            self._query(self._cmds.OPC)
-            activation_errors = self._drain_errors()
-            if activation_errors:
-                logger.error("[UXM] SCell 激活动作被拒绝: %s", activation_errors)
-                return False
-            logger.info(
-                "[UXM] Activation command accepted for %d SCell(s): %s",
-                len(indices),
-                indices,
-            )
-            return True
-        except Exception as e:  # noqa: BLE001
-            logger.error("[UXM] SCell activation failed: %s", e)
-            return False
+        logger.error(
+            "[UXM/%s] SCell 激活未执行：缺少逐 SCell 激活态权威回读；"
+            "expected=%s。正式 CA 保持 UNKNOWN/阻断。",
+            self._cmds.PROFILE_NAME,
+            sorted(expected_indices or []),
+        )
+        return False
 
     async def remove_all_secondary_cells(self) -> bool:
         """Phase 2g: cleanup helper — remove every SCell on this PCell."""

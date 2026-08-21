@@ -398,7 +398,7 @@ class BaseStationDriver(InstrumentDriver):
         *,
         expected_indices: Optional[List[int]] = None,
     ) -> bool:
-        """激活已 add 的 SCell；可要求仪器清单精确匹配预期集合。"""
+        """激活 SCell；仅在权威回读确认预期集合均已激活时返回 True。"""
         raise NotImplementedError
 
     async def remove_all_secondary_cells(self) -> bool:

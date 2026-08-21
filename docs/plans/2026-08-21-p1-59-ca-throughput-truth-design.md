@@ -112,14 +112,15 @@ schema 1 不包含口径证明，不能区分单载波真值与 CA PCell-only �
 
 - add 前验证当前 profile 的完整命令模板，缺任一项零 I/O 失败；
 - add 前清历史错误、写后消费错误队列，任何拒绝或错误门不可用均失败；
-- activate 要求仪器 SCell 清单与本次请求 index 集合精确一致；
-- 激活动作后消费错误队列；`*OPC?` 不单独作为成功依据；
-- 当前手册没有 active-state 独立回读，所以返回值只表示仪器接受本次动作，不声称 UE
-  已实际启用载波。
+- 配置清单与错误队列只能证明命令被接受，不能证明 UE 实际激活全部 SCell；
+- 当前手册没有逐 SCell active-state 权威回读，因此真实 UXM 在发送激活动作前即
+  fail-closed，不能以 `*OPC?`、清单或干净错误队列替代动作真值；
+- 只有未来补齐带厂商出处、能精确确认预期 SCell 集合的回读后，正式 CA 才可放行。
 
 当前 `UxmLteNrIratProfile` 有来源的命令面只足以查询聚合吞吐，不足以完成本片要求的
-逐 SCell 配置/激活真值；因此 IRAT CA 在补齐厂商出处与现场兼容性证据前明确失败。此处
-选择“无报告”而非“PCell-only 假报告”，现场半保持 Hardware Blocked。
+逐 SCell 配置/激活真值；`Uxm5GProfile` 同样没有逐 SCell 激活态权威回读。因此真实 UXM
+CA 在补齐厂商出处与现场兼容性证据前统一明确失败。此处选择“无报告”而非“PCell-only
+假报告”，现场半保持 Hardware Blocked。
 
 ## 验收
 
