@@ -281,7 +281,7 @@ function LogPanel() {
           </Chip.Group>
           <TextInput
             size="xs"
-            placeholder="搜索 msg / logger"
+            placeholder="搜索 msg / logger / traceback"
             leftSection={<IconSearch size={14} />}
             value={keyword}
             onChange={(e) => setKeyword(e.currentTarget.value)}

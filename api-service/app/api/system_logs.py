@@ -578,7 +578,7 @@ def tail_log_file(
     filename: str = Query(default="app.log", description="日志文件名"),
     lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg 和 logger 字段）"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg、logger、同行 exception 字段的 traceback，以及 RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
 ):
@@ -626,7 +626,7 @@ def read_log_history(
     filename: str = Query(default="app.log", description="日志文件名"),
     lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合；精确匹配"),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（范围同 /tail：msg、logger、同行 exception 字段、RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤"),
 ):
@@ -687,7 +687,7 @@ def download_log_file(filename: str):
 def export_filtered_logs(
     filename: str,
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
-    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤（范围同 /tail：msg、logger、同行 exception 字段、RAW 续行；整组返回）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 过滤"),
     hal_mode: Optional[str] = Query(default=None, description="按 HAL 模式过滤 (mock/real)"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
