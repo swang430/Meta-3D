@@ -10,8 +10,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.hal.base_station import ThroughputMetrics
+from app.hal.scpi_evidence import (
+    ScpiExchangeRef,
+    exchange_matches_catalog_role,
+    load_default_p0_5_catalog,
+)
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+from app.diagnostics.sequences import uxm_scpi_compatibility
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.report_service import report_has_provenance_trust
@@ -135,6 +141,40 @@ def test_missing_all_nr_queries_never_fall_back_to_pcell(
     assert metrics.kpi_valid["dl_throughput"] is False
     assert metrics.kpi_valid["ul_throughput"] is False
     assert metrics.throughput_scope == ThroughputMetrics.SCOPE_UNKNOWN
+
+
+def test_ca_all_nr_queries_are_critical_for_the_irat_compatibility_probe() -> None:
+    applicable, _not_in_profile = uxm_scpi_compatibility._critical_partition(
+        UxmLteNrIratProfile,
+    )
+
+    assert {
+        "MEAS_TPUT_DL_OTA_ALL",
+        "MEAS_TPUT_UL_OTA_ALL",
+    } <= applicable
+
+
+def test_all_nr_query_matches_the_sourced_throughput_evidence_role() -> None:
+    exchange = ScpiExchangeRef(
+        exchange_id="p1-59-all-nr",
+        instrument_id="uxm-irat",
+        operation="query",
+        command=UxmLteNrIratProfile.MEAS_TPUT_DL_OTA_ALL,
+        execution_id="p1-59",
+        capture_id="p1-59-capture",
+        sequence=1,
+        result_type="response",
+        response="10,5000000,0,0,6000000,0",
+    )
+    entry = load_default_p0_5_catalog().entries["uxm.dl_throughput"]
+
+    assert "all nr" in entry.source.section.lower()
+    assert "ALL" in entry.notes
+    assert exchange_matches_catalog_role(
+        exchange,
+        "uxm.dl_throughput",
+        "query",
+    ) is True
 
 
 def _scell(frequency_hz: float = 3.7e9) -> SimpleNamespace:

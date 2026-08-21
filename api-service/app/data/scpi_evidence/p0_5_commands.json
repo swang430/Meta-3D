@@ -97,8 +97,8 @@
     {
       "id": "uxm.dl_throughput", "instrument": "uxm", "mandatory": true,
       "command": "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:<cell>?", "query": "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:<cell>?", "status": "confirmed", "max_evidence_level": "E4",
-      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR PHY Measurements / OTA DL Throughput"},
-      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "6 doubles，平均值单位 bps；有效且大于零才是 E4。LTE_NR_IRAT 范围未确认。"
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR PHY Measurements / OTA DL Throughput / DL OTA all NR Results"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "6 doubles，平均值单位 bps；<cell> 可为具体 cell，ALL 表示所有 NR cells 结果之和；有效且大于零才是 E4。LTE_NR_IRAT 范围未确认。"
     },
     {
       "id": "positioner.move_absolute", "instrument": "positioner", "mandatory": true,
