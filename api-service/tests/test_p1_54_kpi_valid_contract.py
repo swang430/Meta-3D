@@ -120,14 +120,17 @@ def test_measure_sample_gate_accepts_real_zero_and_rejects_invalid_default():
     invalid_zero = ThroughputMetrics(
         dl_throughput_mbps=0.0,
         kpi_valid={"dl_throughput": False},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
     real_zero = ThroughputMetrics(
         dl_throughput_mbps=0.0,
         kpi_valid={"dl_throughput": True},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
     non_finite = ThroughputMetrics(
         dl_throughput_mbps=float("nan"),
         kpi_valid={"dl_throughput": True},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
 
     assert MeasureExecutor._trusted_throughput_value(invalid_zero) is None
@@ -139,7 +142,8 @@ def test_measure_executor_routes_samples_through_trust_gate():
     """生产采样与 phase 判据都必须经过各自的可信门。"""
     source = inspect.getsource(MeasureExecutor.execute)
 
-    assert "self._trusted_throughput_value(metrics)" in source
+    assert "self._trusted_throughput_value(" in source
+    assert "required_scope=throughput_scope" in source
     assert "samples_tput.append(metrics.dl_throughput_mbps)" not in source
     assert "self._all_requested_throughput_is_valid(" in source
     assert "config.azimuths_deg" in source

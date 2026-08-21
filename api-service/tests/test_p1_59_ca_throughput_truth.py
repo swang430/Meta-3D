@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.hal.base_station import ThroughputMetrics
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+from app.services.mimo_ota.executors.measure import MeasureExecutor
 
 
 @pytest.fixture
@@ -129,3 +132,182 @@ def test_missing_all_nr_queries_never_fall_back_to_pcell(
     assert metrics.kpi_valid["dl_throughput"] is False
     assert metrics.kpi_valid["ul_throughput"] is False
     assert metrics.throughput_scope == ThroughputMetrics.SCOPE_UNKNOWN
+
+
+def _scell(frequency_hz: float = 3.7e9) -> SimpleNamespace:
+    return SimpleNamespace(
+        frequency_hz=frequency_hz,
+        bandwidth_mhz=100,
+        subcarrier_spacing_khz=30,
+        band="n78",
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_scell_needs_no_ca_driver_capability() -> None:
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        SimpleNamespace(),
+        [],
+        inherit=False,
+        execution_id="single-carrier",
+    )
+
+    assert added == []
+    assert blocker is None
+
+
+@pytest.mark.asyncio
+async def test_ca_inherit_mode_fails_before_sampling() -> None:
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(return_value=True),
+        activate_secondary_cells=AsyncMock(return_value=True),
+    )
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell()],
+        inherit=True,
+        execution_id="ca-inherit",
+    )
+
+    assert added == []
+    assert blocker and "inherit" in blocker
+    driver.add_secondary_cell.assert_not_awaited()
+    driver.activate_secondary_cells.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "driver, missing_name",
+    [
+        (SimpleNamespace(activate_secondary_cells=AsyncMock()), "add_secondary_cell"),
+        (SimpleNamespace(add_secondary_cell=AsyncMock()), "activate_secondary_cells"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ca_requires_both_driver_capabilities(
+    driver: SimpleNamespace,
+    missing_name: str,
+) -> None:
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell()],
+        inherit=False,
+        execution_id="ca-capability",
+    )
+
+    assert added == []
+    assert blocker and missing_name in blocker
+
+
+@pytest.mark.asyncio
+async def test_any_scell_add_failure_blocks_activation_and_sampling() -> None:
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(side_effect=[True, False]),
+        activate_secondary_cells=AsyncMock(return_value=True),
+    )
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell(), _scell(3.8e9)],
+        inherit=False,
+        execution_id="ca-add-failure",
+    )
+
+    assert len(added) == 1
+    assert blocker and "SCell 2" in blocker
+    driver.activate_secondary_cells.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scell_activation_false_blocks_sampling() -> None:
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(return_value=True),
+        activate_secondary_cells=AsyncMock(return_value=False),
+    )
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell()],
+        inherit=False,
+        execution_id="ca-activation-failure",
+    )
+
+    assert len(added) == 1
+    assert blocker and "激活" in blocker
+
+
+@pytest.mark.parametrize("failure_stage", ["add", "activate"])
+@pytest.mark.asyncio
+async def test_ca_driver_exception_is_an_actionable_blocker(
+    failure_stage: str,
+) -> None:
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(
+            side_effect=RuntimeError("add exploded")
+            if failure_stage == "add"
+            else None,
+            return_value=True,
+        ),
+        activate_secondary_cells=AsyncMock(
+            side_effect=RuntimeError("activate exploded")
+            if failure_stage == "activate"
+            else None,
+            return_value=True,
+        ),
+    )
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell()],
+        inherit=False,
+        execution_id="ca-exception",
+    )
+
+    assert blocker and "exploded" in blocker
+    if failure_stage == "add":
+        assert added == []
+        driver.activate_secondary_cells.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_all_scells_must_activate_before_all_nr_scope_is_allowed() -> None:
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(return_value=True),
+        activate_secondary_cells=AsyncMock(return_value=True),
+    )
+
+    added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
+        driver,
+        [_scell(), _scell(3.8e9)],
+        inherit=False,
+        execution_id="ca-success",
+    )
+
+    assert blocker is None
+    assert [item["cc_index"] for item in added] == [1, 2]
+    driver.activate_secondary_cells.assert_awaited_once_with()
+
+
+def test_trusted_throughput_requires_the_exact_requested_scope() -> None:
+    pcell_zero = ThroughputMetrics(
+        dl_throughput_mbps=0.0,
+        kpi_valid={"dl_throughput": True},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+    )
+
+    assert MeasureExecutor._trusted_throughput_value(
+        pcell_zero,
+        required_scope=ThroughputMetrics.SCOPE_PCELL,
+    ) == pytest.approx(0.0)
+    assert MeasureExecutor._trusted_throughput_value(
+        pcell_zero,
+        required_scope=ThroughputMetrics.SCOPE_NR_ALL_CELLS,
+    ) is None
+
+
+def test_completed_scan_with_wrong_scope_is_not_throughput_verified() -> None:
+    assert MeasureExecutor._all_requested_throughput_is_valid(
+        [0.0],
+        [{"throughput_valid": True, "throughput_scope": "pcell"}],
+        required_scope=ThroughputMetrics.SCOPE_NR_ALL_CELLS,
+    ) is False
