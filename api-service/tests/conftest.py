@@ -168,6 +168,39 @@ def sample_topology_data() -> Dict[str, Any]:
 # ===== Cleanup Fixtures =====
 
 @pytest.fixture(autouse=True)
+def _suite_isolate_execution_contextvar():
+    """P2-35：套件级隔离 —— 每条测试结束后把 ``current_execution_id``
+    恢复到该测试进入时的值。
+
+    为什么必须有：它是**进程级** ContextVar，主线程同步代码里任何
+    ``set(...)`` 不还原就永久泄漏给之后收集到的所有测试。生产路径不漏
+    （AuditMiddleware 最外层 token finally reset；后台任务在 context 副本里），
+    但测试**直调**带 set 的生产函数时没有那层兜底 —— 实证：
+    ``test_mimo_ota_report_verified_backcompat`` 主线程直调
+    ``VrtExecutionService.stop/complete`` → ``get()`` 内 set，泄漏的 UUID
+    让字母序更靠后的 ``test_p1_36_execution_id::
+    test_no_execution_means_default_not_empty``（"无关日志行应为 -"）
+    在全量顺序下必失败；47C 的 ``_execution`` 帮手同形态。
+
+    做法：进入时 ``set(get("-"))`` 拿 token，teardown ``reset(token)`` ——
+    语义 = 恢复进入时的值，不硬写 "-"，不改变任何测试进入时看到的世界。
+    conftest 的 autouse 在最外层包住各文件自己的 fixture（如 p2_29 的
+    文件级自净），嵌套 set/reset 严格配对，无冲突；async 测试的 set 落在
+    Task 的 context 副本里，本 fixture 对其无感也无害。
+
+    行为门在 ``tests/test_p2_35_contextvar_isolation.py``：把本 fixture
+    摘掉/改坏，那对 a/b 测试当场红（变异已实跑）。
+    """
+    from app.core.logging_config import current_execution_id
+
+    token = current_execution_id.set(current_execution_id.get("-"))
+    try:
+        yield
+    finally:
+        current_execution_id.reset(token)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_dependency_overrides():
     """Per-test snapshot+restore of ``app.dependency_overrides``.
 
