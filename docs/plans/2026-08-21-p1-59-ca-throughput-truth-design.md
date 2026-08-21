@@ -184,3 +184,24 @@ fresh 尾审：P1/P2/P3=0
 - 不为 5G_NR_Test 或 CMW500 猜测未确认命令；
 - 不把 mock 数值放入正式 KPI；
 - 不现场验证 UXM firmware 支持性；该证据仍由 compatibility 序列取得。
+
+## R3 P1 尾修验证（2026-08-21）
+
+R3 指出部分 SCell 已添加、后续添加或激活失败时，`MeasureExecutor` 会在 `try` 内直接
+返回；`finally` 虽然执行清理，但失败结果已构造完成，清理 warnings 被丢弃。同时
+`cleanup_chamber_instruments()` 没有消费 `remove_all_secondary_cells()` 的布尔契约，
+真实驱动返回 `False` 时仍表现为清理成功，残留 SCell 可污染下一次单载波执行。
+
+代码/测试提交 `9ad5969` 按 fail-closed 收口：清理必须精确返回 `True` 才算确认；CA
+配置 blocker 先穿过 cleanup，再构造失败结果，未确认移除会同时进入 `error_message`、
+`warnings` 与 `measurements.cleanup_warnings`。TDD RED 两条修前均失败：一条观察到空
+warnings，另一条只收到原始 `SCell 2 添加失败`；GREEN 后均通过。
+
+```text
+定点 RED → GREEN：2 failed → 2 passed
+相关及安全对称链：348 passed, 676 warnings in 5.39s
+全后端：4170 passed, 5 skipped, 4290 warnings in 92.76s
+compileall：通过
+diff-check：通过
+fresh 尾审：P1/P2/P3=0
+```
