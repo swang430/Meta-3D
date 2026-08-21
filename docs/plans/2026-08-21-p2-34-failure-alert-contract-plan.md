@@ -23,11 +23,11 @@
      `TestExecutionListResponse` 侧 `types/api.ts`（若该类型内联行形状）。
 4. **既有测试对齐**（顺带，同源于返回值契约变更）：
    `test_execution_failure_alerts.py` 的 `is True/is False` 断言改为对应枚举值。
-5. **变异实跑**：设计稿 §4 五条，逐条改源 → 跑门确认红 → `git checkout` 还原 →
-   还原后复跑确认绿（脚本化替换须 assert 命中）。
+5. **变异实跑**：设计稿 §4 五条，逐条改源 → 跑门确认红 → **内存快照写回**还原（仓库纪律：
+   禁 `git checkout` 冲掉修复）→ 还原后复跑确认绿（脚本化替换须 assert 命中）。
 6. **全量**：`cd api-service && .venv/bin/python -m pytest -q --color=no
-   -p no:cacheprovider`；已知失败 `test_p1_36_execution_id::
-   test_no_execution_means_default_not_empty` 之外零失败。
+   -p no:cacheprovider`；零失败、无豁免（原已知失败 `test_p1_36_execution_id::
+   test_no_execution_means_default_not_empty` 已由 P2-35 #357 治掉）。
 7. commit（中文、`-F`、Co-Authored-By trailer）→ push 分支，不开 PR。
 
 ## 硬约束核对单

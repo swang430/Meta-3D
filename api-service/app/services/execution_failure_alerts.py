@@ -63,7 +63,9 @@ def resolve_recorded_outcome(config: Any) -> Optional[str]:
     if not isinstance(record, dict):
         return None
     outcome = record.get("outcome")
-    if outcome in RECORDED_OUTCOMES:
+    # 内审 F1：先验 str 再查白名单 —— list / dict 这类不可哈希的脏值会让
+    # `in set` 抛 TypeError，穿到 _to_history_item 就把整页历史吞成空表。
+    if isinstance(outcome, str) and outcome in RECORDED_OUTCOMES:
         return outcome
     return None
 

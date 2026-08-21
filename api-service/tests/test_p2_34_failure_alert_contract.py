@@ -160,6 +160,83 @@ def test_record_write_failure_is_swallowed_and_row_stays_unrecorded(db, monkeypa
     assert item.failure_alert_outcome is None
 
 
+def _second_commit_failing_session():
+    """第一个 commit（告警事务）正常，第二个 commit（记录事务）炸。"""
+    session = TestingSessionLocal()
+    real_commit = session.commit
+    calls = {"n": 0}
+
+    def _commit():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("config column locked")
+        real_commit()
+
+    session.commit = _commit
+    return session
+
+
+def test_record_failure_does_not_reverse_published_alert(db, monkeypatch):
+    """门B3（内审 F2）：告警已发出、记录事务才失败 → 返回仍是 published，告警行在，
+    行上"未记录"（不是 failed）。
+
+    变异：`_record_publish_outcome` 的 except 改成 re-raise → 外层 except 接住后返回
+    failed（告警明明已发出）→ 本门红。门B2 抓不到它：那里两个 commit 都炸，re-raise
+    后返回的恰好也是 failed。
+    """
+    execution = _execution(db)
+    execution_id = execution.id
+    monkeypatch.setattr(alerts, "SessionLocal", _second_commit_failing_session)
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+    assert outcome == alerts.OUTCOME_PUBLISHED, "记录失败不得反噬已发出的告警结果"
+
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert db.query(Alert).count() == 1  # 告警确实发出去了
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})  # 未记录，不是错记成 failed
+
+    item = _to_history_item(row, case_name=None)
+    assert item.failure_alert_outcome is None
+
+
+def test_outer_guard_returns_failed_without_raising(db, monkeypatch):
+    """门B4：告警链在查询阶段就炸（外层 except 路径）→ 不抛、返回 failed、会话关闭。
+
+    变异：外层 except 返回 published → 本门红。
+    """
+    execution = _execution(db)
+    execution_id = execution.id
+    closed = {"n": 0}
+
+    def _query_exploding_session():
+        session = TestingSessionLocal()
+
+        def _query(*_args, **_kwargs):
+            raise RuntimeError("connection reset")
+
+        real_close = session.close
+
+        def _close():
+            closed["n"] += 1
+            real_close()
+
+        session.query = _query
+        session.close = _close
+        return session
+
+    monkeypatch.setattr(alerts, "SessionLocal", _query_exploding_session)
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)  # 不得抛异常
+    assert outcome == alerts.OUTCOME_FAILED
+    assert closed["n"] == 1
+
+    row = _reload(db, execution_id)
+    assert row.status == "failed"
+    assert db.query(Alert).count() == 0
+    assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
+
+
 # ─────────────────────────── 门C：历史行 = 未记录，绝不折叠成成功 ───────────────────────────
 
 
@@ -169,6 +246,8 @@ def test_record_write_failure_is_swallowed_and_row_stays_unrecorded(db, monkeypa
     {"failure_alert": "published"},                    # 畸形：记录不是 dict
     {"failure_alert": {"outcome": "exploded"}},        # 畸形：outcome 越界值
     {"failure_alert": {}},                             # 畸形：没有 outcome
+    {"failure_alert": {"outcome": ["published"]}},    # 畸形：不可哈希（list），不许抛 TypeError 毒整页
+    {"failure_alert": {"outcome": {"a": 1}}},         # 畸形：不可哈希（dict）
 ])
 def test_history_rows_without_valid_record_resolve_to_unrecorded(db, config):
     execution = _execution(db, config=config)

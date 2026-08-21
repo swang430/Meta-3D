@@ -103,12 +103,18 @@ duplicate 补缺覆盖「产线上线早于契约」的历史窗口），跳过�
 - **门E** 跳过类：VRT 源 → `skipped_not_formal` 且 config 零污染；行不存在 →
   `skipped_missing`；非 failed → `skipped_not_failed`。
 
-变异清单（每条实跑确认门红后还原）：
+变异清单（开发 agent 的实跑输出未留存；下列结果为 2026-08-21 内审 + 主 agent 复跑）：
 M1 resolver 白名单放行畸形值 → 门C 红；M2 删记录写入 → 门A 红；
-M3 记录失败异常泄漏（去掉吞异常）→ 门B2 红；M4 duplicate 无条件覆盖 → 门D 红；
-M5 published 不记 alert_id → 门A 红。
+M3 记录失败异常泄漏（except 改 re-raise）→ **门B2 不红**（初版写「门B2 红」是假的：B2 两个
+commit 都炸，re-raise 被外层 except 接住后返回的恰好也是 failed）→ 内审 F2 补**门B3**
+（告警 commit 成功、记录 commit 失败 → 仍 published / 告警 1 行 / 行上未记录）后 M3 红；
+M4 duplicate 无条件覆盖 → 门D 红；M5 published 不记 alert_id → 门A 红；
+内审另造：M8 外层 except 返回 published → 初版全绿 → 补**门B4**（查询阶段炸 → 不抛、返回
+failed、会话关闭）后红；MX1 resolver 去掉 `isinstance(str)` 前置 → 门C 新增的 list / dict
+脏值两条红（内审 F1：不可哈希值会让 `in set` 抛 TypeError 吞掉整页历史）。
 
 ## 5. 范围外（显式）
 
 GUI 渲染、告警重试机制、`ExecutionHistoryItem` 之外的 API 面（commissioning 会话响应等）、
-mockDatabase 种子、`skipped_*` 的落库。均记入产出报告的未做事项。
+`skipped_*` 的落库。均记入产出报告的未做事项。（mockDatabase 种子**已做**，见 §3.3 ——
+初版此处误列为范围外，内审 F4 纠正。）
