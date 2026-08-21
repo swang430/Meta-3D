@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -207,3 +209,31 @@ def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monke
     )
 
     assert module.detect_open_states([log], directory=tmp_path)[log.resolve()] == "open"
+
+
+def test_calibration_tests_leave_no_sqlite_in_calling_directory(tmp_path: Path) -> None:
+    api_root = Path(__file__).resolve().parents[1]
+    protected_cwd = tmp_path / "protected-cwd"
+    protected_cwd.mkdir()
+    nodeids = [
+        f"{api_root / 'tests/test_channel_calibration.py'}::TestChannelCalibrationService::test_create_session",
+        f"{api_root / 'tests/test_probe_calibration_api.py'}::TestAmplitudeCalibrationStart::test_start_amplitude_calibration_success",
+        f"{api_root / 'tests/test_probe_calibration_service.py'}::TestAmplitudeCalibrationService::test_execute_calibration_mock",
+        f"{api_root / 'tests/test_probe_calibration_integration.py'}::TestCompleteCalibrationWorkflow::test_full_calibration_workflow_single_probe",
+    ]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(api_root), env.get("PYTHONPATH", "")])
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", *nodeids, "-q"],
+        cwd=protected_cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert list(protected_cwd.glob("*.db")) == []

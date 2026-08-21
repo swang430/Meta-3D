@@ -29,18 +29,15 @@ from app.models.probe_calibration import (
 )
 
 
-# 使用专用的测试数据库
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_probe_calibration_integration.db"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 由模块级 pytest 临时目录持有；导入测试模块不得在调用目录创建 SQLite。
+engine = None
+TestingSessionLocal = None
 CHAMBER_ID = uuid.UUID("b2222222-2222-2222-2222-222222222153")
 
 
 def override_get_db():
     """覆盖数据库依赖"""
+    assert TestingSessionLocal is not None
     try:
         db = TestingSessionLocal()
         yield db
@@ -49,8 +46,15 @@ def override_get_db():
 
 
 @pytest.fixture(scope="module", autouse=True)
-def setup_database():
+def setup_database(tmp_path_factory):
     """模块级别的数据库设置"""
+    global engine, TestingSessionLocal
+    db_path = tmp_path_factory.mktemp("probe-calibration-integration") / "probe_calibration.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     # 在 fixture 执行时捕获原始依赖（而不是在模块加载时）
     original_get_db = app.dependency_overrides.get(get_db)
 
@@ -73,6 +77,9 @@ def setup_database():
     yield
     # 测试完成后清理
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+    engine = None
+    TestingSessionLocal = None
 
     # 恢复原始依赖
     if original_get_db is not None:
@@ -111,6 +118,7 @@ def _scoped_post(path: str, **kwargs):
 @pytest.fixture(autouse=True)
 def clean_tables():
     """每个测试前清理表数据"""
+    assert TestingSessionLocal is not None
     db = TestingSessionLocal()
     try:
         db.query(ProbeAmplitudeCalibration).delete()

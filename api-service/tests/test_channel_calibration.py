@@ -43,20 +43,22 @@ from app.services.channel_calibration_service import (
 # ==================== 测试数据库设置 ====================
 
 @pytest.fixture(scope="function")
-def db_session():
+def db_session(tmp_path):
     """创建测试数据库会话"""
+    db_path = tmp_path / "channel_calibration.db"
     engine = create_engine(
-        "sqlite:///./test_channel_calibration.db",
+        f"sqlite:///{db_path}",
         connect_args={"check_same_thread": False}
     )
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
-
-    yield session
-
-    session.close()
-    Base.metadata.drop_all(bind=engine)
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 # ==================== 时域校准算法测试 ====================
