@@ -1768,6 +1768,7 @@ class PatternCalibrationService:
         SGH 跟着 DUT 一起转 — 等效于探头相对 SGH 转), 或专门的 SGH 反向定位台.
         """
         from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_test_lease import instrument_test_lease
         from app.services.path_loss_calibration_service import (
             ProbePathLossCalibrationService,
             calculate_fspl,
@@ -1794,45 +1795,57 @@ class PatternCalibrationService:
             if motion_stop_generation is not None
             else {}
         )
-        # Row-major (elevation outer, azimuth inner) — match _mock_pattern_measurements
-        # ordering so downstream peak / HPBW / FtB index math is identical.
-        for elev in elevation_deg:
-            for az in azimuth_deg:
-                ok = await positioner.move_to(
-                    azimuth=float(az), elevation=float(elev), **motion_stop_kwargs
-                )
-                if not ok:
-                    raise RuntimeError(
-                        f"positioner.move_to(az={az}, el={elev}) failed; "
-                        f"aborting pattern scan for probe {probe_id} pol "
-                        f"{polarization.value if hasattr(polarization, 'value') else polarization}"
+        # P2-30: 作业级租约 —— 一次 el×az 扫描只真取/放一次 F64 控制权。
+        # 循环内每点 acquire_sa_power_via_ce_tone 自带的那圈租约在嵌套下
+        # 自动变 no-op（hold() 引用计数）；此前逐角度点真建拆 socket 并跑
+        # _apply_session_reset。控制权参数与内层一致（F64 有、UXM 无、监控关）。
+        async with instrument_test_lease(
+            f"probe-pattern:probe{probe_id}:"
+            f"{polarization.value if hasattr(polarization, 'value') else polarization}",
+            control_f64=True,
+            control_uxm=False,
+            enable_monitoring=False,
+        ):
+            # Row-major (elevation outer, azimuth inner) — match
+            # _mock_pattern_measurements ordering so downstream peak / HPBW /
+            # FtB index math is identical.
+            for elev in elevation_deg:
+                for az in azimuth_deg:
+                    ok = await positioner.move_to(
+                        azimuth=float(az), elevation=float(elev), **motion_stop_kwargs
                     )
-                sa_mean_dbm, sa_std_db, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                    frequency_mhz=frequency_mhz,
-                    ce_tx_power_dbm=ce_tx_power_dbm,
-                    ce_port=ce_port,
-                    probe_id=probe_id,
-                    polarization=polarization,
-                    warning_sink=warnings,
-                    warning_label=(
-                        f"pattern probe {probe_id} "
-                        f"{polarization.value if hasattr(polarization, 'value') else polarization} "
-                        f"az={float(az):g} el={float(elev):g}"
-                    ),
-                )
-                gain_dbi = (
-                    sa_mean_dbm
-                    - ce_tx_power_dbm
-                    + fspl_db
-                    - sgh_gain_dbi
-                    - chain_correction_db
-                )
-                measurements.append(PatternMeasurement(
-                    azimuth_deg=float(az),
-                    elevation_deg=float(elev),
-                    gain_dbi=float(gain_dbi),
-                    uncertainty_db=float(sa_std_db + 0.3),  # SA noise + SGH ref unc
-                ))
+                    if not ok:
+                        raise RuntimeError(
+                            f"positioner.move_to(az={az}, el={elev}) failed; "
+                            f"aborting pattern scan for probe {probe_id} pol "
+                            f"{polarization.value if hasattr(polarization, 'value') else polarization}"
+                        )
+                    sa_mean_dbm, sa_std_db, _ = await pl_service.acquire_sa_power_via_ce_tone(
+                        frequency_mhz=frequency_mhz,
+                        ce_tx_power_dbm=ce_tx_power_dbm,
+                        ce_port=ce_port,
+                        probe_id=probe_id,
+                        polarization=polarization,
+                        warning_sink=warnings,
+                        warning_label=(
+                            f"pattern probe {probe_id} "
+                            f"{polarization.value if hasattr(polarization, 'value') else polarization} "
+                            f"az={float(az):g} el={float(elev):g}"
+                        ),
+                    )
+                    gain_dbi = (
+                        sa_mean_dbm
+                        - ce_tx_power_dbm
+                        + fspl_db
+                        - sgh_gain_dbi
+                        - chain_correction_db
+                    )
+                    measurements.append(PatternMeasurement(
+                        azimuth_deg=float(az),
+                        elevation_deg=float(elev),
+                        gain_dbi=float(gain_dbi),
+                        uncertainty_db=float(sa_std_db + 0.3),  # SA noise + SGH ref unc
+                    ))
 
         return measurements
 
