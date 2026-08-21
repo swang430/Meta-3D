@@ -27,3 +27,13 @@ test('Dashboard readiness 消费顶部唯一 LabProfile 真源并按选择隔离
   assert.match(source, /enabled:\s*!labLoading/)
   assert.doesNotMatch(source, /fetchLabProfiles|useState\([^)]*LabProfile/)
 })
+
+test('HAL unavailable 只把 HAL-owned 区域标为不可用，不否定实时 Lab 与校准', () => {
+  const dashboard = read('src/features/Dashboard/ZoneReadiness.tsx')
+  const service = read('src/api/service.ts')
+
+  assert.match(dashboard, /仪表驱动和子网状态暂不可用/)
+  assert.match(dashboard, /LabProfile 与校准状态仍来自实时配置/)
+  assert.doesNotMatch(dashboard, /以下为占位状态，不代表实时设备/)
+  assert.doesNotMatch(service, /sub-sections carry\s+\* placeholder values/)
+})

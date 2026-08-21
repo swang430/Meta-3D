@@ -10,8 +10,8 @@
  * Honesty notes:
  * - DUT-attach is a backend placeholder (status always "not_implemented");
  *   this cell renders gray "未实现" — never fake green/red.
- * - When `available=false` HAL hasn't initialised; we render a "HAL 未就绪"
- *   banner rather than treating the placeholder sub-sections as live.
+ * - When `available=false` HAL hasn't initialised; the driver/subnet snapshot
+ *   is unavailable, while LabProfile/calibration remain live DB truth.
  * - Polls ~10s (readiness changes slowly).
  */
 import { useQuery } from '@tanstack/react-query'
@@ -307,7 +307,7 @@ export function ZoneReadiness() {
 
         {data && !data.available && (
           <Alert color="orange" variant="light" title="HAL 未就绪">
-            HAL 尚未初始化（启动未完成或正在重新加载），以下为占位状态，不代表实时设备。
+            仪表驱动和子网状态暂不可用（启动未完成或正在重新加载）；LabProfile 与校准状态仍来自实时配置。
           </Alert>
         )}
 
