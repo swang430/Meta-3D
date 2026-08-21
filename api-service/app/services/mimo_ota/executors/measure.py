@@ -52,6 +52,7 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
+from app.hal.base_station import ThroughputMetrics
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,10 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
 # 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+class _CaSetupBlocked(RuntimeError):
+    """Carry a CA setup blocker through cleanup before building the result."""
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -327,6 +332,8 @@ class MeasureExecutor(IStepExecutor):
     def _all_requested_throughput_is_valid(
         requested_azimuths: List[float],
         azimuth_results: List[Dict[str, Any]],
+        *,
+        required_scope: Optional[str] = None,
     ) -> bool:
         """Only a complete scan with trusted throughput at every azimuth passes."""
         return (
@@ -334,15 +341,25 @@ class MeasureExecutor(IStepExecutor):
             and len(azimuth_results) == len(requested_azimuths)
             and all(
                 azimuth.get("throughput_valid") is True
+                and (
+                    required_scope is None
+                    or azimuth.get("throughput_scope") == required_scope
+                )
                 for azimuth in azimuth_results
             )
         )
 
     @staticmethod
-    def _trusted_throughput_value(metrics: Any) -> Optional[float]:
-        """返回显式可信的 DL average；缺标记、无效或缺值都 fail-closed。"""
+    def _trusted_throughput_value(
+        metrics: Any,
+        *,
+        required_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> Optional[float]:
+        """返回显式可信且口径匹配的 DL average；其余均 fail-closed。"""
         validity = getattr(metrics, "kpi_valid", None)
         if not isinstance(validity, dict):
+            return None
+        if getattr(metrics, "throughput_scope", None) != required_scope:
             return None
         value = getattr(metrics, "dl_throughput_mbps", None)
         if validity.get("dl_throughput") is not True or value is None:
@@ -352,6 +369,89 @@ class MeasureExecutor(IStepExecutor):
         except (TypeError, ValueError):
             return None
         return parsed if math.isfinite(parsed) else None
+
+    @staticmethod
+    async def _configure_requested_secondary_cells(
+        base_station: Any,
+        scells: List[Any],
+        *,
+        inherit: bool,
+        execution_id: Any,
+    ) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        """配置并确认完整 CA 集合；任何未知/部分成功都阻断正式采样。"""
+        if not scells:
+            return [], None
+        if inherit:
+            return [], (
+                "CA TestCase 不能使用 uxm_config_mode=inherit：本次没有 SCell "
+                "写入与激活真值；请改用 dispatch 模式。"
+            )
+
+        add_secondary_cell = getattr(base_station, "add_secondary_cell", None)
+        activate_secondary_cells = getattr(
+            base_station,
+            "activate_secondary_cells",
+            None,
+        )
+        if not callable(add_secondary_cell):
+            return [], "baseStation driver 缺少 add_secondary_cell，不能执行正式 CA。"
+        if not callable(activate_secondary_cells):
+            return [], (
+                "baseStation driver 缺少 activate_secondary_cells，不能确认正式 CA。"
+            )
+        if (
+            getattr(
+                base_station,
+                "SCELL_ACTIVATION_READBACK_AUTHORITATIVE",
+                False,
+            )
+            is not True
+        ):
+            return [], (
+                "baseStation driver 缺少逐 SCell 激活态权威回读；"
+                "已在首次 SCell 写入前阻断正式 CA。"
+            )
+
+        added: List[Dict[str, Any]] = []
+        for cc_idx, scell in enumerate(scells, start=1):
+            try:
+                ok = await add_secondary_cell(
+                    cc_idx,
+                    {
+                        "frequency_mhz": scell.frequency_hz / 1e6,
+                        "bandwidth_mhz": scell.bandwidth_mhz,
+                        "scs_khz": scell.subcarrier_spacing_khz,
+                        "band": scell.band,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                return added, f"SCell {cc_idx} 添加异常：{exc}"
+            if ok is not True:
+                return added, (
+                    f"SCell {cc_idx} 添加失败；已阻断正式 CA，防止少载波 KPI 入报告。"
+                )
+            added.append({
+                "cc_index": cc_idx,
+                "frequency_ghz": scell.frequency_hz / 1e9,
+                "bandwidth_mhz": scell.bandwidth_mhz,
+                "band": scell.band,
+            })
+
+        try:
+            activated = await activate_secondary_cells(
+                expected_indices=[item["cc_index"] for item in added],
+            )
+        except Exception as exc:  # noqa: BLE001
+            return added, f"SCell 激活异常：{exc}"
+        if activated is not True:
+            return added, "SCell 激活未获确认；已阻断正式 CA 吞吐采样。"
+
+        logger.info(
+            "[%s] Phase 2g: 已添加并激活 %d 个 SCell",
+            execution_id,
+            len(added),
+        )
+        return added, None
 
     @staticmethod
     def _mac_config_blocker(mac_cfg: Any) -> Optional[str]:
@@ -610,6 +710,7 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # UXM signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
+        ca_setup_blocker: Optional[str] = None
         uxm_config_capture_manager = None
         uxm_config_exchanges = []
         try:
@@ -695,52 +796,23 @@ class MeasureExecutor(IStepExecutor):
                     )
 
             # --- Phase 2g: SCell add + activate for CA scenarios ---
-            scells_added: List[Dict[str, Any]] = []
-            if scells and uxm_inherit:
-                logger.warning(
-                    "[%s] 开关1 inherit: %d 个 SCell 声明被跳过 (继承模式不下发"
-                    "载波) — CA 场景请用 dispatch 模式",
-                    context.test_execution.id, len(scells),
-                )
-            elif scells and hasattr(base_station, "add_secondary_cell"):
-                for cc_idx, scell in enumerate(scells, start=1):
-                    # SCell 走 SCELL_CONF_FREQ 直接按 frequency_mhz 程控 (无 ARFCN
-                    # band fallback, 见 add_secondary_cell) → 没有 PCell 那个坑, 不需
-                    # 显式 arfcn。频率一致性校验也只比 PCell。
-                    ok = await base_station.add_secondary_cell(
-                        cc_idx,
-                        {
-                            "frequency_mhz": scell.frequency_hz / 1e6,
-                            "bandwidth_mhz": scell.bandwidth_mhz,
-                            "scs_khz": scell.subcarrier_spacing_khz,
-                            "band": scell.band,
-                        },
-                    )
-                    if ok:
-                        scells_added.append({
-                            "cc_index": cc_idx,
-                            "frequency_ghz": scell.frequency_hz / 1e9,
-                            "bandwidth_mhz": scell.bandwidth_mhz,
-                            "band": scell.band,
-                        })
-                    else:
-                        logger.warning(
-                            "[%s] SCell %d add failed; CA may run with fewer carriers than requested",
-                            context.test_execution.id, cc_idx,
-                        )
-                if scells_added and hasattr(base_station, "activate_secondary_cells"):
-                    await base_station.activate_secondary_cells()
-                logger.info(
-                    "[%s] Phase 2g: PCell %.2fGHz + %d SCell(s)",
-                    context.test_execution.id,
-                    pcell.frequency_hz / 1e9, len(scells_added),
-                )
-            elif scells:
-                logger.warning(
-                    "[%s] Config has %d SCell(s) but baseStation driver lacks "
-                    "add_secondary_cell — running PCell-only",
-                    context.test_execution.id, len(scells),
-                )
+            scells_added, ca_blocker = await self._configure_requested_secondary_cells(
+                base_station,
+                scells,
+                inherit=uxm_inherit,
+                execution_id=context.test_execution.id,
+            )
+            if ca_blocker:
+                # Do not construct the failure result until cleanup has run:
+                # a partial SCell add can leave residual cells, and a rejected
+                # removal must be visible to the operator rather than lost by
+                # returning from inside this try block.
+                raise _CaSetupBlocked(ca_blocker)
+            throughput_scope = (
+                ThroughputMetrics.SCOPE_NR_ALL_CELLS
+                if scells
+                else ThroughputMetrics.SCOPE_PCELL
+            )
 
             # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
             # P1-32: 返回值**必须消费**。上一版丢弃它、然后无条件 start_signaling
@@ -2106,7 +2178,10 @@ class MeasureExecutor(IStepExecutor):
 
                 for _ in range(num_windows):
                     with capture_scpi_exchanges() as throughput_exchanges:
-                        metrics = await base_station.measure_throughput_window(window_s)
+                        metrics = await base_station.measure_throughput_window(
+                            window_s,
+                            throughput_scope=throughput_scope,
+                        )
                     latest_throughput_exchanges = throughput_exchanges
 
                     # RF KPIs (RSRP/SINR) are normally UE-reported; until that
@@ -2123,7 +2198,10 @@ class MeasureExecutor(IStepExecutor):
 
                     samples_rsrp.append(rsrp)
                     samples_sinr.append(sinr)
-                    trusted_tput = self._trusted_throughput_value(metrics)
+                    trusted_tput = self._trusted_throughput_value(
+                        metrics,
+                        required_scope=throughput_scope,
+                    )
                     if trusted_tput is not None:
                         samples_tput.append(trusted_tput)
                     samples_ri.append(float(metrics.rank_indicator))
@@ -2177,6 +2255,11 @@ class MeasureExecutor(IStepExecutor):
                     ),
                     "throughput_valid": (
                         not measurement_simulated and bool(samples_tput)
+                    ),
+                    "throughput_scope": (
+                        throughput_scope
+                        if samples_tput
+                        else ThroughputMetrics.SCOPE_UNKNOWN
                     ),
                     "throughput_sample_count": len(samples_tput),
                     "rank_indicator": (
@@ -2245,6 +2328,7 @@ class MeasureExecutor(IStepExecutor):
             throughput_verified = self._all_requested_throughput_is_valid(
                 config.azimuths_deg,
                 azimuth_results,
+                required_scope=throughput_scope,
             )
 
             # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---
@@ -2287,6 +2371,7 @@ class MeasureExecutor(IStepExecutor):
                 "measurement_source": "simulated" if measurement_simulated else "instrument",
                 "measurement_verified": not measurement_simulated,
                 "throughput_verified": throughput_verified,
+                "throughput_scope": throughput_scope,
                 "simulated_sources": simulated_sources,
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
@@ -2395,6 +2480,8 @@ class MeasureExecutor(IStepExecutor):
                 result_payload["emulation_file_source"] = (
                     "testcase" if config.emulation_file else "driver_default"
                 )
+        except _CaSetupBlocked as exc:
+            ca_setup_blocker = str(exc)
         finally:
             if uxm_config_capture_manager is not None:
                 uxm_config_capture_manager.__exit__(None, None, None)
@@ -2402,6 +2489,24 @@ class MeasureExecutor(IStepExecutor):
                 hal,
                 context.test_execution.id,
                 expected_operator_stop_generation=motion_stop_generation,
+            )
+
+        if ca_setup_blocker is not None:
+            error_message = ca_setup_blocker
+            if cleanup_warnings:
+                error_message = (
+                    f"{error_message} 清理未完整确认："
+                    f"{'; '.join(cleanup_warnings)}"
+                )
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                measurements=(
+                    {"cleanup_warnings": cleanup_warnings}
+                    if cleanup_warnings
+                    else {}
+                ),
+                warnings=cleanup_warnings or None,
+                error_message=error_message,
             )
 
         if cleanup_warnings:

@@ -34,7 +34,14 @@ async def cleanup_chamber_instruments(
         # stop/disconnect tuple so its failure doesn't skip those.
         if hasattr(base_station, "remove_all_secondary_cells"):
             try:
-                await base_station.remove_all_secondary_cells()
+                scells_removed = await base_station.remove_all_secondary_cells()
+                if scells_removed is not True:
+                    msg = (
+                        "baseStation.remove_all_secondary_cells was not "
+                        "confirmed during cleanup; residual SCells may remain"
+                    )
+                    warnings.append(msg)
+                    logger.warning("[%s] %s", execution_id, msg)
             except Exception as e:  # noqa: BLE001
                 msg = f"baseStation.remove_all_secondary_cells failed during cleanup: {e}"
                 warnings.append(msg)

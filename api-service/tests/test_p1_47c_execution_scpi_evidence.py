@@ -999,6 +999,15 @@ def test_mimo_report_applies_evidence_gate_before_building_content(db):
         # P1-54 的独立吞吐可信门不是本用例的被测对象；显式打开后，
         # overall_result 仍只由 SCPI formal acceptance 决定。
         "throughput_verified": True,
+        # P1-59 的独立 scope 门同样不是本用例对象；固定完整单载波证据。
+        "throughput_scope": "pcell",
+        "carrier_aggregation": {"num_component_carriers": 1},
+        "azimuth_results": [{
+            "azimuth_deg": 0.0,
+            "throughput_mbps": 1.0,
+            "throughput_valid": True,
+            "throughput_scope": "pcell",
+        }],
     })
     phases["measure"] = measure
     measurements["phases"] = phases

@@ -54,6 +54,14 @@ _VERIFIED_PHASES = {
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
         "throughput_verified": True,
+        "throughput_scope": "pcell",
+        "carrier_aggregation": {"num_component_carriers": 1},
+        "azimuth_results": [{
+            "azimuth_deg": 0.0,
+            "throughput_mbps": 1.0,
+            "throughput_valid": True,
+            "throughput_scope": "pcell",
+        }],
     },
     "analysis": {"verdict": "PASS"},
 }

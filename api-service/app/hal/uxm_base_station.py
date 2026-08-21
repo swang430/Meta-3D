@@ -3074,7 +3074,11 @@ class RealUxmDriver(BaseStationDriver):
         """按下标取值; 越界或 NaN → None (而不是 0.0)。"""
         return vals[idx] if 0 <= idx < len(vals) else None
 
-    async def get_throughput_metrics(self) -> ThroughputMetrics:
+    async def get_throughput_metrics(
+        self,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> ThroughputMetrics:
         """
         读取仪表与终端上报的 KPI。
 
@@ -3106,7 +3110,22 @@ class RealUxmDriver(BaseStationDriver):
         调用时机: UE 连接后, 统计窗口 (stat_count 子帧) 完成后读取。
         """
         cell = self._cell_id
-        metrics = ThroughputMetrics()
+        if throughput_scope == ThroughputMetrics.SCOPE_PCELL:
+            dl_tput_command = self._cmds.MEAS_TPUT_DL_OTA
+            ul_tput_command = self._cmds.MEAS_TPUT_UL_OTA
+        elif throughput_scope == ThroughputMetrics.SCOPE_NR_ALL_CELLS:
+            dl_tput_command = getattr(self._cmds, "MEAS_TPUT_DL_OTA_ALL", None)
+            ul_tput_command = getattr(self._cmds, "MEAS_TPUT_UL_OTA_ALL", None)
+        else:
+            dl_tput_command = None
+            ul_tput_command = None
+
+        effective_scope = (
+            throughput_scope
+            if dl_tput_command and ul_tput_command
+            else ThroughputMetrics.SCOPE_UNKNOWN
+        )
+        metrics = ThroughputMetrics(throughput_scope=effective_scope)
         self._warn_once_if_profile_has_no_kpi_commands()
         # 哪些字段这一轮真的拿到了数 —— 进 measurement.log, 让读日志的人
         # 能分辨"测出来是 0"和"根本没测到"(P1-30 同一个母题)。
@@ -3129,7 +3148,7 @@ class RealUxmDriver(BaseStationDriver):
             return self._parse_doubles(raw)
 
         # ── DL 吞吐量 (bps → Mbps) ──────────────────────────────
-        dl = _read_doubles(self._cmds.MEAS_TPUT_DL_OTA, "DL OTA throughput")
+        dl = _read_doubles(dl_tput_command, "DL OTA throughput")
         dl_avg, dl_cur = self._pick(dl, 4), self._pick(dl, 1)
         if dl_avg is not None:
             metrics.dl_throughput_mbps = dl_avg / 1e6
@@ -3139,7 +3158,7 @@ class RealUxmDriver(BaseStationDriver):
         valid["dl_throughput_current"] = dl_cur is not None
 
         # ── UL 吞吐量 (bps → Mbps) ──────────────────────────────
-        ul = _read_doubles(self._cmds.MEAS_TPUT_UL_OTA, "UL OTA throughput")
+        ul = _read_doubles(ul_tput_command, "UL OTA throughput")
         ul_avg, ul_cur = self._pick(ul, 4), self._pick(ul, 1)
         if ul_avg is not None:
             metrics.ul_throughput_mbps = ul_avg / 1e6
@@ -3256,6 +3275,7 @@ class RealUxmDriver(BaseStationDriver):
                 "rsrp_dbm": metrics.rsrp_dbm,
                 "sinr_db": metrics.sinr_db,
                 "kpi_valid": dict(metrics.kpi_valid),
+                "throughput_scope": metrics.throughput_scope,
                 "kpi_missing": missing,
                 # 口径未确认的原始上报值（手册未说明单位）——
                 # 只作证据，**不要**当 dBm/dB 用。
@@ -3268,7 +3288,12 @@ class RealUxmDriver(BaseStationDriver):
 
         return metrics
 
-    async def measure_throughput_window(self, window_s: float) -> ThroughputMetrics:
+    async def measure_throughput_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> ThroughputMetrics:
         """Phase 2d: 清零 → 等一个窗口 → 读, 取一个 i.i.d. 样本。
 
         不这么做的话, 同一个 stat_count 窗口里连着调 get_throughput_metrics()
@@ -3289,7 +3314,9 @@ class RealUxmDriver(BaseStationDriver):
                 "读到的是自测量开始以来的累积值, 不是 %.1fs 窗口样本", window_s
             )
             await asyncio.sleep(max(window_s, 0.0))
-            return await self.get_throughput_metrics()
+            return await self.get_throughput_metrics(
+                throughput_scope=throughput_scope,
+            )
 
         try:
             self._write(clear_cmd)
@@ -3298,7 +3325,9 @@ class RealUxmDriver(BaseStationDriver):
                 "[UXM] BTHRoughput:CLEar 失败 (%s) — 本次读到的是累积值不是窗口样本", e
             )
         await asyncio.sleep(max(window_s, 0.0))
-        return await self.get_throughput_metrics()
+        return await self.get_throughput_metrics(
+            throughput_scope=throughput_scope,
+        )
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取 UE 信息 (TODO: 从 UXM 查询)"""
@@ -3399,7 +3428,35 @@ class RealUxmDriver(BaseStationDriver):
             logger.error("[UXM] add_secondary_cell: cc_index must be ≥ 1 (PCell is 0)")
             return False
         cell = self._cell_id
+        required_templates = {
+            "SCELL_CONF_FREQ": self._cmds.SCELL_CONF_FREQ,
+            "SCELL_CONF_BW": self._cmds.SCELL_CONF_BW,
+            "SCELL_CONF_SCS": self._cmds.SCELL_CONF_SCS,
+            "SCELL_ADD": self._cmds.SCELL_ADD,
+        }
+        if cc_config.get("band"):
+            required_templates["SCELL_CONF_BAND"] = self._cmds.SCELL_CONF_BAND
+        missing = sorted(
+            name for name, template in required_templates.items()
+            if not isinstance(template, str) or not template
+        )
+        if missing:
+            logger.error(
+                "[UXM/%s] SCell %d 未下发：当前 profile 缺少 %s；禁止按别的"
+                "方言猜命令。",
+                self._cmds.PROFILE_NAME,
+                cc_index,
+                ", ".join(missing),
+            )
+            return False
         try:
+            baseline_errors = self._drain_errors()
+            if self._error_queue_unusable(baseline_errors):
+                logger.error("[UXM] SCell add 错误门不可用: %s", baseline_errors[-1])
+                return False
+            if baseline_errors:
+                logger.info("[UXM] SCell add 前已清理历史错误: %s", baseline_errors)
+
             freq_mhz = float(cc_config.get("frequency_mhz", 0))
             bw_mhz = float(cc_config.get("bandwidth_mhz", 100))
             scs_khz = int(cc_config.get("scs_khz", 30))
@@ -3422,6 +3479,14 @@ class RealUxmDriver(BaseStationDriver):
                 cell=cell, idx=cc_index
             ))
             self._query(self._cmds.OPC)
+            command_errors = self._drain_errors()
+            if command_errors:
+                logger.error(
+                    "[UXM] SCell %d 配置/添加被仪器拒绝或错误门不可用: %s",
+                    cc_index,
+                    command_errors,
+                )
+                return False
             logger.info(
                 "[UXM] SCell %d added: freq=%.1f MHz BW=%.0f MHz scs=%dkHz band=%s",
                 cc_index, freq_mhz, bw_mhz, scs_khz, band or "auto",
@@ -3431,27 +3496,25 @@ class RealUxmDriver(BaseStationDriver):
             logger.error("[UXM] SCell %d add failed: %s", cc_index, e)
             return False
 
-    async def activate_secondary_cells(self) -> bool:
-        """Phase 2g: query SCell list, activate each one. UE receives
-        SCellActivation MAC CE on the next subframe.
+    async def activate_secondary_cells(
+        self,
+        *,
+        expected_indices: Optional[List[int]] = None,
+    ) -> bool:
+        """当前 UXM 方言缺少逐 SCell 激活态权威回读，正式 CA 保持阻断。
+
+        配置清单与错误队列只能证明仪器接受了命令，不能证明 UE 实际激活了
+        ``expected_indices`` 中的每个 SCell。两种现有 profile 都没有带厂商出处的
+        逐 SCell active-state query，因此在补齐该证据前不发送激活动作，也绝不把
+        命令接受等同于 CA 已建立。
         """
-        cell = self._cell_id
-        try:
-            scell_resp = self._query(
-                self._cmds.SCELL_LIST_QUERY.format(cell=cell)
-            )
-            if not scell_resp or not scell_resp.strip():
-                logger.warning("[UXM] No SCells configured to activate")
-                return True
-            indices = [int(s) for s in scell_resp.strip().split(",") if s.strip().isdigit()]
-            for idx in indices:
-                self._write(self._cmds.SCELL_ACTIVATE.format(cell=cell, idx=idx))
-            self._query(self._cmds.OPC)
-            logger.info("[UXM] Activated %d SCell(s): %s", len(indices), indices)
-            return True
-        except Exception as e:  # noqa: BLE001
-            logger.error("[UXM] SCell activation failed: %s", e)
-            return False
+        logger.error(
+            "[UXM/%s] SCell 激活未执行：缺少逐 SCell 激活态权威回读；"
+            "expected=%s。正式 CA 保持 UNKNOWN/阻断。",
+            self._cmds.PROFILE_NAME,
+            sorted(expected_indices or []),
+        )
+        return False
 
     async def remove_all_secondary_cells(self) -> bool:
         """Phase 2g: cleanup helper — remove every SCell on this PCell."""

@@ -46,6 +46,15 @@ def _content(phases, **kw):
         # P1-54 独立可信门：本文件只隔离 PASS canonical 谓词，显式打开
         # 吞吐读数真值，避免另一个安全门掩盖这里的被测分支。
         "throughput_verified": True,
+        # P1-59 独立口径门：本文件只测 PASS 谓词，固定为完整单载波证据。
+        "throughput_scope": "pcell",
+        "carrier_aggregation": {"num_component_carriers": 1},
+        "azimuth_results": [{
+            "azimuth_deg": 0.0,
+            "throughput_mbps": 1.0,
+            "throughput_valid": True,
+            "throughput_scope": "pcell",
+        }],
         **(phases.get("measure") or {}),
     }
     return _build_mimo_ota_content_data(_exec(phases, **kw), datetime(2026, 1, 1))

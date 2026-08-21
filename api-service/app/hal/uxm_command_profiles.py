@@ -155,6 +155,8 @@ class UxmTestApp:
     #   {progress-count, current, min, max, average, current-scheduled}, 单位 bps
     MEAS_TPUT_DL_OTA: Optional[str] = None
     MEAS_TPUT_UL_OTA: Optional[str] = None
+    MEAS_TPUT_DL_OTA_ALL: Optional[str] = None
+    MEAS_TPUT_UL_OTA_ALL: Optional[str] = None
     # DL BLER: 10 doubles {progress, ack-count, ack-ratio, nack-count, nack-ratio,
     #   statdtx-count, statdtx-ratio, pdschBlerCount, pdschBlerRatio, pdschTputRatio}
     MEAS_BLER_DL: Optional[str] = None
@@ -488,6 +490,17 @@ class UxmLteNrIratProfile(UxmTestApp):
     # 单位 **bps** (GUI 显示 Mbps, SCPI 层是 bps)
     MEAS_TPUT_DL_OTA = "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:{cell}?"
     MEAS_TPUT_UL_OTA = "BSE:MEASure:NR5G:BTHRoughput:UL:THRoughput:OTA:{cell}?"
+    # Keysight UXM SCPI Reference:
+    #   UXM5G_SCPI_02_NR_PHY_Measurements.md
+    #   NR BLER/Tput > DL/UL OTA > "DL/UL OTA all NR Results"。
+    # 两条均返回 6 doubles，原文明确为所有 NR cells 结果之和；Application
+    # Mode 为 NSA | SA。其他 profile 保持 None，禁止按相似方言猜命令。
+    MEAS_TPUT_DL_OTA_ALL = (
+        "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:ALL?"
+    )
+    MEAS_TPUT_UL_OTA_ALL = (
+        "BSE:MEASure:NR5G:BTHRoughput:UL:THRoughput:OTA:ALL?"
+    )
     # DL BLER — 10 doubles, 取 idx8 = pdschBlerRatio
     MEAS_BLER_DL = "BSE:MEASure:NR5G:BTHRoughput:DL:BLER:{cell}?"
     # UL BLER — 6 doubles, 取 idx4 = nack-ratio

@@ -120,14 +120,17 @@ def test_measure_sample_gate_accepts_real_zero_and_rejects_invalid_default():
     invalid_zero = ThroughputMetrics(
         dl_throughput_mbps=0.0,
         kpi_valid={"dl_throughput": False},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
     real_zero = ThroughputMetrics(
         dl_throughput_mbps=0.0,
         kpi_valid={"dl_throughput": True},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
     non_finite = ThroughputMetrics(
         dl_throughput_mbps=float("nan"),
         kpi_valid={"dl_throughput": True},
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
     )
 
     assert MeasureExecutor._trusted_throughput_value(invalid_zero) is None
@@ -139,7 +142,8 @@ def test_measure_executor_routes_samples_through_trust_gate():
     """生产采样与 phase 判据都必须经过各自的可信门。"""
     source = inspect.getsource(MeasureExecutor.execute)
 
-    assert "self._trusted_throughput_value(metrics)" in source
+    assert "self._trusted_throughput_value(" in source
+    assert "required_scope=throughput_scope" in source
     assert "samples_tput.append(metrics.dl_throughput_mbps)" not in source
     assert "self._all_requested_throughput_is_valid(" in source
     assert "config.azimuths_deg" in source
@@ -234,10 +238,14 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
         "frequency_consistency": {"fully_verified": True},
         "path_loss_verified": True,
         "throughput_verified": True,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
                 "throughput_mbps": 350.0,
+                "throughput_valid": True,
+                "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
                 "sinr_db": 30.0,
                 "rank_indicator": 2.0,
@@ -281,10 +289,14 @@ def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
         "measurement_verified": True,
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
                 "throughput_mbps": 0.0,
+                "throughput_valid": True,
+                "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
                 "sinr_db": 30.0,
                 "rank_indicator": 2.0,
@@ -337,7 +349,7 @@ def test_report_keeps_explicitly_trusted_throughput():
     )
 
     assert content["formal_throughput_verified"] is True
-    assert content["throughput_trust_schema_version"] == 1
+    assert content["throughput_trust_schema_version"] == 2
     assert content["overall_result"] == "passed"
     assert content["table_data"][0]["Throughput (Mbps)"] == "0.0"
 
@@ -346,8 +358,13 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
     path_loss_only = {"calibration_trust_schema_version": 1}
     fully_sanitized = {
         "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+    }
+    old_throughput_scope = {
+        "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 1,
     }
 
     assert report_has_provenance_trust(path_loss_only) is False
+    assert report_has_provenance_trust(old_throughput_scope) is False
     assert report_has_provenance_trust(fully_sanitized) is True
