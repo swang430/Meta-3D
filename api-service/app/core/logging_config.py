@@ -193,15 +193,20 @@ class _DuplicateBurstLimiter:
         self.repeat_window_seconds = max(0.001, float(repeat_window_seconds))
         self.clock = clock
         self.max_buckets = max(1, int(max_buckets))
-        self._buckets: dict[tuple[str, str, str, str], _RepeatBucket] = {}
+        self._buckets: dict[tuple[str, str, str, str, int], _RepeatBucket] = {}
 
     @staticmethod
-    def _key(record: logging.LogRecord) -> tuple[str, str, str, str]:
+    def _key(record: logging.LogRecord) -> tuple[str, str, str, str, int]:
+        # P2-33：key 必须含 levelno —— 否则同文本的 ERROR 会落进已满额的
+        # INFO 桶被直接吞掉，摘要还复制首条 INFO，级别升级完全不可见
+        # （Codex #303 R1）。levelno 放末尾：drain() 按 key[0] 取
+        # execution_id，前四位的既有语义不动。
         return (
             str(getattr(record, "execution_id", "-")),
             str(getattr(record, "instrument_id", "-")),
             record.name,
             record.getMessage(),
+            record.levelno,
         )
 
     @staticmethod

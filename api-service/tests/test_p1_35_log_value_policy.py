@@ -205,10 +205,15 @@ _LOG_VIEWER = "gui/src/features/Reports/components/SystemLogViewer.tsx"
 
 
 def test_issues_view_covers_warning_error_and_critical():
-    """后端 `level` 是**精确相等**，所以「WARNING 及以上」只能靠前端并流。
+    """「仅异常」必须覆盖 WARNING/ERROR/CRITICAL 三个级别，且不得被中途切筛。
 
-    变异：把 `ISSUE_LEVELS` 砍成只剩 `['ERROR']` → 本门红
-    （那样分诊时会漏掉 WARNING，正是这一档要解决的问题）。
+    P2-33 起「仅异常」是级别多选的**一键预设**（不再是哨兵档位）：
+    唯一合法消费 = `Array.from(ISSUE_LEVELS)` 整体取。意图与立门时相同 ——
+    内审 F1 实证 `ISSUE_LEVELS.slice(0, 1)` 会让它静默退化成只看 WARNING
+    （ERROR/CRITICAL 全漏），而只看常量的门全绿。
+
+    变异：把 `ISSUE_LEVELS` 砍成只剩 `['ERROR']`，或快捷键改
+    `ISSUE_LEVELS.slice(0, 1)` → 本门红。
     """
     src = (_REPO_ROOT / _LOG_VIEWER).read_text(encoding="utf-8")
     m = re.search(r"const ISSUE_LEVELS = \[(.*?)\]", src, re.S)
@@ -219,13 +224,18 @@ def test_issues_view_covers_warning_error_and_critical():
     )
 
     # ⚠ 光检查常量不够 —— 内审 F1 原话：「从不检查它的**用处**」。
-    # 实证：`ISSUE_LEVELS.slice(0, 1).join(',')` 让「仅异常」静默退化成只看
-    # WARNING（ERROR/CRITICAL 全漏），而只看常量的门**全绿**。
-    # 所以这里钉死：这个常量只准被整体 join，不准中途被切/筛/映射。
+    # 多选模型下常量只准被 Array.from 整体取；任何 `.方法` 逐步消费
+    # （slice/filter/map/join 皆是）都给"中途少发级别"开了口子。
     uses = re.findall(r"ISSUE_LEVELS\.(\w+)", src)
-    assert uses == ["join"], (
-        f"ISSUE_LEVELS 的用法是 {uses}（应恰好一次 `.join`）—— "
-        f"中间插了 slice/filter/map 就会静默少发级别，界面看不出来"
+    assert uses == [], (
+        f"ISSUE_LEVELS 被逐方法消费 {uses} —— 只准 Array.from(ISSUE_LEVELS) "
+        f"整体取，中途切筛会静默少发级别，界面看不出来"
+    )
+    # 钉完整形态（Array.from 结果**直接**入 setter）——
+    # 只查 `Array.from(ISSUE_LEVELS)` 会被 `.slice(0, 1)` 接在其后绕过。
+    assert src.count("setSelectedLevels(Array.from(ISSUE_LEVELS))") == 1, (
+        "「仅异常」快捷键必须恰好一处、不加中间链式调用地整体选中 "
+        "ISSUE_LEVELS —— 零处 = 常量成了摆设，多处 = 又开始抄"
     )
 
 
@@ -234,9 +244,11 @@ def test_tail_and_export_share_one_filter_predicate():
 
     P1-34 内审 F3 已经吃过一次亏（屏幕 5 条、导出全量）；根因是 `/export`
     自己抄了一份判断。抄出来的两份一定会漂 —— 本片把它删了，改成调用
-    `_entry_matches`。
+    共享谓词。P2-33 起共享谓词升级为组谓词 `_group_matches`（关键词可命中
+    traceback 续行），本门的 token 随之指向它 —— 意图不变：`/export` 不得
+    自抄判断；行为一致仍由 `test_tail_and_export_return_the_same_rows` 兜底。
 
-    变异：把 `/export` 的 `_entry_matches(...)` 换回自己写的逐条 if → 本门红。
+    变异：把 `/export` 的 `_group_matches(...)` 换回自己写的逐条 if → 本门红。
     """
     src = _src("app/api/system_logs.py")
 
@@ -250,7 +262,7 @@ def test_tail_and_export_share_one_filter_predicate():
             break
     assert body, "找不到 filtered_stream —— 本门失效"
 
-    assert "_entry_matches(" in body, "/export 没有复用 _entry_matches，又自己抄了一份"
+    assert "_group_matches(" in body, "/export 没有复用共享组谓词，又自己抄了一份"
     for own in ("entry.level.upper()", "entry.session_id !=", "entry.hal_mode.lower()"):
         assert own not in body, (
             f"filtered_stream 里还留着自己那份判断 {own!r} —— "
@@ -298,12 +310,18 @@ def test_screen_history_and_export_build_their_query_from_one_place():
         f"有一处又自己拼参数了"
     )
 
-    # 归一化只该发生在一处。数全文件的哨兵判断而不是"取函数体再看外面"——
+    # 归一化只该发生在一处（数全文件而不是"取函数体再看外面"——
     # 后者试过，`}): Record<string, string> {` 这行开头就是 `}`，
-    # 非贪婪正则会在那里截断，把整个函数体判成"函数外"。
-    sentinel_checks = len(re.findall(r"=== ISSUES", src))
-    assert sentinel_checks == 1, (
-        f"`=== ISSUES` 哨兵判断出现 {sentinel_checks} 次（应恰好 1 次，在 "
-        f"buildLogQuery 里）—— 归一化又被抄了一份，漏一处就会把 "
-        f"`__ISSUES__` 发给后端（精确匹配 → 0 行）"
+    # 非贪婪正则会在那里截断，把整个函数体判成"函数外"）。
+    # P2-33 起级别过滤是多选：`__ISSUES__` 哨兵整类消失 ——「哨兵值漏发给
+    # 后端（精确匹配 → 0 行）」这一类风险的源头没了，禁止它回归；
+    # 归一化本体变成 join，恰一处（位置钉在 test_p2_33 的门里）。
+    assert "__ISSUES__" not in src, (
+        "`__ISSUES__` 哨兵回归了 —— 多选模型不需要哨兵，"
+        "留着它就重新打开「哨兵值发给后端 → 0 行」那类缺陷"
+    )
+    joins = len(re.findall(r"\.join\(','\)", src))
+    assert joins == 1, (
+        f"level 归一化 join 出现 {joins} 次（应恰好 1 次，在 buildLogQuery "
+        f"里）—— 归一化又被抄了一份，两处必漂"
     )
