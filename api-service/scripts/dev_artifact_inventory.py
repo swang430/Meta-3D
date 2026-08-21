@@ -76,20 +76,50 @@ def _git_state(worktree: Path, path: Path) -> str:
 
 def detect_open_state(path: Path) -> str:
     """Return open/closed/unknown without changing the target."""
+    return detect_open_states([path])[path.resolve()]
+
+
+def detect_open_states(
+    paths: Iterable[Path],
+    *,
+    directory: Path | None = None,
+) -> dict[Path, str]:
+    """Probe a group of files in one ``lsof`` call.
+
+    Log directories can contain hundreds of files; invoking ``lsof`` once per
+    file makes a dry-run slower than the application startup it is auditing.
+    ``-Fn`` keeps output machine-readable without opening file contents.
+    """
+    resolved = tuple(dict.fromkeys(path.resolve() for path in paths))
+    if not resolved:
+        return {}
     try:
+        selection = (
+            ["+D", os.fspath(directory.resolve())]
+            if directory is not None
+            else ["--", *(os.fspath(path) for path in resolved)]
+        )
         result = subprocess.run(
-            ["lsof", os.fspath(path)],
+            ["lsof", "-Fn", *selection],
             check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
         )
     except FileNotFoundError:
-        return "unknown"
-    if result.returncode == 0:
-        return "open"
+        return {path: "unknown" for path in resolved}
+    # macOS lsof can return 1 for +D while still emitting valid matches (for
+    # example when one process exits during the directory walk).  Valid name
+    # records are positive evidence and must not be discarded with the status.
+    if result.stdout:
+        open_paths = {
+            Path(line[1:]).resolve()
+            for line in result.stdout.splitlines()
+            if line.startswith("n/")
+        }
+        return {path: "open" if path in open_paths else "closed" for path in resolved}
     if result.returncode == 1:
-        return "closed"
-    return "unknown"
+        return {path: "closed" for path in resolved}
+    return {path: "unknown" for path in resolved}
 
 
 def _sqlite_evidence(path: Path) -> tuple[list[str], bool]:
@@ -119,11 +149,17 @@ def _known_test_location(worktree: Path, path: Path) -> bool:
     return relative == (path.name,) or relative == ("api-service", path.name)
 
 
-def _artifact_entry(worktree: dict[str, Any], path: Path, *, kind: str) -> dict[str, Any]:
+def _artifact_entry(
+    worktree: dict[str, Any],
+    path: Path,
+    *,
+    kind: str,
+    open_state: str | None = None,
+) -> dict[str, Any]:
     root = Path(str(worktree["path"])).resolve()
     path = path.resolve()
     stat = path.stat()
-    open_state = detect_open_state(path)
+    open_state = open_state or detect_open_state(path)
     git_state = _git_state(root, path)
     evidence = [f"git_{git_state}", f"worktree_head:{worktree.get('head') or 'unknown'}"]
     disposition = "protect"
@@ -192,12 +228,23 @@ def _filesystem_artifacts(worktrees: list[dict[str, Any]]) -> list[dict[str, Any
         root = Path(str(worktree["path"])).resolve()
         log_root = root / "api-service" / "logs"
         if log_root.is_dir() and not log_root.is_symlink():
-            for path in sorted(log_root.rglob("*")):
-                if path.is_symlink() or not path.is_file():
-                    continue
+            log_paths = [
+                path
+                for path in sorted(log_root.rglob("*"))
+                if not path.is_symlink() and path.is_file()
+            ]
+            open_states = detect_open_states(log_paths, directory=log_root)
+            for path in log_paths:
                 key = os.fspath(path.resolve())
                 if key not in seen:
-                    entries.append(_artifact_entry(worktree, path, kind="log"))
+                    entries.append(
+                        _artifact_entry(
+                            worktree,
+                            path,
+                            kind="log",
+                            open_state=open_states[path.resolve()],
+                        )
+                    )
                     seen.add(key)
         for path in _candidate_database_paths(root):
             key = os.fspath(path.resolve())

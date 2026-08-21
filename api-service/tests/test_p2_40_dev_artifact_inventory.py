@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -188,3 +189,21 @@ def test_docker_unavailable_is_explicit_and_safe(tmp_path: Path) -> None:
 
     assert manifest["probes"]["docker"] == "unavailable"
     assert not any(item["disposition"] == "quarantine_candidate" for item in manifest["docker_volumes"])
+
+
+def test_lsof_partial_success_keeps_positive_open_evidence(tmp_path: Path, monkeypatch) -> None:
+    module = _load_module()
+    log = tmp_path / "app.log"
+    log.write_text("evidence", encoding="utf-8")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=f"p123\nf4\nn{log}\n",
+            stderr="",
+        ),
+    )
+
+    assert module.detect_open_states([log], directory=tmp_path)[log.resolve()] == "open"
