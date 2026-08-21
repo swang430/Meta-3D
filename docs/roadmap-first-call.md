@@ -18,7 +18,17 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-38「Dashboard readiness 显式消费顶部选定 LabProfile」（R1 P1 已修，待 R2；2026-08-22）**。
+**Current Focus = P2-31「SMB `.smu` 工程真值扫描」（P2-36 核验为 PR #292 已交付的重复项；2026-08-22）**。
+
+> **~~P2-36~~ ✅ 2026-08-22 现状核验收口**：该条目的“执行历史一键跳本次执行日志”
+> 已由 P1-39 / PR #292 在提交 `5c89a60` 完整交付；当前 main 仍保留
+> `HistoryTab → App → ReportsPage → SystemLogViewer` 四段接线，传递与过滤使用完整
+> execution ID，并以一次性交接避免后续页面劫持。2026-08-21 从旧 Discovered 再次提升为
+> P2-36 属 roadmap 重复项，不重复实现。核验证据见
+> [`P2-36 现状核验`](plans/2026-08-22-p2-36-execution-history-log-jump-reconciliation.md)。
+
+> **~~P2-38~~ ✅ 2026-08-22 由 PR #366 完成**：R1 的缓存假绿 P1 已按 TDD 收口，
+> R2 覆盖最终 HEAD `f5d28dd` 且无重大问题；merge commit `e017f4b`。
 
 > **P2-38 开发证据**：Dashboard 只有在顶部存在显式 LabProfile 选择时才读取 readiness，
 > 查询参数与 React Query key 共同使用该 ID；后端通过 active 白名单精确解析，按请求重建
@@ -136,7 +146,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
 P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ →
 ~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → ~~P2-40~~ ✅ →
-~~P2-37~~ ✅ → **P2-38** → P2-36 → P2-31 → P3-22**。
+~~P2-37~~ ✅ → ~~P2-38~~ ✅ → ~~P2-36~~ ✅ → **P2-31** → P3-22**。
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
@@ -163,10 +173,10 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P3-21** | 统一 UXM 两套诊断错误队列读取逻辑 | ↪ 非阻塞维护池；诊断 helper 已有上界 |
 | **P1-58** | `uxm_scpi_compatibility` 判据按当前方言 profile 派生，四态结果不再折叠 | ✅ PR #358（最终 HEAD 经 R3 覆盖，无 P1） |
 | **P2-35** | `current_execution_id` 测试间泄漏隔离 | ✅ PR #357 |
-| **P2-36** | 执行历史一键跳本次执行日志（P1-36 串链只差入口） | ⬜（2026-08-21 自 Discovered 8-05 提升） |
+| **P2-36** | 执行历史一键跳本次执行日志 | ✅ 已由 P1-39 / PR #292（`5c89a60`）交付；2026-08-22 核验为重复项 |
 | **P1-59** | CA 多小区正式吞吐使用聚合真值；PCell-only 不得冒充 CA 总吞吐 | ✅ PR #362（R5 覆盖最终 HEAD，无 P1）；逐 SCell 激活态回读现场证据仍 Hardware Blocked |
 | **P2-37** | UE L3 报告队列有界消费，避免后台监控响应/日志无界增长 | ✅ PR #365；merge `406ff71` |
-| **P2-38** | Dashboard readiness 显式消费顶部选定 LabProfile | 🟡 开发/回归/内审完成，待外审 |
+| **P2-38** | Dashboard readiness 显式消费顶部选定 LabProfile | ✅ PR #366；merge `e017f4b`；R2 覆盖最终 HEAD 无 P1 |
 | **P2-39** | pytest 与运行日志目录隔离，测试不得轮转删除历史仪器证据 | ✅ PR #363；merge `9417fee` |
 | **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；实际隔离另候批准 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ⬜ |
@@ -412,7 +422,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-38 ⏭ → P2-36 → P2-31 → P3-22**，当前 WIP=1。P2-40 代码已合并，实际隔离仍在独立批准点；P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 已完成历史见顶部表；当前顺序 **P2-31 ⏭ → P3-22**，当前 WIP=1。P2-36 经核验已由 PR #292 交付；P2-40 代码已合并，实际隔离仍在独立批准点；P2-32 已转功能启用池，P3-20/P3-21 已转非阻塞维护池。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3908,7 +3918,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[resolved 2026-08-18 by P2-28 / PR #352；原 discovered 2026-08-06 during P1-45 external review, Codex #295 R1]` **诊断序列完整 output / trace pointer 持久化缺口** —— `POST /api/v1/diagnostic-sequences/{key}/run` 的 live response 含完整 `steps/raw`，但 `DiagnosticContext.record_run()` 原来只把组合输出截成最多约 2048 bytes 的 `DiagnosticRun.output_excerpt`，该 endpoint 又没有传 `hal_trace_log_path`；离开 live 结果后，审计行可能既没有完整 raw，也没有可回取全量 trace 的指针。P2-28 已采用与审计行同生命周期的结构化 `sequence_evidence`，详情可重新打开完整证据，旧行只显示摘要并明确不可恢复，不依赖日志轮转/清理后可能失效的指针，也不从旧摘要猜测证据。
 
-- `[discovered 2026-08-05 during P1-36 内审 F7]` **「从执行历史一键看这次执行的日志」未做（P2）** —— P1-36 给了 `execution_id` 串链 + 日志表「执行」列（点它隔离），但**没有从执行历史跳过去的入口**：`SystemLogViewer` 不接任何 props、也不读 URL 参数。所以「跑完一个用例想看它做了什么」这条路现在是"自己去日志页、找到那次执行的任意一行、点一下"，而不是"从执行历史点一下"。**顺带**：过滤徽章显示的是裸 UUID 前 8 位，P1-36 条目 ⚠② 原本要求"显示用例名 + 执行时间"（**过滤判据仍须用 id**，别拿名字当键 —— 同名用例会合并成假链）。两件事一起做：给 `SystemLogViewer` 加受控 props（或走 URL 查询参数），执行历史每行加跳转按钮。
+- `[resolved 2026-08-06 by P1-39 / PR #292；2026-08-22 复核并关闭重复 P2-36]` **「从执行历史一键看这次执行的日志」已完成** —— `HistoryTab` 每行按钮把完整 execution ID 经 `App` 一次性交给 `ReportsPage`，自动切到系统日志页签并让 `SystemLogViewer` 的首个请求直接携带精确过滤；执行标签显示用例名语境与本地执行时间，复制/过滤仍使用完整 UUID。2026-08-21 从本条旧文字再次提升的 P2-36 是重复项，未再实现第二套机制。
 
 - `[discovered 2026-08-05 during P1-35]` **`instrument_logs` 孤儿表待 drop（P3）** —— P1-35 删掉了 `InstrumentLog` 模型与三个 schema（零引用、库里 0 行、0 写入方），**表本身还在**。内审已查证**无害**：① `alembic/` 里零命中，这张表从来不是任何迁移建的；② baseline 迁移 `40fd1c51ff40` 走 `Base.metadata.create_all`，所以新的 greenfield 库**不会再有它**；③ 后续迁移全是手写 `table_exists/column_exists` 守门式，本仓库不用 autogenerate。**唯一残留风险**：哪天有人跑 `alembic revision --autogenerate` 会白得一条 `drop_table`。真要 drop 需 migration，而两台现场机器是 brownfield 库，属另一类风险 —— 单独走一片，按 `feedback_addcolumn_migration_dialect_agnostic` 三路径（PG / SQLite-brownfield / SQLite-greenfield）验。
 - `[discovered 2026-08-05 during P1-35 内审 F8]` **两个日志面板对「异常」有两个定义，主控台漏 CRITICAL（P3）** —— P1-35 在 `SystemLogViewer` 确立「异常 = WARNING/ERROR/CRITICAL」，而 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 的 `LEVEL_FILTERS` 只有 `{INFO, WARNING, ERROR}`，且**没有任何 chip 能打开 CRITICAL** —— 不是"要多点一下"，是那个开关不存在，于是 CRITICAL 的行在主控台日志面板里**恒被客户端过滤掉**。P2-19 遗留，非 P1-35 造成（按 ⑦ 判据「不改它本片故障还在吗」→ 还在，故本片不顺手改）。**顺带**：`ZoneLogsAlerts` 现在可以用一个 `level=WARNING,ERROR,CRITICAL` 请求替掉那三十行两路 boost + 跨流去重（P1-35 的新能力开出来的化简机会）。
