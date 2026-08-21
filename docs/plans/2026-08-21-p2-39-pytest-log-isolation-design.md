@@ -76,3 +76,18 @@ SCPI 证据、执行日志、系统日志 API 与完整 rule gates 回归。
 - 不改变正式日志留存天数或敏感 SCPI 30 天上限。
 - 不把测试日志改写为内存 mock，也不跳过 `setup_logging()`。
 - 不处理非 pytest 的临时脚本；本条可观察故障限定为 pytest 导入应用链。
+
+## 实施与验证（当前代码提交 `903f811`）
+
+- RED：子 pytest 继承受保护 `LOG_DIR` 后，`app.log` 被轮转并新增九类当前日志，保护目录
+  快照断言失败；证明测试确实命中本条故障，而不是只检查源码形状。
+- GREEN：conftest 无条件覆盖 `LOG_DIR` 后，同一子进程测试通过；保护目录的文件名、字节、
+  大小与 mtime 全部保持不变。
+- 门变异：把直接赋值改成 `setdefault`，顺序门按预期失败；恢复后完整 rule gates
+  **53 passed**。
+- 日志相关回归：**66 passed**；全后端：**4172 passed / 5 skipped**。
+- 全量测试前后对 worktree `api-service/logs` 的文件名、大小与 mtime manifest 做精确比较，
+  结果完全一致，确认全量 pytest 没有触碰运行日志。
+- `compileall` 通过（仅一条既有 `test_rule_gates.py` 无效转义 SyntaxWarning）；
+  `git diff --check origin/main...HEAD` 通过。
+- fresh 内审：P1/P2/P3=0。生产日志配置零改动，范围只覆盖测试入口、端到端回归与顺序门。
