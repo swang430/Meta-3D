@@ -219,6 +219,29 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
 - Emit `execution_failed` only when the failed transition wins; a late writer must reread and respect
   the existing terminal owner without publishing a contradictory alert.
 
+### Task 5E: Publish REPORT only after verified instrument handoff
+
+**Files:**
+- Modify: `api-service/app/services/instrument_test_lease.py`
+- Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/app/api/commissioning.py`
+- Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `api-service/tests/test_commissioning_adhoc.py`
+- Modify: `api-service/tests/test_p1_40_execution_logs.py`
+- Modify: `api-service/tests/test_p1_56_positioner_motion_truth.py`
+
+- Add RED order tests proving formal and commissioning REPORT dispatch happens only after the lease
+  has exited successfully; run-all must defer its final REPORT descriptor too.
+- Preserve both the business exception and release exception by raising one
+  `InstrumentTestLeaseError`; the outer runner must not mistake a failed handoff for an ordinary
+  phase failure.
+- On handoff failure, preserve the previous terminal/error evidence, mark the authoritative execution
+  failed, add explicit Local-handoff diagnostics, and emit one failure alert.
+- Add a deterministic concurrent-cancel RED test. If the first failed-handoff CAS loses, reread the
+  database winner and retry once so a hardware-truth failure cannot disappear behind a late cancel.
+- Keep REPORT outside the hardware lease after handoff; it performs no instrument I/O and must never
+  publish a completed PDF while either controlled instrument may still be Remote.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**

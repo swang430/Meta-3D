@@ -480,8 +480,13 @@ async def _run_case(execution_id: UUID) -> None:
     current_execution_id.set(str(execution_id))
     db = SessionLocal()
     try:
+        deferred_report = None
         async with instrument_test_lease(f"formal-case:{execution_id}"):
-            await _run_case_loop(db, execution_id)
+            deferred_report = await _run_case_loop(
+                db, execution_id, defer_report=True
+            )
+        if deferred_report is not None:
+            await _run_deferred_case_report(db, execution_id, deferred_report)
     except Exception as e:  # noqa: BLE001
         logger.exception("[case-runner] execution %s 执行器异常: %s", execution_id, e)
         try:
@@ -492,22 +497,28 @@ async def _run_case(execution_id: UUID) -> None:
             )
             lease_failed = isinstance(e, InstrumentTestLeaseError)
             if ex is not None and (ex.status == "running" or lease_failed):
-                # Local 交接是执行完整性的一部分：业务相位全绿但 F64 仍被 Remote
-                # 占着，不得继续显示 completed。cancelled/failed 本来已是非成功，
-                # 只补证据；completed/running 才降级为 failed。
-                cfg = dict(ex.config or {})
-                cfg["error_message"] = f"执行器异常: {e}"
-                if lease_failed:
-                    cfg["local_control_handoff_failed"] = True
-                _finalize_scpi_acceptance(ex)
-                expected_status = (
-                    ex.status
-                    if ex.status == "running"
-                    or (lease_failed and ex.status == "completed")
-                    else None
-                )
+                # Local 交接是执行完整性的一部分：无论此前业务赢家是完成、取消
+                # 还是失败，只要 F64/UXM 仍可能处于 Remote，最终都必须明确
+                # failed，同时保留此前赢家及其错误作为诊断证据。
                 won = False
-                if expected_status is not None:
+                attempts = 2 if lease_failed else 1
+                for attempt in range(attempts):
+                    if attempt:
+                        # 交接失败比 completed/cancelled/failed 都更接近硬件真值。
+                        # 若第一次 CAS 输给并发取消/终态写方，必须重读赢家并在
+                        # 它之上保留原始业务证据后再降级，不能静默漏掉交接失败。
+                        db.expire(ex)
+                        db.refresh(ex)
+                    _finalize_scpi_acceptance(ex)
+                    cfg = dict(ex.config or {})
+                    if lease_failed:
+                        cfg["local_control_handoff_failed"] = True
+                        cfg["local_control_handoff_previous_status"] = ex.status
+                        cfg["local_control_handoff_error"] = str(e)
+                        cfg.setdefault("error_message", f"执行器异常: {e}")
+                    else:
+                        cfg["error_message"] = f"执行器异常: {e}"
+                    expected_status = ex.status
                     completed_at = datetime.utcnow()
                     won = _cas_case_execution_terminal(
                         db,
@@ -521,9 +532,11 @@ async def _run_case(execution_id: UUID) -> None:
                         ),
                         config=cfg,
                     )
-                else:
-                    # cancelled/failed 已有终态所有者；只持久化 SCPI 接受度，
-                    # 不改生命周期、config，也不重复发布失败告警。
+                    if won:
+                        break
+                if not won and not lease_failed:
+                    # 非租约业务异常遇到已有终态时只持久化 SCPI 接受度；
+                    # 已有赢家不能被迟到异常覆盖。
                     db.commit()
                 if won:
                     emit_execution_failed_alert(ex.id)
@@ -545,7 +558,9 @@ async def _run_case(execution_id: UUID) -> None:
             db.close()
 
 
-async def _run_case_loop(db, execution_id: UUID) -> None:
+async def _run_case_loop(
+    db, execution_id: UUID, *, defer_report: bool = False
+) -> Optional[dict]:
     execution = (
         db.query(TestExecution).filter(TestExecution.id == execution_id).first()
     )
@@ -574,7 +589,7 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
     failed_phase: Optional[str] = None
     failed_message: Optional[str] = None
 
-    for raw in descriptors:
+    for index, raw in enumerate(descriptors):
         # ── 协作式 cancel: 相位间读最新状态, 反向判定 (非 running 一律停,
         #    cancel / 任何外部改状态都尊重, 不枚举具体终态) ──
         db.expire(execution)
@@ -589,6 +604,13 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
             return
 
         d = _descriptor_from_dict(raw)
+        if defer_report and d.type == "MIMO_OTA_REPORT":
+            if index != len(descriptors) - 1:
+                raise RuntimeError("MIMO_OTA_REPORT 必须是执行链最后一个相位")
+            # REPORT 不触碰硬件。正式 PDF/内容与 completed 生命周期只能在
+            # F64/UXM 已成功交还 Local 后发布，消除交接失败/进程崩溃留下的
+            # “报告 completed、仪表仍 Remote”窗口。
+            return raw
         ctx = build_step_context(db, execution, test_case, d)
         result = await dispatch_step(ctx)
         phase_status = result.status.value
@@ -650,6 +672,69 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         evidence_summary.formal_verdict.value,
         evidence_summary.reason,
     )
+    return None
+
+
+async def _run_deferred_case_report(
+    db, execution_id: UUID, raw: dict
+) -> None:
+    """在仪表租约成功退出后执行唯一的无硬件 REPORT 相位。"""
+    execution = (
+        db.query(TestExecution).filter(TestExecution.id == execution_id).first()
+    )
+    if execution is None:
+        raise RuntimeError(f"execution {execution_id} 在 REPORT 前不存在")
+    db.expire(execution)
+    db.refresh(execution)
+    if execution.status != "running":
+        _finalize_scpi_acceptance(execution)
+        db.commit()
+        return
+    test_case = (
+        db.query(TestCase).filter(TestCase.id == execution.test_case_id).first()
+    )
+    if test_case is None:
+        raise RuntimeError(f"execution {execution_id} 的快照 TestCase 不存在")
+
+    descriptor = _descriptor_from_dict(raw)
+    result = await dispatch_step(
+        build_step_context(db, execution, test_case, descriptor)
+    )
+    db.expire(execution)
+    db.refresh(execution)
+    cfg = dict(execution.config or {})
+    cfg.setdefault("phase_progress", []).append(
+        {"type": descriptor.type, "status": result.status.value}
+    )
+    execution.config = cfg
+    flag_modified(execution, "config")
+    db.commit()
+
+    db.expire(execution)
+    db.refresh(execution)
+    if execution.status == "running":
+        completed_at = datetime.utcnow()
+        _finalize_scpi_acceptance(execution)
+        cfg = dict(execution.config or {})
+        terminal_status = "completed"
+        if result.status.value != "success":
+            terminal_status = "failed"
+            cfg["failed_phase"] = descriptor.type
+            cfg["error_message"] = (
+                result.error_message
+                or "REPORT 未发布正式执行终态，报告保持不可用"
+            )
+        won = _cas_case_execution_terminal(
+            db,
+            execution.id,
+            expected_status="running",
+            terminal_status=terminal_status,
+            completed_at=completed_at,
+            duration_sec=_terminal_duration(execution.started_at, completed_at),
+            config=cfg,
+        )
+        if won and terminal_status == "failed":
+            emit_execution_failed_alert(execution.id)
 
 
 def _descriptor_from_dict(raw: dict):

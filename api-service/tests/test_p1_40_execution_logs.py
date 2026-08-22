@@ -242,7 +242,11 @@ async def test_case_runner_closes_execution_log(monkeypatch):
             return None
 
     monkeypatch.setattr(test_case_runner, "SessionLocal", _Db)
-    monkeypatch.setattr(test_case_runner, "_run_case_loop", lambda db, eid: _done())
+    monkeypatch.setattr(
+        test_case_runner,
+        "_run_case_loop",
+        lambda db, eid, *, defer_report=False: _done(),
+    )
     monkeypatch.setattr(test_case_runner, "close_execution_log", closed.append)
 
     await test_case_runner._run_case(execution_id)
@@ -262,7 +266,11 @@ async def test_case_runner_log_close_failure_does_not_leak_db(monkeypatch):
             state["db_closed"] = True
 
     monkeypatch.setattr(test_case_runner, "SessionLocal", _Db)
-    monkeypatch.setattr(test_case_runner, "_run_case_loop", lambda db, eid: _done())
+    monkeypatch.setattr(
+        test_case_runner,
+        "_run_case_loop",
+        lambda db, eid, *, defer_report=False: _done(),
+    )
     monkeypatch.setattr(
         test_case_runner,
         "close_execution_log",

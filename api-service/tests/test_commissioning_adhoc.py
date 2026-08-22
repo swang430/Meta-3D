@@ -287,14 +287,27 @@ class TestAdhocPhaseEndpoint:
         )
 
         terminal_at = datetime(2026, 8, 22, 3, 4, 5)
+        events = []
+
+        @asynccontextmanager
+        async def _lease(_purpose):
+            events.append("lease-enter")
+            try:
+                yield
+            finally:
+                events.append("lease-exit")
 
         async def _fake_dispatch(ctx):
+            events.append("report-dispatch")
             ctx.test_execution.status = "completed"
             ctx.test_execution.completed_at = terminal_at
             ctx.test_execution.duration_sec = 89.195194
             ctx.db.commit()
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
 
         resp = client.post(
@@ -308,6 +321,7 @@ class TestAdhocPhaseEndpoint:
         assert execution.status == "completed"
         assert execution.completed_at == terminal_at
         assert execution.duration_sec == pytest.approx(89.195194)
+        assert events == ["lease-enter", "lease-exit", "report-dispatch"]
 
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(
@@ -448,8 +462,8 @@ class TestExecutionStatusVisibleToReloadGate:
             finally:
                 events.append("exit")
 
-        async def _dispatch(_ctx):
-            events.append("dispatch")
+        async def _dispatch(ctx):
+            events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
         monkeypatch.setattr(
@@ -469,7 +483,7 @@ class TestExecutionStatusVisibleToReloadGate:
         assert resp.status_code == 200, resp.text
         assert events == [
             f"enter:commissioning-phase:{sid}:precheck",
-            "dispatch",
+            "dispatch:MIMO_OTA_PRECHECK",
             "exit",
         ]
 
@@ -489,8 +503,8 @@ class TestExecutionStatusVisibleToReloadGate:
             finally:
                 events.append("exit")
 
-        async def _dispatch(_ctx):
-            events.append("dispatch")
+        async def _dispatch(ctx):
+            events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
         monkeypatch.setattr(
@@ -507,8 +521,8 @@ class TestExecutionStatusVisibleToReloadGate:
 
         assert resp.status_code == 200, resp.text
         assert events[0] == f"enter:commissioning-run-all:{sid}"
-        assert events[-1] == "exit"
-        assert events.count("dispatch") == 5
+        assert events[-2:] == ["exit", "dispatch:MIMO_OTA_REPORT"]
+        assert len([event for event in events if event.startswith("dispatch:")]) == 5
     """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
     否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
 

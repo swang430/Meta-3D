@@ -78,6 +78,11 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 - cancel 先赢时，同一报告按 cancelled/incomplete 重建；completed 先赢后 cancel 返回冲突；
 - 历史行缺少 `duration_sec` 或 `completed_at` 时保持 `None` 并渲染 `N/A`，不得猜 0 秒或重建时刻；
 - commissioning adhoc 包装层只收尾仍为 running 的相位，不覆盖 REPORT 已拥有的终态时间；
+- 正式 runner 与 commissioning 的 REPORT 必须延迟到仪表租约成功退出、F64/UXM 已确认交还
+  Local 后才允许生成或发布；交接失败时不得留下 completed/可下载报告；
+- 业务异常与 Local 交接异常同时发生时，交接失败不能被前一个异常遮蔽；既有业务错误、取消
+  或完成证据必须保留，并把最终生命周期降级为 failed。若交接失败收尾的第一次 CAS 输给并发
+  取消，必须重读终态赢家后再裁决，不能静默漏掉硬件仍可能处于 Remote 的事实；
 - 公开恢复入口只允许权威执行已经处于终态时取得 writer claim；运行中的内部 pending 报告
   只能由同时携带 typed projection 与数据库 resolver 的 REPORT executor 继续；
 - 外部取消方若先写入 cancelled/completed_at，也必须把同一终态的 duration_sec 落到执行行；
@@ -103,6 +108,13 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
     报告都保持 completed。
 12. runner 已读到 phase failure 后，cancel CAS 先赢时，普通失败收尾不得覆盖 cancelled，
     也不得发布 `execution_failed` 告警。
+13. 正式 runner、commissioning 单相位/adhoc/run-all 均在仪表租约成功退出后才调用 REPORT；
+14. 业务异常与 lease release 异常同时出现时，外层必须收到包含两者的
+    `InstrumentTestLeaseError`；
+15. Local 交接失败发生在 completed/cancelled/failed 既有终态后时，最终统一 failed，保留
+    原错误并写入交接诊断与失败告警；
+16. Local 交接失败的第一次终态 CAS 若输给并发 cancel，重读 cancelled 赢家后再次裁决为
+    failed，并保留取消证据。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。

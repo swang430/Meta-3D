@@ -777,10 +777,17 @@ async def run_phase(
     ctx = _build_context(db, execution, test_case, step)
     with _execution_marked_running(db, execution):
         with retain_positioner_stop_generation(_current_positioner_driver()):
-            async with instrument_test_lease(
-                f"commissioning-phase:{session_id}:{phase_name}"
-            ):
+            if target_step_type == "MIMO_OTA_REPORT":
+                async with instrument_test_lease(
+                    f"commissioning-phase:{session_id}:{phase_name}"
+                ):
+                    pass
                 result = await dispatch_step(ctx)
+            else:
+                async with instrument_test_lease(
+                    f"commissioning-phase:{session_id}:{phase_name}"
+                ):
+                    result = await dispatch_step(ctx)
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -915,10 +922,17 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     try:
         ctx = _build_context(db, execution, test_case, step)
         with retain_positioner_stop_generation(_current_positioner_driver()):
-            async with instrument_test_lease(
-                f"commissioning-adhoc:{req.phase_name}"
-            ):
+            if target_step_type == "MIMO_OTA_REPORT":
+                async with instrument_test_lease(
+                    f"commissioning-adhoc:{req.phase_name}"
+                ):
+                    pass
                 result = await dispatch_step(ctx)
+            else:
+                async with instrument_test_lease(
+                    f"commissioning-adhoc:{req.phase_name}"
+                ):
+                    result = await dispatch_step(ctx)
         status_value = result.status.value
         error_message = result.error_message
     except Exception as e:  # noqa: BLE001
@@ -1052,8 +1066,16 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     started_at = datetime.utcnow()
     with _execution_marked_running(db, execution):
         with retain_positioner_stop_generation(_current_positioner_driver()):
+            deferred_report = None
             async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
-                for step in descriptors:
+                for index, step in enumerate(descriptors):
+                    if step.type == "MIMO_OTA_REPORT":
+                        if index != len(descriptors) - 1:
+                            raise RuntimeError(
+                                "MIMO_OTA_REPORT 必须是 run-all 最后一个相位"
+                            )
+                        deferred_report = step
+                        break
                     ctx = _build_context(db, execution, test_case, step)
                     result = await dispatch_step(ctx)
                     if result.status.value == "failed":
@@ -1066,6 +1088,14 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                             result.error_message,
                         )
                         break
+            if aborted_at is None and deferred_report is not None:
+                ctx = _build_context(
+                    db, execution, test_case, deferred_report
+                )
+                result = await dispatch_step(ctx)
+                if result.status.value == "failed":
+                    aborted_at = deferred_report.type
+                    abort_message = result.error_message
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表

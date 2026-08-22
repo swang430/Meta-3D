@@ -286,13 +286,17 @@ class InstrumentTestLease:
                             "[instrument-lease] 测试结束，F64/UXM 控制会话已释放: %s",
                             purpose,
                         )
-                except BaseException:
+                except BaseException as release_error:
                     if operation_error is None:
                         raise
                     logger.exception(
                         "[instrument-lease] 取得/使用仪表异常后释放控制会话也失败: %s",
                         purpose,
                     )
+                    raise InstrumentTestLeaseError(
+                        f"测试 {purpose!r} 的操作失败 ({operation_error})，且随后"
+                        f"未能安全归还仪表控制 ({release_error})"
+                    ) from operation_error
 
     async def park_idle_instruments(self) -> bool:
         """HAL 初始化/重载完成后，关闭 F64 与 UXM 的控制会话。"""
