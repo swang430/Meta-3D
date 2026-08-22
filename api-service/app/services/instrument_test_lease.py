@@ -180,6 +180,41 @@ class InstrumentTestLease:
                 + (f": {detail}" if detail else "")
             )
 
+    async def _settle_local_controls(
+        self,
+        hal,
+        purpose: str,
+        *,
+        control_f64: bool,
+        control_uxm: bool,
+    ) -> None:
+        """独立尝试缓存清理与全部 Local 归还，并聚合完整失败证据。"""
+        failures: list[tuple[str, BaseException]] = []
+        try:
+            await self._clear_metrics_cache(hal)
+        except BaseException as exc:
+            failures.append(("指标缓存清理", exc))
+
+        for enabled, instrument in (
+            (control_uxm, "UXM"),
+            (control_f64, "F64"),
+        ):
+            if not enabled:
+                continue
+            try:
+                await self._release_local(hal, purpose, instrument=instrument)
+            except BaseException as exc:
+                failures.append((f"{instrument} Local 交接", exc))
+
+        if failures:
+            details = "；".join(
+                f"{stage}: {type(exc).__name__}: {exc}"
+                for stage, exc in failures
+            )
+            raise InstrumentTestLeaseReleaseError(
+                f"测试 {purpose!r} 结束时未能完整确认仪表 Local 交接：{details}"
+            ) from failures[0][1]
+
     @asynccontextmanager
     async def hold(
         self,
@@ -270,22 +305,12 @@ class InstrumentTestLease:
                 self._monitoring_enabled = False
                 try:
                     if hal is not None:
-                        await self._clear_metrics_cache(hal)
-                        release_errors: list[BaseException] = []
-                        for enabled, instrument in (
-                            (control_uxm, "UXM"),
-                            (control_f64, "F64"),
-                        ):
-                            if not enabled:
-                                continue
-                            try:
-                                await self._release_local(
-                                    hal, purpose, instrument=instrument
-                                )
-                            except BaseException as exc:
-                                release_errors.append(exc)
-                        if release_errors:
-                            raise release_errors[0]
+                        await self._settle_local_controls(
+                            hal,
+                            purpose,
+                            control_f64=control_f64,
+                            control_uxm=control_uxm,
+                        )
                         logger.info(
                             "[instrument-lease] 测试结束，F64/UXM 控制会话已释放: %s",
                             purpose,
@@ -308,17 +333,12 @@ class InstrumentTestLease:
             if self.is_active:
                 return False
             hal = self._hal()
-            await self._clear_metrics_cache(hal)
-            release_errors: list[BaseException] = []
-            for instrument in ("UXM", "F64"):
-                try:
-                    await self._release_local(
-                        hal, "idle-park", instrument=instrument
-                    )
-                except BaseException as exc:
-                    release_errors.append(exc)
-            if release_errors:
-                raise release_errors[0]
+            await self._settle_local_controls(
+                hal,
+                "idle-park",
+                control_f64=True,
+                control_uxm=True,
+            )
             logger.info(
                 "[instrument-lease] 空闲停放完成：F64/UXM 均不保持 Remote"
             )

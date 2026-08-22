@@ -335,6 +335,89 @@ async def test_uxm_release_failure_does_not_skip_f64_release():
 
 
 @pytest.mark.asyncio
+async def test_exit_cache_failure_still_attempts_and_reports_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _ExitCacheFailureHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            if self.cache_clears == 2:
+                raise RuntimeError("exit cache clear failed")
+
+    events: list[str] = []
+    hal = _ExitCacheFailureHAL(
+        _FakeF64(events, release_ok=False),
+        _FakeUxm(events, release_ok=False),
+    )
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError) as caught:
+        async with lease.hold("formal-case"):
+            events.append("test")
+
+    message = str(caught.value)
+    assert "exit cache clear failed" in message
+    assert "UXM" in message
+    assert "F64" in message
+    assert events == [
+        "f64-remote",
+        "uxm-remote",
+        "test",
+        "uxm-local",
+        "f64-local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_idle_cache_failure_still_attempts_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _CacheFailureHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            raise RuntimeError("idle cache clear failed")
+
+    events: list[str] = []
+    hal = _CacheFailureHAL(_FakeF64(events), _FakeUxm(events))
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError, match="idle cache clear failed"):
+        await lease.park_idle_instruments()
+
+    assert events == ["uxm-local", "f64-local"]
+
+
+@pytest.mark.asyncio
+async def test_exit_cleanup_cancellation_still_attempts_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _ExitCancelledHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            if self.cache_clears == 2:
+                raise asyncio.CancelledError("cancel during cleanup")
+
+    events: list[str] = []
+    hal = _ExitCancelledHAL(_FakeF64(events), _FakeUxm(events))
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError, match="CancelledError"):
+        async with lease.hold("formal-case"):
+            events.append("test")
+
+    assert events[-2:] == ["uxm-local", "f64-local"]
+
+
+@pytest.mark.asyncio
 async def test_lease_is_visible_while_remote_acquire_is_still_in_progress():
     from app.services.instrument_test_lease import InstrumentTestLease
 

@@ -208,6 +208,57 @@ def _reconcile_ambiguous_alert_commit(
         _close_best_effort(verify_db, execution_id)
 
 
+def _reconcile_ambiguous_alert_update(
+    execution_id: UUID,
+    alert_id: UUID,
+    intended_message: str,
+    commit_error_summary: str,
+) -> str:
+    """用新会话核对既有告警正文更新的 COMMIT 真值。"""
+    verify_db: Any = None
+    try:
+        verify_db = SessionLocal()
+        committed = (
+            verify_db.query(Alert.id)
+            .filter(
+                Alert.id == alert_id,
+                Alert.alert_type == EXECUTION_FAILED_ALERT_TYPE,
+                Alert.related_entity_type == "test_execution",
+                Alert.related_entity_id == execution_id,
+                Alert.message == intended_message,
+            )
+            .first()
+        )
+        if committed is None:
+            logger.warning(
+                "执行 %s 的既有告警正文更新结果暂不可见，历史保持原记录：%s",
+                execution_id,
+                commit_error_summary,
+            )
+            return OUTCOME_FAILED
+        _record_publish_outcome(
+            verify_db,
+            execution_id,
+            OUTCOME_DUPLICATE,
+            str(alert_id),
+            None,
+        )
+        logger.info(
+            "执行 %s 的既有告警更新确认丢失，但已按冻结 ID 与正文查证成功",
+            execution_id,
+        )
+        return OUTCOME_DUPLICATE
+    except Exception:  # noqa: BLE001 - 查证失败不得猜测正文是否已提交
+        _rollback_best_effort(verify_db, execution_id, "既有告警更新查证事务")
+        logger.exception(
+            "执行 %s 的既有告警正文更新结果无法查证，历史保持原记录",
+            execution_id,
+        )
+        return OUTCOME_FAILED
+    finally:
+        _close_best_effort(verify_db, execution_id)
+
+
 def emit_execution_failed_alert(execution_id: UUID) -> str:
     """为一个新进入 failed 的正式执行创建告警，并记录发布结果。
 
@@ -261,8 +312,25 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
             # 保持 Remote”这一新的安全事实。
             if existing_alert.message != message:
                 existing_alert.message = message
-                db.commit()
-            outcome = OUTCOME_DUPLICATE
+                frozen_alert_id = existing_alert.id
+                try:
+                    db.commit()
+                except Exception as exc:  # noqa: BLE001 - COMMIT 结果需独立查证
+                    _rollback_best_effort(db, execution_id, "既有告警更新事务")
+                    error_summary = (
+                        f"{type(exc).__name__}: {exc}"
+                    )[:_ERROR_SUMMARY_LIMIT]
+                    outcome = _reconcile_ambiguous_alert_update(
+                        execution_id,
+                        frozen_alert_id,
+                        message,
+                        error_summary,
+                    )
+                    outcome_already_recorded = True
+                else:
+                    outcome = OUTCOME_DUPLICATE
+            else:
+                outcome = OUTCOME_DUPLICATE
             alert_id = str(existing[0])
         else:
             new_alert_id = uuid4()

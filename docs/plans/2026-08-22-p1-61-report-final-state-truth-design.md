@@ -83,6 +83,12 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 - 业务异常与 Local 交接异常同时发生时，交接失败不能被前一个异常遮蔽；既有业务错误、取消
   或完成证据必须保留，并把最终生命周期降级为 failed。若交接失败收尾的第一次 CAS 输给并发
   取消，必须重读终态赢家后再裁决，不能静默漏掉硬件仍可能处于 Remote 的事实；
+- 退出缓存清理与 UXM/F64 两台 Local 归还必须各自独立尝试；任一异常或取消不得跳过其余硬件
+  归还，全部失败必须聚合进同一个 `InstrumentTestLeaseReleaseError`；
+- commissioning executor 已返回业务失败、随后 Local 交接又失败时，主错误、配置证据与告警
+  必须同时保留业务原因和交接原因；
+- 既有失败告警正文更新的 COMMIT 若确认丢失，必须用新会话按冻结 ID 与目标正文查证，不能把
+  实际已更新的告警误记为发布失败；
 - 公开恢复入口只允许权威执行已经处于终态时取得 writer claim；运行中的内部 pending 报告
   只能由同时携带 typed projection 与数据库 resolver 的 REPORT executor 继续；
 - 外部取消方若先写入 cancelled/completed_at，也必须把同一终态的 duration_sec 落到执行行；
@@ -121,6 +127,9 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
     标记仪表可能仍处于 Remote。
 19. 同一执行已有已确认/已解决告警时，后续 Local 交接失败只刷新告警正文，不重开告警生命周期；
     数据库主错误字段、配置镜像与告警正文必须共同包含新的安全事实和此前业务错误。
+20. 退出缓存清理异常或取消时仍尝试两台 Local；两台同时拒绝时异常正文保留全部失败。
+21. commissioning 单阶段、adhoc 与 run-all 的业务失败和后续交接失败共同进入最终错误真值。
+22. 既有告警正文更新已提交但确认丢失时，新会话查证后返回 duplicate，正文保持新安全事实。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。

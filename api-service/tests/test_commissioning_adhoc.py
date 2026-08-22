@@ -340,7 +340,10 @@ class TestAdhocPhaseEndpoint:
             raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
 
         async def _dispatch(_ctx):
-            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message="预检业务失败",
+            )
 
         monkeypatch.setattr(
             "app.api.commissioning.instrument_test_lease", _lease, raising=False
@@ -361,6 +364,7 @@ class TestAdhocPhaseEndpoint:
         execution = db.get(TestExecution, uuid.UUID(sid))
         assert execution.status == "failed"
         assert "UXM Local 交接失败" in execution.error_message
+        assert "预检业务失败" in execution.error_message
         assert (execution.config or {})["local_control_handoff_failed"] is True
         assert db.query(Alert).filter(
             Alert.related_entity_id == execution.id,
@@ -701,7 +705,10 @@ class TestExecutionStatusVisibleToReloadGate:
             raise InstrumentTestLeaseReleaseError("F64 Local 交接失败")
 
         async def _dispatch(_ctx):
-            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message="链路业务失败",
+            )
 
         monkeypatch.setattr(
             "app.api.commissioning.instrument_test_lease", _lease, raising=False
@@ -720,6 +727,7 @@ class TestExecutionStatusVisibleToReloadGate:
         execution = db.get(TestExecution, uuid.UUID(sid))
         assert execution.status == "failed"
         assert "F64 Local 交接失败" in execution.error_message
+        assert "链路业务失败" in execution.error_message
         assert (execution.config or {})["local_control_handoff_failed"] is True
         assert db.query(Alert).filter(
             Alert.related_entity_id == execution.id,

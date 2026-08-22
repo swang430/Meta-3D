@@ -172,12 +172,19 @@ def _record_local_handoff_failure(
     db: Session,
     execution: TestExecution,
     error: InstrumentTestLeaseReleaseError,
+    *,
+    previous_error: Optional[str] = None,
 ) -> None:
     """把 commissioning 的 Local 交接失败发布为可见且不可重跑的终态。"""
     db.refresh(execution)
     previous_status = execution.status
     cfg = dict(execution.config or {})
-    previous_error = execution.error_message or cfg.get("error_message")
+    persisted_error = execution.error_message or cfg.get("error_message")
+    previous_errors = []
+    for candidate in (previous_error, persisted_error):
+        if candidate and candidate not in previous_errors:
+            previous_errors.append(candidate)
+    previous_error = "；".join(previous_errors) or None
     cfg["local_control_handoff_failed"] = True
     cfg["local_control_handoff_previous_status"] = previous_status
     cfg["local_control_handoff_error"] = str(error)
@@ -811,6 +818,7 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
+    result = None
     try:
         with _execution_marked_running(db, execution):
             with retain_positioner_stop_generation(_current_positioner_driver()):
@@ -826,7 +834,14 @@ async def run_phase(
                     ):
                         result = await dispatch_step(ctx)
     except InstrumentTestLeaseReleaseError as error:
-        _record_local_handoff_failure(db, execution, error)
+        _record_local_handoff_failure(
+            db,
+            execution,
+            error,
+            previous_error=(
+                result.error_message if result is not None else None
+            ),
+        )
         raise
 
     db.refresh(execution)  # pick up measurements written by executor
@@ -959,6 +974,7 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     started = time.monotonic()
     error_message: Optional[str] = None
     status_value = "failed"
+    result = None
     try:
         ctx = _build_context(db, execution, test_case, step)
         with retain_positioner_stop_generation(_current_positioner_driver()):
@@ -977,7 +993,14 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
         error_message = result.error_message
     except InstrumentTestLeaseReleaseError as e:
         logger.exception("[adhoc] phase=%s Local 交接失败", req.phase_name)
-        _record_local_handoff_failure(db, execution, e)
+        _record_local_handoff_failure(
+            db,
+            execution,
+            e,
+            previous_error=(
+                result.error_message if result is not None else None
+            ),
+        )
         error_message = str(e)
     except Exception as e:  # noqa: BLE001
         logger.exception("[adhoc] phase=%s aborted", req.phase_name)
@@ -1142,7 +1165,18 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                         aborted_at = deferred_report.type
                         abort_message = result.error_message
     except InstrumentTestLeaseReleaseError as error:
-        _record_local_handoff_failure(db, execution, error)
+        previous_error = None
+        if aborted_at is not None:
+            previous_error = (
+                f"链在相位 {aborted_at} 中止: "
+                f"{abort_message or '明细见相位结果'}"
+            )
+        _record_local_handoff_failure(
+            db,
+            execution,
+            error,
+            previous_error=previous_error,
+        )
         raise
 
     if aborted_at is not None:

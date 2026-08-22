@@ -264,6 +264,26 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
 - Retain the existing partial-database-failure tests around alert lookup, commit, rollback and outcome
   recording; the message refresh must not bypass those failure gates.
 
+### Task 5G: Preserve the complete Local-handoff failure set
+
+**Files:**
+- Modify: `api-service/app/services/instrument_test_lease.py`
+- Modify: `api-service/app/api/commissioning.py`
+- Modify: `api-service/app/services/execution_failure_alerts.py`
+- Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `api-service/tests/test_commissioning_adhoc.py`
+- Modify: `api-service/tests/test_p2_34_failure_alert_contract.py`
+
+- Add RED coverage proving exit-cache failure and cleanup cancellation cannot skip either instrument's
+  Local release; aggregate cache, UXM and F64 failures into one release-only error.
+- Reuse the same complete settlement path for idle parking.
+- Preserve executor-returned business failures alongside the later handoff failure in all commissioning
+  consumers.
+- Verify ambiguous existing-alert message updates through a fresh database session using the frozen
+  alert ID plus intended message.
+- GREEN evidence: focused failure-truth suites `91 passed`; full backend `4274 passed / 5 skipped`;
+  GUI production build, compileall, single Alembic head and diff-check passed.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**
