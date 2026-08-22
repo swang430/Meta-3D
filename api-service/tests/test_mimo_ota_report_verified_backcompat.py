@@ -401,6 +401,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
             return SimpleNamespace(
                 config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                 test_case_id=None,
+                status="completed",
             )
 
     monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
@@ -525,6 +526,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
                 return SimpleNamespace(
                     config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                     test_case_id=None,
+                    status="completed",
                 )
             if value == malformed_descriptors_execution_id:
                 return SimpleNamespace(

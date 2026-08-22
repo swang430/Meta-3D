@@ -174,11 +174,23 @@ def _settle_execution_lifecycle(
             duration_end = duration_end.replace(tzinfo=None)
         elif duration_end.tzinfo is None and started_at.tzinfo is not None:
             duration_end = duration_end.replace(tzinfo=started_at.tzinfo)
-        observed = ReportLifecycleProjection(
-            status=observed.status,
-            completed_at=observed.completed_at,
-            duration_sec=(duration_end - started_at).total_seconds(),
+        derived_duration = (duration_end - started_at).total_seconds()
+        # 取消方等外部终态 writer 可能只写 status/completed_at。报告不能
+        # 私自持有第三份时长真值：仅在观察到的同一终态/完成时间仍成立时，
+        # 用数据库条件更新补齐 duration，再从数据库重读。
+        db.query(TestExecution).filter(
+            TestExecution.id == execution.id,
+            TestExecution.status == observed.status,
+            TestExecution.completed_at == observed.completed_at,
+            TestExecution.duration_sec.is_(None),
+        ).update(
+            {TestExecution.duration_sec: derived_duration},
+            synchronize_session=False,
         )
+        db.commit()
+        db.expire(execution)
+        db.refresh(execution)
+        observed = _effective_lifecycle(execution, None)
     return observed
 
 

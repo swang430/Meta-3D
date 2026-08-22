@@ -171,6 +171,24 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
 - Let the adhoc wrapper finalize only rows still in `running`.
 - Add `pending` to both GUI type mirrors and the viewer result mapping.
 
+### Task 5B: Close second fresh-review ownership gaps
+
+**Files:**
+- Modify: `api-service/app/services/report_service.py`
+- Modify: `api-service/app/services/mimo_ota/executors/report.py`
+- Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/tests/test_p1_61_report_final_state_truth.py`
+- Modify: `api-service/tests/test_p1_47c_execution_scpi_evidence.py`
+
+- Add RED coverage proving public regeneration cannot claim an internal pending report while its
+  authoritative execution is active.
+- Validate the complete internal projection/resolver/MIMO/PDF/single-execution contract before the
+  database writer claim; an arbitrary callable must not bypass the public terminal-state gate.
+- Persist cancellation-winner duration on the authoritative `TestExecution` row with a conditional
+  update, then rebuild the report from the reread database winner.
+- Update the pre-P1-61 internal test mirror to exercise the complete projection plus resolver
+  contract rather than the removed projection-only shape.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**

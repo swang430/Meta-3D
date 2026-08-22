@@ -145,6 +145,65 @@ def test_historical_completed_missing_timing_stays_unknown_in_payload_and_pdf():
     )
 
 
+def test_public_regeneration_cannot_claim_internal_report_while_execution_running(
+    monkeypatch,
+):
+    """内部 REPORT 的 pending 建行窗口不能被公开恢复入口抢走。"""
+    from app.services.report_service import (
+        LegacyMimoRegenerationRejected,
+        ReportService,
+    )
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = Session()
+    try:
+        execution = TestExecution(
+            status="running",
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            executed_by="test_case_runner",
+            config={"step_descriptors": [{"type": "MIMO_OTA_REPORT"}]},
+            measurements={"phases": {"measure": {}, "analysis": {}}},
+        )
+        db.add(execution)
+        db.commit()
+        db.refresh(execution)
+
+        service = ReportService()
+        report = service.create_report(
+            db=db,
+            title="internal-pending",
+            report_type="single_execution",
+            format="pdf",
+            generated_by="mimo_ota.executors.report",
+            test_execution_ids=[execution.id],
+            content_data={},
+        )
+        monkeypatch.setattr(
+            "app.services.report_service.PDFGenerator.generate_report",
+            lambda *_args, **_kwargs: pytest.fail(
+                "公开恢复入口不应取得内部 pending 报告的 writer claim"
+            ),
+        )
+
+        with pytest.raises(
+            LegacyMimoRegenerationRejected,
+            match="terminal|终态|still running",
+        ):
+            service.generate_report(db, report.id)
+
+        db.refresh(report)
+        assert report.status == "pending"
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+
+
 @pytest.mark.parametrize(
     ("status", "verdict", "validation_pass", "trusted", "expected_state", "pass_rate"),
     [
@@ -346,12 +405,14 @@ async def test_cancel_during_pdf_generation_rebuilds_report_from_cancelled_truth
         runner_db.refresh(execution)
         assert result.status.value == "success"
         assert execution.status == "cancelled"
+        assert execution.duration_sec is not None
         assert len(generated_contents) == 2, "取消先赢后必须重建正式报告"
         rebuilt = generated_contents[-1]
         assert rebuilt["test_plan"]["status"] == "cancelled"
         assert rebuilt["overall_result"] == "incomplete"
         assert rebuilt["execution_summary"]["incomplete"] == 1
         assert rebuilt["execution_summary"]["pending"] == 0
+        assert rebuilt["duration_s"] == pytest.approx(execution.duration_sec)
     finally:
         cancel_db.close()
         runner_db.close()

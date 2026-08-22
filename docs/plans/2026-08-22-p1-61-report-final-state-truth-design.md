@@ -73,6 +73,10 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 - cancel 先赢时，同一报告按 cancelled/incomplete 重建；completed 先赢后 cancel 返回冲突；
 - 历史行缺少 `duration_sec` 或 `completed_at` 时保持 `None` 并渲染 `N/A`，不得猜 0 秒或重建时刻；
 - commissioning adhoc 包装层只收尾仍为 running 的相位，不覆盖 REPORT 已拥有的终态时间；
+- 公开恢复入口只允许权威执行已经处于终态时取得 writer claim；运行中的内部 pending 报告
+  只能由同时携带 typed projection 与数据库 resolver 的 REPORT executor 继续；
+- 外部取消方若先写入 cancelled/completed_at，也必须把同一终态的 duration_sec 落到执行行；
+  报告不得独占一份只存在于 PDF 投影里的耗时；
 - 内容投影不写数据库、不创建第二份状态缓存；
 - 可信性门仍优先于 PASS/FAIL：校准或吞吐证据不足时，completed 执行只能是 undetermined。
 
@@ -88,6 +92,8 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 6. 裁决前报告行仍为 generating、没有正式路径和 completed 内容；
 7. 历史 completed 行缺时间时 payload/PDF 显示未知/N/A；
 8. commissioning adhoc REPORT 保留 executor 已裁决的终态、完成时间与耗时。
+9. 运行中的内部 pending 报告不能被公开 regeneration 抢占 writer claim；
+10. cancel 先赢时，执行行与重建报告持有相同的非空真实耗时。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。

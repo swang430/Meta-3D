@@ -174,6 +174,8 @@ def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
 def legacy_mimo_regeneration_error(
     db: Session,
     report: TestReport,
+    *,
+    allow_active_execution: bool = False,
 ) -> Optional[str]:
     """Return why a legacy MIMO report cannot be rebuilt without false trust.
 
@@ -226,6 +228,16 @@ def legacy_mimo_regeneration_error(
         return (
             "The linked TestExecution is not an authoritative MIMO OTA "
             "execution; regeneration cannot be performed safely."
+        )
+    raw_execution_status = getattr(execution, "status", None)
+    execution_status = getattr(raw_execution_status, "value", raw_execution_status)
+    if (
+        not allow_active_execution
+        and execution_status not in {"completed", "failed", "cancelled", "skipped"}
+    ):
+        return (
+            "Safe public regeneration requires the linked TestExecution to be "
+            "in a terminal state."
         )
     return None
 
@@ -431,7 +443,62 @@ class ReportService:
         if not execution_ids_well_formed:
             raise ValueError("Report TestExecution identifiers are malformed")
 
-        regeneration_error = legacy_mimo_regeneration_error(db, report)
+        if (
+            execution_lifecycle_resolver is not None
+            and not callable(execution_lifecycle_resolver)
+        ):
+            raise ValueError("MIMO lifecycle resolver must be callable")
+
+        allow_active_execution = False
+        if execution_lifecycle_resolver is not None:
+            # 运行中 execution 的报告只能由 REPORT executor 的完整内部契约
+            # 生成。必须在取得 writer claim 前验证全部条件；不能让调用方仅靠
+            # 传入任意 callable 绕过公开恢复的终态门。
+            from app.services.mimo_ota.executors.report import (
+                ReportLifecycleProjection,
+            )
+
+            if (
+                not isinstance(
+                    execution_lifecycle_projection,
+                    ReportLifecycleProjection,
+                )
+                or report.report_type not in (ReportType.SINGLE_EXECUTION, "single_execution")
+                or report.format not in (ReportFormat.PDF, "pdf")
+                or report.road_test_execution_id is not None
+                or len(execution_ids) != 1
+            ):
+                raise ValueError(
+                    "Deferred lifecycle publication is only valid for an "
+                    "internally projected single-execution MIMO PDF"
+                )
+            try:
+                internal_execution_id = UUID(str(execution_ids[0]))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError(
+                    "Deferred lifecycle publication requires one valid "
+                    "TestExecution identifier"
+                ) from exc
+            internal_execution = db.query(TestExecution).filter(
+                TestExecution.id == internal_execution_id
+            ).first()
+            if internal_execution is None or not is_mimo_ota_execution(
+                db,
+                internal_execution,
+            ):
+                raise ValueError(
+                    "Deferred lifecycle publication requires an authoritative "
+                    "MIMO OTA TestExecution"
+                )
+            allow_active_execution = True
+
+        regeneration_error = legacy_mimo_regeneration_error(
+            db,
+            report,
+            # 只有 REPORT executor 持有的内部 resolver 可以在 execution
+            # 仍 running 时生成 staging；公开恢复入口必须等待权威终态。
+            allow_active_execution=allow_active_execution,
+        )
         if regeneration_error:
             raise LegacyMimoRegenerationRejected(regeneration_error)
 
@@ -485,12 +552,6 @@ class ReportService:
             report.error_details = None
             db.commit()
             db.refresh(report)
-
-        if (
-            execution_lifecycle_resolver is not None
-            and not callable(execution_lifecycle_resolver)
-        ):
-            raise ValueError("MIMO lifecycle resolver must be callable")
 
         logger.info(f"Starting report generation: {report_id}")
         staging_output_path: Optional[str] = None

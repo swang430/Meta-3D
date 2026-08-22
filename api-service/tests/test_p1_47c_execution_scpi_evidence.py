@@ -865,17 +865,31 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
         "app.services.report_service.PDFGenerator.generate_report", _fake_generate,
     )
     completed_at = datetime(2026, 8, 22, 1, 1, 29)
+    projection = ReportLifecycleProjection(
+        status="completed",
+        completed_at=completed_at,
+        duration_sec=89.195194,
+    )
+
+    def _settle_lifecycle(candidate):
+        assert candidate == projection
+        execution.status = candidate.status
+        execution.completed_at = candidate.completed_at
+        execution.duration_sec = candidate.duration_sec
+        db.commit()
+        db.refresh(execution)
+        return candidate
+
     generated = ReportService().generate_report(
         db,
         report.id,
-        execution_lifecycle_projection=ReportLifecycleProjection(
-            status="completed",
-            completed_at=completed_at,
-            duration_sec=89.195194,
-        ),
+        execution_lifecycle_projection=projection,
+        execution_lifecycle_resolver=_settle_lifecycle,
     )
 
-    assert execution.status == "running"
+    assert execution.status == "completed"
+    assert execution.completed_at == completed_at
+    assert execution.duration_sec == pytest.approx(89.195194)
     assert captured["test_plan"]["status"] == "completed"
     assert captured["overall_result"] == "undetermined"
     assert captured["execution_summary"]["pending"] == 0

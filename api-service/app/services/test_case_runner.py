@@ -252,6 +252,11 @@ def request_cancel(db, execution_id: UUID) -> bool:
         return False
     execution.status = "cancelled"
     execution.completed_at = datetime.utcnow()
+    if execution.started_at is not None:
+        execution.duration_sec = max(
+            0.0,
+            (execution.completed_at - execution.started_at).total_seconds(),
+        )
     # Codex #237 C5: cancel 落在 REPORT 相位执行中时, report executor 会把
     # status 直接写回 "completed" 并 commit (report.py "Mark execution
     # lifecycle complete", 暗室首测链依赖它, 不能改) — 在 config 里留一个
@@ -546,6 +551,11 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         if execution.status != "cancelled":
             execution.status = "cancelled"
             execution.completed_at = datetime.utcnow()
+            if execution.started_at is not None:
+                execution.duration_sec = max(
+                    0.0,
+                    (execution.completed_at - execution.started_at).total_seconds(),
+                )
             db.commit()
             logger.info(
                 "[case-runner] execution %s 末相位覆盖了 cancelled, 已救回",
