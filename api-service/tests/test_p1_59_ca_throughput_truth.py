@@ -481,6 +481,15 @@ async def test_analysis_rejects_legacy_ca_verdict_without_scope_proof(
     measure = {
         "measurement_verified": True,
         "frequency_consistency": {"fully_verified": True},
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "p1-59-analysis-real-cert",
+            "value_disclosure": "verified",
+        },
         "path_loss_verified": True,
         "throughput_verified": True,
         "carrier_aggregation": {"num_component_carriers": 2},
@@ -578,6 +587,15 @@ def _report_execution(
         azimuth["throughput_scope"] = azimuth_scope
     measure = {
         "measurement_verified": True,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "p1-59-report-real-cert",
+            "value_disclosure": "verified",
+        },
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
         "throughput_verified": True,

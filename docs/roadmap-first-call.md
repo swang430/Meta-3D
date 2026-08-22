@@ -28,9 +28,12 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 PRECHECK、MEASURE、warning、正式报告、历史重建与 commissioning GUI 已消费同一语义；
 服务端报告信任字段禁止客户端伪造。fresh 内审另发现 strict 失败与 operator bypass 原先仍共用
 “Phase 3 回退默认线损”尾句，已按 TDD 收窄为 strict 在硬件连接前阻断、只有显式 bypass 才
-无补偿继续。验证：本片相关 + 完整 rule gates **163 passed**、GUI 契约 **5 passed**、全后端
-**4308 passed / 5 skipped**、GUI production build、`compileall`、单一 Alembic head 与
-`diff-check` 均通过；fresh 内审 **P1/P2/P3=0**。设计与证据见
+无补偿继续。Codex R1 进一步指出缺失/畸形应用快照仍可被旧布尔字段从报告、Analysis 与历史
+列表救回正式 PASS，并指出解析器接受写方不可能产生的状态组合；两条均已按 TDD 收口，四类
+正式消费者统一复用同一 applied explicit-real 白名单，非法组合统一降级为历史 unknown。
+验证：本片相关 + 完整 rule gates **317 passed**、GUI 契约 **5 passed**、全后端
+**4312 passed / 5 skipped**、GUI production build、`compileall`、单一 Alembic head 与
+`diff-check` 均通过；R1 尾修 fresh 内审 **P1/P2/P3=0**。设计与证据见
 [`P1-62 设计`](plans/2026-08-22-p1-62-path-loss-certificate-truth-design.md)。
 
 > **~~P1-61~~ ✅ 2026-08-22 由 PR #372 完成**：报告由最终执行生命周期 CAS 赢家发布，
@@ -240,7 +243,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
 | **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | ✅ PR #371；R4 覆盖最终 HEAD 无 P1；merge `ebccb1e` |
 | **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | ✅ PR #372 / merge `425e389`；Codex R4 覆盖最终 HEAD 且无重大问题 |
-| **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | 🔄 TDD、全量回归与 fresh 内审完成，P1/P2/P3=0；待开 Ready PR 与 Codex 外审 |
+| **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | 🔄 PR #373；R1 的正式判定旧标志绕过 P1 与非法组合 P2 已按 TDD 修复，回归/尾审通过，待 R2 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。

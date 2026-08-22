@@ -232,6 +232,15 @@ def test_untrusted_selected_certificate_can_be_rejected_without_losing_identity(
             "certificate_id": "legacy-certificate",
             "value_disclosure": "verified",
         },
+        {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "simulated",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "impossible-strict-simulated",
+            "value_disclosure": "hidden_unverified",
+        },
     ],
 )
 def test_missing_or_malformed_history_never_guesses_application_state(stored_value):

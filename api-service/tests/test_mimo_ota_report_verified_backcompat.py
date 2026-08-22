@@ -95,13 +95,14 @@ def _path_loss_application(
     reason="selected",
     certificate_id="cert-legacy",
     value_disclosure="hidden_unverified",
+    gate_mode="mock_not_applicable",
 ):
     return {
         "schema_version": 1,
         "status": status,
         "provenance": provenance,
         "reason": reason,
-        "gate_mode": "mock_not_applicable",
+        "gate_mode": gate_mode,
         "certificate_id": certificate_id,
         "value_disclosure": value_disclosure,
     }
@@ -147,6 +148,33 @@ def test_report_renders_applied_real_certificate_and_verified_value():
 
 
 @pytest.mark.parametrize(
+    "application",
+    [
+        None,
+        _path_loss_application(
+            provenance="simulated",
+            certificate_id="impossible-strict-simulated",
+        ) | {"gate_mode": "strict"},
+    ],
+)
+def test_legacy_flags_cannot_recover_formal_pass_from_unknown_application(
+    application,
+):
+    """旧布尔值不能绕过缺失/非法的应用快照重新发布正式 PASS。"""
+    content = _build_mimo_ota_content_data(
+        _exec(_path_loss_report_phases(application, verified=True)),
+        datetime(2026, 1, 1),
+    )
+
+    assert content["formal_path_loss_verified"] is False
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["pass_rate"] is None
+    assert content["statistics"] == {}
+    assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert _step(content, "analysis")["parameters"]["verdict"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
     "application, expected_text",
     [
         (
@@ -158,6 +186,7 @@ def test_report_renders_applied_real_certificate_and_verified_value():
                 status="not_applied",
                 reason="rejected_untrusted",
                 value_disclosure="none",
+                gate_mode="operator_bypass",
             ),
             "因来源未验证未应用",
         ),
@@ -339,6 +368,12 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
             "trp_verified": True,
         },
         "measure": {
+            "path_loss_application": _path_loss_application(
+                provenance="real",
+                certificate_id="cert-real",
+                value_disclosure="verified",
+                gate_mode="strict",
+            ),
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
             "throughput_verified": True,

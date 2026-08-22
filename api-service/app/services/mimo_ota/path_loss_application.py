@@ -132,6 +132,11 @@ def parse_path_loss_application(value: Any) -> dict[str, Any]:
             or not certificate_id
         ):
             return _legacy_unknown()
+        if (
+            provenance in {"simulated", "unknown"}
+            and parsed["gate_mode"] != "mock_not_applicable"
+        ):
+            return _legacy_unknown()
         expected_disclosure = "verified" if provenance == "real" else "hidden_unverified"
         return parsed if disclosure == expected_disclosure else _legacy_unknown()
 
@@ -141,6 +146,7 @@ def parse_path_loss_application(value: Any) -> dict[str, Any]:
             or not isinstance(certificate_id, str)
             or not certificate_id
             or disclosure != "none"
+            or parsed["gate_mode"] == "mock_not_applicable"
         ):
             return _legacy_unknown()
         return parsed
@@ -152,6 +158,17 @@ def parse_path_loss_application(value: Any) -> dict[str, Any]:
     if parsed == _legacy_unknown():
         return parsed
     return _legacy_unknown()
+
+
+def path_loss_application_is_formally_verified(value: Any) -> bool:
+    """正式消费者统一白名单：必须是可解析的 applied explicit-real 快照。"""
+    application = parse_path_loss_application(value)
+    return (
+        application["status"] == "applied"
+        and application["provenance"] == "real"
+        and application["reason"] == "selected"
+        and application["value_disclosure"] == "verified"
+    )
 
 
 def path_loss_application_message(value: Any) -> str:

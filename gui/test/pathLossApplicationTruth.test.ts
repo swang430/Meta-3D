@@ -51,7 +51,7 @@ test('only applied explicit-real evidence may display the compensation value', (
 
 
 test('missing and malformed history never infer application truth', () => {
-  assert.deepEqual(parsePathLossApplication(undefined), {
+  const unknown = {
     schema_version: 1,
     status: 'unknown',
     provenance: 'unknown',
@@ -59,7 +59,8 @@ test('missing and malformed history never infer application truth', () => {
     gate_mode: 'strict',
     certificate_id: null,
     value_disclosure: 'none',
-  })
+  }
+  assert.deepEqual(parsePathLossApplication(undefined), unknown)
   assert.equal(
     describePathLossApplication({
       schema_version: 1,
@@ -68,6 +69,10 @@ test('missing and malformed history never infer application truth', () => {
     }).showCompensationValue,
     false,
   )
+  assert.deepEqual(parsePathLossApplication(application({
+    provenance: 'simulated',
+    gate_mode: 'strict',
+  })), unknown)
 })
 
 

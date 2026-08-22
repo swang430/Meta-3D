@@ -22,6 +22,7 @@ from app.hal.base_station import ThroughputMetrics
 from app.services.mimo_ota.executors._helpers import write_phase_result
 from app.services.mimo_ota.path_loss_application import (
     parse_path_loss_application,
+    path_loss_application_is_formally_verified,
     path_loss_application_message,
 )
 from app.services.mimo_ota.throughput_trust import (
@@ -504,12 +505,11 @@ def _build_mimo_ota_content_data(
     _path_loss_application_text = path_loss_application_message(
         _path_loss_application
     )
-    _path_loss_value_visible = (
+    _path_loss_formally_verified = (
         _pl_verified is True
-        and _path_loss_application["status"] == "applied"
-        and _path_loss_application["provenance"] == "real"
-        and _path_loss_application["value_disclosure"] == "verified"
+        and path_loss_application_is_formally_verified(_path_loss_application)
     )
+    _path_loss_value_visible = _path_loss_formally_verified
 
     # P1-54: 吞吐的数值与“这次是否真的读到”必须同行。历史执行没有该字段，
     # 也可能正是把缺测默认 0.0 当样本的旧数据，所以只能 fail-closed；不能从
@@ -530,7 +530,7 @@ def _build_mimo_ota_content_data(
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
-    if _pl_verified is not True or _throughput_verified is not True:
+    if not _path_loss_formally_verified or _throughput_verified is not True:
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
@@ -686,7 +686,7 @@ def _build_mimo_ota_content_data(
         "report_type": "single_execution",
         "report_family": "mimo_ota",
         "calibration_trust_schema_version": 1,
-        "formal_path_loss_verified": _pl_verified is True,
+        "formal_path_loss_verified": _path_loss_formally_verified,
         "path_loss_application": _path_loss_application,
         "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,

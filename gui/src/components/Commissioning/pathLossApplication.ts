@@ -70,6 +70,10 @@ export function parsePathLossApplication(value: unknown): PathLossApplication {
       !['real', 'simulated', 'unknown'].includes(String(value.provenance))
       || value.reason !== 'selected'
       || !hasCertificateId
+      || (
+        ['simulated', 'unknown'].includes(String(value.provenance))
+        && value.gate_mode !== 'mock_not_applicable'
+      )
     ) {
       return legacyUnknown()
     }
@@ -83,6 +87,7 @@ export function parsePathLossApplication(value: unknown): PathLossApplication {
       !['simulated', 'unknown'].includes(String(value.provenance))
       || !hasCertificateId
       || value.value_disclosure !== 'none'
+      || value.gate_mode === 'mock_not_applicable'
     ) {
       return legacyUnknown()
     }

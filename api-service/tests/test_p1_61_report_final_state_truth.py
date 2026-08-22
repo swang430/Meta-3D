@@ -21,6 +21,15 @@ from app.services.pdf_generator import PDFGenerator
 
 def _trusted_measure() -> dict:
     return {
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "p1-61-real-cert",
+            "value_disclosure": "verified",
+        },
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
         "throughput_verified": True,
