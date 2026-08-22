@@ -26,6 +26,12 @@ from app.services.channel_asset_service import (
     list_channel_assets,
     update_channel_asset,
 )
+from app.services.smu_project_inventory import (
+    SMUProjectInventoryError,
+    SMUProjectSyncError,
+    preview_smu_project_sync,
+    sync_smu_project_truth,
+)
 
 router = APIRouter(prefix="/channel-assets", tags=["Channel Asset"])
 
@@ -71,6 +77,45 @@ class ChannelAssetResponse(ChannelAssetBase):
     is_active: bool
 
 
+class SMUProjectSyncItemResponse(BaseModel):
+    """One read-only project observation plus its exact-match synchronization decision."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    relative_path: str
+    instrument_path: str
+    size_bytes: int
+    sha256: str
+    center_frequencies_hz: Dict[int, int]
+    primary_center_frequency_hz: Optional[int] = None
+    scan_status: str
+    scan_detail: Optional[str] = None
+    sync_status: str
+    sync_detail: str
+    connection_id: UUID
+    asset_id: Optional[UUID] = None
+    asset_name: Optional[str] = None
+    target_arfcn: Optional[int] = None
+
+
+class SMUProjectSyncPreviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    connection_id: UUID
+    items: List[SMUProjectSyncItemResponse]
+    protected_paths: List[str]
+    total_files: int
+    total_bytes: int
+
+
+class SMUProjectSyncResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    updated_count: int
+    already_synced_count: int
+    preview: SMUProjectSyncPreviewResponse
+
+
 @router.get("", response_model=List[ChannelAssetResponse])
 def list_assets(
     source_type: Optional[SourceType] = None,
@@ -92,6 +137,36 @@ def create_asset(req: ChannelAssetCreate, db: Session = Depends(get_db)):
     except ChannelAssetError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return ChannelAssetResponse.model_validate(a)
+
+
+# Static routes must be registered before /{asset_id}; otherwise FastAPI/Starlette can route
+# "vendor-files" into the dynamic UUID sibling and return a misleading 422/404.
+@router.post(
+    "/vendor-files/smu-scan",
+    response_model=SMUProjectSyncPreviewResponse,
+)
+def scan_vendor_smu_projects(db: Session = Depends(get_db)):
+    """Read the configured mounted SMB copy and preview exact-path updates without mutation."""
+    try:
+        return preview_smu_project_sync(db)
+    except SMUProjectInventoryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/vendor-files/smu-sync",
+    response_model=SMUProjectSyncResultResponse,
+)
+def sync_vendor_smu_projects(db: Session = Depends(get_db)):
+    """Re-scan server-side and atomically synchronize only provable exact-path matches.
+
+    There is intentionally no request body: clients cannot submit a frequency, ARFCN, mount root,
+    or cached preview as truth.
+    """
+    try:
+        return sync_smu_project_truth(db)
+    except (SMUProjectInventoryError, SMUProjectSyncError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{asset_id}", response_model=ChannelAssetResponse)
