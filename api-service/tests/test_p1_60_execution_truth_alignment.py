@@ -104,6 +104,29 @@ async def test_native_model_derives_uma_from_model_name_without_umi_default():
     assert emulator.loaded["scenario"] == "UMa"
 
 
+@pytest.mark.asyncio
+async def test_native_model_rejects_declared_scenario_conflict_in_any_token_order():
+    class Emulator:
+        def get_supported_load_modes(self):
+            return [ChannelLoadMode.NATIVE_MODEL]
+
+        async def load_channel(self, **kwargs):
+            raise AssertionError("scenario conflict must fail before hardware I/O")
+
+    ok = await NativeModelStrategy(
+        Emulator(), SimpleNamespace(), [], generate_oop=False
+    ).generate_and_load(
+        {"emulation_file": r"D:\Scenario\UMa.smu"},
+        {
+            "model_name": "CDL-C UMa NLOS",
+            "scenario": "UMi",
+            "session_id": "p1-60-conflict",
+        },
+    )
+
+    assert ok is False
+
+
 def test_frequency_warning_names_missing_center_when_bandwidth_is_declared():
     assert hasattr(measure, "_describe_f64_frequency_verification_gap")
     message = measure._describe_f64_frequency_verification_gap(

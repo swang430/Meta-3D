@@ -55,9 +55,10 @@ def _resolve_native_scenario(model_name: str, declared: Optional[str]) -> str:
     canonical_declared = SCENARIO_ALIASES.get(declared, declared)
     if canonical_declared not in SCENARIO_NAMES:
         raise ValueError(f"unsupported native scenario: {declared!r}")
-    first_token = model_name.strip().split()[0]
-    model_has_explicit_scenario = (
-        first_token in SCENARIO_NAMES or first_token in SCENARIO_ALIASES
+    model_tokens = model_name.strip().split()
+    model_has_explicit_scenario = any(
+        token in SCENARIO_NAMES or token in SCENARIO_ALIASES
+        for token in model_tokens
     )
     if model_has_explicit_scenario and parsed.scenario_name != canonical_declared:
         raise ValueError(
