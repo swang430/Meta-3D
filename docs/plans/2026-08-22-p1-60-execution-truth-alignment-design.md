@@ -78,3 +78,10 @@
 4. UMa vendor asset 传到 GCM/OOP 的 scenario 仍为 UMa；缺场景不默认 UMi。
 5. mock F64 无中心回读时 warning 如实说明中心频率缺失，并承认资产 BW40 已声明。
 6. 同一 aware UTC 时刻生成的执行快照 token、commissioning token、报告 token 与本地日志时区一致；DB 时间仍为 UTC。
+
+## 完成证据（2026-08-22）
+
+- RED：首批 7 条断言失败；场景 token 顺序与 legacy 0-based RF-chain 两条尾部边界也分别先红后绿。
+- GREEN：相关链与完整规则门 `159 passed / 2 skipped`；全后端 `4240 passed / 5 skipped`。
+- GUI production build、Python `compileall`、单一 Alembic head `b6d8f0a2c4e6`、`git diff --check` 均通过。
+- fresh 内审先发现 1 条 P1（只认一基 topology 会阻断完整零基 legacy 证书），按证书 ID 集合精确判 base 后复审 `P1/P2/P3=0`。
