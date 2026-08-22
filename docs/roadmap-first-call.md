@@ -36,7 +36,8 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > `invalid_asset`，定点诊断证明资产与 `available_channel_models` 均不变；R2 的 legacy
 > projection P2 按规则仅报告、不阻塞。merge commit `2c9d5ff`。
 
-> **P3-22 当前设计证据**：全仓复算为 216 个测试文件、82,309 行，全后端基线
+> **P3-22 当前设计证据**：`git ls-files 'api-service/tests/**' 'gui/test/**'`
+> 复算为 216 个 tracked 文件、82,803 行，全后端基线
 > **4228 passed / 5 skipped**。首轮归一化候选审计仅确认 HAL 模式决策表满足同 fixture、
 > 同路径、同断言语义；已收敛 40 行重复源码，仍保留 10 个具名参数 cell 与 2 个枚举 wire
 > 契约。三组反向变异分别让 1 / 2 / 4 个对应 cell 变红；focused + 完整 rule gates

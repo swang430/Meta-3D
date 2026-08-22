@@ -6,7 +6,7 @@
 
 ## 当前实证
 
-- `api-service/tests` 与 `gui/test` 共 216 个测试文件、82,309 行；全后端基线为 4,228 passed / 5 skipped。
+- `git ls-files 'api-service/tests/**' 'gui/test/**'` 枚举出 216 个 tracked 文件、82,803 行；全后端基线为 4,228 passed / 5 skipped。
 - AST 归一化只找到三类“外形重复”候选；逐条核对后，只有 HAL 模式决策表满足同一 fixture、同一路径、同一断言语义。
 - `test_p1_49_static_route_order.py` 的两组测试分别保护静态路由不被 UUID 路由遮挡、UUID 详情路由仍可达，失败场景不同，保留。
 - `test_bootstrap_lifespan.py` 与 `test_instrument_catalog_model_capabilities.py` 的数据库 fixture 分别服务应用 lifespan 与 catalog 模型能力，依赖覆盖和生命周期不同，保留。
