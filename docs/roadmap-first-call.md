@@ -45,7 +45,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > 产品代码零改动。静态/UUID 路由和两个不同生命周期数据库 fixture 的失败场景不同，明确不删。
 > Codex R1 的测试行数基线 P3 已换成可复现的 tracked-file 口径；R2 覆盖修正 HEAD
 > `78cd070` 且无重大问题，PR #369 完成后暂停，不自动启动维护池条目。
-> P2-40 实际清理继续冻结。
+> P2-40 的已批准实际清理已完成；精确删除范围与保护范围见下方收口记录。
 
 > **~~P2-36~~ ✅ 2026-08-22 现状核验收口**：该条目的“执行历史一键跳本次执行日志”
 > 已由 P1-39 / PR #292 在提交 `5c89a60` 完整交付；当前 main 仍保留
@@ -84,9 +84,12 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 
 > **~~P2-40~~ ✅ 2026-08-22 由 PR #364 完成**：只读 inventory 与测试 SQLite
 > 临时目录隔离已由 merge commit `65765ce` 合入；Codex R2 覆盖最终 HEAD 且无 P1，
-> 仅提示实际隔离前必须重新确认 open state。代码与 PR 均未移动、备份、删除任何 DB、日志、
-> volume 或 worktree；20 个零 schema SQLite 的可恢复隔离仍停在用户独立批准点，不属于
-> P2-37。
+> 仅提示实际隔离前必须重新确认 open state。PR 本身未移动、备份或删除任何 DB、日志、
+> volume 或 worktree；合并后经用户逐级批准，20 个零 schema、closed 的测试 SQLite 已先按
+> manifest 隔离，再永久删除，共 21,299,200 bytes。运行日志、生产 PostgreSQL、Docker
+> volume 与 worktree 均未纳入删除范围；删除后数据不可恢复，SHA-256、原路径与操作回执保存在
+> `/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-deletion-receipt.json` 和
+> `/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-moves.json`。
 
 > **~~P2-39~~ ✅ 2026-08-21 由 PR #363 完成**：pytest 在导入 `app.main`
 > 前无条件将 `LOG_DIR` 换到进程级 `TemporaryDirectory`，生产日志链零改动；子进程回归证明
@@ -96,14 +99,15 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 > **4172 passed / 5 skipped**，全量前后运行日志 manifest 一致，`compileall`、
 > `diff-check` 通过。
 
-> **P2-40 当前只读实证（未执行任何清理）**：主工作区日志 338 个文件 / 约 2.6 GB，
+> **P2-40 清理前只读实证（历史快照）**：主工作区日志 338 个文件 / 约 2.6 GB，
 > 其中当前日志仍被运行服务打开；P1-59 worktree 约 242 MB，Claude worktree 约 11 MB；
 > 四组校准测试在不同 cwd 留下多份约 1 MB 的空 schema SQLite；活跃
 > `meta3d_postgres_data` 约 79.7 MB，必须备份保护；另有 14 个未挂载匿名 Docker
 > volume，仅凭匿名标签无法证明属于本项目，暂列人工复核而非清理候选。设计与实施计划见
 > [`P2-40 设计`](plans/2026-08-21-p2-40-dev-artifact-governance-design.md) 和
-> [`P2-40 计划`](plans/2026-08-21-p2-40-dev-artifact-governance-plan.md)。本 PR 只建立只读
-> manifest 与阻止测试 SQLite 继续沉积；任何备份、隔离、删除或 prune 均停在精确批准点。
+> [`P2-40 计划`](plans/2026-08-21-p2-40-dev-artifact-governance-plan.md)。PR 只建立只读
+> manifest 与阻止测试 SQLite 继续沉积；实际清理是合并后取得用户明确批准的独立操作，范围
+> 仅限上段 20 个已确认测试 SQLite。
 
 > **P2-40 合并前开发证据快照（实际清理仍未执行）**：只读 inventory 已覆盖注册 worktree、
 > 显式日志根、三层 SQLite 白名单与 Docker volume/mount/size；未知身份默认 protect，关闭日志
@@ -187,7 +191,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ✅ PR #347 |
 | **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | ✅ PR #348 |
 | **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ✅ PR #349 |
-| **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ✅ PR #350（本地半完成；R2 P1 尾修未获外审覆盖，fresh 内审 P1=0、相关回归通过）；物理现场验证保持 Hardware Blocked |
+| **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ✅ PR #350；补充 Codex 外审覆盖包含尾修 `bd71879` 的 merge commit `0f981339`，无重大问题；物理现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ✅ PR #351 |
 | **P2-28** | 诊断序列完整证据持久化 | ✅ PR #352；R1/R2 均无重大问题 |
 | **~~P1-57~~** | 全局 LabProfile / 当前暗室上下文统一；拓扑、探头与首测不得各自选暗室 | ✅ PR #353（R1–R3 全修；R4 Gemini 无 P1） |
@@ -206,7 +210,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-37** | UE L3 报告队列有界消费，避免后台监控响应/日志无界增长 | ✅ PR #365；merge `406ff71` |
 | **P2-38** | Dashboard readiness 显式消费顶部选定 LabProfile | ✅ PR #366；merge `e017f4b`；R2 覆盖最终 HEAD 无 P1 |
 | **P2-39** | pytest 与运行日志目录隔离，测试不得轮转删除历史仪器证据 | ✅ PR #363；merge `9417fee` |
-| **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；实际隔离另候批准 |
+| **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；合并后经用户批准永久删除 20 个空测试 SQLite（21,299,200 bytes），其余资产保持保护 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
@@ -450,7 +454,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 当前为空，WIP=0；正式连续队列已完成。P2-40 代码已合并，实际隔离仍在独立批准点；P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 当前为空，WIP=0；正式连续队列已完成，P2-40 已完成代码治理与获批实际清理。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -509,7 +513,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | on-site real F64。⚠ 2026-08-07 实测：口 1 = `-166.60000,-51.6100`，而我们发的 `-50.00` 超上限 1.61 dB 被 `-200 Parameter exceeds set limits` 拒 → **当轮 measure 当场 FAILED**。其余 31 口未知；限值由什么决定（是否随已加载模型 / `OUTP:LOSS` 变）**手册未说明** | ❌ **待建**：现有 [`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只查 ch1，无 per-port。出发前须扩它或新写只读普查序列 |
 | **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | on-site real F64 + 人在面板前。⚠ 这是整套租约 / `release_to_local_control` 机制的**地基假设**，而手册原文（PROPSIM User Reference §20.1）说的是：发第一条 ATE 命令后自动进 remote，**回 local 要操作员在 GUI 右上角点 Local Mode 按钮** —— 方向与实现前提相反。代码里 `control_mode` 已改成如实措辞 `ate_socket_released`（不再替仪器宣布「它在 Local」），但**真相要现场 5 分钟测出来** | ❌ **无载体**：不是 SCPI 能问的，属「发一条命令 + 人看面板」的观察项。可挂在任一 F64 序列末尾做人工确认步 |
 | **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 |
-| **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。真实单位、方向、偏置、型号与机械目视动作仍须现场，继续 Hardware Blocked |
+| **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。包含尾修 `bd71879` 的 merge commit `0f981339` 已获补充 Codex 外审且无重大问题。真实单位、方向、偏置、型号与机械目视动作仍须现场，继续 Hardware Blocked |
 | P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
 | ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
