@@ -281,8 +281,9 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
   consumers, including synchronous 409 responses, adhoc responses and DiagnosticRun audit rows.
 - Verify ambiguous existing-alert message updates through a fresh database session using the frozen
   alert ID plus intended message.
-- GREEN evidence: focused failure-truth suites `91 passed`; full backend `4274 passed / 5 skipped`;
-  GUI production build, compileall, single Alembic head and diff-check passed.
+- GREEN evidence: focused failure-truth suites `92 passed`; final full backend
+  `4275 passed / 5 skipped`; GUI production build, compileall, single Alembic head and
+  diff-check passed. Ninth fresh review: `P1=0 / P2=0 / P3=0` with `138 passed`.
 
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
