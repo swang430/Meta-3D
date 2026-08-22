@@ -11,7 +11,8 @@ CAL-04: 下行链路校准 (含 PA)
 """
 import math
 import numpy as np
-from typing import List, Dict, Optional, Any, Tuple
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Any, Tuple, Literal
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
@@ -37,6 +38,20 @@ from app.schemas.probe_calibration import (
 # chamber-keyed entrypoint that doesn't need them.
 
 logger = logging.getLogger("app.calibration.path_loss")
+
+
+@dataclass(frozen=True)
+class PathLossCalibrationSelection:
+    """一次路损证书选择及未选中原因。"""
+
+    certificate: Optional[ProbePathLossCalibration]
+    reason: Literal[
+        "selected",
+        "missing",
+        "expired",
+        "frequency_mismatch",
+        "operating_mode_mismatch",
+    ]
 
 
 def select_latest_path_loss_by_mode(base_query, operating_mode: Optional[str]):
@@ -1337,17 +1352,38 @@ class ProbePathLossCalibrationService:
         operating mode 过滤 cert (精确匹配优先, 退回 legacy 未标记), 否则多 mode 同频
         校准的 lab 会拿错 RF 通路的 per-chain 线损。见 select_latest_path_loss_by_mode。
         """
+        return self.resolve_latest_calibration(
+            chamber_id,
+            frequency_mhz=frequency_mhz,
+            operating_mode=operating_mode,
+            require_real=require_real,
+        ).certificate
+
+    def resolve_latest_calibration(
+        self,
+        chamber_id: UUID,
+        frequency_mhz: Optional[float] = None,
+        operating_mode: Optional[str] = None,
+        *,
+        require_real: bool = False,
+    ) -> PathLossCalibrationSelection:
+        """选择最新证书，并保留没有选中的可审计原因。
+
+        原因分类只读取同一暗室的数据库真值；数据库查询异常继续上抛，不能伪装成
+        ``missing``。匹配规则与历史 ``get_latest_calibration`` 完全相同。
+        """
+        now = datetime.utcnow()
         query = self.db.query(ProbePathLossCalibration).filter(
             ProbePathLossCalibration.chamber_id == chamber_id,
             ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-            ProbePathLossCalibration.valid_until > datetime.utcnow(),
+            ProbePathLossCalibration.valid_until > now,
         )
         if require_real:
             # 正式补偿只从 explicit-real 白名单中挑“最新”。不能先选任意来源
             # 的最新证书再拒绝，否则一次更新的 mock 演练会遮住仍有效的真实证书。
             query = query.filter(ProbePathLossCalibration.use_mock.is_(False))
 
-        if frequency_mhz:
+        if frequency_mhz is not None:
             # 查找最接近的频率
             query = query.filter(
                 ProbePathLossCalibration.frequency_mhz.between(
@@ -1355,7 +1391,64 @@ class ProbePathLossCalibrationService:
                 )
             )
 
-        return select_latest_path_loss_by_mode(query, operating_mode)
+        selected = select_latest_path_loss_by_mode(query, operating_mode)
+        if selected is not None:
+            return PathLossCalibrationSelection(selected, "selected")
+
+        candidates_query = self.db.query(ProbePathLossCalibration).filter(
+            ProbePathLossCalibration.chamber_id == chamber_id,
+        )
+        if require_real:
+            candidates_query = candidates_query.filter(
+                ProbePathLossCalibration.use_mock.is_(False)
+            )
+        candidates = candidates_query.all()
+        if not candidates:
+            return PathLossCalibrationSelection(None, "missing")
+
+        valid_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.status == CalibrationStatus.VALID.value
+        ]
+
+        def frequency_matches(candidate: ProbePathLossCalibration) -> bool:
+            if frequency_mhz is None:
+                return True
+            return frequency_mhz * 0.95 <= candidate.frequency_mhz <= frequency_mhz * 1.05
+
+        def mode_matches(candidate: ProbePathLossCalibration) -> bool:
+            if operating_mode is None:
+                return True
+            return candidate.operating_mode in (operating_mode, None)
+
+        if any(
+            frequency_matches(candidate)
+            and mode_matches(candidate)
+            and candidate.valid_until <= now
+            for candidate in valid_candidates
+        ):
+            return PathLossCalibrationSelection(None, "expired")
+
+        active_candidates = [
+            candidate
+            for candidate in valid_candidates
+            if candidate.valid_until > now
+        ]
+        if frequency_mhz is not None and active_candidates and not any(
+            frequency_matches(candidate) for candidate in active_candidates
+        ):
+            return PathLossCalibrationSelection(None, "frequency_mismatch")
+
+        frequency_candidates = [
+            candidate for candidate in active_candidates if frequency_matches(candidate)
+        ]
+        if operating_mode is not None and frequency_candidates and not any(
+            mode_matches(candidate) for candidate in frequency_candidates
+        ):
+            return PathLossCalibrationSelection(None, "operating_mode_mismatch")
+
+        return PathLossCalibrationSelection(None, "missing")
 
     def get_path_loss_for_probe(
         self,
