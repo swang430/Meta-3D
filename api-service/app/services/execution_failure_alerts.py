@@ -16,6 +16,7 @@ P2-34 发布结果契约：
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -44,6 +45,7 @@ OUTCOME_SKIPPED_NOT_FORMAL = "skipped_not_formal"  # 非正式源（VRT / 调试
 RECORDED_OUTCOMES = frozenset({OUTCOME_PUBLISHED, OUTCOME_DUPLICATE, OUTCOME_FAILED})
 
 CONFIG_RECORD_KEY = "failure_alert"
+LOCAL_HANDOFF_ALERT_KEY = "local_control_handoff_failed"
 
 _ERROR_SUMMARY_LIMIT = 500  # 摘要进 JSONB；完整 traceback 只进日志
 
@@ -112,6 +114,9 @@ def _record_publish_outcome(
         execution = (
             db.query(TestExecution)
             .filter(TestExecution.id == execution_id)
+            # Alert 已在上一事务提交；本事务仍需独立锁住 execution 后再合并
+            # 整列 JSON config，避免覆盖并发落盘的 Local 交接或其他最终证据。
+            .with_for_update()
             .first()
         )
         if execution is None:
@@ -212,9 +217,11 @@ def _reconcile_ambiguous_alert_update(
     execution_id: UUID,
     alert_id: UUID,
     intended_message: str,
+    intended_status: str,
+    intended_extra_data: Optional[str],
     commit_error_summary: str,
 ) -> str:
-    """用新会话核对既有告警正文更新的 COMMIT 真值。"""
+    """用新会话核对既有告警正文与生命周期更新的 COMMIT 真值。"""
     verify_db: Any = None
     try:
         verify_db = SessionLocal()
@@ -226,6 +233,8 @@ def _reconcile_ambiguous_alert_update(
                 Alert.related_entity_type == "test_execution",
                 Alert.related_entity_id == execution_id,
                 Alert.message == intended_message,
+                Alert.status == intended_status,
+                Alert.extra_data == intended_extra_data,
             )
             .first()
         )
@@ -263,8 +272,9 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
     """为一个新进入 failed 的正式执行创建告警，并记录发布结果。
 
     返回发布结果 outcome（``OUTCOME_*``）。去重覆盖告警全部生命周期：
-    操作员已 acknowledge/resolve/dismiss 的同一执行不得因调用方重试而
-    重新变成 active。
+    操作员已 acknowledge/resolve/dismiss 的同一执行不得因普通重试而重新
+    变成 active；但后来新增的 Local 交接失败代表仪表可能仍处于 Remote，
+    必须恰好重新激活一次。
     """
     db: Any = None
     try:
@@ -274,6 +284,10 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
         execution = (
             db.query(TestExecution)
             .filter(TestExecution.id == execution_id)
+            # execution 行必然存在，先锁它来串行化同一执行的“查无告警→首建”
+            # 与后续去重。PostgreSQL 对不存在的 Alert 行没有 gap lock，仅锁
+            # Alert 不能阻止两个 emitter 各插一条不同 UUID 的重复告警。
+            .with_for_update()
             .first()
         )
         if execution is None:
@@ -301,18 +315,50 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
         alert_id: Optional[str] = None
         error_summary: Optional[str] = None
         if existing is not None:
-            existing_alert = db.get(Alert, existing[0])
+            existing_alert = (
+                db.query(Alert)
+                .filter(Alert.id == existing[0])
+                # Local 交接失败是会重开同一告警的一次性安全事实。必须先锁住
+                # 权威 Alert 行再读 marker 与 lifecycle；否则两个 emitter 都可能
+                # 从旧快照判断为“首次”，后提交者会覆盖操作员刚完成的确认。
+                .with_for_update()
+                .first()
+            )
             if existing_alert is None:
                 raise RuntimeError(
-                    f"执行 {execution.id} 的既有失败告警在读取正文时消失"
+                    f"执行 {execution.id} 的既有失败告警在加锁读取时消失"
                 )
-            # 同一执行只保留一条告警，也不重开操作员已经 acknowledge / resolve /
-            # dismiss 的生命周期；但失败原因可能在稍后的 Local 交接阶段变得更严重。
-            # 必须刷新正文，否则活动摘要与历史页仍只展示旧业务失败，漏掉“仪表可能
-            # 保持 Remote”这一新的安全事实。
-            if existing_alert.message != message:
+            try:
+                alert_metadata = json.loads(existing_alert.extra_data or "{}")
+            except (TypeError, ValueError):
+                alert_metadata = {}
+            if not isinstance(alert_metadata, dict):
+                alert_metadata = {}
+            handoff_fact_new = (
+                config.get(LOCAL_HANDOFF_ALERT_KEY) is True
+                and alert_metadata.get(LOCAL_HANDOFF_ALERT_KEY) is not True
+            )
+            message_changed = existing_alert.message != message
+            # 普通原因更新只刷新正文并保留操作员 lifecycle。Local 交接失败是
+            # 新的安全事实：首次进入同一告警时重新激活并置为未读；结构化 marker
+            # 与状态同行提交，保证后续普通重试不会再次重开。
+            if message_changed or handoff_fact_new:
                 existing_alert.message = message
+                if handoff_fact_new:
+                    existing_alert.status = AlertStatus.ACTIVE.value
+                    existing_alert.is_read = False
+                    existing_alert.acknowledged_at = None
+                    existing_alert.resolved_at = None
+                    existing_alert.acknowledged_by = None
+                    alert_metadata[LOCAL_HANDOFF_ALERT_KEY] = True
+                    existing_alert.extra_data = json.dumps(
+                        alert_metadata,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
                 frozen_alert_id = existing_alert.id
+                intended_status = existing_alert.status
+                intended_extra_data = existing_alert.extra_data
                 try:
                     db.commit()
                 except Exception as exc:  # noqa: BLE001 - COMMIT 结果需独立查证
@@ -324,6 +370,8 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                         execution_id,
                         frozen_alert_id,
                         message,
+                        intended_status,
+                        intended_extra_data,
                         error_summary,
                     )
                     outcome_already_recorded = True
@@ -331,9 +379,12 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                     outcome = OUTCOME_DUPLICATE
             else:
                 outcome = OUTCOME_DUPLICATE
-            alert_id = str(existing[0])
+            alert_id = str(existing_alert.id)
         else:
             new_alert_id = uuid4()
+            handoff_fact_present = (
+                config.get(LOCAL_HANDOFF_ALERT_KEY) is True
+            )
             alert = Alert(
                 id=new_alert_id,
                 title="正式测试执行失败",
@@ -345,6 +396,15 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
                 related_entity_type="test_execution",
                 related_entity_id=execution.id,
                 created_by=execution.executed_by,
+                extra_data=(
+                    json.dumps(
+                        {LOCAL_HANDOFF_ALERT_KEY: True},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    if handoff_fact_present
+                    else None
+                ),
             )
             try:
                 db.add(alert)

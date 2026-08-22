@@ -63,6 +63,15 @@ Codex R2 随后发现延迟生命周期投影虽已生成正确的 `execution_su
 GREEN 后显式 PASS 的顶层与嵌套通过率均为 100%；fresh 尾审 P1/P2/P3=0，报告相关链
 148 passed、全后端 4276 passed / 5 skipped、GUI production build、`compileall`、单一
 Alembic head 与 `diff-check` 通过，待 R3。
+Codex R3 又发现：原业务失败告警若在仪表交还期间被操作员关闭，随后新增的 Local 交还失败
+只会刷新正文而保留非活动状态，Dashboard 会漏掉“仪表可能仍为 Remote”的新安全事实。
+现已按 TDD 收窄为仅在结构化交还失败事实首次进入同一告警时重新 active/unread；同行 marker
+保证操作员再次确认后普通重试不会反复重开。尾审继续追全并发入口：正式 emitter 先锁
+`TestExecution` 再查/锁 `Alert`，串行化首建与重开；outcome 第二事务重新锁 execution 后才合并
+JSON，避免抹掉并发落盘的交还证据；通用 `POST /alerts` 精确拒绝系统保留类型
+`execution_failed`。三组 RED 分别证明旧 resolved 不重开、并发锁站点缺失与通用入口可伪造，
+GREEN 后相关链 129 passed、全后端 4280 passed / 5 skipped；最终 fresh 内审 P1/P2/P3=0，
+`compileall`、单一 Alembic head、GUI production build 与 `diff-check` 通过，待 R4。
 下一项 P1-62 收口同次执行中“确实应用了 legacy/来源未知路损证书，却被报告、warning 与 GUI
 描述成无证书/未补偿”的叙事真值；两项均不放宽正式 KPI 判据。设计见
 [`P1-61 设计`](plans/2026-08-22-p1-61-report-final-state-truth-design.md)。
@@ -267,7 +276,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；合并后经用户批准永久删除 20 个空测试 SQLite（21,299,200 bytes），其余资产保持保护 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
 | **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | ✅ PR #371；R4 覆盖最终 HEAD 无 P1；merge `ebccb1e` |
-| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | 🔄 Codex R1 的缺失 verdict 假 FAIL 与 R2 的投影顶层 `pass_rate` 缺失 P1 均已按 TDD 修复；fresh 尾审 P1/P2/P3=0，相关链 148 passed、全后端 4276 passed / 5 skipped，待 R3 |
+| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | 🔄 Codex R1/R2 的 verdict、`pass_rate` P1 已收口；R3 的交还失败告警生命周期与并发全集已按 TDD 修复，最终内审 P1/P2/P3=0、相关链 129 passed、全后端 4280 passed / 5 skipped，待 R4 |
 | **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ⏭ P1-61 合并后下一优先项；正式 verdict 与未验证数值门保持不变 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。

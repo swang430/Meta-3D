@@ -16,6 +16,7 @@ from app.schemas.alert import (
     AlertListResponse,
     AlertSummary,
 )
+from app.services.execution_failure_alerts import EXECUTION_FAILED_ALERT_TYPE
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard Alerts"])
 logger = logging.getLogger(__name__)
@@ -70,6 +71,15 @@ def create_alert(
 
     Used by system components to notify users of important events.
     """
+    # execution_failed 是正式执行失败服务的保留类型；该服务负责执行行锁、
+    # 去重、Local 交接事实与 outcome 记录。通用入口若可伪造该类型，会绕过
+    # 整条真值链并为同一 execution 创建重复/错误严重度告警。
+    if request.type == EXECUTION_FAILED_ALERT_TYPE:
+        raise HTTPException(
+            status_code=422,
+            detail="execution_failed 是系统保留告警类型，不能通过通用入口创建",
+        )
+
     # Map 'type' to 'severity'
     severity_map = {
         "info": AlertSeverity.INFO.value,
