@@ -46,6 +46,7 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
+    "path_loss_application",
     "throughput_trust_schema_version",
     "formal_throughput_verified",
     "throughput_scope",

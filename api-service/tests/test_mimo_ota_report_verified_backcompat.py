@@ -55,6 +55,182 @@ def _step(content, phase):
     return next(s for s in content["step_results"] if s["phase"] == phase)
 
 
+def _path_loss_report_phases(application, *, verified=False):
+    return {
+        "precheck": {
+            "overall_pass": True,
+            "quiet_zone_ripple_source": "probe_pattern_peak_spread",
+        },
+        "reference": {
+            "measured_trp_dbm": 23.0,
+            "compensation_factor_db": 8.0,
+            "trp_verified": True,
+        },
+        "measure": {
+            "path_loss_application": application,
+            "path_loss_verified": verified,
+            "path_loss_calibration_use_mock": False if verified else None,
+            "path_loss_compensation_db": 56.77,
+            "throughput_verified": True,
+            "throughput_scope": "pcell",
+            "carrier_aggregation": {"num_component_carriers": 1},
+            "azimuth_results": [{
+                "azimuth_deg": 0.0,
+                "rsrp_dbm": -70.0,
+                "sinr_db": 20.0,
+                "throughput_mbps": 500.0,
+                "throughput_valid": True,
+                "throughput_scope": "pcell",
+                "rank_indicator": 4.0,
+            }],
+        },
+        "analysis": {"verdict": "PASS"},
+    }
+
+
+def _path_loss_application(
+    *,
+    status="applied",
+    provenance="unknown",
+    reason="selected",
+    certificate_id="cert-legacy",
+    value_disclosure="hidden_unverified",
+):
+    return {
+        "schema_version": 1,
+        "status": status,
+        "provenance": provenance,
+        "reason": reason,
+        "gate_mode": "mock_not_applicable",
+        "certificate_id": certificate_id,
+        "value_disclosure": value_disclosure,
+    }
+
+
+def test_report_renders_applied_unknown_certificate_without_false_uncompensated_claim():
+    application = _path_loss_application()
+
+    content = _build_mimo_ota_content_data(
+        _exec(_path_loss_report_phases(application)), datetime(2026, 1, 1),
+    )
+    parameters = _step(content, "measure")["parameters"]
+
+    assert content["path_loss_application"] == application
+    assert content["formal_path_loss_verified"] is False
+    assert content["overall_result"] != "passed"
+    assert "已应用路损补偿" in parameters["路损应用"]
+    assert "来源未知" in parameters["路损应用"]
+    assert parameters["路损证书 ID"] == "cert-legacy"
+    assert "未补偿" not in parameters["路损应用"]
+    assert parameters["路损补偿 (dB)"] == "—（补偿数值不展示）"
+    assert "56.77" not in str(content)
+
+
+def test_report_renders_applied_real_certificate_and_verified_value():
+    application = _path_loss_application(
+        provenance="real",
+        certificate_id="cert-real",
+        value_disclosure="verified",
+    )
+
+    content = _build_mimo_ota_content_data(
+        _exec(_path_loss_report_phases(application, verified=True)),
+        datetime(2026, 1, 1),
+    )
+    parameters = _step(content, "measure")["parameters"]
+
+    assert content["formal_path_loss_verified"] is True
+    assert content["overall_result"] == "passed"
+    assert parameters["路损补偿 (dB)"] == 56.77
+    assert parameters["路损证书 ID"] == "cert-real"
+    assert "已应用经验证" in parameters["路损应用"]
+
+
+@pytest.mark.parametrize(
+    "application, expected_text",
+    [
+        (
+            _path_loss_application(provenance="simulated"),
+            "流程演练",
+        ),
+        (
+            _path_loss_application(
+                status="not_applied",
+                reason="rejected_untrusted",
+                value_disclosure="none",
+            ),
+            "因来源未验证未应用",
+        ),
+        (
+            _path_loss_application(
+                status="not_applied",
+                provenance="missing",
+                reason="missing",
+                certificate_id=None,
+                value_disclosure="none",
+            ),
+            "未找到匹配",
+        ),
+        (
+            _path_loss_application(
+                status="not_applied",
+                provenance="missing",
+                reason="expired",
+                certificate_id=None,
+                value_disclosure="none",
+            ),
+            "已过期",
+        ),
+        (
+            _path_loss_application(
+                status="not_applied",
+                provenance="missing",
+                reason="frequency_mismatch",
+                certificate_id=None,
+                value_disclosure="none",
+            ),
+            "频率不匹配",
+        ),
+        (
+            _path_loss_application(
+                status="not_applied",
+                provenance="missing",
+                reason="operating_mode_mismatch",
+                certificate_id=None,
+                value_disclosure="none",
+            ),
+            "operating mode 不匹配",
+        ),
+        (None, "历史记录无法证明"),
+        ({"schema_version": 1, "status": "invented"}, "历史记录无法证明"),
+    ],
+    ids=[
+        "simulated",
+        "rejected-untrusted",
+        "missing",
+        "expired",
+        "frequency-mismatch",
+        "mode-mismatch",
+        "absent-history",
+        "malformed-history",
+    ],
+)
+def test_report_path_loss_state_matrix_hides_unverified_values(
+    application,
+    expected_text,
+):
+    content = _build_mimo_ota_content_data(
+        _exec(_path_loss_report_phases(application)), datetime(2026, 1, 1),
+    )
+    parameters = _step(content, "measure")["parameters"]
+
+    assert expected_text in parameters["路损应用"]
+    assert parameters["路损补偿 (dB)"] == "—（补偿数值不展示）"
+    assert content["formal_path_loss_verified"] is False
+    assert content["overall_result"] != "passed"
+    assert "56.77" not in str(content)
+
+
 def test_historical_fallback_not_marked_verified():
     """Legacy payloads: provenance present, verified flag ABSENT → must NOT
     be reported as verified."""
@@ -1617,6 +1793,15 @@ def test_report_create_drops_client_supplied_trust_attestation():
         "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 1,
         "formal_path_loss_verified": True,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "forged-cert",
+            "value_disclosure": "verified",
+        },
         "formal_throughput_verified": True,
         "overall_result": "passed",
         "statistics": {"avg_throughput_mbps": 9999.0},
@@ -1635,6 +1820,7 @@ def test_report_create_drops_client_supplied_trust_attestation():
     assert "calibration_trust_schema_version" not in report.content_data
     assert "throughput_trust_schema_version" not in report.content_data
     assert "formal_path_loss_verified" not in report.content_data
+    assert "path_loss_application" not in report.content_data
     assert "formal_throughput_verified" not in report.content_data
     assert report.content_data["overall_result"] == "passed"
     assert report.content_data["statistics"]["avg_throughput_mbps"] == 9999.0
