@@ -38,8 +38,33 @@ from app.services.channel_generation.oop_parser import (
     generate_oop_file,
     OOPProfile,
 )
+from app.services.cdl_model_parser import (
+    SCENARIO_ALIASES,
+    SCENARIO_NAMES,
+    parse_cdl_model_name,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_native_scenario(model_name: str, declared: Optional[str]) -> str:
+    """Resolve one scenario and reject an explicit model/declaration conflict."""
+    parsed = parse_cdl_model_name(model_name)
+    if not declared:
+        return parsed.scenario_name
+    canonical_declared = SCENARIO_ALIASES.get(declared, declared)
+    if canonical_declared not in SCENARIO_NAMES:
+        raise ValueError(f"unsupported native scenario: {declared!r}")
+    first_token = model_name.strip().split()[0]
+    model_has_explicit_scenario = (
+        first_token in SCENARIO_NAMES or first_token in SCENARIO_ALIASES
+    )
+    if model_has_explicit_scenario and parsed.scenario_name != canonical_declared:
+        raise ValueError(
+            "channel scenario conflicts with cdl_model_name: "
+            f"{canonical_declared!r} != {parsed.scenario_name!r}"
+        )
+    return canonical_declared
 
 
 # .oop 文件输出目录
@@ -122,8 +147,14 @@ class NativeModelStrategy(BaseChannelGenerator):
         """
         logger.info("[NativeModel Strategy] Starting native channel generation")
 
-        model_name = cdl_model_data.get("model_name", "3GPP_CDL-C")
-        scenario = cdl_model_data.get("scenario", "UMi")
+        model_name = cdl_model_data.get("model_name", "CDL-C")
+        try:
+            scenario = _resolve_native_scenario(
+                model_name, cdl_model_data.get("scenario")
+            )
+        except ValueError as exc:
+            logger.error("[NativeModel Strategy] Invalid model scenario: %s", exc)
+            return False
 
         # ----- Step 1: 验证仿真器能力 -----
         supported_modes = self.emulator.get_supported_load_modes()
@@ -239,7 +270,13 @@ class NativeModelStrategy(BaseChannelGenerator):
         if not azimuth_steps:
             azimuth_steps = [0.0]
 
-        full_model_name = f"{scenario} {model_name}"
+        try:
+            model_scenario = parse_cdl_model_name(model_name).scenario_name
+        except ValueError:
+            model_scenario = None
+        full_model_name = (
+            model_name if model_scenario == scenario else f"{scenario} {model_name}"
+        )
 
         profile = generate_oop_file(
             model_name=full_model_name,

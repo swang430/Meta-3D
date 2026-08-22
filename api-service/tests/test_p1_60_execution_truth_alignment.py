@@ -14,6 +14,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.probe_calibration import ChannelPhaseCalibration
 from app.services.phase_calibration_service import PhaseCalibrationService
+from app.hal.channel_emulator import ChannelLoadMode
+from app.services.channel_generation.gcm_strategy import NativeModelStrategy
 from app.services.channel_engine_client import ChannelEngineClient
 from app.services.mimo_ota import channel_asset_resolver
 from app.services.mimo_ota.executors import measure
@@ -78,6 +80,28 @@ def test_vendor_asset_resolution_exposes_uma_scenario():
         scenario="UMa",
     )
     assert resolved.scenario == "UMa"
+
+
+@pytest.mark.asyncio
+async def test_native_model_derives_uma_from_model_name_without_umi_default():
+    class Emulator:
+        def get_supported_load_modes(self):
+            return [ChannelLoadMode.NATIVE_MODEL]
+
+        async def load_channel(self, **kwargs):
+            self.loaded = kwargs
+            return True
+
+    emulator = Emulator()
+    ok = await NativeModelStrategy(
+        emulator, SimpleNamespace(), [], generate_oop=False
+    ).generate_and_load(
+        {"emulation_file": r"D:\Scenario\UMa.smu"},
+        {"model_name": "UMa CDL-C NLOS", "session_id": "p1-60"},
+    )
+
+    assert ok is True
+    assert emulator.loaded["scenario"] == "UMa"
 
 
 def test_frequency_warning_names_missing_center_when_bandwidth_is_declared():

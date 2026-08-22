@@ -79,6 +79,7 @@ class TestResolver:
         # scd_config 声明频率喂一致性网 (Codex #174 复查 P2: 防选错频率 .smu)
         assert r.scd_freq_identity is not None
         assert r.scd_freq_identity.center_arfcn == 640000
+        assert r.scenario == "UMa"
 
     def test_verified_project_truth_overrides_stale_parseable_filename(self, db):
         """P2-31 R1: 已由工程正文同步的资产不能再被旧 MF_ 文件名拒绝执行。"""

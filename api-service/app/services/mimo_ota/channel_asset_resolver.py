@@ -58,6 +58,7 @@ class ResolvedChannelAsset:
     rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
     scd_freq_identity: Any = None  # vendor_file/rt_dynamic 声明频率 → 频率一致性网 (Codex #174 复查 P2)
     ue_velocity_mps: Any = None  # rt_dynamic 顶层速度 → B2 sim_rules 多普勒上下文 (Codex 9d4e758 P2)
+    scenario: Optional[str] = None  # vendor_file scd_config 的显式场景真值
 
 
 class ChannelAssetResolveError(ValueError):
@@ -124,7 +125,10 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
                 raise ChannelAssetResolveError(chk.failure_reason())
         return ResolvedChannelAsset(
             engine_mode=engine, asset=asset,
-            emulation_file=asset.associated_file_path, scd_freq_identity=freq_id)
+            emulation_file=asset.associated_file_path,
+            scd_freq_identity=freq_id,
+            scenario=scd.get("scenario"),
+        )
     # rt_dynamic: 透传单快照 rays 到 B2 (对称 custom clusters 透传; 多快照轨迹/ACP 装配是 S3)。
     # Codex #174 复查 P2: 否则 rt_dynamic 资产路由到 B2 但 rays 没接, B2 误用 legacy rt_rays。
     snapshots = (asset.payload or {}).get("snapshots") or []
