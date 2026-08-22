@@ -25,70 +25,30 @@ import pytest
 from app.services.instrument_hal_service import DriverMode, InstrumentHALService
 
 
-class TestDecideUseRealMockForce:
-    """MOCK_FORCE — hard mock, ignores per-instrument 'real'."""
+@pytest.mark.parametrize(
+    ("global_mode", "instrument_mode", "expected"),
+    [
+        pytest.param(
+            DriverMode.MOCK_FORCE, "real", False, id="mock-force-overrides-instrument-real"
+        ),
+        pytest.param(DriverMode.MOCK_FORCE, "mock", False, id="mock-force-keeps-instrument-mock"),
+        pytest.param(
+            DriverMode.MOCK_FORCE, "auto", False, id="mock-force-keeps-instrument-auto-mock"
+        ),
+        pytest.param(DriverMode.MOCK_FORCE, "", False, id="mock-force-keeps-unset-instrument-mock"),
+        pytest.param(DriverMode.MOCK, "real", True, id="legacy-mock-honors-instrument-real"),
+        pytest.param(DriverMode.MOCK, "mock", False, id="legacy-mock-keeps-instrument-mock"),
+        pytest.param(DriverMode.MOCK, "auto", False, id="legacy-mock-auto-follows-global"),
+        pytest.param(DriverMode.REAL, "mock", False, id="real-mode-honors-instrument-mock"),
+        pytest.param(DriverMode.REAL, "real", True, id="real-mode-keeps-instrument-real"),
+        pytest.param(DriverMode.REAL, "auto", True, id="real-mode-auto-follows-global"),
+    ],
+)
+def test_decide_use_real_contract_matrix(global_mode, instrument_mode, expected):
+    """Pin every cell of the global/per-instrument hardware safety matrix."""
+    svc = InstrumentHALService(mode=global_mode)
 
-    @pytest.fixture
-    def svc(self):
-        return InstrumentHALService(mode=DriverMode.MOCK_FORCE)
-
-    def test_per_instrument_real_overridden(self, svc):
-        # The exact bug Codex caught: in MOCK_FORCE, even an explicit
-        # per-instrument 'real' must NOT load a real driver.
-        assert svc._decide_use_real("real") is False
-
-    def test_per_instrument_mock_stays_mock(self, svc):
-        assert svc._decide_use_real("mock") is False
-
-    def test_per_instrument_auto_stays_mock(self, svc):
-        assert svc._decide_use_real("auto") is False
-
-    def test_per_instrument_unset_stays_mock(self, svc):
-        # Practical: a category row with no driver_mode column value
-        # gets normalized to 'auto' upstream; pinning here so a future
-        # refactor that drops the normalisation still produces mock.
-        assert svc._decide_use_real("") is False
-
-
-class TestDecideUseRealMockSoft:
-    """MOCK (legacy) — soft mock, per-instrument 'real' still
-    connects to hardware. Pinning the regression boundary so the
-    GUI's existing HAL mode switch behavior doesn't drift."""
-
-    @pytest.fixture
-    def svc(self):
-        return InstrumentHALService(mode=DriverMode.MOCK)
-
-    def test_per_instrument_real_still_loads_real(self, svc):
-        # This is the EXPECTED behavior for MOCK (in contrast to
-        # MOCK_FORCE). An operator who deliberately set one
-        # instrument to 'real' wants it real even when global is mock.
-        assert svc._decide_use_real("real") is True
-
-    def test_per_instrument_mock_stays_mock(self, svc):
-        assert svc._decide_use_real("mock") is False
-
-    def test_per_instrument_auto_follows_global(self, svc):
-        # auto + global MOCK → mock
-        assert svc._decide_use_real("auto") is False
-
-
-class TestDecideUseRealRealMode:
-    """REAL — real by default, per-instrument 'mock' still goes mock."""
-
-    @pytest.fixture
-    def svc(self):
-        return InstrumentHALService(mode=DriverMode.REAL)
-
-    def test_per_instrument_mock_stays_mock(self, svc):
-        assert svc._decide_use_real("mock") is False
-
-    def test_per_instrument_real_loads_real(self, svc):
-        assert svc._decide_use_real("real") is True
-
-    def test_per_instrument_auto_follows_global(self, svc):
-        # auto + global REAL → real
-        assert svc._decide_use_real("auto") is True
+    assert svc._decide_use_real(instrument_mode) is expected
 
 
 class TestEnumMembership:
