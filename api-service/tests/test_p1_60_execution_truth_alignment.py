@@ -174,6 +174,33 @@ async def test_explicit_vendor_file_preserves_non_3gpp_scenario_label():
 
 
 @pytest.mark.asyncio
+async def test_explicit_vendor_file_accepts_driver_supported_non_cdl_model():
+    class Emulator:
+        def get_supported_load_modes(self):
+            return [ChannelLoadMode.NATIVE_MODEL]
+
+        async def load_channel(self, **kwargs):
+            self.loaded = kwargs
+            return True
+
+    emulator = Emulator()
+    ok = await NativeModelStrategy(
+        emulator, SimpleNamespace(), [], generate_oop=False
+    ).generate_and_load(
+        {"emulation_file": r"D:\\Scenario\\TDL-A_Indoor.smu"},
+        {
+            "model_name": "TDL-A",
+            "scenario": "Indoor",
+            "session_id": "p1-60-vendor-tdl",
+        },
+    )
+
+    assert ok is True
+    assert emulator.loaded["model_name"] == "TDL-A"
+    assert emulator.loaded["scenario"] == "Indoor"
+
+
+@pytest.mark.asyncio
 async def test_explicit_vendor_file_rejects_non_alnum_scenario_before_io():
     class Emulator:
         def get_supported_load_modes(self):
