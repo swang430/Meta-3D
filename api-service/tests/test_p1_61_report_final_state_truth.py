@@ -337,6 +337,34 @@ def test_report_summary_uses_exactly_one_lifecycle_verdict_state(
     _assert_one_state(summary)
 
 
+def test_completed_report_without_analysis_verdict_is_undetermined_not_failed():
+    """手工只跑 REPORT 时，缺失 ANALYSIS 不能被伪装成正式 FAIL。"""
+    execution = _execution(
+        status="completed",
+        validation_pass=None,
+        trusted=True,
+        duration_sec=1.0,
+        completed_at=datetime(2026, 8, 22, 1, 0, 1),
+    )
+    del execution.measurements["phases"]["analysis"]
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 22, 1, 0, 2),
+        "report-without-analysis",
+    )
+
+    summary = content["execution_summary"]
+    assert summary["undetermined"] == 1
+    assert summary["failed"] == 0
+    assert summary["pass_rate"] is None
+    analysis_step = next(
+        step for step in content["step_results"] if step["phase"] == "analysis"
+    )
+    assert analysis_step["parameters"]["verdict"] == "UNKNOWN"
+    _assert_one_state(summary)
+
+
 @pytest.mark.asyncio
 async def test_report_executor_projects_completed_content_without_early_orm_mutation(
     monkeypatch,

@@ -397,17 +397,24 @@ def _build_mimo_ota_content_data(
     # 列缺失 (老执行 / analysis 未跑到 / 测试 stub) 时兜 payload 的 verdict
     # 三值字面量; 都没有 → 保守 False (与旧行为同向, 绝不把未知判成通过)。
     _validation_pass = getattr(execution, "validation_pass", None)
+    _analysis_verdict = analysis.get("verdict")
     if _validation_pass is not None:
         overall_pass = bool(_validation_pass)
     else:
-        overall_pass = analysis.get("verdict") in ("PASS", "MARGINAL")
+        overall_pass = _analysis_verdict in ("PASS", "MARGINAL")
     duration_sec = (
         float(lifecycle.duration_sec)
         if lifecycle.duration_sec is not None
         else None
     )
 
-    verdict_unknown = analysis.get("verdict") == "UNKNOWN"
+    # 只有显式的执行级布尔判决，或 ANALYSIS 写出的 PASS/MARGINAL/FAIL，
+    # 才能把 completed 映射为正式通过/失败。手工跳过 ANALYSIS 直接跑
+    # REPORT 时 verdict 缺失，语义是尚未判定，而不是 FAIL/0%。
+    verdict_unknown = (
+        _validation_pass is None
+        and _analysis_verdict not in ("PASS", "MARGINAL", "FAIL")
+    )
 
     # Aggregate per-azimuth stats into one stat-row per KPI
     azimuth_results: List[Dict[str, Any]] = measure.get("azimuth_results") or []
@@ -503,7 +510,7 @@ def _build_mimo_ota_content_data(
     # throughput sample. Historical, mock, bypass and missing-read executions
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
-    reported_verdict = analysis.get("verdict")
+    reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
     if _pl_verified is not True or _throughput_verified is not True:
         overall_pass = False
         verdict_unknown = True
