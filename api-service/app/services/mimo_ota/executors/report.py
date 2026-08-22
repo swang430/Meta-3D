@@ -395,7 +395,7 @@ def _build_mimo_ota_content_data(
     # TestExecution.validation_pass 列 (= verdict in ("PASS","MARGINAL")),
     # 从不写 payload 的 "overall_pass" 键 (旧读法恒 False → 报告恒 failed/0.0%)。
     # 列缺失 (老执行 / analysis 未跑到 / 测试 stub) 时兜 payload 的 verdict
-    # 三值字面量; 都没有 → 保守 False (与旧行为同向, 绝不把未知判成通过)。
+    # 三值字面量；两端都没有或 verdict 未知 → undetermined，不伪造 FAIL/0%。
     _validation_pass = getattr(execution, "validation_pass", None)
     _analysis_verdict = analysis.get("verdict")
     if _validation_pass is not None:
