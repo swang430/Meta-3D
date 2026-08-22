@@ -57,11 +57,9 @@ export function formatLogDate(ts: string, locale = 'zh-CN'): string {
  * `execution_id`（UUID）——用户原话是「测试例 ID 太长」，解法是给一个认得出的
  * 标签，**不是**再造一个短主键。别拿它当 key、别用它做等值查询。
  *
- * ⚠ **取本地时区，不取 UTC。** 后端建执行快照时用的是
- * `datetime.utcnow()`（`test_case_runner.py:134`，名字形如
- * `xxx [执行 20260805-151251]`），而日志面板 P1-34 已统一显示**本地时间**。
- * 本标签的用途是让人拿它跟**日志时间线和墙上的钟**对上，所以跟着日志走；
- * 与快照名相差一个时区偏移是**预期行为**，那是名字不是索引。
+ * ⚠ **取本地时区，不取 UTC。** P1-60 起后端执行快照、commissioning 名称和
+ * 报告人读 ID 也通过共享 helper 转成本地时区；本标签与日志、快照名称和墙上的钟
+ * 应显示同一时刻。数据库/API 的底层时间仍保持 UTC。
  */
 export function formatExecutionTag(ts: string | null | undefined): string {
   if (!ts) return '—';

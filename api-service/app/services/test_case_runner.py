@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -53,6 +53,7 @@ from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.execution_exclusion_guard import active_unsafe_diagnostic
 from app.services.test_execution.hydrate import build_step_context
 from app.services.test_execution.registry import dispatch_step
+from app.utils.human_time import format_human_local_timestamp
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     instrument_test_lease,
@@ -162,7 +163,9 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     #    非法参数在这里 fail-loud 直接 422, 不产生半截执行行) ──
     snap_name = (
         f"{source.name}"[:200]
-        + f" [执行 {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}]"
+        + " [执行 "
+        + format_human_local_timestamp(datetime.now(timezone.utc))
+        + "]"
     )
     try:
         snapshot, descriptors = build_mimo_ota_test_case(
