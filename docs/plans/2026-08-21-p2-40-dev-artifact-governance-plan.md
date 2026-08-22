@@ -219,8 +219,16 @@ SQLite read-only mode and output claims against AGENTS.md. Fix P1 through RED→
 Open a Ready PR. Process R1 findings, then request R2; if R2 or later still has P1, continue P1-only review
 until the latest HEAD is covered with no P1.
 
-**Step 4: Present the separate operation approval packet**
+**Step 4: Present the separate operation approval packet — ✅ completed 2026-08-22**
 
 After merge, show the user exact quarantine candidates and recovery plan. Do not create backup, move,
 delete, prune or remove worktrees until explicit approval. P2-40 code completion and artifact cleanup are
 reported as separate states.
+
+Historical outcome: the user separately approved quarantine and then permanent deletion. Exactly 20 closed,
+zero-schema test SQLite files (21,299,200 bytes) were quarantined and permanently deleted. Runtime logs,
+production PostgreSQL, Docker volumes and worktrees remained protected. The deleted data is not recoverable;
+the immutable operation evidence is retained in
+`/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-deletion-receipt.json` and
+`/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-moves.json`. This step is complete and must not be
+re-run from this plan.

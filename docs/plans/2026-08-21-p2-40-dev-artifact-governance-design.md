@@ -207,7 +207,17 @@ manifest 校验：
 2 P1 / 3 P2 与 R1 的 view-only schema 漏判均已按 TDD 与单一真值源收口，尾修复审
 **P1/P2/P3=0**。
 
-### 拟提交用户批准的可恢复操作（尚未执行）
+### 用户批准操作的最终状态（2026-08-22 已完成）
+
+以下步骤是清理前的批准方案，保留作审计历史，不再是待执行指令。用户随后先批准隔离，再明确
+批准永久删除：20 个候选在操作前重新确认仍为 closed、零 schema 且身份未漂移，按 manifest
+隔离后永久删除，共 21,299,200 bytes。运行日志、生产 PostgreSQL、Docker volume 与 worktree
+均未移动或删除。删除后的数据不可恢复；逐文件原路径、SHA-256 与操作结果保存在：
+
+- `/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-deletion-receipt.json`
+- `/Users/simon/Meta3D-Artifacts/quarantine/2026-08-22-p2-40-moves.json`
+
+下列“拟定/批准后”措辞只描述当时的操作设计，**已经 superseded，不得再次执行**。
 
 外部隔离根拟定为：
 
@@ -225,4 +235,5 @@ manifest 校验：
    `pg_restore --list` / 恢复验证；
 5. 所有日志和 14 个 anonymous volume 本轮继续原地保留，不纳入移动单。
 
-隔离观察与最终删除是第二个独立批准点；本 PR、当前 dry-run 以及第一次批准都不直接删除。
+隔离观察与最终删除原设计为第二个独立批准点；两个批准点均已在 PR 合并后由用户明确完成，
+最终状态以上述删除回执为准。
