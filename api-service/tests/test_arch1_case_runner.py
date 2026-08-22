@@ -345,11 +345,8 @@ class TestCancel:
     @pytest.mark.asyncio
     async def test_cancel_during_final_phase_respected(self, db, lab):
         """cancel 落在最后一个相位 (REPORT) 执行期间 → 终态必须是 cancelled
-        (agent F4③ + Codex #237 C5)。fake 复刻真 REPORT executor 的关键行为:
-        它会把 execution.status 直接写 "completed" 并 commit (report.py
-        "Mark execution lifecycle complete"), 把 cancel 端点刚写的 cancelled
-        覆盖掉 — 收尾必须凭 config.cancel_requested 痕迹救回。
-        变异: 砍收尾的 cancel_requested 检查 → 本测试红 (终态错成 completed)。"""
+        (agent F4③ + P1-61)。REPORT 与取消必须通过同一个数据库终态 CAS
+        裁决，取消先赢后 REPORT 不得覆盖。"""
         source = _make_case(db, lab, name="末相位取消")
         calls = {"n": 0}
 
@@ -362,21 +359,80 @@ class TestCancel:
                     tcr.request_cancel(s2, ctx.test_execution.id)
                 finally:
                     s2.close()
-                # 再复刻真 REPORT executor: 同 runner session 直接覆盖 status
+                # 再走真 REPORT executor 的终态 CAS；它必须观察到取消赢家。
                 from datetime import datetime as _dt
-                ctx.test_execution.status = "completed"
-                ctx.test_execution.completed_at = _dt.utcnow()
-                ctx.db.commit()
+                from app.services.mimo_ota.executors.report import (
+                    ReportLifecycleProjection,
+                    _settle_execution_lifecycle,
+                )
+
+                completed_at = _dt.utcnow()
+                settled = _settle_execution_lifecycle(
+                    ctx.db,
+                    ctx.test_execution,
+                    ReportLifecycleProjection(
+                        status="completed",
+                        completed_at=completed_at,
+                        duration_sec=(
+                            completed_at - ctx.test_execution.started_at
+                        ).total_seconds(),
+                    ),
+                )
+                assert settled.status == "cancelled"
             return _ok()
 
         with patch.object(tcr, "dispatch_step", new=_dispatch):
             ex = await _launch_and_wait(db, source.id)
         assert calls["n"] == 5
         assert ex.status == "cancelled", (
-            "REPORT executor 把 cancelled 覆盖成 completed 后收尾没救回 — "
-            "取消不许被相位收尾吃掉"
+            "REPORT completion CAS 覆盖了已赢得裁决的 cancelled"
         )
         assert len((ex.config or {}).get("phase_progress") or []) == 5
+
+    @pytest.mark.asyncio
+    async def test_cancel_after_failed_phase_wins_before_runner_terminal_write(
+        self, db, lab, monkeypatch,
+    ):
+        """runner 读到 running 后，取消 CAS 先赢时不得再覆盖成 failed。"""
+        source = _make_case(db, lab, name="失败收尾竞态")
+        runner_db = TestingSessionLocal()
+        original_refresh = runner_db.refresh
+        refresh_count = {"value": 0}
+        cancel_result = {}
+
+        def _refresh_with_cancel(instance, *args, **kwargs):
+            original_refresh(instance, *args, **kwargs)
+            if not isinstance(instance, TestExecution):
+                return
+            refresh_count["value"] += 1
+            # failed phase: phase 前、dispatch 后、最终收尾前共三次 refresh。
+            # 第三次已让 runner 持有 running 快照，此刻让独立 API session
+            # 先赢得 running -> cancelled。
+            if refresh_count["value"] == 3:
+                cancel_db = TestingSessionLocal()
+                try:
+                    cancel_result["won"] = tcr.request_cancel(
+                        cancel_db,
+                        instance.id,
+                    )
+                finally:
+                    cancel_db.close()
+
+        monkeypatch.setattr(runner_db, "refresh", _refresh_with_cancel)
+        monkeypatch.setattr(tcr, "SessionLocal", lambda: runner_db)
+        with patch.object(
+            tcr,
+            "dispatch_step",
+            new=AsyncMock(return_value=_failed("相位失败")),
+        ):
+            ex = await _launch_and_wait(db, source.id)
+
+        assert cancel_result["won"] is True
+        assert ex.status == "cancelled"
+        assert db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == ex.id,
+        ).count() == 0
 
     @pytest.mark.asyncio
     async def test_cancel_other_chains_rows_rejected(self, db, lab):

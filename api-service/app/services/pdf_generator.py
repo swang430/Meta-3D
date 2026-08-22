@@ -783,10 +783,12 @@ class PDFGenerator:
         failed = exec_summary.get('failed', 0)
         pending = exec_summary.get('pending', 0)
         pass_rate = exec_summary.get('pass_rate')   # 可能为 None（见封面页说明）
-        duration = exec_summary.get('total_duration_sec', 0)
+        duration = exec_summary.get('total_duration_sec')
 
         # Format duration
-        if duration >= 3600:
+        if duration is None:
+            duration_str = "N/A"
+        elif duration >= 3600:
             duration_str = f"{duration/3600:.1f} hours"
         elif duration >= 60:
             duration_str = f"{duration/60:.1f} minutes"

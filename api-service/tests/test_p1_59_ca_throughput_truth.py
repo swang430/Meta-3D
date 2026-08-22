@@ -626,7 +626,10 @@ def test_report_rejects_missing_or_wrong_carrier_scope(
     )
 
     assert content["formal_throughput_verified"] is False
-    assert content["overall_result"] == "unknown"
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["pending"] == 0
+    assert content["execution_summary"]["undetermined"] == 1
+    assert content["execution_summary"]["pass_rate"] is None
     assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
 
 

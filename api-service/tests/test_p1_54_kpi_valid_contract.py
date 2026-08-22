@@ -331,8 +331,10 @@ def test_report_hides_untrusted_or_historical_throughput(
     )
 
     assert content["formal_throughput_verified"] is False
-    assert content["overall_result"] == "unknown"
-    assert content["execution_summary"]["pending"] == 1
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["pending"] == 0
+    assert content["execution_summary"]["undetermined"] == 1
+    assert content["execution_summary"]["pass_rate"] is None
     assert content["statistics"] == {}
     assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
     measure_step = next(

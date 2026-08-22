@@ -407,7 +407,8 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
     async def lease(_purpose: str):
         yield
 
-    async def run_case_loop(_db, _execution_id) -> None:
+    async def run_case_loop(_db, _execution_id, *, defer_report=False) -> None:
+        assert defer_report is True
         observed.append(
             positioner_module.current_positioner_operation_stop_generation.get()
         )

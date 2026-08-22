@@ -85,10 +85,11 @@ class TestPassPredicate:
         assert _content({"analysis": {"verdict": "MARGINAL"}})["overall_result"] == "passed"
         assert _content({"analysis": {"verdict": "FAIL"}})["overall_result"] == "failed"
 
-    def test_pass_predicate_unknown_stays_failed(self):
-        """列与 verdict 都缺 → 保守 failed (绝不把未知判成通过)。"""
-        assert _content({"analysis": {}})["overall_result"] == "failed"
-        assert _content({})["overall_result"] == "failed"
+    def test_pass_predicate_unknown_stays_undetermined(self):
+        """列与 verdict 都缺 → 保守 undetermined，不伪造 FAIL/0%。"""
+        for content in (_content({"analysis": {}}), _content({})):
+            assert content["overall_result"] == "undetermined"
+            assert content["execution_summary"]["pass_rate"] is None
 
     def test_kpi_fail_not_reported_as_pass(self):
         """红线: completed 状态 + KPI FAIL → 必须 failed。

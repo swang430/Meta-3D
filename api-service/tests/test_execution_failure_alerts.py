@@ -4,14 +4,16 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.alert import get_alert_summary
+from app.api.alert import create_alert, get_alert_summary
 from app.db.database import Base
 from app.models.alert import Alert, AlertStatus
 from app.models.test_plan import TestExecution
+from app.schemas.alert import AlertCreate
 from app.services import execution_failure_alerts as alerts
 
 engine = create_engine(
@@ -68,6 +70,124 @@ def test_formal_failure_is_counted_once_across_alert_lifecycle(db):
     assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
     assert db.query(Alert).count() == 1
     assert get_alert_summary(db).total_active == 0
+
+
+def test_duplicate_failure_refreshes_message_without_reopening_alert(db):
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+
+    alert = db.query(Alert).one()
+    alert.status = AlertStatus.ACKNOWLEDGED.value
+    db.commit()
+
+    execution.error_message = (
+        "仪表 Local 交接失败；此前业务失败：相位配置失败"
+    )
+    db.commit()
+
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
+    db.expire_all()
+    refreshed = db.query(Alert).one()
+    assert refreshed.status == AlertStatus.ACKNOWLEDGED.value
+    assert "Local 交接失败" in refreshed.message
+    assert "相位配置失败" in refreshed.message
+
+
+def test_new_local_handoff_failure_reactivates_existing_alert(db):
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+
+    alert = db.query(Alert).one()
+    alert.status = AlertStatus.RESOLVED.value
+    alert.is_read = True
+    db.commit()
+
+    execution.config = {
+        **execution.config,
+        "local_control_handoff_failed": True,
+        "error_message": (
+            "仪表 Local 交接失败；此前业务失败：相位配置失败"
+        ),
+    }
+    execution.error_message = execution.config["error_message"]
+    db.commit()
+
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
+    db.expire_all()
+    refreshed = db.query(Alert).one()
+    assert refreshed.status == AlertStatus.ACTIVE.value
+    assert refreshed.is_read is False
+    assert "Local 交接失败" in refreshed.message
+
+    # 交接失败已经进入同一告警正文后，操作员再次确认不得被普通重试重开。
+    refreshed.status = AlertStatus.ACKNOWLEDGED.value
+    db.commit()
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
+    db.expire_all()
+    assert db.query(Alert).one().status == AlertStatus.ACKNOWLEDGED.value
+
+
+def test_local_handoff_reactivation_serializes_existing_alert(db, monkeypatch):
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+
+    alert = db.query(Alert).one()
+    alert.status = AlertStatus.RESOLVED.value
+    alert.is_read = True
+    execution.config = {
+        **execution.config,
+        "local_control_handoff_failed": True,
+    }
+    db.commit()
+
+    locked_entities = []
+    original_with_for_update = Query.with_for_update
+
+    def _record_lock(query, *args, **kwargs):
+        locked_entities.append(query.column_descriptions[0]["entity"])
+        return original_with_for_update(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", _record_lock)
+
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
+    # 先锁必然存在的 execution，覆盖查无→首建；再锁既有 alert，
+    # 与操作员的 acknowledge/resolve/dismiss 更新排序。
+    assert locked_entities == [TestExecution, Alert, TestExecution]
+
+
+def test_first_failure_alert_creation_serializes_on_execution(db, monkeypatch):
+    execution = _execution(db)
+    locked_entities = []
+    original_with_for_update = Query.with_for_update
+
+    def _record_lock(query, *args, **kwargs):
+        locked_entities.append(query.column_descriptions[0]["entity"])
+        return original_with_for_update(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", _record_lock)
+
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+    assert db.query(Alert).count() == 1
+    assert locked_entities == [TestExecution, TestExecution]
+
+
+def test_public_alert_api_rejects_reserved_execution_failure_type():
+    class _NoWriteDb:
+        def add(self, _alert):
+            raise AssertionError("保留的系统告警不得进入通用写路径")
+
+    request = AlertCreate(
+        message="伪造执行失败告警",
+        type="execution_failed",
+        source="external_client",
+        related_entity_type="test_execution",
+        related_entity_id=uuid.uuid4(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        create_alert(request, db=_NoWriteDb())
+
+    assert exc_info.value.status_code == 422
 
 
 @pytest.mark.parametrize("status,source,validation_pass,expected", [

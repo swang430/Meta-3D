@@ -401,6 +401,46 @@ def test_commit_ack_loss_with_unavailable_verifier_keeps_history_unrecorded(
     assert alerts.CONFIG_RECORD_KEY not in (row.config or {})
 
 
+def test_existing_alert_message_commit_ack_loss_is_verified_as_duplicate(
+    db, monkeypatch
+):
+    """既有告警正文已更新但确认丢失时，必须用新会话核对正文真值。"""
+    execution = _execution(db)
+    execution_id = execution.id
+    assert alerts.emit_execution_failed_alert(execution_id) == alerts.OUTCOME_PUBLISHED
+
+    execution.error_message = "业务失败；仪表 Local 交接失败"
+    db.commit()
+    factory_calls = {"n": 0}
+
+    def _update_ack_lost_then_fresh_sessions():
+        factory_calls["n"] += 1
+        session = TestingSessionLocal()
+        if factory_calls["n"] == 1:
+            real_commit = session.commit
+
+            def _commit_then_drop_ack():
+                real_commit()
+                raise RuntimeError("update acknowledgement lost")
+
+            session.commit = _commit_then_drop_ack
+        return session
+
+    monkeypatch.setattr(
+        alerts,
+        "SessionLocal",
+        _update_ack_lost_then_fresh_sessions,
+    )
+
+    outcome = alerts.emit_execution_failed_alert(execution_id)
+
+    assert factory_calls["n"] >= 2
+    assert outcome == alerts.OUTCOME_DUPLICATE
+    db.expire_all()
+    alert = db.query(Alert).one()
+    assert "仪表 Local 交接失败" in alert.message
+
+
 def test_outer_guard_returns_failed_without_raising(db, monkeypatch):
     """门B4：告警链在查询阶段就炸（外层 except 路径）→ 不抛、返回 failed、会话关闭。
 

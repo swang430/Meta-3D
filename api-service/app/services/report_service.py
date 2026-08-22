@@ -174,6 +174,8 @@ def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
 def legacy_mimo_regeneration_error(
     db: Session,
     report: TestReport,
+    *,
+    allow_active_execution: bool = False,
 ) -> Optional[str]:
     """Return why a legacy MIMO report cannot be rebuilt without false trust.
 
@@ -226,6 +228,16 @@ def legacy_mimo_regeneration_error(
         return (
             "The linked TestExecution is not an authoritative MIMO OTA "
             "execution; regeneration cannot be performed safely."
+        )
+    raw_execution_status = getattr(execution, "status", None)
+    execution_status = getattr(raw_execution_status, "value", raw_execution_status)
+    if (
+        not allow_active_execution
+        and execution_status not in {"completed", "failed", "cancelled", "skipped"}
+    ):
+        return (
+            "Safe public regeneration requires the linked TestExecution to be "
+            "in a terminal state."
         )
     return None
 
@@ -410,6 +422,8 @@ class ReportService:
         *,
         expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
         vrt_archive_metadata_override: Optional[Dict[str, Any]] = None,
+        execution_lifecycle_projection: Any = None,
+        execution_lifecycle_resolver: Any = None,
     ) -> Optional[TestReport]:
         """
         Trigger report generation
@@ -429,7 +443,62 @@ class ReportService:
         if not execution_ids_well_formed:
             raise ValueError("Report TestExecution identifiers are malformed")
 
-        regeneration_error = legacy_mimo_regeneration_error(db, report)
+        if (
+            execution_lifecycle_resolver is not None
+            and not callable(execution_lifecycle_resolver)
+        ):
+            raise ValueError("MIMO lifecycle resolver must be callable")
+
+        allow_active_execution = False
+        if execution_lifecycle_resolver is not None:
+            # 运行中 execution 的报告只能由 REPORT executor 的完整内部契约
+            # 生成。必须在取得 writer claim 前验证全部条件；不能让调用方仅靠
+            # 传入任意 callable 绕过公开恢复的终态门。
+            from app.services.mimo_ota.executors.report import (
+                ReportLifecycleProjection,
+            )
+
+            if (
+                not isinstance(
+                    execution_lifecycle_projection,
+                    ReportLifecycleProjection,
+                )
+                or report.report_type not in (ReportType.SINGLE_EXECUTION, "single_execution")
+                or report.format not in (ReportFormat.PDF, "pdf")
+                or report.road_test_execution_id is not None
+                or len(execution_ids) != 1
+            ):
+                raise ValueError(
+                    "Deferred lifecycle publication is only valid for an "
+                    "internally projected single-execution MIMO PDF"
+                )
+            try:
+                internal_execution_id = UUID(str(execution_ids[0]))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError(
+                    "Deferred lifecycle publication requires one valid "
+                    "TestExecution identifier"
+                ) from exc
+            internal_execution = db.query(TestExecution).filter(
+                TestExecution.id == internal_execution_id
+            ).first()
+            if internal_execution is None or not is_mimo_ota_execution(
+                db,
+                internal_execution,
+            ):
+                raise ValueError(
+                    "Deferred lifecycle publication requires an authoritative "
+                    "MIMO OTA TestExecution"
+                )
+            allow_active_execution = True
+
+        regeneration_error = legacy_mimo_regeneration_error(
+            db,
+            report,
+            # 只有 REPORT executor 持有的内部 resolver 可以在 execution
+            # 仍 running 时生成 staging；公开恢复入口必须等待权威终态。
+            allow_active_execution=allow_active_execution,
+        )
         if regeneration_error:
             raise LegacyMimoRegenerationRejected(regeneration_error)
 
@@ -485,6 +554,7 @@ class ReportService:
             db.refresh(report)
 
         logger.info(f"Starting report generation: {report_id}")
+        staging_output_path: Optional[str] = None
 
         try:
             # Get template
@@ -564,6 +634,16 @@ class ReportService:
                 linked_execution is not None
                 and is_mimo_ota_execution(db, linked_execution)
             )
+            deferred_mimo_publication = execution_lifecycle_resolver is not None
+            if deferred_mimo_publication and (
+                not is_mimo_single_execution
+                or execution_lifecycle_projection is None
+                or report.format not in (ReportFormat.PDF, "pdf")
+            ):
+                raise ValueError(
+                    "Deferred lifecycle publication is only valid for an "
+                    "internally projected single-execution MIMO PDF"
+                )
             if mimo_report and linked_execution is None:
                 raise ValueError(
                     "MIMO OTA report cannot be safely regenerated because its "
@@ -582,6 +662,7 @@ class ReportService:
                 # current provenance-aware builder instead of patching only its
                 # summary fields.
                 from app.services.mimo_ota.executors.report import (
+                    ReportLifecycleProjection,
                     _build_mimo_ota_content_data,
                 )
                 from app.services.test_case_runner import (
@@ -589,11 +670,22 @@ class ReportService:
                 )
 
                 _finalize_scpi_acceptance(execution)
+                if (
+                    execution_lifecycle_projection is not None
+                    and not isinstance(
+                        execution_lifecycle_projection,
+                        ReportLifecycleProjection,
+                    )
+                ):
+                    raise ValueError(
+                        "MIMO lifecycle projection is an internal typed value"
+                    )
                 case_name = report.title.split("—", 1)[-1].strip()
                 report_data_dict = _build_mimo_ota_content_data(
                     execution,
                     datetime.utcnow(),
                     case_name,
+                    lifecycle_projection=execution_lifecycle_projection,
                 )
             elif report.report_type == ReportType.SINGLE_EXECUTION and source_data:
                 # For VRT/Single Execution, use the data directly
@@ -710,14 +802,15 @@ class ReportService:
                     report_data_dict['scpi_evidence'] = authoritative.get(
                         'scpi_evidence', {}
                     )
-                    report_data_dict['execution_summary'] = summary
-                    report_data_dict['pass_rate'] = summary.get('pass_rate')
-                    if summary.get('passed') == summary.get('total_executions'):
-                        report_data_dict['overall_result'] = 'passed'
-                    elif summary.get('failed', 0) > 0:
-                        report_data_dict['overall_result'] = 'failed'
-                    else:
-                        report_data_dict['overall_result'] = 'pending'
+                    if execution_lifecycle_projection is None:
+                        report_data_dict['execution_summary'] = summary
+                        report_data_dict['pass_rate'] = summary.get('pass_rate')
+                        if summary.get('passed') == summary.get('total_executions'):
+                            report_data_dict['overall_result'] = 'passed'
+                        elif summary.get('failed', 0) > 0:
+                            report_data_dict['overall_result'] = 'failed'
+                        else:
+                            report_data_dict['overall_result'] = 'pending'
             else:
                 # For standard reports, collect data from DB
                 data_collector = ReportDataCollector()
@@ -730,9 +823,10 @@ class ReportService:
                     raise ValueError(f"Failed to collect report data for report {report_id}")
                 report_data_dict = report_data.to_dict()
 
-            # PDF、报告详情 API 与 GUI 必须共享同一份服务端最终结论；否则 PDF 已被
-            # AND 门判失败，查看器仍可能从创建时的客户端 content_data 显示 PASS。
-            report.content_data = report_data_dict
+            # 普通路径沿用即时持久化。MIMO 最终相位必须等数据库生命周期
+            # 裁决完成后再一次性公开，避免 completed 投影短暂可见/可下载。
+            if not deferred_mimo_publication:
+                report.content_data = report_data_dict
 
             # Update progress
             report.progress_percent = 50
@@ -760,8 +854,45 @@ class ReportService:
                         'color_scheme': template.color_scheme or {}
                     }
 
-                # Generate PDF using the dict data
-                pdf_generator.generate_report(report_data_dict, template_dict, output_path)
+                generation_output_path = output_path
+                if deferred_mimo_publication:
+                    staging_output_path = f"{output_path}.staging"
+                    generation_output_path = staging_output_path
+
+                # 先在不可下载的 staging 路径生成。生成期间仍允许取消方通过
+                # TestExecution CAS 赢得终态；只有赢家内容会发布到正式路径。
+                pdf_generator.generate_report(
+                    report_data_dict,
+                    template_dict,
+                    generation_output_path,
+                )
+
+                if deferred_mimo_publication:
+                    settled_projection = execution_lifecycle_resolver(
+                        execution_lifecycle_projection
+                    )
+                    if not isinstance(settled_projection, ReportLifecycleProjection):
+                        raise ValueError(
+                            "MIMO lifecycle resolver returned an invalid projection"
+                        )
+                    if settled_projection != execution_lifecycle_projection:
+                        _finalize_scpi_acceptance(execution)
+                        report_data_dict = _build_mimo_ota_content_data(
+                            execution,
+                            datetime.utcnow(),
+                            case_name,
+                            lifecycle_projection=settled_projection,
+                        )
+                        pdf_generator.generate_report(
+                            report_data_dict,
+                            template_dict,
+                            generation_output_path,
+                        )
+                    os.replace(generation_output_path, output_path)
+                    staging_output_path = None
+
+                # PDF、报告详情 API 与 GUI 在同一提交里共享最终赢家结论。
+                report.content_data = report_data_dict
 
                 # Update report with file path and metadata
                 report.file_path = output_path
@@ -806,6 +937,16 @@ class ReportService:
             import traceback
             error_details = traceback.format_exc()
             logger.error(f"Error generating report {report_id}: {e}\n{error_details}")
+
+            if staging_output_path and os.path.exists(staging_output_path):
+                try:
+                    os.unlink(staging_output_path)
+                except OSError:
+                    logger.warning(
+                        "Failed to remove staged report artifact: %s",
+                        staging_output_path,
+                        exc_info=True,
+                    )
 
             # Update status to failed with detailed error info
             report.status = ReportStatus.FAILED

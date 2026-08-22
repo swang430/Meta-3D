@@ -120,6 +120,30 @@ async def test_lease_releases_local_after_test_failure_without_masking_failure()
 
 
 @pytest.mark.asyncio
+async def test_release_failure_is_not_hidden_by_the_operation_failure():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseError,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    events: list[str] = []
+    lease = InstrumentTestLease(
+        lambda: _FakeHAL(_FakeF64(events, release_ok=False))
+    )
+
+    with pytest.raises(InstrumentTestLeaseError) as caught:
+        async with lease.hold("diagnostic"):
+            raise RuntimeError("measurement failed")
+
+    assert isinstance(caught.value, InstrumentTestLeaseReleaseError)
+    assert "measurement failed" in str(caught.value)
+    assert "控制会话释放" in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert events == ["f64-remote", "f64-local"]
+
+
+@pytest.mark.asyncio
 async def test_lease_releases_local_when_running_test_task_is_cancelled():
     from app.services.instrument_test_lease import InstrumentTestLease
 
@@ -311,6 +335,89 @@ async def test_uxm_release_failure_does_not_skip_f64_release():
 
 
 @pytest.mark.asyncio
+async def test_exit_cache_failure_still_attempts_and_reports_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _ExitCacheFailureHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            if self.cache_clears == 2:
+                raise RuntimeError("exit cache clear failed")
+
+    events: list[str] = []
+    hal = _ExitCacheFailureHAL(
+        _FakeF64(events, release_ok=False),
+        _FakeUxm(events, release_ok=False),
+    )
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError) as caught:
+        async with lease.hold("formal-case"):
+            events.append("test")
+
+    message = str(caught.value)
+    assert "exit cache clear failed" in message
+    assert "UXM" in message
+    assert "F64" in message
+    assert events == [
+        "f64-remote",
+        "uxm-remote",
+        "test",
+        "uxm-local",
+        "f64-local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_idle_cache_failure_still_attempts_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _CacheFailureHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            raise RuntimeError("idle cache clear failed")
+
+    events: list[str] = []
+    hal = _CacheFailureHAL(_FakeF64(events), _FakeUxm(events))
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError, match="idle cache clear failed"):
+        await lease.park_idle_instruments()
+
+    assert events == ["uxm-local", "f64-local"]
+
+
+@pytest.mark.asyncio
+async def test_exit_cleanup_cancellation_still_attempts_all_local_releases():
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseReleaseError,
+    )
+
+    class _ExitCancelledHAL(_FakeHAL):
+        async def clear_metrics_cache(self) -> None:
+            self.cache_clears += 1
+            if self.cache_clears == 2:
+                raise asyncio.CancelledError("cancel during cleanup")
+
+    events: list[str] = []
+    hal = _ExitCancelledHAL(_FakeF64(events), _FakeUxm(events))
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError, match="CancelledError"):
+        async with lease.hold("formal-case"):
+            events.append("test")
+
+    assert events[-2:] == ["uxm-local", "f64-local"]
+
+
+@pytest.mark.asyncio
 async def test_lease_is_visible_while_remote_acquire_is_still_in_progress():
     from app.services.instrument_test_lease import InstrumentTestLease
 
@@ -418,12 +525,18 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
         finally:
             events.append("lease-exit")
 
-    async def _loop(_db, _execution_id) -> None:
+    async def _loop(_db, _execution_id, *, defer_report=False):
+        assert defer_report is True
         events.append("case-loop")
+        return {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}}
+
+    async def _report_after_handoff(_db, _execution_id, _raw) -> None:
+        events.append("report-after-handoff")
 
     monkeypatch.setattr(runner, "SessionLocal", _DB)
     monkeypatch.setattr(runner, "instrument_test_lease", _lease)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
+    monkeypatch.setattr(runner, "_run_deferred_case_report", _report_after_handoff)
 
     execution_id = "00000000-0000-0000-0000-000000000001"
     await runner._run_case(execution_id)
@@ -432,20 +545,115 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
         f"lease-enter:formal-case:{execution_id}:{{}}",
         "case-loop",
         "lease-exit",
+        "report-after-handoff",
         "db-close",
     ]
 
 
 @pytest.mark.asyncio
-async def test_formal_case_is_failed_when_local_handoff_fails_after_success(
+@pytest.mark.parametrize("winner", ["completed", "cancelled", "failed"])
+async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_winner(
+    monkeypatch, winner
+):
+    from contextlib import asynccontextmanager
+
+    import app.services.test_case_runner as runner
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
+
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000003"),
+        status="running",
+        config={"error_message": "original phase outcome"},
+        error_message="original persisted outcome",
+        completed_at=None,
+        duration_sec=None,
+        started_at=None,
+        executed_by=runner.RUNNER_MARKER,
+    )
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution
+
+        def update(self, values, synchronize_session=False):
+            assert synchronize_session is False
+            assert execution.status == winner
+            for column, value in values.items():
+                setattr(execution, column.key, value)
+            return 1
+
+    class _DB:
+        def query(self, *_args):
+            return _Query()
+
+        def rollback(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    @asynccontextmanager
+    async def _lease(_purpose):
+        yield
+        raise InstrumentTestLeaseReleaseError("Local 交接失败")
+
+    async def _loop(_db, _execution_id, *, defer_report=False):
+        assert defer_report is True
+        execution.status = winner
+        return None
+
+    alerts = []
+
+    monkeypatch.setattr(runner, "SessionLocal", _DB)
+    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "_run_case_loop", _loop)
+    monkeypatch.setattr(runner, "flag_modified", lambda *_args: None)
+    monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
+    monkeypatch.setattr(runner, "emit_execution_failed_alert", alerts.append)
+
+    await runner._run_case(UUID("00000000-0000-0000-0000-000000000003"))
+
+    assert execution.status == "failed"
+    assert execution.config["local_control_handoff_failed"] is True
+    assert execution.config["local_control_handoff_previous_status"] == winner
+    assert execution.config["local_control_handoff_previous_error"] == (
+        "original persisted outcome"
+    )
+    assert "Local 交接失败" in execution.config["error_message"]
+    assert "original persisted outcome" in execution.config["error_message"]
+    assert execution.error_message == execution.config["error_message"]
+    assert "Local 交接失败" in execution.config["local_control_handoff_error"]
+    assert alerts == [execution.id]
+
+
+@pytest.mark.asyncio
+async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
     monkeypatch,
 ):
     from contextlib import asynccontextmanager
 
     import app.services.test_case_runner as runner
-    from app.services.instrument_test_lease import InstrumentTestLeaseError
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
 
-    execution = SimpleNamespace(status="running", config={}, completed_at=None)
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000004"),
+        status="running",
+        config={"phase_progress": [{"type": "MEASURE", "status": "success"}]},
+        error_message=None,
+        completed_at=None,
+        duration_sec=None,
+        started_at=None,
+        executed_by=runner.RUNNER_MARKER,
+    )
 
     class _Query:
         def filter(self, *_args):
@@ -464,27 +672,129 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_success(
         def commit(self):
             pass
 
+        def flush(self):
+            pass
+
+        def expire(self, *_args):
+            pass
+
+        def refresh(self, *_args):
+            pass
+
         def close(self):
             pass
 
     @asynccontextmanager
     async def _lease(_purpose):
         yield
-        raise InstrumentTestLeaseError("Local 交接失败")
+        raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
-    async def _loop(_db, _execution_id):
-        execution.status = "completed"
+    async def _loop(_db, _execution_id, *, defer_report=False):
+        assert defer_report is True
+        return None
 
+    cas_attempts = []
+
+    def _cas(_db, _execution_id, **kwargs):
+        cas_attempts.append(kwargs)
+        if len(cas_attempts) == 1:
+            assert kwargs["expected_status"] == "running"
+            execution.status = "cancelled"
+            execution.config = {
+                "phase_progress": [{"type": "MEASURE", "status": "success"}],
+                "error_message": "operator cancelled",
+            }
+            return False
+        assert kwargs["expected_status"] == "cancelled"
+        execution.status = kwargs["terminal_status"]
+        execution.config = kwargs["config"]
+        return True
+
+    alerts = []
     monkeypatch.setattr(runner, "SessionLocal", _DB)
     monkeypatch.setattr(runner, "instrument_test_lease", _lease)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
-    monkeypatch.setattr(runner, "flag_modified", lambda *_args: None)
+    monkeypatch.setattr(runner, "_cas_case_execution_terminal", _cas)
     monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
+    monkeypatch.setattr(runner, "emit_execution_failed_alert", alerts.append)
 
-    await runner._run_case(UUID("00000000-0000-0000-0000-000000000003"))
+    await runner._run_case(execution.id)
+
+    assert len(cas_attempts) == 2
+    assert execution.status == "failed"
+    assert execution.config["local_control_handoff_previous_error"] == (
+        "operator cancelled"
+    )
+    assert "Local 交接失败" in execution.config["error_message"]
+    assert "operator cancelled" in execution.config["error_message"]
+    assert execution.config["local_control_handoff_previous_status"] == "cancelled"
+    assert execution.config["local_control_handoff_failed"] is True
+    assert alerts == [execution.id]
+
+
+@pytest.mark.asyncio
+async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
+    monkeypatch,
+):
+    from contextlib import asynccontextmanager
+
+    import app.services.test_case_runner as runner
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000005"),
+        status="running",
+        config={},
+        error_message=None,
+        completed_at=None,
+        duration_sec=None,
+        started_at=None,
+        executed_by=runner.RUNNER_MARKER,
+    )
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution
+
+        def update(self, values, synchronize_session=False):
+            for column, value in values.items():
+                setattr(execution, column.key, value)
+            return 1
+
+    class _DB:
+        def query(self, *_args):
+            return _Query()
+
+        def rollback(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    @asynccontextmanager
+    async def _lease(_purpose):
+        raise InstrumentTestLeaseError("无法取得 UXM Remote 控制")
+        yield
+
+    monkeypatch.setattr(runner, "SessionLocal", _DB)
+    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
+    monkeypatch.setattr(runner, "emit_execution_failed_alert", lambda _id: None)
+
+    await runner._run_case(execution.id)
 
     assert execution.status == "failed"
-    assert execution.config["local_control_handoff_failed"] is True
+    assert "local_control_handoff_failed" not in execution.config
+    assert "无法取得 UXM Remote 控制" in execution.config["error_message"]
 
 
 @pytest.mark.asyncio

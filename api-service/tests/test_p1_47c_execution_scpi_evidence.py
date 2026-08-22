@@ -816,9 +816,108 @@ def test_report_service_rebuilds_legacy_mimo_content_from_execution(
     generated = ReportService().generate_report(db, report.id)
 
     assert captured["calibration_trust_schema_version"] == 1
-    assert captured["overall_result"] == "unknown"
+    assert captured["overall_result"] == "undetermined"
     assert captured["statistics"] == {}
     assert captured["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert generated.content_data == captured
+
+
+def test_internal_mimo_generation_preserves_final_lifecycle_projection(
+    db, tmp_path, monkeypatch,
+):
+    """最终投影的 verdict、summary 与顶层通过率必须同行发布。"""
+    from pathlib import Path
+
+    from app.services.mimo_ota.executors.report import ReportLifecycleProjection
+    from app.services.report_service import ReportService
+
+    execution = _execution(db)
+    execution.config = {
+        "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
+    }
+    execution.validation_pass = True
+    execution.measurements = {
+        "phases": {
+            "measure": {
+                "path_loss_verified": True,
+                "path_loss_calibration_use_mock": False,
+                "throughput_verified": True,
+                "throughput_scope": "pcell",
+                "carrier_aggregation": {"num_component_carriers": 1},
+                "azimuth_results": [
+                    {
+                        "azimuth_deg": 0.0,
+                        "throughput_mbps": 123.0,
+                        "throughput_valid": True,
+                        "throughput_scope": "pcell",
+                    }
+                ],
+            },
+            "analysis": {"verdict": "PASS"},
+        }
+    }
+    report = TestReport(
+        title="MIMO OTA Test Report — projected",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="mimo_ota.executors.report",
+        test_execution_ids=[str(execution.id)],
+        content_data={},
+    )
+    db.add(report)
+    db.commit()
+    captured = {}
+
+    def _fake_generate(self, report_data, template, output_path):
+        captured.update(report_data)
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.4\n")
+        return str(path)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "app.services.report_service.PDFGenerator.generate_report", _fake_generate,
+    )
+    monkeypatch.setattr(
+        "app.services.test_case_runner._finalize_scpi_acceptance",
+        lambda _execution: None,
+    )
+    completed_at = datetime(2026, 8, 22, 1, 1, 29)
+    projection = ReportLifecycleProjection(
+        status="completed",
+        completed_at=completed_at,
+        duration_sec=89.195194,
+    )
+
+    def _settle_lifecycle(candidate):
+        assert candidate == projection
+        execution.status = candidate.status
+        execution.completed_at = candidate.completed_at
+        execution.duration_sec = candidate.duration_sec
+        db.commit()
+        db.refresh(execution)
+        return candidate
+
+    generated = ReportService().generate_report(
+        db,
+        report.id,
+        execution_lifecycle_projection=projection,
+        execution_lifecycle_resolver=_settle_lifecycle,
+    )
+
+    assert execution.status == "completed"
+    assert execution.completed_at == completed_at
+    assert execution.duration_sec == pytest.approx(89.195194)
+    assert captured["test_plan"]["status"] == "completed"
+    assert captured["overall_result"] == "passed"
+    assert captured["pass_rate"] == 100.0
+    assert captured["execution_summary"]["pending"] == 0
+    assert captured["execution_summary"]["passed"] == 1
+    assert captured["execution_summary"]["pass_rate"] == 100.0
+    assert captured["execution_summary"]["total_duration_sec"] == pytest.approx(
+        89.195194
+    )
     assert generated.content_data == captured
 
 
@@ -1015,12 +1114,14 @@ def test_mimo_report_applies_evidence_gate_before_building_content(db):
     content = _build_mimo_ota_content_data(
         execution, datetime.utcnow(), "evidence-gated"
     )
-    assert content["overall_result"] == "failed"
+    # 证据门失败只决定“不能发布 PASS”；执行仍在 running 时，生命周期真值
+    # 必须优先显示 incomplete，不能提前伪造一个已完成的 failed 终态。
+    assert content["overall_result"] == "incomplete"
     assert content["scpi_evidence"]["formal_acceptance"] is False
 
     source = inspect.getsource(ReportExecutor.execute)
     assert source.index("_finalize_scpi_acceptance(execution)") < source.index(
-        "_build_mimo_ota_content_data(execution"
+        "_build_mimo_ota_content_data("
     )
 
 

@@ -101,8 +101,10 @@ def test_historical_cert_id_cannot_recover_path_loss_verification_or_kpis():
     )
 
     assert _step(content, "measure")["parameters"]["路损验证"].startswith("未知")
-    assert content["overall_result"] == "unknown"
-    assert content["execution_summary"]["pending"] == 1
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["pending"] == 0
+    assert content["execution_summary"]["undetermined"] == 1
+    assert content["execution_summary"]["pass_rate"] is None
     assert content["execution_summary"]["passed"] == 0
     assert content["execution_summary"]["failed"] == 0
     assert content["statistics"] == {}
@@ -141,7 +143,9 @@ def test_historical_verified_flag_without_explicit_real_provenance_stays_unknown
         _exec(phases), datetime(2026, 1, 1),
     )
 
-    assert content["overall_result"] == "unknown"
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["undetermined"] == 1
+    assert content["execution_summary"]["pass_rate"] is None
     assert content["formal_path_loss_verified"] is False
     assert content["calibration_trust_schema_version"] == 1
     assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
@@ -397,6 +401,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
             return SimpleNamespace(
                 config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                 test_case_id=None,
+                status="completed",
             )
 
     monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
@@ -521,6 +526,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
                 return SimpleNamespace(
                     config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                     test_case_id=None,
+                    status="completed",
                 )
             if value == malformed_descriptors_execution_id:
                 return SimpleNamespace(
