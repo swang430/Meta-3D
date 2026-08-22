@@ -12,6 +12,7 @@ the operator sees what happened, but a missing PDF should not roll back a
 finished measurement.
 """
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +40,89 @@ from app.utils.human_time import format_human_local_timestamp
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ReportLifecycleProjection:
+    """报告构造期间使用的只读最终生命周期。
+
+    REPORT 仍在运行时，ORM 行必须保持原状态以保留取消裁决；PDF/content_data
+    则需要描述本相位成功结束后的最终状态。投影只承载这三个同行事实，不写数据库。
+    """
+
+    status: str
+    completed_at: Optional[datetime]
+    duration_sec: Optional[float]
+
+
+def _effective_lifecycle(
+    execution: Any,
+    projection: Optional[ReportLifecycleProjection],
+) -> ReportLifecycleProjection:
+    if projection is not None:
+        return ReportLifecycleProjection(
+            status=str(projection.status),
+            completed_at=projection.completed_at,
+            duration_sec=projection.duration_sec,
+        )
+    return ReportLifecycleProjection(
+        status=str(getattr(execution, "status", "pending")),
+        completed_at=getattr(execution, "completed_at", None),
+        duration_sec=getattr(execution, "duration_sec", None),
+    )
+
+
+def _execution_summary(
+    *,
+    lifecycle: ReportLifecycleProjection,
+    overall_pass: bool,
+    verdict_unknown: bool,
+    started_at: Optional[datetime],
+    now: datetime,
+) -> tuple[Dict[str, Any], str]:
+    """把生命周期和正式判决收敛成唯一四态（加 pending 传输态）。"""
+
+    status = lifecycle.status.lower()
+    if status == "failed":
+        outcome = "failed"
+        pass_rate: Optional[float] = 0.0
+    elif status == "completed":
+        if overall_pass:
+            outcome = "passed"
+            pass_rate = 100.0
+        elif verdict_unknown:
+            outcome = "undetermined"
+            pass_rate = None
+        else:
+            outcome = "failed"
+            pass_rate = 0.0
+    elif status == "pending":
+        outcome = "pending"
+        pass_rate = None
+    else:
+        # running/cancelled/skipped 以及未来新增但未明确定义的非终态都不得
+        # 冒充已完成判决；统一保守显示为 incomplete。
+        outcome = "incomplete"
+        pass_rate = None
+
+    duration_sec = float(lifecycle.duration_sec or 0.0)
+    summary = {
+        "total_executions": 1,
+        "passed": 1 if outcome == "passed" else 0,
+        "failed": 1 if outcome == "failed" else 0,
+        "pending": 1 if outcome == "pending" else 0,
+        "undetermined": 1 if outcome == "undetermined" else 0,
+        "incomplete": 1 if outcome == "incomplete" else 0,
+        "pass_rate": pass_rate,
+        "total_duration_sec": duration_sec,
+        "first_execution": started_at.isoformat() if started_at else None,
+        "last_execution": (
+            lifecycle.completed_at.isoformat()
+            if lifecycle.completed_at is not None
+            else now.isoformat()
+        ),
+    }
+    return summary, outcome
+
+
 @register_executor(MIMOOTAStepType.REPORT.value)
 class ReportExecutor(IStepExecutor):
     """Generate a PDF report from prior phases, mark execution completed."""
@@ -46,6 +130,16 @@ class ReportExecutor(IStepExecutor):
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         execution = context.test_execution
         now = datetime.now(timezone.utc)
+        completed_at = now.replace(tzinfo=None)
+        duration_sec: Optional[float] = getattr(execution, "duration_sec", None)
+        if execution.started_at:
+            delta_end = now if execution.started_at.tzinfo is not None else completed_at
+            duration_sec = (delta_end - execution.started_at).total_seconds()
+        lifecycle_projection = ReportLifecycleProjection(
+            status="completed",
+            completed_at=completed_at,
+            duration_sec=duration_sec,
+        )
         report_id_human = (
             f"MIMO_OTA-{str(execution.id)[:8]}-"
             + format_human_local_timestamp(now, fmt="%Y%m%d%H%M%S")
@@ -63,7 +157,12 @@ class ReportExecutor(IStepExecutor):
 
             _finalize_scpi_acceptance(execution)
             context.db.commit()
-            content_data = _build_mimo_ota_content_data(execution, now, case_name)
+            content_data = _build_mimo_ota_content_data(
+                execution,
+                now,
+                case_name,
+                lifecycle_projection=lifecycle_projection,
+            )
             svc = ReportService()
             report = svc.create_report(
                 db=context.db,
@@ -111,11 +210,9 @@ class ReportExecutor(IStepExecutor):
         write_phase_result(execution, "report", result)
 
         # Mark execution lifecycle complete regardless of PDF outcome
-        execution.status = "completed"
-        execution.completed_at = now.replace(tzinfo=None)
-        if execution.started_at:
-            delta = (now.replace(tzinfo=None) - execution.started_at).total_seconds()
-            execution.duration_sec = delta
+        execution.status = lifecycle_projection.status
+        execution.completed_at = lifecycle_projection.completed_at
+        execution.duration_sec = lifecycle_projection.duration_sec
         context.db.commit()
 
         logger.info("[%s] Phase 5: report_id=%s pdf=%s",
@@ -168,7 +265,11 @@ def _trp_source_label(src, verified) -> str:
 
 
 def _build_mimo_ota_content_data(
-    execution: Any, now: datetime, case_name: Optional[str] = None
+    execution: Any,
+    now: datetime,
+    case_name: Optional[str] = None,
+    *,
+    lifecycle_projection: Optional[ReportLifecycleProjection] = None,
 ) -> Dict[str, Any]:
     """Pack the 4 prior phase results into the dict shape PDFGenerator expects.
 
@@ -188,10 +289,11 @@ def _build_mimo_ota_content_data(
     # "名字"就是快照用例名 (caller 经 _lookup_case_name 查好传入;
     # 旧二参调用 / 查不到时兜底"未命名用例", 不再是 "Unknown Plan")
     display_name = case_name or "未命名用例"
+    lifecycle = _effective_lifecycle(execution, lifecycle_projection)
     plan_info = {
         "name": display_name,
         "description": "—",
-        "status": execution.status,
+        "status": lifecycle.status,
         "created_by": "system",
     }
 
@@ -205,19 +307,9 @@ def _build_mimo_ota_content_data(
         overall_pass = bool(_validation_pass)
     else:
         overall_pass = analysis.get("verdict") in ("PASS", "MARGINAL")
-    duration_sec = float(execution.duration_sec or 0.0)
+    duration_sec = float(lifecycle.duration_sec or 0.0)
 
     verdict_unknown = analysis.get("verdict") == "UNKNOWN"
-    summary = {
-        "total_executions": 1,
-        "passed": 1 if overall_pass else 0,
-        "failed": 0 if overall_pass or verdict_unknown else 1,
-        "pending": 1 if verdict_unknown else 0,
-        "pass_rate": 100.0 if overall_pass else 0.0,
-        "total_duration_sec": duration_sec,
-        "first_execution": execution.started_at.isoformat() if execution.started_at else None,
-        "last_execution": execution.completed_at.isoformat() if execution.completed_at else now.isoformat(),
-    }
 
     # Aggregate per-azimuth stats into one stat-row per KPI
     azimuth_results: List[Dict[str, Any]] = measure.get("azimuth_results") or []
@@ -318,16 +410,18 @@ def _build_mimo_ota_content_data(
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
-        summary.update({
-            "passed": 0,
-            "failed": 0,
-            "pending": 1,
-            "pass_rate": 0.0,
-        })
         statistics = {}
         for row in table_data:
             for metric in ("RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"):
                 row[metric] = "N/A"
+
+    summary, report_outcome = _execution_summary(
+        lifecycle=lifecycle,
+        overall_pass=overall_pass,
+        verdict_unknown=verdict_unknown,
+        started_at=getattr(execution, "started_at", None),
+        now=now,
+    )
 
     def _verified_label(flag, verified_note: str, unverified_note: str) -> str:
         """P1-12 三值标志 → 报告可读标注。None (历史数据判不了) 也要显式说出来,
@@ -458,9 +552,7 @@ def _build_mimo_ota_content_data(
         ),
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
-        "overall_result": (
-            "passed" if overall_pass else "unknown" if verdict_unknown else "failed"
-        ),
+        "overall_result": report_outcome,
         "duration_s": duration_sec,
         "test_plan": plan_info,
         "execution_summary": summary,

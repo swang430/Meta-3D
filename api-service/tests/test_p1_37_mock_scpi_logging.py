@@ -199,8 +199,10 @@ def test_simulated_measurement_serializes_as_unknown_na_report():
         execution, datetime(2026, 8, 7), "Mock case",
     )
 
-    assert content["overall_result"] == "unknown"
-    assert content["execution_summary"]["pending"] == 1
+    assert content["overall_result"] == "undetermined"
+    assert content["execution_summary"]["pending"] == 0
+    assert content["execution_summary"]["undetermined"] == 1
+    assert content["execution_summary"]["pass_rate"] is None
     assert content["statistics"] == {}
     assert set(content["table_data"][0].values()) >= {"N/A"}
     measure_step = next(item for item in content["step_results"] if item["phase"] == "measure")
