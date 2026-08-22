@@ -281,4 +281,6 @@ Handle executable in-scope R1 findings with TDD, fresh review, regression, threa
 
 **Step 3: Continue queue**
 
-After verifying `origin/main`, delete the P2-38 automation and start P2-36 from latest main unless the user asks to pause. P2-40 cleanup remains frozen.
+After verifying `origin/main`, delete the P2-38 automation. The originally named next item P2-36 was
+subsequently verified as already delivered by PR #292 and closed as a duplicate; continue with P2-31
+from latest main unless the user asks to pause. P2-40 cleanup remains frozen.
