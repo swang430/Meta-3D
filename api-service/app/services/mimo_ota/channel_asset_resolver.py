@@ -52,7 +52,7 @@ class ResolvedChannelAsset:
     """解析结果: engine_mode 覆盖 + 翻译到现有 config/cdl_model_data 字段。"""
     engine_mode: str
     asset: Any
-    cdl_model_name: Optional[str] = None      # standard_3gpp → config.cdl_model_name
+    cdl_model_name: Optional[str] = None      # standard_3gpp/vendor_file → config.cdl_model_name
     emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
     rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
@@ -125,6 +125,7 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
                 raise ChannelAssetResolveError(chk.failure_reason())
         return ResolvedChannelAsset(
             engine_mode=engine, asset=asset,
+            cdl_model_name=scd.get("model"),
             emulation_file=asset.associated_file_path,
             scd_freq_identity=freq_id,
             scenario=scd.get("scenario"),

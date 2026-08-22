@@ -27,9 +27,12 @@ UTC，仅人读名称使用显式 `OPERATOR_TIMEZONE`（默认 `Asia/Shanghai`�
 接受 3GPP 场景且显式冲突 fail-closed；容器不再把自身 UTC 误当操作员时区。Codex R2
 进一步指出显式厂商 `.smu` 的 `TDL-A` 等驱动支持模型会被 CDL 解析器误拒；已按 TDD 把
 显式文件的安全场景校验与自动原生合成的严格 CDL 解析分开，未知模型不再阻断显式文件，
-但场景冲突与非法标签仍在 I/O 前 fail-closed。R2 尾修相关链 **361 passed**、全后端
-**4244 passed / 5 skipped**，GUI production build、`compileall`、单一 Alembic head与
-`diff-check` 通过；fresh 尾审 P1/P2/P3=0，待覆盖最新 HEAD 的 R3。设计与证据见
+但场景冲突与非法标签仍在 I/O 前 fail-closed。Codex R3 进一步指出 resolver 只透传了
+vendor 资产的 `scenario`，却没有同步透传同一 `scd_config.model`，生产 MEASURE 仍可能
+沿用 TestCase 默认 CDL 模型并触发假冲突；现已让 vendor 资产模型与场景通过同一解析结果
+覆盖旧配置，保持 ChannelAsset 为唯一信道真值源。R3 尾修相关链 **422 passed**；完整回归
+**4244 passed / 5 skipped**，`compileall`、单一 Alembic head与 `diff-check` 通过；fresh
+尾审 P1/P2/P3=0，待覆盖最新 HEAD 的 R4。设计与证据见
 [`P1-60 设计`](plans/2026-08-22-p1-60-execution-truth-alignment-design.md)。
 
 > **~~P2-31~~ ✅ 2026-08-22 由 PR #368 完成**：服务端只从固定只读挂载中解析 `.smu`
@@ -224,7 +227,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-39** | pytest 与运行日志目录隔离，测试不得轮转删除历史仪器证据 | ✅ PR #363；merge `9417fee` |
 | **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；合并后经用户批准永久删除 20 个空测试 SQLite（21,299,200 bytes），其余资产保持保护 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
-| **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | 🔄 PR #371 R1 两条 P2、R2 一条 P1 均已按 TDD 收口；尾审 P1/P2/P3=0，待 R3 |
+| **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | 🔄 PR #371 R1 两条 P2、R2 一条 P2、R3 一条 P1 已按 TDD 收口；尾审 P1/P2/P3=0，待 R4 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
