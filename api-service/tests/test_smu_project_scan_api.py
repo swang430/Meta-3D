@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -161,3 +162,31 @@ def test_static_routes_are_not_captured_by_uuid_asset_route(scan_api):
     assert sync.status_code == 200, sync.text
     assert scan.json()["items"] == []
     assert sync.json()["updated_count"] == 0
+
+
+def test_live_and_checked_in_openapi_publish_bodyless_smu_truth_contracts():
+    live = app.openapi()
+    checked_in = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "api" / "openapi.yaml").read_text()
+    )
+    paths = (
+        "/api/v1/channel-assets/vendor-files/smu-scan",
+        "/api/v1/channel-assets/vendor-files/smu-sync",
+    )
+
+    for path in paths:
+        assert "requestBody" not in live["paths"][path]["post"]
+        assert "requestBody" not in checked_in["paths"][path]["post"]
+
+    expected = {
+        "SMUProjectSyncItemResponse",
+        "SMUProjectSyncPreviewResponse",
+        "SMUProjectSyncResultResponse",
+    }
+    assert expected <= live["components"]["schemas"].keys()
+    assert expected <= checked_in["components"]["schemas"].keys()
+    for schema_name in expected:
+        assert (
+            checked_in["components"]["schemas"][schema_name]["required"]
+            == live["components"]["schemas"][schema_name]["required"]
+        )

@@ -7,6 +7,7 @@ const workbench = readFileSync(
   new URL('../src/features/ChannelWorkbench/ChannelWorkbench.tsx', import.meta.url),
   'utf8',
 )
+const generated = readFileSync(new URL('../src/types/api.generated.ts', import.meta.url), 'utf8')
 
 test('SMU scan and sync clients never accept client-supplied truth', () => {
   assert.match(service, /scanSMUProjects\(\):\s*Promise<SMUProjectSyncPreview>/)
@@ -26,4 +27,11 @@ test('workbench previews before explicit sync and refreshes both truth consumers
   assert.match(workbench, /queryKey:\s*\['channel-assets'\]/)
   assert.match(workbench, /queryKey:\s*\['instruments',\s*'channelModels'\]/)
   assert.match(workbench, /queryKey:\s*\['channelModels'\]/)
+})
+
+test('generated OpenAPI types include both bodyless SMU truth operations', () => {
+  assert.match(generated, /"\/api\/v1\/channel-assets\/vendor-files\/smu-scan"/)
+  assert.match(generated, /"\/api\/v1\/channel-assets\/vendor-files\/smu-sync"/)
+  assert.match(generated, /SMUProjectSyncPreviewResponse/)
+  assert.match(generated, /SMUProjectSyncResultResponse/)
 })
