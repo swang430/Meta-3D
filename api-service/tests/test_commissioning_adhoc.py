@@ -360,6 +360,8 @@ class TestAdhocPhaseEndpoint:
         )
 
         assert resp.status_code == 409, resp.text
+        assert "UXM Local 交接失败" in resp.json()["detail"]
+        assert "预检业务失败" in resp.json()["detail"]
         db.expire_all()
         execution = db.get(TestExecution, uuid.UUID(sid))
         assert execution.status == "failed"
@@ -369,6 +371,48 @@ class TestAdhocPhaseEndpoint:
         assert db.query(Alert).filter(
             Alert.related_entity_id == execution.id,
         ).count() == 1
+
+    def test_adhoc_handoff_failure_response_and_audit_keep_business_error(
+        self, lab, db, monkeypatch
+    ):
+        from app.services.instrument_test_lease import (
+            InstrumentTestLeaseReleaseError,
+        )
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        @asynccontextmanager
+        async def _lease(_purpose):
+            yield
+            raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
+
+        async def _dispatch(_ctx):
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message="adhoc 业务失败",
+            )
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "UXM Local 交接失败" in resp.json()["error_message"]
+        assert "adhoc 业务失败" in resp.json()["error_message"]
+        audit = db.get(
+            DiagnosticRun,
+            uuid.UUID(resp.json()["diagnostic_run_id"]),
+        )
+        assert "adhoc 业务失败" in audit.error_message
+        assert "adhoc 业务失败" in audit.output_excerpt
 
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(
@@ -723,6 +767,8 @@ class TestExecutionStatusVisibleToReloadGate:
         resp = client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
 
         assert resp.status_code == 409, resp.text
+        assert "F64 Local 交接失败" in resp.json()["detail"]
+        assert "链路业务失败" in resp.json()["detail"]
         db.expire_all()
         execution = db.get(TestExecution, uuid.UUID(sid))
         assert execution.status == "failed"

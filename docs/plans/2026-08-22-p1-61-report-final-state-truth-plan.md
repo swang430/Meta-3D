@@ -278,7 +278,7 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
   Local release; aggregate cache, UXM and F64 failures into one release-only error.
 - Reuse the same complete settlement path for idle parking.
 - Preserve executor-returned business failures alongside the later handoff failure in all commissioning
-  consumers.
+  consumers, including synchronous 409 responses, adhoc responses and DiagnosticRun audit rows.
 - Verify ambiguous existing-alert message updates through a fresh database session using the frozen
   alert ID plus intended message.
 - GREEN evidence: focused failure-truth suites `91 passed`; full backend `4274 passed / 5 skipped`;

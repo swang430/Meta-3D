@@ -174,7 +174,7 @@ def _record_local_handoff_failure(
     error: InstrumentTestLeaseReleaseError,
     *,
     previous_error: Optional[str] = None,
-) -> None:
+) -> str:
     """把 commissioning 的 Local 交接失败发布为可见且不可重跑的终态。"""
     db.refresh(execution)
     previous_status = execution.status
@@ -206,6 +206,7 @@ def _record_local_handoff_failure(
     execution.config = cfg
     db.commit()
     emit_execution_failed_alert(execution.id)
+    return message
 
 
 def _lab_resolution_to_422(err: LabResolutionError) -> HTTPException:
@@ -834,7 +835,7 @@ async def run_phase(
                     ):
                         result = await dispatch_step(ctx)
     except InstrumentTestLeaseReleaseError as error:
-        _record_local_handoff_failure(
+        combined_error = _record_local_handoff_failure(
             db,
             execution,
             error,
@@ -842,7 +843,7 @@ async def run_phase(
                 result.error_message if result is not None else None
             ),
         )
-        raise
+        raise InstrumentTestLeaseReleaseError(combined_error) from error
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -993,7 +994,7 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
         error_message = result.error_message
     except InstrumentTestLeaseReleaseError as e:
         logger.exception("[adhoc] phase=%s Local 交接失败", req.phase_name)
-        _record_local_handoff_failure(
+        error_message = _record_local_handoff_failure(
             db,
             execution,
             e,
@@ -1001,7 +1002,6 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
                 result.error_message if result is not None else None
             ),
         )
-        error_message = str(e)
     except Exception as e:  # noqa: BLE001
         logger.exception("[adhoc] phase=%s aborted", req.phase_name)
         error_message = str(e)
@@ -1171,13 +1171,13 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                 f"链在相位 {aborted_at} 中止: "
                 f"{abort_message or '明细见相位结果'}"
             )
-        _record_local_handoff_failure(
+        combined_error = _record_local_handoff_failure(
             db,
             execution,
             error,
             previous_error=previous_error,
         )
-        raise
+        raise InstrumentTestLeaseReleaseError(combined_error) from error
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表
