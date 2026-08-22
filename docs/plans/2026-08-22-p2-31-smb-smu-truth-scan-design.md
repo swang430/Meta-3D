@@ -132,6 +132,12 @@ SMB 短暂断开、半复制文件或工程更新时会在无人确认下改正�
 
 同步不改资产 name、带宽、场景/MIMO/极化、活动状态，不创建资产，不删旧项，不写 SMB/F64。
 
+扫描涉及有界文件 I/O，不能把扫描前载入 ORM identity map 的连接/资产快照直接拿去写。同步在
+正式分类与写入前重新读取并锁定 `instrument_connections` 与完整 `channel_assets`
+规范名空间；PostgreSQL 使用 `SHARE ROW EXCLUSIVE` 表锁阻断分类后的 phantom insert，随后在锁内
+二次扫描、重新匹配和重建计划。无可写计划也显式 rollback 释放锁。这样并发修改既不会被旧
+`connection_params` 覆盖，也不能在分类后插入一条同路径资产制造新的歧义。
+
 ### 4. API 与 GUI
 
 - `POST /api/v1/channel-assets/vendor-files/smu-scan`：只读预览；
@@ -164,6 +170,25 @@ SMB 短暂断开、半复制文件或工程更新时会在无人确认下改正�
 6. GUI 契约证明扫描按钮、只读预览、状态原因、确认同步和错误 detail；不新增文件名推断。
 7. OpenAPI 三镜像、相关/完整 rule gates、GUI production build、全后端、`compileall`、
    单一 Alembic head（本片预计无迁移）与 `git diff --check` 通过。
+
+## 实现与验证证据（2026-08-22）
+
+- 扫描/匹配/事务/API/信道资产与模型消费/完整 rule gates 当前相关组：**252 passed**；
+- GUI 本片契约：**3 passed**；production build 通过；
+- 全后端正常 pytest 命令：**4225 passed / 5 skipped**（不得使用会禁掉 `caplog` fixture 的
+  `-p no:logging` 变体）；
+- `python -m compileall`、Alembic 单一 head `a4c6e8f0b2d4`、`git diff --check` 通过。
+
+fresh 内审先发现并按 TDD 收口两条功能级问题：
+
+1. 扫描后若连接配置被另一写方更新，旧 ORM 快照会覆盖新值；修前并发 marker 丢失，修后在锁内
+   刷新并二次分类，marker 保留；
+2. 同步仍复用通用 `MF_...` 文件名 ARFCN 交叉门，可解析但过时的文件名会压过工程内部 group 0；
+   修前 `updated_count=0`，修后 group 0 派生 ARFCN/顶层频率/provenance 一致写入。
+
+再次枚举文件名/工程正文/客户端请求、ChannelAsset、`available_channel_models` 与 GUI 缓存的全部
+产生和消费路径后，fresh 尾审 **P1/P2/P3=0**。本片仍不创建资产、不推断 band/带宽/场景、
+不双写 legacy SCD，也不触碰 SMB/F64。
 
 ## 非目标
 
