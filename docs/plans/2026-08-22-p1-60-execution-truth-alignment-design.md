@@ -59,7 +59,8 @@
 ### 5. 人读时间
 
 - DB `started_at/completed_at/generated_at` 继续 UTC，API 序列化不变。
-- 新建共享的人读 token helper，对 aware UTC 时刻调用运行机本地时区后再格式化。
+- 新建共享的人读 token helper，对 aware UTC 时刻使用显式操作员时区后再格式化；默认
+  `Asia/Shanghai`，部署可用 `OPERATOR_TIMEZONE` 覆盖，不依赖容器自身时区。
 - TestCase 快照名、commissioning/adhoc 名称、MIMO report human ID 共用该 helper；GUI 日志仍按浏览器本地时区显示。
 - 只影响新记录，不回写历史名称。
 
@@ -85,3 +86,8 @@
 - GREEN：相关链与完整规则门 `159 passed / 2 skipped`；全后端 `4240 passed / 5 skipped`。
 - GUI production build、Python `compileall`、单一 Alembic head `b6d8f0a2c4e6`、`git diff --check` 均通过。
 - fresh 内审先发现 1 条 P1（只认一基 topology 会阻断完整零基 legacy 证书），按证书 ID 集合精确判 base 后复审 `P1/P2/P3=0`。
+- Codex R1 两条 P2 均按 TDD 收口：显式 vendor `.smu` 可保留非 3GPP 场景标签，但普通原生
+  合成与已知 3GPP 冲突门不放宽；人读 token 默认读取显式 `OPERATOR_TIMEZONE`。两条 RED
+  修前均失败；尾审另补非 alnum 场景在 I/O 前拒绝的 RED/GREEN。最终本片测试
+  `15 passed`、相关链 `210 passed`、全后端 `4243 passed / 5 skipped`；fresh 尾审
+  `P1/P2/P3=0`。

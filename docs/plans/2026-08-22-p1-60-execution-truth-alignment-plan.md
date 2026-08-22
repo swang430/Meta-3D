@@ -121,6 +121,7 @@ Expected: 至少六条断言在当前实现上失败，分别复现导出日志�
 
 ## Execution Result（2026-08-22）
 
-Tasks 1–6 的开发、回归与 fresh 内审已完成。最终本地验证为相关链/规则门
-`159 passed / 2 skipped`、全后端 `4240 passed / 5 skipped`、GUI production build、
-`compileall`、单一 Alembic head 与 `diff-check` 通过；待 Ready PR 的 Codex 外审闭环。
+Tasks 1–6 的开发、回归与 fresh 内审已完成。Codex R1 两条 P2（vendor 场景兼容与容器
+操作员时区）已按 TDD 修复。尾修验证为本片 `15 passed`、相关链 `210 passed`、全后端
+`4243 passed / 5 skipped`；GUI production build 沿用代码 HEAD 的通过证据，`compileall`、
+单一 Alembic head 与 `diff-check` 通过，fresh 尾审 `P1/P2/P3=0`；待 R2 覆盖最新 HEAD。

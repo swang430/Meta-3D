@@ -30,6 +30,7 @@ GCM 攻略对齐:
 
 import logging
 import os
+import re
 from typing import Dict, Any, List, Optional
 
 from app.services.channel_generation.base_generator import BaseChannelGenerator
@@ -47,13 +48,20 @@ from app.services.cdl_model_parser import (
 logger = logging.getLogger(__name__)
 
 
-def _resolve_native_scenario(model_name: str, declared: Optional[str]) -> str:
+def _resolve_native_scenario(
+    model_name: str,
+    declared: Optional[str],
+    *,
+    explicit_vendor_file: bool = False,
+) -> str:
     """Resolve one scenario and reject an explicit model/declaration conflict."""
     parsed = parse_cdl_model_name(model_name)
     if not declared:
         return parsed.scenario_name
     canonical_declared = SCENARIO_ALIASES.get(declared, declared)
     if canonical_declared not in SCENARIO_NAMES:
+        if explicit_vendor_file and re.fullmatch(r"[A-Za-z0-9]+", declared):
+            return declared
         raise ValueError(f"unsupported native scenario: {declared!r}")
     model_tokens = model_name.strip().split()
     model_has_explicit_scenario = any(
@@ -151,7 +159,9 @@ class NativeModelStrategy(BaseChannelGenerator):
         model_name = cdl_model_data.get("model_name", "CDL-C")
         try:
             scenario = _resolve_native_scenario(
-                model_name, cdl_model_data.get("scenario")
+                model_name,
+                cdl_model_data.get("scenario"),
+                explicit_vendor_file=bool(simulation_rules.get("emulation_file")),
             )
         except ValueError as exc:
             logger.error("[NativeModel Strategy] Invalid model scenario: %s", exc)

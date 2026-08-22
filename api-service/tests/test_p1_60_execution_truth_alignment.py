@@ -147,6 +147,55 @@ async def test_native_model_rejects_declared_scenario_conflict_in_any_token_orde
     assert ok is False
 
 
+@pytest.mark.asyncio
+async def test_explicit_vendor_file_preserves_non_3gpp_scenario_label():
+    class Emulator:
+        def get_supported_load_modes(self):
+            return [ChannelLoadMode.NATIVE_MODEL]
+
+        async def load_channel(self, **kwargs):
+            self.loaded = kwargs
+            return True
+
+    emulator = Emulator()
+    ok = await NativeModelStrategy(
+        emulator, SimpleNamespace(), [], generate_oop=False
+    ).generate_and_load(
+        {"emulation_file": r"D:\\Scenario\\Highway.smu"},
+        {
+            "model_name": "CDL-C",
+            "scenario": "Highway",
+            "session_id": "p1-60-vendor-scenario",
+        },
+    )
+
+    assert ok is True
+    assert emulator.loaded["scenario"] == "Highway"
+
+
+@pytest.mark.asyncio
+async def test_explicit_vendor_file_rejects_non_alnum_scenario_before_io():
+    class Emulator:
+        def get_supported_load_modes(self):
+            return [ChannelLoadMode.NATIVE_MODEL]
+
+        async def load_channel(self, **kwargs):
+            raise AssertionError("invalid vendor scenario must fail before hardware I/O")
+
+    ok = await NativeModelStrategy(
+        Emulator(), SimpleNamespace(), [], generate_oop=False
+    ).generate_and_load(
+        {"emulation_file": r"D:\\Scenario\\Highway.smu"},
+        {
+            "model_name": "CDL-C",
+            "scenario": "../Highway",
+            "session_id": "p1-60-invalid-vendor-scenario",
+        },
+    )
+
+    assert ok is False
+
+
 def test_frequency_warning_names_missing_center_when_bandwidth_is_declared():
     assert hasattr(measure, "_describe_f64_frequency_verification_gap")
     message = measure._describe_f64_frequency_verification_gap(
@@ -169,6 +218,14 @@ def test_human_timestamp_uses_explicit_local_timezone_without_changing_instant()
         instant, timezone_override=china
     ) == "20260822-103723"
     assert instant.isoformat() == "2026-08-22T02:37:23+00:00"
+
+
+def test_human_timestamp_defaults_to_configured_operator_timezone(monkeypatch):
+    human_time = import_module("app.utils.human_time")
+    instant = datetime(2026, 8, 22, 2, 37, 23, tzinfo=timezone.utc)
+    monkeypatch.setattr(human_time.settings, "operator_timezone", "Asia/Shanghai")
+
+    assert human_time.format_human_local_timestamp(instant) == "20260822-103723"
 
 
 def test_incomplete_or_unknown_phase_compensation_is_rejected_fail_closed():

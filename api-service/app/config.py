@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Mock instruments (for development without hardware)
     use_mock_instruments: bool = True
 
+    # Human-facing filenames/tokens use the operator site's wall clock. DB/API
+    # timestamps remain UTC. Override with OPERATOR_TIMEZONE at deployment.
+    operator_timezone: str = "Asia/Shanghai"
+
     # Bootstrap (DB factory-defaults seeder) — runs on lifespan startup
     # after init_db(). Escape hatch for ops who want to manage seed data
     # out-of-band (e.g. by running `python -m scripts.bootstrap` from
