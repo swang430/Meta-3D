@@ -18,63 +18,26 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-61「正式 MIMO 报告最终状态真值」**（2026-08-22 用户提供
-`app_export (1).jsonl` 后立项）。执行 `e974e199-c1b7-4852-9e93-9246c8cd9165` 已 completed，
-数据库耗时 `89.195194` 秒，但自动报告 `1779d5e8-8f98-41b3-92ab-347aacfa7da1` 仍写
-`running`、`Pending=1`、`0.0 seconds`。根因是 REPORT 在提交最终生命周期前构造 PDF，且把
-“已完成但无可信判决”的 UNKNOWN 折叠成 pending；`ReportService` 还会用数据库 running 摘要
-覆盖 executor 投影。本片已以只读最终状态投影统一 status、duration、末时间与
-passed/failed/undetermined/incomplete 四态，并让完成与取消通过数据库条件更新只产生一个
-终态赢家；取消先赢时同一报告在不可下载 staging 内按 cancelled/incomplete 重建，只有赢家
-内容与 PDF 会一次性发布。fresh 内审进一步发现并已按 TDD 收口三条 P1（裁决前 completed
-产物短暂可下载、缺失时间被猜成 0/重建时刻、commissioning adhoc 二次覆盖 REPORT 终态）和
-一条 P2（GUI 漏 `pending` 显示）。第二次 fresh 内审又发现并已按 TDD 收口两条 P1：公开
-regeneration 可在权威执行仍 running 时抢占内部 pending report 的 writer claim，以及取消方
-先赢时真实耗时只存在于 PDF 投影、未落到执行行。现在公开恢复只接受终态执行，内部运行中
-生成必须在 claim 前通过 typed projection + resolver + 权威 MIMO single-execution PDF 全契约；
-cancelled 赢家的耗时以数据库条件更新落到 `TestExecution` 后再重建报告。第三次 fresh 内审
-继续发现取消端仍可凭旧 ORM 快照在 REPORT completion CAS 已赢后反向覆盖数据库；已用双会话
-RED 复现并改为同一 `running -> cancelled` 数据库 CAS，同时删除已失去职责的
-`config.cancel_requested` 第二状态源。全后端 **4261 passed / 5 skipped**、GUI production
-build、`compileall`、单一 Alembic head 与 `diff-check` 已通过。第四次 fresh 内审又发现普通
-phase failure 可在取消成功后凭旧 `running` 快照覆盖成 `failed` 并误发失败告警；现已把正常
-完成/失败、快照缺失、顶层异常与取消全部收敛到同一数据库条件终态裁决，非生命周期证据先
-flush、终态 config 随赢家一次发布，失败告警也只由 failed 赢家发出。全后端最新
-**4262 passed / 5 skipped**。第五次 fresh 内审又发现两条 P1：REPORT 仍在仪表租约内发布，
-Local 交接失败/进程中断可留下 completed 可下载报告；业务异常与 release 异常同时发生时，
-release 失败会被前者遮蔽。现已把正式 runner 与 commissioning 三入口的 REPORT 全部延迟到
-租约成功退出后；双异常统一携带原业务与交接原因；交接失败会保留原终态证据并把执行降级
-failed，第一次裁决若输给并发 cancel 还会重读赢家再收口。全后端最新
-**4266 passed / 5 skipped**。第六次 fresh 内审收口 commissioning 交接失败回落 pending、既有
-告警漏报新安全事实及 acquire/release 误分类；第七次 fresh 内审又发现退出 cache clear 异常/
-取消会跳过两台 Local 归还，且同时失败只保留第一条。现已把 cache clear、UXM 与 F64 归还收敛为
-独立尝试并聚合完整证据；commissioning 同时保留业务失败与交接失败，既有告警正文更新的未知
-COMMIT 结果用新会话按冻结 ID 与目标正文查证。第八次 fresh 内审 **P1=0**，仅发现同步
-409、adhoc 响应与 DiagnosticRun 审计仍漏业务失败正文；现已统一改读持久化后的组合错误。
-最终全后端 **4275 passed / 5 skipped**、GUI production build、`compileall`、单一 Alembic head
-与 `diff-check` 已通过；第九次 fresh 内审 **P1=0 / P2=0 / P3=0**，独立定点 138 passed。
-Codex R1 随后发现手工跳过 ANALYSIS 直接运行 REPORT 时，缺失 verdict 会被误写为
-`failed / 0%`；现已按 TDD 收窄为只有显式执行级布尔或 PASS/MARGINAL/FAIL 才发布正式
-判决，缺失 verdict 统一为 `undetermined / N/A / UNKNOWN`。尾审 P1=0/P2=0，唯一旧语义注释
-P3 已同步；相关链 133 passed、全后端 4276 passed / 5 skipped，待触发 R2。
-Codex R2 随后发现延迟生命周期投影虽已生成正确的 `execution_summary.pass_rate`，却没有
-同步 GUI 仍消费的顶层 `pass_rate`，显式 PASS/FAIL 报告会被界面叙述为“通过率未判定”。
-现已把顶层兼容镜像收敛到同一次 MIMO 报告构建，与投影 summary 同源；RED 修前直接缺键，
-GREEN 后显式 PASS 的顶层与嵌套通过率均为 100%；fresh 尾审 P1/P2/P3=0，报告相关链
-148 passed、全后端 4276 passed / 5 skipped、GUI production build、`compileall`、单一
-Alembic head 与 `diff-check` 通过，待 R3。
-Codex R3 又发现：原业务失败告警若在仪表交还期间被操作员关闭，随后新增的 Local 交还失败
-只会刷新正文而保留非活动状态，Dashboard 会漏掉“仪表可能仍为 Remote”的新安全事实。
-现已按 TDD 收窄为仅在结构化交还失败事实首次进入同一告警时重新 active/unread；同行 marker
-保证操作员再次确认后普通重试不会反复重开。尾审继续追全并发入口：正式 emitter 先锁
-`TestExecution` 再查/锁 `Alert`，串行化首建与重开；outcome 第二事务重新锁 execution 后才合并
-JSON，避免抹掉并发落盘的交还证据；通用 `POST /alerts` 精确拒绝系统保留类型
-`execution_failed`。三组 RED 分别证明旧 resolved 不重开、并发锁站点缺失与通用入口可伪造，
-GREEN 后相关链 129 passed、全后端 4280 passed / 5 skipped；最终 fresh 内审 P1/P2/P3=0，
-`compileall`、单一 Alembic head、GUI production build 与 `diff-check` 通过，待 R4。
-下一项 P1-62 收口同次执行中“确实应用了 legacy/来源未知路损证书，却被报告、warning 与 GUI
-描述成无证书/未补偿”的叙事真值；两项均不放宽正式 KPI 判据。设计见
-[`P1-61 设计`](plans/2026-08-22-p1-61-report-final-state-truth-design.md)。
+**Current Focus = P1-62「已应用但来源未知的路损证书叙事真值」**。同次执行现在保存
+版本化 `path_loss_application` 快照，严格区分 `applied / not_applied / unknown`、证书来源、
+选择原因与 strict/bypass/mock 门；旧记录或畸形载荷一律保持 unknown，不从证书 ID、补偿数值
+或当前数据库反推。实际应用的 legacy/来源未知证书会显示“已应用但来源未知、不参与正式判定”，
+保留证书 ID 与来源但隐藏补偿数值；缺失、过期、频率不匹配、RF mode 不匹配和来源拒绝分别
+显示真实原因。`path_loss_verified` 的 explicit-real 正式白名单、Analysis 与 verdict 门均未放宽。
+
+PRECHECK、MEASURE、warning、正式报告、历史重建与 commissioning GUI 已消费同一语义；
+服务端报告信任字段禁止客户端伪造。fresh 内审另发现 strict 失败与 operator bypass 原先仍共用
+“Phase 3 回退默认线损”尾句，已按 TDD 收窄为 strict 在硬件连接前阻断、只有显式 bypass 才
+无补偿继续。验证：本片相关 + 完整 rule gates **163 passed**、GUI 契约 **5 passed**、全后端
+**4308 passed / 5 skipped**、GUI production build、`compileall`、单一 Alembic head 与
+`diff-check` 均通过；fresh 内审 **P1/P2/P3=0**。设计与证据见
+[`P1-62 设计`](plans/2026-08-22-p1-62-path-loss-certificate-truth-design.md)。
+
+> **~~P1-61~~ ✅ 2026-08-22 由 PR #372 完成**：报告由最终执行生命周期 CAS 赢家发布，
+> 四态、真实耗时、取消仲裁与 UXM/F64 Local 交还事实同源；Codex R1～R3 的缺失 verdict 假
+> FAIL、顶层 pass rate 漏镜像、交还失败告警生命周期 P1 均已按 TDD 修复，R4 覆盖最终 HEAD
+> `7b43b10` 且无重大问题；merge commit `425e389`。设计见
+> [`P1-61 设计`](plans/2026-08-22-p1-61-report-final-state-truth-design.md)。
 
 > **~~P1-60~~ ✅ 2026-08-22 由 PR #371 完成**：探头/端口编号、相位校准、ChannelAsset
 > 场景、带宽 warning 与操作员时区五项真值已收口；Codex R1/R2 的 vendor 文件与时区 P2、
@@ -276,8 +239,8 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；合并后经用户批准永久删除 20 个空测试 SQLite（21,299,200 bytes），其余资产保持保护 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
 | **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | ✅ PR #371；R4 覆盖最终 HEAD 无 P1；merge `ebccb1e` |
-| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | 🔄 Codex R1/R2 的 verdict、`pass_rate` P1 已收口；R3 的交还失败告警生命周期与并发全集已按 TDD 修复，最终内审 P1/P2/P3=0、相关链 129 passed、全后端 4280 passed / 5 skipped，待 R4 |
-| **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ⏭ P1-61 合并后下一优先项；正式 verdict 与未验证数值门保持不变 |
+| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | ✅ PR #372 / merge `425e389`；Codex R4 覆盖最终 HEAD 且无重大问题 |
+| **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | 🔄 TDD、全量回归与 fresh 内审完成，P1/P2/P3=0；待开 Ready PR 与 Codex 外审 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -520,7 +483,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 当前为空，WIP=0；正式连续队列已完成，P2-40 已完成代码治理与获批实际清理。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | P1-62，WIP=1；实现、回归与内审已完成，正进入外审。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
