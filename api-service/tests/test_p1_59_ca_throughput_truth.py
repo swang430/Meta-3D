@@ -685,6 +685,16 @@ def test_historical_throughput_trust_schema_one_is_fail_closed() -> None:
     schema_two = {
         "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 2,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "unknown",
+            "provenance": "unknown",
+            "reason": "legacy_unclassified",
+            "gate_mode": "strict",
+            "certificate_id": None,
+            "value_disclosure": "none",
+        },
+        "formal_path_loss_verified": False,
     }
 
     assert report_has_provenance_trust(schema_one) is False

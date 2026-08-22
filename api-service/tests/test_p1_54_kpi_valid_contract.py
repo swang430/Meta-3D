@@ -401,6 +401,20 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
     fully_sanitized = {
         "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 2,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "unknown",
+            "provenance": "unknown",
+            "reason": "legacy_unclassified",
+            "gate_mode": "strict",
+            "certificate_id": None,
+            "value_disclosure": "none",
+        },
+        "formal_path_loss_verified": False,
+    }
+    inconsistent_path_loss_attestation = {
+        **fully_sanitized,
+        "formal_path_loss_verified": True,
     }
     old_throughput_scope = {
         "calibration_trust_schema_version": 1,
@@ -409,4 +423,5 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
 
     assert report_has_provenance_trust(path_loss_only) is False
     assert report_has_provenance_trust(old_throughput_scope) is False
+    assert report_has_provenance_trust(inconsistent_path_loss_attestation) is False
     assert report_has_provenance_trust(fully_sanitized) is True

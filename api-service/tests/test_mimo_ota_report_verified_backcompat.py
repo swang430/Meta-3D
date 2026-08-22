@@ -108,6 +108,23 @@ def _path_loss_application(
     }
 
 
+def _trusted_unknown_report_fields():
+    """Server-built trust envelope for a report with no formal path-loss verdict."""
+    return {
+        "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+        "path_loss_application": _path_loss_application(
+            status="unknown",
+            provenance="unknown",
+            reason="legacy_unclassified",
+            certificate_id=None,
+            value_disclosure="none",
+            gate_mode="strict",
+        ),
+        "formal_path_loss_verified": False,
+    }
+
+
 def test_report_renders_applied_unknown_certificate_without_false_uncompensated_claim():
     application = _path_loss_application()
 
@@ -480,6 +497,15 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
             "throughput_trust_schema_version": 2,
+            "path_loss_application": {
+                "schema_version": 1,
+                "status": "unknown",
+                "provenance": "unknown",
+                "reason": "legacy_unclassified",
+                "gate_mode": "strict",
+                "certificate_id": None,
+                "value_disclosure": "none",
+            },
             "formal_path_loss_verified": False,
             "overall_result": "unknown",
         },
@@ -492,6 +518,41 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
 
     assert report_api.get_report(uuid4(), db=object()) is audit_report
     assert report_api.download_report(uuid4(), db=object()).path == str(report_file)
+
+
+def test_pre_p1_62_schema_markers_cannot_publish_old_formal_pass(
+    monkeypatch, tmp_path,
+):
+    from app.api import report as report_api
+
+    report_file = tmp_path / "pre-p1-62-pass.pdf"
+    report_file.write_bytes(b"legacy pass")
+    old_report = SimpleNamespace(
+        status="completed",
+        file_path=str(report_file),
+        format="pdf",
+        title="MIMO OTA Test Report — pre-P1-62",
+        generated_by="mimo_ota.executors.report",
+        content_data={
+            "report_family": "mimo_ota",
+            "calibration_trust_schema_version": 1,
+            "throughput_trust_schema_version": 2,
+            "formal_path_loss_verified": True,
+            "overall_result": "passed",
+        },
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "get_report",
+        lambda db, report_id: old_report,
+    )
+
+    with pytest.raises(HTTPException) as get_error:
+        report_api.get_report(uuid4(), db=object())
+    assert get_error.value.status_code == 409
+    with pytest.raises(HTTPException) as download_error:
+        report_api.download_report(uuid4(), db=object())
+    assert download_error.value.status_code == 409
 
 
 def test_historical_client_vrt_report_is_hidden_until_server_rebuild(
@@ -589,8 +650,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
         _report(
             content_data={
                 "report_family": "mimo_ota",
-                "calibration_trust_schema_version": 1,
-                "throughput_trust_schema_version": 2,
+                **_trusted_unknown_report_fields(),
             },
             execution_ids=[recoverable_execution_id],
         ),
@@ -722,8 +782,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             generated_by="mimo_ota.executors.report",
             content_data={
                 "report_family": "mimo_ota",
-                "calibration_trust_schema_version": 1,
-                "throughput_trust_schema_version": 2,
+                **_trusted_unknown_report_fields(),
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -983,8 +1042,7 @@ def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
         test_execution_ids=[str(execution.id)],
         content_data={
             "report_family": "mimo_ota",
-            "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 2,
+            **_trusted_unknown_report_fields(),
         },
     )
     report_db.add_all([execution, report])
@@ -1789,8 +1847,7 @@ def test_mimo_generation_value_error_after_claim_is_not_misreported_as_conflict(
     sanitized_mimo = SimpleNamespace(
         content_data={
             "report_family": "mimo_ota",
-            "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 2,
+            **_trusted_unknown_report_fields(),
         },
         generated_by="mimo_ota.executors.report",
         test_execution_ids=[],
