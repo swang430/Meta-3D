@@ -658,6 +658,9 @@ def _build_mimo_ota_content_data(
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": report_outcome,
+        # ReportViewer 仍消费顶层兼容镜像；它必须与同一次生命周期
+        # 投影生成的 execution_summary 同源，避免延迟发布时丢失判决。
+        "pass_rate": summary["pass_rate"],
         "duration_s": duration_sec,
         "test_plan": plan_info,
         "execution_summary": summary,

@@ -825,7 +825,7 @@ def test_report_service_rebuilds_legacy_mimo_content_from_execution(
 def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     db, tmp_path, monkeypatch,
 ):
-    """ReportService 不得把内部最终投影重新覆盖成数据库 running 快照。"""
+    """最终投影的 verdict、summary 与顶层通过率必须同行发布。"""
     from pathlib import Path
 
     from app.services.mimo_ota.executors.report import ReportLifecycleProjection
@@ -835,10 +835,25 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     execution.config = {
         "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
     }
+    execution.validation_pass = True
     execution.measurements = {
         "phases": {
-            "measure": {},
-            "analysis": {"verdict": "UNKNOWN"},
+            "measure": {
+                "path_loss_verified": True,
+                "path_loss_calibration_use_mock": False,
+                "throughput_verified": True,
+                "throughput_scope": "pcell",
+                "carrier_aggregation": {"num_component_carriers": 1},
+                "azimuth_results": [
+                    {
+                        "azimuth_deg": 0.0,
+                        "throughput_mbps": 123.0,
+                        "throughput_valid": True,
+                        "throughput_scope": "pcell",
+                    }
+                ],
+            },
+            "analysis": {"verdict": "PASS"},
         }
     }
     report = TestReport(
@@ -863,6 +878,10 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "app.services.report_service.PDFGenerator.generate_report", _fake_generate,
+    )
+    monkeypatch.setattr(
+        "app.services.test_case_runner._finalize_scpi_acceptance",
+        lambda _execution: None,
     )
     completed_at = datetime(2026, 8, 22, 1, 1, 29)
     projection = ReportLifecycleProjection(
@@ -891,9 +910,11 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     assert execution.completed_at == completed_at
     assert execution.duration_sec == pytest.approx(89.195194)
     assert captured["test_plan"]["status"] == "completed"
-    assert captured["overall_result"] == "undetermined"
+    assert captured["overall_result"] == "passed"
+    assert captured["pass_rate"] == 100.0
     assert captured["execution_summary"]["pending"] == 0
-    assert captured["execution_summary"]["undetermined"] == 1
+    assert captured["execution_summary"]["passed"] == 1
+    assert captured["execution_summary"]["pass_rate"] == 100.0
     assert captured["execution_summary"]["total_duration_sec"] == pytest.approx(
         89.195194
     )
