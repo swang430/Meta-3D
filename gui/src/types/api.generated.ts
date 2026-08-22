@@ -1079,10 +1079,135 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/channel-assets/vendor-files/smu-scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview mounted F64 .smu project truth
+         * @description Read-only bounded scan of the server-configured SMB mount. The client cannot submit a path, frequency, ARFCN, or cached preview.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Exact-path synchronization preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SMUProjectSyncPreviewResponse"];
+                    };
+                };
+                /** @description Scan configuration missing, ambiguous, unsafe, or bounded scan failed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/vendor-files/smu-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Synchronize mounted F64 .smu project truth
+         * @description Re-scans server-side and atomically updates only exact, registered, provable matches. The client cannot supply truth in a request body.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Synchronization result and post-commit preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SMUProjectSyncResultResponse"];
+                    };
+                };
+                /** @description Scan or synchronization failed without partial writes */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SMUProjectSyncItemResponse: {
+            relative_path: string;
+            instrument_path: string;
+            size_bytes: number;
+            sha256: string;
+            center_frequencies_hz: {
+                [key: string]: number;
+            };
+            primary_center_frequency_hz?: number | null;
+            scan_status: string;
+            scan_detail?: string | null;
+            sync_status: string;
+            sync_detail: string;
+            /** Format: uuid */
+            connection_id: string;
+            /** Format: uuid */
+            asset_id?: string | null;
+            asset_name?: string | null;
+            target_arfcn?: number | null;
+        };
+        SMUProjectSyncPreviewResponse: {
+            /** Format: uuid */
+            connection_id: string;
+            items: components["schemas"]["SMUProjectSyncItemResponse"][];
+            protected_paths: string[];
+            total_files: number;
+            total_bytes: number;
+        };
+        SMUProjectSyncResultResponse: {
+            updated_count: number;
+            already_synced_count: number;
+            preview: components["schemas"]["SMUProjectSyncPreviewResponse"];
+        };
         TestCaseCreate: {
             name: string;
             description?: string | null;

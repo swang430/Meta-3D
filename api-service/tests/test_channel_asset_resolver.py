@@ -80,6 +80,46 @@ class TestResolver:
         assert r.scd_freq_identity is not None
         assert r.scd_freq_identity.center_arfcn == 640000
 
+    def test_verified_project_truth_overrides_stale_parseable_filename(self, db):
+        """P2-31 R1: 已由工程正文同步的资产不能再被旧 MF_ 文件名拒绝执行。"""
+        path = r"D:\Scenario Packs\MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
+        a = create_channel_asset(
+            db,
+            name="project-truth",
+            source_type="vendor_file",
+            payload={"scd_config": _SCD},
+            associated_file_path=path,
+        )
+        a.payload = {
+            "scd_config": {**_SCD, "arfcn": 636666},
+            "smu_project_truth": {
+                "schema_version": 1,
+                "instrument_path": path,
+                "sha256": "a" * 64,
+                "size_bytes": 123,
+                "primary_group": 0,
+                "center_frequencies_hz": {"0": 3_549_990_000},
+            },
+        }
+        a.center_frequency_hz = 3_549_990_000
+        db.commit()
+
+        resolved = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
+
+        assert resolved.emulation_file == path
+        assert resolved.scd_freq_identity.center_arfcn == 636666
+
+        # 只有完整、与资产当前路径/频率一致的服务端证据能绕过旧文件名门。
+        mutated_payload = dict(a.payload)
+        mutated_payload["smu_project_truth"] = {
+            **mutated_payload["smu_project_truth"],
+            "instrument_path": r"D:\Other\truth.smu",
+        }
+        a.payload = mutated_payload
+        db.commit()
+        with pytest.raises(ChannelAssetResolveError, match="文件名"):
+            resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
+
     def test_vendor_declared_only_no_file(self, db):
         # declared_only (无 associated_file_path) → emulation_file None (GCM gate fail-loud),
         # 不查 SCD 表 (resolver 纯从 ChannelAsset)

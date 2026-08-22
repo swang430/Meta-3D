@@ -636,8 +636,109 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardAlertSummary'
+  /api/v1/channel-assets/vendor-files/smu-scan:
+    post:
+      summary: Preview mounted F64 .smu project truth
+      description: >-
+        Read-only bounded scan of the server-configured SMB mount. The client cannot submit a
+        path, frequency, ARFCN, or cached preview.
+      responses:
+        '200':
+          description: Exact-path synchronization preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SMUProjectSyncPreviewResponse'
+        '409':
+          description: Scan configuration missing, ambiguous, unsafe, or bounded scan failed
+  /api/v1/channel-assets/vendor-files/smu-sync:
+    post:
+      summary: Synchronize mounted F64 .smu project truth
+      description: >-
+        Re-scans server-side and atomically updates only exact, registered, provable matches. The
+        client cannot supply truth in a request body.
+      responses:
+        '200':
+          description: Synchronization result and post-commit preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SMUProjectSyncResultResponse'
+        '409':
+          description: Scan or synchronization failed without partial writes
 components:
   schemas:
+    SMUProjectSyncItemResponse:
+      type: object
+      properties:
+        relative_path:
+          type: string
+        instrument_path:
+          type: string
+        size_bytes:
+          type: integer
+        sha256:
+          type: string
+        center_frequencies_hz:
+          type: object
+          additionalProperties:
+            type: integer
+        primary_center_frequency_hz:
+          type: integer
+          nullable: true
+        scan_status:
+          type: string
+        scan_detail:
+          type: string
+          nullable: true
+        sync_status:
+          type: string
+        sync_detail:
+          type: string
+        connection_id:
+          type: string
+          format: uuid
+        asset_id:
+          type: string
+          format: uuid
+          nullable: true
+        asset_name:
+          type: string
+          nullable: true
+        target_arfcn:
+          type: integer
+          nullable: true
+      required: [relative_path, instrument_path, size_bytes, sha256, center_frequencies_hz,
+        scan_status, sync_status, sync_detail, connection_id]
+    SMUProjectSyncPreviewResponse:
+      type: object
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SMUProjectSyncItemResponse'
+        protected_paths:
+          type: array
+          items:
+            type: string
+        total_files:
+          type: integer
+        total_bytes:
+          type: integer
+      required: [connection_id, items, protected_paths, total_files, total_bytes]
+    SMUProjectSyncResultResponse:
+      type: object
+      properties:
+        updated_count:
+          type: integer
+        already_synced_count:
+          type: integer
+        preview:
+          $ref: '#/components/schemas/SMUProjectSyncPreviewResponse'
+      required: [updated_count, already_synced_count, preview]
     TestCaseCreate:
       type: object
       properties:

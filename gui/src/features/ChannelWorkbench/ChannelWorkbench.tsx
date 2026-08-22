@@ -10,19 +10,22 @@
  */
 import { useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Code, Group, LoadingOverlay, Modal, Paper,
+  ActionIcon, Alert, Badge, Box, Button, Code, Group, LoadingOverlay, Modal, Paper,
   ScrollArea, SegmentedControl, Stack, Switch, Table, Text, Title, Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
-import { IconBroadcast, IconEdit, IconEye, IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconBroadcast, IconEdit, IconEye, IconFileSearch, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   deleteChannelAsset,
   fetchChannelAssets,
+  scanSMUProjects,
+  syncSMUProjects,
   type ChannelAsset,
   type ChannelSourceType,
+  type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
 import { ChannelAssetForm } from './ChannelAssetForm'
 
@@ -53,6 +56,8 @@ export function ChannelWorkbench() {
   const [viewing, setViewing] = useState<ChannelAsset | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [editingAsset, setEditingAsset] = useState<ChannelAsset | null>(null)
+  const [smuOpen, setSMUOpen] = useState(false)
+  const [smuPreview, setSMUPreview] = useState<SMUProjectSyncPreview | null>(null)
   const openCreate = () => { setEditingAsset(null); setFormOpen(true) }
   const openEdit = (a: ChannelAsset) => { setEditingAsset(a); setFormOpen(true) }
 
@@ -74,6 +79,28 @@ export function ChannelWorkbench() {
       invalidate()
     },
     onError: (e: unknown) => notifyError('删除失败', e),
+  })
+
+  const scanMutation = useMutation({
+    mutationFn: scanSMUProjects,
+    onSuccess: (preview) => { setSMUPreview(preview); setSMUOpen(true) },
+    onError: (e: unknown) => notifyError('扫描失败', e),
+  })
+
+  const syncMutation = useMutation({
+    mutationFn: syncSMUProjects,
+    onSuccess: (result) => {
+      setSMUPreview(result.preview)
+      notifications.show({
+        title: 'F64 工程真值已同步',
+        message: `更新 ${result.updated_count} 个资产`,
+        color: 'green',
+      })
+      queryClient.invalidateQueries({ queryKey: ['channel-assets'] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
+      queryClient.invalidateQueries({ queryKey: ['channelModels'] })
+    },
+    onError: (e: unknown) => notifyError('同步失败', e),
   })
 
   const confirmDelete = (a: ChannelAsset) =>
@@ -104,6 +131,14 @@ export function ChannelWorkbench() {
           </Text>
         </div>
         <Group gap="sm">
+          <Button
+            variant="light"
+            leftSection={<IconFileSearch size={16} />}
+            loading={scanMutation.isPending}
+            onClick={() => scanMutation.mutate()}
+          >
+            扫描 F64 工程
+          </Button>
           <Switch
             label="含非活动"
             checked={includeInactive}
@@ -214,6 +249,63 @@ export function ChannelWorkbench() {
       </Modal>
 
       <ChannelAssetForm opened={formOpen} asset={editingAsset} onClose={() => setFormOpen(false)} />
+
+      <Modal
+        opened={smuOpen}
+        onClose={() => setSMUOpen(false)}
+        title="F64 .smu 工程真值预览"
+        size="xl"
+      >
+        {smuPreview && (
+          <Stack gap="sm">
+            <Alert color="blue" variant="light">
+              只读取服务端配置的 SMB 挂载副本；同步时会重新扫描，不接受界面提交频率。
+            </Alert>
+            <Group gap="xs">
+              <Badge color="green">可同步 {smuPreview.items.filter((x) => x.sync_status === 'syncable').length}</Badge>
+              <Badge color="gray">受保护 {smuPreview.items.filter((x) => !['syncable', 'already_synced'].includes(x.sync_status)).length}</Badge>
+              <Badge variant="outline">已扫描 {smuPreview.total_files}</Badge>
+            </Group>
+            <ScrollArea.Autosize mah={460}>
+              <Table striped withTableBorder>
+                <Table.Thead><Table.Tr>
+                  <Table.Th>工程</Table.Th><Table.Th>资产</Table.Th><Table.Th>Group 0</Table.Th><Table.Th>裁决</Table.Th>
+                </Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {smuPreview.items.map((item) => (
+                    <Table.Tr key={item.instrument_path}>
+                      <Table.Td><Text size="sm">{item.relative_path}</Text></Table.Td>
+                      <Table.Td><Text size="sm">{item.asset_name ?? '—'}</Text></Table.Td>
+                      <Table.Td><Text size="sm">{item.primary_center_frequency_hz == null ? '—' : `${(item.primary_center_frequency_hz / 1e6).toFixed(6)} MHz`}</Text></Table.Td>
+                      <Table.Td>
+                        <Badge color={item.sync_status === 'syncable' ? 'green' : item.sync_status === 'already_synced' ? 'blue' : 'gray'}>
+                          {item.sync_status}
+                        </Badge>
+                        <Text size="xs" c="dimmed">{item.sync_detail}</Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea.Autosize>
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setSMUOpen(false)}>关闭</Button>
+              <Button
+                loading={syncMutation.isPending}
+                disabled={!smuPreview.items.some((x) => x.sync_status === 'syncable')}
+                onClick={() => modals.openConfirmModal({
+                  title: '确认同步 F64 工程真值',
+                  children: <Text size="sm">服务端将重新扫描，并仅同步仍然精确匹配且可证明的工程。受保护项不会修改。</Text>,
+                  labels: { confirm: '确认同步', cancel: '取消' },
+                  onConfirm: () => syncMutation.mutate(),
+                })}
+              >
+                确认同步
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   )
 }

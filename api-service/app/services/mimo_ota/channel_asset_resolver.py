@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.services.channel_asset_service import (
     ChannelAssetNotFound,
+    _has_verified_smu_project_truth,
     get_channel_asset,
 )
 from app.hal.nr_arfcn import FrequencyIdentity
@@ -113,7 +114,10 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         # MF_ 可解析名不一致 → fail-loud; 厂商名 (loose) / 解析不出 → 放行留给声明频率门
         # (厂商文件名频率是标称会说谎, 2026-07-03 实证; 真值 = scd_config 声明的工程实测)。
         afp = asset.associated_file_path
-        if afp and scd.get("arfcn") is not None:
+        if (afp and scd.get("arfcn") is not None
+                and not _has_verified_smu_project_truth(
+                    asset.payload, afp, asset.center_frequency_hz,
+                )):
             from app.services.standard_channel_service import check_channel_filename_freq
             chk = check_channel_filename_freq(afp, int(scd["arfcn"]))
             if chk.must_fail:

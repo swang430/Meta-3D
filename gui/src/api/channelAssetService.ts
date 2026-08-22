@@ -93,6 +93,37 @@ export interface ChannelAsset {
   associated_file_path?: string | null
 }
 
+export interface SMUProjectSyncItem {
+  relative_path: string
+  instrument_path: string
+  size_bytes: number
+  sha256: string
+  center_frequencies_hz: Record<string, number>
+  primary_center_frequency_hz?: number | null
+  scan_status: string
+  scan_detail?: string | null
+  sync_status: string
+  sync_detail: string
+  connection_id: string
+  asset_id?: string | null
+  asset_name?: string | null
+  target_arfcn?: number | null
+}
+
+export interface SMUProjectSyncPreview {
+  connection_id: string
+  items: SMUProjectSyncItem[]
+  protected_paths: string[]
+  total_files: number
+  total_bytes: number
+}
+
+export interface SMUProjectSyncResult {
+  updated_count: number
+  already_synced_count: number
+  preview: SMUProjectSyncPreview
+}
+
 /** POST /channel-assets 请求体 (mirror ChannelAssetCreate)。 */
 export interface ChannelAssetCreatePayload {
   name: string
@@ -150,6 +181,18 @@ export async function updateChannelAsset(
 /** 默认软删 (is_active=false); hard=true 物理删。 */
 export async function deleteChannelAsset(id: string, hard = false): Promise<void> {
   await apiClient.delete(`/channel-assets/${id}`, { params: { hard } })
+}
+
+/** 只读扫描服务端配置的 SMB 挂载副本；客户端不能提交路径或频率。 */
+export async function scanSMUProjects(): Promise<SMUProjectSyncPreview> {
+  const res = await apiClient.post<SMUProjectSyncPreview>('/channel-assets/vendor-files/smu-scan')
+  return res.data
+}
+
+/** 服务端强制重扫并原子同步；客户端预览不作为真值回传。 */
+export async function syncSMUProjects(): Promise<SMUProjectSyncResult> {
+  const res = await apiClient.post<SMUProjectSyncResult>('/channel-assets/vendor-files/smu-sync')
+  return res.data
 }
 
 /** 新簇默认值 (对齐后端 CDLClusterInput 默认), 供 S4 簇编辑器。 */
