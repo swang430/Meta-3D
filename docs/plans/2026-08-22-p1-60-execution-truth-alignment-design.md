@@ -27,7 +27,7 @@
 
 ### 1. 物理探头与端口编号
 
-- RF topology 的物理探头编号以 `1..N` 为正式真值；方位索引仍先算零基位置，再显式转换为 `probe_id=index+1`。
+- 当前 RF topology 的物理探头编号以 `1..N` 为正式真值；方位索引仍先算零基位置，再显式转换为 `probe_id=index+1`。存量证书若完整使用 `0..N-1`，则从证书 ID 集合精确识别为 legacy base；缺少能证明 base 的边界 ID 时不猜测。
 - ProbePattern 的存量零基契约不在本片迁移；测量装配不再用同一个 `pid` 同时代表 pattern index 与 RF-chain probe ID。
 - 逐链证书一旦非空，就必须覆盖全部请求方位；部分命中不得和 chamber average 混算，直接在采样前 fail-loud。完全没有逐链字段的 legacy 证书保留现有整体平均回退。
 - `probe_path_losses` 只接受可判定的完整 `0..N-1` legacy 集或 `1..N` topology 集；含越界、重复形状或含糊子集时拒绝构造端口，不再生成 `33/34` 这类不存在端口。
@@ -73,9 +73,8 @@
 ## 验收
 
 1. 16×双极化、证书物理 ID `1..16` 构造端口精确为 `1..32`。
-2. 0/90/180/270° 的 RF-chain probe ID 为 `1/5/9/13`，逐链证书非空但缺任一方位时在采样前失败。
+2. 当前一基拓扑下 0/90/180/270° 的 RF-chain probe ID 为 `1/5/9/13`；完整零基 legacy 证书仍精确映为 `0/4/8/12`，逐链证书非空但缺任一方位时在采样前失败。
 3. legacy/过期/错频/mock 相位记录不能进入真实执行；完整可信记录只能全量 `32/32` 注入。
 4. UMa vendor asset 传到 GCM/OOP 的 scenario 仍为 UMa；缺场景不默认 UMi。
 5. mock F64 无中心回读时 warning 如实说明中心频率缺失，并承认资产 BW40 已声明。
 6. 同一 aware UTC 时刻生成的执行快照 token、commissioning token、报告 token 与本地日志时区一致；DB 时间仍为 UTC。
-

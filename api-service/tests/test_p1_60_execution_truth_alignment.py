@@ -67,9 +67,29 @@ def test_partial_per_chain_path_loss_is_rejected_instead_of_mixed_with_average()
     missing = measure._missing_rf_chain_path_loss_azimuths(
         num_probes=16,
         azimuths_deg=[0.0, 90.0, 180.0, 270.0],
-        chain_pl_by_probe_pol={(5, "V"): 12.0, (9, "V"): 13.0, (13, "V"): 14.0},
+        chain_pl_by_probe_pol={
+            (probe_id, "V"): 10.0 + probe_id for probe_id in range(2, 17)
+        },
     )
     assert missing == [{"azimuth_deg": 0.0, "probe_id": 1, "polarization": "V"}]
+
+
+def test_complete_legacy_zero_based_rf_chain_certificate_remains_addressable():
+    selector = consumer.select_active_rf_chain_probe_id
+    assert [
+        selector(16, azimuth, probe_id_base=0)
+        for azimuth in (0.0, 90.0, 180.0, 270.0)
+    ] == [0, 4, 8, 12]
+
+    missing = measure._missing_rf_chain_path_loss_azimuths(
+        num_probes=16,
+        azimuths_deg=[0.0, 90.0, 180.0, 270.0],
+        chain_pl_by_probe_pol={
+            (probe_id, "V"): 10.0 + probe_id for probe_id in range(16)
+        },
+    )
+
+    assert missing == []
 
 
 def test_vendor_asset_resolution_exposes_uma_scenario():

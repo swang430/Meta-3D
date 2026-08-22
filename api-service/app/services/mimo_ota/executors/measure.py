@@ -92,10 +92,22 @@ def _missing_rf_chain_path_loss_azimuths(
         select_active_rf_chain_probe_id,
     )
 
+    probe_id_base = _rf_chain_probe_id_base(
+        num_probes=num_probes,
+        chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+    )
     missing: List[Dict[str, Any]] = []
     pol = polarization.upper()
     for azimuth in azimuths_deg:
-        probe_id = select_active_rf_chain_probe_id(num_probes, azimuth)
+        probe_id = (
+            select_active_rf_chain_probe_id(
+                num_probes,
+                azimuth,
+                probe_id_base=probe_id_base,
+            )
+            if probe_id_base is not None
+            else None
+        )
         if probe_id is None or (probe_id, pol) not in chain_pl_by_probe_pol:
             missing.append(
                 {
@@ -105,6 +117,26 @@ def _missing_rf_chain_path_loss_azimuths(
                 }
             )
     return missing
+
+
+def _rf_chain_probe_id_base(
+    *,
+    num_probes: int,
+    chain_pl_by_probe_pol: Dict[tuple, float],
+) -> Optional[int]:
+    """Recognize a zero/one-based namespace only when its edge proves the base."""
+    probe_ids = {probe_id for probe_id, _ in chain_pl_by_probe_pol}
+    zero_based = set(range(num_probes))
+    one_based = set(range(1, num_probes + 1))
+    if probe_ids == zero_based or (
+        probe_ids and probe_ids <= zero_based and 0 in probe_ids
+    ):
+        return 0
+    if probe_ids == one_based or (
+        probe_ids and probe_ids <= one_based and num_probes in probe_ids
+    ):
+        return 1
+    return None
 
 
 def _describe_f64_frequency_verification_gap(
@@ -2104,12 +2136,22 @@ class MeasureExecutor(IStepExecutor):
             # until per-azimuth pol switching is wired).
             nominal_probe_gain_dbi = float(chamber.probe_gain_dbi or 0.0)
             azimuth_probe_gains: Dict[float, Dict[str, Any]] = {}
+            rf_chain_probe_id_base = _rf_chain_probe_id_base(
+                num_probes=chamber.num_probes,
+                chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+            )
             for az_target in config.azimuths_deg:
                 pattern_probe_id = select_active_probe_id(
                     chamber.num_probes, az_target
                 )
-                rf_chain_probe_id = select_active_rf_chain_probe_id(
-                    chamber.num_probes, az_target
+                rf_chain_probe_id = (
+                    select_active_rf_chain_probe_id(
+                        chamber.num_probes,
+                        az_target,
+                        probe_id_base=rf_chain_probe_id_base,
+                    )
+                    if rf_chain_probe_id_base is not None
+                    else None
                 )
                 pattern_gain_v = get_probe_gain_at_azimuth(
                     context.db, chamber.num_probes, az_target, pcell.frequency_hz / 1e6, "V",
