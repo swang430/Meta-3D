@@ -2,9 +2,17 @@ import { Stack, Text, Alert, List, ThemeIcon, Table, Group, Button, Card, Badge,
 import { IconCheck, IconX, IconInfoCircle, IconAntenna, IconRotate3d, IconAlertTriangle } from '@tabler/icons-react'
 
 import { DUTCapabilityCrosscheckCard } from './DUTCapabilityCrosscheckCard'
+import {
+  describePathLossApplication,
+  describePathLossSelection,
+} from './pathLossApplication'
 
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
+  const pathLossSelection = describePathLossSelection(
+    data.path_loss_calibration_reason,
+    data.path_loss_calibration_valid === true,
+  )
   
   return (
     <Stack gap="md">
@@ -89,7 +97,7 @@ export function PrecheckPhase({ data }: { data: any }) {
       <Table striped>
         <Table.Tbody>
           <Table.Tr><Table.Td>暗室 ID</Table.Td><Table.Td>{data.chamber_id}</Table.Td></Table.Tr>
-          <Table.Tr><Table.Td>校准有效性</Table.Td><Table.Td>{data.path_loss_calibration_valid ? '有效' : '已过期'}</Table.Td></Table.Tr>
+          <Table.Tr><Table.Td>路损证书状态</Table.Td><Table.Td>{pathLossSelection}</Table.Td></Table.Tr>
           <Table.Tr>
             <Table.Td>静区纹波 (Ripple)</Table.Td>
             <Table.Td>
@@ -173,6 +181,7 @@ export function ReferencePhase({
 
 export function MIMOTestPhase({ data, config: _config }: { data: any, config: any }) {
   if (!data) return <Text c="dimmed">等待测试...</Text>
+  const pathLossView = describePathLossApplication(data.path_loss_application)
   
   return (
     <Stack gap="md">
@@ -185,11 +194,20 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
           实测值”动作，不能让证据换阶段后从 UI 消失。 */}
       <DUTCapabilityCrosscheckCard data={data.controlled_dut_attach} />
 
-      {data.path_loss_verified !== true && (
-        <Alert color="yellow" variant="light" icon={<IconAlertTriangle />} title="路损未校准（RSRP 未补偿）">
-          无 path-loss certificate，RSRP 基线按兜底 0 dB 未补偿——下方 RSRP / 吞吐量为<strong>非校准值</strong>。运行 CAL-01 路损校准（P0-3）后重测。
-        </Alert>
-      )}
+      <Alert
+        color={pathLossView.color}
+        variant="light"
+        icon={pathLossView.showCompensationValue ? <IconCheck /> : <IconAlertTriangle />}
+        title={pathLossView.title}
+      >
+        <Text size="sm">{pathLossView.message}</Text>
+        <Text size="sm" mt={4}>
+          证书：{pathLossView.certificateId ?? '—'}；来源：{pathLossView.sourceLabel}
+        </Text>
+        {pathLossView.showCompensationValue && typeof data.path_loss_compensation_db === 'number' && (
+          <Text size="sm" mt={4}>应用补偿：{data.path_loss_compensation_db.toFixed(2)} dB</Text>
+        )}
+      </Alert>
 
       {data.azimuth_results?.length > 0 && (
         <Table striped highlightOnHover>
