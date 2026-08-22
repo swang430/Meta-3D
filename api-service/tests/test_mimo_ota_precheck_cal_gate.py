@@ -180,7 +180,7 @@ def _seed_path_loss_cal(
     *,
     use_mock: Optional[bool] = False,
     valid_until: Optional[datetime] = None,
-) -> None:
+) -> ProbePathLossCalibration:
     """Write a minimal VALID ProbePathLossCalibration so
     `latest_pl is not None` and `result_payload["path_loss_calibration_valid"]
     = True`."""
@@ -202,6 +202,37 @@ def _seed_path_loss_cal(
     setattr(cal, "use_mock", use_mock)
     db.add(cal)
     db.commit()
+    db.refresh(cal)
+    return cal
+
+
+def _seed_complete_legacy_path_loss_cal(db, chamber) -> ProbePathLossCalibration:
+    """复现现场遗留证书：完整参与补偿，但来源列仍为 NULL。"""
+    now = datetime.utcnow()
+    cal = ProbePathLossCalibration(
+        chamber_id=chamber.id,
+        frequency_mhz=3500.0,
+        operating_mode="mimo_ota",
+        use_mock=None,
+        probe_path_losses={
+            str(probe_id): {
+                "path_loss_db": 56.77,
+                "pol_v_db": 56.77,
+                "pol_h_db": 56.77,
+            }
+            for probe_id in range(1, chamber.num_probes + 1)
+        },
+        sgh_model="legacy-sgh",
+        sgh_gain_dbi=8.0,
+        avg_path_loss_db=56.77,
+        status=CalibrationStatus.VALID.value,
+        calibrated_at=now,
+        valid_until=now + timedelta(days=1),
+    )
+    db.add(cal)
+    db.commit()
+    db.refresh(cal)
+    return cal
 
 
 def _make_cal_cert(overall_pass: bool) -> CalibrationCertificate:
@@ -526,7 +557,7 @@ async def test_precheck_cal_gate_cartesian(
 # frequency window measure.py uses. These tests pin that window contract:
 #   - 3500 MHz target accepts certs in 3325-3675 MHz
 #   - 700 MHz cert at 3500 MHz target → strict FAIL with audit trail showing
-#     "frequency_out_of_window"
+#     "frequency_mismatch"
 #   - bypass: same setup PASSes but cal_pass_reason still records would-fail
 # ---------------------------------------------------------------------------
 
@@ -551,7 +582,7 @@ class TestFrequencyWindow:
         assert measurements["path_loss_calibration_valid"] is False
         # The cert exists for the chamber, just out of window — the audit
         # field disambiguates from "no cert at all" for operator UX
-        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+        assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
         assert "missing or invalid" in measurements["cal_pass_reason"]
 
     @pytest.mark.asyncio
@@ -569,7 +600,7 @@ class TestFrequencyWindow:
         assert measurements["cal_pass"] is True
         # path_loss_calibration_valid still reflects reality (mismatched)
         assert measurements["path_loss_calibration_valid"] is False
-        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+        assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
         # Audit trail proves "this run happened despite the mismatch"
         assert "bypassed" in measurements["cal_pass_reason"]
         assert "path-loss calibration missing" in measurements["cal_pass_reason"]
@@ -622,7 +653,7 @@ class TestFrequencyWindow:
         measurements = result.measurements or {}
 
         assert result.status == StepExecutionStatus.FAILED
-        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+        assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
 
     @pytest.mark.asyncio
     async def test_target_frequency_recorded_in_audit_trail(
@@ -730,7 +761,7 @@ async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
         async def connect(self):
             raise AssertionError("provenance gate ran after hardware connect")
 
-    _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
+    certificate = _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
     hal_with_mocks.drivers["positioner"] = _MustNotConnect()
     hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
     ctx = _build_context(
@@ -744,6 +775,13 @@ async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
     result = await MeasureExecutor().execute(ctx)
 
     assert result.status == StepExecutionStatus.FAILED
+    application = (result.measurements or {})["path_loss_application"]
+    assert application["status"] == "not_applied"
+    assert application["provenance"] == (
+        "simulated" if use_mock is True else "unknown"
+    )
+    assert application["reason"] == "rejected_untrusted"
+    assert application["certificate_id"] == str(certificate.id)
     reason = result.error_message or ""
     for keyword in reason_keywords:
         assert keyword in reason, f"missing {keyword!r} in {reason!r}"
@@ -782,6 +820,10 @@ async def test_direct_measure_strict_rejects_missing_or_expired_cert_before_conn
     result = await MeasureExecutor().execute(ctx)
 
     assert result.status == StepExecutionStatus.FAILED
+    application = (result.measurements or {})["path_loss_application"]
+    assert application["status"] == "not_applied"
+    assert application["reason"] == cert_state
+    assert application["certificate_id"] is None
     assert "missing or expired" in (result.error_message or "")
 
 
@@ -912,6 +954,84 @@ def hal_with_mock_ce(instrument_categories):
     yield hal
     hal.drivers.clear()
     hal.drivers.update(saved)
+
+
+@pytest.fixture
+def hal_with_full_mock_chain(instrument_categories):
+    from app.hal import (
+        MockBaseStation,
+        MockChannelEmulator,
+        MockPositioner,
+        MockSignalAnalyzer,
+    )
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    saved = dict(hal.drivers)
+    hal.drivers["channelEmulator"] = MockChannelEmulator(
+        "mock-ce", {"model": "Mock"}
+    )
+    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    positioner = MockPositioner("mock-pos", {"model": "Mock"})
+
+    async def instant_move_to(azimuth, elevation, **_kwargs):
+        positioner._azimuth = azimuth
+        positioner._elevation = elevation
+        return True
+
+    positioner.move_to = instant_move_to
+    hal.drivers["positioner"] = positioner
+    hal.drivers["signalAnalyzer"] = MockSignalAnalyzer(
+        "mock-sa", {"model": "Mock"}
+    )
+    yield hal
+    hal.drivers.clear()
+    hal.drivers.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
+    db,
+    lab,
+    chamber,
+    hal_with_full_mock_chain,
+):
+    certificate = _seed_complete_legacy_path_loss_cal(db, chamber)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+    test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+    test_case.configuration = {
+        **test_case.configuration,
+        "engine_mode": "keysight_gcm",
+        "switch_mode_id": "mimo_ota",
+        "azimuths_deg": [0.0],
+        "stat_count": 1,
+        "settling_time_s": 0.0,
+        "num_samples_per_azimuth": 1,
+        "precheck_strict_dut": False,
+    }
+    db.commit()
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.SUCCESS, result.error_message
+    measurements = result.measurements or {}
+    application = measurements["path_loss_application"]
+    assert application["status"] == "applied"
+    assert application["provenance"] == "unknown"
+    assert application["certificate_id"] == str(certificate.id)
+    assert measurements["path_loss_verified"] is False
+    assert measurements["measurement_verified"] is False
+    warning_text = "\n".join(result.warnings or [])
+    assert "已应用路损补偿" in warning_text
+    assert "无 path-loss certificate" not in warning_text
+    assert "未补偿" not in warning_text
+    assert "56.77" not in warning_text
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,10 @@ from app.services.mimo_ota.executors._helpers import (
     stddev,
     write_phase_result,
 )
+from app.services.mimo_ota.path_loss_application import (
+    build_path_loss_application,
+    path_loss_application_message,
+)
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -709,18 +713,21 @@ class MeasureExecutor(IStepExecutor):
             emulator is not None and not is_mock_driver(emulator)
         )
         pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-        selected_path_loss_cert = pl_service.get_latest_calibration(
+        path_loss_selection = pl_service.resolve_latest_calibration(
             chamber.id,
             pcell.frequency_hz / 1e6,
             operating_mode=config.switch_mode_id,
             require_real=channel_emulator_is_real,
         )
-        if selected_path_loss_cert is None and channel_emulator_is_real:
-            selected_path_loss_cert = pl_service.get_latest_calibration(
+        if path_loss_selection.certificate is None and channel_emulator_is_real:
+            # 保留任意来源候选的身份，让 strict/bypass 能准确叙述“被拒绝”，
+            # 但只有下方 provenance 门裁决后的 path_loss_cert 才能进入计算。
+            path_loss_selection = pl_service.resolve_latest_calibration(
                 chamber.id,
                 pcell.frequency_hz / 1e6,
                 operating_mode=config.switch_mode_id,
             )
+        selected_path_loss_cert = path_loss_selection.certificate
         selected_path_loss_use_mock = (
             selected_path_loss_cert.use_mock
             if selected_path_loss_cert is not None
@@ -742,17 +749,31 @@ class MeasureExecutor(IStepExecutor):
                     strict=config.precheck_strict_cal,
                 )
             )
+        path_loss_cert = (
+            selected_path_loss_cert if path_loss_cert_usable else None
+        )
+        path_loss_gate_mode = (
+            "mock_not_applicable"
+            if not channel_emulator_is_real
+            else "strict"
+            if config.precheck_strict_cal
+            else "operator_bypass"
+        )
+        path_loss_application = build_path_loss_application(
+            selected_certificate=selected_path_loss_cert,
+            applied_certificate=path_loss_cert,
+            selection_reason=path_loss_selection.reason,
+            gate_mode=path_loss_gate_mode,
+        )
         if provenance_blocker is not None:
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
+                measurements={"path_loss_application": path_loss_application},
                 error_message=(
                     "P1-27 calibration provenance gate failed before hardware "
                     f"connect: {provenance_blocker}"
                 ),
             )
-        path_loss_cert = (
-            selected_path_loss_cert if path_loss_cert_usable else None
-        )
         if selected_path_loss_cert is not None and path_loss_cert is None:
             logger.warning(
                 "[%s] P1-27: ignoring untrusted path-loss certificate %s "
@@ -2528,6 +2549,7 @@ class MeasureExecutor(IStepExecutor):
                     and path_loss_cert is None
                     else None
                 ),
+                "path_loss_application": path_loss_application,
                 "path_loss_per_chain_used": chains_used,
                 "path_loss_per_chain_available": len(per_chain_pl),
                 # P1-12 audit (sibling QZ #79 / TRP #80): no path-loss cert →
@@ -2662,11 +2684,13 @@ class MeasureExecutor(IStepExecutor):
                 "⚠️ Mock/缺失仪器参与本次测量：KPI 与报告数值保持 N/A，"
                 "不得作为正式测试结论。",
             )
-        if not result_payload.get("path_loss_verified"):
+        if (
+            path_loss_application["status"] != "applied"
+            or path_loss_application["provenance"] != "real"
+        ):
             measure_warnings.insert(
                 0,
-                "⚠️ 路损未校准: 无 path-loss certificate, RSRP 基线未补偿 (兜底 0 dB) — "
-                "RSRP / 吞吐量为非校准值。运行 CAL-01 路损校准 (P0-3) 后重测。",
+                "⚠️ " + path_loss_application_message(path_loss_application),
             )
         if not result_payload.get("throughput_verified"):
             measure_warnings.insert(

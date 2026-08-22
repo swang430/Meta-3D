@@ -9,10 +9,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from app.models.probe_calibration import (
-    CalibrationStatus,
-    ProbePathLossCalibration,
-)
 from app.services.mimo_ota.executors._helpers import (
     load_mimo_ota_config,
     write_phase_result,
@@ -496,22 +492,24 @@ class PrecheckExecutor(IStepExecutor):
         # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤, 否则 cal
         # gate 会拿别的 operating mode 的 cert 通过 precheck, 但 measure 用对的 mode 查
         # 不到 → precheck 通过却 measure 静默退兜底 (P1-8 要防的正是这种 gate↔measure 漂移)。
-        latest_pl = pl_service.get_latest_calibration(
+        path_loss_selection = pl_service.resolve_latest_calibration(
             chamber.id,
             target_freq_mhz,
             operating_mode=config.switch_mode_id,
             require_real=ce_is_real,
         )
-        if latest_pl is None and ce_is_real:
+        if path_loss_selection.certificate is None and ce_is_real:
             # 保留“不可信证书存在”的诊断事实；正式执行先从 real 白名单选，
             # 只有白名单为空才回读任意来源用于 fail-loud 原因，绝不应用其数值。
-            latest_pl = pl_service.get_latest_calibration(
+            path_loss_selection = pl_service.resolve_latest_calibration(
                 chamber.id,
                 target_freq_mhz,
                 operating_mode=config.switch_mode_id,
             )
+        latest_pl = path_loss_selection.certificate
 
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
+        result_payload["path_loss_calibration_reason"] = path_loss_selection.reason
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
             path_loss_use_mock = latest_pl.use_mock
@@ -531,34 +529,24 @@ class PrecheckExecutor(IStepExecutor):
                 f"provenance={provenance_label})"
             )
         else:
-            # Disambiguate the two failure modes for audit trail / operator UX:
-            # - chamber has no VALID cert at all
-            # - chamber has VALID cert(s), just none in the ±5% window
-            any_valid_for_chamber = (
-                context.db.query(ProbePathLossCalibration)
-                .filter(
-                    ProbePathLossCalibration.chamber_id == chamber.id,
-                    ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-                    ProbePathLossCalibration.valid_until > datetime.utcnow(),
-                )
-                .first()
-            )
             result_payload["path_loss_calibration_valid"] = False
             result_payload["path_loss_calibration_use_mock"] = None
-            if any_valid_for_chamber is not None:
-                result_payload["path_loss_calibration_reason"] = "frequency_out_of_window"
-                warnings.append(
+            reason_messages = {
+                "expired": "Matching ProbePathLossCalibration is expired",
+                "frequency_mismatch": (
                     f"No ProbePathLossCalibration in ±5% window of "
-                    f"{target_freq_mhz:.0f} MHz for this chamber "
-                    f"(chamber has VALID cert(s) but none at matching frequency) — "
-                    f"Phase 3 will fall back to default cable loss"
-                )
-            else:
-                result_payload["path_loss_calibration_reason"] = "no_cert_for_chamber"
-                warnings.append(
-                    "No valid ProbePathLossCalibration for this chamber — "
-                    "Phase 3 will fall back to default cable loss"
-                )
+                    f"{target_freq_mhz:.0f} MHz for this chamber"
+                ),
+                "operating_mode_mismatch": (
+                    "No ProbePathLossCalibration matches the requested RF "
+                    f"operating mode {config.switch_mode_id!r}"
+                ),
+                "missing": "No valid ProbePathLossCalibration for this chamber",
+            }
+            warnings.append(
+                reason_messages[path_loss_selection.reason]
+                + " — Phase 3 will fall back to default cable loss"
+            )
 
         # --- 4. Quiet zone ripple (Phase 2f: cross-probe pattern variation proxy) ---
         from app.services.probe_pattern.consumer import estimate_quiet_zone_ripple_db
