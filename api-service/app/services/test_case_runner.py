@@ -250,22 +250,36 @@ def request_cancel(db, execution_id: UUID) -> bool:
         )
     if execution.status != "running":
         return False
-    execution.status = "cancelled"
-    execution.completed_at = datetime.utcnow()
+    completed_at = datetime.utcnow()
+    duration_sec = None
     if execution.started_at is not None:
-        execution.duration_sec = max(
+        duration_sec = max(
             0.0,
-            (execution.completed_at - execution.started_at).total_seconds(),
+            (completed_at - execution.started_at).total_seconds(),
         )
-    # Codex #237 C5: cancel 落在 REPORT 相位执行中时, report executor 会把
-    # status 直接写回 "completed" 并 commit (report.py "Mark execution
-    # lifecycle complete", 暗室首测链依赖它, 不能改) — 在 config 里留一个
-    # executor 不碰的痕迹, 收尾据此把终态救回 cancelled。
-    cfg = dict(execution.config or {})
-    cfg["cancel_requested"] = True
-    execution.config = cfg
-    flag_modified(execution, "config")
+    # SELECT 只用于归属、当前状态与 started_at；结束该读事务后，
+    # 取消与 REPORT completion 在同一个 `running -> terminal` 数据库 CAS 上
+    # 竞争。迟到取消不得用旧 ORM 快照把已完成赢家反向覆盖成 cancelled。
+    db.rollback()
+    updated = (
+        db.query(TestExecution)
+        .filter(
+            TestExecution.id == execution_id,
+            TestExecution.executed_by == RUNNER_MARKER,
+            TestExecution.status == "running",
+        )
+        .update(
+            {
+                TestExecution.status: "cancelled",
+                TestExecution.completed_at: completed_at,
+                TestExecution.duration_sec: duration_sec,
+            },
+            synchronize_session=False,
+        )
+    )
     db.commit()
+    if updated != 1:
+        return False
     # P1-36（Codex #286 R1）：取消也是这次执行的生命周期事件，
     # 不设的话「谁在什么时候取消的」不在这条链上。
     current_execution_id.set(str(execution_id))
@@ -518,9 +532,8 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         ctx = build_step_context(db, execution, test_case, d)
         result = await dispatch_step(ctx)
         phase_status = result.status.value
-        # 相位执行期间外部可能写过 config (cancel 的 cancel_requested) —
-        # 先刷最新再 append, 否则用相位前的 stale 快照整字段覆盖会把
-        # 外部写入抹掉 (Codex #237 C5 的伴生修)。
+        # 相位执行期间别的 writer 可能已更新执行行；先刷最新再 append，
+        # 不用相位前的 stale JSON 快照覆盖进度。
         db.expire(execution)
         db.refresh(execution)
         cfg = dict(execution.config or {})
@@ -545,25 +558,6 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
     db.expire(execution)
     db.refresh(execution)
     evidence_summary = _finalize_scpi_acceptance(execution)
-    if (execution.config or {}).get("cancel_requested"):
-        # Codex #237 C5: cancel 的 status 可能已被 REPORT executor 覆盖成
-        # completed — 痕迹在就强制回 cancelled, 取消不许被相位收尾吃掉。
-        if execution.status != "cancelled":
-            execution.status = "cancelled"
-            execution.completed_at = datetime.utcnow()
-            if execution.started_at is not None:
-                execution.duration_sec = max(
-                    0.0,
-                    (execution.completed_at - execution.started_at).total_seconds(),
-                )
-            db.commit()
-            logger.info(
-                "[case-runner] execution %s 末相位覆盖了 cancelled, 已救回",
-                execution_id,
-            )
-        else:
-            db.commit()
-        return
     if execution.status != "running":
         db.commit()
         return  # cancel 在最后一个相位后到达 — 尊重外部终态

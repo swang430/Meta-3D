@@ -3,6 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -204,6 +205,96 @@ def test_public_regeneration_cannot_claim_internal_report_while_execution_runnin
         Base.metadata.drop_all(bind=engine)
 
 
+def test_late_cancel_cannot_overwrite_completed_report_winner(monkeypatch, tmp_path):
+    """取消先读 running、REPORT 先完成时，迟到取消必须输掉同一 CAS。"""
+    from app.services.mimo_ota.executors.report import (
+        ReportLifecycleProjection,
+        _settle_execution_lifecycle,
+    )
+    from app.services.test_case_runner import request_cancel
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'lifecycle-race.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    seed_db = Session()
+    report_db = Session()
+    cancel_db = Session()
+    verify_db = Session()
+    try:
+        execution = TestExecution(
+            status="running",
+            started_at=datetime.utcnow() - timedelta(seconds=8),
+            executed_by="test_case_runner",
+            config={"step_descriptors": [{"type": "MIMO_OTA_REPORT"}]},
+            measurements={"phases": {"measure": {}, "analysis": {}}},
+        )
+        seed_db.add(execution)
+        seed_db.commit()
+        execution_id = execution.id
+
+        cancel_read_running = Event()
+        allow_cancel_to_continue = Event()
+        original_query = cancel_db.query
+
+        def _query_with_read_barrier(*entities, **kwargs):
+            query = original_query(*entities, **kwargs)
+            if entities == (TestExecution,):
+                original_first = query.first
+
+                def _first():
+                    row = original_first()
+                    cancel_read_running.set()
+                    assert allow_cancel_to_continue.wait(timeout=5)
+                    return row
+
+                query.first = _first
+            return query
+
+        monkeypatch.setattr(cancel_db, "query", _query_with_read_barrier)
+        cancel_result = {}
+
+        def _cancel():
+            cancel_result["won"] = request_cancel(cancel_db, execution_id)
+
+        cancel_thread = Thread(target=_cancel)
+        cancel_thread.start()
+        assert cancel_read_running.wait(timeout=5)
+
+        report_execution = report_db.get(TestExecution, execution_id)
+        completed_at = datetime.utcnow()
+        projection = ReportLifecycleProjection(
+            status="completed",
+            completed_at=completed_at,
+            duration_sec=(completed_at - report_execution.started_at).total_seconds(),
+        )
+        settled = _settle_execution_lifecycle(
+            report_db,
+            report_execution,
+            projection,
+        )
+        allow_cancel_to_continue.set()
+        cancel_thread.join(timeout=5)
+        assert not cancel_thread.is_alive()
+
+        final_execution = verify_db.get(TestExecution, execution_id)
+        assert settled.status == "completed"
+        assert cancel_result["won"] is False
+        assert final_execution.status == "completed"
+        assert not (final_execution.config or {}).get("cancel_requested")
+    finally:
+        allow_cancel_to_continue.set()
+        seed_db.close()
+        report_db.close()
+        cancel_db.close()
+        verify_db.close()
+        Base.metadata.drop_all(bind=engine)
+
+
 @pytest.mark.parametrize(
     ("status", "verdict", "validation_pass", "trusted", "expected_state", "pass_rate"),
     [
@@ -354,11 +445,9 @@ async def test_cancel_during_pdf_generation_rebuilds_report_from_cancelled_truth
         def _generate_pdf(_self, report_data, _template, output_path):
             generated_contents.append(deepcopy(report_data))
             if len(generated_contents) == 1:
-                cancelled = cancel_db.get(TestExecution, execution.id)
-                cancelled.status = "cancelled"
-                cancelled.completed_at = datetime.utcnow()
-                cancelled.config = {**(cancelled.config or {}), "cancel_requested": True}
-                cancel_db.commit()
+                from app.services.test_case_runner import request_cancel
+
+                assert request_cancel(cancel_db, execution.id) is True
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"%PDF-1.4\n")

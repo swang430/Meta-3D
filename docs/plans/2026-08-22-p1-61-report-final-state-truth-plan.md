@@ -189,6 +189,21 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
 - Update the pre-P1-61 internal test mirror to exercise the complete projection plus resolver
   contract rather than the removed projection-only shape.
 
+### Task 5C: Close late-cancel terminal overwrite race
+
+**Files:**
+- Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/tests/test_p1_61_report_final_state_truth.py`
+- Modify: `api-service/tests/test_arch1_case_runner.py`
+
+- Add a deterministic two-session RED test: cancel reads `running`, REPORT wins the completion CAS,
+  then the late cancel resumes and must return `False` without changing the database winner.
+- Replace cancellation's stale ORM assignment with `id + executed_by + status=running` conditional
+  update; status, completion timestamp and duration are one atomic terminal transition.
+- Remove the obsolete `config.cancel_requested` recovery mirror. The REPORT executor and cancel
+  endpoint now share the same database CAS, so a second JSON lifecycle source would only risk
+  overwriting concurrent phase-progress evidence.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**
