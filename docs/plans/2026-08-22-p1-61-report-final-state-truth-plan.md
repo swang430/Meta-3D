@@ -4,7 +4,7 @@
 
 **Goal:** 让正式 MIMO PDF、持久化 `content_data` 与最终 `TestExecution` 对同一执行状态、耗时和四态判决给出一致结论，同时保留 REPORT 期间取消与失败语义。
 
-**Architecture:** REPORT 执行器只计算一次最终完成时间和耗时，通过不可变 `ReportLifecycleProjection` 传给内容构造器；构造器以“投影优先、数据库状态兜底”的单一有效生命周期生成全部状态字段。报告尝试结束后才把同一投影提交到 ORM。历史报告重建不传投影，继续读取已落库真值。
+**Architecture:** REPORT 执行器只计算一次最终完成时间和耗时，通过不可变 `ReportLifecycleProjection` 传给内容构造器与 `ReportService`；构造器以“投影优先、数据库状态兜底”的单一有效生命周期生成全部状态字段。报告尝试结束后用数据库条件更新裁决 completed 与外部 cancel，取消先赢则以数据库赢家重建同一报告。历史报告重建不传投影，继续读取已落库真值。
 
 **Tech Stack:** Python 3.12、FastAPI、SQLAlchemy、pytest、ReportLab。
 
@@ -83,6 +83,7 @@ Expected: PASS.
 - Patch report persistence/generation to capture the outgoing `content_data`.
 - During `create_report`/`generate_report`, assert the ORM execution is still `running` while captured content is completed with the projected duration.
 - After executor return, assert the ORM execution is completed with exactly the same completed time/duration.
+- 用独立数据库会话在 PDF 生成期间写入 cancelled，断言条件终态裁决保留 cancelled，且同一报告按 incomplete 重建。
 
 **Step 2: Run test to verify it fails**
 
@@ -92,7 +93,8 @@ Expected: current executor sends running/zero-duration content.
 
 - At REPORT entry compute one timezone-normalized `completed_at` and duration.
 - Pass the projection to `_build_mimo_ota_content_data()`.
-- After report attempt and phase-result write, assign the same values to execution and commit.
+- After report attempt, atomically update only `status == running` to the same completed projection.
+- If an external terminal state won, refresh the execution and regenerate the same report with that lifecycle; do not create a second report.
 - Do not move ORM lifecycle mutation ahead of report generation.
 
 **Step 4: Run focused tests**
@@ -141,7 +143,7 @@ Expected: relevant suite PASS.
 - `cd api-service && .venv/bin/pytest -q`
 - `cd api-service && .venv/bin/python -m compileall -q app tests`
 - Confirm one Alembic head.
-- Run repository `diff-check` command documented in `CLAUDE.md`.
+- Run `git diff --check origin/main...HEAD` and require a zero exit status.
 
 **Step 2: Fresh internal review**
 

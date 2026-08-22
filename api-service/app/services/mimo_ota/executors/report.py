@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.models.report import ReportFormat, ReportType
+from app.models.test_plan import TestExecution
 from app.hal.base_station import ThroughputMetrics
 from app.services.mimo_ota.executors._helpers import write_phase_result
 from app.services.mimo_ota.throughput_trust import (
@@ -123,6 +124,60 @@ def _execution_summary(
     return summary, outcome
 
 
+def _settle_execution_lifecycle(
+    db: Any,
+    execution: Any,
+    completed_projection: ReportLifecycleProjection,
+) -> ReportLifecycleProjection:
+    """以数据库条件更新裁决 REPORT 完成与外部终态谁先发生。
+
+    `request_cancel()` 在独立会话中把 running 改为 cancelled。这里仅允许
+    running -> completed；因此两边只能有一个赢家，不能再由 runner 会话
+    的旧 ORM 快照把 cancelled 覆盖回 completed。
+    """
+
+    updated = (
+        db.query(TestExecution)
+        .filter(
+            TestExecution.id == execution.id,
+            TestExecution.status == "running",
+        )
+        .update(
+            {
+                TestExecution.status: completed_projection.status,
+                TestExecution.completed_at: completed_projection.completed_at,
+                TestExecution.duration_sec: completed_projection.duration_sec,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    db.expire(execution)
+    db.refresh(execution)
+
+    if updated == 1:
+        return completed_projection
+
+    observed = _effective_lifecycle(execution, None)
+    if (
+        observed.duration_sec is None
+        and observed.completed_at is not None
+        and getattr(execution, "started_at", None) is not None
+    ):
+        duration_end = observed.completed_at
+        started_at = execution.started_at
+        if duration_end.tzinfo is not None and started_at.tzinfo is None:
+            duration_end = duration_end.replace(tzinfo=None)
+        elif duration_end.tzinfo is None and started_at.tzinfo is not None:
+            duration_end = duration_end.replace(tzinfo=started_at.tzinfo)
+        observed = ReportLifecycleProjection(
+            status=observed.status,
+            completed_at=observed.completed_at,
+            duration_sec=(duration_end - started_at).total_seconds(),
+        )
+    return observed
+
+
 @register_executor(MIMOOTAStepType.REPORT.value)
 class ReportExecutor(IStepExecutor):
     """Generate a PDF report from prior phases, mark execution completed."""
@@ -148,6 +203,9 @@ class ReportExecutor(IStepExecutor):
         warnings: List[str] = []
         report_db_id: Optional[str] = None
         report_file_path: Optional[str] = None
+        report = None
+        svc: Optional[ReportService] = None
+        content_data: Optional[Dict[str, Any]] = None
 
         case_name = _lookup_case_name(context, execution)
         try:
@@ -181,6 +239,7 @@ class ReportExecutor(IStepExecutor):
                 db=context.db,
                 report_id=report.id,
                 content_data_override=content_data,
+                execution_lifecycle_projection=lifecycle_projection,
             )
             if generated and generated.file_path:
                 report_file_path = generated.file_path
@@ -196,6 +255,47 @@ class ReportExecutor(IStepExecutor):
             warnings.append(f"PDF generation failed: {e}")
             logger.exception("[%s] Phase 5: PDF generation failed", execution.id)
 
+        settled_lifecycle = _settle_execution_lifecycle(
+            context.db,
+            execution,
+            lifecycle_projection,
+        )
+        if (
+            settled_lifecycle.status != lifecycle_projection.status
+            and report is not None
+            and svc is not None
+        ):
+            # 外部终态（当前实际写方是 request_cancel）先赢时，第一版 PDF 的
+            # completed 投影已失效。立即从数据库赢家重建同一报告，不能让正式
+            # artifact 与 TestExecution 终态分叉。
+            try:
+                content_data = _build_mimo_ota_content_data(
+                    execution,
+                    now,
+                    case_name,
+                    lifecycle_projection=settled_lifecycle,
+                )
+                regenerated = svc.generate_report(
+                    db=context.db,
+                    report_id=report.id,
+                    content_data_override=content_data,
+                    execution_lifecycle_projection=settled_lifecycle,
+                )
+                if regenerated and regenerated.file_path:
+                    report_file_path = regenerated.file_path
+                else:
+                    report_file_path = None
+                    warnings.append(
+                        "Final-state report regeneration returned no file_path"
+                    )
+            except Exception as e:  # noqa: BLE001
+                report_file_path = None
+                warnings.append(f"Final-state report regeneration failed: {e}")
+                logger.exception(
+                    "[%s] Phase 5: final-state report regeneration failed",
+                    execution.id,
+                )
+
         result: Dict[str, Any] = {
             "report_id": report_id_human,
             "report_db_id": report_db_id,
@@ -209,10 +309,7 @@ class ReportExecutor(IStepExecutor):
 
         write_phase_result(execution, "report", result)
 
-        # Mark execution lifecycle complete regardless of PDF outcome
-        execution.status = lifecycle_projection.status
-        execution.completed_at = lifecycle_projection.completed_at
-        execution.duration_sec = lifecycle_projection.duration_sec
+        # 生命周期已由上面的数据库条件更新裁决；这里只持久化 report 相位载荷。
         context.db.commit()
 
         logger.info("[%s] Phase 5: report_id=%s pdf=%s",

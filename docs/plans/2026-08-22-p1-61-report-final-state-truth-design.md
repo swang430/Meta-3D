@@ -27,11 +27,13 @@
 
 ## 方案裁决
 
-### 采用：只读“最终状态投影”，落盘成功后再提交真实生命周期
+### 采用：只读“最终状态投影”与数据库条件终态裁决
 
 REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显式投影参数传给内容构造器。
-报告内容使用该投影；ORM 对象仍保持原状态，直到 PDF 尝试结束后才按现有顺序写入
-`completed`。这样既让报告读取正确的最终真值，又不把“报告尚未完成”提前写进数据库。
+报告内容和 `ReportService` 的内部安全重建都使用该投影；ORM 对象仍保持原状态，直到 PDF
+尝试结束。随后只允许数据库中的 `running -> completed` 条件更新，与独立会话的
+`running -> cancelled` 竞争，保证只有一个终态赢家。若取消先赢，同一报告立即按数据库赢家
+重建为 `cancelled/incomplete`，PDF、持久化 `content_data` 与执行行不再分叉。
 
 历史重建不传投影，继续读取数据库中已经提交的最终生命周期。
 
@@ -40,9 +42,11 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 该方案代码较短，但会破坏 REPORT 相位的取消语义：PDF 仍在生成、甚至随后失败时，其他请求已
 看到 completed；取消请求也可能被提前完成覆盖。它把展示问题变成生命周期竞态，因此拒绝。
 
-### 未采用：PDF 生成后再二次修改 PDF 内容
+### 未采用：无条件生成后再补丁 PDF 内容
 
-这会引入第二份报告状态写入路径，并产生 PDF、`content_data`、数据库三者漂移；拒绝。
+常规 completed 路径只生成一次，不做事后补丁。唯一例外是数据库已证明 operator cancel
+先赢：此时第一版 completed 投影已经失效，必须通过既有 `ReportService` 重建同一报告，而不是
+直接改 PDF 或另建第二份报告。
 
 ## 最终状态契约
 
@@ -64,17 +68,20 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 ## 失败与取消语义
 
 - PDF 生成失败仍沿用现有策略：执行测量已结束，生命周期提交 completed，并把报告失败写入 warning；
-- REPORT 运行期间 ORM 状态不提前改变，保留 runner 对 operator cancel 的最终裁决；
+- REPORT 运行期间 ORM 状态不提前改变；完成与 operator cancel 通过数据库条件更新裁决；
+- cancel 先赢时，同一报告按 cancelled/incomplete 重建；completed 先赢后 cancel 返回冲突；
 - 内容投影不写数据库、不创建第二份状态缓存；
 - 可信性门仍优先于 PASS/FAIL：校准或吞吐证据不足时，completed 执行只能是 undetermined。
 
 ## 验证策略
 
-先用 TDD 证明三个核心故障：
+先用 TDD 证明五个核心故障：
 
 1. running ORM + completed 投影生成 completed/89.195 秒/undetermined；
 2. 构造报告时 ORM 仍是 running，证明没有提前提交 completed；
-3. 历史 completed 执行无需投影也保持相同四态契约。
+3. 历史 completed 执行无需投影也保持相同四态契约；
+4. `ReportService` 不得用数据库 running 摘要覆盖内部最终投影；
+5. PDF 生成期间取消先赢时，执行保持 cancelled 且同一报告重建为 incomplete。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。

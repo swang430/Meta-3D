@@ -410,6 +410,7 @@ class ReportService:
         *,
         expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
         vrt_archive_metadata_override: Optional[Dict[str, Any]] = None,
+        execution_lifecycle_projection: Any = None,
     ) -> Optional[TestReport]:
         """
         Trigger report generation
@@ -582,6 +583,7 @@ class ReportService:
                 # current provenance-aware builder instead of patching only its
                 # summary fields.
                 from app.services.mimo_ota.executors.report import (
+                    ReportLifecycleProjection,
                     _build_mimo_ota_content_data,
                 )
                 from app.services.test_case_runner import (
@@ -589,11 +591,22 @@ class ReportService:
                 )
 
                 _finalize_scpi_acceptance(execution)
+                if (
+                    execution_lifecycle_projection is not None
+                    and not isinstance(
+                        execution_lifecycle_projection,
+                        ReportLifecycleProjection,
+                    )
+                ):
+                    raise ValueError(
+                        "MIMO lifecycle projection is an internal typed value"
+                    )
                 case_name = report.title.split("—", 1)[-1].strip()
                 report_data_dict = _build_mimo_ota_content_data(
                     execution,
                     datetime.utcnow(),
                     case_name,
+                    lifecycle_projection=execution_lifecycle_projection,
                 )
             elif report.report_type == ReportType.SINGLE_EXECUTION and source_data:
                 # For VRT/Single Execution, use the data directly
@@ -710,14 +723,15 @@ class ReportService:
                     report_data_dict['scpi_evidence'] = authoritative.get(
                         'scpi_evidence', {}
                     )
-                    report_data_dict['execution_summary'] = summary
-                    report_data_dict['pass_rate'] = summary.get('pass_rate')
-                    if summary.get('passed') == summary.get('total_executions'):
-                        report_data_dict['overall_result'] = 'passed'
-                    elif summary.get('failed', 0) > 0:
-                        report_data_dict['overall_result'] = 'failed'
-                    else:
-                        report_data_dict['overall_result'] = 'pending'
+                    if execution_lifecycle_projection is None:
+                        report_data_dict['execution_summary'] = summary
+                        report_data_dict['pass_rate'] = summary.get('pass_rate')
+                        if summary.get('passed') == summary.get('total_executions'):
+                            report_data_dict['overall_result'] = 'passed'
+                        elif summary.get('failed', 0) > 0:
+                            report_data_dict['overall_result'] = 'failed'
+                        else:
+                            report_data_dict['overall_result'] = 'pending'
             else:
                 # For standard reports, collect data from DB
                 data_collector = ReportDataCollector()

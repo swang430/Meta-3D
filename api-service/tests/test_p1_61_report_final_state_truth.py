@@ -1,11 +1,18 @@
 """P1-61：正式 MIMO 报告必须消费同一份最终生命周期真值。"""
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.db.database import Base
+from app.models.test_plan import TestExecution
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 
 
@@ -193,6 +200,18 @@ async def test_report_executor_projects_completed_content_without_early_orm_muta
         lambda _execution: None,
     )
 
+    def _settle(_db, target, projection):
+        target.status = projection.status
+        target.completed_at = projection.completed_at
+        target.duration_sec = projection.duration_sec
+        _db.commit()
+        return projection
+
+    monkeypatch.setattr(
+        "app.services.mimo_ota.executors.report._settle_execution_lifecycle",
+        _settle,
+    )
+
     context = StepExecutionContext(
         db=db,
         step=StepDescriptor(id="report", type="MIMO_OTA_REPORT"),
@@ -211,3 +230,81 @@ async def test_report_executor_projects_completed_content_without_early_orm_muta
     assert execution.duration_sec == pytest.approx(content["duration_s"])
     assert execution.completed_at.isoformat() == content["execution_summary"]["last_execution"]
     assert commits[-1] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_pdf_generation_rebuilds_report_from_cancelled_truth(
+    monkeypatch, tmp_path,
+):
+    """取消与完成只能有一个数据库赢家，PDF 必须跟随赢家终态。"""
+    from app.services.mimo_ota.executors.report import ReportExecutor
+    from app.services.test_execution import StepDescriptor, StepExecutionContext
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    runner_db = Session()
+    cancel_db = Session()
+    try:
+        execution = TestExecution(
+            status="running",
+            started_at=datetime.utcnow() - timedelta(seconds=12),
+            executed_by="test_case_runner",
+            config={
+                "phase_progress": [],
+                "step_descriptors": [{"type": "MIMO_OTA_REPORT"}],
+            },
+            measurements={"phases": {"measure": {}, "analysis": {"verdict": "UNKNOWN"}}},
+        )
+        runner_db.add(execution)
+        runner_db.commit()
+        runner_db.refresh(execution)
+        generated_contents = []
+
+        def _generate_pdf(_self, report_data, _template, output_path):
+            generated_contents.append(deepcopy(report_data))
+            if len(generated_contents) == 1:
+                cancelled = cancel_db.get(TestExecution, execution.id)
+                cancelled.status = "cancelled"
+                cancelled.completed_at = datetime.utcnow()
+                cancelled.config = {**(cancelled.config or {}), "cancel_requested": True}
+                cancel_db.commit()
+            path = Path(output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"%PDF-1.4\n")
+            return str(path)
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "app.services.report_service.PDFGenerator.generate_report",
+            _generate_pdf,
+        )
+        monkeypatch.setattr(
+            "app.services.test_case_runner._finalize_scpi_acceptance",
+            lambda _execution: None,
+        )
+
+        context = StepExecutionContext(
+            db=runner_db,
+            step=StepDescriptor(id="report", type="MIMO_OTA_REPORT"),
+            test_execution=execution,
+        )
+        result = await ReportExecutor().execute(context)
+
+        runner_db.refresh(execution)
+        assert result.status.value == "success"
+        assert execution.status == "cancelled"
+        assert len(generated_contents) == 2, "取消先赢后必须重建正式报告"
+        rebuilt = generated_contents[-1]
+        assert rebuilt["test_plan"]["status"] == "cancelled"
+        assert rebuilt["overall_result"] == "incomplete"
+        assert rebuilt["execution_summary"]["incomplete"] == 1
+        assert rebuilt["execution_summary"]["pending"] == 0
+    finally:
+        cancel_db.close()
+        runner_db.close()
+        Base.metadata.drop_all(bind=engine)
