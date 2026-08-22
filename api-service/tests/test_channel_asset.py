@@ -250,6 +250,61 @@ class TestPolymorphicPayloadValidation:
         a = create_channel_asset(db, name="vd", source_type="vendor_file", payload=_VENDOR_PAYLOAD)
         assert a.associated_file_path is None and a.allowed_targets == ["gcm_native"]
 
+    def test_vendor_project_truth_is_server_managed(self, db):
+        forged = {
+            **_VENDOR_PAYLOAD,
+            "smu_project_truth": {
+                "schema_version": 1,
+                "instrument_path": r"D:\forged.smu",
+                "sha256": "a" * 64,
+                "size_bytes": 1,
+                "primary_group": 0,
+                "center_frequencies_hz": {"0": 3_600_000_000},
+            },
+        }
+        with pytest.raises(ChannelAssetError, match="只能由服务端扫描写入"):
+            create_channel_asset(
+                db,
+                name="forged-truth",
+                source_type="vendor_file",
+                payload=forged,
+                associated_file_path=r"D:\forged.smu",
+            )
+
+        # 已有服务端证据可随无关字段编辑保留，但客户端不能替换它。
+        asset = create_channel_asset(
+            db,
+            name="server-truth",
+            source_type="vendor_file",
+            payload=_VENDOR_PAYLOAD,
+            associated_file_path=(
+                r"D:\MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
+            ),
+        )
+        server_payload = {
+            "scd_config": {**_SCD, "arfcn": 636666},
+            "smu_project_truth": {
+                "schema_version": 1,
+                "instrument_path": asset.associated_file_path,
+                "sha256": "b" * 64,
+                "size_bytes": 2,
+                "primary_group": 0,
+                "center_frequencies_hz": {"0": 3_549_990_000},
+            },
+        }
+        asset.payload = server_payload
+        asset.center_frequency_hz = 3_549_990_000
+        db.commit()
+
+        updated = update_channel_asset(db, asset.id, description="operator note")
+        assert updated.payload["smu_project_truth"] == server_payload["smu_project_truth"]
+        forged_update = {
+            **server_payload,
+            "smu_project_truth": {**server_payload["smu_project_truth"], "sha256": "c" * 64},
+        }
+        with pytest.raises(ChannelAssetError, match="只能由服务端扫描写入"):
+            update_channel_asset(db, asset.id, payload=forged_update)
+
 
 class TestTopPhysicalAndUniqueness:
     def test_center_freq_nonpos(self, db):

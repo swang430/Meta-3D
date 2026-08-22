@@ -20,15 +20,18 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 
 **Current Focus = P2-31「SMB `.smu` 工程真值扫描」（P2-36 核验为 PR #292 已交付的重复项；2026-08-22）**。
 
-> **P2-31 开发完成，等待外审**：服务端只从固定只读挂载中解析 `.smu`
+> **P2-31 R1 已收口，等待 R2**：服务端只从固定只读挂载中解析 `.smu`
 > `[Channel Group 0] CenterFrequency`，文件名永不作为频率真值；完整 Windows 路径只精确匹配
 > 已登记 `vendor_file` 资产，未登记、重复、跨绑定、非栅格和坏工程全部保护。无请求体的 scan/sync
 > API、GUI 预览/显式确认、live OpenAPI / checked-in YAML / generated TS 已同步。sync 在写入前
 > 重新锁定并刷新连接与完整 ChannelAsset 规范名空间，在锁内二次扫描分类，资产 provenance、ARFCN、
 > 顶层频率、绑定与 `available_channel_models` 单事务更新；不创建资产、不写 SMB/F64、不双写
 > legacy SCD。相关组 **252 passed**、GUI 契约 **3 passed**、production build、`compileall`、
-> 全后端 **4225 passed / 5 skipped**、单一 Alembic head、`diff-check` 通过；fresh 内审发现的并发旧快照覆盖与 `MF_` 文件名反压
-> group 0 两条 P1 均已按 TDD 收口，fresh 尾审 **P1/P2/P3=0**。
+> 全后端最新 **4228 passed / 5 skipped**、单一 Alembic head、`diff-check` 通过；fresh 内审发现的并发旧快照覆盖与 `MF_` 文件名反压
+> group 0 两条 P1 均已按 TDD 收口。Codex R1 又发现运行 resolver 仍会用旧 `MF_` 文件名拒绝
+> 已同步资产，以及提交后 SMB 复扫失败会把已提交成功误报为失败；两条均已按 TDD 收口，工程证据判据
+> 收敛为执行与编辑共用的服务端白名单，成功响应不再做 fallible post-commit I/O，fresh 尾审
+> **P1/P2/P3=0**。
 > P2-40 实际清理继续冻结。
 
 > **~~P2-36~~ ✅ 2026-08-22 现状核验收口**：该条目的“执行历史一键跳本次执行日志”

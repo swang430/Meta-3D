@@ -455,6 +455,36 @@ def test_sync_internal_group_zero_truth_overrides_parseable_lying_filename(inven
     assert stored.payload["smu_project_truth"]["primary_group"] == 0
 
 
+def test_sync_success_does_not_rescan_after_commit(inventory_db, monkeypatch):
+    """提交后的 SMB 短暂消失不能把已提交成功伪装成 409 失败。"""
+    import app.services.smu_project_inventory as inventory_service
+
+    db, _connection, root = inventory_db
+    _write_smu(
+        root / "truth.smu",
+        "[Channel Group 0]\nCenterFrequency=3549990000 Hz\n",
+    )
+    asset = _create_vendor_asset(
+        db,
+        name="post-commit",
+        path=r"D:\Scenario Packs\truth.smu",
+    )
+
+    def forbidden_post_commit_rescan(_db):
+        raise inventory_service.SMUProjectInventoryError("SMB disappeared after commit")
+
+    monkeypatch.setattr(
+        inventory_service, "preview_smu_project_sync", forbidden_post_commit_rescan,
+    )
+    result = inventory_service.sync_smu_project_truth(db)
+    db.expire_all()
+
+    assert result.updated_count == 1
+    assert result.already_synced_count == 1
+    assert result.preview.items[0].sync_status == "already_synced"
+    assert db.get(ChannelAsset, asset.id).payload["scd_config"]["arfcn"] == 636666
+
+
 def test_sync_rolls_back_all_candidates_when_commit_fails(inventory_db, monkeypatch):
     from app.services.smu_project_inventory import (
         SMUProjectSyncError,

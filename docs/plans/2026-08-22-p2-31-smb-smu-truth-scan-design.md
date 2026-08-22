@@ -190,6 +190,21 @@ fresh 内审先发现并按 TDD 收口两条功能级问题：
 产生和消费路径后，fresh 尾审 **P1/P2/P3=0**。本片仍不创建资产、不推断 band/带宽/场景、
 不双写 legacy SCD，也不触碰 SMB/F64。
 
+Codex R1 覆盖 `94e4648` 后指出两条本片缺陷，并在后续提交按 TDD 收口：
+
+1. 同步写入虽允许工程正文压过过时 `MF_` 文件名，运行 resolver 仍会重新执行旧文件名门，导致
+   已同步资产不可执行。修复将严格的 `smu_project_truth` 白名单判据收敛到 ChannelAsset 服务：
+   schema、group 0、SHA-256 形态、路径、顶层频率与 ARFCN 精确一致时，执行与无关字段编辑共同
+   接受工程正文；普通 create/update 不能伪造或替换服务端证据，证据输入改变时自动失效并回到
+   原 fail-loud 文件名门。
+2. 数据库 commit 后再次扫描 SMB 可能失败并向客户端返回 409，但写入已经不可回滚。修复在 commit
+   前的锁内最终预览上纯内存构造已提交响应，不再执行任何 post-commit SMB I/O；定点测试证明
+   commit 后扫描入口即使被强制置为异常，仍返回 `updated_count=1` 且数据库与响应同为成功。
+
+R1 RED 为 **3 failed**，GREEN 定点 **3 passed**；相关资产/扫描/迁移/rule gates **227 passed**，
+全后端 **4228 passed / 5 skipped**，GUI 契约 **3 passed**、production build、`compileall`、单一
+Alembic head `a4c6e8f0b2d4`、`git diff --check` 通过；fresh 尾审 **P1/P2/P3=0**。
+
 ## 非目标
 
 - EMQuest/band/SSB 数据与 UXM/F64 SCPI 命令；

@@ -10,6 +10,8 @@ S2 填充, S1 接受 operator 可选传入 + 唯一校验)。平行 CustomCDLPro
 from __future__ import annotations
 
 import math
+from copy import deepcopy
+from pathlib import PureWindowsPath
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -169,6 +171,7 @@ def _validate_rt_dynamic_payload(payload: dict) -> None:
 # vendor_file scd_config 完整 SCD 规范字段 (mirror StandardChannelName; S2 Codex #173 第5轮)
 _SCD_CONFIG_REQUIRED = ("band", "arfcn", "bandwidth_mhz", "model",
                         "scenario", "mimo", "polarization", "version")
+_SMU_PROJECT_TRUTH_KEY = "smu_project_truth"
 
 
 def _scd_to_standard_name(scd: dict) -> str:
@@ -336,6 +339,54 @@ def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> N
         raise ChannelAssetError(chk.failure_reason())
 
 
+def _has_verified_smu_project_truth(
+    payload: Any, associated_file_path: Any, center_frequency_hz: Any,
+) -> bool:
+    """只接受服务端 scanner 写入且仍与当前资产路径/频率精确一致的工程正文证据。"""
+    if not isinstance(payload, dict):
+        return False
+    truth = payload.get(_SMU_PROJECT_TRUTH_KEY)
+    scd = payload.get("scd_config")
+    if not isinstance(truth, dict) or not isinstance(scd, dict):
+        return False
+    if type(truth.get("schema_version")) is not int or truth["schema_version"] != 1:
+        return False
+    if type(truth.get("primary_group")) is not int or truth["primary_group"] != 0:
+        return False
+    sha256 = truth.get("sha256")
+    if (not isinstance(sha256, str) or len(sha256) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in sha256)):
+        return False
+    size_bytes = truth.get("size_bytes")
+    if type(size_bytes) is not int or size_bytes < 0:
+        return False
+    try:
+        truth_path = str(PureWindowsPath(str(truth["instrument_path"]))).casefold()
+        asset_path = str(PureWindowsPath(str(associated_file_path))).casefold()
+    except (KeyError, TypeError, ValueError):
+        return False
+    if truth_path != asset_path:
+        return False
+    groups = truth.get("center_frequencies_hz")
+    if not isinstance(groups, dict):
+        return False
+    center_hz = groups.get("0", groups.get(0))
+    if type(center_hz) is not int or center_hz <= 0:
+        return False
+    if center_frequency_hz is None or abs(center_frequency_hz - center_hz) > 1:
+        return False
+    arfcn = scd.get("arfcn")
+    if type(arfcn) is not int:
+        return False
+    from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, nr_arfcn_to_freq_mhz
+    try:
+        derived_arfcn = freq_mhz_to_nr_arfcn(center_hz / 1e6)
+        round_trip_hz = round(nr_arfcn_to_freq_mhz(derived_arfcn) * 1e6)
+    except ValueError:
+        return False
+    return derived_arfcn == arfcn and abs(round_trip_hz - center_hz) <= 1
+
+
 def create_channel_asset(
     db: Session, *, name: str, source_type: str, payload: Any,
     created_by: Optional[str] = None, **fields,
@@ -347,6 +398,11 @@ def create_channel_asset(
             f"source_type 非法: {source_type!r} (须 {sorted(_SOURCE_TYPES)})")
     if payload is None:
         raise ChannelAssetError("payload 必填")
+    if (source_type == "vendor_file" and isinstance(payload, dict)
+            and _SMU_PROJECT_TRUTH_KEY in payload):
+        raise ChannelAssetError(
+            "vendor_file payload.smu_project_truth 只能由服务端扫描写入"
+        )
     if db.query(ChannelAsset).filter(ChannelAsset.name == name).first() is not None:
         raise ChannelAssetError(f"ChannelAsset 名 {name!r} 已存在")
     # 先校验 payload (含 vendor 命名契约), 再派生 canonical (依赖合法 scd_config)
@@ -441,6 +497,39 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
             and db.query(ChannelAsset).filter(
                 ChannelAsset.canonical_name == new_canon).first() is not None):
         raise ChannelAssetError(f"canonical_name {new_canon!r} 已存在")
+    if asset.source_type == "vendor_file":
+        existing_payload = asset.payload if isinstance(asset.payload, dict) else {}
+        existing_truth = existing_payload.get(_SMU_PROJECT_TRUTH_KEY)
+        incoming_payload = fields.get("payload")
+        if "payload" in fields and not isinstance(incoming_payload, dict):
+            # 保留显式坏类型，交给既有 payload validator 统一 fail-loud；不能静默换回旧值。
+            pass
+        elif isinstance(incoming_payload, dict):
+            incoming_payload = deepcopy(incoming_payload)
+            supplied_truth = incoming_payload.get(_SMU_PROJECT_TRUTH_KEY)
+            if (_SMU_PROJECT_TRUTH_KEY in incoming_payload
+                    and supplied_truth != existing_truth):
+                raise ChannelAssetError(
+                    "vendor_file payload.smu_project_truth 只能由服务端扫描写入"
+                )
+        else:
+            incoming_payload = deepcopy(existing_payload)
+        if isinstance(incoming_payload, dict):
+            existing_scd = existing_payload.get("scd_config") or {}
+            incoming_scd = incoming_payload.get("scd_config") or {}
+            truth_inputs_unchanged = (
+                fields.get("associated_file_path", asset.associated_file_path)
+                == asset.associated_file_path
+                and fields.get("center_frequency_hz", asset.center_frequency_hz)
+                == asset.center_frequency_hz
+                and incoming_scd.get("arfcn") == existing_scd.get("arfcn")
+            )
+            if existing_truth is not None and truth_inputs_unchanged:
+                incoming_payload[_SMU_PROJECT_TRUTH_KEY] = deepcopy(existing_truth)
+            else:
+                incoming_payload.pop(_SMU_PROJECT_TRUTH_KEY, None)
+            if "payload" in fields or (existing_truth is not None and not truth_inputs_unchanged):
+                fields["payload"] = incoming_payload
     # payload 改了 → 用现有 source_type 重新 dispatch 校验 (source_type 不可改, 形态稳定)
     if "payload" in fields:
         _validate_payload(asset.source_type, fields["payload"])
@@ -459,8 +548,11 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         # 用 stale 值)。显式给 canonical_name 替换 → 不自动重派生 (尊重 operator 指定)。
         _np = fields.get("payload", asset.payload) or {}
         _scd = _np.get("scd_config") if isinstance(_np, dict) else None
-        _check_vendor_filename_freq(
-            _scd, fields.get("associated_file_path", asset.associated_file_path))
+        _final_path = fields.get("associated_file_path", asset.associated_file_path)
+        if not _has_verified_smu_project_truth(
+            _np, _final_path, _vsf["center_frequency_hz"],
+        ):
+            _check_vendor_filename_freq(_scd, _final_path)
         # P3-15: 顶层声明 vs scd 一致性用**最终状态**判 (同 _vsf 合并逻辑 —
         # 只改一边也要撞另一边的现值, 不然"只 PATCH 顶层频率"绕过校验)
         _check_vendor_declared_freq(

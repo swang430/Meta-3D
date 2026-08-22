@@ -669,7 +669,25 @@ def sync_smu_project_truth(db: Session) -> SMUProjectSyncResult:
         db.rollback()
         raise SMUProjectSyncError(f"SMU 工程真值同步已整体回滚: {exc}") from exc
 
-    post = preview_smu_project_sync(db)
+    committed_ids = {plan.asset.id for plan in plans}
+    committed_rows = tuple(
+        SMUProjectSyncItem(
+            **{
+                **row.__dict__,
+                "sync_status": "already_synced",
+                "sync_detail": "资产与 channel-model 投影已提交为当前工程内容",
+            }
+        )
+        if row.asset_id in committed_ids else row
+        for row in preview.items
+    )
+    post = SMUProjectSyncPreview(
+        connection_id=preview.connection_id,
+        items=committed_rows,
+        protected_paths=preview.protected_paths,
+        total_files=preview.total_files,
+        total_bytes=preview.total_bytes,
+    )
     return SMUProjectSyncResult(
         updated_count=len(plans),
         already_synced_count=sum(row.sync_status == "already_synced" for row in post.items),
