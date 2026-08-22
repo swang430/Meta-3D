@@ -66,6 +66,7 @@ const MODE_LABELS: Record<string, string> = {
 const RESULT_CONFIG = {
   passed: { color: 'green', label: '通过', icon: IconCheck },
   failed: { color: 'red', label: '失败', icon: IconX },
+  pending: { color: 'blue', label: '等待中', icon: IconClock },
   incomplete: { color: 'yellow', label: '未完成', icon: IconClock },
   // ⚠️ 跑完了但一条 KPI 都没有可信判决（P1-48）——
   //    跟「未完成」是两回事：那个是执行中断了，这个是执行跑完但结论无从判起。

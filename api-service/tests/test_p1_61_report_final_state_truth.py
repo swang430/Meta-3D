@@ -12,8 +12,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.models.report import TestReport
 from app.models.test_plan import TestExecution
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.pdf_generator import PDFGenerator
 
 
 def _trusted_measure() -> dict:
@@ -118,6 +120,31 @@ def test_historical_completed_unknown_is_undetermined_without_projection():
     _assert_one_state(summary)
 
 
+def test_historical_completed_missing_timing_stays_unknown_in_payload_and_pdf():
+    """旧行没有时长/完成时间时必须显示 N/A，不能编成 0 秒或重建时刻。"""
+    execution = _execution(status="completed", duration_sec=None, completed_at=None)
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 22, 2, 0, 0),
+        "historical-missing-timing",
+    )
+
+    assert content["duration_s"] is None
+    assert content["execution_summary"]["total_duration_sec"] is None
+    assert content["execution_summary"]["last_execution"] is None
+
+    table = next(
+        element
+        for element in PDFGenerator()._generate_execution_summary_section(content)
+        if hasattr(element, "_cellvalues")
+    )
+    assert any(
+        row[0] == "Total Duration" and row[1] == "N/A"
+        for row in table._cellvalues
+    )
+
+
 @pytest.mark.parametrize(
     ("status", "verdict", "validation_pass", "trusted", "expected_state", "pass_rate"),
     [
@@ -220,8 +247,8 @@ async def test_report_executor_projects_completed_content_without_early_orm_muta
     result = await ReportExecutor().execute(context)
 
     assert result.status.value == "success"
-    assert captured["created"] is captured["generated"]
-    content = captured["created"]
+    assert captured["created"] == {}, "终态裁决前不得公开 completed content_data"
+    content = captured["generated"]
     assert content["test_plan"]["status"] == "completed"
     assert content["execution_summary"]["undetermined"] == 1
     assert content["execution_summary"]["pending"] == 0
@@ -286,6 +313,27 @@ async def test_cancel_during_pdf_generation_rebuilds_report_from_cancelled_truth
         monkeypatch.setattr(
             "app.services.test_case_runner._finalize_scpi_acceptance",
             lambda _execution: None,
+        )
+
+        from app.services.mimo_ota.executors import report as report_module
+
+        original_settle = report_module._settle_execution_lifecycle
+
+        def _assert_unpublished_then_settle(db, target, projection):
+            observer = Session()
+            try:
+                artifact = observer.query(TestReport).one()
+                assert artifact.status == "generating"
+                assert artifact.file_path is None
+                assert (artifact.content_data or {}).get("overall_result") != "undetermined"
+            finally:
+                observer.close()
+            return original_settle(db, target, projection)
+
+        monkeypatch.setattr(
+            report_module,
+            "_settle_execution_lifecycle",
+            _assert_unpublished_then_settle,
         )
 
         context = StepExecutionContext(

@@ -277,6 +277,38 @@ class TestAdhocPhaseEndpoint:
         assert execution.status == "completed"
         assert execution.duration_sec is not None
 
+    def test_report_phase_preserves_executor_owned_terminal_lifecycle(
+        self, lab, db, monkeypatch
+    ):
+        """REPORT 已裁决的终态/时间不得被 adhoc 包装层用请求耗时覆盖。"""
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        terminal_at = datetime(2026, 8, 22, 3, 4, 5)
+
+        async def _fake_dispatch(ctx):
+            ctx.test_execution.status = "completed"
+            ctx.test_execution.completed_at = terminal_at
+            ctx.test_execution.duration_sec = 89.195194
+            ctx.db.commit()
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "report"},
+        )
+        assert resp.status_code == 200, resp.text
+        execution = db.get(
+            TestExecution, uuid.UUID(resp.json()["test_execution_id"])
+        )
+        assert execution.status == "completed"
+        assert execution.completed_at == terminal_at
+        assert execution.duration_sec == pytest.approx(89.195194)
+
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(
             "/api/v1/commissioning/diagnostic/run-phase",

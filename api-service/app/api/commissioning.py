@@ -935,13 +935,14 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     # 相位状态有四种 (StepExecutionStatus: success/failed/skipped/running),
     # 二分成 completed/failed 会把"跳过"记成"失败" — skipped 是
     # TestExecution.status 的合法值, 原样保留 (自查发现, 见提交说明)。
-    _PHASE_TO_ROW_STATUS = {"success": "completed", "skipped": "skipped"}
-    execution.status = _PHASE_TO_ROW_STATUS.get(status_value, "failed")
-    execution.completed_at = datetime.utcnow()
-    execution.duration_sec = duration_ms / 1000.0
-    if error_message:
-        execution.error_message = error_message
-    db.commit()
+    if execution.status == "running":
+        _PHASE_TO_ROW_STATUS = {"success": "completed", "skipped": "skipped"}
+        execution.status = _PHASE_TO_ROW_STATUS.get(status_value, "failed")
+        execution.completed_at = datetime.utcnow()
+        execution.duration_sec = duration_ms / 1000.0
+        if error_message:
+            execution.error_message = error_message
+        db.commit()
 
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
     phase_payload = (execution.measurements or {}).get("phases", {}).get(phases_key) or {}

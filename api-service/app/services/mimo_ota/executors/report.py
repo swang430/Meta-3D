@@ -104,7 +104,11 @@ def _execution_summary(
         outcome = "incomplete"
         pass_rate = None
 
-    duration_sec = float(lifecycle.duration_sec or 0.0)
+    duration_sec = (
+        float(lifecycle.duration_sec)
+        if lifecycle.duration_sec is not None
+        else None
+    )
     summary = {
         "total_executions": 1,
         "passed": 1 if outcome == "passed" else 0,
@@ -118,7 +122,7 @@ def _execution_summary(
         "last_execution": (
             lifecycle.completed_at.isoformat()
             if lifecycle.completed_at is not None
-            else now.isoformat()
+            else None
         ),
     }
     return summary, outcome
@@ -206,6 +210,7 @@ class ReportExecutor(IStepExecutor):
         report = None
         svc: Optional[ReportService] = None
         content_data: Optional[Dict[str, Any]] = None
+        settled_lifecycle: Optional[ReportLifecycleProjection] = None
 
         case_name = _lookup_case_name(context, execution)
         try:
@@ -232,14 +237,27 @@ class ReportExecutor(IStepExecutor):
                 generated_by="mimo_ota.executors.report",
                 test_plan_id=execution.test_plan_id,
                 test_execution_ids=[execution.id],
-                content_data=content_data,
+                # 正式结论尚未裁决，pending 行不能先公开 completed 投影。
+                content_data={},
             )
             report_db_id = str(report.id)
+            def _resolve_lifecycle(
+                projection: ReportLifecycleProjection,
+            ) -> ReportLifecycleProjection:
+                nonlocal settled_lifecycle
+                settled_lifecycle = _settle_execution_lifecycle(
+                    context.db,
+                    execution,
+                    projection,
+                )
+                return settled_lifecycle
+
             generated = svc.generate_report(
                 db=context.db,
                 report_id=report.id,
                 content_data_override=content_data,
                 execution_lifecycle_projection=lifecycle_projection,
+                execution_lifecycle_resolver=_resolve_lifecycle,
             )
             if generated and generated.file_path:
                 report_file_path = generated.file_path
@@ -255,46 +273,13 @@ class ReportExecutor(IStepExecutor):
             warnings.append(f"PDF generation failed: {e}")
             logger.exception("[%s] Phase 5: PDF generation failed", execution.id)
 
-        settled_lifecycle = _settle_execution_lifecycle(
-            context.db,
-            execution,
-            lifecycle_projection,
-        )
-        if (
-            settled_lifecycle.status != lifecycle_projection.status
-            and report is not None
-            and svc is not None
-        ):
-            # 外部终态（当前实际写方是 request_cancel）先赢时，第一版 PDF 的
-            # completed 投影已失效。立即从数据库赢家重建同一报告，不能让正式
-            # artifact 与 TestExecution 终态分叉。
-            try:
-                content_data = _build_mimo_ota_content_data(
-                    execution,
-                    now,
-                    case_name,
-                    lifecycle_projection=settled_lifecycle,
-                )
-                regenerated = svc.generate_report(
-                    db=context.db,
-                    report_id=report.id,
-                    content_data_override=content_data,
-                    execution_lifecycle_projection=settled_lifecycle,
-                )
-                if regenerated and regenerated.file_path:
-                    report_file_path = regenerated.file_path
-                else:
-                    report_file_path = None
-                    warnings.append(
-                        "Final-state report regeneration returned no file_path"
-                    )
-            except Exception as e:  # noqa: BLE001
-                report_file_path = None
-                warnings.append(f"Final-state report regeneration failed: {e}")
-                logger.exception(
-                    "[%s] Phase 5: final-state report regeneration failed",
-                    execution.id,
-                )
+        # 生成器异常时还没到内部裁决点；测量生命周期仍需独立收口。
+        if settled_lifecycle is None:
+            settled_lifecycle = _settle_execution_lifecycle(
+                context.db,
+                execution,
+                lifecycle_projection,
+            )
 
         result: Dict[str, Any] = {
             "report_id": report_id_human,
@@ -404,7 +389,11 @@ def _build_mimo_ota_content_data(
         overall_pass = bool(_validation_pass)
     else:
         overall_pass = analysis.get("verdict") in ("PASS", "MARGINAL")
-    duration_sec = float(lifecycle.duration_sec or 0.0)
+    duration_sec = (
+        float(lifecycle.duration_sec)
+        if lifecycle.duration_sec is not None
+        else None
+    )
 
     verdict_unknown = analysis.get("verdict") == "UNKNOWN"
 

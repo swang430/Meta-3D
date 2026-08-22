@@ -4,7 +4,7 @@
 
 **Goal:** 让正式 MIMO PDF、持久化 `content_data` 与最终 `TestExecution` 对同一执行状态、耗时和四态判决给出一致结论，同时保留 REPORT 期间取消与失败语义。
 
-**Architecture:** REPORT 执行器只计算一次最终完成时间和耗时，通过不可变 `ReportLifecycleProjection` 传给内容构造器与 `ReportService`；构造器以“投影优先、数据库状态兜底”的单一有效生命周期生成全部状态字段。报告尝试结束后用数据库条件更新裁决 completed 与外部 cancel，取消先赢则以数据库赢家重建同一报告。历史报告重建不传投影，继续读取已落库真值。
+**Architecture:** REPORT 执行器只计算一次最终完成时间和耗时，通过不可变 `ReportLifecycleProjection` 传给内容构造器与 `ReportService`；构造器以“投影优先、数据库状态兜底”的单一有效生命周期生成全部状态字段。PDF 先写不可公开 staging，随后用数据库条件更新裁决 completed 与外部 cancel；取消先赢则在 staging 内以数据库赢家重建，最后只发布赢家版本。历史报告重建不传投影，缺失时间保持未知而不猜值。
 
 **Tech Stack:** Python 3.12、FastAPI、SQLAlchemy、pytest、ReportLab。
 
@@ -94,7 +94,9 @@ Expected: current executor sends running/zero-duration content.
 - At REPORT entry compute one timezone-normalized `completed_at` and duration.
 - Pass the projection to `_build_mimo_ota_content_data()`.
 - After report attempt, atomically update only `status == running` to the same completed projection.
-- If an external terminal state won, refresh the execution and regenerate the same report with that lifecycle; do not create a second report.
+- 先生成到不可下载的 staging 路径；pending/generating 行不得公开 completed content/path。
+- 在 staging 生成后执行终态 CAS；若外部终态先赢，在 staging 内按赢家重建同一报告。
+- 只把赢家 content/PDF/path 一次性发布；do not create a second report。
 - Do not move ORM lifecycle mutation ahead of report generation.
 
 **Step 4: Run focused tests**
@@ -152,6 +154,22 @@ Re-enumerate all lifecycle producers/consumers, report regeneration, cancellatio
 **Step 3: Update evidence and commit**
 
 Record exact commands and final counts in roadmap; keep P1-62 queued and out of this diff.
+
+### Task 5A: Close fresh-review lifecycle gaps
+
+**Files:**
+- Modify: `api-service/app/services/report_service.py`
+- Modify: `api-service/app/services/pdf_generator.py`
+- Modify: `api-service/app/api/commissioning.py`
+- Modify: `gui/src/types/report.ts`
+- Modify: `gui/src/types/roadTest.ts`
+- Modify: `gui/src/components/Report/ReportViewer.tsx`
+
+- Add RED coverage for pre-CAS publication, nullable historical timing, adhoc REPORT ownership, and GUI pending mapping.
+- Stage PDF and delay content/path publication until lifecycle resolver returns the database winner.
+- Preserve missing timing as `None`/`N/A`; never substitute zero or rebuild time.
+- Let the adhoc wrapper finalize only rows still in `running`.
+- Add `pending` to both GUI type mirrors and the viewer result mapping.
 
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 

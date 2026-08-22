@@ -27,13 +27,15 @@
 
 ## 方案裁决
 
-### 采用：只读“最终状态投影”与数据库条件终态裁决
+### 采用：不可公开 staging、只读最终状态投影与数据库条件终态裁决
 
 REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显式投影参数传给内容构造器。
-报告内容和 `ReportService` 的内部安全重建都使用该投影；ORM 对象仍保持原状态，直到 PDF
-尝试结束。随后只允许数据库中的 `running -> completed` 条件更新，与独立会话的
-`running -> cancelled` 竞争，保证只有一个终态赢家。若取消先赢，同一报告立即按数据库赢家
-重建为 `cancelled/incomplete`，PDF、持久化 `content_data` 与执行行不再分叉。
+报告内容和 `ReportService` 的内部安全重建都使用该投影；ORM 对象仍保持原状态，PDF 先写入
+不可下载的 staging 路径，pending/generating 报告行不写入 completed `content_data` 或正式
+`file_path`。随后只允许数据库中的 `running -> completed` 条件更新，与独立会话的
+`running -> cancelled` 竞争，保证只有一个终态赢家。若取消先赢，在 staging 内按数据库赢家
+重建为 `cancelled/incomplete`；最终只把赢家 PDF、`content_data` 与下载路径一次性公开。
+因此不存在“先发布错误 completed 报告、再事后覆盖”的可下载窗口。
 
 历史重建不传投影，继续读取数据库中已经提交的最终生命周期。
 
@@ -42,11 +44,10 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 该方案代码较短，但会破坏 REPORT 相位的取消语义：PDF 仍在生成、甚至随后失败时，其他请求已
 看到 completed；取消请求也可能被提前完成覆盖。它把展示问题变成生命周期竞态，因此拒绝。
 
-### 未采用：无条件生成后再补丁 PDF 内容
+### 未采用：先发布 completed，再事后补丁 PDF 内容
 
-常规 completed 路径只生成一次，不做事后补丁。唯一例外是数据库已证明 operator cancel
-先赢：此时第一版 completed 投影已经失效，必须通过既有 `ReportService` 重建同一报告，而不是
-直接改 PDF 或另建第二份报告。
+后续重建无法追回已经下载的错误文件，因此任何 completed 投影都不得在终态裁决前进入正式
+路径。取消先赢时可以在 staging 内重建同一报告，但对外始终只有一次发布。
 
 ## 最终状态契约
 
@@ -70,6 +71,8 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 - PDF 生成失败仍沿用现有策略：执行测量已结束，生命周期提交 completed，并把报告失败写入 warning；
 - REPORT 运行期间 ORM 状态不提前改变；完成与 operator cancel 通过数据库条件更新裁决；
 - cancel 先赢时，同一报告按 cancelled/incomplete 重建；completed 先赢后 cancel 返回冲突；
+- 历史行缺少 `duration_sec` 或 `completed_at` 时保持 `None` 并渲染 `N/A`，不得猜 0 秒或重建时刻；
+- commissioning adhoc 包装层只收尾仍为 running 的相位，不覆盖 REPORT 已拥有的终态时间；
 - 内容投影不写数据库、不创建第二份状态缓存；
 - 可信性门仍优先于 PASS/FAIL：校准或吞吐证据不足时，completed 执行只能是 undetermined。
 
@@ -81,7 +84,10 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 2. 构造报告时 ORM 仍是 running，证明没有提前提交 completed；
 3. 历史 completed 执行无需投影也保持相同四态契约；
 4. `ReportService` 不得用数据库 running 摘要覆盖内部最终投影；
-5. PDF 生成期间取消先赢时，执行保持 cancelled 且同一报告重建为 incomplete。
+5. PDF 生成期间取消先赢时，执行保持 cancelled 且同一报告在 staging 内重建为 incomplete；
+6. 裁决前报告行仍为 generating、没有正式路径和 completed 内容；
+7. 历史 completed 行缺时间时 payload/PDF 显示未知/N/A；
+8. commissioning adhoc REPORT 保留 executor 已裁决的终态、完成时间与耗时。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。
