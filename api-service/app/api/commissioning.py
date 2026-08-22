@@ -38,7 +38,10 @@ from app.services.test_execution import (
     StepExecutionContext,
     dispatch_step,
 )
-from app.services.instrument_test_lease import instrument_test_lease
+from app.services.instrument_test_lease import (
+    InstrumentTestLeaseReleaseError,
+    instrument_test_lease,
+)
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 from app.utils.human_time import format_human_local_timestamp
 
@@ -163,6 +166,39 @@ def _execution_marked_running(db: Session, execution: TestExecution):
         if execution.status == "running":
             execution.status = prior_status
             db.commit()
+
+
+def _record_local_handoff_failure(
+    db: Session,
+    execution: TestExecution,
+    error: InstrumentTestLeaseReleaseError,
+) -> None:
+    """把 commissioning 的 Local 交接失败发布为可见且不可重跑的终态。"""
+    db.refresh(execution)
+    previous_status = execution.status
+    cfg = dict(execution.config or {})
+    previous_error = execution.error_message or cfg.get("error_message")
+    cfg["local_control_handoff_failed"] = True
+    cfg["local_control_handoff_previous_status"] = previous_status
+    cfg["local_control_handoff_error"] = str(error)
+    if previous_error:
+        cfg["local_control_handoff_previous_error"] = previous_error
+    message = f"仪表 Local 交接失败: {error}"
+    if previous_error:
+        message += f"；此前业务结果: {previous_error}"
+    cfg["error_message"] = message
+    completed_at = datetime.utcnow()
+    execution.status = "failed"
+    execution.completed_at = completed_at
+    execution.duration_sec = (
+        max(0.0, (completed_at - execution.started_at).total_seconds())
+        if execution.started_at is not None
+        else None
+    )
+    execution.error_message = message
+    execution.config = cfg
+    db.commit()
+    emit_execution_failed_alert(execution.id)
 
 
 def _lab_resolution_to_422(err: LabResolutionError) -> HTTPException:
@@ -775,19 +811,23 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
-    with _execution_marked_running(db, execution):
-        with retain_positioner_stop_generation(_current_positioner_driver()):
-            if target_step_type == "MIMO_OTA_REPORT":
-                async with instrument_test_lease(
-                    f"commissioning-phase:{session_id}:{phase_name}"
-                ):
-                    pass
-                result = await dispatch_step(ctx)
-            else:
-                async with instrument_test_lease(
-                    f"commissioning-phase:{session_id}:{phase_name}"
-                ):
+    try:
+        with _execution_marked_running(db, execution):
+            with retain_positioner_stop_generation(_current_positioner_driver()):
+                if target_step_type == "MIMO_OTA_REPORT":
+                    async with instrument_test_lease(
+                        f"commissioning-phase:{session_id}:{phase_name}"
+                    ):
+                        pass
                     result = await dispatch_step(ctx)
+                else:
+                    async with instrument_test_lease(
+                        f"commissioning-phase:{session_id}:{phase_name}"
+                    ):
+                        result = await dispatch_step(ctx)
+    except InstrumentTestLeaseReleaseError as error:
+        _record_local_handoff_failure(db, execution, error)
+        raise
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -935,6 +975,10 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
                     result = await dispatch_step(ctx)
         status_value = result.status.value
         error_message = result.error_message
+    except InstrumentTestLeaseReleaseError as e:
+        logger.exception("[adhoc] phase=%s Local 交接失败", req.phase_name)
+        _record_local_handoff_failure(db, execution, e)
+        error_message = str(e)
     except Exception as e:  # noqa: BLE001
         logger.exception("[adhoc] phase=%s aborted", req.phase_name)
         error_message = str(e)
@@ -1064,38 +1108,42 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    with _execution_marked_running(db, execution):
-        with retain_positioner_stop_generation(_current_positioner_driver()):
-            deferred_report = None
-            async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
-                for index, step in enumerate(descriptors):
-                    if step.type == "MIMO_OTA_REPORT":
-                        if index != len(descriptors) - 1:
-                            raise RuntimeError(
-                                "MIMO_OTA_REPORT 必须是 run-all 最后一个相位"
+    try:
+        with _execution_marked_running(db, execution):
+            with retain_positioner_stop_generation(_current_positioner_driver()):
+                deferred_report = None
+                async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
+                    for index, step in enumerate(descriptors):
+                        if step.type == "MIMO_OTA_REPORT":
+                            if index != len(descriptors) - 1:
+                                raise RuntimeError(
+                                    "MIMO_OTA_REPORT 必须是 run-all 最后一个相位"
+                                )
+                            deferred_report = step
+                            break
+                        ctx = _build_context(db, execution, test_case, step)
+                        result = await dispatch_step(ctx)
+                        if result.status.value == "failed":
+                            aborted_at = step.type
+                            abort_message = result.error_message
+                            logger.warning(
+                                "[%s] run-all aborted at %s: %s",
+                                session_id,
+                                step.type,
+                                result.error_message,
                             )
-                        deferred_report = step
-                        break
-                    ctx = _build_context(db, execution, test_case, step)
+                            break
+                if aborted_at is None and deferred_report is not None:
+                    ctx = _build_context(
+                        db, execution, test_case, deferred_report
+                    )
                     result = await dispatch_step(ctx)
                     if result.status.value == "failed":
-                        aborted_at = step.type
+                        aborted_at = deferred_report.type
                         abort_message = result.error_message
-                        logger.warning(
-                            "[%s] run-all aborted at %s: %s",
-                            session_id,
-                            step.type,
-                            result.error_message,
-                        )
-                        break
-            if aborted_at is None and deferred_report is not None:
-                ctx = _build_context(
-                    db, execution, test_case, deferred_report
-                )
-                result = await dispatch_step(ctx)
-                if result.status.value == "failed":
-                    aborted_at = deferred_report.type
-                    abort_message = result.error_message
+    except InstrumentTestLeaseReleaseError as error:
+        _record_local_handoff_failure(db, execution, error)
+        raise
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表

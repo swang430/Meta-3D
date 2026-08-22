@@ -55,7 +55,7 @@ from app.services.test_execution.hydrate import build_step_context
 from app.services.test_execution.registry import dispatch_step
 from app.utils.human_time import format_human_local_timestamp
 from app.services.instrument_test_lease import (
-    InstrumentTestLeaseError,
+    InstrumentTestLeaseReleaseError,
     instrument_test_lease,
 )
 from app.services.instrument_hal_service import get_hal_service
@@ -99,6 +99,7 @@ def _cas_case_execution_terminal(
     completed_at: datetime,
     duration_sec: Optional[float],
     config: Optional[dict] = None,
+    error_message: Optional[str] = None,
 ) -> bool:
     """本 runner 的全部终态生产方共用同一个数据库裁决点。
 
@@ -113,6 +114,8 @@ def _cas_case_execution_terminal(
     }
     if config is not None:
         values[TestExecution.config] = config
+    if error_message is not None:
+        values[TestExecution.error_message] = error_message
     # ``_finalize_scpi_acceptance`` 会在 ORM 对象上补 evidence/config。
     # Query.update 本身的发射顺序不能拿来当契约：先明确 flush 非生命周期
     # 字段，再用下面这一条 CAS 同时发布终态及其最终 config，避免迟到的
@@ -495,7 +498,7 @@ async def _run_case(execution_id: UUID) -> None:
                 db.query(TestExecution)
                 .filter(TestExecution.id == execution_id).first()
             )
-            lease_failed = isinstance(e, InstrumentTestLeaseError)
+            lease_failed = isinstance(e, InstrumentTestLeaseReleaseError)
             if ex is not None and (ex.status == "running" or lease_failed):
                 # Local 交接是执行完整性的一部分：无论此前业务赢家是完成、取消
                 # 还是失败，只要 F64/UXM 仍可能处于 Remote，最终都必须明确
@@ -512,10 +515,21 @@ async def _run_case(execution_id: UUID) -> None:
                     _finalize_scpi_acceptance(ex)
                     cfg = dict(ex.config or {})
                     if lease_failed:
+                        previous_error = (
+                            getattr(ex, "error_message", None)
+                            or cfg.get("error_message")
+                        )
                         cfg["local_control_handoff_failed"] = True
                         cfg["local_control_handoff_previous_status"] = ex.status
                         cfg["local_control_handoff_error"] = str(e)
-                        cfg.setdefault("error_message", f"执行器异常: {e}")
+                        if previous_error:
+                            cfg["local_control_handoff_previous_error"] = previous_error
+                            cfg["error_message"] = (
+                                f"仪表 Local 交接失败: {e}；此前业务结果: "
+                                f"{previous_error}"
+                            )
+                        else:
+                            cfg["error_message"] = f"仪表 Local 交接失败: {e}"
                     else:
                         cfg["error_message"] = f"执行器异常: {e}"
                     expected_status = ex.status
@@ -531,6 +545,9 @@ async def _run_case(execution_id: UUID) -> None:
                             completed_at,
                         ),
                         config=cfg,
+                        error_message=(
+                            cfg["error_message"] if lease_failed else None
+                        ),
                     )
                     if won:
                         break

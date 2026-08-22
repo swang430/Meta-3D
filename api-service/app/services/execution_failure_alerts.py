@@ -232,6 +232,12 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
         if execution.executed_by not in FORMAL_EXECUTION_SOURCES:
             return OUTCOME_SKIPPED_NOT_FORMAL
 
+        config = execution.config if isinstance(execution.config, dict) else {}
+        reason = execution.error_message or config.get("error_message")
+        message = f"执行 {execution.id} 已失败"
+        if reason:
+            message += f"：{reason}"
+
         existing = (
             db.query(Alert.id)
             .filter(
@@ -244,14 +250,21 @@ def emit_execution_failed_alert(execution_id: UUID) -> str:
         alert_id: Optional[str] = None
         error_summary: Optional[str] = None
         if existing is not None:
+            existing_alert = db.get(Alert, existing[0])
+            if existing_alert is None:
+                raise RuntimeError(
+                    f"执行 {execution.id} 的既有失败告警在读取正文时消失"
+                )
+            # 同一执行只保留一条告警，也不重开操作员已经 acknowledge / resolve /
+            # dismiss 的生命周期；但失败原因可能在稍后的 Local 交接阶段变得更严重。
+            # 必须刷新正文，否则活动摘要与历史页仍只展示旧业务失败，漏掉“仪表可能
+            # 保持 Remote”这一新的安全事实。
+            if existing_alert.message != message:
+                existing_alert.message = message
+                db.commit()
             outcome = OUTCOME_DUPLICATE
             alert_id = str(existing[0])
         else:
-            config = execution.config if isinstance(execution.config, dict) else {}
-            reason = execution.error_message or config.get("error_message")
-            message = f"执行 {execution.id} 已失败"
-            if reason:
-                message += f"：{reason}"
             new_alert_id = uuid4()
             alert = Alert(
                 id=new_alert_id,

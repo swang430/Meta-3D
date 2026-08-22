@@ -242,6 +242,28 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
 - Keep REPORT outside the hardware lease after handoff; it performs no instrument I/O and must never
   publish a completed PDF while either controlled instrument may still be Remote.
 
+### Task 5F: Surface commissioning handoff failures without relabeling acquire failures
+
+**Files:**
+- Modify: `api-service/app/services/instrument_test_lease.py`
+- Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/app/services/execution_failure_alerts.py`
+- Modify: `api-service/app/api/commissioning.py`
+- Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `api-service/tests/test_execution_failure_alerts.py`
+- Modify: `api-service/tests/test_commissioning_adhoc.py`
+
+- Introduce a release-only `InstrumentTestLeaseReleaseError`; Remote acquire failures remain ordinary
+  lease errors and must not be labeled as Local-handoff failures.
+- Persist commissioning single-phase and run-all release failures as failed terminal rows with a
+  failure alert instead of letting the running context restore pending.
+- Publish the combined Local-handoff plus previous-business error to both the authoritative execution
+  error column and its config evidence.
+- Refresh the single existing alert's message with the newer safety fact while preserving acknowledged,
+  resolved or dismissed lifecycle state.
+- Retain the existing partial-database-failure tests around alert lookup, commit, rollback and outcome
+  recording; the message refresh must not bypass those failure gates.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**

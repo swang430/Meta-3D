@@ -115,6 +115,12 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
     原错误并写入交接诊断与失败告警；
 16. Local 交接失败的第一次终态 CAS 若输给并发 cancel，重读 cancelled 赢家后再次裁决为
     failed，并保留取消证据。
+17. commissioning 单阶段与 run-all 的 Local 交接失败必须留下 failed 终态与失败告警，不能由
+    `_execution_marked_running` 恢复成 pending 后允许重复操作硬件。
+18. Remote 获取失败与 Local 归还失败必须由不同异常类型表达；只有后者能覆盖既有业务终态并
+    标记仪表可能仍处于 Remote。
+19. 同一执行已有已确认/已解决告警时，后续 Local 交接失败只刷新告警正文，不重开告警生命周期；
+    数据库主错误字段、配置镜像与告警正文必须共同包含新的安全事实和此前业务错误。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。

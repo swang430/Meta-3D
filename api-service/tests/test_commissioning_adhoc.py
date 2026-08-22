@@ -323,6 +323,49 @@ class TestAdhocPhaseEndpoint:
         assert execution.duration_sec == pytest.approx(89.195194)
         assert events == ["lease-enter", "lease-exit", "report-dispatch"]
 
+    def test_phase_local_handoff_failure_persists_failed_truth(
+        self, lab, db, monkeypatch
+    ):
+        from app.services.instrument_test_lease import (
+            InstrumentTestLeaseReleaseError,
+        )
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        @asynccontextmanager
+        async def _lease(_purpose):
+            yield
+            raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
+
+        async def _dispatch(_ctx):
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(
+            f"/api/v1/commissioning/sessions/{sid}/phase/precheck"
+        )
+
+        assert resp.status_code == 409, resp.text
+        db.expire_all()
+        execution = db.get(TestExecution, uuid.UUID(sid))
+        assert execution.status == "failed"
+        assert "UXM Local 交接失败" in execution.error_message
+        assert (execution.config or {})["local_control_handoff_failed"] is True
+        assert db.query(Alert).filter(
+            Alert.related_entity_id == execution.id,
+        ).count() == 1
+
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(
             "/api/v1/commissioning/diagnostic/run-phase",
@@ -640,6 +683,47 @@ class TestExecutionStatusVisibleToReloadGate:
         assert seen.get("blockers", 0) >= 1, (
             "run-all 相位期间 HAL reload 闸门看不见这条链 — 暗室首测裸奔"
         )
+
+    def test_run_all_local_handoff_failure_is_failed_not_pending(
+        self, lab, db, monkeypatch
+    ):
+        from app.services.instrument_test_lease import (
+            InstrumentTestLeaseReleaseError,
+        )
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        @asynccontextmanager
+        async def _lease(_purpose):
+            yield
+            raise InstrumentTestLeaseReleaseError("F64 Local 交接失败")
+
+        async def _dispatch(_ctx):
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
+
+        assert resp.status_code == 409, resp.text
+        db.expire_all()
+        execution = db.get(TestExecution, uuid.UUID(sid))
+        assert execution.status == "failed"
+        assert "F64 Local 交接失败" in execution.error_message
+        assert (execution.config or {})["local_control_handoff_failed"] is True
+        assert db.query(Alert).filter(
+            Alert.related_entity_id == execution.id,
+        ).count() == 1
 
     def test_run_all_aborted_chain_is_failed_not_completed(
         self, lab, db, monkeypatch

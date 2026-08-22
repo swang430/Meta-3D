@@ -124,6 +124,7 @@ async def test_release_failure_is_not_hidden_by_the_operation_failure():
     from app.services.instrument_test_lease import (
         InstrumentTestLease,
         InstrumentTestLeaseError,
+        InstrumentTestLeaseReleaseError,
     )
 
     events: list[str] = []
@@ -135,6 +136,7 @@ async def test_release_failure_is_not_hidden_by_the_operation_failure():
         async with lease.hold("diagnostic"):
             raise RuntimeError("measurement failed")
 
+    assert isinstance(caught.value, InstrumentTestLeaseReleaseError)
     assert "measurement failed" in str(caught.value)
     assert "控制会话释放" in str(caught.value)
     assert isinstance(caught.value.__cause__, RuntimeError)
@@ -473,12 +475,13 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
     from contextlib import asynccontextmanager
 
     import app.services.test_case_runner as runner
-    from app.services.instrument_test_lease import InstrumentTestLeaseError
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
 
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000003"),
         status="running",
         config={"error_message": "original phase outcome"},
+        error_message="original persisted outcome",
         completed_at=None,
         duration_sec=None,
         started_at=None,
@@ -518,7 +521,7 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
     @asynccontextmanager
     async def _lease(_purpose):
         yield
-        raise InstrumentTestLeaseError("Local 交接失败")
+        raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
         assert defer_report is True
@@ -539,7 +542,12 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
     assert execution.status == "failed"
     assert execution.config["local_control_handoff_failed"] is True
     assert execution.config["local_control_handoff_previous_status"] == winner
-    assert execution.config["error_message"] == "original phase outcome"
+    assert execution.config["local_control_handoff_previous_error"] == (
+        "original persisted outcome"
+    )
+    assert "Local 交接失败" in execution.config["error_message"]
+    assert "original persisted outcome" in execution.config["error_message"]
+    assert execution.error_message == execution.config["error_message"]
     assert "Local 交接失败" in execution.config["local_control_handoff_error"]
     assert alerts == [execution.id]
 
@@ -551,12 +559,13 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
     from contextlib import asynccontextmanager
 
     import app.services.test_case_runner as runner
-    from app.services.instrument_test_lease import InstrumentTestLeaseError
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
 
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000004"),
         status="running",
         config={"phase_progress": [{"type": "MEASURE", "status": "success"}]},
+        error_message=None,
         completed_at=None,
         duration_sec=None,
         started_at=None,
@@ -595,7 +604,7 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
     @asynccontextmanager
     async def _lease(_purpose):
         yield
-        raise InstrumentTestLeaseError("Local 交接失败")
+        raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
         assert defer_report is True
@@ -630,10 +639,79 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
 
     assert len(cas_attempts) == 2
     assert execution.status == "failed"
-    assert execution.config["error_message"] == "operator cancelled"
+    assert execution.config["local_control_handoff_previous_error"] == (
+        "operator cancelled"
+    )
+    assert "Local 交接失败" in execution.config["error_message"]
+    assert "operator cancelled" in execution.config["error_message"]
     assert execution.config["local_control_handoff_previous_status"] == "cancelled"
     assert execution.config["local_control_handoff_failed"] is True
     assert alerts == [execution.id]
+
+
+@pytest.mark.asyncio
+async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
+    monkeypatch,
+):
+    from contextlib import asynccontextmanager
+
+    import app.services.test_case_runner as runner
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000005"),
+        status="running",
+        config={},
+        error_message=None,
+        completed_at=None,
+        duration_sec=None,
+        started_at=None,
+        executed_by=runner.RUNNER_MARKER,
+    )
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution
+
+        def update(self, values, synchronize_session=False):
+            for column, value in values.items():
+                setattr(execution, column.key, value)
+            return 1
+
+    class _DB:
+        def query(self, *_args):
+            return _Query()
+
+        def rollback(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    @asynccontextmanager
+    async def _lease(_purpose):
+        raise InstrumentTestLeaseError("无法取得 UXM Remote 控制")
+        yield
+
+    monkeypatch.setattr(runner, "SessionLocal", _DB)
+    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
+    monkeypatch.setattr(runner, "emit_execution_failed_alert", lambda _id: None)
+
+    await runner._run_case(execution.id)
+
+    assert execution.status == "failed"
+    assert "local_control_handoff_failed" not in execution.config
+    assert "无法取得 UXM Remote 控制" in execution.config["error_message"]
 
 
 @pytest.mark.asyncio

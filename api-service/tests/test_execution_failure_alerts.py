@@ -70,6 +70,27 @@ def test_formal_failure_is_counted_once_across_alert_lifecycle(db):
     assert get_alert_summary(db).total_active == 0
 
 
+def test_duplicate_failure_refreshes_message_without_reopening_alert(db):
+    execution = _execution(db)
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_PUBLISHED
+
+    alert = db.query(Alert).one()
+    alert.status = AlertStatus.ACKNOWLEDGED.value
+    db.commit()
+
+    execution.error_message = (
+        "仪表 Local 交接失败；此前业务失败：相位配置失败"
+    )
+    db.commit()
+
+    assert alerts.emit_execution_failed_alert(execution.id) == alerts.OUTCOME_DUPLICATE
+    db.expire_all()
+    refreshed = db.query(Alert).one()
+    assert refreshed.status == AlertStatus.ACKNOWLEDGED.value
+    assert "Local 交接失败" in refreshed.message
+    assert "相位配置失败" in refreshed.message
+
+
 @pytest.mark.parametrize("status,source,validation_pass,expected", [
     ("completed", "test_case_runner", False, "skipped_not_failed"),
     ("failed", "commissioning_adhoc", None, "skipped_not_formal"),

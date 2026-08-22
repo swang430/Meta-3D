@@ -20,6 +20,10 @@ class InstrumentTestLeaseError(RuntimeError):
     """测试无法安全取得或归还仪表控制权。"""
 
 
+class InstrumentTestLeaseReleaseError(InstrumentTestLeaseError):
+    """业务操作结束后，仪表未能被确认交还 Local。"""
+
+
 class InstrumentTestLease:
     """进程内单飞测试租约。
 
@@ -171,7 +175,7 @@ class InstrumentTestLease:
             return
         if not await driver.release_to_local_control():
             detail = getattr(driver, "get_last_error", lambda: None)()
-            raise InstrumentTestLeaseError(
+            raise InstrumentTestLeaseReleaseError(
                 f"测试 {purpose!r} 结束后未能确认 {instrument} 控制会话释放"
                 + (f": {detail}" if detail else "")
             )
@@ -293,7 +297,7 @@ class InstrumentTestLease:
                         "[instrument-lease] 取得/使用仪表异常后释放控制会话也失败: %s",
                         purpose,
                     )
-                    raise InstrumentTestLeaseError(
+                    raise InstrumentTestLeaseReleaseError(
                         f"测试 {purpose!r} 的操作失败 ({operation_error})，且随后"
                         f"未能安全归还仪表控制 ({release_error})"
                     ) from operation_error
