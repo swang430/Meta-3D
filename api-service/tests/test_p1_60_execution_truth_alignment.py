@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.models.probe_calibration import ChannelPhaseCalibration
+from app.services.phase_calibration_service import PhaseCalibrationService
 from app.services.channel_engine_client import ChannelEngineClient
 from app.services.mimo_ota import channel_asset_resolver
 from app.services.mimo_ota.executors import measure
@@ -105,3 +110,75 @@ def test_incomplete_or_unknown_phase_compensation_is_rejected_fail_closed():
     assert validate({port: 0.0 for port in range(1, 33)}, num_ports=32) != {}
     assert validate({port: 0.0 for port in range(1, 32)}, num_ports=32) == {}
     assert validate({port: 0.0 for port in range(0, 32)}, num_ports=32) == {}
+
+
+@pytest.fixture
+def phase_db():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    ChannelPhaseCalibration.__table__.create(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _phase_row(*, chamber_id, use_mock, frequency_mhz=3550.0, ports=4, days=30):
+    now = datetime.utcnow()
+    return ChannelPhaseCalibration(
+        chamber_id=chamber_id,
+        frequency_mhz=frequency_mhz,
+        reference_channel_id=1,
+        channel_phases=[{"channel_id": port} for port in range(1, ports + 1)],
+        phase_compensation=[
+            {"channel_id": port, "compensation_deg": float(port)}
+            for port in range(1, ports + 1)
+        ],
+        use_mock=use_mock,
+        calibrated_at=now,
+        valid_until=now + timedelta(days=days),
+        status="valid",
+    )
+
+
+def test_phase_query_is_frequency_validity_provenance_and_full_set_allowlist(phase_db):
+    chamber_id = uuid4()
+    phase_db.add_all(
+        [
+            _phase_row(chamber_id=chamber_id, use_mock=False),
+            _phase_row(chamber_id=chamber_id, use_mock=None),
+            _phase_row(chamber_id=chamber_id, use_mock=True),
+            _phase_row(chamber_id=chamber_id, use_mock=False, frequency_mhz=3500.0),
+            _phase_row(chamber_id=chamber_id, use_mock=False, days=-1),
+        ]
+    )
+    phase_db.commit()
+    client = ChannelEngineClient(phase_db)
+
+    real = client._query_phase_compensation(
+        chamber_id, 3_550_000_000, num_ports=4, use_mock=False
+    )
+    mock = client._query_phase_compensation(
+        chamber_id, 3_550_000_000, num_ports=4, use_mock=True
+    )
+
+    assert real == {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}
+    assert mock == real
+
+
+@pytest.mark.asyncio
+async def test_mock_phase_writer_marks_provenance_and_uses_one_based_channels(phase_db):
+    chamber_id = uuid4()
+    await PhaseCalibrationService(phase_db, use_mock=True).calibrate_phases(
+        chamber_id=chamber_id,
+        frequency_mhz=3550.0,
+        num_channels=4,
+    )
+    record = phase_db.query(ChannelPhaseCalibration).one()
+    assert record.use_mock is True
+    assert record.measurement_method == "mock"
+    assert [row["channel_id"] for row in record.phase_compensation] == [1, 2, 3, 4]

@@ -937,6 +937,7 @@ class MeasureExecutor(IStepExecutor):
                 chamber.id, pcell.frequency_hz, chamber,
                 operating_mode=config.switch_mode_id,
                 path_loss_calibration=path_loss_cert,
+                phase_use_mock=not channel_emulator_is_real,
             )
 
             # --- Phase 2a / P0: path-loss compensation ---

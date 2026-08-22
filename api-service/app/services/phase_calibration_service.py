@@ -45,6 +45,8 @@ PHASE_DRIFT_WARNING_THRESHOLD_DEG = 5.0
 
 # 参考通道索引
 REFERENCE_CHANNEL_INDEX = 0
+# F64 / Channel Engine 的人读通道 ID 使用 1..N；算法数组索引仍为 0。
+REFERENCE_CHANNEL_ID = 1
 
 
 # ==================== 数据模型 ====================
@@ -210,13 +212,14 @@ def generate_mock_phase_data(
     np.random.seed(int(frequency_mhz * 100) % 2**31)
     
     channel_phases = []
-    for ch in range(num_channels):
+    for channel_index in range(num_channels):
+        channel_id = channel_index + 1
         # 模拟相位偏移 (参考通道为 0)
-        if ch == REFERENCE_CHANNEL_INDEX:
+        if channel_index == REFERENCE_CHANNEL_INDEX:
             phase_offset = 0.0
         else:
             # 添加系统偏移和随机偏移
-            system_offset = (ch * 15) % 360 - 180  # 系统性偏移
+            system_offset = (channel_index * 15) % 360 - 180  # 系统性偏移
             random_offset = np.random.normal(0, phase_drift_deg)
             phase_offset = system_offset + random_offset
         
@@ -224,7 +227,7 @@ def generate_mock_phase_data(
         amplitude_db = -30 + np.random.normal(0, 0.5)
         
         channel_phases.append(ChannelPhaseData(
-            channel_id=ch,
+            channel_id=channel_id,
             frequency_mhz=frequency_mhz,
             phase_offset_deg=phase_offset,
             amplitude_db=amplitude_db
@@ -324,7 +327,7 @@ class PhaseCalibrationService:
             id=uuid4(),
             chamber_id=chamber_id,
             frequency_mhz=frequency_mhz,
-            reference_channel=REFERENCE_CHANNEL_INDEX,
+            reference_channel=REFERENCE_CHANNEL_ID,
             channel_phases=channel_phases,
             coherence_score=coherence_score,
             max_phase_deviation_deg=max_deviation,
@@ -344,7 +347,8 @@ class PhaseCalibrationService:
                 id=calibration_result.id,
                 chamber_id=chamber_id,
                 frequency_mhz=frequency_mhz,
-                reference_channel_id=REFERENCE_CHANNEL_INDEX,
+                use_mock=self.use_mock,
+                reference_channel_id=REFERENCE_CHANNEL_ID,
                 channel_phases=[cp.to_dict() for cp in channel_phases],
                 coherence_score=coherence_score,
                 max_phase_deviation_deg=max_deviation,
@@ -355,7 +359,7 @@ class PhaseCalibrationService:
                     for cp in channel_phases
                 ],
                 compensation_applied=False,
-                measurement_method="vna",
+                measurement_method="mock" if self.use_mock else "vna",
                 calibrated_at=calibration_result.calibrated_at,
                 calibrated_by=calibrated_by,
                 valid_until=calibration_result.valid_until,
