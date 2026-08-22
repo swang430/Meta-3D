@@ -12,6 +12,9 @@ from app.services.mimo_ota.executors._helpers import (
     write_phase_result,
 )
 from app.services.mimo_ota.throughput_trust import throughput_scope_is_verified
+from app.services.mimo_ota.path_loss_application import (
+    path_loss_application_is_formally_verified,
+)
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -54,7 +57,13 @@ class AnalysisExecutor(IStepExecutor):
             and frequency_consistency.get("fully_verified") is False
         )
         simulated_measurement = measure.get("measurement_verified") is False
-        path_loss_unverified = measure.get("path_loss_verified") is not True
+        path_loss_unverified = not (
+            measure.get("path_loss_verified") is True
+            and measure.get("path_loss_calibration_use_mock") is False
+            and path_loss_application_is_formally_verified(
+                measure.get("path_loss_application")
+            )
+        )
         throughput_unverified = not (
             measure.get("throughput_verified") is True
             and throughput_scope_is_verified(measure)

@@ -37,6 +37,18 @@ def _stub_cmw(driver: RealCmw500Driver, responses: dict[str, str]) -> None:
     )
 
 
+def _verified_path_loss_application() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "status": "applied",
+        "provenance": "real",
+        "reason": "selected",
+        "gate_mode": "strict",
+        "certificate_id": "p1-54-real-cert",
+        "value_disclosure": "verified",
+    }
+
+
 def test_throughput_contract_distinguishes_missing_from_real_zero():
     missing = ThroughputMetrics()
     missing_payload = missing.to_dict()
@@ -174,7 +186,9 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
     measure = {
         "measurement_verified": True,
         "frequency_consistency": {"fully_verified": True},
+        "path_loss_application": _verified_path_loss_application(),
         "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
@@ -227,16 +241,35 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
     assert "吞吐" in " ".join(result.warnings)
 
 
+@pytest.mark.parametrize(
+    "path_loss_application,expected_verdict",
+    [
+        (_verified_path_loss_application(), "PASS"),
+        (
+            {
+                **_verified_path_loss_application(),
+                "provenance": "simulated",
+                "certificate_id": "impossible-strict-simulated",
+            },
+            "UNKNOWN",
+        ),
+    ],
+    ids=["verified-application", "malformed-application"],
+)
 @pytest.mark.asyncio
 async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
     monkeypatch,
+    path_loss_application: dict[str, object],
+    expected_verdict: str,
 ):
     from app.services.mimo_ota.executors import analysis as analysis_module
 
     measure = {
         "measurement_verified": True,
         "frequency_consistency": {"fully_verified": True},
+        "path_loss_application": path_loss_application,
         "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
         "throughput_verified": True,
         "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
         "carrier_aggregation": {"num_component_carriers": 1},
@@ -278,15 +311,22 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
 
     result = await AnalysisExecutor().execute(context)
 
-    assert result.measurements["verdict"] == "PASS"
-    assert result.measurements["avg_throughput_mbps"] == 350.0
-    assert result.measurements["throughput_pass"] is True
-    assert execution.validation_pass is True
+    assert result.measurements["verdict"] == expected_verdict
+    if expected_verdict == "PASS":
+        assert result.measurements["avg_throughput_mbps"] == 350.0
+        assert result.measurements["throughput_pass"] is True
+        assert execution.validation_pass is True
+    else:
+        assert result.measurements["avg_throughput_mbps"] is None
+        assert result.measurements["throughput_pass"] is None
+        assert execution.validation_pass is None
+        assert "路损" in " ".join(result.warnings)
 
 
 def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
     measure = {
         "measurement_verified": True,
+        "path_loss_application": _verified_path_loss_application(),
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
         "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
@@ -361,6 +401,20 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
     fully_sanitized = {
         "calibration_trust_schema_version": 1,
         "throughput_trust_schema_version": 2,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "unknown",
+            "provenance": "unknown",
+            "reason": "legacy_unclassified",
+            "gate_mode": "strict",
+            "certificate_id": None,
+            "value_disclosure": "none",
+        },
+        "formal_path_loss_verified": False,
+    }
+    inconsistent_path_loss_attestation = {
+        **fully_sanitized,
+        "formal_path_loss_verified": True,
     }
     old_throughput_scope = {
         "calibration_trust_schema_version": 1,
@@ -369,4 +423,5 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
 
     assert report_has_provenance_trust(path_loss_only) is False
     assert report_has_provenance_trust(old_throughput_scope) is False
+    assert report_has_provenance_trust(inconsistent_path_loss_attestation) is False
     assert report_has_provenance_trust(fully_sanitized) is True

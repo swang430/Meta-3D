@@ -41,6 +41,15 @@ def _content(phases, **kw):
     # P1-27 path-loss trust gate open so it cannot mask the predicate under test.
     phases = dict(phases)
     phases["measure"] = {
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "p1-22-real-cert",
+            "value_disclosure": "verified",
+        },
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
         # P1-54 独立可信门：本文件只隔离 PASS canonical 谓词，显式打开

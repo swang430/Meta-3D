@@ -22,6 +22,10 @@ from app.models.report import (
 from app.models.test_plan import TestPlan, TestCase, TestExecution
 from app.services.pdf_generator import PDFGenerator
 from app.services.report_data_collector import ReportDataCollector
+from app.services.mimo_ota.path_loss_application import (
+    parse_path_loss_application,
+    path_loss_application_is_formally_verified,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,7 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
+    "path_loss_application",
     "throughput_trust_schema_version",
     "formal_throughput_verified",
     "throughput_scope",
@@ -78,16 +83,28 @@ def _strip_untrusted_report_attestation(
 
 
 def report_has_provenance_trust(content_data: Any) -> bool:
-    """Accept only exact server-written calibration *and* throughput markers."""
+    """Accept only a complete, internally consistent server trust envelope."""
     if not isinstance(content_data, dict):
         return False
     calibration_marker = content_data.get("calibration_trust_schema_version")
     throughput_marker = content_data.get(THROUGHPUT_TRUST_FIELD)
+    raw_application = content_data.get("path_loss_application")
+    formal_path_loss_verified = content_data.get("formal_path_loss_verified")
+    application_is_well_formed = (
+        isinstance(raw_application, dict)
+        and parse_path_loss_application(raw_application) == raw_application
+    )
     return (
         type(calibration_marker) is int
         and calibration_marker == 1
         and type(throughput_marker) is int
         and throughput_marker == THROUGHPUT_TRUST_SCHEMA_VERSION
+        and application_is_well_formed
+        and type(formal_path_loss_verified) is bool
+        and (
+            formal_path_loss_verified
+            is path_loss_application_is_formally_verified(raw_application)
+        )
     )
 
 

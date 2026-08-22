@@ -239,6 +239,39 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
         "phases": {"measure": {
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
+            "path_loss_application": {
+                "schema_version": 1,
+                "status": "applied",
+                "provenance": "real",
+                "reason": "selected",
+                "gate_mode": "strict",
+                "certificate_id": "fresh-real-cert",
+                "value_disclosure": "verified",
+            },
+            "throughput_verified": True,
+            "throughput_scope": "pcell",
+            "carrier_aggregation": {"num_component_carriers": 1},
+            "azimuth_results": [{
+                "throughput_valid": True,
+                "throughput_scope": "pcell",
+            }],
+        }}
+    }
+    malformed = _case_runner_execution(db, snapshot)
+    malformed.validation_pass = True
+    malformed.measurements = {
+        "phases": {"measure": {
+            "path_loss_verified": True,
+            "path_loss_calibration_use_mock": False,
+            "path_loss_application": {
+                "schema_version": 1,
+                "status": "applied",
+                "provenance": "simulated",
+                "reason": "selected",
+                "gate_mode": "strict",
+                "certificate_id": "impossible-strict-simulated",
+                "value_disclosure": "hidden_unverified",
+            },
             "throughput_verified": True,
             "throughput_scope": "pcell",
             "carrier_aggregation": {"num_component_carriers": 1},
@@ -257,6 +290,7 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
 
     assert rows[str(legacy.id)]["validation_pass"] is None
     assert rows[str(fresh.id)]["validation_pass"] is True
+    assert rows[str(malformed.id)]["validation_pass"] is None
 
 
 def test_ga_legacy_mimo_without_path_loss_markers_is_not_formal_fail(db, lab):

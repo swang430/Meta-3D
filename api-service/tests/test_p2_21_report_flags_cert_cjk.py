@@ -39,7 +39,16 @@ _FALLBACK_PHASES = {
     "reference": {"measured_trp_dbm": -30.0, "compensation_factor_db": 1.5,
                   "measurement_source": "mock"},
     "measure": {"frequency_ghz": 3.55, "mimo_config": "4x4",
-                "path_loss_certificate_id": None, "path_loss_verified": False},
+                "path_loss_certificate_id": None, "path_loss_verified": False,
+                "path_loss_application": {
+                    "schema_version": 1,
+                    "status": "not_applied",
+                    "provenance": "missing",
+                    "reason": "missing",
+                    "gate_mode": "operator_bypass",
+                    "certificate_id": None,
+                    "value_disclosure": "none",
+                }},
     "analysis": {"verdict": "PASS"},
 }
 
@@ -53,6 +62,15 @@ _VERIFIED_PHASES = {
         "frequency_ghz": 3.55,
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "verified-path-loss-cert",
+            "value_disclosure": "verified",
+        },
         "throughput_verified": True,
         "throughput_scope": "pcell",
         "carrier_aggregation": {"num_component_carriers": 1},
@@ -114,14 +132,14 @@ class TestTrustFlagsReachable:
         text = _rendered_text(_content(_FALLBACK_PHASES))
         assert "未验证 (兜底默认值, 非实测静区)" in text
         assert "未验证 (mock/兜底值)" in text
-        assert "未验证 (无路损校准, RSRP 未补偿)" in text
+        assert "未验证 (未找到匹配的路损证书；本次结果未补偿。)" in text
 
     def test_verified_run_renders_verified_labels(self):
         """对向: 全实测执行 → 三条"已验证", 不出现"未验证" (别把好数据也叫脏)。"""
         text = _rendered_text(_content(_VERIFIED_PHASES))
         assert "已验证 (探头方向图实测)" in text
         assert "已验证 (真实信号分析仪)" in text
-        assert "已验证 (路损校准证书)" in text
+        assert "已验证 (真实来源路损校准证书)" in text
         assert "未验证" not in text
 
     def test_free_text_with_angle_bracket_survives_rendering(self):

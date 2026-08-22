@@ -20,6 +20,11 @@ from app.models.report import ReportFormat, ReportType
 from app.models.test_plan import TestExecution
 from app.hal.base_station import ThroughputMetrics
 from app.services.mimo_ota.executors._helpers import write_phase_result
+from app.services.mimo_ota.path_loss_application import (
+    parse_path_loss_application,
+    path_loss_application_is_formally_verified,
+    path_loss_application_message,
+)
 from app.services.mimo_ota.throughput_trust import (
     required_throughput_scope as _required_throughput_scope,
     throughput_scope_is_verified,
@@ -491,6 +496,20 @@ def _build_mimo_ota_content_data(
         # real certificate from a mock one. Missing/NULL provenance therefore
         # stays UNKNOWN; neither a cert ID nor the legacy boolean can recover it.
         _pl_verified = None
+    # P1-62: “是否应用”与“是否可信”是两个独立事实。报告只消费执行当时
+    # 保存的应用快照；旧/畸形记录统一降级 unknown，绝不从证书 ID、补偿
+    # 数值或当前数据库中的证书状态反推。
+    _path_loss_application = parse_path_loss_application(
+        measure.get("path_loss_application")
+    )
+    _path_loss_application_text = path_loss_application_message(
+        _path_loss_application
+    )
+    _path_loss_formally_verified = (
+        _pl_verified is True
+        and path_loss_application_is_formally_verified(_path_loss_application)
+    )
+    _path_loss_value_visible = _path_loss_formally_verified
 
     # P1-54: 吞吐的数值与“这次是否真的读到”必须同行。历史执行没有该字段，
     # 也可能正是把缺测默认 0.0 当样本的旧数据，所以只能 fail-closed；不能从
@@ -511,7 +530,7 @@ def _build_mimo_ota_content_data(
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
-    if _pl_verified is not True or _throughput_verified is not True:
+    if not _path_loss_formally_verified or _throughput_verified is not True:
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
@@ -549,6 +568,20 @@ def _build_mimo_ota_content_data(
         if isinstance(v, list):
             return [_cell(x) for x in v]
         return v
+
+    def _path_loss_verification_label() -> str:
+        if _path_loss_value_visible:
+            return "已验证 (真实来源路损校准证书)"
+        if _path_loss_application["status"] == "unknown":
+            return f"未知 ({_path_loss_application_text})"
+        return f"未验证 ({_path_loss_application_text})"
+
+    _path_loss_provenance_labels = {
+        "real": "真实来源",
+        "simulated": "模拟来源",
+        "unknown": "来源未知",
+        "missing": "无匹配证书",
+    }
 
     # P2-21: 渲染载荷整体放 parameters 下 (PDFGenerator 步骤区只渲染 name/
     # step_name 与 parameters 的键值表, 顶层键进不了 PDF) —— P1-12 的三个可信化
@@ -607,12 +640,18 @@ def _build_mimo_ota_content_data(
              "CDL 模型": _cell(measure.get("cdl_model_name")),
              # ⚠️ 同上：没有路损证书时存的是兜底值 0.0，印出来会被当成「补偿过了」
              "路损补偿 (dB)": (
-                 _cell(measure.get("path_loss_compensation_db")) if _pl_verified is True
-                 else "—（无路损校准，未补偿）"
+                 _cell(measure.get("path_loss_compensation_db"))
+                 if _path_loss_value_visible
+                 else "—（补偿数值不展示）"
              ),
-             # P1-12: 无路损证书 → RSRP 未补偿 → 结果未校准, 必须标注。
-             "路损验证": _verified_label(
-                 _pl_verified, "路损校准证书", "无路损校准, RSRP 未补偿"),
+             "路损应用": _path_loss_application_text,
+             "路损证书 ID": _cell(_path_loss_application["certificate_id"]),
+             "路损来源": _path_loss_provenance_labels[
+                 _path_loss_application["provenance"]
+             ],
+             # P1-62: 标签与应用快照同源，不能再由单一 verified 布尔值把
+             # “已应用但来源未知”叙述成“无证书/未补偿”。
+             "路损验证": _path_loss_verification_label(),
              "测量验证": _verified_label(
                  measure.get("measurement_verified"),
                  "真实仪器链",
@@ -647,7 +686,8 @@ def _build_mimo_ota_content_data(
         "report_type": "single_execution",
         "report_family": "mimo_ota",
         "calibration_trust_schema_version": 1,
-        "formal_path_loss_verified": _pl_verified is True,
+        "formal_path_loss_verified": _path_loss_formally_verified,
+        "path_loss_application": _path_loss_application,
         "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,
         "throughput_scope": (

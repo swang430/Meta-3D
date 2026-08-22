@@ -839,6 +839,15 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     execution.measurements = {
         "phases": {
             "measure": {
+                "path_loss_application": {
+                    "schema_version": 1,
+                    "status": "applied",
+                    "provenance": "real",
+                    "reason": "selected",
+                    "gate_mode": "strict",
+                    "certificate_id": "p1-47c-real-cert",
+                    "value_disclosure": "verified",
+                },
                 "path_loss_verified": True,
                 "path_loss_calibration_use_mock": False,
                 "throughput_verified": True,
