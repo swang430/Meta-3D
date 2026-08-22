@@ -16,6 +16,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Mapping, Sequence
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, nr_arfcn_to_freq_mhz
@@ -370,7 +371,6 @@ def _candidate_plan(
     from app.services.channel_asset_service import (
         ChannelAssetError,
         _check_vendor_declared_freq,
-        _check_vendor_filename_freq,
         _scd_to_standard_name,
         _validate_payload,
     )
@@ -384,7 +384,10 @@ def _candidate_plan(
     payload["smu_project_truth"] = truth
     try:
         _validate_payload("vendor_file", payload)
-        _check_vendor_filename_freq(payload["scd_config"], item.instrument_path)
+        # The project body is the authority for this synchronization flow.  The generic asset
+        # create/update path still cross-checks parseable MF_ names against operator declarations,
+        # but applying that filename gate here would prevent this scanner from correcting the
+        # exact stale/misleading filename condition P2-31 exists to replace.
         _check_vendor_declared_freq(
             payload["scd_config"],
             float(item.primary_center_frequency_hz),
@@ -582,11 +585,62 @@ def _upsert_projection(
         raw_models[match_index] = existing
 
 
+def _lock_sync_truth_rows(db: Session, connection_id: UUID) -> InstrumentConnection:
+    """Refresh and lock every database row that can change the synchronization decision.
+
+    The bounded SMB scan necessarily performs filesystem I/O before the database write.  Do not
+    publish from ORM objects loaded before that I/O: another request may have changed the selected
+    connection, a vendor binding, or a canonical-name owner in the meantime.  The second preview
+    below runs only after these rows are refreshed and locked.
+    """
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        # Row locks cannot stop a phantom vendor_file insert after classification.  This mode
+        # blocks INSERT/UPDATE/DELETE on both truth tables while still allowing normal readers;
+        # without it a new duplicate path could appear between the second preview and commit.
+        db.execute(text(
+            "LOCK TABLE instrument_connections, channel_assets "
+            "IN SHARE ROW EXCLUSIVE MODE"
+        ))
+    db.expire_all()
+    connection = (
+        db.query(InstrumentConnection)
+        .filter(InstrumentConnection.id == connection_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if connection is None:
+        raise SMUProjectSyncError("channelEmulator 连接在同步期间消失")
+
+    # Lock the complete canonical-name namespace, not only the current vendor_file matches: any
+    # ChannelAsset source can own the globally unique canonical_name used by a candidate.
+    (
+        db.query(ChannelAsset)
+        .order_by(ChannelAsset.id)
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    return connection
+
+
 def sync_smu_project_truth(db: Session) -> SMUProjectSyncResult:
     """Re-scan and atomically synchronize every currently provable exact-path candidate."""
-    preview, plans = _preview_with_plans(db)
+    initial_preview, _ = _preview_with_plans(db)
+    try:
+        _lock_sync_truth_rows(db, initial_preview.connection_id)
+        # Re-scan and rebuild every plan from the refreshed, locked database truth.  This also
+        # rejects a scan-root/configuration change that raced the first bounded scan instead of
+        # combining old filesystem evidence with new connection metadata.
+        preview, plans = _preview_with_plans(db)
+    except Exception:
+        db.rollback()
+        raise
+
     already_count = sum(row.sync_status == "already_synced" for row in preview.items)
     if not plans:
+        db.rollback()  # release SELECT FOR UPDATE locks on the read-only no-op path
         return SMUProjectSyncResult(
             updated_count=0,
             already_synced_count=already_count,
@@ -594,7 +648,8 @@ def sync_smu_project_truth(db: Session) -> SMUProjectSyncResult:
         )
 
     connection = db.get(InstrumentConnection, preview.connection_id)
-    if connection is None:  # the same transaction resolved it moments ago; defensive fail-loud
+    if connection is None:  # locked above; defensive fail-loud
+        db.rollback()
         raise SMUProjectSyncError("channelEmulator 连接在同步期间消失")
     params = deepcopy(connection.connection_params or {})
     raw_models, _ = _projection_index(params)

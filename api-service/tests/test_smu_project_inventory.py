@@ -9,7 +9,7 @@ from pathlib import Path
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -430,6 +430,31 @@ def test_sync_updates_asset_and_projection_together_while_preserving_unknown_key
     assert again.already_synced_count == 1
 
 
+def test_sync_internal_group_zero_truth_overrides_parseable_lying_filename(inventory_db):
+    from app.services.smu_project_inventory import sync_smu_project_truth
+
+    db, _connection, root = inventory_db
+    filename = "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
+    _write_smu(
+        root / filename,
+        "[Channel Group 0]\nCenterFrequency=3549990000 Hz\n",
+    )
+    asset = _create_vendor_asset(
+        db,
+        name="truth-over-filename",
+        path=rf"D:\Scenario Packs\{filename}",
+    )
+
+    result = sync_smu_project_truth(db)
+    db.expire_all()
+    stored = db.get(ChannelAsset, asset.id)
+
+    assert result.updated_count == 1
+    assert stored.payload["scd_config"]["arfcn"] == 636666
+    assert stored.center_frequency_hz == 3_549_990_000
+    assert stored.payload["smu_project_truth"]["primary_group"] == 0
+
+
 def test_sync_rolls_back_all_candidates_when_commit_fails(inventory_db, monkeypatch):
     from app.services.smu_project_inventory import (
         SMUProjectSyncError,
@@ -467,3 +492,58 @@ def test_sync_rolls_back_all_candidates_when_commit_fails(inventory_db, monkeypa
     assert after == before
     db.refresh(connection)
     assert connection.connection_params["available_channel_models"] == []
+
+
+def test_sync_reloads_connection_truth_after_scan_before_writing(
+    inventory_db, monkeypatch,
+):
+    """A concurrent connection edit must not be lost behind the filesystem scan snapshot."""
+    import app.services.smu_project_inventory as inventory_service
+
+    db, connection, root = inventory_db
+    _write_smu(
+        root / "truth.smu",
+        "[Channel Group 0]\nCenterFrequency=3549990000 Hz\n",
+    )
+    _create_vendor_asset(
+        db,
+        name="truth",
+        path=r"D:\Scenario Packs\truth.smu",
+    )
+    original_preview = inventory_service._preview_with_plans
+    preview_calls = 0
+
+    def preview_then_concurrent_connection_update(session):
+        nonlocal preview_calls
+        preview, plans = original_preview(session)
+        preview_calls += 1
+        if preview_calls != 1:
+            return preview, plans
+        resolved_connection = session.get(InstrumentConnection, preview.connection_id)
+        concurrent_params = {
+            **resolved_connection.connection_params,
+            "concurrent_writer_marker": {"must_survive": True},
+        }
+        # Bypass this Session's identity map to model a row changed after the scan context was
+        # loaded.  synchronize_session=False deliberately leaves resolved_connection stale.
+        session.execute(
+            update(InstrumentConnection)
+            .where(InstrumentConnection.id == resolved_connection.id)
+            .values(connection_params=concurrent_params),
+            execution_options={"synchronize_session": False},
+        )
+        return preview, plans
+
+    monkeypatch.setattr(
+        inventory_service,
+        "_preview_with_plans",
+        preview_then_concurrent_connection_update,
+    )
+
+    inventory_service.sync_smu_project_truth(db)
+    db.expire_all()
+    stored_connection = db.get(InstrumentConnection, connection.id)
+
+    assert stored_connection.connection_params["concurrent_writer_marker"] == {
+        "must_survive": True,
+    }
