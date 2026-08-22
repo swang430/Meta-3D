@@ -34,6 +34,7 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
+from app.utils.human_time import format_human_local_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,8 @@ class ReportExecutor(IStepExecutor):
         execution = context.test_execution
         now = datetime.now(timezone.utc)
         report_id_human = (
-            f"MIMO_OTA-{str(execution.id)[:8]}-{now.strftime('%Y%m%d%H%M%S')}"
+            f"MIMO_OTA-{str(execution.id)[:8]}-"
+            + format_human_local_timestamp(now, fmt="%Y%m%d%H%M%S")
         )
 
         warnings: List[str] = []

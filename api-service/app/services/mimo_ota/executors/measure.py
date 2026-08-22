@@ -80,6 +80,93 @@ def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
     return use_mock is False
 
 
+def _missing_rf_chain_path_loss_azimuths(
+    *,
+    num_probes: int,
+    azimuths_deg: List[float],
+    chain_pl_by_probe_pol: Dict[tuple, float],
+    polarization: str = "V",
+) -> List[Dict[str, Any]]:
+    """Return requested azimuths absent from a non-empty per-chain map."""
+    from app.services.probe_pattern.consumer import (
+        select_active_rf_chain_probe_id,
+    )
+
+    probe_id_base = _rf_chain_probe_id_base(
+        num_probes=num_probes,
+        chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+    )
+    missing: List[Dict[str, Any]] = []
+    pol = polarization.upper()
+    for azimuth in azimuths_deg:
+        probe_id = (
+            select_active_rf_chain_probe_id(
+                num_probes,
+                azimuth,
+                probe_id_base=probe_id_base,
+            )
+            if probe_id_base is not None
+            else None
+        )
+        if probe_id is None or (probe_id, pol) not in chain_pl_by_probe_pol:
+            missing.append(
+                {
+                    "azimuth_deg": float(azimuth),
+                    "probe_id": probe_id,
+                    "polarization": pol,
+                }
+            )
+    return missing
+
+
+def _rf_chain_probe_id_base(
+    *,
+    num_probes: int,
+    chain_pl_by_probe_pol: Dict[tuple, float],
+) -> Optional[int]:
+    """Recognize a zero/one-based namespace only when its edge proves the base."""
+    probe_ids = {probe_id for probe_id, _ in chain_pl_by_probe_pol}
+    zero_based = set(range(num_probes))
+    one_based = set(range(1, num_probes + 1))
+    if probe_ids == zero_based or (
+        probe_ids and probe_ids <= zero_based and 0 in probe_ids
+    ):
+        return 0
+    if probe_ids == one_based or (
+        probe_ids and probe_ids <= one_based and num_probes in probe_ids
+    ):
+        return 1
+    return None
+
+
+def _describe_f64_frequency_verification_gap(
+    *,
+    f64_center_mhz: Optional[float],
+    f64_bandwidth_source: str,
+    declared_bandwidth_mhz: Optional[float],
+) -> str:
+    """Explain the exact missing half of the F64 frequency identity."""
+    bandwidth_declared = (
+        f64_bandwidth_source == "channel_asset_or_scd_declared"
+        and declared_bandwidth_mhz is not None
+    )
+    if f64_center_mhz is None and bandwidth_declared:
+        return (
+            "F64 中心频率未回读；资产/SCD 已声明带宽 "
+            f"{declared_bandwidth_mhz:g} MHz，但缺少 live center，"
+            "P0-5 不得据此判完整闭环。"
+        )
+    if f64_center_mhz is not None and not bandwidth_declared:
+        return (
+            "F64 中心频率已回读，但当前场景带宽没有可信资产声明；"
+            "频率中心一致，带宽保持 unknown，P0-5 不得据此判完整闭环。"
+        )
+    return (
+        "F64 中心频率未回读，当前场景带宽也没有可信资产声明；"
+        "频率身份保持 unknown，P0-5 不得据此判完整闭环。"
+    )
+
+
 def _evaluate_path_loss_provenance_for_measure(
     use_mock: Optional[bool],
     *,
@@ -570,6 +657,7 @@ class MeasureExecutor(IStepExecutor):
         from app.services.probe_pattern.consumer import (
             get_probe_gain_at_azimuth,
             select_active_probe_id,
+            select_active_rf_chain_probe_id,
         )
         from app.hal.channel_emulator import ChannelLoadMode
         from app.hal.positioner import (
@@ -909,6 +997,7 @@ class MeasureExecutor(IStepExecutor):
                 chamber.id, pcell.frequency_hz, chamber,
                 operating_mode=config.switch_mode_id,
                 path_loss_calibration=path_loss_cert,
+                phase_use_mock=not channel_emulator_is_real,
             )
 
             # --- Phase 2a / P0: path-loss compensation ---
@@ -1073,6 +1162,8 @@ class MeasureExecutor(IStepExecutor):
                 # P2-15: custom CDL profile id (设了 → ASC strategy 走 input_mode=custom)
                 "cdl_profile_id": getattr(config, "cdl_profile_id", None),
             }
+            if resolved_asset is not None and resolved_asset.scenario:
+                cdl_model_data["scenario"] = resolved_asset.scenario
             # P2-16 S2: ChannelAsset custom_static → 透传 payload clusters (不查 CustomCDLProfile 表)
             if resolved_asset is not None and resolved_asset.clusters_payload is not None:
                 cdl_model_data["clusters"] = resolved_asset.clusters_payload
@@ -1239,6 +1330,11 @@ class MeasureExecutor(IStepExecutor):
                 emulator.get_center_frequency_mhz()
                 if hasattr(emulator, "get_center_frequency_mhz") else None
             )
+            declared_f64_bandwidth_mhz = (
+                float(scd_freq_identity.bandwidth_mhz)
+                if scd_freq_identity is not None
+                else None
+            )
             if f64_center_mhz is not None and scd_freq_identity is not None:
                 f64_identity = FrequencyIdentity.from_center_freq_mhz(
                     f64_center_mhz, scd_freq_identity.bandwidth_mhz
@@ -1252,7 +1348,11 @@ class MeasureExecutor(IStepExecutor):
                 f64_bandwidth_source = "unknown"
             else:
                 f64_identity = None
-                f64_bandwidth_source = "unknown"
+                f64_bandwidth_source = (
+                    "channel_asset_or_scd_declared"
+                    if declared_f64_bandwidth_mhz is not None
+                    else "unknown"
+                )
             freq_result = check_frequency_consistency(
                 FrequencyIdentity.from_center_freq_mhz(
                     pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
@@ -1297,9 +1397,13 @@ class MeasureExecutor(IStepExecutor):
                 )
             elif not frequency_consistency_payload["fully_verified"]:
                 logger.warning(
-                    "[%s] F64 中心频率已回读，但当前场景带宽没有可信资产声明；"
-                    "频率中心一致，带宽保持 unknown，P0-5 不得据此判完整闭环。",
+                    "[%s] %s",
                     context.test_execution.id,
+                    _describe_f64_frequency_verification_gap(
+                        f64_center_mhz=f64_center_mhz,
+                        f64_bandwidth_source=f64_bandwidth_source,
+                        declared_bandwidth_mhz=declared_f64_bandwidth_mhz,
+                    ),
                 )
 
             # --- 仪表参数 (开关 3 块 2): F64 输出增益, 显式给才写 ---
@@ -2032,15 +2136,31 @@ class MeasureExecutor(IStepExecutor):
             # until per-azimuth pol switching is wired).
             nominal_probe_gain_dbi = float(chamber.probe_gain_dbi or 0.0)
             azimuth_probe_gains: Dict[float, Dict[str, Any]] = {}
+            rf_chain_probe_id_base = _rf_chain_probe_id_base(
+                num_probes=chamber.num_probes,
+                chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+            )
             for az_target in config.azimuths_deg:
-                pid = select_active_probe_id(chamber.num_probes, az_target)
+                pattern_probe_id = select_active_probe_id(
+                    chamber.num_probes, az_target
+                )
+                rf_chain_probe_id = (
+                    select_active_rf_chain_probe_id(
+                        chamber.num_probes,
+                        az_target,
+                        probe_id_base=rf_chain_probe_id_base,
+                    )
+                    if rf_chain_probe_id_base is not None
+                    else None
+                )
                 pattern_gain_v = get_probe_gain_at_azimuth(
                     context.db, chamber.num_probes, az_target, pcell.frequency_hz / 1e6, "V",
                     chamber_id=chamber.id,
                 )
-                chain_pl_db = chain_pl_by_probe_pol.get((pid, "V"))
+                chain_pl_db = chain_pl_by_probe_pol.get((rf_chain_probe_id, "V"))
                 azimuth_probe_gains[az_target] = {
-                    "probe_id": pid,
+                    "probe_id": rf_chain_probe_id,
+                    "probe_pattern_id": pattern_probe_id,
                     "pattern_gain_dbi": pattern_gain_v,
                     "gain_offset_db": (
                         pattern_gain_v - nominal_probe_gain_dbi
@@ -2055,6 +2175,26 @@ class MeasureExecutor(IStepExecutor):
             chains_used = sum(
                 1 for v in azimuth_probe_gains.values() if v["path_loss_db"] is not None
             )
+            if per_chain_pl and chains_used != len(config.azimuths_deg):
+                missing = _missing_rf_chain_path_loss_azimuths(
+                    num_probes=chamber.num_probes,
+                    azimuths_deg=list(config.azimuths_deg),
+                    chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+                )
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    measurements={
+                        "path_loss_compensation": {
+                            "source": "rf_chain",
+                            "complete": False,
+                            "missing": missing,
+                        }
+                    },
+                    error_message=(
+                        "逐 RF-chain 路损证书不完整，禁止与暗室平均路损混合采样；"
+                        f"缺失方位/物理探头: {missing}"
+                    ),
+                )
             if chains_used:
                 logger.info(
                     "[%s] P0: per-RFChain path-loss applied for %d/%d azimuths",
@@ -2277,6 +2417,7 @@ class MeasureExecutor(IStepExecutor):
                     "measurement_source": "simulated" if measurement_simulated else "instrument",
                     "measurement_verified": not measurement_simulated,
                     "active_probe_id": az_meta.get("probe_id"),
+                    "probe_pattern_id": az_meta.get("probe_pattern_id"),
                     "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
                     "path_loss_compensation_db": az_path_loss_db,
                     "path_loss_source": (

@@ -27,6 +27,7 @@ import io
 import base64
 import zipfile
 import logging
+from datetime import datetime
 from typing import List, Dict, Literal, Optional, Any
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -503,6 +504,7 @@ class ChannelEngineClient:
         chamber: ChamberConfiguration,
         operating_mode: Optional[str] = None,
         path_loss_calibration: Any = _AUTO_SELECT_PATH_LOSS,
+        phase_use_mock: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
         从 PostgreSQL 查询校准数据，构造 calibration_data.entries[]。
@@ -547,17 +549,37 @@ class ChannelEngineClient:
 
 
         if latest_cal and latest_cal.probe_path_losses:
+            try:
+                probe_ids = {int(key) for key in latest_cal.probe_path_losses}
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "probe_path_losses contains a non-integer probe ID"
+                ) from exc
+            zero_based = set(range(chamber.num_probes))
+            one_based = set(range(1, chamber.num_probes + 1))
+            if probe_ids == zero_based:
+                probe_id_base = 0
+            elif probe_ids == one_based:
+                probe_id_base = 1
+            else:
+                raise ValueError(
+                    "probe_path_losses must contain the complete physical probe set "
+                    f"0..{chamber.num_probes - 1} (legacy) or "
+                    f"1..{chamber.num_probes} (topology); got "
+                    f"{sorted(probe_ids)}"
+                )
             logger.info(
                 f"Using calibration data from {latest_cal.calibrated_at} "
                 f"for {len(latest_cal.probe_path_losses)} probes"
             )
             for probe_id_str, probe_data in latest_cal.probe_path_losses.items():
                 probe_id = int(probe_id_str)
+                probe_index = probe_id - probe_id_base
                 path_loss = probe_data.get("path_loss_db", fallback_loss)
 
                 # V 极化端口
                 entries.append({
-                    "port_id": probe_id * 2 + 1,
+                    "port_id": probe_index * chamber.num_polarizations + 1,
                     "cable_loss_db": float(path_loss),
                     "cable_phase_deg": 0.0,  # 下面由 phase_compensation_map 覆盖
                     "probe_gain_dbi": float(chamber.probe_gain_dbi),
@@ -567,7 +589,7 @@ class ChannelEngineClient:
                 if chamber.num_polarizations >= 2:
                     h_loss = probe_data.get("pol_h_db", path_loss)
                     entries.append({
-                        "port_id": probe_id * 2 + 2,
+                        "port_id": probe_index * chamber.num_polarizations + 2,
                         "cable_loss_db": float(h_loss) if h_loss else float(path_loss),
                         "cable_phase_deg": 0.0,
                         "probe_gain_dbi": float(chamber.probe_gain_dbi),
@@ -590,7 +612,10 @@ class ChannelEngineClient:
 
         # ----- 注入相位校准数据 (P1: 打通相位补偿链路) -----
         phase_compensation_map = self._query_phase_compensation(
-            chamber_id, frequency_hz
+            chamber_id,
+            frequency_hz,
+            num_ports=num_ports,
+            use_mock=phase_use_mock,
         )
         if phase_compensation_map:
             injected_count = 0
@@ -603,6 +628,7 @@ class ChannelEngineClient:
                 f"Phase calibration injected for {injected_count}/{len(entries)} ports"
             )
 
+        entries.sort(key=lambda entry: entry["port_id"])
         return entries
 
     def _build_payload(
@@ -875,6 +901,9 @@ class ChannelEngineClient:
         self,
         chamber_id: UUID,
         frequency_hz: float,
+        *,
+        num_ports: int,
+        use_mock: Optional[bool],
     ) -> Dict[int, float]:
         """
         从 DB 查询最新的相位校准补偿值。
@@ -884,10 +913,18 @@ class ChannelEngineClient:
         Returns:
             {channel_id: compensation_phase_deg} 字典，空字典表示无校准数据。
         """
+        if use_mock is None:
+            logger.info(
+                "Phase compensation skipped: execution provenance is unspecified"
+            )
+            return {}
         try:
             latest_phase_cal = self.db.query(ChannelPhaseCalibration).filter(
                 ChannelPhaseCalibration.chamber_id == chamber_id,
+                ChannelPhaseCalibration.frequency_mhz == frequency_hz / 1e6,
                 ChannelPhaseCalibration.status == "valid",
+                ChannelPhaseCalibration.valid_until > datetime.utcnow(),
+                ChannelPhaseCalibration.use_mock.is_(use_mock),
             ).order_by(
                 desc(ChannelPhaseCalibration.calibrated_at)
             ).first()
@@ -902,6 +939,18 @@ class ChannelEngineClient:
                 if ch_id is not None:
                     phase_map[int(ch_id)] = float(comp_deg)
 
+            phase_map = self._validate_phase_compensation_map(
+                phase_map, num_ports=num_ports
+            )
+            if not phase_map:
+                logger.warning(
+                    "Phase compensation rejected: calibration %s does not cover "
+                    "the exact port set 1..%d",
+                    latest_phase_cal.id,
+                    num_ports,
+                )
+                return {}
+
             logger.info(
                 f"Phase compensation loaded: {len(phase_map)} channels "
                 f"from calibration {latest_phase_cal.id}"
@@ -911,6 +960,14 @@ class ChannelEngineClient:
         except Exception as e:
             logger.warning(f"Failed to query phase compensation: {e}")
             return {}
+
+    @staticmethod
+    def _validate_phase_compensation_map(
+        phase_map: Dict[int, float], *, num_ports: int
+    ) -> Dict[int, float]:
+        """Accept only a complete, one-based F64 port compensation set."""
+        expected = set(range(1, num_ports + 1))
+        return phase_map if set(phase_map) == expected else {}
 
     def _extract_asc_zip(
         self, zip_b64: str, session_id: str

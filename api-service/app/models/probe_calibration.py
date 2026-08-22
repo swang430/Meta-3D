@@ -698,6 +698,11 @@ class ChannelPhaseCalibration(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chamber_id = Column(UUID(as_uuid=True), nullable=False, index=True, comment="暗室配置 ID")
     frequency_mhz = Column(Float, nullable=False, index=True, comment="校准频率 (MHz)")
+    use_mock = Column(
+        Boolean,
+        nullable=True,
+        comment="False=真实相位校准；True=模拟；NULL=历史来源未知",
+    )
 
     # 参考通道
     reference_channel_id = Column(Integer, default=0, comment="参考通道 ID")

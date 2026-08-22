@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -40,6 +40,7 @@ from app.services.test_execution import (
 )
 from app.services.instrument_test_lease import instrument_test_lease
 from app.services.execution_failure_alerts import emit_execution_failed_alert
+from app.utils.human_time import format_human_local_timestamp
 
 
 COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
@@ -652,7 +653,10 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
     try:
         test_case, descriptors = build_mimo_ota_test_case(
             db,
-            name=f"MIMO_OTA Session {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+            name=(
+                "MIMO_OTA Session "
+                + format_human_local_timestamp(datetime.now(timezone.utc))
+            ),
             description="Created by /commissioning/sessions REST endpoint",
             lab_profile_id=req.lab_profile_id,
             config_overrides=overrides,
@@ -850,7 +854,10 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     try:
         test_case, descriptors = build_mimo_ota_test_case(
             db,
-            name=f"ADHOC {req.phase_name} {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+            name=(
+                f"ADHOC {req.phase_name} "
+                + format_human_local_timestamp(datetime.now(timezone.utc))
+            ),
             description=f"Ad-hoc workshop run of phase '{req.phase_name}'",
             lab_profile_id=req.lab_profile_id,
             config_overrides=overrides,
