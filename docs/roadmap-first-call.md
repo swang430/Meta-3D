@@ -36,7 +36,11 @@ cancelled 赢家的耗时以数据库条件更新落到 `TestExecution` 后再�
 继续发现取消端仍可凭旧 ORM 快照在 REPORT completion CAS 已赢后反向覆盖数据库；已用双会话
 RED 复现并改为同一 `running -> cancelled` 数据库 CAS，同时删除已失去职责的
 `config.cancel_requested` 第二状态源。全后端 **4261 passed / 5 skipped**、GUI production
-build、`compileall`、单一 Alembic head 与 `diff-check` 已通过，正进行第四次独立复审。
+build、`compileall`、单一 Alembic head 与 `diff-check` 已通过。第四次 fresh 内审又发现普通
+phase failure 可在取消成功后凭旧 `running` 快照覆盖成 `failed` 并误发失败告警；现已把正常
+完成/失败、快照缺失、顶层异常与取消全部收敛到同一数据库条件终态裁决，非生命周期证据先
+flush、终态 config 随赢家一次发布，失败告警也只由 failed 赢家发出。全后端最新
+**4262 passed / 5 skipped**，正进行第五次独立复审。
 下一项 P1-62 收口同次执行中“确实应用了 legacy/来源未知路损证书，却被报告、warning 与 GUI
 描述成无证书/未补偿”的叙事真值；两项均不放宽正式 KPI 判据。设计见
 [`P1-61 设计`](plans/2026-08-22-p1-61-report-final-state-truth-design.md)。
@@ -241,7 +245,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P2-40** | 开发环境 DB / 日志沉积盘点、备份与可恢复清理 | ✅ PR #364；merge `65765ce`；合并后经用户批准永久删除 20 个空测试 SQLite（21,299,200 bytes），其余资产保持保护 |
 | **P3-22** | 测试冗余按产品契约收敛，不降低核心保护 | ✅ PR #369；R2 无 P1 |
 | **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | ✅ PR #371；R4 覆盖最终 HEAD 无 P1；merge `ebccb1e` |
-| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | 🔄 三次 fresh 内审累计 6 P1 + 1 P2 均已按 TDD 修复；全后端 4261 passed / 5 skipped，待第四次独立复审 |
+| **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | 🔄 四次 fresh 内审累计 7 P1 + 1 P2 均已按 TDD 修复；全后端 4262 passed / 5 skipped，待第五次独立复审 |
 | **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ⏭ P1-61 合并后下一优先项；正式 verdict 与未验证数值门保持不变 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。

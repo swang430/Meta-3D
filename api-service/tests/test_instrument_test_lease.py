@@ -445,7 +445,15 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_success(
     import app.services.test_case_runner as runner
     from app.services.instrument_test_lease import InstrumentTestLeaseError
 
-    execution = SimpleNamespace(status="running", config={}, completed_at=None)
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000003"),
+        status="running",
+        config={},
+        completed_at=None,
+        duration_sec=None,
+        started_at=None,
+        executed_by=runner.RUNNER_MARKER,
+    )
 
     class _Query:
         def filter(self, *_args):
@@ -453,6 +461,13 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_success(
 
         def first(self):
             return execution
+
+        def update(self, values, synchronize_session=False):
+            assert synchronize_session is False
+            assert execution.status == "completed"
+            for column, value in values.items():
+                setattr(execution, column.key, value)
+            return 1
 
     class _DB:
         def query(self, *_args):
@@ -462,6 +477,9 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_success(
             pass
 
         def commit(self):
+            pass
+
+        def flush(self):
             pass
 
         def close(self):

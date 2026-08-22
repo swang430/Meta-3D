@@ -83,6 +83,54 @@ def _finalize_scpi_acceptance(execution):
     return summary
 
 
+def _terminal_duration(started_at, completed_at: datetime) -> Optional[float]:
+    """从同一份已读取的生命周期快照计算终态时长。"""
+    if started_at is None:
+        return None
+    return max(0.0, (completed_at - started_at).total_seconds())
+
+
+def _cas_case_execution_terminal(
+    db,
+    execution_id: UUID,
+    *,
+    expected_status: str,
+    terminal_status: str,
+    completed_at: datetime,
+    duration_sec: Optional[float],
+    config: Optional[dict] = None,
+) -> bool:
+    """本 runner 的全部终态生产方共用同一个数据库裁决点。
+
+    cancel、REPORT completion、普通 phase failure 与顶层异常可能来自不同
+    session。只有仍持有 ``expected_status`` 的 writer 可以发布终态；迟到方
+    不得用 ORM 旧快照覆盖已经成功返回给操作员的赢家。
+    """
+    values = {
+        TestExecution.status: terminal_status,
+        TestExecution.completed_at: completed_at,
+        TestExecution.duration_sec: duration_sec,
+    }
+    if config is not None:
+        values[TestExecution.config] = config
+    # ``_finalize_scpi_acceptance`` 会在 ORM 对象上补 evidence/config。
+    # Query.update 本身的发射顺序不能拿来当契约：先明确 flush 非生命周期
+    # 字段，再用下面这一条 CAS 同时发布终态及其最终 config，避免迟到的
+    # ORM JSON flush 把 failed_phase/error_message 覆盖回旧快照。
+    db.flush()
+    updated = (
+        db.query(TestExecution)
+        .filter(
+            TestExecution.id == execution_id,
+            TestExecution.executed_by == RUNNER_MARKER,
+            TestExecution.status == expected_status,
+        )
+        .update(values, synchronize_session=False)
+    )
+    db.commit()
+    return updated == 1
+
+
 def has_active_case_run() -> Optional[str]:
     """返回当前活跃的 case 执行 id (无则 None)。"""
     for key, task in _RUNNING_TASKS.items():
@@ -251,34 +299,20 @@ def request_cancel(db, execution_id: UUID) -> bool:
     if execution.status != "running":
         return False
     completed_at = datetime.utcnow()
-    duration_sec = None
-    if execution.started_at is not None:
-        duration_sec = max(
-            0.0,
-            (completed_at - execution.started_at).total_seconds(),
-        )
+    duration_sec = _terminal_duration(execution.started_at, completed_at)
     # SELECT 只用于归属、当前状态与 started_at；结束该读事务后，
     # 取消与 REPORT completion 在同一个 `running -> terminal` 数据库 CAS 上
     # 竞争。迟到取消不得用旧 ORM 快照把已完成赢家反向覆盖成 cancelled。
     db.rollback()
-    updated = (
-        db.query(TestExecution)
-        .filter(
-            TestExecution.id == execution_id,
-            TestExecution.executed_by == RUNNER_MARKER,
-            TestExecution.status == "running",
-        )
-        .update(
-            {
-                TestExecution.status: "cancelled",
-                TestExecution.completed_at: completed_at,
-                TestExecution.duration_sec: duration_sec,
-            },
-            synchronize_session=False,
-        )
+    won = _cas_case_execution_terminal(
+        db,
+        execution_id,
+        expected_status="running",
+        terminal_status="cancelled",
+        completed_at=completed_at,
+        duration_sec=duration_sec,
     )
-    db.commit()
-    if updated != 1:
+    if not won:
         return False
     # P1-36（Codex #286 R1）：取消也是这次执行的生命周期事件，
     # 不设的话「谁在什么时候取消的」不在这条链上。
@@ -461,18 +495,37 @@ async def _run_case(execution_id: UUID) -> None:
                 # Local 交接是执行完整性的一部分：业务相位全绿但 F64 仍被 Remote
                 # 占着，不得继续显示 completed。cancelled/failed 本来已是非成功，
                 # 只补证据；completed/running 才降级为 failed。
-                if ex.status in {"running", "completed"}:
-                    ex.status = "failed"
-                    ex.completed_at = datetime.utcnow()
                 cfg = dict(ex.config or {})
                 cfg["error_message"] = f"执行器异常: {e}"
                 if lease_failed:
                     cfg["local_control_handoff_failed"] = True
-                ex.config = cfg
-                flag_modified(ex, "config")
                 _finalize_scpi_acceptance(ex)
-                db.commit()
-                if ex.status == "failed":
+                expected_status = (
+                    ex.status
+                    if ex.status == "running"
+                    or (lease_failed and ex.status == "completed")
+                    else None
+                )
+                won = False
+                if expected_status is not None:
+                    completed_at = datetime.utcnow()
+                    won = _cas_case_execution_terminal(
+                        db,
+                        ex.id,
+                        expected_status=expected_status,
+                        terminal_status="failed",
+                        completed_at=completed_at,
+                        duration_sec=_terminal_duration(
+                            ex.started_at,
+                            completed_at,
+                        ),
+                        config=cfg,
+                    )
+                else:
+                    # cancelled/failed 已有终态所有者；只持久化 SCPI 接受度，
+                    # 不改生命周期、config，也不重复发布失败告警。
+                    db.commit()
+                if won:
                     emit_execution_failed_alert(ex.id)
         except Exception:  # noqa: BLE001
             logger.exception("[case-runner] execution %s 异常收尾也失败", execution_id)
@@ -503,10 +556,17 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         db.query(TestCase).filter(TestCase.id == execution.test_case_id).first()
     )
     if test_case is None:
-        execution.status = "failed"
-        execution.completed_at = datetime.utcnow()
-        db.commit()
-        emit_execution_failed_alert(execution.id)
+        completed_at = datetime.utcnow()
+        won = _cas_case_execution_terminal(
+            db,
+            execution.id,
+            expected_status="running",
+            terminal_status="failed",
+            completed_at=completed_at,
+            duration_sec=_terminal_duration(execution.started_at, completed_at),
+        )
+        if won:
+            emit_execution_failed_alert(execution.id)
         logger.error("[case-runner] execution %s 的快照 TestCase 不存在", execution_id)
         return
 
@@ -561,18 +621,27 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
     if execution.status != "running":
         db.commit()
         return  # cancel 在最后一个相位后到达 — 尊重外部终态
+    terminal_status = "completed"
+    terminal_config = None
     if failed_phase is not None:
-        execution.status = "failed"
+        terminal_status = "failed"
         cfg = dict(execution.config or {})
         cfg["failed_phase"] = failed_phase
         cfg["error_message"] = failed_message or "明细见相位日志"
-        execution.config = cfg
-        flag_modified(execution, "config")
-    else:
-        execution.status = "completed"
-    execution.completed_at = datetime.utcnow()
-    db.commit()
-    if execution.status == "failed":
+        terminal_config = cfg
+    completed_at = datetime.utcnow()
+    won = _cas_case_execution_terminal(
+        db,
+        execution.id,
+        expected_status="running",
+        terminal_status=terminal_status,
+        completed_at=completed_at,
+        duration_sec=_terminal_duration(execution.started_at, completed_at),
+        config=terminal_config,
+    )
+    db.expire(execution)
+    db.refresh(execution)
+    if won and terminal_status == "failed":
         emit_execution_failed_alert(execution.id)
     logger.info(
         "[case-runner] execution %s 收尾: %s, SCPI formal=%s (%s)",

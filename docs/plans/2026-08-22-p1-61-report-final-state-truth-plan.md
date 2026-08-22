@@ -204,6 +204,21 @@ Record exact commands and final counts in roadmap; keep P1-62 queued and out of 
   endpoint now share the same database CAS, so a second JSON lifecycle source would only risk
   overwriting concurrent phase-progress evidence.
 
+### Task 5D: Unify ordinary runner terminal ownership
+
+**Files:**
+- Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/tests/test_arch1_case_runner.py`
+
+- Add a deterministic RED test in which a phase has already failed, the runner has refreshed a
+  `running` snapshot, and an independent cancel session wins before the ordinary failure write.
+- Route normal completion/failure, missing-snapshot failure, top-level exception failure and cancel
+  through one `id + executed_by + expected_status` database transition helper.
+- Flush non-lifecycle SCPI evidence before the terminal CAS, then publish terminal config in the CAS
+  itself so a pending ORM JSON flush cannot erase `failed_phase` or `error_message`.
+- Emit `execution_failed` only when the failed transition wins; a late writer must reread and respect
+  the existing terminal owner without publishing a contradictory alert.
+
 ### Task 6: Ready PR, Codex review, merge, then P1-62
 
 **Files:**

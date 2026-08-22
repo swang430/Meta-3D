@@ -390,6 +390,51 @@ class TestCancel:
         assert len((ex.config or {}).get("phase_progress") or []) == 5
 
     @pytest.mark.asyncio
+    async def test_cancel_after_failed_phase_wins_before_runner_terminal_write(
+        self, db, lab, monkeypatch,
+    ):
+        """runner 读到 running 后，取消 CAS 先赢时不得再覆盖成 failed。"""
+        source = _make_case(db, lab, name="失败收尾竞态")
+        runner_db = TestingSessionLocal()
+        original_refresh = runner_db.refresh
+        refresh_count = {"value": 0}
+        cancel_result = {}
+
+        def _refresh_with_cancel(instance, *args, **kwargs):
+            original_refresh(instance, *args, **kwargs)
+            if not isinstance(instance, TestExecution):
+                return
+            refresh_count["value"] += 1
+            # failed phase: phase 前、dispatch 后、最终收尾前共三次 refresh。
+            # 第三次已让 runner 持有 running 快照，此刻让独立 API session
+            # 先赢得 running -> cancelled。
+            if refresh_count["value"] == 3:
+                cancel_db = TestingSessionLocal()
+                try:
+                    cancel_result["won"] = tcr.request_cancel(
+                        cancel_db,
+                        instance.id,
+                    )
+                finally:
+                    cancel_db.close()
+
+        monkeypatch.setattr(runner_db, "refresh", _refresh_with_cancel)
+        monkeypatch.setattr(tcr, "SessionLocal", lambda: runner_db)
+        with patch.object(
+            tcr,
+            "dispatch_step",
+            new=AsyncMock(return_value=_failed("相位失败")),
+        ):
+            ex = await _launch_and_wait(db, source.id)
+
+        assert cancel_result["won"] is True
+        assert ex.status == "cancelled"
+        assert db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == ex.id,
+        ).count() == 0
+
+    @pytest.mark.asyncio
     async def test_cancel_other_chains_rows_rejected(self, db, lab):
         """归属收窄 (agent F2): VRT / 计划链的 running 行不归本 cancel 管 —
         VRT 状态枚举没有 cancelled (置了会 500 毒化面板), 计划链置了也是

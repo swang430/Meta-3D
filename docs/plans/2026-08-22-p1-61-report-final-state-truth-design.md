@@ -72,6 +72,9 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 - REPORT 运行期间 ORM 状态不提前改变；完成与 operator cancel 通过数据库条件更新裁决；
 - operator cancel 自身也只允许 `running -> cancelled` 条件更新；取消端先读 running、REPORT
   先完成时，迟到取消必须返回冲突，不能用旧 ORM 快照反向覆盖 completed；
+- 普通完成、相位失败、快照缺失与执行器顶层异常同样只能通过共享的数据库条件终态裁决；
+  取消成功后，任何持有旧 `running` ORM 快照的收尾不得覆盖成 completed/failed，失败告警也只由
+  真正赢得 failed 终态的一方发布；
 - cancel 先赢时，同一报告按 cancelled/incomplete 重建；completed 先赢后 cancel 返回冲突；
 - 历史行缺少 `duration_sec` 或 `completed_at` 时保持 `None` 并渲染 `N/A`，不得猜 0 秒或重建时刻；
 - commissioning adhoc 包装层只收尾仍为 running 的相位，不覆盖 REPORT 已拥有的终态时间；
@@ -98,6 +101,8 @@ REPORT 开始时计算一次共同的 `completed_at` 与 `duration_sec`，以显
 10. cancel 先赢时，执行行与重建报告持有相同的非空真实耗时。
 11. cancel 先读 running、REPORT completion CAS 先赢时，迟到 cancel 返回 False，数据库与
     报告都保持 completed。
+12. runner 已读到 phase failure 后，cancel CAS 先赢时，普通失败收尾不得覆盖 cancelled，
+    也不得发布 `execution_failed` 告警。
 
 随后更新旧镜像测试，运行报告链、runner/取消链、完整规则门、全后端回归、`compileall`、
 单一 Alembic head 与 `diff-check`，再做 fresh 内审与 Codex 外审。
