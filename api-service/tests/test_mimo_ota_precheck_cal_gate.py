@@ -584,6 +584,9 @@ class TestFrequencyWindow:
         # field disambiguates from "no cert at all" for operator UX
         assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
         assert "missing or invalid" in measurements["cal_pass_reason"]
+        warning_text = "\n".join(result.warnings or [])
+        assert "strict calibration gate will block Phase 3" in warning_text
+        assert "fall back to default cable loss" not in warning_text
 
     @pytest.mark.asyncio
     async def test_mismatched_frequency_bypass_passes_with_audit(
@@ -604,6 +607,9 @@ class TestFrequencyWindow:
         # Audit trail proves "this run happened despite the mismatch"
         assert "bypassed" in measurements["cal_pass_reason"]
         assert "path-loss calibration missing" in measurements["cal_pass_reason"]
+        warning_text = "\n".join(result.warnings or [])
+        assert "operator bypass permits Phase 3 without path-loss compensation" in warning_text
+        assert "fall back to default cable loss" not in warning_text
 
     @pytest.mark.asyncio
     async def test_upper_boundary_within_window_passes(

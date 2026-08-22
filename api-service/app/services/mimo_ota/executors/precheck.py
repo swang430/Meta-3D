@@ -543,9 +543,22 @@ class PrecheckExecutor(IStepExecutor):
                 ),
                 "missing": "No valid ProbePathLossCalibration for this chamber",
             }
+            if ce_is_real and config.precheck_strict_cal:
+                gate_outcome = (
+                    "strict calibration gate will block Phase 3 before "
+                    "hardware connection"
+                )
+            elif ce_is_real:
+                gate_outcome = (
+                    "operator bypass permits Phase 3 without path-loss compensation"
+                )
+            else:
+                gate_outcome = (
+                    "simulated rehearsal may continue without path-loss compensation; "
+                    "formal KPI remains UNKNOWN/N/A"
+                )
             warnings.append(
-                reason_messages[path_loss_selection.reason]
-                + " — Phase 3 will fall back to default cable loss"
+                reason_messages[path_loss_selection.reason] + f" — {gate_outcome}"
             )
 
         # --- 4. Quiet zone ripple (Phase 2f: cross-probe pattern variation proxy) ---
