@@ -80,6 +80,33 @@ def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
     return use_mock is False
 
 
+def _missing_rf_chain_path_loss_azimuths(
+    *,
+    num_probes: int,
+    azimuths_deg: List[float],
+    chain_pl_by_probe_pol: Dict[tuple, float],
+    polarization: str = "V",
+) -> List[Dict[str, Any]]:
+    """Return requested azimuths absent from a non-empty per-chain map."""
+    from app.services.probe_pattern.consumer import (
+        select_active_rf_chain_probe_id,
+    )
+
+    missing: List[Dict[str, Any]] = []
+    pol = polarization.upper()
+    for azimuth in azimuths_deg:
+        probe_id = select_active_rf_chain_probe_id(num_probes, azimuth)
+        if probe_id is None or (probe_id, pol) not in chain_pl_by_probe_pol:
+            missing.append(
+                {
+                    "azimuth_deg": float(azimuth),
+                    "probe_id": probe_id,
+                    "polarization": pol,
+                }
+            )
+    return missing
+
+
 def _evaluate_path_loss_provenance_for_measure(
     use_mock: Optional[bool],
     *,
@@ -570,6 +597,7 @@ class MeasureExecutor(IStepExecutor):
         from app.services.probe_pattern.consumer import (
             get_probe_gain_at_azimuth,
             select_active_probe_id,
+            select_active_rf_chain_probe_id,
         )
         from app.hal.channel_emulator import ChannelLoadMode
         from app.hal.positioner import (
@@ -2033,14 +2061,20 @@ class MeasureExecutor(IStepExecutor):
             nominal_probe_gain_dbi = float(chamber.probe_gain_dbi or 0.0)
             azimuth_probe_gains: Dict[float, Dict[str, Any]] = {}
             for az_target in config.azimuths_deg:
-                pid = select_active_probe_id(chamber.num_probes, az_target)
+                pattern_probe_id = select_active_probe_id(
+                    chamber.num_probes, az_target
+                )
+                rf_chain_probe_id = select_active_rf_chain_probe_id(
+                    chamber.num_probes, az_target
+                )
                 pattern_gain_v = get_probe_gain_at_azimuth(
                     context.db, chamber.num_probes, az_target, pcell.frequency_hz / 1e6, "V",
                     chamber_id=chamber.id,
                 )
-                chain_pl_db = chain_pl_by_probe_pol.get((pid, "V"))
+                chain_pl_db = chain_pl_by_probe_pol.get((rf_chain_probe_id, "V"))
                 azimuth_probe_gains[az_target] = {
-                    "probe_id": pid,
+                    "probe_id": rf_chain_probe_id,
+                    "probe_pattern_id": pattern_probe_id,
                     "pattern_gain_dbi": pattern_gain_v,
                     "gain_offset_db": (
                         pattern_gain_v - nominal_probe_gain_dbi
@@ -2055,6 +2089,26 @@ class MeasureExecutor(IStepExecutor):
             chains_used = sum(
                 1 for v in azimuth_probe_gains.values() if v["path_loss_db"] is not None
             )
+            if per_chain_pl and chains_used != len(config.azimuths_deg):
+                missing = _missing_rf_chain_path_loss_azimuths(
+                    num_probes=chamber.num_probes,
+                    azimuths_deg=list(config.azimuths_deg),
+                    chain_pl_by_probe_pol=chain_pl_by_probe_pol,
+                )
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    measurements={
+                        "path_loss_compensation": {
+                            "source": "rf_chain",
+                            "complete": False,
+                            "missing": missing,
+                        }
+                    },
+                    error_message=(
+                        "逐 RF-chain 路损证书不完整，禁止与暗室平均路损混合采样；"
+                        f"缺失方位/物理探头: {missing}"
+                    ),
+                )
             if chains_used:
                 logger.info(
                     "[%s] P0: per-RFChain path-loss applied for %d/%d azimuths",
@@ -2277,6 +2331,7 @@ class MeasureExecutor(IStepExecutor):
                     "measurement_source": "simulated" if measurement_simulated else "instrument",
                     "measurement_verified": not measurement_simulated,
                     "active_probe_id": az_meta.get("probe_id"),
+                    "probe_pattern_id": az_meta.get("probe_pattern_id"),
                     "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
                     "path_loss_compensation_db": az_path_loss_db,
                     "path_loss_source": (

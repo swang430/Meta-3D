@@ -547,17 +547,37 @@ class ChannelEngineClient:
 
 
         if latest_cal and latest_cal.probe_path_losses:
+            try:
+                probe_ids = {int(key) for key in latest_cal.probe_path_losses}
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "probe_path_losses contains a non-integer probe ID"
+                ) from exc
+            zero_based = set(range(chamber.num_probes))
+            one_based = set(range(1, chamber.num_probes + 1))
+            if probe_ids == zero_based:
+                probe_id_base = 0
+            elif probe_ids == one_based:
+                probe_id_base = 1
+            else:
+                raise ValueError(
+                    "probe_path_losses must contain the complete physical probe set "
+                    f"0..{chamber.num_probes - 1} (legacy) or "
+                    f"1..{chamber.num_probes} (topology); got "
+                    f"{sorted(probe_ids)}"
+                )
             logger.info(
                 f"Using calibration data from {latest_cal.calibrated_at} "
                 f"for {len(latest_cal.probe_path_losses)} probes"
             )
             for probe_id_str, probe_data in latest_cal.probe_path_losses.items():
                 probe_id = int(probe_id_str)
+                probe_index = probe_id - probe_id_base
                 path_loss = probe_data.get("path_loss_db", fallback_loss)
 
                 # V 极化端口
                 entries.append({
-                    "port_id": probe_id * 2 + 1,
+                    "port_id": probe_index * chamber.num_polarizations + 1,
                     "cable_loss_db": float(path_loss),
                     "cable_phase_deg": 0.0,  # 下面由 phase_compensation_map 覆盖
                     "probe_gain_dbi": float(chamber.probe_gain_dbi),
@@ -567,7 +587,7 @@ class ChannelEngineClient:
                 if chamber.num_polarizations >= 2:
                     h_loss = probe_data.get("pol_h_db", path_loss)
                     entries.append({
-                        "port_id": probe_id * 2 + 2,
+                        "port_id": probe_index * chamber.num_polarizations + 2,
                         "cable_loss_db": float(h_loss) if h_loss else float(path_loss),
                         "cable_phase_deg": 0.0,
                         "probe_gain_dbi": float(chamber.probe_gain_dbi),
@@ -603,6 +623,7 @@ class ChannelEngineClient:
                 f"Phase calibration injected for {injected_count}/{len(entries)} ports"
             )
 
+        entries.sort(key=lambda entry: entry["port_id"])
         return entries
 
     def _build_payload(

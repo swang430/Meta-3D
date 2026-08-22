@@ -83,6 +83,20 @@ def select_active_probe_id(num_probes: int, azimuth_deg: float) -> Optional[int]
     return int(round(azimuth_deg / az_per_probe)) % num_probes
 
 
+def select_active_rf_chain_probe_id(
+    num_probes: int, azimuth_deg: float
+) -> Optional[int]:
+    """Map azimuth to the topology/certificate physical probe ID (``1..N``).
+
+    ``select_active_probe_id`` is the historical ProbePattern index contract and
+    remains zero-based.  RF topology and per-chain path-loss certificates use
+    one-based physical probe IDs, so callers must cross that boundary
+    explicitly instead of reusing the pattern index.
+    """
+    pattern_index = select_active_probe_id(num_probes, azimuth_deg)
+    return None if pattern_index is None else pattern_index + 1
+
+
 def get_probe_gain_at_azimuth(
     db: Session,
     num_probes: int,
