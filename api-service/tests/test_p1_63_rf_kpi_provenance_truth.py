@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,11 @@ from app.hal.base_station import ThroughputMetrics
 from app.api.test_execution import _formal_validation_pass
 from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
+from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.report_service import (
+    _strip_untrusted_report_attestation,
+    report_has_provenance_trust,
+)
 from app.services.test_execution import StepExecutionStatus
 
 
@@ -278,3 +284,86 @@ def test_execution_history_requires_complete_rf_kpi_trust():
 
     assert _formal_validation_pass(without_trust, "MIMO_OTA") is None
     assert _formal_validation_pass(with_trust, "MIMO_OTA") is True
+
+
+def _report_execution(*, include_rf_trust: bool) -> SimpleNamespace:
+    measure = _formal_measure(
+        rf_trust=_complete_rf_trust() if include_rf_trust else None
+    )
+    return SimpleNamespace(
+        id="p1-63-report",
+        measurements={
+            "phases": {
+                "measure": measure,
+                "analysis": {"verdict": "PASS"},
+            }
+        },
+        status="completed",
+        duration_sec=1.0,
+        started_at=datetime(2026, 8, 23),
+        completed_at=datetime(2026, 8, 23),
+        validation_pass=True,
+    )
+
+
+def _pre_p1_63_report_envelope() -> dict[str, object]:
+    return {
+        "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+        "path_loss_application": _verified_path_loss_application(),
+        "formal_path_loss_verified": True,
+    }
+
+
+def test_report_masks_rf_kpis_without_complete_trust_snapshot():
+    content = _build_mimo_ota_content_data(
+        _report_execution(include_rf_trust=False),
+        datetime(2026, 8, 23),
+    )
+
+    assert content["formal_rf_kpi_verified"] is False
+    assert content["overall_result"] == "undetermined"
+    assert content["pass_rate"] is None
+    assert content["statistics"] == {}
+    assert content["table_data"][0]["RSRP (dBm)"] == "N/A"
+    assert content["table_data"][0]["SINR (dB)"] == "N/A"
+    assert content["table_data"][0]["RI"] == "N/A"
+
+
+def test_report_keeps_rf_kpis_with_complete_trust_snapshot():
+    content = _build_mimo_ota_content_data(
+        _report_execution(include_rf_trust=True),
+        datetime(2026, 8, 23),
+    )
+
+    assert content["rf_kpi_trust_schema_version"] == 1
+    assert content["rf_kpi_trust"] == _complete_rf_trust()
+    assert content["formal_rf_kpi_verified"] is True
+    assert content["overall_result"] == "passed"
+    assert content["table_data"][0]["RSRP (dBm)"] == "-80.0"
+
+
+def test_pre_p1_63_report_cannot_bypass_new_trust_envelope():
+    old_envelope = _pre_p1_63_report_envelope()
+    new_envelope = {
+        **old_envelope,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": _complete_rf_trust(),
+        "formal_rf_kpi_verified": True,
+    }
+
+    assert report_has_provenance_trust(old_envelope) is False
+    assert report_has_provenance_trust(new_envelope) is True
+
+
+def test_client_cannot_self_attest_rf_kpi_trust():
+    forged = {
+        "title": "client payload",
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": _complete_rf_trust(),
+        "formal_rf_kpi_verified": True,
+    }
+
+    sanitized = _strip_untrusted_report_attestation(forged)
+
+    assert sanitized == {"title": "client payload"}

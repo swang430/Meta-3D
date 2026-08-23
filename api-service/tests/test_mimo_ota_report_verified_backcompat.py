@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.report_service import ReportService
 
 
@@ -56,7 +57,7 @@ def _step(content, phase):
 
 
 def _path_loss_report_phases(application, *, verified=False):
-    return {
+    phases = {
         "precheck": {
             "overall_pass": True,
             "quiet_zone_ripple_source": "probe_pattern_peak_spread",
@@ -77,15 +78,27 @@ def _path_loss_report_phases(application, *, verified=False):
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
                 "rsrp_dbm": -70.0,
+                "rsrp_valid": True,
                 "sinr_db": 20.0,
+                "sinr_valid": True,
                 "throughput_mbps": 500.0,
                 "throughput_valid": True,
                 "throughput_scope": "pcell",
                 "rank_indicator": 4.0,
+                "rank_indicator_valid": True,
             }],
         },
         "analysis": {"verdict": "PASS"},
     }
+    if verified:
+        measure = phases["measure"]
+        measure["rf_kpi_trust"] = build_rf_kpi_trust(
+            requested_azimuths=[0.0],
+            azimuth_results=measure["azimuth_results"],
+            source="explicit_real",
+        )
+        measure["formal_rf_kpi_verified"] = True
+    return phases
 
 
 def _path_loss_application(
@@ -122,6 +135,13 @@ def _trusted_unknown_report_fields():
             gate_mode="strict",
         ),
         "formal_path_loss_verified": False,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[],
+            azimuth_results=[],
+            source="unknown",
+        ),
+        "formal_rf_kpi_verified": False,
     }
 
 
@@ -408,6 +428,17 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
         },
         "analysis": {"verdict": "PASS"},
     }
+    phases["measure"]["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=[{
+            "azimuth_deg": 0.0,
+            "rsrp_valid": True,
+            "sinr_valid": True,
+            "rank_indicator_valid": True,
+        }],
+        source="explicit_real",
+    )
+    phases["measure"]["formal_rf_kpi_verified"] = True
 
     content = _build_mimo_ota_content_data(
         _exec(phases), datetime(2026, 1, 1),
@@ -495,18 +526,7 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
         generated_by="mimo_ota.executors.report",
         content_data={
             "report_family": "mimo_ota",
-            "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 2,
-            "path_loss_application": {
-                "schema_version": 1,
-                "status": "unknown",
-                "provenance": "unknown",
-                "reason": "legacy_unclassified",
-                "gate_mode": "strict",
-                "certificate_id": None,
-                "value_disclosure": "none",
-            },
-            "formal_path_loss_verified": False,
+            **_trusted_unknown_report_fields(),
             "overall_result": "unknown",
         },
     )

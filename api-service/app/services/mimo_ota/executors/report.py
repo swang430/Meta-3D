@@ -25,6 +25,12 @@ from app.services.mimo_ota.path_loss_application import (
     path_loss_application_is_formally_verified,
     path_loss_application_message,
 )
+from app.services.mimo_ota.rf_kpi_trust import (
+    RF_KPI_TRUST_SCHEMA_VERSION,
+    build_rf_kpi_trust,
+    parse_rf_kpi_trust,
+    rf_kpi_scope_is_verified,
+)
 from app.services.mimo_ota.throughput_trust import (
     required_throughput_scope as _required_throughput_scope,
     throughput_scope_is_verified,
@@ -524,13 +530,35 @@ def _build_mimo_ota_content_data(
     if _throughput_verified is True and not throughput_scope_verified:
         _throughput_verified = False
 
+    # P1-63: 数值存在不等于有仪器证据。旧执行没有快照时只生成一个
+    # source=unknown 的安全报告包络，不能从历史数值或旧 verdict 反推可信。
+    _rf_kpi_trust = parse_rf_kpi_trust(measure.get("rf_kpi_trust"))
+    _rf_kpi_formally_verified = rf_kpi_scope_is_verified(measure)
+    if _rf_kpi_trust is None:
+        requested_azimuths = [
+            float(row["azimuth_deg"])
+            for row in azimuth_results
+            if isinstance(row, dict)
+            and isinstance(row.get("azimuth_deg"), (int, float))
+            and not isinstance(row.get("azimuth_deg"), bool)
+        ]
+        _rf_kpi_trust = build_rf_kpi_trust(
+            requested_azimuths=requested_azimuths,
+            azimuth_results=[],
+            source="unknown",
+        )
+
     # A formal KPI/report verdict requires explicit proof that the applied
     # path-loss certificate was real *and* every azimuth contributed a trusted
     # throughput sample. Historical, mock, bypass and missing-read executions
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
-    if not _path_loss_formally_verified or _throughput_verified is not True:
+    if (
+        not _path_loss_formally_verified
+        or _throughput_verified is not True
+        or not _rf_kpi_formally_verified
+    ):
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
@@ -662,6 +690,11 @@ def _build_mimo_ota_content_data(
                  "各方位均有仪表有效读数",
                  "存在缺测/无效读数, 吞吐 KPI 为 N/A",
              ),
+             "RF KPI 验证": _verified_label(
+                 _rf_kpi_formally_verified,
+                 "RSRP/SINR/RI 逐指标、逐方位真实读数完整",
+                 "缺少完整真实读数, RSRP/SINR/RI 为 N/A",
+             ),
              # ⭐ 逐台点名哪几台是模拟的（P1-48）：这份名单**早就存在库里**
              #    （measure 那格的 simulated_sources），只是报告一直没取。
              #    只说「未验证」读者不知道是哪个环节出的问题。
@@ -695,6 +728,9 @@ def _build_mimo_ota_content_data(
             if _throughput_verified is True
             else ThroughputMetrics.SCOPE_UNKNOWN
         ),
+        "rf_kpi_trust_schema_version": RF_KPI_TRUST_SCHEMA_VERSION,
+        "rf_kpi_trust": _rf_kpi_trust,
+        "formal_rf_kpi_verified": _rf_kpi_formally_verified,
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": report_outcome,

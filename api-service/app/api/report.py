@@ -84,9 +84,9 @@ def _reject_untrusted_mimo_report(db: Session, report) -> None:
         status_code=status.HTTP_409_CONFLICT,
         detail=(
             "Legacy MIMO OTA report cannot be viewed or downloaded until its "
-            "path-loss and throughput provenance are sanitized. Regenerate the report to "
+            "path-loss, throughput, and RF-KPI provenance are sanitized. Regenerate the report to "
             "produce an UNKNOWN/N/A audit record, or re-run the measurement "
-            "with a real calibration and valid throughput samples for a formal result."
+            "with a real calibration and valid throughput/RF-KPI samples for a formal result."
         ),
     )
 

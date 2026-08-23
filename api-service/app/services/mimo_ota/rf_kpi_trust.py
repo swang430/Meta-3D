@@ -17,7 +17,7 @@ RF_KPI_SOURCES = frozenset({"explicit_real", "simulated", "unknown"})
 
 
 def _finite_azimuths(value: Any) -> list[float] | None:
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
         return None
     result: list[float] = []
     for item in value:

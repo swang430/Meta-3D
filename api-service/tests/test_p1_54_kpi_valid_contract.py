@@ -292,11 +292,20 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
                 "throughput_valid": True,
                 "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
+                "rsrp_valid": True,
                 "sinr_db": 30.0,
+                "sinr_valid": True,
                 "rank_indicator": 2.0,
+                "rank_indicator_valid": True,
             }
         ],
     }
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=measure["azimuth_results"],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     measure["rf_kpi_trust"] = build_rf_kpi_trust(
         requested_azimuths=[0.0],
         azimuth_results=[{
@@ -361,13 +370,22 @@ def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
                 "throughput_valid": True,
                 "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
+                "rsrp_valid": True,
                 "sinr_db": 30.0,
+                "sinr_valid": True,
                 "rank_indicator": 2.0,
+                "rank_indicator_valid": True,
             }
         ],
     }
     if throughput_verified is not None:
         measure["throughput_verified"] = throughput_verified
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=measure["azimuth_results"],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     return SimpleNamespace(
         id="p1-54-report",
         measurements={
@@ -434,6 +452,13 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
             "value_disclosure": "none",
         },
         "formal_path_loss_verified": False,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[],
+            azimuth_results=[],
+            source="unknown",
+        ),
+        "formal_rf_kpi_verified": False,
     }
     inconsistent_path_loss_attestation = {
         **fully_sanitized,
