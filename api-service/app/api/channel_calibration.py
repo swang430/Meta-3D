@@ -62,6 +62,7 @@ from app.schemas.channel_calibration import (
     InvalidateCalibrationResponse,
 )
 from app.services.channel_calibration_service import ChannelCalibrationService
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_detail
 
 router = APIRouter(prefix="/calibration/channel", tags=["Channel Calibration"])
 
@@ -450,7 +451,7 @@ async def get_quiet_zone_calibration(
     calibration = service.get_quiet_zone_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return sanitize_channel_qz_detail(calibration)
 
 
 # ==================== EIS Validation ====================

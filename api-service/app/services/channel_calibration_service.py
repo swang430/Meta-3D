@@ -34,6 +34,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationValidity,
     ChannelCalibrationStatus,
 )
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_history
 
 logger = logging.getLogger("app.calibration.channel")
 
@@ -1468,22 +1469,12 @@ class ChannelCalibrationService:
         # 静区校准
         if calibration_type in (None, "quiet_zone"):
             query = self.db.query(ChannelQuietZoneCalibration)
-            if validation_pass is not None:
-                query = query.filter(ChannelQuietZoneCalibration.validation_pass == validation_pass)
-            for cal in query.order_by(desc(ChannelQuietZoneCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "quiet_zone",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "shape": cal.quiet_zone_shape,
-                        "diameter_m": cal.quiet_zone_diameter_m,
-                        "amplitude_std_db": cal.amplitude_std_db,
-                    }
-                })
+            # Legacy QZ rows have no explicit-real provenance. A formal PASS or
+            # FAIL filter therefore has no matching rows; unfiltered audit
+            # history is retained but projected as UNKNOWN/N/A.
+            if validation_pass is None:
+                for cal in query.order_by(desc(ChannelQuietZoneCalibration.calibrated_at)).limit(limit).offset(offset):
+                    results.append(sanitize_channel_qz_history(cal))
 
         # EIS 验证
         if calibration_type in (None, "eis"):

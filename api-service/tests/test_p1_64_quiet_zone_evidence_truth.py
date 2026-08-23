@@ -1,7 +1,9 @@
 """P1-64: 静区代理量不能冒充正式多点场扫描证据。"""
 
 import math
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -366,6 +368,135 @@ def test_dashboard_quiet_zone_metric_is_unknown_without_evidence():
 
     assert quiet_zone.value == "N/A"
     assert quiet_zone.trend == "unknown"
+
+
+def _legacy_channel_qz_row():
+    return SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000064",
+        session_id=None,
+        quiet_zone_shape="sphere",
+        quiet_zone_diameter_m=1.0,
+        quiet_zone_height_m=None,
+        field_probe_type="dipole",
+        field_probe_size_mm=10.0,
+        measurement_grid={"points": [{"amplitude_v_per_m": 1.23}]},
+        num_points=100,
+        amplitude_mean_db=0.1,
+        amplitude_std_db=0.2,
+        amplitude_range_db=[-0.2, 0.2],
+        phase_mean_deg=1.0,
+        phase_std_deg=2.0,
+        phase_range_deg=[-2.0, 2.0],
+        amplitude_uniformity_pass=True,
+        phase_uniformity_pass=True,
+        validation_pass=True,
+        amplitude_threshold_db=1.0,
+        phase_threshold_deg=30.0,
+        fc_ghz=3.5,
+        calibrated_at=datetime(2026, 8, 20),
+        calibrated_by="legacy",
+        valid_until=datetime(2027, 2, 20),
+        status="valid",
+    )
+
+
+def test_legacy_channel_qz_detail_is_sanitized_to_unknown():
+    from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_detail
+
+    detail = sanitize_channel_qz_detail(_legacy_channel_qz_row())
+
+    assert detail["measurement_grid"] == {}
+    assert detail["num_points"] == 0
+    assert detail["validation_pass"] is None
+    assert detail["amplitude_uniformity_pass"] is None
+    assert detail["phase_uniformity_pass"] is None
+    assert detail["amplitude_std_db"] is None
+    assert detail["phase_std_deg"] is None
+    assert detail["valid_until"] is None
+    assert detail["status"] == "unknown"
+
+
+def test_legacy_channel_qz_history_is_unknown_and_hides_values():
+    from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_history
+
+    item = sanitize_channel_qz_history(_legacy_channel_qz_row())
+
+    assert item["validation_pass"] is None
+    assert item["status"] == "unknown"
+    assert item["summary"] == {
+        "shape": "sphere",
+        "diameter_m": 1.0,
+        "formal_status": "UNKNOWN",
+        "amplitude_std_db": None,
+    }
+
+
+def test_channel_report_excludes_legacy_qz_from_formal_summary():
+    from app.services.calibration_report_generator import CalibrationReportGenerator
+
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+        def limit(self, _value):
+            return self
+
+        def all(self):
+            return [_legacy_channel_qz_row()]
+
+    db = SimpleNamespace(query=lambda _model: Query())
+    data = CalibrationReportGenerator(db)._collect_channel_data(
+        calibration_type="quiet_zone"
+    )
+
+    assert data["execution_summary"] == {
+        "total_executions": 0,
+        "passed": 0,
+        "failed": 0,
+        "pending": 0,
+        "pass_rate": 0,
+    }
+    row = data["channel_calibration"]["quiet_zone"][0]
+    assert row["validation_pass"] is None
+    assert row["formal_status"] == "UNKNOWN"
+    assert row["amplitude_uniformity_db"] is None
+    assert row["phase_uniformity_deg"] is None
+
+
+def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):
+    from app.api.calibration_report import _has_provenance_aware_calibration_manifest
+    from app.services.calibration_report_generator import _write_report_provenance_manifest
+
+    report_path = tmp_path / "channel_calibration_current.pdf"
+    report_path.write_bytes(b"pdf")
+    Path(f"{report_path}.provenance.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "path_loss_provenance_disclosed": True,
+        }),
+        encoding="utf-8",
+    )
+    assert _has_provenance_aware_calibration_manifest(str(report_path)) is False
+
+    _write_report_provenance_manifest(
+        str(report_path),
+        {
+            "probe_calibration": {},
+            "channel_calibration": {"quiet_zone": [{"validation_pass": None}]},
+        },
+        path_loss_provenance_disclosed=True,
+        quiet_zone_provenance_sanitized=True,
+    )
+    manifest = json.loads(
+        Path(f"{report_path}.provenance.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schema_version"] == 2
+    assert manifest["quiet_zone_provenance_sanitized"] is True
+    assert manifest["unverified_quiet_zone_records"] == 1
+    assert _has_provenance_aware_calibration_manifest(str(report_path)) is True
 
 
 def test_report_rebuild_does_not_repeat_legacy_quiet_zone_pass_claims():

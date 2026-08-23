@@ -20,7 +20,6 @@ import {
   startDopplerCalibration,
   startSpatialCorrelationCalibration,
   startAngularSpreadCalibration,
-  startQuietZoneCalibration,
   startEISValidation,
   getCalibrationTypeName,
 } from '../../api/channelCalibrationService'
@@ -69,12 +68,13 @@ export function ChannelCalibrationPage() {
           })
           break
         case 'quiet_zone':
-          await startQuietZoneCalibration({
-            quiet_zone: { shape: 'sphere', diameter_m: 1.0 },
-            fc_ghz: 3.5,
-            calibrated_by: 'system',
+          notifications.show({
+            title: '静区校准未判定',
+            message: '无权威多点场扫描证据；当前入口不会生成模拟数值或正式判决。',
+            color: 'yellow',
           })
-          break
+          setStartModalOpen(false)
+          return
         case 'eis':
           await startEISValidation({
             test_config: { fc_ghz: 3.5 },

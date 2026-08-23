@@ -79,17 +79,15 @@ class ReportGeneratedResponse(BaseModel):
 
 def _has_provenance_aware_calibration_manifest(report_path: str) -> bool:
     """Only provenance-aware probe/comprehensive PDFs are formal artifacts."""
-    # Channel-only reports do not consume ProbePathLossCalibration.
-    if os.path.basename(report_path).startswith("channel_calibration_"):
-        return True
     try:
         with open(f"{report_path}.provenance.json", encoding="utf-8") as handle:
             manifest = json.load(handle)
     except (OSError, ValueError, TypeError):
         return False
     return (
-        manifest.get("schema_version") == 1
+        manifest.get("schema_version") == 2
         and manifest.get("path_loss_provenance_disclosed") is True
+        and manifest.get("quiet_zone_provenance_sanitized") is True
     )
 
 

@@ -35,6 +35,7 @@ from app.models.channel_calibration import (
     ChannelQuietZoneCalibration,
     EISValidation,
 )
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_report
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def _write_report_provenance_manifest(
     report_data: Dict[str, Any],
     *,
     path_loss_provenance_disclosed: bool,
+    quiet_zone_provenance_sanitized: bool = True,
 ) -> None:
     """Stamp a sidecar that distinguishes rebuilt reports from legacy PDFs.
 
@@ -55,12 +57,20 @@ def _write_report_provenance_manifest(
     probe_rows = (
         (report_data.get("probe_calibration") or {}).get("path_loss") or []
     )
+    quiet_zone_rows = (
+        (report_data.get("channel_calibration") or {}).get("quiet_zone") or []
+    )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "path_loss_section_included": bool(probe_rows),
         "path_loss_provenance_disclosed": path_loss_provenance_disclosed,
         "unverified_path_loss_records": sum(
             1 for row in probe_rows if row.get("validation_pass") is None
+        ),
+        "quiet_zone_section_included": bool(quiet_zone_rows),
+        "quiet_zone_provenance_sanitized": quiet_zone_provenance_sanitized,
+        "unverified_quiet_zone_records": sum(
+            1 for row in quiet_zone_rows if row.get("validation_pass") is None
         ),
     }
     with open(f"{report_path}.provenance.json", "w", encoding="utf-8") as handle:
@@ -246,7 +256,14 @@ class CalibrationReportGenerator:
             output_path = f"{output_dir}/channel_calibration_{timestamp}.pdf"
 
         template = self._create_channel_template()
-        return self.pdf_generator.generate_report(report_data, template, output_path)
+        report_path = self.pdf_generator.generate_report(report_data, template, output_path)
+        _write_report_provenance_manifest(
+            report_path,
+            report_data,
+            path_loss_provenance_disclosed=True,
+            quiet_zone_provenance_sanitized=True,
+        )
+        return report_path
 
     def generate_chamber_calibration_report(
         self,
@@ -949,19 +966,10 @@ class CalibrationReportGenerator:
 
             qz_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                qz_data.append({
-                    'id': str(cal.id),
-                    'quiet_zone_shape': cal.quiet_zone_shape,
-                    'quiet_zone_diameter_m': cal.quiet_zone_diameter_m,
-                    'fc_ghz': cal.fc_ghz,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'amplitude_uniformity_db': cal.amplitude_uniformity_db,
-                    'phase_uniformity_deg': cal.phase_uniformity_deg,
-                })
+                # No existing row carries an auditable explicit-real QZ
+                # provenance snapshot. Keep it visible for audit only and do
+                # not add it to the formal report denominator.
+                qz_data.append(sanitize_channel_qz_report(cal))
             data['channel_calibration']['quiet_zone'] = qz_data
 
         # EIS validations

@@ -445,46 +445,31 @@ class TestChannelCalibrationService:
         assert calibration.status == ChannelCalibrationStatus.VALID.value
 
     def test_run_quiet_zone_calibration_sphere(self, db_session):
-        """测试执行球形静区校准"""
+        """缺真实多点扫描平台时球形静区校准不得生成随机 PASS。"""
         service = ChannelCalibrationService(db_session)
 
-        calibration = service.run_quiet_zone_calibration(
-            quiet_zone_shape="sphere",
-            quiet_zone_diameter_m=1.0,
-            fc_ghz=3.5,
-            num_points=50,
-            calibrated_by="test_user"
-        )
-
-        assert calibration.id is not None
-        assert calibration.quiet_zone_shape == "sphere"
-        assert calibration.quiet_zone_diameter_m == 1.0
-        assert calibration.num_points > 0
-        assert calibration.amplitude_std_db is not None
-        assert calibration.phase_std_deg is not None
-        assert calibration.validation_pass is not None
-        assert calibration.status == ChannelCalibrationStatus.VALID.value
+        with pytest.raises(RuntimeError, match="真实多点场扫描"):
+            service.run_quiet_zone_calibration(
+                quiet_zone_shape="sphere",
+                quiet_zone_diameter_m=1.0,
+                fc_ghz=3.5,
+                num_points=50,
+                calibrated_by="test_user"
+            )
 
     def test_run_quiet_zone_calibration_cylinder(self, db_session):
-        """测试执行圆柱形静区校准"""
+        """缺真实多点扫描平台时圆柱静区校准不得生成随机 PASS。"""
         service = ChannelCalibrationService(db_session)
 
-        calibration = service.run_quiet_zone_calibration(
-            quiet_zone_shape="cylinder",
-            quiet_zone_diameter_m=2.0,
-            quiet_zone_height_m=3.0,
-            fc_ghz=3.5,
-            num_points=100,
-            calibrated_by="test_user"
-        )
-
-        assert calibration.id is not None
-        assert calibration.quiet_zone_shape == "cylinder"
-        assert calibration.quiet_zone_diameter_m == 2.0
-        assert calibration.quiet_zone_height_m == 3.0
-        assert calibration.num_points == 100
-        assert calibration.amplitude_uniformity_pass is not None
-        assert calibration.phase_uniformity_pass is not None
+        with pytest.raises(RuntimeError, match="真实多点场扫描"):
+            service.run_quiet_zone_calibration(
+                quiet_zone_shape="cylinder",
+                quiet_zone_diameter_m=2.0,
+                quiet_zone_height_m=3.0,
+                fc_ghz=3.5,
+                num_points=100,
+                calibrated_by="test_user"
+            )
 
     def test_run_eis_validation(self, db_session):
         """测试执行 EIS 验证"""
@@ -515,7 +500,6 @@ class TestChannelCalibrationService:
 
         # 创建各类校准记录
         service.run_angular_spread_calibration("UMa", "LOS", 3.5, calibrated_by="test")
-        service.run_quiet_zone_calibration("sphere", 1.0, 3.5, calibrated_by="test")
         service.run_eis_validation(3.5, "TestDUT", measured_by="test")
 
         # 列出各类型
@@ -524,8 +508,7 @@ class TestChannelCalibrationService:
         assert angular_results[0]["calibration_type"] == "angular_spread"
 
         qz_results = service.list_calibrations(calibration_type="quiet_zone", limit=10)
-        assert len(qz_results) == 1
-        assert qz_results[0]["calibration_type"] == "quiet_zone"
+        assert qz_results == []
 
         eis_results = service.list_calibrations(calibration_type="eis", limit=10)
         assert len(eis_results) == 1

@@ -179,3 +179,24 @@ test('legacy quiet-zone calibration cannot fall back to mock PASS or green resul
   assert.match(wizardSource, /UNKNOWN/)
   assert.match(wizardSource, /无权威多点场扫描证据/)
 })
+
+
+test('legacy channel quiet-zone history is UNKNOWN and cannot render green or red', () => {
+  const dashboardSource = readFileSync(
+    new URL('../src/features/ChannelCalibration/components/ChannelCalibrationDashboard.tsx', import.meta.url),
+    'utf8',
+  )
+  const pageSource = readFileSync(
+    new URL('../src/features/ChannelCalibration/ChannelCalibrationPage.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(dashboardSource, /item\.validation_pass === null \? 'yellow'/)
+  assert.match(dashboardSource, /item\.validation_pass === null \? 'UNKNOWN'/)
+  assert.match(pageSource, /静区校准未判定/)
+  assert.match(pageSource, /无权威多点场扫描证据/)
+  assert.doesNotMatch(
+    pageSource.match(/case 'quiet_zone':[\s\S]*?break/)?.[0] ?? '',
+    /startQuietZoneCalibration/,
+  )
+})

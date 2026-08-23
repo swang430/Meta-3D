@@ -424,10 +424,10 @@ export function ChannelCalibrationDashboard({
                     <Group gap="xs">
                       <Badge
                         size="xs"
-                        color={item.validation_pass ? 'green' : 'red'}
+                        color={item.validation_pass === null ? 'yellow' : item.validation_pass ? 'green' : 'red'}
                         variant="light"
                       >
-                        {item.validation_pass ? 'PASS' : 'FAIL'}
+                        {item.validation_pass === null ? 'UNKNOWN' : item.validation_pass ? 'PASS' : 'FAIL'}
                       </Badge>
                       <Text size="sm">{getCalibrationTypeName(item.calibration_type)}</Text>
                     </Group>
