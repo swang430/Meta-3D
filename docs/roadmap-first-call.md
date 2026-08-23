@@ -105,6 +105,8 @@ production build、compileall、单一 Alembic head、diff-check 均通过。
 > 6. **[P3 候选] 方向图租约仍在 `(probe, pol)` 层**（P2-30 #359 内审 F1）：多探头方向图作业按组数真建拆，今天无生产调用方。
 > 7. **[P2 候选] UXM KPI / MAC 配置真机证据链收口**（Discovered 08-03/08-04/07-20 四条合并，见「2026-08-23 账面清理」表）：前置写包 `try` 不丢已收证据、raw 逐字、`configure_mac_throughput_test` 返回值必须消费（ON 态写被拒不得静默带旧配置测）。
 > 8. **[验收项，非开发] 首份真机 `exec-*.log`**（缺口 B）：下次现场跑 ≥1 条正式 TestCase，核对 `[case-runner] 收尾` 行、SCPI formal verdict 与报告三样齐全。
+> 9. **[P1 候选，出发前硬门槛] 补齐无载体 blocker 的诊断序列**（EMCenter 握手 / F64 per-port 电平窗口 / OffsetToCarrier 剧本 / 面板 Local 人工确认步）—— 细节见「Blocked on hardware」区的 2026-08-23 覆盖矩阵。
+> 10. **[P2 候选] 现场清单跑批**（按 Phase 勾选序列顺序执行 + go/no-go 汇总）—— 依赖候选 9。
 
 > **~~P1-62~~ ✅ 2026-08-22 由 PR #373 完成**：版本化 `path_loss_application` 已贯穿
 > PRECHECK、MEASURE、Analysis、报告、历史与 GUI；旧/畸形快照和旧 PDF 均不能凭遗留布尔标记
@@ -625,6 +627,46 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。[补充 Codex 结论](https://github.com/swang430/Meta-3D/pull/350#issuecomment-5327846839)明确 reviewed commit `0f981339c5`（包含尾修 `bd71879`）且无重大问题。真实单位、方向、偏置、型号与机械目视动作仍须现场，继续 Hardware Blocked |
 | P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
 | ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
+
+**2026-08-23 覆盖矩阵：Blocked 行 ↔ 现场协议 Phase 0–5 ↔ 载体**（用户问"Phase 0–5 是否覆盖所有
+blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可测量的 OTA 流程，不是解除全部 blocker）。
+按 [`on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) §3 逐 Phase 对账：
+
+| 行 | Phase | 覆盖形态 | 载体 | 现场怎么验 |
+|---|---|---|---|---|
+| P0-5 | 4 | ✅ gate 本身 | `baseStation_attach_check` + MIMO_OTA TestCase | 走 Phase 4 gate（attach / capability / 单方位非零 / 4 方位不同） |
+| P0-8a | 1.5 | ✅ gate 本身 | `propsim_f64_p08_gate` | 走 Phase 1.5 gate |
+| P0-8b | 4 | ✅ gate 第三条 | 同一 TestCase（衰落 / bypass 各测一次非 0% ACK） | 随 Phase 4 |
+| NEW-4 / P1-56 转台 | 1（回零）+ 4（4 方位） | ⚠️ gate 间接覆盖，**协议未点名序列** | `aerotech_positioner_motion_truth` | Phase 1 逐仪表握手时加跑该序列（协议速查表只写"转台回零"） |
+| P2-13 SIM | 4 | ⚠️ 部分 | precheck 核 SIMProfile；IMSI 仍回退手填 | Phase 4 attach 记 IMSI 时对照 |
+| P2-12 标准信道文件 | 1.5 | ⚠️ 部分 | p08_gate 按 SCD 实测频率 load `.smu`，但不证事项级端到端 | 随 Phase 1.5 顺带记，不算关闭 |
+| P1-4 重复性 | 3 / 5 | ⚠️ 部分 | Phase 3 只重复路损 ±0.5 dB；Phase 5 只跑 1 次 first-call | 要关闭需 Phase 5 **跑两次**并对比（报告对比契约仍是 plan 级，缺口在表内） |
+| P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 | 无 | Phase 1 若出现 idle-close 只记现象喂 P2-4，不当 driver bug 修 |
+| P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 | 无 C 类载体 | 同上 |
+| **P2-9 EMCenter** | **无** | ❌ **隐性前置**：Phase 3 路损校准要切 32 链路，离不开 EMCenter，但协议没有它的握手步骤、速查表不列、15 个序列无一覆盖 | 无 | **出发前必须补 `emcenter_switch_health` 只读序列**，并在 Phase 1 速查表加一行；否则 Phase 3 会在没有诊断证据的情况下失败 |
+| P1-2 license probe | 无 | ❌ 流程外 | 无（08-07 已拿一半答案） | 连接即发 `SYSTem:CALibration:USER:LIST?` → -100 留在队列跨会话；与 Phase 1.5「错误队列零残留」gate 的交互依赖生产加载事务先清旧队列（P1-47B）——**出发前用 mock 核一次 p08_gate 在带残留 -100 的队列上不误判** |
+| P1-17 UXM fresh-start | 无 | ❌ 流程外 | `uxm_config_truth_probe` 只覆盖已 ON 小区 | 需要独立时段：HAL reload + `default_state_file` recall + 全配置对齐 |
+| P1-5 相位校准 | 无 | ❌ 流程外（**且不在 first-call 范围**：PFS 是 power-only，相位校准留给将来 PWS） | 正式入口存在但落 mock 数据 | 不排进本次现场 |
+| P2-10 F64 工程精细化 | §7 清单 | ❌ 流程外 | `propsim_f64_health` / `_state_machine` 只验公共能力 | 按协议 §7 能力探测清单逐项打勾（探未知，结论回填 docx） |
+| NEW-1 各口电平窗口 | 无 | ❌ 流程外 / 待建 | 无 | 出发前扩 `propsim_f64_health` 做 per-port `OUTP:LEV:AMP:LIM?` 只读普查 |
+| NEW-3 OffsetToCarrier 102 | 无 | ❌ 流程外 / 待建 | 无 | 出发前写「下发 + 回读 + 看 attach」剧本序列；可挂 Phase 4 前 |
+| NEW-2 面板 Local | 无 | ❌ 人工观察 | 无（非 SCPI 可问） | 挂在任一 F64 序列末尾做人工确认步 |
+
+**汇总**：14 行里 Phase 0–5 的 gate 直接覆盖 **4 行**（P0-5 / P0-8a / P0-8b / NEW-4），部分覆盖 4 行，
+被动观察 2 行，**完全在流程外 7 行**（其中 P2-9 是隐性前置、最危险）。流程外的行**不会因为 first-call
+跑通而解除**，需要在现场计划里给它们独立时段，并在出发前补齐载体。
+
+**执行方式现状**：诊断序列只能在 GUI「调试维护 → 调试序列」**单选逐条跑**（`POST /diagnostic-sequences/{key}/run`），
+每次落 `DiagnosticRun`（参数 / 成败 / 仪器原始回复 / 耗时 / 日志路径，P2-28）；**没有批量或清单式执行**。
+blocker 的"解除"没有自动机制 —— gate 过了、`DiagnosticRun` 有证据、人把结论抄回本表。
+
+**由此登记两条候选（顶部「后续开发候选」第 9、10 条）**：
+- **候选 9 [P1 候选，出发前硬门槛]** 补齐无载体 blocker 的诊断序列：`emcenter_switch_health`（P2-9，只读握手 + 槽位/状态回读，
+  命令按 [`2026-06-04-emcenter-switch-protocol.md`](site-debug/2026-06-04-emcenter-switch-protocol.md) 有出处的裸命令 + CR）、
+  `propsim_f64_health` 扩 per-port 电平窗口（NEW-1）、`uxm_offset_to_carrier_probe` 剧本（NEW-3，下发 + 回读 + attach 观察）、
+  F64 序列末尾人工确认步（NEW-2）。约束照旧：只放手册有据 + 生产驱动在用的命令，F64 禁盲试，先查 NotebookLM。
+- **候选 10 [P2 候选]** 现场清单跑批：按 Phase 勾选多条序列顺序执行、逐条落 `DiagnosticRun`、出一张 go/no-go 汇总
+  （后端批量 runner + 面板多选 + 汇总视图）。前提是候选 9 先落地——没有载体的行，批量也批不到。
 
 **P1-45 triage 结论**：13 条未完成/现场半/HOLD 行中，2 条已有合规载体，7 条只有
 部分载体，4 条没有合规载体，即已有 **9 条可复跑承载路径**；这只是入口/路径存在，

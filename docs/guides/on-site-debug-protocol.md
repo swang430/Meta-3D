@@ -81,6 +81,11 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 
 ## 3. 现场分阶段执行（Phase-Gated Execution）
 
+> ⚠️ **本节只覆盖 first-call 主线**（2026-08-23 对账）：Blocked 表 14 行里 Phase 0–5 的 gate 直接覆盖 4 行，
+> 7 行完全在流程外（P2-9 EMCenter 还是 Phase 3 的隐性前置）。逐行对照与各自的现场验法见
+> [`roadmap-first-call.md` 「Blocked on hardware」区的 2026-08-23 覆盖矩阵](../roadmap-first-call.md#-blocked-on-hardware-on-site-queue--p0-优先)。
+> 流程外的行要在现场计划里给独立时段，出发前补齐载体（候选 9）。
+
 每个 Phase 末尾一个 **go/no-go gate**。**gate 不过不进下一阶段**。gate 标准直接取自
 roadmap 对应 P0 项的 acceptance criteria。
 
