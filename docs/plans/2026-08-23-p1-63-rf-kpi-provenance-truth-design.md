@@ -89,3 +89,12 @@ MEASURE 写入一个版本化、服务端生成的 `rf_kpi_trust` 快照。最�
 4. mock/simulated 数值：可供诊断观察，但正式报告/历史为 N/A/UNKNOWN。
 5. 旧、缺失或畸形 `rf_kpi_trust`：详情/下载不放行旧 PASS，必须安全重建或保持 UNKNOWN。
 6. P1-64 在 roadmap 有独立占位，P1-63 不修改静区判据。
+
+## 当前 HEAD 验证事实
+
+- P1-63 + P1-54 + UXM KPI + 报告兼容 + P1-61 + 完整规则门：**193 passed**。
+- 全后端（从 `api-service/` 正确工作目录运行）：**4329 passed / 5 skipped**。
+- GUI 本片契约：**3 passed**；production build 通过。
+- `compileall`、单一 Alembic head `b6d8f0a2c4e6`、`git diff --check` 全部通过。
+- 全量前端直接 Node 测试仍有两条既有的 extensionless import 解析失败；本片新增契约与生产
+  TypeScript/Vite 构建均通过，未以测试问题放宽产品门。

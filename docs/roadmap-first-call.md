@@ -25,6 +25,10 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 且整条执行 provenance 为真实的 RSRP/SINR/RI 进入 ANALYSIS、报告、历史与 verdict；诊断/模拟
 执行仍可完成并生成诊断报告，但正式结论保持 UNKNOWN/N/A。设计与证据见
 [`P1-63 设计`](plans/2026-08-23-p1-63-rf-kpi-provenance-truth-design.md)。
+实现已按 TDD 完成：MEASURE 不再合成正式 RSRP/SINR，也不再把默认 RI 当样本；ANALYSIS、
+报告、详情/下载、执行历史与 GUI 统一消费版本化逐指标白名单。当前验证为相关链与完整规则门
+**193 passed**、全后端 **4329 passed / 5 skipped**、GUI 契约 **3 passed** 与 production build，
+compileall、单一 Alembic head、diff-check 均通过；当前进入 fresh 内审，尚未合并。
 
 **下一顺位 = P1-64「静区纹波无真实测量证据不得显示预检通过」**。当前无 ProbePattern 时的
 0.7 dB 兜底会形成 `quiet_zone_pass=true`，并被 ANALYSIS、报告与 GUI 解释为正式通过。P1-64
@@ -244,7 +248,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P1-60** | 最近一次手工执行的校准、信道与时间真值对齐 | ✅ PR #371；R4 覆盖最终 HEAD 无 P1；merge `ebccb1e` |
 | **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | ✅ PR #372 / merge `425e389`；Codex R4 覆盖最终 HEAD 且无重大问题 |
 | **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ✅ PR #373；R3 覆盖最终 HEAD 无 P1；merge `6b2b064` |
-| **P1-63** | 正式 RSRP/SINR/RI 必须具有逐指标真实来源证据，禁止合成值/默认值进入判决 | 🔄 Current Focus；设计已批准，按 TDD 开发 |
+| **P1-63** | 正式 RSRP/SINR/RI 必须具有逐指标真实来源证据，禁止合成值/默认值进入判决 | 🔄 Current Focus；TDD 与全量回归完成，fresh 内审中 |
 | **P1-64** | 无真实静区纹波证据时不得显示预检通过或把 0.7 dB 兜底叙述为实测 | ⏭ P1-63 合并后独立实施；已占位 |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
