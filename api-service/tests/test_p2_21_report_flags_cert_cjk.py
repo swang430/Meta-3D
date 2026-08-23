@@ -12,6 +12,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.pdf_generator import CJK_FONT, PDFGenerator
 from app.services.pdf_certificate import PDFCertificateGenerator
 
@@ -76,6 +77,12 @@ _VERIFIED_PHASES = {
         "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [{
             "azimuth_deg": 0.0,
+            "rsrp_dbm": -80.0,
+            "rsrp_valid": True,
+            "sinr_db": 20.0,
+            "sinr_valid": True,
+            "rank_indicator": 2.0,
+            "rank_indicator_valid": True,
             "throughput_mbps": 1.0,
             "throughput_valid": True,
             "throughput_scope": "pcell",
@@ -83,6 +90,12 @@ _VERIFIED_PHASES = {
     },
     "analysis": {"verdict": "PASS"},
 }
+_VERIFIED_PHASES["measure"]["rf_kpi_trust"] = build_rf_kpi_trust(
+    requested_azimuths=[0.0],
+    azimuth_results=_VERIFIED_PHASES["measure"]["azimuth_results"],
+    source="explicit_real",
+)
+_VERIFIED_PHASES["measure"]["formal_rf_kpi_verified"] = True
 
 
 def _step(content, phase):

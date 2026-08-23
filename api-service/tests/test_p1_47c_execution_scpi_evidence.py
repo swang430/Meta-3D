@@ -33,6 +33,7 @@ from app.services.execution_scpi_evidence import (
     register_required_scpi_evidence,
 )
 from app.services.report_data_collector import ReportDataCollector
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 
 
 engine = create_engine(
@@ -856,6 +857,12 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
                 "azimuth_results": [
                     {
                         "azimuth_deg": 0.0,
+                        "rsrp_dbm": -80.0,
+                        "rsrp_valid": True,
+                        "sinr_db": 20.0,
+                        "sinr_valid": True,
+                        "rank_indicator": 2.0,
+                        "rank_indicator_valid": True,
                         "throughput_mbps": 123.0,
                         "throughput_valid": True,
                         "throughput_scope": "pcell",
@@ -865,6 +872,13 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
             "analysis": {"verdict": "PASS"},
         }
     }
+    measure = execution.measurements["phases"]["measure"]
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=measure["azimuth_results"],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     report = TestReport(
         title="MIMO OTA Test Report — projected",
         report_type="single_execution",

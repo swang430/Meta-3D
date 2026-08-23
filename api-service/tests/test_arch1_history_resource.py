@@ -38,6 +38,7 @@ from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.lab_profile import LabProfile
 from app.models.report import TestReport
 from app.models.test_plan import TestCase, TestExecution, TestPlanExecution
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 
 engine = create_engine(
     "sqlite://",
@@ -252,11 +253,25 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
             "throughput_scope": "pcell",
             "carrier_aggregation": {"num_component_carriers": 1},
             "azimuth_results": [{
+                "azimuth_deg": 0.0,
+                "rsrp_dbm": -80.0,
+                "rsrp_valid": True,
+                "sinr_db": 20.0,
+                "sinr_valid": True,
+                "rank_indicator": 2.0,
+                "rank_indicator_valid": True,
                 "throughput_valid": True,
                 "throughput_scope": "pcell",
             }],
         }}
     }
+    fresh_measure = fresh.measurements["phases"]["measure"]
+    fresh_measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=fresh_measure["azimuth_results"],
+        source="explicit_real",
+    )
+    fresh_measure["formal_rf_kpi_verified"] = True
     malformed = _case_runner_execution(db, snapshot)
     malformed.validation_pass = True
     malformed.measurements = {
