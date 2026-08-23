@@ -860,6 +860,21 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        requested_types = set()
+        if session_id is not None:
+            session = self.db.query(ChannelCalibrationSession).filter(
+                ChannelCalibrationSession.id == session_id
+            ).first()
+            configuration = (
+                session.configuration
+                if session is not None and isinstance(session.configuration, dict)
+                else {}
+            )
+            configured_types = configuration.get("requested_calibration_types")
+            if isinstance(configured_types, list):
+                requested_types = {
+                    value for value in configured_types if isinstance(value, str)
+                }
 
         # Temporal calibrations
         if not calibration_type or calibration_type == 'temporal':
@@ -970,6 +985,16 @@ class CalibrationReportGenerator:
                 # provenance snapshot. Keep it visible for audit only and do
                 # not add it to the formal report denominator.
                 qz_data.append(sanitize_channel_qz_report(cal))
+            if "quiet_zone" in requested_types and not qz_data:
+                qz_data.append({
+                    "id": None,
+                    "session_id": str(session_id),
+                    "validation_pass": None,
+                    "formal_status": "UNKNOWN",
+                    "reason": "requested_without_explicit_real_evidence",
+                    "amplitude_uniformity_db": None,
+                    "phase_uniformity_deg": None,
+                })
             data['channel_calibration']['quiet_zone'] = qz_data
 
         # EIS validations
@@ -998,13 +1023,21 @@ class CalibrationReportGenerator:
             data['channel_calibration']['eis'] = eis_data
 
         # Summary
-        data['execution_summary'] = {
-            'total_executions': total,
+        unverified_requested = 1 if "quiet_zone" in requested_types else 0
+        summary = {
+            'total_executions': total + unverified_requested,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else None,
+            'pass_rate': (
+                None
+                if unverified_requested or total == 0
+                else passed / total * 100
+            ),
         }
+        if unverified_requested:
+            summary['undetermined'] = unverified_requested
+        data['execution_summary'] = summary
 
         return data
 
@@ -1016,18 +1049,30 @@ class CalibrationReportGenerator:
         total = probe_summary.get('total_executions', 0) + channel_summary.get('total_executions', 0)
         passed = probe_summary.get('passed', 0) + channel_summary.get('passed', 0)
         failed = probe_summary.get('failed', 0) + channel_summary.get('failed', 0)
+        pending = probe_summary.get('pending', 0) + channel_summary.get('pending', 0)
+        undetermined = (
+            probe_summary.get('undetermined', 0)
+            + channel_summary.get('undetermined', 0)
+        )
 
-        return {
+        summary = {
             'total_executions': total,
             'passed': passed,
             'failed': failed,
-            'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else None,
+            'pending': pending,
+            'pass_rate': (
+                None
+                if total == 0 or undetermined
+                else passed / total * 100
+            ),
             'probe_total': probe_summary.get('total_executions', 0),
             'probe_pass_rate': probe_summary.get('pass_rate', 0),
             'channel_total': channel_summary.get('total_executions', 0),
-            'channel_pass_rate': channel_summary.get('pass_rate', 0),
+            'channel_pass_rate': channel_summary.get('pass_rate'),
         }
+        if undetermined:
+            summary['undetermined'] = undetermined
+        return summary
 
     def _create_calibration_template(self) -> Dict[str, Any]:
         """Create template configuration for comprehensive calibration report"""

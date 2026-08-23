@@ -636,6 +636,36 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     )
     assert completed.overall_pass is None
 
+    from app.services.calibration_report_generator import CalibrationReportGenerator
+    generator = CalibrationReportGenerator(db)
+    channel_data = generator._collect_channel_data(session_id=session.id)
+    assert channel_data["execution_summary"] == {
+        "total_executions": 2,
+        "passed": 1,
+        "failed": 0,
+        "pending": 0,
+        "undetermined": 1,
+        "pass_rate": None,
+    }
+    assert channel_data["channel_calibration"]["quiet_zone"] == [{
+        "id": None,
+        "session_id": str(session.id),
+        "validation_pass": None,
+        "formal_status": "UNKNOWN",
+        "reason": "requested_without_explicit_real_evidence",
+        "amplitude_uniformity_db": None,
+        "phase_uniformity_deg": None,
+    }]
+
+    comprehensive = generator._collect_report_data(
+        session_id=session.id,
+        chamber_id=None,
+        include_probe=False,
+        include_channel=True,
+    )
+    assert comprehensive["execution_summary"]["pass_rate"] is None
+    assert comprehensive["execution_summary"]["undetermined"] == 1
+
 
 def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):
     from app.api.calibration_report import _has_provenance_aware_calibration_manifest
