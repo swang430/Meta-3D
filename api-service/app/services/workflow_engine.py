@@ -251,7 +251,9 @@ class WorkflowParser:
             version=data.get("version", "1.0"),
             description=data.get("description"),
             settings=data.get("settings", {}),
-            parameters=data.get("parameters", {}),
+            # 显式 `parameters: null` 归一成 {}：下游 dict()/** 展开有 3 处读方，
+            # 在源头归一比逐处兜底可靠（Gemini #375 R1 + 内审 F1）。
+            parameters=data.get("parameters") or {},
             steps=steps,
         )
 
@@ -279,7 +281,7 @@ class WorkflowParser:
             id=data["id"],
             type=step_type,
             calibration_type=data.get("calibration_type"),
-            parameters=data.get("parameters", {}),
+            parameters=data.get("parameters") or {},  # 同上：步骤级显式 null 归一
             depends_on=data.get("depends_on", []),
             parallel_with=data.get("parallel_with", []),
             on_failure=on_failure,
@@ -363,9 +365,7 @@ class WorkflowExecutor:
                 if step.type == StepType.CHANNEL_CALIBRATION
                 and step.calibration_type is not None
             ))
-            # Gemini #375 R1：YAML 显式 `parameters: null` 时解析器给 None，
-            # dict(None) 会 TypeError —— 此前是直接透传，兜成空对象不改语义。
-            session_configuration = dict(execution.workflow.parameters or {})
+            session_configuration = dict(execution.workflow.parameters)
             session_configuration["requested_calibration_types"] = (
                 requested_calibration_types
             )

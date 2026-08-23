@@ -495,11 +495,15 @@ steps:
         assert result.validation_pass is not None
 
     def test_session_tolerates_null_workflow_parameters(self, db_session):
-        """Gemini #375 R1 medium：YAML 显式写 `parameters: null` 时解析器给出 None，
-        `dict(None)` 会 TypeError —— 本片引入的回归（此前是把 None 直接透传）。
-        会话必须照常建立，配置只含 requested_calibration_types。
+        """Gemini #375 R1 medium + 内审 F1：YAML 显式 `parameters: null`。
 
-        变异：去掉 `or {}` 兜底 → 本门以 TypeError 红。
+        同一个 None 在引擎里有 3 个读方（建会话的 dict()、两处 `{**parameters}` 展开）；
+        只在建会话处兜底会让"会话建了、步骤一步跑不动"。修法换源：解析器把显式 null
+        归一成 {}（工作流级与步骤级），三个读方一次全覆盖。
+        断言两层：① 解析器契约 —— 显式 null 给 {}；② 步骤真的进了 ChannelCalibrationService，
+        拿到本片的"未判定"语义而不是 Python 类型错误。
+
+        变异：解析器归一去掉 → ① 红；只恢复建会话处的 `or {}` 而不改解析器 → ② 红。
         """
         workflow = WorkflowParser.parse_string("""
 name: "Null Parameters Test"
@@ -512,7 +516,8 @@ steps:
     type: channel_calibration
     calibration_type: quiet_zone
 """)
-        assert workflow.parameters is None, "前提自检：解析器对显式 null 给出 None"
+        assert workflow.parameters == {}, "解析器契约：显式 null 归一成 {}"
+        assert workflow.steps[0].parameters == {}, "步骤级同样归一"
         executor = WorkflowExecutor(db_session)
         execution = executor.run(executor.create_execution(workflow))
 
@@ -522,6 +527,11 @@ steps:
             ChannelCalibrationSession.id == UUID(execution.session_id)
         ).one()
         assert session.configuration == {"requested_calibration_types": ["quiet_zone"]}
+        # ② 步骤进了服务、拿到本片语义（而不是在 {**None} 上炸成 Python 类型错误）
+        step = execution.step_results["quiet_zone"]
+        err = step.error_message or ""
+        assert "NoneType" not in err and "not a mapping" not in err, err
+        assert session.overall_pass is None
 
     def test_session_persists_authoritative_requested_calibration_types(self, db_session):
         workflow = WorkflowParser.parse_string("""
