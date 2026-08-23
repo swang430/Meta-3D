@@ -680,6 +680,22 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     assert comprehensive["execution_summary"]["undetermined"] == 1
 
 
+@pytest.mark.parametrize("malformed", ["null", "[]", '["schema_version", 2]', '"v2"', "3"])
+def test_calibration_report_manifest_non_object_is_not_formal(tmp_path, malformed):
+    """Gemini #375 R1 medium：manifest 文件是合法 JSON 但不是对象（null / list / 标量）时，
+    可信门必须 fail-closed 返回 False，而不是在 `.get` 上抛 AttributeError 变 500。
+
+    变异：去掉 `isinstance(manifest, dict)` 前置 → 本门以 AttributeError 红。
+    """
+    from app.api.calibration_report import _has_provenance_aware_calibration_manifest
+
+    report_path = tmp_path / "channel_calibration_current.pdf"
+    report_path.write_bytes(b"pdf")
+    Path(f"{report_path}.provenance.json").write_text(malformed, encoding="utf-8")
+
+    assert _has_provenance_aware_calibration_manifest(str(report_path)) is False
+
+
 def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):
     from app.api.calibration_report import _has_provenance_aware_calibration_manifest
     from app.services.calibration_report_generator import _write_report_provenance_manifest

@@ -84,6 +84,10 @@ def _has_provenance_aware_calibration_manifest(report_path: str) -> bool:
             manifest = json.load(handle)
     except (OSError, ValueError, TypeError):
         return False
+    # Gemini #375 R1：合法 JSON 但不是对象（null / list / 标量）同样 fail-closed，
+    # 不能在 .get 上抛 AttributeError 把可信门变成 500。
+    if not isinstance(manifest, dict):
+        return False
     return (
         manifest.get("schema_version") == 2
         and manifest.get("path_loss_provenance_disclosed") is True

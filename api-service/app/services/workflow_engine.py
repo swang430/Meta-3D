@@ -363,7 +363,9 @@ class WorkflowExecutor:
                 if step.type == StepType.CHANNEL_CALIBRATION
                 and step.calibration_type is not None
             ))
-            session_configuration = dict(execution.workflow.parameters)
+            # Gemini #375 R1：YAML 显式 `parameters: null` 时解析器给 None，
+            # dict(None) 会 TypeError —— 此前是直接透传，兜成空对象不改语义。
+            session_configuration = dict(execution.workflow.parameters or {})
             session_configuration["requested_calibration_types"] = (
                 requested_calibration_types
             )

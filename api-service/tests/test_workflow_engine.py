@@ -494,6 +494,35 @@ steps:
         assert result.calibration_id is not None
         assert result.validation_pass is not None
 
+    def test_session_tolerates_null_workflow_parameters(self, db_session):
+        """Gemini #375 R1 medium：YAML 显式写 `parameters: null` 时解析器给出 None，
+        `dict(None)` 会 TypeError —— 本片引入的回归（此前是把 None 直接透传）。
+        会话必须照常建立，配置只含 requested_calibration_types。
+
+        变异：去掉 `or {}` 兜底 → 本门以 TypeError 红。
+        """
+        workflow = WorkflowParser.parse_string("""
+name: "Null Parameters Test"
+parameters: null
+settings:
+  retry_count: 0
+  retry_delay_seconds: 0
+steps:
+  - id: quiet_zone
+    type: channel_calibration
+    calibration_type: quiet_zone
+""")
+        assert workflow.parameters is None, "前提自检：解析器对显式 null 给出 None"
+        executor = WorkflowExecutor(db_session)
+        execution = executor.run(executor.create_execution(workflow))
+
+        from uuid import UUID
+        from app.models.channel_calibration import ChannelCalibrationSession
+        session = db_session.query(ChannelCalibrationSession).filter(
+            ChannelCalibrationSession.id == UUID(execution.session_id)
+        ).one()
+        assert session.configuration == {"requested_calibration_types": ["quiet_zone"]}
+
     def test_session_persists_authoritative_requested_calibration_types(self, db_session):
         workflow = WorkflowParser.parse_string("""
 name: "Quiet Zone Scope Test"
