@@ -693,7 +693,7 @@ class ChannelCalibrationService:
         passed_calibrations: int,
         failed_calibrations: int
     ) -> Optional[ChannelCalibrationSession]:
-        """完成校准会话"""
+        """完成校准会话，并从服务端记录重算正式结果。"""
         session = self.db.query(ChannelCalibrationSession).filter(
             ChannelCalibrationSession.id == session_id
         ).first()
@@ -701,16 +701,48 @@ class ChannelCalibrationService:
         if not session:
             return None
 
+        formal_verdicts: List[bool] = []
+        for model in (
+            TemporalChannelCalibration,
+            DopplerCalibration,
+            SpatialCorrelationCalibration,
+            AngularSpreadCalibration,
+            EISValidation,
+        ):
+            rows = self.db.query(model).filter(model.session_id == session_id).all()
+            formal_verdicts.extend(
+                row.validation_pass
+                for row in rows
+                if row.validation_pass is True or row.validation_pass is False
+            )
+
+        # Existing quiet-zone rows have no auditable explicit-real provenance.
+        # Their presence makes the session verdict undetermined; client-supplied
+        # counters/verdicts cannot promote them to PASS.
+        has_unverified_quiet_zone = (
+            self.db.query(ChannelQuietZoneCalibration)
+            .filter(ChannelQuietZoneCalibration.session_id == session_id)
+            .first()
+            is not None
+        )
+        formal_total = len(formal_verdicts)
+        formal_passed = sum(verdict is True for verdict in formal_verdicts)
+        formal_failed = sum(verdict is False for verdict in formal_verdicts)
+
         session.status = "completed"
         session.progress_percent = 100
         session.completed_at = datetime.utcnow()
         session.duration_minutes = (
             (session.completed_at - session.started_at).total_seconds() / 60
         )
-        session.overall_pass = overall_pass
-        session.total_calibrations = total_calibrations
-        session.passed_calibrations = passed_calibrations
-        session.failed_calibrations = failed_calibrations
+        session.overall_pass = (
+            None
+            if has_unverified_quiet_zone or formal_total == 0
+            else formal_failed == 0
+        )
+        session.total_calibrations = formal_total
+        session.passed_calibrations = formal_passed
+        session.failed_calibrations = formal_failed
 
         self.db.commit()
         self.db.refresh(session)

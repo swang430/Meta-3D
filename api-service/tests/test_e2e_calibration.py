@@ -457,7 +457,9 @@ steps:
 
         assert updated_session.status == "completed"
         assert updated_session.total_calibrations == 3
-        assert updated_session.overall_pass is True
+        assert updated_session.passed_calibrations == 2
+        assert updated_session.failed_calibrations == 1
+        assert updated_session.overall_pass is False
 
     def test_e2e_list_calibrations(self, db_session):
         """

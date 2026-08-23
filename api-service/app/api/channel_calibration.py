@@ -604,7 +604,7 @@ async def get_channel_calibration_status(
     }
 
     # 计算总体状态
-    statuses = [temporal_info["status"]]
+    statuses = [temporal_info["status"]] + [default_info["status"]] * 5
     if "expired" in statuses:
         overall_status = "expired"
     elif "expiring_soon" in statuses:

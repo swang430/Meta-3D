@@ -1003,7 +1003,7 @@ class CalibrationReportGenerator:
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
         }
 
         return data
@@ -1022,7 +1022,7 @@ class CalibrationReportGenerator:
             'passed': passed,
             'failed': failed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
             'probe_total': probe_summary.get('total_executions', 0),
             'probe_pass_rate': probe_summary.get('pass_rate', 0),
             'channel_total': channel_summary.get('total_executions', 0),

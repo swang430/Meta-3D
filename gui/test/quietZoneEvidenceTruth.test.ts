@@ -178,6 +178,14 @@ test('legacy quiet-zone calibration cannot fall back to mock PASS or green resul
   assert.match(wizardSource, /静区校准未判定/)
   assert.match(wizardSource, /UNKNOWN/)
   assert.match(wizardSource, /无权威多点场扫描证据/)
+  assert.match(
+    wizardSource,
+    /onChange=\{\(value\) => \{[\s\S]*?setResults\(null\)[\s\S]*?setExecutionProgress\(0\)[\s\S]*?\}\}/,
+  )
+  assert.match(
+    wizardSource,
+    /\{results && !calibrationType\.startsWith\('quiet_zone_'\) && \(/,
+  )
 })
 
 
@@ -199,4 +207,20 @@ test('legacy channel quiet-zone history is UNKNOWN and cannot render green or re
     pageSource.match(/case 'quiet_zone':[\s\S]*?break/)?.[0] ?? '',
     /startQuietZoneCalibration/,
   )
+})
+
+
+test('system calibration dependency graph cannot publish a static green quiet-zone node', () => {
+  const graphSource = readFileSync(
+    new URL('../src/components/SystemCalibration/CalibrationDependencyGraph.tsx', import.meta.url),
+    'utf8',
+  )
+  const quietZoneNode = graphSource.match(
+    /\{\s*id: 'quiet_zone',[\s\S]*?\n\s*\},/,
+  )?.[0] ?? ''
+
+  assert.match(quietZoneNode, /status: 'unknown'/)
+  assert.doesNotMatch(quietZoneNode, /status: 'valid'|validUntil:/)
+  assert.match(graphSource, /unknown: \{ color: 'yellow',[\s\S]*?label: 'UNKNOWN \/ N\/A'/)
+  assert.match(graphSource, /const unknownCount = calibrationNodes\.filter/)
 })

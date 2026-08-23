@@ -457,13 +457,83 @@ def test_channel_report_excludes_legacy_qz_from_formal_summary():
         "passed": 0,
         "failed": 0,
         "pending": 0,
-        "pass_rate": 0,
+        "pass_rate": None,
     }
     row = data["channel_calibration"]["quiet_zone"][0]
     assert row["validation_pass"] is None
     assert row["formal_status"] == "UNKNOWN"
     assert row["amplitude_uniformity_db"] is None
     assert row["phase_uniformity_deg"] is None
+
+
+def test_comprehensive_summary_keeps_zero_formal_denominator_undetermined():
+    from app.services.calibration_report_generator import CalibrationReportGenerator
+
+    generator = CalibrationReportGenerator(SimpleNamespace())
+    summary = generator._calculate_overall_summary({
+        "probe_summary": {"total_executions": 0, "passed": 0, "failed": 0},
+        "channel_summary": {
+            "total_executions": 0,
+            "passed": 0,
+            "failed": 0,
+            "pass_rate": None,
+        },
+    })
+
+    assert summary["pass_rate"] is None
+    assert summary["channel_pass_rate"] is None
+
+
+@pytest.mark.asyncio
+async def test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown(monkeypatch):
+    from app.api import channel_calibration as api
+
+    temporal = SimpleNamespace(
+        calibrated_at=datetime(2026, 8, 23),
+        valid_until=datetime(2026, 10, 23),
+    )
+    service = SimpleNamespace(
+        get_latest_temporal_calibration=lambda: temporal,
+        list_calibrations=lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(api, "ChannelCalibrationService", lambda _db: service)
+
+    result = await api.get_channel_calibration_status(db=SimpleNamespace())
+
+    assert result.temporal_status == "valid"
+    assert result.quiet_zone_status == "unknown"
+    assert result.overall_status == "unknown"
+
+
+def test_empty_calibration_session_cannot_self_attest_pass():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.database import Base
+    from app.services.channel_calibration_service import ChannelCalibrationService
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    service = ChannelCalibrationService(db)
+    session = service.create_session(name="no authoritative rows")
+
+    completed = service.complete_session(
+        session_id=session.id,
+        overall_pass=True,
+        total_calibrations=9,
+        passed_calibrations=9,
+        failed_calibrations=0,
+    )
+
+    assert completed.total_calibrations == 0
+    assert completed.passed_calibrations == 0
+    assert completed.failed_calibrations == 0
+    assert completed.overall_pass is None
 
 
 def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):

@@ -279,6 +279,45 @@ class TestPDFGeneratorCalibrationSections:
         elements = generator._generate_calibration_channel_section(data)
         assert len(elements) > 0
 
+    def test_quiet_zone_unknown_renders_unknown_without_engineering_values(self):
+        generator = PDFGenerator()
+        data = {
+            'channel_calibration': {
+                'quiet_zone': [
+                    {
+                        'quiet_zone_shape': 'sphere',
+                        'quiet_zone_diameter_m': 1.0,
+                        'amplitude_uniformity_db': None,
+                        'phase_uniformity_deg': None,
+                        'validation_pass': None,
+                    },
+                ],
+            },
+            'channel_summary': {
+                'total_executions': 0,
+                'passed': 0,
+                'failed': 0,
+                'pass_rate': None,
+            },
+        }
+
+        elements = generator._generate_calibration_channel_section(data)
+        table = next(
+            element for element in elements
+            if hasattr(element, '_cellvalues')
+            and element._cellvalues[0][0] == 'Shape'
+        )
+        row = table._cellvalues[1]
+
+        assert row[2:4] == ['N/A', 'N/A']
+        assert row[4].getPlainText() == 'UNKNOWN'
+        summary_table = next(
+            element for element in elements
+            if hasattr(element, '_cellvalues')
+            and element._cellvalues[0] == ['Metric', 'Value']
+        )
+        assert summary_table._cellvalues[-1] == ['Pass Rate', 'N/A']
+
     def test_generate_calibration_channel_section_empty(self):
         """Test generating channel calibration section with no data"""
         generator = PDFGenerator()

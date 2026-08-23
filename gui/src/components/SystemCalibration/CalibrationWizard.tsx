@@ -364,7 +364,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               label="校准类型"
               placeholder="选择校准类型"
               value={calibrationType}
-              onChange={(value) => setCalibrationType(value || 'trp')}
+              onChange={(value) => {
+                setCalibrationType(value || 'trp');
+                setResults(null);
+                setExecutionProgress(0);
+              }}
               data={[
                 {
                   group: '系统验证测试 (System Validation)', items: [
@@ -657,7 +661,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               </Stack>
             )}
 
-            {results && (
+            {results && !calibrationType.startsWith('quiet_zone_') && (
               <Stack gap="md">
                 <Alert
                   icon={results.validation_pass || results.overall_pass ? <IconCheck size={16} /> : <IconAlertCircle size={16} />}
