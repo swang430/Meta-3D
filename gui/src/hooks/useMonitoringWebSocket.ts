@@ -31,7 +31,6 @@ export interface MonitoringMetricData {
 export interface MonitoringMetrics {
   throughput: MonitoringMetricData
   snr: MonitoringMetricData
-  quiet_zone_uniformity: MonitoringMetricData
   eirp: MonitoringMetricData
   temperature: MonitoringMetricData
 }

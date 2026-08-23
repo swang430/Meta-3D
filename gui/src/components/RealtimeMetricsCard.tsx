@@ -92,6 +92,21 @@ const MetricCard = memo(({ label, data, decimals = 2 }: MetricCardProps) => {
 
 MetricCard.displayName = 'MetricCard'
 
+export const UnavailableMetricCard = memo(({ label }: { label: string }) => (
+  <Card withBorder padding="sm" radius="sm">
+    <Stack gap="xs">
+      <Group justify="space-between">
+        <Text size="sm" c="dimmed">{label}</Text>
+        <Badge size="xs" color="gray">UNKNOWN</Badge>
+      </Group>
+      <Text size="xl" fw={700}>N/A</Text>
+      <Text size="xs" c="dimmed">无权威多点场扫描证据</Text>
+    </Stack>
+  </Card>
+))
+
+UnavailableMetricCard.displayName = 'UnavailableMetricCard'
+
 export function RealtimeMetricsCard({ debug = false, throttleMs = 100 }: RealtimeMetricsCardProps) {
   const { metrics, isConnected, error, reconnect } = useMonitoringWebSocket({
     debug: debug,
@@ -139,11 +154,7 @@ export function RealtimeMetricsCard({ debug = false, throttleMs = 100 }: Realtim
           <SimpleGrid cols={2} spacing="md">
             <MetricCard label={METRIC_LABELS.throughput} data={metrics.throughput} decimals={2} />
             <MetricCard label={METRIC_LABELS.snr} data={metrics.snr} decimals={2} />
-            <MetricCard
-              label={METRIC_LABELS.quiet_zone_uniformity}
-              data={metrics.quiet_zone_uniformity}
-              decimals={3}
-            />
+            <UnavailableMetricCard label={METRIC_LABELS.quiet_zone_uniformity} />
             <MetricCard label={METRIC_LABELS.eirp} data={metrics.eirp} decimals={2} />
             <MetricCard label={METRIC_LABELS.temperature} data={metrics.temperature} decimals={1} />
           </SimpleGrid>

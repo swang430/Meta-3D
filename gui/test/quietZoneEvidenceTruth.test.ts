@@ -130,3 +130,31 @@ test('commissioning phase consumes the shared tri-state presenter', () => {
   assert.doesNotMatch(source, /data\.overall_pass \? "预检通过" : "预检失败"/)
   assert.doesNotMatch(source, /±\{data\.quiet_zone_ripple_db\} dB/)
 })
+
+
+test('live monitoring never presents a derived quiet-zone value or status', () => {
+  const realtimeSource = readFileSync(
+    new URL('../src/components/RealtimeMetricsCard.tsx', import.meta.url),
+    'utf8',
+  )
+  const executionSource = readFileSync(
+    new URL('../src/features/Monitoring/components/ExecutionMetricsCard.tsx', import.meta.url),
+    'utf8',
+  )
+  const hookSource = readFileSync(
+    new URL('../src/hooks/useMonitoringWebSocket.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.doesNotMatch(realtimeSource, /metrics\.quiet_zone_uniformity/)
+  assert.doesNotMatch(executionSource, /metrics\.quiet_zone_uniformity/)
+  assert.doesNotMatch(hookSource, /quiet_zone_uniformity:/)
+  assert.match(realtimeSource, /静区均匀度/)
+  assert.match(realtimeSource, /UNKNOWN/)
+  assert.match(realtimeSource, />N\/A</)
+  assert.match(executionSource, /静区均匀度/)
+  assert.match(
+    executionSource,
+    /<UnavailableMetricCard label=\{METRIC_LABELS\.quiet_zone_uniformity\} \/>/,
+  )
+})

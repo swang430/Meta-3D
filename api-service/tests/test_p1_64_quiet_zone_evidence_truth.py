@@ -284,6 +284,26 @@ def test_commissioning_precheck_status_preserves_current_operational_failure():
     ) == "failed"
 
 
+def test_live_monitoring_does_not_derive_quiet_zone_from_path_loss():
+    from app.services.instrument_hal_service import InstrumentHALService
+
+    metrics = InstrumentHALService._build_monitoring_data(
+        object(),
+        {"path_loss_db": 80.0, "throughput_mbps": 350.0, "snr_db": 30.0},
+        None,
+        None,
+        "2026-08-23T00:00:00Z",
+    )
+
+    assert "quiet_zone_uniformity" not in metrics
+
+
+def test_monitoring_fallback_does_not_invent_quiet_zone_metric():
+    from app.api.monitoring import _generate_fallback_data
+
+    assert "quiet_zone_uniformity" not in _generate_fallback_data()
+
+
 def test_report_rebuild_does_not_repeat_legacy_quiet_zone_pass_claims():
     from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 

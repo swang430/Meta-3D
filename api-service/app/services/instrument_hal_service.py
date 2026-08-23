@@ -1185,7 +1185,6 @@ class InstrumentHALService:
         throughput = 0.0
         snr = 0.0
         eirp = 0.0
-        quiet_zone_uniformity = 0.0
         temperature = 23.0
 
         # Extract throughput from channel emulator
@@ -1199,14 +1198,6 @@ class InstrumentHALService:
             # EIRP approximation (power + antenna gain)
             # Assuming 3dBi antenna gain for now
             eirp = power_dbm + 3.0
-
-        # Calculate quiet zone uniformity (simplified)
-        # In real system, this would be calculated from multiple probe measurements
-        if channel_metrics:
-            path_loss = channel_metrics.get("path_loss_db", 80.0)
-            # Uniformity inversely related to path loss variation
-            # This is simplified; real calculation uses spatial correlation
-            quiet_zone_uniformity = max(0.5, 1.0 - (abs(path_loss - 80.0) / 100.0))
 
         # Temperature from base station (if available)
         if base_station_metrics:
@@ -1241,12 +1232,6 @@ class InstrumentHALService:
                 "unit": "dB",
                 "timestamp": timestamp,
                 "status": get_status(snr, 22, 18)
-            },
-            "quiet_zone_uniformity": {
-                "value": round(quiet_zone_uniformity, 3),
-                "unit": "dB",
-                "timestamp": timestamp,
-                "status": get_status(quiet_zone_uniformity, 0.7, 0.6)
             },
             "eirp": {
                 "value": round(eirp, 2),
