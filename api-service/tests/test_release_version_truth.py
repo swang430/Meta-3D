@@ -22,6 +22,24 @@ def test_app_version_cannot_be_overridden_by_environment(monkeypatch, poison):
     )
 
 
+@pytest.mark.parametrize("legacy_line", ["APP_VERSION=1.0.0", "APP_VERSION=9.9.9", "APP_VERSION="])
+def test_legacy_dotenv_app_version_is_ignored_not_fatal(tmp_path, monkeypatch, legacy_line):
+    """内审 F1（P1）：按旧 .env.example / README 配好的 .env 里残留 APP_VERSION，
+    ClassVar 后 BaseSettings(extra=forbid) 会抛 extra_forbidden —— API 起不来，
+    爆炸半径从"报假版本"升级成"进程拒绝启动"。必须忽略（可 warning），不能致命。
+
+    变异：去掉 before-validator 的弹键 → 本门以 ValidationError 红。
+    """
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"APP_NAME=Meta-3D OTA API\n{legacy_line}\nDEBUG=false\n", encoding="utf-8")
+
+    fresh = config_module.Settings(_env_file=str(env_file))  # 不得抛
+
+    assert fresh.app_version == "0.9.0"
+    assert fresh.debug is False, "同一份 .env 里的其它键必须照常生效"
+
+
 def test_app_version_is_single_sourced_in_config_module():
     # 三处版本字段（config / openapi / package.json）都对齐到同一个号
     import json

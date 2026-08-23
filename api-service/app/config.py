@@ -1,6 +1,11 @@
 """Application configuration"""
+import logging
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -12,6 +17,23 @@ class Settings(BaseSettings):
     # （2026-08-23 实测 .env 的 APP_VERSION=1.0.0 会静默覆盖，运行时报假版本）。
     # 阶段性 release（日常测试用）；1.0.0 留给 first-call 现场通过后。
     app_version: ClassVar[str] = "0.9.0"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_legacy_app_version_input(cls, data: Any) -> Any:
+        """旧 .env / README 里残留的 APP_VERSION 只忽略、不致命。
+
+        ClassVar 让它不再是字段，但 BaseSettings 默认 extra="forbid"，.env 里的旧键会
+        直接抛 extra_forbidden 让 API 起不来（内审 2026-08-23 抓出：爆炸半径从"报假
+        版本"升级成"进程拒绝启动"）。这里把该键弹掉并 warning 一句；其它键照常校验。
+        """
+        if isinstance(data, dict) and "app_version" in data:
+            data = {k: v for k, v in data.items() if k != "app_version"}
+            logger.warning(
+                "配置里的 APP_VERSION 已忽略：版本号是构建属性，唯一真值源 = app/config.py "
+                "(app_version=%s)；请从 .env 删除该行", cls.app_version,
+            )
+        return data
     debug: bool = True
 
     # Database
