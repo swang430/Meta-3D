@@ -124,6 +124,7 @@ class PrecheckExecutor(IStepExecutor):
                     # violations (即便 phase 已 fail)。对齐 section 6 正常失败路径:
                     # write_phase_result + commit, return 带 measurements/warnings。
                     # 保留 fail-fast (请求层数根本超声明时, 不必再查 QZ/cal)。
+                    result_payload["operational_ready"] = False
                     result_payload["overall_pass"] = False
                     result_payload["messages"] = messages
                     write_phase_result(
@@ -245,6 +246,7 @@ class PrecheckExecutor(IStepExecutor):
                     if not sim_id.consistent:
                         if config.precheck_strict_sim_identity:
                             # 早期 fail 持久化 phase result (同 dut_capability strict, Codex P2 #135)
+                            result_payload["operational_ready"] = False
                             result_payload["overall_pass"] = False
                             result_payload["messages"] = messages
                             write_phase_result(
