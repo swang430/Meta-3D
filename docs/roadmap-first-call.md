@@ -639,19 +639,19 @@ blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可�
 | P0-8a | 1.5 | ✅ gate 本身 | `propsim_f64_p08_gate` | 走 Phase 1.5 gate |
 | P0-8b | 4 | ✅ gate 第三条 | 同一 TestCase（衰落 / bypass 各测一次非 0% ACK） | 随 Phase 4 |
 | NEW-4 / P1-56 转台 | 1（回零）+ 4（4 方位） | ⚠️ gate 间接覆盖，**协议未点名序列** | `aerotech_positioner_motion_truth` | Phase 1 逐仪表握手时加跑该序列（协议速查表只写"转台回零"） |
-| P2-13 SIM | 4 | ⚠️ 部分，载体补全（P1-65） | precheck + `uxm_sim_identity_truth` | Phase 4 attach 记 IMSI 时对照 |
+| P2-13 SIM | 4 | ⚠️ 部分，载体补全（P1-65） | precheck + `uxm_sim_identity_truth` | Phase 4 attach 后跑 `uxm_sim_identity_truth`（`UEReported:IMSI?` 与 SIMProfile 对账，脱敏） |
 | P2-12 标准信道文件 | 1.5 | ⚠️ 部分 | p08_gate 按 SCD 实测频率 load `.smu`，但不证事项级端到端 | 随 Phase 1.5 顺带记，不算关闭 |
 | P1-4 重复性 | 3 / 5 | ⚠️ 部分 | Phase 3 只重复路损 ±0.5 dB；Phase 5 只跑 1 次 first-call | 要关闭需 Phase 5 **跑两次**并对比（报告对比契约仍是 plan 级，缺口在表内） |
-| P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 → 主动载体（P1-65） | `connection_idle_hold_probe` | Phase 1 若出现 idle-close 只记现象喂 P2-4，不当 driver bug 修 |
-| P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 → C 类载体（P1-65） | `connection_idle_hold_probe` | 同上 |
-| **P2-9 EMCenter** | **无** | ⚠️ **隐性前置，载体已补（P1-65）**：Phase 3 路损校准要切 32 链路，离不开 EMCenter，但协议没有它的握手步骤、速查表不列、当前 15 个已注册序列无一覆盖（P1-45 核对时为 12 个） | 无 | **出发前必须补 `emcenter_switch_health` 只读序列**，并在 Phase 1 速查表加一行；否则 Phase 3 会在没有诊断证据的情况下失败 |
-| P1-2 license probe | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_license_truth` | 连接即发 `SYSTem:CALibration:USER:LIST?` → -100 留在队列跨会话；与 Phase 1.5「错误队列零残留」gate 的交互依赖生产加载事务先清旧队列（P1-47B）——**出发前用 mock 核一次 p08_gate 在带残留 -100 的队列上不误判** |
-| P1-17 UXM fresh-start | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_config_truth_probe` + `uxm_fresh_start_truth` | 需要独立时段：HAL reload + `default_state_file` recall + 全配置对齐 |
+| P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 → 主动载体（P1-65） | `connection_idle_hold_probe` | 跑 `connection_idle_hold_probe`（空置 ≤900 s）；空置后断开/重连记为观察喂 P2-4，不当 driver bug 修 |
+| P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 → C 类载体（P1-65） | `connection_idle_hold_probe` | 同上，category 选对应仪器 |
+| **P2-9 EMCenter** | **无** | ⚠️ **隐性前置，载体已补（P1-65）**：Phase 3 路损校准要切 32 链路，离不开 EMCenter；P1-65 前协议无握手步骤、速查表不列、15 个序列无一覆盖（P1-45 核对时 12 个），现 `emcenter_switch_health` 已注册、速查表已加行 | 无 | 跑 `emcenter_switch_health`（机箱/卡 IDN、逐继电器回读、互锁）—— **排在 Phase 3 之前**；协议速查表已加行 |
+| P1-2 license probe | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_license_truth` | 跑 `propsim_f64_license_truth`：`SYSTem:INFO?` 尾部许可 + `CALIBration:*` / `USER:GET?` 真值，与驱动自称对账；驱动两条探针命令手册查无（Discovered） |
+| P1-17 UXM fresh-start | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_config_truth_probe` + `uxm_fresh_start_truth` | 跑 `uxm_fresh_start_truth`：只读 `SYSTem:SCPI:*` 机制真值；要导入时 `confirm_action` 且无 UE 在网 |
 | P1-5 相位校准 | 无 | ❌ 流程外（**且不在 first-call 范围**：PFS 是 power-only，相位校准留给将来 PWS） | 正式入口存在但落 mock 数据 | 不排进本次现场 |
 | P2-10 F64 工程精细化 | §7 清单 | ❌ 流程外 | `propsim_f64_health` / `_state_machine` 只验公共能力 | 按协议 §7 能力探测清单逐项打勾（探未知，结论回填 docx） |
-| NEW-1 各口电平窗口 | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_output_level_windows` | 出发前扩 `propsim_f64_health` 做 per-port `OUTP:LEV:AMP:LIM?` 只读普查 |
-| NEW-3 OffsetToCarrier 102 | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_offset_to_carrier_probe` | 出发前写「下发 + 回读 + 看 attach」剧本序列；可挂 Phase 4 前 |
-| NEW-2 面板 Local | 无 | ⚠️ 人工观察，载体已补（P1-65） | `propsim_f64_local_handback_check`（两段式证据记录） | 挂在任一 F64 序列末尾做人工确认步 |
+| NEW-1 各口电平窗口 | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_output_level_windows` | 跑 `propsim_f64_output_level_windows`：先查 STATE（仿真未打开不发），逐口 `LIMits?` + `CH?`，当前值落窗外即 BLOCKER 点名口号 |
+| NEW-3 OffsetToCarrier 102 | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_offset_to_carrier_probe` | 跑 `uxm_offset_to_carrier_probe`：默认只读采集 PointA / OTCarrier / ARFCN；要下发 102 时 `confirm_write` 且小区 OFF，写后回读对账，不 APPLY，再看 attach |
+| NEW-2 面板 Local | 无 | ⚠️ 人工观察，载体已补（P1-65） | `propsim_f64_local_handback_check`（两段式证据记录） | 跑 `propsim_f64_local_handback_check`：release 段结束后去面板看（§20.1：Remote mode 水印是否消失、Local Mode 按钮是否不再亮蓝），再以 confirm 段把观察记回 |
 
 **汇总**（数字由脚本按上表「覆盖形态」列统计，两个口径别混）：Blocked 表开放 **16 行**（不含 3 行划线）；
 P0-8 按 a/b 两个 gate 拆开后矩阵 **17 行**。**P1-65（#380，2026-08-23）补齐 8 条序列后**按矩阵行：✅ gate 直接覆盖 **3 行**
