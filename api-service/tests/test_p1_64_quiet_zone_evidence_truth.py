@@ -583,6 +583,60 @@ def test_requested_quiet_zone_without_a_trusted_row_keeps_session_undetermined()
     assert completed.overall_pass is None
 
 
+@pytest.mark.asyncio
+async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.api.channel_calibration import start_quiet_zone_calibration
+    from app.db.database import Base
+    from app.models.channel_calibration import TemporalChannelCalibration
+    from app.schemas.channel_calibration import StartQuietZoneCalibrationRequest
+    from app.services.channel_calibration_service import ChannelCalibrationService
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    service = ChannelCalibrationService(db)
+    session = service.create_session(name="direct api session")
+    db.add(TemporalChannelCalibration(
+        session_id=session.id,
+        scenario_type="UMa",
+        scenario_condition="LOS",
+        fc_ghz=3.5,
+        measured_pdp={},
+        validation_pass=True,
+    ))
+    db.commit()
+
+    request = StartQuietZoneCalibrationRequest.model_validate({
+        "quiet_zone": {"shape": "sphere", "diameter_m": 1.0},
+        "fc_ghz": 3.5,
+        "num_points": 25,
+        "session_id": str(session.id),
+        "calibrated_by": "operator",
+    })
+    with pytest.raises(HTTPException) as exc_info:
+        await start_quiet_zone_calibration(request=request, db=db)
+    assert exc_info.value.status_code == 503
+
+    db.refresh(session)
+    assert session.configuration["requested_calibration_types"] == ["quiet_zone"]
+    completed = service.complete_session(
+        session_id=session.id,
+        overall_pass=True,
+        total_calibrations=1,
+        passed_calibrations=1,
+        failed_calibrations=0,
+    )
+    assert completed.overall_pass is None
+
+
 def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):
     from app.api.calibration_report import _has_provenance_aware_calibration_manifest
     from app.services.calibration_report_generator import _write_report_provenance_manifest

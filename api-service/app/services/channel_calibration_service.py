@@ -685,6 +685,40 @@ class ChannelCalibrationService:
         self.db.refresh(session)
         return session
 
+    def register_requested_calibration_type(
+        self,
+        session_id: UUID,
+        calibration_type: str,
+    ) -> Optional[ChannelCalibrationSession]:
+        """Atomically add a server-observed request to an active session scope."""
+        session = (
+            self.db.query(ChannelCalibrationSession)
+            .filter(ChannelCalibrationSession.id == session_id)
+            .with_for_update()
+            .first()
+        )
+        if session is None:
+            return None
+        if session.status != "running":
+            raise ValueError("Calibration session is no longer active")
+
+        configuration = (
+            dict(session.configuration)
+            if isinstance(session.configuration, dict)
+            else {}
+        )
+        existing = configuration.get("requested_calibration_types")
+        requested = [
+            value for value in existing if isinstance(value, str)
+        ] if isinstance(existing, list) else []
+        if calibration_type not in requested:
+            requested.append(calibration_type)
+        configuration["requested_calibration_types"] = requested
+        session.configuration = configuration
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
     def complete_session(
         self,
         session_id: UUID,
@@ -694,9 +728,12 @@ class ChannelCalibrationService:
         failed_calibrations: int
     ) -> Optional[ChannelCalibrationSession]:
         """完成校准会话，并从服务端记录重算正式结果。"""
-        session = self.db.query(ChannelCalibrationSession).filter(
-            ChannelCalibrationSession.id == session_id
-        ).first()
+        session = (
+            self.db.query(ChannelCalibrationSession)
+            .filter(ChannelCalibrationSession.id == session_id)
+            .with_for_update()
+            .first()
+        )
 
         if not session:
             return None

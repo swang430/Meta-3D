@@ -411,6 +411,18 @@ async def start_quiet_zone_calibration(
     - 幅度均匀性: ±1 dB
     - 相位均匀性: ±30° (mmWave 可放宽至 ±45°)
     """
+    if request.session_id is not None:
+        service = ChannelCalibrationService(db)
+        try:
+            session = service.register_requested_calibration_type(
+                request.session_id,
+                "quiet_zone",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if session is None:
+            raise HTTPException(status_code=404, detail="Calibration session not found")
+
     raise HTTPException(
         status_code=503,
         detail=(
