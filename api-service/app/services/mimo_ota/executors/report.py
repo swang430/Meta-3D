@@ -690,7 +690,25 @@ def _build_mimo_ota_content_data(
         _precheck_result = (
             "FAIL" if precheck.get("operational_ready") is False else "UNKNOWN"
         )
+        def _is_legacy_quiet_zone_claim(message: Any) -> bool:
+            if not isinstance(message, str):
+                return False
+            normalized = message.casefold()
+            return any(marker in normalized for marker in (
+                "quiet zone",
+                "quiet-zone",
+                "quiet_zone",
+                "静区",
+                "probe pattern",
+                "probe_pattern",
+                "fallback_default",
+            ))
+
         _precheck_messages = [
+            message
+            for message in (precheck.get("messages") or [])
+            if not _is_legacy_quiet_zone_claim(message)
+        ] + [
             "静区结论未判定：无权威多点场扫描证据；"
             "历史提示未作为正式证据发布。"
         ]

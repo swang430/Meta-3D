@@ -224,7 +224,12 @@ def test_ga_no_phase_progress_stays_none(db, lab):
     assert row["phases_total"] == 1  # descriptors 有, 只是不记进度
 
 
-def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab):
+def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab, monkeypatch):
+    # Isolate this path-loss contract from P1-64's independent quiet-zone gate.
+    monkeypatch.setattr(
+        "app.api.test_execution.quiet_zone_scope_is_formally_verified",
+        lambda _precheck: True,
+    )
     snapshot = _make_case(db, lab, name="MIMO provenance history")
     legacy = _case_runner_execution(db, snapshot)
     legacy.validation_pass = True
