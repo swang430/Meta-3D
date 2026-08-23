@@ -254,6 +254,36 @@ def test_execution_history_rejects_legacy_quiet_zone_pass():
     assert _formal_validation_pass(execution, "MIMO_OTA") is None
 
 
+def test_commissioning_precheck_status_rejects_legacy_quiet_zone_failure():
+    from app.api.commissioning import _phase_status_from_payload
+
+    legacy_precheck = {
+        "overall_pass": False,
+        "quiet_zone_pass": False,
+        "quiet_zone_ripple_db": 1.2,
+    }
+
+    assert _phase_status_from_payload(
+        legacy_precheck,
+        require_operational_truth=True,
+    ) == "completed"
+
+
+def test_commissioning_precheck_status_preserves_current_operational_failure():
+    from app.api.commissioning import _phase_status_from_payload
+
+    current_failure = {
+        "overall_pass": False,
+        "operational_ready": False,
+        "error_message": "DUT 门未通过",
+    }
+
+    assert _phase_status_from_payload(
+        current_failure,
+        require_operational_truth=True,
+    ) == "failed"
+
+
 def test_report_rebuild_does_not_repeat_legacy_quiet_zone_pass_claims():
     from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 

@@ -464,11 +464,17 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     return overrides
 
 
-def _phase_status_from_payload(payload: Dict[str, Any]) -> str:
+def _phase_status_from_payload(
+    payload: Dict[str, Any],
+    *,
+    require_operational_truth: bool = False,
+) -> str:
     """Map a phase payload to old PhaseStatus string."""
     if not payload:
         return "pending"
     if payload.get("overall_pass") is False:
+        if require_operational_truth and payload.get("operational_ready") is not False:
+            return "completed"
         return "failed"
     return "completed"
 
@@ -489,7 +495,10 @@ def _execution_to_session_response(
             "measure" if legacy_name == "mimo_test" else legacy_name
         )
         payload = phases.get(internal_key, {}) or {}
-        status = _phase_status_from_payload(payload)
+        status = _phase_status_from_payload(
+            payload,
+            require_operational_truth=internal_key == "precheck",
+        )
         phase_statuses[legacy_name] = status
         if status == "completed":
             completed_count += 1
