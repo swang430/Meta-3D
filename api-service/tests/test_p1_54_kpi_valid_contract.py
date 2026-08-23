@@ -15,6 +15,7 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.report_service import report_has_provenance_trust
 from app.services.test_execution import StepExecutionStatus
 
@@ -199,6 +200,17 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
             }
         ],
     }
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=[{
+            "azimuth_deg": 0.0,
+            "rsrp_valid": True,
+            "sinr_valid": True,
+            "rank_indicator_valid": True,
+        }],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     if throughput_verified is not None:
         measure["throughput_verified"] = throughput_verified
 
@@ -285,6 +297,17 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
             }
         ],
     }
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=[{
+            "azimuth_deg": 0.0,
+            "rsrp_valid": True,
+            "sinr_valid": True,
+            "rank_indicator_valid": True,
+        }],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     config = SimpleNamespace(
         theoretical_peak_throughput_mbps=450.0,
         pass_criteria=SimpleNamespace(

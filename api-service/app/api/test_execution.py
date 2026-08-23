@@ -17,6 +17,7 @@ from app.services.mimo_ota.throughput_trust import throughput_scope_is_verified
 from app.services.mimo_ota.path_loss_application import (
     path_loss_application_is_formally_verified,
 )
+from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -69,6 +70,8 @@ def _formal_validation_pass(
         measure.get("throughput_verified") is True
         and throughput_scope_is_verified(measure)
     ):
+        return None
+    if not rf_kpi_scope_is_verified(measure):
         return None
     return execution.validation_pass
 

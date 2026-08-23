@@ -15,6 +15,7 @@ from app.services.mimo_ota.throughput_trust import throughput_scope_is_verified
 from app.services.mimo_ota.path_loss_application import (
     path_loss_application_is_formally_verified,
 )
+from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -68,11 +69,13 @@ class AnalysisExecutor(IStepExecutor):
             measure.get("throughput_verified") is True
             and throughput_scope_is_verified(measure)
         )
+        rf_kpi_unverified = not rf_kpi_scope_is_verified(measure)
         if (
             simulated_measurement
             or frequency_identity_unverified
             or path_loss_unverified
             or throughput_unverified
+            or rf_kpi_unverified
         ):
             if simulated_measurement:
                 detail = (
@@ -95,13 +98,20 @@ class AnalysisExecutor(IStepExecutor):
                 )
                 warning = "路损校准未明确验证为真实来源，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "path-loss calibration not explicitly verified"
-            else:
+            elif throughput_unverified:
                 detail = (
                     "N/A: one or more azimuths have no explicitly valid "
                     "throughput sample; formal KPI analysis was not performed"
                 )
                 warning = "吞吐 KPI 缺少显式有效样本，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "throughput KPI validity is incomplete"
+            else:
+                detail = (
+                    "N/A: RSRP/SINR/RI lack complete per-metric, per-azimuth "
+                    "explicit-real evidence; formal KPI analysis was not performed"
+                )
+                warning = "RF KPI 缺少逐指标、逐方位真实证据，不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "RF KPI provenance is incomplete"
             result: Dict[str, Any] = {
                 "verdict": "UNKNOWN",
                 "details": [detail],
@@ -109,6 +119,7 @@ class AnalysisExecutor(IStepExecutor):
                 "frequency_identity_verified": not frequency_identity_unverified,
                 "path_loss_verified": not path_loss_unverified,
                 "throughput_verified": not throughput_unverified,
+                "rf_kpi_verified": not rf_kpi_unverified,
                 "avg_throughput_mbps": None,
                 "throughput_ratio": None,
                 "throughput_pass": None,
