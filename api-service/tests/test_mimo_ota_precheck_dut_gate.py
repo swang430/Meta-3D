@@ -337,11 +337,13 @@ async def test_precheck_dut_gate_cartesian(
     result = await PrecheckExecutor().execute(ctx)
     measurements = result.measurements or {}
 
-    assert measurements.get("overall_pass") == expect_overall_pass, (
+    expected_overall = None if expect_overall_pass else False
+    assert measurements.get("overall_pass") is expected_overall, (
         f"overall_pass mismatch: got {measurements.get('overall_pass')}, "
-        f"expected {expect_overall_pass}; dut_pass_reason="
+        f"expected {expected_overall}; dut_pass_reason="
         f"{measurements.get('dut_pass_reason')!r}"
     )
+    assert measurements.get("operational_ready") is expect_overall_pass
     assert measurements.get("dut_pass") == expect_dut_pass, (
         f"dut_pass mismatch: got {measurements.get('dut_pass')}, "
         f"expected {expect_dut_pass}"
@@ -422,7 +424,8 @@ async def test_mock_baseStation_auto_skips_strict_dut_gate(
         f"expected mock-auto-skip reason, got {reason!r}"
     )
     # And with cal seeded + dut auto-skipped, the whole precheck passes.
-    assert measurements.get("overall_pass") is True
+    assert measurements.get("operational_ready") is True
+    assert measurements.get("overall_pass") is None
     assert result.status == StepExecutionStatus.SUCCESS
 
 
@@ -579,7 +582,8 @@ class TestLiveQueryVerification:
         measurements = result.measurements or {}
 
         assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["overall_pass"] is True
+        assert measurements["operational_ready"] is True
+        assert measurements["overall_pass"] is None
         assert measurements["dut_pass"] is True  # forced by bypass
         assert measurements["live_ue_query_state"] == "unavailable"
         reason = measurements["dut_pass_reason"]
@@ -648,29 +652,63 @@ class TestLiveQueryVerification:
 
 
 # ---------------------------------------------------------------------------
-# QZ ripple fallback must be marked "未验证(兜底值)", not a clean PASS (P1-12 audit)
+# QZ evidence must stay tri-state and never publish a fallback/proxy PASS.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_qz_ripple_fallback_marked_unverified(
     db, lab, chamber, hal_with_mock_bs,
 ):
-    """No ProbePattern data → QZ ripple falls back to the legacy 0.7 dB
-    constant. That is NOT a measured quiet-zone qualification, so precheck must
-    flag it: quiet_zone_verified=False + a 未验证 message (so report/GUI show it
-    显著). The run still proceeds (qz_pass stays True — we mark, not fail-loud,
-    so local/mock rehearsal without pattern data can still run)."""
+    """No pattern or grid evidence means UNKNOWN, while diagnostics continue."""
     _seed_valid_cal(db, chamber.id)
     ctx = _build_context(db, lab, dut_attach=None, strict_mode=True)
     result = await PrecheckExecutor().execute(ctx)
     m = result.measurements or {}
 
-    assert m.get("quiet_zone_ripple_source") == "fallback_default", m.get("quiet_zone_ripple_source")
-    assert m.get("quiet_zone_verified") is False, "fallback QZ must be marked unverified"
-    assert m.get("quiet_zone_pass") is True, "marking, not failing — run still proceeds"
-    assert any("未验证" in msg for msg in m.get("messages", [])), (
-        f"expected a 未验证 QZ message, got {m.get('messages')!r}"
+    assert m.get("quiet_zone_ripple_db") is None
+    assert m.get("quiet_zone_proxy_ripple_db") is None
+    assert m.get("quiet_zone_verified") is False
+    assert m.get("quiet_zone_pass") is None
+    assert m.get("quiet_zone_can_continue") is True
+    assert m.get("quiet_zone_evidence") == {
+        "schema_version": 1,
+        "status": "unavailable",
+        "source": "missing",
+        "formal_verified": False,
+        "measured_ripple_db": None,
+        "proxy_ripple_db": None,
+        "calibration_id": None,
+    }
+    assert any("未判定" in msg for msg in m.get("messages", [])), (
+        f"expected a 未判定 QZ message, got {m.get('messages')!r}"
     )
-    # The fallback QZ did NOT silently block the run (DUT auto-skipped via mock
-    # BS, cal seeded) — overall passes but with QZ flagged unverified.
-    assert m.get("overall_pass") is True
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert m.get("operational_ready") is True
+    assert m.get("overall_pass") is None
+
+
+@pytest.mark.asyncio
+async def test_qz_probe_pattern_spread_is_diagnostic_only(
+    db, lab, chamber, hal_with_mock_bs, monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.services.probe_pattern.consumer.estimate_quiet_zone_ripple_db",
+        lambda *_args, **_kwargs: 0.42,
+    )
+    _seed_valid_cal(db, chamber.id)
+    ctx = _build_context(db, lab, dut_attach=None, strict_mode=True)
+
+    result = await PrecheckExecutor().execute(ctx)
+    m = result.measurements or {}
+
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert m.get("quiet_zone_ripple_db") is None
+    assert m.get("quiet_zone_proxy_ripple_db") == pytest.approx(0.42)
+    assert m.get("quiet_zone_pass") is None
+    assert m.get("quiet_zone_verified") is False
+    assert m.get("overall_pass") is None
+    assert m.get("quiet_zone_evidence", {}).get("status") == "diagnostic_proxy"
+    assert any(
+        "诊断代理" in msg and "非静区" in msg and "实测" in msg
+        for msg in m["messages"]
+    )

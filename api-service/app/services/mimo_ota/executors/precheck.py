@@ -13,6 +13,7 @@ from app.services.mimo_ota.executors._helpers import (
     load_mimo_ota_config,
     write_phase_result,
 )
+from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -571,49 +572,30 @@ class PrecheckExecutor(IStepExecutor):
             polarization="V",
             chamber_id=chamber.id,
         )
-        if ripple_db is None:
-            # Conservative legacy fallback when no ProbePattern data exists yet
-            ripple_db = 0.7
-            result_payload["quiet_zone_ripple_source"] = "fallback_default"
+        quiet_zone_evidence = build_quiet_zone_evidence(ripple_db)
+        result_payload["quiet_zone_evidence"] = quiet_zone_evidence
+        result_payload["quiet_zone_ripple_source"] = quiet_zone_evidence["source"]
+        result_payload["quiet_zone_ripple_db"] = None
+        result_payload["quiet_zone_proxy_ripple_db"] = quiet_zone_evidence[
+            "proxy_ripple_db"
+        ]
+        result_payload["quiet_zone_pass"] = None
+        result_payload["quiet_zone_verified"] = False
+        result_payload["quiet_zone_can_continue"] = True
+        if quiet_zone_evidence["status"] == "diagnostic_proxy":
+            messages.append(
+                f"⚠️ ProbePattern 峰值离散诊断代理: {ripple_db:.2f} dB；"
+                "非静区多点场扫描实测，不形成静区 PASS/FAIL "
+                f"(正式阈值 {criteria.max_quiet_zone_ripple_db:.1f} dB)"
+            )
+        else:
             warnings.append(
-                "No ProbePattern data for QZ ripple estimate; using legacy default 0.7 dB. "
-                "Import vendor patterns via /api/v1/calibration/probe/pattern/import."
-            )
-        else:
-            result_payload["quiet_zone_ripple_source"] = "probe_pattern_peak_spread"
-        result_payload["quiet_zone_ripple_db"] = ripple_db
-        qz_pass = ripple_db <= criteria.max_quiet_zone_ripple_db
-        result_payload["quiet_zone_pass"] = qz_pass
-        # P1-12 audit (2026-05-25): QZ qualification is the heart of the
-        # software-defined quiet zone. When there's no real ProbePattern data we
-        # fall back to a legacy 0.7 dB constant — that's NOT a measured QZ
-        # qualification, so we must NOT report it as a clean PASS. We don't
-        # fail-loud (local/mock rehearsal has no pattern data and must still
-        # run); instead the result is explicitly flagged "未验证(兜底值)" in the
-        # precheck payload + message + downstream report/GUI, so an operator can
-        # never mistake a fallback for a real measured QZ.
-        qz_verified = result_payload["quiet_zone_ripple_source"] != "fallback_default"
-        result_payload["quiet_zone_verified"] = qz_verified
-        if qz_verified:
-            messages.append(
-                f"Quiet zone ripple: ±{ripple_db:.1f} dB "
-                f"({'PASS' if qz_pass else 'FAIL'}, threshold ±{criteria.max_quiet_zone_ripple_db:.1f}) "
-                f"[{result_payload['quiet_zone_ripple_source']}]"
-            )
-        else:
-            # P1-48 (外审): 这条消息会被 report.py 渲染进正式报告的「提示」栏，
-            # 所以**绝不能带兜底数字** —— 上一轮只把 quiet_zone_ripple_db 字段
-            # 置空是不够的，同一个 0.7 从这条文案里照样印进 PDF。
-            # 阈值 (max_quiet_zone_ripple_db) 是配置里的真值，可以印；
-            # ripple_db 是兜底默认值，只进日志不进报告。
-            logger.info(
-                "[%s] 静区均匀度未验证，兜底波纹值 ±%.1f dB（仅日志，不进报告）",
-                context.test_execution.id, ripple_db,
+                "No authoritative quiet-zone field scan evidence is available; "
+                "diagnostic execution may continue, but formal verdict remains UNKNOWN."
             )
             messages.append(
-                "⚠️ 静区均匀度未验证: 无 ProbePattern 实测数据, 波纹值不可用 "
-                f"(阈值 ±{criteria.max_quiet_zone_ripple_db:.1f} dB; 非实测合格) "
-                "[fallback_default]"
+                "⚠️ 静区均匀度未判定: 无权威多点场扫描证据，正式波纹值为 N/A；"
+                f"诊断流程可继续 (正式阈值 {criteria.max_quiet_zone_ripple_db:.1f} dB)"
             )
 
         # --- 5. Calibration gate (P1-8, 2026-05-19) ---
@@ -786,10 +768,10 @@ class PrecheckExecutor(IStepExecutor):
         critical_online = all(
             instruments_online.get(k, False) for k in _CRITICAL_INSTRUMENT_CATEGORIES
         )
-        overall_pass = (
-            critical_online and qz_pass and ue_cap_pass and cal_pass and dut_pass
-        )
+        operational_ready = critical_online and ue_cap_pass and cal_pass and dut_pass
+        overall_pass = None if operational_ready else False
         result_payload["critical_instruments_online"] = critical_online
+        result_payload["operational_ready"] = operational_ready
         result_payload["overall_pass"] = overall_pass
         result_payload["messages"] = messages
 
@@ -797,17 +779,12 @@ class PrecheckExecutor(IStepExecutor):
         write_phase_result(context.test_execution, "precheck", result_payload)
         context.db.commit()
 
-        if not overall_pass:
+        if not operational_ready:
             failure_reason = []
             if not critical_online:
                 failure_reason.append(
                     f"critical instruments offline: "
                     f"{[k for k in _CRITICAL_INSTRUMENT_CATEGORIES if not instruments_online.get(k)]}"
-                )
-            if not qz_pass:
-                failure_reason.append(
-                    f"quiet zone ripple ±{ripple_db} dB > threshold "
-                    f"±{criteria.max_quiet_zone_ripple_db} dB"
                 )
             if not ue_cap_pass:
                 ue_cap = result_payload.get("ue_capability") or {}
@@ -827,11 +804,11 @@ class PrecheckExecutor(IStepExecutor):
             )
 
         logger.info(
-            "[%s] Pre-check PASS — %d/%d instruments, ripple ±%.2f dB",
+            "[%s] Pre-check operationally ready — %d/%d instruments; "
+            "quiet-zone verdict UNKNOWN",
             context.test_execution.id,
             online_n,
             len(instruments_online),
-            ripple_db,
         )
         return StepExecutionResult(
             status=StepExecutionStatus.SUCCESS,

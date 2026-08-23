@@ -510,11 +510,13 @@ async def test_precheck_cal_gate_cartesian(
 
     measurements = result.measurements or {}
 
-    assert measurements.get("overall_pass") == expect_overall_pass, (
+    expected_overall = None if expect_overall_pass else False
+    assert measurements.get("overall_pass") is expected_overall, (
         f"overall_pass mismatch: got {measurements.get('overall_pass')}, "
-        f"expected {expect_overall_pass}; cal_pass_reason="
+        f"expected {expected_overall}; cal_pass_reason="
         f"{measurements.get('cal_pass_reason')!r}"
     )
+    assert measurements.get("operational_ready") is expect_overall_pass
     assert measurements.get("cal_pass") == expect_cal_pass, (
         f"cal_pass mismatch: got {measurements.get('cal_pass')}, "
         f"expected {expect_cal_pass}"
@@ -599,7 +601,8 @@ class TestFrequencyWindow:
         measurements = result.measurements or {}
 
         assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["overall_pass"] is True
+        assert measurements["operational_ready"] is True
+        assert measurements["overall_pass"] is None
         assert measurements["cal_pass"] is True
         # path_loss_calibration_valid still reflects reality (mismatched)
         assert measurements["path_loss_calibration_valid"] is False
@@ -624,7 +627,8 @@ class TestFrequencyWindow:
         measurements = result.measurements or {}
 
         assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["overall_pass"] is True
+        assert measurements["operational_ready"] is True
+        assert measurements["overall_pass"] is None
         assert measurements["cal_pass"] is True
         assert measurements["path_loss_calibration_valid"] is True
         assert measurements["path_loss_calibration_frequency_mhz"] == 3675.0
@@ -642,7 +646,8 @@ class TestFrequencyWindow:
         measurements = result.measurements or {}
 
         assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["overall_pass"] is True
+        assert measurements["operational_ready"] is True
+        assert measurements["overall_pass"] is None
         assert measurements["cal_pass"] is True
         assert measurements["path_loss_calibration_valid"] is True
 
@@ -730,7 +735,8 @@ async def test_path_loss_provenance_gate(
 
     assert measurements.get("path_loss_calibration_use_mock") is use_mock
     assert measurements.get("cal_pass") is expect_pass
-    assert measurements.get("overall_pass") is expect_pass
+    assert measurements.get("operational_ready") is expect_pass
+    assert measurements.get("overall_pass") is (None if expect_pass else False)
     assert result.status == (
         StepExecutionStatus.SUCCESS if expect_pass else StepExecutionStatus.FAILED
     )
