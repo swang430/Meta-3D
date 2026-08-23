@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "Meta-3D OTA API"
-    app_version: str = "1.0.0"
+    app_version: str = "0.9.0"  # 阶段性 release（日常测试用）；1.0.0 留给 first-call 通过后
     debug: bool = True
 
     # Database
