@@ -107,3 +107,16 @@ PRECHECK 的 `overall_pass` 改为三态：
 3. 旧 `quiet_zone_verified=true` 或旧来源字符串不能恢复 PASS/详情/PDF。
 4. 其它真实运行门失败仍按原行为 FAILED，不能被“可继续诊断”绕过。
 5. mock、缺失、畸形与历史未知均 fail-closed；所有相关回归、GUI build、规则门和全后端通过。
+
+## 实施状态（2026-08-23）
+
+- `7419690`：严格静区证据 parser/builder；RED 15 failed，GREEN 15 passed。
+- `0b4fe8a`：PRECHECK 删除固定 0.7，拆分运行门与静区正式判决；DUT/calibration 对称链
+  58 passed。
+- `42a82ff`：Analysis、报告、详情/下载、历史可信门统一消费静区白名单；RED 4 failed，
+  GREEN focused 19 passed，相关 report/history/rule gates 226 passed。
+- `44028f8`：GUI 顶部绿/红/黄三态与独立 proxy 展示；RED 因 presenter 缺失失败，GREEN
+  契约 4 passed，production build 通过。
+
+真实静区多点扫描的硬件写方仍未实现；缺厘米单位线性 XY 平台的边界继续标记为
+Hardware Blocked。本片没有新增 SCPI、没有晋升历史校准行，也没有产生正式 measured 状态。
