@@ -417,8 +417,10 @@ def test_report_hides_untrusted_or_historical_throughput(
     assert content["execution_summary"]["pending"] == 0
     assert content["execution_summary"]["undetermined"] == 1
     assert content["execution_summary"]["pass_rate"] is None
-    assert content["statistics"] == {}
+    assert "Throughput_Mbps" not in content["statistics"]
+    assert content["statistics"]["RSRP_dBm"]["mean"] == -80.0
     assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert content["table_data"][0]["RSRP (dBm)"] == "-80.0"
     measure_step = next(
         step for step in content["step_results"] if step["phase"] == "measure"
     )

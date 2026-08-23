@@ -92,12 +92,16 @@ MEASURE 写入一个版本化、服务端生成的 `rf_kpi_trust` 快照。最�
 
 ## 当前 HEAD 验证事实
 
-- P1-63 + P1-54 + UXM KPI + 报告兼容 + P1-61 + 完整规则门：**203 passed**。
+- P1-63 + P1-54 + UXM KPI + 报告兼容 + P1-61 + 完整规则门：**204 passed**。
 - 两次 fresh 内审共发现并按 TDD 收口六条 P1：持久化信任快照必须与当前逐方位有限数值、
   精确请求方位全集和当前 explicit-real provenance 完全一致；未请求的额外行与当前模拟来源均
   不得借旧快照进入正式统计；报告必须先完成信任裁决再做统计，非对象/畸形历史行只能降级为
   N/A/UNKNOWN；语义失配的旧快照须重写成服务端 unknown envelope，不能生成完成但不可查看的报告。
-- 全后端（从 `api-service/` 正确工作目录运行）：**4339 passed / 5 skipped**。
+- 全后端（从 `api-service/` 正确工作目录运行）：**4340 passed / 5 skipped**。
 - GUI 本片契约：**3 passed**；production build 通过。
 - `compileall`、单一 Alembic head `b6d8f0a2c4e6`、`git diff --check` 全部通过。
 - 受影响历史/报告/生命周期链：**143 passed**。
+- Codex R1 发现并按 TDD 收口两条 P1：RF KPI 不完整只屏蔽 RSRP/SINR/RI，独立通过
+  P1-54/P1-59 门的真实吞吐统计与表格值继续保留；GUI Rank 保留窗口平均值的小数精度。
+- R1 尾审继续收口一条 P1：旧吞吐布尔不能绕过当前测量 provenance；当前 phase 或任一逐方位
+  来源不是 explicit-real 时，吞吐统计与表格同样保持 N/A，不能重新发布模拟样本。

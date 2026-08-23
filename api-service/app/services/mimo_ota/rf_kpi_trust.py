@@ -195,6 +195,26 @@ def rf_kpi_trust_is_formally_verified(value: Any) -> bool:
     )
 
 
+def measurement_provenance_is_explicit_real(measure: Any) -> bool:
+    """Require current phase and every current row to declare real provenance."""
+    if not isinstance(measure, dict):
+        return False
+    rows = measure.get("azimuth_results")
+    return bool(
+        measure.get("measurement_source") == "instrument"
+        and measure.get("measurement_verified") is True
+        and measure.get("simulated_sources") == []
+        and isinstance(rows, list)
+        and rows
+        and all(
+            isinstance(row, dict)
+            and row.get("measurement_source") == "instrument"
+            and row.get("measurement_verified") is True
+            for row in rows
+        )
+    )
+
+
 def rf_kpi_scope_is_verified(measure: Any) -> bool:
     """Require the snapshot, server boolean and current rows to agree."""
     if not isinstance(measure, dict):
@@ -217,18 +237,7 @@ def rf_kpi_scope_is_verified(measure: Any) -> bool:
     )
     current_source = (
         "explicit_real"
-        if (
-            measure.get("measurement_source") == "instrument"
-            and measure.get("measurement_verified") is True
-            and measure.get("simulated_sources") == []
-            and isinstance(rows, list)
-            and all(
-                isinstance(row, dict)
-                and row.get("measurement_source") == "instrument"
-                and row.get("measurement_verified") is True
-                for row in rows
-            )
-        )
+        if measurement_provenance_is_explicit_real(measure)
         else "unknown"
     )
     rebuilt = (

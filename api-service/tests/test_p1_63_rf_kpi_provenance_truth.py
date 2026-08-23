@@ -414,9 +414,10 @@ def test_report_masks_rf_kpis_without_complete_trust_snapshot():
     assert content["formal_rf_kpi_verified"] is False
     assert content["overall_result"] == "undetermined"
     assert content["pass_rate"] is None
-    assert content["statistics"] == {}
+    assert content["statistics"]["Throughput_Mbps"]["mean"] == 350.0
     assert content["table_data"][0]["RSRP (dBm)"] == "N/A"
     assert content["table_data"][0]["SINR (dB)"] == "N/A"
+    assert content["table_data"][0]["Throughput (Mbps)"] == "350.0"
     assert content["table_data"][0]["RI"] == "N/A"
 
 
@@ -433,7 +434,7 @@ def test_report_safely_masks_malformed_legacy_rf_values_before_statistics():
 
     assert content["overall_result"] == "undetermined"
     assert content["pass_rate"] is None
-    assert content["statistics"] == {}
+    assert content["statistics"]["Throughput_Mbps"]["mean"] == 350.0
     assert content["table_data"][0]["RSRP (dBm)"] == "N/A"
 
 
@@ -468,6 +469,27 @@ def test_report_rewrites_mismatched_rf_snapshot_to_safe_unknown_envelope():
     assert content["rf_kpi_trust"]["verified_azimuths"] == []
     assert content["overall_result"] == "undetermined"
     assert report_has_provenance_trust(content) is True
+
+
+def test_report_hides_throughput_when_current_measurement_is_simulated():
+    execution = _report_execution(include_rf_trust=True)
+    measure = execution.measurements["phases"]["measure"]
+    measure["measurement_source"] = "simulated"
+    measure["measurement_verified"] = False
+    measure["simulated_sources"] = ["baseStation"]
+    measure["azimuth_results"][0]["measurement_source"] = "simulated"
+    measure["azimuth_results"][0]["measurement_verified"] = False
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 23),
+    )
+
+    assert content["formal_rf_kpi_verified"] is False
+    assert content["formal_throughput_verified"] is False
+    assert "Throughput_Mbps" not in content["statistics"]
+    assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert content["overall_result"] == "undetermined"
 
 
 def test_report_keeps_rf_kpis_with_complete_trust_snapshot():

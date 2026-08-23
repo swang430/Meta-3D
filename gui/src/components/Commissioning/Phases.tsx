@@ -238,7 +238,7 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
                 <Table.Td>{formatRfKpiValue(az.rsrp_dbm, rfKpiView.verified, 1)}</Table.Td>
                 <Table.Td>{formatRfKpiValue(az.sinr_db, rfKpiView.verified, 1)}</Table.Td>
                 <Table.Td>{az.throughput_mbps}</Table.Td>
-                <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 0)}</Table.Td>
+                <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 2)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

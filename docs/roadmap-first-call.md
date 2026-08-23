@@ -29,9 +29,13 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 报告、详情/下载、执行历史与 GUI 统一消费版本化逐指标白名单。两次 fresh 内审发现的六条 P1
 已按 TDD 收口：快照必须绑定当前有限数值、精确请求方位全集与当前 explicit-real provenance；
 额外方位、模拟来源、非对象/畸形历史行和失配旧快照全部安全降级，不能进入正式统计或生成
-不可查看的恢复报告。当前验证为相关链与完整规则门 **203 passed**、受影响历史/报告链
-**143 passed**、全后端 **4339 passed / 5 skipped**、GUI 契约 **3 passed** 与 production build；
+不可查看的恢复报告。当前验证为相关链与完整规则门 **204 passed**、受影响历史/报告链
+**143 passed**、全后端 **4340 passed / 5 skipped**、GUI 契约 **3 passed** 与 production build；
 compileall、单一 Alembic head、diff-check 均通过；当前进入最终 fresh 尾审，尚未合并。
+Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独立可信吞吐量，GUI Rank
+不再把窗口平均值静默四舍五入为整数；总体 verdict 仍保持 UNKNOWN。R1 尾审另发现旧吞吐
+布尔可能绕过当前模拟来源，现已让吞吐正式门复用同一 explicit-real phase/逐方位 provenance
+判据；当前来源不可信时吞吐同样保持 N/A。
 
 **下一顺位 = P1-64「静区纹波无真实测量证据不得显示预检通过」**。当前无 ProbePattern 时的
 0.7 dB 兜底会形成 `quiet_zone_pass=true`，并被 ANALYSIS、报告与 GUI 解释为正式通过。P1-64

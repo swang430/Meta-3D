@@ -32,6 +32,9 @@ test('commissioning table consumes the explicit server verdict', () => {
   assert.match(source, /describeRfKpiEvidence\(data\.formal_rf_kpi_verified\)/)
   assert.match(source, /formatRfKpiValue\(az\.rsrp_dbm, rfKpiView\.verified/)
   assert.match(source, /formatRfKpiValue\(az\.sinr_db, rfKpiView\.verified/)
-  assert.match(source, /formatRfKpiValue\(az\.rank_indicator, rfKpiView\.verified/)
+  assert.match(
+    source,
+    /formatRfKpiValue\(az\.rank_indicator, rfKpiView\.verified, 2\)/,
+  )
   assert.doesNotMatch(source, /<Table\.Td>\{az\.(?:rsrp_dbm|sinr_db|rank_indicator)\}<\/Table\.Td>/)
 })

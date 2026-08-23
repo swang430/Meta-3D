@@ -29,6 +29,7 @@ from app.services.mimo_ota.path_loss_application import (
 from app.services.mimo_ota.rf_kpi_trust import (
     RF_KPI_TRUST_SCHEMA_VERSION,
     build_rf_kpi_trust,
+    measurement_provenance_is_explicit_real,
     parse_rf_kpi_trust,
     rf_kpi_scope_is_verified,
 )
@@ -582,7 +583,10 @@ def _build_mimo_ota_content_data(
     # CA 执行读的是全部 NR cells 而非 PCell。正式报告必须同时核对载波数量、
     # measure 顶层范围和每个方位的同行范围；历史记录缺任一证据都 fail-closed。
     throughput_scope_verified = throughput_scope_is_verified(measure)
-    if _throughput_verified is True and not throughput_scope_verified:
+    if _throughput_verified is True and (
+        not throughput_scope_verified
+        or not measurement_provenance_is_explicit_real(measure)
+    ):
         _throughput_verified = False
 
     # A formal KPI/report verdict requires explicit proof that the applied
@@ -599,9 +603,28 @@ def _build_mimo_ota_content_data(
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
-        statistics = {}
+
+        # 每个 KPI 族只由自己的证据门决定是否可见。RF KPI 不完整会阻止
+        # 总体 PASS/FAIL，但不能顺带抹掉已经通过独立 P1-54/P1-59 门的真实
+        # 吞吐量；反方向同理。路损不是 explicit-real 时，所有补偿后数值仍
+        # 整体隐藏，避免把未经可信校准的读数重新发布为正式工程量。
+        if not _path_loss_formally_verified:
+            statistics = {}
+            hidden_table_metrics = (
+                "RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"
+            )
+        else:
+            hidden_table_metrics: tuple[str, ...] = ()
+            if _throughput_verified is not True:
+                statistics.pop("Throughput_Mbps", None)
+                hidden_table_metrics += ("Throughput (Mbps)",)
+            if not _rf_kpi_formally_verified:
+                for metric_key in ("RSRP_dBm", "SINR_dB", "RankIndicator"):
+                    statistics.pop(metric_key, None)
+                hidden_table_metrics += ("RSRP (dBm)", "SINR (dB)", "RI")
+
         for row in table_data:
-            for metric in ("RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"):
+            for metric in hidden_table_metrics:
                 row[metric] = "N/A"
 
     summary, report_outcome = _execution_summary(
