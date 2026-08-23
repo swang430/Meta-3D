@@ -657,6 +657,19 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
         "phase_uniformity_deg": None,
     }]
 
+    temporal_only = generator._collect_channel_data(
+        session_id=session.id,
+        calibration_type="temporal",
+    )
+    assert temporal_only["execution_summary"] == {
+        "total_executions": 1,
+        "passed": 1,
+        "failed": 0,
+        "pending": 0,
+        "pass_rate": 100.0,
+    }
+    assert "quiet_zone" not in temporal_only["channel_calibration"]
+
     comprehensive = generator._collect_report_data(
         session_id=session.id,
         chamber_id=None,

@@ -1023,7 +1023,12 @@ class CalibrationReportGenerator:
             data['channel_calibration']['eis'] = eis_data
 
         # Summary
-        unverified_requested = 1 if "quiet_zone" in requested_types else 0
+        unverified_requested = (
+            1
+            if "quiet_zone" in requested_types
+            and calibration_type in (None, "quiet_zone")
+            else 0
+        )
         summary = {
             'total_executions': total + unverified_requested,
             'passed': passed,

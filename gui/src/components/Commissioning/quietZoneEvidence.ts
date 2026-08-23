@@ -73,7 +73,23 @@ export function describePrecheckMessages(value: unknown, evidenceValue: unknown)
   if (formalVerified === true && Array.isArray(value)) {
     return value.filter((message): message is string => typeof message === 'string')
   }
-  return [
+  const legacyQuietZoneMarkers = [
+    'quiet zone',
+    'quiet-zone',
+    'quiet_zone',
+    '静区',
+    'probe pattern',
+    'probe_pattern',
+    'fallback_default',
+  ]
+  const preserved = Array.isArray(value)
+    ? value.filter((message): message is string => {
+      if (typeof message !== 'string') return false
+      const normalized = message.toLocaleLowerCase()
+      return !legacyQuietZoneMarkers.some((marker) => normalized.includes(marker))
+    })
+    : []
+  return [...preserved,
     '静区结论未判定：无权威多点场扫描证据；历史提示未作为正式证据发布。',
   ]
 }

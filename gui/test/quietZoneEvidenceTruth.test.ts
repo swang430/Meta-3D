@@ -77,6 +77,24 @@ test('legacy free-text quiet-zone verdicts are replaced by a canonical diagnosti
 })
 
 
+test('quiet-zone sanitization preserves unrelated precheck audit messages', () => {
+  const messages = describePrecheckMessages(
+    [
+      'Chamber: CAICT-Lab-1',
+      'Quiet zone ripple: 2.00 dB (FAIL) [probe_pattern_peak_spread]',
+      'Instruments (HAL): 4/5 online',
+    ],
+    { quiet_zone_verified: false, quiet_zone_ripple_db: 2.0 },
+  )
+
+  assert.deepEqual(messages, [
+    'Chamber: CAICT-Lab-1',
+    'Instruments (HAL): 4/5 online',
+    '静区结论未判定：无权威多点场扫描证据；历史提示未作为正式证据发布。',
+  ])
+})
+
+
 test('probe-pattern spread is a diagnostic proxy, not measured ripple', () => {
   const view = describeQuietZoneEvidence(proxyEvidence)
 

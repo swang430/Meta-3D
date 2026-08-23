@@ -80,7 +80,7 @@ export interface CalibrationSessionResponse {
   current_stage?: string
   started_at?: string
   completed_at?: string
-  overall_pass?: boolean
+  overall_pass?: boolean | null
   total_calibrations?: number
   passed_calibrations?: number
   failed_calibrations?: number
@@ -394,7 +394,7 @@ export interface ChannelCalibrationHistoryItem {
   calibrated_at: string
   calibrated_by?: string
   status: string
-  validation_pass: boolean
+  validation_pass: boolean | null
   summary: Record<string, unknown>
 }
 
