@@ -23,6 +23,7 @@ from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.report_service import report_has_provenance_trust
 from app.services.test_execution import StepExecutionStatus
 
@@ -577,16 +578,23 @@ def _report_execution(
 ) -> SimpleNamespace:
     azimuth = {
         "azimuth_deg": 0.0,
+        "measurement_source": "instrument",
+        "measurement_verified": True,
         "throughput_mbps": 123.0,
         "throughput_valid": True,
         "rsrp_dbm": -80.0,
+        "rsrp_valid": True,
         "sinr_db": 30.0,
+        "sinr_valid": True,
         "rank_indicator": 2.0,
+        "rank_indicator_valid": True,
     }
     if azimuth_scope is not None:
         azimuth["throughput_scope"] = azimuth_scope
     measure = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "path_loss_application": {
             "schema_version": 1,
             "status": "applied",
@@ -604,6 +612,12 @@ def _report_execution(
     }
     if top_scope is not None:
         measure["throughput_scope"] = top_scope
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=[azimuth],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     return SimpleNamespace(
         id="p1-59-report",
         measurements={
@@ -695,6 +709,13 @@ def test_historical_throughput_trust_schema_one_is_fail_closed() -> None:
             "value_disclosure": "none",
         },
         "formal_path_loss_verified": False,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[],
+            azimuth_results=[],
+            source="unknown",
+        ),
+        "formal_rf_kpi_verified": False,
     }
 
     assert report_has_provenance_trust(schema_one) is False

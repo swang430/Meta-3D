@@ -12,6 +12,7 @@ the operator sees what happened, but a missing PDF should not roll back a
 finished measurement.
 """
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,13 @@ from app.services.mimo_ota.path_loss_application import (
     parse_path_loss_application,
     path_loss_application_is_formally_verified,
     path_loss_application_message,
+)
+from app.services.mimo_ota.rf_kpi_trust import (
+    RF_KPI_TRUST_SCHEMA_VERSION,
+    build_rf_kpi_trust,
+    measurement_provenance_is_explicit_real,
+    parse_rf_kpi_trust,
+    rf_kpi_scope_is_verified,
 )
 from app.services.mimo_ota.throughput_trust import (
     required_throughput_scope as _required_throughput_scope,
@@ -422,7 +430,42 @@ def _build_mimo_ota_content_data(
     )
 
     # Aggregate per-azimuth stats into one stat-row per KPI
-    azimuth_results: List[Dict[str, Any]] = measure.get("azimuth_results") or []
+    raw_azimuth_results = measure.get("azimuth_results")
+    azimuth_results: List[Dict[str, Any]] = (
+        [row for row in raw_azimuth_results if isinstance(row, dict)]
+        if isinstance(raw_azimuth_results, list)
+        else []
+    )
+
+    # P1-63: decide trust before touching historical metric values. Old or
+    # malformed rows must reach the UNKNOWN/N/A path instead of raising while
+    # min/max/sum or string formatting is still running.
+    _rf_kpi_trust = parse_rf_kpi_trust(measure.get("rf_kpi_trust"))
+    _rf_kpi_formally_verified = rf_kpi_scope_is_verified(measure)
+    if not _rf_kpi_formally_verified:
+        requested_azimuths = (
+            _rf_kpi_trust["requested_azimuths"]
+            if _rf_kpi_trust is not None
+            else [
+                float(row["azimuth_deg"])
+                for row in azimuth_results
+                if isinstance(row.get("azimuth_deg"), (int, float))
+                and not isinstance(row.get("azimuth_deg"), bool)
+                and math.isfinite(float(row["azimuth_deg"]))
+            ]
+        )
+        _rf_kpi_trust = build_rf_kpi_trust(
+            requested_azimuths=requested_azimuths,
+            azimuth_results=[],
+            source="unknown",
+        )
+
+    def _finite_report_number(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+
     statistics = {}
     table_data = []
     if azimuth_results:
@@ -432,7 +475,19 @@ def _build_mimo_ota_content_data(
             ("throughput_mbps", "Throughput", "Mbps"),
             ("rank_indicator", "RankIndicator", ""),
         ]:
-            values = [a.get(kpi_key) for a in azimuth_results if a.get(kpi_key) is not None]
+            if (
+                kpi_key in {"rsrp_dbm", "sinr_db", "rank_indicator"}
+                and not _rf_kpi_formally_verified
+            ):
+                values = []
+            else:
+                values = [
+                    number
+                    for row in azimuth_results
+                    if isinstance(row, dict)
+                    and (number := _finite_report_number(row.get(kpi_key)))
+                    is not None
+                ]
             if values:
                 vmin, vmax = min(values), max(values)
                 vavg = sum(values) / len(values)
@@ -448,15 +503,22 @@ def _build_mimo_ota_content_data(
                 }
 
         for a in azimuth_results:
-            def _format_metric(value, digits: int) -> str:
-                return "N/A" if value is None else f"{value:.{digits}f}"
+            def _format_metric(value: Any, digits: int, *, visible: bool = True) -> str:
+                numeric = _finite_report_number(value) if visible else None
+                return "N/A" if numeric is None else f"{numeric:.{digits}f}"
 
             table_data.append({
-                "Azimuth (°)": f"{a.get('azimuth_deg', 0):.1f}",
-                "RSRP (dBm)": _format_metric(a.get("rsrp_dbm"), 1),
-                "SINR (dB)": _format_metric(a.get("sinr_db"), 1),
+                "Azimuth (°)": _format_metric(a.get("azimuth_deg"), 1),
+                "RSRP (dBm)": _format_metric(
+                    a.get("rsrp_dbm"), 1, visible=_rf_kpi_formally_verified
+                ),
+                "SINR (dB)": _format_metric(
+                    a.get("sinr_db"), 1, visible=_rf_kpi_formally_verified
+                ),
                 "Throughput (Mbps)": _format_metric(a.get("throughput_mbps"), 1),
-                "RI": _format_metric(a.get("rank_indicator"), 2),
+                "RI": _format_metric(
+                    a.get("rank_indicator"), 2, visible=_rf_kpi_formally_verified
+                ),
             })
 
     # Backward-compat for historical/migrated executions that predate the
@@ -521,7 +583,10 @@ def _build_mimo_ota_content_data(
     # CA 执行读的是全部 NR cells 而非 PCell。正式报告必须同时核对载波数量、
     # measure 顶层范围和每个方位的同行范围；历史记录缺任一证据都 fail-closed。
     throughput_scope_verified = throughput_scope_is_verified(measure)
-    if _throughput_verified is True and not throughput_scope_verified:
+    if _throughput_verified is True and (
+        not throughput_scope_verified
+        or not measurement_provenance_is_explicit_real(measure)
+    ):
         _throughput_verified = False
 
     # A formal KPI/report verdict requires explicit proof that the applied
@@ -530,13 +595,36 @@ def _build_mimo_ota_content_data(
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
-    if not _path_loss_formally_verified or _throughput_verified is not True:
+    if (
+        not _path_loss_formally_verified
+        or _throughput_verified is not True
+        or not _rf_kpi_formally_verified
+    ):
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
-        statistics = {}
+
+        # 每个 KPI 族只由自己的证据门决定是否可见。RF KPI 不完整会阻止
+        # 总体 PASS/FAIL，但不能顺带抹掉已经通过独立 P1-54/P1-59 门的真实
+        # 吞吐量；反方向同理。路损不是 explicit-real 时，所有补偿后数值仍
+        # 整体隐藏，避免把未经可信校准的读数重新发布为正式工程量。
+        if not _path_loss_formally_verified:
+            statistics = {}
+            hidden_table_metrics = (
+                "RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"
+            )
+        else:
+            hidden_table_metrics: tuple[str, ...] = ()
+            if _throughput_verified is not True:
+                statistics.pop("Throughput_Mbps", None)
+                hidden_table_metrics += ("Throughput (Mbps)",)
+            if not _rf_kpi_formally_verified:
+                for metric_key in ("RSRP_dBm", "SINR_dB", "RankIndicator"):
+                    statistics.pop(metric_key, None)
+                hidden_table_metrics += ("RSRP (dBm)", "SINR (dB)", "RI")
+
         for row in table_data:
-            for metric in ("RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"):
+            for metric in hidden_table_metrics:
                 row[metric] = "N/A"
 
     summary, report_outcome = _execution_summary(
@@ -662,6 +750,11 @@ def _build_mimo_ota_content_data(
                  "各方位均有仪表有效读数",
                  "存在缺测/无效读数, 吞吐 KPI 为 N/A",
              ),
+             "RF KPI 验证": _verified_label(
+                 _rf_kpi_formally_verified,
+                 "RSRP/SINR/RI 逐指标、逐方位真实读数完整",
+                 "缺少完整真实读数, RSRP/SINR/RI 为 N/A",
+             ),
              # ⭐ 逐台点名哪几台是模拟的（P1-48）：这份名单**早就存在库里**
              #    （measure 那格的 simulated_sources），只是报告一直没取。
              #    只说「未验证」读者不知道是哪个环节出的问题。
@@ -695,6 +788,9 @@ def _build_mimo_ota_content_data(
             if _throughput_verified is True
             else ThroughputMetrics.SCOPE_UNKNOWN
         ),
+        "rf_kpi_trust_schema_version": RF_KPI_TRUST_SCHEMA_VERSION,
+        "rf_kpi_trust": _rf_kpi_trust,
+        "formal_rf_kpi_verified": _rf_kpi_formally_verified,
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": report_outcome,

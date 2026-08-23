@@ -15,6 +15,7 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.report_service import report_has_provenance_trust
 from app.services.test_execution import StepExecutionStatus
 
@@ -185,6 +186,8 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
 
     measure = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "frequency_consistency": {"fully_verified": True},
         "path_loss_application": _verified_path_loss_application(),
         "path_loss_verified": True,
@@ -192,6 +195,8 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "throughput_mbps": 0.0,
                 "rsrp_dbm": -80.0,
                 "sinr_db": 30.0,
@@ -199,6 +204,17 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
             }
         ],
     }
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=[{
+            "azimuth_deg": 0.0,
+            "rsrp_valid": True,
+            "sinr_valid": True,
+            "rank_indicator_valid": True,
+        }],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     if throughput_verified is not None:
         measure["throughput_verified"] = throughput_verified
 
@@ -266,6 +282,8 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
 
     measure = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "frequency_consistency": {"fully_verified": True},
         "path_loss_application": path_loss_application,
         "path_loss_verified": True,
@@ -276,15 +294,26 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "throughput_mbps": 350.0,
                 "throughput_valid": True,
                 "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
+                "rsrp_valid": True,
                 "sinr_db": 30.0,
+                "sinr_valid": True,
                 "rank_indicator": 2.0,
+                "rank_indicator_valid": True,
             }
         ],
     }
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=measure["azimuth_results"],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     config = SimpleNamespace(
         theoretical_peak_throughput_mbps=450.0,
         pass_criteria=SimpleNamespace(
@@ -326,6 +355,8 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
 def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
     measure = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "path_loss_application": _verified_path_loss_application(),
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
@@ -334,17 +365,28 @@ def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "throughput_mbps": 0.0,
                 "throughput_valid": True,
                 "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
                 "rsrp_dbm": -80.0,
+                "rsrp_valid": True,
                 "sinr_db": 30.0,
+                "sinr_valid": True,
                 "rank_indicator": 2.0,
+                "rank_indicator_valid": True,
             }
         ],
     }
     if throughput_verified is not None:
         measure["throughput_verified"] = throughput_verified
+    measure["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=measure["azimuth_results"],
+        source="explicit_real",
+    )
+    measure["formal_rf_kpi_verified"] = True
     return SimpleNamespace(
         id="p1-54-report",
         measurements={
@@ -375,8 +417,10 @@ def test_report_hides_untrusted_or_historical_throughput(
     assert content["execution_summary"]["pending"] == 0
     assert content["execution_summary"]["undetermined"] == 1
     assert content["execution_summary"]["pass_rate"] is None
-    assert content["statistics"] == {}
+    assert "Throughput_Mbps" not in content["statistics"]
+    assert content["statistics"]["RSRP_dBm"]["mean"] == -80.0
     assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert content["table_data"][0]["RSRP (dBm)"] == "-80.0"
     measure_step = next(
         step for step in content["step_results"] if step["phase"] == "measure"
     )
@@ -411,6 +455,13 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
             "value_disclosure": "none",
         },
         "formal_path_loss_verified": False,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[],
+            azimuth_results=[],
+            source="unknown",
+        ),
+        "formal_rf_kpi_verified": False,
     }
     inconsistent_path_loss_attestation = {
         **fully_sanitized,

@@ -26,6 +26,11 @@ from app.services.mimo_ota.path_loss_application import (
     parse_path_loss_application,
     path_loss_application_is_formally_verified,
 )
+from app.services.mimo_ota.rf_kpi_trust import (
+    RF_KPI_TRUST_SCHEMA_VERSION,
+    parse_rf_kpi_trust,
+    rf_kpi_trust_is_formally_verified,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +59,9 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "throughput_trust_schema_version",
     "formal_throughput_verified",
     "throughput_scope",
+    "rf_kpi_trust_schema_version",
+    "rf_kpi_trust",
+    "formal_rf_kpi_verified",
     "vrt_archive_trust_schema_version",
 })
 
@@ -90,6 +98,9 @@ def report_has_provenance_trust(content_data: Any) -> bool:
     throughput_marker = content_data.get(THROUGHPUT_TRUST_FIELD)
     raw_application = content_data.get("path_loss_application")
     formal_path_loss_verified = content_data.get("formal_path_loss_verified")
+    rf_kpi_marker = content_data.get("rf_kpi_trust_schema_version")
+    raw_rf_kpi_trust = content_data.get("rf_kpi_trust")
+    formal_rf_kpi_verified = content_data.get("formal_rf_kpi_verified")
     application_is_well_formed = (
         isinstance(raw_application, dict)
         and parse_path_loss_application(raw_application) == raw_application
@@ -104,6 +115,15 @@ def report_has_provenance_trust(content_data: Any) -> bool:
         and (
             formal_path_loss_verified
             is path_loss_application_is_formally_verified(raw_application)
+        )
+        and type(rf_kpi_marker) is int
+        and rf_kpi_marker == RF_KPI_TRUST_SCHEMA_VERSION
+        and isinstance(raw_rf_kpi_trust, dict)
+        and parse_rf_kpi_trust(raw_rf_kpi_trust) == raw_rf_kpi_trust
+        and type(formal_rf_kpi_verified) is bool
+        and (
+            formal_rf_kpi_verified
+            is rf_kpi_trust_is_formally_verified(raw_rf_kpi_trust)
         )
     )
 

@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
 from app.services.report_service import ReportService
 
 
@@ -56,7 +57,7 @@ def _step(content, phase):
 
 
 def _path_loss_report_phases(application, *, verified=False):
-    return {
+    phases = {
         "precheck": {
             "overall_pass": True,
             "quiet_zone_ripple_source": "probe_pattern_peak_spread",
@@ -67,6 +68,9 @@ def _path_loss_report_phases(application, *, verified=False):
             "trp_verified": True,
         },
         "measure": {
+            "measurement_source": "instrument" if verified else "unknown",
+            "measurement_verified": verified,
+            "simulated_sources": [] if verified else None,
             "path_loss_application": application,
             "path_loss_verified": verified,
             "path_loss_calibration_use_mock": False if verified else None,
@@ -76,16 +80,30 @@ def _path_loss_report_phases(application, *, verified=False):
             "carrier_aggregation": {"num_component_carriers": 1},
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument" if verified else "unknown",
+                "measurement_verified": verified,
                 "rsrp_dbm": -70.0,
+                "rsrp_valid": True,
                 "sinr_db": 20.0,
+                "sinr_valid": True,
                 "throughput_mbps": 500.0,
                 "throughput_valid": True,
                 "throughput_scope": "pcell",
                 "rank_indicator": 4.0,
+                "rank_indicator_valid": True,
             }],
         },
         "analysis": {"verdict": "PASS"},
     }
+    if verified:
+        measure = phases["measure"]
+        measure["rf_kpi_trust"] = build_rf_kpi_trust(
+            requested_azimuths=[0.0],
+            azimuth_results=measure["azimuth_results"],
+            source="explicit_real",
+        )
+        measure["formal_rf_kpi_verified"] = True
+    return phases
 
 
 def _path_loss_application(
@@ -122,6 +140,13 @@ def _trusted_unknown_report_fields():
             gate_mode="strict",
         ),
         "formal_path_loss_verified": False,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[],
+            azimuth_results=[],
+            source="unknown",
+        ),
+        "formal_rf_kpi_verified": False,
     }
 
 
@@ -348,10 +373,15 @@ def test_historical_verified_flag_without_explicit_real_provenance_stays_unknown
             "trp_verified": True,
         },
         "measure": {
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "simulated_sources": [],
             "path_loss_verified": True,
             "path_loss_certificate_id": "legacy-cert",
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "rsrp_dbm": -70.0,
                 "sinr_db": 20.0,
                 "throughput_mbps": 500.0,
@@ -385,6 +415,9 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
             "trp_verified": True,
         },
         "measure": {
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "simulated_sources": [],
             "path_loss_application": _path_loss_application(
                 provenance="real",
                 certificate_id="cert-real",
@@ -398,16 +431,27 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
             "carrier_aggregation": {"num_component_carriers": 1},
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "rsrp_dbm": -70.0,
+                "rsrp_valid": True,
                 "sinr_db": 20.0,
+                "sinr_valid": True,
                 "throughput_mbps": 500.0,
                 "throughput_valid": True,
                 "throughput_scope": "pcell",
                 "rank_indicator": 4.0,
+                "rank_indicator_valid": True,
             }],
         },
         "analysis": {"verdict": "PASS"},
     }
+    phases["measure"]["rf_kpi_trust"] = build_rf_kpi_trust(
+        requested_azimuths=[0.0],
+        azimuth_results=phases["measure"]["azimuth_results"],
+        source="explicit_real",
+    )
+    phases["measure"]["formal_rf_kpi_verified"] = True
 
     content = _build_mimo_ota_content_data(
         _exec(phases), datetime(2026, 1, 1),
@@ -495,18 +539,7 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
         generated_by="mimo_ota.executors.report",
         content_data={
             "report_family": "mimo_ota",
-            "calibration_trust_schema_version": 1,
-            "throughput_trust_schema_version": 2,
-            "path_loss_application": {
-                "schema_version": 1,
-                "status": "unknown",
-                "provenance": "unknown",
-                "reason": "legacy_unclassified",
-                "gate_mode": "strict",
-                "certificate_id": None,
-                "value_disclosure": "none",
-            },
-            "formal_path_loss_verified": False,
+            **_trusted_unknown_report_fields(),
             "overall_result": "unknown",
         },
     )
