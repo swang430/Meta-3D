@@ -18,7 +18,7 @@ export function PrecheckPhase({ data }: { data: any }) {
     data.path_loss_calibration_reason,
     data.path_loss_calibration_valid === true,
   )
-  const precheckOutcome = describePrecheckOutcome(data.overall_pass)
+  const precheckOutcome = describePrecheckOutcome(data.overall_pass, data.quiet_zone_evidence)
   const quietZoneView = describeQuietZoneEvidence(data.quiet_zone_evidence)
   
   return (
@@ -26,7 +26,7 @@ export function PrecheckPhase({ data }: { data: any }) {
       <Alert
         color={precheckOutcome.color}
         title={precheckOutcome.title}
-        icon={data.overall_pass === true ? <IconCheck /> : data.overall_pass === false ? <IconX /> : <IconAlertTriangle />}
+        icon={precheckOutcome.color === 'green' ? <IconCheck /> : precheckOutcome.color === 'red' ? <IconX /> : <IconAlertTriangle />}
       >
         {precheckOutcome.message}
       </Alert>

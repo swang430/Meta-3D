@@ -41,8 +41,9 @@ function parseQuietZoneEvidence(value: unknown): QuietZoneEvidence | null {
   return null
 }
 
-export function describePrecheckOutcome(value: unknown) {
-  if (value === true) {
+export function describePrecheckOutcome(value: unknown, evidenceValue: unknown) {
+  const formalVerified = parseQuietZoneEvidence(evidenceValue)?.formal_verified as boolean | undefined
+  if (value === true && formalVerified === true) {
     return {
       color: 'green',
       title: '预检通过',

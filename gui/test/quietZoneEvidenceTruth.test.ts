@@ -20,7 +20,21 @@ const proxyEvidence = {
 
 
 test('unknown precheck is yellow and never presented as pass or fail', () => {
-  assert.deepEqual(describePrecheckOutcome(null), {
+  assert.deepEqual(describePrecheckOutcome(null, proxyEvidence), {
+    color: 'yellow',
+    title: '预检未判定',
+    message: '运行条件已检查，但缺少正式静区测量证据。诊断流程可继续。',
+  })
+})
+
+
+test('legacy overall true cannot revive a green precheck without canonical formal evidence', () => {
+  const legacyEvidence = {
+    quiet_zone_verified: true,
+    quiet_zone_ripple_db: 0.7,
+  }
+
+  assert.deepEqual(describePrecheckOutcome(true, legacyEvidence), {
     color: 'yellow',
     title: '预检未判定',
     message: '运行条件已检查，但缺少正式静区测量证据。诊断流程可继续。',
@@ -59,7 +73,7 @@ test('commissioning phase consumes the shared tri-state presenter', () => {
     'utf8',
   )
 
-  assert.match(source, /describePrecheckOutcome\(data\.overall_pass\)/)
+  assert.match(source, /describePrecheckOutcome\(data\.overall_pass, data\.quiet_zone_evidence\)/)
   assert.match(source, /describeQuietZoneEvidence\(data\.quiet_zone_evidence\)/)
   assert.doesNotMatch(source, /data\.overall_pass \? "预检通过" : "预检失败"/)
   assert.doesNotMatch(source, /±\{data\.quiet_zone_ripple_db\} dB/)
