@@ -1,4 +1,4 @@
-"""F64 license probe — feature-probe replacement for ``*OPT?``.
+"""F64 license discovery — SYSTem:INFO? replacement for ``*OPT?``.
 
 Confirmed CAICT 2026-05-13 (memory ``project_f64_ate_server_capabilities``):
 F64's ATE Server answers ``-100,"ATE command not supported"`` to
@@ -6,18 +6,24 @@ F64's ATE Server answers ``-100,"ATE command not supported"`` to
 ``has_interference_generator`` flag silently stayed False even on units
 where the K01 license was actually installed.
 
-The fix replaces ``*OPT?`` with two complementary probes:
-  (a) SYST:INFO? keyword scan — SYST:INFO? is known to work on F64.
-  (b) Soft feature probes — one read-only SCPI per option. If the
-      controller answers, the gating license is installed; if it NAKs,
-      treated as absent.
+License discovery reads the ``SYSTem:INFO?`` reply — the manual says it
+carries the license list (User Reference Rev 10.2 §20.4.2.4, "Query
+returns the basic system info and licenses") — and scans it for known
+keywords.
 
-These tests pin the dispatch contract without needing a real F64.
-``_query`` is monkey-patched to return canned responses per command.
+P1-66: the former "soft feature probes"
+(``SYSTem:CALibration:USER:LIST?`` / ``OUTPut:INTERFerence:LIST?``) were
+removed — both commands are absent from the manual, each connect left a
+-100 in the error queue, and crediting "any response" as an ACK turned
+the returned -100 payload into a license false-positive. The fake driver
+here raises on any unexpected SCPI, so these tests double as a unit-level
+gate that no fabricated probe command is ever sent.
+
+Connect-level behavior gates live in ``test_p1_66_f64_probe_truth.py``.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pytest
 
@@ -36,14 +42,17 @@ def _make_driver_with_query_table(query_table: Dict[str, Any]) -> RealPropsimF64
       - an exception instance (raised)
       - None (raises a generic Exception — used to simulate NAK)
     Commands not in the table raise (so the test fails noisily on
-    unexpected SCPI traffic — better than silently passing).
+    unexpected SCPI traffic — better than silently passing). Every sent
+    command is recorded on ``driver._sent_commands``.
     """
     d = RealPropsimF64Driver(
         instrument_id="f64-license-test",
         config={"ip": "192.168.0.100", "port": 5025},
     )
+    d._sent_commands = []  # type: ignore[attr-defined]
 
     async def fake_query(cmd: str, **_kwargs) -> str:
+        d._sent_commands.append(cmd)  # type: ignore[attr-defined]
         if cmd not in query_table:
             raise AssertionError(f"unexpected SCPI: {cmd!r}")
         spec = query_table[cmd]
@@ -58,112 +67,78 @@ def _make_driver_with_query_table(query_table: Dict[str, Any]) -> RealPropsimF64
 
 
 # ---------------------------------------------------------------------------
-# SYST:INFO? scan
+# SYST:INFO? scan — the single license source
 # ---------------------------------------------------------------------------
 
 class TestSystInfoKeywordScan:
     @pytest.mark.asyncio
     async def test_interference_keyword_promotes_int_gen(self):
-        """Realistic SYST:INFO? format with an 'interference' substring
-        is recognised — even without a successful soft probe."""
+        """Realistic SYST:INFO? format with license names in the tail
+        (manual §20.4.2.4) — both tokens recognised from the scan."""
         d = _make_driver_with_query_table({
             "SYST:INFO?": "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,Interference Generator,Calibration User Alignment",
-            # Soft probes both NAK — must NOT remove tokens already
-            # found by the keyword scan.
-            "OUTPut:INTERFerence:LIST?": None,
-            "SYSTem:CALibration:USER:LIST?": None,
         })
         opts = await d._probe_installed_options()
         assert "INT-GEN" in opts
         assert "USER-ALIGN" in opts
 
     @pytest.mark.asyncio
-    async def test_no_keywords_means_no_tokens_from_scan_alone(self):
+    async def test_awgn_interferences_field_form_is_recognised(self):
+        """现场 2026-08 实测形态: SYST:INFO? 含 "AWGN interferences:32"。"""
+        d = _make_driver_with_query_table({
+            "SYST:INFO?": "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,Main license,AWGN interferences:32,Shadowing",
+        })
+        opts = await d._probe_installed_options()
+        assert "INT-GEN" in opts
+
+    @pytest.mark.asyncio
+    async def test_no_keywords_means_no_tokens(self):
         d = _make_driver_with_query_table({
             "SYST:INFO?": "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz",
-            "OUTPut:INTERFerence:LIST?": None,
-            "SYSTem:CALibration:USER:LIST?": None,
         })
         opts = await d._probe_installed_options()
         assert opts == []
 
     @pytest.mark.asyncio
-    async def test_syst_info_failure_does_not_block_probes(self):
-        """If SYST:INFO? itself fails, the soft probes still run —
-        startup must not depend on any one source."""
+    async def test_syst_info_failure_yields_empty_and_does_not_raise(self):
+        """SYST:INFO? failing must not break connect — discovery just
+        yields no tokens (fail-closed; explicit config can override)."""
         d = _make_driver_with_query_table({
             "SYST:INFO?": RuntimeError("simulated SYST:INFO? failure"),
-            "OUTPut:INTERFerence:LIST?": "",  # ACK with empty payload
-            "SYSTem:CALibration:USER:LIST?": None,
-        })
-        opts = await d._probe_installed_options()
-        # Probe succeeded → INT-GEN detected even with SYST:INFO? failure.
-        assert "INT-GEN" in opts
-        # User align probe NAKed → absent.
-        assert "USER-ALIGN" not in opts
-
-
-# ---------------------------------------------------------------------------
-# Soft feature probes
-# ---------------------------------------------------------------------------
-
-class TestSoftFeatureProbes:
-    @pytest.mark.asyncio
-    async def test_probe_ack_promotes_option(self):
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF,v1.0,16",
-            # Both probes ACK → both options installed.
-            "OUTPut:INTERFerence:LIST?": "ce_sa_cal_tone,interferer_2",
-            "SYSTem:CALibration:USER:LIST?": "lab_alignment_v1",
-        })
-        opts = await d._probe_installed_options()
-        assert set(opts) == {"INT-GEN", "USER-ALIGN"}
-
-    @pytest.mark.asyncio
-    async def test_empty_ack_still_counts_as_license_present(self):
-        """ACK with empty payload ≠ 'command not supported'. Probe must
-        recognise '' as success (license present, list just happens to
-        be empty)."""
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": "",
-            "SYSTem:CALibration:USER:LIST?": "",
-        })
-        opts = await d._probe_installed_options()
-        assert set(opts) == {"INT-GEN", "USER-ALIGN"}
-
-    @pytest.mark.asyncio
-    async def test_probe_nak_keeps_option_out(self):
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": RuntimeError("simulated -100"),
-            "SYSTem:CALibration:USER:LIST?": RuntimeError("simulated -100"),
         })
         opts = await d._probe_installed_options()
         assert opts == []
 
+
+# ---------------------------------------------------------------------------
+# No fabricated probe commands (P1-66)
+# ---------------------------------------------------------------------------
+
+class TestNoFabricatedProbeCommands:
     @pytest.mark.asyncio
-    async def test_mixed_result_reports_only_the_working_one(self):
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": "",         # K01 installed
-            "SYSTem:CALibration:USER:LIST?": None,    # user-align missing
-        })
-        opts = await d._probe_installed_options()
-        assert opts == ["INT-GEN"]
+    async def test_discovery_sends_only_syst_info(self):
+        """The two manual-absent probe commands
+        (``SYSTem:CALibration:USER:LIST?`` / ``OUTPut:INTERFerence:LIST?``)
+        must never be sent — with or without keyword hits."""
+        for info in (
+            "PROPSIM F64,64,RF,v1.0,16",  # no keywords → no fallback probing
+            "PROPSIM F64,64,RF,Interference Generator",
+        ):
+            d = _make_driver_with_query_table({"SYST:INFO?": info})
+            await d._probe_installed_options()
+            assert d._sent_commands == ["SYST:INFO?"]  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
-# Idempotence — keyword + probe agreeing doesn't double-list
+# Idempotence — multiple keywords mapping to one token don't double-list
 # ---------------------------------------------------------------------------
 
 class TestNoDuplicates:
     @pytest.mark.asyncio
-    async def test_keyword_and_probe_both_find_same_token_emits_once(self):
+    async def test_two_keywords_for_same_token_emit_once(self):
+        # "interference" and "int-gen" both map to INT-GEN.
         d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF,Interference Generator",
-            "OUTPut:INTERFerence:LIST?": "",  # ALSO acks
-            "SYSTem:CALibration:USER:LIST?": None,
+            "SYST:INFO?": "PROPSIM F64,64,RF,Interference Generator,INT-GEN option",
         })
         opts = await d._probe_installed_options()
         assert opts.count("INT-GEN") == 1
@@ -177,13 +152,11 @@ class TestNoDuplicates:
 class TestAppliesToHasFlag:
     @pytest.mark.asyncio
     async def test_int_gen_token_flips_has_interference_generator_true(self):
-        """End-to-end intent of the probe: ``has_interference_generator``
-        ends up True on a unit with the K01 license, without operator
+        """End-to-end intent: ``has_interference_generator`` ends up True
+        on a unit whose SYST:INFO? names the license, without operator
         having to manually set ``config['has_interference_generator']``."""
         d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": "ce_sa_cal_tone",
-            "SYSTem:CALibration:USER:LIST?": None,
+            "SYST:INFO?": "PROPSIM F64,64,RF,Interference Generator",
         })
         opts = await d._probe_installed_options()
         await d._apply_discovered_capabilities(opts)
@@ -193,25 +166,23 @@ class TestAppliesToHasFlag:
     async def test_no_int_gen_token_keeps_has_flag_false(self):
         d = _make_driver_with_query_table({
             "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": None,
-            "SYSTem:CALibration:USER:LIST?": None,
         })
         opts = await d._probe_installed_options()
         await d._apply_discovered_capabilities(opts)
         assert d.has_interference_generator is False
 
     @pytest.mark.asyncio
-    async def test_explicit_config_overrides_probe(self):
+    async def test_explicit_config_overrides_discovery(self):
         """When the operator explicitly sets has_interference_generator
-        in config, the probe result is informational only — explicit
+        in config, the discovery result is informational only — explicit
         wins over discovered. Pre-existing contract, pinned here so
-        the new probe path doesn't accidentally clobber it."""
+        the discovery path doesn't accidentally clobber it."""
         d = RealPropsimF64Driver(
             instrument_id="f64-explicit",
             config={
                 "ip": "192.168.0.100",
                 "port": 5025,
-                # Operator says "yes K01 is here" — even if probe NAKs.
+                # Operator says "yes K01 is here" — even if SYST:INFO? NAKs.
                 "has_interference_generator": True,
             },
         )
@@ -227,23 +198,24 @@ class TestAppliesToHasFlag:
 
 
 # ---------------------------------------------------------------------------
-# Token canonicalisation — probe uses the same set the apply hook checks
+# Token canonicalisation — scan uses the same set the apply hook checks
 # ---------------------------------------------------------------------------
 
 class TestTokenSetAlignment:
-    def test_probe_int_gen_token_is_in_apply_set(self):
-        """Probe emits "INT-GEN"; ``_apply_discovered_capabilities``
-        checks against ``INTERFERENCE_GEN_OPTION_TOKENS``. The probe
+    def test_scan_int_gen_token_is_in_apply_set(self):
+        """The scan emits "INT-GEN"; ``_apply_discovered_capabilities``
+        checks against ``INTERFERENCE_GEN_OPTION_TOKENS``. The canonical
         token must be a member, otherwise a perfectly-detected option
         silently fails to flip the has_* flag."""
         # The apply hook upper-cases options before set intersection,
-        # so the probe's canonical token must round-trip through .upper()
+        # so the canonical token must round-trip through .upper()
         # to a member of INTERFERENCE_GEN_OPTION_TOKENS.
         assert "INT-GEN".upper() in INTERFERENCE_GEN_OPTION_TOKENS
 
 
 # ---------------------------------------------------------------------------
-# Error-payload guard (Codex P1 on PR #15)
+# Error-payload guard (Codex P1 on PR #15; consumed post-P1-66 by
+# get_user_alignment_status and the health categorizer alignment)
 # ---------------------------------------------------------------------------
 
 class TestUnsupportedErrorPayloadDetector:
@@ -251,9 +223,9 @@ class TestUnsupportedErrorPayloadDetector:
     tuples the F64 sometimes returns as the **query response** itself
     (not raised) when a SCPI command isn't supported.
 
-    Without this guard the soft-probe ``if response is not None`` would
-    credit ``-100,"ATE command not supported"`` as proof the license is
-    installed — exactly the false-positive Codex flagged.
+    Without this guard, code that checks "did we get a non-empty
+    string?" would credit ``-100,"ATE command not supported"`` as a
+    real value — e.g. as an active user-alignment name.
     """
 
     def test_canonical_minus_100_payload_is_rejected(self):
@@ -293,7 +265,7 @@ class TestUnsupportedErrorPayloadDetector:
         assert _is_unsupported_error_payload("PROPSIM,F64,SN12345") is False
 
     def test_empty_string_not_treated_as_unsupported(self):
-        # Empty ACK = "command ran, list is empty" = license present.
+        # Empty reply = 合法回复形态 (e.g. USER:GET? 未启用, §20.4.2.19)。
         # Must not be confused with an error payload.
         assert _is_unsupported_error_payload("") is False
 
@@ -310,57 +282,15 @@ class TestUnsupportedErrorPayloadDetector:
         assert _is_unsupported_error_payload(None) is False  # type: ignore[arg-type]
 
 
-class TestProbeRejectsInlineErrorPayload:
-    """End-to-end: the F64 license probe must NOT credit an option when
-    the soft probe ``response`` is itself a SCPI error payload."""
+class TestScanRejectsInlineErrorPayload:
+    """SYST:INFO? itself replying with a SCPI error payload must yield
+    no license tokens (the error text carries no keywords — fail-closed
+    by construction, pinned here so a keyword addition can't break it)."""
 
     @pytest.mark.asyncio
-    async def test_inline_minus_100_payload_keeps_option_absent(self):
+    async def test_inline_minus_100_payload_yields_no_tokens(self):
         d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            # F64 returns the error TEXT as the query response — does
-            # NOT raise. Probe must detect and reject.
-            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
-            "SYSTem:CALibration:USER:LIST?": '-100,"ATE command not supported"',
+            "SYST:INFO?": '-100,"ATE command not supported"',
         })
         opts = await d._probe_installed_options()
         assert opts == []
-
-    @pytest.mark.asyncio
-    async def test_no_error_sentinel_does_credit_option(self):
-        """Negative control — ``0,"No error"`` (SCPI-shaped but not an
-        error) must NOT be misclassified as unsupported. The probe
-        should treat it as proof the command ran."""
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": '0,"No error"',
-            "SYSTem:CALibration:USER:LIST?": None,
-        })
-        opts = await d._probe_installed_options()
-        assert "INT-GEN" in opts
-
-    @pytest.mark.asyncio
-    async def test_mixed_inline_error_and_real_response(self):
-        """One probe returns inline -100, the other returns real data
-        — only the latter's option ends up in the list."""
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
-            "SYSTem:CALibration:USER:LIST?": "lab_alignment_v1",
-        })
-        opts = await d._probe_installed_options()
-        assert opts == ["USER-ALIGN"]
-
-    @pytest.mark.asyncio
-    async def test_inline_error_payload_with_apply_keeps_has_flag_false(self):
-        """End-to-end: an unlicensed unit emitting inline ``-100,...``
-        as the probe response must NOT end up with
-        ``has_interference_generator = True`` (the Codex P1 concern)."""
-        d = _make_driver_with_query_table({
-            "SYST:INFO?": "PROPSIM F64,64,RF",
-            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
-            "SYSTem:CALibration:USER:LIST?": None,
-        })
-        opts = await d._probe_installed_options()
-        await d._apply_discovered_capabilities(opts)
-        assert d.has_interference_generator is False
