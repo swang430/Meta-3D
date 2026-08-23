@@ -515,6 +515,7 @@ steps:
   - id: quiet_zone
     type: channel_calibration
     calibration_type: quiet_zone
+    parameters: null
 """)
         assert workflow.parameters == {}, "解析器契约：显式 null 归一成 {}"
         assert workflow.steps[0].parameters == {}, "步骤级同样归一"
