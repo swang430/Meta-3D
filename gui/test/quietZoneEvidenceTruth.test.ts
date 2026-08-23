@@ -122,6 +122,10 @@ test('commissioning phase consumes the shared tri-state presenter', () => {
   )
   assert.match(source, /describeQuietZoneEvidence\(data\.quiet_zone_evidence\)/)
   assert.match(source, /describePrecheckMessages\(data\.messages, data\.quiet_zone_evidence\)/)
+  assert.match(
+    source,
+    /data\.overall_pass === false && data\.operational_ready === false && \(\(\) =>/,
+  )
   assert.match(source, /quietZoneView\.verified && data\.quiet_zone_pass === false/)
   assert.doesNotMatch(source, /data\.overall_pass \? "预检通过" : "预检失败"/)
   assert.doesNotMatch(source, /±\{data\.quiet_zone_ripple_db\} dB/)

@@ -37,11 +37,10 @@ export function PrecheckPhase({ data }: { data: any }) {
         {precheckOutcome.message}
       </Alert>
 
-      {/* P1-9 follow-up: when overall_pass is false, the passing `messages`
-          list below doesn't tell the operator WHICH gate failed (e.g. all
-          checks read PASS but the strict DUT/cal gate failed). Surface the
-          failing gate reasons explicitly from the result payload. */}
-      {data.overall_pass === false && (() => {
+      {/* Only a current operational gate failure may publish red failure
+          reasons. A legacy overall_pass=false can represent an untrusted
+          quiet-zone verdict and must remain UNKNOWN. */}
+      {data.overall_pass === false && data.operational_ready === false && (() => {
         const reasons: string[] = []
         if (data.critical_instruments_online === false) reasons.push('关键仪表离线 — 无法继续')
         if (data.cal_pass === false && data.cal_pass_reason) reasons.push(`校准门未通过：${data.cal_pass_reason}`)
