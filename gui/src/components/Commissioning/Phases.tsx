@@ -6,6 +6,7 @@ import {
   describePathLossApplication,
   describePathLossSelection,
 } from './pathLossApplication'
+import { describeRfKpiEvidence, formatRfKpiValue } from './rfKpiEvidence'
 
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
@@ -182,6 +183,7 @@ export function ReferencePhase({
 export function MIMOTestPhase({ data, config: _config }: { data: any, config: any }) {
   if (!data) return <Text c="dimmed">等待测试...</Text>
   const pathLossView = describePathLossApplication(data.path_loss_application)
+  const rfKpiView = describeRfKpiEvidence(data.formal_rf_kpi_verified)
   
   return (
     <Stack gap="md">
@@ -209,6 +211,15 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
         )}
       </Alert>
 
+      <Alert
+        color={rfKpiView.color}
+        variant="light"
+        icon={rfKpiView.verified ? <IconCheck /> : <IconAlertTriangle />}
+        title={rfKpiView.title}
+      >
+        {rfKpiView.message}
+      </Alert>
+
       {data.azimuth_results?.length > 0 && (
         <Table striped highlightOnHover>
           <Table.Thead>
@@ -224,10 +235,10 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
             {data.azimuth_results.map((az: any) => (
               <Table.Tr key={az.azimuth_deg}>
                 <Table.Td>{az.azimuth_deg}</Table.Td>
-                <Table.Td>{az.rsrp_dbm}</Table.Td>
-                <Table.Td>{az.sinr_db}</Table.Td>
+                <Table.Td>{formatRfKpiValue(az.rsrp_dbm, rfKpiView.verified, 1)}</Table.Td>
+                <Table.Td>{formatRfKpiValue(az.sinr_db, rfKpiView.verified, 1)}</Table.Td>
                 <Table.Td>{az.throughput_mbps}</Table.Td>
-                <Table.Td>{az.rank_indicator}</Table.Td>
+                <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 0)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
