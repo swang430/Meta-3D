@@ -7,6 +7,10 @@ import {
   describePathLossSelection,
 } from './pathLossApplication'
 import { describeRfKpiEvidence, formatRfKpiValue } from './rfKpiEvidence'
+import {
+  describePrecheckOutcome,
+  describeQuietZoneEvidence,
+} from './quietZoneEvidence'
 
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
@@ -14,22 +18,24 @@ export function PrecheckPhase({ data }: { data: any }) {
     data.path_loss_calibration_reason,
     data.path_loss_calibration_valid === true,
   )
+  const precheckOutcome = describePrecheckOutcome(data.overall_pass)
+  const quietZoneView = describeQuietZoneEvidence(data.quiet_zone_evidence)
   
   return (
     <Stack gap="md">
       <Alert
-        color={data.overall_pass ? 'green' : 'red'}
-        title={data.overall_pass ? "预检通过" : "预检失败"}
-        icon={data.overall_pass ? <IconCheck /> : <IconX />}
+        color={precheckOutcome.color}
+        title={precheckOutcome.title}
+        icon={data.overall_pass === true ? <IconCheck /> : data.overall_pass === false ? <IconX /> : <IconAlertTriangle />}
       >
-        {data.overall_pass ? "所有系统与校准状态正常，可进行下一步测试。" : "系统存在异常，请检查以下信息。"}
+        {precheckOutcome.message}
       </Alert>
 
       {/* P1-9 follow-up: when overall_pass is false, the passing `messages`
           list below doesn't tell the operator WHICH gate failed (e.g. all
           checks read PASS but the strict DUT/cal gate failed). Surface the
           failing gate reasons explicitly from the result payload. */}
-      {!data.overall_pass && (() => {
+      {data.overall_pass === false && (() => {
         const reasons: string[] = []
         if (data.critical_instruments_online === false) reasons.push('关键仪表离线 — 无法继续')
         if (data.cal_pass === false && data.cal_pass_reason) reasons.push(`校准门未通过：${data.cal_pass_reason}`)
@@ -75,9 +81,8 @@ export function PrecheckPhase({ data }: { data: any }) {
         <List spacing="sm" size="sm">
           {data.messages?.map((msg: string, i: number) => {
             const isError = msg.includes('FAIL') || msg.includes('异常')
-            // 未验证(兜底值) 类消息 (如静区均匀度兜底) 用黄色警告色, 区别于
-            // 干净 PASS 的蓝色 info —— 操作员一眼看出"非实测"。
-            const isWarn = !isError && (msg.includes('未验证') || msg.includes('⚠️'))
+            // 未判定/诊断代理类消息用黄色警告色，与正式 PASS 区分。
+            const isWarn = !isError && (msg.includes('未验证') || msg.includes('未判定') || msg.includes('诊断代理') || msg.includes('⚠️'))
             const color = isError ? 'red' : isWarn ? 'yellow' : 'blue'
             return (
               <List.Item
@@ -102,14 +107,23 @@ export function PrecheckPhase({ data }: { data: any }) {
           <Table.Tr>
             <Table.Td>静区纹波 (Ripple)</Table.Td>
             <Table.Td>
-              ±{data.quiet_zone_ripple_db} dB
-              {data.quiet_zone_verified !== true && (
-                <Text span c="yellow.8" fw={600} ml={6}>
-                  ⚠️ 未验证（兜底默认值，非实测）
-                </Text>
-              )}
+              {quietZoneView.formalRipple}
+              <Text span c="yellow.8" fw={600} ml={6}>
+                ⚠️ {quietZoneView.label}
+              </Text>
             </Table.Td>
           </Table.Tr>
+          {quietZoneView.proxyRipple && (
+            <Table.Tr>
+              <Table.Td>ProbePattern 峰值离散</Table.Td>
+              <Table.Td>
+                {quietZoneView.proxyRipple}
+                <Text span c="yellow.8" fw={600} ml={6}>
+                  诊断代理，非静区实测
+                </Text>
+              </Table.Td>
+            </Table.Tr>
+          )}
         </Table.Tbody>
       </Table>
     </Stack>
