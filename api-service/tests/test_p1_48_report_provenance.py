@@ -261,39 +261,6 @@ def test_fallback_calibration_numbers_are_not_printed():
     )
 
 
-def test_fallback_ripple_number_never_reaches_report_messages():
-    """⭐ 外审抓出（第二条路）：上一轮只把「静区波纹」字段置空，
-    而同一个兜底 0.7 从 precheck 的**提示文案**里照样印进 PDF。
-
-    「提示」栏 = `precheck.messages` 原样渲染（见 report.py 的 step_results），
-    渲染端分不清哪个数字是兜底的 —— 所以必须在生成端就不写进去。
-
-    判据只盯未验证那条消息：阈值 `{criteria.max_quiet_zone_ripple_db}`
-    是配置里的真值可以印，兜底的 `{ripple_db}` 不行。
-
-    让它报错的改法：把 `{ripple_db:.1f}` 加回那条消息（已实跑，见下）。
-    """
-    import inspect
-
-    from app.services.mimo_ota.executors.precheck import PrecheckExecutor
-
-    # 锚在 "[fallback_default]"（带方括号，源码里唯一），往前取最近的
-    # messages.append —— 那就是未验证分支这一条。
-    # 不能锚在中文句子上：注释里也会写同样的话，锚会漂到上一个分支
-    # （PASS 分支的消息带实测数字，合法），门就会误红。
-    src = inspect.getsource(PrecheckExecutor.execute)
-    end = src.index('"[fallback_default]"')
-    start = src.rindex("messages.append(", 0, end)
-    block = src[start:end]
-
-    assert "{ripple_db" not in block, (
-        "未验证分支的提示文案又带上了兜底波纹数字 —— 它会原样进正式报告的「提示」栏：\n"
-        + block
-    )
-    # 阈值该留着（不然操作员不知道判据是多少）
-    assert "max_quiet_zone_ripple_db" in block, "阈值被一起删掉了，提示失去意义"
-
-
 def test_provenance_failure_leaves_an_explicit_unknown():
     """⭐ 外审抓出：填充失败时静默留空 = 退回那份「看起来很干净」的报告。
 

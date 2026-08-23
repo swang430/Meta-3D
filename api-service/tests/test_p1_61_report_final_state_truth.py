@@ -326,8 +326,8 @@ def test_late_cancel_cannot_overwrite_completed_report_winner(monkeypatch, tmp_p
 @pytest.mark.parametrize(
     ("status", "verdict", "validation_pass", "trusted", "expected_state", "pass_rate"),
     [
-        ("completed", "PASS", True, True, "passed", 100.0),
-        ("completed", "FAIL", False, True, "failed", 0.0),
+        ("completed", "PASS", True, True, "undetermined", None),
+        ("completed", "FAIL", False, True, "undetermined", None),
         ("completed", "UNKNOWN", None, False, "undetermined", None),
         ("pending", "UNKNOWN", None, False, "pending", None),
         ("running", "UNKNOWN", None, False, "incomplete", None),

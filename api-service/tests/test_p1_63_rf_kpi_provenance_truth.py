@@ -19,6 +19,7 @@ from app.services.report_service import (
 )
 from app.services.test_execution import StepExecutionStatus
 from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
+from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
 
 
 def _verified_path_loss_application() -> dict[str, object]:
@@ -352,8 +353,8 @@ async def test_analysis_keeps_verdict_with_complete_rf_kpi_trust(monkeypatch):
 
     result = await AnalysisExecutor().execute(context)
 
-    assert result.measurements["verdict"] == "PASS"
-    assert execution.validation_pass is True
+    assert result.measurements["verdict"] == "UNKNOWN"
+    assert execution.validation_pass is None
 
 
 def test_execution_history_requires_complete_rf_kpi_trust():
@@ -501,7 +502,7 @@ def test_report_keeps_rf_kpis_with_complete_trust_snapshot():
     assert content["rf_kpi_trust_schema_version"] == 1
     assert content["rf_kpi_trust"] == _complete_rf_trust()
     assert content["formal_rf_kpi_verified"] is True
-    assert content["overall_result"] == "passed"
+    assert content["overall_result"] == "undetermined"
     assert content["table_data"][0]["RSRP (dBm)"] == "-80.0"
 
 
@@ -512,6 +513,9 @@ def test_pre_p1_63_report_cannot_bypass_new_trust_envelope():
         "rf_kpi_trust_schema_version": 1,
         "rf_kpi_trust": _complete_rf_trust(),
         "formal_rf_kpi_verified": True,
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
     }
 
     assert report_has_provenance_trust(old_envelope) is False

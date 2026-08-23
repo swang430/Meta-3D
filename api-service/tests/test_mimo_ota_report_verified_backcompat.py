@@ -22,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
+from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
 from app.services.report_service import ReportService
 
 
@@ -147,6 +148,9 @@ def _trusted_unknown_report_fields():
             source="unknown",
         ),
         "formal_rf_kpi_verified": False,
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
     }
 
 
@@ -183,7 +187,7 @@ def test_report_renders_applied_real_certificate_and_verified_value():
     parameters = _step(content, "measure")["parameters"]
 
     assert content["formal_path_loss_verified"] is True
-    assert content["overall_result"] == "passed"
+    assert content["overall_result"] == "undetermined"
     assert parameters["路损补偿 (dB)"] == 56.77
     assert parameters["路损证书 ID"] == "cert-real"
     assert "已应用经验证" in parameters["路损应用"]
@@ -457,7 +461,7 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
         _exec(phases), datetime(2026, 1, 1),
     )
 
-    assert content["overall_result"] == "passed"
+    assert content["overall_result"] == "undetermined"
     assert content["formal_path_loss_verified"] is True
     assert content["table_data"][0]["Throughput (Mbps)"] == "500.0"
 
@@ -1951,9 +1955,8 @@ def test_report_create_drops_client_supplied_trust_attestation():
     assert report.content_data["statistics"]["avg_throughput_mbps"] == 9999.0
 
 
-def test_historical_real_provenance_derives_verified():
-    """Legacy real-source payload (no flag) → derived verified=True for QZ
-    (source unambiguously recovers it)."""
+def test_historical_probe_pattern_source_does_not_derive_qz_verified():
+    """Legacy ProbePattern provenance is only a diagnostic proxy."""
     phases = {
         "precheck": {
             "overall_pass": True,
@@ -1966,7 +1969,9 @@ def test_historical_real_provenance_derives_verified():
         "analysis": {"overall_pass": True},
     }
     content = _build_mimo_ota_content_data(_exec(phases), datetime(2026, 1, 1))
-    assert _step(content, "precheck")["parameters"]["静区验证"].startswith("已验证")
+    precheck = _step(content, "precheck")["parameters"]
+    assert precheck["静区验证"].startswith("未验证")
+    assert precheck["静区波纹 (±dB)"].startswith("—")
     assert _step(content, "reference")["parameters"]["TRP 验证"].startswith("已验证")
 
 

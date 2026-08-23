@@ -1,6 +1,7 @@
 """P1-64: 静区代理量不能冒充正式多点场扫描证据。"""
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -89,3 +90,141 @@ def test_legacy_boolean_cannot_promote_diagnostic_snapshot():
     }
 
     assert quiet_zone_scope_is_formally_verified(precheck) is False
+
+
+def _trusted_measure_for_analysis() -> dict[str, object]:
+    from app.hal.base_station import ThroughputMetrics
+    from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
+
+    rows = [{
+        "azimuth_deg": 0.0,
+        "measurement_source": "instrument",
+        "measurement_verified": True,
+        "throughput_mbps": 350.0,
+        "throughput_valid": True,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "rsrp_dbm": -80.0,
+        "rsrp_valid": True,
+        "sinr_db": 30.0,
+        "sinr_valid": True,
+        "rank_indicator": 2.0,
+        "rank_indicator_valid": True,
+    }]
+    return {
+        "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
+        "frequency_consistency": {"fully_verified": True},
+        "path_loss_application": {
+            "schema_version": 1,
+            "status": "applied",
+            "provenance": "real",
+            "reason": "selected",
+            "gate_mode": "strict",
+            "certificate_id": "p1-64-real-cert",
+            "value_disclosure": "verified",
+        },
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+        "throughput_verified": True,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "carrier_aggregation": {"num_component_carriers": 1},
+        "azimuth_results": rows,
+        "rf_kpi_trust": build_rf_kpi_trust(
+            requested_azimuths=[0.0],
+            azimuth_results=rows,
+            source="explicit_real",
+        ),
+        "formal_rf_kpi_verified": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_analysis_rejects_legacy_quiet_zone_pass(monkeypatch):
+    from app.services.mimo_ota.executors import analysis as analysis_module
+    from app.services.mimo_ota.executors.analysis import AnalysisExecutor
+    from app.services.test_execution import StepExecutionStatus
+
+    config = SimpleNamespace(
+        theoretical_peak_throughput_mbps=450.0,
+        pass_criteria=SimpleNamespace(
+            min_throughput_ratio=0.5,
+            min_throughput_mbps=300.0,
+            max_rsrp_variance_db=8.0,
+            min_sinr_db=10.0,
+            min_avg_rank_indicator=1.5,
+        ),
+    )
+    execution = SimpleNamespace(
+        validation_pass=True,
+        validation_details=None,
+        id="p1-64-analysis",
+    )
+    context = SimpleNamespace(
+        test_execution=execution,
+        db=SimpleNamespace(commit=lambda: None),
+    )
+    legacy_precheck = {
+        "quiet_zone_pass": True,
+        "quiet_zone_verified": True,
+        "quiet_zone_ripple_source": "probe_pattern_peak_spread",
+    }
+    monkeypatch.setattr(analysis_module, "load_mimo_ota_config", lambda _e: config)
+    monkeypatch.setattr(
+        analysis_module,
+        "read_phase_result",
+        lambda _e, phase: (
+            _trusted_measure_for_analysis() if phase == "measure" else legacy_precheck
+        ),
+    )
+    monkeypatch.setattr(analysis_module, "write_phase_result", lambda *_args: None)
+
+    result = await AnalysisExecutor().execute(context)
+
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert result.measurements["verdict"] == "UNKNOWN"
+    assert result.measurements["qz_pass"] is None
+    assert execution.validation_pass is None
+
+
+def _trusted_report_envelope() -> dict[str, object]:
+    measure = _trusted_measure_for_analysis()
+    return {
+        "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 2,
+        "path_loss_application": measure["path_loss_application"],
+        "formal_path_loss_verified": True,
+        "rf_kpi_trust_schema_version": 1,
+        "rf_kpi_trust": measure["rf_kpi_trust"],
+        "formal_rf_kpi_verified": True,
+    }
+
+
+def test_report_trust_requires_canonical_quiet_zone_attestation():
+    from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
+    from app.services.report_service import report_has_provenance_trust
+
+    old_envelope = _trusted_report_envelope()
+    new_envelope = {
+        **old_envelope,
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
+    }
+
+    assert report_has_provenance_trust(old_envelope) is False
+    assert report_has_provenance_trust(new_envelope) is True
+
+
+def test_client_cannot_self_attest_quiet_zone_trust():
+    from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
+    from app.services.report_service import _strip_untrusted_report_attestation
+
+    forged = {
+        "title": "client payload",
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
+    }
+
+    assert _strip_untrusted_report_attestation(forged) == {"title": "client payload"}

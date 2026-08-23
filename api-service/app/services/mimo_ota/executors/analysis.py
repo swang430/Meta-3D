@@ -16,6 +16,9 @@ from app.services.mimo_ota.path_loss_application import (
     path_loss_application_is_formally_verified,
 )
 from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
+from app.services.mimo_ota.quiet_zone_evidence import (
+    quiet_zone_scope_is_formally_verified,
+)
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -70,12 +73,14 @@ class AnalysisExecutor(IStepExecutor):
             and throughput_scope_is_verified(measure)
         )
         rf_kpi_unverified = not rf_kpi_scope_is_verified(measure)
+        quiet_zone_unverified = not quiet_zone_scope_is_formally_verified(precheck)
         if (
             simulated_measurement
             or frequency_identity_unverified
             or path_loss_unverified
             or throughput_unverified
             or rf_kpi_unverified
+            or quiet_zone_unverified
         ):
             if simulated_measurement:
                 detail = (
@@ -105,13 +110,20 @@ class AnalysisExecutor(IStepExecutor):
                 )
                 warning = "吞吐 KPI 缺少显式有效样本，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "throughput KPI validity is incomplete"
-            else:
+            elif rf_kpi_unverified:
                 detail = (
                     "N/A: RSRP/SINR/RI lack complete per-metric, per-azimuth "
                     "explicit-real evidence; formal KPI analysis was not performed"
                 )
                 warning = "RF KPI 缺少逐指标、逐方位真实证据，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "RF KPI provenance is incomplete"
+            else:
+                detail = (
+                    "N/A: quiet-zone uniformity lacks authoritative multi-point "
+                    "field-scan evidence; formal KPI analysis was not performed"
+                )
+                warning = "静区均匀度缺少权威多点场扫描证据，不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "quiet-zone evidence is not formally verified"
             result: Dict[str, Any] = {
                 "verdict": "UNKNOWN",
                 "details": [detail],
@@ -120,6 +132,7 @@ class AnalysisExecutor(IStepExecutor):
                 "path_loss_verified": not path_loss_unverified,
                 "throughput_verified": not throughput_unverified,
                 "rf_kpi_verified": not rf_kpi_unverified,
+                "qz_verified": not quiet_zone_unverified,
                 "avg_throughput_mbps": None,
                 "throughput_ratio": None,
                 "throughput_pass": None,
@@ -204,7 +217,7 @@ class AnalysisExecutor(IStepExecutor):
         )
 
         # --- Quiet zone (from Phase 1) ---
-        qz_pass = bool(precheck.get("quiet_zone_pass", False))
+        qz_pass = precheck.get("quiet_zone_pass") is True
         result["qz_pass"] = qz_pass
 
         # --- Overall verdict + margin ---
