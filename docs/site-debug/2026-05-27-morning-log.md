@@ -75,7 +75,7 @@ DIAG:SIMU:GOS                                                      ← 注意是
 
 - 可靠回读：band **N78**、DL ARFCN **636666**、DL/UL **BW40**、Point A **632946**、CELL1 active=1。
 - **读不到（C8700200A 查询形式不支持，`?` 超时）**：SCS / DUPLex / DL 功率 / SSB 功率 / MIMO 层数+codebook / RF 端口 / **天线→端口路由** / PDSCH MCS+RB。
-- **原生 SAVE 不灵**：`SYSTem:CONFiguration:SAVE` 被接受但不生成文件（C8700200A 不适用该命令/路径）。
+- **原生 SAVE 不灵**：`SYSTem:CONFiguration:SAVE` 被接受但不生成文件（C8700200A 不适用该命令/路径）。（2026-08-24 注：P1-67 手册对账证实该命令手册查无，与"被接受但不生成文件"的实测**相符**（因果未单独证实——当日队列只见 -221 无 -113）。P1-67 #383 的 `SYSTem:SCPI:EXPort` 换源**仅覆盖 5G_NR_Test 方言**；本机 C8700200A（IRAT）下 EXPort 可用性手册未说明、profile 置 None fail-closed——**GUI「Save Configuration」仍是本机唯一可靠路径**）
 - 潜伏告警：`SYST:ERR?` 有 `-221,"Settings conflict; PUCCH Resource ID 2 is enabled in Resource Set 0"`（没挡 attach/数据）。
 - **完整存配置唯一可靠路径**：C8700200A app GUI「Save Configuration」。offline 修：对照厂商手册补 LTE_NR_IRAT profile 的查询/存档命令 + 给 UxmTopologyProfile 加"捕获 live 状态"。
 

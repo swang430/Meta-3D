@@ -52,7 +52,7 @@
 | `OUTPut:INTERFerence:GET?` | §20.4.9.5 | 干扰源列表，无则 `"0"`；**前置：仿真已加载** | P1-2，先 `STATE?` 再决定发不发 |
 | `DIAG:SIMU:STATE?` | 既有 `propsim_f64_state_machine` | 状态前置 | 既有 |
 
-**手册查无（驱动现用，本片不发、登记 Discovered）**：`SYSTem:CALibration:USER:LIST?`（驱动 USER-ALIGN 软探针）、
+**手册查无（写稿时驱动现用 → P1-66 #382 已删，本片不发、登记 Discovered）**：`SYSTem:CALibration:USER:LIST?`（驱动 USER-ALIGN 软探针）、
 `OUTPut:INTERFerence:LIST?`（驱动 INT-GEN 软探针）—— 注释自承 "CAICT to-verify"；现场 -100 "ATE command not supported"
 （P1-2 实测）是**命令编出来的**，不是"该机不支持"。
 
@@ -74,7 +74,7 @@
 | `BSE:INFO:NR5G:<cell>:UEReported:IMSI?` | 01_NR_Core:39014 | UE 上报 IMSI | P2-13 |
 | `SYSTem:ERRor?` | 既有 | 每步后读 | 既有 |
 
-**手册查无（驱动 5G profile 现用，本片不发、登记 Discovered）**：`SYSTem:CONFiguration:LOAD "<file>"`（`STATE_LOAD`）、
+**手册查无（写稿时驱动 5G profile 现用 → P1-67 #383 已换源，本片不发、登记 Discovered）**：`SYSTem:CONFiguration:LOAD "<file>"`（`STATE_LOAD`）、
 `MMEMory:CATalog? "D:\User Files"`（`STATE_LIST`）—— md 与 HTML 手册 0 命中，NotebookLM 原文核对"不存在"。
 
 ### EMCenter（`EMCenter_SCPI_Cmds_and_Errs_RevA_1801188.pdf` + `docs/site-debug/2026-06-04-emcenter-switch-protocol.md`）
@@ -107,5 +107,9 @@ mock 拒绝门 + 只读序列"不得发写命令"不变量门（收集所有 `_q
    手册查无；每次连接各留一条 -100 在错误队列（08-07 实测 269 次连接 = 269 条）。正解：许可从 `SYSTem:INFO?` 尾部
    `<License…>` 读（手册 §20.4.2.4 原文"and licenses"），用户对齐用 `USER:GET?`，干扰源用 `INTERFerence:GET?`。
 2. **[P1 候选] UXM 5G profile 的 `STATE_LOAD` / `STATE_LIST` 手册查无**：手册状态导入是 `SYSTem:SCPI:IMPort` 系列。
+
+   > ⟦2026-08-24 收口注记⟧ 第 1 条已由 P1-66 #382 修复（探针机制删除，能力单源
+   > `SYSTem:INFO?`）；第 2 条已由 P1-67 #383 修复（换 `SYSTem:SCPI:IMPort/EXPort`，
+   > `STATE_LIST=None`）。驱动不再含上述编造命令；本节其余为当时的调查存档。
 3. 序列 runner 的租约默认 `enable_monitoring=True`，`connection_idle_hold_probe` 的"空置"会被 1 Hz 广播的流量打破
    —— 序列如实记录该 caveat 并读出期间交换计数；要真空置需 runner 支持按序列关监控（加机制，另议）。
