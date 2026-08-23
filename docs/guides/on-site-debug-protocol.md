@@ -74,17 +74,17 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 | UXM E7515B（基站仿真器） | `192.168.1.x` | 多 client 友好 | 先确认 **Test App 已启动**（5G NR FR1）；用 hislip endpoint |
 | R&S FSVA3000（信号分析仪 SA，校准接收端） | `192.168.1.x` | — | IDN + 频段确认；P0-4 把它 bind 到 `signalAnalyzer`，GUI 选 model=`FSVA3000`（HAL 自动用 `RealRsFsvaDriver`）；SCPI 是 R&S FSW/FSVA 命令族，非 Keysight X-Series |
 | ENA / VNA | — | — | IDN + 基本扫描 |
-| RF Switch | — | — | IDN + 通道切换 |
-| Aerotech 转台 | — | — | IDN + 单轴回零 / 定位（CAICT 曾卡在单轴） |
+| RF Switch（EMCenter） | — | 裸命令 + CR | 跑 `emcenter_switch_health`（机箱/卡 IDN、逐继电器回读、互锁；P1-65）—— **Phase 3 切 32 链路的隐性前置** |
+| Aerotech 转台 | — | — | IDN + 单轴回零 / 定位（CAICT 曾卡在单轴）；跑 `aerotech_positioner_motion_truth`（NEW-4 / P1-56） |
 
 ---
 
 ## 3. 现场分阶段执行（Phase-Gated Execution）
 
 > ⚠️ **本节只覆盖 first-call 主线**（2026-08-23 对账）：Blocked 表开放 16 行（P0-8 拆 a/b 后矩阵 17 行）里
-> Phase 0–5 的 gate 直接覆盖矩阵 3 行（P0-5 / P0-8a / P0-8b），8 行完全在流程外（P2-9 EMCenter 还是 Phase 3 的隐性前置）。逐行对照与各自的现场验法见
+> Phase 0–5 的 gate 直接覆盖矩阵 3 行（P0-5 / P0-8a / P0-8b）；P1-65（#380）后流程外各行都有了载体，仅 P1-5 / P2-10 仍无（矩阵 ✅3 / ⚠️12 / ❌2）。
+> 流程外的行要在现场计划里给独立时段逐条跑其序列（P2-9 EMCenter 是 Phase 3 的隐性前置，务必排在 Phase 3 之前）。逐行对照与各自的现场验法见
 > [`roadmap-first-call.md` 「Blocked on hardware」区的 2026-08-23 覆盖矩阵](../roadmap-first-call.md#-blocked-on-hardware-on-site-queue--p0-优先)。
-> 流程外的行要在现场计划里给独立时段，出发前补齐载体（候选 9）。
 
 每个 Phase 末尾一个 **go/no-go gate**。**gate 不过不进下一阶段**。gate 标准直接取自
 roadmap 对应 P0 项的 acceptance criteria。
