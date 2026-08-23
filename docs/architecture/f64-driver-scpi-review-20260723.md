@@ -126,8 +126,8 @@ DIAG:SIMU:GO                 # (§20.4.3.8)
 
 | 方法:行号 | 级别 | 问题 | 正确命令 |
 |---|---|---|---|
-| `_probe_installed_options:3338` | P2 | interference license 探测用不存在的 `OUTPut:INTERFerence:LIST?` | `OUTPut:INTERFerence:GET?`（§20.4.9.5） |
-| `_probe_installed_options:3343` | P2 | user-align license 探测用不存在的 `SYSTem:CALibration:USER:LIST?` | `SYSTem:CALIBration:LIST?`（§20.4.2.12）或 `USER:GET?`（§20.4.2.19，不受 license 门控） |
+| `_probe_installed_options:3338` | P2 | interference license 探测用不存在的 `OUTPut:INTERFerence:LIST?` | `OUTPut:INTERFerence:GET?`（§20.4.9.5）**✅ P1-66 #382 已修：探针机制整体删除，能力单源 `SYSTem:INFO?`** |
+| `_probe_installed_options:3343` | P2 | user-align license 探测用不存在的 `SYSTem:CALibration:USER:LIST?` | `SYSTem:CALIBration:LIST?`（§20.4.2.12）或 `USER:GET?`（§20.4.2.19，不受 license 门控）**✅ P1-66 #382 已修：同上，用户对齐走 `USER:GET?` 真值链** |
 
 后果：每次 connect 打两条非法命令（-100）+ interference/user-align license **恒判缺失**（保证性
 false-negative）→ 装了 K01 的机器 `set_calibration_tone` 被错误 gate 掉。且这两条查询在 connect 时

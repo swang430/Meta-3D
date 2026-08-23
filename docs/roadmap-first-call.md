@@ -284,7 +284,8 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ →
 ~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → ~~P2-40~~ ✅ →
 ~~P2-37~~ ✅ → ~~P2-38~~ ✅ → ~~P2-36~~ ✅ → ~~P2-31~~ ✅ → ~~P3-22~~ ✅ →
-~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → ~~P1-64~~ ✅ → ~~P1-65~~ ✅。**队列已清空（2026-08-23）。**
+~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → ~~P1-64~~ ✅ → ~~P1-65~~ ✅ →
+~~P1-66~~ ✅ → ~~P1-67~~ ✅。**队列已清空（2026-08-24）。**
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
@@ -324,6 +325,8 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P1-63** | 正式 RSRP/SINR/RI 必须具有逐指标真实来源证据，禁止合成值/默认值进入判决 | ✅ PR #374；merge `75089a9` |
 | **P1-64** | 无真实静区纹波证据时不得显示预检通过或把 0.7 dB 兜底叙述为实测 | ✅ PR #375（Gemini R1 2 medium 已修，R2 无 high） |
 | **P1-65** | 硬件 blocker 载体序列补齐：8 条新诊断序列（EMCenter / F64 电平窗口·许可真值·面板 Local / UXM OffsetToCarrier·fresh-start·SIM 身份 / 连接空置） | ✅ PR #380（2026-08-23 用户拍板立项 = 候选 9；内审 1 P1 / 3 P2 / 3 P3 全修；Gemini R1 无意见） |
+| **P1-66** | F64 盲试探针换真值：删两条编造命令（`USER:LIST?`/`INTERFerence:LIST?`），能力单源 `SYSTem:INFO?` + `USER:GET?` error-payload 守卫 | ✅ PR #382（内审全套无 P1/P2；Gemini R1 1 medium 前提不成立报告不修，R2 无 high） |
+| **P1-67** | UXM 状态文件命令换手册真值：`SYSTem:SCPI:IMPort/EXPort` + STATus? 复核，`STATE_LIST=None` fail-closed；fresh_start 序列镜像同步 | ✅ PR #383（内审 F1 P2 列注释编造命令 / F2 第二入口门已修；Gemini R1 1 high 超时恢复当轮修，R2 无 high） |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -613,10 +616,10 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。当前阻塞为：Aerotech 实时型号/固件依据、可信坐标偏置/标定状态，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未标定转台路径会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b（DL 不失真）：同一条 MIMO_OTA TestCase |
-| P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-07 拿到部分答案** | **实测**：连接流程每次都会发 `SYSTem:CALibration:USER:LIST?`，该机回 **"ATE command not supported"**（-100 族），且这条 -100 会留在错误队列里跨会话带走。所以「校准侧没有这条命令」这半个前提**不成立** —— 命令发了，是**本机不支持**。剩余未答：按 license presence/absence 判定的那半。⚠ 条目原文写「没有事项要求的 `SYSTem:CALibration:USER:LIST?`」，与实测矛盾，已按实测改写。保留 Blocked（判定逻辑未做）；不并入 P1-46 **✅ 载体（P1-65 #380）**：[`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py) —— 用手册有的 `SYSTem:INFO?` 尾部许可列表 + `CALIBration:*` / `USER:GET?/INFO?` 读真值并与驱动自称对账；驱动连接探针 `USER:LIST?` 手册查无（Discovered） |
+| P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-07 拿到部分答案** | **实测**：连接流程每次都会发 `SYSTem:CALibration:USER:LIST?`，该机回 **"ATE command not supported"**（-100 族），且这条 -100 会留在错误队列里跨会话带走。所以「校准侧没有这条命令」这半个前提**不成立** —— 命令发了，是**本机不支持**。剩余未答：按 license presence/absence 判定的那半。⚠ 条目原文写「没有事项要求的 `SYSTem:CALibration:USER:LIST?`」，与实测矛盾，已按实测改写。保留 Blocked（判定逻辑未做）；不并入 P1-46 **✅ 载体（P1-65 #380）**：[`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py) —— 用手册有的 `SYSTem:INFO?` 尾部许可列表 + `CALIBration:*` / `USER:GET?/INFO?` 读真值并与驱动自称对账。**✅ 驱动侧收口（P1-66 #382）**：探针机制整体删除，connect 不再发 `USER:LIST?`/`INTERFerence:LIST?`，能力单源 `SYSTem:INFO?` 关键字 + `USER:GET?`；现场剩余验证 = 跑 license_truth 把 `SYSTem:INFO?` 尾部许可与已知装机许可对账 |
 | P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
-| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入；驱动 `STATE_LOAD/STATE_LIST` 手册查无（Discovered） |
+| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
 | P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，已注册序列里没有 EMCenter（P1-45 核对时 12 个，2026-08-23 为 15 个，仍无）。保留 Blocked；不并入 P1-46 **✅ 载体（P1-65 #380）**：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py) —— 机箱/卡 IDN、逐继电器回读、互锁，只读；TCP 端口仍按驱动绑定、连不上如实报 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
@@ -1167,6 +1170,11 @@ on a unit where the licensed state is known a priori.
 
 **Status**: `[ ]` not started
 **Estimate**: on-site 1 hour
+
+> ⟦2026-08-24 更新⟧ P1-65 手册对账证明这两条软探针**并非** "shaped right" —— 系
+> Propsim User Reference Rev 10.2 全文查无的编造命令（现场 -100 是命令编出来的
+> 结果，不是"该机不支持"）。P1-66 #382 已删除探针机制，能力单源 `SYSTem:INFO?`；
+> 本条剩余现场半 = 跑 `propsim_f64_license_truth` 对账实测。
 
 ### P1-3 — PyVISA "not installed" investigation ✅ Done (2026-05-16)
 
@@ -4009,7 +4017,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | ID | Question | Verification path |
 |----|----------|-------------------|
 | U-1 | Does CAICT NAT really drop idle TCP entries? | Idle-then-poke test, see [P2-4](#p2-4--natfirewall-idle-drop-hypothesis-verification) |
-| U-2 | Are `OUTPut:INTERFerence:LIST?` / `SYSTem:CALibration:USER:LIST?` the right soft-probes on F64? | On-site execution, see [P1-2](#p1-2--f64-license-probe-scpi-on-site-verification) |
+| U-2 | ~~Are `OUTPut:INTERFerence:LIST?` / `SYSTem:CALibration:USER:LIST?` the right soft-probes on F64?~~ | **已裁决（2026-08-24）：不是** —— 两条均系手册查无的编造命令（P1-65 手册对账）；P1-66 #382 已删除探针机制，能力单源 `SYSTem:INFO?` |
 | U-3 | Which UXM Test Apps does CAICT actually use (beyond 5G NR / LTE_NR_IRAT)? | Inventory at next on-site |
 | U-4 | What are the common DUT attach failure modes (IMSI / SIM / RRC state)? | First DUT attach session, see [P0-5](#p0-5--dut-attach--bearer--pdsch-on-uxm-5g-nr) |
 | U-5 | 转台 (Aerotech A3200) 单轴/多轴定位与回零行为? | **offline 半 done (2026-06-04)**: driver 本就完整 (HOME/MOVEABS/PFBK/ABORT/单轴回零), "无结论"真因是**无 standalone 控制路径** → 补 `/instruments/positioner/*` 端点 + GUI 调试维护"转台控制"Tab + 12 测试 (见 [positioner-turntable runbook](site-debug/2026-06-04-positioner-turntable.md))。现场半: 按 runbook 验真机回零→定位→4方位扫 + 角度一致性, 关联 P0-5 |
@@ -4029,8 +4037,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ### 2026-08-23 P1-65 查出的驱动层事实（待 triage，不自动启动）
 
-- `[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] F64 驱动连接路径两条"软探针"是手册查无的命令** —— `app/hal/propsim_f64.py` `_F64_OPTION_PROBES` 的 `SYSTem:CALibration:USER:LIST?` 与 `OUTPut:INTERFerence:LIST?`（注释自承 "CAICT to-verify"），手册 §20.4.2 / §20.4.9 全文 0 命中，NotebookLM 原文核对不存在。现场 P1-2 看到的 -100 "ATE command not supported" 不是该机不支持，是命令不存在；**每次连接各留一条 -100 在错误队列**（08-07 一天 269 次连接）。正解：许可在 `SYSTem:INFO?` 尾部 `<License…>`（§20.4.2.4 原文 "and licenses"），用户对齐 `CALIBration:USER:GET?`（§20.4.2.19），干扰源 `OUTPut:INTERFerence:GET?`（§20.4.9.5）。**第三个站点**：既有 `propsim_f64_health.py:176` 也发 `INTERFerence:LIST?`。修法 = 换源（三处改用手册命令）+ 去掉探针机制；P1-65 的 `propsim_f64_license_truth` 已能在现场把驱动自称与手册真值对账。
-- `[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] UXM 5G profile 的 `STATE_LOAD = SYSTem:CONFiguration:LOAD` / `STATE_LIST = MMEMory:CATalog?` 手册查无** —— md 与 HTML 手册 0 命中，NotebookLM 原文核对不存在；手册的整机状态加载是 `SYSTem:SCPI:IMPort "<file>"` + `:STATus?` + `:INCLude:PRESet`（06_General「Export / Import SCPI」）。生产驱动 `configure()` 走 `state_file` 时发的是不存在的命令。修法 = 换源。
+- ~~`[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] F64 驱动连接路径两条"软探针"是手册查无的命令**~~ → **✅ P1-66 #382 已修（2026-08-24）**：`_F64_OPTION_PROBES` 探针机制整体删除（含 `propsim_f64_health` 第三站点），能力单源 `SYSTem:INFO?` 关键字扫描（现场 08-07 实测回复含 "AWGN interferences:32"）+ `USER:GET?` 加 error-payload 守卫；license_truth 序列措辞同步为过去时。原文要点存档：两条命令手册 §20.4.2 / §20.4.9 全文 0 命中，现场 -100 是命令编出来的结果，每次连接各留一条（08-07 一天 269 次连接）。
+- ~~`[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] UXM 5G profile 的 `STATE_LOAD = SYSTem:CONFiguration:LOAD` / `STATE_LIST = MMEMory:CATalog?` 手册查无**~~ → **✅ P1-67 #383 已修（2026-08-24）**：三字段换手册真值 `SYSTem:SCPI:IMPort/EXPort`（load 写后 `IMPort:STATus?` + 错误队列复核）、`STATE_LIST=None`（手册无文件列表命令，fail-closed）；`uxm_fresh_start_truth` 序列的 discrepancy 记录同步换成 `driver_state_commands` 现值（防反向假信息）；`STATE_SAVE=SYSTem:CONFiguration:SAVE` 系第三条同族编造命令，一并换源。原文要点存档：md 与 HTML 手册 0 命中，`configure()` 走 `state_file` 时发的是不存在的命令。
 - `[discovered 2026-08-23 during P1-65]` **[P3] 诊断序列 runner 取租约默认 `enable_monitoring=True`** —— 1 Hz 广播流量让 `connection_idle_hold_probe` 的"空置"不纯；序列已如实记录 caveat。真空置需 runner 支持按序列关监控（加机制，另议）。
 
 ### 2026-08-23 账面清理（release v0.9.0 后）

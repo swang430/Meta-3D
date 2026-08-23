@@ -427,7 +427,8 @@
     有各自站得住的理由(卸载路 / `*RST` 本就清队列 / 用 `STATE?` 回读做更强确认),
     **动手前要逐个判**, 别一刀切全包 `_gated_write_transaction`。
   - 对照: 同文件已有 10 个方法**是**查的 —— 所以这不是"没这个机制", 是"机制没铺满"。
-  - 禁盲试:connect 两条手册**不存在**的命令(`INTERFerence:LIST?`/`USER:LIST?` → `:GET?`);写
+  - 禁盲试:connect 两条手册**不存在**的命令(`INTERFerence:LIST?`/`USER:LIST?` → `:GET?`
+    ✅ P1-66 #382 已修:探针机制删除,能力单源 `SYSTem:INFO?`);写
     命令 fail-loud 收敛(input_phase / runtime_env / output_gain 静默钳位 / user_alignment 空
     标定 / output_calib null 混淆);健康检查 `*OPT?` 必误报 BLOCKER + MMEM 能力误判(手册其实
     完整支持)。
