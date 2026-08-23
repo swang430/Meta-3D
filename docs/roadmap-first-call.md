@@ -617,7 +617,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 |
-| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，当前 12 个已注册序列里没有 EMCenter。保留 Blocked；不并入 P1-46 |
+| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，已注册序列里没有 EMCenter（P1-45 核对时 12 个，2026-08-23 为 15 个，仍无）。保留 Blocked；不并入 P1-46 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 |
@@ -643,7 +643,7 @@ blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可�
 | P1-4 重复性 | 3 / 5 | ⚠️ 部分 | Phase 3 只重复路损 ±0.5 dB；Phase 5 只跑 1 次 first-call | 要关闭需 Phase 5 **跑两次**并对比（报告对比契约仍是 plan 级，缺口在表内） |
 | P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 | 无 | Phase 1 若出现 idle-close 只记现象喂 P2-4，不当 driver bug 修 |
 | P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 | 无 C 类载体 | 同上 |
-| **P2-9 EMCenter** | **无** | ❌ **隐性前置**：Phase 3 路损校准要切 32 链路，离不开 EMCenter，但协议没有它的握手步骤、速查表不列、15 个序列无一覆盖 | 无 | **出发前必须补 `emcenter_switch_health` 只读序列**，并在 Phase 1 速查表加一行；否则 Phase 3 会在没有诊断证据的情况下失败 |
+| **P2-9 EMCenter** | **无** | ❌ **隐性前置**：Phase 3 路损校准要切 32 链路，离不开 EMCenter，但协议没有它的握手步骤、速查表不列、当前 15 个已注册序列无一覆盖（P1-45 核对时为 12 个） | 无 | **出发前必须补 `emcenter_switch_health` 只读序列**，并在 Phase 1 速查表加一行；否则 Phase 3 会在没有诊断证据的情况下失败 |
 | P1-2 license probe | 无 | ❌ 流程外 | 无（08-07 已拿一半答案） | 连接即发 `SYSTem:CALibration:USER:LIST?` → -100 留在队列跨会话；与 Phase 1.5「错误队列零残留」gate 的交互依赖生产加载事务先清旧队列（P1-47B）——**出发前用 mock 核一次 p08_gate 在带残留 -100 的队列上不误判** |
 | P1-17 UXM fresh-start | 无 | ❌ 流程外 | `uxm_config_truth_probe` 只覆盖已 ON 小区 | 需要独立时段：HAL reload + `default_state_file` recall + 全配置对齐 |
 | P1-5 相位校准 | 无 | ❌ 流程外（**且不在 first-call 范围**：PFS 是 power-only，相位校准留给将来 PWS） | 正式入口存在但落 mock 数据 | 不排进本次现场 |
@@ -652,8 +652,10 @@ blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可�
 | NEW-3 OffsetToCarrier 102 | 无 | ❌ 流程外 / 待建 | 无 | 出发前写「下发 + 回读 + 看 attach」剧本序列；可挂 Phase 4 前 |
 | NEW-2 面板 Local | 无 | ❌ 人工观察 | 无（非 SCPI 可问） | 挂在任一 F64 序列末尾做人工确认步 |
 
-**汇总**：14 行里 Phase 0–5 的 gate 直接覆盖 **4 行**（P0-5 / P0-8a / P0-8b / NEW-4），部分覆盖 4 行，
-被动观察 2 行，**完全在流程外 7 行**（其中 P2-9 是隐性前置、最危险）。流程外的行**不会因为 first-call
+**汇总**（数字由脚本按上表「覆盖形态」列统计，两个口径别混）：Blocked 表开放 **16 行**（不含 3 行划线）；
+P0-8 按 a/b 两个 gate 拆开后矩阵 **17 行**。按矩阵行：✅ gate 直接覆盖 **3 行**（P0-5 / P0-8a / P0-8b，= Blocked 表 2 行），
+⚠️ 部分 / 间接 / 被动观察 **6 行**（NEW-4 / P2-13 / P2-12 / P1-4 / P2-4 / P1-6），❌ **完全在流程外 8 行**
+（P2-9 / P1-2 / P1-17 / P1-5 / P2-10 / NEW-1 / NEW-3 / NEW-2；其中 P2-9 是隐性前置、最危险）。3 + 6 + 8 = 17。流程外的行**不会因为 first-call
 跑通而解除**，需要在现场计划里给它们独立时段，并在出发前补齐载体。
 
 **执行方式现状**：诊断序列只能在 GUI「调试维护 → 调试序列」**单选逐条跑**（`POST /diagnostic-sequences/{key}/run`），
