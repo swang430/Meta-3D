@@ -37,7 +37,9 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 布尔可能绕过当前模拟来源，现已让吞吐正式门复用同一 explicit-real phase/逐方位 provenance
 判据；当前来源不可信时吞吐同样保持 N/A。
 
-**Current Focus = P1-64「静区纹波无真实测量证据不得显示预检通过」**。原实现无
+**Current Focus = 无（2026-08-12 批准队列已全部交付，WIP=0；下一项待 triage —— 候选见下方「阶段性 release 评估」与 Discovered 待评估池，不自动启动）。**
+
+> **~~P1-64~~ ✅ 2026-08-23 由 PR #375 完成**：原实现无
 ProbePattern 时把固定 0.7 dB 写成 `quiet_zone_pass=true`；有 ProbePattern 时又把峰值离散代理
 当作静区实测，ANALYSIS、报告、历史与 GUI 因而可能发布正式 PASS。当前实现已按 TDD 把
 “诊断流程允许继续”与“正式静区判定通过”分离：版本化 `quiet_zone_evidence` 当前只接受
@@ -46,10 +48,60 @@ PRECHECK 运行门仍能指出仪表/校准/DUT 的真实失败，但静区及�
 Analysis、报告详情/下载、历史可信门和 GUI 均复用严格白名单；旧布尔、旧 source、畸形快照与
 客户端自证不能恢复正式 PASS。真实多点场扫描仍因缺少厘米单位线性 XY 平台保持 Hardware
 Blocked，不从旧 QuietZoneCalibration/Mock API 猜测。设计见
-[`P1-64 设计`](plans/2026-08-23-p1-64-quiet-zone-evidence-truth-design.md)。当前进入完整回归与
-fresh 独立内审后已达到 P1/P2/P3=0，Ready PR #375 已进入外审。最终本地验证为受影响链
-**198 passed**、全后端 **4379 passed / 5 skipped**、GUI 静区契约 **14 passed** 与
-production build；compileall、单一 Alembic head、diff-check 均通过。
+[`P1-64 设计`](plans/2026-08-23-p1-64-quiet-zone-evidence-truth-design.md)。fresh 独立内审至
+P1/P2/P3=0；外审 Gemini R1 两条 medium 已修（畸形 provenance manifest fail-closed；`parameters: null`
+在解析器源头归一成 `{}`，三个读方一次覆盖），R2 一条 medium 前提不成立（工作流执行是引擎内存
+dataclass，无持久化回灌路径）报告一次；Codex 因额度未发生。分支最终态 `3c667fa`（squash 后为 main
+`899fae9`）验证：全后端
+**4385 passed / 5 skipped / 0 failed**、GUI 契约 113 pass（2 条 main 同款 Node runner 解析问题）、
+production build、compileall、单一 Alembic head、diff-check 均通过。
+
+> **2026-08-23 阶段性 release 评估（用户要求：P1-64 后评估真实 HAL 日志 vs mock 日志，可接受即打 release 标签）**
+>
+> **数据源**：现场真机日志只有 2026-08-07 一天（`app.log` 72,087 行 real / `scpi.log` 60,469 条 RX）；
+> 08-08～08-13 标 `real` 的行是开发机开着 real 模式但仪器不在线跑出来的（310 次重启、VISA 全超时），
+> 不算现场样本。mock 对照取 08-20～22 开发日志。
+>
+> **结论：日志的"形状"真机与 mock 完全一致，可分析；差异全在"内容分布"，不阻塞 release。**
+>
+> | 维度 | 真机（08-07） | mock（08-20～22） | 判定 |
+> |---|---|---|---|
+> | JSON 行结构 / 字段（ts·level·logger·hal_mode·session_id·execution_id·instrument_id·msg·exception） | 同 | 同 | ✅ 同一格式器 |
+> | SCPI 交换字段（`exchange_id`·`operation`·`command`·`response`·`resp_len`·`duration_ms`·`result_type`） | 同 | 同 | ✅ 真实吞吐 JSON 回复 907 字符完整落盘（截断上限 2000，08-07 仅 15 条截断且全是单测造的 `PARSE?/LONG?`） |
+> | level 分布 | INFO 83% / WARN 9% / ERROR 7% | INFO 98% / WARN 2% | 预期：真机有重连、超时、错误队列 |
+> | logger 分布 | HAL 服务 32% · UXM 驱动 11% · F64 驱动 9% · 租约 5% · 转台 4% | audit 71% · 诊断序列 7% | 真机独有的全是驱动状态机消息（重连 / 超时排水 / 会话重建 / 特性探针），mock 驱动永远不发 |
+> | `session_id` 覆盖 | 27% | 98% | 真机 73% 的行来自 1 Hz 监控广播与后台任务，不在请求上下文里 —— 符合预期 |
+> | `instrument_id` 覆盖（驱动层 app.log 行） | **UXM 0% · Aerotech 0% · 开关 0% · FSVA 0% · F64 10%**；只有 `app.hal.base` 的 SCPI 包装层 100% | 同 | ⚠ **缺口 A**：驱动自己的 warning/error 只靠 `[F64]`/`[UXM]` 文字前缀区分仪器，日志面板无法按仪器过滤 |
+> | 逐执行文件 `exec-*.log` | **0 份真机样本**（08-07 未跑正式 TestCase；盘上 2 份标 real 的是 pytest 遗留，P2-39 隔离前） | 250 份 | ⚠ **缺口 B**：`[case-runner] 收尾: status, SCPI formal=` 整条逐执行证据链从未在真机上产出过 |
+> | pyvisa DEBUG 噪音（08-07 占 57%） | 当天 #304 已修 | — | ✅ 08-08 起 0 条 |
+> | `GET /dashboard/alerts/summary` 被 `{alert_id}` 遮挡（08-07 571 次 422 + DB rollback） | 已修 | 今天 125 次全 200 | ✅ |
+> | reload 重启风暴（08-07 256 次 HAL 重建 = 269 次 F64 连接，每次留一条 -100 在错误队列） | `.env DEBUG=true` → uvicorn reload | — | ⚠ **缺口 C**：release 运行必须 `DEBUG=false`（运行 runbook 事项，不是代码） |
+>
+> **不需要为 release 做日志同步优化**：格式同源，真机样本证明可读可分析。缺口 A 作为 release 后第一个
+> P2 候选（见下）；缺口 B 是 first-call 验收项（下次现场至少跑 1 条正式 TestCase 留下首份真机
+> exec 样本）；缺口 C 进 release checklist。
+>
+> **版本号与标签（待用户拍板）**：现状 `settings.app_version = "1.0.0"`、GUI `package.json` = `0.0.0`、
+> 既有 tag `onsite-*-baseline-<日期>`。建议 **`v0.9.0`**（阶段性 release，日常测试用；`1.0.0` 留给
+> first-call 通过），同一 PR 把 `app_version` 与 `package.json` 对齐到 `0.9.0`，tag 注释写明合并态
+> `899fae9`（P1-64 #375）+ 本 roadmap 收口。
+>
+> **Release checklist**：① `.env` `DEBUG=false`（关 reload 与 DEBUG 控制台）；② `DATABASE_URL` 指向
+> PostgreSQL（绝不 SQLite）；③ HAL 模式与仪器 IP 按现场 `.env`，缺配置 fail-closed（P1-51）；
+> ④ 日志目录独立于 pytest（P2-39）、保留策略生效（P1-50）；⑤ 主线全量 0 failed（当前 `899fae9`
+> 4385 passed / 5 skipped）。
+>
+> **后续开发候选（待 triage，不自动启动；按"仍可复现的产品故障优先"排）**：
+> 1. **[P2 候选] 驱动层日志行绑定 `instrument_id`**（缺口 A）—— UXM / Aerotech / 开关 / FSVA 的 `app.hal.*` logger
+>    行 0% 带 `instrument_id`；修法形状 = 换源：驱动构造时把 `instrument_id` 绑进 logger context（与 `app.hal.scpi.<id>` 同一机制），不改消息文本。
+> 2. **[需拍板] `uxm_scpi_compatibility` 在 P1-46 拍板下 `SUCCESS` 结构性不可达**（P1-58 #358 落定的事实）：
+>    `CONFIG_APPLY` / `QCONFIG_APPLY_ALL` 在 critical 清单里，定义了 → 只读普查验证不了 → BLOCKER；不定义 → UNDETERMINED。
+>    两条路都推翻 P1-46：(a) mandatory ACTION 的 INFERRED_ONLY 降为披露；(b) 另建剧本式序列做 apply 后 `SYST:ERR?` 直接证据。
+> 3. **[P3 候选] `api/monitoring.py` WS ping 的 `json.loads(data).get(...)`** 对 `null` JSON 抛 AttributeError 断开 WS 循环（只接 JSONDecodeError）—— 与 P1-64 外审 Gemini 抓的 manifest 同形态，非本片所动。
+> 4. **[P3 候选] 工作流解析器对 `parameters` / `settings` 非 dict 真值做类型校验**（Gemini #375 R2 延伸）：现在 list / 字符串 / 整数会在 `dict()` 上以晦涩错误 fail-closed，结果对但信息差。
+> 5. **[P3 候选] 日志 `_entry_matches` 的 `keyword` 参数已无调用方传非 None**（P2-33 内审）—— 第二个关键词入口，属"去掉"类清理；同族 `mockDatabase.ts` 的 mock 关键词实现仍只查 msg/logger、不分组（mock 默认禁用）。
+> 6. **[P3 候选] 方向图租约仍在 `(probe, pol)` 层**（P2-30 #359 内审 F1）：多探头方向图作业按组数真建拆，今天无生产调用方。
+> 7. **[验收项，非开发] 首份真机 `exec-*.log`**（缺口 B）：下次现场跑 ≥1 条正式 TestCase，核对 `[case-runner] 收尾` 行、SCPI formal verdict 与报告三样齐全。
 
 > **~~P1-62~~ ✅ 2026-08-22 由 PR #373 完成**：版本化 `path_loss_application` 已贯穿
 > PRECHECK、MEASURE、Analysis、报告、历史与 GUI；旧/畸形快照和旧 PDF 均不能凭遗留布尔标记
@@ -227,7 +279,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ →
 ~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → ~~P2-40~~ ✅ →
 ~~P2-37~~ ✅ → ~~P2-38~~ ✅ → ~~P2-36~~ ✅ → ~~P2-31~~ ✅ → ~~P3-22~~ ✅ →
-~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → **P1-64**。
+~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → ~~P1-64~~ ✅。**队列已清空（2026-08-23）。**
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
@@ -265,7 +317,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P1-61** | 正式 MIMO 报告必须使用最终执行状态、真实耗时与四态判决 | ✅ PR #372 / merge `425e389`；Codex R4 覆盖最终 HEAD 且无重大问题 |
 | **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ✅ PR #373；R3 覆盖最终 HEAD 无 P1；merge `6b2b064` |
 | **P1-63** | 正式 RSRP/SINR/RI 必须具有逐指标真实来源证据，禁止合成值/默认值进入判决 | ✅ PR #374；merge `75089a9` |
-| **P1-64** | 无真实静区纹波证据时不得显示预检通过或把 0.7 dB 兜底叙述为实测 | 🔄 Current Focus；PR #375，本地 TDD/全量回归/fresh 内审完成，外审中 |
+| **P1-64** | 无真实静区纹波证据时不得显示预检通过或把 0.7 dB 兜底叙述为实测 | ✅ PR #375（Gemini R1 2 medium 已修，R2 无 high） |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -508,7 +560,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P1-64，WIP=1（本地完成，外审中）。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 队列已清空，WIP=0，下一项待 triage。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
