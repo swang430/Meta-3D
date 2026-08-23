@@ -113,10 +113,10 @@ def _patched_hal(monkeypatch, *, ce=None, sa=None, positioner=None):
 # ============================================================================
 
 class TestFieldUniformityMock:
-    """Mock path: synthetic uniform field → PASS, no driver wiring needed."""
+    """Mock grid data cannot become a formal quiet-zone calibration."""
 
     @pytest.mark.asyncio
-    async def test_mock_returns_pass_with_5pt_grid(self, db, chamber):
+    async def test_mock_is_rejected_before_persistence(self, db, chamber):
         svc = QuietZoneValidationService(db, use_mock=True)
         np.random.seed(42)  # deterministic mock noise
         result = await svc.run_field_uniformity_validation(
@@ -125,21 +125,10 @@ class TestFieldUniformityMock:
             sgh_model="SGH-01",
             sgh_gain_dbi=10.0,
         )
-        assert result.success
-        assert result.data["field_uniformity_pass"] is True
-        assert result.data["grid_points"] == 5  # default 5-point grid
-        assert result.data["threshold_db"] == QZ_AMPLITUDE_THRESHOLD_DB
-
-        # Persistence: a QuietZoneCalibration row exists, grid stored
-        from uuid import UUID as _UUID
-        cal = db.query(QuietZoneCalibration).filter_by(
-            id=_UUID(result.data["calibration_id"])
-        ).one()
-        assert cal.validation_type == "field_uniformity"
-        assert cal.validation_pass is True
-        assert len(cal.grid_data) == 5
-        assert cal.field_uniformity_db is not None  # range stored
-        assert cal.measurement_method == "mock"
+        assert result.success is False
+        assert result.data == {}
+        assert "mock" in result.message.lower()
+        assert db.query(QuietZoneCalibration).count() == 0
 
 
 class TestFieldUniformityRealCeSa:
@@ -394,7 +383,7 @@ class TestXpdValidation:
 
 class TestQzLookup:
     @pytest.mark.asyncio
-    async def test_get_latest_validation_returns_most_recent(
+    async def test_mock_runs_do_not_create_a_latest_formal_validation(
         self, db, chamber
     ):
         svc = QuietZoneValidationService(db, use_mock=True)
@@ -406,13 +395,12 @@ class TestQzLookup:
             sgh_gain_dbi=10.0,
         )
         np.random.seed(2)
-        result2 = await svc.run_field_uniformity_validation(
+        await svc.run_field_uniformity_validation(
             chamber_id=chamber.id,
             frequency_mhz=3500.0,
             sgh_model="SGH-01",
             sgh_gain_dbi=10.0,
         )
         latest = svc.get_latest_validation(chamber.id, "field_uniformity")
-        assert latest is not None
-        assert str(latest.id) == result2.data["calibration_id"]
-        assert latest.frequency_mhz == 3500.0
+        assert latest is None
+        assert db.query(QuietZoneCalibration).count() == 0

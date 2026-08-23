@@ -33,6 +33,12 @@ from app.services.mimo_ota.rf_kpi_trust import (
     parse_rf_kpi_trust,
     rf_kpi_scope_is_verified,
 )
+from app.services.mimo_ota.quiet_zone_evidence import (
+    QUIET_ZONE_EVIDENCE_SCHEMA_VERSION,
+    build_quiet_zone_evidence,
+    parse_quiet_zone_evidence,
+    quiet_zone_evidence_is_formally_verified,
+)
 from app.services.mimo_ota.throughput_trust import (
     required_throughput_scope as _required_throughput_scope,
     throughput_scope_is_verified,
@@ -521,16 +527,13 @@ def _build_mimo_ota_content_data(
                 ),
             })
 
-    # Backward-compat for historical/migrated executions that predate the
-    # explicit verified flags (Codex on PR #80): NEVER default an absent flag to
-    # "verified" — an old fallback run would then be silently presented as a
-    # real measurement. Derive from provenance instead.
-    _qz_verified = precheck.get("quiet_zone_verified")
-    if _qz_verified is None:
-        # quiet_zone_ripple_source unambiguously recovers it: only the real
-        # probe-pattern source counts as verified; fallback_default / missing
-        # source → not verified.
-        _qz_verified = precheck.get("quiet_zone_ripple_source") == "probe_pattern_peak_spread"
+    # P1-64: ProbePattern peak spread is a diagnostic proxy, not a multi-point
+    # quiet-zone field scan. Historical booleans/source labels cannot promote
+    # it; malformed or absent snapshots are rewritten to canonical unavailable.
+    _qz_evidence = parse_quiet_zone_evidence(precheck.get("quiet_zone_evidence"))
+    if _qz_evidence is None:
+        _qz_evidence = build_quiet_zone_evidence(None)
+    _qz_verified = quiet_zone_evidence_is_formally_verified(_qz_evidence)
     _trp_verified = reference.get("trp_verified")
     if _trp_verified is None:
         # "mock" = no SA → unverified; legacy "hal_signal_analyzer" didn't
@@ -599,6 +602,7 @@ def _build_mimo_ota_content_data(
         not _path_loss_formally_verified
         or _throughput_verified is not True
         or not _rf_kpi_formally_verified
+        or not _qz_verified
     ):
         overall_pass = False
         verdict_unknown = True
@@ -671,6 +675,44 @@ def _build_mimo_ota_content_data(
         "missing": "无匹配证书",
     }
 
+    if _qz_verified:
+        _precheck_result = (
+            "PASS" if precheck.get("overall_pass") is True
+            else "FAIL" if precheck.get("overall_pass") is False
+            else "UNKNOWN"
+        )
+        _precheck_messages = precheck.get("messages") or []
+    else:
+        # 旧 overall_pass/quiet_zone_pass 与自由文本可能来自固定 0.7 或
+        # ProbePattern 代理。只有当前写方同行保存的运行门失败可以继续发布
+        # FAIL；静区结论与旧提示一律换成规范 UNKNOWN，避免同一份报告顶层
+        # UNKNOWN、步骤内部却又出现 PASS/FAIL 与代理数值。
+        _precheck_result = (
+            "FAIL" if precheck.get("operational_ready") is False else "UNKNOWN"
+        )
+        def _is_legacy_quiet_zone_claim(message: Any) -> bool:
+            if not isinstance(message, str):
+                return False
+            normalized = message.casefold()
+            return any(marker in normalized for marker in (
+                "quiet zone",
+                "quiet-zone",
+                "quiet_zone",
+                "静区",
+                "probe pattern",
+                "probe_pattern",
+                "fallback_default",
+            ))
+
+        _precheck_messages = [
+            message
+            for message in (precheck.get("messages") or [])
+            if not _is_legacy_quiet_zone_claim(message)
+        ] + [
+            "静区结论未判定：无权威多点场扫描证据；"
+            "历史提示未作为正式证据发布。"
+        ]
+
     # P2-21: 渲染载荷整体放 parameters 下 (PDFGenerator 步骤区只渲染 name/
     # step_name 与 parameters 的键值表, 顶层键进不了 PDF) —— P1-12 的三个可信化
     # 标志因此从未生效过, 现场拿假干净报告做判断。同一修法 P1-22 已在 analysis
@@ -680,23 +722,23 @@ def _build_mimo_ota_content_data(
     step_results = [
         {"phase": "precheck", "name": "precheck (预检)",
          "parameters": {
-             "结果": "PASS" if precheck.get("overall_pass") else "FAIL",
-             # ⚠️ 未验证时不印数值（外审 P1）：没有探头方向图时，写入端存的是
-             #    兜底值 0.7，验证标志为假 —— 光标一句「未验证」不够，
-             #    数字印在那儿读者会当成实测的静区波纹。
+             "结果": _precheck_result,
+             # ⚠️ 旧执行可能保存固定 0.7 或 ProbePattern 代理；当前
+             #    写方只保存 N/A 与独立 proxy。无权威多点场扫描时，
+             #    新旧数字都不能印成正式静区波纹。
              "静区波纹 (±dB)": (
                  _cell(precheck.get("quiet_zone_ripple_db")) if _qz_verified is True
                  else "—（未实测，不印兜底值）"
              ),
              # P1-12: 非 True 时波纹是遗留默认值, 静区从未实测 —— 必须标注。
              "静区验证": _verified_label(
-                 _qz_verified, "探头方向图实测", "兜底默认值, 非实测静区"),
+                 _qz_verified, "权威多点场扫描", "无权威多点场扫描证据"),
              # ⭐ 预检那两句「为什么算通过」的原话（P1-48）：库里早就存着
              #    （cal_pass_reason / dut_pass_reason），报告一直没取。
              #    其中一句会明说「这是 mock」—— 那正是读者最该看到的。
              "校准门理由": _cell(precheck.get("cal_pass_reason") or "未记录"),
              "DUT 门理由": _cell(precheck.get("dut_pass_reason") or "未记录"),
-             "提示": _cell(precheck.get("messages") or []),
+             "提示": _cell(_precheck_messages),
          }},
         {"phase": "reference", "name": "reference (参考测量)",
          "parameters": {
@@ -791,6 +833,9 @@ def _build_mimo_ota_content_data(
         "rf_kpi_trust_schema_version": RF_KPI_TRUST_SCHEMA_VERSION,
         "rf_kpi_trust": _rf_kpi_trust,
         "formal_rf_kpi_verified": _rf_kpi_formally_verified,
+        "quiet_zone_evidence_schema_version": QUIET_ZONE_EVIDENCE_SCHEMA_VERSION,
+        "quiet_zone_evidence": _qz_evidence,
+        "formal_quiet_zone_verified": _qz_verified,
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": report_outcome,

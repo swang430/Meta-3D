@@ -31,6 +31,11 @@ from app.services.mimo_ota.rf_kpi_trust import (
     parse_rf_kpi_trust,
     rf_kpi_trust_is_formally_verified,
 )
+from app.services.mimo_ota.quiet_zone_evidence import (
+    QUIET_ZONE_EVIDENCE_SCHEMA_VERSION,
+    parse_quiet_zone_evidence,
+    quiet_zone_evidence_is_formally_verified,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +67,9 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "rf_kpi_trust_schema_version",
     "rf_kpi_trust",
     "formal_rf_kpi_verified",
+    "quiet_zone_evidence_schema_version",
+    "quiet_zone_evidence",
+    "formal_quiet_zone_verified",
     "vrt_archive_trust_schema_version",
 })
 
@@ -101,6 +109,9 @@ def report_has_provenance_trust(content_data: Any) -> bool:
     rf_kpi_marker = content_data.get("rf_kpi_trust_schema_version")
     raw_rf_kpi_trust = content_data.get("rf_kpi_trust")
     formal_rf_kpi_verified = content_data.get("formal_rf_kpi_verified")
+    quiet_zone_marker = content_data.get("quiet_zone_evidence_schema_version")
+    raw_quiet_zone_evidence = content_data.get("quiet_zone_evidence")
+    formal_quiet_zone_verified = content_data.get("formal_quiet_zone_verified")
     application_is_well_formed = (
         isinstance(raw_application, dict)
         and parse_path_loss_application(raw_application) == raw_application
@@ -124,6 +135,16 @@ def report_has_provenance_trust(content_data: Any) -> bool:
         and (
             formal_rf_kpi_verified
             is rf_kpi_trust_is_formally_verified(raw_rf_kpi_trust)
+        )
+        and type(quiet_zone_marker) is int
+        and quiet_zone_marker == QUIET_ZONE_EVIDENCE_SCHEMA_VERSION
+        and isinstance(raw_quiet_zone_evidence, dict)
+        and parse_quiet_zone_evidence(raw_quiet_zone_evidence)
+        == raw_quiet_zone_evidence
+        and type(formal_quiet_zone_verified) is bool
+        and (
+            formal_quiet_zone_verified
+            is quiet_zone_evidence_is_formally_verified(raw_quiet_zone_evidence)
         )
     )
 

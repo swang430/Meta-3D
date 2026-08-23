@@ -18,6 +18,7 @@
 """
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -84,7 +85,17 @@ def _content(phases, **kw):
         source="explicit_real",
     )
     phases["measure"]["formal_rf_kpi_verified"] = True
-    return _build_mimo_ota_content_data(_exec(phases, **kw), datetime(2026, 1, 1))
+    # This suite isolates P1-22's canonical verdict source. Keep P1-64's
+    # independent quiet-zone gate open inside this helper so a regression in
+    # validation_pass/verdict precedence cannot be hidden by QZ UNKNOWN.
+    with patch(
+        "app.services.mimo_ota.executors.report."
+        "quiet_zone_evidence_is_formally_verified",
+        return_value=True,
+    ):
+        return _build_mimo_ota_content_data(
+            _exec(phases, **kw), datetime(2026, 1, 1)
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────

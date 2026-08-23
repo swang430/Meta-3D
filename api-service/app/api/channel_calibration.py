@@ -62,6 +62,7 @@ from app.schemas.channel_calibration import (
     InvalidateCalibrationResponse,
 )
 from app.services.channel_calibration_service import ChannelCalibrationService
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_detail
 
 router = APIRouter(prefix="/calibration/channel", tags=["Channel Calibration"])
 
@@ -410,7 +411,27 @@ async def start_quiet_zone_calibration(
     - 幅度均匀性: ±1 dB
     - 相位均匀性: ±30° (mmWave 可放宽至 ±45°)
     """
-    service = ChannelCalibrationService(db)
+    if request.session_id is not None:
+        service = ChannelCalibrationService(db)
+        try:
+            session = service.register_requested_calibration_type(
+                request.session_id,
+                "quiet_zone",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if session is None:
+            raise HTTPException(status_code=404, detail="Calibration session not found")
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+            "不会生成随机网格或正式判决。"
+        ),
+    )
+
+    service = ChannelCalibrationService(db)  # pragma: no cover - retired path
 
     calibration = service.run_quiet_zone_calibration(
         quiet_zone_shape=request.quiet_zone.shape.value,
@@ -442,7 +463,7 @@ async def get_quiet_zone_calibration(
     calibration = service.get_quiet_zone_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return sanitize_channel_qz_detail(calibration)
 
 
 # ==================== EIS Validation ====================
@@ -595,7 +616,7 @@ async def get_channel_calibration_status(
     }
 
     # 计算总体状态
-    statuses = [temporal_info["status"]]
+    statuses = [temporal_info["status"]] + [default_info["status"]] * 5
     if "expired" in statuses:
         overall_status = "expired"
     elif "expiring_soon" in statuses:

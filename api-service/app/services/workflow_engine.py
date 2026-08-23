@@ -251,7 +251,9 @@ class WorkflowParser:
             version=data.get("version", "1.0"),
             description=data.get("description"),
             settings=data.get("settings", {}),
-            parameters=data.get("parameters", {}),
+            # 显式 `parameters: null` 归一成 {}：下游 dict()/** 展开有 3 处读方，
+            # 在源头归一比逐处兜底可靠（Gemini #375 R1 + 内审 F1）。
+            parameters=data.get("parameters") or {},
             steps=steps,
         )
 
@@ -279,7 +281,7 @@ class WorkflowParser:
             id=data["id"],
             type=step_type,
             calibration_type=data.get("calibration_type"),
-            parameters=data.get("parameters", {}),
+            parameters=data.get("parameters") or {},  # 同上：步骤级显式 null 归一
             depends_on=data.get("depends_on", []),
             parallel_with=data.get("parallel_with", []),
             on_failure=on_failure,
@@ -357,11 +359,21 @@ class WorkflowExecutor:
             from app.services.channel_calibration_service import ChannelCalibrationService
             channel_service = ChannelCalibrationService(self.db)
 
+            requested_calibration_types = list(dict.fromkeys(
+                step.calibration_type
+                for step in execution.workflow.steps
+                if step.type == StepType.CHANNEL_CALIBRATION
+                and step.calibration_type is not None
+            ))
+            session_configuration = dict(execution.workflow.parameters)
+            session_configuration["requested_calibration_types"] = (
+                requested_calibration_types
+            )
             session = channel_service.create_session(
                 name=f"Workflow: {execution.workflow.name}",
                 description=execution.workflow.description,
                 workflow_id=execution.id,
-                configuration=execution.workflow.parameters,
+                configuration=session_configuration,
             )
             execution.session_id = str(session.id)
             logger.info(f"Workflow session created: {session.id}")

@@ -35,6 +35,7 @@ from app.models.channel_calibration import (
     ChannelQuietZoneCalibration,
     EISValidation,
 )
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_report
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def _write_report_provenance_manifest(
     report_data: Dict[str, Any],
     *,
     path_loss_provenance_disclosed: bool,
+    quiet_zone_provenance_sanitized: bool = True,
 ) -> None:
     """Stamp a sidecar that distinguishes rebuilt reports from legacy PDFs.
 
@@ -55,12 +57,20 @@ def _write_report_provenance_manifest(
     probe_rows = (
         (report_data.get("probe_calibration") or {}).get("path_loss") or []
     )
+    quiet_zone_rows = (
+        (report_data.get("channel_calibration") or {}).get("quiet_zone") or []
+    )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "path_loss_section_included": bool(probe_rows),
         "path_loss_provenance_disclosed": path_loss_provenance_disclosed,
         "unverified_path_loss_records": sum(
             1 for row in probe_rows if row.get("validation_pass") is None
+        ),
+        "quiet_zone_section_included": bool(quiet_zone_rows),
+        "quiet_zone_provenance_sanitized": quiet_zone_provenance_sanitized,
+        "unverified_quiet_zone_records": sum(
+            1 for row in quiet_zone_rows if row.get("validation_pass") is None
         ),
     }
     with open(f"{report_path}.provenance.json", "w", encoding="utf-8") as handle:
@@ -246,7 +256,14 @@ class CalibrationReportGenerator:
             output_path = f"{output_dir}/channel_calibration_{timestamp}.pdf"
 
         template = self._create_channel_template()
-        return self.pdf_generator.generate_report(report_data, template, output_path)
+        report_path = self.pdf_generator.generate_report(report_data, template, output_path)
+        _write_report_provenance_manifest(
+            report_path,
+            report_data,
+            path_loss_provenance_disclosed=True,
+            quiet_zone_provenance_sanitized=True,
+        )
+        return report_path
 
     def generate_chamber_calibration_report(
         self,
@@ -843,6 +860,21 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        requested_types = set()
+        if session_id is not None:
+            session = self.db.query(ChannelCalibrationSession).filter(
+                ChannelCalibrationSession.id == session_id
+            ).first()
+            configuration = (
+                session.configuration
+                if session is not None and isinstance(session.configuration, dict)
+                else {}
+            )
+            configured_types = configuration.get("requested_calibration_types")
+            if isinstance(configured_types, list):
+                requested_types = {
+                    value for value in configured_types if isinstance(value, str)
+                }
 
         # Temporal calibrations
         if not calibration_type or calibration_type == 'temporal':
@@ -949,18 +981,19 @@ class CalibrationReportGenerator:
 
             qz_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                # No existing row carries an auditable explicit-real QZ
+                # provenance snapshot. Keep it visible for audit only and do
+                # not add it to the formal report denominator.
+                qz_data.append(sanitize_channel_qz_report(cal))
+            if "quiet_zone" in requested_types and not qz_data:
                 qz_data.append({
-                    'id': str(cal.id),
-                    'quiet_zone_shape': cal.quiet_zone_shape,
-                    'quiet_zone_diameter_m': cal.quiet_zone_diameter_m,
-                    'fc_ghz': cal.fc_ghz,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'amplitude_uniformity_db': cal.amplitude_uniformity_db,
-                    'phase_uniformity_deg': cal.phase_uniformity_deg,
+                    "id": None,
+                    "session_id": str(session_id),
+                    "validation_pass": None,
+                    "formal_status": "UNKNOWN",
+                    "reason": "requested_without_explicit_real_evidence",
+                    "amplitude_uniformity_db": None,
+                    "phase_uniformity_deg": None,
                 })
             data['channel_calibration']['quiet_zone'] = qz_data
 
@@ -990,13 +1023,26 @@ class CalibrationReportGenerator:
             data['channel_calibration']['eis'] = eis_data
 
         # Summary
-        data['execution_summary'] = {
-            'total_executions': total,
+        unverified_requested = (
+            1
+            if "quiet_zone" in requested_types
+            and calibration_type in (None, "quiet_zone")
+            else 0
+        )
+        summary = {
+            'total_executions': total + unverified_requested,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (
+                None
+                if unverified_requested or total == 0
+                else passed / total * 100
+            ),
         }
+        if unverified_requested:
+            summary['undetermined'] = unverified_requested
+        data['execution_summary'] = summary
 
         return data
 
@@ -1008,18 +1054,30 @@ class CalibrationReportGenerator:
         total = probe_summary.get('total_executions', 0) + channel_summary.get('total_executions', 0)
         passed = probe_summary.get('passed', 0) + channel_summary.get('passed', 0)
         failed = probe_summary.get('failed', 0) + channel_summary.get('failed', 0)
+        pending = probe_summary.get('pending', 0) + channel_summary.get('pending', 0)
+        undetermined = (
+            probe_summary.get('undetermined', 0)
+            + channel_summary.get('undetermined', 0)
+        )
 
-        return {
+        summary = {
             'total_executions': total,
             'passed': passed,
             'failed': failed,
-            'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pending': pending,
+            'pass_rate': (
+                None
+                if total == 0 or undetermined
+                else passed / total * 100
+            ),
             'probe_total': probe_summary.get('total_executions', 0),
             'probe_pass_rate': probe_summary.get('pass_rate', 0),
             'channel_total': channel_summary.get('total_executions', 0),
-            'channel_pass_rate': channel_summary.get('pass_rate', 0),
+            'channel_pass_rate': channel_summary.get('pass_rate'),
         }
+        if undetermined:
+            summary['undetermined'] = undetermined
+        return summary
 
     def _create_calibration_template(self) -> Dict[str, Any]:
         """Create template configuration for comprehensive calibration report"""

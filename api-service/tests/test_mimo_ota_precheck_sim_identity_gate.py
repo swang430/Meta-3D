@@ -119,11 +119,15 @@ async def _run_precheck(db, lab, *, sim_profile_id, attach_imsi, strict, observe
 class TestSIMIdentityPrecheckGate:
     async def test_mismatch_strict_fails(self, db, lab):
         sim = _make_sim(db, imsi="460001234567890")
-        res, _ = await _run_precheck(
+        res, execution = await _run_precheck(
             db, lab, sim_profile_id=str(sim.id), attach_imsi="310260000000001", strict=True,
         )
         assert res.status == StepExecutionStatus.FAILED
         assert "SIM 身份不符" in (res.error_message or "")
+        assert (res.measurements or {})["operational_ready"] is False
+        db.refresh(execution)
+        persisted = (execution.measurements or {})["phases"]["precheck"]
+        assert persisted["operational_ready"] is False
         # 脱敏: 完整订户号不出现在 error
         assert "4567890" not in (res.error_message or "")
 

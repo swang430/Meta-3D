@@ -337,6 +337,7 @@ def test_late_cancel_cannot_overwrite_completed_report_winner(monkeypatch, tmp_p
     ],
 )
 def test_report_summary_uses_exactly_one_lifecycle_verdict_state(
+    monkeypatch,
     status,
     verdict,
     validation_pass,
@@ -344,6 +345,12 @@ def test_report_summary_uses_exactly_one_lifecycle_verdict_state(
     expected_state,
     pass_rate,
 ):
+    # Isolate P1-61's lifecycle projection from P1-64's independent QZ gate.
+    monkeypatch.setattr(
+        "app.services.mimo_ota.executors.report."
+        "quiet_zone_evidence_is_formally_verified",
+        lambda _evidence: True,
+    )
     execution = _execution(
         status=status,
         verdict=verdict,

@@ -34,6 +34,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationValidity,
     ChannelCalibrationStatus,
 )
+from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_history
 
 logger = logging.getLogger("app.calibration.channel")
 
@@ -684,6 +685,40 @@ class ChannelCalibrationService:
         self.db.refresh(session)
         return session
 
+    def register_requested_calibration_type(
+        self,
+        session_id: UUID,
+        calibration_type: str,
+    ) -> Optional[ChannelCalibrationSession]:
+        """Atomically add a server-observed request to an active session scope."""
+        session = (
+            self.db.query(ChannelCalibrationSession)
+            .filter(ChannelCalibrationSession.id == session_id)
+            .with_for_update()
+            .first()
+        )
+        if session is None:
+            return None
+        if session.status != "running":
+            raise ValueError("Calibration session is no longer active")
+
+        configuration = (
+            dict(session.configuration)
+            if isinstance(session.configuration, dict)
+            else {}
+        )
+        existing = configuration.get("requested_calibration_types")
+        requested = [
+            value for value in existing if isinstance(value, str)
+        ] if isinstance(existing, list) else []
+        if calibration_type not in requested:
+            requested.append(calibration_type)
+        configuration["requested_calibration_types"] = requested
+        session.configuration = configuration
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
     def complete_session(
         self,
         session_id: UUID,
@@ -692,13 +727,59 @@ class ChannelCalibrationService:
         passed_calibrations: int,
         failed_calibrations: int
     ) -> Optional[ChannelCalibrationSession]:
-        """完成校准会话"""
-        session = self.db.query(ChannelCalibrationSession).filter(
-            ChannelCalibrationSession.id == session_id
-        ).first()
+        """完成校准会话，并从服务端记录重算正式结果。"""
+        session = (
+            self.db.query(ChannelCalibrationSession)
+            .filter(ChannelCalibrationSession.id == session_id)
+            .with_for_update()
+            .first()
+        )
 
         if not session:
             return None
+
+        formal_verdicts: List[bool] = []
+        formally_observed_types = set()
+        for calibration_type, model in (
+            ("temporal", TemporalChannelCalibration),
+            ("doppler", DopplerCalibration),
+            ("spatial_correlation", SpatialCorrelationCalibration),
+            ("angular_spread", AngularSpreadCalibration),
+            ("eis", EISValidation),
+        ):
+            rows = self.db.query(model).filter(model.session_id == session_id).all()
+            verdicts = [
+                row.validation_pass
+                for row in rows
+                if row.validation_pass is True or row.validation_pass is False
+            ]
+            if verdicts:
+                formally_observed_types.add(calibration_type)
+                formal_verdicts.extend(verdicts)
+
+        configuration = session.configuration if isinstance(session.configuration, dict) else {}
+        configured_types = configuration.get("requested_calibration_types")
+        requested_types = {
+            value
+            for value in configured_types
+            if isinstance(value, str)
+        } if isinstance(configured_types, list) else set()
+        has_unverified_requested_type = bool(
+            requested_types - formally_observed_types
+        )
+
+        # Existing quiet-zone rows have no auditable explicit-real provenance.
+        # Their presence makes the session verdict undetermined; client-supplied
+        # counters/verdicts cannot promote them to PASS.
+        has_unverified_quiet_zone = (
+            self.db.query(ChannelQuietZoneCalibration)
+            .filter(ChannelQuietZoneCalibration.session_id == session_id)
+            .first()
+            is not None
+        )
+        formal_total = len(formal_verdicts)
+        formal_passed = sum(verdict is True for verdict in formal_verdicts)
+        formal_failed = sum(verdict is False for verdict in formal_verdicts)
 
         session.status = "completed"
         session.progress_percent = 100
@@ -706,10 +787,18 @@ class ChannelCalibrationService:
         session.duration_minutes = (
             (session.completed_at - session.started_at).total_seconds() / 60
         )
-        session.overall_pass = overall_pass
-        session.total_calibrations = total_calibrations
-        session.passed_calibrations = passed_calibrations
-        session.failed_calibrations = failed_calibrations
+        session.overall_pass = (
+            None
+            if (
+                has_unverified_quiet_zone
+                or has_unverified_requested_type
+                or formal_total == 0
+            )
+            else formal_failed == 0
+        )
+        session.total_calibrations = formal_total
+        session.passed_calibrations = formal_passed
+        session.failed_calibrations = formal_failed
 
         self.db.commit()
         self.db.refresh(session)
@@ -1107,6 +1196,15 @@ class ChannelCalibrationService:
         4. 验证是否满足要求
         5. 保存结果
         """
+        # P1-64: this legacy implementation only synthesizes grid samples with
+        # numpy.random.  Until a verified centimetre-scale XY scanner is wired
+        # in, no caller (API or workflow) may persist those values as formal
+        # channel calibration evidence.
+        raise RuntimeError(
+            "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+            "不会生成模拟数值或正式判决。"
+        )
+
         # 生成测量网格
         if quiet_zone_shape == "sphere":
             # 球形静区: 生成 3D 网格点
@@ -1459,22 +1557,12 @@ class ChannelCalibrationService:
         # 静区校准
         if calibration_type in (None, "quiet_zone"):
             query = self.db.query(ChannelQuietZoneCalibration)
-            if validation_pass is not None:
-                query = query.filter(ChannelQuietZoneCalibration.validation_pass == validation_pass)
-            for cal in query.order_by(desc(ChannelQuietZoneCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "quiet_zone",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "shape": cal.quiet_zone_shape,
-                        "diameter_m": cal.quiet_zone_diameter_m,
-                        "amplitude_std_db": cal.amplitude_std_db,
-                    }
-                })
+            # Legacy QZ rows have no explicit-real provenance. A formal PASS or
+            # FAIL filter therefore has no matching rows; unfiltered audit
+            # history is retained but projected as UNKNOWN/N/A.
+            if validation_pass is None:
+                for cal in query.order_by(desc(ChannelQuietZoneCalibration.calibrated_at)).limit(limit).offset(offset):
+                    results.append(sanitize_channel_qz_history(cal))
 
         # EIS 验证
         if calibration_type in (None, "eis"):

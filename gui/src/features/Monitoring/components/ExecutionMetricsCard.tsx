@@ -38,6 +38,7 @@ import {
   IconAlertTriangle,
 } from '@tabler/icons-react'
 import { useMonitoringWebSocket, type MonitoringMetricData } from '../../../hooks/useMonitoringWebSocket'
+import { UnavailableMetricCard } from '../../../components/RealtimeMetricsCard'
 import { memo } from 'react'
 
 interface ExecutionMetricsCardProps {
@@ -57,7 +58,6 @@ interface ExecutionMetricsCardProps {
   expectedRanges?: {
     throughput?: { min: number; max: number }
     snr?: { min: number; max: number }
-    quiet_zone_uniformity?: { min: number; max: number }
     eirp?: { min: number; max: number }
     temperature?: { min: number; max: number }
   }
@@ -295,12 +295,7 @@ export function ExecutionMetricsCard({
               decimals={2}
               expectedRange={expectedRanges?.snr}
             />
-            <ExecutionMetricCard
-              label={METRIC_LABELS.quiet_zone_uniformity}
-              data={metrics.quiet_zone_uniformity}
-              decimals={3}
-              expectedRange={expectedRanges?.quiet_zone_uniformity}
-            />
+            <UnavailableMetricCard label={METRIC_LABELS.quiet_zone_uniformity} />
             <ExecutionMetricCard
               label={METRIC_LABELS.eirp}
               data={metrics.eirp}

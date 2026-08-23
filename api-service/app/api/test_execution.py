@@ -18,6 +18,9 @@ from app.services.mimo_ota.path_loss_application import (
     path_loss_application_is_formally_verified,
 )
 from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
+from app.services.mimo_ota.quiet_zone_evidence import (
+    quiet_zone_scope_is_formally_verified,
+)
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -56,7 +59,10 @@ def _formal_validation_pass(
         else None
     )
     measure = phases.get("measure") if isinstance(phases, dict) else None
-    if not isinstance(measure, dict):
+    precheck = phases.get("precheck") if isinstance(phases, dict) else None
+    if not isinstance(measure, dict) or not quiet_zone_scope_is_formally_verified(
+        precheck
+    ):
         return None
     if not (
         measure.get("path_loss_verified") is True

@@ -148,17 +148,17 @@ class TestTrustFlagsReachable:
         """行为门: 全兜底执行 → 渲染器产出里三条"未验证"标注全部可见。
         变异 (标志挪回顶层 / 删标注 helper) → 红。"""
         text = _rendered_text(_content(_FALLBACK_PHASES))
-        assert "未验证 (兜底默认值, 非实测静区)" in text
+        assert "未验证 (无权威多点场扫描证据)" in text
         assert "未验证 (mock/兜底值)" in text
         assert "未验证 (未找到匹配的路损证书；本次结果未补偿。)" in text
 
     def test_verified_run_renders_verified_labels(self):
         """对向: 全实测执行 → 三条"已验证", 不出现"未验证" (别把好数据也叫脏)。"""
         text = _rendered_text(_content(_VERIFIED_PHASES))
-        assert "已验证 (探头方向图实测)" in text
+        assert "未验证 (无权威多点场扫描证据)" in text
         assert "已验证 (真实信号分析仪)" in text
         assert "已验证 (真实来源路损校准证书)" in text
-        assert "未验证" not in text
+        assert "未验证 (mock/兜底值)" not in text
 
     def test_free_text_with_angle_bracket_survives_rendering(self):
         """内审 F1: `<字母` 形态的自由文本 (操作员命名 "TDL-A <30ns" / 掉线消息)

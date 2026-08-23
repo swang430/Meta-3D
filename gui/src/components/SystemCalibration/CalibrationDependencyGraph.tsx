@@ -24,7 +24,7 @@ import {
 interface CalibrationNode {
     id: string;
     name: string;
-    status: 'valid' | 'expired' | 'invalidated' | 'pending';
+    status: 'valid' | 'expired' | 'invalidated' | 'pending' | 'unknown';
     validUntil?: string;
     dependencies: string[];
 }
@@ -82,8 +82,7 @@ const calibrationNodes: CalibrationNode[] = [
     {
         id: 'quiet_zone',
         name: '静区校准',
-        status: 'valid',
-        validUntil: '2026-06-15',
+        status: 'unknown',
         dependencies: ['e2e_matrix', 'ce_internal'],
     },
 ];
@@ -93,6 +92,7 @@ const statusConfig = {
     expired: { color: 'red', icon: IconAlertTriangle, label: '已过期' },
     invalidated: { color: 'orange', icon: IconAlertTriangle, label: '已失效' },
     pending: { color: 'gray', icon: IconClock, label: '待校准' },
+    unknown: { color: 'yellow', icon: IconAlertTriangle, label: 'UNKNOWN / N/A' },
 };
 
 interface NodeCardProps {
@@ -177,6 +177,7 @@ export function CalibrationDependencyGraph() {
     const validCount = calibrationNodes.filter(n => n.status === 'valid').length;
     const expiredCount = calibrationNodes.filter(n => n.status === 'expired').length;
     const invalidatedCount = calibrationNodes.filter(n => n.status === 'invalidated').length;
+    const unknownCount = calibrationNodes.filter(n => n.status === 'unknown').length;
 
     return (
         <Paper p="md" withBorder>
@@ -186,6 +187,7 @@ export function CalibrationDependencyGraph() {
                     <Badge size="xs" color="green" variant="light">{validCount} 有效</Badge>
                     <Badge size="xs" color="red" variant="light">{expiredCount} 过期</Badge>
                     <Badge size="xs" color="orange" variant="light">{invalidatedCount} 失效</Badge>
+                    <Badge size="xs" color="yellow" variant="light">{unknownCount} 未判定</Badge>
                 </Group>
             </Group>
 

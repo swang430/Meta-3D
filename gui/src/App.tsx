@@ -3639,7 +3639,6 @@ function Monitoring({
         expectedRanges={{
           throughput: { min: 140, max: 160 },
           snr: { min: 23, max: 27 },
-          quiet_zone_uniformity: { min: 0.7, max: 1.0 },
           eirp: { min: 43, max: 47 },
           temperature: { min: 20, max: 25 },
         }}

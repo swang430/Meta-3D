@@ -80,7 +80,7 @@ export interface CalibrationSessionResponse {
   current_stage?: string
   started_at?: string
   completed_at?: string
-  overall_pass?: boolean
+  overall_pass?: boolean | null
   total_calibrations?: number
   passed_calibrations?: number
   failed_calibrations?: number
@@ -308,23 +308,23 @@ export interface QuietZoneCalibrationResponse {
   }
   num_points: number
   // Statistics
-  amplitude_mean_db: number
-  amplitude_std_db: number
-  amplitude_range_db: number[]
-  phase_mean_deg: number
-  phase_std_deg: number
-  phase_range_deg: number[]
+  amplitude_mean_db: number | null
+  amplitude_std_db: number | null
+  amplitude_range_db: number[] | null
+  phase_mean_deg: number | null
+  phase_std_deg: number | null
+  phase_range_deg: number[] | null
   // Validation
-  amplitude_uniformity_pass: boolean
-  phase_uniformity_pass: boolean
-  validation_pass: boolean
+  amplitude_uniformity_pass: boolean | null
+  phase_uniformity_pass: boolean | null
+  validation_pass: boolean | null
   amplitude_threshold_db: number
   phase_threshold_deg: number
   // Metadata
   fc_ghz: number
   calibrated_at: string
   calibrated_by?: string
-  valid_until: string
+  valid_until: string | null
   status: string
 }
 
@@ -378,7 +378,7 @@ export interface EISValidationResponse {
   eis_spread_db: number
   // Validation
   min_eis_dbm: number
-  validation_pass: boolean
+  validation_pass: boolean | null
   // Metadata
   measured_at: string
   measured_by?: string
@@ -394,7 +394,7 @@ export interface ChannelCalibrationHistoryItem {
   calibrated_at: string
   calibrated_by?: string
   status: string
-  validation_pass: boolean
+  validation_pass: boolean | null
   summary: Record<string, unknown>
 }
 

@@ -425,7 +425,8 @@ class TestP06MockFirstCall:
         # proves the mock-aware *runtime* bypass (mock BS → gate N/A), not a
         # config opt-out.
         precheck = phases.get("precheck", {})
-        assert precheck.get("overall_pass") is True, precheck
+        assert precheck.get("operational_ready") is True, precheck
+        assert precheck.get("overall_pass") is None, precheck
         assert precheck.get("dut_pass") is True
         assert "gate N/A" in (precheck.get("dut_pass_reason") or ""), (
             f"expected mock auto-skip reason, got {precheck.get('dut_pass_reason')!r}"

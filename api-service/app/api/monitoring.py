@@ -120,7 +120,6 @@ def _generate_fallback_data() -> Dict[str, Any]:
     # Generate realistic metrics with random variations
     throughput = 150.0 + random.uniform(-20, 30)
     snr = 25.0 + random.uniform(-3, 3)
-    quiet_zone = 0.8 + random.uniform(-0.15, 0.15)
     eirp = 45.0 + random.uniform(-2, 2)
     temperature = 23.0 + random.uniform(-1, 1)
 
@@ -151,12 +150,6 @@ def _generate_fallback_data() -> Dict[str, Any]:
             "unit": "dB",
             "timestamp": now,
             "status": get_status(snr, 22, 18)
-        },
-        "quiet_zone_uniformity": {
-            "value": round(quiet_zone, 3),
-            "unit": "dB",
-            "timestamp": now,
-            "status": get_status(quiet_zone, 0.7, 0.6)
         },
         "eirp": {
             "value": round(eirp, 2),

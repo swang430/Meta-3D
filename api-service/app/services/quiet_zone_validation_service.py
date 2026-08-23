@@ -112,6 +112,15 @@ class QuietZoneValidationService:
             data 含 calibration_id, field_uniformity_pass, std/range/mean,
             grid_points 数, threshold.
         """
+        if self.use_mock:
+            return CalibrationResult(
+                success=False,
+                message=(
+                    "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+                    "mock 网格不形成正式证据。"
+                ),
+            )
+
         chamber = self.db.query(ChamberConfiguration).filter(
             ChamberConfiguration.id == chamber_id
         ).first()

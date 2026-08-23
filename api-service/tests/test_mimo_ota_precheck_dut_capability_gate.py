@@ -129,8 +129,10 @@ class TestDUTCapabilityPrecheckGate:
         assert res.measurements is not None
         assert res.measurements["dut_capability_check"]["violations"]
         assert res.measurements["overall_pass"] is False
+        assert res.measurements["operational_ready"] is False
         db.refresh(execution)
         persisted = (execution.measurements or {})["phases"]["precheck"]
+        assert persisted["operational_ready"] is False
         assert persisted["dut_capability_check"]["consistent"] is False
         assert persisted["dut_capability_check"]["violations"]
 

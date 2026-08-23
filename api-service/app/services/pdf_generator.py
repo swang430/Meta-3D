@@ -1722,12 +1722,13 @@ class PDFGenerator:
             elements.append(Paragraph('<b>Channel Calibration Overview</b>', self.styles['SubsectionTitle']))
             elements.append(Spacer(1, 8))
 
+            pass_rate = channel_summary.get('pass_rate')
             summary_data = [
                 ['Metric', 'Value'],
                 ['Total Calibrations', str(channel_summary.get('total_executions', 0))],
                 ['Passed', Paragraph(f'<font color="green">{channel_summary.get("passed", 0)}</font>', self.styles['BodyText'])],
                 ['Failed', Paragraph(f'<font color="red">{channel_summary.get("failed", 0)}</font>', self.styles['BodyText'])],
-                ['Pass Rate', f"{channel_summary.get('pass_rate', 0):.1f}%"],
+                ['Pass Rate', 'N/A' if pass_rate is None else f"{pass_rate:.1f}%"],
             ]
 
             table = Table(summary_data, colWidths=[150, 150])
@@ -1816,13 +1817,20 @@ class PDFGenerator:
                     headers = ['Shape', 'Diameter (m)', 'Amp Uniform (dB)', 'Phase Uniform (°)', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
+                        verdict = cal.get('validation_pass')
+                        if verdict is True:
+                            status, status_color = '✓ PASS', '#43a047'
+                        elif verdict is False:
+                            status, status_color = '✗ FAIL', '#e53935'
+                        else:
+                            status, status_color = 'UNKNOWN', '#f9a825'
+                        amplitude = cal.get('amplitude_uniformity_db')
+                        phase = cal.get('phase_uniformity_deg')
                         rows.append([
                             cal.get('quiet_zone_shape', '-'),
                             str(cal.get('quiet_zone_diameter_m', '-')),
-                            f"±{cal.get('amplitude_uniformity_db', 0):.2f}",
-                            f"±{cal.get('phase_uniformity_deg', 0):.1f}",
+                            f"±{amplitude:.2f}" if amplitude is not None else 'N/A',
+                            f"±{phase:.1f}" if phase is not None else 'N/A',
                             Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
                         ])
                 elif cal_type == 'eis':
