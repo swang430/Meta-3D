@@ -34,6 +34,7 @@ FOLDER_Q = "SYSTem:SCPI:FOLDer?"
 INCL_PRESET_Q = "SYSTem:SCPI:IMPort:INCLude:PRESet?"
 IMPORT_STATUS_Q = "SYSTem:SCPI:IMPort:STATus?"
 IMPORT_HEADER = "SYSTem:SCPI:IMPort"
+INJ = "CELL1?;:SYSTem:PRESet:FULL;:BSE:STATus:NR5G:CELL1"  # 内审 F5 的注入串
 
 _READONLY_SET = {APP_Q, LIC_Q, FOLDER_Q, INCL_PRESET_Q, IMPORT_STATUS_Q, STATUS_Q, ERR}
 
@@ -265,6 +266,39 @@ def test_import_include_preset_on_is_surfaced_in_summary():
     result = _run(bs, {"import_file": "fresh.scpi", "confirm_action": True})
     assert result.extra["readback"]["import_include_preset"] == "1"
     assert "PRESet" in result.summary
+
+
+# ── 门 4b：同意门 fail-closed（内审 F2）────────────────────────────────
+
+def test_confirm_action_string_false_forms_never_import():
+    """`bool("false") == True` 会放行导入 —— 在 INCLude:PRESet 默认为 1 的机器上
+    = 先复位再导入。变异：`_as_bool(...) is True` 换回 `bool(...)` → 红。"""
+    for form in ("false", "0", "no", "False", None, "", "maybe", 0):
+        bs = _ScriptedBs()
+        result = _run(bs, {"import_file": "fresh.scpi", "confirm_action": form})
+        assert bs.writes == [], repr(form)
+        assert result.extra["import"]["attempted"] is False, repr(form)
+        assert result.extra["verdict"] == "UNDETERMINED", repr(form)
+
+
+def test_confirm_action_string_true_forms_import():
+    for form in ("true", "1", "yes", "True", True):
+        bs = _ScriptedBs()
+        result = _run(bs, {"import_file": "fresh.scpi", "confirm_action": form})
+        assert bs.writes == ['SYSTem:SCPI:IMPort "fresh.scpi"'], repr(form)
+        assert result.extra["verdict"] == "SUCCESS", repr(form)
+
+
+# ── 门 4c：cell 白名单（内审 F5）────────────────────────────────────────
+
+def test_cell_injection_sends_nothing():
+    """变异：去掉 `_validate_cell` 校验 → 红（注入串会拼进 BSE:STATus 查询）。"""
+    for bad in (INJ, "CELL0", "CELL15", "CELL1;*RST", "SELected?"):
+        bs = _ScriptedBs()
+        result = _run(bs, {"cell": bad, "import_file": "fresh.scpi", "confirm_action": True})
+        assert bs.ops == [], repr(bad)
+        assert result.extra["verdict"] != "SUCCESS", repr(bad)
+        assert "白名单" in result.summary, repr(bad)
 
 
 # ── 门 5：异常 → ABORTED ────────────────────────────────────────────────

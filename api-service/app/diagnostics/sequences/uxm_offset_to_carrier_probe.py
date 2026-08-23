@@ -51,6 +51,7 @@ OTCarrier / POINta 命令形式**未经手册证实** → 不发, UNDETERMINED�
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -61,6 +62,10 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
     mock_driver_refusal_summary,
 )
+# 复用不复制: 同意门的布尔解析跟同 PR 的 handback 序列同源 (内审 F2) ——
+# `RunSequenceRequest.params` 是 Dict[str, Any], API 调用方传 "false" 时
+# `bool("false") == True` 会把写门直接放行。
+from app.diagnostics.sequences.propsim_f64_local_handback_check import _as_bool
 # 复用不复制: 错误码解析与方言解析跟兄弟序列同源, 免得判据漂移。
 from app.diagnostics.sequences.uxm_scpi_compatibility import (
     _parse_err,
@@ -114,6 +119,28 @@ def _is_bse_dialect(profile: Any) -> bool:
     """
     arfcn_t = getattr(profile, "CELL_DL_ARFCN", None)
     return isinstance(arfcn_t, str) and arfcn_t.upper().startswith("BSE:")
+
+
+# 手册三条目 (OTCarrier / POINta / UEReported:IMSI?) 的 banding 原文:
+# `CELL1 | CELL2 | … | CELL14 | SELected`。白名单之外的任何串都拒绝 ——
+# 内审 F5: `cell` 直接进 format(), 形如 `CELL1?;:SYSTem:PRESet:FULL;:…` 的串会
+# 拼出合法的多命令程序消息, 绕过源码级"不发 PRESet"的门。
+_CELL_RE = re.compile(r"^(?:CELL([1-9]|1[0-4])|(SELECTED))$", re.IGNORECASE)
+
+
+def _validate_cell(raw: Any, default: str) -> Tuple[Optional[str], Optional[str]]:
+    """返回 (规范化小区, 拒绝原因)。留空 → default (也要过白名单)。
+
+    规范化: `cell3` → `CELL3`, `selected` → `SELected` (手册拼写)。
+    """
+    s = (str(raw) if raw is not None else "").strip() or default
+    m = _CELL_RE.match(s)
+    if not m:
+        return None, (
+            f"cell={raw!r} 不在手册 banding 白名单 (CELL1..CELL14 | SELected), "
+            f"拒绝, 未发到仪器"
+        )
+    return (f"CELL{int(m.group(1))}" if m.group(1) else "SELected"), None
 
 
 def _parse_offset_param(value: Any) -> Tuple[Optional[int], Optional[str]]:
@@ -196,8 +223,7 @@ async def run(
 
     profile = _profile_for_driver(bs)
     profile_name = getattr(profile, "PROFILE_NAME", "?")
-    cell = (params.get("cell") or "").strip() or getattr(profile, "PRIMARY_CELL", "CELL1")
-    extra: Dict[str, Any] = {"profile": profile_name, "cell": cell}
+    extra: Dict[str, Any] = {"profile": profile_name, "cell": None}
 
     # ── 方言门: 新命令只在 BSE 根方言发; 其它方言命令形式未查证, 一条不发 ──
     if not _is_bse_dialect(profile):
@@ -212,6 +238,17 @@ async def run(
                 f"不发 (未探测 ≠ 不支持)。现场方言 LTE_NR_IRAT 下重跑。"
             ),
         )
+
+    # ── 小区白名单 (内审 F5): 不合法一条不发 ──
+    cell, cell_reject = _validate_cell(
+        params.get("cell"), getattr(profile, "PRIMARY_CELL", "CELL1"),
+    )
+    if cell_reject:
+        extra["verdict"] = "UNDETERMINED"
+        return SequenceRunResult(
+            success=False, extra=extra, summary=f"UNDETERMINED: {cell_reject}",
+        )
+    extra["cell"] = cell
 
     err_cmd = getattr(profile, "ERR", "SYSTem:ERRor?")
     switch_t = getattr(profile, "CELL_STATE_QUERY", None)
@@ -281,7 +318,9 @@ async def run(
 
     # ── 写参数先在本地解析 (越界 / 非法一条都不发) ──
     otc_value, param_reject = _parse_offset_param(params.get("offset_to_carrier"))
-    confirm_write = bool(params.get("confirm_write", False))
+    # 同意门 fail-closed: 只有 True / "true" / "1" / "yes" 算确认; None / "false" /
+    # 非法形态一律 False (内审 F2: bool("false") 会放行)。
+    confirm_write = _as_bool(params.get("confirm_write")) is True
     write_info: Dict[str, Any] = {
         "attempted": False, "value": otc_value, "readback": None,
         "readback_matches": None, "error_after_write": None,

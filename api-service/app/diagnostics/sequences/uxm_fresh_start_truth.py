@@ -63,7 +63,12 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
     mock_driver_refusal_summary,
 )
-from app.diagnostics.sequences.uxm_offset_to_carrier_probe import _is_bse_dialect
+# 复用不复制: 同意门布尔解析 (内审 F2) 与小区白名单 (内审 F5) 跟兄弟序列同源。
+from app.diagnostics.sequences.propsim_f64_local_handback_check import _as_bool
+from app.diagnostics.sequences.uxm_offset_to_carrier_probe import (
+    _is_bse_dialect,
+    _validate_cell,
+)
 # 复用不复制: 错误码解析与方言解析跟兄弟序列同源。
 from app.diagnostics.sequences.uxm_scpi_compatibility import (
     _parse_err,
@@ -151,10 +156,9 @@ async def run(
 
     profile = _profile_for_driver(bs)
     profile_name = getattr(profile, "PROFILE_NAME", "?")
-    cell = (params.get("cell") or "").strip() or getattr(profile, "PRIMARY_CELL", "CELL1")
     extra: Dict[str, Any] = {
         "profile": profile_name,
-        "cell": cell,
+        "cell": None,
         "preset_commands_available_not_sent": list(_PRESET_COMMANDS_NOT_SENT),
         # 设计稿 §5 Discovered 2: 驱动 5G profile 现用的两条状态命令手册查无。
         # 只记录, 不发; 本条不是"仪器不支持", 是"手册里没有这条命令"。
@@ -178,6 +182,17 @@ async def run(
                 f"现场方言 LTE_NR_IRAT 下重跑。"
             ),
         )
+
+    # ── 小区白名单 (内审 F5): 不合法一条不发 ──
+    cell, cell_reject = _validate_cell(
+        params.get("cell"), getattr(profile, "PRIMARY_CELL", "CELL1"),
+    )
+    if cell_reject:
+        extra["verdict"] = "UNDETERMINED"
+        return SequenceRunResult(
+            success=False, extra=extra, summary=f"UNDETERMINED: {cell_reject}",
+        )
+    extra["cell"] = cell
 
     err_cmd = getattr(profile, "ERR", "SYSTem:ERRor?")
     status_t = getattr(profile, "CELL_STATUS_QUERY", None)
@@ -232,7 +247,8 @@ async def run(
         )
 
     import_file, file_reject = _validate_import_file(params.get("import_file"))
-    confirm_action = bool(params.get("confirm_action", False))
+    # 同意门 fail-closed (内审 F2): 只有 True / "true" / "1" / "yes" 算确认。
+    confirm_action = _as_bool(params.get("confirm_action")) is True
     import_info: Dict[str, Any] = {
         "attempted": False, "file": import_file, "status_after": None,
         "application_after": None, "error_after_import": None, "reason": None,

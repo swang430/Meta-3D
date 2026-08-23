@@ -113,7 +113,7 @@ def test_confirm_phase_sends_zero_scpi():
     ce = _ScriptedCe()
     result = _run(ce, {
         "phase": "confirm",
-        "operator_observation": "Local Mode 按钮可点，背景 Remote mode 水印消失",
+        "operator_observation": "背景 Remote mode 水印消失，Local Mode 按钮不再亮蓝",
         "operator_confirmed_local": True,
     })
     assert ce.queries == []
@@ -123,7 +123,7 @@ def test_confirm_phase_sends_zero_scpi():
 
 
 def test_confirm_phase_records_observation_as_onsite_evidence():
-    obs = "Local Mode 按钮可点，背景 Remote mode 水印消失"
+    obs = "背景 Remote mode 水印消失，Local Mode 按钮不再亮蓝"
     ce = _ScriptedCe()
     result = _run(ce, {
         "phase": "confirm", "operator_observation": obs, "operator_confirmed_local": True,
@@ -184,3 +184,25 @@ def test_unknown_phase_is_aborted_without_scpi():
     assert result.success is False
     assert result.extra["verdict"] == "ABORTED"
     assert "release" in result.summary and "confirm" in result.summary
+
+
+# ── F4：判据文本必须与手册 §20.1 同向 ──────────────────────────────────────
+
+def test_operator_facing_texts_follow_manual_button_semantics():
+    """§20.1 原文：Remote 态下 "the Local Mode button … is activated (turns blue)" ——
+    按钮亮 / 可点是 **Remote** 的标志。给操作员看的 label 与指令不得写"按钮可点 = 已回 Local"，
+    判据只留手册有据的"水印消失 / 按钮不再亮蓝"。"""
+    texts = [p["label"] for p in seq.metadata.params_schema] + [
+        seq._RELEASE_INSTRUCTIONS, seq.metadata.description,
+    ]
+    for t in texts:
+        assert "按钮可点" not in t, t
+        assert "可点" not in t, t
+    confirm_label = next(p for p in seq.metadata.params_schema
+                         if p["name"] == "operator_confirmed_local")["label"]
+    assert "水印" in confirm_label and "亮蓝" in confirm_label
+    assert "水印" in seq._RELEASE_INSTRUCTIONS and "亮蓝" in seq._RELEASE_INSTRUCTIONS
+    # release 段 summary 就是这段指令，运行态也要同向
+    result = _run(_ScriptedCe())
+    assert "可点" not in result.summary
+    assert "水印" in result.summary

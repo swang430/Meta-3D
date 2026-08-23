@@ -201,6 +201,28 @@ def test_relay_readback_timeout_is_blocker_and_walk_continues():
     assert "INTLK? SAFETYRELAY" in drv.received
 
 
+def test_three_consecutive_timeouts_stop_the_walk():
+    """行为门（内审 F7-M7）：半死会话上每条超时 5 s，连续 3 次无响应后序列必须停，
+    steps 不再增长、互锁也不再问。变异：上限放到 10**6 → 红。"""
+    mappings = {
+        f"p{slot}": {"switch_id": f"{slot}:INT_RELAY_A", "relay_type": "spdt"}
+        for slot in (4, 5, 6, 7)
+    }
+    responses = {"*IDN?": "ETS-Lindgren EMCenter version 4.3.4", "VERSION_SW?": "4.3.4"}
+    drv = _ScriptedEmcenter(responses, mappings)  # 槽位级全部无响应
+    result = _run(drv)
+
+    assert drv.received == [
+        "*IDN?", "VERSION_SW?",
+        "4:*IDN?", "4:INT_RELAY_A?", "5:*IDN?",  # 第 3 次连续无响应 → 停
+    ]
+    assert "INTLK? SAFETYRELAY" not in drv.received
+    assert len(result.steps) == 5
+    assert result.extra["walk_aborted"] is True
+    assert result.extra["verdict"] == "BLOCKER"
+    assert "连续无响应" in result.summary
+
+
 def test_chassis_idn_timeout_aborts_walk_as_blocker():
     responses = dict(_HEALTHY_RESPONSES)
     del responses["*IDN?"]

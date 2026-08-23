@@ -12,9 +12,11 @@
 1. ``*IDN?``（IEEE 488.2 通用身份查询；F64 手册 §20.4.1.5、UXM 06_General、
    EMCenter 手册 :136-155 —— 所有受支持品类都有）—— 用驱动的 ``_query`` 原语发。
 2. ``asyncio.sleep(hold_seconds)`` —— **期间本序列不发任何命令**。
-3. 再发一次 ``*IDN?``；并把驱动上能 ``getattr`` 到的会话 / 重连迹象与步骤 1 之前的快照对比
-   （``_visa_session`` 对象换了 = 驱动静默重连过，这是 F64 / UXM ``_silent_reconnect_visa``
-   的可观察副作用；其余候选属性不假设存在，拿不到就不记）。
+3. 再发一次 ``*IDN?``；并把驱动上的会话 / 重连迹象与「步骤 1 成功之后」的快照对比
+   （F64 ``_visa_resource`` / UXM ``_visa_session`` 对象换了、``_identity_response``
+   被清 None = 驱动静默重连过，这是两者 ``_silent_reconnect_visa`` 的可观察副作用，
+   属性表见 ``_SESSION_SIGN_ATTRS``；驱动没有的属性不记）。快照取在首条 IDN 成功之后，
+   否则首条 IDN 自己触发的重连（F64 常态）会被记成空置后重连。
 
 判定（照 P1-58 四态，透出在 ``extra["verdict"]``）
 -----------------------------------------------
@@ -67,14 +69,22 @@ _DEFAULT_CATEGORY = "channelEmulator"
 _DEFAULT_HOLD_S = 120
 _MAX_HOLD_S = 900
 
-# 驱动上可能存在的「会话 / 重连」迹象属性（不假设存在，getattr 拿不到就不记）。
-# `_visa_session` 对象身份变化 = F64 / UXM 静默重连换了会话；其余是计数 / 时间戳类。
+# 「静默重连」在两个真驱动上留下的可观察副作用 —— 表从 `_silent_reconnect_visa` 的
+# 赋值点 grep 出来，不凭记忆（内审 F1：初版写的 `_visa_session` 在 F64 上 0 处，
+# F64 的会话对象是 `_visa_resource`）。`tests/test_p1_65_connection_idle_hold_probe.py`
+# 有不变量门：表里每个名字必须真的在某个真驱动的 `_silent_reconnect_visa` 里被赋值。
+#   F64  `RealPropsimF64Driver._silent_reconnect_visa`（propsim_f64.py）：
+#        换 `_visa_resource`（新 open_resource）、清 `_identity_response`
+#   UXM  `RealUxmDriver._silent_reconnect_visa`（uxm_base_station.py）：
+#        换 `_visa_session`、清 `_identity_response` / `_platform_identity_response`
+# 不收 `_reconnect_retry_after`：重连后第一条命令跑通就被 `_note_io_success` 归零，
+# 空置掉线 → 第二条 *IDN? 触发重连成功 → 它前后都是 0.0，不是迹象。
+# 对象型属性记 id()（换没换），标量 / 字符串记原值；驱动没有的属性不记（getattr None）。
 _SESSION_SIGN_ATTRS = (
-    "_visa_session",
-    "_reconnect_retry_after",
-    "_session_rebuilds",
-    "_reconnect_count",
-    "operation_error",
+    "_visa_resource",              # F64 会话对象
+    "_visa_session",               # UXM 会话对象
+    "_identity_response",          # 两者重连都清 None；裸 *IDN? 不会重新填
+    "_platform_identity_response", # UXM 重连清 None
 )
 
 _CAVEAT = (
@@ -210,8 +220,10 @@ async def run(
         return text
 
     # ── 1. 空置前 ──────────────────────────────────────────────────
-    snap_before = _session_snapshot(drv)
     idn_before = await _idn("*IDN? (空置前)")
+    # ⚠ 快照必须取在首条 *IDN? **成功之后**：F64 常态是驱动在首条命令上就先静默重连一次，
+    #   取在它之前会把"首条 IDN 自己触发的重连"记成"空置后重连"的反向假观察（内审 F1）。
+    snap_before = _session_snapshot(drv)
     base_extra = {
         "category": category,
         "driver": type(drv).__name__,

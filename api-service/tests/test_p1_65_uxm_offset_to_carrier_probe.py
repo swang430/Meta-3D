@@ -33,6 +33,7 @@ ARFCN_Q = UxmLteNrIratProfile.CELL_DL_ARFCN.format(cell=CELL) + "?"
 POINTA_Q = f"BSE:CONFig:NR5G:{CELL}:DL:POINta?"
 OTC_Q = f"BSE:CONFig:NR5G:{CELL}:DL:OTCarrier?"
 OTC_HEADER = f"BSE:CONFig:NR5G:{CELL}:DL:OTCarrier"
+INJ = "CELL1?;:SYSTem:PRESet:FULL;:BSE:STATus:NR5G:CELL1"  # 内审 F5 的注入串
 
 # 只读路径**不得**出现的东西：任何写命令 / APPLY / 驱动里手册查无的状态命令
 _FORBIDDEN_IN_READONLY = (
@@ -310,6 +311,50 @@ def test_accepts_int_param_form():
     result = _run(bs, {"offset_to_carrier": 102, "confirm_write": True})
     assert bs.writes == [f"{OTC_HEADER} 102"]
     assert result.extra["verdict"] == "SUCCESS"
+
+
+# ── 门 4b：同意门 fail-closed（内审 F2）—— API 传字符串布尔 ──────────────
+
+def test_confirm_write_string_false_forms_never_write():
+    """`RunSequenceRequest.params` 是 Dict[str, Any]：`bool("false") == True` 会放行。
+    变异：`_as_bool(...) is True` 换回 `bool(...)` → 红。"""
+    for form in ("false", "0", "no", "False", None, "", "maybe", 0):
+        bs = _ScriptedBs()
+        result = _run(bs, {"offset_to_carrier": "102", "confirm_write": form})
+        assert bs.writes == [], repr(form)
+        assert result.extra["write"]["attempted"] is False, repr(form)
+        assert result.extra["verdict"] == "UNDETERMINED", repr(form)
+
+
+def test_confirm_write_string_true_forms_write_when_cell_off():
+    for form in ("true", "1", "yes", "True", True):
+        bs = _ScriptedBs()
+        result = _run(bs, {"offset_to_carrier": "102", "confirm_write": form})
+        assert bs.writes == [f"{OTC_HEADER} 102"], repr(form)
+        assert result.extra["verdict"] == "SUCCESS", repr(form)
+
+
+# ── 门 4c：cell 白名单（内审 F5）—— 注入串零 SCPI ─────────────────────────
+
+def test_cell_injection_sends_nothing():
+    """`cell` 直接进 format()：多命令程序消息会绕过"不发 PRESet"的源码级门。
+    变异：去掉 `_validate_cell` 校验 → 红。"""
+    for bad in (INJ, "CELL0", "CELL15", "CELL1;*RST", "cell", "SELected?"):  # 全空白 = 留空 = 主小区, 不在此列
+        bs = _ScriptedBs()
+        result = _run(bs, {"cell": bad, "offset_to_carrier": "102", "confirm_write": True})
+        assert _all_commands(bs) == [], repr(bad)
+        assert result.extra["verdict"] != "SUCCESS", repr(bad)
+        assert result.success is False, repr(bad)
+        assert "白名单" in result.summary, repr(bad)
+
+
+def test_cell_whitelist_accepts_manual_banding_and_normalises():
+    """手册 banding：CELL1..CELL14 | SELected；大小写不敏感，规范化后进命令。"""
+    for given, canon in (("cell3", "CELL3"), ("CELL14", "CELL14"), ("selected", "SELected"), ("", CELL)):
+        bs = _ScriptedBs()
+        result = _run(bs, {"cell": given})
+        assert result.extra["cell"] == canon, given
+        assert any(c == f"BSE:CONFig:NR5G:{canon}:DL:OTCarrier?" for c in bs.queries), given
 
 
 # ── 门 5：异常 → ABORTED，且不写 ──────────────────────────────────────

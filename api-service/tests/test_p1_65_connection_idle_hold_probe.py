@@ -30,30 +30,66 @@ from app.diagnostics.sequences import connection_idle_hold_probe as seq
 
 class _ScriptedIdle:
     """回放式假驱动：按顺序回放 `_query` 的结果；元素是 Exception 就抛。
-    可选 `rebuild_session_on_call`：第 N 次调用前换掉 `_visa_session`，
-    模拟驱动静默重连（F64 / UXM 的 `_silent_reconnect_visa` 会换会话对象）。"""
+    可选 `rebuild_session_on_call`：第 N 次调用时先走一遍 `_silent_reconnect()`
+    —— 子类按**真驱动**的属性名实现（内审 F1：初版用的 `_visa_session` 在 F64 上 0 处）。
+    基类本身不带任何会话属性（= 没有会话属性可读的驱动）。"""
 
     def __init__(self, responses, rebuild_session_on_call=None):
         self.calls = []
         self._responses = list(responses)
         self._rebuild_on = rebuild_session_on_call
-        self._visa_session = object()
+
+    def _silent_reconnect(self):
+        pass
 
     def _query(self, cmd):
         self.calls.append(cmd)
         if self._rebuild_on is not None and len(self.calls) == self._rebuild_on:
-            self._visa_session = object()
+            self._silent_reconnect()
         r = self._responses.pop(0)
         if isinstance(r, Exception):
             raise r
         return r
 
 
-class _AsyncScriptedIdle(_ScriptedIdle):
-    """F64 形态：`_query` 返回 coroutine，序列必须两种都兜住。"""
+class _F64Shaped(_ScriptedIdle):
+    """F64 形态：异步 `_query`；会话对象是 `_visa_resource`；
+    `_silent_reconnect_visa` 换 `_visa_resource`、清 `_identity_response`（propsim_f64.py），
+    重连后 `_reconnect_retry_after` 又会被 `_note_io_success` 归零 —— 照真驱动写，
+    让「只看 _reconnect_retry_after」这种假判据在这里必然漏判。"""
+
+    def __init__(self, responses, rebuild_session_on_call=None):
+        super().__init__(responses, rebuild_session_on_call)
+        self._visa_resource = object()
+        self._identity_response = "Keysight,F8800A,SN,1.0"
+        self._reconnect_retry_after = 0.0
+
+    def _silent_reconnect(self):
+        self._reconnect_retry_after = 30.0
+        self._identity_response = None
+        self._visa_resource = object()
 
     async def _query(self, cmd):  # type: ignore[override]
-        return super()._query(cmd)
+        out = super()._query(cmd)
+        self._reconnect_retry_after = 0.0  # _note_io_success：命令跑通即归零
+        return out
+
+
+class _UxmShaped(_ScriptedIdle):
+    """UXM 形态：同步 `_query`；会话对象是 `_visa_session`；
+    `_silent_reconnect_visa` 换 `_visa_session`、清 `_identity_response` /
+    `_platform_identity_response`（uxm_base_station.py）。"""
+
+    def __init__(self, responses, rebuild_session_on_call=None):
+        super().__init__(responses, rebuild_session_on_call)
+        self._visa_session = object()
+        self._identity_response = "Keysight Technologies,E7515B,SN,28.21"
+        self._platform_identity_response = "platform"
+
+    def _silent_reconnect(self):
+        self._identity_response = None
+        self._platform_identity_response = None
+        self._visa_session = object()
 
 
 def _run(drv, params=None, category="channelEmulator"):
@@ -176,7 +212,7 @@ def test_default_params_are_channel_emulator_and_120s(fake_sleep):
 
 
 def test_async_query_primitive_is_awaited(fake_sleep):
-    drv = _AsyncScriptedIdle(["a", "a"])
+    drv = _F64Shaped(["a", "a"])
     result = _run(drv, {"hold_seconds": 5, "category": "baseStation"}, category="baseStation")
     assert result.success is True
     assert result.extra["idn_after"] == "a"
@@ -222,15 +258,72 @@ def test_second_idn_failure_is_observation_not_sequence_failure(fake_sleep):
     assert "VI_ERROR_TMO" in after.detail
 
 
-def test_second_idn_ok_but_session_rebuilt_is_observation(fake_sleep):
-    drv = _ScriptedIdle(["a", "a"], rebuild_session_on_call=2)
+def test_f64_shaped_silent_reconnect_on_second_idn_is_observation(fake_sleep):
+    """F64：空置掉线 → 第二条 *IDN? 触发静默重连成功 → IDN 文本相同、
+    `_reconnect_retry_after` 前后都是 0.0 —— 只有 `_visa_resource` 换了对象、
+    `_identity_response` 被清，序列必须据此记成 idle_drop（内审 F1 的漏判形态）。"""
+    drv = _F64Shaped(["a", "a"], rebuild_session_on_call=2)
     result = _run(drv, {"hold_seconds": 60})
 
     assert result.success is False
     assert result.extra["verdict"] == "UNDETERMINED"
     assert result.extra["observation"] == "idle_drop"
-    assert "_visa_session" in result.extra["reconnect_signs"]
+    assert "_visa_resource" in result.extra["reconnect_signs"]
+    assert "_identity_response" in result.extra["reconnect_signs"]
     assert "空置后会话断开/重连，现象已记录" in result.summary
+
+
+def test_uxm_shaped_silent_reconnect_on_second_idn_is_observation(fake_sleep):
+    drv = _UxmShaped(["a", "a"], rebuild_session_on_call=2)
+    result = _run(drv, {"hold_seconds": 60, "category": "baseStation"}, category="baseStation")
+
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert result.extra["observation"] == "idle_drop"
+    assert set(result.extra["reconnect_signs"]) >= {
+        "_visa_session", "_identity_response", "_platform_identity_response",
+    }
+
+
+@pytest.mark.parametrize("shape,category", [(_F64Shaped, "channelEmulator"), (_UxmShaped, "baseStation")])
+def test_reconnect_triggered_by_first_idn_is_not_counted_as_idle_drop(fake_sleep, shape, category):
+    """快照必须取在首条 *IDN? 成功之后：F64 常态是首条命令就先静默重连一次，
+    这不是空置造成的 —— 记成 idle_drop 就是反向假观察（内审 F1）。"""
+    drv = shape(["a", "a"], rebuild_session_on_call=1)
+    result = _run(drv, {"hold_seconds": 60, "category": category}, category=category)
+
+    assert result.success is True
+    assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["reconnect_signs"] == []
+
+
+def test_session_sign_attrs_are_real_driver_reconnect_side_effects():
+    """不变量门：`_SESSION_SIGN_ATTRS` 里的每个名字都必须真的在某个真驱动的
+    `_silent_reconnect_visa` 里被赋值（防表里再混进 `_session_rebuilds` 这类不存在的名字），
+    且两台真驱动各自的会话对象属性都在表里（F64 `_visa_resource` / UXM `_visa_session`）。
+    变异：把 `_visa_resource` 从表里去掉 → 红；往表里加个幻想名字 → 红。"""
+    import inspect
+    import re
+
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.uxm_base_station import RealUxmDriver
+
+    assigned = {}
+    for cls in (RealPropsimF64Driver, RealUxmDriver):
+        src = inspect.getsource(cls._silent_reconnect_visa)
+        assigned[cls.__name__] = set(re.findall(r"self\.(\w+)\s*=[^=]", src))
+
+    for attr in seq._SESSION_SIGN_ATTRS:
+        assert any(attr in names for names in assigned.values()), (
+            f"{attr!r} 不是任何真驱动 _silent_reconnect_visa 的赋值目标 —— 幻想属性"
+        )
+    # 判定器自测：正则真能从源码里抽到赋值目标
+    assert "_visa_resource" in assigned["RealPropsimF64Driver"]
+    assert "_visa_session" in assigned["RealUxmDriver"]
+    # 两台驱动的会话对象属性都必须在表里（空置掉线后 IDN 文本不变，只有它们换）
+    assert "_visa_resource" in seq._SESSION_SIGN_ATTRS
+    assert "_visa_session" in seq._SESSION_SIGN_ATTRS
+    assert "_identity_response" in seq._SESSION_SIGN_ATTRS
 
 
 # ── BLOCKER：第一次就不通 ────────────────────────────────────────────

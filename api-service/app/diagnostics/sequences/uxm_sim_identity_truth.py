@@ -49,7 +49,10 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
     mock_driver_refusal_summary,
 )
-from app.diagnostics.sequences.uxm_offset_to_carrier_probe import _is_bse_dialect
+from app.diagnostics.sequences.uxm_offset_to_carrier_probe import (
+    _is_bse_dialect,
+    _validate_cell,
+)
 from app.diagnostics.sequences.uxm_scpi_compatibility import (
     _parse_err,
     _profile_for_driver,
@@ -169,8 +172,7 @@ async def run(
 
     profile = _profile_for_driver(bs)
     profile_name = getattr(profile, "PROFILE_NAME", "?")
-    cell = (params.get("cell") or "").strip() or getattr(profile, "PRIMARY_CELL", "CELL1")
-    extra: Dict[str, Any] = {"profile": profile_name, "cell": cell}
+    extra: Dict[str, Any] = {"profile": profile_name, "cell": None}
 
     if not _is_bse_dialect(profile):
         extra["verdict"] = "UNDETERMINED"
@@ -183,6 +185,17 @@ async def run(
                 f"现场方言 LTE_NR_IRAT 下重跑。"
             ),
         )
+
+    # ── 小区白名单 (内审 F5): 不合法一条不发 ──
+    cell, cell_reject = _validate_cell(
+        params.get("cell"), getattr(profile, "PRIMARY_CELL", "CELL1"),
+    )
+    if cell_reject:
+        extra["verdict"] = "UNDETERMINED"
+        return SequenceRunResult(
+            success=False, extra=extra, summary=f"UNDETERMINED: {cell_reject}",
+        )
+    extra["cell"] = cell
 
     err_cmd = getattr(profile, "ERR", "SYSTem:ERRor?")
     status_t = getattr(profile, "CELL_STATUS_QUERY", None)

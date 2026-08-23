@@ -115,9 +115,12 @@ def test_all_replies_is_success_read_only_and_raw_archived():
     for cmd in (
         "SYSTem:INFO?", "SYSTem:CALIBration:LIST?", "SYSTem:CALIBration:VALid?",
         "SYSTem:CALIBration:GET?", "SYSTem:CALIBration:USER:GET?",
-        "SYSTem:CALIBration:USER:INFO?", "DIAG:SIMU:STATE?", "OUTPut:INTERFerence:GET?",
+        "DIAG:SIMU:STATE?", "OUTPut:INTERFerence:GET?",
     ):
         assert cmd in ce.queries, cmd
+    # F6：USER:GET? 回空串（未启用）→ USER:INFO? 不发（手册未说明未启用时的应答形态，不盲发）
+    assert "SYSTem:CALIBration:USER:INFO?" not in ce.queries
+    assert result.extra["user_alignment"]["info_query_sent"] is False
     raws = {s.raw for s in result.steps if s.raw is not None}
     assert SYS_INFO in raws and "1,1" in raws and "0" in raws
     # 许可列表从 SYSTem:INFO? 尾部解析（不是探针）
@@ -126,6 +129,7 @@ def test_all_replies_is_success_read_only_and_raw_archived():
     assert result.extra["calibration"]["valid"] is True
     assert result.extra["calibration"]["current"] == "LTETestSetup"
     assert result.extra["user_alignment"]["enabled"] is False
+    assert result.extra["calibration"]["current_query_sent"] is True
     assert result.extra["interference"]["sent"] is True
     assert result.extra["interference"]["sources"] == []
 
@@ -238,3 +242,94 @@ def test_identity_mismatch_aborts_before_license_queries():
     assert result.success is False
     assert result.extra["verdict"] == "ABORTED"
     assert "SYSTem:CALIBration:LIST?" not in ce.queries
+
+
+# ── F6：先查状态再决定发不发（USER:INFO? / CALIBration:GET? 的前置）────────
+
+def test_user_info_only_sent_when_user_alignment_enabled():
+    ce = _ScriptedCe(_replies(**{
+        "SYSTem:CALIBration:USER:GET?": "MyAlign",
+        "SYSTem:CALIBration:USER:INFO?": "FI1234567, 29.01.2024",
+    }), installed_options=[])
+    result = _run(ce)
+    assert "SYSTem:CALIBration:USER:INFO?" in ce.queries
+    assert result.extra["user_alignment"] == {
+        "enabled": True, "name": "MyAlign", "info": "FI1234567, 29.01.2024",
+        "info_query_sent": True,
+    }
+    assert result.extra["verdict"] == "SUCCESS"
+
+
+def test_calibration_get_not_sent_when_not_in_use():
+    ce = _ScriptedCe(_replies(**{"SYSTem:CALIBration:VALid?": "0,0"}), installed_options=[])
+    result = _run(ce)
+    assert "SYSTem:CALIBration:GET?" not in ce.queries
+    assert result.extra["calibration"]["in_use"] is False
+    assert result.extra["calibration"]["current"] is None
+    assert result.extra["calibration"]["current_query_sent"] is False
+    assert result.extra["verdict"] == "SUCCESS"
+
+
+def test_calibration_get_not_sent_when_valid_unparseable():
+    ce = _ScriptedCe(_replies(**{"SYSTem:CALIBration:VALid?": "garbage"}), installed_options=[])
+    result = _run(ce)
+    assert "SYSTem:CALIBration:GET?" not in ce.queries
+    assert result.extra["calibration"]["in_use"] is None
+    assert result.extra["calibration"]["current_query_sent"] is False
+
+
+# ── F3：错误 payload 当响应串回来时不能被解析成"值"────────────────────────────
+
+_ERR_PAYLOAD = '-100,"ATE command not supported"'
+
+
+def test_error_payload_reply_is_not_a_value_and_blocks():
+    """驱动 propsim_f64.py 自己写明 F64 有时把 -100,"ATE command not supported" 当响应串回
+    而不是 raise。USER:GET? / CALIBration:LIST? 回这个 → 不能变成 enabled=True / "2 个校准"。"""
+    ce = _ScriptedCe(_replies(**{
+        "SYSTem:CALIBration:USER:GET?": _ERR_PAYLOAD,
+        "SYSTem:CALIBration:LIST?": _ERR_PAYLOAD,
+    }), installed_options=[])
+    result = _run(ce)
+    assert result.extra["user_alignment"]["enabled"] is False
+    assert result.extra["user_alignment"]["name"] is None
+    assert result.extra["calibration"]["list"] == []
+    # USER:GET? 回错误 payload → 不是"启用" → INFO? 不发
+    assert "SYSTem:CALIBration:USER:INFO?" not in ce.queries
+    steps = {s.label: s for s in result.steps}
+    assert steps["SYSTem:CALIBration:USER:GET?"].success is False
+    assert steps["SYSTem:CALIBration:LIST?"].success is False
+    assert steps["SYSTem:CALIBration:LIST?"].raw == _ERR_PAYLOAD   # 原样归档
+    assert sorted(result.extra["failed_queries"]) == sorted([
+        "SYSTem:CALIBration:LIST?", "SYSTem:CALIBration:USER:GET?",
+    ])
+    assert result.extra["error_payloads"] == {
+        "SYSTem:CALIBration:LIST?": _ERR_PAYLOAD,
+        "SYSTem:CALIBration:USER:GET?": _ERR_PAYLOAD,
+    }
+    assert result.extra["verdict"] == "BLOCKER"
+    assert "错误 payload" in result.summary
+    assert "不支持" not in result.summary
+
+
+def test_state_error_payload_on_valid_is_flagged_too():
+    """-200 族（状态拒绝）同样是错误元组不是值：VALid? 回 -200 → in_use None、GET? 不发。"""
+    ce = _ScriptedCe(_replies(**{
+        "SYSTem:CALIBration:VALid?": '-200,"Wrong device state for command"',
+    }), installed_options=[])
+    result = _run(ce)
+    assert result.extra["calibration"]["in_use"] is None
+    assert "SYSTem:CALIBration:GET?" not in ce.queries
+    assert result.extra["failed_queries"] == ["SYSTem:CALIBration:VALid?"]
+    assert result.extra["verdict"] == "BLOCKER"
+
+
+def test_no_error_sentinel_and_plain_values_are_not_payloads():
+    """`0,"No error"` 形状的哨兵与 `1,1` / CSV 这类正常值都不能被误判成错误 payload。"""
+    ce = _ScriptedCe(_replies(**{"SYSTem:CALIBration:USER:INFO?": '0,"No error"',
+                                 "SYSTem:CALIBration:USER:GET?": "MyAlign"}),
+                     installed_options=[])
+    result = _run(ce)
+    assert result.extra["failed_queries"] == []
+    assert result.extra["calibration"]["in_use"] is True
+    assert result.extra["calibration"]["list"] == ["LTETestSetup", "WCDMATestSetup"]

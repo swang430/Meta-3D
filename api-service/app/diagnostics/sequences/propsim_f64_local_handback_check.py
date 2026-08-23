@@ -2,8 +2,11 @@
 
 **手册事实**（Propsim User Reference Rev 10.2 §20.1 原文）：
 "When you open a remote connection to PROPSIM and issue an ATE command, PROPSIM goes
-automatically into remote mode. … To return to local mode, click the Local Mode button in
-the top right corner of the GUI."
+automatically into remote mode. In remote mode, the background of PROPSIM GUI shows the text
+“Remote mode”, … and the Local Mode button in the top right corner button is activated (turns
+blue). … To return to local mode, click the Local Mode button in the top right corner of the GUI."
+⚠ 按钮**亮蓝 / 被激活是 Remote 态**的标志（内审 F4 纠正：初版 label 写成"按钮可点 = 已回
+Local"，方向反了）。给操作员的判据只留手册有据的两条：Remote mode 水印消失、按钮不再亮蓝。
 —— 没有任何 SCPI 能切回或查询 Local / Remote（§20.4 指令集无此类命令；NotebookLM
 2026-08-23 核对：这是手册**无记载**，不是推断出的"支持"或"不支持"）。ATE AN 全文也没有
 "socket 关闭即回 Local"。驱动 `release_to_local_control` 做的只是关 socket、
@@ -68,7 +71,7 @@ metadata = SequenceMetadata(
         },
         {
             "name": "operator_confirmed_local",
-            "label": "confirm 必填：面板已回到 Local（按钮可点、Remote mode 水印消失）",
+            "label": "confirm 必填：面板已回到 Local（背景 Remote mode 水印消失、右上角 Local Mode 按钮不再亮蓝）",
             "type": "boolean",
             "default": False,
         },
@@ -83,8 +86,9 @@ _PHASES = ("release", "confirm")
 
 _RELEASE_INSTRUCTIONS = (
     "UNDETERMINED（等待人工确认）：本序列结束、租约释放（驱动关闭 ATE socket）后，"
-    "到 F64 前面板看右上角 Local Mode 按钮是否可点 / 背景是否仍显示 Remote mode；"
-    "手册 §20.1：回 Local 只能点 GUI 的 Local Mode 按钮，没有 SCPI 能切回或查询。"
+    "到 F64 前面板看背景是否仍显示 Remote mode 水印 / 右上角 Local Mode 按钮是否仍亮蓝"
+    "（手册 §20.1 原文：Remote 态下该按钮 is activated (turns blue) —— 按钮亮蓝是 Remote 的标志，"
+    "不是已回 Local）；回 Local 只能点 GUI 的 Local Mode 按钮，没有 SCPI 能切回或查询。"
     "看完后用 phase=confirm 再跑一次，把观察原文填进 operator_observation、"
     "结论填进 operator_confirmed_local（⚠ 先看面板再开始 confirm —— 取租约本身会再发 ATE 命令，"
     "仪器会重新进 Remote）。"

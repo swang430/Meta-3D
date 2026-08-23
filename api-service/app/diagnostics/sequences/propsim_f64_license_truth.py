@@ -25,6 +25,17 @@
                                                    仿真打开后可用" → **只在 STATE? 非 CLOSED 时发**
 - `SYSTem:ERRor?`                      §20.4.2.1   结尾读到 `0,"No error"` 为止
 
+**先查状态再决定发不发**（内审 F6）：`USER:INFO?` 只在 `USER:GET?` 非空（已启用）时发；
+`CALIBration:GET?` 只在 `VALid?` 的 in_use=1 时发 —— 手册未说明未启用 / 未使用时这两条的
+应答形态，不盲发（超时会被驱动当 3334 desync 排水，把"没装用户对齐"这个很可能的现场实况
+报成 BLOCKER）。
+
+**错误 payload 不是值**（内审 F3）：驱动 `propsim_f64.py` 自承 F64 有时把
+`-100,"ATE command not supported"` 当**响应串**回而不是 raise。每条回复先过驱动现成的
+`_F64_SCPI_ERROR_RE`（复用不复制），非零错误元组 → 该步 success=False、不解析成值、
+计入 failed 与 `extra["error_payloads"]`，原样归档。否则 `USER:GET?` 回 -100 会变成
+"用户对齐已启用，名叫 -100,…"。
+
 许可列表解析复用驱动 `parse_f64_sys_info`（索引 5 起、非 "Band:" 前缀的字段 = extra_tokens）
 —— 这是按 §20.4.2.4 示例推出的切分约定，不是手册逐字保证；原始回复原样进 raw。
 
@@ -51,7 +62,7 @@ from app.diagnostics.sequences.propsim_f64_health import (
 )
 from app.diagnostics.sequences.propsim_f64_state_machine import classify_state
 from app.hal.channel_emulator import F64_STATE_QUERY
-from app.hal.propsim_f64 import parse_f64_sys_info
+from app.hal.propsim_f64 import _F64_SCPI_ERROR_RE, parse_f64_sys_info
 from app.services.diagnostic_context import DiagnosticContext
 
 
@@ -100,6 +111,22 @@ def _result(verdict: str, summary: str, steps: List[SequenceStepResult],
                              steps=steps, extra=extra)
 
 
+def _error_payload_code(raw: Optional[str]) -> Optional[int]:
+    """回复是 IEEE 488.2 错误元组 `<code>,"<text>"` 且 code≠0 → 返回 code；否则 None。
+    正则复用驱动 `_F64_SCPI_ERROR_RE`（要求引号包住描述，`1,1` / CSV 校准名不会误中；
+    `0,"No error"` 形状命中但 code=0 不算错误）。"""
+    if not isinstance(raw, str):
+        return None
+    m = _F64_SCPI_ERROR_RE.match(raw)
+    if m is None:
+        return None
+    try:
+        code = int(m.group(1))
+    except ValueError:
+        return None
+    return code if code != 0 else None
+
+
 def _csv(raw: Optional[str]) -> List[str]:
     return [p.strip() for p in (raw or "").split(",") if p.strip()]
 
@@ -139,6 +166,7 @@ class _Recorder:
         self._log = log
         self.steps: List[SequenceStepResult] = []
         self.failed: List[str] = []
+        self.error_payloads: Dict[str, str] = {}
 
     async def query(self, cmd: str) -> Optional[str]:
         raw = await _maybe_await(self._query_fn(cmd))
@@ -166,8 +194,19 @@ class _Recorder:
             self.add(cmd, False, "无回复（驱动返回 None）", None, started)
             self.failed.append(cmd)
             return None
+        code = _error_payload_code(raw)
+        if code is not None:
+            # 错误元组当响应串回来了 —— 不是值。命令手册有据；固件 / 许可 / 状态未认，
+            # 原样归档，不据此断言"仪器不支持"。
+            self.add(cmd, False, f"仪器回错误 payload（code {code}），不解析成值", raw, started)
+            self.failed.append(cmd)
+            self.error_payloads[cmd] = raw
+            return None
         self.add(cmd, True, describe(raw), raw, started)
         return raw
+
+    def skip(self, cmd: str, reason: str) -> None:
+        self.add(cmd, True, reason, None, time.monotonic())
 
     async def residue(self) -> Optional[bool]:
         started = time.monotonic()
@@ -275,7 +314,8 @@ async def run(
     extra: Dict[str, Any] = {
         "idn": None, "sys_info": None, "licenses": [], "calibration": {},
         "user_alignment": {}, "state": None, "interference": {},
-        "driver_probe_discrepancy": {}, "failed_queries": [], "residue_clean": None,
+        "driver_probe_discrepancy": {}, "failed_queries": [], "error_payloads": {},
+        "residue_clean": None,
     }
 
     ok, idn, info_raw = await _identity_gate(rec)
@@ -298,23 +338,39 @@ async def run(
         lambda r: (lambda iu, v: f"in_use={iu} valid={v}" if iu is not None
                    else f"解析不出 <in use>,<valid>: {r!r}")(*_parse_valid(r)),
     )
-    cal_get_raw = await rec.read(_CAL_GET, lambda r: f"当前校准 {r.strip() or '(空)'}")
     in_use, valid = _parse_valid(cal_valid_raw)
+    # §20.4.2.11 GET? 只在 VALid? 说 in_use=1 时发（未使用时的应答形态手册未说明，不盲发）
+    if in_use is True:
+        cal_get_raw = await rec.read(_CAL_GET, lambda r: f"当前校准 {r.strip() or '(空)'}")
+    else:
+        cal_get_raw = None
+        rec.skip(_CAL_GET, "未发：VALid? 未给出 in_use=1"
+                 + ("（解析不出 / 无回复）" if in_use is None else "（in_use=0）"))
     extra["calibration"] = {
         "list": _csv(cal_list_raw),
         "in_use": in_use,
         "valid": valid,
         "current": (cal_get_raw or "").strip() or None,
+        "current_query_sent": in_use is True,
     }
 
     # 用户对齐 —— §20.4.2.19 / 21（空串 = 未启用，手册原文）
     user_get_raw = await rec.read(
         _USER_GET, lambda r: f"用户对齐 {r.strip()!r}" if r.strip() else "未启用用户对齐（空串）")
-    user_info_raw = await rec.read(_USER_INFO, lambda r: f"附加信息 {r.strip()!r}" if r.strip() else "(空)")
+    user_enabled = bool(user_get_raw.strip()) if user_get_raw is not None else False
+    # §20.4.2.21 INFO? 只在 USER:GET? 非空（已启用）时发（未启用时的应答形态手册未说明，不盲发）
+    if user_enabled:
+        user_info_raw = await rec.read(
+            _USER_INFO, lambda r: f"附加信息 {r.strip()!r}" if r.strip() else "(空)")
+    else:
+        user_info_raw = None
+        rec.skip(_USER_INFO, "未发：USER:GET? 未给出已启用的对齐名"
+                 + ("（空串 = 未启用）" if user_get_raw is not None else "（无回复 / 错误 payload）"))
     extra["user_alignment"] = {
-        "enabled": (bool(user_get_raw.strip()) if user_get_raw is not None else None),
+        "enabled": user_enabled,
         "name": (user_get_raw or "").strip() or None,
         "info": (user_info_raw or "").strip() or None,
+        "info_query_sent": user_enabled,
     }
 
     # 干扰源 —— 先 STATE?（§20.4.3.14），非 CLOSED 才发 INTERFerence:GET?（§20.4.9.5）
@@ -352,6 +408,7 @@ async def run(
     disc = _reconcile(ce, licenses)
     extra["driver_probe_discrepancy"] = disc
     extra["failed_queries"] = list(rec.failed)
+    extra["error_payloads"] = dict(rec.error_payloads)
 
     extra["residue_clean"] = await rec.residue()
 
@@ -363,9 +420,13 @@ async def run(
         f"驱动探针命令手册查无 {list(_DRIVER_PROBES_NOT_IN_MANUAL)}，本序列未发"
     )
     if rec.failed:
+        n_payload = len(rec.error_payloads)
         return _result(
             "BLOCKER",
-            f"BLOCKER: {len(rec.failed)} 条查询超时 / 无回复：{rec.failed}" + suffix,
+            f"BLOCKER: {len(rec.failed)} 条查询超时 / 无回复 / 回错误 payload：{rec.failed}"
+            + (f"（其中 {n_payload} 条是仪器把错误元组当响应回来：{rec.error_payloads}；"
+               f"命令手册有据，固件 / 许可 / 状态未认，原样归档）" if n_payload else "")
+            + suffix,
             rec.steps, extra,
         )
     if extra["residue_clean"] is not True:

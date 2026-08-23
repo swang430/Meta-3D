@@ -37,6 +37,7 @@ CELL = UxmLteNrIratProfile.PRIMARY_CELL
 ERR = UxmLteNrIratProfile.ERR
 STATUS_Q = UxmLteNrIratProfile.CELL_STATUS_QUERY.format(cell=CELL)
 IMSI_Q = f"BSE:INFO:NR5G:{CELL}:UEReported:IMSI?"
+INJ = "CELL1?;:SYSTem:PRESet:FULL;:BSE:STATus:NR5G:CELL1"  # 内审 F5 的注入串
 
 DECLARED = "460001234567890"
 OTHER = "460009876543210"
@@ -262,6 +263,27 @@ def test_query_error_is_recorded(sim):
     assert result.extra["readback_errors"] == {IMSI_Q: '-113,"Undefined header"'}
     assert result.extra["verdict"] == "UNDETERMINED"
     assert "不支持" not in result.summary
+
+
+def test_cell_injection_sends_nothing(sim):
+    """内审 F5：`cell` 白名单 CELL1..CELL14 | SELected；注入串零 SCPI。
+    变异：去掉 `_validate_cell` 校验 → 红。"""
+    for bad in (INJ, "CELL0", "CELL15", "CELL1;*RST", "SELected?"):
+        bs = _ScriptedBs()
+        result = _run(bs, {"cell": bad, "sim_profile": "TestSIM-46000"})
+        assert bs.ops == [], repr(bad)
+        assert result.extra["verdict"] != "SUCCESS", repr(bad)
+        assert "白名单" in result.summary, repr(bad)
+
+
+def test_cell_whitelist_normalises_into_imsi_query(sim):
+    bs = _ScriptedBs()
+    bs._responses[f"BSE:INFO:NR5G:CELL2:UEReported:IMSI?"] = f'"{DECLARED}"'
+    bs._responses[UxmLteNrIratProfile.CELL_STATUS_QUERY.format(cell="CELL2")] = "CONNected"
+    result = _run(bs, {"cell": "cell2", "sim_profile": "TestSIM-46000"})
+    assert result.extra["cell"] == "CELL2"
+    assert "BSE:INFO:NR5G:CELL2:UEReported:IMSI?" in bs.ops
+    assert result.extra["verdict"] == "SUCCESS"
 
 
 def test_transport_exception_is_aborted(sim):

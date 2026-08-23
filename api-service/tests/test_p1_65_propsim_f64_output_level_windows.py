@@ -252,3 +252,50 @@ def test_clean_error_queue_is_read_once_and_marked_clean():
     assert ce.queries[-1] == "SYSTem:ERRor?"
     assert ce.queries.count("SYSTem:ERRor?") == 1
     assert result.extra["residue_clean"] is True
+
+
+# ── F7：边界值与状态读不到 ─────────────────────────────────────────────────
+
+def test_boundary_values_are_inside_window():
+    """手册 §20.4.5.5 "Level cannot be set outside the limits"：恰好等于下限 / 上限算窗内。
+    判定改成严格 < 会把边界值误报 BLOCKER。"""
+    replies = _base_replies(ports=(1, 2))
+    replies["OUTPut:LEVel:AMPlitude:CH? 1"] = "-68.8401"   # == lower
+    replies["OUTPut:LEVel:AMPlitude:CH? 2"] = "-23.8401"   # == higher
+    ce = _ScriptedCe(replies, active_outputs=[1, 2])
+    result = _run(ce)
+    assert result.extra["ports"]["1"]["in_window"] is True
+    assert result.extra["ports"]["2"]["in_window"] is True
+    assert result.extra["verdict"] == "SUCCESS"
+
+
+def test_just_outside_boundary_is_blocker():
+    replies = _base_replies(ports=(1,))
+    replies["OUTPut:LEVel:AMPlitude:CH? 1"] = "-23.84"   # 高于上限 -23.8401 一点
+    ce = _ScriptedCe(replies, active_outputs=[1])
+    result = _run(ce)
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["out_of_window"] == [1]
+
+
+def test_state_none_sends_no_per_port_query_and_is_undetermined():
+    """STATE? 读不到（驱动回 None）：先查状态再决定发不发 —— 读不到就不盲发逐口查询。"""
+    replies = _base_replies()
+    replies["DIAG:SIMU:STATE?"] = None
+    ce = _ScriptedCe(replies, active_outputs=[1, 2])
+    result = _run(ce)
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert result.extra["state"] is None
+    assert not [q for q in ce.queries if q.startswith("OUTPut:LEVel")]
+    assert "读不到" in result.summary
+    _assert_read_only(ce)
+
+
+def test_state_outside_whitelist_sends_no_per_port_query():
+    """会话错位的迟到应答（如 0,"No error"）不是状态 → 同样不发。"""
+    replies = _base_replies(state='0,"No error"')
+    ce = _ScriptedCe(replies, active_outputs=[1, 2])
+    result = _run(ce)
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert not [q for q in ce.queries if q.startswith("OUTPut:LEVel")]
