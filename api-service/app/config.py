@@ -1,6 +1,6 @@
 """Application configuration"""
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import ClassVar, Optional
 
 
 class Settings(BaseSettings):
@@ -8,7 +8,10 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "Meta-3D OTA API"
-    app_version: str = "0.9.0"  # 阶段性 release（日常测试用）；1.0.0 留给 first-call 通过后
+    # 版本是构建属性，不是部署配置 —— ClassVar 让 BaseSettings 不再从环境 / .env 读它
+    # （2026-08-23 实测 .env 的 APP_VERSION=1.0.0 会静默覆盖，运行时报假版本）。
+    # 阶段性 release（日常测试用）；1.0.0 留给 first-call 现场通过后。
+    app_version: ClassVar[str] = "0.9.0"
     debug: bool = True
 
     # Database
