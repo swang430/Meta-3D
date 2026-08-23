@@ -536,6 +536,53 @@ def test_empty_calibration_session_cannot_self_attest_pass():
     assert completed.overall_pass is None
 
 
+def test_requested_quiet_zone_without_a_trusted_row_keeps_session_undetermined():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.database import Base
+    from app.models.channel_calibration import TemporalChannelCalibration
+    from app.services.channel_calibration_service import ChannelCalibrationService
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    service = ChannelCalibrationService(db)
+    session = service.create_session(
+        name="workflow requests quiet zone",
+        workflow_id="workflow-1",
+        configuration={
+            "requested_calibration_types": ["temporal", "quiet_zone"],
+        },
+    )
+    db.add(TemporalChannelCalibration(
+        session_id=session.id,
+        scenario_type="UMa",
+        scenario_condition="LOS",
+        fc_ghz=3.5,
+        measured_pdp={},
+        validation_pass=True,
+    ))
+    db.commit()
+
+    completed = service.complete_session(
+        session_id=session.id,
+        overall_pass=False,
+        total_calibrations=2,
+        passed_calibrations=1,
+        failed_calibrations=1,
+    )
+
+    assert completed.total_calibrations == 1
+    assert completed.passed_calibrations == 1
+    assert completed.failed_calibrations == 0
+    assert completed.overall_pass is None
+
+
 def test_calibration_report_manifest_requires_qz_sanitization(tmp_path):
     from app.api.calibration_report import _has_provenance_aware_calibration_manifest
     from app.services.calibration_report_generator import _write_report_provenance_manifest

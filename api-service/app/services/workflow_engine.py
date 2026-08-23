@@ -357,11 +357,21 @@ class WorkflowExecutor:
             from app.services.channel_calibration_service import ChannelCalibrationService
             channel_service = ChannelCalibrationService(self.db)
 
+            requested_calibration_types = list(dict.fromkeys(
+                step.calibration_type
+                for step in execution.workflow.steps
+                if step.type == StepType.CHANNEL_CALIBRATION
+                and step.calibration_type is not None
+            ))
+            session_configuration = dict(execution.workflow.parameters)
+            session_configuration["requested_calibration_types"] = (
+                requested_calibration_types
+            )
             session = channel_service.create_session(
                 name=f"Workflow: {execution.workflow.name}",
                 description=execution.workflow.description,
                 workflow_id=execution.id,
-                configuration=execution.workflow.parameters,
+                configuration=session_configuration,
             )
             execution.session_id = str(session.id)
             logger.info(f"Workflow session created: {session.id}")

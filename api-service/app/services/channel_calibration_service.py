@@ -702,19 +702,34 @@ class ChannelCalibrationService:
             return None
 
         formal_verdicts: List[bool] = []
-        for model in (
-            TemporalChannelCalibration,
-            DopplerCalibration,
-            SpatialCorrelationCalibration,
-            AngularSpreadCalibration,
-            EISValidation,
+        formally_observed_types = set()
+        for calibration_type, model in (
+            ("temporal", TemporalChannelCalibration),
+            ("doppler", DopplerCalibration),
+            ("spatial_correlation", SpatialCorrelationCalibration),
+            ("angular_spread", AngularSpreadCalibration),
+            ("eis", EISValidation),
         ):
             rows = self.db.query(model).filter(model.session_id == session_id).all()
-            formal_verdicts.extend(
+            verdicts = [
                 row.validation_pass
                 for row in rows
                 if row.validation_pass is True or row.validation_pass is False
-            )
+            ]
+            if verdicts:
+                formally_observed_types.add(calibration_type)
+                formal_verdicts.extend(verdicts)
+
+        configuration = session.configuration if isinstance(session.configuration, dict) else {}
+        configured_types = configuration.get("requested_calibration_types")
+        requested_types = {
+            value
+            for value in configured_types
+            if isinstance(value, str)
+        } if isinstance(configured_types, list) else set()
+        has_unverified_requested_type = bool(
+            requested_types - formally_observed_types
+        )
 
         # Existing quiet-zone rows have no auditable explicit-real provenance.
         # Their presence makes the session verdict undetermined; client-supplied
@@ -737,7 +752,11 @@ class ChannelCalibrationService:
         )
         session.overall_pass = (
             None
-            if has_unverified_quiet_zone or formal_total == 0
+            if (
+                has_unverified_quiet_zone
+                or has_unverified_requested_type
+                or formal_total == 0
+            )
             else formal_failed == 0
         )
         session.total_calibrations = formal_total

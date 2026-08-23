@@ -494,6 +494,28 @@ steps:
         assert result.calibration_id is not None
         assert result.validation_pass is not None
 
+    def test_session_persists_authoritative_requested_calibration_types(self, db_session):
+        workflow = WorkflowParser.parse_string("""
+name: "Quiet Zone Scope Test"
+settings:
+  retry_count: 0
+  retry_delay_seconds: 0
+steps:
+  - id: quiet_zone
+    type: channel_calibration
+    calibration_type: quiet_zone
+""")
+        executor = WorkflowExecutor(db_session)
+        execution = executor.run(executor.create_execution(workflow))
+
+        from uuid import UUID
+        from app.models.channel_calibration import ChannelCalibrationSession
+        session = db_session.query(ChannelCalibrationSession).filter(
+            ChannelCalibrationSession.id == UUID(execution.session_id)
+        ).one()
+        assert session.configuration["requested_calibration_types"] == ["quiet_zone"]
+        assert session.overall_pass is None
+
     def test_run_dependency_check(self, db_session):
         """Test that dependencies are checked"""
         workflow = WorkflowParser.parse_string("""
