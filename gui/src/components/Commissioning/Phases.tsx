@@ -8,6 +8,7 @@ import {
 } from './pathLossApplication'
 import { describeRfKpiEvidence, formatRfKpiValue } from './rfKpiEvidence'
 import {
+  describePrecheckMessages,
   describePrecheckOutcome,
   describeQuietZoneEvidence,
 } from './quietZoneEvidence'
@@ -18,8 +19,13 @@ export function PrecheckPhase({ data }: { data: any }) {
     data.path_loss_calibration_reason,
     data.path_loss_calibration_valid === true,
   )
-  const precheckOutcome = describePrecheckOutcome(data.overall_pass, data.quiet_zone_evidence)
+  const precheckOutcome = describePrecheckOutcome(
+    data.overall_pass,
+    data.quiet_zone_evidence,
+    data.operational_ready,
+  )
   const quietZoneView = describeQuietZoneEvidence(data.quiet_zone_evidence)
+  const precheckMessages = describePrecheckMessages(data.messages, data.quiet_zone_evidence)
   
   return (
     <Stack gap="md">
@@ -40,7 +46,7 @@ export function PrecheckPhase({ data }: { data: any }) {
         if (data.critical_instruments_online === false) reasons.push('关键仪表离线 — 无法继续')
         if (data.cal_pass === false && data.cal_pass_reason) reasons.push(`校准门未通过：${data.cal_pass_reason}`)
         if (data.dut_pass === false && data.dut_pass_reason) reasons.push(`DUT 门未通过：${data.dut_pass_reason}`)
-        if (data.quiet_zone_pass === false) reasons.push(`静区纹波超阈值（±${data.quiet_zone_ripple_db} dB）`)
+        if (quietZoneView.verified && data.quiet_zone_pass === false) reasons.push(`静区纹波超阈值（±${data.quiet_zone_ripple_db} dB）`)
         if (data.ue_capability_pass === false) reasons.push('UE 能力不足（max_dl_layers < 请求层数）')
         if (typeof data.error_message === 'string' && reasons.length === 0) reasons.push(data.error_message)
         const strictGateFailed = data.dut_pass === false || data.cal_pass === false
@@ -79,7 +85,7 @@ export function PrecheckPhase({ data }: { data: any }) {
       <Card withBorder>
         <Text fw={500} mb="sm">预检详情</Text>
         <List spacing="sm" size="sm">
-          {data.messages?.map((msg: string, i: number) => {
+          {precheckMessages.map((msg: string, i: number) => {
             const isError = msg.includes('FAIL') || msg.includes('异常')
             // 未判定/诊断代理类消息用黄色警告色，与正式 PASS 区分。
             const isWarn = !isError && (msg.includes('未验证') || msg.includes('未判定') || msg.includes('诊断代理') || msg.includes('⚠️'))

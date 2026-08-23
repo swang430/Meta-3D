@@ -41,7 +41,11 @@ function parseQuietZoneEvidence(value: unknown): QuietZoneEvidence | null {
   return null
 }
 
-export function describePrecheckOutcome(value: unknown, evidenceValue: unknown) {
+export function describePrecheckOutcome(
+  value: unknown,
+  evidenceValue: unknown,
+  operationalReady: unknown,
+) {
   const formalVerified = parseQuietZoneEvidence(evidenceValue)?.formal_verified as boolean | undefined
   if (value === true && formalVerified === true) {
     return {
@@ -50,7 +54,7 @@ export function describePrecheckOutcome(value: unknown, evidenceValue: unknown) 
       message: '所有系统、校准与静区测量证据均满足正式测试要求。',
     }
   }
-  if (value === false) {
+  if (value === false && operationalReady === false) {
     return {
       color: 'red',
       title: '预检失败',
@@ -64,6 +68,16 @@ export function describePrecheckOutcome(value: unknown, evidenceValue: unknown) 
   }
 }
 
+export function describePrecheckMessages(value: unknown, evidenceValue: unknown): string[] {
+  const formalVerified = parseQuietZoneEvidence(evidenceValue)?.formal_verified as boolean | undefined
+  if (formalVerified === true && Array.isArray(value)) {
+    return value.filter((message): message is string => typeof message === 'string')
+  }
+  return [
+    '静区结论未判定：无权威多点场扫描证据；历史提示未作为正式证据发布。',
+  ]
+}
+
 export function describeQuietZoneEvidence(value: unknown) {
   const evidence = parseQuietZoneEvidence(value)
   const proxy = evidence?.status === 'diagnostic_proxy'
@@ -73,7 +87,7 @@ export function describeQuietZoneEvidence(value: unknown) {
     verified: false,
     formalRipple: 'N/A',
     proxyRipple: typeof proxy === 'number' ? `${proxy.toFixed(2)} dB` : null,
-    label: proxy
+    label: proxy !== null
       ? 'ProbePattern 峰值离散诊断代理，非静区实测'
       : '无权威多点场扫描证据',
   }

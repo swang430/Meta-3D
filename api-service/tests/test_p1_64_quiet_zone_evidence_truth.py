@@ -1,6 +1,7 @@
 """P1-64: 静区代理量不能冒充正式多点场扫描证据。"""
 
 import math
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -228,3 +229,67 @@ def test_client_cannot_self_attest_quiet_zone_trust():
     }
 
     assert _strip_untrusted_report_attestation(forged) == {"title": "client payload"}
+
+
+def test_execution_history_rejects_legacy_quiet_zone_pass():
+    from app.api.test_execution import _formal_validation_pass
+
+    execution = SimpleNamespace(
+        measurements={
+            "phases": {
+                "precheck": {
+                    "overall_pass": True,
+                    "quiet_zone_pass": True,
+                    "quiet_zone_verified": True,
+                    "quiet_zone_ripple_db": 0.7,
+                    "quiet_zone_ripple_source": "probe_pattern_peak_spread",
+                },
+                "measure": _trusted_measure_for_analysis(),
+            }
+        },
+        validation_pass=True,
+        config={},
+    )
+
+    assert _formal_validation_pass(execution, "MIMO_OTA") is None
+
+
+def test_report_rebuild_does_not_repeat_legacy_quiet_zone_pass_claims():
+    from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+
+    execution = SimpleNamespace(
+        measurements={
+            "phases": {
+                "precheck": {
+                    "overall_pass": True,
+                    "quiet_zone_pass": True,
+                    "quiet_zone_verified": True,
+                    "quiet_zone_ripple_db": 0.7,
+                    "quiet_zone_ripple_source": "probe_pattern_peak_spread",
+                    "messages": [
+                        "Quiet zone ripple: 0.70 dB (PASS) "
+                        "[probe_pattern_peak_spread]"
+                    ],
+                },
+                "measure": _trusted_measure_for_analysis(),
+                "analysis": {"verdict": "PASS"},
+            }
+        },
+        status="completed",
+        duration_sec=1.0,
+        started_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        completed_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        validation_pass=True,
+    )
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 23, tzinfo=timezone.utc),
+    )
+    precheck = next(
+        step for step in content["step_results"] if step["phase"] == "precheck"
+    )["parameters"]
+
+    assert precheck["结果"] == "UNKNOWN"
+    assert all("0.70" not in message for message in precheck["提示"])
+    assert all("(PASS)" not in message for message in precheck["提示"])

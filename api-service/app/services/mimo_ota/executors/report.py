@@ -675,6 +675,26 @@ def _build_mimo_ota_content_data(
         "missing": "无匹配证书",
     }
 
+    if _qz_verified:
+        _precheck_result = (
+            "PASS" if precheck.get("overall_pass") is True
+            else "FAIL" if precheck.get("overall_pass") is False
+            else "UNKNOWN"
+        )
+        _precheck_messages = precheck.get("messages") or []
+    else:
+        # 旧 overall_pass/quiet_zone_pass 与自由文本可能来自固定 0.7 或
+        # ProbePattern 代理。只有当前写方同行保存的运行门失败可以继续发布
+        # FAIL；静区结论与旧提示一律换成规范 UNKNOWN，避免同一份报告顶层
+        # UNKNOWN、步骤内部却又出现 PASS/FAIL 与代理数值。
+        _precheck_result = (
+            "FAIL" if precheck.get("operational_ready") is False else "UNKNOWN"
+        )
+        _precheck_messages = [
+            "静区结论未判定：无权威多点场扫描证据；"
+            "历史提示未作为正式证据发布。"
+        ]
+
     # P2-21: 渲染载荷整体放 parameters 下 (PDFGenerator 步骤区只渲染 name/
     # step_name 与 parameters 的键值表, 顶层键进不了 PDF) —— P1-12 的三个可信化
     # 标志因此从未生效过, 现场拿假干净报告做判断。同一修法 P1-22 已在 analysis
@@ -684,14 +704,10 @@ def _build_mimo_ota_content_data(
     step_results = [
         {"phase": "precheck", "name": "precheck (预检)",
          "parameters": {
-             "结果": (
-                 "PASS" if precheck.get("overall_pass") is True
-                 else "FAIL" if precheck.get("overall_pass") is False
-                 else "UNKNOWN"
-             ),
-             # ⚠️ 未验证时不印数值（外审 P1）：没有探头方向图时，写入端存的是
-             #    兜底值 0.7，验证标志为假 —— 光标一句「未验证」不够，
-             #    数字印在那儿读者会当成实测的静区波纹。
+             "结果": _precheck_result,
+             # ⚠️ 旧执行可能保存固定 0.7 或 ProbePattern 代理；当前
+             #    写方只保存 N/A 与独立 proxy。无权威多点场扫描时，
+             #    新旧数字都不能印成正式静区波纹。
              "静区波纹 (±dB)": (
                  _cell(precheck.get("quiet_zone_ripple_db")) if _qz_verified is True
                  else "—（未实测，不印兜底值）"
@@ -704,7 +720,7 @@ def _build_mimo_ota_content_data(
              #    其中一句会明说「这是 mock」—— 那正是读者最该看到的。
              "校准门理由": _cell(precheck.get("cal_pass_reason") or "未记录"),
              "DUT 门理由": _cell(precheck.get("dut_pass_reason") or "未记录"),
-             "提示": _cell(precheck.get("messages") or []),
+             "提示": _cell(_precheck_messages),
          }},
         {"phase": "reference", "name": "reference (参考测量)",
          "parameters": {

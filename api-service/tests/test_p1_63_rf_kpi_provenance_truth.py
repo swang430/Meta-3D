@@ -357,7 +357,12 @@ async def test_analysis_keeps_verdict_with_complete_rf_kpi_trust(monkeypatch):
     assert execution.validation_pass is None
 
 
-def test_execution_history_requires_complete_rf_kpi_trust():
+def test_execution_history_requires_complete_rf_kpi_trust(monkeypatch):
+    # Isolate the RF contract under test from P1-64's independent QZ gate.
+    monkeypatch.setattr(
+        "app.api.test_execution.quiet_zone_scope_is_formally_verified",
+        lambda _precheck: True,
+    )
     without_trust = SimpleNamespace(
         measurements={"phases": {"measure": _formal_measure()}},
         validation_pass=True,

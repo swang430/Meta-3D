@@ -18,6 +18,7 @@
 """
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -84,7 +85,17 @@ def _content(phases, **kw):
         source="explicit_real",
     )
     phases["measure"]["formal_rf_kpi_verified"] = True
-    return _build_mimo_ota_content_data(_exec(phases, **kw), datetime(2026, 1, 1))
+    # This suite isolates P1-22's canonical verdict source. Keep P1-64's
+    # independent quiet-zone gate open inside this helper so a regression in
+    # validation_pass/verdict precedence cannot be hidden by QZ UNKNOWN.
+    with patch(
+        "app.services.mimo_ota.executors.report."
+        "quiet_zone_evidence_is_formally_verified",
+        return_value=True,
+    ):
+        return _build_mimo_ota_content_data(
+            _exec(phases, **kw), datetime(2026, 1, 1)
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -97,20 +108,20 @@ class TestPassPredicate:
         verdict FAIL), 列必须赢 (内审 F1: 同向用例区分不出列读取整个失效
         恒走 fallback 的形态, 属性名拼错也全绿)。"""
         c = _content({"analysis": {"verdict": "FAIL"}}, validation_pass=True)
-        assert c["overall_result"] == "undetermined"
-        assert c["execution_summary"]["pass_rate"] is None
-        assert c["execution_summary"]["undetermined"] == 1
+        assert c["overall_result"] == "passed"
+        assert c["execution_summary"]["pass_rate"] == 100.0
+        assert c["execution_summary"]["passed"] == 1
 
     def test_pass_predicate_column_false_is_failed(self):
         c = _content({"analysis": {"verdict": "FAIL"}}, validation_pass=False)
-        assert c["overall_result"] == "undetermined"
-        assert c["execution_summary"]["pass_rate"] is None
+        assert c["overall_result"] == "failed"
+        assert c["execution_summary"]["pass_rate"] == 0.0
 
     def test_pass_predicate_falls_back_to_verdict_literal(self):
         """列缺失 (老执行) → 按 verdict 三值字面量判。"""
-        assert _content({"analysis": {"verdict": "PASS"}})["overall_result"] == "undetermined"
-        assert _content({"analysis": {"verdict": "MARGINAL"}})["overall_result"] == "undetermined"
-        assert _content({"analysis": {"verdict": "FAIL"}})["overall_result"] == "undetermined"
+        assert _content({"analysis": {"verdict": "PASS"}})["overall_result"] == "passed"
+        assert _content({"analysis": {"verdict": "MARGINAL"}})["overall_result"] == "passed"
+        assert _content({"analysis": {"verdict": "FAIL"}})["overall_result"] == "failed"
 
     def test_pass_predicate_unknown_stays_undetermined(self):
         """列与 verdict 都缺 → 保守 undetermined，不伪造 FAIL/0%。"""
@@ -126,7 +137,7 @@ class TestPassPredicate:
             {"analysis": {"verdict": "FAIL"}},
             validation_pass=False, status="completed",
         )
-        assert c["overall_result"] == "undetermined"
+        assert c["overall_result"] == "failed"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -138,7 +149,7 @@ class TestAnalysisStepShape:
         """渲染器只读 name/step_name 与 parameters 下的键。"""
         c = _content({"analysis": {"verdict": "MARGINAL"}}, validation_pass=True)
         step = next(s for s in c["step_results"] if s["phase"] == "analysis")
-        assert step["parameters"]["verdict"] == "UNKNOWN"
+        assert step["parameters"]["verdict"] == "MARGINAL"
         assert step["name"] == "analysis"
 
     def test_dead_keys_removed_from_analysis_step(self):
