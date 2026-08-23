@@ -47,7 +47,7 @@ Create `.env` file:
 ```env
 # Application
 APP_NAME=Meta-3D OTA API
-APP_VERSION=1.0.0
+# 版本号不在 .env 配（唯一真值源 = app/config.py 的 app_version；残留的 APP_VERSION 会被忽略并 warning）
 DEBUG=true
 
 # Database
