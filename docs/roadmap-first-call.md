@@ -105,7 +105,7 @@ production build、compileall、单一 Alembic head、diff-check 均通过。
 > 6. **[P3 候选] 方向图租约仍在 `(probe, pol)` 层**（P2-30 #359 内审 F1）：多探头方向图作业按组数真建拆，今天无生产调用方。
 > 7. **[P2 候选] UXM KPI / MAC 配置真机证据链收口**（Discovered 08-03/08-04/07-20 四条合并，见「2026-08-23 账面清理」表）：前置写包 `try` 不丢已收证据、raw 逐字、`configure_mac_throughput_test` 返回值必须消费（ON 态写被拒不得静默带旧配置测）。
 > 8. **[验收项，非开发] 首份真机 `exec-*.log`**（缺口 B）：下次现场跑 ≥1 条正式 TestCase，核对 `[case-runner] 收尾` 行、SCPI formal verdict 与报告三样齐全。
-> 9. **[P1 候选，出发前硬门槛] 补齐无载体 blocker 的诊断序列**（EMCenter 握手 / F64 per-port 电平窗口 / OffsetToCarrier 剧本 / 面板 Local 人工确认步）—— 细节见「Blocked on hardware」区的 2026-08-23 覆盖矩阵。
+> 9. ~~**[P1 候选，出发前硬门槛] 补齐无载体 blocker 的诊断序列**~~ ✅ **P1-65 / PR #380**（8 条，比候选多了 license 真值、fresh-start 真值、SIM 身份、连接空置四条）。
 > 10. **[P2 候选] 现场清单跑批**（按 Phase 勾选序列顺序执行 + go/no-go 汇总）—— 依赖候选 9。
 
 > **~~P1-62~~ ✅ 2026-08-22 由 PR #373 完成**：版本化 `path_loss_application` 已贯穿
@@ -284,7 +284,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ →
 ~~P2-34~~ ✅ → ~~P2-35~~ ✅ → ~~P1-58~~ ✅ → ~~P1-59~~ ✅ → **~~P2-39~~ ✅ → ~~P2-40~~ ✅ →
 ~~P2-37~~ ✅ → ~~P2-38~~ ✅ → ~~P2-36~~ ✅ → ~~P2-31~~ ✅ → ~~P3-22~~ ✅ →
-~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → ~~P1-64~~ ✅。**队列已清空（2026-08-23）。**
+~~P1-60~~ ✅ → ~~P1-61~~ ✅ → ~~P1-62~~ ✅ → ~~P1-63~~ ✅ → ~~P1-64~~ ✅ → ~~P1-65~~ ✅。**队列已清空（2026-08-23）。**
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
@@ -323,6 +323,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **P1-62** | 已应用但来源未知的路损证书不得被叙述为“无证书/未补偿” | ✅ PR #373；R3 覆盖最终 HEAD 无 P1；merge `6b2b064` |
 | **P1-63** | 正式 RSRP/SINR/RI 必须具有逐指标真实来源证据，禁止合成值/默认值进入判决 | ✅ PR #374；merge `75089a9` |
 | **P1-64** | 无真实静区纹波证据时不得显示预检通过或把 0.7 dB 兜底叙述为实测 | ✅ PR #375（Gemini R1 2 medium 已修，R2 无 high） |
+| **P1-65** | 硬件 blocker 载体序列补齐：8 条新诊断序列（EMCenter / F64 电平窗口·许可真值·面板 Local / UXM OffsetToCarrier·fresh-start·SIM 身份 / 连接空置） | ✅ PR #380（2026-08-23 用户拍板立项 = 候选 9；内审 1 P1 / 3 P2 / 3 P3 全修；Gemini R1 无意见） |
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -612,20 +613,20 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。当前阻塞为：Aerotech 实时型号/固件依据、可信坐标偏置/标定状态，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未标定转台路径会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b（DL 不失真）：同一条 MIMO_OTA TestCase |
-| P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-07 拿到部分答案** | **实测**：连接流程每次都会发 `SYSTem:CALibration:USER:LIST?`，该机回 **"ATE command not supported"**（-100 族），且这条 -100 会留在错误队列里跨会话带走。所以「校准侧没有这条命令」这半个前提**不成立** —— 命令发了，是**本机不支持**。剩余未答：按 license presence/absence 判定的那半。⚠ 条目原文写「没有事项要求的 `SYSTem:CALibration:USER:LIST?`」，与实测矛盾，已按实测改写。保留 Blocked（判定逻辑未做）；不并入 P1-46 |
+| P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-07 拿到部分答案** | **实测**：连接流程每次都会发 `SYSTem:CALibration:USER:LIST?`，该机回 **"ATE command not supported"**（-100 族），且这条 -100 会留在错误队列里跨会话带走。所以「校准侧没有这条命令」这半个前提**不成立** —— 命令发了，是**本机不支持**。剩余未答：按 license presence/absence 判定的那半。⚠ 条目原文写「没有事项要求的 `SYSTem:CALibration:USER:LIST?`」，与实测矛盾，已按实测改写。保留 Blocked（判定逻辑未做）；不并入 P1-46 **✅ 载体（P1-65 #380）**：[`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py) —— 用手册有的 `SYSTem:INFO?` 尾部许可列表 + `CALIBration:*` / `USER:GET?/INFO?` 读真值并与驱动自称对账；驱动连接探针 `USER:LIST?` 手册查无（Discovered） |
 | P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
-| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 |
-| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 |
-| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，已注册序列里没有 EMCenter（P1-45 核对时 12 个，2026-08-23 为 15 个，仍无）。保留 Blocked；不并入 P1-46 |
+| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入；驱动 `STATE_LOAD/STATE_LIST` 手册查无（Discovered） |
+| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
+| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，已注册序列里没有 EMCenter（P1-45 核对时 12 个，2026-08-23 为 15 个，仍无）。保留 Blocked；不并入 P1-46 **✅ 载体（P1-65 #380）**：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py) —— 机箱/卡 IDN、逐继电器回读、互锁，只读；TCP 端口仍按驱动绑定、连不上如实报 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
-| P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 |
-| **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | on-site real F64。⚠ 2026-08-07 实测：口 1 = `-166.60000,-51.6100`，而我们发的 `-50.00` 超上限 1.61 dB 被 `-200 Parameter exceeds set limits` 拒 → **当轮 measure 当场 FAILED**。其余 31 口未知；限值由什么决定（是否随已加载模型 / `OUTP:LOSS` 变）**手册未说明** | ❌ **待建**：现有 [`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只查 ch1，无 per-port。出发前须扩它或新写只读普查序列 |
-| **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | on-site real F64 + 人在面板前。⚠ 这是整套租约 / `release_to_local_control` 机制的**地基假设**，而手册原文（PROPSIM User Reference §20.1）说的是：发第一条 ATE 命令后自动进 remote，**回 local 要操作员在 GUI 右上角点 Local Mode 按钮** —— 方向与实现前提相反。代码里 `control_mode` 已改成如实措辞 `ate_socket_released`（不再替仪器宣布「它在 Local」），但**真相要现场 5 分钟测出来** | ❌ **无载体**：不是 SCPI 能问的，属「发一条命令 + 人看面板」的观察项。可挂在任一 F64 序列末尾做人工确认步 |
-| **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 |
+| P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_sim_identity_truth`](../api-service/app/diagnostics/sequences/uxm_sim_identity_truth.py) —— `UEReported:IMSI?` 与 SIMProfile 对账，四出口脱敏 |
+| **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | on-site real F64。⚠ 2026-08-07 实测：口 1 = `-166.60000,-51.6100`，而我们发的 `-50.00` 超上限 1.61 dB 被 `-200 Parameter exceeds set limits` 拒 → **当轮 measure 当场 FAILED**。其余 31 口未知；限值由什么决定（是否随已加载模型 / `OUTP:LOSS` 变）**手册未说明** | ❌ **待建**：现有 [`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只查 ch1，无 per-port。出发前须扩它或新写只读普查序列 **✅ 载体（P1-65 #380）**：[`propsim_f64_output_level_windows`](../api-service/app/diagnostics/sequences/propsim_f64_output_level_windows.py) |
+| **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | on-site real F64 + 人在面板前。⚠ 这是整套租约 / `release_to_local_control` 机制的**地基假设**，而手册原文（PROPSIM User Reference §20.1）说的是：发第一条 ATE 命令后自动进 remote，**回 local 要操作员在 GUI 右上角点 Local Mode 按钮** —— 方向与实现前提相反。代码里 `control_mode` 已改成如实措辞 `ate_socket_released`（不再替仪器宣布「它在 Local」），但**真相要现场 5 分钟测出来** | ❌ **无载体**：不是 SCPI 能问的，属「发一条命令 + 人看面板」的观察项。可挂在任一 F64 序列末尾做人工确认步 **✅ 载体（P1-65 #380）**：[`propsim_f64_local_handback_check`](../api-service/app/diagnostics/sequences/propsim_f64_local_handback_check.py) —— 两段式人工确认（§20.1：回 Local 只有 GUI 按钮） |
+| **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 **✅ 载体（P1-65 #380）**：[`uxm_offset_to_carrier_probe`](../api-service/app/diagnostics/sequences/uxm_offset_to_carrier_probe.py) —— 只读采集，显式确认 + 小区 OFF 才写，不 APPLY |
 | **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。[补充 Codex 结论](https://github.com/swang430/Meta-3D/pull/350#issuecomment-5327846839)明确 reviewed commit `0f981339c5`（包含尾修 `bd71879`）且无重大问题。真实单位、方向、偏置、型号与机械目视动作仍须现场，继续 Hardware Blocked |
-| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
+| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：同 P2-4 的 `connection_idle_hold_probe` |
 | ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
 **2026-08-23 覆盖矩阵：Blocked 行 ↔ 现场协议 Phase 0–5 ↔ 载体**（用户问"Phase 0–5 是否覆盖所有
@@ -638,24 +639,26 @@ blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可�
 | P0-8a | 1.5 | ✅ gate 本身 | `propsim_f64_p08_gate` | 走 Phase 1.5 gate |
 | P0-8b | 4 | ✅ gate 第三条 | 同一 TestCase（衰落 / bypass 各测一次非 0% ACK） | 随 Phase 4 |
 | NEW-4 / P1-56 转台 | 1（回零）+ 4（4 方位） | ⚠️ gate 间接覆盖，**协议未点名序列** | `aerotech_positioner_motion_truth` | Phase 1 逐仪表握手时加跑该序列（协议速查表只写"转台回零"） |
-| P2-13 SIM | 4 | ⚠️ 部分 | precheck 核 SIMProfile；IMSI 仍回退手填 | Phase 4 attach 记 IMSI 时对照 |
+| P2-13 SIM | 4 | ⚠️ 部分，载体补全（P1-65） | precheck + `uxm_sim_identity_truth` | Phase 4 attach 后跑 `uxm_sim_identity_truth`（`UEReported:IMSI?` 与 SIMProfile 对账，脱敏） |
 | P2-12 标准信道文件 | 1.5 | ⚠️ 部分 | p08_gate 按 SCD 实测频率 load `.smu`，但不证事项级端到端 | 随 Phase 1.5 顺带记，不算关闭 |
 | P1-4 重复性 | 3 / 5 | ⚠️ 部分 | Phase 3 只重复路损 ±0.5 dB；Phase 5 只跑 1 次 first-call | 要关闭需 Phase 5 **跑两次**并对比（报告对比契约仍是 plan 级，缺口在表内） |
-| P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 | 无 | Phase 1 若出现 idle-close 只记现象喂 P2-4，不当 driver bug 修 |
-| P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 | 无 C 类载体 | 同上 |
-| **P2-9 EMCenter** | **无** | ❌ **隐性前置**：Phase 3 路损校准要切 32 链路，离不开 EMCenter，但协议没有它的握手步骤、速查表不列、当前 15 个已注册序列无一覆盖（P1-45 核对时为 12 个） | 无 | **出发前必须补 `emcenter_switch_health` 只读序列**，并在 Phase 1 速查表加一行；否则 Phase 3 会在没有诊断证据的情况下失败 |
-| P1-2 license probe | 无 | ❌ 流程外 | 无（08-07 已拿一半答案） | 连接即发 `SYSTem:CALibration:USER:LIST?` → -100 留在队列跨会话；与 Phase 1.5「错误队列零残留」gate 的交互依赖生产加载事务先清旧队列（P1-47B）——**出发前用 mock 核一次 p08_gate 在带残留 -100 的队列上不误判** |
-| P1-17 UXM fresh-start | 无 | ❌ 流程外 | `uxm_config_truth_probe` 只覆盖已 ON 小区 | 需要独立时段：HAL reload + `default_state_file` recall + 全配置对齐 |
+| P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 → 主动载体（P1-65） | `connection_idle_hold_probe` | 跑 `connection_idle_hold_probe`（空置 ≤900 s）；空置后断开/重连记为观察喂 P2-4，不当 driver bug 修 |
+| P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 → C 类载体（P1-65） | `connection_idle_hold_probe` | 同上，category 选对应仪器 |
+| **P2-9 EMCenter** | **无** | ⚠️ **隐性前置，载体已补（P1-65）**：Phase 3 路损校准要切 32 链路，离不开 EMCenter；P1-65 前协议无握手步骤、速查表不列、15 个序列无一覆盖（P1-45 核对时 12 个），现 `emcenter_switch_health` 已注册、速查表已加行 | `emcenter_switch_health` | 跑 `emcenter_switch_health`（机箱/卡 IDN、逐继电器回读、互锁）—— **排在 Phase 3 之前**；协议速查表已加行 |
+| P1-2 license probe | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_license_truth` | 跑 `propsim_f64_license_truth`：`SYSTem:INFO?` 尾部许可 + `CALIBration:*` / `USER:GET?` 真值，与驱动自称对账；驱动两条探针命令手册查无（Discovered） |
+| P1-17 UXM fresh-start | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_config_truth_probe` + `uxm_fresh_start_truth` | 跑 `uxm_fresh_start_truth`：只读 `SYSTem:SCPI:*` 机制真值；要导入时 `confirm_action` 且无 UE 在网 |
 | P1-5 相位校准 | 无 | ❌ 流程外（**且不在 first-call 范围**：PFS 是 power-only，相位校准留给将来 PWS） | 正式入口存在但落 mock 数据 | 不排进本次现场 |
 | P2-10 F64 工程精细化 | §7 清单 | ❌ 流程外 | `propsim_f64_health` / `_state_machine` 只验公共能力 | 按协议 §7 能力探测清单逐项打勾（探未知，结论回填 docx） |
-| NEW-1 各口电平窗口 | 无 | ❌ 流程外 / 待建 | 无 | 出发前扩 `propsim_f64_health` 做 per-port `OUTP:LEV:AMP:LIM?` 只读普查 |
-| NEW-3 OffsetToCarrier 102 | 无 | ❌ 流程外 / 待建 | 无 | 出发前写「下发 + 回读 + 看 attach」剧本序列；可挂 Phase 4 前 |
-| NEW-2 面板 Local | 无 | ❌ 人工观察 | 无（非 SCPI 可问） | 挂在任一 F64 序列末尾做人工确认步 |
+| NEW-1 各口电平窗口 | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_output_level_windows` | 跑 `propsim_f64_output_level_windows`：先查 STATE（仿真未打开不发），逐口 `LIMits?` + `CH?`，当前值落窗外即 BLOCKER 点名口号 |
+| NEW-3 OffsetToCarrier 102 | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_offset_to_carrier_probe` | 跑 `uxm_offset_to_carrier_probe`：默认只读采集 PointA / OTCarrier / ARFCN；要下发 102 时 `confirm_write` 且小区 OFF，写后回读对账，不 APPLY，再看 attach |
+| NEW-2 面板 Local | 无 | ⚠️ 人工观察，载体已补（P1-65） | `propsim_f64_local_handback_check`（两段式证据记录） | 跑 `propsim_f64_local_handback_check`：release 段结束后去面板看（§20.1：Remote mode 水印是否消失、Local Mode 按钮是否不再亮蓝），再以 confirm 段把观察记回 |
 
 **汇总**（数字由脚本按上表「覆盖形态」列统计，两个口径别混）：Blocked 表开放 **16 行**（不含 3 行划线）；
-P0-8 按 a/b 两个 gate 拆开后矩阵 **17 行**。按矩阵行：✅ gate 直接覆盖 **3 行**（P0-5 / P0-8a / P0-8b，= Blocked 表 2 行），
-⚠️ 部分 / 间接 / 被动观察 **6 行**（NEW-4 / P2-13 / P2-12 / P1-4 / P2-4 / P1-6），❌ **完全在流程外 8 行**
-（P2-9 / P1-2 / P1-17 / P1-5 / P2-10 / NEW-1 / NEW-3 / NEW-2；其中 P2-9 是隐性前置、最危险）。3 + 6 + 8 = 17。流程外的行**不会因为 first-call
+P0-8 按 a/b 两个 gate 拆开后矩阵 **17 行**。**P1-65（#380，2026-08-23）补齐 8 条序列后**按矩阵行：✅ gate 直接覆盖 **3 行**
+（P0-5 / P0-8a / P0-8b），⚠️ 部分 / 间接 / 已有载体但在流程外 **12 行**（NEW-4 / P2-13 / P2-12 / P1-4 / P2-4 / P1-6 /
+P2-9 / P1-2 / P1-17 / NEW-1 / NEW-3 / NEW-2），❌ **无载体且流程外 2 行**（P1-5 不在 first-call 范围；P2-10 §7 清单
+逐项查证后各建）。3 + 12 + 2 = 17。P1-65 之前这一行是 3 / 6 / 8。流程外的行仍不会因 first-call 跑通而解除，
+但现在每一行都有 checked-in 载体可跑、结果落 `DiagnosticRun`。流程外的行**不会因为 first-call
 跑通而解除**，需要在现场计划里给它们独立时段，并在出发前补齐载体。
 
 **执行方式现状**：诊断序列只能在 GUI「调试维护 → 调试序列」**单选逐条跑**（`POST /diagnostic-sequences/{key}/run`），
@@ -663,7 +666,7 @@ P0-8 按 a/b 两个 gate 拆开后矩阵 **17 行**。按矩阵行：✅ gate �
 blocker 的"解除"没有自动机制 —— gate 过了、`DiagnosticRun` 有证据、人把结论抄回本表。
 
 **由此登记两条候选（顶部「后续开发候选」第 9、10 条）**：
-- **候选 9 [P1 候选，出发前硬门槛]** 补齐无载体 blocker 的诊断序列：`emcenter_switch_health`（P2-9，只读握手 + 槽位/状态回读，
+- ~~**候选 9 [P1 候选，出发前硬门槛]**~~ ✅ **P1-65 / PR #380** 补齐无载体 blocker 的诊断序列：`emcenter_switch_health`（P2-9，只读握手 + 槽位/状态回读，
   命令按 [`2026-06-04-emcenter-switch-protocol.md`](site-debug/2026-06-04-emcenter-switch-protocol.md) 有出处的裸命令 + CR）、
   `propsim_f64_health` 扩 per-port 电平窗口（NEW-1）、`uxm_offset_to_carrier_probe` 剧本（NEW-3，下发 + 回读 + attach 观察）、
   F64 序列末尾人工确认步（NEW-2）。约束照旧：只放手册有据 + 生产驱动在用的命令，F64 禁盲试，先查 NotebookLM。
@@ -4023,6 +4026,12 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+### 2026-08-23 P1-65 查出的驱动层事实（待 triage，不自动启动）
+
+- `[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] F64 驱动连接路径两条"软探针"是手册查无的命令** —— `app/hal/propsim_f64.py` `_F64_OPTION_PROBES` 的 `SYSTem:CALibration:USER:LIST?` 与 `OUTPut:INTERFerence:LIST?`（注释自承 "CAICT to-verify"），手册 §20.4.2 / §20.4.9 全文 0 命中，NotebookLM 原文核对不存在。现场 P1-2 看到的 -100 "ATE command not supported" 不是该机不支持，是命令不存在；**每次连接各留一条 -100 在错误队列**（08-07 一天 269 次连接）。正解：许可在 `SYSTem:INFO?` 尾部 `<License…>`（§20.4.2.4 原文 "and licenses"），用户对齐 `CALIBration:USER:GET?`（§20.4.2.19），干扰源 `OUTPut:INTERFerence:GET?`（§20.4.9.5）。**第三个站点**：既有 `propsim_f64_health.py:176` 也发 `INTERFerence:LIST?`。修法 = 换源（三处改用手册命令）+ 去掉探针机制；P1-65 的 `propsim_f64_license_truth` 已能在现场把驱动自称与手册真值对账。
+- `[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] UXM 5G profile 的 `STATE_LOAD = SYSTem:CONFiguration:LOAD` / `STATE_LIST = MMEMory:CATalog?` 手册查无** —— md 与 HTML 手册 0 命中，NotebookLM 原文核对不存在；手册的整机状态加载是 `SYSTem:SCPI:IMPort "<file>"` + `:STATus?` + `:INCLude:PRESet`（06_General「Export / Import SCPI」）。生产驱动 `configure()` 走 `state_file` 时发的是不存在的命令。修法 = 换源。
+- `[discovered 2026-08-23 during P1-65]` **[P3] 诊断序列 runner 取租约默认 `enable_monitoring=True`** —— 1 Hz 广播流量让 `connection_idle_hold_probe` 的"空置"不纯；序列已如实记录 caveat。真空置需 runner 支持按序列关监控（加机制，另议）。
 
 ### 2026-08-23 账面清理（release v0.9.0 后）
 
