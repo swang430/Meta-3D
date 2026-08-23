@@ -51,7 +51,8 @@ Blocked，不从旧 QuietZoneCalibration/Mock API 猜测。设计见
 [`P1-64 设计`](plans/2026-08-23-p1-64-quiet-zone-evidence-truth-design.md)。fresh 独立内审至
 P1/P2/P3=0；外审 Gemini R1 两条 medium 已修（畸形 provenance manifest fail-closed；`parameters: null`
 在解析器源头归一成 `{}`，三个读方一次覆盖），R2 一条 medium 前提不成立（工作流执行是引擎内存
-dataclass，无持久化回灌路径）报告一次；Codex 因额度未发生。合并态 `3c667fa` 验证：全后端
+dataclass，无持久化回灌路径）报告一次；Codex 因额度未发生。分支最终态 `3c667fa`（squash 后为 main
+`899fae9`）验证：全后端
 **4385 passed / 5 skipped / 0 failed**、GUI 契约 113 pass（2 条 main 同款 Node runner 解析问题）、
 production build、compileall、单一 Alembic head、diff-check 均通过。
 
