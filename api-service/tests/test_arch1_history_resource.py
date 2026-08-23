@@ -230,6 +230,9 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
     legacy.validation_pass = True
     legacy.measurements = {
         "phases": {"measure": {
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "simulated_sources": [],
             "path_loss_verified": True,
             "path_loss_certificate_id": "legacy-cert",
         }}
@@ -238,6 +241,9 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
     fresh.validation_pass = True
     fresh.measurements = {
         "phases": {"measure": {
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "simulated_sources": [],
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
             "path_loss_application": {
@@ -254,6 +260,8 @@ def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab)
             "carrier_aggregation": {"num_component_carriers": 1},
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "rsrp_dbm": -80.0,
                 "rsrp_valid": True,
                 "sinr_db": 20.0,

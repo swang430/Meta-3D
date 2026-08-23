@@ -30,6 +30,15 @@ def _finite_azimuths(value: Any) -> list[float] | None:
     return result
 
 
+def _row_has_finite_metric(row: dict[str, Any], metric: str) -> bool:
+    value = row.get(metric)
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
+
+
 def build_rf_kpi_trust(
     *,
     requested_azimuths: list[float],
@@ -65,6 +74,7 @@ def build_rf_kpi_trust(
                 if azimuth not in duplicate_azimuths
                 and isinstance(rows_by_azimuth.get(azimuth), dict)
                 and rows_by_azimuth[azimuth].get(validity_field) is True
+                and _row_has_finite_metric(rows_by_azimuth[azimuth], metric)
             ]
             if safe_source == "explicit_real"
             else []
@@ -186,16 +196,55 @@ def rf_kpi_trust_is_formally_verified(value: Any) -> bool:
 
 
 def rf_kpi_scope_is_verified(measure: Any) -> bool:
-    """Require the exact snapshot and its server boolean to agree."""
+    """Require the snapshot, server boolean and current rows to agree."""
     if not isinstance(measure, dict):
         return False
     raw_trust = measure.get(RF_KPI_TRUST_FIELD)
     parsed = parse_rf_kpi_trust(raw_trust)
     formal = measure.get("formal_rf_kpi_verified")
     expected = rf_kpi_trust_is_formally_verified(raw_trust)
+    rows = measure.get("azimuth_results")
+    current_azimuths = (
+        _finite_azimuths([row.get("azimuth_deg") for row in rows])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
+        else None
+    )
+    rows_match_requested = bool(
+        parsed is not None
+        and current_azimuths is not None
+        and len(current_azimuths) == len(parsed["requested_azimuths"])
+        and set(current_azimuths) == set(parsed["requested_azimuths"])
+    )
+    current_source = (
+        "explicit_real"
+        if (
+            measure.get("measurement_source") == "instrument"
+            and measure.get("measurement_verified") is True
+            and measure.get("simulated_sources") == []
+            and isinstance(rows, list)
+            and all(
+                isinstance(row, dict)
+                and row.get("measurement_source") == "instrument"
+                and row.get("measurement_verified") is True
+                for row in rows
+            )
+        )
+        else "unknown"
+    )
+    rebuilt = (
+        build_rf_kpi_trust(
+            requested_azimuths=parsed["requested_azimuths"],
+            azimuth_results=rows,
+            source=current_source,
+        )
+        if parsed is not None and isinstance(rows, list)
+        else None
+    )
     return bool(
         parsed is not None
         and parsed == raw_trust
+        and rows_match_requested
+        and rebuilt == parsed
         and type(formal) is bool
         and formal is expected
         and expected

@@ -22,6 +22,9 @@ from app.services.pdf_generator import PDFGenerator
 
 def _trusted_measure() -> dict:
     measure = {
+        "measurement_source": "instrument",
+        "measurement_verified": True,
+        "simulated_sources": [],
         "path_loss_application": {
             "schema_version": 1,
             "status": "applied",
@@ -39,6 +42,8 @@ def _trusted_measure() -> dict:
         "azimuth_results": [
             {
                 "azimuth_deg": 0.0,
+                "measurement_source": "instrument",
+                "measurement_verified": True,
                 "rsrp_dbm": -80.0,
                 "rsrp_valid": True,
                 "sinr_db": 20.0,

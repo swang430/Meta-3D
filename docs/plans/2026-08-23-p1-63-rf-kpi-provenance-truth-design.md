@@ -92,9 +92,12 @@ MEASURE 写入一个版本化、服务端生成的 `rf_kpi_trust` 快照。最�
 
 ## 当前 HEAD 验证事实
 
-- P1-63 + P1-54 + UXM KPI + 报告兼容 + P1-61 + 完整规则门：**193 passed**。
-- 全后端（从 `api-service/` 正确工作目录运行）：**4329 passed / 5 skipped**。
+- P1-63 + P1-54 + UXM KPI + 报告兼容 + P1-61 + 完整规则门：**203 passed**。
+- 两次 fresh 内审共发现并按 TDD 收口六条 P1：持久化信任快照必须与当前逐方位有限数值、
+  精确请求方位全集和当前 explicit-real provenance 完全一致；未请求的额外行与当前模拟来源均
+  不得借旧快照进入正式统计；报告必须先完成信任裁决再做统计，非对象/畸形历史行只能降级为
+  N/A/UNKNOWN；语义失配的旧快照须重写成服务端 unknown envelope，不能生成完成但不可查看的报告。
+- 全后端（从 `api-service/` 正确工作目录运行）：**4339 passed / 5 skipped**。
 - GUI 本片契约：**3 passed**；production build 通过。
 - `compileall`、单一 Alembic head `b6d8f0a2c4e6`、`git diff --check` 全部通过。
-- 全量前端直接 Node 测试仍有两条既有的 extensionless import 解析失败；本片新增契约与生产
-  TypeScript/Vite 构建均通过，未以测试问题放宽产品门。
+- 受影响历史/报告/生命周期链：**143 passed**。

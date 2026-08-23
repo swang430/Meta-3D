@@ -578,6 +578,8 @@ def _report_execution(
 ) -> SimpleNamespace:
     azimuth = {
         "azimuth_deg": 0.0,
+        "measurement_source": "instrument",
+        "measurement_verified": True,
         "throughput_mbps": 123.0,
         "throughput_valid": True,
         "rsrp_dbm": -80.0,
@@ -591,6 +593,8 @@ def _report_execution(
         azimuth["throughput_scope"] = azimuth_scope
     measure = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "path_loss_application": {
             "schema_version": 1,
             "status": "applied",

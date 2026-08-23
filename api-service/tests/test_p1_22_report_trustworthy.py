@@ -42,6 +42,9 @@ def _content(phases, **kw):
     # P1-27 path-loss trust gate open so it cannot mask the predicate under test.
     phases = dict(phases)
     phases["measure"] = {
+        "measurement_source": "instrument",
+        "measurement_verified": True,
+        "simulated_sources": [],
         "path_loss_application": {
             "schema_version": 1,
             "status": "applied",
@@ -61,6 +64,8 @@ def _content(phases, **kw):
         "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [{
             "azimuth_deg": 0.0,
+            "measurement_source": "instrument",
+            "measurement_verified": True,
             "rsrp_dbm": -80.0,
             "rsrp_valid": True,
             "sinr_db": 20.0,

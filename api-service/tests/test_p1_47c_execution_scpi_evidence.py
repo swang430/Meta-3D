@@ -210,6 +210,9 @@ def test_unverified_frequency_identity_blocks_formal_acceptance(db):
     execution.measurements = {
         "phases": {
             "measure": {
+                "measurement_source": "instrument",
+                "measurement_verified": True,
+                "simulated_sources": [],
                 "frequency_consistency": {
                     "fully_verified": False,
                     "warnings": ["F64 bandwidth lacks a supported readback"],
@@ -840,6 +843,9 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     execution.measurements = {
         "phases": {
             "measure": {
+                "measurement_source": "instrument",
+                "measurement_verified": True,
+                "simulated_sources": [],
                 "path_loss_application": {
                     "schema_version": 1,
                     "status": "applied",
@@ -857,6 +863,8 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
                 "azimuth_results": [
                     {
                         "azimuth_deg": 0.0,
+                        "measurement_source": "instrument",
+                        "measurement_verified": True,
                         "rsrp_dbm": -80.0,
                         "rsrp_valid": True,
                         "sinr_db": 20.0,

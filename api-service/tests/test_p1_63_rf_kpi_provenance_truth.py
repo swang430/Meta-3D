@@ -18,6 +18,7 @@ from app.services.report_service import (
     report_has_provenance_trust,
 )
 from app.services.test_execution import StepExecutionStatus
+from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
 
 
 def _verified_path_loss_application() -> dict[str, object]:
@@ -39,8 +40,11 @@ def _complete_rf_trust() -> dict[str, object]:
         requested_azimuths=[0.0],
         azimuth_results=[{
             "azimuth_deg": 0.0,
+            "rsrp_dbm": -80.0,
             "rsrp_valid": True,
+            "sinr_db": 30.0,
             "sinr_valid": True,
+            "rank_indicator": 2.0,
             "rank_indicator_valid": True,
         }],
         source="explicit_real",
@@ -50,6 +54,8 @@ def _complete_rf_trust() -> dict[str, object]:
 def _formal_measure(*, rf_trust: object = None) -> dict[str, object]:
     measure: dict[str, object] = {
         "measurement_verified": True,
+        "measurement_source": "instrument",
+        "simulated_sources": [],
         "frequency_consistency": {"fully_verified": True},
         "path_loss_application": _verified_path_loss_application(),
         "path_loss_verified": True,
@@ -59,6 +65,8 @@ def _formal_measure(*, rf_trust: object = None) -> dict[str, object]:
         "carrier_aggregation": {"num_component_carriers": 1},
         "azimuth_results": [{
             "azimuth_deg": 0.0,
+            "measurement_source": "instrument",
+            "measurement_verified": True,
             "throughput_mbps": 350.0,
             "throughput_valid": True,
             "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
@@ -121,14 +129,24 @@ def test_rf_kpi_trust_requires_every_metric_at_every_requested_azimuth():
     complete_rows = [
         {
             "azimuth_deg": 0.0,
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "rsrp_dbm": -80.0,
             "rsrp_valid": True,
+            "sinr_db": 30.0,
             "sinr_valid": True,
+            "rank_indicator": 2.0,
             "rank_indicator_valid": True,
         },
         {
             "azimuth_deg": 90.0,
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "rsrp_dbm": -81.0,
             "rsrp_valid": True,
+            "sinr_db": 29.0,
             "sinr_valid": True,
+            "rank_indicator": 2.0,
             "rank_indicator_valid": True,
         },
     ]
@@ -149,7 +167,14 @@ def test_rf_kpi_trust_requires_every_metric_at_every_requested_azimuth():
     )
 
     assert rf_kpi_scope_is_verified(
-        {"rf_kpi_trust": complete, "formal_rf_kpi_verified": True}
+        {
+            "rf_kpi_trust": complete,
+            "formal_rf_kpi_verified": True,
+            "measurement_source": "instrument",
+            "measurement_verified": True,
+            "simulated_sources": [],
+            "azimuth_results": complete_rows,
+        }
     ) is True
     assert rf_kpi_scope_is_verified(
         {"rf_kpi_trust": partial, "formal_rf_kpi_verified": False}
@@ -170,8 +195,11 @@ def test_rf_kpi_trust_rejects_malformed_or_self_inconsistent_payloads():
         requested_azimuths=[0.0],
         azimuth_results=[{
             "azimuth_deg": 0.0,
+            "rsrp_dbm": -80.0,
             "rsrp_valid": True,
+            "sinr_db": 30.0,
             "sinr_valid": True,
+            "rank_indicator": 2.0,
             "rank_indicator_valid": True,
         }],
         source="explicit_real",
@@ -183,6 +211,68 @@ def test_rf_kpi_trust_rejects_malformed_or_self_inconsistent_payloads():
         {"rf_kpi_trust": trust, "formal_rf_kpi_verified": False}
     ) is False
     assert rf_kpi_scope_is_verified({"formal_rf_kpi_verified": True}) is False
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("rsrp_dbm", float("nan")),
+        ("rsrp_dbm", float("inf")),
+        ("rsrp_dbm", True),
+        ("rsrp_dbm", None),
+        ("azimuth_deg", 90.0),
+    ],
+)
+def test_rf_kpi_scope_rejects_invalid_or_snapshot_mismatched_rows(
+    field: str,
+    value: object,
+):
+    measure = _formal_measure(rf_trust=_complete_rf_trust())
+    row = measure["azimuth_results"][0]
+    if value is None:
+        row.pop(field)
+    else:
+        row[field] = value
+
+    assert rf_kpi_scope_is_verified(measure) is False
+
+
+def test_rf_kpi_scope_rejects_unrequested_extra_rows():
+    measure = _formal_measure(rf_trust=_complete_rf_trust())
+    measure["azimuth_results"].append({
+        "azimuth_deg": 90.0,
+        "measurement_source": "instrument",
+        "measurement_verified": True,
+        "throughput_mbps": 999.0,
+        "throughput_valid": True,
+        "throughput_scope": ThroughputMetrics.SCOPE_PCELL,
+        "rsrp_dbm": 999.0,
+        "rsrp_valid": True,
+        "sinr_db": 999.0,
+        "sinr_valid": True,
+        "rank_indicator": 99.0,
+        "rank_indicator_valid": True,
+    })
+
+    assert rf_kpi_scope_is_verified(measure) is False
+
+
+def test_rf_kpi_scope_rejects_current_simulated_provenance():
+    measure = _formal_measure(rf_trust=_complete_rf_trust())
+    measure["measurement_source"] = "simulated"
+    measure["measurement_verified"] = False
+    measure["simulated_sources"] = ["baseStation"]
+    measure["azimuth_results"][0]["measurement_source"] = "simulated"
+    measure["azimuth_results"][0]["measurement_verified"] = False
+
+    execution = SimpleNamespace(
+        measurements={"phases": {"measure": measure}},
+        validation_pass=True,
+        config={},
+    )
+
+    assert rf_kpi_scope_is_verified(measure) is False
+    assert _formal_validation_pass(execution, "MIMO_OTA") is None
 
 
 @pytest.mark.asyncio
@@ -328,6 +418,56 @@ def test_report_masks_rf_kpis_without_complete_trust_snapshot():
     assert content["table_data"][0]["RSRP (dBm)"] == "N/A"
     assert content["table_data"][0]["SINR (dB)"] == "N/A"
     assert content["table_data"][0]["RI"] == "N/A"
+
+
+def test_report_safely_masks_malformed_legacy_rf_values_before_statistics():
+    execution = _report_execution(include_rf_trust=False)
+    execution.measurements["phases"]["measure"]["azimuth_results"][0][
+        "rsrp_dbm"
+    ] = "bad"
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 23),
+    )
+
+    assert content["overall_result"] == "undetermined"
+    assert content["pass_rate"] is None
+    assert content["statistics"] == {}
+    assert content["table_data"][0]["RSRP (dBm)"] == "N/A"
+
+
+def test_report_safely_omits_non_object_legacy_rows():
+    execution = _report_execution(include_rf_trust=False)
+    execution.measurements["phases"]["measure"]["azimuth_results"] = ["bad-row"]
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 23),
+    )
+
+    assert content["overall_result"] == "undetermined"
+    assert content["pass_rate"] is None
+    assert content["statistics"] == {}
+    assert content["table_data"] == []
+
+
+def test_report_rewrites_mismatched_rf_snapshot_to_safe_unknown_envelope():
+    execution = _report_execution(include_rf_trust=True)
+    execution.measurements["phases"]["measure"]["azimuth_results"][0][
+        "azimuth_deg"
+    ] = 90.0
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 8, 23),
+    )
+
+    assert content["formal_rf_kpi_verified"] is False
+    assert content["rf_kpi_trust"]["source"] == "unknown"
+    assert content["rf_kpi_trust"]["verified_azimuths"] == []
+    assert content["overall_result"] == "undetermined"
+    assert report_has_provenance_trust(content) is True
 
 
 def test_report_keeps_rf_kpis_with_complete_trust_snapshot():
