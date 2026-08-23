@@ -644,7 +644,7 @@ blocker"——答案是**不覆盖**：协议的设计目标是跑通一条可�
 | P1-4 重复性 | 3 / 5 | ⚠️ 部分 | Phase 3 只重复路损 ±0.5 dB；Phase 5 只跑 1 次 first-call | 要关闭需 Phase 5 **跑两次**并对比（报告对比契约仍是 plan 级，缺口在表内） |
 | P2-4 idle-drop | 1 故障树 | ⚠️ 被动观察 → 主动载体（P1-65） | `connection_idle_hold_probe` | 跑 `connection_idle_hold_probe`（空置 ≤900 s）；空置后断开/重连记为观察喂 P2-4，不当 driver bug 修 |
 | P1-6 HOLD | 1 故障树 | ⚠️ 被动观察 → C 类载体（P1-65） | `connection_idle_hold_probe` | 同上，category 选对应仪器 |
-| **P2-9 EMCenter** | **无** | ⚠️ **隐性前置，载体已补（P1-65）**：Phase 3 路损校准要切 32 链路，离不开 EMCenter；P1-65 前协议无握手步骤、速查表不列、15 个序列无一覆盖（P1-45 核对时 12 个），现 `emcenter_switch_health` 已注册、速查表已加行 | 无 | 跑 `emcenter_switch_health`（机箱/卡 IDN、逐继电器回读、互锁）—— **排在 Phase 3 之前**；协议速查表已加行 |
+| **P2-9 EMCenter** | **无** | ⚠️ **隐性前置，载体已补（P1-65）**：Phase 3 路损校准要切 32 链路，离不开 EMCenter；P1-65 前协议无握手步骤、速查表不列、15 个序列无一覆盖（P1-45 核对时 12 个），现 `emcenter_switch_health` 已注册、速查表已加行 | `emcenter_switch_health` | 跑 `emcenter_switch_health`（机箱/卡 IDN、逐继电器回读、互锁）—— **排在 Phase 3 之前**；协议速查表已加行 |
 | P1-2 license probe | 无 | ⚠️ 流程外，载体已补（P1-65） | `propsim_f64_license_truth` | 跑 `propsim_f64_license_truth`：`SYSTem:INFO?` 尾部许可 + `CALIBration:*` / `USER:GET?` 真值，与驱动自称对账；驱动两条探针命令手册查无（Discovered） |
 | P1-17 UXM fresh-start | 无 | ⚠️ 流程外，载体已补（P1-65） | `uxm_config_truth_probe` + `uxm_fresh_start_truth` | 跑 `uxm_fresh_start_truth`：只读 `SYSTem:SCPI:*` 机制真值；要导入时 `confirm_action` 且无 UE 在网 |
 | P1-5 相位校准 | 无 | ❌ 流程外（**且不在 first-call 范围**：PFS 是 power-only，相位校准留给将来 PWS） | 正式入口存在但落 mock 数据 | 不排进本次现场 |
