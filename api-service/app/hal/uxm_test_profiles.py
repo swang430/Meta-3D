@@ -26,8 +26,10 @@ UXM 综测仪标准测试配置模板
     await base_station.set_cell_config(profile.to_config_dict())
 
     # 方式 3: 使用仪器端配置文件 (一键恢复)
+    # P1-67: 文件必须是仪器 SYSTem:SCPI:EXPort 导出的 SCPI 文件, 路径为绝对路径
+    # 或相对仪器 SCPI:FOLDer (旧 ".state" 后缀属已删除的编造机制, 手册未规定后缀)
     await base_station.set_cell_config({
-        "state_file": r"D:\\User Files\\CAICT_N78_100M_2x2.state"
+        "state_file": r"D:\\User Files\\CAICT_N78_100M_2x2_export"
     })
 """
 

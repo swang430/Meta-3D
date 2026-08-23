@@ -90,8 +90,9 @@ class InstrumentTopologyProfile(Base):
     cell_id = Column(String(20), default="CELL0", nullable=False)
     state_file = Column(
         String(500), nullable=True,
-        comment="Optional UXM instrument-side .state file path; when set "
-                "set_cell_config short-circuits to MMEM:LOAD:STATe.",
+        comment="Optional UXM instrument-side SCPI export file path (created by "
+                "SYSTem:SCPI:EXPort); when set, configure/set_cell_config "
+                "short-circuit to SYSTem:SCPI:IMPort + :STATus? readback (P1-67).",
     )
 
     # --- Test App compat declaration ---

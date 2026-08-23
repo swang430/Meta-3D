@@ -2884,54 +2884,118 @@ class RealUxmDriver(BaseStationDriver):
 
     async def load_state_file(self, filepath: str) -> bool:
         """
-        从 UXM 本机加载保存的配置文件，一次性恢复全部仪器状态。
+        导入先前导出的 SCPI 状态文件（P1-67 换手册真值机制）。
 
-        使用场景:
-          - 工程师在 UXM 前面板手动调好所有参数后，执行 save_state_file()
-            保存为 .state 文件
-          - 后续自动化测试时只需 load_state_file() 即可一键恢复
-          - 消除逐条 SCPI 配置的潜在顺序依赖和参数遗漏风险
+        手册出处（本地原件 `Instrument_API_Doc/Keysight UXM NR SCPI/`
+        `UXM5G_SCPI_06_General_Examples_Shared.md`「Utility > Export / Import
+        SCPI」节）：
+          - `SYSTem:SCPI:IMPort "<file>"` —— 原文 "Import (i.e. load) a SCPI
+            file, recovering a previously exported application state"。
+            ⚠ 恢复的是**整机应用状态**（不是单参数增量）——正在进行的会话
+            会被拆掉。
+          - `SYSTem:SCPI:IMPort:INCLude:PRESet` —— 原文 "Presets the
+            instrument before importing the SCPI file"：该开关为 ON 时导入前
+            会**先复位仪器**；其默认值由仪器当前状态决定（手册原文：任一设置
+            处于非默认值时默认为 true）。本方法**不改**这个开关；要读本机的
+            机制真值（FOLDer / INCLude:PRESet / IMPort:STATus），先跑 P1-65
+            诊断序列 `uxm_fresh_start_truth`。
 
-        UXM 配置文件包含:
-          - NR5G 小区所有参数 (Band/BW/SCS/ARFCN/MIMO/Power)
-          - RF 路由设置 (DL/UL 端口映射)
-          - TDD 时隙配置
-          - PDSCH/PUSCH 参数
-          - 测量配置
+        写后复核（本方法实现）：
+          - `SYSTem:SCPI:IMPort:STATus?`（Query only，原文 "Queries the
+            success or failure of an import"）——Boolean（Range ON|1|OFF|0），
+            但**哪个值代表成功手册未给**。判法保守：回读解析为 ON/1 才算成功，
+            OFF/0 或解析不出一律按失败处理并把 raw 写进日志
+            （fail-closed —— 这是保守判法，不是手册语义）。
+          - `SYSTem:ERRor?` 排空错误队列（既有 `_drain_errors` 读法）——
+            队列有错或错误门不可用同样判失败（半生效不报 applied）。
+
+        路径安全（同 P1-65 `uxm_fresh_start_truth` 判法）：filepath 含双引号 /
+        换行 / 回车 / 全空白 → fail-loud 本地拒绝，**不发任何 SCPI**。
 
         Args:
-            filepath: UXM 本机的文件路径
-                例: "D:\\User Files\\CAICT_N78_100M_2x2.state"
+            filepath: SCPI 状态文件（相对 `SYSTem:SCPI:FOLDer` 或仪器本机
+                绝对路径），例 "CAICT_N78_100M_2x2.scpi"
 
         Returns:
-            True if state loaded successfully
+            True 仅当 IMPort 下发 + STATus? 判成功 + 错误队列干净
         """
+        # 先本地校验、再查 profile —— 两个拒绝路径都必须零 SCPI。
+        if '"' in filepath or "\n" in filepath or "\r" in filepath \
+                or not filepath.strip():
+            logger.error(
+                f"[UXM] load_state_file: 文件路径 {filepath!r} 含引号/换行"
+                "或为空白, 本地拒绝, 未发到仪器"
+            )
+            return False
+
+        load_cmd = self._cmds.STATE_LOAD
+        if not load_cmd:
+            # 措辞两个方向都不下结论（本文件 :2653 同款禁令）：唯一的事实是
+            # 本 profile 没定义 —— 手册把 SYSTem:SCPI:IMPort 标 NSA | SA，
+            # IRAT 下可不可用未说明（未探测 ≠ 不支持）。
+            logger.error(
+                f"[UXM] load_state_file: 本方言 ({self._cmds.PROFILE_NAME}) "
+                "无手册可依的状态导入命令 (STATE_LOAD 未定义; 手册标 NSA | SA, "
+                "本方言下可用性未说明) — 如实拒绝, 未发任何 SCPI"
+            )
+            return False
+
         try:
-            logger.info(f"[UXM] Loading state file: {filepath}")
+            logger.info(f"[UXM] Importing SCPI state file: {filepath}")
             self._set_status(InstrumentStatus.BUSY)
 
-            # 加载前先安全关闭小区 — P0-2 F1: 无条件, 不看缓存门 (同 disconnect:
+            # 导入前先安全关闭小区 — P0-2 F1: 无条件, 不看缓存门 (同 disconnect:
             # 缓存 OFF 可能是"读不到"而非真 OFF, 漏关比多关贵)。
             await self.stop_signaling()
 
-            # 设置长超时（配置文件包含大量参数，加载需要时间）
+            # 设置长超时（导入恢复整机应用状态，需要时间）。异常路径也必须
+            # 恢复 —— 否则本会话后续所有 SCPI 都继承 60s 超时（与 :1712
+            # set_cell_config 的 *OPC? 同法）。
             old_timeout = self._visa_session.timeout
             self._visa_session.timeout = VISA_TIMEOUT_STATE_LOAD
+            try:
+                self._write(load_cmd.format(filepath=filepath))
+                self._query("*OPC?")
+            finally:
+                # 静默重连失败会把 _visa_session 置 None 再重抛原异常 ——
+                # 此时恢复会抛 AttributeError 把原始异常吃掉；会话都没了,
+                # 不存在超时级联, 跳过恢复。
+                if self._visa_session is not None:
+                    self._visa_session.timeout = old_timeout
 
-            self._write(
-                self._cmds.STATE_LOAD.format(filepath=filepath)
-            )
-            self._query("*OPC?")
+            # 复核 ①: IMPort:STATus? — 保守判法, 见 docstring。
+            status_raw = (
+                self._query("SYSTem:SCPI:IMPort:STATus?") or ""
+            ).strip()
+            token = status_raw.strip('"').upper()
+            import_ok = token in ("1", "ON")
 
-            self._visa_session.timeout = old_timeout
+            # 复核 ②: 错误队列（既有读法）。
+            errors = self._drain_errors()
+            queue_dirty = bool(errors) or self._error_queue_unusable(errors)
 
-            # 加载后刷新内部状态缓存
+            if not import_ok or queue_dirty:
+                reason = []
+                if not import_ok:
+                    reason.append(
+                        f"IMPort:STATus? 未判成功 (raw={status_raw!r}; "
+                        "保守判法: 仅 ON/1 算成功, 解析不出按失败)"
+                    )
+                if queue_dirty:
+                    reason.append(f"错误队列: {errors}")
+                msg = f"load_state_file: {filepath} 导入失败 — " + "; ".join(reason)
+                logger.error(f"[UXM] {msg}")
+                self._set_status(InstrumentStatus.ERROR, msg)
+                return False
+
+            # 导入后刷新内部状态缓存
             await self._refresh_config_from_instrument()
 
             self._set_status(InstrumentStatus.READY)
             logger.info(
-                f"[UXM] State loaded: {filepath} → "
-                f"band={self._band}, BW={self._bandwidth_mhz}MHz"
+                f"[UXM] SCPI state imported: {filepath} → "
+                f"band={self._band}, BW={self._bandwidth_mhz}MHz "
+                f"(IMPort:STATus?={status_raw!r}, 错误队列干净)"
             )
             return True
 
@@ -2942,27 +3006,55 @@ class RealUxmDriver(BaseStationDriver):
 
     async def save_state_file(self, filepath: str) -> bool:
         """
-        将 UXM 当前完整配置保存为 .state 文件。
+        将 UXM 当前**整机应用状态**导出为 SCPI 文件（P1-67 换手册真值机制）。
 
-        用途:
-          - 工程师手动调优完成后保存为模板
-          - 团队间共享标准化测试配置
-          - 回归测试的可重复性保证
+        手册出处（同 `load_state_file`，「Utility > Export / Import SCPI」节）：
+        `SYSTem:SCPI:EXPort "<file>"` —— 原文 "Export (i.e. save) the current
+        application state into a SCPI file"。
+
+        写后读一次错误队列（既有 `_drain_errors` 读法）——队列有错或错误门
+        不可用判失败。路径安全同 `load_state_file`（引号/换行/回车/全空白
+        本地拒绝，零 SCPI）。
 
         Args:
-            filepath: UXM 本机的保存路径
-                例: "D:\\User Files\\CAICT_N78_100M_2x2.state"
+            filepath: SCPI 状态文件（相对 `SYSTem:SCPI:FOLDer` 或仪器本机
+                绝对路径），例 "CAICT_N78_100M_2x2.scpi"
 
         Returns:
-            True if state saved successfully
+            True 仅当 EXPort 下发且错误队列干净
         """
-        try:
-            logger.info(f"[UXM] Saving state: {filepath}")
-            self._write(
-                self._cmds.STATE_SAVE.format(filepath=filepath)
+        if '"' in filepath or "\n" in filepath or "\r" in filepath \
+                or not filepath.strip():
+            logger.error(
+                f"[UXM] save_state_file: 文件路径 {filepath!r} 含引号/换行"
+                "或为空白, 本地拒绝, 未发到仪器"
             )
+            return False
+
+        save_cmd = self._cmds.STATE_SAVE
+        if not save_cmd:
+            # 同 load_state_file: 唯一的事实是本 profile 没定义, 不下仪器结论。
+            logger.error(
+                f"[UXM] save_state_file: 本方言 ({self._cmds.PROFILE_NAME}) "
+                "无手册可依的状态导出命令 (STATE_SAVE 未定义) — 如实拒绝, "
+                "未发任何 SCPI"
+            )
+            return False
+
+        try:
+            logger.info(f"[UXM] Exporting SCPI state: {filepath}")
+            self._write(save_cmd.format(filepath=filepath))
             self._query("*OPC?")
-            logger.info(f"[UXM] State saved: {filepath}")
+
+            errors = self._drain_errors()
+            if errors or self._error_queue_unusable(errors):
+                logger.error(
+                    f"[UXM] save_state_file: {filepath} 导出后错误队列有错: "
+                    f"{errors} — 不报成功"
+                )
+                return False
+
+            logger.info(f"[UXM] SCPI state exported: {filepath}")
             return True
 
         except Exception as e:
@@ -2971,26 +3063,31 @@ class RealUxmDriver(BaseStationDriver):
 
     async def list_state_files(self) -> List[str]:
         """
-        列出 UXM 本机上已保存的配置文件。
+        列出仪器上已保存的状态文件 —— **当前无手册可依的命令，恒返回 []**。
+
+        P1-67：旧实现发 `MMEMory:CATalog?`，该命令在全套手册 md + HTML
+        **0 命中**（编造命令）。手册「Utility > Export / Import SCPI」节
+        没有文件列表查询命令 —— 未探测 ≠ 不支持，不猜替代（若将来某方言
+        查证到列表命令，parser 须按该命令的真实返回格式另写）。
 
         Returns:
-            文件名列表
+            [] （STATE_LIST 未定义时不发任何 SCPI）
         """
-        try:
-            result = self._query(self._cmds.STATE_LIST)
-            # 解析 MMEMory:CATalog? 返回格式
-            # 典型: '"file1.state","file2.state",...'
-            files = []
-            if result:
-                parts = result.replace('"', '').split(',')
-                files = [
-                    p.strip() for p in parts
-                    if p.strip().endswith('.state')
-                ]
-            return files
-        except Exception as e:
-            logger.warning(f"[UXM] list_state_files failed: {e}")
+        if not self._cmds.STATE_LIST:
+            logger.info(
+                "[UXM] list_state_files: 手册无文件列表命令 "
+                "(MMEMory:CATalog? 查无; 未探测 ≠ 不支持) — "
+                "不发 SCPI, 返回空列表"
+            )
             return []
+        # 防御分支: 当前没有任何 profile 定义 STATE_LIST; 若将来出现,
+        # 必须先补手册出处与返回格式 parser, 这里 fail-closed 不盲发。
+        logger.warning(
+            f"[UXM] list_state_files: profile {self._cmds.PROFILE_NAME} 定义了 "
+            f"STATE_LIST={self._cmds.STATE_LIST!r} 但驱动无对应返回格式 "
+            "parser — 不发, 返回空列表"
+        )
+        return []
 
     async def _refresh_config_from_instrument(self) -> None:
         """
