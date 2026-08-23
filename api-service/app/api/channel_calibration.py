@@ -410,7 +410,15 @@ async def start_quiet_zone_calibration(
     - 幅度均匀性: ±1 dB
     - 相位均匀性: ±30° (mmWave 可放宽至 ±45°)
     """
-    service = ChannelCalibrationService(db)
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+            "不会生成随机网格或正式判决。"
+        ),
+    )
+
+    service = ChannelCalibrationService(db)  # pragma: no cover - retired path
 
     calibration = service.run_quiet_zone_calibration(
         quiet_zone_shape=request.quiet_zone.shape.value,

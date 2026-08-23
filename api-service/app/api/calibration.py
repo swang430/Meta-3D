@@ -366,8 +366,19 @@ async def execute_quiet_zone_calibration(
     3. probe_coupling - 探头互耦测量 (threshold: max coupling < -20 dB)
     4. phase_stability - 相位稳定性测试 (threshold: drift < 10°)
     """
-    instruments = MockInstrumentOrchestrator()
-    service = QuietZoneCalibrationService(instruments)
+    # P1-64: this legacy route has no verified centimetre-scale XY scanner.
+    # Its only implementation is MockInstrumentOrchestrator, so running any
+    # branch would manufacture engineering values and a formal PASS/FAIL.
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+            "不会生成模拟数值或正式判决。"
+        ),
+    )
+
+    instruments = MockInstrumentOrchestrator()  # pragma: no cover - retired path
+    service = QuietZoneCalibrationService(instruments)  # pragma: no cover
 
     if request.validation_type == 'field_uniformity':
         calibration = await service.execute_field_uniformity(

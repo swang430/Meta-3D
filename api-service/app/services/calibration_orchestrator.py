@@ -385,15 +385,11 @@ class CalibrationOrchestrator:
                     message = "No multi-frequency calibration covering target frequency"
 
             elif item == CalibrationItem.QUIET_ZONE_UNIFORMITY:
-                cal = self.db.query(QuietZoneCalibration).filter(
-                    QuietZoneCalibration.validation_pass == True
-                ).order_by(desc(QuietZoneCalibration.tested_at)).first()
-                if cal:
-                    is_valid = True
-                    valid_until = cal.tested_at + timedelta(days=365) if cal.tested_at else None
-                    calibration_id = cal.id
-                else:
-                    message = "No quiet zone uniformity calibration found"
+                # P1-64: existing rows predate formal QZ provenance and include
+                # mock/XPD/phase records.  None may satisfy the uniformity gate.
+                # A future verified writer must add an explicit-real snapshot
+                # before this status can be promoted from UNKNOWN.
+                message = "No verified real quiet zone uniformity evidence"
 
             elif item == CalibrationItem.DUPLEXER_ISOLATION:
                 # 双工器隔离度从 RFChainCalibration 中带出

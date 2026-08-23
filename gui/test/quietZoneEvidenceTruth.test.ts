@@ -158,3 +158,24 @@ test('live monitoring never presents a derived quiet-zone value or status', () =
     /<UnavailableMetricCard label=\{METRIC_LABELS\.quiet_zone_uniformity\} \/>/,
   )
 })
+
+
+test('legacy quiet-zone calibration cannot fall back to mock PASS or green results', () => {
+  const serviceSource = readFileSync(
+    new URL('../src/api/calibrationService.ts', import.meta.url),
+    'utf8',
+  )
+  const wizardSource = readFileSync(
+    new URL('../src/components/SystemCalibration/CalibrationWizard.tsx', import.meta.url),
+    'utf8',
+  )
+
+  const quietZoneFunction = serviceSource.match(
+    /export async function executeQuietZoneCalibration[\s\S]*?\n}\n/,
+  )?.[0] ?? ''
+  assert.doesNotMatch(quietZoneFunction, /USE_MOCK|ALLOW_FALLBACK|generateMockQuietZoneResult/)
+  assert.doesNotMatch(serviceSource, /function generateMockQuietZoneResult/)
+  assert.match(wizardSource, /静区校准未判定/)
+  assert.match(wizardSource, /UNKNOWN/)
+  assert.match(wizardSource, /无权威多点场扫描证据/)
+})

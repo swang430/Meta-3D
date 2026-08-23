@@ -304,6 +304,70 @@ def test_monitoring_fallback_does_not_invent_quiet_zone_metric():
     assert "quiet_zone_uniformity" not in _generate_fallback_data()
 
 
+@pytest.mark.asyncio
+async def test_legacy_quiet_zone_calibration_endpoint_fails_closed_without_real_scanner():
+    from fastapi import HTTPException
+
+    from app.api.calibration import execute_quiet_zone_calibration
+    from app.schemas.calibration import QuietZoneCalibrationRequest
+
+    request = QuietZoneCalibrationRequest(
+        validation_type="field_uniformity",
+        frequency_mhz=3500.0,
+        tested_by="operator",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await execute_quiet_zone_calibration(request, db=object())
+
+    assert exc_info.value.status_code == 503
+    assert "真实多点场扫描" in str(exc_info.value.detail)
+
+
+def test_channel_quiet_zone_random_writer_fails_before_db_write():
+    from app.services.channel_calibration_service import ChannelCalibrationService
+
+    class NoWriteDb:
+        def add(self, _value):
+            raise AssertionError("quiet-zone legacy row must not be persisted")
+
+    service = ChannelCalibrationService(NoWriteDb())
+
+    with pytest.raises(RuntimeError, match="真实多点场扫描"):
+        service.run_quiet_zone_calibration(
+            quiet_zone_shape="sphere",
+            quiet_zone_diameter_m=1.0,
+            fc_ghz=3.5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_mock_quiet_zone_fails_without_db_access():
+    from app.services.quiet_zone_validation_service import QuietZoneValidationService
+
+    result = await QuietZoneValidationService(object(), use_mock=True).run_field_uniformity_validation(
+        chamber_id="00000000-0000-0000-0000-000000000001",
+        frequency_mhz=3500.0,
+        sgh_model="mock",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert result.success is False
+    assert result.data == {}
+    assert "真实多点场扫描" in result.message
+
+
+def test_dashboard_quiet_zone_metric_is_unknown_without_evidence():
+    from app.api.dashboard import _dashboard_live_metrics
+
+    quiet_zone = next(
+        metric for metric in _dashboard_live_metrics() if metric.label == "静区均匀性"
+    )
+
+    assert quiet_zone.value == "N/A"
+    assert quiet_zone.trend == "unknown"
+
+
 def test_report_rebuild_does_not_repeat_legacy_quiet_zone_pass_claims():
     from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 

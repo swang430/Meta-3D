@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 _comparison_selections: Dict[UUID, dict] = {}
 
 
+def _dashboard_live_metrics() -> List[LiveMetric]:
+    """Return dashboard metrics without inventing quiet-zone evidence."""
+    return [
+        LiveMetric(label="吞吐量", value="150 Mbps", trend="up"),
+        LiveMetric(label="信噪比", value="25.3 dB", trend="stable"),
+        LiveMetric(label="静区均匀性", value="N/A", trend="unknown"),
+    ]
+
+
 @router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(db: Session = Depends(get_db)):
     """
@@ -50,12 +59,8 @@ def get_dashboard(db: Session = Depends(get_db)):
             comparisons_selected=len(_comparison_selections)
         )
 
-        # Live metrics (mock data for now)
-        live_metrics = [
-            LiveMetric(label="吞吐量", value="150 Mbps", trend="up"),
-            LiveMetric(label="信噪比", value="25.3 dB", trend="stable"),
-            LiveMetric(label="静区均匀性", value="±0.8 dB", trend="stable"),
-        ]
+        # QZ remains N/A until a verified real multi-point scan is available.
+        live_metrics = _dashboard_live_metrics()
 
         # Active alerts (empty for now, TODO: implement alert system)
         active_alerts = []

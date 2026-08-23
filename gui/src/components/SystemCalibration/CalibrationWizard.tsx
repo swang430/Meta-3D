@@ -632,6 +632,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         {/* Step 4: Execute */}
         <Stepper.Step label="执行校准" description="运行测试">
           <Stack gap="md" mt="xl">
+            {calibrationType.startsWith('quiet_zone_') && (
+              <Alert icon={<IconInfoCircle size={16} />} title="静区校准未判定" color="yellow">
+                UNKNOWN / N/A：无权威多点场扫描证据；当前入口不会生成模拟数值或正式判决。
+              </Alert>
+            )}
             {!isExecuting && !results && (
               <Alert icon={<IconInfoCircle size={16} />} title="准备执行">
                 点击"开始校准"按钮执行 {calibrationType.toUpperCase()} 校准测试。

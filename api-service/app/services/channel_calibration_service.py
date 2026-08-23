@@ -1107,6 +1107,15 @@ class ChannelCalibrationService:
         4. 验证是否满足要求
         5. 保存结果
         """
+        # P1-64: this legacy implementation only synthesizes grid samples with
+        # numpy.random.  Until a verified centimetre-scale XY scanner is wired
+        # in, no caller (API or workflow) may persist those values as formal
+        # channel calibration evidence.
+        raise RuntimeError(
+            "静区校准未判定：缺少可验证的真实多点场扫描平台；"
+            "不会生成模拟数值或正式判决。"
+        )
+
         # 生成测量网格
         if quiet_zone_shape == "sphere":
             # 球形静区: 生成 3D 网格点
