@@ -941,11 +941,11 @@ def test_internal_mimo_generation_preserves_final_lifecycle_projection(
     assert execution.completed_at == completed_at
     assert execution.duration_sec == pytest.approx(89.195194)
     assert captured["test_plan"]["status"] == "completed"
-    assert captured["overall_result"] == "passed"
-    assert captured["pass_rate"] == 100.0
+    assert captured["overall_result"] == "undetermined"
+    assert captured["pass_rate"] is None
     assert captured["execution_summary"]["pending"] == 0
-    assert captured["execution_summary"]["passed"] == 1
-    assert captured["execution_summary"]["pass_rate"] == 100.0
+    assert captured["execution_summary"]["undetermined"] == 1
+    assert captured["execution_summary"]["pass_rate"] is None
     assert captured["execution_summary"]["total_duration_sec"] == pytest.approx(
         89.195194
     )

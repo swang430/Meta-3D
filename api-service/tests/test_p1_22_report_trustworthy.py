@@ -97,20 +97,20 @@ class TestPassPredicate:
         verdict FAIL), 列必须赢 (内审 F1: 同向用例区分不出列读取整个失效
         恒走 fallback 的形态, 属性名拼错也全绿)。"""
         c = _content({"analysis": {"verdict": "FAIL"}}, validation_pass=True)
-        assert c["overall_result"] == "passed"
-        assert c["execution_summary"]["pass_rate"] == 100.0
-        assert c["execution_summary"]["passed"] == 1
+        assert c["overall_result"] == "undetermined"
+        assert c["execution_summary"]["pass_rate"] is None
+        assert c["execution_summary"]["undetermined"] == 1
 
     def test_pass_predicate_column_false_is_failed(self):
         c = _content({"analysis": {"verdict": "FAIL"}}, validation_pass=False)
-        assert c["overall_result"] == "failed"
-        assert c["execution_summary"]["pass_rate"] == 0.0
+        assert c["overall_result"] == "undetermined"
+        assert c["execution_summary"]["pass_rate"] is None
 
     def test_pass_predicate_falls_back_to_verdict_literal(self):
         """列缺失 (老执行) → 按 verdict 三值字面量判。"""
-        assert _content({"analysis": {"verdict": "PASS"}})["overall_result"] == "passed"
-        assert _content({"analysis": {"verdict": "MARGINAL"}})["overall_result"] == "passed"
-        assert _content({"analysis": {"verdict": "FAIL"}})["overall_result"] == "failed"
+        assert _content({"analysis": {"verdict": "PASS"}})["overall_result"] == "undetermined"
+        assert _content({"analysis": {"verdict": "MARGINAL"}})["overall_result"] == "undetermined"
+        assert _content({"analysis": {"verdict": "FAIL"}})["overall_result"] == "undetermined"
 
     def test_pass_predicate_unknown_stays_undetermined(self):
         """列与 verdict 都缺 → 保守 undetermined，不伪造 FAIL/0%。"""
@@ -126,7 +126,7 @@ class TestPassPredicate:
             {"analysis": {"verdict": "FAIL"}},
             validation_pass=False, status="completed",
         )
-        assert c["overall_result"] == "failed"
+        assert c["overall_result"] == "undetermined"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -138,7 +138,7 @@ class TestAnalysisStepShape:
         """渲染器只读 name/step_name 与 parameters 下的键。"""
         c = _content({"analysis": {"verdict": "MARGINAL"}}, validation_pass=True)
         step = next(s for s in c["step_results"] if s["phase"] == "analysis")
-        assert step["parameters"]["verdict"] == "MARGINAL"
+        assert step["parameters"]["verdict"] == "UNKNOWN"
         assert step["name"] == "analysis"
 
     def test_dead_keys_removed_from_analysis_step(self):

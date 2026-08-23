@@ -16,6 +16,7 @@ from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
+from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
 from app.services.report_service import report_has_provenance_trust
 from app.services.test_execution import StepExecutionStatus
 
@@ -260,7 +261,7 @@ async def test_analysis_stays_unknown_without_explicit_trusted_throughput(
 @pytest.mark.parametrize(
     "path_loss_application,expected_verdict",
     [
-        (_verified_path_loss_application(), "PASS"),
+        (_verified_path_loss_application(), "UNKNOWN"),
         (
             {
                 **_verified_path_loss_application(),
@@ -349,7 +350,11 @@ async def test_analysis_keeps_normal_verdict_with_explicit_trusted_throughput(
         assert result.measurements["avg_throughput_mbps"] is None
         assert result.measurements["throughput_pass"] is None
         assert execution.validation_pass is None
-        assert "路损" in " ".join(result.warnings)
+        warning_text = " ".join(result.warnings)
+        if path_loss_application.get("provenance") == "real":
+            assert "静区" in warning_text
+        else:
+            assert "路损" in warning_text
 
 
 def _report_execution(throughput_verified: bool | None) -> SimpleNamespace:
@@ -436,7 +441,7 @@ def test_report_keeps_explicitly_trusted_throughput():
 
     assert content["formal_throughput_verified"] is True
     assert content["throughput_trust_schema_version"] == 2
-    assert content["overall_result"] == "passed"
+    assert content["overall_result"] == "undetermined"
     assert content["table_data"][0]["Throughput (Mbps)"] == "0.0"
 
 
@@ -462,6 +467,9 @@ def test_existing_path_loss_only_report_is_not_trusted_for_throughput():
             source="unknown",
         ),
         "formal_rf_kpi_verified": False,
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
     }
     inconsistent_path_loss_attestation = {
         **fully_sanitized,

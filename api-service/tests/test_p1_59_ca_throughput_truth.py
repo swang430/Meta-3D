@@ -24,6 +24,7 @@ from app.services.mimo_ota.executors.analysis import AnalysisExecutor
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
+from app.services.mimo_ota.quiet_zone_evidence import build_quiet_zone_evidence
 from app.services.report_service import report_has_provenance_trust
 from app.services.test_execution import StepExecutionStatus
 
@@ -716,6 +717,9 @@ def test_historical_throughput_trust_schema_one_is_fail_closed() -> None:
             source="unknown",
         ),
         "formal_rf_kpi_verified": False,
+        "quiet_zone_evidence_schema_version": 1,
+        "quiet_zone_evidence": build_quiet_zone_evidence(None),
+        "formal_quiet_zone_verified": False,
     }
 
     assert report_has_provenance_trust(schema_one) is False
