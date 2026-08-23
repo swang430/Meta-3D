@@ -6,9 +6,9 @@ Replaces commissioning_service.phase3_static_mimo_test. The flow:
    bound TestCase.configuration (no longer hard-coded in the service).
 2. Generate the CDL channel via ChannelEngineClient and load it into the
    channel emulator (ASC or GCM strategy depending on engine_mode).
-3. Walk the turntable through each azimuth in config.azimuths_deg, sample
-   throughput from the base station + simulate RSRP/SINR (since the BS does
-   not currently report those), and aggregate per-azimuth statistics.
+3. Walk the turntable through each azimuth in config.azimuths_deg and aggregate
+   only the base-station KPIs whose per-field validity is explicitly confirmed.
+   Missing RSRP/SINR/RI remain N/A; target settings are never measurements.
 
 LabProfile contributes the chamber row (calibration entries, geometry).
 TestCase.calibration_certificate_id (optional) is referenced for traceability;
@@ -32,7 +32,6 @@ import asyncio
 import inspect
 import logging
 import math
-import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +46,10 @@ from app.services.mimo_ota.executors._helpers import (
 from app.services.mimo_ota.path_loss_application import (
     build_path_loss_application,
     path_loss_application_message,
+)
+from app.services.mimo_ota.rf_kpi_trust import (
+    build_rf_kpi_trust,
+    rf_kpi_trust_is_formally_verified,
 )
 from app.services.test_execution import (
     IStepExecutor,
@@ -460,6 +463,23 @@ class MeasureExecutor(IStepExecutor):
         except (TypeError, ValueError):
             return None
         return parsed if math.isfinite(parsed) else None
+
+    @staticmethod
+    def _trusted_rf_kpi_value(
+        metrics: Any,
+        *,
+        key: str,
+        attribute: str,
+    ) -> Optional[float]:
+        """只接受驱动逐指标显式标真的有限数值。"""
+        validity = getattr(metrics, "kpi_valid", None)
+        if not isinstance(validity, dict) or validity.get(key) is not True:
+            return None
+        value = getattr(metrics, attribute, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
 
     @staticmethod
     async def _configure_requested_secondary_cells(
@@ -2330,12 +2350,10 @@ class MeasureExecutor(IStepExecutor):
                 latest_throughput_exchanges = []
 
                 az_meta = azimuth_probe_gains.get(azimuth, {})
-                gain_offset = az_meta.get("gain_offset_db")
                 # P0: per-chain path-loss when available; falls back to avg.
                 az_path_loss_db = az_meta.get("path_loss_db")
                 if az_path_loss_db is None:
                     az_path_loss_db = avg_path_loss_db
-                ce_base_rsrp = config.target_rsrp_dbm - az_path_loss_db
 
                 for _ in range(num_windows):
                     with capture_scpi_exchanges() as throughput_exchanges:
@@ -2345,27 +2363,37 @@ class MeasureExecutor(IStepExecutor):
                         )
                     latest_throughput_exchanges = throughput_exchanges
 
-                    # RF KPIs (RSRP/SINR) are normally UE-reported; until that
-                    # path exists we synthesize from target + per-probe pattern
-                    # offset (Phase 2f) when available, falling back to a coarse
-                    # cos(az) approximation when no pattern is loaded.
-                    if gain_offset is not None:
-                        rsrp = ce_base_rsrp + gain_offset + random.gauss(0, 0.3)
-                        sinr = config.target_snr_db + gain_offset * 0.5 + random.gauss(0, 0.5)
-                    else:
-                        az_factor = math.cos(math.radians(azimuth)) * 0.1
-                        rsrp = ce_base_rsrp + az_factor * 5 + random.gauss(0, 0.5)
-                        sinr = config.target_snr_db + az_factor * 3 + random.gauss(0, 0.8)
-
-                    samples_rsrp.append(rsrp)
-                    samples_sinr.append(sinr)
+                    # P1-63: target power / path loss / probe gain describe the
+                    # requested setup; they are not UE RF measurements. Only
+                    # the driver's explicit per-field validity can admit a
+                    # finite value into the formal result.
+                    trusted_rsrp = self._trusted_rf_kpi_value(
+                        metrics,
+                        key="rsrp_dbm",
+                        attribute="rsrp_dbm",
+                    )
+                    trusted_sinr = self._trusted_rf_kpi_value(
+                        metrics,
+                        key="sinr_db",
+                        attribute="sinr_db",
+                    )
+                    trusted_ri = self._trusted_rf_kpi_value(
+                        metrics,
+                        key="rank_indicator",
+                        attribute="rank_indicator",
+                    )
+                    if trusted_rsrp is not None:
+                        samples_rsrp.append(trusted_rsrp)
+                    if trusted_sinr is not None:
+                        samples_sinr.append(trusted_sinr)
+                    if trusted_ri is not None:
+                        samples_ri.append(trusted_ri)
                     trusted_tput = self._trusted_throughput_value(
                         metrics,
                         required_scope=throughput_scope,
                     )
                     if trusted_tput is not None:
                         samples_tput.append(trusted_tput)
-                    samples_ri.append(float(metrics.rank_indicator))
                     # P1 (Codex #126): ThroughputMetrics.mcs_dl 默认 0 —— 真 UXM 不报
                     # DL_MCS 时保持 0, 不能当有效样本 (否则众数 0 < 请求 → 误判 clamp 把
                     # 整组有效测量 abort)。只收真实报告的 (>0); 0/None 都视作"未报" skip。
@@ -2403,13 +2431,17 @@ class MeasureExecutor(IStepExecutor):
                     # loop, but must not enter formal measurement/KPI/report
                     # fields. Provenance is carried at phase and row level.
                     "rsrp_dbm": (
-                        None if measurement_simulated
+                        None if measurement_simulated or not samples_rsrp
                         else sum(samples_rsrp) / len(samples_rsrp)
                     ),
+                    "rsrp_valid": not measurement_simulated and bool(samples_rsrp),
+                    "rsrp_sample_count": len(samples_rsrp),
                     "sinr_db": (
-                        None if measurement_simulated
+                        None if measurement_simulated or not samples_sinr
                         else sum(samples_sinr) / len(samples_sinr)
                     ),
+                    "sinr_valid": not measurement_simulated and bool(samples_sinr),
+                    "sinr_sample_count": len(samples_sinr),
                     "throughput_mbps": (
                         None if measurement_simulated or not samples_tput
                         else sum(samples_tput) / len(samples_tput)
@@ -2424,12 +2456,22 @@ class MeasureExecutor(IStepExecutor):
                     ),
                     "throughput_sample_count": len(samples_tput),
                     "rank_indicator": (
-                        None if measurement_simulated
+                        None if measurement_simulated or not samples_ri
                         else sum(samples_ri) / len(samples_ri)
                     ),
+                    "rank_indicator_valid": (
+                        not measurement_simulated and bool(samples_ri)
+                    ),
+                    "rank_indicator_sample_count": len(samples_ri),
                     "num_samples": len(samples_rsrp),
-                    "rsrp_std_db": None if measurement_simulated else stddev(samples_rsrp),
-                    "sinr_std_db": None if measurement_simulated else stddev(samples_sinr),
+                    "rsrp_std_db": (
+                        None if measurement_simulated or not samples_rsrp
+                        else stddev(samples_rsrp)
+                    ),
+                    "sinr_std_db": (
+                        None if measurement_simulated or not samples_sinr
+                        else stddev(samples_sinr)
+                    ),
                     "throughput_std_mbps": (
                         None
                         if measurement_simulated or not samples_tput
@@ -2457,6 +2499,20 @@ class MeasureExecutor(IStepExecutor):
                     logger.warning(
                         "  azimuth=%.0f°: Tput=N/A（本方位没有显式有效的吞吐 KPI 窗口）",
                         azimuth,
+                    )
+                elif not all(
+                    az.get(flag) is True
+                    for flag in (
+                        "rsrp_valid",
+                        "sinr_valid",
+                        "rank_indicator_valid",
+                    )
+                ):
+                    logger.warning(
+                        "  azimuth=%.0f°: Tput=%.0f Mbps, "
+                        "RF KPI=N/A（缺逐指标真实读数）",
+                        azimuth,
+                        az["throughput_mbps"],
                     )
                 else:
                     logger.info(
@@ -2491,6 +2547,14 @@ class MeasureExecutor(IStepExecutor):
                 config.azimuths_deg,
                 azimuth_results,
                 required_scope=throughput_scope,
+            )
+            rf_kpi_trust = build_rf_kpi_trust(
+                requested_azimuths=config.azimuths_deg,
+                azimuth_results=azimuth_results,
+                source=("simulated" if measurement_simulated else "explicit_real"),
+            )
+            formal_rf_kpi_verified = rf_kpi_trust_is_formally_verified(
+                rf_kpi_trust
             )
 
             # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---
@@ -2534,6 +2598,8 @@ class MeasureExecutor(IStepExecutor):
                 "measurement_verified": not measurement_simulated,
                 "throughput_verified": throughput_verified,
                 "throughput_scope": throughput_scope,
+                "rf_kpi_trust": rf_kpi_trust,
+                "formal_rf_kpi_verified": formal_rf_kpi_verified,
                 "simulated_sources": simulated_sources,
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
@@ -2697,6 +2763,12 @@ class MeasureExecutor(IStepExecutor):
                 0,
                 "⚠️ 至少一个方位没有显式有效的吞吐 KPI 样本：吞吐结论保持 N/A，"
                 "不得将缺测默认值当作 0 Mbps 进入正式判定。",
+            )
+        if not result_payload.get("formal_rf_kpi_verified"):
+            measure_warnings.insert(
+                0,
+                "⚠️ RSRP/SINR/RI 缺少逐指标、逐方位的显式真实读数："
+                "RF KPI 结论保持 N/A，不得由目标配置、默认值或合成值替代。",
             )
         if not (
             result_payload.get("frequency_consistency") or {}
