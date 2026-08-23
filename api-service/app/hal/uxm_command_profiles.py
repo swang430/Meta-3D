@@ -349,9 +349,28 @@ class Uxm5GNRTestAppProfile(UxmTestApp):
 
     MEAS_EVM_START = "MEASure:NR5G:{cell}:PHY:EVM:STARt"
 
-    STATE_SAVE = 'SYSTem:CONFiguration:SAVE "{filepath}"'
-    STATE_LOAD = 'SYSTem:CONFiguration:LOAD "{filepath}"'
-    STATE_LIST = 'MMEMory:CATalog? "D:\\User Files"'
+    # P1-67（2026-08-24）：状态保存/导入换手册真值。旧值
+    # `SYSTem:CONFiguration:SAVE/LOAD` 与 `MMEMory:CATalog?` 在
+    # `Instrument_API_Doc/Keysight UXM NR SCPI/` 全套手册 md + HTML **0 命中**
+    # （编造命令，真机必 -113，"一键配置"从未可能工作过）。
+    # 手册原件 UXM5G_SCPI_06_General_Examples_Shared.md
+    # 「Utility > Export / Import SCPI」节（约 :1179-1250）原文：
+    #   · `SYSTem:SCPI:EXPort` —— "Export (i.e. save) the current application
+    #     state into a SCPI file"
+    #   · `SYSTem:SCPI:IMPort` —— "Import (i.e. load) a SCPI file, recovering
+    #     a previously exported application state"
+    # ⚠ 导入恢复的是**整机应用状态**，且 `SYSTem:SCPI:IMPort:INCLude:PRESet`
+    #   为 ON 时导入前会先复位仪器（原文 "Presets the instrument before
+    #   importing the SCPI file"）—— 语义披露与写后复核在驱动
+    #   `load_state_file` 的 docstring / 实现里。
+    # ⚠ 两条均标 Application Mode `NSA | SA`；本 5G_NR_Test 方言认不认
+    #   未经查证 —— 下发后由驱动读 `SYSTem:SCPI:IMPort:STATus?` + 错误队列
+    #   定案，不靠推断。IRAT 下可用性手册同样未说明 → IRAT profile 保持 None。
+    STATE_SAVE = 'SYSTem:SCPI:EXPort "{filepath}"'
+    STATE_LOAD = 'SYSTem:SCPI:IMPort "{filepath}"'
+    # 手册**没有**文件列表查询命令（`MMEMory:CATalog?` 查无；
+    # 未探测 ≠ 不支持，不猜替代）。
+    STATE_LIST = None
 
     RF_CONNECTOR = "CONFig:NR5G:{cell}:RFSettings:CHANnel"
     RF_PORT_DL = "CONFig:NR5G:{cell}:RFSettings:DL:PORT"

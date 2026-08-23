@@ -1,8 +1,10 @@
 """P1-65 / P1-17: `uxm_fresh_start_truth` 的行为门。
 
 故障：roadmap「Blocked on hardware」P1-17（UXM fresh-start / 状态导入机制真值）
-没有任何 checked-in 载体；驱动 5G profile 的 `STATE_LOAD`（`SYSTem:CONFiguration:LOAD`）/
-`STATE_LIST`（`MMEMory:CATalog?`）手册查无（设计稿 §5 Discovered 2）。
+没有任何 checked-in 载体；P1-65 时驱动 5G profile 的 `STATE_LOAD`（`SYSTem:CONFiguration:LOAD`）/
+`STATE_LIST`（`MMEMory:CATalog?`）手册查无（设计稿 §5 Discovered 2）——
+P1-67 已把 profile 换源为手册机制（SYSTem:SCPI:IMPort/EXPort），本文件的
+对照断言随之改为「序列如实记录 profile 现值、不再报手册查无」。
 
 本序列的契约（设计稿 §1/§2/§3）：
 - 只读：`SYSTem:APPLication:NAME?` / `SYSTem:LICense:AVAilable:ALL?` / `SYSTem:SCPI:FOLDer?`
@@ -172,18 +174,21 @@ def test_readonly_collects_mechanism_truth_and_never_writes():
     assert result.extra["import"]["attempted"] is False
 
 
-def test_readonly_discloses_preset_commands_not_sent_and_driver_discrepancy():
+def test_readonly_discloses_preset_commands_not_sent_and_driver_state_commands():
     bs = _ScriptedBs()
     result = _run(bs)
     assert result.extra["preset_commands_available_not_sent"] == [
         "SYSTem:PRESet:API", "SYSTem:PRESet:FACTory", "SYSTem:PRESet:FULL",
     ]
-    disc = result.extra["driver_state_load_discrepancy"]
-    # 如实记录驱动 5G profile 现用而手册查无的两条（不发）
-    assert disc["STATE_LOAD"] == Uxm5GNRTestAppProfile.STATE_LOAD
-    assert disc["STATE_LIST"] == Uxm5GNRTestAppProfile.STATE_LIST
-    assert disc["manual_hits"] == 0
-    assert disc["sent"] is False
+    # P1-67 换源后：如实记录 profile 现值（动态对照，profile 再漂移这里跟着红）
+    cmds = result.extra["driver_state_commands"]
+    assert cmds["STATE_LOAD"] == Uxm5GNRTestAppProfile.STATE_LOAD
+    assert cmds["STATE_SAVE"] == Uxm5GNRTestAppProfile.STATE_SAVE
+    assert cmds["STATE_LIST"] is None
+    # 行为门：换源后的手册命令不得再被报成「手册查无」（反向假信息）
+    assert "driver_state_load_discrepancy" not in result.extra
+    assert "manual_hits" not in cmds
+    assert "手册查无, 未发" not in result.summary
     _assert_never_sent(bs)
 
 

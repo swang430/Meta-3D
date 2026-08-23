@@ -1,9 +1,9 @@
 """P1-17 现场载体: UXM fresh-start / 状态导入机制真值 (P1-65)。
 
 要回答的问题 (roadmap「Blocked on hardware」P1-17): 现场想把 UXM 拉回一个已知的
-干净状态, 手册给的机制是什么、本机到底可不可用 —— 而**不是**驱动里那两条
-手册查无的命令。本序列默认只读, 把机制可用性采齐; 导入动作只在显式确认
-+ 先查小区状态后才发, 发完读导入状态 + 错误队列 + 复核 TAP 名。
+干净状态, 手册给的机制是什么、本机到底可不可用。(P1-65 时驱动用的两条手册查无
+命令已随 P1-67 换源为同一套手册机制。) 本序列默认只读, 把机制可用性采齐; 导入
+动作只在显式确认 + 先查小区状态后才发, 发完读导入状态 + 错误队列 + 复核 TAP 名。
 
 命令清单 (全部出自本地手册原件 `Instrument_API_Doc/Keysight UXM NR SCPI/`
 `UXM5G_SCPI_06_General_Examples_Shared.md`, 设计稿 §2):
@@ -30,9 +30,10 @@
 **本序列不发**:
 - `SYSTem:PRESet:FULL` / `FACTory` / `API` (06_General.md:9568-9570 命令总表) ——
   破坏性复位, 只记进 `extra["preset_commands_available_not_sent"]` 作手册可用命令;
-- 驱动 5G profile 的 `STATE_LOAD` (`SYSTem:CONFiguration:LOAD "<file>"`) 与
-  `STATE_LIST` (`MMEMory:CATalog? "D:\\User Files"`) —— 六份手册 md **0 命中**
-  (设计稿 §5 Discovered 2), 只如实记进 `extra["driver_state_load_discrepancy"]`。
+- `SYSTem:CONFiguration:LOAD` / `MMEMory:CATalog?` —— 六份手册 md **0 命中**
+  (设计稿 §5 Discovered 2)。P1-65 时驱动 5G profile 曾用它们; P1-67 已换源为
+  本序列采集的这套手册机制 (STATE_LOAD/STATE_SAVE = SYSTem:SCPI:IMPort/EXPort,
+  STATE_LIST=None), profile 现值记进 `extra["driver_state_commands"]` 供现场对照。
 
 方言门: 手册是 Test Application Framework (LTE_NR_IRAT / NSA / NRSA …) 的 SCPI
 参考, `SYSTem:SCPI:*` 标 `NSA | SA`; 5G_NR_Test 方言 (无前缀 `CONFig:` 根, CELL0)
@@ -97,7 +98,7 @@ metadata = SequenceMetadata(
     description=(
         "只读采集手册给的状态导入机制: APPLication:NAME? / LICense:AVAilable:ALL? / "
         "SCPI:FOLDer? / SCPI:IMPort:INCLude:PRESet? / SCPI:IMPort:STATus? / 小区状态; "
-        "如实记录驱动 STATE_LOAD/STATE_LIST 手册查无 (不发)。给了 import_file 且 "
+        "记录驱动 state 命令现值 (P1-67 起即手册机制)。给了 import_file 且 "
         "confirm_action=True 时发 SYSTem:SCPI:IMPort 并读导入状态 + 错误队列 + 复核 TAP; "
         "有 UE 在网时拒绝导入。不发 SYSTem:PRESet:*。只在 LTE_NR_IRAT (BSE:) 方言发命令。"
     ),
@@ -160,14 +161,16 @@ async def run(
         "profile": profile_name,
         "cell": None,
         "preset_commands_available_not_sent": list(_PRESET_COMMANDS_NOT_SENT),
-        # 设计稿 §5 Discovered 2: 驱动 5G profile 现用的两条状态命令手册查无。
-        # 只记录, 不发; 本条不是"仪器不支持", 是"手册里没有这条命令"。
-        "driver_state_load_discrepancy": {
+        # P1-67 已换源: 驱动 5G profile 的 STATE_LOAD/STATE_SAVE 即本序列采集的
+        # 手册机制 (SYSTem:SCPI:IMPort/EXPort), STATE_LIST=None (手册无文件列表
+        # 命令)。P1-65 时代的 driver_state_load_discrepancy (manual_hits:0, 记的
+        # 是当时的 SYSTem:CONFiguration:LOAD / MMEMory:CATalog?) 随之退役 ——
+        # 保留该键会把换源后的手册命令报成「手册查无」, 是反向假信息。
+        "driver_state_commands": {
             "STATE_LOAD": Uxm5GNRTestAppProfile.STATE_LOAD,
+            "STATE_SAVE": Uxm5GNRTestAppProfile.STATE_SAVE,
             "STATE_LIST": Uxm5GNRTestAppProfile.STATE_LIST,
-            "manual_hits": 0,
-            "manual_mechanism": f'{_IMPORT_HEADER} "<file>" + {_IMPORT_STATUS_Q}',
-            "sent": False,
+            "source": "06_General.md「Export / Import SCPI」(P1-67 换源)",
         },
     }
 
@@ -304,7 +307,7 @@ async def run(
         + (f" | 回读报错 {len(readback_errors)} 条 (见 readback_errors; 推断的查询形式被拒 "
            f"≠ 命令不存在)" if readback_errors else "")
         + f" | 手册复位命令 {_PRESET_COMMANDS_NOT_SENT} 本序列不发"
-        + " | 驱动 STATE_LOAD/STATE_LIST 手册查无, 未发"
+        + " | 驱动 state 命令已是手册机制 (P1-67, 见 driver_state_commands)"
     )
 
     # ── 导入路径判定 ──
