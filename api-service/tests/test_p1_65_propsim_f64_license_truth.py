@@ -1,9 +1,10 @@
 """P1-65 / P1-2：F64 许可与校准真值序列的行为门。
 
-故障：驱动连接时靠两条**手册查无**的软探针（`SYSTem:CALibration:USER:LIST?` /
+故障（当时）：驱动连接时靠两条**手册查无**的软探针（`SYSTem:CALibration:USER:LIST?` /
 `OUTPut:INTERFerence:LIST?`）猜许可，每次连接各留一条 -100 在错误队列
 （08-07 实测 269 次连接 = 269 条），而现场没有载体能用手册有的命令把许可/校准
-真值读出来跟驱动自称对账。
+真值读出来跟驱动自称对账。（P1-66 已删除驱动侧探针；本序列保留对账能力，
+`driver_probe_commands_not_in_manual` 记录的即那两条历史探针命令。）
 
 手册依据（Propsim User Reference Rev 10.2）：§20.4.2.4 `SYSTem:INFO?` 尾部
 `<License#1>,…`（原文 "Query returns the basic system info and licenses"）；

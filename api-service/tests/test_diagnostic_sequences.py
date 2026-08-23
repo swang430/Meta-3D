@@ -1188,9 +1188,9 @@ class TestPropsimF64HealthSequence:
     def test_f64_opt_unsupported_is_expected_and_not_a_blocker(self, lab_with_ce, monkeypatch):
         """Real F64 ATE firmware does not implement ``*OPT?``.
 
-        License discovery uses F64 feature probes instead, so this legacy
-        IEEE-488 query may remain visible as unsupported but must not fail
-        the health sequence.
+        License discovery reads the SYSTem:INFO? reply instead (手册
+        §20.4.2.4), so this legacy IEEE-488 query may remain visible as
+        unsupported but must not fail the health sequence.
         """
         broken = "*OPT?"
 

@@ -439,12 +439,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         )
 
         # Calibration-tone 能力: PROPSIM Internal Interference Generator 是
-        # optional license. 默认在 connect() 中通过 *OPT? 探测 (见 base
-        # _probe_installed_options + 本类 _apply_discovered_capabilities).
-        # config 里显式给值 (True/False) 时跳过探测, 用于 mock / CI / 手动
-        # override 场景:
-        #   未设置        → connect() 时探测; 探测前为 None (按无 license 处理)
-        #   True / False  → 显式声明, 跳过探测
+        # optional license. 默认在 connect() 中从 SYSTem:INFO? 的许可清单读出
+        # (手册 §20.4.2.4; 见本类 _probe_installed_options +
+        # _apply_discovered_capabilities). config 里显式给值 (True/False) 时
+        # 跳过应用, 用于 mock / CI / 手动 override 场景:
+        #   未设置        → connect() 时读取; 读取前为 None (按无 license 处理)
+        #   True / False  → 显式声明, 读取结果仅作日志
         explicit = config.get("has_interference_generator")
         self._explicit_interference_gen: bool = explicit is not None
         self.has_interference_generator: Optional[bool] = (
@@ -3520,9 +3520,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """声明本 PROPSIM 的 CE+SA tone 能力.
 
         D 路径 (INTERNAL_CW_GENERATOR) 需要 Internal Interference Generator
-        optional license. has_interference_generator 在 connect() 时由
-        *OPT? 探测填充 (见 _apply_discovered_capabilities); config 显式声明
-        会跳过探测. 探测前 / 未连接时为 None, 按无 license 处理.
+        optional license. has_interference_generator 在 connect() 时从
+        SYSTem:INFO? 许可清单读出 (手册 §20.4.2.4, 见
+        _apply_discovered_capabilities); config 显式声明优先.
+        读取前 / 未连接时为 None, 按无 license 处理.
 
         B 路径 (PASSTHROUGH_ONLY) 任何 PROPSIM 都支持 — 走 BypassMode
         .CALIBRATION (DIAG:SIMU:MODEL:STATIC 3), 全通道等增益等延迟透传.
@@ -3812,7 +3813,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         except Exception as e:
             logger.warning(f"[F64] User alignment query failed: {e}")
             return None
-        name = raw_name.strip().strip('"').strip("'")
+        stripped = raw_name.strip()
+        # P1-66: F64 有时把 `-100,"ATE command not supported"` 这类 SCPI 错误
+        # payload 当**响应串**回来而不是 raise（`_is_unsupported_error_payload`
+        # 的存在理由）。错误 payload 不是 alignment 名 —— 不拦会把它当"有激活
+        # 对齐"，造成能力假阳性。措辞注意：只说"命令未生效/错误 payload 不是值"。
+        if _is_unsupported_error_payload(stripped):
+            logger.warning(
+                f"[F64] SYSTem:CALIBration:USER:GET? returned SCPI error "
+                f"payload {stripped!r} — not an alignment name; treating as "
+                f"no active user alignment"
+            )
+            return None
+        name = stripped.strip('"').strip("'")
         if not name:
             return None
         info = ""
@@ -4673,8 +4686,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         ]
 
         # License-aware: Internal Interference Generator (CW tone source).
-        # has_interference_generator 在 connect() 时由 *OPT? 探测填充
-        # (None = 探测前 / 探测失败, 当作不可用).
+        # has_interference_generator 在 connect() 时从 SYSTem:INFO? 许可
+        # 清单读出 (手册 §20.4.2.4; None = 读取前 / 失败, 当作不可用).
         caps.append(
             InstrumentCapability(
                 name="Internal Interference Generator",
@@ -4694,13 +4707,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
         )
 
-        # 透明声明所有 *OPT? 探测出的选件 — 上层 (lab dashboard / commissioning
-        # 报告) 能直接看到这台 F64 装了哪些 license, 不需要再额外查询.
+        # 透明声明所有从 SYSTem:INFO? 许可清单读出的选件 — 上层 (lab
+        # dashboard / commissioning 报告) 能直接看到这台 F64 装了哪些
+        # license, 不需要再额外查询.
         caps.append(
             InstrumentCapability(
                 name="Installed Options",
                 description=f"{len(self._installed_options)} license token(s) "
-                            f"reported by *OPT?",
+                            f"from SYSTem:INFO?",
                 supported=bool(self._installed_options),
                 parameters={"options": list(self._installed_options)},
             )
@@ -5230,7 +5244,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._remove_capability(CE_INTERFERENCE_GENERATOR)
         logger.info(
             f"[F64] Interference Generator license: "
-            f"{self.has_interference_generator} (probed from {options or '(empty)'})"
+            f"{self.has_interference_generator} "
+            f"(licenses from SYSTem:INFO?: {options or '(empty)'})"
         )
 
     # ──────────────────────────────────────────────────────────────────
@@ -5246,48 +5261,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # had to manually set ``config['has_interference_generator']`` to
     # work around the failure.
     #
-    # The override below replaces ``*OPT?`` with a two-source probe:
+    # The override below reads licenses from ``SYSTem:INFO?`` — the manual
+    # says its reply carries the license list (User Reference Rev 10.2
+    # §20.4.2.4, "Query returns the basic system info and licenses"), and
+    # on-site 2026-08 the real reply contained "AWGN interferences:32".
+    # We scan for known license-related keywords and emit canonical tokens.
     #
-    #   (a) **SYST:INFO? keyword scan** — SYST:INFO? is the one
-    #       confirmed-working introspection query on F64; its text
-    #       contains free-form capability hints. We scan for known
-    #       license-related keywords and emit canonical tokens. Cheap
-    #       and never NAKs (the command itself works).
+    # P1-66: the former step (b) "soft feature probes"
+    # (``SYSTem:CALibration:USER:LIST?`` / ``OUTPut:INTERFerence:LIST?``)
+    # was removed — both commands are absent from the manual (0 hits in
+    # Rev 10.2; NotebookLM 原文核对), each connect left a -100 in the
+    # error queue (269 connects/day observed 2026-08-07), and treating
+    # "any response" as an ACK turned the returned -100 payload into a
+    # license false-positive. User-alignment truth already comes from the
+    # connect() flow itself: ``get_user_alignment_status()``
+    # (``SYSTem:CALIBration:USER:GET?``, §20.4.2.19, empty when not
+    # enabled) → ``_update_user_alignment_capability()``.
     #
-    #   (b) **Soft feature probes** — for each option we care about,
-    #       send a single read-only SCPI that's gated by the same
-    #       license as the feature. If the controller answers, the
-    #       license is installed; if it NAKs with -100/-113, the
-    #       license is absent. Probes are NEVER write commands and
-    #       NEVER mutate device state.
-    #
-    # Adding a new license check is one row in ``_F64_OPTION_PROBES``.
-    # Each entry has a clear ``why`` so the next engineer doesn't have
-    # to guess what feature the probe gates.
-    #
-    # The exact SCPI for each soft probe needs on-site verification
-    # against the F64 firmware — comments below mark each entry's
-    # provenance. If a probe turns out wrong, the worst case is a
-    # false-negative (option not detected, operator falls back to
-    # explicit config), never a false-positive.
-
-    # (canonical_token, probe_scpi, rationale).
-    # canonical_token is the value that lands in self._installed_options;
-    # _apply_discovered_capabilities then maps it onto has_*  flags.
-    _F64_OPTION_PROBES: List[tuple] = [
-        # CAICT to-verify: OUTPut:INTERFerence:LIST? — read-only query
-        # for currently-defined interferer ids. Expected to NAK with
-        # -100 when the K01 (Internal Interference Generator) license
-        # is missing, ACK (possibly with empty/0 payload) when present.
-        # Token "INT-GEN" matches INTERFERENCE_GEN_OPTION_TOKENS.
-        ("INT-GEN", "OUTPut:INTERFerence:LIST?",
-         "K01 Interference Generator — gates set_calibration_tone()"),
-        # SYSTem:CALibration:USER:LIST? — read-only query for stored
-        # user-alignment names. Should NAK without the User Alignment
-        # license; ACK (CSV or empty) when present.
-        ("USER-ALIGN", "SYSTem:CALibration:USER:LIST?",
-         "Integrated Setup Calibration (user alignment) license"),
-    ]
+    # Failure to detect a license here is fail-closed ("license absent");
+    # the operator can override via explicit config.
 
     # Keyword → canonical token. Used by SYST:INFO? scan. All lower-case;
     # match is substring on the lower-cased SYST:INFO? response.
@@ -5299,29 +5291,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         "user alignment": "USER-ALIGN",
     }
 
-    @staticmethod
-    def _looks_like_unsupported_payload(response: str) -> bool:
-        """Delegate to module-level helper so subclasses / tests share
-        the same SCPI-error-payload detection logic. See module docstring
-        on ``_is_unsupported_error_payload`` for the shapes recognised."""
-        return _is_unsupported_error_payload(response)
-
     async def _probe_installed_options(self) -> List[str]:
         """F64-specific replacement for the base class ``*OPT?`` probe.
 
-        Returns a list of canonical option tokens. Failure to detect an
-        option (probe NAKs / SYST:INFO? missing keyword) is treated as
-        "license absent" — safer default than assuming installed.
-
-        Never raises; SYST:INFO? failure is logged + scan skipped, soft-
-        probe failures are silently treated as "feature absent".
+        Single source: SYST:INFO? keyword scan (manual §20.4.2.4 — the
+        reply carries the license list). Returns canonical option tokens.
+        Missing keyword = "license absent" (fail-closed; explicit config
+        can override). Never raises; SYST:INFO? failure is logged and
+        yields an empty list.
         """
         discovered: List[str] = []
         seen: set = set()
 
-        # Step (a): SYST:INFO? keyword scan. SYST:INFO? is the confirmed-
-        # working introspection query (returns the channel-count line we
-        # already parse in connect() — see propsim_f64.py:257-266).
+        # SYST:INFO? keyword scan. SYST:INFO? is the confirmed-working
+        # introspection query (returns the channel-count line we already
+        # parse in connect() — see parse_f64_sys_info).
         try:
             info_raw = await self._query("SYST:INFO?")
             info_lower = (info_raw or "").lower()
@@ -5335,45 +5319,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 extra={"instrument_id": self.instrument_id},
             )
 
-        # Step (b): soft feature probes. One round-trip per option;
-        # don't propagate per-probe failures so a missing license can't
-        # block startup.
-        for token, probe_cmd, rationale in self._F64_OPTION_PROBES:
-            if token in seen:
-                continue
-            try:
-                response = await self._query(probe_cmd)
-            except Exception:
-                # NAK raised / transient I/O — treat as "license absent"
-                # without spamming the log. The probe table is the
-                # source of truth for what's expected to fail.
-                continue
-            if response is None:
-                continue
-            # CRITICAL: F64 sometimes returns the SCPI error payload
-            # ``-100,"ATE command not supported"`` as the response
-            # string instead of raising. (Codex P1 review on PR #15 —
-            # the same controller behaviour the categoriser in
-            # propsim_f64_health._categorize_status already maps to
-            # UNSUPPORTED.) Without this guard we'd credit a license
-            # that's actually missing and later send OUTPut:INTERFerence:*
-            # commands the controller has already said it doesn't
-            # implement.
-            if self._looks_like_unsupported_payload(response):
-                logger.debug(
-                    f"[F64] feature probe '{probe_cmd}' returned SCPI "
-                    f"error payload {response.strip()!r} → {token} absent"
-                )
-                continue
-            discovered.append(token)
-            seen.add(token)
-            logger.debug(
-                f"[F64] feature probe '{probe_cmd}' → {token} ({rationale})"
-            )
-
         self._installed_options = discovered
         logger.info(
-            f"[F64] installed options (feature-probed, not *OPT?): "
+            f"[F64] licenses from SYSTem:INFO? (手册 §20.4.2.4, not *OPT?): "
             f"{discovered or '(none)'}",
             extra={"instrument_id": self.instrument_id},
         )

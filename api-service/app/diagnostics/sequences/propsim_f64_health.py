@@ -2,7 +2,7 @@
 
 Mirrors what ``uxm_scpi_compatibility`` and ``vna_ena_health`` do for the
 baseStation and VNA, but for the F64 — covering both the wide SCPI
-surface (24 critical commands across identification, simulation engine,
+surface (34 curated commands across identification, simulation engine,
 channel filter, calibration, external units) AND the high-value
 read-only driver APIs an operator uses before a real test.
 
@@ -16,7 +16,7 @@ firmware/license mismatches; the functional Phase B catches the
 "header exists but the API path crashes for a different reason" case
 (parser errors, retry-timeout, etc.).
 
-Strategy — Phase A (SCPI surface, ~24 cmds, ~5 s)
+Strategy — Phase A (SCPI surface, 34 cmds, ~5 s)
 -------------------------------------------------
 For each curated SCPI header:
 
@@ -105,9 +105,9 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     # Identification & status — every F64 must answer these.
     ("IDN",                "*IDN?",                            True,  "identification"),
     # Real CAICT F8800A firmware 8.0 returns -100 for *OPT?.  The F64
-    # driver discovers licenses through SYST:INFO? plus feature probes;
+    # driver reads licenses from the SYSTem:INFO? reply (手册 §20.4.2.4);
     # keep this row for evidence, but an unsupported reply is expected.
-    ("OPT",                "*OPT?",                            False, "legacy options query (feature-probed on F64)"),
+    ("OPT",                "*OPT?",                            False, "legacy options query (F64 reads licenses from SYSTem:INFO?)"),
     ("STB",                "*STB?",                            False, "status byte"),
     ("ESR",                "*ESR?",                            False, "event status register"),
     ("ERR",                "SYST:ERR?",                        True,  "error queue read"),
@@ -172,8 +172,10 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     # verification step.
     ("MMEM_CDIR",          "MMEM:CDIR?",                       False, "current mass-memory working directory"),
     ("MMEM_CAT",           "MMEM:CAT?",                        False, "directory listing (used,free,\"name,type,size\",...)"),
-    # Interference generator (license-dependent CW tone path).
-    ("INT_LIST",           "OUTPut:INTERFerence:LIST?",        False, "active interference signals"),
+    # P1-66: 原 INT_LIST 行 (`OUTPut:INTERFerence:LIST?`) 已删 —— 该命令手册
+    # (Rev 10.2) 查无; 干扰源清单的手册命令是 `OUTPut:INTERFerence:GET?`
+    # (§20.4.9.5), 但它要求仿真已加载, health 不保证该前置 ——
+    # `propsim_f64_license_truth` 已按前置正确地探它, 不在这里重复。
     # RSRP measurement subsystem (queries existence, doesn't trigger one).
     ("RSRP_HEADER",        "INP:RSRP:MEAS:STAT?",              False, "RSRP measurement subsystem"),
 ]
@@ -225,7 +227,7 @@ def _categorize_status(err_code: Optional[int]) -> str:
 metadata = SequenceMetadata(
     name="PROPSIM F64 health probe",
     description=(
-        "Two-phase F64 readiness check: (A) probes ~24 critical SCPI "
+        "Two-phase F64 readiness check: (A) probes 34 curated SCPI "
         "headers and classifies each by SYST:ERR?; (B) exercises 5 "
         "read-only driver APIs (runtime env, user alignment, external "
         "units, output calibration, metrics). ~7 s end-to-end. Catches "
@@ -461,7 +463,7 @@ async def run(
     include_supported = bool(params.get("include_supported", False))
     do_functional = bool(params.get("functional_checks", True))
 
-    # Pre-flight: verify IDN says PROPSIM before running 24 probes against
+    # Pre-flight: verify IDN says PROPSIM before running 34 probes against
     # something that might be a different instrument behind the same IP.
     # Two-tier identity gate: IDN first, SYST:INFO? as fallback for the
     # firmware-rebranded case (backported from the FS16 probe — FS16's

@@ -351,24 +351,24 @@ class TestOptionsProbe:
 
     CAICT 2026-05-13 confirmed F64's ATE Server doesn't implement
     ``*OPT?`` — returns -100 (memory ``project_f64_ate_server_capabilities``).
-    F64 now overrides ``_probe_installed_options`` with a feature-probe
-    strategy (SYST:INFO? keyword scan + soft per-feature probes).
+    F64 overrides ``_probe_installed_options`` to read licenses from the
+    SYSTem:INFO? reply (手册 §20.4.2.4 keyword scan; P1-66 删除了手册查无的
+    soft feature probes).
 
     Token-shape pinning for the old ``*OPT?`` CSV path moved to
-    ``tests/test_f64_license_probe.py`` against the new probe surface.
+    ``tests/test_f64_license_probe.py`` against the SYSTem:INFO? surface.
     The remaining cases here pin the **outcome contract** that must
-    survive any future probe replacement: explicit config overrides
-    discovery, probe failure doesn't break connect, empty discovery
+    survive any future discovery replacement: explicit config overrides
+    discovery, discovery failure doesn't break connect, empty discovery
     means "no license".
     """
 
     @pytest.mark.asyncio
-    async def test_probe_token_match_is_case_insensitive(self):
-        drv, visa = _make_driver()
-        visa.query.return_value = "k01,foo"  # lower-case
+    async def test_apply_token_match_is_case_insensitive(self):
+        """token → has_* 映射大小写不敏感 (apply 侧 upper 后取交集)。"""
+        drv, _ = _make_driver()
 
-        opts = await drv._probe_installed_options()
-        await drv._apply_discovered_capabilities(opts)
+        await drv._apply_discovered_capabilities(["k01"])  # lower-case
 
         assert drv.has_interference_generator is True
 

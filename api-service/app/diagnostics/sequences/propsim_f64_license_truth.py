@@ -1,11 +1,12 @@
 """F64 许可 / 校准 / 用户对齐 / 干扰源真值读取（`propsim_f64_license_truth`，P1-65 / P1-2）。
 
-故障：驱动连接路径靠两条**手册查无**的软探针猜许可 ——
+故障（P1-65 时；**P1-66 已修驱动**）：驱动连接路径曾靠两条**手册查无**的软探针猜许可 ——
 `SYSTem:CALibration:USER:LIST?`（USER-ALIGN）/ `OUTPut:INTERFerence:LIST?`（INT-GEN），
-驱动源码注释自承 "CAICT to-verify"；现场每次连接各留一条 -100 "ATE command not supported"
-在错误队列（2026-08-07 实测 269 次连接 = 269 条）。那个 -100 是**命令编出来的**，
+当时驱动源码注释自承 "CAICT to-verify"（该探针表已随 P1-66 删除，connect 只扫
+SYSTem:INFO?）；现场每次连接各留一条 -100 "ATE command not supported" 在错误队列
+（2026-08-07 实测 269 次连接 = 269 条）。那个 -100 是**命令编出来的**，
 不是"该机不支持"。本序列用手册有的命令把真值读出来，跟驱动自称的 `_installed_options`
-对账；**绝不发那两条探针**（设计稿 §5 Discovered 1，本片不改驱动）。
+对账；**绝不发那两条探针**（P1-65 设计稿 §5 Discovered 1 只建本序列；P1-66 删了驱动探针）。
 
 **只读**，每条命令旁注手册章节（Propsim User Reference Rev 10.2）：
 
@@ -71,8 +72,9 @@ metadata = SequenceMetadata(
     description=(
         "只读：用手册有的命令读许可列表（SYSTem:INFO? 尾部）、校准列表/有效性/当前校准、"
         "用户对齐状态；仿真已加载时再读干扰源列表（OUTPut:INTERFerence:GET?）。"
-        "把驱动自称的 _installed_options 与手册列表对账，并报告驱动连接时发的两条"
-        "手册查无的探针命令（本序列绝不发它们）。结尾读 SYSTem:ERRor? 零残留。"
+        "把驱动自称的 _installed_options 与手册列表对账，并报告 P1-66 前驱动连接时"
+        "曾发的两条手册查无探针命令（驱动已删除，本序列也绝不发它们，供历史记录对照）。"
+        "结尾读 SYSTem:ERRor? 零残留。"
     ),
     required_categories=["channelEmulator"],
     params_schema=[],
@@ -89,17 +91,20 @@ _USER_INFO = "SYSTem:CALIBration:USER:INFO?"       # §20.4.2.21
 _INTERF_GET = "OUTPut:INTERFerence:GET?"           # §20.4.9.5
 _RESIDUE_CAP = 100
 
-# 驱动 `_F64_OPTION_PROBES` 连接时发的两条命令 —— Propsim User Reference Rev 10.2 全文 0 命中
-# （§20.4.2.x 用户对齐子树无 USER:LIST?；§20.4.9 干扰源列表是 GET? 不是 LIST?）。
-# 本序列**只报告、绝不发**。措辞恒为"手册查无"，不说"仪器不支持"。
+# P1-66 前驱动 `_F64_OPTION_PROBES` 连接时曾发的两条命令 —— Propsim User Reference
+# Rev 10.2 全文 0 命中（§20.4.2.x 用户对齐子树无 USER:LIST?；§20.4.9 干扰源列表是
+# GET? 不是 LIST?）。P1-66 已把探针从驱动删除（connect 只扫 SYSTem:INFO?）；本条
+# 保留是为对照历史 DiagnosticRun。本序列**只报告、绝不发**。措辞恒为"手册查无"，
+# 不说"仪器不支持"。
 _DRIVER_PROBES_NOT_IN_MANUAL: Tuple[str, ...] = (
     "SYSTem:CALibration:USER:LIST?",
     "OUTPut:INTERFerence:LIST?",
 )
 _PROBE_NOTE = (
-    "驱动连接时发的这两条探针命令手册查无（Rev 10.2 全文无此条目）；现场回的 -100 "
-    "是命令编出来的结果，不能据此断言仪器缺少对应许可。许可真值看 SYSTem:INFO? 尾部，"
-    "用户对齐看 USER:GET?，干扰源看 INTERFerence:GET?。本序列未发这两条。"
+    "这两条探针命令手册查无（Rev 10.2 全文无此条目）；P1-66 前驱动连接时曾发它们，"
+    "历史记录里回的 -100 是命令编出来的结果，不能据此断言仪器缺少对应许可；P1-66 起"
+    "驱动已不发。许可真值看 SYSTem:INFO? 尾部，用户对齐看 USER:GET?，干扰源看 "
+    "INTERFerence:GET?。本序列未发这两条。"
 )
 
 
@@ -417,7 +422,7 @@ async def run(
         f"；对账：驱动自称 {disc['driver_tokens'] or '(无)'}，手册许可 {len(licenses)} 条，"
         f"差异 {n_diff} 项（驱动有手册无 {disc['driver_claims_without_manual_hit']}，"
         f"手册有驱动无 {disc['manual_hits_without_driver_token']}）；"
-        f"驱动探针命令手册查无 {list(_DRIVER_PROBES_NOT_IN_MANUAL)}，本序列未发"
+        f"历史探针命令手册查无 {list(_DRIVER_PROBES_NOT_IN_MANUAL)}（P1-66 已从驱动删除），本序列未发"
     )
     if rec.failed:
         n_payload = len(rec.error_payloads)
