@@ -117,6 +117,16 @@ PRECHECK 的 `overall_pass` 改为三态：
   GREEN focused 19 passed，相关 report/history/rule gates 226 passed。
 - `44028f8`：GUI 顶部绿/红/黄三态与独立 proxy 展示；RED 因 presenter 缺失失败，GREEN
   契约 4 passed，production build 通过。
+- `287074c` / `93d5c21`：三条 mock/random 静区写入口在持久化前 fail-closed；历史详情、
+  状态、报告与下载统一读时降级并要求 schema 2 的净化 manifest。
+- `779bb6a`～`bb73b38`：会话请求静区但没有正式记录时，生命周期和完整报告都保持
+  undetermined；按类型过滤的报告只计算所选类型，不把被过滤的静区 scope 混入摘要。
+- `9f624a7`：GUI 仅过滤旧静区/proxy/fallback 判词，保留暗室与仪表在线等运行审计消息；
+  手写 nullable 类型与后端契约对齐。
+
+最终 fresh 独立内审为 P1/P2/P3=0。验证：受影响链 198 passed，全后端
+4379 passed / 5 skipped，GUI 静区契约 14 passed 且 production build 通过；compileall、
+单一 Alembic head、diff-check 均通过。
 
 真实静区多点扫描的硬件写方仍未实现；缺厘米单位线性 XY 平台的边界继续标记为
 Hardware Blocked。本片没有新增 SCPI、没有晋升历史校准行，也没有产生正式 measured 状态。
