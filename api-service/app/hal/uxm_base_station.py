@@ -2948,14 +2948,20 @@ class RealUxmDriver(BaseStationDriver):
             # 缓存 OFF 可能是"读不到"而非真 OFF, 漏关比多关贵)。
             await self.stop_signaling()
 
-            # 设置长超时（导入恢复整机应用状态，需要时间）
+            # 设置长超时（导入恢复整机应用状态，需要时间）。异常路径也必须
+            # 恢复 —— 否则本会话后续所有 SCPI 都继承 60s 超时（与 :1712
+            # set_cell_config 的 *OPC? 同法）。
             old_timeout = self._visa_session.timeout
             self._visa_session.timeout = VISA_TIMEOUT_STATE_LOAD
-
-            self._write(load_cmd.format(filepath=filepath))
-            self._query("*OPC?")
-
-            self._visa_session.timeout = old_timeout
+            try:
+                self._write(load_cmd.format(filepath=filepath))
+                self._query("*OPC?")
+            finally:
+                # 静默重连失败会把 _visa_session 置 None 再重抛原异常 ——
+                # 此时恢复会抛 AttributeError 把原始异常吃掉；会话都没了,
+                # 不存在超时级联, 跳过恢复。
+                if self._visa_session is not None:
+                    self._visa_session.timeout = old_timeout
 
             # 复核 ①: IMPort:STATus? — 保守判法, 见 docstring。
             status_raw = (

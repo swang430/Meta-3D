@@ -34,7 +34,7 @@ from typing import Dict, List
 
 import pytest
 
-from app.hal.uxm_base_station import RealUxmDriver
+from app.hal.uxm_base_station import VISA_TIMEOUT_STATE_LOAD, RealUxmDriver
 from app.hal.uxm_command_profiles import (
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
@@ -130,6 +130,50 @@ class TestConfigureStateFileManualTruth:
         assert 'SYSTem:SCPI:IMPort "N78_100M.scpi"' in sess.written
         assert "SYSTem:SCPI:IMPort:STATus?" in sess.queried
         _assert_no_fabricated(sess)
+
+    @pytest.mark.asyncio
+    async def test_timeout_restored_when_import_write_raises(self):
+        """长超时（VISA_TIMEOUT_STATE_LOAD=60s）设置后 IMPort 写入抛异常，
+        超时必须恢复原值 —— 否则本会话后续所有 SCPI 都继承 60s 超时（级联慢）。
+        触发点选 IMPort 写入本身：它严格发生在超时设置之后，避免更早的
+        stop_signaling 阶段抛异常造成「超时从未被设置」的假绿。"""
+        d, sess = _mk_5g(dict(_CLEAN_REPLIES))
+        sess.timeout = 4321  # 非默认值：区分「恢复原值」与「写死默认」(内审 F2)
+        seen_at_import: List[int] = []
+        orig_write = sess.write
+
+        def _boom(cmd: str) -> None:
+            if "SYSTem:SCPI:IMPort" in cmd:
+                seen_at_import.append(sess.timeout)
+                raise IOError("VISA write failed mid-import")
+            orig_write(cmd)
+
+        sess.write = _boom
+        ok = await d.configure({"state_file": "a.scpi"})
+        assert ok is False
+        # 导入窗口内确实抬到长超时（内审 F3：删设置行 / *OPC? 挪出窗口在这红）
+        assert seen_at_import == [VISA_TIMEOUT_STATE_LOAD]
+        assert sess.timeout == 4321, "异常路径长超时未恢复原值"
+
+    @pytest.mark.asyncio
+    async def test_original_error_not_masked_when_session_lost_mid_import(self):
+        """IMPort 写入断链、静默重连失败把 `_visa_session` 置 None 时，finally
+        的超时恢复不得抛 `NoneType` AttributeError 吃掉原始异常 —— 失败归因
+        (`_last_error`) 必须是断链原因，现场靠它区分「链路断」和「代码崩」。"""
+        d, sess = _mk_5g(dict(_CLEAN_REPLIES))
+        orig_write = sess.write
+
+        def _boom(cmd: str) -> None:
+            if "SYSTem:SCPI:IMPort" in cmd:
+                d._visa_session = None  # 模拟重连失败后的会话丢失
+                raise ConnectionError("link lost mid-import")
+            orig_write(cmd)
+
+        sess.write = _boom
+        ok = await d.configure({"state_file": "a.scpi"})
+        assert ok is False
+        assert "link lost mid-import" in (d._last_error or "")
+        assert "NoneType" not in (d._last_error or "")
 
     @pytest.mark.asyncio
     async def test_status_check_happens_after_import_write(self):
