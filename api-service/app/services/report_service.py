@@ -1100,23 +1100,63 @@ class ReportTemplateService:
         return True
 
 
+# P1-72 对比指标集：取自 execution.measurements.phases.analysis 的真实落库键
+# （2026-08-25 生产库 45 条 completed 行实查所得，不是设计臆断）
+COMPARISON_METRIC_KEYS = (
+    "avg_throughput_mbps",
+    "throughput_ratio",
+    "rsrp_variance_db",
+    "avg_sinr_db",
+)
+
+
 class ReportComparisonService:
-    """Service for managing report comparisons"""
+    """Service for managing report comparisons
+
+    P1-72 对比换源：新建与分析一律 execution 级（TestExecution 是正式测试的
+    执行记录层）；plan 级历史行只读（计划链已封存）。全部参与 execution 同属
+    一个 TestCase 时，分析同时落一行 repeatability_tests 对齐记录（设计稿 §5）。
+    """
 
     def create_comparison(
         self,
         db: Session,
         name: str,
-        baseline_plan_id: UUID,
-        comparison_plan_ids: List[UUID],
+        baseline_execution_id: UUID,
+        comparison_execution_ids: List[UUID],
         created_by: str,
         **kwargs
     ) -> ReportComparison:
-        """Create a new comparison analysis"""
+        """Create a new execution-level comparison（P1-72 换源）。
+
+        fail-loud：任何参与 execution 不存在即拒建，不留悬空对比。
+        """
+        all_ids = [baseline_execution_id, *comparison_execution_ids]
+        # 内审 F2：自比/重复 execution 会落出 spread=0 的假"完美重复性"——
+        # 比造显著性更隐蔽的假数据，拒建
+        if len(set(all_ids)) != len(all_ids):
+            raise ValueError(
+                "参与 execution 有重复（baseline 不得出现在对比列表、"
+                "列表内不得重复）—— 自比会产出 spread=0 的假重复性记录"
+            )
+        found = {
+            row.id
+            for row in db.query(TestExecution)
+            .filter(TestExecution.id.in_(all_ids))
+            .all()
+        }
+        missing = [str(i) for i in all_ids if i not in found]
+        if missing:
+            raise ValueError(
+                f"TestExecution 不存在: {missing} —— 不建悬空对比"
+            )
+
         comparison = ReportComparison(
             name=name,
-            baseline_plan_id=baseline_plan_id,
-            comparison_plan_ids=comparison_plan_ids,
+            baseline_execution_id=baseline_execution_id,
+            comparison_execution_ids=[str(i) for i in comparison_execution_ids],
+            # 封存列 NOT NULL —— 新行恒写空数组，见模型注释
+            comparison_plan_ids=[],
             created_by=created_by,
             **kwargs
         )
@@ -1148,29 +1188,189 @@ class ReportComparisonService:
         query = query.order_by(ReportComparison.created_at.desc())
         return query.offset(skip).limit(limit).all()
 
+    @staticmethod
+    def _extract_execution_metrics(execution: TestExecution) -> Dict[str, Any]:
+        """从 execution.measurements.phases.analysis 提对比指标 + provenance。
+
+        fail-loud：无 analysis 数据的 execution 不可对比（不猜、不补零）。
+        """
+        measurements = execution.measurements or {}
+        analysis = (measurements.get("phases") or {}).get("analysis") or {}
+        # 内审 F5：analysis 存在但 4 个对比指标键全缺 → 同样无可比数据，
+        # 不产出"formal 却零指标"的空壳对比
+        if not analysis or all(
+            analysis.get(k) is None for k in COMPARISON_METRIC_KEYS
+        ):
+            raise ValueError(
+                f"execution {execution.id} 无 measurements.phases.analysis "
+                f"对比指标（status={execution.status}）—— 无指标可对比，"
+                f"不生成对比结果"
+            )
+        return {
+            "execution_id": str(execution.id),
+            "test_case_id": (
+                str(execution.test_case_id) if execution.test_case_id else None
+            ),
+            "status": execution.status,
+            "started_at": (
+                execution.started_at.isoformat() if execution.started_at else None
+            ),
+            "metrics": {k: analysis.get(k) for k in COMPARISON_METRIC_KEYS},
+            "provenance": {
+                "verdict": analysis.get("verdict"),
+                "measurement_verified": analysis.get("measurement_verified"),
+                "throughput_verified": analysis.get("throughput_verified"),
+                "rf_kpi_verified": analysis.get("rf_kpi_verified"),
+            },
+        }
+
     def perform_comparison_analysis(
         self,
         db: Session,
         comparison_id: UUID
     ) -> Optional[ReportComparison]:
-        """
-        Perform statistical comparison analysis
+        """execution 级对比分析（P1-72 实现，原占位符）。
 
-        This is a placeholder for actual comparison logic.
-        In production, this would:
-        1. Fetch data from baseline and comparison test plans
-        2. Perform statistical tests (t-test, ANOVA, etc.)
-        3. Calculate summary statistics
-        4. Identify significant differences
-        5. Generate comparison charts
+        产出：comparison_results（baseline/逐项指标/差分/formal 判定）+
+        summary_statistics（各指标 mean/min/max/spread）。
+        significant_differences **不写** —— 每个 execution 是单次运行，
+        没有分布，t-test/ANOVA 会制造假显著性（P1-64 同母题：不造数）。
+        全部参与 execution 同属一个 TestCase 时，落一行 repeatability_tests
+        对齐记录（设计稿 §5）。
         """
         comparison = self.get_comparison(db, comparison_id)
         if not comparison:
             return None
+        if comparison.baseline_execution_id is None:
+            raise ValueError(
+                "plan 级历史对比不可分析：计划链已封存（ARCH-1 S4），"
+                "请新建 execution 级对比（P1-72）"
+            )
 
-        # TODO: Implement actual comparison analysis
-        logger.info(f"Performing comparison analysis: {comparison_id}")
+        # 内审 F3：重分析（重试/双击）不许增殖对齐行 —— 记住上一轮落的行，
+        # 本轮落新行前删旧行，保持 1 comparison ↔ ≤1 对齐行
+        previous_repeatability_id = (comparison.comparison_results or {}).get(
+            "repeatability_test_id"
+        )
 
+        ordered_ids = [comparison.baseline_execution_id] + [
+            UUID(str(i)) for i in (comparison.comparison_execution_ids or [])
+        ]
+        rows = {
+            row.id: row
+            for row in db.query(TestExecution)
+            .filter(TestExecution.id.in_(ordered_ids))
+            .all()
+        }
+        missing = [str(i) for i in ordered_ids if i not in rows]
+        if missing:
+            raise ValueError(f"TestExecution 不存在: {missing} —— 对比无法分析")
+
+        entries = [
+            self._extract_execution_metrics(rows[i]) for i in ordered_ids
+        ]
+        baseline_entry, compare_entries = entries[0], entries[1:]
+
+        deltas = []
+        for entry in compare_entries:
+            per_metric = {}
+            for key in COMPARISON_METRIC_KEYS:
+                base_v = baseline_entry["metrics"].get(key)
+                comp_v = entry["metrics"].get(key)
+                per_metric[key] = (
+                    comp_v - base_v
+                    if isinstance(base_v, (int, float))
+                    and isinstance(comp_v, (int, float))
+                    and not isinstance(base_v, bool)
+                    and not isinstance(comp_v, bool)
+                    else None
+                )
+            deltas.append(
+                {"execution_id": entry["execution_id"], "deltas": per_metric}
+            )
+
+        formal = all(
+            entry["provenance"].get("measurement_verified") is True
+            for entry in entries
+        )
+
+        comparison.comparison_results = {
+            "mode": "execution",
+            "baseline": baseline_entry,
+            "comparisons": compare_entries,
+            "deltas": deltas,
+            "formal": formal,
+            "formal_note": (
+                None if formal else
+                "至少一个 execution 的测量含模拟仪器 provenance —— "
+                "本对比不构成正式结论"
+            ),
+        }
+
+        summary: Dict[str, Any] = {}
+        for key in COMPARISON_METRIC_KEYS:
+            values = [
+                entry["metrics"].get(key)
+                for entry in entries
+                if isinstance(entry["metrics"].get(key), (int, float))
+                and not isinstance(entry["metrics"].get(key), bool)
+            ]
+            if values:
+                summary[key] = {
+                    "n": len(values),
+                    "mean": sum(values) / len(values),
+                    "min": min(values),
+                    "max": max(values),
+                    "spread": max(values) - min(values),
+                }
+        comparison.summary_statistics = summary
+
+        case_ids = {entry["test_case_id"] for entry in entries}
+        repeatability_id = None
+        if len(case_ids) == 1 and None not in case_ids:
+            from app.models.calibration import RepeatabilityTest
+
+            if previous_repeatability_id is not None:
+                stale = db.get(RepeatabilityTest, UUID(previous_repeatability_id))
+                if stale is not None:
+                    db.delete(stale)
+
+            repeatability = RepeatabilityTest(
+                test_type="execution_metrics",
+                measurements=[
+                    {
+                        "run_number": index + 1,
+                        "execution_id": entry["execution_id"],
+                        "metrics": entry["metrics"],
+                    }
+                    for index, entry in enumerate(entries)
+                ],
+                num_runs=len(entries),
+                test_case_id=UUID(baseline_entry["test_case_id"]),
+                execution_ids=[entry["execution_id"] for entry in entries],
+                metric_deltas={
+                    "baseline_execution_id": baseline_entry["execution_id"],
+                    "deltas": deltas,
+                    "formal": formal,
+                },
+                tested_by=comparison.created_by,
+            )
+            db.add(repeatability)
+            db.flush()
+            repeatability_id = str(repeatability.id)
+            # 重新赋值而非原地加键：flush 已清脏标记，普通 JSON 列不追踪
+            # 原地变更，原地加键会在 refresh 后静默丢失（门测试抓出）
+            comparison.comparison_results = {
+                **comparison.comparison_results,
+                "repeatability_test_id": repeatability_id,
+            }
+
+        db.commit()
+        db.refresh(comparison)
+        logger.info(
+            "Comparison analysis %s: %d executions, formal=%s, repeatability=%s",
+            comparison_id, len(entries), formal, repeatability_id,
+        )
         return comparison
 
 

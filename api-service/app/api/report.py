@@ -356,15 +356,29 @@ def create_comparison(
     comparison: ReportComparisonCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new comparison analysis"""
-    return comparison_service.create_comparison(
-        db=db,
-        name=comparison.name,
-        baseline_plan_id=comparison.baseline_plan_id,
-        comparison_plan_ids=comparison.comparison_plan_ids,
-        created_by=comparison.created_by,
-        **comparison.model_dump(exclude={"name", "baseline_plan_id", "comparison_plan_ids", "created_by"}, exclude_unset=True)
-    )
+    """Create a new execution-level comparison（P1-72 对比换源）。
+
+    参与 execution 必须全部存在，否则 422 fail-loud。
+    """
+    try:
+        return comparison_service.create_comparison(
+            db=db,
+            name=comparison.name,
+            baseline_execution_id=comparison.baseline_execution_id,
+            comparison_execution_ids=comparison.comparison_execution_ids,
+            created_by=comparison.created_by,
+            **comparison.model_dump(
+                exclude={
+                    "name", "baseline_execution_id",
+                    "comparison_execution_ids", "created_by",
+                },
+                exclude_unset=True,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
 
 
 @router.get("/comparisons/{comparison_id}", response_model=ReportComparisonResponse)
@@ -410,8 +424,18 @@ def analyze_comparison(
     comparison_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Perform statistical comparison analysis"""
-    comparison = comparison_service.perform_comparison_analysis(db, comparison_id)
+    """Perform execution-level comparison analysis（P1-72 实现）。
+
+    产出指标差分 + provenance formal 判定；全部 execution 同属一个 TestCase
+    时同步落 repeatability_tests 对齐记录。plan 级历史对比 / 缺指标的
+    execution → 422 fail-loud。
+    """
+    try:
+        comparison = comparison_service.perform_comparison_analysis(db, comparison_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
     if not comparison:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

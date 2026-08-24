@@ -89,20 +89,29 @@ class RepeatabilityTestRequest(BaseModel):
 
 
 class RepeatabilityTestResponse(BaseModel):
-    """Response from repeatability test"""
+    """Response from repeatability test
+
+    P1-72 起本表双形态：历史 TRP/TIS mock 行填 dBm 统计列；
+    execution_metrics 对齐行这些列为 NULL（无 dBm 语义、无判据不造判决），
+    改 Optional —— 否则首行对齐记录落库后 GET 列表整个 500（内审 F1）。
+    """
     id: UUID
     test_type: str
     num_runs: int
-    mean_dbm: float
-    std_dev_db: float
-    coefficient_of_variation: float
-    min_dbm: float
-    max_dbm: float
-    range_db: float
-    validation_pass: bool
-    threshold_db: float
+    mean_dbm: Optional[float] = None
+    std_dev_db: Optional[float] = None
+    coefficient_of_variation: Optional[float] = None
+    min_dbm: Optional[float] = None
+    max_dbm: Optional[float] = None
+    range_db: Optional[float] = None
+    validation_pass: Optional[bool] = None
+    threshold_db: Optional[float] = None
     measurements: List[Dict[str, Any]]
     tested_at: UTCDateTime
+    # P1-72 execution 对齐行字段（历史行为 None）
+    test_case_id: Optional[UUID] = None
+    execution_ids: Optional[List[UUID]] = None
+    metric_deltas: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True

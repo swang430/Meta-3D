@@ -273,9 +273,13 @@ class ReportComparison(Base):
     name = Column(String(255), nullable=False, comment="Comparison name")
     description = Column(Text, comment="Comparison description")
 
-    # Compared items (test plans or executions)
-    baseline_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), comment="Baseline test plan")
-    comparison_plan_ids = Column(JSON, nullable=False, comment="Array of test plan UUIDs to compare")
+    # Compared items —— P1-72 起对比换源 execution 级（TestCase→TestExecution
+    # 两层架构）：新建对比一律走 execution 列；plan 两列只读封存（计划链已拆，
+    # 历史 0 行，保留仅为兼容潜在旧数据形态），新代码不要写它们。
+    baseline_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), comment="[封存] Baseline test plan（P1-72 起只读，新建对比走 baseline_execution_id）")
+    comparison_plan_ids = Column(JSON, nullable=False, comment="[封存] Array of test plan UUIDs（P1-72 起只读，新行恒写 []）")
+    baseline_execution_id = Column(UUID(as_uuid=True), ForeignKey('test_executions.id'), comment="Baseline test execution（P1-72 对比换源）")
+    comparison_execution_ids = Column(JSON, comment="Array of test execution UUIDs to compare（P1-72 对比换源）")
 
     # Comparison configuration
     comparison_metrics = Column(JSON, comment="Metrics to compare: [throughput, latency, ...]")

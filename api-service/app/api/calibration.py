@@ -28,7 +28,6 @@ from app.schemas.calibration import (
 from app.services.system_calibration import (
     TRPCalibrationService,
     TISCalibrationService,
-    RepeatabilityTestService,
     CalibrationCertificateService,
 )
 from app.services.comparability_test import ComparabilityTestService
@@ -172,21 +171,21 @@ async def execute_repeatability_test(
     - TRP: σ < 0.3 dB
     - TIS: σ < 0.5 dB
     - EIS: σ < 0.5 dB
+
+    P1-72 起恒 503：本口唯一实现是 MockInstrumentOrchestrator 无条件合成
+    N 次测量落库（无 provenance）——repeatability_tests 已激活为「同 TestCase
+    多 execution 指标对齐」的正式载体，不允许 mock 合成行混入。TRP/TIS
+    重复性真实测量路径落地时再复活（届时带 use_mock provenance）。
     """
-    instruments = MockInstrumentOrchestrator()
-    service = RepeatabilityTestService(instruments)
-
-    test_result = await service.execute_repeatability_test(
-        db=db,
-        test_type=request.test_type,
-        dut_model=request.dut_model,
-        dut_serial=request.dut_serial,
-        num_runs=request.num_runs,
-        frequency_mhz=request.frequency_mhz,
-        tested_by=request.tested_by
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "重复性测试未执行：本端点仅有 mock 合成实现（无真实仪器路径、"
+            "无 provenance）；repeatability_tests 表已是正式对齐记录载体，"
+            "不生成模拟数值。execution 级重复性走 "
+            "POST /reports/comparisons + /analyze。"
+        ),
     )
-
-    return test_result
 
 
 @router.get("/repeatability", response_model=List[RepeatabilityTestResponse])
@@ -264,18 +263,23 @@ def generate_certificate(
     """
     service = CalibrationCertificateService()
 
-    certificate = service.generate_certificate(
-        db=db,
-        trp_calibration_id=str(request.trp_calibration_id),
-        tis_calibration_id=str(request.tis_calibration_id),
-        repeatability_test_id=str(request.repeatability_test_id),
-        lab_name=request.lab_name,
-        lab_address=request.lab_address,
-        lab_accreditation=request.lab_accreditation,
-        calibrated_by=request.calibrated_by,
-        reviewed_by=request.reviewed_by,
-        validity_months=request.validity_months
-    )
+    try:
+        certificate = service.generate_certificate(
+            db=db,
+            trp_calibration_id=str(request.trp_calibration_id),
+            tis_calibration_id=str(request.tis_calibration_id),
+            repeatability_test_id=str(request.repeatability_test_id),
+            lab_name=request.lab_name,
+            lab_address=request.lab_address,
+            lab_accreditation=request.lab_accreditation,
+            calibrated_by=request.calibrated_by,
+            reviewed_by=request.reviewed_by,
+            validity_months=request.validity_months
+        )
+    except ValueError as exc:
+        # 输入类拒绝（记录缺失 / execution_metrics 对齐行）呈现为 422，
+        # 不是 500（轻量复核 F1，与 report.py create_comparison 同形）
+        raise HTTPException(status_code=422, detail=str(exc))
 
     # Generate PDF
     pdf_generator = PDFCertificateGenerator()
