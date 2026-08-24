@@ -5,13 +5,15 @@
 真建拆一次 F64 socket 并跑一遍 `_apply_session_reset`（清 6 个缓存字段）。
 一次 32 探头 × 2 极化的 path-loss 作业 = 64 次建拆；方向图按角度点计更甚。
 
-本文件的 5 条测试对应 5 个作业入口（三类作业）：
+本文件的 4 条正向测试对应 4 个作业入口（两类作业）：
 
 1. 方向图  `PatternCalibrationService._real_pattern_measurements`
-2. QZ 校验 `QuietZoneValidationService.run_xpd_validation`
-3. path-loss `ProbePathLossCalibrationService.start_calibration`
-4. path-loss `ProbePathLossCalibrationService.start_calibration_for_lab_profile`
-5. path-loss `MultiFrequencyPathLossService.calibrate_frequency_sweep`
+2. path-loss `ProbePathLossCalibrationService.start_calibration`
+3. path-loss `ProbePathLossCalibrationService.start_calibration_for_lab_profile`
+4. path-loss `MultiFrequencyPathLossService.calibrate_frequency_sweep`
+
+（原第 2 条 QZ XPD 载体随 P1-71 的 run_xpd_validation 移除而删；
+租约嵌套性质由其余 4 个入口继续钉着。）
 
 断言是**行为**不是源码 grep：用引用计数桩替换 `instrument_test_lease`，
 如实模拟 `hold()` 的嵌套语义（depth 0→1 = 真 acquire，1→0 = 真 release，
@@ -21,7 +23,7 @@
   B. 每次点级测量发生时 depth >= 1（所有点都在作业级租约持有期间）。
 
 变异（摘掉任一入口的外层租约）→ 对应测试的断言 A 变红：
-方向图 / XPD 桩在 primitive 上，退化回逐点取放 acquires == 点数 != 1；
+方向图桩在 primitive 上，退化回逐点取放 acquires == 点数 != 1；
 path-loss 三入口桩在 `_real_path_loss_measurement_via_ce_sa`（内层 wrapper 不跑），
 红的形态是 acquires == releases == 0（内审 F4 实跑纠正叙述，门的判据不变）。
 """
@@ -225,38 +227,6 @@ async def test_pattern_scan_holds_one_task_level_lease(lease, monkeypatch):
     )
     assert all(d >= 1 for d in depths), (
         f"有角度点的测量发生在作业级租约之外: depths={depths}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 2. QZ XPD 校验：co + cross 两次 = 一次作业
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_xpd_validation_holds_one_task_level_lease(
-    lease, db, chamber, monkeypatch
-):
-    from app.services.quiet_zone_validation_service import QuietZoneValidationService
-
-    depths = _stub_inner_tone(monkeypatch, lease)
-
-    svc = QuietZoneValidationService(db, use_mock=False)
-    result = await svc.run_xpd_validation(
-        chamber_id=chamber.id,
-        frequency_mhz=3500.0,
-        sgh_model="SGH-01",
-        sgh_gain_dbi=10.0,
-    )
-
-    assert result.success
-    assert len(depths) == 2
-    assert lease.acquires == 1 and lease.releases == 1, (
-        "一次 XPD 校验（co + cross 两次采集）必须只真取/放一次仪表控制权 —— "
-        f"实际 acquires={lease.acquires} releases={lease.releases}"
-    )
-    assert all(d >= 1 for d in depths), (
-        f"有采集发生在作业级租约之外: depths={depths}"
     )
 
 

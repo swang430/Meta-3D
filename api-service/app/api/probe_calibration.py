@@ -294,9 +294,9 @@ async def start_phase_calibration():
     一批 NULL 来源行）。
 
     REST 直接口仅剩导入：`POST /phase/import-csv`（外部实测 CSV，spec v1.0，
-    import 侧带 provenance）。workflow 引擎的 phase 步骤是仍然活着的间接
-    mock 落库口（workflow_engine.py → execute_phase_calibration），其处置
-    归 P1-69 设计稿——本口的关闭不等于系统层面 phase mock 已全止血。
+    import 侧带 provenance）。workflow 引擎的 phase 步骤（曾是最后一个活的
+    间接 mock 落库口）已随 P1-71 同语义 fail-loud —— 系统层面 phase mock
+    写点至此全部关闭，PWS 复活时一并恢复。
     """
     raise HTTPException(
         status_code=409,

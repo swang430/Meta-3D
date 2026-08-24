@@ -412,8 +412,10 @@ class ChannelQuietZoneCalibration(Base):
     有效期：6个月
     合格标准：幅度均匀性 ±1 dB，相位均匀性 ±30°
 
-    注意：与 models/calibration.py 中的 QuietZoneCalibration (系统级) 不同，
-    此表专用于信道校准流程中的场均匀性验证。
+    注意：P1-71 QZ 并轨后本表是静区均匀性的**唯一活载体** ——
+    probe 侧 quiet_zone_calibrations（49 列大表，models/calibration.py）
+    已封存，quiet_zone_validation_service 的落库也换源到本表
+    （chamber/SGH 等 provenance 收进 measurement_grid JSON）。
     """
     __tablename__ = "channel_quiet_zone_calibrations"
 
@@ -442,7 +444,11 @@ class ChannelQuietZoneCalibration(Base):
     # 幅度均匀性统计
     amplitude_mean_db = Column(Float, comment="幅度均值 (dB)")
     amplitude_std_db = Column(Float, comment="幅度标准差 (dB)")
-    amplitude_range_db = Column(JSON, comment="幅度范围 [min, max]")
+    amplitude_range_db = Column(
+        JSON,
+        comment="幅度范围 [min, max]（dB 相对量；P1-71 起活写方存相对均值偏差，"
+                "绝对功率见 measurement_grid.provenance）",
+    )
 
     # 相位均匀性统计
     phase_mean_deg = Column(Float, comment="相位均值 (度)")

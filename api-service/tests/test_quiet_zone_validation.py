@@ -1,14 +1,13 @@
 """Quiet-Zone validation tests (3GPP TR 38.151 § 7.2).
 
-Pin two cert sub-tests:
-  - **Field uniformity**: 5-point grid scan + std/range check vs ±1 dB spec.
-    Verify positioner.move_to fires once per grid point, CE+SA tone fires
-    once per point, persistence to QuietZoneCalibration captures grid + stats.
-  - **XPD / cross-pol isolation**: V vs H probe power ratio vs 25 dB spec.
-    Verify two CE+SA acquisitions (co-pol + cross-pol), XPD math = co - cross.
+Pin the field-uniformity cert sub-test：mock 拒绝落库、real 路径在拿到
+linear XY stage API 前 fail-closed、chamber 缺失可诊断。
+落库目标 P1-71 起为 ChannelQuietZoneCalibration（QZ 并轨，probe 侧封存），
+换源后的持久化行为门在 test_p1_71_qz_merge_and_phase_gate.py。
 
-Also pin the failure paths: positioner unbound, positioner.move_to False,
-chamber not found, threshold breach (FAIL but record persists).
+P1-71 注：原 XPD 组（TestXpdValidation）与 get_latest_validation 组随
+run_xpd_validation / get_latest_validation 移除 —— XPD 有实现与测试但零
+生产调用方，且 mock 分支无守卫直接落已封存的 probe 表；复活先裁决载体。
 """
 from __future__ import annotations
 
@@ -23,12 +22,12 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.calibration import QuietZoneCalibration
+from app.models.channel_calibration import ChannelQuietZoneCalibration
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.schemas.probe_calibration import PolarizationType
 from app.services.quiet_zone_validation_service import (
     DEFAULT_SCAN_OFFSETS_CM,
     QZ_AMPLITUDE_THRESHOLD_DB,
-    XPD_THRESHOLD_DB,
     QuietZoneValidationService,
 )
 
@@ -128,6 +127,8 @@ class TestFieldUniformityMock:
         assert result.success is False
         assert result.data == {}
         assert "mock" in result.message.lower()
+        # 新旧两张 QZ 表都不许进行（channel 侧=活载体，probe 侧=封存）
+        assert db.query(ChannelQuietZoneCalibration).count() == 0
         assert db.query(QuietZoneCalibration).count() == 0
 
 
@@ -266,126 +267,12 @@ class TestFieldUniformityRealCeSa:
 
 
 # ============================================================================
-# XPD / cross-pol isolation (§ 7.2.x)
-# ============================================================================
-
-class TestXpdValidation:
-    """V vs H probe power ratio vs 25 dB spec (3GPP MIMO OTA)."""
-
-    @pytest.mark.asyncio
-    async def test_mock_xpd_passes_with_30db(self, db, chamber):
-        np.random.seed(42)
-        svc = QuietZoneValidationService(db, use_mock=True)
-        result = await svc.run_xpd_validation(
-            chamber_id=chamber.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-        )
-        assert result.success
-        assert result.data["xpd_pass"] is True
-        assert result.data["xpd_db"] > XPD_THRESHOLD_DB
-        assert result.data["threshold_db"] == XPD_THRESHOLD_DB
-
-    @pytest.mark.asyncio
-    async def test_real_xpd_two_acquisitions(self, db, chamber, monkeypatch):
-        """Real path: two CE+SA acquisitions (co + cross), XPD = co - cross."""
-        ce = _make_ce_d_path()
-        # Co-pol -85 dBm, cross-pol -115 dBm → XPD = 30 dB
-        powers = iter([
-            -85.0, -85.0, -85.0, -85.0, -85.0,    # co-pol acquisition × 5 samples
-            -115.0, -115.0, -115.0, -115.0, -115.0,  # cross-pol × 5
-        ])
-        sa = MagicMock()
-        sa.setup_spectrum = AsyncMock(return_value=True)
-        sa.measure_channel_power = AsyncMock(side_effect=lambda *_: next(powers))
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
-
-        svc = QuietZoneValidationService(db, use_mock=False)
-        result = await svc.run_xpd_validation(
-            chamber_id=chamber.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-            ce_port_co="B1.1",   # V probe ce_port
-            ce_port_cross="B1.2",  # H probe ce_port
-        )
-        assert result.success
-        assert result.data["xpd_db"] == pytest.approx(30.0, abs=0.01)
-        assert result.data["xpd_pass"] is True
-        # Two CE tone bursts (one per pol)
-        assert ce.set_calibration_tone.await_count == 2
-        ce_ports_used = [
-            call.kwargs.get("ce_port")
-            for call in ce.set_calibration_tone.await_args_list
-        ]
-        assert ce_ports_used == ["B1.1", "B1.2"]
-
-    @pytest.mark.asyncio
-    async def test_real_xpd_preserves_cleanup_warnings_from_both_acquisitions(
-        self, db, chamber, monkeypatch
-    ):
-        ce = _make_ce_d_path()
-        ce.stop_calibration_tone = AsyncMock(return_value=False)
-        powers = iter([-85.0] * 5 + [-115.0] * 5)
-        sa = MagicMock()
-        sa.setup_spectrum = AsyncMock(return_value=True)
-        sa.measure_channel_power = AsyncMock(side_effect=lambda *_: next(powers))
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
-
-        result = await QuietZoneValidationService(
-            db, use_mock=False
-        ).run_xpd_validation(
-            chamber_id=chamber.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-        )
-
-        assert result.success
-        assert any("XPD co-pol" in warning for warning in result.warnings)
-        assert any("XPD cross-pol" in warning for warning in result.warnings)
-
-    @pytest.mark.asyncio
-    async def test_real_xpd_below_threshold_records_fail(
-        self, db, chamber, monkeypatch
-    ):
-        ce = _make_ce_d_path()
-        # Co-pol -85, cross-pol -100 → XPD = 15 dB (below 25 dB spec)
-        powers = iter([-85.0] * 5 + [-100.0] * 5)
-        sa = MagicMock()
-        sa.setup_spectrum = AsyncMock(return_value=True)
-        sa.measure_channel_power = AsyncMock(side_effect=lambda *_: next(powers))
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
-
-        svc = QuietZoneValidationService(db, use_mock=False)
-        result = await svc.run_xpd_validation(
-            chamber_id=chamber.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-        )
-        assert result.success  # measurement completed
-        assert result.data["xpd_db"] == pytest.approx(15.0, abs=0.01)
-        assert result.data["xpd_pass"] is False
-
-        from uuid import UUID as _UUID
-        cal = db.query(QuietZoneCalibration).filter_by(
-            id=_UUID(result.data["calibration_id"])
-        ).one()
-        assert cal.validation_type == "probe_coupling"
-        assert cal.coupling_pass is False
-
-
-# ============================================================================
 # Service helpers
 # ============================================================================
 
-class TestQzLookup:
+class TestMockRunsPersistNothing:
     @pytest.mark.asyncio
-    async def test_mock_runs_do_not_create_a_latest_formal_validation(
-        self, db, chamber
-    ):
+    async def test_repeated_mock_runs_persist_no_rows(self, db, chamber):
         svc = QuietZoneValidationService(db, use_mock=True)
         np.random.seed(1)
         await svc.run_field_uniformity_validation(
@@ -401,6 +288,5 @@ class TestQzLookup:
             sgh_model="SGH-01",
             sgh_gain_dbi=10.0,
         )
-        latest = svc.get_latest_validation(chamber.id, "field_uniformity")
-        assert latest is None
+        assert db.query(ChannelQuietZoneCalibration).count() == 0
         assert db.query(QuietZoneCalibration).count() == 0

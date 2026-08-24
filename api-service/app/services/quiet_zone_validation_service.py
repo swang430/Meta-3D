@@ -1,11 +1,9 @@
 """
 Quiet-Zone Validation Service (3GPP TR 38.151 § 7.2)
 
-实现 3GPP MIMO OTA cert 必查的两个 QZ sub-test:
-  1. **Field uniformity** (§ 7.2.x): SGH 在静区内多点扫描, 测各点功率,
-     计算 std/range, 验证 ≤ ±1 dB (cert spec).
-  2. **XPD / Cross-pol isolation** (§ 7.2.x): 同位置 V vs H 极化功率比,
-     验证 ≥ 25 dB.
+实现 3GPP MIMO OTA cert 的 QZ sub-test:
+  **Field uniformity** (§ 7.2.x): SGH 在静区内多点扫描, 测各点功率,
+  计算 std/range, 验证 ≤ ±1 dB (cert spec).
 
 设计原则 (跟 CE+SA 路径一致, 不引入 VNA):
 - **复用 path_loss 服务的 acquire_sa_power_via_ce_tone() helper** —
@@ -16,42 +14,43 @@ Quiet-Zone Validation Service (3GPP TR 38.151 § 7.2)
 - **真实 QZ 网格要求经过验证的 X-Y 平移台（cm）**。现有 positioner 是旋转台
   （degree）且 ETS 动作协议没有仓内出处，因此真实路径在任何位置 I/O 前拒绝；
   mock 路径只用于算法演练，不形成正式校准结论。
-- **持久化到 QuietZoneCalibration model** — 已有 30+ 字段, 不动 schema.
+- **持久化到 ChannelQuietZoneCalibration**（P1-71 QZ 并轨，设计稿 §2 R6）：
+  probe 侧 quiet_zone_calibrations 已封存，静区唯一活载体 = channel 侧表；
+  chamber / SGH / 绝对功率等 provenance 收进 measurement_grid JSON。
 
 CalibrationOrchestrator dispatch 接 CalibrationItem.QUIET_ZONE_UNIFORMITY.
+
+P1-71 注：原 run_xpd_validation（XPD 验证器）与 get_latest_validation 随并轨
+移除 —— 两者零调用方、persist / 查询目标是已封存的 probe 侧表，且 channel
+侧无 XPD 语义槽；需要时从 git 历史（P1-71 片之前）复活并先裁决落库载体。
 
 参考: docs/design/MPAC-OTA-Chamber-Topology.md, 3GPP TR 38.151 § 7.2
 """
 import logging
-import statistics
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 import numpy as np
 from sqlalchemy.orm import Session
 
-from app.models.calibration import QuietZoneCalibration
+from app.models.channel_calibration import ChannelQuietZoneCalibration
 from app.models.chamber import ChamberConfiguration
 from app.schemas.probe_calibration import PolarizationType
 from app.services.channel_calibration_service import (
     calculate_uniformity_stats,
     validate_quiet_zone_uniformity,
 )
-from app.services.path_loss_calibration_service import (
-    CalibrationResult,
-    ProbePathLossCalibrationService,
-)
+from app.services.path_loss_calibration_service import CalibrationResult
 
 logger = logging.getLogger("app.calibration.quiet_zone")
 
 # 3GPP TR 38.151 § 7.2 cert thresholds
 QZ_AMPLITUDE_THRESHOLD_DB = 1.0  # ±1 dB field uniformity (cert spec)
 QZ_PHASE_THRESHOLD_DEG = 30.0    # ±30° phase uniformity (used by amp-only check too)
-XPD_THRESHOLD_DB = 25.0          # ≥25 dB cross-pol isolation (3GPP MIMO OTA)
 
-# QZ validation 有效期 (跟 CALIBRATION_CONFIG 里 QUIET_ZONE_UNIFORMITY 一致)
-QZ_VALIDITY_DAYS = 365
+# 有效期/status：本服务不设 valid_until（原 365 天死常量随并轨删除，零消费方）。
+# 激活批统一到 channel 侧本家口径（channel_calibration_service 180 天）时一并定。
 
 # 默认扫描偏移 (cm) — 5 点平面网格: center + ±5 cm in {x, y}
 # 真实 cert 用 7-9 点 3D 球面/立方网格, 由 caller 传 scan_offsets_cm 覆盖
@@ -65,7 +64,7 @@ DEFAULT_SCAN_OFFSETS_CM: List[Tuple[float, float, float]] = [
 
 
 class QuietZoneValidationService:
-    """3GPP TR 38.151 § 7.2 QZ field uniformity + XPD validation."""
+    """3GPP TR 38.151 § 7.2 QZ field uniformity validation（落库 channel 侧）."""
 
     def __init__(self, db: Session, use_mock: bool = True):
         self.db = db
@@ -168,27 +167,56 @@ class QuietZoneValidationService:
         # Cert 报告通常报 max-min range (peak-to-peak) 而非 std, 两者都存
         field_range_db = float(max_dbm - min_dbm)
 
-        cal = QuietZoneCalibration(
-            chamber_id=chamber_id,
-            validation_type="field_uniformity",
-            frequency_mhz=frequency_mhz,
-            qz_diameter_cm=getattr(chamber, "quiet_zone_diameter_cm", None) or 30.0,
-            grid_points=len(grid_data),
-            grid_data=grid_data,
-            sgh_model=sgh_model,
-            sgh_gain_dbi=sgh_gain_dbi,
-            measurement_method="ce_sa" if not self.use_mock else "mock",
-            scan_pattern="grid",
-            field_uniformity_db=field_range_db,
-            field_uniformity_pass=bool(amplitude_pass),
-            field_mean_dbm=float(mean_dbm),
-            field_std_dev_db=float(std_db),
-            field_max_dbm=float(max_dbm),
-            field_min_dbm=float(min_dbm),
+        # P1-71 QZ 并轨：落 channel 侧表。probe 侧独有的 chamber/SGH/绝对功率
+        # 字段没有对应列，如实收进 measurement_grid.provenance；amplitude_* 列
+        # 按其 dB（相对量）语义只存偏差统计，绝对功率留在 provenance。
+        qz_diameter_m = getattr(chamber, "quiet_zone_diameter_m", None) or 0.3
+        cal = ChannelQuietZoneCalibration(
+            session_id=None,
+            # chamber 只登记直径无形状 —— 径-only 规格按球解读（与 channel 侧
+            # run_quiet_zone_calibration 的默认一致），出处见 provenance。
+            quiet_zone_shape="sphere",
+            quiet_zone_diameter_m=float(qz_diameter_m),
+            field_probe_type="sgh",
+            measurement_grid={
+                "points": [
+                    {
+                        "x_cm": p["x"], "y_cm": p["y"], "z_cm": p["z"],
+                        "power_dbm": p["measured_value"],
+                    }
+                    for p in grid_data
+                ],
+                "provenance": {
+                    "chamber_id": str(chamber_id),
+                    "frequency_mhz": float(frequency_mhz),
+                    "sgh_model": sgh_model,
+                    "sgh_gain_dbi": float(sgh_gain_dbi),
+                    "polarization": polarization.value,
+                    "measurement_method": "ce_sa",
+                    "scan_pattern": "grid",
+                    "field_mean_dbm": float(mean_dbm),
+                    "field_max_dbm": float(max_dbm),
+                    "field_min_dbm": float(min_dbm),
+                    "quiet_zone_shape_source": "assumed sphere (chamber 仅登记直径)",
+                    "units_note": (
+                        "amplitude_range_db 为相对均值偏差（dB，外审 #394 R1 对齐"
+                        "列名语义）；amplitude_mean_db 不填——相对均值恒 0 无信息，"
+                        "绝对功率（dBm）见本 provenance 的 field_*_dbm"
+                    ),
+                },
+            },
+            num_points=len(grid_data),
+            amplitude_mean_db=None,
+            amplitude_std_db=float(std_db),
+            amplitude_range_db=[
+                float(min_dbm - mean_dbm), float(max_dbm - mean_dbm)
+            ],
+            amplitude_uniformity_pass=bool(amplitude_pass),
             validation_pass=bool(amplitude_pass),
-            threshold_value=float(amplitude_threshold_db),
-            tested_at=datetime.utcnow(),
-            tested_by=calibrated_by,
+            amplitude_threshold_db=float(amplitude_threshold_db),
+            fc_ghz=float(frequency_mhz) / 1000.0,
+            calibrated_at=datetime.utcnow(),
+            calibrated_by=calibrated_by,
         )
         self.db.add(cal)
         self.db.commit()
@@ -220,147 +248,6 @@ class QuietZoneValidationService:
                 "field_mean_dbm": float(mean_dbm),
                 "grid_points": len(grid_data),
                 "threshold_db": float(amplitude_threshold_db),
-            },
-            warnings=warnings,
-        )
-
-    # ======================================================================
-    # XPD / Cross-pol isolation (§ 7.2.x)
-    # ======================================================================
-
-    async def run_xpd_validation(
-        self,
-        chamber_id: UUID,
-        frequency_mhz: float,
-        sgh_model: str,
-        sgh_gain_dbi: float,
-        probe_id: int = 0,
-        ce_port_co: Optional[str] = None,
-        ce_port_cross: Optional[str] = None,
-        route_target_co: Optional[str] = None,
-        route_target_cross: Optional[str] = None,
-        xpd_threshold_db: float = XPD_THRESHOLD_DB,
-        ce_tx_power_dbm: float = -20.0,
-        calibrated_by: str = "System",
-    ) -> CalibrationResult:
-        """3GPP MIMO OTA XPD: co-pol vs cross-pol 功率比.
-
-        实测顺序:
-          1. CE tone 经 V probe → SGH (V-pol port) → SA: P_co
-          2. CE tone 经 H probe → SGH (V-pol port) → SA: P_cross
-          XPD = P_co - P_cross (dB).
-
-        在多探头暗室里, V/H probe 是同一物理位置的双极化对; SGH 不动.
-        ce_port_co + ce_port_cross 指定两个 ce_port.
-
-        Spec ≥ 25 dB (3GPP TR 38.151).
-        """
-        chamber = self.db.query(ChamberConfiguration).filter(
-            ChamberConfiguration.id == chamber_id
-        ).first()
-        if chamber is None:
-            return CalibrationResult(
-                success=False,
-                message=f"Chamber {chamber_id} not found",
-            )
-
-        warnings: List[str] = []
-
-        try:
-            if self.use_mock:
-                # Mock: 30 dB XPD 典型值 + 噪声
-                p_co_dbm = -85.0 + float(np.random.normal(0, 0.2))
-                p_cross_dbm = -85.0 - 30.0 + float(np.random.normal(0, 0.2))
-            else:
-                # Lazy import — 与 primitive 内层同源，mock 路径不触碰租约模块。
-                from app.services.instrument_test_lease import instrument_test_lease
-
-                pl_service = ProbePathLossCalibrationService(self.db, use_mock=False)
-                # P2-30: 作业级租约 —— co + cross 两次采集共用一次真取/放；
-                # 内层 primitive 的租约圈在嵌套下自动 no-op（hold() 引用计数）。
-                # 控制权参数与内层一致（F64 有、UXM 无、监控关）。
-                async with instrument_test_lease(
-                    f"qz-xpd:probe{probe_id}",
-                    control_f64=True,
-                    control_uxm=False,
-                    enable_monitoring=False,
-                ):
-                    p_co_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                        frequency_mhz=frequency_mhz,
-                        ce_tx_power_dbm=ce_tx_power_dbm,
-                        ce_port=ce_port_co,
-                        route_target=route_target_co,
-                        probe_id=probe_id,
-                        polarization=PolarizationType.V,
-                        warning_sink=warnings,
-                        warning_label="XPD co-pol",
-                    )
-                    p_cross_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                        frequency_mhz=frequency_mhz,
-                        ce_tx_power_dbm=ce_tx_power_dbm,
-                        ce_port=ce_port_cross,
-                        route_target=route_target_cross,
-                        probe_id=probe_id,
-                        polarization=PolarizationType.H,
-                        warning_sink=warnings,
-                        warning_label="XPD cross-pol",
-                    )
-        except Exception as e:  # noqa: BLE001
-            logger.error("[QZ XPD] measurement failed: %s", e)
-            return CalibrationResult(
-                success=False,
-                message=f"XPD measurement failed: {e}",
-                warnings=warnings,
-            )
-
-        xpd_db = float(p_co_dbm - p_cross_dbm)
-        xpd_pass = xpd_db >= xpd_threshold_db
-
-        cal = QuietZoneCalibration(
-            chamber_id=chamber_id,
-            validation_type="probe_coupling",  # XPD = cross-pol coupling, 复用此 type
-            frequency_mhz=frequency_mhz,
-            num_probes_measured=1,
-            coupling_matrix=[
-                {
-                    "probe_id": probe_id,
-                    "co_pol_dbm": float(p_co_dbm),
-                    "cross_pol_dbm": float(p_cross_dbm),
-                    "xpd_db": xpd_db,
-                }
-            ],
-            max_coupling_db=xpd_db,
-            coupling_pass=bool(xpd_pass),
-            sgh_model=sgh_model,
-            sgh_gain_dbi=sgh_gain_dbi,
-            measurement_method="ce_sa" if not self.use_mock else "mock",
-            validation_pass=bool(xpd_pass),
-            threshold_value=float(xpd_threshold_db),
-            tested_at=datetime.utcnow(),
-            tested_by=calibrated_by,
-        )
-        self.db.add(cal)
-        self.db.commit()
-        self.db.refresh(cal)
-
-        logger.info(
-            "[QZ XPD] chamber=%s freq=%.0f MHz probe=%d — "
-            "co=%.2f cross=%.2f → XPD=%.2f dB %s",
-            chamber_id, frequency_mhz, probe_id, p_co_dbm, p_cross_dbm, xpd_db,
-            "PASS" if xpd_pass else "FAIL",
-        )
-
-        return CalibrationResult(
-            success=True,
-            message=f"XPD {xpd_db:.1f} dB ({'PASS' if xpd_pass else 'FAIL'})",
-            data={
-                "calibration_id": str(cal.id),
-                "validation_type": "probe_coupling",
-                "xpd_db": xpd_db,
-                "xpd_pass": bool(xpd_pass),
-                "co_pol_dbm": float(p_co_dbm),
-                "cross_pol_dbm": float(p_cross_dbm),
-                "threshold_db": float(xpd_threshold_db),
             },
             warnings=warnings,
         )
@@ -402,26 +289,4 @@ class QuietZoneValidationService:
             "Real QZ grid acquisition requires a verified linear XY stage API "
             "in centimetres; rotational PositionerDriver.move_to(degrees) "
             "must not be used for x_cm/y_cm"
-        )
-
-    # ======================================================================
-    # Lookup helpers
-    # ======================================================================
-
-    def get_latest_validation(
-        self,
-        chamber_id: UUID,
-        validation_type: str = "field_uniformity",
-    ) -> Optional[QuietZoneCalibration]:
-        """获取最新的 QZ 验证记录 (按 validation_type 过滤)."""
-        from sqlalchemy import desc
-
-        return (
-            self.db.query(QuietZoneCalibration)
-            .filter(
-                QuietZoneCalibration.chamber_id == chamber_id,
-                QuietZoneCalibration.validation_type == validation_type,
-            )
-            .order_by(desc(QuietZoneCalibration.tested_at))
-            .first()
         )

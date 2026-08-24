@@ -31,9 +31,6 @@ from app.models.probe_calibration import (
     ChannelPhaseCalibration,
     CEInternalCalibration,
 )
-from app.models.calibration import (
-    QuietZoneCalibration,
-)
 from app.services.path_loss_calibration_service import (
     ProbePathLossCalibrationService,
     RFChainCalibrationService,
@@ -387,8 +384,10 @@ class CalibrationOrchestrator:
             elif item == CalibrationItem.QUIET_ZONE_UNIFORMITY:
                 # P1-64: existing rows predate formal QZ provenance and include
                 # mock/XPD/phase records.  None may satisfy the uniformity gate.
-                # A future verified writer must add an explicit-real snapshot
-                # before this status can be promoted from UNKNOWN.
+                # P1-71 QZ 并轨后写端已换源 channel 表（real 路径带 ce_sa
+                # provenance、今天仍 fail-closed）—— 激活批必须让本分支与
+                # quiet_zone_calibration_truth 按 provenance 分流真行，
+                # 否则真实证据在这里恒被判 UNKNOWN。
                 message = "No verified real quiet zone uniformity evidence"
 
             elif item == CalibrationItem.DUPLEXER_ISOLATION:
