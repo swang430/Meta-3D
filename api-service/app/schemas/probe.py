@@ -119,49 +119,9 @@ class BulkProbeResponse(BaseModel):
     probes: List[ProbeResponse]
 
 
-# ==================== Configuration Schemas ====================
-
-class ProbeConfigurationCreate(BaseModel):
-    """Request to create a probe configuration"""
-    name: str = Field(..., max_length=255)
-    description: Optional[str] = None
-    version: str = Field("1.0", max_length=50)
-    probe_data: List[ProbeResponse]
-    created_by: str = Field(..., max_length=100)
-    imported_from: Optional[str] = Field(None, max_length=255)
-
-
-class ProbeConfigurationUpdate(BaseModel):
-    """Request to update a probe configuration"""
-    name: Optional[str] = Field(None, max_length=255)
-    description: Optional[str] = None
-    version: Optional[str] = Field(None, max_length=50)
-    probe_data: Optional[List[ProbeResponse]] = None
-    is_active: Optional[bool] = None
-
-
-class ProbeConfigurationResponse(BaseModel):
-    """Probe configuration response"""
-    id: UUID
-    name: str
-    description: Optional[str]
-    version: str
-    probe_data: List[ProbeResponse]
-    is_active: bool
-    created_at: UTCDateTime
-    updated_at: Optional[UTCDateTime]
-    created_by: str
-    imported_from: Optional[str]
-    exported_at: Optional[UTCDateTime]
-
-    class Config:
-        from_attributes = True
-
-
-class ProbeConfigurationListResponse(BaseModel):
-    """List of probe configurations response"""
-    total: int
-    configurations: List[ProbeConfigurationResponse]
+# ⚠ P2-41（2026-08-24）已删除 ProbeConfigurationCreate/Update/Response/ListResponse
+# 四个 schema 类 —— 全仓零引用的死类型，随 `probe_configurations` 表一并清理
+# （Schema Review R3，docs/plans/2026-08-24-system-schema-review.md）。
 
 
 # ==================== Statistics ====================

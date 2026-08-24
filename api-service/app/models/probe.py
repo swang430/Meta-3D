@@ -101,39 +101,7 @@ class Probe(Base):
     created_by = Column(String(100), comment="创建者")
 
 
-class ProbeConfiguration(Base):
-    """
-    Probe Configuration - 探头配置版本
-
-    用于保存和管理不同的探头阵列配置，支持配置的导入/导出和版本管理。
-    """
-    __tablename__ = "probe_configurations"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    # 暗室配置关联
-    chamber_config_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("chamber_configurations.id", ondelete="SET NULL"),
-        nullable=True,
-        comment="关联的暗室配置 ID"
-    )
-
-    # 基本信息
-    name = Column(String(255), nullable=False, comment="配置名称")
-    description = Column(Text, comment="配置描述")
-    version = Column(String(50), default="1.0", comment="版本号")
-
-    # 配置数据
-    probe_data = Column(JSON, nullable=False, comment="完整的探头配置数据数组")
-    # probe_data结构: Array<ProbeResponse>
-
-    # 元数据
-    is_active = Column(Boolean, default=False, comment="是否为当前活动配置")
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    created_by = Column(String(100), nullable=False, comment="创建者")
-
-    # 导入/导出
-    imported_from = Column(String(255), comment="导入来源文件名")
-    exported_at = Column(DateTime, comment="导出时间")
+# ⚠ P2-41（2026-08-24）已删除 `ProbeConfiguration` 模型（原 `probe_configurations` 表）。
+# 该表 0 行且 api/services/schemas/GUI 全仓零引用（Schema Review R3 双零裁决，
+# 设计稿 docs/plans/2026-08-24-system-schema-review.md）；表由同片迁移 DROP，
+# 数据归档见该片 PR。探头配置的真实载体是 `probes` / `chamber_configurations`。
