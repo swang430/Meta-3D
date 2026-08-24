@@ -25,7 +25,6 @@ from app.schemas.probe_calibration import (
     StartAmplitudeCalibrationRequest,
     AmplitudeCalibrationResponse,
     # Phase
-    StartPhaseCalibrationRequest,
     PhaseCalibrationResponse,
     ImportPhaseCalibrationResponse,
     # Polarization
@@ -277,88 +276,36 @@ def get_amplitude_calibration_history(
 
 # ==================== Phase Calibration Endpoints (TASK-P05) ====================
 
-@router.post("/phase/start", response_model=CalibrationJobResponse, status_code=202)
-async def start_phase_calibration(
-    request: StartPhaseCalibrationRequest,
-    db: Session = Depends(get_db)
-):
+@router.post(
+    "/phase/start",
+    status_code=409,
+    responses={409: {"description": (
+        "P1-68 关闭：PFS power-only 不需要相位校准；mock 生成口不再落库，"
+        "外部实测数据走 POST /phase/import-csv"
+    )}},
+)
+async def start_phase_calibration():
     """
-    启动相位校准任务
+    启动相位校准任务 —— P1-68 起 fail-loud 拒绝（mock 生成口关闭）。
 
-    相位校准测量探头相对于参考探头的相位偏移和群时延。
+    既定决策（Schema Review B-2 / `project_pfs_phase_cal_decision`）：PFS 是
+    power-only（TR 37.977 F.2），不需要相位校准；相位校准基建为将来 PWS 保留。
+    原实现用 random 生成 mock 校准行落库，只会增殖演示数据（P2-41 刚清理过
+    一批 NULL 来源行）。
 
-    **校准内容**:
-    - 相位偏移: 相对参考探头的相位差 (度)
-    - 群时延: 信号延迟 (ns)
-
-    **验收标准**: 相位不确定度 < ±5°
+    REST 直接口仅剩导入：`POST /phase/import-csv`（外部实测 CSV，spec v1.0，
+    import 侧带 provenance）。workflow 引擎的 phase 步骤是仍然活着的间接
+    mock 落库口（workflow_engine.py → execute_phase_calibration），其处置
+    归 P1-69 设计稿——本口的关闭不等于系统层面 phase mock 已全止血。
     """
-    _require_chamber_probe_ids(
-        db,
-        request.chamber_id,
-        [*request.probe_ids, request.reference_probe_id],
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "PFS 不需要相位校准（TR 37.977 F.2 power-only）；PWS 相位校准"
+            "未实现。此入口按 P1-68 fail-loud 关闭，不再生成 mock 校准数据；"
+            "外部实测相位数据请走 POST /calibration/probe/phase/import-csv。"
+        ),
     )
-    job_id = uuid4()
-
-    # 计算预估时间
-    num_probes = len(request.probe_ids)
-    num_polarizations = len(request.polarizations)
-    estimated_minutes = num_probes * num_polarizations * 3.0  # 相位校准比幅度校准稍长
-
-    # 生成频率点
-    freq_range = request.frequency_range
-    freq_points = []
-    freq = freq_range.start_mhz
-    while freq <= freq_range.stop_mhz:
-        freq_points.append(freq)
-        freq += freq_range.step_mhz
-
-    # 为每个探头和极化创建校准记录（mock 数据）
-    for probe_id in request.probe_ids:
-        for pol in request.polarizations:
-            num_points = len(freq_points)
-            import random
-
-            # Mock 相位数据
-            # 相位偏移: 相对参考探头，随探头位置变化
-            base_phase = (probe_id - request.reference_probe_id) * 15.0  # 每个探头约 15° 差异
-            phase_offsets = [base_phase + random.gauss(0, 2) for _ in range(num_points)]
-
-            # 群时延: 约 0.5-1.5 ns，随频率略有变化
-            base_delay = 0.8 + probe_id * 0.01
-            group_delays = [base_delay + random.gauss(0, 0.05) for _ in range(num_points)]
-
-            # 相位不确定度
-            phase_uncertainties = [3.0 for _ in range(num_points)]  # ±3°
-
-            calibration = ProbePhaseCalibration(
-                chamber_id=request.chamber_id,
-                use_mock=True,
-                probe_id=probe_id,
-                polarization=pol.value,
-                reference_probe_id=request.reference_probe_id,
-                frequency_points_mhz=freq_points,
-                phase_offset_deg=phase_offsets,
-                group_delay_ns=group_delays,
-                phase_uncertainty_deg=phase_uncertainties,
-                vna_model="Mock VNA",
-                vna_serial="VNA-001",
-                calibrated_at=datetime.utcnow(),
-                calibrated_by=request.calibrated_by,
-                valid_until=datetime.utcnow() + timedelta(days=90),
-                status=CalibrationStatus.VALID
-            )
-            db.add(calibration)
-
-    db.commit()
-
-    return CalibrationJobResponse(
-        calibration_job_id=job_id,
-        status=CalibrationJobStatus.COMPLETED,
-        estimated_duration_minutes=estimated_minutes,
-        message=f"Phase calibration completed for {num_probes} probes, {num_polarizations} polarizations"
-    )
-
 
 @router.post(
     "/phase/import-csv",

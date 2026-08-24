@@ -2368,7 +2368,12 @@ _P1_53_CHAMBER_SCOPE_INVENTORY = (
     ("api-service/app/api/probe_calibration.py", "start_amplitude_calibration"),
     ("api-service/app/api/probe_calibration.py", "get_amplitude_calibration"),
     ("api-service/app/api/probe_calibration.py", "get_amplitude_calibration_history"),
-    ("api-service/app/api/probe_calibration.py", "start_phase_calibration"),
+    # start_phase_calibration 已随 P1-68 fail-loud 关闭（B-2：PFS power-only，
+    # mock 生成口不再写库），不再是活动写点，移出 chamber-scope 名单。
+    # REST 直接口仅剩 import_phase_calibration_csv_endpoint（仍在名单）；
+    # workflow 引擎的 phase 步骤是仍活着的间接落库口（归 P1-69），其
+    # service 写点 execute_phase_calibration 的 chamber-scope 由名单内
+    # service 行覆盖。
     ("api-service/app/api/probe_calibration.py", "import_phase_calibration_csv_endpoint"),
     ("api-service/app/api/probe_calibration.py", "get_phase_calibration"),
     ("api-service/app/api/probe_calibration.py", "get_phase_calibration_history"),

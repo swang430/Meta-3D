@@ -286,8 +286,8 @@ class TestValidityStatus:
 class TestPhaseCalibration:
     """测试相位校准 API (TASK-P05)"""
 
-    def test_start_phase_calibration_success(self):
-        """测试成功启动相位校准"""
+    def test_start_phase_calibration_closed_fail_loud(self):
+        """P1-68: mock 生成口关闭 —— 409 并指路 import-csv（PFS power-only）。"""
         response = client.post(
             f"/api/v1/calibration/probe/phase/start?chamber_id={TEST_CHAMBER_ID}",
             json={
@@ -303,10 +303,8 @@ class TestPhaseCalibration:
                 "calibrated_by": "Test Engineer"
             }
         )
-        assert response.status_code == 202
-        data = response.json()
-        assert "calibration_job_id" in data
-        assert data["status"] == "completed"
+        assert response.status_code == 409
+        assert "import-csv" in response.json()["detail"]
 
     def test_get_phase_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""

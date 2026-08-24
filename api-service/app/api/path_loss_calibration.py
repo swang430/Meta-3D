@@ -251,7 +251,7 @@ async def calibrate_uplink_chain(
             message="Chamber does not have LNA, no calibration needed"
         )
 
-    service = RFChainCalibrationService(db, use_mock=True)
+    service = RFChainCalibrationService(db, use_mock=request.use_mock)
     result = await service.calibrate_uplink(
         chamber_id=request.chamber_id,
         frequency_mhz=request.frequency_mhz,
@@ -298,7 +298,7 @@ async def calibrate_downlink_chain(
             message="Chamber does not have PA, no calibration needed"
         )
 
-    service = RFChainCalibrationService(db, use_mock=True)
+    service = RFChainCalibrationService(db, use_mock=request.use_mock)
     result = await service.calibrate_downlink(
         chamber_id=request.chamber_id,
         frequency_mhz=request.frequency_mhz,
@@ -328,7 +328,9 @@ def get_uplink_calibration(
     db: Session = Depends(get_db)
 ):
     """获取上行链路校准数据"""
-    service = RFChainCalibrationService(db, use_mock=True)
+    # P1-68: 读路径不测量, use_mock 无行为差异 —— 用默认构造, 不再显式写
+    # use_mock=True 制造「查询也在 mock」的误导。
+    service = RFChainCalibrationService(db)
     calibration = service.get_latest_uplink_calibration(chamber_id, frequency_mhz)
 
     if not calibration:
@@ -344,7 +346,8 @@ def get_downlink_calibration(
     db: Session = Depends(get_db)
 ):
     """获取下行链路校准数据"""
-    service = RFChainCalibrationService(db, use_mock=True)
+    # P1-68: 同上行读路径 —— use_mock 在读路径无行为差异。
+    service = RFChainCalibrationService(db)
     calibration = service.get_latest_downlink_calibration(chamber_id, frequency_mhz)
 
     if not calibration:
@@ -373,7 +376,7 @@ async def start_multi_frequency_calibration(
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
     # 现有生产入口仍是模拟校准；正式实测入口需另行完成硬件授权与接线。
-    service = MultiFrequencyPathLossService(db, use_mock=True)
+    service = MultiFrequencyPathLossService(db, use_mock=request.use_mock)
     result = await service.calibrate_frequency_sweep(
         chamber_id=request.chamber_id,
         probe_ids=request.probe_ids,
@@ -955,7 +958,13 @@ async def apply_uplink_compensation(
 
 # ==================== 相位校准 (CAL-04) ====================
 
-@phase_router.post("/calibrate")
+@phase_router.post(
+    "/calibrate",
+    status_code=409,
+    responses={409: {"description": (
+        "P1-68 关闭：PFS power-only 不需要相位校准（TR 37.977 F.2）"
+    )}},
+)
 async def calibrate_phases(
     chamber_id: UUID,
     frequency_mhz: float = Query(3500.0, description="校准频率 (MHz)"),
@@ -964,20 +973,19 @@ async def calibrate_phases(
     db: Session = Depends(get_db)
 ):
     """
-    执行相位校准
-    
-    测量各通道间的相位偏移并生成补偿值。
+    执行相位校准 —— P1-68 起 fail-loud 拒绝。
+
+    既定决策（Schema Review B-2 / `project_pfs_phase_cal_decision`）：PFS 是
+    power-only（TR 37.977 F.2），不需要相位校准；相位校准基建为将来 PWS 保留。
+    原实现落 mock 数据行，只会增殖演示数据（P2-41 刚清理过一批）。
     """
-    service = PhaseCalibrationService(db, use_mock=True)
-    
-    result = await service.calibrate_phases(
-        chamber_id=chamber_id,
-        frequency_mhz=frequency_mhz,
-        num_channels=num_channels,
-        calibrated_by=calibrated_by
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "PFS 不需要相位校准（TR 37.977 F.2 power-only）；PWS 相位校准"
+            "未实现。此入口按 P1-68 fail-loud 关闭，不再生成 mock 校准数据。"
+        ),
     )
-    
-    return result.to_dict()
 
 
 @phase_router.get("/coherence/{chamber_id}")
