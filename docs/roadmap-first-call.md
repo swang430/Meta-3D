@@ -37,7 +37,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 布尔可能绕过当前模拟来源，现已让吞吐正式门复用同一 explicit-real phase/逐方位 provenance
 判据；当前来源不可信时吞吐同样保持 N/A。
 
-**Current Focus = P1-71（QZ 并轨 + workflow phase 口关闭）。2026-08-24 批准队列 ~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅（设计稿获批）→ ~~P1-70~~ ✅ #392 → P1-71 → P1-72，逐片 WIP=1；设计稿 = [P1-69 校准完善设计稿](plans/2026-08-24-p1-69-calibration-design.md)。**
+**Current Focus = P1-72（P1-4 对比换源）。2026-08-24 批准队列 ~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅（设计稿获批）→ ~~P1-70~~ ✅ #392 → ~~P1-71~~ ✅ #394 → P1-72，逐片 WIP=1；设计稿 = [P1-69 校准完善设计稿](plans/2026-08-24-p1-69-calibration-design.md)。**
 
 > **~~P1-64~~ ✅ 2026-08-23 由 PR #375 完成**：原实现无
 ProbePattern 时把固定 0.7 dB 写成 `quiet_zone_pass=true`；有 ProbePattern 时又把峰值离散代理
@@ -280,7 +280,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 均在任何外部 I/O 前明确失败，已有数据库连接值不自动清空。
 
 **2026-08-24 批准队列（系统校准完善前置，稳定编号，逐片 WIP=1）**：
-**~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅ → ~~P1-70~~ ✅ #392 → P1-71 → P1-72**。设计稿 = [2026-08-24 系统级 Schema Review](plans/2026-08-24-system-schema-review.md) 与 [P1-69 校准完善设计稿](plans/2026-08-24-p1-69-calibration-design.md)
+**~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅ → ~~P1-70~~ ✅ #392 → ~~P1-71~~ ✅ #394 → P1-72**。设计稿 = [2026-08-24 系统级 Schema Review](plans/2026-08-24-system-schema-review.md) 与 [P1-69 校准完善设计稿](plans/2026-08-24-p1-69-calibration-design.md)
 （用户 2026-08-24 批准全部 11 条冗余裁决与 4 个行动切片）。
 
 | ID | 正式条目 | 验收标准 | 状态 |
@@ -289,8 +289,8 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 | **P1-68** | 校准 API real 可达性 + mock 口治理：B-1 五端点（`path_loss_calibration.py` RFChain ×4 + MultiFreq ×1）`use_mock` 硬编码改 request 传入（照 path_loss 既有模式）；B-2 相位校准入口 fail-loud（PFS 不需要相位校准，PWS 未实现——`project_pfs_phase_cal_decision`）；动到的端点补进 `api/openapi.yaml` 并走四步契约同步（A-2 裁决②：只补动到的面）。⚠ **RFChain 的 real 分支是 VNA+SG 基（内审 F2 实证 :1733/:1806），与「不引 VNA」决策冲突——本片只去硬编码，real 打通与否归 P1-69 裁决其测量路线** | **MultiFreq**（真 CE+SA）real 分支从 API 可达且有行为门 + 变异；RFChain 去硬编码但 real 路线标记「待 P1-69 裁决」；phase 口 fail-loud 有门；契约四步同步完成；全套内审 | ✅ PR #388（内审全套 3 P2 修；Gemini R1 1 medium 修 / R2 无 high；活契约与 yaml、行为三方对齐；`use_mock` 硬编码残余全集与 workflow 间接落库口已在 PR body 申报归 P1-69） |
 | **P1-69** | 校准完善设计稿：R6/R7 双轨并轨方向（quiet_zone ×2、validity ×2）+ R8 `app/models/channel_calibration.py` 8 表在 B-2 标注式 CDL 路线下的保留集裁决 + B-3 P1-4 重复性接 TestExecution 的方案 | 产出 `docs/plans/` 设计稿，**用户 review 通过后**才产生后续代码切片（⓪⁺②）；R8 的每张表给出 保留/封存 结论与理由；连带裁决：RFChain 测量路线（B-1）+ E2E 两列软引用悬空（P2-41 内审 F3） | ✅ [设计稿](plans/2026-08-24-p1-69-calibration-design.md)，用户 2026-08-24 确认（含三条对 Schema Review 的显式修正：R8 冻结→保留并分级激活；R7 validity 并轨→撤销（两张正交）；R6 定向保留 channel 侧 QZ、封存 probe 侧）。RFChain 路线裁决 = 端到端吸收（C 案），VNA 明细测量冻结 |
 | **P1-70** | 信道验证第一激活批（temporal + doppler）：真 SA 驱动实现 `measure_pdp` / `measure_doppler_spectrum`（**必查 SA 手册 SCPI**。⚠ 实施对象纠偏：设计稿原写「X 系列」，但现场 SA 实测系 R&S FSVA3000（playbook 2026-05-27:68，P0-4 绑 `RealRsFsvaDriver`）且本地 X 系列两份手册均系假文件——真驱动落 `rs_fsva.py`（依据 R&S FSVA/FSV 手册 1176.7510.02─13 原文），X 系列保持 NotImplementedError 指路）；`channel_calibration` 两端点暴露 use_mock（P1-68 模式）；Orchestrator ×2（含 `execute_calibration_plan` 主链）同批改 request 传入；phase 只读 ×3 去死参；诊断序列补一条 SA 测量能力探针（出发前载体，禁盲试适用） | 真 SA 路径有行为门 + 变异（mock HAL 下走 fail-loud/能力探测语义）；CE+SA 闭环端到端可从 API 触达；全套内审 **现场前置（内审 F3）**：补 FSV3000/FSVA3000 家族手册（1176.7510.02 不覆盖现场料号 1330.5000Kxx）核对 TRACe:IQ 写路径命令；出发前跑 `rs_fsva_iq_capability` 探针 | ✅ #392（内审全套 5+3 findings 全修、17 变异全红、外审 Gemini R1 采纳 + R2 无 high；**现场前置两项仍待办**：补家册核对写路径 + 出发前跑探针） |
-| **P1-71** | QZ 并轨 + workflow phase 口关闭：probe 侧 `quiet_zone_calibrations` 挂封存 banner（照计划链五表模式，0 行无迁移）+ `quiet_zone_validation_service`/orchestrator 的 qz 引用换源 channel 侧；workflow_engine phase 步骤类型 fail-loud（同 P1-68 REST 口语义） | 封存 banner + 引用换源零残留（grep 门）；workflow phase 步骤 fail-loud 有门；全套内审 | ⏳ 队首 |
-| **P1-72** | P1-4 对比换源：`ReportComparison` 增 execution 级列（旧 plan 列保留只读封存语义）；报表对比逻辑换源 TestExecution；`repeatability_tests` 激活为同 TestCase 多 execution 指标对齐记录 | Phase 5 跑两次后能出 execution 级对比报告（P1-4 关闭判据）；add-column 迁移方言无关 + column_exists 守门；全套内审 | ⏳ |
+| **P1-71** | QZ 并轨 + workflow phase 口关闭：probe 侧 `quiet_zone_calibrations` 挂封存 banner（照计划链五表模式，0 行无迁移）+ `quiet_zone_validation_service`/orchestrator 的 qz 引用换源 channel 侧；workflow_engine phase 步骤类型 fail-loud（同 P1-68 REST 口语义） | 封存 banner + 引用换源零残留（grep 门）；workflow phase 步骤 fail-loud 有门；全套内审 | ✅ #394（内审 5+3 findings 全修、变异 17 条全红——开 PR 前 12 条（PR body 口径）+ R1 修复轮 5 条、外审 R1 采纳 + R2 明文 clean。**QZ 激活批硬前置留痕**：truth 层的三个 sanitizer 与 orchestrator 状态分支须按 `measurement_grid.provenance.measurement_method=="ce_sa"` 分流真行，否则真实证据恒被判 UNKNOWN——注记在 quiet_zone_calibration_truth.py 模块头） |
+| **P1-72** | P1-4 对比换源：`ReportComparison` 增 execution 级列（旧 plan 列保留只读封存语义）；报表对比逻辑换源 TestExecution；`repeatability_tests` 激活为同 TestCase 多 execution 指标对齐记录 | Phase 5 跑两次后能出 execution 级对比报告（P1-4 关闭判据）；add-column 迁移方言无关 + column_exists 守门；全套内审 | ⏳ 队首 |
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
@@ -582,7 +582,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 2026-08-24 批准队列在办：~~P2-41~~ ✅ → ~~P1-68~~ ✅ → ~~P1-69~~ ✅ → ~~P1-70~~ ✅ → P1-71 → P1-72（见顶部 Current Focus）。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | 2026-08-24 批准队列在办：~~P2-41~~ ✅ → ~~P1-68~~ ✅ → ~~P1-69~~ ✅ → ~~P1-70~~ ✅ → ~~P1-71~~ ✅ → P1-72（见顶部 Current Focus）。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
