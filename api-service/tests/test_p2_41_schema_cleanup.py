@@ -42,6 +42,7 @@ def db():
             "probe_amplitude_calibrations", "probe_phase_calibrations",
             "probe_polarization_calibrations", "link_calibrations",
             "probe_path_loss_calibrations", "probe_calibration_validity",
+            "calibration_baselines",
         )
     ]
     Base.metadata.create_all(engine, tables=tables)
@@ -150,9 +151,6 @@ class TestNoProvenanceFence:
     """门 4（内审 F1）：无来源列表的时间围栏选择性 —— M8（丢 WHERE 全删）在这红。"""
 
     def test_baselines_fence_keeps_post_governance_rows(self, db):
-        from app.db.database import Base
-        Base.metadata.create_all(db.engine,
-                                 tables=[Base.metadata.tables["calibration_baselines"]])
         mig = _load_migration()
         base = dict(chamber_id=str(uuid.uuid4()), calibration_type="phase",
                     frequency_mhz=3500.0, reference_channel_id="ch1",
@@ -186,6 +184,40 @@ class TestUpgradeWiring:
         attrs = {n.func.attr for n in ast.walk(up)
                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
         assert "drop_table" in attrs and "execute" in attrs
+
+    def test_upgrade_guards_check_all_referenced_columns(self):
+        """守门列检查完整性（轻量内审 F1）：每个 DELETE 构造引用的列都必须在
+        upgrade() 的 column_exists 守门里出现 —— 守门回退（M1 删 created_at
+        检查 / M2 all() 漏 vna_model）在这红。brownfield 缺列时旧行为是崩，
+        守门后是跳过（fail-safe），但守门本身不许静默退化。"""
+        import ast
+        src = _MIG_PATH.read_text()
+        tree = ast.parse(src)
+        up = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "upgrade")
+        def _cols_in(node):
+            """该子树内 column_exists 的常量列名 + 元组常量（all() 生成器形态）。"""
+            cols = {n.args[-1].value for n in ast.walk(node)
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "column_exists"
+                    and isinstance(n.args[-1], ast.Constant)}
+            for n in ast.walk(node):
+                if isinstance(n, ast.Tuple):
+                    cols |= {e.value for e in n.elts
+                             if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            return cols
+
+        # 按守门点断言（全函数并集会让别处的同名列掩护回退）
+        fenced_for = next(n for n in ast.walk(up) if isinstance(n, ast.For)
+                          and isinstance(n.iter, ast.Name)
+                          and n.iter.id == "_FENCED_TABLES")
+        assert {"use_mock", "created_at"} <= _cols_in(fenced_for), \
+            "fenced 循环守门缺列 —— 守门退化"
+        pl_ifs = [n for n in ast.walk(up) if isinstance(n, ast.If)
+                  and "probe_path_loss_calibrations" in ast.dump(n.test)]
+        assert pl_ifs, "path_loss 守门分支消失"
+        assert {"use_mock", "created_at", "vna_model"} <= _cols_in(pl_ifs[0].test), \
+            "path_loss 守门缺列 —— 守门退化"
 
 
 class TestR3NoResurrection:

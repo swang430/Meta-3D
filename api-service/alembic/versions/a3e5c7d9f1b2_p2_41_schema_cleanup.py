@@ -100,10 +100,12 @@ def upgrade() -> None:
 
     # ---- R5: 演示期校准数据清理 ----
     for t in _FENCED_TABLES:
-        if table_exists(t) and column_exists(t, "use_mock"):
+        if table_exists(t) and column_exists(t, "use_mock") \
+                and column_exists(t, "created_at"):
             op.execute(fenced_delete_sql(t))
-    if table_exists("probe_path_loss_calibrations") and \
-            column_exists("probe_path_loss_calibrations", "use_mock"):
+    if table_exists("probe_path_loss_calibrations") and all(
+            column_exists("probe_path_loss_calibrations", c)
+            for c in ("use_mock", "created_at", "vna_model")):
         op.execute(path_loss_delete_sql())
     for t in _NO_PROVENANCE_TABLES:
         if table_exists(t) and column_exists(t, "created_at"):
