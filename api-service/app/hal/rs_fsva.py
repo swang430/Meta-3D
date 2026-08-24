@@ -616,9 +616,11 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
                 f"[FSVA] TRACe:IQ:DATA? 空回复 / 非字符串 ({raw!r:.80}) —— "
                 f"不返回半截数据"
             )
-        parts = raw.strip().split(",")
         try:
-            values = np.array([float(p) for p in parts], dtype=np.float64)
+            # C 层解析（外审 #392 R1 建议）。坏数据 raise ValueError 依赖
+            # numpy≥2（requirements 已锁地板；1.x 会静默截断且长度检查
+            # 对「恰好 2N 个合法值+尾垃圾」不设防）。
+            values = np.fromstring(raw.strip(), sep=",")
         except ValueError:
             raise RuntimeError(
                 f"[FSVA] TRACe:IQ:DATA? 回复含非数值字段（前 80 字: "
