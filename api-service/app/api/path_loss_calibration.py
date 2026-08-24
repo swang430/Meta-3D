@@ -500,6 +500,14 @@ def get_calibration_plan(
     chamber_id: UUID,
     frequency_mhz: float = Query(3500.0),
     force_recalibrate: bool = Query(False, description="是否强制重新校准所有项目"),
+    use_mock: bool = Query(
+        True,
+        description=(
+            "True = mock 校准路径（默认，向后兼容）；False = 真实仪器路径。"
+            "P1-69 §4 裁决：Orchestrator 两站点随第一激活批（P1-70）改请求传入，"
+            "照 P1-68 模式（本端点为 Query 参数，无 request body）。"
+        ),
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -507,7 +515,7 @@ def get_calibration_plan(
 
     确定需要执行的校准项目和执行顺序。
     """
-    orchestrator = CalibrationOrchestrator(db, use_mock=True)
+    orchestrator = CalibrationOrchestrator(db, use_mock=use_mock)
     plan = orchestrator.get_calibration_plan(chamber_id, frequency_mhz, force_recalibrate)
 
     if "chamber_id" not in plan:
@@ -524,6 +532,14 @@ async def execute_calibration_plan(
     sgh_model: str = Query("Generic SGH", description="SGH 型号"),
     sgh_gain_dbi: float = Query(10.0, description="SGH 增益 (dBi)"),
     items: Optional[List[str]] = Query(None, description="要执行的校准项目，None 表示按计划执行"),
+    use_mock: bool = Query(
+        True,
+        description=(
+            "True = mock 校准数据（默认，向后兼容）；False = 真实仪器路径"
+            "（execute_calibration_plan 主链按各子 service 的 real 分支执行）。"
+            "P1-69 §4 裁决：随第一激活批（P1-70）改请求传入，照 P1-68 模式。"
+        ),
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -531,7 +547,7 @@ async def execute_calibration_plan(
 
     按顺序执行所有需要的校准项目。
     """
-    orchestrator = CalibrationOrchestrator(db, use_mock=True)
+    orchestrator = CalibrationOrchestrator(db, use_mock=use_mock)
 
     # 确定要执行的项目
     if items:
@@ -998,7 +1014,9 @@ async def get_phase_coherence(
     
     返回当前暗室的相位校准状态和一致性评分。
     """
-    service = PhaseCalibrationService(db, use_mock=True)
+    # P1-70（P1-69 §4）: 只读端点不落库, use_mock 无行为差异 —— 默认构造去死参,
+    # 照 P1-68 GET 模式, 不再用显式 use_mock=True 制造「查询也在 mock」的误导。
+    service = PhaseCalibrationService(db)
     status = service.get_phase_coherence_status(chamber_id)
     return status.to_dict()
 
@@ -1014,7 +1032,8 @@ async def get_phase_compensation(
     
     返回各通道需要应用的相位补偿值。
     """
-    service = PhaseCalibrationService(db, use_mock=True)
+    # P1-70（P1-69 §4）: 同上只读路径 —— use_mock 在读路径无行为差异, 去死参。
+    service = PhaseCalibrationService(db)
     compensations = service.calculate_phase_compensation(chamber_id, frequency_mhz)
     
     return {
@@ -1035,7 +1054,9 @@ async def verify_phase_coherence(
     
     应用补偿后重新测量，验证补偿效果。
     """
-    service = PhaseCalibrationService(db, use_mock=True)
+    # P1-70（P1-69 §4）: 只读校验、不落库（#388 内审申报的三个不落库站点之一）
+    # —— 默认构造去死参, 行为不变（service 缺省即 True）。
+    service = PhaseCalibrationService(db)
     result = await service.verify_phase_coherence(chamber_id, frequency_mhz)
     return result
 

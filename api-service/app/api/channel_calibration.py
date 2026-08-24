@@ -179,7 +179,10 @@ async def start_temporal_calibration(
         distance_2d_m=request.scenario.distance_2d_m,
         session_id=request.session_id,
         channel_emulator=request.channel_emulator_id,
-        calibrated_by=request.calibrated_by
+        calibrated_by=request.calibrated_by,
+        # P1-70（P1-69 §1 第一激活批）：real 分支（SA.measure_pdp）此前从 API
+        # 不可达 —— 端点不传 use_mock，service 缺省恒 True。照 P1-68 模式透传。
+        use_mock=request.use_mock,
     )
 
     return CalibrationJobResponse(
@@ -253,7 +256,10 @@ async def start_doppler_calibration(
         fc_ghz=request.fc_ghz,
         session_id=request.session_id,
         channel_emulator=request.channel_emulator_id,
-        calibrated_by=request.calibrated_by
+        calibrated_by=request.calibrated_by,
+        # P1-70（P1-69 §1 第一激活批）：real 分支（SA.measure_doppler_spectrum）
+        # 此前从 API 不可达。照 P1-68 模式透传。
+        use_mock=request.use_mock,
     )
 
     return CalibrationJobResponse(

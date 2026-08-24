@@ -3,6 +3,14 @@ Keysight X-Series Signal Analyzer Driver
 ========================================
 
 Real HAL Driver for Keysight X-Series Signal Analyzers.
+
+⚠ P1-70 注记（信道验证第一激活批的实施对象纠偏）：
+现场 SA 实测是 R&S FSVA3000（docs/site-debug/2026-05-27-onsite-playbook.md:68，
+"SCPI 是 R&S FSW/FSVA 命令族，不是 Keysight X-Series"），P0-4 起绑
+`RealRsFsvaDriver`。且本地 Instrument_API_Doc 里 Keysight X 系列的两份"手册"
+均系假文件（一份内容是 N6700 电源手册、一份是 HTML 网页）——按禁盲试铁律，
+无真手册不实现 SCPI。故 measure_pdp / measure_doppler_spectrum 在本驱动保持
+未实现并指路 FSVA；将来要启用 X 系列，先补真手册再实现。
 """
 
 import logging
@@ -124,6 +132,35 @@ class RealKeysightXSeriesSaDriver(SignalAnalyzerDriver):
             return True
         except Exception:
             return False
+
+    # ── P1-70：信道验证采集在 X 系列上显式未实现（见文件头注记） ──────
+
+    _P1_70_NOT_IMPLEMENTED = (
+        "Keysight X 系列的 {method} 未实现：现场 SA 系 R&S FSVA3000"
+        "（RealRsFsvaDriver 已实现该测量，P1-70）；X 系列本地手册系假文件"
+        "（一份是 N6700 电源手册、一份是 HTML 网页），按禁盲试铁律，"
+        "实现前须先补真手册。"
+    )
+
+    async def measure_pdp(
+        self,
+        center_freq_hz: float,
+        max_delay_ns: float = 2000.0,
+        resolution_ns: float = 10.0,
+    ):
+        raise NotImplementedError(
+            self._P1_70_NOT_IMPLEMENTED.format(method="measure_pdp")
+        )
+
+    async def measure_doppler_spectrum(
+        self,
+        center_freq_hz: float,
+        max_doppler_hz: float = 500.0,
+        num_bins: int = 256,
+    ):
+        raise NotImplementedError(
+            self._P1_70_NOT_IMPLEMENTED.format(method="measure_doppler_spectrum")
+        )
 
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""

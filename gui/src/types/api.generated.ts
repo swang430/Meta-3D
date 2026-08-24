@@ -1359,10 +1359,209 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calibration/channel/temporal/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start temporal (PDP) channel validation (P1-70 real reachable) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartTemporalCalibrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Calibration job result */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelCalibrationJobResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/doppler/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Doppler spectrum channel validation (P1-70 real reachable) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartDopplerCalibrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Calibration job result */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelCalibrationJobResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/orchestrator/plan/{chamber_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get calibration plan (use_mock exposed since P1-70) */
+        get: {
+            parameters: {
+                query?: {
+                    use_mock?: boolean;
+                };
+                header?: never;
+                path: {
+                    chamber_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Calibration plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/orchestrator/execute/{chamber_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute calibration plan (use_mock exposed since P1-70) */
+        post: {
+            parameters: {
+                query: {
+                    frequency_mhz?: number;
+                    calibrated_by: string;
+                    sgh_model?: string;
+                    sgh_gain_dbi?: number;
+                    items?: string[];
+                    use_mock?: boolean;
+                };
+                header?: never;
+                path: {
+                    chamber_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Execution result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ChannelCalibrationJobResponse: {
+            /** Format: uuid */
+            calibration_job_id: string;
+            status: string;
+            estimated_duration_minutes?: number | null;
+            message?: string | null;
+        };
+        ScenarioConfig: {
+            type: string;
+            condition: string;
+            fc_ghz: number;
+            distance_2d_m?: number | null;
+        };
+        StartTemporalCalibrationRequest: {
+            scenario: components["schemas"]["ScenarioConfig"];
+            /** Format: uuid */
+            session_id?: string | null;
+            channel_emulator_id?: string | null;
+            calibrated_by: string;
+            /**
+             * @description True = synthetic PDP (default). False = real instrument path via signalAnalyzer measure_pdp (RealRsFsvaDriver TRACe:IQ, P1-70).
+             * @default true
+             */
+            use_mock: boolean;
+        };
+        StartDopplerCalibrationRequest: {
+            velocity_kmh: number;
+            fc_ghz: number;
+            /** Format: uuid */
+            session_id?: string | null;
+            channel_emulator_id?: string | null;
+            calibrated_by: string;
+            /**
+             * @description True = reference-plus-noise synthetic spectrum (default). False = real instrument path via measure_doppler_spectrum (P1-70).
+             * @default true
+             */
+            use_mock: boolean;
+        };
         StartRFChainCalibrationRequest: {
             /** Format: uuid */
             chamber_id: string;

@@ -154,6 +154,15 @@ class StartTemporalCalibrationRequest(BaseModel):
     session_id: Optional[UUID] = Field(None, description="关联的校准会话ID")
     channel_emulator_id: Optional[str] = Field(None, description="信道仿真器设备ID")
     calibrated_by: str = Field(..., description="校准人员")
+    use_mock: bool = Field(
+        True,
+        description=(
+            "True = 合成 PDP（generate_mock_pdp，默认，向后兼容）；"
+            "False = 真实仪器路径：活动 LabProfile 须绑 signalAnalyzer 驱动且实现 "
+            "measure_pdp（P1-70 起 RealRsFsvaDriver 已实现，走 TRACe:IQ 采集），"
+            "前置 CE 已加载目标 CDL 模型（由调用方编排）。P1-69 §1 第一激活批。"
+        ),
+    )
 
 
 class TemporalCalibrationMeasuredParams(BaseModel):
@@ -230,6 +239,15 @@ class StartDopplerCalibrationRequest(BaseModel):
     session_id: Optional[UUID] = Field(None, description="关联的校准会话ID")
     channel_emulator_id: Optional[str] = Field(None, description="信道仿真器设备ID")
     calibrated_by: str = Field(..., description="校准人员")
+    use_mock: bool = Field(
+        True,
+        description=(
+            "True = 参考谱加噪声合成测量谱（默认，向后兼容）；"
+            "False = 真实仪器路径：活动 LabProfile 须绑 signalAnalyzer 驱动且实现 "
+            "measure_doppler_spectrum（P1-70 起 RealRsFsvaDriver 已实现，长 IQ 采集 "
+            "+ FFT），前置 CE 已加载目标信道（由调用方编排）。P1-69 §1 第一激活批。"
+        ),
+    )
 
 
 class DopplerCalibrationResponse(BaseModel):

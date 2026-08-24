@@ -844,10 +844,15 @@ class ChannelCalibrationService:
                     "implementing measure_pdp()."
                 )
             center_hz = fc_ghz * 1e9
+            # P1-70 内审 F4：10 ns 分辨率 → 请求 100 MHz 采样率，超出手册
+            # 基础采样率范围 100 Hz–45 MHz（1176.7510.02─13，无 B40/B70/B160
+            # 选件时；超范围行为手册未载，可能入错误队列使采集恒 fail-loud）。
+            # 收窄到 25 ns → 40 MHz ≤ 45 MHz；对 UMa 百 ns 级 RMS 时延扩展
+            # 判据精度足够。实际速率仍以驱动回读值定轴。
             delay_list, power_list = await sa.measure_pdp(
                 center_freq_hz=center_hz,
                 max_delay_ns=2000.0,
-                resolution_ns=10.0,
+                resolution_ns=25.0,
             )
             delay_bins = np.array(delay_list)
             power_db = np.array(power_list)
@@ -936,6 +941,7 @@ class ChannelCalibrationService:
         # 获取测量频谱
         if use_mock:
             meas_power = ref_power + np.random.normal(0, 0.5, len(ref_power))
+            meas_freq = ref_freq
         else:
             from app.services.instrument_hal_service import get_hal_service
             hal = get_hal_service()
@@ -947,12 +953,19 @@ class ChannelCalibrationService:
                     "implementing measure_doppler_spectrum()."
                 )
             center_hz = fc_ghz * 1e9
+            # P1-70 内审 F1：测量轴必须与参考网格**完全同一** —— 参考 =
+            # linspace(-1.1fd, +1.1fd, 512)（generate_classical_doppler_spectrum），
+            # 驱动按契约返回 linspace(-max_doppler, +max_doppler, num_bins)。
+            # 传 1.1*fd 即两轴同网格。原 max(2fd, 100) 会让两条不同频率轴
+            # 逐点做 Pearson —— 完美 Jakes 谱实算相关 0.09~0.28，恒判 fail，
+            # 且落库把参考轴配测量值（假轴）。
             meas_freq_list, meas_power_list = await sa.measure_doppler_spectrum(
                 center_freq_hz=center_hz,
-                max_doppler_hz=max(expected_doppler * 2.0, 100.0),
+                max_doppler_hz=expected_doppler * 1.1,
                 num_bins=len(ref_freq),
             )
             meas_power = np.array(meas_power_list)
+            meas_freq = np.array(meas_freq_list)
 
         # 计算相关性
         correlation = calculate_spectral_correlation(meas_power, ref_power)
@@ -971,7 +984,9 @@ class ChannelCalibrationService:
             fc_ghz=fc_ghz,
             expected_doppler_hz=expected_doppler,
             measured_spectrum={
-                "frequency_bins_hz": ref_freq.tolist(),
+                # P1-70 内审 F1：测量记录必须配测量自己的轴（真实生效端），
+                # 不能借参考轴。
+                "frequency_bins_hz": meas_freq.tolist(),
                 "power_density_db": meas_power.tolist()
             },
             reference_spectrum={
