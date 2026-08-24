@@ -1,9 +1,16 @@
 """Read-time truth projection for legacy quiet-zone calibration rows.
 
-Both existing QZ tables predate an explicit-real provenance contract and were
-populated by mock/random writers.  Preserve their configuration/audit identity,
-but never disclose their grid samples, engineering values, validity, or verdict
-as formal evidence.
+历史行（本层立层时的全部行）出自 mock/random 写方、先于显式 real provenance
+契约，所以按 UNKNOWN/N/A 投影：保留配置/审计身份，不把网格样本、工程值、
+有效期、判决当正式证据放出。
+
+⚠ P1-71 起该前提**不再对未来行成立**：QZ 并轨后
+`quiet_zone_validation_service` 的 real 路径（今天在网格取数前 fail-closed，
+等 XY 场扫描平台）会向 ChannelQuietZoneCalibration 写入带
+`measurement_grid.provenance.measurement_method == "ce_sa"` 的真实行。
+**激活批的硬前置**：先教会本层按行内 provenance 分流（真行放行、legacy 行
+维持 UNKNOWN），否则真实证据会被这里无条件吞掉 —— 三个 sanitizer 都要改，
+calibration_orchestrator 的 QUIET_ZONE_UNIFORMITY 状态分支同步。
 """
 
 from typing import Any, Dict

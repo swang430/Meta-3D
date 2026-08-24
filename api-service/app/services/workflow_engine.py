@@ -525,7 +525,6 @@ class WorkflowExecutor:
         from app.schemas.probe_calibration import FrequencyRange, PolarizationType
         from app.services.probe_calibration_service import (
             AmplitudeCalibrationService,
-            PhaseCalibrationService,
         )
         from app.services.chamber_resolution import resolve_current_chamber
 
@@ -569,28 +568,14 @@ class WorkflowExecutor:
                     )
                 )
             elif cal_type == "phase":
-                reference_probe_id = params.get("reference_probe_id", 0)
-                if (
-                    isinstance(reference_probe_id, bool)
-                    or not isinstance(reference_probe_id, int)
-                    or not 0 <= reference_probe_id < chamber.num_probes
-                ):
-                    raise ValueError(
-                        f"reference_probe_id {reference_probe_id!r} is outside chamber "
-                        f"range 0..{chamber.num_probes - 1}"
-                    )
-                calibration = _asyncio.run(
-                    PhaseCalibrationService().execute_phase_calibration(
-                        db=self.db,
-                        probe_ids=probe_ids,
-                        reference_probe_id=reference_probe_id,
-                        polarizations=polarizations,
-                        frequency_range=frequency_range,
-                        calibrated_by=params.get("calibrated_by", "workflow"),
-                        vna_id=params.get("vna_id"),
-                        use_mock=params.get("use_mock", True),
-                        chamber_id=chamber.id,
-                    )
+                # P1-71 关闭（设计稿 §4）：这里曾是最后一个活的间接 mock 相位
+                # 落库口（use_mock 默认 True → execute_phase_calibration 直接
+                # 生成合成相位数据入库）。与 P1-68 REST 口同语义 fail-loud；
+                # 相位校准基建为将来 PWS 保留，PWS 复活时一并恢复。
+                raise RuntimeError(
+                    "P1-71 关闭：workflow 相位校准步骤不再执行 —— PFS power-only"
+                    "（TR 37.977 F.2）不需要相位校准，mock 生成口不落库；"
+                    "外部实测相位数据请走 POST /calibration/probe/phase/import-csv。"
                 )
             else:
                 raise ValueError(f"Unknown probe calibration type: {cal_type}")
@@ -885,14 +870,8 @@ steps:
     parameters:
       probe_ids: auto
 
-  - id: phase_calibration
-    type: probe_calibration
-    calibration_type: phase
-    description: "相位校准 - 确保通道间相位一致性"
-    parameters:
-      probe_ids: auto
-      reference_probe_id: 0
-    depends_on: [probe_path_loss]
+  # P1-71: 相位校准步骤已从内置模板摘除（phase 步骤类型 fail-loud，
+  # PWS 复活时一并恢复）；quiet_zone 的依赖改挂 probe_path_loss。
 
   - id: uplink_chain
     type: probe_calibration
@@ -919,7 +898,7 @@ steps:
       quiet_zone:
         shape: sphere
         diameter_m: 1.0
-    depends_on: [probe_path_loss, phase_calibration]
+    depends_on: [probe_path_loss]
 
   - id: notification_complete
     type: notify
@@ -951,14 +930,7 @@ steps:
     parameters:
       probe_ids: auto
 
-  - id: phase_recheck
-    type: probe_calibration
-    calibration_type: phase
-    description: "新频点相位验证"
-    parameters:
-      probe_ids: auto
-      reference_probe_id: 0
-    depends_on: [path_loss_recheck]
+  # P1-71: phase_recheck 步骤已摘除（phase 步骤类型 fail-loud，PWS 复活时恢复）
 
   - id: temporal_validation
     type: channel_calibration
@@ -968,7 +940,7 @@ steps:
       scenario:
         type: UMa
         condition: LOS
-    depends_on: [phase_recheck]
+    depends_on: [path_loss_recheck]
 """
 
 PATH_LOSS_ONLY_WORKFLOW = """

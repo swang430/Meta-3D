@@ -919,9 +919,10 @@ class ProbePathLossCalibrationService:
         直接抛 `F64LocalControlReservedError`。而校准链**不走 commissioning
         的相位租约**，于是「后端启动 → 操作员点路损校准」必然报
         "已交还本地控制" —— 错误文本跟操作员正在做的事完全对不上。
-        租约加在这个共用 primitive 上而不是三个调用方各加一次：
-        `quiet_zone_validation_service`(3 处) / `probe_calibration_service`(1 处)
-        / 本服务自己，都经这里碰 CE。
+        租约加在这个共用 primitive 上而不是各调用方各加一次：
+        `probe_calibration_service`(1 处) / 本服务自己，都经这里碰 CE
+        （原第三家 `quiet_zone_validation_service` 的 XPD 两处已随 P1-71
+        移除，其 field_uniformity 在网格取数前 fail-closed 不达这里）。
         ⚠ 本方法**可以安全嵌套**在外层租约里（`hold()` 用引用计数：内层复用
         外层那份控制权、退出不拆）。所以调用方要减少 socket 建拆开销时，
         直接在作业入口（一次探头方向图 / 一次 QZ 校验 / 一次 path-loss 作业）

@@ -30,7 +30,6 @@ from app.services.system_calibration import (
     TISCalibrationService,
     RepeatabilityTestService,
     CalibrationCertificateService,
-    QuietZoneCalibrationService,
 )
 from app.services.comparability_test import ComparabilityTestService
 from app.services.pdf_certificate import PDFCertificateGenerator
@@ -360,15 +359,14 @@ async def execute_quiet_zone_calibration(
     """
     Execute quiet zone quality validation
 
-    Supports 4 validation types:
-    1. field_uniformity - 场均匀性测试 (threshold: < 1.0 dB)
-    2. spatial_correlation - 空间相关性验证 (threshold: RMS error < 0.1)
-    3. probe_coupling - 探头互耦测量 (threshold: max coupling < -20 dB)
-    4. phase_stability - 相位稳定性测试 (threshold: drift < 10°)
+    P1-64 起恒 503（缺可验证的多点场扫描平台）；P1-71 起 QZ 已并轨 channel 侧
+    （probe 侧 quiet_zone_calibrations 封存，503 后的 mock 实现死代码已删）。
+    XY 场扫描平台到位后，激活路径 = quiet_zone_validation_service（落 channel 表），
+    不复活本端点的 mock 实现。
     """
-    # P1-64: this legacy route has no verified centimetre-scale XY scanner.
-    # Its only implementation is MockInstrumentOrchestrator, so running any
-    # branch would manufacture engineering values and a formal PASS/FAIL.
+    # P1-64: this legacy route has no verified centimetre-scale XY scanner;
+    # running its retired mock implementation would manufacture engineering
+    # values and a formal PASS/FAIL.
     raise HTTPException(
         status_code=503,
         detail=(
@@ -376,49 +374,6 @@ async def execute_quiet_zone_calibration(
             "不会生成模拟数值或正式判决。"
         ),
     )
-
-    instruments = MockInstrumentOrchestrator()  # pragma: no cover - retired path
-    service = QuietZoneCalibrationService(instruments)  # pragma: no cover
-
-    if request.validation_type == 'field_uniformity':
-        calibration = await service.execute_field_uniformity(
-            db=db,
-            frequency_mhz=request.frequency_mhz,
-            grid_points=request.grid_points,
-            tested_by=request.tested_by
-        )
-    elif request.validation_type == 'spatial_correlation':
-        calibration = await service.execute_spatial_correlation(
-            db=db,
-            frequency_mhz=request.frequency_mhz,
-            num_antennas=request.num_antennas or 4,
-            target_channel_model=request.target_channel_model or '3GPP_UMa',
-            tested_by=request.tested_by
-        )
-    elif request.validation_type == 'probe_coupling':
-        # Default: test all 32 probes
-        probe_ids = request.probe_ids or list(range(1, 33))
-        calibration = await service.execute_probe_coupling(
-            db=db,
-            frequency_mhz=request.frequency_mhz,
-            probe_ids=probe_ids,
-            tested_by=request.tested_by
-        )
-    elif request.validation_type == 'phase_stability':
-        calibration = await service.execute_phase_stability(
-            db=db,
-            frequency_mhz=request.frequency_mhz,
-            duration_sec=request.duration_sec or 60.0,
-            tested_by=request.tested_by
-        )
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported validation type: {request.validation_type}. "
-                   f"Supported types: field_uniformity, spatial_correlation, probe_coupling, phase_stability"
-        )
-
-    return calibration
 
 
 # ==================== Multi-Frequency Calibration Endpoints ====================

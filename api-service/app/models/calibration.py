@@ -248,21 +248,28 @@ class CalibrationCertificate(Base):
 
 
 class QuietZoneCalibration(Base):
-    """
+    """⚠️ P1-71 起**封存 (deprecated)** —— QZ 并轨 channel 侧（2026-08-24 设计稿 §2 R6）。
+
+    静区均匀性的唯一活载体 = ``channel_quiet_zone_calibrations``
+    （``ChannelQuietZoneCalibration``，models/channel_calibration.py）。
+    本表 49 列混入 SGH / certificate 等路损域字段、职责不单一，
+    且两台现场机器的库里均为 0 行。
+
+    **表原地保留不迁移不删除**（照计划链五表模式）；**无任何业务写入方**：
+    - ``quiet_zone_validation_service`` 落库已换源 channel 侧；
+    - ``system_calibration`` 的 QZ 写点（503 后不可达死代码）已随本片删除；
+    - 原 XPD 验证器（``run_xpd_validation``）零调用方，随本片移除。
+
+    **新代码不要引用本表。** 会红的门见
+    tests/test_p1_71_qz_merge_and_phase_gate.py（封存表零写点不变量门）。
+
+    -- 以下为封存前原始说明（历史备查）--
+
     Quiet Zone Quality Validation
 
-    验证静区（Quiet Zone）的电磁场质量，这是 MIMO OTA 系统的核心指标。
-    静区质量由软件算法和校准决定，而非暗室的物理尺寸。
-
-    支持的验证类型：
-    1. field_uniformity - 场均匀性测试 (使用 SGH 在静区内扫描)
-    2. spatial_correlation - 空间相关性验证
-    3. probe_coupling - 探头互耦测量
-    4. phase_stability - 相位稳定性测试
-
-    CAL-07: 关联暗室配置和 SGH 测量方法
-    - field_uniformity 测量使用 SGH 在静区内多点扫描
-    - 需要记录 SGH 参考天线信息和测量方法
+    验证静区（Quiet Zone）的电磁场质量。曾支持的验证类型：
+    field_uniformity / spatial_correlation / probe_coupling / phase_stability。
+    CAL-07: 关联暗室配置和 SGH 测量方法。
     """
     __tablename__ = "quiet_zone_calibrations"
 
