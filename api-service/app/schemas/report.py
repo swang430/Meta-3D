@@ -359,11 +359,18 @@ class ReportTemplateSummary(BaseModel):
 # ==================== Comparison Schemas ====================
 
 class ReportComparisonCreate(BaseModel):
-    """Request to create a comparison analysis"""
+    """Request to create a comparison analysis
+
+    P1-72 对比换源：新建对比一律 execution 级（计划链已封存，plan 级创建
+    入口随之关闭——旧 plan 行只读）。
+    """
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    baseline_plan_id: UUID = Field(..., description="Baseline test plan")
-    comparison_plan_ids: List[UUID] = Field(..., description="Plans to compare against baseline")
+    baseline_execution_id: UUID = Field(..., description="Baseline test execution")
+    comparison_execution_ids: List[UUID] = Field(
+        ..., min_length=1,
+        description="Executions to compare against baseline",
+    )
 
     # Configuration
     comparison_metrics: Optional[List[str]] = Field(
@@ -395,8 +402,11 @@ class ReportComparisonResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
-    baseline_plan_id: UUID
+    # plan 两列封存只读（历史行形态）；execution 两列为 P1-72 起的活形态
+    baseline_plan_id: Optional[UUID] = None
     comparison_plan_ids: List[UUID]
+    baseline_execution_id: Optional[UUID] = None
+    comparison_execution_ids: Optional[List[UUID]] = None
     comparison_metrics: Optional[List[str]]
     grouping: Optional[str]
     statistical_tests: Optional[List[str]]

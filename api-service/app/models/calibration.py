@@ -1,5 +1,5 @@
 """System calibration database models"""
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, JSON, Text
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, JSON, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -107,32 +107,61 @@ class SystemTISCalibration(Base):
 
 
 class RepeatabilityTest(Base):
-    """Repeatability test records"""
+    """Repeatability test records
+
+    P1-72 激活（设计稿 §5）：本表激活为「同 TestCase 多次 execution 的指标
+    对齐记录」，由报表对比服务（ReportComparisonService.perform_comparison_analysis）
+    在全部参与 execution 同属一个 TestCase 时落行。原 TRP/TIS mock 合成端点
+    （POST /calibration/repeatability）已 fail-loud 关闭 —— 表成为正式载体后
+    不允许无 provenance 的 mock 写点。
+    """
     __tablename__ = "repeatability_tests"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    test_type = Column(String(50), nullable=False, comment="TRP, TIS, or EIS")
+    test_type = Column(
+        String(50), nullable=False,
+        comment="TRP, TIS, EIS（历史 mock 端点值，已关闭）或 "
+                "execution_metrics（P1-72 对齐记录，唯一活写点）",
+    )
 
     # Standard DUT
     dut_model = Column(String(255))
     dut_serial = Column(String(255))
 
     # Measurement data
-    measurements = Column(JSON, nullable=False, comment="[{run_number, value_dbm, timestamp}, ...]")
+    measurements = Column(
+        JSON, nullable=False,
+        comment="历史形态 [{run_number, value_dbm, timestamp}]；"
+                "execution_metrics 形态 [{run_number, execution_id, metrics}]",
+    )
 
-    # Statistics
+    # Statistics（dBm/dB 语义列 —— execution_metrics 行不填，指标差分在
+    # metric_deltas；P1-72 迁移已放开 NOT NULL）
     num_runs = Column(Integer, nullable=False)
-    mean_dbm = Column(Float, nullable=False)
-    std_dev_db = Column(Float, nullable=False, comment="Standard deviation")
+    mean_dbm = Column(Float)
+    std_dev_db = Column(Float, comment="Standard deviation")
     coefficient_of_variation = Column(Float, comment="std_dev / mean")
     min_dbm = Column(Float)
     max_dbm = Column(Float)
     range_db = Column(Float, comment="max - min")
 
-    # Validation
-    validation_pass = Column(Boolean, nullable=False)
-    threshold_db = Column(Float, nullable=False, comment="Pass if std_dev < threshold")
+    # Validation（execution_metrics 行无判据不造判决 —— P1-72 放开 NOT NULL）
+    validation_pass = Column(Boolean)
+    threshold_db = Column(Float, comment="Pass if std_dev < threshold")
+
+    # P1-72 execution 对齐记录（设计稿 §5：行含 test_case_id + execution_ids
+    # + 指标差分）
+    test_case_id = Column(
+        UUID(as_uuid=True), ForeignKey('test_cases.id'),
+        comment="同 TestCase 对齐记录的 case（execution_metrics 行必填）",
+    )
+    execution_ids = Column(JSON, comment="参与对齐的 test_execution UUID 数组")
+    metric_deltas = Column(
+        JSON,
+        comment="相对 baseline 的指标差分（吞吐/RSRP 方差/SINR），"
+                "含各 execution 的 provenance 标志",
+    )
 
     # Metadata
     tested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
