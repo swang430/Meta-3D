@@ -730,8 +730,175 @@ paths:
           description: >-
             Mock-generation entry closed; external measured phase data must go
             through POST /api/v1/calibration/probe/phase/import-csv.
+  /api/v1/calibration/channel/temporal/start:
+    post:
+      summary: Start temporal (PDP) channel validation (P1-70 real reachable)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTemporalCalibrationRequest'
+      responses:
+        '202':
+          description: Calibration job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelCalibrationJobResponse'
+  /api/v1/calibration/channel/doppler/start:
+    post:
+      summary: Start Doppler spectrum channel validation (P1-70 real reachable)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartDopplerCalibrationRequest'
+      responses:
+        '202':
+          description: Calibration job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelCalibrationJobResponse'
+  /api/v1/calibration/orchestrator/plan/{chamber_id}:
+    get:
+      summary: Get calibration plan (use_mock exposed since P1-70)
+      parameters:
+        - name: chamber_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: use_mock
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Calibration plan
+  /api/v1/calibration/orchestrator/execute/{chamber_id}:
+    post:
+      summary: Execute calibration plan (use_mock exposed since P1-70)
+      parameters:
+        - name: chamber_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: frequency_mhz
+          in: query
+          schema:
+            type: number
+            default: 3500.0
+        - name: calibrated_by
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sgh_model
+          in: query
+          schema:
+            type: string
+            default: Generic SGH
+        - name: sgh_gain_dbi
+          in: query
+          schema:
+            type: number
+            default: 10.0
+        - name: items
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          required: false
+        - name: use_mock
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Execution result
 components:
   schemas:
+    ChannelCalibrationJobResponse:
+      type: object
+      required: [calibration_job_id, status]
+      properties:
+        calibration_job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        estimated_duration_minutes:
+          type: number
+          nullable: true
+        message:
+          type: string
+          nullable: true
+    ScenarioConfig:
+      type: object
+      required: [type, condition, fc_ghz]
+      properties:
+        type:
+          type: string
+        condition:
+          type: string
+        fc_ghz:
+          type: number
+        distance_2d_m:
+          type: number
+          nullable: true
+    StartTemporalCalibrationRequest:
+      type: object
+      required: [scenario, calibrated_by]
+      properties:
+        scenario:
+          $ref: '#/components/schemas/ScenarioConfig'
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel_emulator_id:
+          type: string
+          nullable: true
+        calibrated_by:
+          type: string
+        use_mock:
+          type: boolean
+          default: true
+          description: >-
+            True = synthetic PDP (default). False = real instrument path via
+            signalAnalyzer measure_pdp (RealRsFsvaDriver TRACe:IQ, P1-70).
+    StartDopplerCalibrationRequest:
+      type: object
+      required: [velocity_kmh, fc_ghz, calibrated_by]
+      properties:
+        velocity_kmh:
+          type: number
+        fc_ghz:
+          type: number
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel_emulator_id:
+          type: string
+          nullable: true
+        calibrated_by:
+          type: string
+        use_mock:
+          type: boolean
+          default: true
+          description: >-
+            True = reference-plus-noise synthetic spectrum (default). False =
+            real instrument path via measure_doppler_spectrum (P1-70).
     StartRFChainCalibrationRequest:
       type: object
       required: [chamber_id, chain_type, frequency_mhz, calibrated_by]

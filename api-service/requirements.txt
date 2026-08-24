@@ -36,7 +36,7 @@ pillow>=10.0.0
 
 # Utilities
 python-dateutil>=2.8.0
-numpy>=1.24.0
+numpy>=2.0.0  # rs_fsva IQ 解析依赖 np.fromstring 坏数据 raise（1.x 静默截断）
 scipy>=1.11.0
 pyyaml>=6.0
 
