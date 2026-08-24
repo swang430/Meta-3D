@@ -37,7 +37,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 布尔可能绕过当前模拟来源，现已让吞吐正式门复用同一 explicit-real phase/逐方位 provenance
 判据；当前来源不可信时吞吐同样保持 N/A。
 
-**Current Focus = P2-41（系统校准完善前置·清理片）。2026-08-24 用户批准 [系统级 Schema Review](plans/2026-08-24-system-schema-review.md) 的裁决与切片，队列 P2-41 → P1-68 → P1-69，逐片 WIP=1。**
+**Current Focus = P1-68（校准 API real 可达性 + mock 口治理）。2026-08-24 批准队列 ~~P2-41~~ ✅ #386 → P1-68 → P1-69，逐片 WIP=1；设计稿 = [系统级 Schema Review](plans/2026-08-24-system-schema-review.md)。**
 
 > **~~P1-64~~ ✅ 2026-08-23 由 PR #375 完成**：原实现无
 ProbePattern 时把固定 0.7 dB 写成 `quiet_zone_pass=true`；有 ProbePattern 时又把峰值离散代理
@@ -285,9 +285,9 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 
 | ID | 正式条目 | 验收标准 | 状态 |
 |---|---|---|---|
-| **P2-41** | 清理片：R1 `alerts_p1_38_backup_20260811`（674 行）导出归档后 DROP；R2 `instrument_logs` DROP（P1-35 已删 model 的遗留）；R3 `probe_configurations` 表+model 删（双零死表；含 `app/schemas/probe.py` 的 4 个 ProbeConfiguration* 死 schema 类，删前按名字前缀全仓终扫）；R5 289 行 NULL 来源校准数据导出归档后清理（`probe_calibration_validity` 32 行派生引用一并处理，实现前做全 FK audit 防悬空） | 一个 alembic 迁移（G1 单 head）；归档文件路径写进 PR body；全量绿；G13 与 `chamber_configuration_integrity` 不红 | ⏳ 队首 |
+| **P2-41** | 清理片：R1 `alerts_p1_38_backup_20260811`（674 行）导出归档后 DROP；R2 `instrument_logs` DROP（P1-35 已删 model 的遗留）；R3 `probe_configurations` 表+model 删（双零死表；含 `app/schemas/probe.py` 的 4 个 ProbeConfiguration* 死 schema 类，删前按名字前缀全仓终扫）；R5 289 行 NULL 来源校准数据导出归档后清理（`probe_calibration_validity` 32 行派生引用一并处理，实现前做全 FK audit 防悬空） | 一个 alembic 迁移（G1 单 head）；归档文件路径写进 PR body；全量绿；G13 与 `chamber_configuration_integrity` 不红 | ✅ PR #386（迁移已在本地 PG 实跑 61→58 表；997 行归档；内审全套+轻量各 1 轮、Gemini R1 3 medium 修 / R2 无 high） |
 | **P1-68** | 校准 API real 可达性 + mock 口治理：B-1 五端点（`path_loss_calibration.py` RFChain ×4 + MultiFreq ×1）`use_mock` 硬编码改 request 传入（照 path_loss 既有模式）；B-2 相位校准入口 fail-loud（PFS 不需要相位校准，PWS 未实现——`project_pfs_phase_cal_decision`）；动到的端点补进 `api/openapi.yaml` 并走四步契约同步（A-2 裁决②：只补动到的面）。⚠ **RFChain 的 real 分支是 VNA+SG 基（内审 F2 实证 :1733/:1806），与「不引 VNA」决策冲突——本片只去硬编码，real 打通与否归 P1-69 裁决其测量路线** | **MultiFreq**（真 CE+SA）real 分支从 API 可达且有行为门 + 变异；RFChain 去硬编码但 real 路线标记「待 P1-69 裁决」；phase 口 fail-loud 有门；契约四步同步完成；全套内审 | ⏳ |
-| **P1-69** | 校准完善设计稿：R6/R7 双轨并轨方向（quiet_zone ×2、validity ×2）+ R8 `channel_calibration.py` 8 表在 B-2 标注式 CDL 路线下的保留集裁决 + B-3 P1-4 重复性接 TestExecution 的方案 | 产出 `docs/plans/` 设计稿，**用户 review 通过后**才产生后续代码切片（⓪⁺②）；R8 的每张表给出 保留/封存 结论与理由 | ⏳ |
+| **P1-69** | 校准完善设计稿：R6/R7 双轨并轨方向（quiet_zone ×2、validity ×2）+ R8 `channel_calibration.py` 8 表在 B-2 标注式 CDL 路线下的保留集裁决 + B-3 P1-4 重复性接 TestExecution 的方案 | 产出 `docs/plans/` 设计稿，**用户 review 通过后**才产生后续代码切片（⓪⁺②）；R8 的每张表给出 保留/封存 结论与理由；连带裁决：RFChain 测量路线（B-1）+ E2E 两列软引用悬空（P2-41 内审 F3） | ⏳ |
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
