@@ -168,8 +168,8 @@ class QuietZoneValidationService:
         field_range_db = float(max_dbm - min_dbm)
 
         # P1-71 QZ 并轨：落 channel 侧表。probe 侧独有的 chamber/SGH/绝对功率
-        # 字段没有对应列，如实收进 measurement_grid.provenance；amplitude_* 统计
-        # 列承载的是功率（dBm 标度）统计，同样在 provenance 里申明。
+        # 字段没有对应列，如实收进 measurement_grid.provenance；amplitude_* 列
+        # 按其 dB（相对量）语义只存偏差统计，绝对功率留在 provenance。
         qz_diameter_m = getattr(chamber, "quiet_zone_diameter_m", None) or 0.3
         cal = ChannelQuietZoneCalibration(
             session_id=None,
@@ -198,13 +198,19 @@ class QuietZoneValidationService:
                     "field_max_dbm": float(max_dbm),
                     "field_min_dbm": float(min_dbm),
                     "quiet_zone_shape_source": "assumed sphere (chamber 仅登记直径)",
-                    "units_note": "amplitude_* 统计列为功率统计（dBm 标度）",
+                    "units_note": (
+                        "amplitude_range_db 为相对均值偏差（dB，外审 #394 R1 对齐"
+                        "列名语义）；amplitude_mean_db 不填——相对均值恒 0 无信息，"
+                        "绝对功率（dBm）见本 provenance 的 field_*_dbm"
+                    ),
                 },
             },
             num_points=len(grid_data),
-            amplitude_mean_db=float(mean_dbm),
+            amplitude_mean_db=None,
             amplitude_std_db=float(std_db),
-            amplitude_range_db=[float(min_dbm), float(max_dbm)],
+            amplitude_range_db=[
+                float(min_dbm - mean_dbm), float(max_dbm - mean_dbm)
+            ],
             amplitude_uniformity_pass=bool(amplitude_pass),
             validation_pass=bool(amplitude_pass),
             amplitude_threshold_db=float(amplitude_threshold_db),

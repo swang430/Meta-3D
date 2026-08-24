@@ -186,6 +186,16 @@ class TestQzPersistRetargeted:
         row = db.query(ChannelQuietZoneCalibration).one()
         persisted = [p["power_dbm"] for p in row.measurement_grid["points"]]
         assert persisted == pytest.approx(fed)
+        # 外审 #394 R1：amplitude_range_db 按列名 dB 语义存相对均值偏差；
+        # 绝对 dBm 只在 provenance，mean 列不填（相对均值恒 0 无信息）
+        mean = sum(fed) / len(fed)
+        assert row.amplitude_range_db == pytest.approx(
+            [min(fed) - mean, max(fed) - mean]
+        )
+        assert row.amplitude_mean_db is None
+        assert row.measurement_grid["provenance"]["field_mean_dbm"] == (
+            pytest.approx(mean)
+        )
 
     def test_fail_verdict_persists_as_fail(self, db, monkeypatch):
         # 内审 F2（MY-1 揭穿）：判决列不是常量 —— 超差网格必须 FAIL 落库

@@ -444,7 +444,11 @@ class ChannelQuietZoneCalibration(Base):
     # 幅度均匀性统计
     amplitude_mean_db = Column(Float, comment="幅度均值 (dB)")
     amplitude_std_db = Column(Float, comment="幅度标准差 (dB)")
-    amplitude_range_db = Column(JSON, comment="幅度范围 [min, max]")
+    amplitude_range_db = Column(
+        JSON,
+        comment="幅度范围 [min, max]（dB 相对量；P1-71 起活写方存相对均值偏差，"
+                "绝对功率见 measurement_grid.provenance）",
+    )
 
     # 相位均匀性统计
     phase_mean_deg = Column(Float, comment="相位均值 (度)")
