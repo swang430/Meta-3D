@@ -62,7 +62,7 @@ client = TestClient(app)
 def _capture_service(monkeypatch, module_path, cls_name, captured):
     """替换 service 类为构造参数捕获桩（calibrate_* 返回最小假结果）。"""
     import importlib
-    api_mod = importlib.import_module("app.api.path_loss_calibration")
+    api_mod = importlib.import_module(module_path)
 
     class _Stub:
         def __init__(self, db, use_mock=True):
