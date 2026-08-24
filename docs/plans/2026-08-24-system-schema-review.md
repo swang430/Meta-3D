@@ -18,7 +18,7 @@
 
 | 维度 | 实测 |
 |---|---|
-| PG 表 | **61** 张（`pg_tables`，不含 alembic_version 60） |
+| PG 表 | **61** 张（`pg_tables`；不含 alembic_version 则是 60 张） |
 | 有 model 的表 | 58 张（`app/models/` 含子目录；61 − alembic_version − 2 孤儿 = 58，双向 diff 对平） |
 | 孤儿表（PG 有、model 无） | **2 张**：`alerts_p1_38_backup_20260811`（674 行备份）、`instrument_logs`（0 行；P1-35 已删 model，表遗留，源码注记自认「孤儿表」） |
 | 有数据的表 | 36 张；真空表 25 张 |
@@ -101,7 +101,7 @@ GUI 的校准页面全部对无契约端点编程（手写类型，非 generated
 | R7 | `probe_calibration_validity`(32) vs `channel_calibration_validity`(0) | 双轨 | **以 probe 侧为准，channel 侧随 R8 一并裁决** | probe 侧有活消费链 |
 | R8 | `channel_calibration.py` 全家 8 表（sessions/temporal/doppler/spatial/angular/eis/validity/channel_qz） | 8 张全 0 行；引用只在 `channel_calibration_service` + 报告生成器自家闭环 | **冻结待设计裁决**：校准完善设计稿必须显式回答「B-2 标注式 CDL 路线下，多普勒/空间相关/角度扩展校准还要不要」，保留集之外整体封存（照计划链五表模式） | 2025 设计稿时代铺的体系；F64 无 custom PSD 口的硬约束下，这套按信道特征逐项校准的设计很可能已被 B-2 路线取代。**不要默认保留，也不要现在就删**——这是设计问题不是清理问题 |
 | R9 | `probe_phase_calibrations`(52) + `channel_phase_calibrations`(6) + phase 基建 | mock 时代数据 | **冻结**（数据随 R5 清理；表与服务保留） | 既定决策：phase cal 为将来 PWS 保留，PFS 不需要。校准完善不在这里花力气 |
-| R10 | `system_trp/tis_calibrations`、`comparability_tests` | 0 行、极少引用 | **冻结**（不删不投入） | CTIA 系统级验收概念，first-call 路线未到 |
+| R10 | `system_trp_calibrations`、`system_tis_calibrations`、`comparability_tests` | 0 行、极少引用 | **冻结**（不删不投入） | CTIA 系统级验收概念，first-call 路线未到 |
 | R11 | `repeatability_tests` | 0 行 | **保留并激活**——P1-4 的自然数据位 | 唯一一张「空但下一步就要用」的表 |
 
 ## 5. 建议的行动切片（供 triage，按依赖排序）
