@@ -1247,11 +1247,19 @@ class ReportComparisonService:
                 "请新建 execution 级对比（P1-72）"
             )
 
-        # 内审 F3：重分析（重试/双击）不许增殖对齐行 —— 记住上一轮落的行，
-        # 本轮落新行前删旧行，保持 1 comparison ↔ ≤1 对齐行
+        # 内审 F3：重分析（重试/双击）不许增殖对齐行 —— 记住上一轮落的行并
+        # 立即清理（外审 #396 R1 high：清理若挂在"本轮也满足同 case"分支里，
+        # 本轮不满足时旧行成孤儿且指针随 comparison_results 覆盖永失）。
+        # 本轮后续 fail-loud raise 时由调用方 rollback 撤销此删除，无害。
         previous_repeatability_id = (comparison.comparison_results or {}).get(
             "repeatability_test_id"
         )
+        if previous_repeatability_id is not None:
+            from app.models.calibration import RepeatabilityTest
+
+            stale = db.get(RepeatabilityTest, UUID(previous_repeatability_id))
+            if stale is not None:
+                db.delete(stale)
 
         ordered_ids = [comparison.baseline_execution_id] + [
             UUID(str(i)) for i in (comparison.comparison_execution_ids or [])
@@ -1329,11 +1337,6 @@ class ReportComparisonService:
         repeatability_id = None
         if len(case_ids) == 1 and None not in case_ids:
             from app.models.calibration import RepeatabilityTest
-
-            if previous_repeatability_id is not None:
-                stale = db.get(RepeatabilityTest, UUID(previous_repeatability_id))
-                if stale is not None:
-                    db.delete(stale)
 
             repeatability = RepeatabilityTest(
                 test_type="execution_metrics",

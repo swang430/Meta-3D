@@ -345,6 +345,23 @@ class TestReviewFindingsGates:
         assert first_rep_id != second_rep_id
         assert db.get(RepeatabilityTest, uuid.UUID(first_rep_id)) is None
 
+    def test_reanalyze_after_case_unbind_cleans_stale_row(self, db):
+        # 外审 #396 R1 high：本轮不再满足同 case 条件时，上一轮对齐行
+        # 必须被清理（否则成孤儿且指针随 comparison_results 覆盖永失）
+        svc, row = self._analyzed_pair(db)
+        first = svc.perform_comparison_analysis(db, row.id)
+        first_rep_id = first.comparison_results["repeatability_test_id"]
+        assert db.query(RepeatabilityTest).count() == 1
+
+        baseline = db.get(TestExecution, row.baseline_execution_id)
+        baseline.test_case_id = None
+        db.commit()
+
+        second = svc.perform_comparison_analysis(db, row.id)
+        assert db.query(RepeatabilityTest).count() == 0, "孤儿对齐行未清理"
+        assert db.get(RepeatabilityTest, uuid.UUID(first_rep_id)) is None
+        assert "repeatability_test_id" not in second.comparison_results
+
     def test_f4_certificate_rejects_alignment_row(self, db):
         from datetime import datetime as _dt
         from app.models.calibration import (
