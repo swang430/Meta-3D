@@ -716,6 +716,17 @@ class StartRFChainCalibrationRequest(BaseModel):
 
     calibrated_by: str = Field(..., description="校准人员")
 
+    use_mock: bool = Field(
+        default=True,
+        description=(
+            "True = 生成模拟数据 (默认, 开发/无硬件场景); "
+            "False = 走真实仪器测量路径。P1-68: 原端点硬编码 True 使 real "
+            "分支 API 不可达。⚠ RFChain 的 real 分支现为 VNA+SG 基, 测量"
+            "路线与「CE+SA 不引 VNA」决策的取舍归 P1-69 裁决 —— 本字段只"
+            "恢复可达性, 不代表路线已定。"
+        ),
+    )
+
 
 class RFChainCalibrationResponse(BaseModel):
     """RF 链路增益校准响应"""
@@ -795,6 +806,15 @@ class StartMultiFrequencyPathLossRequest(BaseModel):
     vna_id: Optional[str] = Field(None, description="VNA 设备 ID")
 
     calibrated_by: str = Field(..., description="校准人员")
+
+    use_mock: bool = Field(
+        default=True,
+        description=(
+            "True = 生成模拟数据 (默认, 开发/无硬件场景); False = 真实 "
+            "CE+SA 扫频测量 (_real_frequency_sweep_via_ce_sa)。"
+            "P1-68 恢复 real 可达性。"
+        ),
+    )
 
     @field_validator('freq_stop_mhz')
     @classmethod

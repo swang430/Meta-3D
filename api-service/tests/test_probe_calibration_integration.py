@@ -168,22 +168,24 @@ class TestCompleteCalibrationWorkflow:
         assert amp_data.json()["probe_id"] == probe_id
 
         # Step 2: 相位校准
-        phase_response = _scoped_post(
-            "/api/v1/calibration/probe/phase/start",
-            json={
-                "probe_ids": [probe_id],
-                "polarizations": ["V"],
-                "reference_probe_id": 0,
-                "frequency_range": {
-                    "start_mhz": 3300,
-                    "stop_mhz": 3800,
-                    "step_mhz": 100
-                },
-                "calibrated_by": "Integration Test"
-            }
+        # P1-68: phase mock 生成口已关闭（PFS power-only, 409）——
+        # 相位数据唯一合法路径 = import-csv（外部实测导入）。
+        csv_payload = (
+            "frequency_mhz,phase_offset_deg,group_delay_ns,phase_uncertainty_deg\n"
+            "3300,-12.5,0.85,2.1\n3500,-12.8,0.86,2.1\n3800,-13.1,0.87,2.2\n"
         )
-        assert phase_response.status_code == 202
-        assert phase_response.json()["status"] == "completed"
+        phase_response = _scoped_post(
+            "/api/v1/calibration/probe/phase/import-csv",
+            files={"file": ("phase.csv", csv_payload, "text/csv")},
+            data={
+                "chamber_id": str(CHAMBER_ID),
+                "probe_id": str(probe_id),
+                "polarization": "V",
+                "reference_probe_id": "0",
+                "calibrated_by": "Integration Test",
+            },
+        )
+        assert phase_response.status_code == 201, phase_response.text
 
         # 验证相位校准数据
         phase_data = _scoped_get(f"/api/v1/calibration/probe/phase/{probe_id}")
@@ -267,12 +269,16 @@ class TestCompleteCalibrationWorkflow:
         validity_data = validity.json()
 
         assert validity_data["amplitude"] is None
-        assert validity_data["phase"] is None
+        # P1-68: phase 数据现在走 import-csv（外部实测导入, explicit-real
+        # 白名单内）—— validity 认它是正确语义, 不再是 mock 生成行。
+        assert validity_data["phase"] is not None
+        assert validity_data["phase"]["status"] == "valid"
         assert validity_data["polarization"] is None
         assert validity_data["pattern"] is None
         # 正式有效性只从 explicit-real 白名单选择；mock 记录仅保留在审计读取中。
         assert validity_data["link"] is None
-        assert validity_data["overall_status"] == "unknown"
+        # P1-68: phase 一类有效（import 实测）而其余仍无 —— partial
+        assert validity_data["overall_status"] == "partial"
 
         # Step 7: 获取综合校准数据
         full_data = _scoped_get(f"/api/v1/calibration/probe/{probe_id}/data")
@@ -317,22 +323,24 @@ class TestCompleteCalibrationWorkflow:
             assert data.status_code == 200
             assert data.json()["probe_id"] == pid
 
-        # 批量相位校准
-        phase_response = _scoped_post(
-            "/api/v1/calibration/probe/phase/start",
-            json={
-                "probe_ids": probe_ids,
-                "polarizations": ["V"],
-                "reference_probe_id": 0,
-                "frequency_range": {
-                    "start_mhz": 3300,
-                    "stop_mhz": 3500,
-                    "step_mhz": 100
-                },
-                "calibrated_by": "Multi-Probe Test"
-            }
+        # 批量相位数据 —— P1-68: mock 生成口关闭, 逐探头走 import-csv
+        csv_payload = (
+            "frequency_mhz,phase_offset_deg,group_delay_ns,phase_uncertainty_deg\n"
+            "3300,-12.5,0.85,2.1\n3400,-12.8,0.86,2.1\n3500,-13.1,0.87,2.2\n"
         )
-        assert phase_response.status_code == 202
+        for pid in probe_ids:
+            phase_response = _scoped_post(
+                "/api/v1/calibration/probe/phase/import-csv",
+                files={"file": ("phase.csv", csv_payload, "text/csv")},
+                data={
+                    "chamber_id": str(CHAMBER_ID),
+                    "probe_id": str(pid),
+                    "polarization": "V",
+                    "reference_probe_id": "0",
+                    "calibrated_by": "Multi-Probe Test",
+                },
+            )
+            assert phase_response.status_code == 201, phase_response.text
 
         # 验证每个探头都有相位校准数据
         for pid in probe_ids:
@@ -714,16 +722,21 @@ class TestComprehensiveDataQuery:
             }
         )
 
-        # 相位校准
+        # 相位数据 —— P1-68: mock 生成口关闭, 走 import-csv
+        csv_payload = (
+            "frequency_mhz,phase_offset_deg,group_delay_ns,phase_uncertainty_deg\n"
+            "3500,-12.5,0.85,2.1\n3600,-12.8,0.86,2.1\n"
+        )
         _scoped_post(
-            "/api/v1/calibration/probe/phase/start",
-            json={
-                "probe_ids": [probe_id],
-                "polarizations": ["V"],
-                "reference_probe_id": 0,
-                "frequency_range": {"start_mhz": 3500, "stop_mhz": 3600, "step_mhz": 100},
-                "calibrated_by": "Data Query Test"
-            }
+            "/api/v1/calibration/probe/phase/import-csv",
+            files={"file": ("phase.csv", csv_payload, "text/csv")},
+            data={
+                "chamber_id": str(CHAMBER_ID),
+                "probe_id": str(probe_id),
+                "polarization": "V",
+                "reference_probe_id": "0",
+                "calibrated_by": "Data Query Test",
+            },
         )
 
         # 极化校准

@@ -1171,10 +1171,241 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calibration/path-loss/rf-chain/uplink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start RF chain uplink gain calibration (P1-68 real reachable) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartRFChainCalibrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Calibration job result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalibrationJobResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/path-loss/rf-chain/downlink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start RF chain downlink gain calibration (P1-68 real reachable) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartRFChainCalibrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Calibration job result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalibrationJobResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/path-loss/multi-frequency/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start multi-frequency path-loss calibration (real = CE+SA sweep) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartMultiFrequencyPathLossRequest"];
+                };
+            };
+            responses: {
+                /** @description Calibration job result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalibrationJobResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/phase/calibrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Phase calibration entry (fail-loud closed since P1-68) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PFS is power-only (TR 37.977 F.2); phase calibration belongs to a future PWS. Entry refuses and no mock rows are generated. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/probe/phase/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe phase calibration mock entry (fail-loud closed since P1-68) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Mock-generation entry closed; external measured phase data must go through POST /api/v1/calibration/probe/phase/import-csv. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        StartRFChainCalibrationRequest: {
+            /** Format: uuid */
+            chamber_id: string;
+            /** @enum {string} */
+            chain_type: "uplink" | "downlink";
+            frequency_mhz: number;
+            vna_id?: string | null;
+            power_meter_id?: string | null;
+            signal_generator_id?: string | null;
+            probe_ids?: number[] | null;
+            calibrated_by: string;
+            /**
+             * @description True = simulated data (default). False = real instrument path. P1-68 restored API reachability; the RFChain real branch is VNA+SG based and its measurement route is pending the P1-69 decision (CE+SA policy).
+             * @default true
+             */
+            use_mock: boolean;
+        };
+        StartMultiFrequencyPathLossRequest: {
+            /** Format: uuid */
+            chamber_id: string;
+            probe_ids: number[];
+            polarization: string;
+            freq_start_mhz: number;
+            freq_stop_mhz: number;
+            freq_step_mhz: number;
+            sgh_model: string;
+            sgh_gain_dbi: number;
+            vna_id?: string | null;
+            calibrated_by: string;
+            /**
+             * @description True = simulated (default); False = real CE+SA frequency sweep (_real_frequency_sweep_via_ce_sa). P1-68 restored reachability.
+             * @default true
+             */
+            use_mock: boolean;
+        };
+        CalibrationJobResponse: {
+            /** Format: uuid */
+            calibration_job_id: string;
+            status: string;
+            estimated_duration_minutes?: number | null;
+            message?: string | null;
+            warnings?: string[];
+        };
         SMUProjectSyncItemResponse: {
             relative_path: string;
             instrument_path: string;

@@ -666,8 +666,163 @@ paths:
                 $ref: '#/components/schemas/SMUProjectSyncResultResponse'
         '409':
           description: Scan or synchronization failed without partial writes
+  /api/v1/calibration/path-loss/rf-chain/uplink:
+    post:
+      summary: Start RF chain uplink gain calibration (P1-68 real reachable)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRFChainCalibrationRequest'
+      responses:
+        '200':
+          description: Calibration job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrationJobResponse'
+  /api/v1/calibration/path-loss/rf-chain/downlink:
+    post:
+      summary: Start RF chain downlink gain calibration (P1-68 real reachable)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRFChainCalibrationRequest'
+      responses:
+        '200':
+          description: Calibration job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrationJobResponse'
+  /api/v1/calibration/path-loss/multi-frequency/start:
+    post:
+      summary: Start multi-frequency path-loss calibration (real = CE+SA sweep)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartMultiFrequencyPathLossRequest'
+      responses:
+        '200':
+          description: Calibration job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrationJobResponse'
+  /api/v1/calibration/phase/calibrate:
+    post:
+      summary: Phase calibration entry (fail-loud closed since P1-68)
+      responses:
+        '409':
+          description: >-
+            PFS is power-only (TR 37.977 F.2); phase calibration belongs to a
+            future PWS. Entry refuses and no mock rows are generated.
+  /api/v1/calibration/probe/phase/start:
+    post:
+      summary: Probe phase calibration mock entry (fail-loud closed since P1-68)
+      responses:
+        '409':
+          description: >-
+            Mock-generation entry closed; external measured phase data must go
+            through POST /api/v1/calibration/probe/phase/import-csv.
 components:
   schemas:
+    StartRFChainCalibrationRequest:
+      type: object
+      required: [chamber_id, chain_type, frequency_mhz, calibrated_by]
+      properties:
+        chamber_id:
+          type: string
+          format: uuid
+        chain_type:
+          type: string
+          enum: [uplink, downlink]
+        frequency_mhz:
+          type: number
+        vna_id:
+          type: string
+          nullable: true
+        power_meter_id:
+          type: string
+          nullable: true
+        signal_generator_id:
+          type: string
+          nullable: true
+        probe_ids:
+          type: array
+          items:
+            type: integer
+          nullable: true
+        calibrated_by:
+          type: string
+        use_mock:
+          type: boolean
+          default: true
+          description: >-
+            True = simulated data (default). False = real instrument path.
+            P1-68 restored API reachability; the RFChain real branch is
+            VNA+SG based and its measurement route is pending the P1-69
+            decision (CE+SA policy).
+    StartMultiFrequencyPathLossRequest:
+      type: object
+      required: [chamber_id, probe_ids, polarization, freq_start_mhz, freq_stop_mhz, freq_step_mhz, sgh_model, sgh_gain_dbi, calibrated_by]
+      properties:
+        chamber_id:
+          type: string
+          format: uuid
+        probe_ids:
+          type: array
+          items:
+            type: integer
+          minItems: 1
+          maxItems: 64
+        polarization:
+          type: string
+        freq_start_mhz:
+          type: number
+        freq_stop_mhz:
+          type: number
+        freq_step_mhz:
+          type: number
+        sgh_model:
+          type: string
+        sgh_gain_dbi:
+          type: number
+        vna_id:
+          type: string
+          nullable: true
+        calibrated_by:
+          type: string
+        use_mock:
+          type: boolean
+          default: true
+          description: >-
+            True = simulated (default); False = real CE+SA frequency sweep
+            (_real_frequency_sweep_via_ce_sa). P1-68 restored reachability.
+    CalibrationJobResponse:
+      type: object
+      required: [calibration_job_id, status]
+      properties:
+        calibration_job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        estimated_duration_minutes:
+          type: number
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
     SMUProjectSyncItemResponse:
       type: object
       properties:
