@@ -184,8 +184,11 @@ vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过；驱
 动作和确认信号成功后才能返回 true。finally 已运行、disconnect 成功或没有抛异常都不能推导
 Local 已交还。UXM/CMW 的 release 调用开始时必须仍有本次活跃 VISA/HiSLIP session，且 close
 精确成功；session 已为 None 或 close 失败都必须返回 false，不能把“已经断开”当作本次交还。
-runner 在租约退出后持久化该 server-owned 结果；Local 未确认时，业务错误仍完整
-保留，但公开 KPI、历史正式判决和最终报告必须保持 UNKNOWN/N/A。
+`instrument_test_lease` 必须向每个直接持有租约的调用方暴露同一个可在 `__aexit__` 后读取的
+server-owned outcome；formal runner 以及 commissioning 的单相位、adhoc、run-all 三类 lease owner
+都必须在租约退出后，通过同一个持久化 helper 把 `BaseStationLocalControlResult` 写回对应 execution，
+不能只在异常路径记录自由文本，也不能让 commissioning 依赖 formal runner 代写。Local 未确认时，
+业务错误仍完整保留，但公开 KPI、历史正式判决和最终报告必须保持 UNKNOWN/N/A。
 
 ### 3.2 `1CC - nx2` 内部 route
 
@@ -296,9 +299,12 @@ evaluator，而是按来源换源：`avg_throughput_mbps` 从逐方位受信 thr
 `rsrp_variance_db` / `avg_sinr_db` 分别从 P1-63 的逐方位、逐指标 RF trust 后聚合；未来新增
 BLER 对比才调用 base-station BLER evaluator。未获信任的值不得进入 delta、summary statistics、
 repeatability 或 `formal=true`，且一个指标 unknown 不得清空其他独立可信指标。缺测不写 0，
-debug 不打印数值后再声明“不可信”。Analysis 在租约内只能形成 provisional 结果；runner 必须在
-租约退出并持久化 Local handoff 后重建公开投影，唯一最终 REPORT 继续走现有 deferred-report 路径。
-cleanup 和 Local 交还确定前不发布最终报告或正式历史判决。历史列表只
+debug 不打印数值后再声明“不可信”。正式 Analysis 与 REPORT 都必须位于 Local handoff 之后：
+formal runner 将末尾连续的 ANALYSIS/REPORT 一起从租约内延迟，租约退出并持久化 handoff 后才按
+ANALYSIS → REPORT 顺序执行；不得保留一份租约内 UNKNOWN 的 `validation_pass` 再只重建显示投影。
+commissioning run-all 同样延迟这两个正式化相位；单相位/adhoc 的 ANALYSIS 或 REPORT 先完成空租约
+与 handoff 持久化，再 dispatch 对应相位。cleanup 和 Local 交还确定前不发布最终报告、正式历史判决
+或 completed 判词。历史列表只
 返回摘要，详情按 execution ID 读取完整快照；旧或畸形 evidence 保持 UNKNOWN，不从当前数据库
 或旧正文补证。
 

@@ -1170,11 +1170,16 @@ git commit -m "feat: add formal base station execution evidence"
 - Modify: `api-service/app/hal/uxm_base_station.py`
 - Modify: `api-service/app/hal/cmw500_base_station.py`
 - Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/app/api/commissioning.py`
 - Modify: `api-service/tests/test_p1_73a_vendor_neutral_measure.py`
 - Create: `api-service/tests/test_p1_73c_cmw_measure_integration.py`
 - Create: `api-service/tests/test_p1_73c_base_station_cleanup_truth.py`
 - Create: `api-service/tests/test_p1_73c_base_station_lease_handoff.py`
+- Create: `api-service/tests/test_p1_73c_commissioning_lease_handoff.py`
 - Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `api-service/tests/test_commissioning_smoke.py`
+- Modify: `api-service/tests/test_commissioning_adhoc.py`
+- Modify: `api-service/tests/test_commissioning_strict_gate_overrides.py`
 - Modify: `api-service/tests/test_p1_61_report_final_state_truth.py`
 - Modify: `api-service/tests/test_p1_59_ca_throughput_truth.py`
 
@@ -1199,9 +1204,20 @@ git commit -m "feat: add formal base station execution evidence"
   时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
 - `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
   必须实现同一 async Remote/Local 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
-- Local handoff 只在租约退出时形成 `BaseStationLocalControlResult`。runner 在退出后用独立事务持久化
-  server-owned 结果，并在 deferred REPORT 前重建/净化公开投影；Analysis 在租约内产生的结果只是
-  provisional，不能先进入正式历史或报告；
+- Local handoff 只在租约退出时形成 `BaseStationLocalControlResult`。`instrument_test_lease` 必须
+  `async with ... as lease_outcome` 暴露同一个 server-owned outcome handle；handle 在块内不可伪造
+  `released_local_confirmed`，只在 `__aexit__` 完成真实交还后可读。formal runner 与 commissioning
+  的单相位、adhoc、run-all 三类直接 lease owner 都必须在退出后调用同一个幂等持久化 helper，以
+  独立事务写回各自 execution；成功与失败都保存结构化结果，不能只在异常路径写自由文本，也不能
+  从另一个入口或 formal runner 补写；
+- formal runner 把执行链末尾连续的 `MIMO_OTA_ANALYSIS` 与 `MIMO_OTA_REPORT` 一起从租约内延迟，
+  持久化 Local handoff 后才严格按 ANALYSIS → REPORT dispatch 并持久化最终 `validation_pass`、
+  正式投影和报告。租约内不得先写一份 UNKNOWN Analysis 后只重建公开 projection；若 ANALYSIS/
+  REPORT 不是末尾规范顺序则 fail-loud；
+- commissioning run-all 同样在 lease 内只跑到 MEASURE，延迟末尾 ANALYSIS/REPORT；单相位和 adhoc
+  若目标是 ANALYSIS 或 REPORT，先完成 lease exit 与 handoff 持久化再 dispatch。MEASURE 等硬件
+  相位完成后也必须先持久化 handoff 才能构造响应；交还失败时不 dispatch 延迟相位、不发布正式
+  历史或报告，并保留原业务 winner 与错误全文；
 - RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_to_local_control` → transport close，
   `release_to_local_control` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
   `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
@@ -1216,7 +1232,9 @@ git commit -m "feat: add formal base station execution evidence"
 
 RED 还要覆盖：CMW 缺 Remote/Local 契约时 fail-loud 而不是跳过；取得 Remote 失败、交还返回
 `False`、交还异常、取消与成功交还；失败时不发布正式历史/报告且保留原业务错误，成功时只有租约
-退出后才允许正式投影与 deferred REPORT。
+退出并由实际 lease owner 持久化后才允许正式 Analysis、投影与 deferred REPORT。分别覆盖 formal
+runner、commissioning 单相位、adhoc、run-all，证明四类 owner 均有结构化 handoff；删除任一 owner
+的持久化调用都必须使对应路径保持 UNKNOWN，而不是由其他入口偶然补证。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -1226,7 +1244,11 @@ cd api-service
   tests/test_p1_73c_cmw_measure_integration.py \
   tests/test_p1_73c_base_station_cleanup_truth.py \
   tests/test_p1_73c_base_station_lease_handoff.py \
+  tests/test_p1_73c_commissioning_lease_handoff.py \
   tests/test_instrument_test_lease.py \
+  tests/test_commissioning_smoke.py \
+  tests/test_commissioning_adhoc.py \
+  tests/test_commissioning_strict_gate_overrides.py \
   tests/test_p1_61_report_final_state_truth.py \
   tests/test_p1_73a_vendor_neutral_measure.py \
   tests/test_p1_59_ca_throughput_truth.py \
@@ -1238,11 +1260,16 @@ git add api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/hal/uxm_base_station.py \
   api-service/app/hal/cmw500_base_station.py \
   api-service/app/services/test_case_runner.py \
+  api-service/app/api/commissioning.py \
   api-service/tests/test_p1_73a_vendor_neutral_measure.py \
   api-service/tests/test_p1_73c_cmw_measure_integration.py \
   api-service/tests/test_p1_73c_base_station_cleanup_truth.py \
   api-service/tests/test_p1_73c_base_station_lease_handoff.py \
+  api-service/tests/test_p1_73c_commissioning_lease_handoff.py \
   api-service/tests/test_instrument_test_lease.py \
+  api-service/tests/test_commissioning_smoke.py \
+  api-service/tests/test_commissioning_adhoc.py \
+  api-service/tests/test_commissioning_strict_gate_overrides.py \
   api-service/tests/test_p1_61_report_final_state_truth.py \
   api-service/tests/test_p1_59_ca_throughput_truth.py
 git commit -m "feat: run CMW500 through the common MIMO measure flow"
@@ -1281,6 +1308,10 @@ Commissioning 方位 KPI 表。逐一证明：
 - 六类消费方都必须消费 runner 在租约退出后持久化的 final evidence：MEASURE cleanup 与
   `local_control_handoff.released_local_confirmed` 缺失或不为 true 时逐指标 UNKNOWN/N/A；不得把
   租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 Local 确认；
+- 正式 runner 不得在 handoff 证据产生前执行最终 ANALYSIS：`_run_case_loop` 必须把末尾连续的
+  ANALYSIS/REPORT 作为一个 deferred formalization bundle 返回，外层 lease owner 在持久化结构化
+  handoff 后才按顺序执行，并把最终 `validation_pass` 与相位进度写回。Local 失败时两者都不执行；
+  只重建 projection 而不重算 Analysis 属于失败，因为会把租约内 UNKNOWN 永久写入历史；
 - expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
   任一与期望不符均 UNKNOWN/N/A，历史/下载不得从当前数据库补齐；
 - 旧 UXM 仅通过精确 translator；旧 CMW 原型、客户端声明、数值形状、adapter 名称均不能恢复 PASS；
@@ -1294,6 +1325,10 @@ Commissioning 方位 KPI 表。逐一证明：
   projection，不能把 `phases["measure"]` 原样透传。单相位执行响应也复用同一 projector；租约内
   provisional 结果只能投影为 diagnostic/unknown，租约退出后的 final evidence 才可能 trusted。
   历史响应不得读取当前 TestCase、LabProfile、InstrumentConnection 或 HAL 状态补证；
+- commissioning 的单相位、adhoc 与 run-all 都直接拥有自己的 lease，不能假设 formal runner 会为
+  它们持久化 handoff。三条路径必须消费 Task 13 的 lease outcome 和共享持久化 helper；run-all
+  延迟 ANALYSIS/REPORT，单相位/adhoc 的 ANALYSIS/REPORT 在 handoff 持久化后执行。对应响应 projector
+  只能读取这次 execution 已落库的 final result；缺失时保持 diagnostic/unknown；
 - Commissioning `Phases.tsx` 不得直接渲染 `az.throughput_mbps`/BLER raw 字段。共享 presenter
   只在逐指标 `trusted` 时显示普通 KPI；`diagnostic` 必须黄色明确标注“诊断值，非正式实测”，
   `unknown` 显示 `N/A`。debug、Mock、窗口生命周期/配置/route/方位不匹配均不能显示成普通 Mbps/%；
