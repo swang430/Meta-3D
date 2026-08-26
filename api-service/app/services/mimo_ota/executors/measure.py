@@ -459,6 +459,11 @@ def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
         duplex=pcell.duplex,
         nr_arfcn=nr_arfcn,
         lte_dl_earfcn=lte_dl_earfcn,
+        lte_transmission_mode=(
+            pcell.lte_transmission_mode
+            if pcell.radio_technology == "lte"
+            else None
+        ),
         subcarrier_spacing_khz=pcell.subcarrier_spacing_khz,
         mimo_layers=config.mimo_layers,
         downlink_power_dbm=config.target_tx_power_dbm,

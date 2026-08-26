@@ -45,6 +45,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
+    LTE_TRANSMISSION_MODES,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
@@ -158,7 +159,13 @@ class CmwScpiCommands:
     # printed p.753: NENBantennas is writable/queryable and returns the exact
     # ONE | TWO | FOUR downlink TX-antenna configuration.
     MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:NENBantennas"
-    TM_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:TMODe"     # TM1-TM10
+    # Same manual, GUI reference printed p.211 and command reference printed
+    # p.754: TRANsmission is writable/queryable and accepts TM1/TM2/TM3/TM4/
+    # TM6/TM7/TM8/TM9.  TMODe is a different ON/OFF "activate UE test mode"
+    # command (printed p.739) and must not be used as LTE transmission mode.
+    TRANSMISSION_MODE = (
+        "CONFigure:LTE:SIGN{i}:CONNection:PCC:TRANsmission"
+    )
 
     # --- FRC / 测试配置 ---
     FRC_STATE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:FRC:STATe"
@@ -973,6 +980,17 @@ class RealCmw500Driver(BaseStationDriver):
             frequency_mhz = float(
                 config.get("frequency_mhz", self._frequency_mhz)
             )
+            transmission_mode = None
+            if "lte_transmission_mode" in config:
+                transmission_mode = str(
+                    config["lte_transmission_mode"]
+                ).upper()
+                if transmission_mode not in LTE_TRANSMISSION_MODES:
+                    logger.error(
+                        "[CMW500] Rejecting invalid LTE transmission mode %r",
+                        config["lte_transmission_mode"],
+                    )
+                    return False
 
             if not await self.ensure_safe_idle():
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
@@ -1006,11 +1024,10 @@ class RealCmw500Driver(BaseStationDriver):
                     + f" {config['cell_id']}"
                 )
 
-            # MIMO 模式 (TM1-TM10)
-            if "tm_mode" in config:
+            if transmission_mode is not None:
                 self._write(
-                    self._fmt(CmwScpiCommands.TM_MODE)
-                    + f" {config['tm_mode']}"
+                    self._fmt(CmwScpiCommands.TRANSMISSION_MODE)
+                    + f" {transmission_mode}"
                 )
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
@@ -1070,6 +1087,13 @@ class RealCmw500Driver(BaseStationDriver):
                 if expected_mimo is not None
                 else None
             )
+            transmission_mode_readback = (
+                self._query(
+                    self._fmt(CmwScpiCommands.TRANSMISSION_MODE) + "?"
+                ).strip().upper()
+                if transmission_mode is not None
+                else None
+            )
             expected_bandwidth = (
                 bandwidth_token
                 if bandwidth_token is not None
@@ -1087,20 +1111,27 @@ class RealCmw500Driver(BaseStationDriver):
                     and duplex_readback != expected_duplex
                 )
                 or (mimo_readback is not None and mimo_readback != expected_mimo)
+                or (
+                    transmission_mode_readback is not None
+                    and transmission_mode_readback != transmission_mode
+                )
             ):
                 logger.error(
                     "[CMW500] Cell config readback mismatch: "
-                    "requested=(%s,%s,%s,%s,%s), applied=(%s,%s,%s,%s,%s)",
+                    "requested=(%s,%s,%s,%s,%s,%s), "
+                    "applied=(%s,%s,%s,%s,%s,%s)",
                     band,
                     expected_bandwidth,
                     earfcn,
                     expected_duplex,
                     expected_mimo,
+                    transmission_mode,
                     band_readback,
                     bandwidth_readback,
                     earfcn_readback,
                     duplex_readback,
                     mimo_readback,
+                    transmission_mode_readback,
                 )
                 return False
 
@@ -1803,7 +1834,7 @@ class RealCmw500Driver(BaseStationDriver):
                     "max_mimo_layers": self.max_mimo_layers,
                     "tm_modes": [
                         "TM1", "TM2", "TM3", "TM4", "TM6", "TM7",
-                        "TM8", "TM9", "TM10",
+                        "TM8", "TM9",
                     ],
                 },
             ),

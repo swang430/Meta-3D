@@ -1,3 +1,5 @@
+import type { LteTransmissionMode } from '../TestCaseConfig/carrierTruth'
+
 export interface CreateSessionParams {
   radioTechnology?: 'nr5g' | 'lte'
   engineMode?: string
@@ -11,6 +13,7 @@ export interface CreateSessionParams {
   subcarrierSpacingKhz?: number
   nrArfcn?: number
   lteDlEarfcn?: number
+  lteTransmissionMode?: LteTransmissionMode
   theoreticalPeakThroughputMbps?: number
   uxmDlPowerDbmPerBw?: number
   f64InputRefDbm?: number
@@ -36,6 +39,7 @@ export interface CreateSessionBody {
   subcarrier_spacing_khz?: number
   nr_arfcn?: number
   lte_dl_earfcn?: number
+  lte_transmission_mode?: LteTransmissionMode
   theoretical_peak_throughput_mbps?: number
   uxm_dl_power_dbm_per_bw?: number
   f64_input_ref_dbm?: number
@@ -71,6 +75,7 @@ export const buildCreateSessionBody = (
     subcarrierSpacingKhz,
     nrArfcn,
     lteDlEarfcn,
+    lteTransmissionMode,
     theoreticalPeakThroughputMbps,
     uxmDlPowerDbmPerBw,
     f64InputRefDbm,
@@ -99,6 +104,9 @@ export const buildCreateSessionBody = (
   if (radioTechnology === 'lte') {
     if (duplex) body.duplex = duplex
     if (lteDlEarfcn !== undefined) body.lte_dl_earfcn = lteDlEarfcn
+    if (lteTransmissionMode !== undefined) {
+      body.lte_transmission_mode = lteTransmissionMode
+    }
     if (theoreticalPeakThroughputMbps !== undefined) {
       body.theoretical_peak_throughput_mbps = theoreticalPeakThroughputMbps
     }

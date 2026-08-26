@@ -271,6 +271,34 @@ async def test_config_requires_applied_two_antenna_readback_for_two_layers():
 
 
 @pytest.mark.asyncio
+async def test_config_requires_exact_applied_lte_transmission_mode():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?": "TM4",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "lte_transmission_mode": "TM3"}
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission TM3"
+        in driver.writes
+    )
+    assert driver.queries[-1] == (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?"
+    )
+
+
+@pytest.mark.asyncio
 async def test_attach_accepts_only_documented_exact_states_and_restores_timeout():
     states = iter(["ON,ADJ", "ATT", "CEST"])
 

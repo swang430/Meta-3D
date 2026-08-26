@@ -36,6 +36,8 @@ import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
 import {
+  LTE_TRANSMISSION_MODES,
+  type LteTransmissionMode,
   patchPrimaryCarrierFields,
   primaryCarrierValue,
   updatePrimaryCarrierValue,
@@ -86,6 +88,7 @@ export interface MIMOOTAConfiguration {
     duplex?: 'fdd' | 'tdd' | null
     nr_arfcn?: number | null
     lte_dl_earfcn?: number | null
+    lte_transmission_mode?: LteTransmissionMode | null
     role?: string
   }>
   mimo_layers?: number
@@ -245,12 +248,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       ? {
           ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
           band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
+          lte_transmission_mode: undefined,
           nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
         }
       : {
           ...current, radio_technology: 'nr5g' as const, channel_kind: 'nr_arfcn' as const,
           band: undefined, nr_arfcn: undefined, subcarrier_spacing_khz: 30,
           duplex: undefined, lte_dl_earfcn: undefined, role: 'pcell' as const,
+          lte_transmission_mode: undefined,
         }
     const next: MIMOOTAConfiguration = { ...value, component_carriers: [pcell] }
     if (rat === 'lte') {
@@ -475,6 +480,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   value={rawPCell?.lte_dl_earfcn ?? undefined}
                   onChange={(v) => patchPCell({ lte_dl_earfcn: typeof v === 'number' ? v : undefined })}
                   min={0}
+                  disabled={readOnly}
+                  required
+                />
+                <Select
+                  label="LTE 传输模式"
+                  data={LTE_TRANSMISSION_MODES.map((mode) => ({ value: mode, label: mode }))}
+                  value={rawPCell?.lte_transmission_mode ?? null}
+                  onChange={(v) => patchPCell({ lte_transmission_mode: v ?? undefined })}
                   disabled={readOnly}
                   required
                 />

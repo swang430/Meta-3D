@@ -1845,6 +1845,8 @@ export interface components {
             subcarrier_spacing_khz?: number | null;
             nr_arfcn?: number | null;
             lte_dl_earfcn?: number | null;
+            /** @enum {string|null} */
+            lte_transmission_mode?: "TM1" | "TM2" | "TM3" | "TM4" | "TM6" | "TM7" | "TM8" | "TM9" | null;
             theoretical_peak_throughput_mbps?: number | null;
             /** @default mimo_first_asc */
             engine_mode: string;

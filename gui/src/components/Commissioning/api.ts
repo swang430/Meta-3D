@@ -12,6 +12,10 @@ export {
   type CreateSessionBody,
   type CreateSessionParams,
 } from './sessionBody'
+export {
+  LTE_TRANSMISSION_MODES,
+  type LteTransmissionMode,
+} from '../TestCaseConfig/carrierTruth'
 
 export interface CommissioningExecutionConfig extends Record<string, unknown> {
   base_station_adapter_profile_freeze?: {

@@ -195,6 +195,7 @@ def test_lte_request_does_not_promote_uxm_bandwidth_power_to_cmw_contract():
         band = "1"
         duplex = "FDD"
         lte_dl_earfcn = 100
+        lte_transmission_mode = "TM3"
         subcarrier_spacing_khz = None
 
     class _RequestConfig:

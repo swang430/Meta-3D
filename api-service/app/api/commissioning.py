@@ -35,6 +35,7 @@ from app.models.test_plan import TestCase, TestExecution
 from app.schemas.mimo_ota.config import MIMO_OTA_TEST_TYPE, MIMOOTAStepType
 from app.services.lab_resolution import LabResolutionError
 from app.services.mimo_ota import build_mimo_ota_test_case
+from app.hal.base_station import LteTransmissionMode
 from app.services.test_execution import (
     StepDescriptor,
     StepExecutionContext,
@@ -354,6 +355,7 @@ class CreateSessionRequest(BaseModel):
     subcarrier_spacing_khz: Optional[int] = None
     nr_arfcn: Optional[int] = None
     lte_dl_earfcn: Optional[int] = None
+    lte_transmission_mode: Optional[LteTransmissionMode] = None
     theoretical_peak_throughput_mbps: Optional[float] = None
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
@@ -464,7 +466,10 @@ class CreateSessionRequest(BaseModel):
             return self
         if self.nr_arfcn is not None or self.subcarrier_spacing_khz is not None:
             raise ValueError("LTE commissioning request must not set NR channel fields")
-        for field_name in ("frequency_hz", "bandwidth_mhz", "band", "duplex", "lte_dl_earfcn"):
+        for field_name in (
+            "frequency_hz", "bandwidth_mhz", "band", "duplex",
+            "lte_dl_earfcn", "lte_transmission_mode",
+        ):
             if getattr(self, field_name) is None:
                 raise ValueError(
                     f"LTE commissioning request requires explicit {field_name}"
@@ -544,6 +549,7 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
                 "band": req.band,
                 "duplex": req.duplex,
                 "lte_dl_earfcn": req.lte_dl_earfcn,
+                "lte_transmission_mode": req.lte_transmission_mode,
                 "role": "pcell",
             }
         ]

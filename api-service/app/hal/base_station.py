@@ -26,6 +26,20 @@ from app.hal.scpi_evidence import InstrumentEvidenceItem
 
 logger = logging.getLogger(__name__)
 
+LTE_TRANSMISSION_MODES = (
+    "TM1",
+    "TM2",
+    "TM3",
+    "TM4",
+    "TM6",
+    "TM7",
+    "TM8",
+    "TM9",
+)
+LteTransmissionMode = Literal[
+    "TM1", "TM2", "TM3", "TM4", "TM6", "TM7", "TM8", "TM9",
+]
+
 
 @dataclass(frozen=True)
 class BaseStationIdentity:
@@ -54,6 +68,7 @@ class BaseStationRequestedConfig:
     duplex: str | None
     nr_arfcn: int | None
     lte_dl_earfcn: int | None
+    lte_transmission_mode: LteTransmissionMode | None
     subcarrier_spacing_khz: int | None
     mimo_layers: int
     downlink_power_dbm: float
@@ -82,6 +97,7 @@ class BaseStationRequestedConfig:
             payload["lte_dl_earfcn"] = self.lte_dl_earfcn
             payload["earfcn"] = self.lte_dl_earfcn
             payload["duplex"] = self.duplex
+            payload["lte_transmission_mode"] = self.lte_transmission_mode
         if self.downlink_power_dbm_per_bandwidth is not None:
             payload["dl_power_dbm_per_bw"] = self.downlink_power_dbm_per_bandwidth
         if self.port_preset is not None:

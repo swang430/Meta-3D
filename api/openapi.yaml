@@ -1098,6 +1098,10 @@ components:
         subcarrier_spacing_khz: { type: integer, nullable: true }
         nr_arfcn: { type: integer, nullable: true }
         lte_dl_earfcn: { type: integer, nullable: true }
+        lte_transmission_mode:
+          type: string
+          enum: [TM1, TM2, TM3, TM4, TM6, TM7, TM8, TM9]
+          nullable: true
         theoretical_peak_throughput_mbps: { type: number, nullable: true }
         engine_mode: { type: string, default: mimo_first_asc }
         lab_profile_id: { type: string, format: uuid, nullable: true }

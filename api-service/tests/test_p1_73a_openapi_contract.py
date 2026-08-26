@@ -38,6 +38,22 @@ def test_live_and_checked_openapi_describe_generic_commissioning_mode_identicall
         assert "base_station_dl_power_dbm_per_bw" not in properties
 
 
+def test_live_and_checked_openapi_publish_explicit_lte_transmission_mode():
+    live = app.openapi()["components"]["schemas"]["CreateSessionRequest"]
+    checked = yaml.safe_load((REPO_ROOT / "api/openapi.yaml").read_text())[
+        "components"
+    ]["schemas"]["CreateSessionRequest"]
+
+    live_mode = live["properties"]["lte_transmission_mode"]
+    assert live_mode["anyOf"][0]["enum"] == [
+        "TM1", "TM2", "TM3", "TM4", "TM6", "TM7", "TM8", "TM9",
+    ]
+
+    checked_mode = checked["properties"]["lte_transmission_mode"]
+    assert checked_mode["enum"] == live_mode["anyOf"][0]["enum"]
+    assert checked_mode["nullable"] is True
+
+
 def test_checked_openapi_keeps_rat_aware_channel_identity_fields():
     schemas = yaml.safe_load((REPO_ROOT / "api/openapi.yaml").read_text())[
         "components"

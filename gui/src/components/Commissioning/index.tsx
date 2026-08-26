@@ -54,6 +54,9 @@ export function CommissioningSandbox() {
   const [duplex, setDuplex] = useState<'fdd' | 'tdd'>('fdd')
   const [nrArfcn, setNrArfcn] = useState<number | string>(636666)
   const [lteDlEarfcn, setLteDlEarfcn] = useState<number | string>('')
+  const [lteTransmissionMode, setLteTransmissionMode] = (
+    useState<api.LteTransmissionMode>('TM3')
+  )
   const [subcarrierSpacingKhz, setSubcarrierSpacingKhz] = useState(30)
   const [theoreticalPeakMbps, setTheoreticalPeakMbps] = useState<number | string>('')
   const [uxmPowerDbmPerBw, setUxmPowerDbmPerBw] = useState(-15)
@@ -161,6 +164,7 @@ export function CommissioningSandbox() {
         subcarrierSpacingKhz: radioTechnology === 'nr5g' ? subcarrierSpacingKhz : undefined,
         nrArfcn: radioTechnology === 'nr5g' && typeof nrArfcn === 'number' ? nrArfcn : undefined,
         lteDlEarfcn: radioTechnology === 'lte' && typeof lteDlEarfcn === 'number' ? lteDlEarfcn : undefined,
+        lteTransmissionMode: radioTechnology === 'lte' ? lteTransmissionMode : undefined,
         theoreticalPeakThroughputMbps: radioTechnology === 'lte' && typeof theoreticalPeakMbps === 'number' ? theoreticalPeakMbps : undefined,
         uxmDlPowerDbmPerBw: radioTechnology === 'nr5g' ? uxmPowerDbmPerBw : undefined,
         f64InputRefDbm,
@@ -439,6 +443,14 @@ export function CommissioningSandbox() {
                       value={duplex} onChange={(value) => setDuplex(value === 'tdd' ? 'tdd' : 'fdd')} allowDeselect={false} />
                     <NumberInput label="LTE DL EARFCN" value={lteDlEarfcn}
                       onChange={setLteDlEarfcn} min={0} required />
+                    <Select label="LTE 传输模式"
+                      data={[...api.LTE_TRANSMISSION_MODES]}
+                      value={lteTransmissionMode}
+                      onChange={(value) => setLteTransmissionMode(
+                        (value ?? 'TM3') as api.LteTransmissionMode,
+                      )}
+                      allowDeselect={false}
+                      required />
                     <NumberInput label="LTE 理论峰值（可选）" suffix=" Mbps" value={theoreticalPeakMbps}
                       description="留空时绝对吞吐仍可用，ratio 与相关判决为 N/A"
                       onChange={setTheoreticalPeakMbps} min={0} />

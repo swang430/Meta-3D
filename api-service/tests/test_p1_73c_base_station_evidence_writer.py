@@ -86,6 +86,7 @@ def _request():
         duplex="fdd",
         nr_arfcn=None,
         lte_dl_earfcn=1300,
+        lte_transmission_mode="TM3",
         subcarrier_spacing_khz=None,
         mimo_layers=2,
         downlink_power_dbm=-50.0,
