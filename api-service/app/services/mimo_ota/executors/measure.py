@@ -126,6 +126,7 @@ class _CmwFormalAttemptContext:
     frozen_adapter: Dict[str, Any]
     attempt_id: str
     lease_identity: Any
+    simulated_diagnostic: bool
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -656,7 +657,10 @@ class MeasureExecutor(IStepExecutor):
 
         from app.hal.scpi_evidence import capture_scpi_exchanges
 
-        if getattr(base_station, "adapter_id", None) == "cmw500":
+        if (
+            getattr(base_station, "adapter_id", None) == "cmw500"
+            and getattr(base_station, "simulated", False) is not True
+        ):
             window = await base_station.measure_base_station_window(
                 window_s,
                 throughput_scope=throughput_scope,
@@ -719,13 +723,36 @@ class MeasureExecutor(IStepExecutor):
         frozen = execution_config.get(FREEZE_CONFIG_KEY)
         if not isinstance(frozen, dict):
             raise RuntimeError("CMW500 execution is missing its frozen adapter profile")
-        decision = base_station.evaluate_lte_2x2_formal_capability(
-            frozen,
-            duplex=str(duplex or "").lower(),
-            config_mode=config_mode,
+        resolution = frozen.get("resolution")
+        execution_mode = (
+            resolution.get("execution_mode")
+            if isinstance(resolution, dict)
+            else None
         )
-        if decision.ready is not True:
-            raise RuntimeError(f"CMW500 formal capability is not ready: {decision.reason}")
+        simulated_diagnostic = execution_mode == "simulated"
+        if simulated_diagnostic:
+            if getattr(base_station, "simulated", False) is not True:
+                raise RuntimeError(
+                    "CMW500 simulated execution is not using the authoritative mock"
+                )
+        else:
+            evaluator = getattr(
+                base_station, "evaluate_lte_2x2_formal_capability", None
+            )
+            if not callable(evaluator):
+                raise RuntimeError("CMW500 driver has no formal capability evaluator")
+            decision = evaluator(
+                frozen,
+                duplex=str(duplex or "").lower(),
+                config_mode=config_mode,
+            )
+            if decision.ready is not True and getattr(decision, "status", None) not in {
+                "disabled",
+                "diagnostic",
+            }:
+                raise RuntimeError(
+                    f"CMW500 formal capability is not ready: {decision.reason}"
+                )
 
         raw_evidence = load_base_station_execution_evidence(context.test_execution)
         if raw_evidence is None:
@@ -745,6 +772,7 @@ class MeasureExecutor(IStepExecutor):
             frozen_adapter=frozen,
             attempt_id=attempt_id,
             lease_identity=lease_identity,
+            simulated_diagnostic=simulated_diagnostic,
         )
 
     @staticmethod
@@ -1188,7 +1216,7 @@ class MeasureExecutor(IStepExecutor):
                 ok = await base_station.apply_requested_config(
                     pcell_requested_config
                 )
-                if cmw_attempt is not None:
+                if cmw_attempt is not None and not cmw_attempt.simulated_diagnostic:
                     route_result = await base_station.apply_internal_lte_2x2_route(
                         cmw_attempt.frozen_adapter
                     )
@@ -1216,7 +1244,11 @@ class MeasureExecutor(IStepExecutor):
                             "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
                         ),
                     )
-                if cmw_attempt is not None and route_result.confirmed is not True:
+                if (
+                    cmw_attempt is not None
+                    and not cmw_attempt.simulated_diagnostic
+                    and route_result.confirmed is not True
+                ):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(

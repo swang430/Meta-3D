@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
-from app.hal.base_station import BaseStationMeasurementWindow, ThroughputMetrics
+from app.hal.base_station import (
+    BaseStationMeasurementWindow,
+    MockBaseStation,
+    ThroughputMetrics,
+)
 from app.models.test_plan import TestExecution
 from app.services.execution_scpi_evidence import (
     begin_base_station_measurement_attempt,
@@ -158,6 +164,28 @@ class _FormalCmw(_CmwDriver):
         return SimpleNamespace(ready=True, reason="ready")
 
 
+class _DiagnosticCmw(_CmwDriver):
+    def __init__(self, status: str):
+        self.status = status
+
+    def evaluate_lte_2x2_formal_capability(self, *_args, **_kwargs):
+        return SimpleNamespace(
+            ready=False,
+            status=self.status,
+            reason=f"{self.status} diagnostic",
+        )
+
+
+def _simulated_frozen() -> dict:
+    frozen = _frozen(enabled=False)
+    frozen["resolution"]["execution_mode"] = "simulated"
+    payload = {key: value for key, value in frozen.items() if key != "digest"}
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return {**payload, "digest": hashlib.sha256(encoded).hexdigest()}
+
+
 def test_cmw_formal_attempt_requires_the_server_current_attempt_and_active_lease(
     monkeypatch,
 ):
@@ -231,3 +259,104 @@ def test_cmw_formal_attempt_rejects_a_lease_from_an_old_attempt(monkeypatch):
             duplex="fdd",
             config_mode="dispatch",
         )
+
+
+@pytest.mark.parametrize(
+    ("status", "config_mode"),
+    [("disabled", "dispatch"), ("diagnostic", "inherit")],
+)
+def test_cmw_disabled_or_inherit_keeps_the_measurement_attempt_diagnostic(
+    monkeypatch,
+    status,
+    config_mode,
+):
+    execution = TestExecution(
+        id=uuid4(), status="running", executed_by="test", config={}
+    )
+    frozen = _frozen(enabled=status != "disabled")
+    execution.config = {"base_station_adapter_profile_freeze": frozen}
+    driver = _DiagnosticCmw(status)
+    initialize_base_station_execution_evidence(
+        execution,
+        frozen_adapter=frozen,
+        requested_config=_request(),
+        requested_positions=[{"azimuth_deg": 0.0, "elevation_deg": 0.0}],
+        driver=driver,
+    )
+    db = _Db(execution)
+    attempt_id = begin_base_station_measurement_attempt(db, execution.id)
+    lease = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-diagnostic",
+        measurement_attempt_id=attempt_id,
+        adapter_id="cmw500",
+        session_token="session-diagnostic",
+    )
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.active_base_station_lease_identity",
+        lambda: lease,
+    )
+
+    resolved = MeasureExecutor._cmw_formal_attempt_context(
+        SimpleNamespace(test_execution=execution, db=db),
+        driver,
+        duplex="fdd",
+        config_mode=config_mode,
+    )
+
+    assert resolved.attempt_id == attempt_id
+    assert resolved.simulated_diagnostic is False
+
+
+def test_explicit_cmw_mock_can_enter_a_simulated_diagnostic_attempt(monkeypatch):
+    execution = TestExecution(
+        id=uuid4(), status="running", executed_by="test", config={}
+    )
+    frozen = _simulated_frozen()
+    execution.config = {"base_station_adapter_profile_freeze": frozen}
+    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+    initialize_base_station_execution_evidence(
+        execution,
+        frozen_adapter=frozen,
+        requested_config=_request(),
+        requested_positions=[{"azimuth_deg": 0.0, "elevation_deg": 0.0}],
+        driver=driver,
+    )
+    db = _Db(execution)
+    attempt_id = begin_base_station_measurement_attempt(db, execution.id)
+    lease = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-mock",
+        measurement_attempt_id=attempt_id,
+        adapter_id="cmw500",
+        session_token="session-mock",
+    )
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.active_base_station_lease_identity",
+        lambda: lease,
+    )
+
+    resolved = MeasureExecutor._cmw_formal_attempt_context(
+        SimpleNamespace(test_execution=execution, db=db),
+        driver,
+        duplex="fdd",
+        config_mode="dispatch",
+    )
+
+    assert resolved.attempt_id == attempt_id
+    assert resolved.simulated_diagnostic is True
+
+
+@pytest.mark.asyncio
+async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window():
+    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+    await driver.start_signaling()
+
+    samples = await MeasureExecutor._measure_base_station_samples(
+        driver,
+        window_s=0.0,
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        requested_sample_count=2,
+    )
+
+    assert len(samples) == 2
+    assert all(sample.window is None for sample in samples)
+    assert all(sample.metrics.throughput_scope == "simulated" for sample in samples)
