@@ -249,7 +249,8 @@ Analysis/报告/历史、GUI/OpenAPI 和全量回归。模拟驱动复用真实�
 P1-73 不做破坏性数据库迁移；新 evidence 放在现有版本化 JSON envelope；新字段只增加不删除。
 回滚优先关闭 CMW500 正式能力并切回 UXM，必要时部署 `v0.9.1`，不删除执行、报告或仪器资料。
 
-P1-73 完成必须满足：顶层与厂商无关、UXM 无回归退化、CMW connect 不修改仪表、LTE 1CC 2×2
-内部 route 与配置有回读、throughput/BLER 来自有边界窗口、模拟/未知/debug 不进入 KPI、GUI/
-Analysis/报告/历史共用信任函数、取消和清理失败可见、型号/版本/选件组合经用户启用、真机 smoke
-通过，并能安全回滚到 `v0.9.1`。
+P1-73 软件开发完成必须满足：顶层与厂商无关、UXM 无回归退化、CMW connect 不修改仪表、
+LTE 1CC 2×2 内部 route 与配置有回读、throughput/BLER 来自有边界窗口、模拟/未知/debug 不进入
+KPI、GUI/Analysis/报告/历史共用信任函数、取消和清理失败可见、正式能力只按型号/版本/选件判断
+且具备默认关闭的显式启用门、真机 smoke 待确认时明确显示 Warning，并能安全回滚到 `v0.9.1`。
+真机 smoke 通过是后续正式发布启用条件，不是 P1-73A/B/C 合并阻塞项。
