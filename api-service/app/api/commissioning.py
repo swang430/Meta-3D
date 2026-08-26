@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import current_execution_id
@@ -361,7 +361,13 @@ class CreateSessionRequest(BaseModel):
     # 设成 2（Butler 直通）可先用直通扶它 attach，挂上后自动撤掉再开衰落。
     # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
     f64_bypass_mode: Optional[int] = None
-    base_station_config_mode: Optional[Literal["dispatch", "inherit"]] = None
+    base_station_config_mode: Optional[Literal["dispatch", "inherit"]] = Field(
+        default=None,
+        description=(
+            "Vendor-neutral base-station configuration mode; inherit is "
+            "diagnostic-only."
+        ),
+    )
 
     @model_validator(mode="after")
     def require_explicit_lte_working_point(self) -> "CreateSessionRequest":

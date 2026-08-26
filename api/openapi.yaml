@@ -1076,7 +1076,11 @@ components:
         engine_mode: { type: string, default: mimo_first_asc }
         lab_profile_id: { type: string, format: uuid, nullable: true }
         channel_asset_id: { type: string, format: uuid, nullable: true }
-        base_station_config_mode: { type: string, enum: [dispatch, inherit], nullable: true }
+        base_station_config_mode:
+          type: string
+          enum: [dispatch, inherit]
+          nullable: true
+          description: Vendor-neutral base-station configuration mode; inherit is diagnostic-only.
     AddChannelModelRequest:
       type: object
       required: [filename, radio_technology, channel_kind, band]

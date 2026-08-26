@@ -40,7 +40,7 @@ test('form writes only the generic field and removes a legacy writer key', () =>
 
 test('commissioning request emits only the generic config-mode key', () => {
   const source = readFileSync(
-    new URL('../src/components/Commissioning/api.ts', import.meta.url),
+    new URL('../src/components/Commissioning/sessionBody.ts', import.meta.url),
     'utf8',
   )
   assert.match(source, /body\.base_station_config_mode\s*=\s*baseStationConfigMode/)

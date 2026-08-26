@@ -37,11 +37,11 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 布尔可能绕过当前模拟来源，现已让吞吐正式门复用同一 explicit-real phase/逐方位 provenance
 判据；当前来源不可信时吞吐同样保持 N/A。
 
-**Current Focus = P1-73「CMW500 单载波 LTE 2×2 MIMO OTA」已立项；架构方案 #1 与列明固定边界已获用户批准，六章设计和实施计划正在按标准流程评审。2026-08-24 批准队列六片已全部完成：~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅（设计稿获批）→ ~~P1-70~~ ✅ #392 → ~~P1-71~~ ✅ #394 → ~~P1-72~~ ✅ #396；P2-32 与维护池 P3-20/P3-21 按既定规矩不得自动启动。**
+**Current Focus = P1-73「CMW500 单载波 LTE 2×2 MIMO OTA」；六章设计已由 PR #399 合并，当前只执行 P1-73A「BaseStation HAL 清洁与 LTE 工作点真值」。P1-73A 已完成本地 TDD 实现与定向回归，下一步为 fresh 内审、外审与合并；不得提前开始 P1-73B/C。2026-08-24 批准队列六片已全部完成：~~P2-41~~ ✅ #386 → ~~P1-68~~ ✅ #388 → ~~P1-69~~ ✅（设计稿获批）→ ~~P1-70~~ ✅ #392 → ~~P1-71~~ ✅ #394 → ~~P1-72~~ ✅ #396；P2-32 与维护池 P3-20/P3-21 按既定规矩不得自动启动。**
 
-> **P1-73 — CMW500 单载波 LTE 2×2 MIMO OTA（固定边界已批准，设计 PR 评审中）**
+> **P1-73 — CMW500 单载波 LTE 2×2 MIMO OTA（设计已合并；P1-73A 本地实现完成）**
 >
-> 评审中设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。
+> 已合并设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。P1-73A 已建立通用 BaseStation contract、严格新旧配置 canonicalizer、LTE 单载波工作点、通用执行证据与逻辑 `DL1…DLN/UL1` 拓扑；CMW 正式能力仍保持关闭。定向后端回归 **210 passed**，GUI 相关契约 **15 passed**、production build、compileall、单一 Alembic head 与 diff-check 通过。
 >
 > **可观察缺口**：仓库已有 `CMW500BaseStationDriver`，但当前真实执行契约尚不能发布
 > CMW500 LTE 2×2 OTA 的正式吞吐/BLER 结果：现有路由仍按 `1CC - 1x1` 形态配置，且
@@ -627,7 +627,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 固定边界已批准，六章设计与 P1-73A/B/C 实施计划正在评审**（设计稿：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`）。adapter 可注册、正式能力默认关闭；现场待确认项以 Warning 表示，不阻止开发。2026-08-24 批准队列六片均已完成。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **P1-73 设计已由 PR #399 合并；当前 WIP 仅为 P1-73A，已完成本地 TDD 与定向回归，等待 fresh 内审、Codex 外审和合并。P1-73B/C 不提前启动。** adapter 可注册、正式能力默认关闭；现场待确认项以 Warning 表示，不阻止开发。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |

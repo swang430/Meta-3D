@@ -1790,7 +1790,10 @@ export interface components {
             lab_profile_id?: string | null;
             /** Format: uuid */
             channel_asset_id?: string | null;
-            /** @enum {string|null} */
+            /**
+             * @description Vendor-neutral base-station configuration mode; inherit is diagnostic-only.
+             * @enum {string|null}
+             */
             base_station_config_mode?: "dispatch" | "inherit" | null;
         };
         AddChannelModelRequest: {
