@@ -21,6 +21,7 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
+from app.hal.scpi_evidence import InstrumentEvidenceItem
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,23 @@ class BaseStationCleanupResult:
 
 
 @dataclass(frozen=True)
+class BaseStationMeasurementWindow:
+    """由单一厂商测量边界产生的结构化 KPI 窗口。"""
+
+    window_id: str
+    started_at: datetime
+    completed_at: datetime | None
+    metrics: "ThroughputMetrics"
+    preclear_off_confirmed: bool
+    running_confirmed: bool
+    ready_confirmed: bool
+    closed_off_confirmed: bool
+    evidence: tuple[InstrumentEvidenceItem, ...]
+    confirmed: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class BaseStationRemoteSessionResult:
     """驱动成功建立真实 transport session 后返回的不可伪造身份。"""
 
@@ -188,8 +206,8 @@ class ThroughputMetrics:
         self,
         dl_throughput_mbps: Optional[float] = None,
         ul_throughput_mbps: Optional[float] = None,
-        dl_bler: float = 0.0,
-        ul_bler: float = 0.0,
+        dl_bler: Optional[float] = None,
+        ul_bler: Optional[float] = None,
         cqi: int = 0,
         rank_indicator: int = 1,
         mcs_dl: int = 0,
@@ -225,6 +243,8 @@ class ThroughputMetrics:
             "ul_throughput": ul_throughput_mbps is not None,
             "dl_throughput_current": dl_throughput_current_mbps is not None,
             "ul_throughput_current": ul_throughput_current_mbps is not None,
+            "dl_bler": dl_bler is not None,
+            "ul_bler": ul_bler is not None,
         }
         if kpi_valid:
             self.kpi_valid.update({key: value is True for key, value in kpi_valid.items()})
@@ -485,6 +505,22 @@ class BaseStationDriver(InstrumentDriver):
         await _asyncio.sleep(max(window_s, 0.0))
         return await self.get_throughput_metrics(
             throughput_scope=throughput_scope,
+        )
+
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """采集带厂商生命周期确认的结构化窗口。
+
+        真实驱动必须显式实现；默认拒绝，防止旧 sleep+poll 结果被误当成
+        已确认的独立统计窗口。P1-73C 才把该契约接入通用方位扫描。
+        """
+
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide a confirmed measurement window"
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

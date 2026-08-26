@@ -3345,11 +3345,13 @@ class RealUxmDriver(BaseStationDriver):
         def _throughput_text(value: Optional[float], digits: int = 1) -> str:
             return "N/A" if value is None else f"{value:.{digits}f}Mbps"
 
+        bler_text = "N/A" if metrics.dl_bler is None else f"{metrics.dl_bler:.4f}"
+
         meas_logger.info(
             f"[KPI] DL={_throughput_text(metrics.dl_throughput_mbps)}"
             f"(cur {_throughput_text(metrics.dl_throughput_current_mbps)}) "
             f"UL={_throughput_text(metrics.ul_throughput_mbps)} "
-            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator} "
+            f"BLER={bler_text} CQI={metrics.cqi} RI={metrics.rank_indicator} "
             f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB"
             + (f"  ⚠未读到: {','.join(missing)}" if missing else ""),
             extra={

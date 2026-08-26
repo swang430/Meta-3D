@@ -1,8 +1,10 @@
 """Instrument Pydantic schemas"""
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
+
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 
 
 # ==================== Model Schemas ====================
@@ -53,6 +55,7 @@ class InstrumentModelResponse(InstrumentModelBase):
 
 class InstrumentConnectionBase(BaseModel):
     """Base instrument connection schema"""
+    model_config = ConfigDict(extra="forbid")
     endpoint: Optional[str] = Field(None, max_length=500)
     controller_ip: Optional[str] = Field(None, max_length=100)
     port: Optional[int] = Field(None, ge=1, le=65535)
@@ -88,6 +91,8 @@ class InstrumentConnectionResponse(InstrumentConnectionBase):
     created_at: UTCDateTime
     updated_at: Optional[UTCDateTime]
     created_by: str
+    cmw500_lte_2x2_formal_enabled: bool
+    cmw500_lte_2x2_formal_updated_at: Optional[UTCDateTime]
 
     class Config:
         from_attributes = True
@@ -163,10 +168,15 @@ class InstrumentCatalogResponse(BaseModel):
 
 class FEConnectionUpdate(BaseModel):
     """前端发送的连接配置更新（字段名对齐前端 InstrumentConnection 类型）"""
+    model_config = ConfigDict(extra="forbid")
     endpoint: Optional[str] = None
     controller: Optional[str] = None  # 前端叫 controller，对应 DB 的 protocol
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None  # Option B port_maps 等额外配置
+    base_station_adapter_profile: Optional[BaseStationAdapterProfile] = Field(
+        None,
+        description="CMW500 LTE 2x2 内部七字段 route；UXM 不消费此字段",
+    )
 
 
 class UpdateInstrumentCategoryRequest(BaseModel):

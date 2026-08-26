@@ -73,6 +73,38 @@ export type InstrumentConnection = {
   controller?: string | null
   notes?: string | null
   connection_params?: Record<string, any> | null
+  cmw500_lte_2x2_formal_enabled: boolean
+  cmw500_lte_2x2_formal_updated_at: string | null
+}
+
+export type Cmw500FormalCapabilityResponse = {
+  connection_id: string
+  enabled: boolean
+  updated_at: string
+}
+
+export type Cmw500Lte2x2InternalRoute = {
+  pcc_bb_board: string
+  rx_connector: string
+  rx_converter: string
+  tx1_connector: string
+  tx1_converter: string
+  tx2_connector: string
+  tx2_converter: string
+}
+
+export type BaseStationAdapterProfile = {
+  schema_version: 1
+  adapter: 'cmw500'
+  lte_2x2_internal_route: Cmw500Lte2x2InternalRoute
+}
+
+export type InstrumentConnectionUpdate = {
+  endpoint?: string | null
+  controller?: string | null
+  notes?: string | null
+  connection_params?: Record<string, unknown> | null
+  base_station_adapter_profile?: BaseStationAdapterProfile | null
 }
 
 export type InstrumentCategory = {
@@ -475,7 +507,7 @@ export type InstrumentsResponse = {
 
 export type UpdateInstrumentPayload = {
   modelId?: string
-  connection?: InstrumentConnection
+  connection?: InstrumentConnectionUpdate
 }
 
 

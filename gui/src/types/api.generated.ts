@@ -4,6 +4,68 @@
  */
 
 export interface paths {
+    "/api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Explicitly enable or disable CMW500 LTE 2x2 formal admission
+         * @description The only write path for the durable CMW500 LTE 2x2 rollout approval.
+         *     Generic connection fields and connection_params cannot enable it.
+         *     The selected category/model are locked and must resolve to the registered
+         *     CMW500 base-station adapter.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    connection_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["Cmw500FormalCapabilityUpdate"];
+                };
+            };
+            responses: {
+                /** @description Server-owned approval state and timestamp */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Cmw500FormalCapabilityResponse"];
+                    };
+                };
+                /** @description Instrument connection not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Connection is not the selected registered CMW500 base station */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboard": {
         parameters: {
             query?: never;
@@ -2057,7 +2119,32 @@ export interface components {
         };
         UpdateInstrumentPayload: {
             modelId?: string | null;
-            connection?: components["schemas"]["InstrumentConnection"];
+            connection?: components["schemas"]["InstrumentConnectionUpdate"];
+        };
+        Cmw500Lte2x2InternalRoute: {
+            pcc_bb_board: string;
+            rx_connector: string;
+            rx_converter: string;
+            tx1_connector: string;
+            tx1_converter: string;
+            tx2_connector: string;
+            tx2_converter: string;
+        };
+        BaseStationAdapterProfile: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            adapter: "cmw500";
+            lte_2x2_internal_route: components["schemas"]["Cmw500Lte2x2InternalRoute"];
+        };
+        InstrumentConnectionUpdate: {
+            endpoint?: string | null;
+            controller?: string | null;
+            notes?: string | null;
+            connection_params?: {
+                [key: string]: unknown;
+            } | null;
+            base_station_adapter_profile?: components["schemas"]["BaseStationAdapterProfile"] | null;
         };
         SystemStatusItem: {
             label: string;
@@ -2134,6 +2221,20 @@ export interface components {
             connection_params: {
                 [key: string]: unknown;
             } | null;
+            /** @description Read-only durable rollout approval; generic connection update cannot write it. */
+            cmw500_lte_2x2_formal_enabled: boolean;
+            /** Format: date-time */
+            cmw500_lte_2x2_formal_updated_at: string | null;
+        };
+        Cmw500FormalCapabilityUpdate: {
+            enabled: boolean;
+        };
+        Cmw500FormalCapabilityResponse: {
+            /** Format: uuid */
+            connection_id: string;
+            enabled: boolean;
+            /** Format: date-time */
+            updated_at: string;
         };
         /**
          * @description P3-5 composite snapshot. `available=false` means HAL is not

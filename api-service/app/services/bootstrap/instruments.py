@@ -451,6 +451,7 @@ def _seed(db: Session) -> SeedResult:
                 protocol=conn_def["protocol"],
                 status="disconnected",
                 created_by="system",
+                cmw500_lte_2x2_formal_enabled=False,
                 notes="连接地址未配置；连接真实硬件前必须由操作员填写",
             ))
             inserted += 1

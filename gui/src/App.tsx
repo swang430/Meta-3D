@@ -109,6 +109,13 @@ import type {
   UpdateProbePayload,
   UpdateInstrumentPayload,
 } from './types/api'
+import {
+  CMW500_ROUTE_FIELDS,
+  buildCmw500AdapterProfile,
+  emptyCmw500Route,
+  readCmw500Route,
+  type Cmw500RouteDraft,
+} from './types/cmwAdapterProfile'
 
 const hexToRgba = (hex: string, alpha: number) => {
   const sanitized = hex.replace('#', '')
@@ -200,6 +207,7 @@ type EquipmentDraft = {
   controller: string
   notes: string
   connection_params?: string
+  cmw500_route?: Cmw500RouteDraft
 }
 
 type EquipmentFeedback = {
@@ -1723,6 +1731,9 @@ function EquipmentManager() {
           controller: previous?.controller ?? (category.connection.controller ?? ''),
           notes: previous?.notes ?? (category.connection.notes ?? ''),
           connection_params: previous?.connection_params ?? (category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : ''),
+          cmw500_route: previous?.cmw500_route ?? readCmw500Route(
+            category.connection.connection_params?.base_station_adapter_profile,
+          ),
         }
       })
       return next
@@ -1785,6 +1796,12 @@ function EquipmentManager() {
           endpoint: updatedCategory.connection.endpoint ?? '',
           controller: updatedCategory.connection.controller ?? '',
           notes: updatedCategory.connection.notes ?? '',
+          connection_params: updatedCategory.connection.connection_params
+            ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
+            : '',
+          cmw500_route: readCmw500Route(
+            updatedCategory.connection.connection_params?.base_station_adapter_profile,
+          ),
         },
       }))
       const needsHALReload =
@@ -1848,6 +1865,24 @@ function EquipmentManager() {
         }
       }
 
+      const category = categories.find((item) => item.key === categoryKey)
+      const selectedModel = category?.models.find((model) => model.id === draft.modelId)
+      let cmw500Profile
+      if (categoryKey === 'baseStation' && selectedModel?.model === 'CMW500') {
+        try {
+          cmw500Profile = buildCmw500AdapterProfile(
+            draft.cmw500_route ?? emptyCmw500Route(),
+          )
+        } catch (error) {
+          showFeedback(
+            categoryKey,
+            'error',
+            error instanceof Error ? error.message : 'CMW500 内部 route 配置无效',
+          )
+          return
+        }
+      }
+
       instrumentMutation.mutate({
         categoryKey,
         payload: {
@@ -1855,12 +1890,15 @@ function EquipmentManager() {
             endpoint: draft.endpoint || undefined,
             controller: draft.controller || undefined,
             notes: draft.notes || undefined,
-            ...(parsedParams !== undefined ? { connection_params: parsedParams } : {})
+            ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+            ...(cmw500Profile !== undefined
+              ? { base_station_adapter_profile: cmw500Profile }
+              : {}),
           },
         },
       })
     },
-    [drafts, instrumentMutation, showFeedback],
+    [categories, drafts, instrumentMutation, showFeedback],
   )
 
   const modelSelectData = useMemo(() => {
@@ -2196,6 +2234,41 @@ function EquipmentManager() {
                   // bails (returns null) if backend says reason='not_a_uxm'
                   // — safe to render unconditionally for baseStation.
                   <TopologyProfileCard categoryKey={category.key} />
+                )}
+
+                {category.key === 'baseStation' && drawerSelectedModel?.model === 'CMW500' && (
+                  <Card withBorder padding="md" radius="md">
+                    <Stack gap="sm">
+                      <Stack gap={2}>
+                        <Text fw={600} size="sm">CMW500 LTE 2×2 内部 Route</Text>
+                        <Text size="xs" c="dimmed">
+                          仅配置 CMW500 内部 BB / connector / converter，不包含外部射频开关或功率补偿。
+                        </Text>
+                      </Stack>
+                      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                        {CMW500_ROUTE_FIELDS.map((field) => (
+                          <TextInput
+                            key={field}
+                            label={field}
+                            value={(draft.cmw500_route ?? emptyCmw500Route())[field]}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value
+                              setDrafts((prev) => ({
+                                ...prev,
+                                [category.key]: {
+                                  ...prev[category.key],
+                                  cmw500_route: {
+                                    ...(prev[category.key]?.cmw500_route ?? emptyCmw500Route()),
+                                    [field]: value,
+                                  },
+                                },
+                              }))
+                            }}
+                          />
+                        ))}
+                      </SimpleGrid>
+                    </Stack>
+                  </Card>
                 )}
 
                 <Group justify="flex-end" mt="md">

@@ -953,7 +953,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '驱动MPAC阵列并合成目标波场，支持WFS/PWG模式。',
     tags: ['64TRX', 'WFS', 'PWG'],
     selectedModelId: 'propsim-f64',
-    connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#' },
+    connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#', cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null },
     usagePhase: [],
     driverMode: 'auto',
     models: [
@@ -998,7 +998,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: "用于在基站仿真器、信道仿真器与MIMO探头之间灵活路由射频信号。",
     tags: ["开关", "矩阵"],
     selectedModelId: "caict-custom-matrix",
-    connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部" },
+    connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部", cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null },
     usagePhase: [],
     driverMode: 'auto',
     models: [
@@ -1019,7 +1019,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '生成5G NR/LTE/C-V2X协议栈信号，提供核心网交互。',
     tags: ['5G NR', 'C-V2X'],
     selectedModelId: 'rs-cmx500',
-    connection: { endpoint: '192.168.100.11', controller: 'LAN', notes: 'NR-SA 模式' },
+    connection: { endpoint: '192.168.100.11', controller: 'LAN', notes: 'NR-SA 模式', cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null },
     usagePhase: [],
     driverMode: 'auto',
     models: [
@@ -1058,7 +1058,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '用于静区路径校准与探头S参数测量，覆盖FR1全频段。',
     tags: ['校准', 'S参数'],
     selectedModelId: 'keysight-pna',
-    connection: { endpoint: '192.168.100.31', controller: 'LAN', notes: '校准台专用' },
+    connection: { endpoint: '192.168.100.31', controller: 'LAN', notes: '校准台专用', cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null },
     usagePhase: [],
     driverMode: 'auto',
     models: [
@@ -1097,7 +1097,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '用于实时监控静区内杂散、干扰与波束功率分布。',
     tags: ['监控', '干扰'],
     selectedModelId: 'rsa-306',
-    connection: { endpoint: '', controller: 'USB', notes: '便携式采样' },
+    connection: { endpoint: '', controller: 'USB', notes: '便携式采样', cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null },
     usagePhase: [],
     driverMode: 'auto',
     models: [

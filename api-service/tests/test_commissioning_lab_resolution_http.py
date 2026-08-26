@@ -29,7 +29,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
+from app.hal import MockBaseStation
+from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
+from app.services.instrument_hal_service import get_hal_service
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -57,9 +60,23 @@ def setup_db():
     Base.metadata.create_all(bind=engine)
     prior = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = _override_get_db
+    hal = get_hal_service()
+    prior_base_station = hal.drivers.get("baseStation")
+    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    with TestingSessionLocal() as db:
+        db.add(InstrumentCategory(
+            category_key="baseStation",
+            category_name="Base Station",
+            driver_mode="mock",
+        ))
+        db.commit()
     try:
         yield
     finally:
+        if prior_base_station is None:
+            hal.drivers.pop("baseStation", None)
+        else:
+            hal.drivers["baseStation"] = prior_base_station
         if prior is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -77,7 +94,21 @@ def db():
 
 
 def _add_lab(db, *, name: str, active: bool = True) -> LabProfile:
-    lab = LabProfile(id=uuid.uuid4(), name=name, is_active=active)
+    category = db.query(InstrumentCategory).filter_by(
+        category_key="baseStation"
+    ).one()
+    lab = LabProfile(
+        id=uuid.uuid4(),
+        name=name,
+        is_active=active,
+        instrument_bindings=[{
+            "category_id": str(category.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "baseStation",
+        }],
+    )
     db.add(lab)
     db.commit()
     db.refresh(lab)

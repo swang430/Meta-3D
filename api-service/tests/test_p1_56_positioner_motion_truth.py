@@ -400,11 +400,26 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
             return generation
 
     class DB:
+        class Query:
+            def __init__(self, execution):
+                self.execution = execution
+
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return self.execution
+
+        def query(self, *_args, **_kwargs):
+            return self.Query(SimpleNamespace(
+                config={runner.FREEZE_CONFIG_KEY: {"digest": "test-freeze"}},
+            ))
+
         def close(self) -> None:
             return None
 
     @asynccontextmanager
-    async def lease(_purpose: str):
+    async def lease(_purpose: str, **_kwargs):
         yield
 
     async def run_case_loop(_db, _execution_id, *, defer_report=False) -> None:

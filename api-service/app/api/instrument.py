@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Literal, Optional
@@ -74,6 +75,8 @@ class FEInstrumentConnection(BaseModel):
     controller: Optional[str] = None
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None
+    cmw500_lte_2x2_formal_enabled: bool = False
+    cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
 
 
 class FEInstrumentCategory(BaseModel):
@@ -201,7 +204,26 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",
         connection_params=conn_db.connection_params,
+        cmw500_lte_2x2_formal_enabled=(
+            conn_db.cmw500_lte_2x2_formal_enabled is True
+        ),
+        cmw500_lte_2x2_formal_updated_at=(
+            conn_db.cmw500_lte_2x2_formal_updated_at
+        ),
     )
+
+
+class Cmw500FormalCapabilityUpdate(BaseModel):
+    """唯一可写的 CMW500 LTE 2x2 rollout approval 请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
+class Cmw500FormalCapabilityResponse(BaseModel):
+    connection_id: UUID
+    enabled: bool
+    updated_at: datetime
 
 
 def _category_tags(cat: InstrumentCategoryModel) -> List[str]:
@@ -1556,7 +1578,11 @@ def add_channel_model_entry(
         # InstrumentConnection record yet — happens when they're seeding
         # a fresh DB. Create a minimal record so the channel-model list
         # has somewhere to live.
-        conn = InstrumentConnectionDB(category_id=cat.id, created_by="system")
+        conn = InstrumentConnectionDB(
+            category_id=cat.id,
+            created_by="system",
+            cmw500_lte_2x2_formal_enabled=False,
+        )
         db.add(conn)
         db.flush()
 
@@ -1710,11 +1736,14 @@ def update_instrument_category(
         if not connection:
             connection = InstrumentConnectionDB(
                 category_id=category.id,
-                created_by="system"
+                created_by="system",
+                cmw500_lte_2x2_formal_enabled=False,
             )
             db.add(connection)
 
         conn_data = request.connection.dict(exclude_unset=True)
+        adapter_profile_supplied = "base_station_adapter_profile" in conn_data
+        adapter_profile = conn_data.pop("base_station_adapter_profile", None)
         # 将前端的 controller 字段映射回 DB 的 protocol
         if "controller" in conn_data:
             conn_data["protocol"] = conn_data.pop("controller")
@@ -1727,6 +1756,19 @@ def update_instrument_category(
                 conn_data["controller_ip"] = parsed_ip
             if parsed_port:
                 conn_data["port"] = parsed_port
+
+        if adapter_profile_supplied:
+            params = dict(
+                conn_data.get("connection_params")
+                if "connection_params" in conn_data
+                else connection.connection_params
+                or {}
+            )
+            if adapter_profile is None:
+                params.pop("base_station_adapter_profile", None)
+            else:
+                params["base_station_adapter_profile"] = adapter_profile
+            conn_data["connection_params"] = params
 
         for key, value in conn_data.items():
             if value is not None and hasattr(connection, key):
@@ -1745,6 +1787,70 @@ def update_instrument_category(
     ).first()
 
     return _convert_category(category, models, conn)
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2",
+    response_model=Cmw500FormalCapabilityResponse,
+)
+def update_cmw500_lte_2x2_formal_capability(
+    connection_id: UUID,
+    request: Cmw500FormalCapabilityUpdate,
+    db: Session = Depends(get_db),
+) -> Cmw500FormalCapabilityResponse:
+    """显式启停一个 CMW500 connection 的 LTE 2x2 正式准入。"""
+
+    connection = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.id == connection_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="instrument connection not found")
+    category = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.id == connection.category_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if category is None:
+        raise HTTPException(status_code=422, detail="connection category is missing")
+    if category.category_key != "baseStation" or category.selected_model_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="CMW500 LTE 2x2 formal capability requires selected baseStation model",
+        )
+    model = (
+        db.query(InstrumentModelDB)
+        .filter(
+            InstrumentModelDB.id == category.selected_model_id,
+            InstrumentModelDB.category_id == category.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if model is None:
+        raise HTTPException(status_code=422, detail="selected baseStation model is missing")
+    from app.services.instrument_hal_service import get_real_driver_class
+
+    driver_class = get_real_driver_class(category.category_key, model.model)
+    if getattr(driver_class, "adapter_id", None) != "cmw500":
+        raise HTTPException(
+            status_code=422,
+            detail="selected baseStation model is not the registered CMW500 adapter",
+        )
+
+    changed_at = datetime.now(timezone.utc)
+    connection.cmw500_lte_2x2_formal_enabled = request.enabled
+    connection.cmw500_lte_2x2_formal_updated_at = changed_at
+    db.commit()
+    db.refresh(connection)
+    return Cmw500FormalCapabilityResponse(
+        connection_id=connection.id,
+        enabled=connection.cmw500_lte_2x2_formal_enabled is True,
+        updated_at=changed_at,
+    )
 
 
 # ============================================================

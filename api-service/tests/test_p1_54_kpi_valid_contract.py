@@ -57,9 +57,11 @@ def test_throughput_contract_distinguishes_missing_from_real_zero():
 
     assert missing.dl_throughput_mbps is None
     assert missing.dl_throughput_current_mbps is None
+    assert missing.dl_bler is None
     assert missing_payload["dl_throughput_mbps"] is None
     assert missing_payload["kpi_valid"]["dl_throughput"] is False
     assert missing_payload["kpi_valid"]["dl_throughput_current"] is False
+    assert missing_payload["kpi_valid"]["dl_bler"] is False
 
     measured_zero = ThroughputMetrics(
         dl_throughput_mbps=0.0,

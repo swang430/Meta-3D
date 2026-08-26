@@ -513,13 +513,31 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
 
     events: list[str] = []
 
+    execution = SimpleNamespace(
+        config={
+            "base_station_adapter_profile_freeze": {"digest": "formal-freeze"}
+        }
+    )
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution
+
     class _DB:
+        def query(self, *_args):
+            return _Query()
+
         def close(self) -> None:
             events.append("db-close")
 
     @asynccontextmanager
     async def _lease(purpose: str, **kwargs):
-        events.append(f"lease-enter:{purpose}:{kwargs}")
+        validator = kwargs.get("validate_before_remote")
+        assert getattr(validator, "validation_identity", None) == "formal-freeze"
+        events.append(f"lease-enter:{purpose}")
         try:
             yield
         finally:
@@ -542,7 +560,7 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
     await runner._run_case(execution_id)
 
     assert events == [
-        f"lease-enter:formal-case:{execution_id}:{{}}",
+        f"lease-enter:formal-case:{execution_id}",
         "case-loop",
         "lease-exit",
         "report-after-handoff",
@@ -563,7 +581,10 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000003"),
         status="running",
-        config={"error_message": "original phase outcome"},
+        config={
+            "error_message": "original phase outcome",
+            "base_station_adapter_profile_freeze": {"digest": "formal-freeze"},
+        },
         error_message="original persisted outcome",
         completed_at=None,
         duration_sec=None,
@@ -602,7 +623,7 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
             pass
 
     @asynccontextmanager
-    async def _lease(_purpose):
+    async def _lease(_purpose, **_kwargs):
         yield
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
@@ -647,7 +668,10 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000004"),
         status="running",
-        config={"phase_progress": [{"type": "MEASURE", "status": "success"}]},
+        config={
+            "phase_progress": [{"type": "MEASURE", "status": "success"}],
+            "base_station_adapter_profile_freeze": {"digest": "formal-freeze"},
+        },
         error_message=None,
         completed_at=None,
         duration_sec=None,
@@ -685,7 +709,7 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
             pass
 
     @asynccontextmanager
-    async def _lease(_purpose):
+    async def _lease(_purpose, **_kwargs):
         yield
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
@@ -744,7 +768,9 @@ async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000005"),
         status="running",
-        config={},
+        config={
+            "base_station_adapter_profile_freeze": {"digest": "formal-freeze"}
+        },
         error_message=None,
         completed_at=None,
         duration_sec=None,
@@ -781,7 +807,7 @@ async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
             pass
 
     @asynccontextmanager
-    async def _lease(_purpose):
+    async def _lease(_purpose, **_kwargs):
         raise InstrumentTestLeaseError("无法取得 UXM Remote 控制")
         yield
 
@@ -984,6 +1010,100 @@ class TestNestedLeaseReusesInsteadOfTearingDown:
 
         msg = asyncio.run(_scenario())
         assert "F64" in msg and "outer" in msg and "inner" in msg
+
+    def test_nested_validator_rechecks_same_frozen_identity_before_body(self):
+        """同一 execution 的内层操作仍须在协调锁内复核活动 driver。"""
+        import asyncio
+
+        import pytest as _pytest
+
+        from app.services.instrument_test_lease import (
+            InstrumentTestLease,
+            InstrumentTestLeaseError,
+        )
+
+        hal = SimpleNamespace(driver_generation="first", cache_clears=0)
+
+        async def _clear_metrics_cache():
+            hal.cache_clears += 1
+
+        hal.clear_metrics_cache = _clear_metrics_cache
+
+        class _Validator:
+            validation_identity = "execution-freeze-digest"
+
+            def __call__(self, current_hal):
+                if current_hal.driver_generation != "first":
+                    return "loaded driver no longer matches frozen execution"
+                return None
+
+        lease = InstrumentTestLease(lambda: hal)
+
+        async def _scenario():
+            validator = _Validator()
+            async with lease.hold(
+                "outer",
+                control_f64=False,
+                control_uxm=False,
+                validate_before_remote=validator,
+            ):
+                assert hal.cache_clears == 1
+                hal.driver_generation = "reloaded"
+                with _pytest.raises(
+                    InstrumentTestLeaseError,
+                    match="no longer matches",
+                ):
+                    async with lease.hold(
+                        "inner",
+                        control_f64=False,
+                        control_uxm=False,
+                        validate_before_remote=validator,
+                    ):
+                        _pytest.fail("driver reload 后不得进入内层硬件操作")
+                assert hal.cache_clears == 1
+
+        asyncio.run(_scenario())
+
+    def test_nested_lease_rejects_a_different_frozen_identity(self):
+        """嵌套操作不能借用另一 execution 已取得的 Remote 控制。"""
+        import asyncio
+
+        import pytest as _pytest
+
+        from app.services.instrument_test_lease import (
+            InstrumentTestLease,
+            InstrumentTestLeaseError,
+        )
+
+        class _Validator:
+            def __init__(self, identity):
+                self.validation_identity = identity
+
+            def __call__(self, _hal):
+                return None
+
+        lease = InstrumentTestLease(lambda: None)
+
+        async def _scenario():
+            async with lease.hold(
+                "outer",
+                control_f64=False,
+                control_uxm=False,
+                validate_before_remote=_Validator("execution-a"),
+            ):
+                with _pytest.raises(
+                    InstrumentTestLeaseError,
+                    match="冻结身份",
+                ):
+                    async with lease.hold(
+                        "inner",
+                        control_f64=False,
+                        control_uxm=False,
+                        validate_before_remote=_Validator("execution-b"),
+                    ):
+                        pass
+
+        asyncio.run(_scenario())
 
     def test_park_and_mutation_guard_stay_reentrant(self):
         """反向：可重入不能被一刀切掉 —— `park` / `hal_mutation_guard`
