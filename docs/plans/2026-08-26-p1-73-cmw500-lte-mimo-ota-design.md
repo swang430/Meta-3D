@@ -172,9 +172,11 @@ DISCONNECTED
 并把状态不确定写入 cleanup 与告警。
 
 共享 MEASURE cleanup 必须返回并消费结构化 `BaseStationCleanupResult`，只负责该阶段能够真实
-确认的 `stop_signaling_confirmed`、`disconnect_confirmed`、`safe_idle_confirmed` 和 warnings。
-`False`、`None`、异常均不可当成功；`cleanup_chamber_instruments()` 必须检查每个布尔返回并聚合
-失败。执行证据中的 cleanup 确认只能由这个结果推导，不能由 finally 已运行或无异常直接置 true。
+确认的 `stop_signaling_confirmed`、`safe_idle_confirmed` 和 warnings。它不得调用基站
+`disconnect()`：VISA/HiSLIP transport 必须一直保留到租约退出时，由同一个
+`release_to_local_control()` 独占完成控制交还与会话关闭。`False`、`None`、异常均不可当成功；
+`cleanup_chamber_instruments()` 必须检查每个安全动作的布尔返回并聚合失败。执行证据中的 cleanup
+确认只能由这个结果推导，不能由 finally 已运行或无异常直接置 true。
 
 Local 控制权交还不属于 MEASURE cleanup：它发生在 `instrument_test_lease` 退出时，必须由独立的
 `BaseStationLocalControlResult` 保存 Remote 取得与 Local 交还的精确结果。租约的基站解析必须是
@@ -276,6 +278,11 @@ evaluate_base_station_metric_trust(
 GUI 继续消费 OperationalLab 唯一 `baseStation`，展示型号、固件、选件、LTE 能力、内部 route、
 模式和 readiness。adapter 可注册，正式能力默认关闭；未完成现场确认显示黄色 Warning，不使用
 `Hardware Blocked`。后端不可达、缓存旧数据或关键仪表状态未知不得复活旧绿。
+
+Commissioning 方位 KPI 表也是正式消费方：不得直接格式化原始 `throughput_mbps`/BLER。后端必须
+按同一个逐指标 evaluator 输出 server-owned trust projection；GUI 主 KPI 只显示 trusted 值，
+diagnostic 值必须黄色标注“非正式实测”，unknown 显示 N/A。Mock、debug、生命周期未闭合以及
+配置/route/方位不匹配均不能以普通 Mbps/% 外观发布。
 
 API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容；GUI 不再写旧字段；新旧
 冲突时 422。live OpenAPI、checked-in YAML 和 GUI generated TS 必须同步。

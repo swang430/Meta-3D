@@ -66,7 +66,6 @@ class BaseStationConfigResult:
 @dataclass(frozen=True)
 class BaseStationCleanupResult:
     stop_signaling_confirmed: bool
-    disconnect_confirmed: bool
     safe_idle_confirmed: bool
     warnings: tuple[str, ...]
 
@@ -96,7 +95,8 @@ cd api-service
 - `adapter_id` 由 `instrument_hal_service.get_real_driver_class(category_key, model_name)` 命中的注册类
   的固定类属性产生；registry 初始化校验唯一值，业务层不得从型号/类名前缀或 connection params 猜。
 - `BaseStationCleanupResult` 是共享 MEASURE cleanup 的唯一结果，只保存该阶段真实拥有的
-  stop/disconnect/SAFE_IDLE；任何字段只有驱动返回精确 `True` 且相应状态回读确认后才为 true。
+  stop signaling/SAFE_IDLE；任何字段只有驱动返回精确 `True` 且相应状态回读确认后才为 true。
+  它不拥有基站 transport close，不得调用 `disconnect()` 抢在租约 Local handoff 之前关闭会话。
 - `BaseStationLocalControlResult` 独立保存测试租约的 Remote 取得与 Local 交还；它只能由
   `instrument_test_lease` 的真实控制会话结果产生，不能用 cleanup、finally 或“无异常”推导。
 - UXM 改为导入通用类型，不复制定义。
@@ -1127,7 +1127,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、disconnect、SAFE_IDLE 三项，以及租约退出后 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项，以及租约退出后仍持有原控制会话时形成的 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -1188,15 +1188,21 @@ git commit -m "feat: add formal base station execution evidence"
 - STOP 被拒、STOP 后非 RDY、final ABORt 被拒或最终状态非 OFF 时 window 不 confirmed，整次正式
   指标 UNKNOWN，且在原方位立即终止，不得移动转台、切 F64 或开始下一 window；
 - route/config/error/cleanup 任一 unknown 时正式 throughput/BLER 均 UNKNOWN；
-- shared cleanup 对 `stop_signaling()` / `disconnect()` 的返回值逐项要求 `is True`；`False`、`None`
+- shared cleanup 对 `stop_signaling()` 与 SAFE_IDLE 回读逐项要求 `is True`；`False`、`None`
   和异常都写入 warnings 与 `BaseStationCleanupResult`，不得因 await 完成或 finally 已运行而确认；
-- `measure.py` 消费该结构化结果并只由 stop/disconnect/SAFE_IDLE 派生 evidence cleanup；任一失败
+- shared cleanup 必须删除基站 `disconnect()` 调用；基站 session 在 stop/SAFE_IDLE 后继续存活，
+  只允许最外层 `instrument_test_lease` 的 `release_to_local_control()` 关闭。positioner 等其他仪表的
+  既有安全断开所有权不受此规则改变；
+- `measure.py` 消费该结构化结果并只由 stop/SAFE_IDLE 派生 evidence cleanup；任一失败
   时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
 - `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
   必须实现同一 async Remote/Local 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
 - Local handoff 只在租约退出时形成 `BaseStationLocalControlResult`。runner 在退出后用独立事务持久化
   server-owned 结果，并在 deferred REPORT 前重建/净化公开投影；Analysis 在租约内产生的结果只是
   provisional，不能先进入正式历史或报告；
+- RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_to_local_control` → transport close，
+  `release_to_local_control` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
+  `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
 - 租约交还失败时保留原业务 winner 与错误全文，再追加 handoff 失败；不能从 disconnect、finally、
   context manager 正常退出或执行终态推导 Local 已确认；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
@@ -1233,7 +1239,7 @@ git add api-service/app/services/mimo_ota/executors/measure.py \
 git commit -m "feat: run CMW500 through the common MIMO measure flow"
 ```
 
-### Task 14：收紧 Analysis、报告、报告对比、下载和历史消费方
+### Task 14：收紧 Analysis、报告、对比、下载、历史和 Commissioning KPI 消费方
 
 **Files:**
 
@@ -1242,6 +1248,9 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 - Modify: `api-service/app/services/mimo_ota/rf_kpi_trust.py`
 - Modify: `api-service/app/services/report_service.py`
 - Modify: `api-service/app/api/test_execution.py`
+- Modify: `gui/src/components/Commissioning/Phases.tsx`
+- Create: `gui/src/components/Commissioning/baseStationMetricTruth.ts`
+- Create: `gui/src/components/Commissioning/baseStationMetricTruth.test.ts`
 - Create: `api-service/tests/test_p1_73c_formal_consumers.py`
 - Modify: `api-service/tests/test_p1_72_comparison_gate.py`
 - Modify: `api-service/tests/test_p1_63_rf_kpi_provenance_truth.py`
@@ -1251,13 +1260,14 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 
 **Step 1: 写 RED**
 
-列全五类正式消费方：Analysis、报告 builder、报告对比、报告详情/下载 trust、执行历史。逐一证明：
+列全六类正式消费方：Analysis、报告 builder、报告对比、报告详情/下载 trust、执行历史、
+Commissioning 方位 KPI 表。逐一证明：
 
 - Analysis、报告 builder、报告详情/下载 trust、执行历史对直接来自基站窗口的 throughput/BLER
   逐指标调用唯一
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
-- 五类消费方都必须消费 runner 在租约退出后持久化的 final evidence：MEASURE cleanup 与
+- 六类消费方都必须消费 runner 在租约退出后持久化的 final evidence：MEASURE cleanup 与
   `local_control_handoff.released_local_confirmed` 缺失或不为 true 时逐指标 UNKNOWN/N/A；不得把
   租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 Local 确认；
 - expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
@@ -1265,6 +1275,12 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 - 旧 UXM 仅通过精确 translator；旧 CMW 原型、客户端声明、数值形状、adapter 名称均不能恢复 PASS；
 - BLER unknown 不清空独立可信吞吐，吞吐 unknown 也不清空独立可信 BLER；
 - 缺正式证据时数值可保留在诊断结构，但正式 KPI/verdict 为 UNKNOWN/N/A；
+- 后端给每个 `azimuth_results[*]` 的 throughput/BLER 输出 server-owned 逐指标 trust projection，
+  至少区分 `trusted` / `diagnostic` / `unknown` 并把正式值与诊断值分槽；projection 只由同一个
+  evaluator 生成，GUI 不得用 raw 数值、`kpi_valid`、adapter 名称或顶层 bool 自行恢复信任；
+- Commissioning `Phases.tsx` 不得直接渲染 `az.throughput_mbps`/BLER raw 字段。共享 presenter
+  只在逐指标 `trusted` 时显示普通 KPI；`diagnostic` 必须黄色明确标注“诊断值，非正式实测”，
+  `unknown` 显示 `N/A`。debug、Mock、窗口生命周期/配置/route/方位不匹配均不能显示成普通 Mbps/%；
 - 历史/下载不能用当前数据库的仪器配置替旧执行补证据；
 - `ReportComparisonService` 必须按现行 `COMPARISON_METRIC_KEYS` 显式映射权威源，不能把派生/RF
   聚合指标名直接交给 base-station evaluator，也不能继续信任 analysis 聚合值或旧
@@ -1293,11 +1309,18 @@ cd api-service
   tests/test_p1_54_kpi_valid_contract.py \
   tests/test_mimo_ota_report_verified_backcompat.py \
   tests/test_arch1_history_resource.py
+cd ../gui
+node --test src/components/Commissioning/baseStationMetricTruth.test.ts
+npm run build
+cd ..
 git add api-service/app/services/mimo_ota/executors/analysis.py \
   api-service/app/services/mimo_ota/executors/report.py \
   api-service/app/services/mimo_ota/rf_kpi_trust.py \
   api-service/app/services/report_service.py \
   api-service/app/api/test_execution.py \
+  gui/src/components/Commissioning/Phases.tsx \
+  gui/src/components/Commissioning/baseStationMetricTruth.ts \
+  gui/src/components/Commissioning/baseStationMetricTruth.test.ts \
   api-service/tests/test_p1_73c_formal_consumers.py \
   api-service/tests/test_p1_73c_base_station_metric_trust.py \
   api-service/tests/test_p1_72_comparison_gate.py \
