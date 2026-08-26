@@ -781,15 +781,20 @@ class BaseStationAdapterProfile(BaseModel):
 class BaseStationAdapterProfileResolution(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal[1]
-    adapter: Literal["uxm", "cmw500"]
-    status: Literal["not_applicable", "configured"]
+    adapter: Literal["uxm", "cmw500"] | None
+    status: Literal["diagnostic_unbound", "not_applicable", "configured"]
+    execution_mode: Literal["real", "simulated"]
     profile: BaseStationAdapterProfile | None
 ```
 
-组合白名单只允许 `uxm/not_applicable/profile=None` 或 `cmw500/configured/profile.adapter=cmw500`。
+组合白名单只允许 `uxm/not_applicable/profile=None`、
+`cmw500/configured/profile.adapter=cmw500`，或仅限白名单 Mock 且两端型号均未配置时的
+`adapter=None/diagnostic_unbound/simulated/profile=None`。`diagnostic_unbound` 只允许既有通用 Mock
+诊断，不得进入 CMW/UXM adapter 专属配置、正式 evidence 或 KPI/verdict。
 adapter identity 必须与 HAL 实际装载链完全同源：在同一事务锁定 `baseStation`
 `InstrumentCategory`，读取其 `selected_model_id`，并要求它与所选 LabProfile binding 的
-`instrument_model_id` 均非空且精确一致；只用该唯一 `InstrumentModel.model` 调用
+`instrument_model_id` 精确一致。真实模式下两者必须均非空；白名单 Mock 仅在两者都为空时允许
+上述 `diagnostic_unbound`，只缺一端仍 fail-loud。只用非空的唯一 `InstrumentModel.model` 调用
 `instrument_hal_service.get_real_driver_class(category_key, model_name)`，读取注册类固定
 `adapter_id`。不得从型号/类名前缀、endpoint 或 connection params 推断。unknown、重复注册、
 binding/selected model/registry/profile adapter 冲突均 fail-loud。
@@ -804,9 +809,14 @@ TX converter 复用、非 CMW profile、LabProfile binding 与 InstrumentConnect
 InstrumentConnection；先核对 binding model 与 `InstrumentCategory.selected_model_id`，再解析
 registry class/adapter，校验规范 profile 后把 resolution、profile、model/connection identity 与
 digest 写入 server-owned execution config。取得 Remote 前还必须只读检查当前
-`hal.drivers["baseStation"]`：必须存在、不是 mock，且 `type(driver)` 与该 registry class 精确一致；
-检查不得 connect 或发送 SCPI。已有规范快照时幂等返回且绝不覆盖，但仍要核对当前 loaded driver
-与冻结 identity；缺失、选择漂移、绑定漂移或冲突均在首次硬件 I/O 前 fail-loud。
+`hal.drivers["baseStation"]`：不存在则阻断；以 `instrument_hal_service.is_mock_driver(driver)` 作为
+唯一 real/mock 判据。real 必须满足 `type(driver) is registry_class`；白名单 Mock 可执行诊断，
+但必须冻结 `execution_mode=simulated`，且 Task 12/14 的所有正式消费者永久排除。已配置型号的
+Mock 仍按同一 binding/selected model/registry 解析期望 adapter，CMW 仍要求完整七字段 profile，
+UXM 仍为 `not_applicable`；两端型号都未配置时只允许 `diagnostic_unbound`。不属于权威 Mock
+白名单、又不与 registry real class 精确一致的类一律阻断。检查不得 connect 或发送 SCPI。
+已有规范快照时幂等返回且绝不覆盖，但仍要核对当前 loaded driver 分类与冻结 identity；缺失、
+选择漂移、绑定漂移或冲突均在首次硬件 I/O 前 fail-loud。
 
 冻结条件必须按权威 adapter 收窄：`cmw500` 缺严格七字段即阻断；`uxm` 不要求、不读取 CMW
 profile，冻结显式 `uxm/not_applicable/profile=None` 后继续现有 UXM 配置、route 与证据链；adapter
@@ -825,7 +835,10 @@ RED 分别覆盖 formal runner、session create/首次 phase、adhoc 和 run-all
 必须冻结 `not_applicable` 并正常进入既有 lease/dispatch。另以双向 RED 覆盖 binding=CMW 但
 `selected_model_id`=UXM、binding=UXM 但 `selected_model_id`=CMW，以及 registry class 与当前 loaded
 driver class 不一致；三者都必须在 lease/dispatch 前阻断且零仪器 I/O。unknown/冲突 adapter
-同样不得放行。
+同样不得放行。四条入口还要成对覆盖：registry real class mismatch 阻断；权威白名单 Mock 在
+显式 CMW/UXM 配置下可以执行诊断但 resolution 标为 simulated、正式值全为 UNKNOWN/N/A；两端
+型号都为空的既有 Mock 冻结 `diagnostic_unbound` 后仍可跑通用 commissioning/adhoc/run-all，
+不得运行 adapter 专属分支或形成正式判决；非白名单 fake 不能借 duck typing 放行。
 
 **Step 2: RED → GREEN 并提交**
 
