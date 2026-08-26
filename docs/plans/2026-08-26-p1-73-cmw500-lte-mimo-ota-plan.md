@@ -66,7 +66,13 @@ class BaseStationConfigResult:
 class BaseStationCleanupResult:
     stop_signaling_confirmed: bool
     disconnect_confirmed: bool
-    local_control_confirmed: bool
+    safe_idle_confirmed: bool
+    warnings: tuple[str, ...]
+
+@dataclass(frozen=True)
+class BaseStationLocalControlResult:
+    acquired_remote_confirmed: bool
+    released_local_confirmed: bool
     warnings: tuple[str, ...]
 ```
 
@@ -86,8 +92,10 @@ cd api-service
 **Step 3: 最小 GREEN**
 
 - 把真正跨驱动的类型移到 `base_station.py`。
-- `BaseStationCleanupResult` 是共享 cleanup 与执行 evidence 的唯一基站清理结果；任何字段只有驱动
-  返回精确 `True` 且相应 Local/SAFE_IDLE 回读确认后才为 true，不能用“无异常”推导。
+- `BaseStationCleanupResult` 是共享 MEASURE cleanup 的唯一结果，只保存该阶段真实拥有的
+  stop/disconnect/SAFE_IDLE；任何字段只有驱动返回精确 `True` 且相应状态回读确认后才为 true。
+- `BaseStationLocalControlResult` 独立保存测试租约的 Remote 取得与 Local 交还；它只能由
+  `instrument_test_lease` 的真实控制会话结果产生，不能用 cleanup、finally 或“无异常”推导。
 - UXM 改为导入通用类型，不复制定义。
 - UXM 专属功率 builder 下沉到 UXM profile/driver。
 - 只改归属，不改变 UXM 命令、返回值或执行顺序。
@@ -776,6 +784,9 @@ configure → route confirmed → CELL ON → UE attached/connected → measurem
 - attach 轮询不得 `except: pass`；状态解析只接受手册枚举，不能用宽松 substring 把 ATT 当 CONN。
 - 写失败时内部缓存不得提前伪装已应用；cleanup 多失败聚合并返回。
 - cancel 后仍执行安全 cleanup，但不把失败 cleanup 静默覆盖业务错误。
+- CMW 驱动实现共享 async `acquire_remote_control()` / `release_to_local_control()` 契约；控制动作、
+  返回值与确认信号必须逐项引用厂商手册，缺少明确出处时保持 false/unknown，不能用 VISA 会话存在、
+  disconnect 成功或未抛异常推断 Remote/Local；共享租约在 P1-73C 才接入并消费这些结果。
 
 **Step 2: RED → GREEN**
 
@@ -932,6 +943,7 @@ class BaseStationExecutionEvidence(BaseModel):
     requested_positions: list[PositionSnapshot]
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     cleanup: BaseStationCleanupResult
+    local_control_handoff: BaseStationLocalControlResult
     exchange_ids: list[str]
 
 class BaseStationMeasurementWindowEvidence(BaseModel):
@@ -946,7 +958,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 cleanup 的 stop signaling、disconnect、Local control 三项都精确 confirmed。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup `False`/`None`/异常/仅无异常返回，均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、disconnect、SAFE_IDLE 三项，以及租约退出后 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -984,9 +996,14 @@ git commit -m "feat: add formal base station execution evidence"
 
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/cleanup.py`
+- Modify: `api-service/app/services/instrument_test_lease.py`
+- Modify: `api-service/app/services/test_case_runner.py`
 - Modify: `api-service/tests/test_p1_73a_vendor_neutral_measure.py`
 - Create: `api-service/tests/test_p1_73c_cmw_measure_integration.py`
 - Create: `api-service/tests/test_p1_73c_base_station_cleanup_truth.py`
+- Create: `api-service/tests/test_p1_73c_base_station_lease_handoff.py`
+- Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `api-service/tests/test_p1_61_report_final_state_truth.py`
 - Modify: `api-service/tests/test_p1_59_ca_throughput_truth.py`
 
 **Step 1: 写 RED**
@@ -1000,10 +1017,21 @@ git commit -m "feat: add formal base station execution evidence"
 - route/config/error/cleanup 任一 unknown 时正式 throughput/BLER 均 UNKNOWN；
 - shared cleanup 对 `stop_signaling()` / `disconnect()` 的返回值逐项要求 `is True`；`False`、`None`
   和异常都写入 warnings 与 `BaseStationCleanupResult`，不得因 await 完成或 finally 已运行而确认；
-- `measure.py` 消费该结构化结果并由 stop/disconnect/Local 三项共同派生 evidence cleanup；任一失败
+- `measure.py` 消费该结构化结果并只由 stop/disconnect/SAFE_IDLE 派生 evidence cleanup；任一失败
   时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
+- `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
+  必须实现同一 async Remote/Local 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
+- Local handoff 只在租约退出时形成 `BaseStationLocalControlResult`。runner 在退出后用独立事务持久化
+  server-owned 结果，并在 deferred REPORT 前重建/净化公开投影；Analysis 在租约内产生的结果只是
+  provisional，不能先进入正式历史或报告；
+- 租约交还失败时保留原业务 winner 与错误全文，再追加 handoff 失败；不能从 disconnect、finally、
+  context manager 正常退出或执行终态推导 Local 已确认；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
 - UXM 仍通过同一个 executor 且原回归行为不变。
+
+RED 还要覆盖：CMW 缺 Remote/Local 契约时 fail-loud 而不是跳过；取得 Remote 失败、交还返回
+`False`、交还异常、取消与成功交还；失败时不发布正式历史/报告且保留原业务错误，成功时只有租约
+退出后才允许正式投影与 deferred REPORT。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -1012,14 +1040,22 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73c_cmw_measure_integration.py \
   tests/test_p1_73c_base_station_cleanup_truth.py \
+  tests/test_p1_73c_base_station_lease_handoff.py \
+  tests/test_instrument_test_lease.py \
+  tests/test_p1_61_report_final_state_truth.py \
   tests/test_p1_73a_vendor_neutral_measure.py \
   tests/test_p1_59_ca_throughput_truth.py \
   tests/test_uxm_cell_config_orchestration.py
 git add api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/cleanup.py \
+  api-service/app/services/instrument_test_lease.py \
+  api-service/app/services/test_case_runner.py \
   api-service/tests/test_p1_73a_vendor_neutral_measure.py \
   api-service/tests/test_p1_73c_cmw_measure_integration.py \
   api-service/tests/test_p1_73c_base_station_cleanup_truth.py \
+  api-service/tests/test_p1_73c_base_station_lease_handoff.py \
+  api-service/tests/test_instrument_test_lease.py \
+  api-service/tests/test_p1_61_report_final_state_truth.py \
   api-service/tests/test_p1_59_ca_throughput_truth.py
 git commit -m "feat: run CMW500 through the common MIMO measure flow"
 ```
@@ -1048,6 +1084,9 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
   逐指标调用唯一
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
+- 五类消费方都必须消费 runner 在租约退出后持久化的 final evidence：MEASURE cleanup 与
+  `local_control_handoff.released_local_confirmed` 缺失或不为 true 时逐指标 UNKNOWN/N/A；不得把
+  租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 Local 确认；
 - expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
   任一与期望不符均 UNKNOWN/N/A，历史/下载不得从当前数据库补齐；
 - 旧 UXM 仅通过精确 translator；旧 CMW 原型、客户端声明、数值形状、adapter 名称均不能恢复 PASS；

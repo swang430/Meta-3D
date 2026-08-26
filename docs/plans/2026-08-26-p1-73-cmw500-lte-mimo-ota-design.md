@@ -59,6 +59,7 @@ MIMO OTA 顶层只允许使用：
 - `BaseStationMeasurementWindow`
 - `BaseStationKpiSnapshot`
 - `BaseStationCleanupResult`
+- `BaseStationLocalControlResult`
 - `BaseStationExecutionEvidence`
 
 顶层不得出现 `uxm_*`、`cmw_*`、具体 SCPI、厂商类判断或 Test Application/Signaling Task
@@ -152,10 +153,17 @@ DISCONNECTED
 任一状态无法确认时停止产生正式 KPI，不自动重发带副作用的命令，尝试有出处且幂等的安全动作，
 并把状态不确定写入 cleanup 与告警。
 
-共享 cleanup 必须返回并消费结构化 `BaseStationCleanupResult`，至少包含
-`stop_signaling_confirmed`、`disconnect_confirmed`、`local_control_confirmed` 和 warnings。
+共享 MEASURE cleanup 必须返回并消费结构化 `BaseStationCleanupResult`，只负责该阶段能够真实
+确认的 `stop_signaling_confirmed`、`disconnect_confirmed`、`safe_idle_confirmed` 和 warnings。
 `False`、`None`、异常均不可当成功；`cleanup_chamber_instruments()` 必须检查每个布尔返回并聚合
 失败。执行证据中的 cleanup 确认只能由这个结果推导，不能由 finally 已运行或无异常直接置 true。
+
+Local 控制权交还不属于 MEASURE cleanup：它发生在 `instrument_test_lease` 退出时，必须由独立的
+`BaseStationLocalControlResult` 保存 Remote 取得与 Local 交还的精确结果。租约的基站解析必须是
+vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过；驱动只有在有厂商出处的控制会话
+动作和确认信号成功后才能返回 true。finally 已运行、disconnect 成功或没有抛异常都不能推导
+Local 已交还。runner 在租约退出后持久化该 server-owned 结果；Local 未确认时，业务错误仍完整
+保留，但公开 KPI、历史正式判决和最终报告必须保持 UNKNOWN/N/A。
 
 ### 3.2 `1CC - nx2` 内部 route
 
@@ -208,7 +216,7 @@ Absolute 字段 1 是 reliability indicator，不是 BLER；Relative 字段 5 �
 
 新 UXM 与 CMW500 执行均写 `BaseStationExecutionEvidence(schema_version=1)`，包含 adapter、
 execution mode、identity、capabilities、requested/applied config、内部 route、lifecycle、
-measurement windows 和 cleanup。`adapter_id` 只用于审计显示与 command profile 注册，不允许
+measurement windows、MEASURE cleanup 和租约退出后的 Local control handoff。`adapter_id` 只用于审计显示与 command profile 注册，不允许
 在 Analysis、报告、报告对比、历史或 GUI 中形成厂商分支。
 
 每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间和独立 KPI。
@@ -230,7 +238,8 @@ evaluate_base_station_metric_trust(
 ```
 
 它要求规范 schema、dispatch 模式、获准 adapter/profile、真实身份、配置回读、内部 CMW route、
-完整测量窗口、正确字段/单位、当前 execution provenance 和方位绑定。外部 RF router 不进入该
+完整测量窗口、正确字段/单位、当前 execution provenance、方位绑定、MEASURE cleanup，以及租约
+退出后精确确认的 Local control handoff。外部 RF router 不进入该
 函数。旧 `throughput_verified`、`kpi_valid` 或 `config_applied` 不能单独恢复正式 PASS。
 
 旧 UXM 只通过精确 legacy translator；冲突时 UNKNOWN。CMW500 原型历史没有 legacy 信任路径。
@@ -251,7 +260,9 @@ evaluator，而是按来源换源：`avg_throughput_mbps` 从逐方位受信 thr
 `rsrp_variance_db` / `avg_sinr_db` 分别从 P1-63 的逐方位、逐指标 RF trust 后聚合；未来新增
 BLER 对比才调用 base-station BLER evaluator。未获信任的值不得进入 delta、summary statistics、
 repeatability 或 `formal=true`，且一个指标 unknown 不得清空其他独立可信指标。缺测不写 0，
-debug 不打印数值后再声明“不可信”，cleanup 和 Local 交还确定前不发布最终报告。历史列表只
+debug 不打印数值后再声明“不可信”。Analysis 在租约内只能形成 provisional 结果；runner 必须在
+租约退出并持久化 Local handoff 后重建公开投影，唯一最终 REPORT 继续走现有 deferred-report 路径。
+cleanup 和 Local 交还确定前不发布最终报告或正式历史判决。历史列表只
 返回摘要，详情按 execution ID 读取完整快照；旧或畸形 evidence 保持 UNKNOWN，不从当前数据库
 或旧正文补证。
 
