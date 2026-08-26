@@ -112,7 +112,7 @@ class BaseStationFormalCapabilityApprovalSnapshot(BaseModel):
                 not self.instrument_connection_id
                 or self.capability != "cmw500_lte_2x2"
                 or type(self.enabled) is not bool
-                or self.updated_at is None
+                or (self.enabled is True and self.updated_at is None)
             ):
                 raise ValueError("configured approval is incomplete")
         elif any(
@@ -451,6 +451,8 @@ def _formal_envelope(
             return False, "cmw500_identity_not_supported", []
         if approval.enabled is not True:
             return False, "formal_capability_not_approved", []
+        if evidence.requested_config.payload.get("mimo_layers") != 2:
+            return False, "cmw500_mimo_layers_not_2x2", []
         duplex = evidence.requested_config.payload.get("duplex")
         required_duplex_option = (
             "CMW-KS500" if duplex == "fdd" else "CMW-KS550" if duplex == "tdd" else None

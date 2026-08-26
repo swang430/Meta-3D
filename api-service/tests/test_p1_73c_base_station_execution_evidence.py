@@ -12,6 +12,7 @@ from app.services.execution_scpi_evidence import (
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     base_station_execution_evidence_is_formally_acceptable,
+    canonical_snapshot_digest,
     parse_base_station_execution_evidence,
 )
 from tests.p1_73c_evidence_fixtures import valid_cmw_evidence
@@ -76,6 +77,25 @@ def test_cmw_capability_requires_the_frozen_duplex_options():
     evidence = valid_cmw_evidence()
     evidence["identity"]["options"] = ["CMW-KS520"]
 
+    assert base_station_execution_evidence_is_formally_acceptable(evidence) is False
+
+
+def test_cmw_lte_2x2_formal_capability_rejects_other_frozen_layer_counts():
+    evidence = valid_cmw_evidence()
+    evidence["requested_config"]["payload"]["mimo_layers"] = 4
+    digest = canonical_snapshot_digest(evidence["requested_config"]["payload"])
+    evidence["requested_config"]["digest"] = digest
+    evidence["measurement_windows"][0]["config_digest"] = digest
+
+    assert parse_base_station_execution_evidence(evidence) == evidence
+    assert base_station_execution_evidence_is_formally_acceptable(evidence) is False
+
+
+def test_default_disabled_cmw_approval_without_timestamp_is_valid_but_not_formal():
+    evidence = valid_cmw_evidence()
+    evidence["formal_capability_approval"].update(enabled=False, updated_at=None)
+
+    assert parse_base_station_execution_evidence(evidence) == evidence
     assert base_station_execution_evidence_is_formally_acceptable(evidence) is False
 
 
