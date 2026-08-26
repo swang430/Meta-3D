@@ -81,6 +81,9 @@ const readinessSnapshot: HALReadinessResponse = {
     detail:
       'DUT attach sensing not implemented in this build (no probe-sensing / RFID / session table yet — future P3 item)',
   },
+  // The demo fixture uses UXM, so CMW readiness is explicitly not present
+  // as a value while the serialized response field itself remains required.
+  cmw500_lte_2x2: null,
   // P1-11: per-/24-subnet reachability rollup. These values are exactly
   // what the backend build_subnet_reachability() produces for the driver
   // endpoints above — F64 on 192.168.0.x (1 instrument, no network fail →

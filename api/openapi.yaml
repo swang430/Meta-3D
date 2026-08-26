@@ -1800,6 +1800,28 @@ components:
         enabled: {type: boolean}
         updated_at: {type: string, format: date-time}
       required: [connection_id, enabled, updated_at]
+    Cmw500Lte2x2Readiness:
+      type: object
+      additionalProperties: false
+      description: Current selected-LabProfile CMW500 LTE 2x2 readiness preview.
+      properties:
+        status:
+          type: string
+          enum: [ready, warning, diagnostic, not_applicable]
+        adapter_registered: {type: boolean}
+        connection_id: {type: string, nullable: true}
+        model: {type: string, nullable: true}
+        identity_verified: {type: boolean, nullable: true}
+        firmware_version: {type: string, nullable: true}
+        options:
+          type: array
+          items: {type: string}
+        formal_enabled: {type: boolean}
+        formal_updated_at: {type: string, nullable: true}
+        fdd_ready: {type: boolean}
+        tdd_ready: {type: boolean}
+        detail: {type: string}
+      required: [status, adapter_registered, connection_id, model, identity_verified, firmware_version, options, formal_enabled, formal_updated_at, fdd_ready, tdd_ready, detail]
     HALReadinessResponse:
       type: object
       description: |
@@ -1820,6 +1842,10 @@ components:
           $ref: '#/components/schemas/CalibrationReadiness'
         dut_attach:
           $ref: '#/components/schemas/DutAttachReadiness'
+        cmw500_lte_2x2:
+          allOf:
+            - $ref: '#/components/schemas/Cmw500Lte2x2Readiness'
+          nullable: true
         generated_at_iso:
           type: string
         subnets:
@@ -1831,7 +1857,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:

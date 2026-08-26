@@ -262,7 +262,7 @@ export type HALReadinessResponse = {
   lab_profile: ReadinessLabProfile
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
-  cmw500_lte_2x2?: Cmw500Lte2x2Readiness | null
+  cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string
   subnets: SubnetReachability[]
 }

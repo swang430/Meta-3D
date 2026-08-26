@@ -3228,6 +3228,11 @@ class DutAttachReadinessResponse(BaseModel):
 class Cmw500Lte2x2ReadinessResponse(BaseModel):
     """Current LabProfile-bound CMW500 LTE 2x2 readiness preview."""
 
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_serialization_defaults_required=True,
+    )
+
     status: Literal["ready", "warning", "diagnostic", "not_applicable"]
     adapter_registered: bool
     connection_id: Optional[str] = None
