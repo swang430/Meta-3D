@@ -48,6 +48,10 @@ from app.hal.uxm_command_profiles import (
     build_uxm_downlink_power_command,
     detect_profile,
 )
+from app.hal.uxm_test_profiles import (
+    UXM_MIMO_PORT_PRESETS,
+    get_uxm_mimo_route_snapshot,
+)
 
 if TYPE_CHECKING:
     # P2-1 Phase 2.1: apply_topology_profile() consumes the dataclass.
@@ -1869,29 +1873,12 @@ class RealUxmDriver(BaseStationDriver):
 
     # 预置端口映射表
     # 键: (逻辑天线编号, 方向)  值: 物理端口名
-    MIMO_PORT_PRESETS = {
-        "siso": {
-            "tx": {1: "RF1OUT"},
-            "rx": {1: "RF1IN"},
-            "description": "SISO 1x1: RF1 单端口",
-        },
-        "2x2": {
-            "tx": {1: "RF1OUT", 2: "RF2OUT"},
-            "rx": {1: "RF1IN",  2: "RF2IN"},
-            "description": "2x2 MIMO: RF1 + RF2",
-        },
-        "4x4": {
-            "tx": {1: "RF1OUT", 2: "RF2OUT", 3: "RF3OUT", 4: "RF4OUT"},
-            "rx": {1: "RF1IN",  2: "RF2IN",  3: "RF3IN",  4: "RF4IN"},
-            "description": "4x4 MIMO: RF1 + RF2 + RF3 + RF4",
-        },
-        # 交叉验证配置: 仅使用 RF3+RF4 (用于隔离测试)
-        "2x2_alt": {
-            "tx": {1: "RF3OUT", 2: "RF4OUT"},
-            "rx": {1: "RF3IN",  2: "RF4IN"},
-            "description": "2x2 MIMO (备用端口): RF3 + RF4",
-        },
-    }
+    MIMO_PORT_PRESETS = UXM_MIMO_PORT_PRESETS
+
+    def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
+        """Profile-owned connector projection for topology display/audit."""
+
+        return get_uxm_mimo_route_snapshot(preset)
 
     async def set_mimo_port_mapping(
         self,

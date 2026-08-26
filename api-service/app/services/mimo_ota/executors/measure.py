@@ -51,6 +51,9 @@ from app.services.mimo_ota.rf_kpi_trust import (
     build_rf_kpi_trust,
     rf_kpi_trust_is_formally_verified,
 )
+from app.services.base_station_port_mapping import (
+    resolve_base_station_port_mapping,
+)
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -461,6 +464,43 @@ def _validate_port_preset(
     if preset.lower() not in valid_presets:
         return f"mimo_port_preset={preset!r} 非法 (支持: {list(valid_presets)})"
     return None
+
+
+def _resolve_base_station_route_snapshot(
+    base_station,
+    *,
+    configured_preset: Optional[str],
+    mimo_layers: int,
+    inherit: bool,
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """Return display/audit route metadata without making it a runtime gate.
+
+    Physical connector readback is deliberately optional in P1-73A.  A
+    missing or failing adapter readback must leave the logical topology usable
+    and surface as resolver warnings; it must never guess connector names.
+    """
+
+    default_preset = {1: "siso", 2: "2x2", 4: "4x4"}.get(
+        mimo_layers, f"{mimo_layers}x{mimo_layers}"
+    )
+    effective_preset = (
+        configured_preset.strip().lower()
+        if isinstance(configured_preset, str) and configured_preset.strip()
+        else default_preset
+    )
+    getter = getattr(base_station, "get_mimo_route_snapshot", None)
+    if inherit or not callable(getter):
+        return effective_preset, None
+    try:
+        snapshot = getter(effective_preset)
+    except Exception as exc:
+        logger.warning(
+            "BaseStation route snapshot unavailable for preset %s: %s",
+            effective_preset,
+            exc,
+        )
+        return effective_preset, None
+    return effective_preset, snapshot if isinstance(snapshot, dict) else None
 
 
 
@@ -1057,8 +1097,25 @@ class MeasureExecutor(IStepExecutor):
             # topology id/mode/CE→probe 绑定供下游 channel-gen 消费。无 active topology
             # row = warning (固定布线手工接线, 见下面门放行); 有 topology 但请求 mode
             # 不提供 = strict FAIL (switch_mode_gate)。
+            effective_port_preset, route_snapshot = (
+                _resolve_base_station_route_snapshot(
+                    base_station,
+                    configured_preset=config.mimo_port_preset,
+                    mimo_layers=int(config.mimo_layers),
+                    inherit=base_station_inherit,
+                )
+            )
+            base_station_port_mapping = resolve_base_station_port_mapping(
+                adapter_id=str(getattr(base_station, "adapter_id", "unknown")),
+                mimo_port_preset=effective_port_preset,
+                mimo_layers=int(config.mimo_layers),
+                route_snapshot=route_snapshot,
+            )
             topology_result = orchestrate_switch_topology(
-                context.db, chamber.id, mode_id=config.switch_mode_id
+                context.db,
+                chamber.id,
+                mode_id=config.switch_mode_id,
+                base_station_port_mapping=base_station_port_mapping,
             )
             if topology_result.success:
                 logger.info(

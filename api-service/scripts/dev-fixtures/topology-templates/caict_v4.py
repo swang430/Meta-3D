@@ -419,7 +419,25 @@ def _generate_nodes() -> List[Dict[str, Any]]:
     """生成所有节点 (信号源、CE、EMCenter、探头、接收端)"""
     nodes = []
 
-    # ── 1. UXM (综测仪) ──
+    # ── 1. MIMO OTA 逻辑基站（物理 connector 由运行时 profile 映射）──
+    nodes.append({
+        "id": "baseStation",
+        "type": "communication_tester",
+        "label": "Base Station Emulator",
+        "position": {"x": _COL_SOURCE, "y": 120},
+        "params": {
+            "ports": ["DL1", "DL2", "DL3", "DL4", "UL1"],
+            "port_roles": {
+                "DL1": "dl", "DL2": "dl", "DL3": "dl", "DL4": "dl",
+                "UL1": "ul",
+            },
+            "physical_port_display": {},
+            "visible_modes": ["mimo_ota"],
+            "description": "逻辑端口；物理口来自所选 BaseStation route snapshot",
+        },
+    })
+
+    # ── 1b. UXM 物理节点（保留给 TRP/TIS 等非 MIMO 路径）──
     nodes.append({
         "id": "uxm",
         "type": "communication_tester",
@@ -429,6 +447,10 @@ def _generate_nodes() -> List[Dict[str, Any]]:
             "model": "E7515B",
             "vendor": "Keysight",
             "ports": ["RF1", "RF2", "RF3", "RF4", "RF5", "RF6"],
+            "port_roles": {
+                "RF1": "dl", "RF2": "dl", "RF3": "dl", "RF4": "dl",
+                "RF5": "dl", "RF6": "ul",
+            },
             "roles": {
                 "RF1-RF4": "BS Emulator → CE 4 路输入",
                 "RF5": "TRP/TIS → EMCenter Switch → 垂直环",
@@ -448,7 +470,7 @@ def _generate_nodes() -> List[Dict[str, Any]]:
             "vendor": "Keysight",
             "inputs": 4,
             "outputs": 32,
-            "description": "4 路 UXM 输入 → 32 路 OTA 输出",
+            "description": "4 路 BaseStation 输入 → 32 路 OTA 输出",
         },
     })
 
@@ -585,12 +607,12 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
         "calibration": [],
     }
 
-    # ── Shared: UXM RF1-4 → CE 输入 ──
+    # ── MIMO OTA: 逻辑 BaseStation DL1-4 → CE 输入 ──
     for i in range(1, 5):
         conns["shared"].append({
-            "id": f"conn_uxm_rf{i}_to_ce",
-            "source": "uxm",
-            "source_pin": f"RF{i}",
+            "id": f"conn_base_station_dl{i}_to_ce",
+            "source": "baseStation",
+            "source_pin": f"DL{i}",
             "target": "ce_f64",
             "target_pin": f"in{i}",
             "cable_type": "Phase-matched SMA-SMA",
@@ -625,11 +647,11 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
 
     # MIMO OTA Uplink
     conns["mimo_ota"].append({
-        "id": "conn_link_antenna_to_uxm_mimo",
+        "id": "conn_link_antenna_to_base_station_mimo",
         "source": "link_antenna",
         "source_pin": "rf",
-        "target": "uxm",
-        "target_pin": "RF6",
+        "target": "baseStation",
+        "target_pin": "UL1",
         "cable_type": "Low-loss N-SMA",
         "cable_loss_db": 1.2,
         "cable_length_m": 6.0,
@@ -772,7 +794,7 @@ def generate_caict_mimo_topology() -> Dict[str, Any]:
             "id": "mimo_ota",
             "name": "MIMO OTA (5G NR)",
             "description": (
-                "UXM RF1-4 → CE F64 (4in/32out) → EMCenter 集成PA → "
+                "BaseStation DL1-4 → CE F64 (4in/32out) → EMCenter 集成PA → "
                 "16 水平探头 (32路固定连接, 不经过 Switch)"
             ),
             "active_connections": _conn_ids_by_tag("mimo_ota"),

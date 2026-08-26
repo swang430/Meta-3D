@@ -11,6 +11,7 @@ import {
   IconChartLine,
   IconAntennaBars5,
 } from '@tabler/icons-react';
+import { formatPortLabel, resolvePortHandles } from './baseStationPorts';
 
 // ==========================================
 // Base Node Style
@@ -60,31 +61,43 @@ export const ChannelEmulatorNode = ({ data }: any) => {
 // ==========================================
 export const CommunicationTesterNode = ({ data }: any) => {
   const roles = data.params?.roles || {};
+  const portHandles = resolvePortHandles(data.params);
   return (
     <Box style={{ ...baseNodeStyle, borderLeft: '4px solid var(--mantine-color-indigo-6)', minWidth: '190px' }}>
       <Group gap="xs" mb={6}>
         <ThemeIcon color="indigo" variant="light" size="sm">
           <IconRadio size={14} />
         </ThemeIcon>
-        <Text size="sm" fw={600}>{data.label || 'UXM'}</Text>
+        <Text size="sm" fw={600}>{data.label || 'Base Station'}</Text>
       </Group>
 
       <Stack gap={2}>
         {Object.entries(roles).map(([port, desc]: [string, any]) => (
           <Text key={port} size="xs" c="dimmed">{port}: {desc}</Text>
         ))}
+        {portHandles.some((port) => port.physicalPort) && (
+          <Stack gap={0} mt={2}>
+            {portHandles.map((port) => (
+              <Text key={port.id} size="xs" c="indigo">
+                {formatPortLabel(port)}
+              </Text>
+            ))}
+          </Stack>
+        )}
       </Stack>
 
       {/* Port handles on right */}
-      {(data.params?.ports || ['RF1','RF2','RF3','RF4','RF5']).map((port: string, i: number) => (
+      {portHandles.map((port, i) => (
         <Handle
-          key={port}
-          type={port === 'RF6' ? 'target' : 'source'}
+          key={port.id}
+          type={port.handleType}
           position={Position.Right}
-          id={port}
+          id={port.id}
           style={{
             top: `${15 + i * 14}%`,
-            background: port === 'RF6' ? 'var(--mantine-color-pink-6)' : (port === 'RF5' ? 'var(--mantine-color-orange-6)' : 'var(--mantine-color-indigo-6)'),
+            background: port.role === 'ul'
+              ? 'var(--mantine-color-pink-6)'
+              : 'var(--mantine-color-indigo-6)',
           }}
         />
       ))}

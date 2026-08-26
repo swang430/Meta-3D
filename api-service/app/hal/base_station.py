@@ -310,6 +310,16 @@ class BaseStationDriver(InstrumentDriver):
             raise TypeError("requested must be BaseStationRequestedConfig")
         return await self.set_cell_config(requested.to_driver_payload())
 
+    def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
+        """Optional physical connector projection for topology display.
+
+        Drivers without an authoritative profile/readback return an empty
+        snapshot. The application must warn and keep logical topology usable;
+        it must not infer connector names from adapter/model identity.
+        """
+
+        return {}
+
     async def set_frc_config(
         self,
         frc_reference: str,
