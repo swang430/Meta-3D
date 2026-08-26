@@ -25,6 +25,7 @@ R&S 命名约定:
 
 import logging
 import asyncio
+import re
 from enum import Enum
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -36,6 +37,7 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.base_station import (
+    BaseStationIdentity,
     BaseStationDriver,
     BaseStationRequestedConfig,
     RadioTechnology,
@@ -182,12 +184,12 @@ class RealCmw500Driver(BaseStationDriver):
     通过 PyVISA → HiSLIP (推荐) 或 TCP Socket 通信。
 
     核心工作流:
-      1. connect() → *IDN? → PRESET
-      2. ROUTe → 配置 RF 路由场景
+      1. connect() → 只读识别型号、版本和选件
+      2. 执行期显式配置 route 与小区工作点
       3. set_cell_config() → Band/BW/DL Freq
       4. set_downlink_power() → RS-EPRE 功率
       5. start_signaling() → Cell ON → PS Establish → 等待连接
-      6. get_throughput_metrics() → ETHRoughput + EBLer
+      6. get_throughput_metrics() → 诊断回读（正式窗口由独立方法负责）
       7. stop_signaling() → PS Release → Cell OFF
     """
 
@@ -229,6 +231,10 @@ class RealCmw500Driver(BaseStationDriver):
         self._bandwidth_mhz: float = 20.0
         self._dl_power_dbm: float = -50.0
         self._cell_state: CellState = CellState.OFF
+        self._identity_model: str = ""
+        self._firmware_version: str | None = None
+        self._identity_model_verified = False
+        self._options_snapshot_verified = False
 
     @property
     def _i(self) -> str:
@@ -271,6 +277,7 @@ class RealCmw500Driver(BaseStationDriver):
     async def _probe_installed_options(self) -> List[str]:
         """Read the CMW-specific usable option snapshot, fail-closed."""
 
+        self._options_snapshot_verified = False
         try:
             software = self._parse_options_response(
                 self._query(CmwScpiCommands.OPTION_LIST_VALID_SOFTWARE)
@@ -284,11 +291,58 @@ class RealCmw500Driver(BaseStationDriver):
             return []
 
         self._installed_options = software + hardware
+        self._options_snapshot_verified = True
         logger.info(
             "[CMW500] Installed usable options: %s",
             self._installed_options or "(none)",
         )
         return self._installed_options
+
+    @staticmethod
+    def _parse_identity_response(idn: str) -> tuple[str, str | None]:
+        """Parse the four-field *IDN? form shown in Base Software manual p.119."""
+
+        fields = [field.strip() for field in idn.split(",")]
+        if len(fields) != 4:
+            raise ValueError("CMW *IDN? response must contain four fields")
+        vendor, model, _serial, version = fields
+        if vendor.casefold() != "rohde&schwarz" or model.upper() != "CMW":
+            raise ValueError(f"connected instrument is not an R&S CMW: {idn}")
+        parsed_version = (
+            version
+            if re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", version)
+            else None
+        )
+        return model.upper(), parsed_version
+
+    @property
+    def identity_snapshot_verified(self) -> bool:
+        """Only a verified model, version, and complete option query authorize use."""
+
+        return (
+            self._identity_model_verified
+            and self._firmware_version is not None
+            and self._options_snapshot_verified
+        )
+
+    def get_base_station_identity(self) -> BaseStationIdentity:
+        return BaseStationIdentity(
+            adapter_id="cmw500",
+            model=self._identity_model,
+            firmware_version=self._firmware_version,
+            options=tuple(self._installed_options),
+        )
+
+    def _close_failed_connect_session(self) -> None:
+        """Close only this driver's session after a failed connection attempt."""
+
+        if self._visa_session is not None:
+            try:
+                self._visa_session.close()
+            except Exception as exc:
+                logger.warning("[CMW500] Failed to close rejected session: %s", exc)
+            self._visa_session = None
+        self._visa_rm = None
 
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 CMW500 的连接"""
@@ -315,31 +369,26 @@ class RealCmw500Driver(BaseStationDriver):
                 timeout=VISA_TIMEOUT_DEFAULT,
             )
 
-            # 验证身份
+            # Base Software User Manual 1173.9463.02-06, §5.1.2,
+            # printed p.119 gives the exact four-field *IDN? example.
             idn = self._query("*IDN?").strip()
             logger.info(f"[CMW500] Connected: {idn}")
-
-            if "CMW" not in idn.upper():
-                logger.warning(
-                    f"[CMW500] Unexpected IDN response: {idn}"
-                )
+            self._identity_model, self._firmware_version = (
+                self._parse_identity_response(idn)
+            )
+            self._identity_model_verified = True
 
             await self._probe_installed_options()
-
-            # 清除状态 + 预设
-            self._write("*CLS")
-            self._write(CmwScpiCommands.PRESET)
-            self._query("*OPC?")
-
-            # 配置 RF 路由 (信令模式单小区)
-            self._write(self._fmt(CmwScpiCommands.ROUTE_SIGN))
-            self._query("*OPC?")
 
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
             return True
 
         except Exception as e:
+            self._identity_model_verified = False
+            self._options_snapshot_verified = False
+            self._installed_options = []
+            self._close_failed_connect_session()
             error_msg = f"[CMW500] Connection failed: {e}"
             logger.error(error_msg)
             self._set_status(InstrumentStatus.ERROR, error_msg)
