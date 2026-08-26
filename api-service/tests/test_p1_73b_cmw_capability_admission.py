@@ -86,11 +86,23 @@ def _configured(db, *, category_key="baseStation", model_name="CMW500"):
     return category, model, connection
 
 
-def test_formal_capability_defaults_false_and_only_dedicated_endpoint_can_toggle(db):
+def test_formal_capability_defaults_false_and_only_dedicated_endpoint_can_toggle(
+    db, monkeypatch,
+):
     category, _, connection = _configured(db)
     db.refresh(connection)
     assert connection.cmw500_lte_2x2_formal_enabled is False
     assert connection.cmw500_lte_2x2_formal_updated_at is None
+
+    original_commit = db.commit
+    commits = 0
+
+    def commit():
+        nonlocal commits
+        commits += 1
+        original_commit()
+
+    monkeypatch.setattr(db, "commit", commit)
 
     result = update_cmw500_lte_2x2_formal_capability(
         connection.id,
@@ -99,6 +111,7 @@ def test_formal_capability_defaults_false_and_only_dedicated_endpoint_can_toggle
     )
     db.refresh(connection)
     assert result.enabled is True
+    assert commits == 1
     assert connection.cmw500_lte_2x2_formal_enabled is True
     assert isinstance(connection.cmw500_lte_2x2_formal_updated_at, datetime)
     assert category.category_key == "baseStation"

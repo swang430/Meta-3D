@@ -1844,7 +1844,8 @@ def update_cmw500_lte_2x2_formal_capability(
     changed_at = datetime.now(timezone.utc)
     connection.cmw500_lte_2x2_formal_enabled = request.enabled
     connection.cmw500_lte_2x2_formal_updated_at = changed_at
-    db.flush()
+    db.commit()
+    db.refresh(connection)
     return Cmw500FormalCapabilityResponse(
         connection_id=connection.id,
         enabled=connection.cmw500_lte_2x2_formal_enabled is True,
