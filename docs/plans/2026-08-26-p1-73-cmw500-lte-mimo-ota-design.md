@@ -195,7 +195,7 @@ Absolute 字段 1 是 reliability indicator，不是 BLER；Relative 字段 5 �
 新 UXM 与 CMW500 执行均写 `BaseStationExecutionEvidence(schema_version=1)`，包含 adapter、
 execution mode、identity、capabilities、requested/applied config、内部 route、lifecycle、
 measurement windows 和 cleanup。`adapter_id` 只用于审计显示与 command profile 注册，不允许
-在 Analysis、报告、历史或 GUI 中形成厂商分支。
+在 Analysis、报告、报告对比、历史或 GUI 中形成厂商分支。
 
 每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间和独立 KPI。
 每个方位再绑定当前窗口、F64 channel evidence、位置回读和路损应用证据。请求方位全集必须精确
@@ -203,7 +203,7 @@ measurement windows 和 cleanup。`adapter_id` 只用于审计显示与 command 
 
 ### 4.2 唯一正式信任函数
 
-Analysis、报告、历史、下载和 GUI 统一消费：
+Analysis、报告、报告对比、历史、下载和 GUI 统一消费：
 
 ```python
 evaluate_base_station_metric_trust(
@@ -220,7 +220,7 @@ evaluate_base_station_metric_trust(
 
 旧 UXM 只通过精确 legacy translator；冲突时 UNKNOWN。CMW500 原型历史没有 legacy 信任路径。
 
-### 4.3 GUI、API、报告和历史
+### 4.3 GUI、API、报告、报告对比和历史
 
 GUI 继续消费 OperationalLab 唯一 `baseStation`，展示型号、固件、选件、LTE 能力、内部 route、
 模式和 readiness。adapter 可注册，正式能力默认关闭；未完成现场确认显示黄色 Warning，不使用
@@ -229,9 +229,11 @@ GUI 继续消费 OperationalLab 唯一 `baseStation`，展示型号、固件、�
 API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容；GUI 不再写旧字段；新旧
 冲突时 422。live OpenAPI、checked-in YAML 和 GUI generated TS 必须同步。
 
-报告只发布同一 trust 函数确认的 KPI。缺测不写 0，debug 不打印数值后再声明“不可信”，cleanup
-和 Local 交还确定前不发布最终报告。历史列表只返回摘要，详情按 execution ID 读取完整快照；
-旧或畸形 evidence 保持 UNKNOWN，不从当前数据库或旧正文补证。
+报告只发布同一 trust 函数确认的 KPI。报告对比对每个 execution、每个指标分别使用其执行时
+冻结的 config/position 调用同一 trust 函数；未获信任的值不得进入 delta、summary statistics、
+repeatability 或 `formal=true`。缺测不写 0，debug 不打印数值后再声明“不可信”，cleanup 和
+Local 交还确定前不发布最终报告。历史列表只返回摘要，详情按 execution ID 读取完整快照；旧或
+畸形 evidence 保持 UNKNOWN，不从当前数据库或旧正文补证。
 
 ## 5. 开发拆分与验证
 
