@@ -146,7 +146,7 @@ export function CommissioningSandbox() {
         nrArfcn: radioTechnology === 'nr5g' && typeof nrArfcn === 'number' ? nrArfcn : undefined,
         lteDlEarfcn: radioTechnology === 'lte' && typeof lteDlEarfcn === 'number' ? lteDlEarfcn : undefined,
         theoreticalPeakThroughputMbps: radioTechnology === 'lte' && typeof theoreticalPeakMbps === 'number' ? theoreticalPeakMbps : undefined,
-        uxmDlPowerDbmPerBw: uxmPowerDbmPerBw,
+        uxmDlPowerDbmPerBw: radioTechnology === 'nr5g' ? uxmPowerDbmPerBw : undefined,
         f64InputRefDbm,
         f64CrestDb,
         f64OutputLevelDbm,
@@ -447,12 +447,14 @@ export function CommissioningSandbox() {
                   onChange={(value) => setBandwidthMhz(Number(value))}
                   min={1}
                 />
-                <NumberInput
-                  label="基站整带宽功率 (dBm)"
-                  value={uxmPowerDbmPerBw}
-                  onChange={(value) => setUxmPowerDbmPerBw(Number(value))}
-                  decimalScale={1}
-                />
+                {radioTechnology === 'nr5g' && (
+                  <NumberInput
+                    label="UXM 整带宽功率 (dBm)"
+                    value={uxmPowerDbmPerBw}
+                    onChange={(value) => setUxmPowerDbmPerBw(Number(value))}
+                    decimalScale={1}
+                  />
+                )}
                 <NumberInput
                   label="F64 输入参考 (dBm)"
                   value={f64InputRefDbm}

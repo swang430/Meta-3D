@@ -36,6 +36,7 @@ import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
 import {
+  patchPrimaryCarrierFields,
   primaryCarrierValue,
   updatePrimaryCarrierValue,
 } from './carrierTruth'
@@ -215,13 +216,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
   }
 
   const patchPCell = (patch: Record<string, unknown>): void => {
-    const current = rawPCell ?? {
-      frequency_hz: value.frequency_hz,
-      bandwidth_mhz: value.bandwidth_mhz,
-      subcarrier_spacing_khz: value.subcarrier_spacing_khz ?? 30,
-      role: 'pcell',
-    }
-    onChange({ ...value, component_carriers: [{ ...current, ...patch, role: 'pcell' }] })
+    onChange(patchPrimaryCarrierFields(value, patch))
   }
 
   const switchRadioTechnology = (rat: 'nr5g' | 'lte'): void => {

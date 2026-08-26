@@ -100,6 +100,28 @@ export function updatePrimaryCarrierIdentity<T extends CarrierTruthConfiguration
   return next as T
 }
 
+/** Patch only the PCell identity fields while preserving every existing SCell. */
+export function patchPrimaryCarrierFields<T extends CarrierTruthConfiguration>(
+  config: T,
+  patch: Record<string, unknown>,
+): T {
+  const carriers = Array.isArray(config.component_carriers)
+    ? config.component_carriers
+    : []
+  const pcell = carriers[0] ?? {
+    frequency_hz: config.frequency_hz,
+    bandwidth_mhz: config.bandwidth_mhz,
+    subcarrier_spacing_khz: config.subcarrier_spacing_khz ?? 30,
+  }
+  return {
+    ...config,
+    component_carriers: [
+      { ...pcell, ...patch, role: 'pcell' },
+      ...carriers.slice(1),
+    ],
+  }
+}
+
 /** PCell is the display/execution truth; top-level fields are legacy mirrors. */
 export function primaryCarrierValue(
   config: CarrierTruthConfiguration,

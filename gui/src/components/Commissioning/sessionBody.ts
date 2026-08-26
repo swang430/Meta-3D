@@ -108,7 +108,7 @@ export const buildCreateSessionBody = (
     }
     if (nrArfcn !== undefined) body.nr_arfcn = nrArfcn
   }
-  if (uxmDlPowerDbmPerBw !== undefined) {
+  if (radioTechnology === 'nr5g' && uxmDlPowerDbmPerBw !== undefined) {
     body.uxm_dl_power_dbm_per_bw = uxmDlPowerDbmPerBw
   }
   if (f64InputRefDbm !== undefined) body.f64_input_ref_dbm = f64InputRefDbm
