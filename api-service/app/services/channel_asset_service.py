@@ -432,11 +432,12 @@ def _check_vendor_declared_freq(
 
 
 def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> None:
-    """vendor .smu 文件名 vs scd_config.arfcn 交叉校验 (Codex P2 accept 侧, 镜像 resolver load 侧)。
+    """vendor .smu 文件名 vs scd_config 工作点交叉校验。
 
-    MF_ 可解析名 ARFCN 不一致 → fail-loud; 厂商名 (loose) 与自定义名 (解析不出) → 放行 ——
+    LTE 的 MF_ 可解析名须匹配 band/EARFCN/BW；NR 沿用 ARFCN 门。厂商名
+    (loose) 与自定义名 (解析不出) → 放行 ——
     厂商文件名频率是标称会说谎 (2026-07-03 现场实证), 真值以 SCD 声明 (工程实测) 为准。
-    create/update 接受文件时拦住"声明一个 ARFCN 却给别 ARFCN 的 MF_ 标准名 .smu", 防坏资产入库。
+    create/update 接受文件时拦住软件标准名与声明工作点不一致，防坏资产入库。
     """
     if not associated_file_path:
         return
@@ -454,10 +455,13 @@ def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> N
         if parsed is not None and (
             parsed.radio_technology != "lte"
             or parsed.channel_kind != "lte_dl_earfcn"
+            or parsed.band != normalized["band"]
             or parsed.lte_dl_earfcn != normalized["lte_dl_earfcn"]
+            or parsed.bandwidth_mhz != normalized["bandwidth_mhz"]
         ):
             raise ChannelAssetError(
-                "LTE 标准信道文件名身份与 scd_config.lte_dl_earfcn 不一致"
+                "LTE 标准信道文件名身份与 scd_config 的 "
+                "band/lte_dl_earfcn/bandwidth_mhz 不一致"
             )
         return
     arfcn = normalized["arfcn"]

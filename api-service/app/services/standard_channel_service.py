@@ -376,9 +376,8 @@ def associate_file(
 
     - scd 不存在 → StandardChannelNotFound。
     - file_path 空 / source 非法 → StandardChannelError。
-    - cross-check: check_channel_filename_freq(file_path, scd.arfcn) 不一致 (文件名能解析出
-      频率但 ≠ 声明) → StandardChannelError (fail-loud, 抓关联错文件); 解析不出 → 放行
-      (SCD 声明本就是真值, 跟 Phase 1 None-skip 一致)。
+    - cross-check: 软件标准名须匹配 SCD 工作点（LTE band/EARFCN/BW；NR ARFCN）；
+      解析不出的厂商文件名继续放行（SCD 声明本就是真值）。
     - standard_generated (路径 a/b): 文件由我们标准名生成 → basename 必须 == standard_name
       (否则是把别的文件误标成 standard; 抓 mislabel)。
     """
@@ -400,10 +399,13 @@ def associate_file(
         if parsed is not None and (
             parsed.radio_technology != "lte"
             or parsed.channel_kind != "lte_dl_earfcn"
+            or parsed.band != scd.band
             or parsed.lte_dl_earfcn != scd.lte_dl_earfcn
+            or parsed.bandwidth_mhz != scd.bandwidth_mhz
         ):
             raise StandardChannelError(
-                "LTE 标准信道文件名身份与 SCD lte_dl_earfcn 不一致"
+                "LTE 标准信道文件名身份与 SCD 的 "
+                "band/lte_dl_earfcn/bandwidth_mhz 不一致"
             )
 
     if association_source == _ASSOCIATION_SOURCE_STANDARD:

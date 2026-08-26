@@ -252,6 +252,30 @@ class TestPolymorphicPayloadValidation:
                 ),
             )
 
+    def test_lte_vendor_rejects_software_owned_filename_with_wrong_bandwidth(self, db):
+        with pytest.raises(ChannelAssetError, match="bandwidth_mhz|BW"):
+            create_channel_asset(
+                db,
+                name="lte-wrong-bandwidth-file",
+                source_type="vendor_file",
+                payload={"scd_config": _LTE_SCD},
+                associated_file_path=(
+                    "/smu/MF_LTE_B3_EARFCN1575_BW10_TDLA_Urban_2x2_DP_v1.smu"
+                ),
+            )
+
+    def test_lte_vendor_rejects_software_owned_filename_with_wrong_band(self, db):
+        with pytest.raises(ChannelAssetError, match="band"):
+            create_channel_asset(
+                db,
+                name="lte-wrong-band-file",
+                source_type="vendor_file",
+                payload={"scd_config": _LTE_SCD},
+                associated_file_path=(
+                    "/smu/MF_LTE_B7_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu"
+                ),
+            )
+
     def test_standard_invalid_cdl_name(self, db):
         # 任意非空名不够, 须合法 3GPP CDL 名 (Codex #173 复查 P2; 复用 parse_cdl_model_name)
         with pytest.raises(ChannelAssetError, match="非法 CDL 名"):

@@ -270,6 +270,30 @@ class TestAssociate:
         assert normalised["lte_dl_earfcn"] == 1575
         assert normalised["center_frequency_mhz"] == 1842.5
 
+    def test_lte_association_rejects_software_owned_filename_with_wrong_bandwidth(
+        self, db, ce_binding,
+    ):
+        scd = _create_lte(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError, match="bandwidth_mhz|BW"):
+            svc.associate_file(
+                db,
+                scd.id,
+                file_path="MF_LTE_B3_EARFCN1575_BW10_TDLA_Urban_2x2_DP_v1.smu",
+                association_source="vendor_associated",
+            )
+
+    def test_lte_association_rejects_software_owned_filename_with_wrong_band(
+        self, db, ce_binding,
+    ):
+        scd = _create_lte(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError, match="band"):
+            svc.associate_file(
+                db,
+                scd.id,
+                file_path="MF_LTE_B7_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu",
+                association_source="vendor_associated",
+            )
+
     def test_associate_loose_freq_mismatch_passes(self, db, ce_binding):
         # 2026-07-03 现场实证: 厂商文件名频率是场景族标称会说谎 (UMa_3600M 工程实为
         # 3549.99 MHz) → source=loose 的不一致**放行** (真值=SCD 声明侧工程实测),
