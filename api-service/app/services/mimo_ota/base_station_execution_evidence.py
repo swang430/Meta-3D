@@ -297,9 +297,10 @@ class BaseStationExecutionEvidence(BaseModel):
                 or not self.identity.adapter_profile_digest
                 or self.route_confirmed is None
                 or self.requested_route is None
-                or self.applied_route is None
             ):
                 raise ValueError("CMW500 evidence is missing its frozen approval or route")
+            if self.route_confirmed is True and self.applied_route is None:
+                raise ValueError("confirmed CMW500 route requires an applied snapshot")
         else:
             if (
                 self.formal_capability_approval.status != "not_applicable"
@@ -345,40 +346,21 @@ def _position_key(position: PositionSnapshot) -> tuple[float, float]:
     return position.azimuth_deg, position.elevation_deg
 
 
-def _formal_envelope(
+def _attempt_lifecycle_envelope(
     evidence: BaseStationExecutionEvidence,
+    attempt_id: str,
 ) -> tuple[bool, str, list[BaseStationMeasurementWindowEvidence]]:
-    if evidence.execution_mode != "real":
-        return False, "execution_mode_not_real", []
-    if not evidence.identity.firmware_version:
-        return False, "identity_incomplete", []
+    """Validate one attempt's complete hardware lifecycle, independent of KPI trust."""
+
+    if evidence.current_measurement_attempt_id != attempt_id:
+        return False, "measurement_attempt_not_current", []
     if evidence.config_confirmed is not True:
         return False, "config_not_confirmed", []
-    if evidence.adapter == "cmw500":
-        approval = evidence.formal_capability_approval
-        if evidence.identity.model != "CMW" or not _firmware_at_least(
-            evidence.identity.firmware_version, (3, 5, 40)
-        ):
-            return False, "cmw500_identity_not_supported", []
-        if approval.enabled is not True:
-            return False, "formal_capability_not_approved", []
-        duplex = evidence.requested_config.payload.get("duplex")
-        required_duplex_option = (
-            "CMW-KS500" if duplex == "fdd" else "CMW-KS550" if duplex == "tdd" else None
-        )
-        installed_options = {item.upper() for item in evidence.identity.options}
-        if (
-            required_duplex_option is None
-            or not {"CMW-KS520", required_duplex_option}.issubset(installed_options)
-        ):
-            return False, "formal_capability_options_not_confirmed", []
-        if evidence.route_confirmed is not True:
-            return False, "route_not_confirmed", []
-        if evidence.requested_route != evidence.applied_route:
-            return False, "route_readback_mismatch", []
-    attempt_id = evidence.current_measurement_attempt_id
-    if not attempt_id or evidence.current_measurement_attempt_state != "completed":
-        return False, "current_attempt_not_completed", []
+    if evidence.adapter == "cmw500" and (
+        evidence.route_confirmed is not True
+        or evidence.requested_route != evidence.applied_route
+    ):
+        return False, "route_not_confirmed", []
     try:
         _unique_non_empty(evidence.exchange_ids, "exchange_ids")
     except ValueError:
@@ -436,6 +418,56 @@ def _formal_envelope(
             return False, "lifecycle_exchange_ids_invalid", []
         if not set(window.lifecycle_exchange_ids).issubset(evidence.exchange_ids):
             return False, "lifecycle_exchange_ids_not_in_execution", []
+    return True, "attempt_lifecycle_confirmed", windows
+
+
+def base_station_attempt_lifecycle_is_complete(value: Any, attempt_id: str) -> bool:
+    """Return true only after every requested position and release is confirmed."""
+
+    evidence = _parsed(value)
+    if evidence is None or not isinstance(attempt_id, str) or not attempt_id:
+        return False
+    accepted, _, _ = _attempt_lifecycle_envelope(evidence, attempt_id)
+    return accepted
+
+
+def _formal_envelope(
+    evidence: BaseStationExecutionEvidence,
+) -> tuple[bool, str, list[BaseStationMeasurementWindowEvidence]]:
+    if evidence.execution_mode != "real":
+        return False, "execution_mode_not_real", []
+    if not evidence.identity.firmware_version:
+        return False, "identity_incomplete", []
+    if evidence.config_confirmed is not True:
+        return False, "config_not_confirmed", []
+    if evidence.adapter == "cmw500":
+        approval = evidence.formal_capability_approval
+        if evidence.identity.model != "CMW" or not _firmware_at_least(
+            evidence.identity.firmware_version, (3, 5, 40)
+        ):
+            return False, "cmw500_identity_not_supported", []
+        if approval.enabled is not True:
+            return False, "formal_capability_not_approved", []
+        duplex = evidence.requested_config.payload.get("duplex")
+        required_duplex_option = (
+            "CMW-KS500" if duplex == "fdd" else "CMW-KS550" if duplex == "tdd" else None
+        )
+        installed_options = {item.upper() for item in evidence.identity.options}
+        if (
+            required_duplex_option is None
+            or not {"CMW-KS520", required_duplex_option}.issubset(installed_options)
+        ):
+            return False, "formal_capability_options_not_confirmed", []
+        if evidence.route_confirmed is not True:
+            return False, "route_not_confirmed", []
+        if evidence.requested_route != evidence.applied_route:
+            return False, "route_readback_mismatch", []
+    attempt_id = evidence.current_measurement_attempt_id
+    if not attempt_id or evidence.current_measurement_attempt_state != "completed":
+        return False, "current_attempt_not_completed", []
+    accepted, reason, windows = _attempt_lifecycle_envelope(evidence, attempt_id)
+    if not accepted:
+        return False, reason, []
     return True, "formal_envelope_confirmed", windows
 
 

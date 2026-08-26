@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
+from uuid import uuid4
 
 from app.hal.base import (
     InstrumentStatus,
@@ -35,7 +36,9 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     AppliedCellConfig,
+    BaseStationControlReleaseResult,
     BaseStationDriver,
+    BaseStationRemoteSessionResult,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
@@ -389,6 +392,7 @@ class RealUxmDriver(BaseStationDriver):
         # VISA session
         self._visa_rm = None
         self._visa_session = None
+        self._session_token: str | None = None
         # 空闲期不持有 UXM 的 VISA/HiSLIP 控制会话。厂商 SCPI 资料没有确认
         # SYST:LOC 一类本地切换指令，因此这里只用“关闭本进程会话”表达释放，
         # 并以该门阻止监控/静默重连重新打开它；绝不顺带停小区或停信令。
@@ -742,6 +746,7 @@ class RealUxmDriver(BaseStationDriver):
 
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
+            self._session_token = uuid4().hex
             return True
 
         except asyncio.CancelledError:
@@ -770,6 +775,7 @@ class RealUxmDriver(BaseStationDriver):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[UXM] 失败连接的临时会话关闭异常: %s", exc)
         self._visa_session = None
+        self._session_token = None
         self._visa_rm = None
         self._active_resource_string = None
         self._identity_response = None
@@ -819,6 +825,7 @@ class RealUxmDriver(BaseStationDriver):
                     return False
 
             self._visa_session = None
+            self._session_token = None
             # ResourceManager 是进程共享对象，不调用 close；只丢本驱动引用。
             self._visa_rm = None
             self._identity_response = None
@@ -832,19 +839,30 @@ class RealUxmDriver(BaseStationDriver):
             )
             return True
 
-    async def acquire_remote_control(self) -> bool:
-        """仅由测试/单次操作租约显式重建 UXM 控制会话。"""
+    async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
+        """仅由测试租约取得带 opaque identity 的 UXM transport session。"""
         async with self._control_lock:
             if (
                 not self._local_control_reserved
                 and self._visa_session is not None
+                and self._session_token is not None
                 and self._status
                 in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
             ):
-                return True
+                return BaseStationRemoteSessionResult(
+                    adapter_id="uxm",
+                    session_token=self._session_token,
+                    acquired_confirmed=True,
+                    warnings=("UXM transport acquired; front-panel Remote unknown",),
+                )
             if self._local_release_failed and self._visa_session is not None:
                 self._last_error = "上次 UXM 会话关闭未确认；请先重试释放控制"
-                return False
+                return BaseStationRemoteSessionResult(
+                    adapter_id="uxm",
+                    session_token=self._session_token or "",
+                    acquired_confirmed=False,
+                    warnings=(self._last_error,),
+                )
 
             self._local_control_reserved = False
             self._local_release_failed = False
@@ -855,7 +873,53 @@ class RealUxmDriver(BaseStationDriver):
                 raise
             if not connected:
                 self._local_control_reserved = True
-            return connected
+            return BaseStationRemoteSessionResult(
+                adapter_id="uxm",
+                session_token=self._session_token or "",
+                acquired_confirmed=(
+                    connected is True
+                    and self._visa_session is not None
+                    and self._session_token is not None
+                ),
+                warnings=(
+                    "UXM transport acquired; front-panel Remote unknown"
+                    if connected is True
+                    else "UXM transport session was not acquired"
+                ,),
+            )
+
+    async def release_remote_session(
+        self,
+        expected_session_token: str,
+        *,
+        measurement_attempt_id: str | None = None,
+        lease_id: str = "",
+    ) -> BaseStationControlReleaseResult:
+        """Close this exact UXM transport without claiming front-panel Local."""
+
+        current_token = self._session_token or ""
+        token_matches = bool(
+            self._visa_session is not None
+            and current_token
+            and expected_session_token == current_token
+        )
+        released = await self.release_to_local_control()
+        warnings: list[str] = []
+        if not token_matches:
+            warnings.append("UXM session token missing or mismatched")
+        warnings.append("UXM front-panel Local state remains unconfirmed")
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id="uxm",
+            session_token=current_token,
+            remote_session_acquired_confirmed=token_matches,
+            transport_session_released_confirmed=(
+                token_matches and released is True
+            ),
+            front_panel_local_confirmed=None,
+            warnings=tuple(warnings),
+        )
 
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
@@ -870,6 +934,7 @@ class RealUxmDriver(BaseStationDriver):
             if self._visa_session:
                 self._visa_session.close()
                 self._visa_session = None
+            self._session_token = None
             # ⚠ **不调** `self._visa_rm.close()`: RM 是**进程级共享单例**, 关它会连带
             # 关掉其它仪表的会话 (权威说明见 `app/hal/_visa_reconnect.py` 的
             # 「ResourceManager 所有权」一节)。自己的 session 上面已经关了, 这里只丢引用。
@@ -3787,6 +3852,7 @@ class RealUxmDriver(BaseStationDriver):
         except Exception:
             pass
         self._visa_session = None
+        self._session_token = None
         try:
             self._visa_session = self._visa_rm.open_resource(
                 self._active_resource_string,
@@ -3801,6 +3867,7 @@ class RealUxmDriver(BaseStationDriver):
             ):
                 self._visa_session.read_termination = "\n"
                 self._visa_session.write_termination = "\n"
+            self._session_token = uuid4().hex
             logger.info(
                 f"[UXM] silent reconnect succeeded — reopened "
                 f"{self._active_resource_string}"
@@ -3809,6 +3876,7 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[UXM] silent reconnect failed: {e}")
             self._visa_session = None
+            self._session_token = None
             return False
 
     def _do_write(self, cmd: str) -> None:

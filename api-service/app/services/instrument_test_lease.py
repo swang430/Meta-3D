@@ -11,7 +11,14 @@ import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Optional
+from uuid import uuid4
+
+from app.hal.base_station import (
+    BaseStationControlReleaseResult,
+    BaseStationRemoteSessionResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +29,26 @@ class InstrumentTestLeaseError(RuntimeError):
 
 class InstrumentTestLeaseReleaseError(InstrumentTestLeaseError):
     """业务操作结束后，仪表未能被确认交还 Local。"""
+
+
+@dataclass
+class InstrumentTestLeaseOutcome:
+    """Server-owned identity and post-exit base-station release truth."""
+
+    lease_id: str
+    measurement_attempt_id: str | None
+    base_station_remote: BaseStationRemoteSessionResult | None = None
+    base_station_release: BaseStationControlReleaseResult | None = None
+
+
+@dataclass(frozen=True)
+class ActiveBaseStationLeaseIdentity:
+    """Read-only server identity available only while the lease is active."""
+
+    lease_id: str
+    measurement_attempt_id: str | None
+    adapter_id: str
+    session_token: str
 
 
 class InstrumentTestLease:
@@ -43,6 +70,7 @@ class InstrumentTestLease:
         self._held_uxm = False
         self._held_validation_identity: Optional[str] = None
         self._monitoring_enabled = False
+        self._active_outcome: InstrumentTestLeaseOutcome | None = None
 
     @property
     def is_active(self) -> bool:
@@ -55,6 +83,20 @@ class InstrumentTestLease:
     @property
     def monitoring_enabled(self) -> bool:
         return self.is_active and self._monitoring_enabled
+
+    def active_base_station_identity(
+        self,
+    ) -> ActiveBaseStationLeaseIdentity | None:
+        outcome = self._active_outcome
+        remote = outcome.base_station_remote if outcome is not None else None
+        if outcome is None or remote is None or remote.acquired_confirmed is not True:
+            return None
+        return ActiveBaseStationLeaseIdentity(
+            lease_id=outcome.lease_id,
+            measurement_attempt_id=outcome.measurement_attempt_id,
+            adapter_id=remote.adapter_id,
+            session_token=remote.session_token,
+        )
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -117,7 +159,7 @@ class InstrumentTestLease:
         return candidate
 
     @staticmethod
-    def _uxm_driver(hal):
+    def _base_station_driver(hal):
         drivers = getattr(hal, "drivers", {}) or {}
         candidate = drivers.get("baseStation") or drivers.get("base_station")
         if candidate is None:
@@ -125,11 +167,15 @@ class InstrumentTestLease:
         if not inspect.iscoroutinefunction(
             getattr(candidate, "acquire_remote_control", None)
         ):
-            return None
+            raise InstrumentTestLeaseError(
+                "baseStation control contract requires async acquire_remote_control"
+            )
         if not inspect.iscoroutinefunction(
-            getattr(candidate, "release_to_local_control", None)
+            getattr(candidate, "release_remote_session", None)
         ):
-            return None
+            raise InstrumentTestLeaseError(
+                "baseStation control contract requires async release_remote_session"
+            )
         return candidate
 
     @staticmethod
@@ -146,17 +192,38 @@ class InstrumentTestLease:
             await clear()
 
     async def _acquire_remote(
-        self, hal, purpose: str, *, instrument: str
+        self,
+        hal,
+        purpose: str,
+        *,
+        instrument: str,
+        outcome: InstrumentTestLeaseOutcome,
     ) -> None:
         if instrument == "F64":
             driver = self._f64_driver(hal)
-        elif instrument == "UXM":
-            driver = self._uxm_driver(hal)
+        elif instrument == "baseStation":
+            driver = self._base_station_driver(hal)
         else:  # pragma: no cover - 仅内部固定枚举调用
             raise ValueError(f"未知仪表控制租约: {instrument}")
         if driver is None:
             return
-        if not await driver.acquire_remote_control():
+        acquired = await driver.acquire_remote_control()
+        if instrument == "baseStation":
+            if not isinstance(acquired, BaseStationRemoteSessionResult):
+                raise InstrumentTestLeaseError(
+                    "baseStation acquire_remote_control violated the common result contract"
+                )
+            outcome.base_station_remote = acquired
+            if (
+                acquired.acquired_confirmed is not True
+                or not acquired.session_token
+                or acquired.adapter_id != getattr(driver, "adapter_id", None)
+            ):
+                raise InstrumentTestLeaseError(
+                    f"测试 {purpose!r} 无法取得 UXM Remote（baseStation transport 未确认）"
+                )
+            return
+        if acquired is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()
             raise InstrumentTestLeaseError(
                 f"测试 {purpose!r} 无法取得 {instrument} Remote 控制"
@@ -164,17 +231,58 @@ class InstrumentTestLease:
             )
 
     async def _release_local(
-        self, hal, purpose: str, *, instrument: str
+        self,
+        hal,
+        purpose: str,
+        *,
+        instrument: str,
+        outcome: InstrumentTestLeaseOutcome | None,
     ) -> None:
         if instrument == "F64":
             driver = self._f64_driver(hal)
-        elif instrument == "UXM":
-            driver = self._uxm_driver(hal)
+        elif instrument == "baseStation":
+            driver = self._base_station_driver(hal)
         else:  # pragma: no cover - 仅内部固定枚举调用
             raise ValueError(f"未知仪表控制租约: {instrument}")
         if driver is None:
             return
-        if not await driver.release_to_local_control():
+        if instrument == "baseStation":
+            if outcome is None:
+                # Idle parking is outside a measurement attempt. Keep the
+                # established maintenance path without fabricating formal
+                # release evidence.
+                released = await driver.release_to_local_control()
+                if released is not True:
+                    raise InstrumentTestLeaseReleaseError(
+                        f"测试 {purpose!r} 结束后未能确认 UXM 控制会话释放（transport）"
+                    )
+                return
+            remote = outcome.base_station_remote
+            expected_token = remote.session_token if remote is not None else ""
+            released = await driver.release_remote_session(
+                expected_token,
+                measurement_attempt_id=outcome.measurement_attempt_id,
+                lease_id=outcome.lease_id,
+            )
+            if not isinstance(released, BaseStationControlReleaseResult):
+                raise InstrumentTestLeaseReleaseError(
+                    "baseStation release_remote_session violated the common result contract"
+                )
+            outcome.base_station_release = released
+            if (
+                remote is None
+                or released.measurement_attempt_id != outcome.measurement_attempt_id
+                or released.lease_id != outcome.lease_id
+                or released.adapter_id != remote.adapter_id
+                or released.session_token != remote.session_token
+                or released.remote_session_acquired_confirmed is not True
+                or released.transport_session_released_confirmed is not True
+            ):
+                raise InstrumentTestLeaseReleaseError(
+                    f"测试 {purpose!r} 结束后未能确认 UXM 控制会话释放（transport）"
+                )
+            return
+        if await driver.release_to_local_control() is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()
             raise InstrumentTestLeaseReleaseError(
                 f"测试 {purpose!r} 结束后未能确认 {instrument} 控制会话释放"
@@ -188,6 +296,7 @@ class InstrumentTestLease:
         *,
         control_f64: bool,
         control_uxm: bool,
+        outcome: InstrumentTestLeaseOutcome | None = None,
     ) -> None:
         """独立尝试缓存清理与全部 Local 归还，并聚合完整失败证据。"""
         failures: list[tuple[str, BaseException]] = []
@@ -197,15 +306,21 @@ class InstrumentTestLease:
             failures.append(("指标缓存清理", exc))
 
         for enabled, instrument in (
-            (control_uxm, "UXM"),
+            (control_uxm, "baseStation"),
             (control_f64, "F64"),
         ):
             if not enabled:
                 continue
             try:
-                await self._release_local(hal, purpose, instrument=instrument)
+                await self._release_local(
+                    hal,
+                    purpose,
+                    instrument=instrument,
+                    outcome=outcome,
+                )
             except BaseException as exc:
-                failures.append((f"{instrument} Local 交接", exc))
+                label = "UXM" if instrument == "baseStation" else instrument
+                failures.append((f"{label} Local 交接", exc))
 
         if failures:
             details = "；".join(
@@ -221,11 +336,12 @@ class InstrumentTestLease:
         self,
         purpose: str,
         *,
+        measurement_attempt_id: str | None = None,
         control_f64: bool = True,
         control_uxm: bool = True,
         enable_monitoring: bool = True,
         validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncIterator[InstrumentTestLeaseOutcome]:
         """在整个测试生命周期内持有 Remote，任何退出路径都归还 Local。
 
         ⚠ **嵌套按引用计数处理，只有最外层真正取/放控制权**（2026-08-07 内审 F5）。
@@ -253,6 +369,16 @@ class InstrumentTestLease:
             and self._active_purpose is not None
         )
         if nested:
+            if self._active_outcome is None:  # pragma: no cover - invariant
+                raise InstrumentTestLeaseError("active lease outcome is missing")
+            if (
+                measurement_attempt_id is not None
+                and measurement_attempt_id
+                != self._active_outcome.measurement_attempt_id
+            ):
+                raise InstrumentTestLeaseError(
+                    f"嵌套租约 {purpose!r} 的 measurement attempt 与外层不一致"
+                )
             widened = [
                 name for want, have, name in (
                     (control_f64, self._held_f64, "F64"),
@@ -287,13 +413,17 @@ class InstrumentTestLease:
                 "[instrument-lease] 嵌套复用 %r 的控制权: %s",
                 self._active_purpose, purpose,
             )
-            yield
+            yield self._active_outcome
             return
         async with self._coordinated():
             # 校验必须与 HAL reload 共用同一把协调锁，并且排在 cache clear / Remote
             # acquire 之前。否则“保存了新地址、活动 driver 仍是旧地址”的窗口会先
             # 对旧仪表产生控制 I/O，随后才报配置冲突。
             hal = self._hal()
+            # Resolve and validate the common base-station control contract
+            # before cache clearing or any instrument I/O.
+            if control_uxm:
+                self._base_station_driver(hal)
             if validate_before_remote is not None:
                 validation_error = validate_before_remote(hal)
                 if validation_error:
@@ -307,16 +437,31 @@ class InstrumentTestLease:
                 "validation_identity",
                 None,
             )
+            outcome = InstrumentTestLeaseOutcome(
+                lease_id=uuid4().hex,
+                measurement_attempt_id=measurement_attempt_id,
+            )
+            self._active_outcome = outcome
             try:
                 try:
                     await self._clear_metrics_cache(hal)
                     if control_f64:
-                        await self._acquire_remote(hal, purpose, instrument="F64")
+                        await self._acquire_remote(
+                            hal,
+                            purpose,
+                            instrument="F64",
+                            outcome=outcome,
+                        )
                     if control_uxm:
-                        await self._acquire_remote(hal, purpose, instrument="UXM")
+                        await self._acquire_remote(
+                            hal,
+                            purpose,
+                            instrument="baseStation",
+                            outcome=outcome,
+                        )
                     self._monitoring_enabled = enable_monitoring
                     logger.info("[instrument-lease] 测试取得仪表控制: %s", purpose)
-                    yield
+                    yield outcome
                 except BaseException as exc:
                     operation_error = exc
                     raise
@@ -334,6 +479,7 @@ class InstrumentTestLease:
                             purpose,
                             control_f64=control_f64,
                             control_uxm=control_uxm,
+                            outcome=outcome,
                         )
                         logger.info(
                             "[instrument-lease] 测试结束，F64/UXM 控制会话已释放: %s",
@@ -350,6 +496,8 @@ class InstrumentTestLease:
                         f"测试 {purpose!r} 的操作失败 ({operation_error})，且随后"
                         f"未能安全归还仪表控制 ({release_error})"
                     ) from operation_error
+                finally:
+                    self._active_outcome = None
 
     async def park_idle_instruments(self) -> bool:
         """HAL 初始化/重载完成后，关闭 F64 与 UXM 的控制会话。"""
@@ -410,23 +558,29 @@ def is_test_monitoring_enabled() -> bool:
     return _LEASE.monitoring_enabled
 
 
+def active_base_station_lease_identity() -> ActiveBaseStationLeaseIdentity | None:
+    return _LEASE.active_base_station_identity()
+
+
 @asynccontextmanager
 async def instrument_test_lease(
     purpose: str,
     *,
+    measurement_attempt_id: str | None = None,
     control_f64: bool = True,
     control_uxm: bool = True,
     enable_monitoring: bool = True,
     validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
-) -> AsyncIterator[None]:
+) -> AsyncIterator[InstrumentTestLeaseOutcome]:
     async with _LEASE.hold(
         purpose,
+        measurement_attempt_id=measurement_attempt_id,
         control_f64=control_f64,
         control_uxm=control_uxm,
         enable_monitoring=enable_monitoring,
         validate_before_remote=validate_before_remote,
-    ):
-        yield
+    ) as outcome:
+        yield outcome
 
 
 async def park_idle_instruments() -> bool:

@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from app.hal.base_station import (
+    BaseStationControlReleaseResult,
+    BaseStationRemoteSessionResult,
+    MockBaseStation,
+)
+from app.services.instrument_test_lease import (
+    ActiveBaseStationLeaseIdentity,
+    InstrumentTestLease,
+    InstrumentTestLeaseError,
+)
+
+
+class _F64:
+    async def acquire_remote_control(self):
+        return True
+
+    async def release_to_local_control(self):
+        return True
+
+
+class _BaseStation:
+    adapter_id = "cmw500"
+
+    def __init__(self, *, release_confirmed=True):
+        self.release_confirmed = release_confirmed
+        self.calls: list[tuple] = []
+
+    async def acquire_remote_control(self):
+        self.calls.append(("acquire",))
+        return BaseStationRemoteSessionResult(
+            adapter_id="cmw500",
+            session_token="session-1",
+            acquired_confirmed=True,
+            warnings=("front-panel Remote unknown",),
+        )
+
+    async def release_remote_session(
+        self, expected_session_token, *, measurement_attempt_id=None, lease_id=""
+    ):
+        self.calls.append(
+            ("release", expected_session_token, measurement_attempt_id, lease_id)
+        )
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id="cmw500",
+            session_token=expected_session_token,
+            remote_session_acquired_confirmed=True,
+            transport_session_released_confirmed=self.release_confirmed,
+            front_panel_local_confirmed=None,
+            warnings=("front-panel Local unknown",),
+        )
+
+
+def _hal(base_station):
+    async def clear_metrics_cache():
+        return None
+
+    return SimpleNamespace(
+        drivers={"channelEmulator": _F64(), "baseStation": base_station},
+        clear_metrics_cache=clear_metrics_cache,
+    )
+
+
+@pytest.mark.asyncio
+async def test_lease_outcome_binds_attempt_lease_and_driver_session_token():
+    driver = _BaseStation()
+    lease = InstrumentTestLease(lambda: _hal(driver))
+
+    async with lease.hold(
+        "measure", measurement_attempt_id="attempt-1"
+    ) as outcome:
+        assert lease.active_base_station_identity() == ActiveBaseStationLeaseIdentity(
+            lease_id=outcome.lease_id,
+            measurement_attempt_id="attempt-1",
+            adapter_id="cmw500",
+            session_token="session-1",
+        )
+        assert outcome.measurement_attempt_id == "attempt-1"
+        assert outcome.base_station_release is None
+        lease_id = outcome.lease_id
+
+    assert outcome.base_station_release == BaseStationControlReleaseResult(
+        measurement_attempt_id="attempt-1",
+        lease_id=lease_id,
+        adapter_id="cmw500",
+        session_token="session-1",
+        remote_session_acquired_confirmed=True,
+        transport_session_released_confirmed=True,
+        front_panel_local_confirmed=None,
+        warnings=("front-panel Local unknown",),
+    )
+    assert driver.calls == [
+        ("acquire",),
+        ("release", "session-1", "attempt-1", lease_id),
+    ]
+    assert lease.active_base_station_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_transport_release_is_exposed_before_fail_loud():
+    driver = _BaseStation(release_confirmed=False)
+    lease = InstrumentTestLease(lambda: _hal(driver))
+    outcome = None
+
+    with pytest.raises(InstrumentTestLeaseError, match="transport"):
+        async with lease.hold(
+            "measure", measurement_attempt_id="attempt-1"
+        ) as outcome:
+            pass
+
+    assert outcome is not None
+    assert outcome.base_station_release is not None
+    assert outcome.base_station_release.transport_session_released_confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_present_base_station_without_common_release_contract_fails_loud():
+    class MissingRelease:
+        async def acquire_remote_control(self):
+            return True
+
+    lease = InstrumentTestLease(lambda: _hal(MissingRelease()))
+
+    with pytest.raises(InstrumentTestLeaseError, match="baseStation.*contract"):
+        async with lease.hold("measure", measurement_attempt_id="attempt-1"):
+            pytest.fail("missing release contract must block instrument I/O")
+
+
+@pytest.mark.asyncio
+async def test_authoritative_mock_uses_the_same_control_contract_but_stays_simulated():
+    driver = MockBaseStation("mock", {"model": "CMW500"})
+
+    acquired = await driver.acquire_remote_control()
+    released = await driver.release_remote_session(
+        acquired.session_token,
+        measurement_attempt_id="attempt-1",
+        lease_id="lease-1",
+    )
+
+    assert driver.simulated is True
+    assert acquired.adapter_id == "cmw500"
+    assert acquired.acquired_confirmed is True
+    assert released == BaseStationControlReleaseResult(
+        measurement_attempt_id="attempt-1",
+        lease_id="lease-1",
+        adapter_id="cmw500",
+        session_token=acquired.session_token,
+        remote_session_acquired_confirmed=True,
+        transport_session_released_confirmed=True,
+        front_panel_local_confirmed=None,
+        warnings=("simulated transport; front-panel Local not applicable",),
+    )

@@ -9,9 +9,30 @@ re-raising here would mask the original error that triggered cleanup.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any, List
 
+from app.hal.base_station import BaseStationCleanupResult, BaseStationDriver
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChamberCleanupResult(Sequence[str]):
+    """MEASURE cleanup truth plus the legacy warning-sequence projection."""
+
+    warnings: list[str]
+    base_station: BaseStationCleanupResult
+
+    def __getitem__(self, index):
+        return self.warnings[index]
+
+    def __len__(self) -> int:
+        return len(self.warnings)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.warnings)
 
 
 async def cleanup_chamber_instruments(
@@ -19,22 +40,36 @@ async def cleanup_chamber_instruments(
     execution_id: Any,
     *,
     expected_operator_stop_generation: int | None = None,
-) -> List[str]:
-    """Stop signaling, home positioner, stop emulation, disconnect drivers.
+) -> ChamberCleanupResult:
+    """Stop signaling, confirm SAFE_IDLE, home positioner and stop emulation.
 
-    Returns the list of warnings encountered (so the caller can surface them
-    in the result payload). Never raises.
+    Transport release is owned by ``instrument_test_lease`` and is deliberately
+    absent here.  The result remains a warning sequence for legacy consumers.
+    Never raises.
     """
     warnings: List[str] = []
+    stop_signaling_confirmed = False
+    safe_idle_confirmed = False
 
     base_station = hal.drivers.get("baseStation")
     if base_station is not None:
         # Phase 2g: SCells must be removed before stop_signaling so the next
         # test starts with a clean PCell. Wrapped before the generic
         # stop/disconnect tuple so its failure doesn't skip those.
-        if hasattr(base_station, "remove_all_secondary_cells"):
+        remove_scells = getattr(base_station, "remove_all_secondary_cells", None)
+        class_remove_scells = getattr(
+            type(base_station), "remove_all_secondary_cells", None
+        )
+        if (
+            callable(remove_scells)
+            and (
+                "remove_all_secondary_cells" in vars(base_station)
+                or class_remove_scells
+                is not BaseStationDriver.remove_all_secondary_cells
+            )
+        ):
             try:
-                scells_removed = await base_station.remove_all_secondary_cells()
+                scells_removed = await remove_scells()
                 if scells_removed is not True:
                     msg = (
                         "baseStation.remove_all_secondary_cells was not "
@@ -49,10 +84,20 @@ async def cleanup_chamber_instruments(
 
         for action_name, coro in (
             ("stop_signaling", lambda: base_station.stop_signaling()),
-            ("disconnect", lambda: base_station.disconnect()),
+            ("ensure_safe_idle", lambda: base_station.ensure_safe_idle()),
         ):
             try:
-                await coro()
+                confirmed = await coro()
+                if action_name == "stop_signaling":
+                    stop_signaling_confirmed = confirmed is True
+                else:
+                    safe_idle_confirmed = confirmed is True
+                if confirmed is not True:
+                    msg = (
+                        f"baseStation.{action_name} was not confirmed during cleanup"
+                    )
+                    warnings.append(msg)
+                    logger.warning("[%s] %s", execution_id, msg)
             except Exception as e:  # noqa: BLE001
                 msg = f"baseStation.{action_name} failed during cleanup: {e}"
                 warnings.append(msg)
@@ -125,4 +170,11 @@ async def cleanup_chamber_instruments(
             warnings.append(msg)
             logger.warning("[%s] %s", execution_id, msg)
 
-    return warnings
+    return ChamberCleanupResult(
+        warnings=warnings,
+        base_station=BaseStationCleanupResult(
+            stop_signaling_confirmed=stop_signaling_confirmed,
+            safe_idle_confirmed=safe_idle_confirmed,
+            warnings=tuple(warnings),
+        ),
+    )

@@ -14,6 +14,7 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -168,6 +169,67 @@ class TestAdhocPhaseEndpoint:
 
         assert resp.status_code == 200, resp.text
         assert events == ["enter:commissioning-adhoc:precheck", "dispatch", "exit"]
+
+    def test_adhoc_measure_persists_its_own_release_before_response(
+        self, lab, monkeypatch
+    ):
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        events = []
+
+        def _begin(*_args, **_kwargs):
+            events.append("attempt-begin")
+            return "attempt-adhoc"
+
+        @asynccontextmanager
+        async def _lease(purpose, **kwargs):
+            assert kwargs.get("measurement_attempt_id") == "attempt-adhoc"
+            events.append(f"enter:{purpose}")
+            try:
+                yield SimpleNamespace(base_station_release="release-adhoc")
+            finally:
+                events.append("exit")
+
+        async def _dispatch(ctx):
+            events.append(f"dispatch:{ctx.step.type}")
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        def _settle(*_args, **kwargs):
+            assert kwargs["attempt_id"] == "attempt-adhoc"
+            assert kwargs["lease_outcome"].base_station_release == "release-adhoc"
+            assert kwargs["phase_succeeded"] is True
+            assert events[-1] == "exit"
+            events.append("release-persisted")
+
+        monkeypatch.setattr(
+            "app.api.commissioning._begin_commissioning_measurement_attempt",
+            _begin,
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        monkeypatch.setattr(
+            "app.api.commissioning._settle_commissioning_measurement_attempt",
+            _settle,
+        )
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "mimo_test"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert events == [
+            "attempt-begin",
+            "enter:commissioning-adhoc:mimo_test",
+            "dispatch:MIMO_OTA_MEASURE",
+            "exit",
+            "release-persisted",
+        ]
 
     def test_unknown_phase_returns_400(self, lab):
         resp = client.post(
@@ -353,7 +415,7 @@ class TestAdhocPhaseEndpoint:
         assert execution.status == "completed"
         assert execution.completed_at == terminal_at
         assert execution.duration_sec == pytest.approx(89.195194)
-        assert events == ["lease-enter", "lease-exit", "report-dispatch"]
+        assert events == ["report-dispatch"]
 
     def test_phase_local_handoff_failure_persists_failed_truth(
         self, lab, db, monkeypatch
@@ -620,11 +682,23 @@ class TestExecutionStatusVisibleToReloadGate:
 
         @asynccontextmanager
         async def _lease(purpose, **_kwargs):
+            assert _kwargs.get("measurement_attempt_id") == "attempt-run-all"
             events.append(f"enter:{purpose}")
             try:
-                yield
+                yield SimpleNamespace(base_station_release="release-run-all")
             finally:
                 events.append("exit")
+
+        def _begin(*_args, **_kwargs):
+            events.append("attempt-begin")
+            return "attempt-run-all"
+
+        def _settle(*_args, **kwargs):
+            assert kwargs["attempt_id"] == "attempt-run-all"
+            assert kwargs["lease_outcome"].base_station_release == "release-run-all"
+            assert kwargs["phase_succeeded"] is True
+            assert events[-1] == "exit"
+            events.append("release-persisted")
 
         async def _dispatch(ctx):
             events.append(f"dispatch:{ctx.step.type}")
@@ -632,6 +706,14 @@ class TestExecutionStatusVisibleToReloadGate:
 
         monkeypatch.setattr(
             "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning._begin_commissioning_measurement_attempt",
+            _begin,
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning._settle_commissioning_measurement_attempt",
+            _settle,
         )
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
         sess = client.post(
@@ -643,9 +725,131 @@ class TestExecutionStatusVisibleToReloadGate:
         resp = client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
 
         assert resp.status_code == 200, resp.text
-        assert events[0] == f"enter:commissioning-run-all:{sid}"
-        assert events[-2:] == ["exit", "dispatch:MIMO_OTA_REPORT"]
+        assert events[:2] == [
+            "attempt-begin",
+            f"enter:commissioning-run-all:{sid}",
+        ]
+        assert events[-4:] == [
+            "exit",
+            "release-persisted",
+            "dispatch:MIMO_OTA_ANALYSIS",
+            "dispatch:MIMO_OTA_REPORT",
+        ]
         assert len([event for event in events if event.startswith("dispatch:")]) == 5
+
+    def test_saved_measure_phase_persists_its_own_release_before_response(
+        self, lab, monkeypatch
+    ):
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        events = []
+
+        def _begin(*_args, **_kwargs):
+            events.append("attempt-begin")
+            return "attempt-phase"
+
+        @asynccontextmanager
+        async def _lease(purpose, **kwargs):
+            assert kwargs.get("measurement_attempt_id") == "attempt-phase"
+            events.append(f"enter:{purpose}")
+            try:
+                yield SimpleNamespace(base_station_release="release-phase")
+            finally:
+                events.append("exit")
+
+        async def _dispatch(ctx):
+            events.append(f"dispatch:{ctx.step.type}")
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        def _settle(*_args, **kwargs):
+            assert kwargs["attempt_id"] == "attempt-phase"
+            assert kwargs["lease_outcome"].base_station_release == "release-phase"
+            assert events[-1] == "exit"
+            events.append("release-persisted")
+
+        monkeypatch.setattr(
+            "app.api.commissioning._begin_commissioning_measurement_attempt",
+            _begin,
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        monkeypatch.setattr(
+            "app.api.commissioning._settle_commissioning_measurement_attempt",
+            _settle,
+        )
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(
+            f"/api/v1/commissioning/sessions/{sid}/phase/mimo_test"
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert events == [
+            "attempt-begin",
+            f"enter:commissioning-phase:{sid}:mimo_test",
+            "dispatch:MIMO_OTA_MEASURE",
+            "exit",
+            "release-persisted",
+        ]
+
+    @pytest.mark.parametrize(
+        "endpoint_suffix",
+        ["phase/mimo_test", "run-all"],
+    )
+    def test_saved_measure_owner_marks_attempt_failed_when_lease_acquire_fails(
+        self, lab, monkeypatch, endpoint_suffix
+    ):
+        from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+        events = []
+
+        def _begin(*_args, **_kwargs):
+            return "attempt-acquire-failed"
+
+        @asynccontextmanager
+        async def _lease(_purpose, **kwargs):
+            assert kwargs["measurement_attempt_id"] == "attempt-acquire-failed"
+            raise InstrumentTestLeaseError("remote acquire rejected")
+            yield  # pragma: no cover
+
+        def _record_failure(*_args, **kwargs):
+            assert kwargs["attempt_id"] == "attempt-acquire-failed"
+            assert kwargs["outcome"] is None
+            assert kwargs["cancelled"] is False
+            events.append("attempt-failed")
+
+        monkeypatch.setattr(
+            "app.api.commissioning._begin_commissioning_measurement_attempt",
+            _begin,
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr(
+            "app.api.commissioning.record_execution_base_station_attempt_failure",
+            _record_failure,
+        )
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(
+            f"/api/v1/commissioning/sessions/{sid}/{endpoint_suffix}"
+        )
+
+        assert resp.status_code == 409
+        assert events == ["attempt-failed"]
     """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
     否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
 
