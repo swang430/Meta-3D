@@ -26,6 +26,7 @@ R&S 命名约定:
 import logging
 import asyncio
 import re
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -48,9 +49,22 @@ from app.hal.lte_earfcn import validate_lte_band_options
 from app.hal.cmw500_command_profile import (
     CMW500_LTE_COMMANDS,
     Cmw500LteCommandProfile,
+    CmwNx2Route,
 )
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
+from app.hal.scpi_evidence import capture_scpi_exchanges
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BaseStationRouteResult:
+    requested: dict[str, str] | None
+    applied: dict[str, str] | None
+    source_reference: str
+    confirmed: bool
+    reason: str
+    exchange_ids: list[str]
 
 
 # ===========================================================================
@@ -244,6 +258,148 @@ class RealCmw500Driver(BaseStationDriver):
     def _fmt(self, template: str) -> str:
         """将命令模板中的 {i} 替换为通道编号"""
         return template.format(i=self._i)
+
+    @staticmethod
+    def _firmware_at_least(actual: str | None, required: str) -> bool:
+        def _parts(value: str | None) -> tuple[int, ...] | None:
+            token = (value or "").removeprefix("V")
+            if not re.fullmatch(r"\d+(?:\.\d+)+", token):
+                return None
+            return tuple(int(part) for part in token.split("."))
+
+        actual_parts = _parts(actual)
+        required_parts = _parts(required)
+        if actual_parts is None or required_parts is None:
+            return False
+        width = max(len(actual_parts), len(required_parts))
+        return actual_parts + (0,) * (width - len(actual_parts)) >= (
+            required_parts + (0,) * (width - len(required_parts))
+        )
+
+    async def apply_internal_lte_2x2_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationRouteResult:
+        """Apply only the execution-frozen internal route and confirm readback."""
+
+        spec = CMW500_LTE_COMMANDS["route_nx2"]
+
+        def _result(
+            *,
+            requested: dict[str, str] | None = None,
+            applied: dict[str, str] | None = None,
+            confirmed: bool = False,
+            reason: str,
+            exchanges=(),
+        ) -> BaseStationRouteResult:
+            return BaseStationRouteResult(
+                requested=requested,
+                applied=applied,
+                source_reference=spec.source_reference,
+                confirmed=confirmed,
+                reason=reason,
+                exchange_ids=[exchange.exchange_id for exchange in exchanges],
+            )
+
+        resolution = frozen_adapter.get("resolution")
+        if not isinstance(resolution, dict):
+            return _result(reason="execution-frozen adapter resolution is missing")
+        if (
+            resolution.get("adapter") != "cmw500"
+            or resolution.get("status") != "configured"
+            or resolution.get("execution_mode") != "real"
+        ):
+            return _result(reason="execution-frozen CMW500 real route is not configured")
+        raw_profile = resolution.get("profile")
+        raw_route = (
+            raw_profile.get("lte_2x2_internal_route")
+            if isinstance(raw_profile, dict)
+            else None
+        )
+        if not isinstance(raw_route, dict):
+            return _result(reason="execution-frozen CMW500 route is missing")
+        if raw_route.get("tx1_connector") == raw_route.get("tx2_connector"):
+            return _result(reason="CMW500 TX connector paths must be distinct")
+        if raw_route.get("tx1_converter") == raw_route.get("tx2_converter"):
+            return _result(reason="CMW500 TX converter paths must be distinct")
+        try:
+            profile = BaseStationAdapterProfile.model_validate(raw_profile)
+        except ValueError as exc:
+            return _result(reason=f"invalid execution-frozen CMW500 route: {exc}")
+        route = CmwNx2Route(**profile.lte_2x2_internal_route.model_dump())
+        requested = asdict(route)
+
+        if not self._firmware_at_least(
+            self._firmware_version,
+            spec.minimum_firmware or "",
+        ):
+            return _result(
+                requested=requested,
+                reason=(
+                    "CMW500 firmware does not satisfy route minimum "
+                    f"{spec.minimum_firmware}"
+                ),
+            )
+        installed = {option.upper() for option in self._installed_options}
+        missing_options = [
+            option for option in spec.required_options if option.upper() not in installed
+        ]
+        if missing_options:
+            return _result(
+                requested=requested,
+                reason=f"CMW500 route requires {', '.join(missing_options)}",
+            )
+
+        with capture_scpi_exchanges() as exchanges:
+            try:
+                self._write(
+                    Cmw500LteCommandProfile.build_route_nx2(
+                        self._sign_channel,
+                        route,
+                    )
+                )
+                queue_result = self._query(CmwScpiCommands.ERR).strip()
+                if re.fullmatch(r'\+?0\s*,\s*"[^"]*"', queue_result) is None:
+                    return _result(
+                        requested=requested,
+                        reason=f"CMW500 error queue rejected route: {queue_result}",
+                        exchanges=exchanges,
+                    )
+                readback = Cmw500LteCommandProfile.parse_route_readback(
+                    self._query(
+                        Cmw500LteCommandProfile.route_query(self._sign_channel)
+                    )
+                )
+            except Exception as exc:
+                return _result(
+                    requested=requested,
+                    reason=f"CMW500 route apply/readback failed: {exc}",
+                    exchanges=exchanges,
+                )
+
+            applied = {
+                "pcc_bb_board": readback.controller,
+                "rx_connector": readback.rx_connector,
+                "rx_converter": readback.rx_converter,
+                "tx1_connector": readback.tx1_connector,
+                "tx1_converter": readback.tx1_converter,
+                "tx2_connector": readback.tx2_connector,
+                "tx2_converter": readback.tx2_converter,
+            }
+            if applied != requested:
+                return _result(
+                    requested=requested,
+                    applied=applied,
+                    reason="CMW500 route readback does not match requested route",
+                    exchanges=exchanges,
+                )
+            return _result(
+                requested=requested,
+                applied=applied,
+                confirmed=True,
+                reason="CMW500 internal LTE 2x2 route confirmed",
+                exchanges=exchanges,
+            )
 
     async def apply_requested_config(
         self, requested: BaseStationRequestedConfig,
