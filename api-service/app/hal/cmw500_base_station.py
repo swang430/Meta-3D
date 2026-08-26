@@ -26,6 +26,7 @@ R&S 命名约定:
 import logging
 import asyncio
 import re
+from uuid import uuid4
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, List, Optional
@@ -38,8 +39,10 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.base_station import (
+    BaseStationControlReleaseResult,
     BaseStationIdentity,
     BaseStationDriver,
+    BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
@@ -87,6 +90,9 @@ class CmwScpiCommands:
     OPC = "*OPC?"
     CLS = "*CLS"
     ERR = "SYSTem:ERRor:ALL?"
+    # R&S CMW500 Base Software User Manual 1173.9463.02-06,
+    # §6.3.4, printed p.205: SYSTem:ERRor:ALL? returns and deletes the
+    # complete error queue; an empty queue is reported as 0,"No error".
     PRESET = "SYSTem:PRESet"
     # R&S CMW500 Base Software User Manual 1173.9463.02-06,
     # §6.3.10.3, printed p.242: SYSTem:BASE:OPTion:LIST? accepts
@@ -139,7 +145,9 @@ class CmwScpiCommands:
     CELL_STATE_ALL = "SOURce:LTE:SIGN{i}:CELL:STATe:ALL?"     # 详细状态
 
     # PS 数据连接
-    PS_ACTION = "CALL:LTE:SIGN{i}:PSWitched:ACTion"           # ETABlish/RELease
+    # LTE UE User Manual 1173.9628.02-41, §2.6.3.8.1, printed p.372:
+    # the documented packet-switched actions are CONNect and DISConnect.
+    PS_ACTION = "CALL:LTE:SIGN{i}:PSWitched:ACTion"
     PS_STATE = "FETCh:LTE:SIGN{i}:PSWitched:STATe?"
 
     # RRC 状态
@@ -236,6 +244,7 @@ class RealCmw500Driver(BaseStationDriver):
         # VISA session
         self._visa_rm = None
         self._visa_session = None
+        self._session_token: str | None = None
         # CMW 信令通道编号 (默认 1)
         self._sign_channel: int = config.get("sign_channel", 1)
         # 小区配置状态
@@ -258,6 +267,98 @@ class RealCmw500Driver(BaseStationDriver):
     def _fmt(self, template: str) -> str:
         """将命令模板中的 {i} 替换为通道编号"""
         return template.format(i=self._i)
+
+    @staticmethod
+    def _error_queue_is_empty(response: str) -> bool:
+        return re.fullmatch(r'\+?0\s*,\s*"[^"]*"', response.strip()) is not None
+
+    def _write_group_confirmed(self) -> bool:
+        """Confirm completion and independently reject any device error."""
+
+        if self._query(CmwScpiCommands.OPC).strip() != "1":
+            return False
+        return self._error_queue_is_empty(self._query(CmwScpiCommands.ERR))
+
+    @staticmethod
+    def _parse_cell_all(response: str) -> tuple[str, str] | None:
+        # LTE UE User Manual 1173.9628.02-41, §2.6.3.8.1, printed p.371:
+        # CELL:STATe:ALL? returns MainState OFF/ON/RFHandover and
+        # SyncState PENDing/ADJusted. Accept only their exact SCPI forms.
+        fields = [field.strip().upper() for field in response.split(",")]
+        if len(fields) != 2:
+            return None
+        main_aliases = {
+            "OFF": "OFF",
+            "ON": "ON",
+            "RFH": "RFHANDOVER",
+            "RFHANDOVER": "RFHANDOVER",
+        }
+        sync_aliases = {
+            "PEND": "PENDING",
+            "PENDING": "PENDING",
+            "ADJ": "ADJUSTED",
+            "ADJUSTED": "ADJUSTED",
+        }
+        main = main_aliases.get(fields[0])
+        sync = sync_aliases.get(fields[1])
+        return (main, sync) if main is not None and sync is not None else None
+
+    @staticmethod
+    def _parse_ps_state(response: str) -> str | None:
+        # LTE UE User Manual 1173.9628.02-41, §2.6.3.8.1, printed p.374:
+        # FETCh:...:PSWitched:STATe? has a closed enum. In particular ATTached
+        # and CESTablished are different states and must never be substring-matched.
+        aliases = {
+            "OFF": "OFF",
+            "ON": "ON",
+            "ATT": "ATTACHED",
+            "ATTACHED": "ATTACHED",
+            "CEST": "CONNECTED",
+            "CESTABLISHED": "CONNECTED",
+            "DISC": "DISCONNECT",
+            "DISCONNECT": "DISCONNECT",
+            "CONN": "CONNECTING",
+            "CONNECTING": "CONNECTING",
+            "SIGN": "SIGNALING",
+            "SIGNALING": "SIGNALING",
+            "SMES": "SMS_SEND",
+            "SMESSAGE": "SMS_SEND",
+            "RMES": "SMS_RECEIVE",
+            "RMESSAGE": "SMS_RECEIVE",
+            "IHAN": "IN_HANDOVER",
+            "IHANDOVER": "IN_HANDOVER",
+            "OHAN": "OUT_HANDOVER",
+            "OHANDOVER": "OUT_HANDOVER",
+        }
+        return aliases.get(response.strip().upper())
+
+    async def ensure_safe_idle(self) -> bool:
+        """Confirm Cell OFF before any configuration or internal-route write."""
+
+        try:
+            state = self._parse_cell_all(
+                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+            )
+            if state == ("OFF", "ADJUSTED"):
+                self._cell_state = CellState.OFF
+                return True
+            if state is None or state[0] not in {"ON", "RFHANDOVER"}:
+                return False
+            self._write(self._fmt(CmwScpiCommands.CELL_STATE_SET) + " OFF")
+            if not self._write_group_confirmed():
+                return False
+            confirmed = self._parse_cell_all(
+                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+            )
+            if confirmed != ("OFF", "ADJUSTED"):
+                return False
+            self._cell_state = CellState.OFF
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[CMW500] SAFE_IDLE confirmation failed: %s", exc)
+            return False
 
     @staticmethod
     def _firmware_at_least(actual: str | None, required: str) -> bool:
@@ -348,6 +449,12 @@ class RealCmw500Driver(BaseStationDriver):
             return _result(
                 requested=requested,
                 reason=f"CMW500 route requires {', '.join(missing_options)}",
+            )
+
+        if not await self.ensure_safe_idle():
+            return _result(
+                requested=requested,
+                reason="CMW500 SAFE_IDLE is not confirmed before route apply",
             )
 
         with capture_scpi_exchanges() as exchanges:
@@ -502,6 +609,15 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 CMW500 的连接"""
+        session_present = self._visa_session is not None
+        token_present = self._session_token is not None
+        if session_present and token_present:
+            return True
+        if session_present != token_present:
+            logger.error(
+                "[CMW500] Refusing connect with incomplete transport/session identity"
+            )
+            return False
         if self._connection_config_error:
             return self._fail_connection_configuration(self._connection_config_error)
         if not self.ip_address:
@@ -536,11 +652,16 @@ class RealCmw500Driver(BaseStationDriver):
 
             await self._probe_installed_options()
 
+            # Server-owned identity for exactly this newly opened transport.
+            # It is intentionally unrelated to resource strings or object shape.
+            self._session_token = uuid4().hex
+
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
             return True
 
         except Exception as e:
+            self._session_token = None
             self._identity_model_verified = False
             self._options_snapshot_verified = False
             self._installed_options = []
@@ -550,15 +671,101 @@ class RealCmw500Driver(BaseStationDriver):
             self._set_status(InstrumentStatus.ERROR, error_msg)
             return False
 
+    async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
+        """Return the opaque identity of the currently active real transport.
+
+        The CMW manuals available to this project do not define a front-panel
+        Remote confirmation command, so this confirms transport ownership only.
+        """
+
+        warnings: list[str] = []
+        session_present = self._visa_session is not None
+        token_present = self._session_token is not None
+        if session_present != token_present:
+            return BaseStationRemoteSessionResult(
+                adapter_id="cmw500",
+                session_token=self._session_token or "",
+                acquired_confirmed=False,
+                warnings=(
+                    "CMW500 transport/session token identity is incomplete; reconnect refused",
+                ),
+            )
+        if not session_present:
+            connected = await self.connect()
+            if not connected:
+                return BaseStationRemoteSessionResult(
+                    adapter_id="cmw500",
+                    session_token="",
+                    acquired_confirmed=False,
+                    warnings=("CMW500 transport session was not acquired",),
+                )
+        warnings.append(
+            "CMW500 transport session acquired; front-panel Remote is unconfirmed"
+        )
+        return BaseStationRemoteSessionResult(
+            adapter_id="cmw500",
+            session_token=self._session_token or "",
+            acquired_confirmed=bool(self._visa_session and self._session_token),
+            warnings=tuple(warnings),
+        )
+
+    async def release_remote_session(
+        self,
+        expected_session_token: str,
+        *,
+        measurement_attempt_id: str | None = None,
+        lease_id: str = "",
+    ) -> BaseStationControlReleaseResult:
+        """Close the active transport without claiming front-panel Local."""
+
+        current_session = self._visa_session
+        current_token = self._session_token or ""
+        token_matches = bool(
+            current_session
+            and current_token
+            and expected_session_token == current_token
+        )
+        warnings: list[str] = []
+        close_confirmed = False
+        if not token_matches:
+            warnings.append("CMW500 session token missing or mismatched")
+        if current_session is None:
+            warnings.append("CMW500 transport session is missing")
+        else:
+            try:
+                current_session.close()
+                close_confirmed = True
+                self._visa_session = None
+                self._visa_rm = None
+                self._session_token = None
+                self._set_status(InstrumentStatus.DISCONNECTED)
+            except Exception as exc:
+                warnings.append(f"CMW500 transport close failed: {exc}")
+        warnings.append(
+            "CMW500 front-panel Local state has no documented confirmation and remains unknown"
+        )
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id="cmw500",
+            session_token=current_token,
+            remote_session_acquired_confirmed=token_matches,
+            transport_session_released_confirmed=token_matches and close_confirmed,
+            front_panel_local_confirmed=None,
+            warnings=tuple(warnings),
+        )
+
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
         try:
+            cleanup_confirmed = True
             if self._cell_state != CellState.OFF:
-                await self.stop_signaling()
+                cleanup_confirmed = await self.stop_signaling() is True
 
             if self._visa_session:
                 self._visa_session.close()
                 self._visa_session = None
+            self._session_token = None
             # ⚠ **不调** `self._visa_rm.close()`: RM 是**进程级共享单例**, 关它会连带
             # 关掉其它仪表的会话 (权威说明见 `app/hal/_visa_reconnect.py` 的
             # 「ResourceManager 所有权」一节)。自己的 session 上面已经关了, 这里只丢引用。
@@ -566,7 +773,11 @@ class RealCmw500Driver(BaseStationDriver):
 
             self._set_status(InstrumentStatus.DISCONNECTED)
             logger.info("[CMW500] Disconnected")
-            return True
+            if not cleanup_confirmed:
+                logger.error(
+                    "[CMW500] Transport closed, but signaling SAFE cleanup was unconfirmed"
+                )
+            return cleanup_confirmed
         except Exception as e:
             logger.error(f"[CMW500] Disconnect error: {e}")
             return False
@@ -589,53 +800,52 @@ class RealCmw500Driver(BaseStationDriver):
           CONFigure:LTE:SIGN1:CELL:DMOD FDD
         """
         try:
-            # 频段
+            band = self._band
             if "band" in config:
-                band = config["band"].upper()
-                # CMW 使用 "OB" 前缀 (Operating Band)
+                band = str(config["band"]).upper()
                 if band.startswith("B"):
                     band = f"O{band}"
                 elif not band.startswith("OB"):
                     band = f"OB{band}"
-                self._band = band
-                self._write(
-                    self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}"
-                )
+            bandwidth_mhz = self._bandwidth_mhz
+            bandwidth_token = None
+            if "bandwidth_mhz" in config:
+                bandwidth_mhz = float(config["bandwidth_mhz"])
+                bandwidth_token = self.bandwidth_token_by_mhz[bandwidth_mhz]
+            if "earfcn" in config:
+                earfcn = int(config["earfcn"])
+            elif "arfcn" in config:
+                earfcn = int(config["arfcn"])
+            else:
+                earfcn = LTE_BAND_EARFCN_MAP.get(band, 1575)
+            frequency_mhz = float(
+                config.get("frequency_mhz", self._frequency_mhz)
+            )
+
+            if not await self.ensure_safe_idle():
+                logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
+                return False
+
+            if "band" in config:
+                self._write(self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}")
 
             # User Manual §2.6.12.1, p.680: PCC DL bandwidth also applies
             # to UL; there is no separate PCC CELL:BANDwidth:UL write.
-            if "bandwidth_mhz" in config:
-                bw = float(config["bandwidth_mhz"])
-                bw_str = self.bandwidth_token_by_mhz[bw]
-                self._bandwidth_mhz = bw
+            if bandwidth_token is not None:
                 self._write(
-                    self._fmt(CmwScpiCommands.CELL_DL_BW) + f" {bw_str}"
+                    self._fmt(CmwScpiCommands.CELL_DL_BW)
+                    + f" {bandwidth_token}"
                 )
 
-            # 双工模式
             if "duplex" in config:
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_DUPLEX)
                     + f" {config['duplex'].upper()}"
                 )
 
-            # EARFCN (DL 频点)
-            if "earfcn" in config:
-                self._earfcn = config["earfcn"]
-            elif "arfcn" in config:
-                self._earfcn = config["arfcn"]
-            else:
-                self._earfcn = LTE_BAND_EARFCN_MAP.get(
-                    self._band, 1575
-                )
             self._write(
-                self._fmt(CmwScpiCommands.CELL_DL_FREQ)
-                + f" {self._earfcn}"
+                self._fmt(CmwScpiCommands.CELL_DL_FREQ) + f" {earfcn}"
             )
-
-            # 频率 (如果直接指定)
-            if "frequency_mhz" in config:
-                self._frequency_mhz = config["frequency_mhz"]
 
             # 物理小区 ID
             if "cell_id" in config:
@@ -659,7 +869,14 @@ class RealCmw500Driver(BaseStationDriver):
                     + f" {mimo_str}"
                 )
 
-            self._query("*OPC?")
+            if not self._write_group_confirmed():
+                logger.error("[CMW500] Cell config rejected by completion/error check")
+                return False
+
+            self._band = band
+            self._bandwidth_mhz = bandwidth_mhz
+            self._earfcn = earfcn
+            self._frequency_mhz = frequency_mhz
             self._set_status(InstrumentStatus.READY)
             logger.info(
                 f"[CMW500] Cell config: band={self._band}, "
@@ -686,6 +903,8 @@ class RealCmw500Driver(BaseStationDriver):
           CONFigure:LTE:SIGN1:CONNection:PCC:FRC:DL R0    (e.g., "R.0")
         """
         try:
+            if not await self.ensure_safe_idle():
+                return False
             # 开启 FRC 模式
             self._write(
                 self._fmt(CmwScpiCommands.FRC_STATE) + " ON"
@@ -698,7 +917,8 @@ class RealCmw500Driver(BaseStationDriver):
                 self._fmt(CmwScpiCommands.FRC_DL) + f" {dl_frc}"
             )
 
-            self._query("*OPC?")
+            if not self._write_group_confirmed():
+                return False
             logger.info(f"[CMW500] FRC config: {frc_reference}")
             return True
 
@@ -713,12 +933,15 @@ class RealCmw500Driver(BaseStationDriver):
         SCPI: CONFigure:LTE:SIGN1:DL:RSEPre:LEVel <power_dbm>
         """
         try:
+            if not await self.ensure_safe_idle():
+                return False
             self._write(
                 self._fmt(CmwScpiCommands.DL_POWER_RS)
                 + f" {power_dbm:.1f}"
             )
+            if not self._write_group_confirmed():
+                return False
             self._dl_power_dbm = power_dbm
-            self._query("*OPC?")
             logger.info(f"[CMW500] DL RS-EPRE power: {power_dbm} dBm")
             return True
         except Exception as e:
@@ -733,26 +956,35 @@ class RealCmw500Driver(BaseStationDriver):
         """
         激活小区、等待 UE Attach 并建立 PS 数据连接。
 
-        SCPI 序列:
-          SOURce:LTE:SIGN1:CELL:STATe ON → *OPC?
-          → 轮询 FETCh:LTE:SIGN1:PSWitched:STATe?
-          → 等待 "ATT" (Attached)
-          → CALL:LTE:SIGN1:PSWitched:ACTion ETABlish
+        SCPI 序列引用 LTE UE User Manual 1173.9628.02-41：
+          printed p.371 CELL ON/OFF 与 CELL:STATe:ALL?；
+          printed p.372 PSWitched:ACTion CONNect；
+          printed p.374 PSWitched:STATe? 的 ATTached/CESTablished 枚举。
         """
+        old_timeout = None
+        cell_on_attempted = False
+        signaling_confirmed = False
         try:
+            if self._visa_session is None:
+                return False
             logger.info("[CMW500] Starting LTE signaling")
             self._set_status(InstrumentStatus.BUSY)
 
             old_timeout = self._visa_session.timeout
             self._visa_session.timeout = VISA_TIMEOUT_CELL
 
-            # 激活小区
+            cell_on_attempted = True
             self._write(self._fmt(CmwScpiCommands.CELL_STATE_SET) + " ON")
-            self._query("*OPC?")
-            self._cell_state = CellState.ON
+            if not self._write_group_confirmed():
+                return False
+            cell = self._parse_cell_all(
+                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+            )
+            if cell != ("ON", "ADJUSTED"):
+                return False
+            self._cell_state = CellState.IDLE
             logger.info("[CMW500] Cell ON, waiting for UE attach...")
 
-            # 等待 UE Attach
             self._visa_session.timeout = VISA_TIMEOUT_ATTACH
             elapsed = 0.0
             poll_interval = 3.0
@@ -761,103 +993,115 @@ class RealCmw500Driver(BaseStationDriver):
             while elapsed < timeout_s:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
-
-                try:
-                    # 查询 PS 连接状态
-                    ps_state = self._query(
-                        self._fmt(CmwScpiCommands.PS_STATE)
-                    ).strip().upper()
-
-                    # CMW 返回: "OFF" / "ATT" / "REG" / "CONN"
-                    if "ATT" in ps_state or "REG" in ps_state:
-                        attached = True
-                        logger.info(
-                            f"[CMW500] UE attached after {elapsed:.1f}s"
-                        )
-                        break
-                except Exception:
-                    pass  # UE 可能还在搜网
+                ps_state = self._parse_ps_state(
+                    self._query(self._fmt(CmwScpiCommands.PS_STATE))
+                )
+                if ps_state == "ATTACHED":
+                    attached = True
+                    logger.info("[CMW500] UE attached after %.1fs", elapsed)
+                    break
+                if ps_state is None:
+                    logger.warning("[CMW500] Unknown PS state while attaching")
+                    return False
 
             if attached:
-                # 建立 PS 数据连接
                 self._write(
-                    self._fmt(CmwScpiCommands.PS_ACTION) + " ETABlish"
+                    self._fmt(CmwScpiCommands.PS_ACTION) + " CONNect"
                 )
-                await asyncio.sleep(3.0)
+                if not self._error_queue_is_empty(
+                    self._query(CmwScpiCommands.ERR)
+                ):
+                    return False
 
-                # 验证 PS 连接
-                ps_state = self._query(
-                    self._fmt(CmwScpiCommands.PS_STATE)
-                ).strip().upper()
-                if "CONN" in ps_state or "ATT" in ps_state:
+                ps_state = self._parse_ps_state(
+                    self._query(self._fmt(CmwScpiCommands.PS_STATE))
+                )
+                if ps_state == "CONNECTED":
                     self._cell_state = CellState.CONNECTED
+                    signaling_confirmed = True
                     logger.info("[CMW500] PS connection established")
                 else:
                     self._cell_state = CellState.IDLE
-                    logger.warning(
-                        f"[CMW500] PS state after establish: {ps_state}"
-                    )
+                    logger.warning("[CMW500] PS connection not confirmed: %s", ps_state)
             else:
                 logger.warning(
                     f"[CMW500] UE attach timeout after {timeout_s}s"
                 )
                 self._cell_state = CellState.IDLE
+            return signaling_confirmed
 
-            # 恢复默认超时
-            self._visa_session.timeout = old_timeout
-
-            return self._cell_state == CellState.CONNECTED
-
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"[CMW500] start_signaling failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+        finally:
+            if cell_on_attempted and not signaling_confirmed:
+                cleanup_confirmed = await asyncio.shield(self.stop_signaling())
+                if not cleanup_confirmed:
+                    logger.error(
+                        "[CMW500] start_signaling failed and SAFE cleanup was not confirmed"
+                    )
+            if self._visa_session is not None and old_timeout is not None:
+                self._visa_session.timeout = old_timeout
 
     async def stop_signaling(self) -> bool:
         """
         释放 PS 连接并关闭小区。
 
-        SCPI:
-          CALL:LTE:SIGN1:PSWitched:ACTion RELease
-          SOURce:LTE:SIGN1:CELL:STATe OFF
+        SCPI 引用 LTE UE User Manual 1173.9628.02-41 printed p.371-374：
+          CALL:...:PSWitched:ACTion DISConnect；Cell OFF 后精确回读 OFF,ADJ。
         """
-        try:
-            # 先释放 PS 连接
-            if self._cell_state == CellState.CONNECTED:
-                self._write(
-                    self._fmt(CmwScpiCommands.PS_ACTION) + " RELease"
-                )
-                await asyncio.sleep(2.0)
-
-            # 关闭小区
-            self._write(self._fmt(CmwScpiCommands.CELL_STATE_SET) + " OFF")
-            self._query("*OPC?")
-            self._cell_state = CellState.OFF
-            self._set_status(InstrumentStatus.READY)
-            logger.info("[CMW500] Signaling stopped")
-            return True
-        except Exception as e:
-            logger.error(f"[CMW500] stop_signaling failed: {e}")
+        failures: list[str] = []
+        if self._visa_session is None:
             return False
+        if self._cell_state == CellState.CONNECTED:
+            try:
+                self._write(
+                    self._fmt(CmwScpiCommands.PS_ACTION) + " DISConnect"
+                )
+                if not self._error_queue_is_empty(self._query(CmwScpiCommands.ERR)):
+                    failures.append("PS disconnect error queue is not empty")
+            except Exception as exc:
+                failures.append(f"PS disconnect failed: {exc}")
+        try:
+            self._write(self._fmt(CmwScpiCommands.CELL_STATE_SET) + " OFF")
+            if not self._write_group_confirmed():
+                failures.append("Cell OFF completion/error confirmation failed")
+            elif self._parse_cell_all(
+                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+            ) != ("OFF", "ADJUSTED"):
+                failures.append("Cell OFF readback is not confirmed")
+            else:
+                self._cell_state = CellState.OFF
+        except Exception as exc:
+            failures.append(f"Cell OFF failed: {exc}")
+        if failures:
+            logger.error("[CMW500] stop_signaling failures: %s", "; ".join(failures))
+            return False
+        self._set_status(InstrumentStatus.READY)
+        logger.info("[CMW500] Signaling stopped")
+        return True
 
     async def get_cell_state(self) -> CellState:
         """查询小区当前状态"""
         try:
-            state = self._query(
-                self._fmt(CmwScpiCommands.CELL_STATE_QUERY)
-            ).strip().upper()
-            if "OFF" in state:
+            state = self._parse_cell_all(
+                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+            )
+            if state == ("OFF", "ADJUSTED"):
                 return CellState.OFF
-            elif "ON" in state:
-                # 检查 PS 状态
-                ps = self._query(
-                    self._fmt(CmwScpiCommands.PS_STATE)
-                ).strip().upper()
-                if "CONN" in ps or "ATT" in ps:
+            if state == ("ON", "ADJUSTED"):
+                ps = self._parse_ps_state(
+                    self._query(self._fmt(CmwScpiCommands.PS_STATE))
+                )
+                if ps == "CONNECTED":
                     return CellState.CONNECTED
                 return CellState.IDLE
             return CellState.ERROR
-        except Exception:
+        except Exception as exc:
+            logger.warning("[CMW500] Cell state query failed: %s", exc)
             return CellState.ERROR
 
     # ===================================================================

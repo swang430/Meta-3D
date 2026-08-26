@@ -57,6 +57,7 @@ def _driver(
 ) -> _RouteDriver:
     return _RouteDriver(
         {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
             "SYSTem:ERRor:ALL?": error,
             "ROUTe:LTE:SIGN1?": readback,
         }
@@ -73,7 +74,11 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible "
         "BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
     ]
-    assert driver.queries == ["SYSTem:ERRor:ALL?", "ROUTe:LTE:SIGN1?"]
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1?",
+    ]
     assert result.confirmed is True
     assert result.requested == {
         "pcc_bb_board": "BB1",
@@ -163,7 +168,10 @@ async def test_route_error_queue_entry_blocks_readback_and_confirmation():
 
     assert result.confirmed is False
     assert "error queue" in result.reason
-    assert driver.queries == ["SYSTem:ERRor:ALL?"]
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+    ]
 
 
 @pytest.mark.asyncio
@@ -174,4 +182,7 @@ async def test_route_error_queue_zero_prefix_cannot_hide_a_following_error():
 
     assert result.confirmed is False
     assert "error queue" in result.reason
-    assert driver.queries == ["SYSTem:ERRor:ALL?"]
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+    ]
