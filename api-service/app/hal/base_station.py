@@ -277,6 +277,9 @@ class BaseStationDriver(InstrumentDriver):
     # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
     # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
     input_level_control_supported: ClassVar[bool] = False
+    # RRC reconfiguration is opt-in.  The abstract method exists to define
+    # the contract, so hasattr() cannot distinguish an implemented adapter.
+    rrc_reconfiguration_supported: ClassVar[bool] = False
     max_bandwidth_mhz: ClassVar[float | None] = None
     max_mimo_layers: ClassVar[int | None] = None
 
@@ -628,6 +631,7 @@ class MockBaseStation(BaseStationDriver):
     # requested index set exactly. Simulated measurements are still excluded
     # from formal KPI by the existing provenance gate.
     SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
+    rrc_reconfiguration_supported = True
 
     driver_source = "mock"
     simulated = True

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import inspect
 
+import app.services.mimo_ota.executors.measure as measure_module
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.input_level_controller import InputLevelController, InputLevelResult
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
@@ -80,6 +82,37 @@ def test_measure_source_has_no_vendor_type_branch_or_cmw_scpi():
     assert "uxm_inherit" not in source
     assert "uxm_config_capture_manager" not in source
     assert '"UXM": uxm_identity' not in source
+
+
+async def test_cmw_does_not_call_inherited_rrc_stub_after_attach(monkeypatch):
+    helper = getattr(measure_module, "_reconfigure_rrc_if_supported", None)
+    assert callable(helper)
+
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    async def forbidden_stub(**_kwargs):
+        raise AssertionError("CMW must not call the inherited RRC stub")
+
+    monkeypatch.setattr(cmw, "reconfigure_rrc", forbidden_stub)
+    assert await helper(cmw, mimo_layers=2, modulation="64QAM") is None
+
+
+async def test_explicit_rrc_capability_keeps_supported_adapter_path():
+    class _Supported:
+        rrc_reconfiguration_supported = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def reconfigure_rrc(self, **kwargs):
+            self.calls.append(kwargs)
+            return True
+
+    helper = getattr(measure_module, "_reconfigure_rrc_if_supported", None)
+    assert callable(helper)
+    adapter = _Supported()
+    assert await helper(adapter, mimo_layers=4, modulation="256QAM") is True
+    assert adapter.calls == [{"mimo_layers": 4, "modulation": "256QAM"}]
 
 
 async def test_uxm_input_loop_keeps_behavior_with_common_result_and_legacy_mirror():

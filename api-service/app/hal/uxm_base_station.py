@@ -322,6 +322,8 @@ class RealUxmDriver(BaseStationDriver):
     adapter_id = "uxm"
     input_level_control_supported = True
 
+    rrc_reconfiguration_supported = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数

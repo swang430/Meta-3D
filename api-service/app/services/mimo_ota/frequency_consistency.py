@@ -238,8 +238,8 @@ def check_frequency_consistency(
     Args:
         testcase: TestCase 派生的频率规范标识 (真值源)。
         instruments: ``{仪表名: Optional[FrequencyIdentity]}``。``None`` = 该仪表无
-            频率可报 → **跳过, 不算不一致** (e.g. ASC 路径 F64 频率由 channel-engine
-            按 TestCase 同源生成, driver 状态里没有; 或仪表未配置)。
+            频率可报；不制造 mismatch，但必须列为 unverified，不能据此发布
+            ``fully_verified=true``。
 
     Returns:
         FrequencyConsistencyResult: ``consistent`` + 每仪表 identity + mismatch 列表。
@@ -252,6 +252,7 @@ def check_frequency_consistency(
     for name, ident in instruments.items():
         if ident is None:
             per_instrument[name] = "未报告(跳过)"
+            unverified.append(name)
             continue
         per_instrument[name] = ident.describe()
         if isinstance(ident, CenterFrequencyObservation):

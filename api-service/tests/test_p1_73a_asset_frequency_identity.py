@@ -69,3 +69,19 @@ def test_center_only_observation_compares_to_lte_center_without_inventing_rat() 
     assert result.fully_verified is False
     assert result.unverified == ["F64"]
 
+
+def test_missing_base_station_identity_keeps_frequency_gate_unverified() -> None:
+    expected = ChannelFrequencyIdentity.from_lte_earfcn(
+        band="B3",
+        dl_earfcn=1575,
+        bandwidth_mhz=20,
+    )
+
+    result = check_frequency_consistency(
+        expected,
+        {"BaseStation": None, "F64": expected},
+    )
+
+    assert result.consistent is True
+    assert result.fully_verified is False
+    assert result.unverified == ["BaseStation"]

@@ -372,6 +372,13 @@ class CreateSessionRequest(BaseModel):
     @model_validator(mode="after")
     def require_explicit_lte_working_point(self) -> "CreateSessionRequest":
         if self.radio_technology != "lte":
+            if (
+                self.subcarrier_spacing_khz is not None
+                and self.subcarrier_spacing_khz not in (15, 30, 60, 120)
+            ):
+                raise ValueError(
+                    "subcarrier_spacing_khz must be one of 15, 30, 60, 120"
+                )
             if self.lte_dl_earfcn is not None:
                 raise ValueError("NR commissioning request must not set lte_dl_earfcn")
             if self.duplex is not None:
@@ -489,7 +496,11 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
                 "radio_technology": "nr5g",
                 "frequency_hz": req.frequency_hz,
                 "bandwidth_mhz": req.bandwidth_mhz,
-                "subcarrier_spacing_khz": req.subcarrier_spacing_khz or 30,
+                "subcarrier_spacing_khz": (
+                    30
+                    if req.subcarrier_spacing_khz is None
+                    else req.subcarrier_spacing_khz
+                ),
                 "band": req.band,
                 "nr_arfcn": req.nr_arfcn,
                 "role": "pcell",

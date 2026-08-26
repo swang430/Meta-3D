@@ -178,6 +178,20 @@ def test_commissioning_lte_request_does_not_accept_prototype_defaults():
         )
 
 
+@pytest.mark.parametrize("invalid_scs", [0, 17])
+def test_commissioning_rejects_invalid_explicit_nr_scs(invalid_scs: int):
+    with pytest.raises(ValidationError, match="subcarrier_spacing_khz"):
+        CreateSessionRequest.model_validate(
+            {
+                "frequency_hz": 3_500_000_000.0,
+                "bandwidth_mhz": 100.0,
+                "band": "n78",
+                "nr_arfcn": 633333,
+                "subcarrier_spacing_khz": invalid_scs,
+            }
+        )
+
+
 def test_measure_builds_one_vendor_neutral_lte_request():
     config = MIMOOTAConfiguration.model_validate(
         {"component_carriers": [LTE_B3_PCELL]}

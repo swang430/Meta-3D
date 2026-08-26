@@ -81,6 +81,21 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+async def _reconfigure_rrc_if_supported(
+    base_station: Any,
+    *,
+    mimo_layers: int,
+    modulation: str,
+) -> Optional[bool]:
+    """Call only an adapter that explicitly opts into the RRC operation."""
+    if not getattr(base_station, "rrc_reconfiguration_supported", False):
+        return None
+    return await base_station.reconfigure_rrc(
+        mimo_layers=mimo_layers,
+        modulation=modulation,
+    )
+
+
 class _CaSetupBlocked(RuntimeError):
     """Carry a CA setup blocker through cleanup before building the result."""
 
@@ -1519,16 +1534,19 @@ class MeasureExecutor(IStepExecutor):
                     if declared_f64_bandwidth_mhz is not None
                     else "unknown"
                 )
+            instrument_frequency_identities = {
+                "BaseStation": base_station_identity,
+                "F64": f64_identity,
+            }
+            # SCD is optional.  Once selected it participates in the gate, but
+            # an absent SCD is not a listed instrument with a missing readback.
+            if scd_freq_identity is not None:
+                instrument_frequency_identities["SCD"] = scd_freq_identity
             freq_result = check_frequency_consistency(
                 _frequency_identity_from_requested_config(
                     pcell_requested_config
                 ),
-                {
-                    "BaseStation": base_station_identity,
-                    "F64": f64_identity,
-                    # slice 4: SCD 声明 ARFCN 进一致性网 (scd_id 给了才非 None; None 时忽略)
-                    "SCD": scd_freq_identity,
-                },
+                instrument_frequency_identities,
             )
             frequency_consistency_payload = freq_result.to_payload()
             frequency_consistency_payload["f64_center_readback_mhz"] = f64_center_mhz
@@ -1809,16 +1827,16 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             # --- Phase 2e: attach 后 RRC reconfig ---
-            if hasattr(base_station, "reconfigure_rrc"):
-                rrc_ok = await base_station.reconfigure_rrc(
-                    mimo_layers=config.mimo_layers,
-                    modulation=config.modulation,
+            rrc_ok = await _reconfigure_rrc_if_supported(
+                base_station,
+                mimo_layers=config.mimo_layers,
+                modulation=config.modulation,
+            )
+            if rrc_ok is False:
+                logger.warning(
+                    "[%s] RRC reconfig returned False; UE may still be on prior layer/modulation",
+                    context.test_execution.id,
                 )
-                if not rrc_ok:
-                    logger.warning(
-                        "[%s] RRC reconfig returned False; UE may still be on prior layer/modulation",
-                        context.test_execution.id,
-                    )
 
             # === 2026-08-07 现场时序: 直通 attach → 开衰落 → 再确认 → 测吞吐 ===
             # 用户当场定的顺序: F64 先 Butler 直通让 DUT 挂上, attach 成功后再
