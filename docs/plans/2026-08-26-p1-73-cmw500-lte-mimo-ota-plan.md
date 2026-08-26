@@ -1167,6 +1167,8 @@ git commit -m "feat: add formal base station execution evidence"
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/cleanup.py`
 - Modify: `api-service/app/services/instrument_test_lease.py`
+- Modify: `api-service/app/hal/uxm_base_station.py`
+- Modify: `api-service/app/hal/cmw500_base_station.py`
 - Modify: `api-service/app/services/test_case_runner.py`
 - Modify: `api-service/tests/test_p1_73a_vendor_neutral_measure.py`
 - Create: `api-service/tests/test_p1_73c_cmw_measure_integration.py`
@@ -1203,6 +1205,10 @@ git commit -m "feat: add formal base station execution evidence"
 - RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_to_local_control` → transport close，
   `release_to_local_control` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
   `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
+- 收窄 UXM 与 CMW 的 `release_to_local_control()` 返回契约：本次调用开始时必须存在活跃
+  VISA/HiSLIP session，且该 session 的 close 精确成功后才可返回 `True`；session 已为 `None`、
+  close 返回/抛出失败、取消或仅清空内部引用均返回 `False`/抛失败。租约只消费这个精确结果，
+  不读取驱动私有字段，也不从 status、finally 或“已断开”反推本次交还；
 - 租约交还失败时保留原业务 winner 与错误全文，再追加 handoff 失败；不能从 disconnect、finally、
   context manager 正常退出或执行终态推导 Local 已确认；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
@@ -1225,9 +1231,12 @@ cd api-service
   tests/test_p1_73a_vendor_neutral_measure.py \
   tests/test_p1_59_ca_throughput_truth.py \
   tests/test_uxm_cell_config_orchestration.py
+cd ..
 git add api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/cleanup.py \
   api-service/app/services/instrument_test_lease.py \
+  api-service/app/hal/uxm_base_station.py \
+  api-service/app/hal/cmw500_base_station.py \
   api-service/app/services/test_case_runner.py \
   api-service/tests/test_p1_73a_vendor_neutral_measure.py \
   api-service/tests/test_p1_73c_cmw_measure_integration.py \
@@ -1248,10 +1257,12 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 - Modify: `api-service/app/services/mimo_ota/rf_kpi_trust.py`
 - Modify: `api-service/app/services/report_service.py`
 - Modify: `api-service/app/api/test_execution.py`
+- Modify: `api-service/app/api/commissioning.py`
 - Modify: `gui/src/components/Commissioning/Phases.tsx`
 - Create: `gui/src/components/Commissioning/baseStationMetricTruth.ts`
 - Create: `gui/src/components/Commissioning/baseStationMetricTruth.test.ts`
 - Create: `api-service/tests/test_p1_73c_formal_consumers.py`
+- Create: `api-service/tests/test_p1_73c_commissioning_metric_projection.py`
 - Modify: `api-service/tests/test_p1_72_comparison_gate.py`
 - Modify: `api-service/tests/test_p1_63_rf_kpi_provenance_truth.py`
 - Modify: `api-service/tests/test_p1_54_kpi_valid_contract.py`
@@ -1278,6 +1289,11 @@ Commissioning 方位 KPI 表。逐一证明：
 - 后端给每个 `azimuth_results[*]` 的 throughput/BLER 输出 server-owned 逐指标 trust projection，
   至少区分 `trusted` / `diagnostic` / `unknown` 并把正式值与诊断值分槽；projection 只由同一个
   evaluator 生成，GUI 不得用 raw 数值、`kpi_valid`、adapter 名称或顶层 bool 自行恢复信任；
+- `api/commissioning.py::_execution_to_session_response` 是列表和详情的唯一活跃响应边界，必须从
+  execution 的冻结 requested config/positions 与 final evidence 逐方位调用 evaluator 后生成上述
+  projection，不能把 `phases["measure"]` 原样透传。单相位执行响应也复用同一 projector；租约内
+  provisional 结果只能投影为 diagnostic/unknown，租约退出后的 final evidence 才可能 trusted。
+  历史响应不得读取当前 TestCase、LabProfile、InstrumentConnection 或 HAL 状态补证；
 - Commissioning `Phases.tsx` 不得直接渲染 `az.throughput_mbps`/BLER raw 字段。共享 presenter
   只在逐指标 `trusted` 时显示普通 KPI；`diagnostic` 必须黄色明确标注“诊断值，非正式实测”，
   `unknown` 显示 `N/A`。debug、Mock、窗口生命周期/配置/route/方位不匹配均不能显示成普通 Mbps/%；
@@ -1303,6 +1319,7 @@ Commissioning 方位 KPI 表。逐一证明：
 cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73c_formal_consumers.py \
+  tests/test_p1_73c_commissioning_metric_projection.py \
   tests/test_p1_73c_base_station_metric_trust.py \
   tests/test_p1_72_comparison_gate.py \
   tests/test_p1_63_rf_kpi_provenance_truth.py \
@@ -1318,10 +1335,12 @@ git add api-service/app/services/mimo_ota/executors/analysis.py \
   api-service/app/services/mimo_ota/rf_kpi_trust.py \
   api-service/app/services/report_service.py \
   api-service/app/api/test_execution.py \
+  api-service/app/api/commissioning.py \
   gui/src/components/Commissioning/Phases.tsx \
   gui/src/components/Commissioning/baseStationMetricTruth.ts \
   gui/src/components/Commissioning/baseStationMetricTruth.test.ts \
   api-service/tests/test_p1_73c_formal_consumers.py \
+  api-service/tests/test_p1_73c_commissioning_metric_projection.py \
   api-service/tests/test_p1_73c_base_station_metric_trust.py \
   api-service/tests/test_p1_72_comparison_gate.py \
   api-service/tests/test_p1_63_rf_kpi_provenance_truth.py \

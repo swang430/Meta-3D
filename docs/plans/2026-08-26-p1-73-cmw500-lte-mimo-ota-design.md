@@ -182,7 +182,9 @@ Local 控制权交还不属于 MEASURE cleanup：它发生在 `instrument_test_l
 `BaseStationLocalControlResult` 保存 Remote 取得与 Local 交还的精确结果。租约的基站解析必须是
 vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过；驱动只有在有厂商出处的控制会话
 动作和确认信号成功后才能返回 true。finally 已运行、disconnect 成功或没有抛异常都不能推导
-Local 已交还。runner 在租约退出后持久化该 server-owned 结果；Local 未确认时，业务错误仍完整
+Local 已交还。UXM/CMW 的 release 调用开始时必须仍有本次活跃 VISA/HiSLIP session，且 close
+精确成功；session 已为 None 或 close 失败都必须返回 false，不能把“已经断开”当作本次交还。
+runner 在租约退出后持久化该 server-owned 结果；Local 未确认时，业务错误仍完整
 保留，但公开 KPI、历史正式判决和最终报告必须保持 UNKNOWN/N/A。
 
 ### 3.2 `1CC - nx2` 内部 route
