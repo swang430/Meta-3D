@@ -1339,12 +1339,33 @@ class InstrumentHALService:
             except asyncio.CancelledError:
                 pass
 
-        for name, driver in self.drivers.items():
+        unsafe_cmw_disconnects: list[str] = []
+        for name, driver in list(self.drivers.items()):
+            real_cmw = (
+                getattr(driver, "adapter_id", None) == "cmw500"
+                and not is_mock_driver(driver)
+            )
             try:
-                await driver.disconnect()
+                disconnected = await driver.disconnect()
+                if real_cmw and disconnected is not True:
+                    unsafe_cmw_disconnects.append(name)
+                    logger.error(
+                        "CMW500 driver %s refused unsafe disconnect; retaining driver",
+                        name,
+                    )
+                    continue
                 logger.info(f"Disconnected driver: {name}")
             except Exception as e:
                 logger.error(f"Error disconnecting {name}: {e}")
+                if real_cmw:
+                    unsafe_cmw_disconnects.append(name)
+                    continue
+            self.drivers.pop(name, None)
+
+        if unsafe_cmw_disconnects:
+            raise RuntimeError(
+                "baseStation CMW500 无法确认安全断开；HAL 保留恢复会话并拒绝卸载"
+            )
 
         self.drivers.clear()
         self._initialized = False
@@ -1515,7 +1536,13 @@ class InstrumentHALService:
 
         try:
             driver = self.drivers[driver_name]
-            await driver.disconnect()
+            disconnected = await driver.disconnect()
+            if disconnected is not True:
+                logger.error(
+                    "Refusing to reconnect %s because disconnect was unconfirmed",
+                    driver_name,
+                )
+                return False
             await asyncio.sleep(0.5)
             success = await driver.connect()
 

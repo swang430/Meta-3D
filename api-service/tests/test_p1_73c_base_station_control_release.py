@@ -220,3 +220,50 @@ async def test_idle_park_accepts_a_real_cmw_with_no_transport_to_release():
     lease = InstrumentTestLease(lambda: _hal(driver))
 
     assert await lease.park_idle_instruments() is True
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_retains_a_cmw_that_cannot_confirm_safe_idle():
+    from app.services.instrument_hal_service import DriverMode, InstrumentHALService
+
+    class _UnsafeCmw:
+        adapter_id = "cmw500"
+
+        async def disconnect(self):
+            return False
+
+    driver = _UnsafeCmw()
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    service.drivers = {"baseStation": driver}
+    service._initialized = True
+
+    with pytest.raises(RuntimeError, match="baseStation.*安全断开"):
+        await service.shutdown()
+
+    assert service.drivers == {"baseStation": driver}
+    assert service._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_hal_reconnect_refuses_to_reopen_after_unsafe_cmw_disconnect():
+    from app.services.instrument_hal_service import DriverMode, InstrumentHALService
+
+    class _UnsafeCmw:
+        adapter_id = "cmw500"
+
+        def __init__(self):
+            self.connect_calls = 0
+
+        async def disconnect(self):
+            return False
+
+        async def connect(self):
+            self.connect_calls += 1
+            return True
+
+    driver = _UnsafeCmw()
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    service.drivers = {"baseStation": driver}
+
+    assert await service.reconnect_driver("baseStation") is False
+    assert driver.connect_calls == 0

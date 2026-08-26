@@ -149,7 +149,7 @@ class TestAdhocPhaseEndpoint:
         async def _lease(purpose, **_kwargs):
             events.append(f"enter:{purpose}")
             try:
-                yield
+                yield SimpleNamespace(measurement_attempt_id=None)
             finally:
                 events.append("exit")
 
@@ -181,16 +181,22 @@ class TestAdhocPhaseEndpoint:
         events = []
 
         def _begin(*_args, **_kwargs):
+            assert events[-1].startswith("enter:")
             events.append("attempt-begin")
             return "attempt-adhoc"
 
         @asynccontextmanager
         async def _lease(purpose, **kwargs):
-            assert kwargs.get("measurement_attempt_id") == "attempt-adhoc"
+            assert kwargs.get("measurement_attempt_id") is None
             events.append(f"enter:{purpose}")
+            outcome = SimpleNamespace(
+                measurement_attempt_id=None,
+                base_station_release="release-adhoc",
+            )
             try:
-                yield SimpleNamespace(base_station_release="release-adhoc")
+                yield outcome
             finally:
+                assert outcome.measurement_attempt_id == "attempt-adhoc"
                 events.append("exit")
 
         async def _dispatch(ctx):
@@ -224,8 +230,8 @@ class TestAdhocPhaseEndpoint:
 
         assert resp.status_code == 200, resp.text
         assert events == [
-            "attempt-begin",
             "enter:commissioning-adhoc:mimo_test",
+            "attempt-begin",
             "dispatch:MIMO_OTA_MEASURE",
             "exit",
             "release-persisted",
@@ -430,7 +436,7 @@ class TestAdhocPhaseEndpoint:
 
         @asynccontextmanager
         async def _lease(_purpose, **_kwargs):
-            yield
+            yield SimpleNamespace(measurement_attempt_id=None)
             raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
 
         async def _dispatch(_ctx):
@@ -479,7 +485,7 @@ class TestAdhocPhaseEndpoint:
 
         @asynccontextmanager
         async def _lease(_purpose, **_kwargs):
-            yield
+            yield SimpleNamespace(measurement_attempt_id=None)
             raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
 
         async def _dispatch(_ctx):
@@ -643,7 +649,7 @@ class TestExecutionStatusVisibleToReloadGate:
         async def _lease(purpose, **_kwargs):
             events.append(f"enter:{purpose}")
             try:
-                yield
+                yield SimpleNamespace(measurement_attempt_id=None)
             finally:
                 events.append("exit")
 
@@ -682,14 +688,20 @@ class TestExecutionStatusVisibleToReloadGate:
 
         @asynccontextmanager
         async def _lease(purpose, **_kwargs):
-            assert _kwargs.get("measurement_attempt_id") == "attempt-run-all"
+            assert _kwargs.get("measurement_attempt_id") is None
             events.append(f"enter:{purpose}")
+            outcome = SimpleNamespace(
+                measurement_attempt_id=None,
+                base_station_release="release-run-all",
+            )
             try:
-                yield SimpleNamespace(base_station_release="release-run-all")
+                yield outcome
             finally:
+                assert outcome.measurement_attempt_id == "attempt-run-all"
                 events.append("exit")
 
         def _begin(*_args, **_kwargs):
+            assert events[-1].startswith("enter:")
             events.append("attempt-begin")
             return "attempt-run-all"
 
@@ -726,8 +738,8 @@ class TestExecutionStatusVisibleToReloadGate:
 
         assert resp.status_code == 200, resp.text
         assert events[:2] == [
-            "attempt-begin",
             f"enter:commissioning-run-all:{sid}",
+            "attempt-begin",
         ]
         assert events[-4:] == [
             "exit",
@@ -748,16 +760,22 @@ class TestExecutionStatusVisibleToReloadGate:
         events = []
 
         def _begin(*_args, **_kwargs):
+            assert events[-1].startswith("enter:")
             events.append("attempt-begin")
             return "attempt-phase"
 
         @asynccontextmanager
         async def _lease(purpose, **kwargs):
-            assert kwargs.get("measurement_attempt_id") == "attempt-phase"
+            assert kwargs.get("measurement_attempt_id") is None
             events.append(f"enter:{purpose}")
+            outcome = SimpleNamespace(
+                measurement_attempt_id=None,
+                base_station_release="release-phase",
+            )
             try:
-                yield SimpleNamespace(base_station_release="release-phase")
+                yield outcome
             finally:
+                assert outcome.measurement_attempt_id == "attempt-phase"
                 events.append("exit")
 
         async def _dispatch(ctx):
@@ -794,8 +812,8 @@ class TestExecutionStatusVisibleToReloadGate:
 
         assert resp.status_code == 200, resp.text
         assert events == [
-            "attempt-begin",
             f"enter:commissioning-phase:{sid}:mimo_test",
+            "attempt-begin",
             "dispatch:MIMO_OTA_MEASURE",
             "exit",
             "release-persisted",
@@ -805,7 +823,7 @@ class TestExecutionStatusVisibleToReloadGate:
         "endpoint_suffix",
         ["phase/mimo_test", "run-all"],
     )
-    def test_saved_measure_owner_marks_attempt_failed_when_lease_acquire_fails(
+    def test_saved_measure_owner_does_not_create_attempt_before_remote_acquire(
         self, lab, monkeypatch, endpoint_suffix
     ):
         from app.services.instrument_test_lease import InstrumentTestLeaseError
@@ -813,19 +831,19 @@ class TestExecutionStatusVisibleToReloadGate:
         events = []
 
         def _begin(*_args, **_kwargs):
-            return "attempt-acquire-failed"
+            pytest.fail("remote acquire failure must not freeze stale identity")
 
         @asynccontextmanager
         async def _lease(_purpose, **kwargs):
-            assert kwargs["measurement_attempt_id"] == "attempt-acquire-failed"
+            assert kwargs["measurement_attempt_id"] is None
             raise InstrumentTestLeaseError("remote acquire rejected")
             yield  # pragma: no cover
 
         def _record_failure(*_args, **kwargs):
-            assert kwargs["attempt_id"] == "attempt-acquire-failed"
+            assert kwargs["attempt_id"] is None
             assert kwargs["outcome"] is None
             assert kwargs["cancelled"] is False
-            events.append("attempt-failed")
+            events.append("no-attempt-to-finalize")
 
         monkeypatch.setattr(
             "app.api.commissioning._begin_commissioning_measurement_attempt",
@@ -849,7 +867,7 @@ class TestExecutionStatusVisibleToReloadGate:
         )
 
         assert resp.status_code == 409
-        assert events == ["attempt-failed"]
+        assert events == ["no-attempt-to-finalize"]
     """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
     否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
 
@@ -981,7 +999,7 @@ class TestExecutionStatusVisibleToReloadGate:
 
         @asynccontextmanager
         async def _lease(_purpose, **_kwargs):
-            yield
+            yield SimpleNamespace(measurement_attempt_id=None)
             raise InstrumentTestLeaseReleaseError("F64 Local 交接失败")
 
         async def _dispatch(_ctx):

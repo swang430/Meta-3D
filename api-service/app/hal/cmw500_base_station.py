@@ -909,9 +909,14 @@ class RealCmw500Driver(BaseStationDriver):
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
         try:
-            cleanup_confirmed = True
             if self._visa_session is not None:
                 cleanup_confirmed = await self.ensure_safe_idle() is True
+                if not cleanup_confirmed:
+                    logger.error(
+                        "[CMW500] SAFE_IDLE unconfirmed; transport remains open "
+                        "for safe recovery"
+                    )
+                    return False
 
             if self._visa_session:
                 self._visa_session.close()
@@ -924,11 +929,7 @@ class RealCmw500Driver(BaseStationDriver):
 
             self._set_status(InstrumentStatus.DISCONNECTED)
             logger.info("[CMW500] Disconnected")
-            if not cleanup_confirmed:
-                logger.error(
-                    "[CMW500] Transport closed, but signaling SAFE cleanup was unconfirmed"
-                )
-            return cleanup_confirmed
+            return True
         except Exception as e:
             logger.error(f"[CMW500] Disconnect error: {e}")
             return False

@@ -442,7 +442,7 @@ async def test_cell_on_rejection_still_attempts_and_confirms_cell_off():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_closes_transport_but_does_not_hide_failed_safe_cleanup():
+async def test_disconnect_preserves_transport_when_safe_cleanup_is_unconfirmed():
     class _CleanupFailureDriver(_StateDriver):
         async def ensure_safe_idle(self) -> bool:
             return False
@@ -452,8 +452,8 @@ async def test_disconnect_closes_transport_but_does_not_hide_failed_safe_cleanup
     driver._cell_state = CellState.CONNECTED
 
     assert await driver.disconnect() is False
-    assert session.closed is True
-    assert driver._visa_session is None
+    assert session.closed is False
+    assert driver._visa_session is session
 
 
 @pytest.mark.asyncio

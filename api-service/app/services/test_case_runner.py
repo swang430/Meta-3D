@@ -76,11 +76,11 @@ _RUNNING_TASKS: Dict[str, "asyncio.Task[None]"] = {}
 
 
 def _begin_formal_measurement_attempt(db, execution) -> str | None:
-    """Freeze the CMW measurement scope and switch its current attempt pre-I/O.
+    """Freeze the active CMW identity and switch its attempt before measurement I/O.
 
     UXM keeps its existing execution path in P1-73C.  CMW is the newly admitted
-    adapter and therefore must have the strict execution envelope before the
-    outer lease can open or reuse a transport session.
+    adapter and therefore freezes its strict execution envelope after the outer
+    lease refreshes the transport identity but before the first measurement I/O.
     """
 
     frozen = (execution.config or {}).get(FREEZE_CONFIG_KEY)
@@ -594,12 +594,15 @@ async def _run_case(execution_id: UUID) -> None:
         )
         if not isinstance(frozen, dict):
             raise RuntimeError("formal execution is missing frozen baseStation adapter profile")
-        measurement_attempt_id = _begin_formal_measurement_attempt(db, execution)
         async with instrument_test_lease(
             f"formal-case:{execution_id}",
-            measurement_attempt_id=measurement_attempt_id,
+            measurement_attempt_id=None,
             validate_before_remote=build_frozen_base_station_validator(frozen),
         ) as lease_outcome:
+            # The lease has now acquired/refreshed the active transport identity.
+            # Freeze that identity before the first measurement operation.
+            measurement_attempt_id = _begin_formal_measurement_attempt(db, execution)
+            lease_outcome.measurement_attempt_id = measurement_attempt_id
             deferred_formalization = await _run_case_loop(
                 db, execution_id, defer_report=True
             )

@@ -579,15 +579,16 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
     async def _lease(purpose: str, **kwargs):
         validator = kwargs.get("validate_before_remote")
         assert getattr(validator, "validation_identity", None) == "formal-freeze"
-        assert kwargs.get("measurement_attempt_id") == "attempt-1"
+        assert kwargs.get("measurement_attempt_id") is None
         events.append(f"lease-enter:{purpose}")
         outcome = InstrumentTestLeaseOutcome(
             lease_id="lease-1",
-            measurement_attempt_id="attempt-1",
+            measurement_attempt_id=None,
         )
         try:
             yield outcome
         finally:
+            assert outcome.measurement_attempt_id == "attempt-1"
             outcome.base_station_release = BaseStationControlReleaseResult(
                 measurement_attempt_id="attempt-1",
                 lease_id="lease-1",
@@ -601,6 +602,7 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
             events.append("lease-exit")
 
     def _begin(_db, _execution):
+        assert events[-1].startswith("lease-enter:")
         events.append("attempt-begin")
         return "attempt-1"
 
@@ -639,8 +641,8 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
     await runner._run_case(execution_id)
 
     assert events == [
-        "attempt-begin",
         f"lease-enter:formal-case:{execution_id}",
+        "attempt-begin",
         "case-loop",
         "lease-exit",
         "release-persisted",
@@ -825,7 +827,7 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
 
     @asynccontextmanager
     async def _lease(_purpose, **_kwargs):
-        yield
+        yield SimpleNamespace(measurement_attempt_id=None)
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
@@ -911,7 +913,7 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
 
     @asynccontextmanager
     async def _lease(_purpose, **_kwargs):
-        yield
+        yield SimpleNamespace(measurement_attempt_id=None)
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):

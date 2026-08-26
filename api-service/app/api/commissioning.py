@@ -84,7 +84,7 @@ def _begin_commissioning_measurement_attempt(
     *,
     step_type: str,
 ) -> str | None:
-    """Start only an actual CMW MEASURE attempt, before the outer lease I/O."""
+    """Start a CMW MEASURE attempt after acquire and before measurement I/O."""
 
     if step_type != "MIMO_OTA_MEASURE":
         return None
@@ -1046,16 +1046,7 @@ async def run_phase(
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(error)) from error
-    try:
-        measurement_attempt_id = _begin_commissioning_measurement_attempt(
-            db,
-            execution,
-            test_case,
-            step_type=target_step_type,
-        )
-    except ValueError as error:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    measurement_attempt_id = None
     result = None
     lease_outcome = None
     try:
@@ -1069,9 +1060,18 @@ async def run_phase(
                 else:
                     async with instrument_test_lease(
                         f"commissioning-phase:{session_id}:{phase_name}",
-                        measurement_attempt_id=measurement_attempt_id,
+                        measurement_attempt_id=None,
                         validate_before_remote=validate_adapter,
                     ) as lease_outcome:
+                        measurement_attempt_id = (
+                            _begin_commissioning_measurement_attempt(
+                                db,
+                                execution,
+                                test_case,
+                                step_type=target_step_type,
+                            )
+                        )
+                        lease_outcome.measurement_attempt_id = measurement_attempt_id
                         result = await dispatch_step(ctx)
                     _settle_commissioning_measurement_attempt(
                         db,
@@ -1277,12 +1277,6 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     measurement_attempt_id = None
     try:
         ctx = _build_context(db, execution, test_case, step)
-        measurement_attempt_id = _begin_commissioning_measurement_attempt(
-            db,
-            execution,
-            test_case,
-            step_type=target_step_type,
-        )
         with retain_positioner_stop_generation(_current_positioner_driver()):
             if target_step_type in {
                 "MIMO_OTA_ANALYSIS",
@@ -1292,9 +1286,16 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
             else:
                 async with instrument_test_lease(
                     f"commissioning-adhoc:{req.phase_name}",
-                    measurement_attempt_id=measurement_attempt_id,
+                    measurement_attempt_id=None,
                     validate_before_remote=validate_adapter,
                 ) as lease_outcome:
+                    measurement_attempt_id = _begin_commissioning_measurement_attempt(
+                        db,
+                        execution,
+                        test_case,
+                        step_type=target_step_type,
+                    )
+                    lease_outcome.measurement_attempt_id = measurement_attempt_id
                     result = await dispatch_step(ctx)
                 _settle_commissioning_measurement_attempt(
                     db,
@@ -1493,16 +1494,7 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    try:
-        measurement_attempt_id = _begin_commissioning_measurement_attempt(
-            db,
-            execution,
-            test_case,
-            step_type="MIMO_OTA_MEASURE",
-        )
-    except ValueError as error:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    measurement_attempt_id = None
     lease_outcome = None
     try:
         with _execution_marked_running(db, execution):
@@ -1510,9 +1502,16 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                 deferred_formalization = None
                 async with instrument_test_lease(
                     f"commissioning-run-all:{session_id}",
-                    measurement_attempt_id=measurement_attempt_id,
+                    measurement_attempt_id=None,
                     validate_before_remote=validate_adapter,
                 ) as lease_outcome:
+                    measurement_attempt_id = _begin_commissioning_measurement_attempt(
+                        db,
+                        execution,
+                        test_case,
+                        step_type="MIMO_OTA_MEASURE",
+                    )
+                    lease_outcome.measurement_attempt_id = measurement_attempt_id
                     for index, step in enumerate(descriptors):
                         if step.type in {
                             "MIMO_OTA_ANALYSIS",

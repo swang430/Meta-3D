@@ -707,11 +707,11 @@ def begin_execution_base_station_measurement(
     *,
     driver,
 ) -> str | None:
-    """Create the CMW evidence scope and current attempt before lease I/O.
+    """Create the CMW evidence scope after acquire and before measurement I/O.
 
     P1-73C does not rewrite the established UXM evidence path.  A frozen CMW
-    execution, however, cannot enter Remote until its immutable request scope
-    and server-owned attempt id are committed.
+    execution, however, cannot enter measurement I/O until its active transport
+    identity, immutable request scope, and server-owned attempt id are committed.
     """
 
     from app.schemas.mimo_ota.config import MIMOOTAConfiguration
