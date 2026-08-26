@@ -380,6 +380,9 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
         async def set_cell_config(self, _config):
             return True
 
+        async def apply_requested_config(self, _requested):
+            return True
+
         async def add_secondary_cell(self, _index, _config):
             self.add_calls += 1
             return self.add_calls == 1

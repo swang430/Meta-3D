@@ -19,10 +19,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.hal.lte_earfcn import frequency_mhz_to_lte_dl_earfcn
 from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, nr_arfcn_to_freq_mhz
 from app.hal.smu_project import parse_smu_project_center_freqs_hz
 from app.models.channel_asset import ChannelAsset
 from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.services.mimo_ota.frequency_consistency import ChannelFrequencyIdentity
 
 
 DEFAULT_MAX_FILES = 1024
@@ -74,6 +76,7 @@ class SMUProjectSyncItem:
     asset_id: UUID | None = None
     asset_name: str | None = None
     target_arfcn: int | None = None
+    target_lte_dl_earfcn: int | None = None
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,7 @@ class _SyncPlan:
     asset: ChannelAsset
     payload: dict
     canonical_name: str
-    target_arfcn: int
+    target_identity: ChannelFrequencyIdentity
     truth: dict
 
 
@@ -318,6 +321,49 @@ def _exact_nr_arfcn(center_frequency_hz: int) -> int | None:
     return arfcn if abs(round_trip_hz - center_frequency_hz) <= 1 else None
 
 
+def _exact_channel_identity(
+    scd: dict, center_frequency_hz: int,
+) -> ChannelFrequencyIdentity | None:
+    """Map project group-0 truth through the asset's explicit RAT namespace."""
+
+    bandwidth_mhz = scd["bandwidth_mhz"]
+    if scd["radio_technology"] == "nr5g":
+        arfcn = _exact_nr_arfcn(center_frequency_hz)
+        if arfcn is None:
+            return None
+        return ChannelFrequencyIdentity.from_nr_arfcn(
+            nr_arfcn=arfcn,
+            bandwidth_mhz=bandwidth_mhz,
+        )
+    try:
+        earfcn = frequency_mhz_to_lte_dl_earfcn(
+            scd["band"], center_frequency_hz / 1e6,
+        )
+    except ValueError:
+        return None
+    return ChannelFrequencyIdentity.from_lte_earfcn(
+        band=scd["band"],
+        dl_earfcn=earfcn,
+        bandwidth_mhz=bandwidth_mhz,
+    )
+
+
+def _projection_frequency_fields(
+    identity: ChannelFrequencyIdentity, *, declared_band: str,
+) -> dict:
+    return {
+        "radio_technology": identity.radio_technology,
+        "channel_kind": identity.channel_kind,
+        "band": declared_band,
+        "nr_arfcn": (
+            identity.channel_number if identity.radio_technology == "nr5g" else None
+        ),
+        "lte_dl_earfcn": (
+            identity.channel_number if identity.radio_technology == "lte" else None
+        ),
+    }
+
+
 def _project_truth(item: SMUProjectInventoryItem) -> dict:
     return {
         "schema_version": 1,
@@ -356,30 +402,43 @@ def _candidate_plan(
     item: SMUProjectInventoryItem,
     asset: ChannelAsset,
     projection_indexes: dict[str, list[int]],
-) -> tuple[_SyncPlan | None, str, str, int | None]:
+) -> tuple[_SyncPlan | None, str, str, ChannelFrequencyIdentity | None]:
     if item.primary_center_frequency_hz is None:
         return None, "parse_error", item.detail or "工程主频不可用", None
-    target_arfcn = _exact_nr_arfcn(item.primary_center_frequency_hz)
-    if target_arfcn is None:
-        return (
-            None,
-            "non_nr_raster",
-            f"工程主频 {item.primary_center_frequency_hz} Hz 不能精确往返 NR-ARFCN；禁止取最近栅格",
-            None,
-        )
 
     from app.services.channel_asset_service import (
         ChannelAssetError,
         _check_vendor_declared_freq,
         _scd_to_standard_name,
         _validate_payload,
+        normalize_vendor_scd_config,
     )
 
     payload = deepcopy(asset.payload)
     if not isinstance(payload, dict) or not isinstance(payload.get("scd_config"), dict):
-        return None, "invalid_asset", "vendor_file 资产缺少 scd_config，拒绝猜测", target_arfcn
-    payload["scd_config"] = dict(payload["scd_config"])
-    payload["scd_config"]["arfcn"] = target_arfcn
+        return None, "invalid_asset", "vendor_file 资产缺少 scd_config，拒绝猜测", None
+    try:
+        scd = normalize_vendor_scd_config(
+            payload["scd_config"], allow_legacy_nr=True,
+        )
+    except ChannelAssetError as exc:
+        return None, "invalid_asset", str(exc), None
+    target_identity = _exact_channel_identity(scd, item.primary_center_frequency_hz)
+    if target_identity is None:
+        return (
+            None,
+            "non_channel_raster",
+            f"工程主频 {item.primary_center_frequency_hz} Hz 不能在资产显式 "
+            f"{scd['radio_technology']}/{scd['channel_kind']} 身份中精确往返；禁止取最近栅格",
+            None,
+        )
+    if target_identity.radio_technology == "nr5g":
+        scd["arfcn"] = target_identity.channel_number
+        scd.pop("lte_dl_earfcn", None)
+    else:
+        scd["lte_dl_earfcn"] = target_identity.channel_number
+        scd.pop("arfcn", None)
+    payload["scd_config"] = scd
     truth = _project_truth(item)
     payload["smu_project_truth"] = truth
     try:
@@ -395,7 +454,7 @@ def _candidate_plan(
         )
         canonical_name = _scd_to_standard_name(payload["scd_config"])
     except (ChannelAssetError, ValueError, TypeError, KeyError) as exc:
-        return None, "invalid_asset", str(exc), target_arfcn
+        return None, "invalid_asset", str(exc), target_identity
 
     collision = (
         db.query(ChannelAsset)
@@ -410,7 +469,7 @@ def _candidate_plan(
             None,
             "canonical_conflict",
             f"目标规范名 {canonical_name!r} 已被资产 {collision.name!r} 占用",
-            target_arfcn,
+            target_identity,
         )
 
     path_key = _normalise_windows_path(item.instrument_path)
@@ -420,7 +479,7 @@ def _candidate_plan(
             None,
             "ambiguous_projection",
             "available_channel_models 中同一完整路径出现多次；拒绝猜测覆盖哪一条",
-            target_arfcn,
+            target_identity,
         )
 
     plan = _SyncPlan(
@@ -428,7 +487,7 @@ def _candidate_plan(
         asset=asset,
         payload=payload,
         canonical_name=canonical_name,
-        target_arfcn=target_arfcn,
+        target_identity=target_identity,
         truth=truth,
     )
     params = connection.connection_params or {}
@@ -440,6 +499,13 @@ def _candidate_plan(
             isinstance(projection, dict)
             and projection.get("center_frequency_mhz") == item.primary_center_frequency_hz / 1e6
             and projection.get("channel_asset_id") == str(asset.id)
+            and all(
+                projection.get(key) == value
+                for key, value in _projection_frequency_fields(
+                    target_identity,
+                    declared_band=scd["band"],
+                ).items()
+            )
         )
     already = (
         asset.instrument_connection_id == connection.id
@@ -453,7 +519,7 @@ def _candidate_plan(
         plan,
         "already_synced" if already else "syncable",
         "资产与 channel-model 投影已等于当前工程内容" if already else "完整路径唯一且工程主频可精确同步",
-        target_arfcn,
+        target_identity,
     )
 
 
@@ -477,7 +543,7 @@ def _preview_with_plans(
         matches = assets_by_path.get(path_key or "", [])
         asset: ChannelAsset | None = None
         plan: _SyncPlan | None = None
-        target_arfcn: int | None = None
+        target_identity: ChannelFrequencyIdentity | None = None
         if item.status != "ok":
             sync_status = "parse_error"
             detail = item.detail or "工程主频不可用"
@@ -496,7 +562,7 @@ def _preview_with_plans(
                 sync_status = "binding_conflict"
                 detail = "命中资产已绑定另一仪器连接；拒绝跨绑定改写"
             else:
-                plan, sync_status, detail, target_arfcn = _candidate_plan(
+                plan, sync_status, detail, target_identity = _candidate_plan(
                     db, connection, item, asset, projection_indexes,
                 )
                 if plan is not None and sync_status == "syncable":
@@ -515,7 +581,18 @@ def _preview_with_plans(
             connection_id=connection.id,
             asset_id=asset.id if asset is not None else None,
             asset_name=asset.name if asset is not None else None,
-            target_arfcn=target_arfcn,
+            target_arfcn=(
+                target_identity.channel_number
+                if target_identity is not None
+                and target_identity.radio_technology == "nr5g"
+                else None
+            ),
+            target_lte_dl_earfcn=(
+                target_identity.channel_number
+                if target_identity is not None
+                and target_identity.radio_technology == "lte"
+                else None
+            ),
         ))
 
     # Two different files can derive the same canonical name even if neither collides with the
@@ -578,6 +655,10 @@ def _upsert_projection(
         "description": plan.asset.description or f"SMU project truth: {plan.item.instrument_path}",
         "center_frequency_mhz": plan.item.primary_center_frequency_hz / 1e6,
         "channel_asset_id": str(plan.asset.id),
+        **_projection_frequency_fields(
+            plan.target_identity,
+            declared_band=plan.payload["scd_config"]["band"],
+        ),
     })
     if match_index is None:
         raw_models.append(existing)

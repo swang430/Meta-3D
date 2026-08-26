@@ -188,7 +188,7 @@ def test_fixed_summary_is_sanitized_and_persisted_on_same_execution(db):
     assert "[REDACTED]" in serialized
     assert summary.formal_acceptance is True
     assert public_execution_scpi_evidence(stored)["items"][0]["evidence_key"] == (
-        "uxm.config_readback"
+        "base_station.config_readback"
     )
 
 
@@ -1162,20 +1162,20 @@ def test_measure_executor_keeps_all_p0_5_evidence_capture_hooks():
 
     source = inspect.getsource(MeasureExecutor.execute)
     required_hooks = {
-        "record_uxm_config_capture": 1,
+        "record_base_station_config_capture": 1,
         "record_f64_command_capture": 3,
         "record_positioner_capture": 1,
-        "record_uxm_throughput_capture": 1,
+        "record_base_station_throughput_capture": 1,
     }
     for hook, minimum_call_sites in required_hooks.items():
         assert source.count(f"{hook}(") >= minimum_call_sites, hook
 
     for requirement_prefix in (
-        "uxm.pcell.config_applied",
+        "base_station.pcell.config_applied",
         "f64.model_loaded",
         "f64.output_state",
         "positioner.azimuth.",
-        "uxm.throughput.azimuth.",
+        "base_station.throughput.azimuth.",
     ):
         assert requirement_prefix in source
 

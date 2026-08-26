@@ -26,6 +26,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.switch_topology import SwitchTopology
+from app.services.base_station_port_mapping import BaseStationPortMapping
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class TopologyOrchestrationResult:
     mode_name: Optional[str] = None
     active_connection_count: int = 0
     probe_bindings: List[ProbePortBinding] = field(default_factory=list)
+    base_station_ports: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     success: bool = False  # True only if topology+mode found AND has ≥1 active conn
 
@@ -64,6 +66,7 @@ class TopologyOrchestrationResult:
             "mode_name": self.mode_name,
             "active_connection_count": self.active_connection_count,
             "probe_binding_count": len(self.probe_bindings),
+            "base_station_ports": self.base_station_ports,
             "warnings": self.warnings,
             "success": self.success,
         }
@@ -73,6 +76,7 @@ def orchestrate_switch_topology(
     db: Session,
     chamber_id: UUID,
     mode_id: str = "mimo_ota",
+    base_station_port_mapping: Optional[BaseStationPortMapping] = None,
 ) -> TopologyOrchestrationResult:
     """Look up the active topology for `chamber_id` and resolve `mode_id`.
 
@@ -117,6 +121,25 @@ def orchestrate_switch_topology(
     active_conn_ids = set(mode.get("active_connections") or [])
     connections = topology.connections or []
     active_conns = [c for c in connections if c.get("id") in active_conn_ids]
+    if base_station_port_mapping is not None:
+        active_ports = base_station_port_mapping.active_logical_ports
+
+        def _uses_inactive_base_station_port(connection: Dict[str, Any]) -> bool:
+            if connection.get("source") == "baseStation":
+                return connection.get("source_pin") not in active_ports
+            if connection.get("target") == "baseStation":
+                return connection.get("target_pin") not in active_ports
+            return False
+
+        active_conns = [
+            connection
+            for connection in active_conns
+            if not _uses_inactive_base_station_port(connection)
+        ]
+        result.base_station_ports = [
+            port.to_payload() for port in base_station_port_mapping.ports
+        ]
+        result.warnings.extend(base_station_port_mapping.warnings)
     result.active_connection_count = len(active_conns)
 
     if not active_conns:

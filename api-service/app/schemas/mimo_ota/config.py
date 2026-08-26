@@ -93,6 +93,12 @@ from pydantic import (
     model_validator,
 )
 
+from app.hal.lte_earfcn import (
+    normalize_lte_band,
+    validate_lte_downlink_operating_point,
+)
+from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+
 
 # Canonical TestCase.test_type value
 MIMO_OTA_TEST_TYPE = "MIMO_OTA"
@@ -105,7 +111,7 @@ _PCELL_MIRROR_FIELDS = (
 _PCELL_MIRROR_ADAPTERS = {
     "frequency_hz": TypeAdapter(float),
     "bandwidth_mhz": TypeAdapter(float),
-    "subcarrier_spacing_khz": TypeAdapter(int),
+    "subcarrier_spacing_khz": TypeAdapter(Optional[int]),
 }
 
 
@@ -143,17 +149,91 @@ class ComponentCarrierConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    radio_technology: Literal["nr5g", "lte"] = Field(
+        default="nr5g",
+        description="PCell RAT；旧记录缺失时精确兼容为 nr5g",
+    )
     frequency_hz: float = Field(..., description="中心频率 (Hz)")
     bandwidth_mhz: float = Field(..., description="信道带宽 (MHz)")
-    subcarrier_spacing_khz: int = Field(default=30, description="子载波间隔 (kHz)")
+    subcarrier_spacing_khz: Optional[int] = Field(
+        default=30,
+        description="NR 子载波间隔 (kHz)；LTE 必须为空",
+    )
     band: Optional[str] = Field(
         default=None,
-        description="3GPP NR 频段 e.g. 'n78' / 'n41' / 'n77' / 'n79'; 留空时由频率推断",
+        description="3GPP band，例如 NR n78 或 LTE B3",
+    )
+    duplex: Optional[Literal["fdd", "tdd"]] = Field(
+        default=None,
+        description="LTE PCell 双工模式；NR 本片不消费",
+    )
+    nr_arfcn: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="可选显式 NR-ARFCN；LTE 禁止",
+    )
+    lte_dl_earfcn: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="LTE 下行 EARFCN；LTE PCell 必填",
     )
     role: Literal["pcell", "scell"] = Field(
         default="scell",
         description="PCell / SCell 角色; 由 _resolve_component_carriers 强制 cc[0]=pcell",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remove_nr_default_from_lte(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        data = deepcopy(raw)
+        if data.get("radio_technology", "nr5g") == "lte" and (
+            "subcarrier_spacing_khz" not in data
+        ):
+            data["subcarrier_spacing_khz"] = None
+        return data
+
+    @model_validator(mode="after")
+    def _validate_rat_specific_identity(self) -> "ComponentCarrierConfig":
+        if not math.isfinite(self.frequency_hz) or self.frequency_hz <= 0:
+            raise ValueError("frequency_hz must be finite and positive")
+        if not math.isfinite(self.bandwidth_mhz) or self.bandwidth_mhz <= 0:
+            raise ValueError("bandwidth_mhz must be finite and positive")
+
+        if self.radio_technology == "lte":
+            if not self.band:
+                raise ValueError("LTE PCell requires explicit band")
+            if not self.duplex:
+                raise ValueError("LTE PCell requires explicit duplex")
+            if self.lte_dl_earfcn is None:
+                raise ValueError("LTE PCell requires explicit lte_dl_earfcn")
+            if self.nr_arfcn is not None:
+                raise ValueError("LTE PCell must not set nr_arfcn")
+            if self.subcarrier_spacing_khz is not None:
+                raise ValueError("LTE PCell must not set subcarrier_spacing_khz")
+            self.band = normalize_lte_band(self.band)
+            validate_lte_downlink_operating_point(
+                band=self.band,
+                duplex=self.duplex,
+                dl_earfcn=self.lte_dl_earfcn,
+                frequency_mhz=self.frequency_hz / 1e6,
+            )
+            return self
+
+        if self.lte_dl_earfcn is not None:
+            raise ValueError("NR PCell must not set lte_dl_earfcn")
+        if self.subcarrier_spacing_khz is None:
+            raise ValueError("NR PCell requires subcarrier_spacing_khz")
+        if self.nr_arfcn is not None:
+            expected_hz = nr_arfcn_to_freq_mhz(self.nr_arfcn) * 1e6
+            if not math.isclose(
+                self.frequency_hz, expected_hz, rel_tol=0.0, abs_tol=1.0
+            ):
+                raise ValueError(
+                    "NR frequency_hz conflicts with explicit nr_arfcn"
+                )
+        return self
 
 
 class MIMOOTAPassCriteria(BaseModel):
@@ -210,7 +290,7 @@ class MIMOOTAConfiguration(BaseModel):
     # === MIMO ===
     mimo_layers: int = 2
     modulation: str = "256QAM"
-    subcarrier_spacing_khz: int = 30
+    subcarrier_spacing_khz: Optional[int] = 30
 
     # === Turntable ===
     azimuths_deg: List[float] = Field(
@@ -336,7 +416,7 @@ class MIMOOTAConfiguration(BaseModel):
     # phase touches HAL.
 
     # === Theoretical reference for ratio calculations (3GPP 2x2 256QAM 100MHz ≈ 450 Mbps) ===
-    theoretical_peak_throughput_mbps: float = 450.0
+    theoretical_peak_throughput_mbps: Optional[float] = 450.0
 
     # === Precheck behavior (P1-8 / P1-9, 2026-05-19) ===
     precheck_strict_cal: bool = True
@@ -463,25 +543,15 @@ class MIMOOTAConfiguration(BaseModel):
     # -46 基线热 36 dB, #216 门审 F3 披露); 现场可给温和起点 (如 -46) 免大
     # 功率起步冲 F64 输入。仅闭环模式消费 (手动定标不涉及)。
 
-    uxm_config_mode: Literal["dispatch", "inherit"] = "dispatch"
-    # 开关 1 (2026-07-21 现场): UXM **小区级参数**从哪来。
-    # - "dispatch" (默认, 现行为): measure 主动下发全套小区参数 (set_cell_config
-    #   含 ARFCN/BW/功率/层数) + 驱动回读对账; 频率一致性网用驱动下发记录。
-    # - "inherit": 跳过小区级参数下发 (set_cell_config + SCell), 沿用仪器当前态
-    #   (如 EMQuest 配好的基线)。**知情继承**: 频率一致性网改用
-    #   read_live_frequency_identity() 从仪器读回实际 ARFCN/BW 与 TestCase 声明
-    #   比对, 对不上仍按 precheck_strict_frequency 拦 — 不是盲信。
-    #   ⚠ inherit 仍会写 UXM 的 (门审 F2/F3 披露, 操作员须知):
-    #   ① MAC 吞吐配置 (FULLBUFFER/AMC/MCS/TDD pattern/HARQ/CSI-RS/统计窗);
-    #   ② start_signaling (CELL ON); ③ RRC reconfig 仍按 TestCase 推
-    #   mimo_layers/调制 (小区级层数继承但 RRC 请求层数是 TestCase 的 — 层数
-    #   **未纳入 live 核对**, 见 roadmap backlog); ④ 输入电平闭环会调 UXM DL
-    #   功率; ⑤ 跑完 cleanup 会 stop_signaling (CELL OFF) — 第二次 inherit
-    #   (P0-2 S5 补: inherit 还会**读**小区状态 BSE:STATus + live 频率做知情
-    #   继承核对 — 只读不写, OFF 不拦 [CELL ON 时缓存配置自动应用], 读不到才告警)
-    #   继承的是"上次跑完态"非原始 EMQuest 态。
-    #   用途: 复用现场已实证的仪器态; 也是"ON 态同值写触发意外重配"(#214 门审
-    #   F5 零实证雷) 的现场逃生通道。
+    base_station_config_mode: Literal["dispatch", "inherit"] = "dispatch"
+    # 基站静态小区配置来源。dispatch（默认）主动下发并回读；inherit 是“基站当前态
+    # 调试继承”，只用于显式诊断，结果不得进入正式 KPI / verdict。
+    uxm_config_mode: Optional[Literal["dispatch", "inherit"]] = Field(
+        default=None,
+        deprecated="Use base_station_config_mode instead.",
+    )
+    # 旧 TestCase JSON 只读兼容键。新写方统一使用 base_station_config_mode；保留原键
+    # 仅为历史审计，不允许执行器再自行回退。
 
     precheck_strict_input_level: bool = True
     # P0-8 Step 2 Phase 2b (2026-05-28): F64 输入操作点闭环 (InputLevelController)
@@ -599,6 +669,55 @@ class MIMOOTAConfiguration(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def _canonicalize_base_station_config_mode(cls, raw: Any) -> Any:
+        """在唯一 schema 边界翻译旧键，并拒绝显式双写分叉。"""
+        if not isinstance(raw, dict):
+            return raw
+
+        data = deepcopy(raw)
+        has_current = "base_station_config_mode" in data
+        has_legacy = "uxm_config_mode" in data
+        current = data.get("base_station_config_mode")
+        legacy = data.get("uxm_config_mode")
+
+        if current is not None and legacy is not None and current != legacy:
+            raise ValueError(
+                "base_station_config_mode conflicts with deprecated "
+                "uxm_config_mode"
+            )
+        if not has_current and has_legacy and legacy is not None:
+            data["base_station_config_mode"] = legacy
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _canonicalize_rat_specific_defaults(cls, raw: Any) -> Any:
+        """旧记录保持 NR 默认；显式 LTE 不继承 NR SCS/450 Mbps。"""
+        if not isinstance(raw, dict):
+            return raw
+        data = deepcopy(raw)
+        carriers = data.get("component_carriers")
+        if not isinstance(carriers, (list, tuple)) or not carriers:
+            return data
+        pcell = carriers[0]
+        if isinstance(pcell, ComponentCarrierConfig):
+            pcell = pcell.model_dump(mode="python")
+        if not isinstance(pcell, dict) or pcell.get("radio_technology", "nr5g") != "lte":
+            return data
+
+        if data.get("subcarrier_spacing_khz") is not None and (
+            "subcarrier_spacing_khz" in data
+        ):
+            raise ValueError(
+                "LTE PCell must not set top-level subcarrier_spacing_khz"
+            )
+        data["subcarrier_spacing_khz"] = None
+        if "theoretical_peak_throughput_mbps" not in data:
+            data["theoretical_peak_throughput_mbps"] = None
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
     def _reconcile_primary_carrier_mirrors(cls, raw: Any) -> Any:
         """让 PCell 成为运行参数真值，同时保留旧顶层镜像兼容。
 
@@ -619,7 +738,11 @@ class MIMOOTAConfiguration(BaseModel):
         if not isinstance(pcell, dict):
             return data
 
+        pcell_rat = pcell.get("radio_technology", "nr5g")
+
         for field in _PCELL_MIRROR_FIELDS:
+            if pcell_rat == "lte" and field == "subcarrier_spacing_khz":
+                continue
             if field in pcell:
                 raw_pcell_value = pcell[field]
             else:
@@ -675,6 +798,14 @@ class MIMOOTAConfiguration(BaseModel):
         - 列表长度必须 ≥ 1 (运行时这是 measure 的输入合同)
         """
         if not self.component_carriers:
+            if (
+                "subcarrier_spacing_khz" in self.model_fields_set
+                and self.subcarrier_spacing_khz is None
+            ):
+                raise ValueError(
+                    "NR PCell requires subcarrier_spacing_khz; explicit null "
+                    "cannot use the legacy default"
+                )
             self.component_carriers = [
                 ComponentCarrierConfig(
                     frequency_hz=self.frequency_hz,
@@ -691,6 +822,20 @@ class MIMOOTAConfiguration(BaseModel):
                     cc = cc.model_copy(update={"role": target_role})
                 normalized.append(cc)
             self.component_carriers = normalized
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rat_specific_configuration(self) -> "MIMOOTAConfiguration":
+        primary = self.primary_carrier
+        if primary.radio_technology == "lte" and len(self.component_carriers or []) != 1:
+            raise ValueError("LTE MIMO OTA requires a single PCell and no SCell")
+        peak = self.theoretical_peak_throughput_mbps
+        if peak is not None and (not math.isfinite(peak) or peak <= 0):
+            raise ValueError(
+                "theoretical_peak_throughput_mbps must be finite and positive"
+            )
+        if primary.radio_technology == "nr5g" and peak is None:
+            raise ValueError("NR requires theoretical_peak_throughput_mbps")
         return self
 
     @model_validator(mode="after")
@@ -721,9 +866,13 @@ def canonicalize_mimo_ota_configuration_payload(payload: dict) -> dict:
     """校验并只规范化载波真值字段，保留稀疏 JSON 与前向兼容扩展。"""
     validated = MIMOOTAConfiguration.model_validate(payload)
     canonical = deepcopy(payload)
+    canonical["base_station_config_mode"] = validated.base_station_config_mode
     primary = validated.primary_carrier
     for field in _PCELL_MIRROR_FIELDS:
-        canonical[field] = getattr(primary, field)
+        if primary.radio_technology == "lte" and field == "subcarrier_spacing_khz":
+            canonical.pop(field, None)
+        else:
+            canonical[field] = getattr(primary, field)
     canonical["component_carriers"] = [
         carrier.model_dump(mode="json")
         for carrier in (validated.component_carriers or [])

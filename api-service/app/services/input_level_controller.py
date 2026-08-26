@@ -1,17 +1,17 @@
 """F64 输入信号参考操作点闭环控制 (P0-8 Step 2 Phase 2).
 
-跨 driver 操作点子系统: 协调 BS (UXM, 设 DL 功率) + CE (F64, autoset/校验), 跑
+跨 driver 操作点子系统: 协调 BS (设 DL 功率) + CE (F64, autoset/校验), 跑
 设计文档 §4 的 A-F 闭环, 输出收敛的下行静态参考 + 遥测。
 
 设计依据: docs/architecture/f64-input-level-and-dynamic-range.md
 - §3.3 当前决策: **下行静态 AUTOSET** (输入稳, path loss 保真)。
 - §3.4 AGC keep pathloss 适用场景 (上行/WiFi/双向) **不实现**, 仅留 mode 接口。
-- §4 闭环流程 A-F: 粗设 UXM 功率 → F64 设 burst+trigger → autoset → 校验 (窗口 +
-  clipping + cut-off) → 调 UXM 功率重试 → 收敛 → 锁静态参考。
+- §4 闭环流程 A-F: 粗设基站功率 → F64 设 burst+trigger → autoset → 校验 (窗口 +
+  clipping + cut-off) → 调基站功率重试 → 收敛 → 锁静态参考。
 - §5 落点: 跨 driver 操作点服务, 不埋 commissioning 一个 phase。
 
 本期范围 (Phase 2, offline 可写可测):
-- 独立服务 + 单测 (mock UXM+F64), **不接 commissioning measure phase** (留 Phase 2b)。
+- 独立服务 + 单测 (mock BaseStation+F64), **不接 commissioning measure phase** (留 Phase 2b)。
 - 默认参数提供; 真值现场标定 (roadmap U-6)。
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ class InputLevelResult:
     """
     success: bool
     operating_point: List[InputOperatingPoint] = field(default_factory=list)
-    uxm_dl_power_dbm: Optional[float] = None
+    base_station_dl_power_dbm: Optional[float] = None
     clipping_per_mille: Optional[float] = None
     system_warnings: List[str] = field(default_factory=list)
     iterations: int = 0
@@ -51,6 +51,12 @@ class InputLevelResult:
     # excessive/None(单 input)。收敛时填; surface 不阻断 (容忍带见 _classify_imbalance)。
     imbalance_db: Optional[float] = None
     imbalance_status: Optional[str] = None
+
+    @property
+    def uxm_dl_power_dbm(self) -> Optional[float]:
+        """旧 UXM 字段的只读同源镜像；新消费方使用公共字段。"""
+
+        return self.base_station_dl_power_dbm
 
 
 class InputLevelController:
@@ -83,12 +89,12 @@ class InputLevelController:
         bs_driver,
         *,
         # —— 收敛参数 (现场真值标定见 roadmap U-6) ——
-        initial_uxm_dl_power_dbm: float = -10.0,
+        initial_base_station_dl_power_dbm: float = -10.0,
         target_avg_offset_below_upper_db: float = 15.0,  # 目标 avg ≤ upper - 15
         autoset_measurement_time_s: float = 3.0,
         burst_trigger_dbm: float = -30.0,
         clipping_threshold_per_mille: float = 1.0,
-        uxm_power_step_db: float = 3.0,
+        base_station_power_step_db: float = 3.0,
         max_iterations: int = 5,
         # —— 多端口 imbalance 容忍带 (#2001(1)): 4x4 各 input avg 间距 ±1-2.5dB 物理必然
         #    (cable 长度/质量/接头/ADC 增益), surface 不阻断; per-port cable cal 补偿是 (2)(3) ——
@@ -105,12 +111,12 @@ class InputLevelController:
             )
         self._ce = ce_driver
         self._bs = bs_driver
-        self._initial_uxm = initial_uxm_dl_power_dbm
+        self._initial_base_station = initial_base_station_dl_power_dbm
         self._target_offset = target_avg_offset_below_upper_db
         self._autoset_t = autoset_measurement_time_s
         self._burst_trigger = burst_trigger_dbm
         self._clip_thresh = clipping_threshold_per_mille
-        self._uxm_step = uxm_power_step_db
+        self._base_station_step = base_station_power_step_db
         self._max_iter = max_iterations
         self._imbalance_marginal = imbalance_marginal_db
         self._imbalance_excessive = imbalance_excessive_db
@@ -119,41 +125,43 @@ class InputLevelController:
 
     async def establish(self) -> InputLevelResult:
         """跑下行静态闭环, 返回收敛结果或失败原因。"""
-        uxm_power = self._initial_uxm
+        base_station_power = self._initial_base_station
 
         for iteration in range(1, self._max_iter + 1):
             logger.info(
-                "[InputLevelController] 第 %d/%d 轮: 试 UXM DL=%.1f dBm",
-                iteration, self._max_iter, uxm_power,
+                "[InputLevelController] 第 %d/%d 轮: 试 BaseStation DL=%.1f dBm",
+                iteration, self._max_iter, base_station_power,
             )
 
-            # A: 粗设 UXM DL 功率
-            if not await self._bs.set_downlink_power(uxm_power):
+            # A: 粗设基站 DL 功率
+            if not await self._bs.set_downlink_power(base_station_power):
                 return InputLevelResult(
-                    success=False, iterations=iteration, uxm_dl_power_dbm=uxm_power,
-                    failure_reason=f"bs.set_downlink_power({uxm_power}) 失败",
+                    success=False, iterations=iteration,
+                    base_station_dl_power_dbm=base_station_power,
+                    failure_reason=f"bs.set_downlink_power({base_station_power}) 失败",
                 )
 
             # C: F64 设 burst 模式 + 触发电平 (TDD 5G DL 必须, 见设计 §1.1)
             mode_err = await self._configure_burst_mode()
             if mode_err is not None:
                 return InputLevelResult(
-                    success=False, iterations=iteration, uxm_dl_power_dbm=uxm_power,
+                    success=False, iterations=iteration,
+                    base_station_dl_power_dbm=base_station_power,
                     failure_reason=mode_err,
                 )
 
             # D: AUTOSET 仅 active_inputs (子集 — 避免 INP:LEV:AUTOSET 0 对未连接输入
             #    触发 no-signal 错误, Codex on PR #96)。fail-loud: device error → False。
             if not await self._ce.autoset_inputs(self._inputs, self._autoset_t):
-                # autoset 失败 (无信号/过强) → 调 UXM 功率重试。
+                # autoset 失败 (无信号/过强) → 调基站功率重试。
                 # heuristic: 第一轮多半是信号弱/未到 → 升; 后续可能是过强 → 降。
                 if iteration == 1:
-                    uxm_power += self._uxm_step
+                    base_station_power += self._base_station_step
                 else:
-                    uxm_power -= self._uxm_step
+                    base_station_power -= self._base_station_step
                 logger.warning(
-                    "[InputLevelController] autoset 失败, 调 UXM → %.1f dBm 重试",
-                    uxm_power,
+                    "[InputLevelController] autoset 失败, 调 BaseStation → %.1f dBm 重试",
+                    base_station_power,
                 )
                 continue
 
@@ -161,7 +169,8 @@ class InputLevelController:
             (op_point, out_lo, out_hi, meas_err) = await self._measure_and_check_window()
             if meas_err is not None:
                 return InputLevelResult(
-                    success=False, iterations=iteration, uxm_dl_power_dbm=uxm_power,
+                    success=False, iterations=iteration,
+                    base_station_dl_power_dbm=base_station_power,
                     operating_point=op_point, failure_reason=meas_err,
                 )
 
@@ -187,14 +196,14 @@ class InputLevelController:
                         "(audit, 不阻断收敛; CTIA MPAC 容忍带, per-port 补偿见 #2001 (2)(3))"
                     ]
                 logger.info(
-                    "[InputLevelController] 收敛 (iter=%d, UXM=%.1f dBm, clipping=%s‰, "
+                    "[InputLevelController] 收敛 (iter=%d, BaseStation=%.1f dBm, clipping=%s‰, "
                     "imbalance=%s dB %s)",
-                    iteration, uxm_power, clipping, imb_db, imb_status,
+                    iteration, base_station_power, clipping, imb_db, imb_status,
                 )
                 return InputLevelResult(
                     success=True,
                     operating_point=op_point,
-                    uxm_dl_power_dbm=uxm_power,
+                    base_station_dl_power_dbm=base_station_power,
                     clipping_per_mille=clipping,
                     system_warnings=warnings,
                     iterations=iteration,
@@ -202,18 +211,20 @@ class InputLevelController:
                     imbalance_status=imb_status,
                 )
 
-            # 调整 UXM 功率重试
+            # 调整基站功率重试
             if clip_bad or cut_off or out_hi:
-                uxm_power -= self._uxm_step  # 过高
+                base_station_power -= self._base_station_step  # 过高
             elif out_lo:
-                uxm_power += self._uxm_step  # 过低
+                base_station_power += self._base_station_step  # 过低
             logger.info(
-                "[InputLevelController] 未收敛 (clip=%s‰, cut_off=%s, oow_lo=%s, oow_hi=%s) → UXM→%.1f",
-                clipping, cut_off, out_lo, out_hi, uxm_power,
+                "[InputLevelController] 未收敛 (clip=%s‰, cut_off=%s, oow_lo=%s, oow_hi=%s) "
+                "→ BaseStation→%.1f",
+                clipping, cut_off, out_lo, out_hi, base_station_power,
             )
 
         return InputLevelResult(
-            success=False, iterations=self._max_iter, uxm_dl_power_dbm=uxm_power,
+            success=False, iterations=self._max_iter,
+            base_station_dl_power_dbm=base_station_power,
             failure_reason=f"{self._max_iter} 轮未收敛",
         )
 
@@ -225,7 +236,7 @@ class InputLevelController:
         """多端口 input 不平衡 = max(avg) - min(avg) 跨 input。<2 input → (None, None)。
 
         容忍带 (#2001): 4x4 各 input avg ±1-2.5 dB 间距是物理必然 (cable 长度/质量 ±0.5-1dB +
-        UXM TX port ±0.3dB + F64 ADC 增益 ±0.5dB + 接头老化)。ok ≤ marginal < marginal..
+        BS TX port ±0.3dB + F64 ADC 增益 ±0.5dB + 接头老化)。ok ≤ marginal < marginal..
         excessive ≤ excessive < excessive。surface 不阻断收敛 (per-port cable cal 补偿是 (2)(3))。
         """
         avgs = [op.avg_dbm for op in op_point]

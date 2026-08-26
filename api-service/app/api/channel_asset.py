@@ -96,6 +96,7 @@ class SMUProjectSyncItemResponse(BaseModel):
     asset_id: Optional[UUID] = None
     asset_name: Optional[str] = None
     target_arfcn: Optional[int] = None
+    target_lte_dl_earfcn: Optional[int] = None
 
 
 class SMUProjectSyncPreviewResponse(BaseModel):

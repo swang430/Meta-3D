@@ -37,10 +37,12 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     BaseStationDriver,
+    BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
+from app.hal.lte_earfcn import validate_lte_band_options
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,17 @@ class CmwScpiCommands:
     CLS = "*CLS"
     ERR = "SYSTem:ERRor:ALL?"
     PRESET = "SYSTem:PRESet"
+    # R&S CMW500 Base Software User Manual 1173.9463.02-06,
+    # §6.3.10.3, printed p.242: SYSTem:BASE:OPTion:LIST? accepts
+    # SWOPtion/HWOPtion and VALid/FUNCtional filters. Query only the usable
+    # software and hardware sets; an unfiltered list also contains unusable
+    # entries and must not authorize an option-gated band.
+    OPTION_LIST_VALID_SOFTWARE = (
+        "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid"
+    )
+    OPTION_LIST_FUNCTIONAL_HARDWARE = (
+        "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional"
+    )
 
     # --- RF 路由 ---
     # 信令模式单小区, 使用内部 RF 前端
@@ -76,7 +89,6 @@ class CmwScpiCommands:
     CELL_BAND = "CONFigure:LTE:SIGN{i}:CELL:BAND"              # e.g., "OB78"
     CELL_DL_FREQ = "CONFigure:LTE:SIGN{i}:RFSettings:CHANnel:DL"  # EARFCN
     CELL_DL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:DL"     # 带宽 (MHz)
-    CELL_UL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:UL"
     CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:CELL:DMOD"             # TDD/FDD
     CELL_PCI = "CONFigure:LTE:SIGN{i}:CELL:PCI"                 # 物理小区 ID
 
@@ -174,6 +186,22 @@ class RealCmw500Driver(BaseStationDriver):
       7. stop_signaling() → PS Release → Cell OFF
     """
 
+    adapter_id = "cmw500"
+    max_bandwidth_mhz = 20.0
+    max_mimo_layers = 4
+    # User Manual §2.6.12.1, p.680: <Bandwidth> is exactly
+    # B014/B030/B050/B100/B150/B200 for 1.4/3/5/10/15/20 MHz.
+    bandwidth_token_by_mhz = {
+        1.4: "B014",
+        3.0: "B030",
+        5.0: "B050",
+        10.0: "B100",
+        15.0: "B150",
+        20.0: "B200",
+    }
+    supported_bandwidths_mhz = frozenset(bandwidth_token_by_mhz)
+    supported_mimo_layers = frozenset({1, 2, 4})
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
@@ -206,9 +234,56 @@ class RealCmw500Driver(BaseStationDriver):
         """将命令模板中的 {i} 替换为通道编号"""
         return template.format(i=self._i)
 
+    async def apply_requested_config(
+        self, requested: BaseStationRequestedConfig,
+    ) -> bool:
+        """Reject lossy CMW translations and unverified option-gated bands."""
+
+        if requested.radio_technology == "lte":
+            if requested.bandwidth_mhz not in self.supported_bandwidths_mhz:
+                logger.error(
+                    "[CMW500] Rejecting unsupported exact LTE bandwidth %.3f MHz",
+                    requested.bandwidth_mhz,
+                )
+                return False
+            if requested.mimo_layers not in self.supported_mimo_layers:
+                logger.error(
+                    "[CMW500] Rejecting unsupported exact MIMO layer count %d",
+                    requested.mimo_layers,
+                )
+                return False
+            try:
+                validate_lte_band_options(requested.band, self._installed_options)
+            except ValueError as exc:
+                logger.error("[CMW500] Rejecting LTE band options: %s", exc)
+                return False
+        return await super().apply_requested_config(requested)
+
     # ===================================================================
     # 1. 连接生命周期
     # ===================================================================
+
+    async def _probe_installed_options(self) -> List[str]:
+        """Read the CMW-specific usable option snapshot, fail-closed."""
+
+        try:
+            software = self._parse_options_response(
+                self._query(CmwScpiCommands.OPTION_LIST_VALID_SOFTWARE)
+            )
+            hardware = self._parse_options_response(
+                self._query(CmwScpiCommands.OPTION_LIST_FUNCTIONAL_HARDWARE)
+            )
+        except Exception as exc:
+            logger.warning("[CMW500] Option snapshot unavailable: %s", exc)
+            self._installed_options = []
+            return []
+
+        self._installed_options = software + hardware
+        logger.info(
+            "[CMW500] Installed usable options: %s",
+            self._installed_options or "(none)",
+        )
+        return self._installed_options
 
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 CMW500 的连接"""
@@ -243,6 +318,8 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.warning(
                     f"[CMW500] Unexpected IDN response: {idn}"
                 )
+
+            await self._probe_installed_options()
 
             # 清除状态 + 预设
             self._write("*CLS")
@@ -297,7 +374,7 @@ class RealCmw500Driver(BaseStationDriver):
 
         SCPI 序列:
           CONFigure:LTE:SIGN1:CELL:BAND OB3
-          CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B20
+          CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
           CONFigure:LTE:SIGN1:CELL:DMOD FDD
         """
@@ -306,23 +383,23 @@ class RealCmw500Driver(BaseStationDriver):
             if "band" in config:
                 band = config["band"].upper()
                 # CMW 使用 "OB" 前缀 (Operating Band)
-                if not band.startswith("OB"):
+                if band.startswith("B"):
+                    band = f"O{band}"
+                elif not band.startswith("OB"):
                     band = f"OB{band}"
                 self._band = band
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}"
                 )
 
-            # 带宽 (CMW 格式: B5, B10, B15, B20)
+            # User Manual §2.6.12.1, p.680: PCC DL bandwidth also applies
+            # to UL; there is no separate PCC CELL:BANDwidth:UL write.
             if "bandwidth_mhz" in config:
-                bw = int(config["bandwidth_mhz"])
-                self._bandwidth_mhz = float(bw)
-                bw_str = f"B{bw}"
+                bw = float(config["bandwidth_mhz"])
+                bw_str = self.bandwidth_token_by_mhz[bw]
+                self._bandwidth_mhz = bw
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_DL_BW) + f" {bw_str}"
-                )
-                self._write(
-                    self._fmt(CmwScpiCommands.CELL_UL_BW) + f" {bw_str}"
                 )
 
             # 双工模式
@@ -718,8 +795,8 @@ class RealCmw500Driver(BaseStationDriver):
                 supported=True,
                 parameters={
                     "bands": list(LTE_BAND_EARFCN_MAP.keys()),
-                    "max_bandwidth_mhz": 20,
-                    "max_mimo_layers": 4,
+                    "max_bandwidth_mhz": self.max_bandwidth_mhz,
+                    "max_mimo_layers": self.max_mimo_layers,
                     "tm_modes": [
                         "TM1", "TM2", "TM3", "TM4", "TM6", "TM7",
                         "TM8", "TM9", "TM10",

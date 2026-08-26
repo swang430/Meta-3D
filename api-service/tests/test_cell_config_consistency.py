@@ -9,7 +9,8 @@
 """
 from __future__ import annotations
 
-from app.hal.uxm_base_station import AppliedCellConfig, RealUxmDriver
+from app.hal.base_station import AppliedCellConfig
+from app.hal.uxm_base_station import RealUxmDriver
 from app.services.mimo_ota.cell_config_consistency import (
     _modulation_order,
     check_cell_config_consistency,

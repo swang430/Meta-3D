@@ -49,6 +49,47 @@ PROFILES_DIR = os.path.join(
 )
 
 
+# MIMO OTA 逻辑天线到 UXM 物理 connector 的唯一 profile 真值。
+# `ota_uplink` 是暗室独立通信天线回程，不等同于小区 MIMO RX antenna map。
+UXM_MIMO_PORT_PRESETS: Dict[str, Dict[str, Any]] = {
+    "siso": {
+        "tx": {1: "RF1OUT"},
+        "rx": {1: "RF1IN"},
+        "ota_uplink": "RF6IN",
+        "description": "SISO 1x1: RF1 单端口",
+    },
+    "2x2": {
+        "tx": {1: "RF1OUT", 2: "RF2OUT"},
+        "rx": {1: "RF1IN", 2: "RF2IN"},
+        "ota_uplink": "RF6IN",
+        "description": "2x2 MIMO: RF1 + RF2",
+    },
+    "4x4": {
+        "tx": {1: "RF1OUT", 2: "RF2OUT", 3: "RF3OUT", 4: "RF4OUT"},
+        "rx": {1: "RF1IN", 2: "RF2IN", 3: "RF3IN", 4: "RF4IN"},
+        "ota_uplink": "RF6IN",
+        "description": "4x4 MIMO: RF1 + RF2 + RF3 + RF4",
+    },
+    "2x2_alt": {
+        "tx": {1: "RF3OUT", 2: "RF4OUT"},
+        "rx": {1: "RF3IN", 2: "RF4IN"},
+        "ota_uplink": "RF6IN",
+        "description": "2x2 MIMO (备用端口): RF3 + RF4",
+    },
+}
+
+
+def get_uxm_mimo_route_snapshot(preset: str) -> Dict[str, Any]:
+    """Return an isolated profile snapshot; unknown presets fail loud."""
+
+    key = str(preset).strip().lower()
+    if key not in UXM_MIMO_PORT_PRESETS:
+        raise KeyError(f"unknown UXM MIMO port preset: {preset!r}")
+    snapshot = deepcopy(UXM_MIMO_PORT_PRESETS[key])
+    snapshot.pop("description", None)
+    return snapshot
+
+
 # ===========================================================================
 # 测试配置模板数据类
 # ===========================================================================

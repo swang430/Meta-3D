@@ -34,18 +34,23 @@ from app.hal.base import (
     redact_instrument_command_text,
 )
 from app.hal.base_station import (
+    AppliedCellConfig,
     BaseStationDriver,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
-    build_uxm_downlink_power_command,
 )
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
+    build_uxm_downlink_power_command,
     detect_profile,
+)
+from app.hal.uxm_test_profiles import (
+    UXM_MIMO_PORT_PRESETS,
+    get_uxm_mimo_route_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -296,28 +301,6 @@ def _infer_band_from_freq(
     return "N78", "TDD"  # 默认 fallback
 
 
-@dataclass(frozen=True)
-class AppliedCellConfig:
-    """P2-11 Phase 6: UXM/UE **实际能用**的 cell config, 供 measure 跟 TestCase 请求值做
-    "下发后"一致性校验 (频率一致性 Phase 1 的吞吐链延伸)。
-
-    ⚠️ Codex on PR #114: **不能读 `CONF:...:MIMO:LAYers?`** —— 那是 set_cell_config 写入
-    的同一个**配置旋钮**, 回读只会原样返回配置的 4, 抓不到 UE 把 4 层静默 clamp 到 2 的
-    降级。改读 **UE 协商能力** (`query_ue_capability().max_dl_layers`): TestCase 请求的 DL
-    layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
-
-    None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
-
-    P2-11 Phase 6 延伸: 加 ue_max_modulation_dl —— 请求调制阶数超 UE 能力同样会被静默
-    clamp (TestCase 请求 256QAM 但 UE 只协商到 64QAM → 实际跑 64QAM 却当 256QAM 测),
-    跟 layers 同机制 (读 UE 协商能力, 非配置旋钮回读)。调制能力上限是 UE 固有能力, 不受
-    AMC 影响 (AMC 只浮动生效 MCS index, 不改 UE 的最高可协商调制)。
-    """
-
-    ue_max_dl_layers: Optional[int] = None
-    ue_max_modulation_dl: Optional[str] = None
-
-
 class RealUxmDriver(BaseStationDriver):
     """
     Keysight UXM 5G Test Platform 真实 SCPI 驱动 (HAL Layer 3)
@@ -335,6 +318,12 @@ class RealUxmDriver(BaseStationDriver):
       5. get_throughput_metrics() → 轮询 BLER/吞吐量/CQI
       6. stop_signaling() → Cell OFF → 断开
     """
+
+    adapter_id = "uxm"
+    input_level_control_supported = True
+
+    rrc_reconfiguration_supported = True
+    mac_throughput_configuration_supported = True
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
@@ -371,6 +360,22 @@ class RealUxmDriver(BaseStationDriver):
         # 若连接先落平台再重定向 hislip2，保留平台的硬件型号/序列/固件；
         # Framework 的 *IDN? 只描述软件端点，不能冒充仪器硬件身份。
         self._platform_identity_response: Optional[str] = None
+        # 选件只保存调用方显式提供的已核验快照；驱动不得从型号或 Test App
+        # 猜测。现场尚未配置时为空元组，仍与“字段缺失”区分。
+        raw_options = config.get("options", ())
+        self._evidence_options: tuple[str, ...] = (
+            tuple(
+                sorted(
+                    {
+                        str(option).strip()
+                        for option in raw_options
+                        if str(option).strip()
+                    }
+                )
+            )
+            if isinstance(raw_options, (list, tuple, set))
+            else ()
+        )
         # P1-17: fresh-start 系统默认 topology profile id。binding 没显式选
         # profile 时, HAL service _initialize_from_db 读这个 attr 做 fallback
         # (见 UXM_DEFAULT_TOPOLOGY_PROFILE_ID)。operator 经 connection_params
@@ -913,6 +918,8 @@ class RealUxmDriver(BaseStationDriver):
         return InstrumentEnvironment(
             instrument_id=self.instrument_id,
             instrument="uxm",
+            adapter_id=self.adapter_id,
+            options=self._evidence_options,
             model=hardware_identity["model"] if live else None,
             firmware_version=(
                 endpoint_identity["firmware_version"] if live else None
@@ -1014,7 +1021,7 @@ class RealUxmDriver(BaseStationDriver):
         )
 
     async def read_live_frequency_identity(self):
-        """开关 1 (uxm_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
+        """开关 1 (base_station_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
         当前实际 ARFCN + BW 构造频率标识 — 不是下发记录 (继承模式没下发,
         get_frequency_identity 必 None), 是仪器真实生效态。
 
@@ -1869,29 +1876,12 @@ class RealUxmDriver(BaseStationDriver):
 
     # 预置端口映射表
     # 键: (逻辑天线编号, 方向)  值: 物理端口名
-    MIMO_PORT_PRESETS = {
-        "siso": {
-            "tx": {1: "RF1OUT"},
-            "rx": {1: "RF1IN"},
-            "description": "SISO 1x1: RF1 单端口",
-        },
-        "2x2": {
-            "tx": {1: "RF1OUT", 2: "RF2OUT"},
-            "rx": {1: "RF1IN",  2: "RF2IN"},
-            "description": "2x2 MIMO: RF1 + RF2",
-        },
-        "4x4": {
-            "tx": {1: "RF1OUT", 2: "RF2OUT", 3: "RF3OUT", 4: "RF4OUT"},
-            "rx": {1: "RF1IN",  2: "RF2IN",  3: "RF3IN",  4: "RF4IN"},
-            "description": "4x4 MIMO: RF1 + RF2 + RF3 + RF4",
-        },
-        # 交叉验证配置: 仅使用 RF3+RF4 (用于隔离测试)
-        "2x2_alt": {
-            "tx": {1: "RF3OUT", 2: "RF4OUT"},
-            "rx": {1: "RF3IN",  2: "RF4IN"},
-            "description": "2x2 MIMO (备用端口): RF3 + RF4",
-        },
-    }
+    MIMO_PORT_PRESETS = UXM_MIMO_PORT_PRESETS
+
+    def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
+        """Profile-owned connector projection for topology display/audit."""
+
+        return get_uxm_mimo_route_snapshot(preset)
 
     async def set_mimo_port_mapping(
         self,

@@ -7,6 +7,7 @@ import * as api from './api'
 import type { SessionResponse, LabResolutionDetail } from './api'
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../../features/OperationalLab'
 import { fetchChannelAssets, type ChannelAsset } from '../../api/channelAssetService'
+import { parseChannelFrequencyIdentity } from '../../features/ChannelWorkbench/channelFrequencyIdentity'
 
 const PHASE_STEPS = [
   { id: 'precheck', label: '系统预检', desc: '仪表状态与校准验证' },
@@ -42,6 +43,13 @@ export function CommissioningSandbox() {
   // 默认，而是本次 session 的显式输入；创建后会固定进 execution.config。
   const [frequencyMhz, setFrequencyMhz] = useState(3549.99)
   const [bandwidthMhz, setBandwidthMhz] = useState(40)
+  const [radioTechnology, setRadioTechnology] = useState<'nr5g' | 'lte'>('nr5g')
+  const [band, setBand] = useState('N78')
+  const [duplex, setDuplex] = useState<'fdd' | 'tdd'>('fdd')
+  const [nrArfcn, setNrArfcn] = useState<number | string>(636666)
+  const [lteDlEarfcn, setLteDlEarfcn] = useState<number | string>('')
+  const [subcarrierSpacingKhz, setSubcarrierSpacingKhz] = useState(30)
+  const [theoreticalPeakMbps, setTheoreticalPeakMbps] = useState<number | string>('')
   const [uxmPowerDbmPerBw, setUxmPowerDbmPerBw] = useState(-15)
   const [f64InputRefDbm, setF64InputRefDbm] = useState(-17)
   const [f64CrestDb, setF64CrestDb] = useState(15)
@@ -125,13 +133,20 @@ export function CommissioningSandbox() {
     try {
       setLoading(true)
       const res = await api.createSession({
+        radioTechnology,
         engineMode,
         labProfileId: labId || undefined,
         ascSourcePath: engineMode === 'external_asc' ? ascSourcePath : undefined,
         channelAssetId: channelAssetId || undefined,
         frequencyHz: frequencyMhz * 1e6,
         bandwidthMhz,
-        uxmDlPowerDbmPerBw: uxmPowerDbmPerBw,
+        band: band.trim().toUpperCase(),
+        duplex: radioTechnology === 'lte' ? duplex : undefined,
+        subcarrierSpacingKhz: radioTechnology === 'nr5g' ? subcarrierSpacingKhz : undefined,
+        nrArfcn: radioTechnology === 'nr5g' && typeof nrArfcn === 'number' ? nrArfcn : undefined,
+        lteDlEarfcn: radioTechnology === 'lte' && typeof lteDlEarfcn === 'number' ? lteDlEarfcn : undefined,
+        theoreticalPeakThroughputMbps: radioTechnology === 'lte' && typeof theoreticalPeakMbps === 'number' ? theoreticalPeakMbps : undefined,
+        uxmDlPowerDbmPerBw: radioTechnology === 'nr5g' ? uxmPowerDbmPerBw : undefined,
         f64InputRefDbm,
         f64CrestDb,
         f64OutputLevelDbm,
@@ -304,7 +319,10 @@ export function CommissioningSandbox() {
                     // GCM 冷启动必须能解析本次 .smu；不能再借用 F64 遗留场景。
                     (engineMode === 'keysight_gcm' && !channelAssetId && !emulationFile.trim()) ||
                     !Number.isFinite(frequencyMhz) || frequencyMhz <= 0 ||
-                    !Number.isFinite(bandwidthMhz) || bandwidthMhz <= 0
+                    !Number.isFinite(bandwidthMhz) || bandwidthMhz <= 0 ||
+                    !band.trim() ||
+                    (radioTechnology === 'nr5g' && typeof nrArfcn !== 'number') ||
+                    (radioTechnology === 'lte' && typeof lteDlEarfcn !== 'number')
                   }
                   onClick={() => {
                     // Bump the attempt counter so the init effect re-fires
@@ -359,6 +377,20 @@ export function CommissioningSandbox() {
                 onChange={(value) => {
                   setChannelAssetId(value)
                   const asset = channelAssets.find((item) => item.id === value)
+                  const scd = parseChannelFrequencyIdentity(
+                    (asset?.payload as { scd_config?: unknown } | undefined)?.scd_config,
+                  )
+                  if (scd) {
+                    setRadioTechnology(scd.radioTechnology)
+                    setBand(scd.band)
+                    if (scd.radioTechnology === 'lte') {
+                      setLteDlEarfcn(scd.channelNumber)
+                      setNrArfcn('')
+                    } else {
+                      setNrArfcn(scd.channelNumber)
+                      setLteDlEarfcn('')
+                    }
+                  }
                   if (asset?.center_frequency_hz != null) {
                     setFrequencyMhz(asset.center_frequency_hz / 1e6)
                   }
@@ -369,6 +401,39 @@ export function CommissioningSandbox() {
               />
 
               <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
+                <Select
+                  label="无线制式"
+                  data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+                  value={radioTechnology}
+                  onChange={(value) => {
+                    const rat = value === 'lte' ? 'lte' : 'nr5g'
+                    setRadioTechnology(rat)
+                    setBand(rat === 'lte' ? '' : 'N78')
+                    setNrArfcn(rat === 'nr5g' ? 636666 : '')
+                    setLteDlEarfcn('')
+                    setTheoreticalPeakMbps('')
+                  }}
+                  allowDeselect={false}
+                />
+                <TextInput label="频段 Band" placeholder={radioTechnology === 'lte' ? 'B3' : 'N78'} value={band}
+                  onChange={(event) => setBand(event.currentTarget.value.toUpperCase())} required />
+                {radioTechnology === 'lte' ? (
+                  <>
+                    <Select label="双工模式" data={[{ value: 'fdd', label: 'FDD' }, { value: 'tdd', label: 'TDD' }]}
+                      value={duplex} onChange={(value) => setDuplex(value === 'tdd' ? 'tdd' : 'fdd')} allowDeselect={false} />
+                    <NumberInput label="LTE DL EARFCN" value={lteDlEarfcn}
+                      onChange={setLteDlEarfcn} min={0} required />
+                    <NumberInput label="LTE 理论峰值（可选）" suffix=" Mbps" value={theoreticalPeakMbps}
+                      description="留空时绝对吞吐仍可用，ratio 与相关判决为 N/A"
+                      onChange={setTheoreticalPeakMbps} min={0} />
+                  </>
+                ) : (
+                  <>
+                    <NumberInput label="NR-ARFCN" value={nrArfcn} onChange={setNrArfcn} min={0} required />
+                    <NumberInput label="子载波间隔" suffix=" kHz" value={subcarrierSpacingKhz}
+                      onChange={(value) => setSubcarrierSpacingKhz(Number(value))} min={1} required />
+                  </>
+                )}
                 <NumberInput
                   label="中心频率 (MHz)"
                   value={frequencyMhz}
@@ -377,17 +442,19 @@ export function CommissioningSandbox() {
                   min={1}
                 />
                 <NumberInput
-                  label="UXM 带宽 (MHz)"
+                  label="基站带宽 (MHz)"
                   value={bandwidthMhz}
                   onChange={(value) => setBandwidthMhz(Number(value))}
                   min={1}
                 />
-                <NumberInput
-                  label="UXM 整带宽功率 (dBm)"
-                  value={uxmPowerDbmPerBw}
-                  onChange={(value) => setUxmPowerDbmPerBw(Number(value))}
-                  decimalScale={1}
-                />
+                {radioTechnology === 'nr5g' && (
+                  <NumberInput
+                    label="UXM 整带宽功率 (dBm)"
+                    value={uxmPowerDbmPerBw}
+                    onChange={(value) => setUxmPowerDbmPerBw(Number(value))}
+                    decimalScale={1}
+                  />
+                )}
                 <NumberInput
                   label="F64 输入参考 (dBm)"
                   value={f64InputRefDbm}

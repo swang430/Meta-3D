@@ -152,6 +152,18 @@ def test_onsite_rf_workpoint_is_saved_in_session_overrides():
     assert overrides["f64_output_level_dbm"] == -52.0
     assert overrides["f64_bypass_mode"] == 2
 
+
+def test_base_station_config_mode_is_optional_and_uses_the_generic_key():
+    default_overrides = _request_overrides(CreateSessionRequest())
+    assert "base_station_config_mode" not in default_overrides
+    assert "uxm_config_mode" not in default_overrides
+
+    overrides = _request_overrides(
+        CreateSessionRequest(base_station_config_mode="inherit")
+    )
+    assert overrides["base_station_config_mode"] == "inherit"
+    assert "uxm_config_mode" not in overrides
+
 # NOTE: the mock/real auto-skip is verified at the precheck gate level (live
 # HAL), see test_mimo_ota_precheck_{dut,cal}_gate.py
 # (test_mock_baseStation_auto_skips_strict_dut_gate /

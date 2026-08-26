@@ -1429,14 +1429,23 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
   const [newFilename, setNewFilename] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [newDescription, setNewDescription] = useState('')
+  const [newRadioTechnology, setNewRadioTechnology] = useState<'nr5g' | 'lte'>('nr5g')
+  const [newBand, setNewBand] = useState('')
+  const [newChannelNumber, setNewChannelNumber] = useState<number | string>('')
   const [opError, setOpError] = useState<string | null>(null)
 
   const addMutation = useMutation({
     mutationFn: () =>
       addChannelModel(categoryKey, {
         filename: newFilename.trim(),
-        label: newLabel.trim() || undefined,
-        description: newDescription.trim() || undefined,
+        label: newLabel.trim() || newFilename.trim(),
+        description: newDescription.trim(),
+        radio_technology: newRadioTechnology,
+        channel_kind: newRadioTechnology === 'lte' ? 'lte_dl_earfcn' : 'nr_arfcn',
+        band: newBand.trim().toUpperCase(),
+        ...(newRadioTechnology === 'lte'
+          ? { lte_dl_earfcn: Number(newChannelNumber) }
+          : { nr_arfcn: Number(newChannelNumber) }),
       }),
     onSuccess: (result) => {
       // Backend returns the post-add list shape (same as fetchChannelModels)
@@ -1448,6 +1457,9 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
       setNewFilename('')
       setNewLabel('')
       setNewDescription('')
+      setNewRadioTechnology('nr5g')
+      setNewBand('')
+      setNewChannelNumber('')
       setOpError(null)
       setAddOpen(false)
     },
@@ -1570,6 +1582,24 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.currentTarget.value)}
               />
+              <Select
+                size="xs"
+                label="无线制式（必填）"
+                data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+                value={newRadioTechnology}
+                onChange={(value) => {
+                  setNewRadioTechnology(value === 'lte' ? 'lte' : 'nr5g')
+                  setNewBand('')
+                  setNewChannelNumber('')
+                }}
+                allowDeselect={false}
+              />
+              <Group grow>
+                <TextInput size="xs" label="频段 Band（必填）" placeholder={newRadioTechnology === 'lte' ? 'B3' : 'N78'}
+                  value={newBand} onChange={(event) => setNewBand(event.currentTarget.value)} />
+                <NumberInput size="xs" label={newRadioTechnology === 'lte' ? 'DL EARFCN（必填）' : 'NR-ARFCN（必填）'}
+                  value={newChannelNumber} onChange={setNewChannelNumber} min={0} />
+              </Group>
               <Group justify="flex-end" gap="xs">
                 <Button
                   size="xs"
@@ -1579,6 +1609,9 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
                     setNewFilename('')
                     setNewLabel('')
                     setNewDescription('')
+                    setNewRadioTechnology('nr5g')
+                    setNewBand('')
+                    setNewChannelNumber('')
                     setOpError(null)
                   }}
                 >
@@ -1588,7 +1621,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
                   size="xs"
                   onClick={() => addMutation.mutate()}
                   loading={addMutation.isPending}
-                  disabled={!newFilename.trim()}
+                  disabled={!newFilename.trim() || !newBand.trim() || typeof newChannelNumber !== 'number'}
                 >
                   保存
                 </Button>
@@ -1608,6 +1641,11 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
                     </Text>
                     <Badge size="xs" variant="outline" color="brand">
                       {item.type}
+                    </Badge>
+                    <Badge size="xs" variant="light" color={item.radio_technology === 'legacy_unknown' ? 'yellow' : 'blue'}>
+                      {item.radio_technology === 'legacy_unknown'
+                        ? '历史·身份未知'
+                        : `${item.radio_technology === 'lte' ? 'LTE' : 'NR'} ${item.band ?? ''} ${item.channel_kind === 'lte_dl_earfcn' ? `EARFCN ${item.lte_dl_earfcn}` : `ARFCN ${item.nr_arfcn}`}`}
                     </Badge>
                   </Group>
                   {item.label !== item.filename ? (

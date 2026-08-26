@@ -43,6 +43,25 @@ from app.hal.rf_switch import MockRfSwitch, EtslSwitchDriver
 _REAL_DRIVER_REGISTRY_CACHE: Optional[Dict[str, Dict[str, type]]] = None
 
 
+def _validate_base_station_adapter_ids(drivers: Dict[str, type]) -> None:
+    """保证注册类提供唯一、显式且受支持的基站 adapter identity。"""
+    supported = {"uxm", "cmw500"}
+    seen: Dict[str, str] = {}
+    for model_name, driver_class in drivers.items():
+        adapter_id = getattr(driver_class, "adapter_id", None)
+        if adapter_id not in supported:
+            raise ValueError(
+                f"unknown base-station adapter_id for {model_name}: {adapter_id!r}"
+            )
+        previous_model = seen.get(adapter_id)
+        if previous_model is not None:
+            raise ValueError(
+                "duplicate base-station adapter_id "
+                f"{adapter_id!r}: {previous_model!r} and {model_name!r}"
+            )
+        seen[adapter_id] = model_name
+
+
 def _real_driver_registry() -> Dict[str, Dict[str, type]]:
     """Lazy-init + cache the (category_key, model_name) → DriverClass table.
 
@@ -69,7 +88,7 @@ def _real_driver_registry() -> Dict[str, Dict[str, type]]:
     from app.hal.rs_zna import RealRsZnaDriver
     from app.hal.rs_fsva import RealRsFsvaDriver
 
-    _REAL_DRIVER_REGISTRY_CACHE = {
+    registry = {
         "channelEmulator": {
             "PROPSIM F64": RealPropsimF64Driver,
             "PROPSIM FS16": RealPropsimFs16Driver,
@@ -100,6 +119,8 @@ def _real_driver_registry() -> Dict[str, Dict[str, type]]:
             "EMCenter Switch": EtslSwitchDriver,
         },
     }
+    _validate_base_station_adapter_ids(registry["baseStation"])
+    _REAL_DRIVER_REGISTRY_CACHE = registry
     return _REAL_DRIVER_REGISTRY_CACHE
 
 

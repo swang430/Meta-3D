@@ -84,9 +84,22 @@ def ce_binding(db) -> UUID:
 
 def _create(db, conn_id, **over):
     base = dict(
-        instrument_connection_id=conn_id, band="N78", arfcn=640000,
+        instrument_connection_id=conn_id, radio_technology="nr5g",
+        channel_kind="nr_arfcn", band="N78", arfcn=640000,
+        lte_dl_earfcn=None,
         bandwidth_mhz=100, model="CDLC", scenario="UMa", mimo="4x4",
         polarization="DP", version=3,
+    )
+    base.update(over)
+    return svc.create_scd(db, **base)
+
+
+def _create_lte(db, conn_id, **over):
+    base = dict(
+        instrument_connection_id=conn_id, radio_technology="lte",
+        channel_kind="lte_dl_earfcn", band="B3", arfcn=None,
+        lte_dl_earfcn=1575, bandwidth_mhz=20, model="TDLA",
+        scenario="Urban", mimo="2x2", polarization="DP", version=1,
     )
     base.update(over)
     return svc.create_scd(db, **base)
@@ -142,6 +155,24 @@ class TestCreate:
     def test_different_version_not_duplicate(self, db, ce_binding):
         _create(db, ce_binding, version=1)
         _create(db, ce_binding, version=2)  # 不同版本 = 不同标准名 = 不冲突
+
+    def test_lte_identity_uses_distinct_column_and_name_family(self, db, ce_binding):
+        scd = _create_lte(db, ce_binding)
+        assert scd.radio_technology == "lte"
+        assert scd.channel_kind == "lte_dl_earfcn"
+        assert scd.arfcn is None
+        assert scd.lte_dl_earfcn == 1575
+        assert scd.standard_name == (
+            "MF_LTE_B3_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu"
+        )
+
+    def test_new_scd_requires_matching_rat_and_channel_kind(self, db, ce_binding):
+        with pytest.raises(svc.StandardChannelError, match="channel_kind"):
+            _create_lte(db, ce_binding, channel_kind="nr_arfcn")
+        with pytest.raises(svc.StandardChannelError, match="lte_dl_earfcn"):
+            _create_lte(db, ce_binding, lte_dl_earfcn=None)
+        with pytest.raises(svc.StandardChannelError, match="arfcn"):
+            _create_lte(db, ce_binding, arfcn=1575)
 
 
 class TestListGetDelete:
@@ -221,6 +252,47 @@ class TestAssociate:
         normalised = normalize_channel_model_entries(_models(db, ce_binding))
         assert normalised[0]["center_frequency_mhz"] == 3600.0
         assert normalised[0]["nr_arfcn"] == 640000
+
+    def test_lte_projection_preserves_typed_identity(self, db, ce_binding):
+        scd = _create_lte(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path="customer_lte_channel.smu",
+            association_source="vendor_associated",
+        )
+        raw = _models(db, ce_binding)[0]
+        assert raw["radio_technology"] == "lte"
+        assert raw["channel_kind"] == "lte_dl_earfcn"
+        assert raw["lte_dl_earfcn"] == 1575
+        assert "nr_arfcn" not in raw
+        normalised = normalize_channel_model_entries([raw])[0]
+        assert normalised["radio_technology"] == "lte"
+        assert normalised["channel_kind"] == "lte_dl_earfcn"
+        assert normalised["lte_dl_earfcn"] == 1575
+        assert normalised["center_frequency_mhz"] == 1842.5
+
+    def test_lte_association_rejects_software_owned_filename_with_wrong_bandwidth(
+        self, db, ce_binding,
+    ):
+        scd = _create_lte(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError, match="bandwidth_mhz|BW"):
+            svc.associate_file(
+                db,
+                scd.id,
+                file_path="MF_LTE_B3_EARFCN1575_BW10_TDLA_Urban_2x2_DP_v1.smu",
+                association_source="vendor_associated",
+            )
+
+    def test_lte_association_rejects_software_owned_filename_with_wrong_band(
+        self, db, ce_binding,
+    ):
+        scd = _create_lte(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError, match="band"):
+            svc.associate_file(
+                db,
+                scd.id,
+                file_path="MF_LTE_B7_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu",
+                association_source="vendor_associated",
+            )
 
     def test_associate_loose_freq_mismatch_passes(self, db, ce_binding):
         # 2026-07-03 现场实证: 厂商文件名频率是场景族标称会说谎 (UMa_3600M 工程实为
@@ -353,6 +425,18 @@ class TestResolveEmulationForMeasure:
         assert path == "vendor_run_3600M.smu"
         assert freq.center_arfcn == 640000  # SCD 声明值, 不是文件名 3600M 解析
 
+    def test_lte_scd_returns_typed_earfcn_identity(self, db, ce_binding):
+        scd = _create_lte(db, ce_binding)
+        path, freq = svc.resolve_emulation_for_measure(
+            db, scd_id=str(scd.id), fallback_emulation_file=None
+        )
+
+        assert path is None
+        assert freq.radio_technology == "lte"
+        assert freq.channel_kind == "lte_dl_earfcn"
+        assert freq.lte_dl_earfcn == 1575
+        assert freq.center_freq_mhz == 1842.5
+
     def test_scd_id_redirects_to_vendor_channel_asset(self, db, ce_binding):
         """P2-16 deprecate-legacy (消费收敛): scd_id 命中同 id vendor_file ChannelAsset →
         用 ChannelAsset 的 associated_file_path + scd_config 频率, **不读** legacy SCD 表。
@@ -364,7 +448,11 @@ class TestResolveEmulationForMeasure:
         # 同 id vendor_file ChannelAsset (工作台编辑后的收敛真值源), 故意不同文件+频率
         db.add(ChannelAsset(
             id=scd.id, name="ca-vendor-收敛", source_type="vendor_file",
-            payload={"scd_config": {"arfcn": 620000, "bandwidth_mhz": 50}},
+            payload={"scd_config": {
+                "band": "N78", "arfcn": 620000, "bandwidth_mhz": 50,
+                "model": "CDLC", "scenario": "UMa", "mimo": "4x4",
+                "polarization": "DP", "version": 1,
+            }},
             allowed_targets=["gcm_native"], associated_file_path="workbench_new.smu",
             is_active=True,
         ))
@@ -393,7 +481,11 @@ class TestResolveEmulationForMeasure:
                 id=scd.id,
                 name="retired-vendor",
                 source_type="vendor_file",
-                payload={"scd_config": {"arfcn": 620000, "bandwidth_mhz": 50}},
+                payload={"scd_config": {
+                    "band": "N78", "arfcn": 620000, "bandwidth_mhz": 50,
+                    "model": "CDLC", "scenario": "UMa", "mimo": "4x4",
+                    "polarization": "DP", "version": 1,
+                }},
                 allowed_targets=["gcm_native"],
                 associated_file_path="retired.smu",
                 is_active=False,

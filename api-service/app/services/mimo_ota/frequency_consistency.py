@@ -13,7 +13,12 @@ TestCase 还是默认 fallback, 最后都校验多方同频, 保护测试结果�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
+
+from app.hal.lte_earfcn import (
+    lte_dl_earfcn_to_frequency_mhz,
+    normalize_lte_band,
+)
 
 from app.hal.nr_arfcn import (
     FrequencyIdentity,
@@ -22,11 +27,138 @@ from app.hal.nr_arfcn import (
 )
 
 
+RadioTechnology = Literal["nr5g", "lte"]
+ChannelKind = Literal["nr_arfcn", "lte_dl_earfcn"]
+
+
+@dataclass(frozen=True)
+class ChannelFrequencyIdentity:
+    """RAT-aware canonical channel identity used by formal frequency gates.
+
+    ``channel_number`` is deliberately namespaced by ``radio_technology`` and
+    ``channel_kind``.  LTE EARFCN and NR-ARFCN may have the same integer value;
+    treating that integer as an untyped slot would silently compare different
+    radio systems.
+    """
+
+    radio_technology: RadioTechnology
+    channel_kind: ChannelKind
+    channel_number: int
+    bandwidth_mhz: float
+    band: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.radio_technology == "nr5g":
+            if self.channel_kind != "nr_arfcn" or self.band is not None:
+                raise ValueError("NR identity must use nr_arfcn without LTE band")
+            nr_arfcn_to_freq_mhz(self.channel_number)
+        elif self.radio_technology == "lte":
+            if self.channel_kind != "lte_dl_earfcn" or self.band is None:
+                raise ValueError("LTE identity must use lte_dl_earfcn with band")
+            object.__setattr__(self, "band", normalize_lte_band(self.band))
+            lte_dl_earfcn_to_frequency_mhz(self.band, self.channel_number)
+        else:  # pragma: no cover - Literal is not a runtime boundary
+            raise ValueError(f"unsupported radio technology: {self.radio_technology!r}")
+        if not isinstance(self.channel_number, int):
+            raise ValueError("channel_number must be an integer")
+        if not isinstance(self.bandwidth_mhz, (int, float)) or self.bandwidth_mhz <= 0:
+            raise ValueError("bandwidth_mhz must be positive")
+        object.__setattr__(self, "bandwidth_mhz", float(self.bandwidth_mhz))
+
+    @classmethod
+    def from_nr_arfcn(
+        cls, *, nr_arfcn: int, bandwidth_mhz: float
+    ) -> "ChannelFrequencyIdentity":
+        return cls(
+            radio_technology="nr5g",
+            channel_kind="nr_arfcn",
+            channel_number=nr_arfcn,
+            bandwidth_mhz=bandwidth_mhz,
+        )
+
+    @classmethod
+    def from_nr_center_freq_mhz(
+        cls, *, center_freq_mhz: float, bandwidth_mhz: float
+    ) -> "ChannelFrequencyIdentity":
+        return cls.from_nr_arfcn(
+            nr_arfcn=freq_mhz_to_nr_arfcn(center_freq_mhz),
+            bandwidth_mhz=bandwidth_mhz,
+        )
+
+    @classmethod
+    def from_lte_earfcn(
+        cls, *, band: str, dl_earfcn: int, bandwidth_mhz: float
+    ) -> "ChannelFrequencyIdentity":
+        return cls(
+            radio_technology="lte",
+            channel_kind="lte_dl_earfcn",
+            channel_number=dl_earfcn,
+            bandwidth_mhz=bandwidth_mhz,
+            band=band,
+        )
+
+    @property
+    def center_freq_mhz(self) -> float:
+        if self.radio_technology == "nr5g":
+            return nr_arfcn_to_freq_mhz(self.channel_number)
+        assert self.band is not None
+        return lte_dl_earfcn_to_frequency_mhz(self.band, self.channel_number)
+
+    @property
+    def center_frequency_hz(self) -> int:
+        return round(self.center_freq_mhz * 1e6)
+
+    @property
+    def center_arfcn(self) -> int:
+        if self.channel_kind != "nr_arfcn":
+            raise AttributeError("LTE identity has no NR center_arfcn")
+        return self.channel_number
+
+    @property
+    def lte_dl_earfcn(self) -> int:
+        if self.channel_kind != "lte_dl_earfcn":
+            raise AttributeError("NR identity has no LTE DL EARFCN")
+        return self.channel_number
+
+    def describe(self) -> str:
+        if self.radio_technology == "nr5g":
+            number = f"NR-ARFCN {self.channel_number}"
+        else:
+            number = f"LTE {self.band} EARFCN {self.channel_number}"
+        return (
+            f"{number} ({self.center_freq_mhz:.2f} MHz) / "
+            f"BW {self.bandwidth_mhz:g} MHz"
+        )
+
+
+TypedFrequencyIdentity = Union[ChannelFrequencyIdentity, FrequencyIdentity]
+
+
+def as_channel_frequency_identity(
+    identity: TypedFrequencyIdentity,
+) -> ChannelFrequencyIdentity:
+    """Translate only the pre-P1-73 NR identity shape.
+
+    This is deliberately narrow: a legacy ``FrequencyIdentity`` can only have
+    come from the NR-only schema, so it may be labelled NR.  Untyped dicts,
+    filenames, and bare numbers are not accepted here.
+    """
+
+    if isinstance(identity, ChannelFrequencyIdentity):
+        return identity
+    if isinstance(identity, FrequencyIdentity):
+        return ChannelFrequencyIdentity.from_nr_arfcn(
+            nr_arfcn=identity.center_arfcn,
+            bandwidth_mhz=identity.bandwidth_mhz,
+        )
+    raise TypeError(f"unsupported frequency identity: {type(identity).__name__}")
+
+
 @dataclass(frozen=True)
 class CenterFrequencyObservation:
     """只有中心频率有实时证据、带宽未知的仪表观察值。"""
 
-    center_arfcn: int
+    center_frequency_hz: int
     source: str
 
     @classmethod
@@ -34,14 +166,17 @@ class CenterFrequencyObservation:
         cls, center_freq_mhz: float, *, source: str
     ) -> "CenterFrequencyObservation":
         return cls(
-            center_arfcn=freq_mhz_to_nr_arfcn(center_freq_mhz),
+            center_frequency_hz=round(float(center_freq_mhz) * 1e6),
             source=source,
         )
 
+    @property
+    def center_freq_mhz(self) -> float:
+        return self.center_frequency_hz / 1e6
+
     def describe(self) -> str:
         return (
-            f"ARFCN {self.center_arfcn} "
-            f"({nr_arfcn_to_freq_mhz(self.center_arfcn):.2f} MHz) / "
+            f"{self.center_freq_mhz:.2f} MHz / "
             f"BW unknown ({self.source})"
         )
 
@@ -93,9 +228,9 @@ class FrequencyConsistencyResult:
 
 
 def check_frequency_consistency(
-    testcase: FrequencyIdentity,
+    testcase: TypedFrequencyIdentity,
     instruments: Dict[
-        str, Optional[Union[FrequencyIdentity, CenterFrequencyObservation]]
+        str, Optional[Union[TypedFrequencyIdentity, CenterFrequencyObservation]]
     ],
 ) -> FrequencyConsistencyResult:
     """校验各仪表频率规范标识跟 TestCase 精确一致。
@@ -103,37 +238,40 @@ def check_frequency_consistency(
     Args:
         testcase: TestCase 派生的频率规范标识 (真值源)。
         instruments: ``{仪表名: Optional[FrequencyIdentity]}``。``None`` = 该仪表无
-            频率可报 → **跳过, 不算不一致** (e.g. ASC 路径 F64 频率由 channel-engine
-            按 TestCase 同源生成, driver 状态里没有; 或仪表未配置)。
+            频率可报；不制造 mismatch，但必须列为 unverified，不能据此发布
+            ``fully_verified=true``。
 
     Returns:
         FrequencyConsistencyResult: ``consistent`` + 每仪表 identity + mismatch 列表。
         比对是精确的 (FrequencyIdentity 相等 = ARFCN 整数 + 带宽都相等)。
     """
+    expected = as_channel_frequency_identity(testcase)
     per_instrument: Dict[str, str] = {}
     mismatches: List[FrequencyMismatch] = []
     unverified: List[str] = []
     for name, ident in instruments.items():
         if ident is None:
             per_instrument[name] = "未报告(跳过)"
+            unverified.append(name)
             continue
         per_instrument[name] = ident.describe()
         if isinstance(ident, CenterFrequencyObservation):
             unverified.append(name)
-            matches = ident.center_arfcn == testcase.center_arfcn
+            matches = ident.center_frequency_hz == expected.center_frequency_hz
         else:
-            matches = ident == testcase
+            ident = as_channel_frequency_identity(ident)
+            matches = ident == expected
         if not matches:
             mismatches.append(
                 FrequencyMismatch(
                     instrument=name,
-                    expected=testcase.describe(),
+                    expected=expected.describe(),
                     actual=ident.describe(),
                 )
             )
     return FrequencyConsistencyResult(
         consistent=not mismatches,
-        testcase_identity=testcase.describe(),
+        testcase_identity=expected.describe(),
         per_instrument=per_instrument,
         mismatches=mismatches,
         unverified=unverified,

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db.database import get_db
 from app.hal.base import (
@@ -320,10 +320,15 @@ class ChannelModelEntry(BaseModel):
     # P2-10 Step 1: 资产盘点元数据 (从文件名频率 token 解析或 config 显式给), 服务
     # emulation_file 选择 (.smu↔TestCase 频率匹配)。None = 文件名无频率 token。
     center_frequency_mhz: Optional[float] = None
+    radio_technology: Literal["nr5g", "lte", "legacy_unknown"]
+    channel_kind: Literal["nr_arfcn", "lte_dl_earfcn", "legacy_unknown"]
+    band: Optional[str] = None
     nr_arfcn: Optional[int] = None
+    lte_dl_earfcn: Optional[int] = None
     # P2-12 slice 4: SCD 派生 entry 的 SCD UUID (手敲条目为 None)。GUI 下拉选 SCD 派生项
     # 时存 scd_id (measure 查 SCD 解析 .smu + 频率 cross-check), 选手敲项存裸 emulation_file。
     scd_id: Optional[str] = None
+    channel_asset_id: Optional[str] = None
 
 
 class ChannelModelsListResult(BaseModel):
@@ -1471,6 +1476,46 @@ class AddChannelModelRequest(BaseModel):
     filename: str
     label: Optional[str] = None
     description: Optional[str] = None
+    radio_technology: Literal["nr5g", "lte"]
+    channel_kind: Literal["nr_arfcn", "lte_dl_earfcn"]
+    band: str
+    nr_arfcn: Optional[int] = None
+    lte_dl_earfcn: Optional[int] = None
+
+    @model_validator(mode="after")
+    def validate_frequency_identity(self) -> "AddChannelModelRequest":
+        from app.hal.lte_earfcn import (
+            lte_dl_earfcn_to_frequency_mhz,
+            normalize_lte_band,
+        )
+        from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+
+        band = self.band.strip().upper()
+        if not band:
+            raise ValueError("band must be a non-empty string")
+
+        if self.radio_technology == "nr5g":
+            if self.channel_kind != "nr_arfcn":
+                raise ValueError("NR channel model must use channel_kind=nr_arfcn")
+            if type(self.nr_arfcn) is not int or self.lte_dl_earfcn is not None:
+                raise ValueError(
+                    "NR channel model requires nr_arfcn and must not set lte_dl_earfcn"
+                )
+            nr_arfcn_to_freq_mhz(self.nr_arfcn)
+            if not band.startswith("N") or not band[1:].isdigit():
+                raise ValueError("NR band must use the N<number> form")
+            self.band = f"N{int(band[1:])}"
+            return self
+
+        if self.channel_kind != "lte_dl_earfcn":
+            raise ValueError("LTE channel model must use channel_kind=lte_dl_earfcn")
+        if type(self.lte_dl_earfcn) is not int or self.nr_arfcn is not None:
+            raise ValueError(
+                "LTE channel model requires lte_dl_earfcn and must not set nr_arfcn"
+            )
+        self.band = normalize_lte_band(band)
+        lte_dl_earfcn_to_frequency_mhz(self.band, self.lte_dl_earfcn)
+        return self
 
 
 @router.post(
@@ -1528,6 +1573,13 @@ def add_channel_model_entry(
             )
 
     new_entry: Dict[str, Any] = {"filename": filename}
+    new_entry.update({
+        "radio_technology": payload.radio_technology,
+        "channel_kind": payload.channel_kind,
+        "band": payload.band,
+        "nr_arfcn": payload.nr_arfcn,
+        "lte_dl_earfcn": payload.lte_dl_earfcn,
+    })
     if payload.label:
         new_entry["label"] = payload.label
     if payload.description:

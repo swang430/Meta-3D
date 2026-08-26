@@ -160,6 +160,12 @@ export interface ChannelModelEntry {
   description: string | null
   type: string // smu / rtc / asc / unknown
   scd_id?: string | null // P2-12 slice 4: SCD 派生 entry 的 SCD UUID (手敲条目为 null)
+  channel_asset_id?: string | null
+  radio_technology: 'nr5g' | 'lte' | 'legacy_unknown'
+  channel_kind: 'nr_arfcn' | 'lte_dl_earfcn' | 'legacy_unknown'
+  band?: string | null
+  nr_arfcn?: number | null
+  lte_dl_earfcn?: number | null
 }
 
 export interface ChannelModelsListResult {
@@ -182,8 +188,13 @@ export const fetchChannelModels = async (
 
 export interface AddChannelModelPayload {
   filename: string
-  label?: string
-  description?: string
+  label: string
+  description: string
+  radio_technology: 'nr5g' | 'lte'
+  channel_kind: 'nr_arfcn' | 'lte_dl_earfcn'
+  band: string
+  nr_arfcn?: number
+  lte_dl_earfcn?: number
 }
 
 export const addChannelModel = async (

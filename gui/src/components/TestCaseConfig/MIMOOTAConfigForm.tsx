@@ -36,9 +36,14 @@ import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
 import {
+  patchPrimaryCarrierFields,
   primaryCarrierValue,
   updatePrimaryCarrierValue,
 } from './carrierTruth'
+import {
+  resolveBaseStationConfigMode,
+  updateBaseStationConfigMode,
+} from './baseStationConfigTruth'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -70,10 +75,15 @@ export interface MIMOOTAConfiguration {
   bandwidth_mhz?: number
   /** Phase 2g 载波聚合。表单只编辑 PCell；SCell 仍由 configuration JSON 管理。 */
   component_carriers?: Array<{
+    radio_technology?: 'nr5g' | 'lte'
+    channel_kind?: 'nr_arfcn' | 'lte_dl_earfcn'
     frequency_hz?: number
     bandwidth_mhz?: number
     subcarrier_spacing_khz?: number
     band?: string | null
+    duplex?: 'fdd' | 'tdd' | null
+    nr_arfcn?: number | null
+    lte_dl_earfcn?: number | null
     role?: string
   }>
   mimo_layers?: number
@@ -124,8 +134,8 @@ export interface MIMOOTAConfiguration {
   f64_output_gain_db?: number
   // AUTOSET 闭环的 UXM 起始功率 (留空 = controller 默认 -10 dBm)。
   input_loop_initial_dl_power_dbm?: number
-  // 开关 1: UXM 小区参数来源 — "dispatch" (默认, 主动下发) / "inherit"
-  // (跳过小区下发, read_live 读回实际频率/带宽核对)。
+  base_station_config_mode?: string
+  /** @deprecated 仅用于读取旧 TestCase；表单不再写该键。 */
   uxm_config_mode?: string
   pass_criteria?: PassCriteria
   step_overrides?: Record<string, unknown> | null
@@ -182,6 +192,9 @@ const MIMO_PORT_PRESET_OPTIONS = [
 ]
 
 export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
+  const rawPCell = value.component_carriers?.[0]
+  const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
+  const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const update = <K extends keyof MIMOOTAConfiguration>(
     key: K,
     next: MIMOOTAConfiguration[K],
@@ -200,6 +213,35 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     if (typeof next !== 'number' || !Number.isFinite(next)) return
 
     onChange(updatePrimaryCarrierValue(value, key, next))
+  }
+
+  const patchPCell = (patch: Record<string, unknown>): void => {
+    onChange(patchPrimaryCarrierFields(value, patch))
+  }
+
+  const switchRadioTechnology = (rat: 'nr5g' | 'lte'): void => {
+    const current = rawPCell ?? {
+      frequency_hz: value.frequency_hz,
+      bandwidth_mhz: value.bandwidth_mhz,
+      role: 'pcell',
+    }
+    const pcell = rat === 'lte'
+      ? {
+          ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
+          band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
+          nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
+        }
+      : {
+          ...current, radio_technology: 'nr5g' as const, channel_kind: 'nr_arfcn' as const,
+          band: undefined, nr_arfcn: undefined, subcarrier_spacing_khz: 30,
+          duplex: undefined, lte_dl_earfcn: undefined, role: 'pcell' as const,
+        }
+    const next: MIMOOTAConfiguration = { ...value, component_carriers: [pcell] }
+    if (rat === 'lte') {
+      next.subcarrier_spacing_khz = undefined
+      next.theoretical_peak_throughput_mbps = undefined
+    }
+    onChange(next)
   }
 
   const updatePass = <K extends keyof PassCriteria>(key: K, next: PassCriteria[K]): void => {
@@ -386,6 +428,51 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               }
             />
             <Select
+              label="无线制式"
+              description="PCell 显式真值；LTE 不继承 NR ARFCN/SCS/峰值"
+              data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+              value={radioTechnology}
+              onChange={(v) => switchRadioTechnology(v === 'lte' ? 'lte' : 'nr5g')}
+              disabled={readOnly}
+              allowDeselect={false}
+            />
+            <TextInput
+              label="频段 Band"
+              placeholder={radioTechnology === 'lte' ? 'B3' : 'N78'}
+              value={rawPCell?.band ?? ''}
+              onChange={(e) => patchPCell({ band: e.currentTarget.value.toUpperCase() || undefined })}
+              disabled={readOnly}
+              required={radioTechnology === 'lte'}
+            />
+            {radioTechnology === 'lte' ? (
+              <>
+                <Select
+                  label="双工模式"
+                  data={[{ value: 'fdd', label: 'FDD' }, { value: 'tdd', label: 'TDD' }]}
+                  value={rawPCell?.duplex ?? null}
+                  onChange={(v) => patchPCell({ duplex: v ?? undefined })}
+                  disabled={readOnly}
+                  required
+                />
+                <NumberInput
+                  label="LTE DL EARFCN"
+                  value={rawPCell?.lte_dl_earfcn ?? undefined}
+                  onChange={(v) => patchPCell({ lte_dl_earfcn: typeof v === 'number' ? v : undefined })}
+                  min={0}
+                  disabled={readOnly}
+                  required
+                />
+              </>
+            ) : (
+              <NumberInput
+                label="NR-ARFCN（可选显式）"
+                value={rawPCell?.nr_arfcn ?? undefined}
+                onChange={(v) => patchPCell({ nr_arfcn: typeof v === 'number' ? v : undefined })}
+                min={0}
+                disabled={readOnly}
+              />
+            )}
+            <Select
               label="子载波间隔"
               data={SCS_OPTIONS}
               value={
@@ -394,7 +481,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   : null
               }
               onChange={(v) => updateCarrierField('subcarrier_spacing_khz', v ? Number(v) : undefined)}
-              disabled={readOnly}
+              disabled={readOnly || radioTechnology === 'lte'}
               allowDeselect={false}
             />
             {/* P2-11 一致性按 ARFCN 整数比对 (nr_arfcn.py), 输入粒度必须细过 NR 栅格
@@ -960,7 +1047,11 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               <NumberInput
                 label="理论峰值吞吐量"
                 suffix=" Mbps"
-                description="用于 ratio 判定基准"
+                description={
+                  radioTechnology === 'lte'
+                    ? 'LTE 只接受本次显式值；留空时绝对吞吐可用，ratio 与相关判决显示 N/A'
+                    : '用于 ratio 判定基准'
+                }
                 value={value.theoretical_peak_throughput_mbps}
                 onChange={(v) =>
                   update(
@@ -990,15 +1081,21 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               </Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
                 <Select
-                  label="UXM 小区配置来源 (开关 1)"
-                  description="继承 = 跳过小区下发, 沿用仪器当前态 (如 EMQuest 基线), 但仍读回实际频率/带宽跟本配置核对"
+                  label="基站小区配置来源 (开关 1)"
+                  description="调试继承 = 跳过静态小区下发并核对当前态；所得数据不进入正式 KPI 或判决"
                   data={[
                     { value: 'dispatch', label: '主动下发 (默认) — 下发全套小区参数并回读对账' },
-                    { value: 'inherit', label: '继承仪器当前态 — 跳过小区下发 + 读回核对' },
+                    { value: 'inherit', label: '基站当前态调试继承 — 仅诊断，不参与正式判定' },
                   ]}
-                  value={value.uxm_config_mode === 'inherit' ? 'inherit' : 'dispatch'}
+                  value={baseStationConfigMode.mode}
+                  error={baseStationConfigMode.conflict ? '新旧配置来源字段冲突，请重新选择后保存' : undefined}
                   onChange={(v) =>
-                    update('uxm_config_mode', v === 'inherit' ? 'inherit' : undefined)
+                    onChange(
+                      updateBaseStationConfigMode(
+                        value,
+                        v === 'inherit' ? 'inherit' : 'dispatch',
+                      ),
+                    )
                   }
                   allowDeselect={false}
                   disabled={readOnly}

@@ -30,13 +30,20 @@ from app.services.channel_asset_service import (
 # —— 各 source_type 合法 payload 样例 ——
 _CLUSTER = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 30.0, "aod_deg": 10.0}
 _RAY = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 30.0, "aod_deg": 10.0, "phase_rad": 0.5}
-_SCD = {"band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
+_SCD = {"radio_technology": "nr5g", "channel_kind": "nr_arfcn",
+        "band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
         "scenario": "UMa", "mimo": "4x4", "polarization": "DP", "version": 1}
 
 _STD_PAYLOAD = {"cdl_model_name": "UMa CDL-C NLOS"}
 _CUSTOM_PAYLOAD = {"snapshots": [{"clusters": [_CLUSTER]}]}
 _RT_PAYLOAD = {"snapshots": [{"rays": [_RAY]}]}
 _VENDOR_PAYLOAD = {"scd_config": _SCD}
+_LTE_SCD = {
+    "radio_technology": "lte", "channel_kind": "lte_dl_earfcn",
+    "band": "B3", "arfcn": None, "lte_dl_earfcn": 1575,
+    "bandwidth_mhz": 20, "model": "TDLA", "scenario": "Urban",
+    "mimo": "2x2", "polarization": "DP", "version": 1,
+}
 
 
 @pytest.fixture
@@ -232,6 +239,42 @@ class TestPolymorphicPayloadValidation:
         a = create_channel_asset(db, name="vc", source_type="vendor_file",
                                  payload=_VENDOR_PAYLOAD)
         assert a.canonical_name == "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
+
+    def test_lte_vendor_rejects_mismatched_software_owned_filename(self, db):
+        with pytest.raises(ChannelAssetError, match="lte_dl_earfcn|EARFCN"):
+            create_channel_asset(
+                db,
+                name="lte-wrong-file",
+                source_type="vendor_file",
+                payload={"scd_config": _LTE_SCD},
+                associated_file_path=(
+                    "/smu/MF_LTE_B3_EARFCN1600_BW20_TDLA_Urban_2x2_DP_v1.smu"
+                ),
+            )
+
+    def test_lte_vendor_rejects_software_owned_filename_with_wrong_bandwidth(self, db):
+        with pytest.raises(ChannelAssetError, match="bandwidth_mhz|BW"):
+            create_channel_asset(
+                db,
+                name="lte-wrong-bandwidth-file",
+                source_type="vendor_file",
+                payload={"scd_config": _LTE_SCD},
+                associated_file_path=(
+                    "/smu/MF_LTE_B3_EARFCN1575_BW10_TDLA_Urban_2x2_DP_v1.smu"
+                ),
+            )
+
+    def test_lte_vendor_rejects_software_owned_filename_with_wrong_band(self, db):
+        with pytest.raises(ChannelAssetError, match="band"):
+            create_channel_asset(
+                db,
+                name="lte-wrong-band-file",
+                source_type="vendor_file",
+                payload={"scd_config": _LTE_SCD},
+                associated_file_path=(
+                    "/smu/MF_LTE_B7_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu"
+                ),
+            )
 
     def test_standard_invalid_cdl_name(self, db):
         # 任意非空名不够, 须合法 3GPP CDL 名 (Codex #173 复查 P2; 复用 parse_cdl_model_name)
