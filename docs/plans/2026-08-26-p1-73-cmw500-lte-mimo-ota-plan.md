@@ -181,6 +181,7 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `api-service/app/api/channel_asset.py`
 - Modify: `api-service/app/api/instrument.py`
 - Modify: `api-service/app/services/channel_asset_service.py`
+- Modify: `api-service/app/services/mimo_ota/channel_naming.py`
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/frequency_consistency.py`
 - Modify: `api-service/app/services/mimo_ota/channel_asset_resolver.py`
@@ -190,7 +191,9 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Create: `api-service/tests/test_p1_73a_lte_operating_point.py`
 - Create: `api-service/tests/test_p1_73a_asset_frequency_identity.py`
 - Modify: `api-service/tests/test_p1_55_carrier_truth_source.py`
+- Modify: `api-service/tests/test_channel_naming.py`
 - Modify: `api-service/tests/test_channel_asset_resolver.py`
+- Modify: `api-service/tests/test_channel_asset_migration.py`
 - Modify: `api-service/tests/test_standard_channel.py`
 - Modify: `api-service/tests/test_channel_models_crud.py`
 - Modify: `api-service/tests/test_channel_models_db_fallback.py`
@@ -201,6 +204,7 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `gui/src/api/channelAssetService.ts`
 - Modify: `gui/src/api/service.ts`
 - Modify: `gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx`
+- Create: `gui/src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts`
 - Modify: `gui/src/components/StandardChannelDefinitionCard.tsx`
 - Create: `gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts`
 - Modify: `api/openapi.yaml`
@@ -229,6 +233,9 @@ git commit -m "refactor: canonicalize base station configuration fields"
   `available_channel_models` projection 都必须显式携带两个字段，缺失/冲突在写入前拒绝；
 - `api/instrument.py` 的 channel model CRUD/list 和 GUI channel-model consumer 同样透传并校验
   RAT/channel kind；旧 projection 只经同一个 legacy-NR translator 读取，不另写第二套兼容规则；
+- 标准信道命名器也消费 typed identity：legacy NR 继续精确生成/解析现有
+  `MF_N78_640000_...`；LTE 新名显式包含 RAT 与 channel kind（例如
+  `MF_LTE_B3_EARFCN1575_...`），不得把 LTE EARFCN 填进旧 NR ARFCN 槽或与同号 NR 资产碰撞；
 - 跨 RAT 的资产一致性仅比较经各自有出处 converter 得到的中心频率与带宽；缺 RAT、缺 converter
   或 channel kind 冲突都保护资产并在 I/O 前 fail-loud，不从文件名或当前 DB 猜测；
 - executor 将同一个 typed `BaseStationRequestedConfig` 交给 fake UXM/CMW，不按厂商类分支；
@@ -241,7 +248,9 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_55_carrier_truth_source.py \
+  tests/test_channel_naming.py \
   tests/test_channel_asset_resolver.py \
+  tests/test_channel_asset_migration.py \
   tests/test_standard_channel.py \
   tests/test_channel_asset_service.py \
   tests/test_channel_models_crud.py \
@@ -249,7 +258,9 @@ cd api-service
   tests/test_f64_channel_model_listing.py \
   tests/test_p1_73a_asset_frequency_identity.py
 cd ../gui
-node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+node --test \
+  src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
+  src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts
 ```
 
 预期：当前 schema 是 NR-only，LTE 输入会被 NR ARFCN 路径解释，测试失败。
@@ -264,6 +275,8 @@ node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
   频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
 - StandardChannel model/API/service、ChannelAsset validator/API、GUI 两个资产入口与三份 API
   镜像同步写入 RAT/channel kind；legacy translator 只在读取旧 NR-only 行时生效，不为新请求补值。
+- channel naming/parser 对 NR 保持字节级兼容，对 LTE 使用不与 NR 混淆的新 canonical family；
+  vendor 文件仍以项目内部 `[Channel Group 0] CenterFrequency` 为频率真值，文件名不反压频率。
 - 保留 P1-55 的顶层镜像一致性门，不能因扩展 RAT 放宽旧冲突检查。
 
 **Step 4: 运行 GREEN 并提交**
@@ -273,8 +286,10 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_55_carrier_truth_source.py \
+  tests/test_channel_naming.py \
   tests/test_frequency_consistency.py \
   tests/test_channel_asset_resolver.py \
+  tests/test_channel_asset_migration.py \
   tests/test_standard_channel.py \
   tests/test_channel_asset_service.py \
   tests/test_channel_models_crud.py \
@@ -283,7 +298,9 @@ cd api-service
   tests/test_p1_73a_asset_frequency_identity.py \
   tests/test_uxm_cell_config_orchestration.py
 cd ../gui
-node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+node --test \
+  src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
+  src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts
 npm run build
 cd ..
 git add api-service/app/schemas/mimo_ota/config.py \
@@ -292,6 +309,7 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/app/api/channel_asset.py \
   api-service/app/api/instrument.py \
   api-service/app/services/channel_asset_service.py \
+  api-service/app/services/mimo_ota/channel_naming.py \
   api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/frequency_consistency.py \
   api-service/app/services/mimo_ota/channel_asset_resolver.py \
@@ -300,7 +318,9 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/app/hal/lte_earfcn.py \
   api-service/tests/test_p1_73a_lte_operating_point.py \
   api-service/tests/test_p1_55_carrier_truth_source.py \
+  api-service/tests/test_channel_naming.py \
   api-service/tests/test_channel_asset_resolver.py \
+  api-service/tests/test_channel_asset_migration.py \
   api-service/tests/test_standard_channel.py \
   api-service/tests/test_channel_asset_service.py \
   api-service/tests/test_channel_models_crud.py \
@@ -313,6 +333,7 @@ git add api-service/app/schemas/mimo_ota/config.py \
   gui/src/api/channelAssetService.ts \
   gui/src/api/service.ts \
   gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx \
+  gui/src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts \
   gui/src/components/StandardChannelDefinitionCard.tsx \
   gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
   api/openapi.yaml gui/src/types/api.generated.ts
