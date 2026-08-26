@@ -1360,7 +1360,8 @@ Commissioning 方位 KPI 表。逐一证明：
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
 - 六类消费方都必须消费实际 measurement lease owner 在租约退出后持久化的 final evidence：
-  window 自带 cleanup 与同 `lease_id`/session digest 的 `transport_session_released_confirmed` 缺失或
+  window 自带 cleanup 与同 `lease_id`/同驱动 opaque `session_token` 的
+  `transport_session_released_confirmed` 缺失或
   不为 true 时逐指标 UNKNOWN/N/A；不得把另一 lease 的成功 release、前面板 Local unknown、
   租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 transport release；
 - 正式 runner 不得在 measurement lease 的 control-release 证据产生前执行最终 ANALYSIS：`_run_case_loop` 必须把末尾连续的
