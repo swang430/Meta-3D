@@ -41,7 +41,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 
 > **P1-73 — CMW500 单载波 LTE 2×2 MIMO OTA（设计已合并；P1-73A 本地实现完成）**
 >
-> 已合并设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。P1-73A 已建立通用 BaseStation contract、严格新旧配置 canonicalizer、LTE 单载波工作点、通用执行证据与逻辑 `DL1…DLN/UL1` 拓扑；CMW 正式能力仍保持关闭。fresh 内审发现并按 TDD 收口两条功能 P1：编辑 PCell 时保留全部 SCell，定制 MIMO mode 同样按所选 BaseStation 逻辑端口过滤拓扑。R1 三条功能 P1 也已最小收口：RAT 不匹配在驱动写入前拒绝；LTE 缺显式峰值时绝对吞吐保留但比例与正式判决为 UNKNOWN/N/A；旧 UXM 证据迁移不再丢弃同行 F64/转台证据。最终全后端 **4739 passed / 5 skipped**，GUI 相关契约 **16 passed**、production build、compileall、单一 Alembic head 与 diff-check 通过；fresh 尾审 **P1/P2/P3=0**。
+> 已合并设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。P1-73A 已建立通用 BaseStation contract、严格新旧配置 canonicalizer、LTE 单载波工作点、通用执行证据与逻辑 `DL1…DLN/UL1` 拓扑；CMW 正式能力仍保持关闭。fresh 内审发现并按 TDD 收口两条功能 P1：编辑 PCell 时保留全部 SCell，定制 MIMO mode 同样按所选 BaseStation 逻辑端口过滤拓扑。R1 三条功能 P1 也已最小收口：RAT 不匹配在驱动写入前拒绝；LTE 缺显式峰值时绝对吞吐保留但比例与正式判决为 UNKNOWN/N/A；旧 UXM 证据迁移不再丢弃同行 F64/转台证据。R2 两条功能 P1 已继续最小收口：显式为 `null` 的 legacy NR SCS 不再静默采用默认值，已获准的 8 层配置完整映射为 `DL1…DL8/UL1`；R2 关于自定义拓扑节点识别的 P2 仅报告、不阻塞且不自动积压。最终全后端 **4741 passed / 5 skipped**，受影响链与规则门 **121 passed**，GUI 相关契约 **16 passed**、production build、compileall、单一 Alembic head 与 diff-check 通过；fresh 尾审 **P1/P2/P3=0**。
 >
 > **可观察缺口**：仓库已有 `CMW500BaseStationDriver`，但当前真实执行契约尚不能发布
 > CMW500 LTE 2×2 OTA 的正式吞吐/BLER 结果：现有路由仍按 `1CC - 1x1` 形态配置，且
