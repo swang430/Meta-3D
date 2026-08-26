@@ -874,6 +874,7 @@ fresh 内审 P1=0 后更新 roadmap，单独 Ready PR。没有真机验证时以
 
 - Create: `api-service/app/services/mimo_ota/base_station_execution_evidence.py`
 - Create: `api-service/tests/test_p1_73c_base_station_execution_evidence.py`
+- Create: `api-service/tests/test_p1_73c_base_station_metric_trust.py`
 - Modify: `api-service/app/services/execution_scpi_evidence.py`
 
 **Step 1: 写 RED**
@@ -889,21 +890,53 @@ class BaseStationExecutionEvidence(BaseModel):
     mode: Literal["dispatch"]
     config_confirmed: Literal[True]
     route_confirmed: bool | None
-    window_ids: list[str]
+    requested_config: BaseStationRequestedConfigSnapshot
+    requested_positions: list[PositionSnapshot]
+    measurement_windows: list[BaseStationMeasurementWindowEvidence]
     cleanup_local_confirmed: Literal[True]
     exchange_ids: list[str]
+
+class BaseStationMeasurementWindowEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    window_id: str
+    config_digest: str
+    route_digest: str | None
+    position: PositionSnapshot
+    ue_link_state: Literal["connected"]
+    started_at: datetime
+    completed_at: datetime
+    metrics: dict[str, BaseStationMetricEvidence]
 ```
 
 正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window、cleanup confirmed。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配均 false。
+
+本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
+
+```python
+evaluate_base_station_metric_trust(
+    evidence,
+    metric_name,
+    expected_config,
+    expected_position,
+) -> FormalMetricTrust
+```
+
+它不能只验证 envelope 或 `kpi_valid`：必须在同一个规范 window 中精确核对
+`config_digest`、CMW 所需的 `route_digest`、position、UE connected、窗口起止、指标字段/单位与
+exchange IDs。`expected_config` 和 `expected_position` 只来自本次执行冻结的 requested config /
+requested positions，不得从当前 TestCase、LabProfile 或仪表数据库回填历史执行。
 
 **Step 2: RED → GREEN 并提交**
 
 ```bash
 cd api-service
-./.venv/bin/python -m pytest -q tests/test_p1_73c_base_station_execution_evidence.py
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73c_base_station_execution_evidence.py \
+  tests/test_p1_73c_base_station_metric_trust.py
 git add api-service/app/services/mimo_ota/base_station_execution_evidence.py \
   api-service/app/services/execution_scpi_evidence.py \
-  api-service/tests/test_p1_73c_base_station_execution_evidence.py
+  api-service/tests/test_p1_73c_base_station_execution_evidence.py \
+  api-service/tests/test_p1_73c_base_station_metric_trust.py
 git commit -m "feat: add formal base station execution evidence"
 ```
 
@@ -921,6 +954,8 @@ git commit -m "feat: add formal base station execution evidence"
 
 - 请求方位全集精确匹配；重复/额外/缺失 window fail-closed；
 - 每方位吞吐与 BLER 各自消费同一 window 的证据；
+- 每个 window 在产生时冻结 config digest、route digest、position、UE link state、起止时间和
+  metric exchange IDs；交换另一配置/route/方位的结构合法 window 也必须 fail-closed；
 - route/config/error/cleanup 任一 unknown 时正式 throughput/BLER 均 UNKNOWN；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
 - UXM 仍通过同一个 executor 且原回归行为不变。
@@ -956,7 +991,11 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 
 列全四类正式消费方：Analysis、报告 builder、报告详情/下载 trust、执行历史。逐一证明：
 
-- 只有规范 `BaseStationExecutionEvidence` + 指标自身 `kpi_valid` 才发布吞吐/BLER；
+- 四类消费方逐指标调用唯一
+  `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
+  只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
+- expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
+  任一与期望不符均 UNKNOWN/N/A，历史/下载不得从当前数据库补齐；
 - 旧 UXM 仅通过精确 translator；旧 CMW 原型、客户端声明、数值形状、adapter 名称均不能恢复 PASS；
 - BLER unknown 不清空独立可信吞吐，吞吐 unknown 也不清空独立可信 BLER；
 - 缺正式证据时数值可保留在诊断结构，但正式 KPI/verdict 为 UNKNOWN/N/A；
@@ -968,6 +1007,7 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73c_formal_consumers.py \
+  tests/test_p1_73c_base_station_metric_trust.py \
   tests/test_p1_54_kpi_valid_contract.py \
   tests/test_mimo_ota_report_verified_backcompat.py \
   tests/test_arch1_history_resource.py
@@ -976,6 +1016,7 @@ git add api-service/app/services/mimo_ota/executors/analysis.py \
   api-service/app/services/report_service.py \
   api-service/app/api/test_execution.py \
   api-service/tests/test_p1_73c_formal_consumers.py \
+  api-service/tests/test_p1_73c_base_station_metric_trust.py \
   api-service/tests/test_p1_54_kpi_valid_contract.py \
   api-service/tests/test_mimo_ota_report_verified_backcompat.py \
   api-service/tests/test_arch1_history_resource.py
