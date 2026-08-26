@@ -203,7 +203,8 @@ measurement windows 和 cleanup。`adapter_id` 只用于审计显示与 command 
 
 ### 4.2 唯一正式信任函数
 
-Analysis、报告、报告对比、历史、下载和 GUI 统一消费：
+直接来自基站测量窗口的 throughput/BLER 在 Analysis、报告、报告对比、历史、下载和 GUI 中
+统一消费：
 
 ```python
 evaluate_base_station_metric_trust(
@@ -229,11 +230,15 @@ GUI 继续消费 OperationalLab 唯一 `baseStation`，展示型号、固件、�
 API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容；GUI 不再写旧字段；新旧
 冲突时 422。live OpenAPI、checked-in YAML 和 GUI generated TS 必须同步。
 
-报告只发布同一 trust 函数确认的 KPI。报告对比对每个 execution、每个指标分别使用其执行时
-冻结的 config/position 调用同一 trust 函数；未获信任的值不得进入 delta、summary statistics、
-repeatability 或 `formal=true`。缺测不写 0，debug 不打印数值后再声明“不可信”，cleanup 和
-Local 交还确定前不发布最终报告。历史列表只返回摘要，详情按 execution ID 读取完整快照；旧或
-畸形 evidence 保持 UNKNOWN，不从当前数据库或旧正文补证。
+报告只发布对应权威 trust 函数确认的 KPI。报告对比不得把全部聚合指标误交给 base-station
+evaluator，而是按来源换源：`avg_throughput_mbps` 从逐方位受信 throughput 聚合；
+`throughput_ratio` 只由该受信均值和本次执行冻结的 theoretical peak 重算；
+`rsrp_variance_db` / `avg_sinr_db` 分别从 P1-63 的逐方位、逐指标 RF trust 后聚合；未来新增
+BLER 对比才调用 base-station BLER evaluator。未获信任的值不得进入 delta、summary statistics、
+repeatability 或 `formal=true`，且一个指标 unknown 不得清空其他独立可信指标。缺测不写 0，
+debug 不打印数值后再声明“不可信”，cleanup 和 Local 交还确定前不发布最终报告。历史列表只
+返回摘要，详情按 execution ID 读取完整快照；旧或畸形 evidence 保持 UNKNOWN，不从当前数据库
+或旧正文补证。
 
 ## 5. 开发拆分与验证
 

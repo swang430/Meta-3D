@@ -980,10 +980,12 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 
 - Modify: `api-service/app/services/mimo_ota/executors/analysis.py`
 - Modify: `api-service/app/services/mimo_ota/executors/report.py`
+- Modify: `api-service/app/services/mimo_ota/rf_kpi_trust.py`
 - Modify: `api-service/app/services/report_service.py`
 - Modify: `api-service/app/api/test_execution.py`
 - Create: `api-service/tests/test_p1_73c_formal_consumers.py`
 - Modify: `api-service/tests/test_p1_72_comparison_gate.py`
+- Modify: `api-service/tests/test_p1_63_rf_kpi_provenance_truth.py`
 - Modify: `api-service/tests/test_p1_54_kpi_valid_contract.py`
 - Modify: `api-service/tests/test_mimo_ota_report_verified_backcompat.py`
 - Modify: `api-service/tests/test_arch1_history_resource.py`
@@ -992,7 +994,8 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 
 列全五类正式消费方：Analysis、报告 builder、报告对比、报告详情/下载 trust、执行历史。逐一证明：
 
-- 五类消费方逐指标调用唯一
+- Analysis、报告 builder、报告详情/下载 trust、执行历史对直接来自基站窗口的 throughput/BLER
+  逐指标调用唯一
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
 - expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
@@ -1001,10 +1004,19 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
 - BLER unknown 不清空独立可信吞吐，吞吐 unknown 也不清空独立可信 BLER；
 - 缺正式证据时数值可保留在诊断结构，但正式 KPI/verdict 为 UNKNOWN/N/A；
 - 历史/下载不能用当前数据库的仪器配置替旧执行补证据；
-- `ReportComparisonService` 对每个 execution、每个指标分别用该 execution 的冻结 config/position
-  调用同一 evaluator；未获信任的指标不得参与 delta、summary statistics 或 repeatability，
-  也不得仅凭旧 `measurement_verified=true` 令对比成为 `formal=true`。结构合法但来自另一配置、
-  route、方位或窗口的值必须独立排除，不得连带清空同一 execution 的其他可信指标。
+- `ReportComparisonService` 必须按现行 `COMPARISON_METRIC_KEYS` 显式映射权威源，不能把派生/RF
+  聚合指标名直接交给 base-station evaluator，也不能继续信任 analysis 聚合值或旧
+  `measurement_verified=true`：
+  - `avg_throughput_mbps`：对冻结请求的每个方位调用 base-station throughput evaluator 后重算均值；
+  - `throughput_ratio`：只从上述受信均值与该 execution 冻结配置中的
+    `theoretical_peak_throughput_mbps` 重算；
+  - `rsrp_variance_db` / `avg_sinr_db`：在 `rf_kpi_trust.py` 抽取并复用最小逐指标 scope helper，
+    分别要求完整 requested positions 的 `rsrp_dbm` / `sinr_db` explicit-real 当前行，再重算；
+  - 未来新增 BLER 对比时才对每个方位调用 base-station BLER evaluator。
+- 对比的每个 execution、每个指标独立产生 trusted/unknown；只有 baseline 与目标 execution 的同一
+  指标都 trusted 才计算 delta，只用 trusted 样本形成 summary/repeatability。任一展示指标不可信
+  时顶层 `formal=false`；结构合法但来自另一配置、route、方位或窗口的值必须独立排除，不得连带
+  清空同一 execution 的其他可信指标。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -1014,16 +1026,19 @@ cd api-service
   tests/test_p1_73c_formal_consumers.py \
   tests/test_p1_73c_base_station_metric_trust.py \
   tests/test_p1_72_comparison_gate.py \
+  tests/test_p1_63_rf_kpi_provenance_truth.py \
   tests/test_p1_54_kpi_valid_contract.py \
   tests/test_mimo_ota_report_verified_backcompat.py \
   tests/test_arch1_history_resource.py
 git add api-service/app/services/mimo_ota/executors/analysis.py \
   api-service/app/services/mimo_ota/executors/report.py \
+  api-service/app/services/mimo_ota/rf_kpi_trust.py \
   api-service/app/services/report_service.py \
   api-service/app/api/test_execution.py \
   api-service/tests/test_p1_73c_formal_consumers.py \
   api-service/tests/test_p1_73c_base_station_metric_trust.py \
   api-service/tests/test_p1_72_comparison_gate.py \
+  api-service/tests/test_p1_63_rf_kpi_provenance_truth.py \
   api-service/tests/test_p1_54_kpi_valid_contract.py \
   api-service/tests/test_mimo_ota_report_verified_backcompat.py \
   api-service/tests/test_arch1_history_resource.py
