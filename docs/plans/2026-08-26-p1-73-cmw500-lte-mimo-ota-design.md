@@ -83,6 +83,14 @@ duplex 在当前会话完成只读 identity/firmware/options snapshot 后、首�
 外部 RF router、具体序列号和外部接线路径不属于正式能力准入键。adapter 可以注册，但正式
 能力默认关闭，待用户显式启用。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。
 
+CMW500 的内部 `1CC - nx2` 元组不是能力准入键，也不能由驱动猜测。它以版本化
+`base_station_adapter_profile` 持久化在被所选 LabProfile 的 `baseStation` binding 解析到的
+`InstrumentConnection.connection_params` 中，完整保存 PCC BB board、RX connector/converter、
+TX1 connector/converter 和 TX2 connector/converter。保存/API/GUI 只接受完整元组，部分字段、
+未知键、TX1/TX2 connector 或 converter 复用均拒绝。执行开始且尚未发生硬件 I/O 时，runner 从
+所选 LabProfile 与唯一 InstrumentConnection 解析该 profile，并把规范 route 快照冻结进本次
+execution；驱动只消费冻结快照，不从当前数据库重读，也不从已有 applied route、型号或端口名反推。
+
 ### 2.4 通用配置与 debug inherit
 
 通用请求包含显式 RAT、LTE 双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
@@ -197,7 +205,15 @@ timeout 在 `finally` 恢复，禁止裸 `except: pass`，超时不得自动重�
 
 ### 3.4 Extended BLER 窗口
 
-窗口经过 clear/configure/initiate/running/fetch/stop/stopped 边界。正式 KPI 只取：
+窗口经过 pre-clear/configure/initiate/running/ready/fetch/stop/closed 边界。厂商手册第 950–951 页
+规定：`ABORt:LTE:SIGN<i>:EBLer` 进入 `OFF` 并清空测量值、释放资源；
+`INITiate:LTE:SIGN<i>:EBLer` 进入 `RUN`；`STOP:LTE:SIGN<i>:EBLer` 进入 `RDY` 并保留结果；
+`FETCh:LTE:SIGN<i>:EBLer:STATe?` 只接受 `OFF | RUN | RDY`。每个方位必须先 ABORt→OFF，
+INITiate 后确认 RUN，等待自然完成或 STOP 后确认 RDY，再 fetch，最后 ABORt→OFF 释放资源。
+任一写操作还要消费错误队列；只有所有边界及最终 OFF 都确认，窗口才可 `confirmed=True`。
+timeout、取消或 fetch 异常仍必须尝试 STOP→RDY 与 ABORt→OFF；最终 OFF 未确认时立即停止整个
+方位循环，不移动转台、不切 F64、不启动下一窗口，并把本次正式 KPI 全部降为 UNKNOWN/N/A。
+正式 KPI 只取：
 
 | KPI | 查询 | 字段 | 单位 | 手册页 |
 |---|---|---:|---|---:|
@@ -219,7 +235,8 @@ execution mode、identity、capabilities、requested/applied config、内部 rou
 measurement windows、MEASURE cleanup 和租约退出后的 Local control handoff。`adapter_id` 只用于审计显示与 command profile 注册，不允许
 在 Analysis、报告、报告对比、历史或 GUI 中形成厂商分支。
 
-每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间和独立 KPI。
+每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间、pre-clear OFF、
+RUN、RDY 与 final OFF 的独立 exchange IDs 和 KPI。
 每个方位再绑定当前窗口、F64 channel evidence、位置回读和路损应用证据。请求方位全集必须精确
 匹配，缺失不当 0，多余历史方位不计入统计。
 

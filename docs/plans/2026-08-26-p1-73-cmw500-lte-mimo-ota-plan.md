@@ -659,6 +659,9 @@ git diff --check
 - `ROUTe:LTE:SIGN<i>?`：第 459–460 页；返回当前 scenario 与相关 RX/TX connector/converter。
 - `FETCh:LTE:SIGN<i>:EBLer[:PCC]:ABSolute?`：第 957–958 页；第 5 字段 `ThroughputAver`，单位 kbit/s。
 - `FETCh:LTE:SIGN<i>:EBLer[:PCC]:RELative?`：第 959 页；第 4 字段 BLER（%），第 5 字段是 throughput 百分比，不是 Mbps。
+- `INITiate:LTE:SIGN<i>:EBLer`、`STOP:LTE:SIGN<i>:EBLer`、
+  `ABORt:LTE:SIGN<i>:EBLer` 与 `FETCh:LTE:SIGN<i>:EBLer:STATe?`：第 950–951 页；分别进入
+  RUN、RDY、OFF，并以 `OFF | RUN | RDY` 状态查询确认。ABORt 会清空测量值并释放资源。
 
 parser 必须拒绝字段不足、sentinel、NaN/Inf、非数值与错误枚举；不得继续把 Absolute 第 1 字段当 BLER。
 
@@ -728,6 +731,82 @@ git add api-service/app/hal/cmw500_base_station.py \
 git commit -m "fix: make CMW500 connect read-only"
 ```
 
+### Task 7A：持久化并冻结 CMW500 内部 2×2 route profile
+
+**Files:**
+
+- Create: `api-service/app/hal/base_station_adapter_profile.py`
+- Modify: `api-service/app/schemas/instrument.py`
+- Modify: `api-service/app/api/instrument.py`
+- Modify: `api-service/app/services/test_case_runner.py`
+- Create: `api-service/tests/test_p1_73b_cmw_adapter_profile.py`
+- Modify: `api-service/tests/test_instrument_api.py`
+- Modify: `api-service/tests/test_instrument_test_lease.py`
+- Modify: `gui/src/App.tsx`
+- Create: `gui/src/types/cmwAdapterProfileTruth.test.ts`
+- Modify: `api/openapi.yaml`
+- Modify: `gui/src/types/api.generated.ts`
+
+**Step 1: 写 RED**
+
+定义唯一持久化形态：所选 LabProfile 的 `baseStation` binding 先按其 `category_id` 解析现有唯一
+`InstrumentConnection`，再从
+`connection_params["base_station_adapter_profile"]` 读取严格 schema：
+
+```python
+class Cmw500Lte2x2InternalRoute(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pcc_bb_board: str
+    rx_connector: str
+    rx_converter: str
+    tx1_connector: str
+    tx1_converter: str
+    tx2_connector: str
+    tx2_converter: str
+
+class BaseStationAdapterProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1]
+    adapter: Literal["cmw500"]
+    lte_2x2_internal_route: Cmw500Lte2x2InternalRoute
+```
+
+覆盖：完整 profile 可保存/读取；缺字段、extra、空白、TX connector 复用、TX converter 复用、
+非 CMW adapter、LabProfile binding 与 InstrumentConnection 不一致均在硬件 I/O 前拒绝。GUI 提供
+七个显式字段，不要求操作员编辑自由 JSON。该 profile 只是内部 route 输入，不进入
+型号/固件/选件能力准入，也不扩展为外部 RF router。
+
+runner 必须在执行开始、取得仪表 Remote 之前锁定 execution 与所选 LabProfile，解析唯一连接，
+将规范 profile 与 digest 冻结到 server-owned execution config；commissioning/adhoc/run-all 都走
+同一 runner 路径。后续 driver/evidence 只消费冻结快照；执行中修改 connection params 不得改变旧
+execution，历史/报告也不得从当前数据库补 route。旧执行没有该快照时保持 UNKNOWN，不猜测。
+
+**Step 2: RED → GREEN 并提交**
+
+```bash
+cd api-service
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73b_cmw_adapter_profile.py \
+  tests/test_instrument_api.py \
+  tests/test_instrument_test_lease.py
+cd ../gui
+node --test src/types/cmwAdapterProfileTruth.test.ts
+npm run build
+cd ..
+git add api-service/app/hal/base_station_adapter_profile.py \
+  api-service/app/schemas/instrument.py \
+  api-service/app/api/instrument.py \
+  api-service/app/services/test_case_runner.py \
+  api-service/tests/test_p1_73b_cmw_adapter_profile.py \
+  api-service/tests/test_instrument_api.py \
+  api-service/tests/test_instrument_test_lease.py \
+  gui/src/App.tsx \
+  gui/src/types/cmwAdapterProfileTruth.test.ts \
+  api/openapi.yaml \
+  gui/src/types/api.generated.ts
+git commit -m "feat: persist CMW500 internal route profile"
+```
+
 ### Task 8：实现 CMW 内部 1CC-nx2 route 的写后回读
 
 **Files:**
@@ -739,7 +818,9 @@ git commit -m "fix: make CMW500 connect read-only"
 
 覆盖：
 
-- 根据显式 `pcc_bb_board/rx_connector/rx_converter/tx1_connector/tx1_converter/tx2_connector/tx2_converter` 构造 TRO flexible 命令；
+- 只从 Task 7A 的 execution-frozen adapter profile 取得完整
+  `pcc_bb_board/rx_connector/rx_converter/tx1_connector/tx1_converter/tx2_connector/tx2_converter`
+  并构造 TRO flexible 命令；不得读取当前 DB、沿用当前 applied route 或选择默认模块；
 - 写后 `ROUTe:LTE:SIGN<i>?` 回读精确匹配 scenario、PCCBBBoard 和完整 RX/TX1/TX2 connector/converter 元组；
 - TX1/TX2 的 connector 必须不同，converter/TX module 也必须不同；两个条件分别验证，不能只比较字符串元组；
 - 固件低于 V3.5.40、缺 KS520、任一字段缺失、TX connector/converter 复用、readback 不一致、错误队列非空均在正式采样前失败；
@@ -826,12 +907,25 @@ class BaseStationMeasurementWindow:
     started_at: datetime
     completed_at: datetime | None
     metrics: ThroughputMetrics
+    preclear_off_confirmed: bool
+    running_confirmed: bool
+    ready_confirmed: bool
+    closed_off_confirmed: bool
     evidence: tuple[InstrumentEvidenceItem, ...]
     confirmed: bool
     reason: str
 ```
 
-CMW 测试要求同一 window 中：initialize/configure → wait/poll complete → Absolute/Relative fetch。`ThroughputAver` 从 kbit/s 显式除以 1000 得 Mbps；BLER 取 Relative 第 4 字段并保持百分比口径。任一字段缺失时该指标独立 unknown，不得用另一个指标替代，也不得保留原型 fallback。
+CMW 测试要求同一 window 中：ABORt→STATE OFF pre-clear → configure → INITiate→STATE RUN →
+自然完成或 STOP→STATE RDY → Absolute/Relative fetch → ABORt→STATE OFF final close。
+每个写动作都消费传输结果、错误队列和紧邻状态查询；不能用 await 完成、`*OPC?` 或 finally 推导。
+`ThroughputAver` 从 kbit/s 显式除以 1000 得 Mbps；BLER 取 Relative 第 4 字段并保持百分比口径。
+任一 KPI 字段缺失时该指标独立 unknown，不得用另一个指标替代，也不得保留原型 fallback；但
+`confirmed=True` 还必须要求 preclear/RUN/RDY/final OFF 四项全部精确 true。
+
+timeout、取消、fetch 异常或 STOP 失败时仍尝试 ABORt 并确认 OFF；最终 OFF 未确认则返回结构化
+失败，调用方不得移动到下一方位、切换 F64 或启动另一窗口。先前取得的数值只留诊断，整次正式
+throughput/BLER 均 UNKNOWN/N/A，并把 STOP/ABORt/STATE/error-drain 的全部失败聚合到 cleanup。
 
 **Step 2: RED → GREEN**
 
@@ -897,6 +991,7 @@ git commit -m "feat: gate CMW500 LTE 2x2 formal capability"
   tests/test_p1_73b_cmw_command_profile.py \
   tests/test_p1_73b_cmw_parsers.py \
   tests/test_p1_73b_cmw_connect_lifecycle.py \
+  tests/test_p1_73b_cmw_adapter_profile.py \
   tests/test_p1_73b_cmw_route_truth.py \
   tests/test_p1_73b_cmw_state_machine.py \
   tests/test_p1_73b_cmw_extended_bler_window.py \
@@ -940,6 +1035,8 @@ class BaseStationExecutionEvidence(BaseModel):
     config_confirmed: Literal[True]
     route_confirmed: bool | None
     requested_config: BaseStationRequestedConfigSnapshot
+    requested_route: BaseStationRequestedRouteSnapshot | None
+    applied_route: BaseStationAppliedRouteSnapshot | None
     requested_positions: list[PositionSnapshot]
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     cleanup: BaseStationCleanupResult
@@ -955,10 +1052,15 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     ue_link_state: Literal["connected"]
     started_at: datetime
     completed_at: datetime
+    preclear_off_confirmed: Literal[True]
+    running_confirmed: Literal[True]
+    ready_confirmed: Literal[True]
+    closed_off_confirmed: Literal[True]
+    lifecycle_exchange_ids: list[str]
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、disconnect、SAFE_IDLE 三项，以及租约退出后 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、disconnect、SAFE_IDLE 三项，以及租约退出后 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -972,8 +1074,9 @@ evaluate_base_station_metric_trust(
 ```
 
 它不能只验证 envelope 或 `kpi_valid`：必须在同一个规范 window 中精确核对
-`config_digest`、CMW 所需的 `route_digest`、position、UE connected、窗口起止、指标字段/单位与
-exchange IDs。`expected_config` 和 `expected_position` 只来自本次执行冻结的 requested config /
+`config_digest`、CMW 所需的 `route_digest`、position、UE connected、窗口起止、pre-clear OFF、
+RUN、RDY、final OFF、指标字段/单位与各自 exchange IDs。任何 lifecycle confirmation 缺失或不为
+精确 true 时，该 window 的所有正式指标均不可信。`expected_config` 和 `expected_position` 只来自本次执行冻结的 requested config /
 requested positions，不得从当前 TestCase、LabProfile 或仪表数据库回填历史执行。
 
 **Step 2: RED → GREEN 并提交**
@@ -1013,7 +1116,10 @@ git commit -m "feat: add formal base station execution evidence"
 - 请求方位全集精确匹配；重复/额外/缺失 window fail-closed；
 - 每方位吞吐与 BLER 各自消费同一 window 的证据；
 - 每个 window 在产生时冻结 config digest、route digest、position、UE link state、起止时间和
-  metric exchange IDs；交换另一配置/route/方位的结构合法 window 也必须 fail-closed；
+  pre-clear/RUN/RDY/final OFF 及 metric exchange IDs；交换另一配置/route/方位的结构合法 window
+  也必须 fail-closed；
+- STOP 被拒、STOP 后非 RDY、final ABORt 被拒或最终状态非 OFF 时 window 不 confirmed，整次正式
+  指标 UNKNOWN，且在原方位立即终止，不得移动转台、切 F64 或开始下一 window；
 - route/config/error/cleanup 任一 unknown 时正式 throughput/BLER 均 UNKNOWN；
 - shared cleanup 对 `stop_signaling()` / `disconnect()` 的返回值逐项要求 `is True`；`False`、`None`
   和异常都写入 warnings 与 `BaseStationCleanupResult`，不得因 await 完成或 finally 已运行而确认；
@@ -1232,6 +1338,7 @@ cd api-service
   tests/test_p1_73b_cmw_command_profile.py \
   tests/test_p1_73b_cmw_parsers.py \
   tests/test_p1_73b_cmw_connect_lifecycle.py \
+  tests/test_p1_73b_cmw_adapter_profile.py \
   tests/test_p1_73b_cmw_route_truth.py \
   tests/test_p1_73b_cmw_state_machine.py \
   tests/test_p1_73b_cmw_extended_bler_window.py \
@@ -1239,6 +1346,8 @@ cd api-service
   tests/test_p1_73b_cmw_inherit_debug.py \
   tests/test_p1_73c_base_station_execution_evidence.py \
   tests/test_p1_73c_cmw_measure_integration.py \
+  tests/test_p1_73c_base_station_cleanup_truth.py \
+  tests/test_p1_73c_base_station_lease_handoff.py \
   tests/test_p1_73c_formal_consumers.py \
   tests/test_p1_73c_cmw_readiness.py \
   tests/test_p1_73c_openapi_contract.py \
@@ -1262,6 +1371,7 @@ node --test \
   src/components/TestCaseConfig/baseStationConfigTruth.test.ts \
   src/components/TestCaseConfig/cmw500ReadinessTruth.test.ts \
   src/types/baseStationApiTruth.test.ts \
+  src/types/cmwAdapterProfileTruth.test.ts \
   src/types/cmw500ApiTruth.test.ts
 npm run build
 cd ..
