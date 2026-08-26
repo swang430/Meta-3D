@@ -35,9 +35,10 @@ LabProfile 中 `baseStation` 是互斥逻辑角色，现场选择 UXM 或 CMW500
 两台仪表同时存在时，现场射频开关或固定接线决定信号源；当前开发不要求把外部 RF router
 状态纳入正式能力准入或逐次执行门。
 
-拓扑节点保存逻辑端口及 adapter 映射：UXM 将 DL1/DL2/UL1 映射到其现有 RF1/RF2/RF6；
-CMW500 映射到当前 internal route 回读确认的 TX1/TX2/RX。拓扑编辑器、模板和运行解析器只以
-逻辑端口连接 F64；adapter 物理映射只用于展示与审计，不把外部源选择开关提升为硬门。
+MIMO OTA 拓扑节点保存逻辑端口及 adapter 映射：UXM 将 DL1/DL2/UL1 映射到其现有
+RF1/RF2/RF6；CMW500 映射到当前 internal route 回读确认的 TX1/TX2/RX。拓扑编辑器、模板和
+运行解析器只以逻辑端口连接 F64；adapter 物理映射只用于展示与审计，不把外部源选择开关提升
+为硬门。CAICT 模板中既有 TRP/TIS/passive 的 UXM RF5 与 VNA 路径不属于 P1-73，必须原样保留。
 
 CMW500 内部仍必须选择 `1CC - nx2` 并配置 RX/TX1/TX2，因为这是仪表生成双路 LTE 下行的
 必要内部状态，不等同于外部 RF router。

@@ -371,6 +371,8 @@ git commit -m "refactor: make MIMO measure base-station neutral"
   不在模板猜固定 RF 口；
 - LabProfile 选择不同 baseStation 后，编辑器/解析器显示对应 adapter 映射，但连接图不复制；
 - 外部源选择开关缺回读只产生 Warning，不把 topology validate 变成运行硬门。
+- 只迁移 `mimo_ota` active connections；CAICT 模板的 TRP/TIS/passive UXM RF5、VNA 与垂直环
+  路径逐项保持不变，避免 CMW MIMO 施工破坏其他测试类型。
 
 **Step 2: 运行 RED**
 
@@ -385,7 +387,8 @@ node --test src/features/TopologyEditor/baseStationPortsTruth.test.ts
 
 **Step 3: 最小 GREEN**
 
-- 模板从固定 `uxm` 节点改为逻辑 `baseStation`，保留 adapter map 作为显示/审计元数据。
+- 模板仅把 MIMO OTA 信号源从固定 `uxm` 节点改为逻辑 `baseStation`，保留 adapter map 作为
+  显示/审计元数据；非 MIMO 的 UXM/VNA 物理节点和连接不改。
 - 新 resolver 只消费 OperationalLab 已选中的 baseStation identity 与当前 driver route snapshot；
   不按节点 label 或型号前缀猜 adapter。
 - switch orchestrator 输出逻辑 port 与可选 physical display，不让物理 display 反向成为连接真源。
