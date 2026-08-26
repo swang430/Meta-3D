@@ -43,6 +43,10 @@ from app.hal.base_station import (
     ThroughputMetrics,
 )
 from app.hal.lte_earfcn import validate_lte_band_options
+from app.hal.cmw500_command_profile import (
+    CMW500_LTE_COMMANDS,
+    Cmw500LteCommandProfile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +136,8 @@ class CmwScpiCommands:
     ETPUT_UL_PCC = "SENSe:LTE:SIGN{i}:CONNection:ETHRoughput:UL:PCC?"
 
     # --- BLER 测量 (FETCh 子系统) ---
-    EBLER_PCC = "FETCh:LTE:SIGN{i}:EBLer:PCC:ABSolute?"
+    EBLER_PCC = CMW500_LTE_COMMANDS["ebler_absolute_query"].template
+    EBLER_RELATIVE_PCC = CMW500_LTE_COMMANDS["ebler_relative_query"].template
     EBLER_CQI = "FETCh:LTE:SIGN{i}:EBLer:PCC:CQIReporting:STReam1?"
 
     # --- UE 测量上报 (RSRP / SINR) ---
@@ -142,9 +147,9 @@ class CmwScpiCommands:
     UE_SINR = "SENSe:LTE:SIGN{i}:UEReport:SINR?"
 
     # --- 信令 BLER (Extended BLER) ---
-    INIT_EBLER = "INITiate:LTE:SIGN{i}:EBLer"
+    INIT_EBLER = CMW500_LTE_COMMANDS["ebler_init"].template
     EBLER_REPS = "CONFigure:LTE:SIGN{i}:EBLer:REPetition"
-    EBLER_STAT = "FETCh:LTE:SIGN{i}:EBLer:PCC:ABSolute?"
+    EBLER_STAT = CMW500_LTE_COMMANDS["ebler_absolute_query"].template
 
     # --- AWGN (加性白高斯噪声) ---
     AWGN_STATE = "CONFigure:LTE:SIGN{i}:DL:AWGN:STATe"
@@ -694,15 +699,31 @@ class RealCmw500Driver(BaseStationDriver):
                 self._fmt(CmwScpiCommands.ETPUT_UL_PCC)
             )
 
-            # BLER
-            bler_str = self._query(
-                self._fmt(CmwScpiCommands.EBLER_PCC)
+            # The sourced Extended BLER responses are parsed only as
+            # diagnostic evidence here.  Task 10 owns the independent formal
+            # measurement window; this legacy poll must not publish its
+            # reliability field (field 1) as BLER or promote the values to KPI.
+            absolute = self._query(
+                Cmw500LteCommandProfile.ebler_absolute_query(self._sign_channel)
             )
-            if bler_str:
+            relative = self._query(
+                Cmw500LteCommandProfile.ebler_relative_query(self._sign_channel)
+            )
+            if absolute and relative:
                 try:
-                    metrics.dl_bler = float(bler_str.strip().split(",")[0])
-                except (ValueError, IndexError):
-                    pass
+                    parsed_absolute = Cmw500LteCommandProfile.parse_ebler_absolute(
+                        absolute
+                    )
+                    parsed_relative = Cmw500LteCommandProfile.parse_ebler_relative(
+                        relative
+                    )
+                    logger.debug(
+                        "[CMW500] Diagnostic Extended BLER: avg=%s kbit/s, BLER=%s%%",
+                        parsed_absolute.throughput_average_kbit_per_s,
+                        parsed_relative.bler_percent,
+                    )
+                except ValueError as exc:
+                    logger.warning("[CMW500] Invalid Extended BLER response: %s", exc)
 
             # CQI
             cqi_str = self._query(
