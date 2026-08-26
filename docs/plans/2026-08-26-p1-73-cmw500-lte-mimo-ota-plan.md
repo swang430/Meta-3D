@@ -46,6 +46,7 @@
 ```python
 @dataclass(frozen=True)
 class BaseStationIdentity:
+    adapter_id: Literal["uxm", "cmw500"]
     model: str
     firmware_version: str | None
     options: tuple[str, ...]
@@ -92,6 +93,8 @@ cd api-service
 **Step 3: 最小 GREEN**
 
 - 把真正跨驱动的类型移到 `base_station.py`。
+- `adapter_id` 由 `instrument_hal_service.get_real_driver_class(category_key, model_name)` 命中的注册类
+  的固定类属性产生；registry 初始化校验唯一值，业务层不得从型号/类名前缀或 connection params 猜。
 - `BaseStationCleanupResult` 是共享 MEASURE cleanup 的唯一结果，只保存该阶段真实拥有的
   stop/disconnect/SAFE_IDLE；任何字段只有驱动返回精确 `True` 且相应状态回读确认后才为 true。
 - `BaseStationLocalControlResult` 独立保存测试租约的 Remote 取得与 Local 交还；它只能由
@@ -774,10 +777,23 @@ class BaseStationAdapterProfile(BaseModel):
     schema_version: Literal[1]
     adapter: Literal["cmw500"]
     lte_2x2_internal_route: Cmw500Lte2x2InternalRoute
+
+class BaseStationAdapterProfileResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1]
+    adapter: Literal["uxm", "cmw500"]
+    status: Literal["not_applicable", "configured"]
+    profile: BaseStationAdapterProfile | None
 ```
 
-覆盖：完整 profile 可保存/读取；缺字段、extra、空白、TX connector 复用、TX converter 复用、
-非 CMW adapter、LabProfile binding 与 InstrumentConnection 不一致均在硬件 I/O 前拒绝。GUI 提供
+组合白名单只允许 `uxm/not_applicable/profile=None` 或 `cmw500/configured/profile.adapter=cmw500`。
+adapter identity 只从所选 binding 的 `instrument_model_id` 解析模型，再调用与 HAL 装载同源的
+`instrument_hal_service.get_real_driver_class(category_key, model_name)` 并读取注册类固定
+`adapter_id`；不得从型号/类名前缀、endpoint 或 connection params 推断。unknown、重复注册、
+binding/model/registry/profile adapter 冲突均 fail-loud。
+
+覆盖：CMW 完整 profile 可保存/读取；CMW 缺字段/profile、extra、空白、TX connector 复用、
+TX converter 复用、非 CMW profile、LabProfile binding 与 InstrumentConnection 不一致均在硬件 I/O 前拒绝。GUI 提供
 七个显式字段，不要求操作员编辑自由 JSON。该 profile 只是内部 route 输入，不进入
 型号/固件/选件能力准入，也不扩展为外部 RF router。
 
@@ -786,6 +802,10 @@ execution、所选 LabProfile 和由其 `baseStation` binding 的 `category_id` 
 InstrumentConnection，校验规范 profile 后把 profile、connection identity 与 digest 写入
 server-owned execution config。已有规范快照时幂等返回且绝不覆盖；缺失、绑定漂移或冲突均在
 取得 Remote/首次硬件 I/O 前 fail-loud。
+
+冻结条件必须按权威 adapter 收窄：`cmw500` 缺严格七字段即阻断；`uxm` 不要求、不读取 CMW
+profile，冻结显式 `uxm/not_applicable/profile=None` 后继续现有 UXM 配置、route 与证据链；adapter
+unknown/冲突才阻断。不得用统一“有 profile/无 profile”布尔决定两种仪表。
 
 现有活入口并不共用同一 runner，因此必须逐条接线：正式 `test_case_runner._run_case`；
 `/commissioning/sessions` 新建 execution；commissioning 单相位在进入 lease 前；adhoc execution
@@ -796,7 +816,8 @@ phase 幂等冻结；REPORT-only 或已有 measurements/phase progress 的旧 ex
 
 RED 分别覆盖 formal runner、session create/首次 phase、adhoc 和 run-all，证明四条路径都在 lease
 取得 Remote 前完成同一冻结；并覆盖第二次调用不覆盖、profile 在执行中被修改不漂移、REPORT-only
-旧执行不补证，以及任一路径缺 profile 都不会偷偷直接 dispatch。
+旧执行不补证。四条入口都要成对覆盖：CMW 缺 profile 必须阻断且不 dispatch；UXM 无 CMW profile
+必须冻结 `not_applicable` 并正常进入既有 lease/dispatch。unknown/冲突 adapter 两者都不得放行。
 
 **Step 2: RED → GREEN 并提交**
 
