@@ -4,6 +4,8 @@ from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
 
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
+
 
 # ==================== Model Schemas ====================
 
@@ -167,6 +169,10 @@ class FEConnectionUpdate(BaseModel):
     controller: Optional[str] = None  # 前端叫 controller，对应 DB 的 protocol
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None  # Option B port_maps 等额外配置
+    base_station_adapter_profile: Optional[BaseStationAdapterProfile] = Field(
+        None,
+        description="CMW500 LTE 2x2 内部七字段 route；UXM 不消费此字段",
+    )
 
 
 class UpdateInstrumentCategoryRequest(BaseModel):

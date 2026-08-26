@@ -43,6 +43,10 @@ from app.services.instrument_test_lease import (
     instrument_test_lease,
 )
 from app.services.execution_failure_alerts import emit_execution_failed_alert
+from app.services.base_station_adapter_profile import (
+    build_frozen_base_station_validator,
+    freeze_execution_base_station_adapter_profile,
+)
 from app.utils.human_time import format_human_local_timestamp
 
 
@@ -827,6 +831,15 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
         executed_by="commissioning_api",
     )
     db.add(execution)
+    db.flush()
+    try:
+        _freeze_base_station_lease(db, execution, test_case)
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=f"baseStation adapter profile cannot be frozen: {error}",
+        ) from error
     db.commit()
     db.refresh(execution)
 
@@ -916,19 +929,29 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
+    try:
+        validate_adapter = _freeze_base_station_lease(
+            db, execution, test_case
+        )
+        db.commit()
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
     result = None
     try:
         with _execution_marked_running(db, execution):
             with retain_positioner_stop_generation(_current_positioner_driver()):
                 if target_step_type == "MIMO_OTA_REPORT":
                     async with instrument_test_lease(
-                        f"commissioning-phase:{session_id}:{phase_name}"
+                        f"commissioning-phase:{session_id}:{phase_name}",
+                        validate_before_remote=validate_adapter,
                     ):
                         pass
                     result = await dispatch_step(ctx)
                 else:
                     async with instrument_test_lease(
-                        f"commissioning-phase:{session_id}:{phase_name}"
+                        f"commissioning-phase:{session_id}:{phase_name}",
+                        validate_before_remote=validate_adapter,
                     ):
                         result = await dispatch_step(ctx)
     except InstrumentTestLeaseReleaseError as error:
@@ -1054,6 +1077,14 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
         executed_by="commissioning_adhoc",
     )
     db.add(execution)
+    db.flush()
+    try:
+        validate_adapter = _freeze_base_station_lease(
+            db, execution, test_case
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(error)) from error
     db.commit()
     db.refresh(execution)
 
@@ -1078,13 +1109,15 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
         with retain_positioner_stop_generation(_current_positioner_driver()):
             if target_step_type == "MIMO_OTA_REPORT":
                 async with instrument_test_lease(
-                    f"commissioning-adhoc:{req.phase_name}"
+                    f"commissioning-adhoc:{req.phase_name}",
+                    validate_before_remote=validate_adapter,
                 ):
                     pass
                 result = await dispatch_step(ctx)
             else:
                 async with instrument_test_lease(
-                    f"commissioning-adhoc:{req.phase_name}"
+                    f"commissioning-adhoc:{req.phase_name}",
+                    validate_before_remote=validate_adapter,
                 ):
                     result = await dispatch_step(ctx)
         status_value = result.status.value
@@ -1221,6 +1254,14 @@ async def hal_trace_tail(lines: int = 200):
 async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     """Sequentially dispatch all 5 phases. Aborts early if a phase fails."""
     execution, test_case, descriptors = _resolve_execution(db, session_id)
+    try:
+        validate_adapter = _freeze_base_station_lease(
+            db, execution, test_case
+        )
+        db.commit()
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
     # ARCH-1 S3: 整条链期间行标 running (闸门要看得见暗室首测 —— 现场
     # 最常用的链)。终态由本函数按相位结果写, 不交给 contextmanager:
@@ -1232,7 +1273,10 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
         with _execution_marked_running(db, execution):
             with retain_positioner_stop_generation(_current_positioner_driver()):
                 deferred_report = None
-                async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
+                async with instrument_test_lease(
+                    f"commissioning-run-all:{session_id}",
+                    validate_before_remote=validate_adapter,
+                ):
                     for index, step in enumerate(descriptors):
                         if step.type == "MIMO_OTA_REPORT":
                             if index != len(descriptors) - 1:
@@ -1357,3 +1401,18 @@ async def device_selfcheck() -> DeviceSelfcheckResult:
         message=("各设备已连接且响应, 可开始暗室首测" if all_ready
                  else "部分设备未就绪 — 去调试维护页单独验证 (转台控制 / 调试序列) 后重试"),
     )
+def _freeze_base_station_lease(
+    db: Session,
+    execution: TestExecution,
+    test_case: TestCase,
+):
+    """Freeze once, then return the lock-time pure validator callback."""
+    from app.services.instrument_hal_service import get_hal_service
+
+    frozen = freeze_execution_base_station_adapter_profile(
+        db,
+        get_hal_service(),
+        execution,
+        test_case,
+    )
+    return build_frozen_base_station_validator(frozen)

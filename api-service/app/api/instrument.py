@@ -1715,6 +1715,8 @@ def update_instrument_category(
             db.add(connection)
 
         conn_data = request.connection.dict(exclude_unset=True)
+        adapter_profile_supplied = "base_station_adapter_profile" in conn_data
+        adapter_profile = conn_data.pop("base_station_adapter_profile", None)
         # 将前端的 controller 字段映射回 DB 的 protocol
         if "controller" in conn_data:
             conn_data["protocol"] = conn_data.pop("controller")
@@ -1727,6 +1729,19 @@ def update_instrument_category(
                 conn_data["controller_ip"] = parsed_ip
             if parsed_port:
                 conn_data["port"] = parsed_port
+
+        if adapter_profile_supplied:
+            params = dict(
+                conn_data.get("connection_params")
+                if "connection_params" in conn_data
+                else connection.connection_params
+                or {}
+            )
+            if adapter_profile is None:
+                params.pop("base_station_adapter_profile", None)
+            else:
+                params["base_station_adapter_profile"] = adapter_profile
+            conn_data["connection_params"] = params
 
         for key, value in conn_data.items():
             if value is not None and hasattr(connection, key):

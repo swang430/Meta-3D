@@ -75,6 +75,30 @@ export type InstrumentConnection = {
   connection_params?: Record<string, any> | null
 }
 
+export type Cmw500Lte2x2InternalRoute = {
+  pcc_bb_board: string
+  rx_connector: string
+  rx_converter: string
+  tx1_connector: string
+  tx1_converter: string
+  tx2_connector: string
+  tx2_converter: string
+}
+
+export type BaseStationAdapterProfile = {
+  schema_version: 1
+  adapter: 'cmw500'
+  lte_2x2_internal_route: Cmw500Lte2x2InternalRoute
+}
+
+export type InstrumentConnectionUpdate = {
+  endpoint?: string | null
+  controller?: string | null
+  notes?: string | null
+  connection_params?: Record<string, unknown> | null
+  base_station_adapter_profile?: BaseStationAdapterProfile | null
+}
+
 export type InstrumentCategory = {
   /** DB UUID for this category. Stable identifier used by LabProfile
    *  instrument_bindings, topology editor links, etc. Distinct from
@@ -475,7 +499,7 @@ export type InstrumentsResponse = {
 
 export type UpdateInstrumentPayload = {
   modelId?: string
-  connection?: InstrumentConnection
+  connection?: InstrumentConnectionUpdate
 }
 
 

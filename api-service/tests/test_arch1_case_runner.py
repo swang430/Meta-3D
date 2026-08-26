@@ -38,6 +38,7 @@ from app.db.database import Base, get_db
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.alert import Alert
 from app.models.lab_profile import LabProfile
+from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.test_plan import TestCase, TestExecution
 from app.services.test_execution.executor_base import (
     StepExecutionResult,
@@ -56,6 +57,12 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(autouse=True)
 def _db_schema(monkeypatch):
     Base.metadata.create_all(bind=engine)
+    from app.hal import MockBaseStation
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    saved_base_station = hal.drivers.get("baseStation")
+    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
     prev = app.dependency_overrides.get(get_db)
 
     def _override():
@@ -73,6 +80,10 @@ def _db_schema(monkeypatch):
         TestingSessionLocal,
     )
     yield
+    if saved_base_station is None:
+        hal.drivers.pop("baseStation", None)
+    else:
+        hal.drivers["baseStation"] = saved_base_station
     if prev is None:
         app.dependency_overrides.pop(get_db, None)
     else:
@@ -95,11 +106,31 @@ def lab(db):
     chamber = create_chamber_from_preset(
         ChamberType.TYPE_C.value, name="CaseRunnerLab Chamber")
     db.add(chamber)
-    db.commit()
+    db.flush()
+    category = InstrumentCategory(
+        category_key="baseStation",
+        category_name="基站仿真器",
+        driver_mode="mock",
+        is_active=True,
+    )
+    db.add(category)
+    db.flush()
+    db.add(InstrumentConnection(
+        category_id=category.id,
+        endpoint=None,
+        connection_params=None,
+        created_by="test",
+    ))
     lp = LabProfile(
         name="CaseRunner-Lab",
         chamber_config_id=chamber.id,
-        instrument_bindings=[],
+        instrument_bindings=[{
+            "category_id": str(category.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "baseStation",
+        }],
         is_active=True,
     )
     db.add(lp)

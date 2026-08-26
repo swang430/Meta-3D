@@ -30,6 +30,7 @@ from app.models.chamber import (
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.alert import Alert
 from app.models.lab_profile import LabProfile
+from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.test_plan import TestExecution
 
 
@@ -56,6 +57,12 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
+    from app.hal import MockBaseStation
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    saved_base_station = hal.drivers.get("baseStation")
+    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
     prev = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setattr(
@@ -65,6 +72,10 @@ def setup_db(monkeypatch):
     try:
         yield
     finally:
+        if saved_base_station is None:
+            hal.drivers.pop("baseStation", None)
+        else:
+            hal.drivers["baseStation"] = saved_base_station
         if prev is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -92,9 +103,30 @@ def chamber(db):
 
 @pytest.fixture
 def lab(db, chamber):
+    category = InstrumentCategory(
+        category_key="baseStation",
+        category_name="基站仿真器",
+        driver_mode="mock",
+        is_active=True,
+    )
+    db.add(category)
+    db.flush()
+    db.add(InstrumentConnection(
+        category_id=category.id,
+        endpoint=None,
+        connection_params=None,
+        created_by="test",
+    ))
     lp = LabProfile(
         name="P3-Phase3-Lab",
         chamber_config_id=chamber.id,
+        instrument_bindings=[{
+            "category_id": str(category.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "baseStation",
+        }],
         is_active=True,
     )
     db.add(lp)
@@ -113,7 +145,7 @@ class TestAdhocPhaseEndpoint:
         events = []
 
         @asynccontextmanager
-        async def _lease(purpose):
+        async def _lease(purpose, **_kwargs):
             events.append(f"enter:{purpose}")
             try:
                 yield
@@ -290,7 +322,7 @@ class TestAdhocPhaseEndpoint:
         events = []
 
         @asynccontextmanager
-        async def _lease(_purpose):
+        async def _lease(_purpose, **_kwargs):
             events.append("lease-enter")
             try:
                 yield
@@ -335,7 +367,7 @@ class TestAdhocPhaseEndpoint:
         )
 
         @asynccontextmanager
-        async def _lease(_purpose):
+        async def _lease(_purpose, **_kwargs):
             yield
             raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
 
@@ -384,7 +416,7 @@ class TestAdhocPhaseEndpoint:
         )
 
         @asynccontextmanager
-        async def _lease(_purpose):
+        async def _lease(_purpose, **_kwargs):
             yield
             raise InstrumentTestLeaseReleaseError("UXM Local 交接失败")
 
@@ -546,7 +578,7 @@ class TestExecutionStatusVisibleToReloadGate:
         events = []
 
         @asynccontextmanager
-        async def _lease(purpose):
+        async def _lease(purpose, **_kwargs):
             events.append(f"enter:{purpose}")
             try:
                 yield
@@ -587,7 +619,7 @@ class TestExecutionStatusVisibleToReloadGate:
         events = []
 
         @asynccontextmanager
-        async def _lease(purpose):
+        async def _lease(purpose, **_kwargs):
             events.append(f"enter:{purpose}")
             try:
                 yield
@@ -744,7 +776,7 @@ class TestExecutionStatusVisibleToReloadGate:
         )
 
         @asynccontextmanager
-        async def _lease(_purpose):
+        async def _lease(_purpose, **_kwargs):
             yield
             raise InstrumentTestLeaseReleaseError("F64 Local 交接失败")
 

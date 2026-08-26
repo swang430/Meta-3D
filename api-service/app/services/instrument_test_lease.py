@@ -41,6 +41,7 @@ class InstrumentTestLease:
         # 最外层 hold() 实际取到的控制权 —— 嵌套时用来校验内层没有"要更宽"
         self._held_f64 = False
         self._held_uxm = False
+        self._held_validation_identity: Optional[str] = None
         self._monitoring_enabled = False
 
     @property
@@ -265,6 +266,23 @@ class InstrumentTestLease:
                     f"内层不会重复 acquire，照跑会在第一条 SCPI 上撞 Local 门。"
                     f"把外层的 control_f64/control_uxm 放宽，或把内层移到租约外。"
                 )
+            nested_identity = getattr(
+                validate_before_remote,
+                "validation_identity",
+                None,
+            )
+            if (
+                nested_identity is not None
+                and nested_identity != self._held_validation_identity
+            ):
+                raise InstrumentTestLeaseError(
+                    f"嵌套租约 {purpose!r} 的冻结身份与外层 "
+                    f"{self._active_purpose!r} 不一致，拒绝复用其 Remote 控制"
+                )
+            if validate_before_remote is not None:
+                validation_error = validate_before_remote(self._hal())
+                if validation_error:
+                    raise InstrumentTestLeaseError(validation_error)
             logger.debug(
                 "[instrument-lease] 嵌套复用 %r 的控制权: %s",
                 self._active_purpose, purpose,
@@ -284,6 +302,11 @@ class InstrumentTestLease:
             self._active_purpose = purpose
             self._held_f64 = control_f64
             self._held_uxm = control_uxm
+            self._held_validation_identity = getattr(
+                validate_before_remote,
+                "validation_identity",
+                None,
+            )
             try:
                 try:
                     await self._clear_metrics_cache(hal)
@@ -302,6 +325,7 @@ class InstrumentTestLease:
                 self._active_purpose = None
                 self._held_f64 = False
                 self._held_uxm = False
+                self._held_validation_identity = None
                 self._monitoring_enabled = False
                 try:
                     if hal is not None:

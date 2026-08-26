@@ -31,7 +31,7 @@ from app.models.chamber import (
     ChamberType,
     create_chamber_from_preset,
 )
-from app.models.instrument import InstrumentCategory
+from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.lab_profile import LabProfile
 from app.models.channel_asset import ChannelAsset
 from app.models.test_plan import TestCase, TestExecution
@@ -91,10 +91,26 @@ def chamber(db):
 
 
 @pytest.fixture
-def lab(db, chamber):
+def lab(db, chamber, instrument_categories):
+    base_station = next(
+        row for row in instrument_categories if row.category_key == "baseStation"
+    )
+    db.add(InstrumentConnection(
+        category_id=base_station.id,
+        endpoint=None,
+        connection_params=None,
+        created_by="test",
+    ))
     lp = LabProfile(
         name="Smoke-Test-Lab",
         chamber_config_id=chamber.id,
+        instrument_bindings=[{
+            "category_id": str(base_station.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "baseStation",
+        }],
         is_active=True,
     )
     db.add(lp)
@@ -304,6 +320,10 @@ class TestFivePhaseCommissioningSmoke:
         from datetime import datetime
         from app.models.test_plan import TestExecution
         from app.services.mimo_ota import build_mimo_ota_test_case
+        from app.services.base_station_adapter_profile import (
+            freeze_execution_base_station_adapter_profile,
+        )
+        from app.services.instrument_hal_service import get_hal_service
 
         config_overrides = {
             "frequency_hz": 3.5e9,
@@ -356,6 +376,10 @@ class TestFivePhaseCommissioningSmoke:
             executed_by="commissioning_api",
         )
         db.add(execution)
+        db.flush()
+        freeze_execution_base_station_adapter_profile(
+            db, get_hal_service(), execution, test_case
+        )
         db.commit()
         db.refresh(execution)
         return str(execution.id)
@@ -495,7 +519,7 @@ class TestFivePhaseCommissioningSmoke:
             )
 
     def test_analysis_stays_unknown_when_frequency_identity_is_unverified(
-        self, lab, db
+        self, lab, hal_with_mocks, db
     ):
         session_id = self._create_fast_session(lab, db, azimuths=(0.0,))
         execution = (
@@ -534,7 +558,7 @@ class TestFivePhaseCommissioningSmoke:
 
     @pytest.mark.parametrize("path_loss_verified", [False, None])
     def test_analysis_stays_unknown_without_explicit_real_path_loss(
-        self, lab, db, path_loss_verified,
+        self, lab, hal_with_mocks, db, path_loss_verified,
     ):
         session_id = self._create_fast_session(lab, db, azimuths=(0.0,))
         execution = (

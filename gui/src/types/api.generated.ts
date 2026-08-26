@@ -2057,7 +2057,32 @@ export interface components {
         };
         UpdateInstrumentPayload: {
             modelId?: string | null;
-            connection?: components["schemas"]["InstrumentConnection"];
+            connection?: components["schemas"]["InstrumentConnectionUpdate"];
+        };
+        Cmw500Lte2x2InternalRoute: {
+            pcc_bb_board: string;
+            rx_connector: string;
+            rx_converter: string;
+            tx1_connector: string;
+            tx1_converter: string;
+            tx2_connector: string;
+            tx2_converter: string;
+        };
+        BaseStationAdapterProfile: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            adapter: "cmw500";
+            lte_2x2_internal_route: components["schemas"]["Cmw500Lte2x2InternalRoute"];
+        };
+        InstrumentConnectionUpdate: {
+            endpoint?: string | null;
+            controller?: string | null;
+            notes?: string | null;
+            connection_params?: {
+                [key: string]: unknown;
+            } | null;
+            base_station_adapter_profile?: components["schemas"]["BaseStationAdapterProfile"] | null;
         };
         SystemStatusItem: {
             label: string;

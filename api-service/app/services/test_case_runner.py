@@ -59,6 +59,11 @@ from app.services.instrument_test_lease import (
     instrument_test_lease,
 )
 from app.services.instrument_hal_service import get_hal_service
+from app.services.base_station_adapter_profile import (
+    FREEZE_CONFIG_KEY,
+    build_frozen_base_station_validator,
+    freeze_execution_base_station_adapter_profile,
+)
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 logger = logging.getLogger(__name__)
@@ -254,6 +259,19 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         executed_by=RUNNER_MARKER,
     )
     db.add(execution)
+    db.flush()
+    try:
+        freeze_execution_base_station_adapter_profile(
+            db,
+            get_hal_service(),
+            execution,
+            snapshot,
+        )
+    except Exception as e:  # noqa: BLE001 — 配置/绑定冲突必须在排入后台前拒绝
+        db.rollback()
+        raise CaseNotExecutable(
+            f"基站 adapter profile 无法冻结: {e}"
+        ) from e
     db.commit()
     db.refresh(execution)
 
@@ -484,7 +502,22 @@ async def _run_case(execution_id: UUID) -> None:
     db = SessionLocal()
     try:
         deferred_report = None
-        async with instrument_test_lease(f"formal-case:{execution_id}"):
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == execution_id)
+            .first()
+        )
+        frozen = (
+            (execution.config or {}).get(FREEZE_CONFIG_KEY)
+            if execution is not None
+            else None
+        )
+        if not isinstance(frozen, dict):
+            raise RuntimeError("formal execution is missing frozen baseStation adapter profile")
+        async with instrument_test_lease(
+            f"formal-case:{execution_id}",
+            validate_before_remote=build_frozen_base_station_validator(frozen),
+        ):
             deferred_report = await _run_case_loop(
                 db, execution_id, defer_report=True
             )

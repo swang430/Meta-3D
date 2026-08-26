@@ -1561,8 +1561,54 @@ components:
           type: string
           nullable: true
         connection:
-          $ref: '#/components/schemas/InstrumentConnection'
+          $ref: '#/components/schemas/InstrumentConnectionUpdate'
       additionalProperties: false
+    Cmw500Lte2x2InternalRoute:
+      type: object
+      additionalProperties: false
+      properties:
+        pcc_bb_board: {type: string, minLength: 1}
+        rx_connector: {type: string, minLength: 1}
+        rx_converter: {type: string, minLength: 1}
+        tx1_connector: {type: string, minLength: 1}
+        tx1_converter: {type: string, minLength: 1}
+        tx2_connector: {type: string, minLength: 1}
+        tx2_converter: {type: string, minLength: 1}
+      required: [pcc_bb_board, rx_connector, rx_converter, tx1_connector, tx1_converter, tx2_connector, tx2_converter]
+    BaseStationAdapterProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        adapter:
+          type: string
+          enum: [cmw500]
+        lte_2x2_internal_route:
+          $ref: '#/components/schemas/Cmw500Lte2x2InternalRoute'
+      required: [schema_version, adapter, lte_2x2_internal_route]
+    InstrumentConnectionUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        endpoint:
+          type: string
+          nullable: true
+        controller:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        connection_params:
+          type: object
+          nullable: true
+          additionalProperties: true
+        base_station_adapter_profile:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationAdapterProfile'
+          nullable: true
     SystemStatusItem:
       type: object
       properties:
