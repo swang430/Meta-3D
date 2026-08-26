@@ -34,6 +34,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
+from app.hal.base_station import (
+    BaseStationControlReleaseResult,
+    BaseStationRemoteSessionResult,
+)
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import (
     Uxm5GNRTestAppProfile,
@@ -76,6 +80,42 @@ def _override_get_db():
 
 
 client = TestClient(app)
+
+
+def _attach_base_station_lease_contract(fake_driver: MagicMock) -> None:
+    session_token = "topology-profile-test-session"
+    fake_driver.adapter_id = "uxm"
+    fake_driver.acquire_remote_control = AsyncMock(
+        return_value=BaseStationRemoteSessionResult(
+            adapter_id="uxm",
+            session_token=session_token,
+            acquired_confirmed=True,
+            warnings=(),
+        )
+    )
+
+    async def _release(
+        expected_session_token: str,
+        *,
+        measurement_attempt_id: str | None = None,
+        lease_id: str = "",
+    ) -> BaseStationControlReleaseResult:
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id="uxm",
+            session_token=expected_session_token,
+            remote_session_acquired_confirmed=(
+                expected_session_token == session_token
+            ),
+            transport_session_released_confirmed=(
+                expected_session_token == session_token
+            ),
+            front_panel_local_confirmed=None,
+            warnings=(),
+        )
+
+    fake_driver.release_remote_session = AsyncMock(side_effect=_release)
 
 
 @pytest.fixture(autouse=True)
@@ -549,6 +589,7 @@ class TestSelectTopologyProfileEndpoint:
             return_value={"applied": True, "profile_id": "caict_n78_2x2",
                           "test_app": "5G_NR_Test"},
         )
+        _attach_base_station_lease_contract(fake_driver)
 
         class FakeHal:
             drivers = {"baseStation": fake_driver}
@@ -589,6 +630,7 @@ class TestSelectTopologyProfileEndpoint:
             return_value={"applied": True, "profile_id": "caict_n78_2x2",
                           "test_app": "5G_NR_Test"},
         )
+        _attach_base_station_lease_contract(fake_driver)
 
         class FakeHal:
             drivers = {"baseStation": fake_driver}

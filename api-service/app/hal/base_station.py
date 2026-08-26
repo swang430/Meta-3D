@@ -736,6 +736,12 @@ class MockBaseStation(BaseStationDriver):
             warnings=("simulated transport; front-panel Local not applicable",),
         )
 
+    async def release_to_local_control(self) -> bool:
+        """Release the simulated transport for idle parking/reload paths."""
+        released = await self.disconnect()
+        self._remote_session_token = None
+        return released is True
+
     async def disconnect(self) -> bool:
         if self._cell_running:
             await self.stop_signaling()
