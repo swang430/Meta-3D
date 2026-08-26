@@ -59,7 +59,7 @@ MIMO OTA 顶层只允许使用：
 - `BaseStationMeasurementWindow`
 - `BaseStationKpiSnapshot`
 - `BaseStationCleanupResult`
-- `BaseStationLocalControlResult`
+- `BaseStationControlReleaseResult`
 - `BaseStationExecutionEvidence`
 
 顶层不得出现 `uxm_*`、`cmw_*`、具体 SCPI、厂商类判断或 Test Application/Signaling Task
@@ -100,6 +100,9 @@ LabProfile binding 的 `instrument_model_id`，两者必须存在且精确一致
 诊断且不进入任何 adapter 正式链；只缺一端、adapter 未知、两种 model 选择分叉、
 registry/已加载真实类/profile 冲突均在首次硬件 I/O 前 fail-loud，且核对过程不得发送仪器命令。
 不得用“缺 profile 就跳过”同时服务 UXM 与 CMW，因为那会让 CMW 缺配置静默放行。
+执行冻结后还必须把同一 frozen identity 作为 lease 的 `validate_before_remote` 输入：lease 在与 HAL
+reload 共用的协调锁内、Remote acquire 与任何 cache/I/O 前重新核对当前 loaded driver 的权威
+real/mock 分类、精确类和 adapter；冻结后发生 reload/model switch 必须零仪器 I/O fail-loud。
 
 ### 2.4 通用配置与 debug inherit
 
@@ -174,21 +177,28 @@ DISCONNECTED
 共享 MEASURE cleanup 必须返回并消费结构化 `BaseStationCleanupResult`，只负责该阶段能够真实
 确认的 `stop_signaling_confirmed`、`safe_idle_confirmed` 和 warnings。它不得调用基站
 `disconnect()`：VISA/HiSLIP transport 必须一直保留到租约退出时，由同一个
-`release_to_local_control()` 独占完成控制交还与会话关闭。`False`、`None`、异常均不可当成功；
+`release_remote_session()` 独占完成控制会话释放。它不宣称前面板 Local。`False`、`None`、异常均不可当成功；
 `cleanup_chamber_instruments()` 必须检查每个安全动作的布尔返回并聚合失败。执行证据中的 cleanup
 确认只能由这个结果推导，不能由 finally 已运行或无异常直接置 true。
 
-Local 控制权交还不属于 MEASURE cleanup：它发生在 `instrument_test_lease` 退出时，必须由独立的
-`BaseStationLocalControlResult` 保存 Remote 取得与 Local 交还的精确结果。租约的基站解析必须是
-vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过；驱动只有在有厂商出处的控制会话
-动作和确认信号成功后才能返回 true。finally 已运行、disconnect 成功或没有抛异常都不能推导
-Local 已交还。UXM/CMW 的 release 调用开始时必须仍有本次活跃 VISA/HiSLIP session，且 close
-精确成功；session 已为 None 或 close 失败都必须返回 false，不能把“已经断开”当作本次交还。
+基站控制会话释放不属于 MEASURE cleanup：它发生在 `instrument_test_lease` 退出时，必须由独立的
+`BaseStationControlReleaseResult` 保存本次 lease 的 Remote session 取得、transport/session 释放和
+前面板 Local 状态三类不同事实。UXM 现有厂商资料没有证明“关闭 VISA/HiSLIP 会话 = 前面板 Local”，
+因此 close 成功只能令 `transport_session_released_confirmed=true`；
+`front_panel_local_confirmed` 必须保持 null/unknown 并形成 Warning，除非未来有厂商出处的控制动作与
+独立确认信号。正式测量发布门消费可核实的 transport release，不得把它命名或叙述成 Local 已交还；
+front-panel Local 是操作状态，不得伪造，也不因缺证据反向否定已完成的真实测量。租约的基站解析
+必须 vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过。finally 已运行、disconnect
+成功或没有抛异常都不能推导任一确认。release 调用开始时必须仍有本次活跃 VISA/HiSLIP session，
+且 close 精确成功；session 已为 None 或 close 失败都不能确认本次 transport release。
 `instrument_test_lease` 必须向每个直接持有租约的调用方暴露同一个可在 `__aexit__` 后读取的
 server-owned outcome；formal runner 以及 commissioning 的单相位、adhoc、run-all 三类 lease owner
-都必须在租约退出后，通过同一个持久化 helper 把 `BaseStationLocalControlResult` 写回对应 execution，
-不能只在异常路径记录自由文本，也不能让 commissioning 依赖 formal runner 代写。Local 未确认时，
-业务错误仍完整保留，但公开 KPI、历史正式判决和最终报告必须保持 UNKNOWN/N/A。
+都必须在租约退出后，通过同一个持久化 helper 把带唯一 `lease_id` 的结果追加到对应 execution，
+不能覆盖此前 lease、只在异常路径记录自由文本或让 commissioning 依赖 formal runner 代写。每个
+measurement window 必须绑定 lease 生成并通过 server-only context 传入的 `lease_id`、session identity
+digest 以及该 window 自身的 cleanup；正式 evaluator 只消费同 lease/session 的 cleanup 与 release。
+transport release 未确认时，业务错误仍完整保留，但公开 KPI、历史正式判决和最终报告必须保持
+UNKNOWN/N/A。ANALYSIS/REPORT 本身不控制仪表，不得创建空基站 lease 来生成或替换测量 provenance。
 
 ### 3.2 `1CC - nx2` 内部 route
 
@@ -249,7 +259,8 @@ Absolute 字段 1 是 reliability indicator，不是 BLER；Relative 字段 5 �
 
 新 UXM 与 CMW500 执行均写 `BaseStationExecutionEvidence(schema_version=1)`，包含 adapter、
 execution mode、identity、capabilities、requested/applied config、内部 route、lifecycle、
-measurement windows、MEASURE cleanup 和租约退出后的 Local control handoff。`adapter_id` 只用于审计显示与 command profile 注册，不允许
+measurement windows、MEASURE cleanup 和按 `lease_id` 保存的 control-session release。
+`adapter_id` 只用于审计显示与 command profile 注册，不允许
 在 Analysis、报告、报告对比、历史或 GUI 中形成厂商分支。
 
 每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间、pre-clear OFF、
@@ -272,8 +283,9 @@ evaluate_base_station_metric_trust(
 ```
 
 它要求规范 schema、dispatch 模式、获准 adapter/profile、真实身份、配置回读、内部 CMW route、
-完整测量窗口、正确字段/单位、当前 execution provenance、方位绑定、MEASURE cleanup，以及租约
-退出后精确确认的 Local control handoff。外部 RF router 不进入该
+完整测量窗口、正确字段/单位、当前 execution provenance、方位绑定、MEASURE cleanup，以及与该
+window 的 `lease_id` 精确匹配且确认 transport/session 已释放的 control-release 结果。前面板 Local
+状态另行显示为 confirmed/unknown Warning，不能由 close 推断，也不进入测量真实性判据。外部 RF router 不进入该
 函数。旧 `throughput_verified`、`kpi_valid` 或 `config_applied` 不能单独恢复正式 PASS。
 
 旧 UXM 只通过精确 legacy translator；冲突时 UNKNOWN。CMW500 原型历史没有 legacy 信任路径。
@@ -299,12 +311,13 @@ evaluator，而是按来源换源：`avg_throughput_mbps` 从逐方位受信 thr
 `rsrp_variance_db` / `avg_sinr_db` 分别从 P1-63 的逐方位、逐指标 RF trust 后聚合；未来新增
 BLER 对比才调用 base-station BLER evaluator。未获信任的值不得进入 delta、summary statistics、
 repeatability 或 `formal=true`，且一个指标 unknown 不得清空其他独立可信指标。缺测不写 0，
-debug 不打印数值后再声明“不可信”。正式 Analysis 与 REPORT 都必须位于 Local handoff 之后：
-formal runner 将末尾连续的 ANALYSIS/REPORT 一起从租约内延迟，租约退出并持久化 handoff 后才按
+debug 不打印数值后再声明“不可信”。正式 Analysis 与 REPORT 都必须位于测量 lease 的 control
+release 之后：formal runner 将末尾连续的 ANALYSIS/REPORT 一起从租约内延迟，租约退出并持久化
+与 measurement window 同 `lease_id` 的 release 后才按
 ANALYSIS → REPORT 顺序执行；不得保留一份租约内 UNKNOWN 的 `validation_pass` 再只重建显示投影。
-commissioning run-all 同样延迟这两个正式化相位；单相位/adhoc 的 ANALYSIS 或 REPORT 先完成空租约
-与 handoff 持久化，再 dispatch 对应相位。cleanup 和 Local 交还确定前不发布最终报告、正式历史判决
-或 completed 判词。历史列表只
+commissioning run-all 同样延迟这两个正式化相位；单相位/adhoc 的 ANALYSIS 或 REPORT 不取得新的
+基站 lease，只读取此前 MEASURE window 绑定的 release；缺失或失败保持 UNKNOWN/N/A。cleanup 与
+匹配 lease 的 transport release 确定前不发布最终报告、正式历史判决或 completed 判词。历史列表只
 返回摘要，详情按 execution ID 读取完整快照；旧或畸形 evidence 保持 UNKNOWN，不从当前数据库
 或旧正文补证。
 
@@ -352,7 +365,8 @@ Analysis/报告/历史、GUI/OpenAPI 和全量回归。模拟驱动复用真实�
 ### 6.2 必测失败场景
 
 覆盖缺 KS520、固件过低、LTE app/实例变化、内部 route 回读不一致、配置错误队列、UE 未 attach、
-测量未启动、返回字段不足、reliability 无效、timeout、取消、cleanup 部分失败、Local 交还失败、
+测量未启动、返回字段不足、reliability 无效、timeout、取消、cleanup 部分失败、control session
+释放失败、前面板 Local 状态未知、
 后端重启后的未知状态，以及 inherit debug 尝试生成正式报告。
 
 每种失败都必须给出明确原因，不得折叠成 0 或通用“连接失败”。现场信息尚未确认时显示 Warning，

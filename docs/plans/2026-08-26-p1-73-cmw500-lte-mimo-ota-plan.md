@@ -70,9 +70,13 @@ class BaseStationCleanupResult:
     warnings: tuple[str, ...]
 
 @dataclass(frozen=True)
-class BaseStationLocalControlResult:
-    acquired_remote_confirmed: bool
-    released_local_confirmed: bool
+class BaseStationControlReleaseResult:
+    lease_id: str
+    adapter_id: Literal["uxm", "cmw500"]
+    session_identity_digest: str
+    remote_session_acquired_confirmed: bool
+    transport_session_released_confirmed: bool
+    front_panel_local_confirmed: bool | None
     warnings: tuple[str, ...]
 ```
 
@@ -96,9 +100,11 @@ cd api-service
   的固定类属性产生；registry 初始化校验唯一值，业务层不得从型号/类名前缀或 connection params 猜。
 - `BaseStationCleanupResult` 是共享 MEASURE cleanup 的唯一结果，只保存该阶段真实拥有的
   stop signaling/SAFE_IDLE；任何字段只有驱动返回精确 `True` 且相应状态回读确认后才为 true。
-  它不拥有基站 transport close，不得调用 `disconnect()` 抢在租约 Local handoff 之前关闭会话。
-- `BaseStationLocalControlResult` 独立保存测试租约的 Remote 取得与 Local 交还；它只能由
-  `instrument_test_lease` 的真实控制会话结果产生，不能用 cleanup、finally 或“无异常”推导。
+  它不拥有基站 transport close，不得调用 `disconnect()` 抢在 lease control release 之前关闭会话。
+- `BaseStationControlReleaseResult` 按唯一 `lease_id` 分开保存 Remote session 取得、transport/session
+  释放与前面板 Local 状态；它只能由 `instrument_test_lease` 的真实控制会话结果产生，不能用 cleanup、
+  finally 或“无异常”推导。关闭 VISA/HiSLIP 只确认 transport release；没有厂商动作与确认信号时
+  `front_panel_local_confirmed` 必须为 null/unknown，不能因类名或旧方法名写成 true。
 - UXM 改为导入通用类型，不复制定义。
 - UXM 专属功率 builder 下沉到 UXM profile/driver。
 - 只改归属，不改变 UXM 命令、返回值或执行顺序。
@@ -744,6 +750,7 @@ git commit -m "fix: make CMW500 connect read-only"
 - Modify: `api-service/app/api/instrument.py`
 - Modify: `api-service/app/api/commissioning.py`
 - Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/app/services/instrument_test_lease.py`
 - Create: `api-service/tests/test_p1_73b_cmw_adapter_profile.py`
 - Modify: `api-service/tests/test_instrument_api.py`
 - Modify: `api-service/tests/test_commissioning_smoke.py`
@@ -818,6 +825,14 @@ UXM 仍为 `not_applicable`；两端型号都未配置时只允许 `diagnostic_u
 已有规范快照时幂等返回且绝不覆盖，但仍要核对当前 loaded driver 分类与冻结 identity；缺失、
 选择漂移、绑定漂移或冲突均在首次硬件 I/O 前 fail-loud。
 
+数据库冻结不能替代进程内 HAL mutation 锁。新增纯只读
+`validate_frozen_base_station_before_remote(hal, frozen_resolution)`，四类入口都必须把它作为
+`instrument_test_lease(validate_before_remote=...)` 的回调传入；回调由 lease 在 `_coordinated`
+锁内、metrics cache clear 与 Remote acquire 之前执行，重新核对当前 loaded driver 的权威 Mock 分类、
+精确 real class、adapter id 与冻结 model/profile identity。冻结后到入锁前发生 HAL reload/model switch
+必须在零仪器 I/O 时 fail-loud。回调不得查询当前数据库来改写快照；嵌套 lease 只能复用外层已绑定的
+同一冻结 identity，否则阻断，不能绕过原子复核。
+
 冻结条件必须按权威 adapter 收窄：`cmw500` 缺严格七字段即阻断；`uxm` 不要求、不读取 CMW
 profile，冻结显式 `uxm/not_applicable/profile=None` 后继续现有 UXM 配置、route 与证据链；adapter
 unknown/冲突才阻断。不得用统一“有 profile/无 profile”布尔决定两种仪表。
@@ -839,6 +854,9 @@ driver class 不一致；三者都必须在 lease/dispatch 前阻断且零仪器
 显式 CMW/UXM 配置下可以执行诊断但 resolution 标为 simulated、正式值全为 UNKNOWN/N/A；两端
 型号都为空的既有 Mock 冻结 `diagnostic_unbound` 后仍可跑通用 commissioning/adhoc/run-all，
 不得运行 adapter 专属分支或形成正式判决；非白名单 fake 不能借 duck typing 放行。
+另加竞态 RED：冻结 CMW 后、进入 lease 前把 active driver reload 为 UXM（以及反向），证明
+`validate_before_remote` 在 `_coordinated` 锁内拒绝且 acquire/clear-cache/SCPI 调用次数均为零；
+同 identity 无漂移时只校验不发送命令并正常 acquire。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -861,6 +879,7 @@ git add api-service/app/hal/base_station_adapter_profile.py \
   api-service/app/api/instrument.py \
   api-service/app/api/commissioning.py \
   api-service/app/services/test_case_runner.py \
+  api-service/app/services/instrument_test_lease.py \
   api-service/tests/test_p1_73b_cmw_adapter_profile.py \
   api-service/tests/test_instrument_api.py \
   api-service/tests/test_commissioning_smoke.py \
@@ -932,9 +951,10 @@ configure → route confirmed → CELL ON → UE attached/connected → measurem
 - attach 轮询不得 `except: pass`；状态解析只接受手册枚举，不能用宽松 substring 把 ATT 当 CONN。
 - 写失败时内部缓存不得提前伪装已应用；cleanup 多失败聚合并返回。
 - cancel 后仍执行安全 cleanup，但不把失败 cleanup 静默覆盖业务错误。
-- CMW 驱动实现共享 async `acquire_remote_control()` / `release_to_local_control()` 契约；控制动作、
-  返回值与确认信号必须逐项引用厂商手册，缺少明确出处时保持 false/unknown，不能用 VISA 会话存在、
-  disconnect 成功或未抛异常推断 Remote/Local；共享租约在 P1-73C 才接入并消费这些结果。
+- CMW 驱动实现共享 async `acquire_remote_control()` / `release_remote_session()` 契约；前者的控制动作、
+  返回值与确认信号必须逐项引用厂商手册，后者只确认本次活跃 VISA/HiSLIP transport 是否精确关闭。
+  两者都不能用会话形状、disconnect 或未抛异常推断；前面板 Local 没有明确厂商动作与确认时保持
+  unknown/Warning。共享租约在 P1-73C 才接入并消费这些结果。
 
 **Step 2: RED → GREEN**
 
@@ -1106,13 +1126,14 @@ class BaseStationExecutionEvidence(BaseModel):
     applied_route: BaseStationAppliedRouteSnapshot | None
     requested_positions: list[PositionSnapshot]
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
-    cleanup: BaseStationCleanupResult
-    local_control_handoff: BaseStationLocalControlResult
+    control_releases: list[BaseStationControlReleaseResult]
     exchange_ids: list[str]
 
 class BaseStationMeasurementWindowEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     window_id: str
+    lease_id: str
+    session_identity_digest: str
     config_digest: str
     route_digest: str | None
     position: PositionSnapshot
@@ -1123,11 +1144,12 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     running_confirmed: Literal[True]
     ready_confirmed: Literal[True]
     closed_off_confirmed: Literal[True]
+    cleanup: BaseStationCleanupResult
     lifecycle_exchange_ids: list[str]
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项，以及租约退出后仍持有原控制会话时形成的 `local_control_handoff.released_local_confirmed` 都精确为 true。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup/Local handoff 的 `False`/`None`/异常/仅无异常返回，均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window；每个 window 自带的结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项精确为 true，且它的 `lease_id` 在 `control_releases` 中恰有一条同 id、同 adapter、同 `session_identity_digest`、`remote_session_acquired_confirmed` 与 `transport_session_released_confirmed` 都精确为 true 的结果。`front_panel_local_confirmed` 没有厂商证据时保持 null/Warning，不得由 close 推断，也不作为测量真值的替代门。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/重复 lease result、跨 lease/session 替换、legacy CMW/inherit/mock/方位集合失配，或本 window cleanup/transport release 的 `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -1174,8 +1196,8 @@ git commit -m "feat: add formal base station execution evidence"
 - Modify: `api-service/tests/test_p1_73a_vendor_neutral_measure.py`
 - Create: `api-service/tests/test_p1_73c_cmw_measure_integration.py`
 - Create: `api-service/tests/test_p1_73c_base_station_cleanup_truth.py`
-- Create: `api-service/tests/test_p1_73c_base_station_lease_handoff.py`
-- Create: `api-service/tests/test_p1_73c_commissioning_lease_handoff.py`
+- Create: `api-service/tests/test_p1_73c_base_station_control_release.py`
+- Create: `api-service/tests/test_p1_73c_commissioning_control_release.py`
 - Modify: `api-service/tests/test_instrument_test_lease.py`
 - Modify: `api-service/tests/test_commissioning_smoke.py`
 - Modify: `api-service/tests/test_commissioning_adhoc.py`
@@ -1198,43 +1220,55 @@ git commit -m "feat: add formal base station execution evidence"
 - shared cleanup 对 `stop_signaling()` 与 SAFE_IDLE 回读逐项要求 `is True`；`False`、`None`
   和异常都写入 warnings 与 `BaseStationCleanupResult`，不得因 await 完成或 finally 已运行而确认；
 - shared cleanup 必须删除基站 `disconnect()` 调用；基站 session 在 stop/SAFE_IDLE 后继续存活，
-  只允许最外层 `instrument_test_lease` 的 `release_to_local_control()` 关闭。positioner 等其他仪表的
+  只允许最外层 `instrument_test_lease` 的 `release_remote_session()` 关闭。positioner 等其他仪表的
   既有安全断开所有权不受此规则改变；
 - `measure.py` 消费该结构化结果并只由 stop/SAFE_IDLE 派生 evidence cleanup；任一失败
   时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
+- outer lease 生成不可由请求体传入的 UUID `lease_id` 与 session identity digest，并通过 server-only
+  context 交给 MEASURE window writer；window 将本次 cleanup 一并冻结。多次 commissioning MEASURE
+  产生不同 lease id，后一次 cleanup/release 只能追加，绝不能覆盖或替前一次 window 的证据；
 - `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
-  必须实现同一 async Remote/Local 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
-- Local handoff 只在租约退出时形成 `BaseStationLocalControlResult`。`instrument_test_lease` 必须
+  必须实现同一 async Remote/session-release 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
+- formal runner 与 commissioning 单相位/adhoc/run-all 每个控制 baseStation 的 lease 都必须从 execution
+  冻结快照构造 Task 7A 的 `validate_before_remote`；回调缺失、当前 loaded driver 与冻结 adapter/profile
+  不一致时在协调锁内、Remote/cache clear/I/O 前阻断，不得仅依赖 lease 外的旧检查；
+- control release 只在租约退出时形成 `BaseStationControlReleaseResult`。`instrument_test_lease` 必须
   `async with ... as lease_outcome` 暴露同一个 server-owned outcome handle；handle 在块内不可伪造
-  `released_local_confirmed`，只在 `__aexit__` 完成真实交还后可读。formal runner 与 commissioning
+  `transport_session_released_confirmed`，只在 `__aexit__` 完成真实 session release 后可读。close 成功
+  不得写 `front_panel_local_confirmed=true`；该字段没有厂商确认时保持 null 并产生 Warning。formal runner 与 commissioning
   的单相位、adhoc、run-all 三类直接 lease owner 都必须在退出后调用同一个幂等持久化 helper，以
-  独立事务写回各自 execution；成功与失败都保存结构化结果，不能只在异常路径写自由文本，也不能
-  从另一个入口或 formal runner 补写；
+  独立事务按 `lease_id` 追加到各自 execution；成功与失败都保存结构化结果，不得覆盖别的 lease、
+  只在异常路径写自由文本或从另一个入口补写；每个 measurement window 在产生时冻结同一 lease id、
+  session identity digest 与该 window 的 cleanup；
 - formal runner 把执行链末尾连续的 `MIMO_OTA_ANALYSIS` 与 `MIMO_OTA_REPORT` 一起从租约内延迟，
-  持久化 Local handoff 后才严格按 ANALYSIS → REPORT dispatch 并持久化最终 `validation_pass`、
+  持久化同 measurement lease 的 control release 后才严格按 ANALYSIS → REPORT dispatch 并持久化最终 `validation_pass`、
   正式投影和报告。租约内不得先写一份 UNKNOWN Analysis 后只重建公开 projection；若 ANALYSIS/
   REPORT 不是末尾规范顺序则 fail-loud；
 - commissioning run-all 同样在 lease 内只跑到 MEASURE，延迟末尾 ANALYSIS/REPORT；单相位和 adhoc
-  若目标是 ANALYSIS 或 REPORT，先完成 lease exit 与 handoff 持久化再 dispatch。MEASURE 等硬件
-  相位完成后也必须先持久化 handoff 才能构造响应；交还失败时不 dispatch 延迟相位、不发布正式
+  若目标是 ANALYSIS 或 REPORT，不得再取得空基站 lease，只能在已有 MEASURE window 的同-id release
+  已持久化后 dispatch；没有匹配结果时相位可诊断执行但正式判决保持 UNKNOWN/N/A。MEASURE 等硬件
+  相位完成后也必须先持久化匹配的 control release 才能构造响应；release 失败时不 dispatch 延迟相位、不发布正式
   历史或报告，并保留原业务 winner 与错误全文；
-- RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_to_local_control` → transport close，
-  `release_to_local_control` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
+- RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_remote_session` → transport close，
+  `release_remote_session` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
   `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
-- 收窄 UXM 与 CMW 的 `release_to_local_control()` 返回契约：本次调用开始时必须存在活跃
-  VISA/HiSLIP session，且该 session 的 close 精确成功后才可返回 `True`；session 已为 `None`、
-  close 返回/抛出失败、取消或仅清空内部引用均返回 `False`/抛失败。租约只消费这个精确结果，
-  不读取驱动私有字段，也不从 status、finally 或“已断开”反推本次交还；
-- 租约交还失败时保留原业务 winner 与错误全文，再追加 handoff 失败；不能从 disconnect、finally、
-  context manager 正常退出或执行终态推导 Local 已确认；
+- 用语义准确的共享 `release_remote_session()` 取代基站正式路径上的误导性
+  `release_to_local_control()`：本次调用开始时必须存在活跃 VISA/HiSLIP session，且该 session 的
+  close 精确成功后才确认 transport release；session 已为 `None`、close 失败、取消或仅清空内部
+  引用均不得确认。UXM 现有兼容方法可保留为 deprecated wrapper，但不能产生 Local=true；租约只
+  消费结构化公共结果，不读取驱动私有字段，也不从 status、finally 或“已断开”反推前面板 Local；
+- control-session release 失败时保留原业务 winner 与错误全文，再追加 release 失败；不能从
+  disconnect、finally、context manager 正常退出或执行终态推导 transport 已释放或前面板 Local；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
 - UXM 仍通过同一个 executor 且原回归行为不变。
 
-RED 还要覆盖：CMW 缺 Remote/Local 契约时 fail-loud 而不是跳过；取得 Remote 失败、交还返回
-`False`、交还异常、取消与成功交还；失败时不发布正式历史/报告且保留原业务错误，成功时只有租约
-退出并由实际 lease owner 持久化后才允许正式 Analysis、投影与 deferred REPORT。分别覆盖 formal
-runner、commissioning 单相位、adhoc、run-all，证明四类 owner 均有结构化 handoff；删除任一 owner
-的持久化调用都必须使对应路径保持 UNKNOWN，而不是由其他入口偶然补证。
+RED 还要覆盖：CMW 缺 Remote/session-release 契约时 fail-loud 而不是跳过；取得 Remote 失败、
+transport close 失败、异常、取消与成功 release；close 成功仍必须证明 front-panel Local 为 unknown
+而非 true。失败时不发布正式历史/报告且保留原业务错误，成功时只有 measurement window 绑定的
+同-id release 由实际 lease owner 持久化后才允许正式 Analysis、投影与 deferred REPORT。分别覆盖 formal
+runner、commissioning 单相位、adhoc、run-all，证明四类 owner 均有结构化 control release；删除任一 owner
+的持久化调用都必须使对应路径保持 UNKNOWN，而不是由其他 lease/入口偶然补证；ANALYSIS/REPORT-only
+调用不得新增 release result，也不得覆盖 MEASURE lease 的失败结果。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -1243,8 +1277,9 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73c_cmw_measure_integration.py \
   tests/test_p1_73c_base_station_cleanup_truth.py \
-  tests/test_p1_73c_base_station_lease_handoff.py \
-  tests/test_p1_73c_commissioning_lease_handoff.py \
+  tests/test_p1_73c_base_station_control_release.py \
+  tests/test_p1_73c_commissioning_control_release.py \
+  tests/test_p1_73c_commissioning_control_release.py \
   tests/test_instrument_test_lease.py \
   tests/test_commissioning_smoke.py \
   tests/test_commissioning_adhoc.py \
@@ -1264,8 +1299,8 @@ git add api-service/app/services/mimo_ota/executors/measure.py \
   api-service/tests/test_p1_73a_vendor_neutral_measure.py \
   api-service/tests/test_p1_73c_cmw_measure_integration.py \
   api-service/tests/test_p1_73c_base_station_cleanup_truth.py \
-  api-service/tests/test_p1_73c_base_station_lease_handoff.py \
-  api-service/tests/test_p1_73c_commissioning_lease_handoff.py \
+  api-service/tests/test_p1_73c_base_station_control_release.py \
+  api-service/tests/test_p1_73c_commissioning_control_release.py \
   api-service/tests/test_instrument_test_lease.py \
   api-service/tests/test_commissioning_smoke.py \
   api-service/tests/test_commissioning_adhoc.py \
@@ -1305,12 +1340,13 @@ Commissioning 方位 KPI 表。逐一证明：
   逐指标调用唯一
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
-- 六类消费方都必须消费 runner 在租约退出后持久化的 final evidence：MEASURE cleanup 与
-  `local_control_handoff.released_local_confirmed` 缺失或不为 true 时逐指标 UNKNOWN/N/A；不得把
-  租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 Local 确认；
-- 正式 runner 不得在 handoff 证据产生前执行最终 ANALYSIS：`_run_case_loop` 必须把末尾连续的
+- 六类消费方都必须消费实际 measurement lease owner 在租约退出后持久化的 final evidence：
+  window 自带 cleanup 与同 `lease_id`/session digest 的 `transport_session_released_confirmed` 缺失或
+  不为 true 时逐指标 UNKNOWN/N/A；不得把另一 lease 的成功 release、前面板 Local unknown、
+  租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 transport release；
+- 正式 runner 不得在 measurement lease 的 control-release 证据产生前执行最终 ANALYSIS：`_run_case_loop` 必须把末尾连续的
   ANALYSIS/REPORT 作为一个 deferred formalization bundle 返回，外层 lease owner 在持久化结构化
-  handoff 后才按顺序执行，并把最终 `validation_pass` 与相位进度写回。Local 失败时两者都不执行；
+  release 后才按顺序执行，并把最终 `validation_pass` 与相位进度写回。transport release 失败时两者都不执行；
   只重建 projection 而不重算 Analysis 属于失败，因为会把租约内 UNKNOWN 永久写入历史；
 - expected config/positions 只取本次执行冻结快照；窗口 config digest、route digest 或 position
   任一与期望不符均 UNKNOWN/N/A，历史/下载不得从当前数据库补齐；
@@ -1325,10 +1361,11 @@ Commissioning 方位 KPI 表。逐一证明：
   projection，不能把 `phases["measure"]` 原样透传。单相位执行响应也复用同一 projector；租约内
   provisional 结果只能投影为 diagnostic/unknown，租约退出后的 final evidence 才可能 trusted。
   历史响应不得读取当前 TestCase、LabProfile、InstrumentConnection 或 HAL 状态补证；
-- commissioning 的单相位、adhoc 与 run-all 都直接拥有自己的 lease，不能假设 formal runner 会为
-  它们持久化 handoff。三条路径必须消费 Task 13 的 lease outcome 和共享持久化 helper；run-all
-  延迟 ANALYSIS/REPORT，单相位/adhoc 的 ANALYSIS/REPORT 在 handoff 持久化后执行。对应响应 projector
-  只能读取这次 execution 已落库的 final result；缺失时保持 diagnostic/unknown；
+- commissioning 的单相位、adhoc 与 run-all 在运行硬件相位时直接拥有自己的 lease，不能假设
+  formal runner 会为它们持久化 release。三条路径必须消费 Task 13 的 lease outcome 和共享持久化
+  helper；run-all 延迟 ANALYSIS/REPORT，单相位/adhoc 的 ANALYSIS/REPORT 不创建新基站 lease，只在
+  measurement window 的同-id release 已落库后执行。projector 精确按 window lease id 选 final result；
+  缺失、重复、跨 lease 或失败时保持 diagnostic/unknown；
 - Commissioning `Phases.tsx` 不得直接渲染 `az.throughput_mbps`/BLER raw 字段。共享 presenter
   只在逐指标 `trusted` 时显示普通 KPI；`diagnostic` 必须黄色明确标注“诊断值，非正式实测”，
   `unknown` 显示 `N/A`。debug、Mock、窗口生命周期/配置/route/方位不匹配均不能显示成普通 Mbps/%；
@@ -1491,7 +1528,7 @@ cd api-service
   tests/test_p1_73c_base_station_execution_evidence.py \
   tests/test_p1_73c_cmw_measure_integration.py \
   tests/test_p1_73c_base_station_cleanup_truth.py \
-  tests/test_p1_73c_base_station_lease_handoff.py \
+  tests/test_p1_73c_base_station_control_release.py \
   tests/test_p1_73c_formal_consumers.py \
   tests/test_p1_73c_cmw_readiness.py \
   tests/test_p1_73c_openapi_contract.py \
