@@ -119,6 +119,24 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         purpose="Read the Extended BLER OFF, RUN, or RDY state",
         minimum_firmware="V1.0.15.20",
     ),
+    "ebler_timeout": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:EBLer:TOUT",
+        source_reference=f"{_LTE_MANUAL}, §3.4.3, printed p.952",
+        purpose="Disable a retained early timeout before a bounded continuous window",
+        minimum_firmware="V2.0.10",
+    ),
+    "ebler_repetition": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:EBLer:REPetition",
+        source_reference=f"{_LTE_MANUAL}, §3.3.3 and §3.4.3, printed p.941, 953",
+        purpose="Select continuous repetition so STOP owns the requested window end",
+        minimum_firmware="V3.0.30",
+    ),
+    "ebler_stop_condition": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:EBLer:SCONdition",
+        source_reference=f"{_LTE_MANUAL}, §3.3.3 and §3.4.3, printed p.941, 953",
+        purpose="Disable retained confidence-level early termination",
+        minimum_firmware="V3.0.30",
+    ),
 }
 
 
@@ -238,6 +256,18 @@ class Cmw500LteCommandProfile:
     @classmethod
     def ebler_state_query(cls, sign_channel: int) -> str:
         return cls._format("ebler_state_query", sign_channel)
+
+    @classmethod
+    def ebler_timeout_disabled(cls, sign_channel: int) -> str:
+        return f"{cls._format('ebler_timeout', sign_channel)} 0"
+
+    @classmethod
+    def ebler_repetition_continuous(cls, sign_channel: int) -> str:
+        return f"{cls._format('ebler_repetition', sign_channel)} CONTinuous"
+
+    @classmethod
+    def ebler_stop_condition_none(cls, sign_channel: int) -> str:
+        return f"{cls._format('ebler_stop_condition', sign_channel)} NONE"
 
     @staticmethod
     def parse_route_readback(response: str) -> CmwNx2RouteReadback:

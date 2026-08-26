@@ -85,6 +85,9 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
     assert window.evidence[0].exchange_ids
     assert driver.writes == [
         "ABORt:LTE:SIGN1:EBLer",
+        "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
+        "CONFigure:LTE:SIGN1:EBLer:REPetition CONTinuous",
+        "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
         "INITiate:LTE:SIGN1:EBLer",
         "STOP:LTE:SIGN1:EBLer",
         "ABORt:LTE:SIGN1:EBLer",
@@ -92,14 +95,17 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
 
 
 @pytest.mark.asyncio
-async def test_natural_ready_does_not_send_stop():
+async def test_continuous_window_rejects_uncommanded_early_ready():
     driver = _WindowDriver(states=["OFF", "RUN", "RDY", "OFF"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
         window = await driver.measure_base_station_window(0.1)
 
-    assert window.confirmed is True
+    assert window.confirmed is False
     assert "STOP:LTE:SIGN1:EBLer" not in driver.writes
+    assert not any(
+        "ABSolute?" in query or "RELative?" in query for query in driver.queries
+    )
 
 
 @pytest.mark.asyncio
@@ -129,7 +135,7 @@ async def test_kpi_fields_fail_independently_without_borrowing_each_other(
     absolute, relative, throughput_valid, bler_valid
 ):
     driver = _WindowDriver(
-        states=["OFF", "RUN", "RDY", "OFF"],
+        states=["OFF", "RUN", "RUN", "RDY", "OFF"],
         absolute=absolute,
         relative=relative,
     )
@@ -148,7 +154,15 @@ async def test_kpi_fields_fail_independently_without_borrowing_each_other(
 async def test_stop_rejection_prevents_fetch_and_still_confirms_final_abort():
     driver = _WindowDriver(
         states=["OFF", "RUN", "RUN", "OFF"],
-        errors=['0,"No error"', '0,"No error"', '-221,"Settings conflict"', '0,"No error"'],
+        errors=[
+            '0,"No error"',
+            '0,"No error"',
+            '0,"No error"',
+            '0,"No error"',
+            '0,"No error"',
+            '-221,"Settings conflict"',
+            '0,"No error"',
+        ],
     )
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
@@ -165,7 +179,7 @@ async def test_stop_rejection_prevents_fetch_and_still_confirms_final_abort():
 
 @pytest.mark.asyncio
 async def test_final_off_failure_discards_previously_fetched_formal_values():
-    driver = _WindowDriver(states=["OFF", "RUN", "RDY", "RUN"])
+    driver = _WindowDriver(states=["OFF", "RUN", "RUN", "RDY", "RUN"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
         window = await driver.measure_base_station_window(0.1)
@@ -181,7 +195,7 @@ async def test_final_off_failure_discards_previously_fetched_formal_values():
 
 @pytest.mark.asyncio
 async def test_cancel_propagates_only_after_final_abort_and_off_confirmation():
-    driver = _WindowDriver(states=["OFF", "RUN", "OFF"])
+    driver = _WindowDriver(states=["OFF", "RUN", "RDY", "OFF"])
 
     async def _cancel(_seconds: float) -> None:
         raise asyncio.CancelledError

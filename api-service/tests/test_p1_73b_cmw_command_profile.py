@@ -21,6 +21,9 @@ def test_reachable_cmw_commands_carry_manual_source_and_purpose():
         "ebler_stop",
         "ebler_abort",
         "ebler_state_query",
+        "ebler_timeout",
+        "ebler_repetition",
+        "ebler_stop_condition",
     }
 
     assert required == set(CMW500_LTE_COMMANDS)
@@ -79,6 +82,15 @@ def test_nx2_route_builder_rejects_scpi_program_separator_in_every_token(field_n
 
 
 def test_extended_bler_builders_share_the_catalog_templates():
+    assert Cmw500LteCommandProfile.ebler_timeout_disabled(2) == (
+        "CONFigure:LTE:SIGN2:EBLer:TOUT 0"
+    )
+    assert Cmw500LteCommandProfile.ebler_repetition_continuous(2) == (
+        "CONFigure:LTE:SIGN2:EBLer:REPetition CONTinuous"
+    )
+    assert Cmw500LteCommandProfile.ebler_stop_condition_none(2) == (
+        "CONFigure:LTE:SIGN2:EBLer:SCONdition NONE"
+    )
     assert Cmw500LteCommandProfile.ebler_absolute_query(2) == (
         "FETCh:LTE:SIGN2:EBLer:PCC:ABSolute?"
     )

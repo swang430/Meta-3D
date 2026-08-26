@@ -872,8 +872,8 @@ class RealCmw500Driver(BaseStationDriver):
         """断开 VISA 连接"""
         try:
             cleanup_confirmed = True
-            if self._cell_state != CellState.OFF:
-                cleanup_confirmed = await self.stop_signaling() is True
+            if self._visa_session is not None:
+                cleanup_confirmed = await self.ensure_safe_idle() is True
 
             if self._visa_session:
                 self._visa_session.close()
@@ -1090,10 +1090,19 @@ class RealCmw500Driver(BaseStationDriver):
             self._write(self._fmt(CmwScpiCommands.CELL_STATE_SET) + " ON")
             if not self._write_group_confirmed():
                 return False
-            cell = self._parse_cell_all(
-                self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
-            )
-            if cell != ("ON", "ADJUSTED"):
+            cell_elapsed = 0.0
+            while cell_elapsed <= timeout_s:
+                cell = self._parse_cell_all(
+                    self._query(self._fmt(CmwScpiCommands.CELL_STATE_ALL))
+                )
+                if cell == ("ON", "ADJUSTED"):
+                    break
+                if cell != ("ON", "PENDING") or cell_elapsed >= timeout_s:
+                    return False
+                wait_s = min(3.0, timeout_s - cell_elapsed)
+                await asyncio.sleep(wait_s)
+                cell_elapsed += wait_s
+            else:
                 return False
             self._cell_state = CellState.IDLE
             logger.info("[CMW500] Cell ON, waiting for UE attach...")
@@ -1259,10 +1268,12 @@ class RealCmw500Driver(BaseStationDriver):
         started_at = datetime.now(timezone.utc)
         window_id = uuid4().hex
         preclear_off_confirmed = False
+        window_configuration_confirmed = False
         running_confirmed = False
         ready_confirmed = False
         closed_off_confirmed = False
         stop_attempted = False
+        ended_before_stop = False
         lifecycle_failures: list[str] = []
         metric_failures: list[str] = []
         absolute_raw: str | None = None
@@ -1300,6 +1311,19 @@ class RealCmw500Driver(BaseStationDriver):
                 lifecycle_failures.append(f"{label}: {exc}")
                 return False
 
+        def _write_and_confirm(command: str, label: str) -> bool:
+            try:
+                self._write(command)
+                if not self._write_group_confirmed():
+                    lifecycle_failures.append(
+                        f"{label}: completion/error confirmation failed"
+                    )
+                    return False
+                return True
+            except Exception as exc:
+                lifecycle_failures.append(f"{label}: {exc}")
+                return False
+
         with capture_scpi_exchanges() as exchanges:
             try:
                 preclear_off_confirmed = _write_and_confirm_state(
@@ -1308,6 +1332,30 @@ class RealCmw500Driver(BaseStationDriver):
                     "pre-clear ABORT/OFF",
                 )
                 if preclear_off_confirmed:
+                    window_configuration_confirmed = all(
+                        _write_and_confirm(command, label)
+                        for command, label in (
+                            (
+                                Cmw500LteCommandProfile.ebler_timeout_disabled(
+                                    self._sign_channel
+                                ),
+                                "continuous window timeout",
+                            ),
+                            (
+                                Cmw500LteCommandProfile.ebler_repetition_continuous(
+                                    self._sign_channel
+                                ),
+                                "continuous window repetition",
+                            ),
+                            (
+                                Cmw500LteCommandProfile.ebler_stop_condition_none(
+                                    self._sign_channel
+                                ),
+                                "continuous window stop condition",
+                            ),
+                        )
+                    )
+                if window_configuration_confirmed:
                     running_confirmed = _write_and_confirm_state(
                         Cmw500LteCommandProfile.ebler_init(self._sign_channel),
                         "RUN",
@@ -1326,9 +1374,7 @@ class RealCmw500Driver(BaseStationDriver):
                     except Exception as exc:
                         lifecycle_failures.append(f"window state: {exc}")
                     else:
-                        if state == "RDY":
-                            ready_confirmed = True
-                        elif state == "RUN":
+                        if state == "RUN":
                             stop_attempted = True
                             ready_confirmed = _write_and_confirm_state(
                                 Cmw500LteCommandProfile.ebler_stop(
@@ -1336,6 +1382,11 @@ class RealCmw500Driver(BaseStationDriver):
                                 ),
                                 "RDY",
                                 "STOP/RDY",
+                            )
+                        elif state == "RDY":
+                            ended_before_stop = True
+                            lifecycle_failures.append(
+                                "window state: continuous measurement ended before requested STOP"
                             )
                         else:
                             lifecycle_failures.append(
@@ -1375,7 +1426,12 @@ class RealCmw500Driver(BaseStationDriver):
             except Exception as exc:
                 lifecycle_failures.append(f"measurement window failed: {exc}")
             finally:
-                if running_confirmed and not ready_confirmed and not stop_attempted:
+                if (
+                    running_confirmed
+                    and not ready_confirmed
+                    and not stop_attempted
+                    and not ended_before_stop
+                ):
                     stop_attempted = True
                     ready_confirmed = _write_and_confirm_state(
                         Cmw500LteCommandProfile.ebler_stop(self._sign_channel),
@@ -1391,6 +1447,7 @@ class RealCmw500Driver(BaseStationDriver):
         lifecycle_confirmed = all(
             (
                 preclear_off_confirmed,
+                window_configuration_confirmed,
                 running_confirmed,
                 ready_confirmed,
                 closed_off_confirmed,
@@ -1426,6 +1483,7 @@ class RealCmw500Driver(BaseStationDriver):
                 "absolute": absolute_raw,
                 "relative": relative_raw,
                 "preclear_off_confirmed": preclear_off_confirmed,
+                "window_configuration_confirmed": window_configuration_confirmed,
                 "running_confirmed": running_confirmed,
                 "ready_confirmed": ready_confirmed,
                 "closed_off_confirmed": closed_off_confirmed,
