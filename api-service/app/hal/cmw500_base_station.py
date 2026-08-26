@@ -154,7 +154,10 @@ class CmwScpiCommands:
     UL_RB_POS = "CONFigure:LTE:SIGN{i}:CONNection:PCC:UDCH:UL:RBPStart"
 
     # --- MIMO ---
-    MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:MIMO"
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41, command reference,
+    # printed p.753: NENBantennas is writable/queryable and returns the exact
+    # ONE | TWO | FOUR downlink TX-antenna configuration.
+    MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:NENBantennas"
     TM_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:TMODe"     # TM1-TM10
 
     # --- FRC / 测试配置 ---
@@ -1002,8 +1005,8 @@ class RealCmw500Driver(BaseStationDriver):
                 )
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
-                mimo_map = {1: "TX1", 2: "TX2", 4: "TX4"}
-                mimo_str = mimo_map.get(layers, "TX2")
+                mimo_map = {1: "ONE", 2: "TWO", 4: "FOUR"}
+                mimo_str = mimo_map[layers]
                 self._write(
                     self._fmt(CmwScpiCommands.MIMO_MODE)
                     + f" {mimo_str}"
@@ -1046,6 +1049,18 @@ class RealCmw500Driver(BaseStationDriver):
                 if expected_duplex is not None
                 else None
             )
+            expected_mimo = (
+                {1: "ONE", 2: "TWO", 4: "FOUR"}[config["mimo_layers"]]
+                if "mimo_layers" in config
+                else None
+            )
+            mimo_readback = (
+                self._query(self._fmt(CmwScpiCommands.MIMO_MODE) + "?")
+                .strip()
+                .upper()
+                if expected_mimo is not None
+                else None
+            )
             expected_bandwidth = (
                 bandwidth_token
                 if bandwidth_token is not None
@@ -1062,18 +1077,21 @@ class RealCmw500Driver(BaseStationDriver):
                     duplex_readback is not None
                     and duplex_readback != expected_duplex
                 )
+                or (mimo_readback is not None and mimo_readback != expected_mimo)
             ):
                 logger.error(
                     "[CMW500] Cell config readback mismatch: "
-                    "requested=(%s,%s,%s,%s), applied=(%s,%s,%s,%s)",
+                    "requested=(%s,%s,%s,%s,%s), applied=(%s,%s,%s,%s,%s)",
                     band,
                     expected_bandwidth,
                     earfcn,
                     expected_duplex,
+                    expected_mimo,
                     band_readback,
                     bandwidth_readback,
                     earfcn_readback,
                     duplex_readback,
+                    mimo_readback,
                 )
                 return False
 

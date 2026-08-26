@@ -69,6 +69,8 @@ class _FakeTransportCmw(RealCmw500Driver):
             return "1300"
         if command == "CONFigure:LTE:SIGN1:DMODe?":
             return "FDD"
+        if command == "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?":
+            return "TWO"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?":
             return "0,900,100,1000,123456.5,120000,125000,0,1000,15"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:RELative?":

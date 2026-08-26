@@ -243,6 +243,34 @@ async def test_config_requires_authoritative_readback_before_updating_cache():
 
 
 @pytest.mark.asyncio
+async def test_config_requires_applied_two_antenna_readback_for_two_layers():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?": "FOUR",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "mimo_layers": 2}
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas TWO"
+        in driver.writes
+    )
+    assert driver.queries[-1] == (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?"
+    )
+
+
+@pytest.mark.asyncio
 async def test_attach_accepts_only_documented_exact_states_and_restores_timeout():
     states = iter(["ON,ADJ", "ATT", "CEST"])
 
