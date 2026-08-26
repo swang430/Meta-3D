@@ -9,6 +9,7 @@ from app.hal.base_station import (
     BaseStationRemoteSessionResult,
     MockBaseStation,
 )
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.instrument_test_lease import (
     ActiveBaseStationLeaseIdentity,
     InstrumentTestLease,
@@ -157,3 +158,33 @@ async def test_authoritative_mock_uses_the_same_control_contract_but_stays_simul
         front_panel_local_confirmed=None,
         warnings=("simulated transport; front-panel Local not applicable",),
     )
+
+
+@pytest.mark.asyncio
+async def test_cmw_release_keeps_transport_open_when_safe_idle_is_unconfirmed():
+    class _Session:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    class _UnsafeCmw(RealCmw500Driver):
+        async def ensure_safe_idle(self) -> bool:
+            return False
+
+    driver = _UnsafeCmw("cmw", {"ip_address": "192.0.2.10"})
+    session = _Session()
+    driver._visa_session = session
+    driver._session_token = "session-1"
+
+    released = await driver.release_remote_session(
+        "session-1",
+        measurement_attempt_id="attempt-1",
+        lease_id="lease-1",
+    )
+
+    assert released.transport_session_released_confirmed is False
+    assert driver._visa_session is session
+    assert driver._session_token == "session-1"
+    assert session.closed is False
+    assert any("SAFE_IDLE" in warning for warning in released.warnings)

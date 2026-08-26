@@ -279,7 +279,14 @@ async def test_cmw500_translates_vendor_neutral_lte_band(monkeypatch):
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
+    def query(command: str) -> str:
+        if command == "CONFigure:LTE:SIGN1:BAND?":
+            return "OB3"
+        if command == "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?":
+            return "1575"
+        return _cmw_safe_idle_query(command)
+
+    monkeypatch.setattr(cmw, "_query", query)
 
     assert await cmw.set_cell_config({"band": "B3", "earfcn": 1575}) is True
     assert any(command.endswith(" OB3") for command in writes)
@@ -304,7 +311,14 @@ async def test_cmw500_translates_each_supported_lte_bandwidth_exactly(
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
+    def query(command: str) -> str:
+        if command == "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?":
+            return cmw_token
+        if command == "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?":
+            return "1575"
+        return _cmw_safe_idle_query(command)
+
+    monkeypatch.setattr(cmw, "_query", query)
 
     assert await cmw.set_cell_config({"bandwidth_mhz": bandwidth_mhz}) is True
     assert any(command.endswith(f" {cmw_token}") for command in writes)

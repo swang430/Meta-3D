@@ -48,6 +48,28 @@ def test_position_projection_keeps_throughput_when_bler_is_untrusted():
     assert rows[0]["dl_bler_percent"].formal_value is None
 
 
+def test_diagnostic_projection_uses_only_the_current_requested_position():
+    evidence = valid_cmw_evidence()
+    second_position = {"azimuth_deg": 90.0, "elevation_deg": 0.0}
+    evidence["requested_positions"].append(second_position)
+    second_window = deepcopy(evidence["measurement_windows"][0])
+    second_window["window_id"] = "window-2"
+    second_window["lease_id"] = "lease-2"
+    second_window["position"] = second_position
+    second_window["metrics"]["dl_throughput_mbps"]["value"] = 48.25
+    evidence["measurement_windows"].append(second_window)
+    evidence["current_measurement_attempt_state"] = "failed"
+
+    rows = project_base_station_metrics_by_position(
+        evidence,
+        expected_config=REQUESTED_CONFIG,
+        expected_positions=[POSITION, second_position],
+    )
+
+    assert rows[0]["dl_throughput_mbps"].diagnostic_value == 96.5
+    assert rows[1]["dl_throughput_mbps"].diagnostic_value == 48.25
+
+
 def test_rf_metric_scope_is_independent_per_metric():
     row = {
         "azimuth_deg": 0.0,

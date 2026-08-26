@@ -40,6 +40,7 @@ class _FakeTransportCmw(RealCmw500Driver):
                 "ON,ADJ",  # Cell ON
                 "OFF,ADJ",  # shared stop readback
                 "OFF,ADJ",  # shared SAFE_IDLE readback
+                "OFF,ADJ",  # release-time SAFE_IDLE readback
             ]
         )
         self.ps_states = deque(["ATT", "CEST"])
@@ -60,6 +61,14 @@ class _FakeTransportCmw(RealCmw500Driver):
             return self.ebler_states.popleft()
         if command == "ROUTe:LTE:SIGN1?":
             return "TRO,BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
+        if command == "CONFigure:LTE:SIGN1:BAND?":
+            return "OB3"
+        if command == "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?":
+            return "B200"
+        if command == "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?":
+            return "1300"
+        if command == "CONFigure:LTE:SIGN1:DMODe?":
+            return "FDD"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?":
             return "0,900,100,1000,123456.5,120000,125000,0,1000,15"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:RELative?":

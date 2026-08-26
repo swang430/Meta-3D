@@ -63,6 +63,7 @@ def _identity_responses() -> dict[str, str]:
         "*IDN?": "Rohde&Schwarz,CMW,1201.0002K50/123456,4.0.250",
         "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid": "CMW-KS520",
         "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional": "CMW-B570B",
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
     }
 
 
@@ -204,6 +205,40 @@ async def test_config_error_queue_failure_does_not_update_cached_working_point()
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
         "*OPC?",
         "SYSTem:ERRor:ALL?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_config_requires_authoritative_readback_before_updating_cache():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:BAND?": "OB3",
+            "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?": "B100",
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:DMODe?": "FDD",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {
+            "band": "B3",
+            "earfcn": 1300,
+            "bandwidth_mhz": 20.0,
+            "duplex": "FDD",
+        }
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert driver.queries[-4:] == [
+        "CONFigure:LTE:SIGN1:BAND?",
+        "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?",
+        "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?",
+        "CONFigure:LTE:SIGN1:DMODe?",
     ]
 
 

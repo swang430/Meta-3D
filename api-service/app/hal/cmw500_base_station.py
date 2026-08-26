@@ -127,10 +127,18 @@ class CmwScpiCommands:
     ROUTE_SIGN_CAFF = "ROUTe:LTE:SIGN{i}:SCENario:CAFF:FLEXible:INTernal"
 
     # --- 小区配置 (CONFigure:LTE:SIGN) ---
-    CELL_BAND = "CONFigure:LTE:SIGN{i}:CELL:BAND"              # e.g., "OB78"
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41,
+    # printed pp.636-637: PCC band and downlink EARFCN are writable/queryable
+    # with CONFigure:LTE:SIGN<i>[:PCC]:BAND and
+    # CONFigure:LTE:SIGN<i>:RFSettings[:PCC]:CHANnel:DL.
+    CELL_BAND = "CONFigure:LTE:SIGN{i}:BAND"                   # e.g., "OB3"
     CELL_DL_FREQ = "CONFigure:LTE:SIGN{i}:RFSettings:CHANnel:DL"  # EARFCN
+    # Same manual, printed p.680: PCC DL bandwidth is writable/queryable with
+    # CONFigure:LTE:SIGN<i>:CELL:BANDwidth[:PCC]:DL.
     CELL_DL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:DL"     # 带宽 (MHz)
-    CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:CELL:DMOD"             # TDD/FDD
+    # Same manual, printed p.366: duplex mode is writable/queryable with
+    # CONFigure:LTE:SIGN<i>[:PCC]:DMODe.
+    CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:DMODe"                # TDD/FDD
     CELL_PCI = "CONFigure:LTE:SIGN{i}:CELL:PCI"                 # 物理小区 ID
 
     # --- 下行功率 ---
@@ -829,7 +837,7 @@ class RealCmw500Driver(BaseStationDriver):
         measurement_attempt_id: str | None = None,
         lease_id: str = "",
     ) -> BaseStationControlReleaseResult:
-        """Close the active transport without claiming front-panel Local."""
+        """Close the transport only after the live cell is confirmed safe idle."""
 
         current_session = self._visa_session
         current_token = self._session_token or ""
@@ -845,6 +853,25 @@ class RealCmw500Driver(BaseStationDriver):
         if current_session is None:
             warnings.append("CMW500 transport session is missing")
         else:
+            try:
+                safe_idle_confirmed = await self.ensure_safe_idle()
+            except Exception as exc:
+                safe_idle_confirmed = False
+                warnings.append(f"CMW500 SAFE_IDLE confirmation failed: {exc}")
+            if safe_idle_confirmed is not True:
+                warnings.append(
+                    "CMW500 SAFE_IDLE is unconfirmed; transport remains open for safe recovery"
+                )
+                return BaseStationControlReleaseResult(
+                    measurement_attempt_id=measurement_attempt_id,
+                    lease_id=lease_id,
+                    adapter_id="cmw500",
+                    session_token=current_token,
+                    remote_session_acquired_confirmed=token_matches,
+                    transport_session_released_confirmed=False,
+                    front_panel_local_confirmed=None,
+                    warnings=tuple(warnings),
+                )
             try:
                 current_session.close()
                 close_confirmed = True
@@ -907,10 +934,10 @@ class RealCmw500Driver(BaseStationDriver):
         配置 CMW500 LTE 物理小区参数。
 
         SCPI 序列:
-          CONFigure:LTE:SIGN1:CELL:BAND OB3
+          CONFigure:LTE:SIGN1:BAND OB3
           CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
-          CONFigure:LTE:SIGN1:CELL:DMOD FDD
+          CONFigure:LTE:SIGN1:DMODe FDD
         """
         try:
             band = self._band
@@ -984,6 +1011,70 @@ class RealCmw500Driver(BaseStationDriver):
 
             if not self._write_group_confirmed():
                 logger.error("[CMW500] Cell config rejected by completion/error check")
+                return False
+
+            # OPC only confirms completion and the error queue only confirms
+            # the absence of a reported command error.  Formal execution also
+            # requires the instrument's applied PCC configuration to match the
+            # request exactly before the cached state may be updated.
+            expected_duplex = (
+                str(config["duplex"]).upper() if "duplex" in config else None
+            )
+            band_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_BAND) + "?")
+                .strip()
+                .upper()
+                if "band" in config
+                else None
+            )
+            bandwidth_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_DL_BW) + "?")
+                .strip()
+                .upper()
+                if "bandwidth_mhz" in config
+                else None
+            )
+            earfcn_readback = int(
+                self._query(
+                    self._fmt(CmwScpiCommands.CELL_DL_FREQ) + "?"
+                ).strip()
+            )
+            duplex_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_DUPLEX) + "?")
+                .strip()
+                .upper()
+                if expected_duplex is not None
+                else None
+            )
+            expected_bandwidth = (
+                bandwidth_token
+                if bandwidth_token is not None
+                else self.bandwidth_token_by_mhz[bandwidth_mhz]
+            )
+            if (
+                (band_readback is not None and band_readback != band)
+                or (
+                    bandwidth_readback is not None
+                    and bandwidth_readback != expected_bandwidth
+                )
+                or earfcn_readback != earfcn
+                or (
+                    duplex_readback is not None
+                    and duplex_readback != expected_duplex
+                )
+            ):
+                logger.error(
+                    "[CMW500] Cell config readback mismatch: "
+                    "requested=(%s,%s,%s,%s), applied=(%s,%s,%s,%s)",
+                    band,
+                    expected_bandwidth,
+                    earfcn,
+                    expected_duplex,
+                    band_readback,
+                    bandwidth_readback,
+                    earfcn_readback,
+                    duplex_readback,
+                )
                 return False
 
             self._band = band

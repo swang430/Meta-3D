@@ -482,33 +482,67 @@ def base_station_execution_evidence_is_formally_acceptable(value: Any) -> bool:
     return accepted
 
 
-def _raw_metric(value: Any, metric_name: str) -> tuple[float | None, str | None]:
+def _raw_metric(
+    value: Any,
+    metric_name: str,
+    expected_position: Any | None = None,
+) -> tuple[float | None, str | None]:
     if not isinstance(value, dict):
+        return None, None
+    attempt_id = value.get("current_measurement_attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return None, None
+    try:
+        position = PositionSnapshot.model_validate(expected_position)
+    except Exception:
         return None, None
     windows = value.get("measurement_windows")
     if not isinstance(windows, list):
         return None, None
+    matching: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for window in windows:
         if not isinstance(window, dict):
+            continue
+        if window.get("measurement_attempt_id") != attempt_id:
+            continue
+        try:
+            window_position = PositionSnapshot.model_validate(window.get("position"))
+        except Exception:
+            continue
+        if _position_key(window_position) != _position_key(position):
             continue
         metrics = window.get("metrics")
         metric = metrics.get(metric_name) if isinstance(metrics, dict) else None
         if not isinstance(metric, dict):
             continue
-        number = metric.get("value")
-        unit = metric.get("unit")
         if (
-            not isinstance(number, bool)
-            and isinstance(number, (int, float))
-            and math.isfinite(float(number))
-            and isinstance(unit, str)
+            metric.get("measurement_attempt_id") != attempt_id
+            or metric.get("session_token") != window.get("session_token")
         ):
-            return float(number), unit
+            continue
+        matching.append((window, metric))
+    if len(matching) != 1:
+        return None, None
+    _, metric = matching[0]
+    number = metric.get("value")
+    unit = metric.get("unit")
+    if (
+        not isinstance(number, bool)
+        and isinstance(number, (int, float))
+        and math.isfinite(float(number))
+        and isinstance(unit, str)
+    ):
+        return float(number), unit
     return None, None
 
 
-def _untrusted(value: Any, metric_name: str, reason: str) -> FormalMetricTrust:
-    diagnostic_value, unit = _raw_metric(value, metric_name)
+def _untrusted(
+    value: Any,
+    metric_name: str,
+    reason: str,
+    expected_position: Any | None = None,
+) -> FormalMetricTrust:
+    diagnostic_value, unit = _raw_metric(value, metric_name, expected_position)
     return FormalMetricTrust(
         status="diagnostic" if diagnostic_value is not None else "unknown",
         formal_value=None,
@@ -526,15 +560,20 @@ def evaluate_base_station_metric_trust(
 ) -> FormalMetricTrust:
     """Evaluate one base-station-native metric against execution-frozen scope."""
 
-    if metric_name not in _METRIC_UNITS:
-        return _untrusted(evidence, metric_name, "unsupported_metric")
-    parsed = _parsed(evidence)
-    if parsed is None:
-        return _untrusted(evidence, metric_name, "invalid_evidence_schema")
     try:
         position = PositionSnapshot.model_validate(expected_position)
     except Exception:
         return _untrusted(evidence, metric_name, "invalid_expected_position")
+    position_payload = position.model_dump(mode="json")
+    if metric_name not in _METRIC_UNITS:
+        return _untrusted(
+            evidence, metric_name, "unsupported_metric", position_payload
+        )
+    parsed = _parsed(evidence)
+    if parsed is None:
+        return _untrusted(
+            evidence, metric_name, "invalid_evidence_schema", position_payload
+        )
     if expected_config != parsed.requested_config.payload:
         return FormalMetricTrust(
             status="unknown",
@@ -556,12 +595,17 @@ def evaluate_base_station_metric_trust(
 
     accepted, reason, windows = _formal_envelope(parsed)
     if not accepted:
-        return _untrusted(evidence, metric_name, reason)
+        return _untrusted(evidence, metric_name, reason, position_payload)
     matching = [
         window for window in windows if _position_key(window.position) == _position_key(position)
     ]
     if len(matching) != 1:
-        return _untrusted(evidence, metric_name, "expected_position_window_not_unique")
+        return _untrusted(
+            evidence,
+            metric_name,
+            "expected_position_window_not_unique",
+            position_payload,
+        )
     window = matching[0]
     metric = window.metrics.get(metric_name)
     expected_unit = _METRIC_UNITS[metric_name]
@@ -572,13 +616,22 @@ def evaluate_base_station_metric_trust(
         or metric.value is None
         or metric.unit != expected_unit
     ):
-        return _untrusted(evidence, metric_name, "metric_evidence_mismatch")
+        return _untrusted(
+            evidence, metric_name, "metric_evidence_mismatch", position_payload
+        )
     try:
         exchange_ids = _unique_non_empty(metric.exchange_ids, "metric_exchange_ids")
     except ValueError:
-        return _untrusted(evidence, metric_name, "metric_exchange_ids_invalid")
+        return _untrusted(
+            evidence, metric_name, "metric_exchange_ids_invalid", position_payload
+        )
     if not set(exchange_ids).issubset(parsed.exchange_ids):
-        return _untrusted(evidence, metric_name, "metric_exchange_ids_not_in_execution")
+        return _untrusted(
+            evidence,
+            metric_name,
+            "metric_exchange_ids_not_in_execution",
+            position_payload,
+        )
     return FormalMetricTrust(
         status="trusted",
         formal_value=metric.value,
