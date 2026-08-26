@@ -82,7 +82,14 @@ duplex 在当前会话完成只读 identity/firmware/options snapshot 后、首�
 前核对；KS500+KS520 不得放行 TDD，KS550+KS520 不得放行 FDD。
 
 外部 RF router、具体序列号和外部接线路径不属于正式能力准入键。adapter 可以注册，但正式
-能力默认关闭，待用户显式启用。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。
+能力默认关闭，待用户显式启用。这里必须分开两个事实：型号/固件/选件决定仪表是否具备
+`hardware_eligible`，而持久化 rollout approval 决定软件是否允许新执行发布正式结果；approval
+不是第四个硬件能力键。唯一写源是 `InstrumentConnection.cmw500_lte_2x2_formal_enabled` 显式列，
+默认 false，并由专用 capability endpoint 在锁行后更新，同时由服务器写更新时间；通用 connection
+更新和 `connection_params` 不能写该列。执行开始时与 adapter profile 一起锁定同一 connection，
+把 connection id、enabled 值和服务器更新时间冻结进 execution；readiness 与正式 evaluator 只消费
+这份冻结 approval，不读环境变量、临时进程状态或任意 JSON key。未完成现场确认时 GUI 显示
+Warning，不使用 `Hardware Blocked`。
 
 CMW500 的内部 `1CC - nx2` 元组不是能力准入键，也不能由驱动猜测。它以版本化
 `base_station_adapter_profile` 持久化在被所选 LabProfile 的 `baseStation` binding 解析到的
@@ -297,6 +304,15 @@ window 的 `lease_id` 精确匹配且确认 transport/session 已释放的 contr
 状态另行显示为 confirmed/unknown Warning，不能由 close 推断，也不进入测量真实性判据。外部 RF router 不进入该
 函数。旧 `throughput_verified`、`kpi_valid` 或 `config_applied` 不能单独恢复正式 PASS。
 
+同一 commissioning execution 允许重跑 MEASURE，但必须显式分代。每次进入 MEASURE、任何硬件
+I/O 前由服务器生成新的 `measurement_attempt_id` 并原子替换 execution 的 current attempt 指针；
+同一行锁内把 attempt state 置为 `running`，已有 running attempt 时拒绝并发重跑；只有本次 cleanup
+和 control release 持久化完成后才置 `completed`，异常/取消/释放失败分别保持非完成终态。本次所有
+window、SCPI exchange、cleanup 和 control release 都带同一 attempt id。evaluator 只检查
+current attempt 内的请求方位全集和唯一 release；旧 attempt 仅保留审计，不因额外 window/release
+污染当前判定。新 attempt 即使在首个 window 前失败也保持 current 且正式 UNKNOWN，绝不能回退到
+上一轮成功结果。ANALYSIS/REPORT-only 不创建或切换 attempt。
+
 旧 UXM 只通过精确 legacy translator；冲突时 UNKNOWN。CMW500 原型历史没有 legacy 信任路径。
 
 ### 4.3 GUI、API、报告、报告对比和历史
@@ -328,7 +344,8 @@ commissioning run-all 同样延迟这两个正式化相位；单相位/adhoc 的
 基站 lease，只读取此前 MEASURE window 绑定的 release；缺失或失败保持 UNKNOWN/N/A。cleanup 与
 匹配 lease 的 transport release 确定前不发布最终报告、正式历史判决或 completed 判词。历史列表只
 返回摘要，详情按 execution ID 读取完整快照；旧或畸形 evidence 保持 UNKNOWN，不从当前数据库
-或旧正文补证。
+或旧正文补证。重复 MEASURE 后，上述所有正式消费者只读取 execution 冻结的 current
+`measurement_attempt_id`；历史 attempt 可展示审计身份，但不得参与当前 KPI、对比或报告。
 
 ## 5. 开发拆分与验证
 
@@ -349,7 +366,8 @@ Cell/attach 状态机、Extended BLER 窗口、错误队列、timeout、cleanup 
 ### 5.3 P1-73C：OTA/GUI/报告集成
 
 把 CMW500 接入 OperationalLab、MIMO OTA 方位证据、F64/位置/路损链、正式信任函数、GUI、
-报告和历史。正式启用只绑定型号、固件版本和选件组合，由用户显式开启，不绑定外部 RF router。
+报告和历史。硬件 eligibility 只绑定型号、固件版本和选件组合；独立的持久化 rollout approval 由
+用户显式开启并冻结到新 execution，不绑定外部 RF router。
 
 ### 5.4 TDD 与回归
 

@@ -16,7 +16,8 @@
 
 - LabProfile 的 `baseStation` 是逻辑角色；一次执行选择 UXM 或 CMW500，不在顶层复制两套流程。
 - CMW500 首期仅 LTE、单载波、2×2、F64 射频域下游链；不做 DAU/IP 吞吐、CA、4×4、数字 IQ 外部衰落。
-- CMW500 正式能力准入只消费**型号、固件版本、选件快照**；外部 RF router 不参与准入键，也不成为逐次执行硬门。
+- CMW500 硬件 eligibility 只消费**型号、固件版本、选件快照**；独立 rollout approval 默认关闭、
+  由专用持久化入口显式开启并冻结到新 execution。外部 RF router 不参与任一准入键，也不成为逐次执行硬门。
 - CMW500 仪表内部 `1CC - nx2` 的 RX/TX1/TX2 route 属于驱动应用态，必须写后回读核对；它不是外部 RF router。
 - adapter 可以注册，正式能力默认关闭；现场未验证项显示 Warning，不以 Hardware Blocked 阻止开发。
 - 开发阶段不建设“请求功率 + 外部补偿 + 开关/线缆路径 + F64 输入上限 + 校准证书”的端到端功率门；该项在正式发布前单独设计。
@@ -78,6 +79,7 @@ class BaseStationRemoteSessionResult:
 
 @dataclass(frozen=True)
 class BaseStationControlReleaseResult:
+    measurement_attempt_id: str | None
     lease_id: str
     adapter_id: Literal["uxm", "cmw500"]
     session_token: str
@@ -1051,6 +1053,11 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
 
 **Files:**
 
+- Modify: `api-service/app/models/instrument.py`
+- Modify: `api-service/app/schemas/instrument.py`
+- Modify: `api-service/app/api/instrument.py`
+- Create: `api-service/alembic/versions/d73b5f6a1c20_add_cmw_formal_capability_approval.py`
+- Modify: `api-service/app/services/base_station_adapter_profile.py`
 - Modify: `api-service/app/hal/cmw500_base_station.py`
 - Modify: `api-service/app/services/instrument_hal_service.py`
 - Create: `api-service/tests/test_p1_73b_cmw_capability_admission.py`
@@ -1062,6 +1069,17 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
 
 - CMW adapter 可由 registry 创建；
 - 正式 LTE 2×2 能力默认 false；
+- 唯一 rollout approval 写源为 `InstrumentConnection.cmw500_lte_2x2_formal_enabled` 非空布尔列，
+  migration revision=`d73b5f6a1c20`、down_revision=`c73a19f4e602`；数据库默认 false，迁移既有行
+  精确回填 false 后移除 server default，ORM/创建服务继续显式写 false；另有 server-owned
+  `cmw500_lte_2x2_formal_updated_at`；
+- 专用 `PUT /api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2`
+  只接受 `{enabled: bool}`，锁定 connection/category/model，要求逻辑类别为 `baseStation` 且 registry
+  adapter 为 CMW500，随后更新布尔与服务器时间。通用 connection create/update schema 不接受这两个
+  字段，`connection_params` 中的同名/相似键不生效，环境变量和进程内 flag 也不是候选真源；
+- adapter profile freeze 在同一事务锁住同一 connection，把 approval 的 connection id、enabled、
+  updated_at 冻结到 server-owned execution snapshot；readiness、runner 和正式 evaluator 只消费该
+  快照。执行中途启停只影响后续 execution，不重写旧 execution 或历史结果；
 - 显式启用后仍必须使用当前会话只读 identity/firmware/options snapshot，满足型号、固件、KS520，
   以及本次请求 FDD 对应 KS500 / TDD 对应 KS550；
   缺任一项给 Warning/unknown，不声称 ready；KS500-only 不得放行 TDD，KS550-only 不得放行 FDD；
@@ -1069,6 +1087,9 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
   泛化本次 duplex 的准入；
 - 外部 RF router 的存在与否不会改变能力结果；
 - `inherit` 只读核对当前 cell/route/状态，不做 preset，且 evidence gate 永远不授予 formal acceptance。
+- RED 覆盖默认 false、专用 endpoint 启停、错误 category/model 422、通用 connection update 与
+  `connection_params` 同名键无法启用、执行冻结后数据库开关变化不改旧 execution，以及 readiness/
+  runner/evaluator 三方读取同一冻结 approval；删除任一持久化生产/冻结/消费站点均保持 UNKNOWN。
 
 **Step 2: RED → GREEN**
 
@@ -1083,6 +1104,11 @@ cd api-service
 
 ```bash
 git add api-service/app/hal/cmw500_base_station.py \
+  api-service/app/models/instrument.py \
+  api-service/app/schemas/instrument.py \
+  api-service/app/api/instrument.py \
+  api-service/alembic/versions/d73b5f6a1c20_add_cmw_formal_capability_approval.py \
+  api-service/app/services/base_station_adapter_profile.py \
   api-service/app/services/instrument_hal_service.py \
   api-service/tests/test_p1_73b_cmw_capability_admission.py \
   api-service/tests/test_p1_73b_cmw_inherit_debug.py
@@ -1132,6 +1158,7 @@ class BaseStationExecutionEvidence(BaseModel):
     schema_version: Literal[1]
     adapter: Literal["uxm", "cmw500"]
     identity: BaseStationIdentitySnapshot
+    formal_capability_approval: BaseStationFormalCapabilityApprovalSnapshot
     mode: Literal["dispatch"]
     config_confirmed: Literal[True]
     route_confirmed: bool | None
@@ -1139,6 +1166,8 @@ class BaseStationExecutionEvidence(BaseModel):
     requested_route: BaseStationRequestedRouteSnapshot | None
     applied_route: BaseStationAppliedRouteSnapshot | None
     requested_positions: list[PositionSnapshot]
+    current_measurement_attempt_id: str | None
+    current_measurement_attempt_state: Literal["running", "completed", "failed", "cancelled"] | None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseResult]
     exchange_ids: list[str]
@@ -1146,6 +1175,7 @@ class BaseStationExecutionEvidence(BaseModel):
 class BaseStationMeasurementWindowEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     window_id: str
+    measurement_attempt_id: str
     lease_id: str
     session_token: str
     config_digest: str
@@ -1163,7 +1193,15 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window；每个 window 自带的结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项精确为 true，且它的 `lease_id` 在 `control_releases` 中恰有一条同 id、同 adapter、同驱动 opaque `session_token`、`remote_session_acquired_confirmed` 与 `transport_session_released_confirmed` 都精确为 true 的结果；window 内每条 KPI/lifecycle exchange 也必须携带同 token。`front_panel_local_confirmed` 没有厂商证据时保持 null/Warning，不得由 close 推断，也不作为测量真值的替代门。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/重复 lease result、跨 lease/token 替换、token 变化或复用、legacy CMW/inherit/mock/方位集合失配，或本 window cleanup/transport release 的 `False`/`None`/异常/仅无异常返回，均 false。
+`BaseStationFormalCapabilityApprovalSnapshot` 只接受固定字段：`schema_version=1`、
+`status: Literal["configured", "not_applicable"]`、冻结的 `instrument_connection_id`、
+`capability: Literal["cmw500_lte_2x2"] | None`、`enabled: bool | None` 和服务器 `updated_at`。
+组合白名单只允许 CMW 的 `configured/cmw500_lte_2x2/bool/非空 updated_at`，或 UXM 的
+`not_applicable/None/None/None`；CMW 正式 evaluator 要求 `enabled is True`，并要求 connection id 与
+Task 7A 冻结 adapter profile 的来源相同。客户端声明、当前数据库新值、环境变量或
+`connection_params` 不能补齐/覆盖该快照。UXM 不被 CMW rollout 开关阻断。
+
+正式判据必须：real driver、获准 adapter/profile、CMW rollout approval=true、identity 完整、dispatch、config readback、自身需要的 route readback，以及 current `measurement_attempt_id` 的 state 精确为 `completed` 且所有请求方位均有唯一 window；每个 current-attempt window 自带的结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项精确为 true，且它的 `lease_id` 在 `control_releases` 中恰有一条同 attempt id、同 lease id、同 adapter、同驱动 opaque `session_token`、`remote_session_acquired_confirmed` 与 `transport_session_released_confirmed` 都精确为 true 的结果；window 内每条 KPI/lifecycle exchange 也必须携带同 attempt id/token。`front_panel_local_confirmed` 没有厂商证据时保持 null/Warning，不得由 close 推断，也不作为测量真值的替代门。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。current attempt 内任何 extra/missing/重复 lease result、跨 attempt/lease/token 替换、token 变化或复用、legacy CMW/inherit/mock/方位集合失配，或本 window cleanup/transport release 的 `False`/`None`/异常/仅无异常返回，均 false；其他 attempt 的 window/release 只保留审计，不参与 current attempt 的唯一性检查。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -1224,6 +1262,12 @@ git commit -m "feat: add formal base station execution evidence"
 使用 fake transport 走完整 PRECHECK/MEASURE：CMW 配置、内部 route、UE attach、每方位 Extended BLER window、F64/转台既有链、cleanup。覆盖：
 
 - 请求方位全集精确匹配；重复/额外/缺失 window fail-closed；
+- 每次 MEASURE 调用在 lease/硬件 I/O 前生成新的 server-owned UUID `measurement_attempt_id`，
+  并在同一行锁事务把 execution 的 current id 指向它、state 置 `running`；已有 running attempt 时
+  409，不允许两个硬件 MEASURE 并发。所有本次 window、exchange、cleanup 和 release 都必须携带
+  该 attempt id；只有匹配 cleanup/release 持久化完成后才置 `completed`，异常/取消/release失败写
+  `failed`/`cancelled`。重跑 MEASURE 不覆盖旧 attempt，旧数据只审计；
+  current attempt 失败或取消后不得回退到此前成功 attempt，正式值保持 UNKNOWN/N/A；
 - 每方位吞吐与 BLER 各自消费同一 window 的证据；
 - 每个 window 在产生时冻结 config digest、route digest、position、UE link state、起止时间和
   pre-clear/RUN/RDY/final OFF 及 metric exchange IDs；交换另一配置/route/方位的结构合法 window
@@ -1241,8 +1285,13 @@ git commit -m "feat: add formal base station execution evidence"
 - outer lease 生成不可由请求体传入的 UUID `lease_id`；UXM/CMW 驱动在真实新 session 建立后生成
   独立 opaque UUID `session_token`，`acquire_remote_control()` 返回结构化
   `BaseStationRemoteSessionResult`。lease 通过 server-only context 把两者交给所有 SCPI exchange 与
-  MEASURE window writer；window 将本次 cleanup 一并冻结。多次 commissioning MEASURE
-  产生不同 lease id，后一次 cleanup/release 只能追加，绝不能覆盖或替前一次 window 的证据；
+  MEASURE window writer；window 将本次 attempt id 与 cleanup 一并冻结。多次 commissioning MEASURE
+  产生不同 attempt/lease id，后一次 cleanup/release 只能追加，绝不能覆盖或替前一次 window 的证据；
+  evaluator 只选择 execution 的 current attempt，并在该 scope 内要求唯一方位全集与唯一 release，
+  不把旧 attempt 的额外 window/release 当冲突；
+- MEASURE owner 必须把刚持久化的 current attempt id 作为 server-only
+  `instrument_test_lease(measurement_attempt_id=...)` 参数传入；lease outcome 原样带回该 id，调用方
+  不得在退出后从“当前指针”重猜，以免并发/重试把 release 归到错误 attempt；
 - `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
   必须实现同一 async Remote/session-release 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
 - formal runner 与 commissioning 单相位/adhoc/run-all 每个控制 baseStation 的 lease 都必须从 execution
@@ -1253,9 +1302,11 @@ git commit -m "feat: add formal base station execution evidence"
   `transport_session_released_confirmed`，只在 `__aexit__` 完成真实 session release 后可读。close 成功
   不得写 `front_panel_local_confirmed=true`；该字段没有厂商确认时保持 null 并产生 Warning。formal runner 与 commissioning
   的单相位、adhoc、run-all 三类直接 lease owner 都必须在退出后调用同一个幂等持久化 helper，以
-  独立事务按 `lease_id` 追加到各自 execution；成功与失败都保存结构化结果，不得覆盖别的 lease、
+  独立事务按 `measurement_attempt_id`/`lease_id` 追加到各自 execution；成功与失败都保存结构化结果，不得覆盖别的 lease、
   只在异常路径写自由文本或从另一个入口补写；每个 measurement window 在产生时冻结同一 lease id、
   驱动 acquire token 与该 window 的 cleanup；
+  MEASURE lease 的 release 必须带非空 current attempt id；不产生测量的 PRECHECK/ANALYSIS/REPORT
+  lease（若仍存在）只能写 `measurement_attempt_id=None`，永远不能满足正式 measurement release 门；
 - formal runner 把执行链末尾连续的 `MIMO_OTA_ANALYSIS` 与 `MIMO_OTA_REPORT` 一起从租约内延迟，
   持久化同 measurement lease 的 control release 后才严格按 ANALYSIS → REPORT dispatch 并持久化最终 `validation_pass`、
   正式投影和报告。租约内不得先写一份 UNKNOWN Analysis 后只重建公开 projection；若 ANALYSIS/
@@ -1265,6 +1316,8 @@ git commit -m "feat: add formal base station execution evidence"
   已持久化后 dispatch；没有匹配结果时相位可诊断执行但正式判决保持 UNKNOWN/N/A。MEASURE 等硬件
   相位完成后也必须先持久化匹配的 control release 才能构造响应；release 失败时不 dispatch 延迟相位、不发布正式
   历史或报告，并保留原业务 winner 与错误全文；
+- ANALYSIS/REPORT-only 调用只能读取 current measurement attempt，不得新建或切换 attempt；新 MEASURE
+  在任何 I/O 前切换 current 指针，因此即使它在首个 window 前失败，旧成功 attempt 也不能重新发布；
 - RED 明确证明调用顺序为 `stop_signaling`/SAFE_IDLE → `release_remote_session` → transport close，
   `release_remote_session` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
   `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
@@ -1360,10 +1413,13 @@ Commissioning 方位 KPI 表。逐一证明：
   `evaluate_base_station_metric_trust(evidence, metric_name, expected_config, expected_position)`；
   只有返回 trusted 才发布吞吐/BLER，规范 envelope + `kpi_valid=true` 本身绝不充分；
 - 六类消费方都必须消费实际 measurement lease owner 在租约退出后持久化的 final evidence：
-  window 自带 cleanup 与同 `lease_id`/同驱动 opaque `session_token` 的
+  先只选择 execution 的 current `measurement_attempt_id`；该 attempt 的 window 自带 cleanup 与同
+  attempt id、同 `lease_id`、同驱动 opaque `session_token` 的
   `transport_session_released_confirmed` 缺失或
   不为 true 时逐指标 UNKNOWN/N/A；不得把另一 lease 的成功 release、前面板 Local unknown、
   租约内 provisional Analysis、execution 已终态或 deferred REPORT 被调用当成 transport release；
+  旧 attempt 的 window/release 仅为审计，不参与 current scope 唯一性；current attempt 内缺失、重复
+  或额外方位/release 才 fail-closed。重跑失败不得回退到上一成功 attempt；
 - 正式 runner 不得在 measurement lease 的 control-release 证据产生前执行最终 ANALYSIS：`_run_case_loop` 必须把末尾连续的
   ANALYSIS/REPORT 作为一个 deferred formalization bundle 返回，外层 lease owner 在持久化结构化
   release 后才按顺序执行，并把最终 `validation_pass` 与相位进度写回。transport release 失败时两者都不执行；
@@ -1448,6 +1504,7 @@ git commit -m "fix: require base station truth for formal OTA results"
 
 - Modify: `api-service/app/services/instrument_hal_service.py`
 - Modify: `api-service/app/api/instrument.py`
+- Modify: `gui/src/App.tsx`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - Modify: `gui/src/components/Commissioning/api.ts`
 - Create: `api-service/tests/test_p1_73c_cmw_readiness.py`
@@ -1460,6 +1517,10 @@ readiness/GUI 必须显示：
 - adapter 已注册；
 - 型号、固件、选件是否满足；
 - 正式能力是否显式启用；
+- 仪器资源配置页通过 Task 11 的专用 endpoint 提供 CMW500 LTE 2×2 正式能力开关；默认关闭，
+  显示服务器更新时间。GUI 不编辑通用 `connection_params` 来启用，不创建环境变量/本地缓存真源；
+- readiness 从所选 LabProfile binding 的同一 InstrumentConnection 读取 approval；执行响应显示本次
+  execution 冻结的 approval，二者有变化时明确提示“仅影响后续执行”，不得改写当前证据；
 - 未真机确认时 Warning/UNKNOWN，允许继续开发与诊断；
 - debug inherit 显式黄色诊断态；
 - 不显示或要求外部 RF router 作为准入项；
@@ -1475,6 +1536,7 @@ node --test src/components/TestCaseConfig/cmw500ReadinessTruth.test.ts
 npm run build
 git add ../api-service/app/services/instrument_hal_service.py \
   ../api-service/app/api/instrument.py \
+  src/App.tsx \
   src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
   src/components/Commissioning/api.ts \
   ../api-service/tests/test_p1_73c_cmw_readiness.py \
