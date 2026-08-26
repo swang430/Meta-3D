@@ -96,5 +96,6 @@ def test_legacy_polling_no_longer_treats_absolute_reliability_as_bler():
     driver._query = query  # type: ignore[method-assign]
     metrics = asyncio.run(driver.get_throughput_metrics())
 
-    assert metrics.dl_bler == 0.0
+    assert metrics.dl_bler is None
     assert metrics.is_valid("dl_throughput") is False
+    assert metrics.is_valid("dl_bler") is False

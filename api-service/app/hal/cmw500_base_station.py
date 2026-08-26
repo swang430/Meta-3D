@@ -30,7 +30,7 @@ from uuid import uuid4
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.hal.base import (
     InstrumentStatus,
@@ -42,6 +42,7 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationIdentity,
     BaseStationDriver,
+    BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     RadioTechnology,
@@ -55,7 +56,12 @@ from app.hal.cmw500_command_profile import (
     CmwNx2Route,
 )
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
-from app.hal.scpi_evidence import capture_scpi_exchanges
+from app.hal.scpi_evidence import (
+    EvidenceLevel,
+    EvidenceVerdict,
+    InstrumentEvidenceItem,
+    capture_scpi_exchanges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1108,6 +1114,230 @@ class RealCmw500Driver(BaseStationDriver):
     # 4. 吞吐量与 BLER 测量
     # ===================================================================
 
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """采集同一 Extended BLER 生命周期内的 DL throughput 与 BLER。
+
+        生命周期与命令取自 R&S CMW LTE UE User Manual 1173.9628.02-41：
+        §3.4.2 printed p.950-951（ABORT/OFF、INIT/RUN、STOP/RDY）以及
+        §3.4.4 printed p.957-959（Absolute/Relative 字段与单位）。
+        """
+
+        if throughput_scope != ThroughputMetrics.SCOPE_PCELL:
+            raise ValueError("CMW500 Extended BLER window supports pcell scope only")
+
+        started_at = datetime.now(timezone.utc)
+        window_id = uuid4().hex
+        preclear_off_confirmed = False
+        running_confirmed = False
+        ready_confirmed = False
+        closed_off_confirmed = False
+        stop_attempted = False
+        lifecycle_failures: list[str] = []
+        metric_failures: list[str] = []
+        absolute_raw: str | None = None
+        relative_raw: str | None = None
+        throughput_mbps: float | None = None
+        bler_percent: float | None = None
+        cancelled: asyncio.CancelledError | None = None
+
+        def _write_and_confirm_state(
+            command: str,
+            expected_state: str,
+            label: str,
+        ) -> bool:
+            try:
+                self._write(command)
+                if not self._write_group_confirmed():
+                    lifecycle_failures.append(
+                        f"{label}: completion/error confirmation failed"
+                    )
+                    return False
+                state = Cmw500LteCommandProfile.parse_ebler_state(
+                    self._query(
+                        Cmw500LteCommandProfile.ebler_state_query(
+                            self._sign_channel
+                        )
+                    )
+                )
+                if state != expected_state:
+                    lifecycle_failures.append(
+                        f"{label}: expected {expected_state}, got {state}"
+                    )
+                    return False
+                return True
+            except Exception as exc:
+                lifecycle_failures.append(f"{label}: {exc}")
+                return False
+
+        with capture_scpi_exchanges() as exchanges:
+            try:
+                preclear_off_confirmed = _write_and_confirm_state(
+                    Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
+                    "OFF",
+                    "pre-clear ABORT/OFF",
+                )
+                if preclear_off_confirmed:
+                    running_confirmed = _write_and_confirm_state(
+                        Cmw500LteCommandProfile.ebler_init(self._sign_channel),
+                        "RUN",
+                        "INIT/RUN",
+                    )
+                if running_confirmed:
+                    await asyncio.sleep(max(float(window_s), 0.0))
+                    try:
+                        state = Cmw500LteCommandProfile.parse_ebler_state(
+                            self._query(
+                                Cmw500LteCommandProfile.ebler_state_query(
+                                    self._sign_channel
+                                )
+                            )
+                        )
+                    except Exception as exc:
+                        lifecycle_failures.append(f"window state: {exc}")
+                    else:
+                        if state == "RDY":
+                            ready_confirmed = True
+                        elif state == "RUN":
+                            stop_attempted = True
+                            ready_confirmed = _write_and_confirm_state(
+                                Cmw500LteCommandProfile.ebler_stop(
+                                    self._sign_channel
+                                ),
+                                "RDY",
+                                "STOP/RDY",
+                            )
+                        else:
+                            lifecycle_failures.append(
+                                f"window state: expected RUN or RDY, got {state}"
+                            )
+
+                if ready_confirmed:
+                    try:
+                        absolute_raw = self._query(
+                            Cmw500LteCommandProfile.ebler_absolute_query(
+                                self._sign_channel
+                            )
+                        )
+                        absolute = Cmw500LteCommandProfile.parse_ebler_absolute(
+                            absolute_raw
+                        )
+                        throughput_mbps = (
+                            absolute.throughput_average_kbit_per_s / 1000.0
+                        )
+                    except Exception as exc:
+                        metric_failures.append(f"DL throughput unavailable: {exc}")
+                    try:
+                        relative_raw = self._query(
+                            Cmw500LteCommandProfile.ebler_relative_query(
+                                self._sign_channel
+                            )
+                        )
+                        relative = Cmw500LteCommandProfile.parse_ebler_relative(
+                            relative_raw
+                        )
+                        bler_percent = relative.bler_percent
+                    except Exception as exc:
+                        metric_failures.append(f"DL BLER unavailable: {exc}")
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+                lifecycle_failures.append("measurement window cancelled")
+            except Exception as exc:
+                lifecycle_failures.append(f"measurement window failed: {exc}")
+            finally:
+                if running_confirmed and not ready_confirmed and not stop_attempted:
+                    stop_attempted = True
+                    ready_confirmed = _write_and_confirm_state(
+                        Cmw500LteCommandProfile.ebler_stop(self._sign_channel),
+                        "RDY",
+                        "cleanup STOP/RDY",
+                    )
+                closed_off_confirmed = _write_and_confirm_state(
+                    Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
+                    "OFF",
+                    "final ABORT/OFF",
+                )
+
+        lifecycle_confirmed = all(
+            (
+                preclear_off_confirmed,
+                running_confirmed,
+                ready_confirmed,
+                closed_off_confirmed,
+            )
+        )
+        if not lifecycle_confirmed:
+            throughput_mbps = None
+            bler_percent = None
+
+        metrics = ThroughputMetrics(
+            dl_throughput_mbps=throughput_mbps,
+            dl_bler=bler_percent,
+            throughput_scope=throughput_scope,
+            kpi_valid={
+                "dl_throughput": lifecycle_confirmed
+                and throughput_mbps is not None,
+                "dl_bler": lifecycle_confirmed and bler_percent is not None,
+            },
+        )
+        exchange_ids = [exchange.exchange_id for exchange in exchanges]
+        details = (*lifecycle_failures, *metric_failures)
+        reason = (
+            "; ".join(details)
+            if details
+            else "Extended BLER lifecycle and KPI fetch confirmed"
+        )
+        evidence = InstrumentEvidenceItem(
+            instrument="cmw500",
+            evidence_key="cmw500.extended_bler.window",
+            requested={"window_s": window_s, "throughput_scope": throughput_scope},
+            command_sent=Cmw500LteCommandProfile.ebler_init(self._sign_channel),
+            readback={
+                "absolute": absolute_raw,
+                "relative": relative_raw,
+                "preclear_off_confirmed": preclear_off_confirmed,
+                "running_confirmed": running_confirmed,
+                "ready_confirmed": ready_confirmed,
+                "closed_off_confirmed": closed_off_confirmed,
+            },
+            exchange_ids=exchange_ids,
+            evidence_level=(
+                EvidenceLevel.OUTCOME
+                if lifecycle_confirmed
+                else EvidenceLevel.TRANSPORT
+            ),
+            source_reference=(
+                "R&S CMW LTE UE User Manual 1173.9628.02-41 "
+                "§3.4.2 printed p.950-951; §3.4.4 printed p.957-959"
+            ),
+            verdict=(
+                EvidenceVerdict.PASSED
+                if lifecycle_confirmed
+                else EvidenceVerdict.UNKNOWN
+            ),
+            reason=reason,
+        )
+        completed_at = datetime.now(timezone.utc)
+        if cancelled is not None:
+            raise cancelled
+        return BaseStationMeasurementWindow(
+            window_id=window_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            metrics=metrics,
+            preclear_off_confirmed=preclear_off_confirmed,
+            running_confirmed=running_confirmed,
+            ready_confirmed=ready_confirmed,
+            closed_off_confirmed=closed_off_confirmed,
+            evidence=(evidence,),
+            confirmed=lifecycle_confirmed,
+            reason=reason,
+        )
+
     async def get_throughput_metrics(
         self,
         *,
@@ -1212,9 +1442,11 @@ class RealCmw500Driver(BaseStationDriver):
         def _throughput_text(value: Optional[float]) -> str:
             return "N/A" if value is None else f"{value:.1f}Mbps"
 
+        bler_text = "N/A" if metrics.dl_bler is None else f"{metrics.dl_bler:.4f}"
+
         meas_logger.info(
             f"[KPI] DL={_throughput_text(metrics.dl_throughput_mbps)} "
-            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} "
+            f"BLER={bler_text} CQI={metrics.cqi} "
             f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB",
             extra={
                 "instrument_id": self.instrument_id,
