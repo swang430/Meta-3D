@@ -250,6 +250,45 @@ async def test_real_adapters_reject_mismatched_rat_before_driver_write(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_cmw500_translates_vendor_neutral_lte_band(monkeypatch):
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+    writes: list[str] = []
+    monkeypatch.setattr(cmw, "_write", writes.append)
+    monkeypatch.setattr(cmw, "_query", lambda _command: "1")
+
+    assert await cmw.set_cell_config({"band": "B3", "earfcn": 1575}) is True
+    assert any(command.endswith(" OB3") for command in writes)
+    assert not any("OBB3" in command for command in writes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"bandwidth_mhz": 100.0},
+        {"mimo_layers": 8},
+    ],
+)
+async def test_cmw500_rejects_requests_beyond_declared_limits_before_io(
+    monkeypatch, overrides,
+):
+    requested = _build_pcell_requested_config(
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [LTE_B3_PCELL]}
+        )
+    )
+    requested = replace(requested, **overrides)
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    async def forbidden_write(_payload):
+        raise AssertionError("adapter limits must be checked before driver I/O")
+
+    monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
+
+    assert await cmw.apply_requested_config(requested) is False
+
+
+@pytest.mark.asyncio
 async def test_analysis_keeps_lte_ratio_and_verdict_unknown_without_peak(monkeypatch):
     from app.services.mimo_ota.executors import analysis as analysis_module
 

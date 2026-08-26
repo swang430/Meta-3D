@@ -175,6 +175,8 @@ class RealCmw500Driver(BaseStationDriver):
     """
 
     adapter_id = "cmw500"
+    max_bandwidth_mhz = 20.0
+    max_mimo_layers = 4
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
@@ -308,7 +310,9 @@ class RealCmw500Driver(BaseStationDriver):
             if "band" in config:
                 band = config["band"].upper()
                 # CMW 使用 "OB" 前缀 (Operating Band)
-                if not band.startswith("OB"):
+                if band.startswith("B"):
+                    band = f"O{band}"
+                elif not band.startswith("OB"):
                     band = f"OB{band}"
                 self._band = band
                 self._write(
@@ -720,8 +724,8 @@ class RealCmw500Driver(BaseStationDriver):
                 supported=True,
                 parameters={
                     "bands": list(LTE_BAND_EARFCN_MAP.keys()),
-                    "max_bandwidth_mhz": 20,
-                    "max_mimo_layers": 4,
+                    "max_bandwidth_mhz": self.max_bandwidth_mhz,
+                    "max_mimo_layers": self.max_mimo_layers,
                     "tm_modes": [
                         "TM1", "TM2", "TM3", "TM4", "TM6", "TM7",
                         "TM8", "TM9", "TM10",

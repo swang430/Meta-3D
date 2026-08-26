@@ -277,6 +277,8 @@ class BaseStationDriver(InstrumentDriver):
     # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
     # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
     input_level_control_supported: ClassVar[bool] = False
+    max_bandwidth_mhz: ClassVar[float | None] = None
+    max_mimo_layers: ClassVar[int | None] = None
 
     # ===================================================================
     # 小区配置
@@ -319,6 +321,30 @@ class BaseStationDriver(InstrumentDriver):
                 self.instrument_id,
                 requested.radio_technology,
                 self.adapter_id,
+            )
+            return False
+        if (
+            self.max_bandwidth_mhz is not None
+            and requested.bandwidth_mhz > self.max_bandwidth_mhz
+        ):
+            logger.error(
+                "[%s] Rejecting bandwidth %.3f MHz: adapter %s maximum is %.3f MHz",
+                self.instrument_id,
+                requested.bandwidth_mhz,
+                self.adapter_id,
+                self.max_bandwidth_mhz,
+            )
+            return False
+        if (
+            self.max_mimo_layers is not None
+            and requested.mimo_layers > self.max_mimo_layers
+        ):
+            logger.error(
+                "[%s] Rejecting %d MIMO layers: adapter %s maximum is %d",
+                self.instrument_id,
+                requested.mimo_layers,
+                self.adapter_id,
+                self.max_mimo_layers,
             )
             return False
         return await self.set_cell_config(requested.to_driver_payload())

@@ -446,9 +446,19 @@ def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> N
         )
     except ChannelAssetError:
         return
-    # The legacy MF_Nxx filename parser is an NR identity source.  LTE vendor
-    # filenames are not used as truth and must never be pushed through it.
-    if normalized["radio_technology"] != "nr5g":
+    if normalized["radio_technology"] == "lte":
+        from app.services.mimo_ota.channel_naming import (
+            parse_standard_channel_filename,
+        )
+        parsed = parse_standard_channel_filename(str(associated_file_path))
+        if parsed is not None and (
+            parsed.radio_technology != "lte"
+            or parsed.channel_kind != "lte_dl_earfcn"
+            or parsed.lte_dl_earfcn != normalized["lte_dl_earfcn"]
+        ):
+            raise ChannelAssetError(
+                "LTE 标准信道文件名身份与 scd_config.lte_dl_earfcn 不一致"
+            )
         return
     arfcn = normalized["arfcn"]
     from app.services.standard_channel_service import check_channel_filename_freq
