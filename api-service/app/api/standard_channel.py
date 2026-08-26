@@ -23,8 +23,13 @@ class SCDCreateRequest(BaseModel):
     """定义一个标准信道的规范配置 (标准名由后端从这些字段算, 不接受前端传名)。"""
 
     instrument_connection_id: UUID = Field(..., description="所属 F64 绑定")
+    radio_technology: str = Field(..., description="nr5g | lte")
+    channel_kind: str = Field(..., description="nr_arfcn | lte_dl_earfcn")
     band: str = Field(..., examples=["N78"])
-    arfcn: int = Field(..., gt=0, description="中心 ARFCN (频率规范真值)")
+    arfcn: Optional[int] = Field(None, gt=0, description="NR-ARFCN；LTE 为空")
+    lte_dl_earfcn: Optional[int] = Field(
+        None, ge=0, description="LTE DL EARFCN；NR 为空"
+    )
     bandwidth_mhz: int = Field(..., gt=0)
     model: str = Field(..., description="filename-safe, e.g. CDLC", examples=["CDLC"])
     scenario: str = Field(..., examples=["UMa"])
@@ -38,8 +43,11 @@ class SCDResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    radio_technology: str
+    channel_kind: str
     band: str
-    arfcn: int
+    arfcn: Optional[int]
+    lte_dl_earfcn: Optional[int]
     bandwidth_mhz: int
     model: str
     scenario: str
@@ -74,7 +82,11 @@ def create_standard_channel(req: SCDCreateRequest, db: Session = Depends(get_db)
         return svc.create_scd(
             db,
             instrument_connection_id=req.instrument_connection_id,
-            band=req.band, arfcn=req.arfcn, bandwidth_mhz=req.bandwidth_mhz,
+            radio_technology=req.radio_technology,
+            channel_kind=req.channel_kind,
+            band=req.band, arfcn=req.arfcn,
+            lte_dl_earfcn=req.lte_dl_earfcn,
+            bandwidth_mhz=req.bandwidth_mhz,
             model=req.model, scenario=req.scenario, mimo=req.mimo,
             polarization=req.polarization, version=req.version,
             description=req.description,

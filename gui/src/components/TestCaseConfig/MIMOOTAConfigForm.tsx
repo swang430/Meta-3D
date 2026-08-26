@@ -74,10 +74,15 @@ export interface MIMOOTAConfiguration {
   bandwidth_mhz?: number
   /** Phase 2g 载波聚合。表单只编辑 PCell；SCell 仍由 configuration JSON 管理。 */
   component_carriers?: Array<{
+    radio_technology?: 'nr5g' | 'lte'
+    channel_kind?: 'nr_arfcn' | 'lte_dl_earfcn'
     frequency_hz?: number
     bandwidth_mhz?: number
     subcarrier_spacing_khz?: number
     band?: string | null
+    duplex?: 'fdd' | 'tdd' | null
+    nr_arfcn?: number | null
+    lte_dl_earfcn?: number | null
     role?: string
   }>
   mimo_layers?: number
@@ -186,6 +191,8 @@ const MIMO_PORT_PRESET_OPTIONS = [
 ]
 
 export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
+  const rawPCell = value.component_carriers?.[0]
+  const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
   const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const update = <K extends keyof MIMOOTAConfiguration>(
     key: K,
@@ -205,6 +212,41 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     if (typeof next !== 'number' || !Number.isFinite(next)) return
 
     onChange(updatePrimaryCarrierValue(value, key, next))
+  }
+
+  const patchPCell = (patch: Record<string, unknown>): void => {
+    const current = rawPCell ?? {
+      frequency_hz: value.frequency_hz,
+      bandwidth_mhz: value.bandwidth_mhz,
+      subcarrier_spacing_khz: value.subcarrier_spacing_khz ?? 30,
+      role: 'pcell',
+    }
+    onChange({ ...value, component_carriers: [{ ...current, ...patch, role: 'pcell' }] })
+  }
+
+  const switchRadioTechnology = (rat: 'nr5g' | 'lte'): void => {
+    const current = rawPCell ?? {
+      frequency_hz: value.frequency_hz,
+      bandwidth_mhz: value.bandwidth_mhz,
+      role: 'pcell',
+    }
+    const pcell = rat === 'lte'
+      ? {
+          ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
+          band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
+          nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
+        }
+      : {
+          ...current, radio_technology: 'nr5g' as const, channel_kind: 'nr_arfcn' as const,
+          band: undefined, nr_arfcn: undefined, subcarrier_spacing_khz: 30,
+          duplex: undefined, lte_dl_earfcn: undefined, role: 'pcell' as const,
+        }
+    const next: MIMOOTAConfiguration = { ...value, component_carriers: [pcell] }
+    if (rat === 'lte') {
+      next.subcarrier_spacing_khz = undefined
+      next.theoretical_peak_throughput_mbps = undefined
+    }
+    onChange(next)
   }
 
   const updatePass = <K extends keyof PassCriteria>(key: K, next: PassCriteria[K]): void => {
@@ -391,6 +433,51 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               }
             />
             <Select
+              label="无线制式"
+              description="PCell 显式真值；LTE 不继承 NR ARFCN/SCS/峰值"
+              data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+              value={radioTechnology}
+              onChange={(v) => switchRadioTechnology(v === 'lte' ? 'lte' : 'nr5g')}
+              disabled={readOnly}
+              allowDeselect={false}
+            />
+            <TextInput
+              label="频段 Band"
+              placeholder={radioTechnology === 'lte' ? 'B3' : 'N78'}
+              value={rawPCell?.band ?? ''}
+              onChange={(e) => patchPCell({ band: e.currentTarget.value.toUpperCase() || undefined })}
+              disabled={readOnly}
+              required={radioTechnology === 'lte'}
+            />
+            {radioTechnology === 'lte' ? (
+              <>
+                <Select
+                  label="双工模式"
+                  data={[{ value: 'fdd', label: 'FDD' }, { value: 'tdd', label: 'TDD' }]}
+                  value={rawPCell?.duplex ?? null}
+                  onChange={(v) => patchPCell({ duplex: v ?? undefined })}
+                  disabled={readOnly}
+                  required
+                />
+                <NumberInput
+                  label="LTE DL EARFCN"
+                  value={rawPCell?.lte_dl_earfcn ?? undefined}
+                  onChange={(v) => patchPCell({ lte_dl_earfcn: typeof v === 'number' ? v : undefined })}
+                  min={0}
+                  disabled={readOnly}
+                  required
+                />
+              </>
+            ) : (
+              <NumberInput
+                label="NR-ARFCN（可选显式）"
+                value={rawPCell?.nr_arfcn ?? undefined}
+                onChange={(v) => patchPCell({ nr_arfcn: typeof v === 'number' ? v : undefined })}
+                min={0}
+                disabled={readOnly}
+              />
+            )}
+            <Select
               label="子载波间隔"
               data={SCS_OPTIONS}
               value={
@@ -399,7 +486,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   : null
               }
               onChange={(v) => updateCarrierField('subcarrier_spacing_khz', v ? Number(v) : undefined)}
-              disabled={readOnly}
+              disabled={readOnly || radioTechnology === 'lte'}
               allowDeselect={false}
             />
             {/* P2-11 一致性按 ARFCN 整数比对 (nr_arfcn.py), 输入粒度必须细过 NR 栅格
@@ -965,7 +1052,11 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               <NumberInput
                 label="理论峰值吞吐量"
                 suffix=" Mbps"
-                description="用于 ratio 判定基准"
+                description={
+                  radioTechnology === 'lte'
+                    ? 'LTE 只接受本次显式值；留空时绝对吞吐可用，ratio 与相关判决显示 N/A'
+                    : '用于 ratio 判定基准'
+                }
                 value={value.theoretical_peak_throughput_mbps}
                 onChange={(v) =>
                   update(

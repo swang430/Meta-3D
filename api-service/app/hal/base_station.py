@@ -36,6 +36,62 @@ class BaseStationIdentity:
 
 
 @dataclass(frozen=True)
+class BaseStationRequestedConfig:
+    """Vendor-neutral, RAT-aware PCell request owned by the execution layer.
+
+    The request carries mutually exclusive NR/LTE channel numbers.  Adapter
+    translation happens below this contract; callers never select a driver
+    dialect or put LTE EARFCN into the legacy NR ``arfcn`` slot.
+    """
+
+    radio_technology: Literal["nr5g", "lte"]
+    channel_kind: Literal["nr_arfcn", "lte_dl_earfcn"]
+    frequency_mhz: float
+    bandwidth_mhz: float
+    band: str
+    duplex: str | None
+    nr_arfcn: int | None
+    lte_dl_earfcn: int | None
+    subcarrier_spacing_khz: int | None
+    mimo_layers: int
+    downlink_power_dbm: float
+    downlink_power_dbm_per_bandwidth: float | None = None
+    port_preset: str | None = None
+    scheduler_algorithm: str | None = None
+    csi_rs_ports: int | None = None
+
+    def to_driver_payload(self) -> dict[str, Any]:
+        """Translate the common request into the existing driver payload API."""
+
+        payload: dict[str, Any] = {
+            "radio_technology": self.radio_technology,
+            "channel_kind": self.channel_kind,
+            "frequency_mhz": self.frequency_mhz,
+            "bandwidth_mhz": self.bandwidth_mhz,
+            "band": self.band,
+            "mimo_layers": self.mimo_layers,
+            "dl_power_dbm": self.downlink_power_dbm,
+        }
+        if self.radio_technology == "nr5g":
+            payload["nr_arfcn"] = self.nr_arfcn
+            payload["arfcn"] = self.nr_arfcn
+            payload["scs_khz"] = self.subcarrier_spacing_khz
+        else:
+            payload["lte_dl_earfcn"] = self.lte_dl_earfcn
+            payload["earfcn"] = self.lte_dl_earfcn
+            payload["duplex"] = self.duplex
+        if self.downlink_power_dbm_per_bandwidth is not None:
+            payload["dl_power_dbm_per_bw"] = self.downlink_power_dbm_per_bandwidth
+        if self.port_preset is not None:
+            payload["mimo_port_preset"] = self.port_preset
+        if self.scheduler_algorithm is not None:
+            payload["sched_algo"] = self.scheduler_algorithm
+        if self.csi_rs_ports is not None:
+            payload["csi_rs_ports"] = self.csi_rs_ports
+        return payload
+
+
+@dataclass(frozen=True)
 class AppliedCellConfig:
     """UE 协商后实际可用的通用小区能力。"""
 
@@ -241,6 +297,15 @@ class BaseStationDriver(InstrumentDriver):
             True if configuration successful
         """
         raise NotImplementedError
+
+    async def apply_requested_config(
+        self, requested: BaseStationRequestedConfig,
+    ) -> bool:
+        """Apply one typed request through the adapter's existing primitive."""
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        return await self.set_cell_config(requested.to_driver_payload())
 
     async def set_frc_config(
         self,

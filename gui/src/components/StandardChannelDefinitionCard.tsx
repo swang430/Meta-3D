@@ -62,8 +62,9 @@ const ASSOCIATION_SOURCE_OPTIONS = [
 ]
 
 const EMPTY_CREATE = {
+  radio_technology: 'nr5g' as 'nr5g' | 'lte',
   band: '',
-  arfcn: '' as number | '',
+  channel_number: '' as number | '',
   bandwidth_mhz: '' as number | '',
   model: '',
   scenario: '',
@@ -99,8 +100,11 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
     mutationFn: () =>
       createStandardChannel({
         instrument_connection_id: connectionId,
+        radio_technology: form.radio_technology,
+        channel_kind: form.radio_technology === 'lte' ? 'lte_dl_earfcn' : 'nr_arfcn',
         band: form.band.trim(),
-        arfcn: Number(form.arfcn),
+        arfcn: form.radio_technology === 'nr5g' ? Number(form.channel_number) : null,
+        lte_dl_earfcn: form.radio_technology === 'lte' ? Number(form.channel_number) : null,
         bandwidth_mhz: Number(form.bandwidth_mhz),
         model: form.model.trim(),
         scenario: form.scenario.trim(),
@@ -120,7 +124,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
 
   const createValid =
     form.band.trim() &&
-    form.arfcn !== '' &&
+    form.channel_number !== '' &&
     form.bandwidth_mhz !== '' &&
     form.model.trim() &&
     form.scenario.trim() &&
@@ -220,7 +224,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
                     <Badge size="xs" color={meta.color} variant="light">{meta.label}</Badge>
                   </Group>
                   <Text size="xs" c="dimmed">
-                    {scd.band} · ARFCN {scd.arfcn} · BW{scd.bandwidth_mhz} · {scd.model}/{scd.scenario} · {scd.mimo} · {scd.polarization} · v{scd.version}
+                    {scd.radio_technology === 'lte' ? 'LTE' : 'NR'} · {scd.band} · {scd.channel_kind === 'lte_dl_earfcn' ? `DL EARFCN ${scd.lte_dl_earfcn}` : `NR-ARFCN ${scd.arfcn}`} · BW{scd.bandwidth_mhz} · {scd.model}/{scd.scenario} · {scd.mimo} · {scd.polarization} · v{scd.version}
                   </Text>
                   {scd.associated_file_path && (
                     <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>📎 {scd.associated_file_path}</Text>
@@ -261,9 +265,16 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
       <Modal opened={createOpen} onClose={() => setCreateOpen(false)} title="新建标准信道定义" size="md">
         <Stack gap="sm">
           <Text size="xs" c="dimmed">标准名由这些规范字段自动生成 (单一真值, 不手填名字).</Text>
+          <Select
+            label="无线制式"
+            data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+            value={form.radio_technology}
+            onChange={(v) => setForm({ ...form, radio_technology: v === 'lte' ? 'lte' : 'nr5g', band: '', channel_number: '' })}
+            allowDeselect={false}
+          />
           <Group grow>
-            <TextInput label="频段 Band" placeholder="N78" value={form.band} onChange={(e) => setForm({ ...form, band: e.currentTarget.value })} required />
-            <NumberInput label="ARFCN" placeholder="640000" value={form.arfcn} onChange={(v) => setForm({ ...form, arfcn: typeof v === 'number' ? v : '' })} min={0} required />
+            <TextInput label="频段 Band" placeholder={form.radio_technology === 'lte' ? 'B3' : 'N78'} value={form.band} onChange={(e) => setForm({ ...form, band: e.currentTarget.value })} required />
+            <NumberInput label={form.radio_technology === 'lte' ? 'DL EARFCN' : 'NR-ARFCN'} placeholder={form.radio_technology === 'lte' ? '1575' : '640000'} value={form.channel_number} onChange={(v) => setForm({ ...form, channel_number: typeof v === 'number' ? v : '' })} min={0} required />
           </Group>
           <Group grow>
             <NumberInput label="带宽 (MHz)" placeholder="100" value={form.bandwidth_mhz} onChange={(v) => setForm({ ...form, bandwidth_mhz: typeof v === 'number' ? v : '' })} min={1} required />

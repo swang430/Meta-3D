@@ -30,7 +30,8 @@ from app.services.channel_asset_service import (
 # —— 各 source_type 合法 payload 样例 ——
 _CLUSTER = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 30.0, "aod_deg": 10.0}
 _RAY = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 30.0, "aod_deg": 10.0, "phase_rad": 0.5}
-_SCD = {"band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
+_SCD = {"radio_technology": "nr5g", "channel_kind": "nr_arfcn",
+        "band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
         "scenario": "UMa", "mimo": "4x4", "polarization": "DP", "version": 1}
 
 _STD_PAYLOAD = {"cdl_model_name": "UMa CDL-C NLOS"}

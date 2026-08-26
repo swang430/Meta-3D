@@ -185,6 +185,8 @@ def test_scan_fails_whole_inventory_when_total_byte_limit_is_exceeded(tmp_path: 
 
 
 _OLD_SCD = {
+    "radio_technology": "nr5g",
+    "channel_kind": "nr_arfcn",
     "band": "N78",
     "arfcn": 640000,
     "bandwidth_mhz": 100,
@@ -239,8 +241,11 @@ def _create_vendor_asset(
     binding_id=None,
     active: bool = True,
     payload_extra: dict | None = None,
+    scd_config: dict | None = None,
+    center_frequency_hz: float = 3_600_000_000,
+    bandwidth_mhz: int = 100,
 ):
-    scd = dict(_OLD_SCD)
+    scd = dict(scd_config or _OLD_SCD)
     # ChannelAsset canonical_name is globally unique.  Tests that need two assets (including the
     # deliberate duplicate-path case) vary only the irrelevant version so setup itself remains
     # valid and the scanner, not the CRUD uniqueness guard, decides the path status.
@@ -252,8 +257,8 @@ def _create_vendor_asset(
         source_type="vendor_file",
         payload=payload,
         associated_file_path=path,
-        center_frequency_hz=3_600_000_000,
-        bandwidth_mhz=100,
+        center_frequency_hz=center_frequency_hz,
+        bandwidth_mhz=bandwidth_mhz,
         instrument_connection_id=binding_id,
     )
     if not active:
@@ -341,7 +346,7 @@ def test_preview_protects_unregistered_duplicate_inactive_other_binding_and_non_
     assert statuses == {
         "duplicate.smu": "ambiguous_asset",
         "inactive.smu": "inactive_asset",
-        "non-raster.smu": "non_nr_raster",
+        "non-raster.smu": "non_channel_raster",
         "other-binding.smu": "binding_conflict",
         "unregistered.smu": "unregistered",
     }
@@ -413,6 +418,10 @@ def test_sync_updates_asset_and_projection_together_while_preserving_unknown_key
     synced = next(p for p in projections if p["filename"] == windows_path)
     untouched = next(p for p in projections if p["filename"].endswith("untouched.smu"))
     assert synced["center_frequency_mhz"] == 3549.99
+    assert synced["radio_technology"] == "nr5g"
+    assert synced["channel_kind"] == "nr_arfcn"
+    assert synced["nr_arfcn"] == 636666
+    assert synced["lte_dl_earfcn"] is None
     assert synced["channel_asset_id"] == str(asset.id)
     assert synced["unknown_projection"] == {"keep": True}
     assert untouched == {
@@ -428,6 +437,63 @@ def test_sync_updates_asset_and_projection_together_while_preserving_unknown_key
     again = sync_smu_project_truth(db)
     assert again.updated_count == 0
     assert again.already_synced_count == 1
+
+
+def test_sync_lte_project_uses_explicit_band_earfcn_identity(inventory_db):
+    from app.services.smu_project_inventory import (
+        preview_smu_project_sync,
+        sync_smu_project_truth,
+    )
+
+    db, connection, root = inventory_db
+    windows_path = r"D:\Scenario Packs\lte-b3.smu"
+    _write_smu(
+        root / "lte-b3.smu",
+        "[Channel Group 0]\nCenterFrequency=1842500000 Hz\n",
+    )
+    asset = _create_vendor_asset(
+        db,
+        name="lte-b3",
+        path=windows_path,
+        scd_config={
+            "radio_technology": "lte",
+            "channel_kind": "lte_dl_earfcn",
+            "band": "B3",
+            "lte_dl_earfcn": 1500,
+            "bandwidth_mhz": 20,
+            "model": "TDLA",
+            "scenario": "Indoor",
+            "mimo": "2x2",
+            "polarization": "DP",
+            "version": 1,
+        },
+        center_frequency_hz=1_835_000_000,
+        bandwidth_mhz=20,
+    )
+
+    preview = preview_smu_project_sync(db)
+    assert preview.items[0].sync_status == "syncable"
+    assert preview.items[0].target_arfcn is None
+    assert preview.items[0].target_lte_dl_earfcn == 1575
+
+    result = sync_smu_project_truth(db)
+    db.expire_all()
+    stored = db.get(ChannelAsset, asset.id)
+    db.refresh(connection)
+
+    assert result.updated_count == 1
+    scd = stored.payload["scd_config"]
+    assert scd["radio_technology"] == "lte"
+    assert scd["channel_kind"] == "lte_dl_earfcn"
+    assert scd["band"] == "B3"
+    assert scd["lte_dl_earfcn"] == 1575
+    assert "arfcn" not in scd
+    projection = connection.connection_params["available_channel_models"][0]
+    assert projection["radio_technology"] == "lte"
+    assert projection["channel_kind"] == "lte_dl_earfcn"
+    assert projection["band"] == "B3"
+    assert projection["lte_dl_earfcn"] == 1575
+    assert projection["nr_arfcn"] is None
 
 
 def test_sync_internal_group_zero_truth_overrides_parseable_lying_filename(inventory_db):

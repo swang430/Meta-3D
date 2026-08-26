@@ -238,7 +238,8 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
     """
     if not entries:
         return []
-    from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, parse_smu_center_freq_mhz
+    from app.hal.lte_earfcn import lte_dl_earfcn_to_frequency_mhz
+    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz, parse_smu_center_freq_mhz
 
     out: list[Dict[str, Any]] = []
     for entry in entries:
@@ -250,18 +251,46 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
         if not filename or not isinstance(filename, str):
             continue
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+        rat = entry.get("radio_technology")
+        kind = entry.get("channel_kind")
+        nr_arfcn_val: Optional[int] = None
+        lte_earfcn_val: Optional[int] = None
         raw_center = entry.get("center_frequency_mhz")
-        center_mhz = (
+        loose_center = (
             float(raw_center)
             if isinstance(raw_center, (int, float))
             else parse_smu_center_freq_mhz(filename)
         )
-        nr_arfcn_val: Optional[int] = None
-        if center_mhz is not None:
+        center_mhz = loose_center
+        if rat == "nr5g" and kind == "nr_arfcn" and type(entry.get("nr_arfcn")) is int:
+            nr_arfcn_val = entry["nr_arfcn"]
             try:
-                nr_arfcn_val = freq_mhz_to_nr_arfcn(center_mhz)
-            except ValueError:  # 频率超出 NR-ARFCN 范围 (异常命名) → 不强标 ARFCN
-                nr_arfcn_val = None
+                declared_center = nr_arfcn_to_freq_mhz(nr_arfcn_val)
+            except ValueError:
+                rat, kind = "legacy_unknown", "legacy_unknown"
+            else:
+                if loose_center is not None and abs(loose_center - declared_center) > 1e-6:
+                    rat, kind = "legacy_unknown", "legacy_unknown"
+                    nr_arfcn_val = None
+                else:
+                    center_mhz = declared_center
+        elif rat == "lte" and kind == "lte_dl_earfcn" and type(entry.get("lte_dl_earfcn")) is int:
+            lte_earfcn_val = entry["lte_dl_earfcn"]
+            try:
+                declared_center = lte_dl_earfcn_to_frequency_mhz(
+                    entry.get("band"), lte_earfcn_val
+                )
+            except ValueError:
+                rat, kind = "legacy_unknown", "legacy_unknown"
+            else:
+                if loose_center is not None and abs(loose_center - declared_center) > 1e-6:
+                    rat, kind = "legacy_unknown", "legacy_unknown"
+                    lte_earfcn_val = None
+                else:
+                    center_mhz = declared_center
+        else:
+            # 历史 bare/manual 项保留展示与 loose center 提示，但不猜成 NR 身份。
+            rat, kind = "legacy_unknown", "legacy_unknown"
         out.append({
             "filename": filename,
             "label": entry.get("label") or filename,
@@ -269,10 +298,15 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
             "type": ext,
             "center_frequency_mhz": center_mhz,
             "nr_arfcn": nr_arfcn_val,
+            "lte_dl_earfcn": lte_earfcn_val,
+            "radio_technology": rat,
+            "channel_kind": kind,
+            "band": entry.get("band"),
             # P2-12 slice 4: SCD 派生 entry 带 scd_id (手敲条目为 None) —— 让 GUI 的
             # emulation_file 下拉选 SCD 派生项时存 scd_id (measure 查 SCD + 频率 cross-check)
             # 而非裸 filename。projection entry 由 _scd_to_projection_entry 打上 scd_id。
             "scd_id": entry.get("scd_id"),
+            "channel_asset_id": entry.get("channel_asset_id"),
         })
     return out
 

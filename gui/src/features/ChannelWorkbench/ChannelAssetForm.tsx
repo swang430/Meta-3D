@@ -25,6 +25,11 @@ import {
 } from '../../api/channelAssetService'
 import { CDLClusterEditor } from './CDLClusterEditor'
 import { RTRayEditor, type RtSnapshot } from './RTRayEditor'
+import {
+  buildVendorSCDConfig,
+  parseChannelFrequencyIdentity,
+  type ChannelRadioTechnology,
+} from './channelFrequencyIdentity'
 
 // 可【新建】的 source_type (四类全可建)
 const CREATABLE: { value: ChannelSourceType; label: string }[] = [
@@ -62,7 +67,8 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   const [cdlModelName, setCdlModelName] = useState('')
   // vendor_file scd_config + .smu
   const [scd, setScd] = useState({
-    band: '', arfcn: '' as number | string, bandwidth_mhz: '' as number | string,
+    radioTechnology: 'nr5g' as ChannelRadioTechnology,
+    band: '', channelNumber: '' as number | string, bandwidth_mhz: '' as number | string,
     model: '', scenario: '', mimo: '', polarization: '', version: 1 as number | string,
   })
   const [filePath, setFilePath] = useState('')
@@ -87,8 +93,10 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       const p = (asset.payload ?? {}) as Record<string, unknown>
       setCdlModelName(String(p.cdl_model_name ?? ''))
       const sc = (p.scd_config ?? {}) as Record<string, unknown>
+      const identity = parseChannelFrequencyIdentity(sc)
       setScd({
-        band: String(sc.band ?? ''), arfcn: (sc.arfcn as number) ?? '',
+        radioTechnology: identity?.radioTechnology ?? 'nr5g',
+        band: identity?.band ?? '', channelNumber: identity?.channelNumber ?? '',
         bandwidth_mhz: (sc.bandwidth_mhz as number) ?? '', model: String(sc.model ?? ''),
         scenario: String(sc.scenario ?? ''), mimo: String(sc.mimo ?? ''),
         polarization: String(sc.polarization ?? ''), version: (sc.version as number) ?? 1,
@@ -103,7 +111,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setSourceType('standard_3gpp')
       setName(''); setDescription(''); setCenterMhz(''); setBandwidthMhz('')
       setIsLos('unset'); setKFactorDb(''); setCdlModelName('')
-      setScd({ band: '', arfcn: '', bandwidth_mhz: '', model: '', scenario: '', mimo: '', polarization: '', version: 1 })
+      setScd({ radioTechnology: 'nr5g', band: '', channelNumber: '', bandwidth_mhz: '', model: '', scenario: '', mimo: '', polarization: '', version: 1 })
       setFilePath('')
       setClusters([])
       setRaySnapshots([])
@@ -148,14 +156,16 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       return { cdl_model_name: cdlModelName.trim() }
     }
     if (sourceType === 'vendor_file') {
-      return {
-        scd_config: {
-          band: scd.band.trim(), arfcn: numOrNull(scd.arfcn),
-          bandwidth_mhz: numOrNull(scd.bandwidth_mhz), model: scd.model.trim(),
-          scenario: scd.scenario.trim(), mimo: scd.mimo.trim(),
-          polarization: scd.polarization.trim(), version: numOrNull(scd.version),
-        },
-      }
+      const channelNumber = numOrNull(scd.channelNumber)
+      const bandwidth = numOrNull(scd.bandwidth_mhz)
+      const version = numOrNull(scd.version)
+      if (channelNumber == null || bandwidth == null || version == null) return null
+      return { scd_config: buildVendorSCDConfig({
+        radioTechnology: scd.radioTechnology,
+        band: scd.band, channelNumber, bandwidthMhz: bandwidth,
+        model: scd.model, scenario: scd.scenario, mimo: scd.mimo,
+        polarization: scd.polarization, version,
+      }) }
     }
     if (sourceType === 'custom_static') {
       // 保留既有 payload 的非 snapshots 字段, 仅覆盖 snapshots: 迁移 (c8e1f5a2d4b7) 把
@@ -277,10 +287,13 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
           <>
             <Divider label="SCD 配置 (scd_config)" labelPosition="left" />
             <SimpleGrid cols={2}>
-              <TextInput label="频段 band" placeholder="N78" value={scd.band}
+              <Select label="无线制式" data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
+                value={scd.radioTechnology} allowDeselect={false}
+                onChange={(v) => setScd({ ...scd, radioTechnology: v === 'lte' ? 'lte' : 'nr5g', band: '', channelNumber: '' })} />
+              <TextInput label="频段 band" placeholder={scd.radioTechnology === 'lte' ? 'B3' : 'N78'} value={scd.band}
                 onChange={(e) => setScd({ ...scd, band: e.currentTarget.value })} />
-              <NumberInput label="ARFCN" value={scd.arfcn}
-                onChange={(v) => setScd({ ...scd, arfcn: v })} />
+              <NumberInput label={scd.radioTechnology === 'lte' ? 'DL EARFCN' : 'NR-ARFCN'} value={scd.channelNumber}
+                onChange={(v) => setScd({ ...scd, channelNumber: v })} />
               <NumberInput label="带宽 MHz" value={scd.bandwidth_mhz}
                 onChange={(v) => setScd({ ...scd, bandwidth_mhz: v })} />
               <TextInput label="模型 model" placeholder="CDLC" value={scd.model}

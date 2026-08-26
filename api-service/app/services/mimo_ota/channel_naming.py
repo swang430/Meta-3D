@@ -28,13 +28,16 @@ class StandardChannelName:
     (model 写 filename-safe 形式, e.g. CDL-C → "CDLC")。"""
 
     band: str            # "N78"
-    arfcn: int           # 640000 (规范真值, 非 frequency_mhz)
+    arfcn: Optional[int] # NR-ARFCN；LTE 必须为 None
     bandwidth_mhz: int   # 100
     model: str           # "CDLC"
     scenario: str        # "UMa"
     mimo: str            # "4x4"
     polarization: str    # "V" / "H" / "DP" (MIMO OTA 核心参数)
     version: int         # 3 (重标/重生成递增)
+    radio_technology: str = "nr5g"
+    channel_kind: str = "nr_arfcn"
+    lte_dl_earfcn: Optional[int] = None
 
 
 def _require_alnum(field: str, value: str) -> None:
@@ -49,8 +52,24 @@ def format_standard_channel_filename(scn: StandardChannelName) -> str:
     """SCD config → 标准 .smu 文件名 (确定性, 我们拥有)。字段非法 → ValueError (早失败)。"""
     for fld in ("band", "model", "scenario", "mimo", "polarization"):
         _require_alnum(fld, getattr(scn, fld))
-    if scn.arfcn <= 0 or scn.bandwidth_mhz <= 0 or scn.version <= 0:
-        raise ValueError("arfcn / bandwidth_mhz / version 必须为正整数")
+    if scn.bandwidth_mhz <= 0 or scn.version <= 0:
+        raise ValueError("bandwidth_mhz / version 必须为正整数")
+    if scn.radio_technology == "lte":
+        if scn.channel_kind != "lte_dl_earfcn":
+            raise ValueError("LTE 标准信道必须使用 channel_kind=lte_dl_earfcn")
+        if scn.arfcn is not None:
+            raise ValueError("LTE EARFCN 不得写入 NR arfcn 槽")
+        if scn.lte_dl_earfcn is None or scn.lte_dl_earfcn < 0:
+            raise ValueError("LTE lte_dl_earfcn 必须为非负整数")
+        return (
+            f"{STANDARD_PREFIX}_LTE_{scn.band}_EARFCN{scn.lte_dl_earfcn}"
+            f"_BW{scn.bandwidth_mhz}_{scn.model}_{scn.scenario}_{scn.mimo}"
+            f"_{scn.polarization}_v{scn.version}.smu"
+        )
+    if scn.radio_technology != "nr5g" or scn.channel_kind != "nr_arfcn":
+        raise ValueError("NR 标准信道必须使用 nr5g/nr_arfcn")
+    if scn.arfcn is None or scn.arfcn <= 0 or scn.lte_dl_earfcn is not None:
+        raise ValueError("NR arfcn 必须为正整数且不得设置 lte_dl_earfcn")
     return (
         f"{STANDARD_PREFIX}_{scn.band}_{scn.arfcn}_BW{scn.bandwidth_mhz}"
         f"_{scn.model}_{scn.scenario}_{scn.mimo}_{scn.polarization}_v{scn.version}.smu"
@@ -60,6 +79,10 @@ def format_standard_channel_filename(scn: StandardChannelName) -> str:
 _STANDARD_RE = re.compile(
     rf"^{STANDARD_PREFIX}_([A-Za-z0-9]+)_(\d+)_BW(\d+)_([A-Za-z0-9]+)_([A-Za-z0-9]+)"
     rf"_([A-Za-z0-9]+)_([A-Za-z0-9]+)_v(\d+)\.smu$"
+)
+_LTE_STANDARD_RE = re.compile(
+    rf"^{STANDARD_PREFIX}_LTE_([A-Za-z0-9]+)_EARFCN(\d+)_BW(\d+)_"
+    rf"([A-Za-z0-9]+)_([A-Za-z0-9]+)_([A-Za-z0-9]+)_([A-Za-z0-9]+)_v(\d+)\.smu$"
 )
 
 
@@ -71,6 +94,15 @@ def parse_standard_channel_filename(filename: Optional[str]) -> Optional[Standar
     if not filename:
         return None
     base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    lte_match = _LTE_STANDARD_RE.match(base)
+    if lte_match:
+        band, earfcn, bw, model, scenario, mimo, pol, ver = lte_match.groups()
+        return StandardChannelName(
+            band=band, arfcn=None, bandwidth_mhz=int(bw), model=model,
+            scenario=scenario, mimo=mimo, polarization=pol, version=int(ver),
+            radio_technology="lte", channel_kind="lte_dl_earfcn",
+            lte_dl_earfcn=int(earfcn),
+        )
     m = _STANDARD_RE.match(base)
     if not m:
         return None

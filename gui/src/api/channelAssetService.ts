@@ -108,6 +108,7 @@ export interface SMUProjectSyncItem {
   asset_id?: string | null
   asset_name?: string | null
   target_arfcn?: number | null
+  target_lte_dl_earfcn?: number | null
 }
 
 export interface SMUProjectSyncPreview {

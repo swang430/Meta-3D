@@ -17,6 +17,7 @@ Schema 选 flat columns (非单个 JSON blob), 跟 InstrumentTopologyProfile / C
 import uuid
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -47,8 +48,23 @@ class StandardChannelDefinition(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # ---- 规范配置 (真值, 进标准名; 字段 alnum 无下划线/连字符) ----
-    band = Column(String(16), nullable=False, comment="NR 频段, e.g. N78")
-    arfcn = Column(Integer, nullable=False, comment="中心 ARFCN (频率规范真值, 非 frequency_mhz)")
+    radio_technology = Column(
+        String(16), nullable=False,
+        comment="RAT identity: nr5g | lte",
+    )
+    channel_kind = Column(
+        String(32), nullable=False,
+        comment="Channel number kind: nr_arfcn | lte_dl_earfcn",
+    )
+    band = Column(String(16), nullable=False, comment="3GPP 频段, e.g. N78 / B3")
+    arfcn = Column(
+        Integer, nullable=True,
+        comment="NR-ARFCN；LTE 必须为 NULL",
+    )
+    lte_dl_earfcn = Column(
+        Integer, nullable=True,
+        comment="LTE downlink EARFCN；NR 必须为 NULL",
+    )
     bandwidth_mhz = Column(Integer, nullable=False, comment="带宽 MHz")
     model = Column(String(32), nullable=False, comment="信道模型 filename-safe, e.g. CDLC")
     scenario = Column(String(32), nullable=False, comment="场景, e.g. UMa")
@@ -87,6 +103,13 @@ class StandardChannelDefinition(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
+        CheckConstraint(
+            "(radio_technology = 'nr5g' AND channel_kind = 'nr_arfcn' "
+            "AND arfcn IS NOT NULL AND lte_dl_earfcn IS NULL) OR "
+            "(radio_technology = 'lte' AND channel_kind = 'lte_dl_earfcn' "
+            "AND arfcn IS NULL AND lte_dl_earfcn IS NOT NULL)",
+            name="ck_scd_rat_channel_identity",
+        ),
         UniqueConstraint(
             "instrument_connection_id", "standard_name",
             name="uq_scd_binding_standard_name",

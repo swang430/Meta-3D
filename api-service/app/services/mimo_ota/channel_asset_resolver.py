@@ -20,6 +20,8 @@ from app.services.channel_asset_service import (
     ChannelAssetNotFound,
     _has_verified_smu_project_truth,
     get_channel_asset,
+    normalize_vendor_scd_config,
+    vendor_scd_frequency_identity,
 )
 from app.hal.nr_arfcn import FrequencyIdentity
 from app.services.channel_generation.base_generator import EngineMode
@@ -102,20 +104,25 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         # 没有同 id 的 SCD 行, 不能透传 scd_id 走查 SCD 表的老路): 直接从 ChannelAsset 提供
         # .smu (associated_file_path)。declared_only (None) → GCM 分支 emulation_file_gate
         # strict fail-loud (没指定 .smu 不能真跑 GCM), 与现状 (裸 emulation_file 缺失) 一致。
-        scd = (asset.payload or {}).get("scd_config") or {}
-        freq_id = None
-        if scd.get("arfcn") is not None and scd.get("bandwidth_mhz") is not None:
-            # scd_config 声明 ARFCN/带宽 → 频率一致性网 cross-check (Codex #174 复查 P2: 否则
-            # .smu 文件名不可解析时, TestCase 选个声明为别的频率的文件也能通过)。
-            freq_id = FrequencyIdentity(
-                center_arfcn=int(scd["arfcn"]), bandwidth_mhz=float(scd["bandwidth_mhz"]))
+        raw_scd = (asset.payload or {}).get("scd_config") or {}
+        try:
+            # Read-time compatibility is deliberately narrow: only complete
+            # pre-P1-73 NR payloads may acquire the missing RAT/kind labels.
+            scd = normalize_vendor_scd_config(raw_scd, allow_legacy_nr=True)
+            freq_id = vendor_scd_frequency_identity(
+                raw_scd, allow_legacy_nr=True
+            )
+        except ValueError as exc:
+            raise ChannelAssetResolveError(
+                f"vendor_file scd_config 频率身份非法: {exc}"
+            ) from exc
         # 文件名 vs scd_config.arfcn 交叉校验 (Codex a0ef389: resolver 直接返回 associated_file_path
         # 绕过老 SCD 关联路的 check_channel_filename_freq; 声明 ARFCN 跟 TestCase 一致但 .smu 实为别
         # ARFCN 的 MF_ 标准名文件 → F64 fallback 不解析 MF 文件名, 错 .smu 静默加载且频率门不报)。
         # MF_ 可解析名不一致 → fail-loud; 厂商名 (loose) / 解析不出 → 放行留给声明频率门
         # (厂商文件名频率是标称会说谎, 2026-07-03 实证; 真值 = scd_config 声明的工程实测)。
         afp = asset.associated_file_path
-        if (afp and scd.get("arfcn") is not None
+        if (afp and scd["radio_technology"] == "nr5g"
                 and not _has_verified_smu_project_truth(
                     asset.payload, afp, asset.center_frequency_hz,
                 )):

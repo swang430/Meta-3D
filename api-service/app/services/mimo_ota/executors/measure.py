@@ -59,7 +59,7 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
-from app.hal.base_station import ThroughputMetrics
+from app.hal.base_station import BaseStationRequestedConfig, ThroughputMetrics
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 
 logger = logging.getLogger(__name__)
@@ -386,6 +386,59 @@ def _build_pcell_cell_config(
     return cell_cfg
 
 
+def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
+    """Build the single RAT-aware request handed to every base-station adapter."""
+
+    pcell = config.primary_carrier
+    if pcell.radio_technology == "lte":
+        channel_kind = "lte_dl_earfcn"
+        nr_arfcn = None
+        lte_dl_earfcn = pcell.lte_dl_earfcn
+    else:
+        from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
+
+        channel_kind = "nr_arfcn"
+        nr_arfcn = pcell.nr_arfcn
+        if nr_arfcn is None:
+            nr_arfcn = freq_mhz_to_nr_arfcn(pcell.frequency_hz / 1e6)
+        lte_dl_earfcn = None
+
+    return BaseStationRequestedConfig(
+        radio_technology=pcell.radio_technology,
+        channel_kind=channel_kind,
+        frequency_mhz=pcell.frequency_hz / 1e6,
+        bandwidth_mhz=pcell.bandwidth_mhz,
+        band=pcell.band,
+        duplex=pcell.duplex,
+        nr_arfcn=nr_arfcn,
+        lte_dl_earfcn=lte_dl_earfcn,
+        subcarrier_spacing_khz=pcell.subcarrier_spacing_khz,
+        mimo_layers=config.mimo_layers,
+        downlink_power_dbm=config.target_tx_power_dbm,
+        downlink_power_dbm_per_bandwidth=config.uxm_dl_power_dbm_per_bw,
+        port_preset=config.mimo_port_preset,
+        scheduler_algorithm=config.sched_algo,
+        csi_rs_ports=config.csi_rs_ports,
+    )
+
+
+def _frequency_identity_from_requested_config(requested: BaseStationRequestedConfig):
+    """Return the RAT-aware identity used by the cross-instrument gate."""
+
+    from app.services.mimo_ota.frequency_consistency import ChannelFrequencyIdentity
+
+    if requested.radio_technology == "lte":
+        return ChannelFrequencyIdentity.from_lte_earfcn(
+            band=requested.band,
+            dl_earfcn=requested.lte_dl_earfcn,
+            bandwidth_mhz=requested.bandwidth_mhz,
+        )
+    return ChannelFrequencyIdentity.from_nr_arfcn(
+        nr_arfcn=requested.nr_arfcn,
+        bandwidth_mhz=requested.bandwidth_mhz,
+    )
+
+
 def _validate_port_preset(
     preset: Optional[str], valid_presets
 ) -> Optional[str]:
@@ -687,7 +740,6 @@ class MeasureExecutor(IStepExecutor):
         from app.hal.positioner import (
             current_positioner_operation_stop_generation,
         )
-        from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
         from app.hal.scpi_evidence import EvidenceLevel, capture_scpi_exchanges
         from app.services.execution_scpi_evidence import (
             record_f64_command_capture,
@@ -873,7 +925,12 @@ class MeasureExecutor(IStepExecutor):
             # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
             uxm_inherit = config.base_station_config_mode == "inherit"
-            pcell_arfcn = freq_mhz_to_nr_arfcn(pcell_freq_mhz)
+            pcell_requested_config = _build_pcell_requested_config(config)
+            pcell_channel_number = (
+                pcell_requested_config.nr_arfcn
+                if pcell_requested_config.radio_technology == "nr5g"
+                else pcell_requested_config.lte_dl_earfcn
+            )
             # 即使选择 inherit，也必须把“本次 TestCase 期望的 PCell 配置”登记为
             # mandatory。inherit 路径当前没有同事务写入/回读/APPLY 证据，因此应在
             # 正式判定中保持 missing/unknown，不能因跳过控制动作而从证据门消失。
@@ -881,7 +938,7 @@ class MeasureExecutor(IStepExecutor):
                 context.test_execution,
                 requirement_id="uxm.pcell.config_applied",
                 evidence_key="uxm.config_apply",
-                requested=pcell_arfcn,
+                requested=pcell_channel_number,
                 required_evidence_level=EvidenceLevel.APPLIED,
             )
             context.db.commit()
@@ -901,20 +958,14 @@ class MeasureExecutor(IStepExecutor):
                 # recipe 必须留在同一 capture，不能依赖执行前仪器恰好为 ON。
                 uxm_config_capture_manager = capture_scpi_exchanges()
                 uxm_config_exchanges = uxm_config_capture_manager.__enter__()
-                cell_cfg = _build_pcell_cell_config(
-                    config,
-                    frequency_mhz=pcell_freq_mhz,
-                    arfcn=pcell_arfcn,
-                    bandwidth_mhz=pcell.bandwidth_mhz,
-                    scs_khz=pcell.subcarrier_spacing_khz,
-                    band=pcell.band,
-                )
                 # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
                 # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
                 # 小区配置进测量, 正是回读门要拦的实验污染。
                 # 先落“必需项”，即使 HAL 调用随后异常/进程中断，收尾也会显示
                 # missing，而不是空集合误绿。
-                ok = await base_station.set_cell_config(cell_cfg)
+                ok = await base_station.apply_requested_config(
+                    pcell_requested_config
+                )
                 if not ok:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -1312,9 +1363,9 @@ class MeasureExecutor(IStepExecutor):
             # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或 UXM 没传 arfcn → 实际
             # 下发 band fallback 基线值 ≠ 标称), strict 模式 FAIL。频率错了下面
             # input level / RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
-            from app.hal.nr_arfcn import FrequencyIdentity
             from app.services.mimo_ota.frequency_consistency import (
                 CenterFrequencyObservation,
+                as_channel_frequency_identity,
                 check_frequency_consistency,
             )
             # 资产声明频率统一兜底喂一致性网 (Codex 0ea6cca P2: standard_3gpp 走 ASC 路, GCM/B2
@@ -1377,8 +1428,18 @@ class MeasureExecutor(IStepExecutor):
                 else None
             )
             if f64_center_mhz is not None and scd_freq_identity is not None:
-                f64_identity = FrequencyIdentity.from_center_freq_mhz(
-                    f64_center_mhz, scd_freq_identity.bandwidth_mhz
+                declared_identity = as_channel_frequency_identity(scd_freq_identity)
+                live_center_hz = int(round(float(f64_center_mhz) * 1_000_000))
+                f64_identity = (
+                    declared_identity
+                    if live_center_hz == declared_identity.center_frequency_hz
+                    else CenterFrequencyObservation(
+                        center_frequency_hz=live_center_hz,
+                        source=(
+                            "F64 CALC:FILT:CENT:CH?; differs from typed "
+                            "ChannelAsset/SCD identity"
+                        ),
+                    )
                 )
                 f64_bandwidth_source = "channel_asset_or_scd_declared"
             elif f64_center_mhz is not None:
@@ -1395,8 +1456,8 @@ class MeasureExecutor(IStepExecutor):
                     else "unknown"
                 )
             freq_result = check_frequency_consistency(
-                FrequencyIdentity.from_center_freq_mhz(
-                    pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
+                _frequency_identity_from_requested_config(
+                    pcell_requested_config
                 ),
                 {
                     "UXM": uxm_identity,
@@ -1653,7 +1714,7 @@ class MeasureExecutor(IStepExecutor):
                     record_uxm_config_capture(
                         context.test_execution,
                         requirement_id="uxm.pcell.config_applied",
-                        requested=cell_cfg.get("arfcn"),
+                        requested=pcell_channel_number,
                         driver=base_station,
                         exchanges=uxm_config_exchanges,
                     )

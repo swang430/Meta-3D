@@ -272,6 +272,7 @@ _LEGACY_PHASE_ORDER = ["precheck", "reference", "mimo_test", "analysis", "report
 
 class CreateSessionRequest(BaseModel):
     cdl_model_name: str = "UMa CDL-C NLOS"
+    radio_technology: Literal["nr5g", "lte"] = "nr5g"
     # 2026-08-07 现场实证的坑：这两个原来是 `float = 3.5e9 / 100`，**同一个默认值
     # 活在两个地方**（这里 + MIMOOTAConfiguration），而 `_request_overrides` 把它们
     # **无条件**塞进 overrides —— 于是改了 schema 默认根本不生效，建出来的会话
@@ -282,6 +283,12 @@ class CreateSessionRequest(BaseModel):
     # 同名的字段，要么默认值相等，要么就是 None（不覆盖）。
     frequency_hz: Optional[float] = None
     bandwidth_mhz: Optional[float] = None
+    band: Optional[str] = None
+    duplex: Optional[Literal["fdd", "tdd"]] = None
+    subcarrier_spacing_khz: Optional[int] = None
+    nr_arfcn: Optional[int] = None
+    lte_dl_earfcn: Optional[int] = None
+    theoretical_peak_throughput_mbps: Optional[float] = None
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = 10.0
@@ -357,6 +364,35 @@ class CreateSessionRequest(BaseModel):
     base_station_config_mode: Optional[Literal["dispatch", "inherit"]] = None
 
     @model_validator(mode="after")
+    def require_explicit_lte_working_point(self) -> "CreateSessionRequest":
+        if self.radio_technology != "lte":
+            if self.lte_dl_earfcn is not None:
+                raise ValueError("NR commissioning request must not set lte_dl_earfcn")
+            if self.duplex is not None:
+                raise ValueError("NR commissioning request must not set LTE duplex")
+            if any(
+                value is not None
+                for value in (self.band, self.nr_arfcn, self.subcarrier_spacing_khz)
+            ):
+                for field_name in (
+                    "frequency_hz", "bandwidth_mhz", "band",
+                    "nr_arfcn", "subcarrier_spacing_khz",
+                ):
+                    if getattr(self, field_name) is None:
+                        raise ValueError(
+                            f"explicit NR commissioning PCell requires {field_name}"
+                        )
+            return self
+        if self.nr_arfcn is not None or self.subcarrier_spacing_khz is not None:
+            raise ValueError("LTE commissioning request must not set NR channel fields")
+        for field_name in ("frequency_hz", "bandwidth_mhz", "band", "duplex", "lte_dl_earfcn"):
+            if getattr(self, field_name) is None:
+                raise ValueError(
+                    f"LTE commissioning request requires explicit {field_name}"
+                )
+        return self
+
+    @model_validator(mode="after")
     def require_current_gcm_model_source(self) -> "CreateSessionRequest":
         """正式 GCM 会话必须声明本次要加载的模型来源。
 
@@ -420,6 +456,39 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         overrides["frequency_hz"] = req.frequency_hz
     if req.bandwidth_mhz is not None:
         overrides["bandwidth_mhz"] = req.bandwidth_mhz
+    if req.radio_technology == "lte":
+        overrides["component_carriers"] = [
+            {
+                "radio_technology": "lte",
+                "frequency_hz": req.frequency_hz,
+                "bandwidth_mhz": req.bandwidth_mhz,
+                "band": req.band,
+                "duplex": req.duplex,
+                "lte_dl_earfcn": req.lte_dl_earfcn,
+                "role": "pcell",
+            }
+        ]
+        if req.theoretical_peak_throughput_mbps is not None:
+            overrides["theoretical_peak_throughput_mbps"] = (
+                req.theoretical_peak_throughput_mbps
+            )
+    elif any(
+        value is not None
+        for value in (req.band, req.nr_arfcn, req.subcarrier_spacing_khz)
+    ):
+        if req.frequency_hz is None or req.bandwidth_mhz is None:
+            raise ValueError("explicit NR commissioning PCell requires frequency and bandwidth")
+        overrides["component_carriers"] = [
+            {
+                "radio_technology": "nr5g",
+                "frequency_hz": req.frequency_hz,
+                "bandwidth_mhz": req.bandwidth_mhz,
+                "subcarrier_spacing_khz": req.subcarrier_spacing_khz or 30,
+                "band": req.band,
+                "nr_arfcn": req.nr_arfcn,
+                "role": "pcell",
+            }
+        ]
     # 仪表工作点（暗室首测专用）—— 同样 None = 不覆盖。这些**不放共享 schema
     # 默认**：那会流进每条新建用例、也会被填进 JSON 里缺这些键的既有用例
     # （2026-08-07 实证：既有 MIMO_OTA 用例的 configuration 里这几个键全缺）。

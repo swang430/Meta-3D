@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.channel_asset import ChannelAsset  # noqa: F401  确保表在 metadata
-from app.services.channel_asset_service import create_channel_asset
+from app.services.channel_asset_service import ChannelAssetError, create_channel_asset
 from app.services.mimo_ota.channel_asset_resolver import (
     ChannelAssetResolveError,
     resolve_channel_asset,
@@ -23,8 +23,13 @@ from app.services.mimo_ota.channel_asset_resolver import (
 
 _CLUSTER = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 33.0, "aod_deg": 10.0}
 _RAY = {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 1.0, "aod_deg": 1.0}
-_SCD = {"band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
+_SCD = {"radio_technology": "nr5g", "channel_kind": "nr_arfcn",
+        "band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "model": "CDLC",
         "scenario": "UMa", "mimo": "4x4", "polarization": "DP", "version": 1}
+_LTE_SCD = {"radio_technology": "lte", "channel_kind": "lte_dl_earfcn",
+            "band": "B3", "lte_dl_earfcn": 1575, "bandwidth_mhz": 20,
+            "model": "TDLA", "scenario": "Urban", "mimo": "2x2",
+            "polarization": "DP", "version": 1}
 
 
 @pytest.fixture
@@ -81,6 +86,60 @@ class TestResolver:
         assert r.scd_freq_identity.center_arfcn == 640000
         assert r.cdl_model_name == "CDLC"
         assert r.scenario == "UMa"
+
+    def test_vendor_file_lte_keeps_earfcn_out_of_nr_slot(self, db):
+        asset = create_channel_asset(
+            db,
+            name="lte-vendor",
+            source_type="vendor_file",
+            payload={"scd_config": _LTE_SCD},
+            associated_file_path="/smu/vendor_lte.smu",
+        )
+
+        resolved = resolve_channel_asset(db, _cfg(channel_asset_id=str(asset.id)))
+
+        identity = resolved.scd_freq_identity
+        assert identity.radio_technology == "lte"
+        assert identity.channel_kind == "lte_dl_earfcn"
+        assert identity.lte_dl_earfcn == 1575
+        assert identity.center_freq_mhz == 1842.5
+
+    def test_legacy_nr_asset_is_translated_only_on_read(self, db):
+        legacy = ChannelAsset(
+            name="legacy-nr",
+            source_type="vendor_file",
+            payload={
+                "scd_config": {
+                    key: value
+                    for key, value in _SCD.items()
+                    if key not in {"radio_technology", "channel_kind"}
+                }
+            },
+            allowed_targets=["gcm_native"],
+            associated_file_path="/smu/legacy.smu",
+            is_active=True,
+        )
+        db.add(legacy)
+        db.commit()
+
+        resolved = resolve_channel_asset(db, _cfg(channel_asset_id=str(legacy.id)))
+
+        assert resolved.scd_freq_identity.radio_technology == "nr5g"
+        assert resolved.scd_freq_identity.center_arfcn == 640000
+
+    def test_new_vendor_asset_missing_rat_kind_is_rejected(self, db):
+        legacy_shape = {
+            key: value
+            for key, value in _SCD.items()
+            if key not in {"radio_technology", "channel_kind"}
+        }
+        with pytest.raises(ChannelAssetError, match="radio_technology"):
+            create_channel_asset(
+                db,
+                name="new-untyped",
+                source_type="vendor_file",
+                payload={"scd_config": legacy_shape},
+            )
 
     def test_verified_project_truth_overrides_stale_parseable_filename(self, db):
         """P2-31 R1: 已由工程正文同步的资产不能再被旧 MF_ 文件名拒绝执行。"""

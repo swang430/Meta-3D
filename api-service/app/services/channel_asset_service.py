@@ -169,51 +169,165 @@ def _validate_rt_dynamic_payload(payload: dict) -> None:
 
 
 # vendor_file scd_config 完整 SCD 规范字段 (mirror StandardChannelName; S2 Codex #173 第5轮)
-_SCD_CONFIG_REQUIRED = ("band", "arfcn", "bandwidth_mhz", "model",
-                        "scenario", "mimo", "polarization", "version")
+_SCD_CONFIG_COMMON_REQUIRED = (
+    "radio_technology", "channel_kind", "band", "bandwidth_mhz", "model",
+    "scenario", "mimo", "polarization", "version",
+)
+_LEGACY_NR_SCD_CONFIG_REQUIRED = (
+    "band", "arfcn", "bandwidth_mhz", "model", "scenario", "mimo",
+    "polarization", "version",
+)
 _SMU_PROJECT_TRUTH_KEY = "smu_project_truth"
+
+
+def normalize_vendor_scd_config(
+    scd: Any, *, allow_legacy_nr: bool = False,
+) -> dict:
+    """Validate and normalize a vendor-file channel identity.
+
+    New writes must carry explicit RAT/kind.  The only compatibility path is
+    read-time translation of a complete pre-P1-73 NR-only shape; LTE is never
+    inferred from a number, filename, or current database state.
+    """
+
+    if not isinstance(scd, dict) or not scd:
+        raise ChannelAssetError(
+            "vendor_file payload.scd_config 须非空对象 (SCD 规范配置)"
+        )
+    normalized = deepcopy(scd)
+    missing_identity = (
+        normalized.get("radio_technology") is None
+        or normalized.get("channel_kind") is None
+    )
+    if missing_identity:
+        if not allow_legacy_nr:
+            raise ChannelAssetError(
+                "vendor_file scd_config.radio_technology/channel_kind 必填"
+            )
+        for field_name in _LEGACY_NR_SCD_CONFIG_REQUIRED:
+            if normalized.get(field_name) is None:
+                raise ChannelAssetError(
+                    "legacy vendor_file scd_config 不是完整旧 NR schema: "
+                    f"缺 {field_name}"
+                )
+        normalized["radio_technology"] = "nr5g"
+        normalized["channel_kind"] = "nr_arfcn"
+
+    for field_name in _SCD_CONFIG_COMMON_REQUIRED:
+        if normalized.get(field_name) is None:
+            raise ChannelAssetError(
+                f"vendor_file scd_config.{field_name} 必填 (完整 SCD schema)"
+            )
+
+    radio = str(normalized["radio_technology"]).strip().lower()
+    kind = str(normalized["channel_kind"]).strip().lower()
+    normalized["radio_technology"] = radio
+    normalized["channel_kind"] = kind
+    if radio == "nr5g":
+        if kind != "nr_arfcn":
+            raise ChannelAssetError("NR scd_config.channel_kind 必须为 nr_arfcn")
+        if normalized.get("arfcn") is None or normalized.get("lte_dl_earfcn") is not None:
+            raise ChannelAssetError(
+                "NR scd_config 必须设置 arfcn 且不得设置 lte_dl_earfcn"
+            )
+        number_field = "arfcn"
+    elif radio == "lte":
+        if kind != "lte_dl_earfcn":
+            raise ChannelAssetError(
+                "LTE scd_config.channel_kind 必须为 lte_dl_earfcn"
+            )
+        if normalized.get("lte_dl_earfcn") is None or normalized.get("arfcn") is not None:
+            raise ChannelAssetError(
+                "LTE scd_config 必须设置 lte_dl_earfcn 且不得使用 arfcn 槽"
+            )
+        number_field = "lte_dl_earfcn"
+    else:
+        raise ChannelAssetError(
+            f"vendor_file scd_config.radio_technology 非法: {radio!r}"
+        )
+
+    for field_name in (number_field, "bandwidth_mhz", "version"):
+        value = normalized.get(field_name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ChannelAssetError(
+                f"vendor_file scd_config.{field_name} 须数值 "
+                f"(得 {type(value).__name__})"
+            )
+        if not math.isfinite(value):
+            raise ChannelAssetError(
+                f"vendor_file scd_config.{field_name} 须有限数值 (得 {value!r})"
+            )
+        if float(value) != int(value):
+            raise ChannelAssetError(
+                f"vendor_file scd_config.{field_name} 须整数 (得 {value!r})"
+            )
+        normalized[field_name] = int(value)
+
+    if radio == "nr5g":
+        from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+        try:
+            nr_arfcn_to_freq_mhz(normalized["arfcn"])
+        except ValueError as exc:
+            raise ChannelAssetError(
+                f"vendor_file scd_config.arfcn 超出 NR-ARFCN 域: {exc}"
+            ) from exc
+    else:
+        from app.hal.lte_earfcn import (
+            lte_dl_earfcn_to_frequency_mhz,
+            normalize_lte_band,
+        )
+        try:
+            normalized["band"] = normalize_lte_band(normalized["band"])
+            lte_dl_earfcn_to_frequency_mhz(
+                normalized["band"], normalized["lte_dl_earfcn"]
+            )
+        except ValueError as exc:
+            raise ChannelAssetError(str(exc)) from exc
+    return normalized
+
+
+def vendor_scd_frequency_identity(
+    scd: Any, *, allow_legacy_nr: bool = False,
+):
+    """Return the one typed frequency identity for a vendor SCD payload."""
+
+    from app.services.mimo_ota.frequency_consistency import ChannelFrequencyIdentity
+
+    normalized = normalize_vendor_scd_config(
+        scd, allow_legacy_nr=allow_legacy_nr
+    )
+    if normalized["radio_technology"] == "nr5g":
+        return ChannelFrequencyIdentity.from_nr_arfcn(
+            nr_arfcn=normalized["arfcn"],
+            bandwidth_mhz=normalized["bandwidth_mhz"],
+        )
+    return ChannelFrequencyIdentity.from_lte_earfcn(
+        band=normalized["band"],
+        dl_earfcn=normalized["lte_dl_earfcn"],
+        bandwidth_mhz=normalized["bandwidth_mhz"],
+    )
 
 
 def _scd_to_standard_name(scd: dict) -> str:
     """vendor_file scd_config → MF_ 标准名 (§3.2 族 A; raise ValueError on invalid)。"""
+    scd = normalize_vendor_scd_config(scd)
     return format_standard_channel_filename(StandardChannelName(
-        band=scd["band"], arfcn=int(scd["arfcn"]),
+        band=scd["band"], arfcn=scd.get("arfcn"),
         bandwidth_mhz=int(scd["bandwidth_mhz"]), model=scd["model"],
         scenario=scd["scenario"], mimo=scd["mimo"],
         polarization=scd["polarization"], version=int(scd["version"]),
+        radio_technology=scd["radio_technology"],
+        channel_kind=scd["channel_kind"],
+        lte_dl_earfcn=scd.get("lte_dl_earfcn"),
     ))
 
 
 def _validate_vendor_file_payload(payload: dict) -> None:
     scd = payload.get("scd_config")
-    if not isinstance(scd, dict) or not scd:
-        raise ChannelAssetError("vendor_file payload.scd_config 须非空对象 (SCD 规范配置)")
-    for f in _SCD_CONFIG_REQUIRED:
-        if scd.get(f) is None:
-            raise ChannelAssetError(f"vendor_file scd_config.{f} 必填 (完整 SCD schema)")
-    # arfcn/bandwidth_mhz/version 是整数 (Dict payload 绕过 Pydantic int → 拒 fractional/bool,
-    # 否则 int() 静默 coerce 640000.7→640000; Codex #174 复查 P2, 同 S1 num_rays 母题)
-    for f in ("arfcn", "bandwidth_mhz", "version"):
-        v = scd.get(f)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            raise ChannelAssetError(f"vendor_file scd_config.{f} 须数值 (得 {type(v).__name__})")
-        # NaN/Infinity: int(v) 抛 ValueError/OverflowError (≠ ChannelAssetError) → 500;
-        # 在 int() 前 fail-loud 成 400 (Codex #174 复查 P2, 同 _num_or_error isfinite 守门)。
-        if not math.isfinite(v):
-            raise ChannelAssetError(f"vendor_file scd_config.{f} 须有限数值 (得 {v!r})")
-        if float(v) != int(v):
-            raise ChannelAssetError(f"vendor_file scd_config.{f} 须整数 (得 {v!r})")
-    # arfcn 须落在 NR-ARFCN 定义域 (Codex P2 on 63646b9: 正整数但非 NR 域如 3279166 仍被
-    # format_standard_channel_filename 放行 → measure 时 nr_arfcn_to_freq_mhz 抛裸 ValueError;
-    # 入库前转 ChannelAssetError, 镜像 SCD service _validate_arfcn_domain 单一真值源)。
-    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
-    try:
-        nr_arfcn_to_freq_mhz(int(scd["arfcn"]))
-    except ValueError as e:
-        raise ChannelAssetError(f"vendor_file scd_config.arfcn 超出 NR-ARFCN 域: {e}")
+    normalized = normalize_vendor_scd_config(scd)
     # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生
     try:
-        _scd_to_standard_name(scd)
+        _scd_to_standard_name(normalized)
     except (ValueError, KeyError, TypeError) as e:
         raise ChannelAssetError(f"vendor_file scd_config 命名契约非法: {e}")
 
@@ -288,27 +402,23 @@ def _check_vendor_declared_freq(
     调用方保证 scd_config 已过 _validate_vendor_file_payload (arfcn 域合法)。"""
     if not isinstance(scd_config, dict):
         return
-    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
-    # scd 取值防御与姊妹函数 _check_vendor_filename_freq 同姿态 (.get + 早退):
-    # update 不带 payload 时 scd 来自资产现值, "已过 payload 校验"是数据史不是
-    # 调用序 — 存量行缺键/域外时无关 PATCH 不该 500 (内审 F3)。
-    arfcn = scd_config.get("arfcn")
-    if center_frequency_hz is not None and arfcn is not None:
-        scd_mhz = None
-        try:
-            scd_mhz = nr_arfcn_to_freq_mhz(int(arfcn))
-        except (ValueError, TypeError):
-            # 域外/坏形态: 归 payload 校验管, 只跳过**频率**比对 — 不 return,
-            # 带宽比对照走 (Codex #263 R1 P2: 早退把带宽漂移也放过了)。
-            pass
-        if scd_mhz is not None:
-            top_mhz = float(center_frequency_hz) / 1e6
-            if abs(top_mhz - scd_mhz) > 1e-3:
-                raise ChannelAssetError(
-                    f"vendor_file 顶层 center_frequency_hz ({top_mhz:g} MHz) 与 "
-                    f"scd_config.arfcn={arfcn} ({scd_mhz:g} MHz) 不一致 — "
-                    "两处只能留一处 (顶层留空以 SCD 为准) 或必须相等"
-                )
+    identity = None
+    try:
+        identity = vendor_scd_frequency_identity(
+            scd_config, allow_legacy_nr=True
+        )
+    except ChannelAssetError:
+        # Payload validation owns malformed shapes; keep unrelated PATCHes on
+        # historical rows from turning this mirror check into a 500.
+        pass
+    if center_frequency_hz is not None and identity is not None:
+        top_hz = round(float(center_frequency_hz))
+        if abs(top_hz - identity.center_frequency_hz) > 1000:
+            raise ChannelAssetError(
+                f"vendor_file 顶层 center_frequency_hz ({top_hz / 1e6:g} MHz) 与 "
+                f"scd_config {identity.describe()} 不一致 — 两处只能留一处 "
+                "(顶层留空以 SCD 为准) 或必须相等"
+            )
     scd_bw_raw = scd_config.get("bandwidth_mhz")
     if bandwidth_mhz is not None and isinstance(scd_bw_raw, (int, float)) \
             and not isinstance(scd_bw_raw, bool):
@@ -330,9 +440,17 @@ def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> N
     """
     if not associated_file_path:
         return
-    arfcn = (scd_config or {}).get("arfcn")
-    if arfcn is None:
+    try:
+        normalized = normalize_vendor_scd_config(
+            scd_config, allow_legacy_nr=True
+        )
+    except ChannelAssetError:
         return
+    # The legacy MF_Nxx filename parser is an NR identity source.  LTE vendor
+    # filenames are not used as truth and must never be pushed through it.
+    if normalized["radio_technology"] != "nr5g":
+        return
+    arfcn = normalized["arfcn"]
     from app.services.standard_channel_service import check_channel_filename_freq
     chk = check_channel_filename_freq(str(associated_file_path), int(arfcn))
     if chk.must_fail:
@@ -375,16 +493,11 @@ def _has_verified_smu_project_truth(
         return False
     if center_frequency_hz is None or abs(center_frequency_hz - center_hz) > 1:
         return False
-    arfcn = scd.get("arfcn")
-    if type(arfcn) is not int:
-        return False
-    from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, nr_arfcn_to_freq_mhz
     try:
-        derived_arfcn = freq_mhz_to_nr_arfcn(center_hz / 1e6)
-        round_trip_hz = round(nr_arfcn_to_freq_mhz(derived_arfcn) * 1e6)
-    except ValueError:
+        identity = vendor_scd_frequency_identity(scd, allow_legacy_nr=True)
+    except ChannelAssetError:
         return False
-    return derived_arfcn == arfcn and abs(round_trip_hz - center_hz) <= 1
+    return abs(identity.center_frequency_hz - center_hz) <= 1
 
 
 def create_channel_asset(
@@ -517,12 +630,26 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         if isinstance(incoming_payload, dict):
             existing_scd = existing_payload.get("scd_config") or {}
             incoming_scd = incoming_payload.get("scd_config") or {}
+            try:
+                existing_frequency_identity = vendor_scd_frequency_identity(
+                    existing_scd, allow_legacy_nr=True,
+                )
+                incoming_frequency_identity = vendor_scd_frequency_identity(
+                    incoming_scd, allow_legacy_nr=True,
+                )
+            except ChannelAssetError:
+                # A malformed/partially edited identity must invalidate the
+                # server-owned project evidence.  The regular payload
+                # validator below will reject the update fail-loud.
+                existing_frequency_identity = None
+                incoming_frequency_identity = None
             truth_inputs_unchanged = (
                 fields.get("associated_file_path", asset.associated_file_path)
                 == asset.associated_file_path
                 and fields.get("center_frequency_hz", asset.center_frequency_hz)
                 == asset.center_frequency_hz
-                and incoming_scd.get("arfcn") == existing_scd.get("arfcn")
+                and existing_frequency_identity is not None
+                and incoming_frequency_identity == existing_frequency_identity
             )
             if existing_truth is not None and truth_inputs_unchanged:
                 incoming_payload[_SMU_PROJECT_TRUTH_KEY] = deepcopy(existing_truth)

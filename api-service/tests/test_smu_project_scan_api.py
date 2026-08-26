@@ -18,6 +18,8 @@ from app.services.channel_asset_service import create_channel_asset
 
 
 _SCD = {
+    "radio_technology": "nr5g",
+    "channel_kind": "nr_arfcn",
     "band": "N78",
     "arfcn": 640000,
     "bandwidth_mhz": 100,

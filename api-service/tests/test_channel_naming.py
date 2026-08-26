@@ -25,6 +25,17 @@ def _scn(**over) -> StandardChannelName:
     return StandardChannelName(**base)
 
 
+def _lte_scn(**over) -> StandardChannelName:
+    base = dict(
+        radio_technology="lte", channel_kind="lte_dl_earfcn",
+        band="B3", arfcn=None, lte_dl_earfcn=1575,
+        bandwidth_mhz=20, model="TDLA", scenario="Urban",
+        mimo="2x2", polarization="DP", version=1,
+    )
+    base.update(over)
+    return StandardChannelName(**base)
+
+
 class TestFormat:
     def test_basic(self):
         assert (
@@ -49,6 +60,15 @@ class TestFormat:
         with pytest.raises(ValueError):
             format_standard_channel_filename(_scn(version=0))
 
+    def test_lte_name_has_explicit_rat_and_channel_kind(self):
+        assert format_standard_channel_filename(_lte_scn()) == (
+            "MF_LTE_B3_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu"
+        )
+
+    def test_lte_number_cannot_use_nr_arfcn_slot(self):
+        with pytest.raises(ValueError, match="arfcn"):
+            format_standard_channel_filename(_lte_scn(arfcn=1575))
+
 
 class TestRoundTrip:
     def test_format_parse_format_exact(self):
@@ -58,6 +78,11 @@ class TestRoundTrip:
         name = format_standard_channel_filename(scn)
         back = parse_standard_channel_filename(name)
         assert back == scn  # 两个方向都我们拥有 → 反解必然精确
+
+    def test_lte_format_parse_format_exact(self):
+        scn = _lte_scn()
+        name = format_standard_channel_filename(scn)
+        assert parse_standard_channel_filename(name) == scn
 
 
 class TestParse:

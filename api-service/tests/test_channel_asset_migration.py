@@ -43,9 +43,9 @@ def _insert_scd(eng, sid, std_name):
     with eng.begin() as c:
         c.execute(text(
             "INSERT INTO standard_channel_definitions "
-            "(id, band, arfcn, bandwidth_mhz, model, scenario, mimo, polarization, version, "
+            "(id, radio_technology, channel_kind, band, arfcn, bandwidth_mhz, model, scenario, mimo, polarization, version, "
             "standard_name, instrument_connection_id, association_source, associated_file_path) "
-            "VALUES (:id,'N78',640000,100,'CDLC','UMa','4x4','DP',1,:sn,:ic,'declared_only',:afp)"),
+            "VALUES (:id,'nr5g','nr_arfcn','N78',640000,100,'CDLC','UMa','4x4','DP',1,:sn,:ic,'declared_only',:afp)"),
             {"id": sid, "sn": std_name, "ic": str(uuid.uuid4()), "afp": "/smu/x.smu"})
 
 
@@ -72,6 +72,10 @@ class TestBackfillMigration:
         assert ven[1] == "vendor_file"
         assert ven[3] == "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"  # canonical = standard_name
         assert json.loads(ven[4])["scd_config"]["arfcn"] == 640000
+        # c8 migration is historical and intentionally keeps its pre-P1-73 NR
+        # JSON shape; the single read translator supplies typed identity without
+        # rewriting old ChannelAsset rows.
+        assert "radio_technology" not in json.loads(ven[4])["scd_config"]
         assert json.loads(ven[5]) == ["gcm_native"]
         assert ven[6] == "/smu/x.smu"  # associated_file_path carry
 

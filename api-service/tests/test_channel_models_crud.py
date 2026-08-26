@@ -98,6 +98,17 @@ def _seed_category(db, *, with_connection: bool = True, initial_params=None):
     return cat
 
 
+def _nr_model(filename: str, **extra):
+    return {
+        "filename": filename,
+        "radio_technology": "nr5g",
+        "channel_kind": "nr_arfcn",
+        "band": "N78",
+        "nr_arfcn": 640000,
+        **extra,
+    }
+
+
 # ---------------------------------------------------------------------------
 # POST — add channel model
 # ---------------------------------------------------------------------------
@@ -107,7 +118,7 @@ class TestAddChannelModel:
         _seed_category(db, initial_params={})
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "EPA_5Hz.smu"},
+            json=_nr_model("EPA_5Hz.smu"),
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -121,11 +132,11 @@ class TestAddChannelModel:
         _seed_category(db, initial_params={})
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={
-                "filename": "EVA_70Hz.smu",
-                "label": "EVA 70 Hz",
-                "description": "3GPP TS 36.521-1 Table B.2.2-1",
-            },
+            json=_nr_model(
+                "EVA_70Hz.smu",
+                label="EVA 70 Hz",
+                description="3GPP TS 36.521-1 Table B.2.2-1",
+            ),
         )
         assert r.status_code == 200
         item = r.json()["items"][0]
@@ -139,7 +150,7 @@ class TestAddChannelModel:
         )
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "urban_macro.rtc"},
+            json=_nr_model("urban_macro.rtc"),
         )
         assert r.status_code == 200
         filenames = [e["filename"] for e in r.json()["items"]]
@@ -152,7 +163,7 @@ class TestAddChannelModel:
         )
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "EPA_5Hz.smu"},
+            json=_nr_model("EPA_5Hz.smu"),
         )
         assert r.status_code == 409
         assert "already" in r.json()["detail"].lower()
@@ -167,7 +178,7 @@ class TestAddChannelModel:
         )
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "EPA_5Hz.smu", "label": "EPA new label"},
+            json=_nr_model("EPA_5Hz.smu", label="EPA new label"),
         )
         assert r.status_code == 409
 
@@ -175,14 +186,14 @@ class TestAddChannelModel:
         _seed_category(db, initial_params={})
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "   "},
+            json=_nr_model("   "),
         )
         assert r.status_code == 422
 
     def test_unknown_category_404(self, client):
         r = client.post(
             "/api/v1/instruments/no_such_cat/channel-models",
-            json={"filename": "x.smu"},
+            json=_nr_model("x.smu"),
         )
         assert r.status_code == 404
 
@@ -199,7 +210,7 @@ class TestAddChannelModel:
         )
         client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "new.smu"},
+            json=_nr_model("new.smu"),
         )
 
         # Read back via DB — the GET endpoint normalises, so we need
@@ -222,10 +233,38 @@ class TestAddChannelModel:
         _seed_category(db, with_connection=False)
         r = client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "fresh.smu"},
+            json=_nr_model("fresh.smu"),
         )
         assert r.status_code == 200, r.text
         assert r.json()["items"][0]["filename"] == "fresh.smu"
+
+    def test_new_manual_entry_requires_explicit_frequency_identity(self, client, db):
+        _seed_category(db, initial_params={})
+        response = client.post(
+            "/api/v1/instruments/channelEmulator/channel-models",
+            json={"filename": "untyped.smu"},
+        )
+        assert response.status_code == 422
+
+    def test_lte_entry_keeps_earfcn_out_of_nr_slot(self, client, db):
+        _seed_category(db, initial_params={})
+        response = client.post(
+            "/api/v1/instruments/channelEmulator/channel-models",
+            json={
+                "filename": "lte-b3.smu",
+                "radio_technology": "lte",
+                "channel_kind": "lte_dl_earfcn",
+                "band": "B3",
+                "lte_dl_earfcn": 1575,
+            },
+        )
+        assert response.status_code == 200, response.text
+        item = response.json()["items"][0]
+        assert item["radio_technology"] == "lte"
+        assert item["channel_kind"] == "lte_dl_earfcn"
+        assert item["lte_dl_earfcn"] == 1575
+        assert item["nr_arfcn"] is None
+        assert item["center_frequency_mhz"] == pytest.approx(1842.5)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +352,7 @@ class TestRoundTrip:
         _seed_category(db, initial_params={})
         client.post(
             "/api/v1/instruments/channelEmulator/channel-models",
-            json={"filename": "x.smu"},
+            json=_nr_model("x.smu"),
         )
         client.delete("/api/v1/instruments/channelEmulator/channel-models/x.smu")
         # Patch HAL out of the way so GET hits the DB-fallback branch.

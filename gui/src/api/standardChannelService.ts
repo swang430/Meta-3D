@@ -13,8 +13,11 @@ import client from './client'
 /** 镜像后端 SCDResponse。standard_name 由后端从规范字段算 (单一真值, 不接受前端传)。 */
 export interface StandardChannel {
   id: string
+  radio_technology: 'nr5g' | 'lte'
+  channel_kind: 'nr_arfcn' | 'lte_dl_earfcn'
   band: string
-  arfcn: number
+  arfcn: number | null
+  lte_dl_earfcn: number | null
   bandwidth_mhz: number
   model: string
   scenario: string
@@ -33,8 +36,11 @@ export interface StandardChannel {
 /** 镜像后端 SCDCreateRequest。 */
 export interface StandardChannelCreatePayload {
   instrument_connection_id: string
+  radio_technology: 'nr5g' | 'lte'
+  channel_kind: 'nr_arfcn' | 'lte_dl_earfcn'
   band: string
-  arfcn: number
+  arfcn?: number | null
+  lte_dl_earfcn?: number | null
   bandwidth_mhz: number
   model: string
   scenario: string

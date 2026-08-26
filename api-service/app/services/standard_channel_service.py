@@ -11,14 +11,17 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.hal.nr_arfcn import FrequencyIdentity, nr_arfcn_to_freq_mhz
+from app.hal.lte_earfcn import lte_dl_earfcn_to_frequency_mhz, normalize_lte_band
+from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
 from app.services.mimo_ota.channel_naming import (
     StandardChannelName,
     check_channel_filename_freq,
     format_standard_channel_filename,
+    parse_standard_channel_filename,
 )
+from app.services.mimo_ota.frequency_consistency import ChannelFrequencyIdentity
 
 
 class StandardChannelError(ValueError):
@@ -69,7 +72,9 @@ def _resolve_channel_emulator_binding(
 
 
 def _compute_standard_name(
-    *, band: str, arfcn: int, bandwidth_mhz: int, model: str, scenario: str,
+    *, radio_technology: str, channel_kind: str, band: str,
+    arfcn: Optional[int], lte_dl_earfcn: Optional[int],
+    bandwidth_mhz: int, model: str, scenario: str,
     mimo: str, polarization: str, version: int,
 ) -> str:
     """规范配置 → 标准名 (slice 1 命名契约; 字段非 alnum → ValueError)。"""
@@ -78,6 +83,8 @@ def _compute_standard_name(
             StandardChannelName(
                 band=band, arfcn=arfcn, bandwidth_mhz=bandwidth_mhz, model=model,
                 scenario=scenario, mimo=mimo, polarization=polarization, version=version,
+                radio_technology=radio_technology, channel_kind=channel_kind,
+                lte_dl_earfcn=lte_dl_earfcn,
             )
         )
     except ValueError as e:
@@ -105,8 +112,11 @@ def create_scd(
     db: Session,
     *,
     instrument_connection_id: UUID,
+    radio_technology: str,
+    channel_kind: str,
     band: str,
-    arfcn: int,
+    arfcn: Optional[int],
+    lte_dl_earfcn: Optional[int],
     bandwidth_mhz: int,
     model: str,
     scenario: str,
@@ -123,10 +133,36 @@ def create_scd(
     """
     # 先校验 binding: 最根本的前置条件 (挂到哪台 F64), 失败比字段非法 / 重复更基础。
     _resolve_channel_emulator_binding(db, instrument_connection_id)
-    # arfcn 越界但为正否则能建出 zombie SCD, 到 associate 重建 projection 才以 500 暴露 (Codex #118)。
-    _validate_arfcn_domain(arfcn)
+    if radio_technology == "nr5g":
+        if channel_kind != "nr_arfcn":
+            raise StandardChannelError("NR SCD channel_kind 必须为 nr_arfcn")
+        if arfcn is None or lte_dl_earfcn is not None:
+            raise StandardChannelError(
+                "NR SCD 必须设置 arfcn 且不得设置 lte_dl_earfcn"
+            )
+        _validate_arfcn_domain(arfcn)
+    elif radio_technology == "lte":
+        if channel_kind != "lte_dl_earfcn":
+            raise StandardChannelError(
+                "LTE SCD channel_kind 必须为 lte_dl_earfcn"
+            )
+        if arfcn is not None or lte_dl_earfcn is None:
+            raise StandardChannelError(
+                "LTE SCD 必须设置 lte_dl_earfcn 且不得使用 arfcn 槽"
+            )
+        try:
+            band = normalize_lte_band(band)
+            lte_dl_earfcn_to_frequency_mhz(band, lte_dl_earfcn)
+        except ValueError as exc:
+            raise StandardChannelError(str(exc)) from exc
+    else:
+        raise StandardChannelError(
+            f"radio_technology={radio_technology!r} 非法"
+        )
     standard_name = _compute_standard_name(
-        band=band, arfcn=arfcn, bandwidth_mhz=bandwidth_mhz, model=model,
+        radio_technology=radio_technology, channel_kind=channel_kind,
+        band=band, arfcn=arfcn, lte_dl_earfcn=lte_dl_earfcn,
+        bandwidth_mhz=bandwidth_mhz, model=model,
         scenario=scenario, mimo=mimo, polarization=polarization, version=version,
     )
     dup = (
@@ -144,7 +180,9 @@ def create_scd(
         )
     scd = StandardChannelDefinition(
         instrument_connection_id=instrument_connection_id,
-        band=band, arfcn=arfcn, bandwidth_mhz=bandwidth_mhz, model=model,
+        radio_technology=radio_technology, channel_kind=channel_kind,
+        band=band, arfcn=arfcn, lte_dl_earfcn=lte_dl_earfcn,
+        bandwidth_mhz=bandwidth_mhz, model=model,
         scenario=scenario, mimo=mimo, polarization=polarization, version=version,
         standard_name=standard_name,
         association_source="declared_only",
@@ -180,7 +218,7 @@ def resolve_emulation_for_measure(
     *,
     scd_id: Optional[str],
     fallback_emulation_file: Optional[str],
-) -> tuple[Optional[str], Optional[FrequencyIdentity]]:
+) -> tuple[Optional[str], Optional[ChannelFrequencyIdentity]]:
     """P2-12 slice 4: TestCase 的 scd_id → measure 用的 (emulation_file, SCD 声明频率)。
 
     scd_id 给了: 查 SCD → (associated_file_path 当 .smu, SCD 声明 ARFCN 的 FrequencyIdentity
@@ -207,18 +245,28 @@ def resolve_emulation_for_measure(
             raise StandardChannelError(
                 f"ChannelAsset {asset.id} 已退役，不能用于新的 GCM MEASURE 执行"
             )
-        scd_cfg = (asset.payload or {}).get("scd_config") or {}
-        arfcn, bw = scd_cfg.get("arfcn"), scd_cfg.get("bandwidth_mhz")
-        # 声明频率一致性网身份 (同 channel_asset_resolver vendor 路; arfcn/bw 缺则 None 不拦)
-        freq = (
-            FrequencyIdentity(center_arfcn=int(arfcn), bandwidth_mhz=float(bw))
-            if arfcn is not None and bw is not None else None
-        )
+        from app.services.channel_asset_service import vendor_scd_frequency_identity
+        try:
+            freq = vendor_scd_frequency_identity(
+                (asset.payload or {}).get("scd_config"), allow_legacy_nr=True
+            )
+        except ValueError as exc:
+            raise StandardChannelError(
+                f"ChannelAsset {asset.id} scd_config 频率身份非法: {exc}"
+            ) from exc
         return asset.associated_file_path, freq
     scd = get_scd(db, UUID(scd_id))
-    freq = FrequencyIdentity(
-        center_arfcn=scd.arfcn, bandwidth_mhz=float(scd.bandwidth_mhz)
-    )
+    if scd.radio_technology == "nr5g":
+        freq = ChannelFrequencyIdentity.from_nr_arfcn(
+            nr_arfcn=scd.arfcn,
+            bandwidth_mhz=float(scd.bandwidth_mhz),
+        )
+    else:
+        freq = ChannelFrequencyIdentity.from_lte_earfcn(
+            band=scd.band,
+            dl_earfcn=scd.lte_dl_earfcn,
+            bandwidth_mhz=float(scd.bandwidth_mhz),
+        )
     return scd.associated_file_path, freq
 
 
@@ -259,15 +307,28 @@ def _scd_to_projection_entry(scd: StandardChannelDefinition) -> dict:
     不进 API 响应) —— 不要在持久化时 strip 掉。
     """
     # arfcn 在 create_scd 已校验落在 NR-ARFCN 域 (越界 → StandardChannelError), 故此反查恒不越界。
-    center_mhz = nr_arfcn_to_freq_mhz(scd.arfcn)  # 声明 → 频率 (round-trip 无损)
+    if scd.radio_technology == "nr5g":
+        center_mhz = nr_arfcn_to_freq_mhz(scd.arfcn)
+        channel_identity = {"nr_arfcn": scd.arfcn}
+        channel_label = f"ARFCN {scd.arfcn}"
+    else:
+        center_mhz = lte_dl_earfcn_to_frequency_mhz(
+            scd.band, scd.lte_dl_earfcn
+        )
+        channel_identity = {"lte_dl_earfcn": scd.lte_dl_earfcn}
+        channel_label = f"EARFCN {scd.lte_dl_earfcn}"
     return {
         "filename": scd.associated_file_path,  # CALC:FILT:FILE 加载这个 (路径 c 是厂商真文件)
         "label": scd.standard_name,            # GUI 永远显示标准名
         "description": (
-            f"SCD {scd.band} ARFCN {scd.arfcn} BW{scd.bandwidth_mhz} "
+            f"SCD {scd.band} {channel_label} BW{scd.bandwidth_mhz} "
             f"{scd.model}/{scd.scenario} {scd.mimo} {scd.polarization} v{scd.version}"
         ),
         "center_frequency_mhz": center_mhz,
+        "radio_technology": scd.radio_technology,
+        "channel_kind": scd.channel_kind,
+        "band": scd.band,
+        **channel_identity,
         "scd_id": str(scd.id),
     }
 
@@ -330,9 +391,20 @@ def associate_file(
             f"{sorted(_VALID_ASSOCIATION_SOURCES)}"
         )
 
-    check = check_channel_filename_freq(file_path, scd.arfcn)
-    if check.must_fail:  # 只拦 MF_ 标准名不一致; 厂商名标称会说谎 (2026-07-03 实证)
-        raise StandardChannelError(check.failure_reason())
+    if scd.radio_technology == "nr5g":
+        check = check_channel_filename_freq(file_path, scd.arfcn)
+        if check.must_fail:
+            raise StandardChannelError(check.failure_reason())
+    else:
+        parsed = parse_standard_channel_filename(file_path)
+        if parsed is not None and (
+            parsed.radio_technology != "lte"
+            or parsed.channel_kind != "lte_dl_earfcn"
+            or parsed.lte_dl_earfcn != scd.lte_dl_earfcn
+        ):
+            raise StandardChannelError(
+                "LTE 标准信道文件名身份与 SCD lte_dl_earfcn 不一致"
+            )
 
     if association_source == _ASSOCIATION_SOURCE_STANDARD:
         if _basename(file_path) != scd.standard_name:

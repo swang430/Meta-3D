@@ -57,6 +57,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InstrumentCategory'
+  /api/v1/instruments/{categoryKey}/channel-models:
+    get:
+      summary: List typed channel-model entries
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Channel-model list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelModelsListResult' }
+    post:
+      summary: Add an explicitly typed channel-model entry
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddChannelModelRequest' }
+      responses:
+        '200':
+          description: Updated channel-model list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelModelsListResult' }
   /api/v1/instruments/{categoryKey}/topology-profile:
     put:
       summary: Operator selects (or clears) the topology profile for a binding (P2-1)
@@ -636,6 +668,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardAlertSummary'
+  /api/v1/commissioning/sessions:
+    post:
+      summary: Create a commissioning session with one explicit LTE/NR PCell
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSessionRequest' }
+      responses:
+        '201': { description: Session created }
+  /api/v1/standard-channels:
+    get:
+      summary: List typed standard-channel definitions
+      parameters:
+        - name: instrument_connection_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid, nullable: true }
+      responses:
+        '200':
+          description: Standard channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SCDResponse' }
+    post:
+      summary: Create an explicitly typed standard-channel definition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SCDCreateRequest' }
+      responses:
+        '201':
+          description: Standard channel created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SCDResponse' }
   /api/v1/channel-assets/vendor-files/smu-scan:
     post:
       summary: Preview mounted F64 .smu project truth
@@ -990,6 +1061,87 @@ components:
           type: array
           items:
             type: string
+    CreateSessionRequest:
+      type: object
+      properties:
+        radio_technology: { type: string, enum: [nr5g, lte], default: nr5g }
+        frequency_hz: { type: number, nullable: true }
+        bandwidth_mhz: { type: number, nullable: true }
+        band: { type: string, nullable: true }
+        duplex: { type: string, enum: [fdd, tdd], nullable: true }
+        subcarrier_spacing_khz: { type: integer, nullable: true }
+        nr_arfcn: { type: integer, nullable: true }
+        lte_dl_earfcn: { type: integer, nullable: true }
+        theoretical_peak_throughput_mbps: { type: number, nullable: true }
+        engine_mode: { type: string, default: mimo_first_asc }
+        lab_profile_id: { type: string, format: uuid, nullable: true }
+        channel_asset_id: { type: string, format: uuid, nullable: true }
+        base_station_config_mode: { type: string, enum: [dispatch, inherit], nullable: true }
+    AddChannelModelRequest:
+      type: object
+      required: [filename, radio_technology, channel_kind, band]
+      properties:
+        filename: { type: string }
+        label: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        radio_technology: { type: string, enum: [nr5g, lte] }
+        channel_kind: { type: string, enum: [nr_arfcn, lte_dl_earfcn] }
+        band: { type: string }
+        nr_arfcn: { type: integer, nullable: true }
+        lte_dl_earfcn: { type: integer, nullable: true }
+    ChannelModelEntry:
+      type: object
+      required: [filename, label, type, radio_technology, channel_kind]
+      properties:
+        filename: { type: string }
+        label: { type: string }
+        description: { type: string, nullable: true }
+        type: { type: string }
+        center_frequency_mhz: { type: number, nullable: true }
+        radio_technology: { type: string, enum: [nr5g, lte, legacy_unknown] }
+        channel_kind: { type: string, enum: [nr_arfcn, lte_dl_earfcn, legacy_unknown] }
+        band: { type: string, nullable: true }
+        nr_arfcn: { type: integer, nullable: true }
+        lte_dl_earfcn: { type: integer, nullable: true }
+        scd_id: { type: string, nullable: true }
+        channel_asset_id: { type: string, nullable: true }
+    ChannelModelsListResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ChannelModelEntry' }
+        reason: { type: string, nullable: true }
+    SCDCreateRequest:
+      type: object
+      required: [instrument_connection_id, radio_technology, channel_kind, band, bandwidth_mhz, model, scenario, mimo, polarization]
+      properties:
+        instrument_connection_id: { type: string, format: uuid }
+        radio_technology: { type: string, enum: [nr5g, lte] }
+        channel_kind: { type: string, enum: [nr_arfcn, lte_dl_earfcn] }
+        band: { type: string }
+        arfcn: { type: integer, nullable: true }
+        lte_dl_earfcn: { type: integer, nullable: true }
+        bandwidth_mhz: { type: integer }
+        model: { type: string }
+        scenario: { type: string }
+        mimo: { type: string }
+        polarization: { type: string }
+        version: { type: integer, default: 1 }
+        description: { type: string, nullable: true }
+    SCDResponse:
+      allOf:
+        - $ref: '#/components/schemas/SCDCreateRequest'
+        - type: object
+          required: [id, standard_name, association_source]
+          properties:
+            id: { type: string, format: uuid }
+            standard_name: { type: string }
+            associated_file_path: { type: string, nullable: true }
+            association_source: { type: string }
+            created_at: { type: string, format: date-time, nullable: true }
+            updated_at: { type: string, format: date-time, nullable: true }
     SMUProjectSyncItemResponse:
       type: object
       properties:
@@ -1028,6 +1180,9 @@ components:
           type: string
           nullable: true
         target_arfcn:
+          type: integer
+          nullable: true
+        target_lte_dl_earfcn:
           type: integer
           nullable: true
       required: [relative_path, instrument_path, size_bytes, sha256, center_frequencies_hz,

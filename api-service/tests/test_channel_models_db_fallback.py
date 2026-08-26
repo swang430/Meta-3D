@@ -50,7 +50,12 @@ class TestNormaliseEntries:
             "type": "smu",
             "center_frequency_mhz": None,  # 无频率 token (P2-10 Step 1)
             "nr_arfcn": None,
+            "lte_dl_earfcn": None,
+            "radio_technology": "legacy_unknown",
+            "channel_kind": "legacy_unknown",
+            "band": None,
             "scd_id": None,  # P2-12 slice 4: bare string 非 SCD 派生 → scd_id None
+            "channel_asset_id": None,
         }]
 
     def test_scd_id_preserved_for_derived_entry(self):
@@ -72,8 +77,40 @@ class TestNormaliseEntries:
             "type": "rtc",
             "center_frequency_mhz": None,  # 无频率 token
             "nr_arfcn": None,
+            "lte_dl_earfcn": None,
+            "radio_technology": "legacy_unknown",
+            "channel_kind": "legacy_unknown",
+            "band": None,
             "scd_id": None,  # P2-12 slice 4
+            "channel_asset_id": None,
         }]
+
+    def test_typed_nr_and_lte_entries_keep_numbers_in_separate_slots(self):
+        out = normalize_channel_model_entries([
+            {
+                "filename": "nr.smu",
+                "radio_technology": "nr5g",
+                "channel_kind": "nr_arfcn",
+                "band": "N78",
+                "nr_arfcn": 640000,
+            },
+            {
+                "filename": "lte.smu",
+                "radio_technology": "lte",
+                "channel_kind": "lte_dl_earfcn",
+                "band": "B3",
+                "lte_dl_earfcn": 1575,
+            },
+        ])
+
+        assert out[0]["radio_technology"] == "nr5g"
+        assert out[0]["nr_arfcn"] == 640000
+        assert out[0]["lte_dl_earfcn"] is None
+        assert out[0]["center_frequency_mhz"] == pytest.approx(3600.0)
+        assert out[1]["radio_technology"] == "lte"
+        assert out[1]["nr_arfcn"] is None
+        assert out[1]["lte_dl_earfcn"] == 1575
+        assert out[1]["center_frequency_mhz"] == pytest.approx(1842.5)
 
     def test_dropped_when_filename_missing(self):
         out = normalize_channel_model_entries([

@@ -76,7 +76,12 @@ class TestEntryNormalisation:
             # 无频率 token (2x2 / UMi 不匹配) → None (P2-10 Step 1)
             "center_frequency_mhz": None,
             "nr_arfcn": None,
+            "lte_dl_earfcn": None,
+            "radio_technology": "legacy_unknown",
+            "channel_kind": "legacy_unknown",
+            "band": None,
             "scd_id": None,  # P2-12 slice 4: bare string 非 SCD 派生
+            "channel_asset_id": None,
         }]
 
     @pytest.mark.asyncio
@@ -94,7 +99,12 @@ class TestEntryNormalisation:
             "type": "smu",
             "center_frequency_mhz": None,  # 无频率 token
             "nr_arfcn": None,
+            "lte_dl_earfcn": None,
+            "radio_technology": "legacy_unknown",
+            "channel_kind": "legacy_unknown",
+            "band": None,
             "scd_id": None,  # P2-12 slice 4
+            "channel_asset_id": None,
         }]
 
     @pytest.mark.asyncio
@@ -206,11 +216,12 @@ class TestMixedRealisticPayload:
 class TestFrequencyMetadata:
     @pytest.mark.asyncio
     async def test_freq_token_parsed_from_filename(self):
-        # ".._3600M.smu" → 3600 MHz → ARFCN 640000 (服务 emulation_file 频率匹配)
+        # 文件名只能辅助显示中心频率，不能授予 NR identity。
         d = _driver(available=["3GPP_FR1_OTA_CDLC_UMa_3600M.smu"])
         item = (await d.list_channel_models())[0]
         assert item["center_frequency_mhz"] == 3600.0
-        assert item["nr_arfcn"] == 640000
+        assert item["nr_arfcn"] is None
+        assert item["radio_technology"] == "legacy_unknown"
 
     @pytest.mark.asyncio
     async def test_no_freq_token_is_none(self):
@@ -228,7 +239,8 @@ class TestFrequencyMetadata:
         }])
         item = (await d.list_channel_models())[0]
         assert item["center_frequency_mhz"] == 3500.0
-        assert item["nr_arfcn"] == 633333  # 3500 MHz 的 ARFCN, 非 3600 的
+        assert item["nr_arfcn"] is None
+        assert item["radio_technology"] == "legacy_unknown"
 
 
 # ---------------------------------------------------------------------------

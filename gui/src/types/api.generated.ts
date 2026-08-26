@@ -154,6 +154,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instruments/{categoryKey}/channel-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List typed channel-model entries */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Channel-model list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelModelsListResult"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Add an explicitly typed channel-model entry */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AddChannelModelRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated channel-model list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelModelsListResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/{categoryKey}/topology-profile": {
         parameters: {
             query?: never;
@@ -1079,6 +1143,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/commissioning/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a commissioning session with one explicit LTE/NR PCell */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateSessionRequest"];
+                };
+            };
+            responses: {
+                /** @description Session created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/standard-channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List typed standard-channel definitions */
+        get: {
+            parameters: {
+                query?: {
+                    instrument_connection_id?: string | null;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Standard channels */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SCDResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an explicitly typed standard-channel definition */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SCDCreateRequest"];
+                };
+            };
+            responses: {
+                /** @description Standard channel created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SCDResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/vendor-files/smu-scan": {
         parameters: {
             query?: never;
@@ -1605,6 +1769,92 @@ export interface components {
             message?: string | null;
             warnings?: string[];
         };
+        CreateSessionRequest: {
+            /**
+             * @default nr5g
+             * @enum {string}
+             */
+            radio_technology: "nr5g" | "lte";
+            frequency_hz?: number | null;
+            bandwidth_mhz?: number | null;
+            band?: string | null;
+            /** @enum {string|null} */
+            duplex?: "fdd" | "tdd" | null;
+            subcarrier_spacing_khz?: number | null;
+            nr_arfcn?: number | null;
+            lte_dl_earfcn?: number | null;
+            theoretical_peak_throughput_mbps?: number | null;
+            /** @default mimo_first_asc */
+            engine_mode: string;
+            /** Format: uuid */
+            lab_profile_id?: string | null;
+            /** Format: uuid */
+            channel_asset_id?: string | null;
+            /** @enum {string|null} */
+            base_station_config_mode?: "dispatch" | "inherit" | null;
+        };
+        AddChannelModelRequest: {
+            filename: string;
+            label?: string | null;
+            description?: string | null;
+            /** @enum {string} */
+            radio_technology: "nr5g" | "lte";
+            /** @enum {string} */
+            channel_kind: "nr_arfcn" | "lte_dl_earfcn";
+            band: string;
+            nr_arfcn?: number | null;
+            lte_dl_earfcn?: number | null;
+        };
+        ChannelModelEntry: {
+            filename: string;
+            label: string;
+            description?: string | null;
+            type: string;
+            center_frequency_mhz?: number | null;
+            /** @enum {string} */
+            radio_technology: "nr5g" | "lte" | "legacy_unknown";
+            /** @enum {string} */
+            channel_kind: "nr_arfcn" | "lte_dl_earfcn" | "legacy_unknown";
+            band?: string | null;
+            nr_arfcn?: number | null;
+            lte_dl_earfcn?: number | null;
+            scd_id?: string | null;
+            channel_asset_id?: string | null;
+        };
+        ChannelModelsListResult: {
+            items: components["schemas"]["ChannelModelEntry"][];
+            reason?: string | null;
+        };
+        SCDCreateRequest: {
+            /** Format: uuid */
+            instrument_connection_id: string;
+            /** @enum {string} */
+            radio_technology: "nr5g" | "lte";
+            /** @enum {string} */
+            channel_kind: "nr_arfcn" | "lte_dl_earfcn";
+            band: string;
+            arfcn?: number | null;
+            lte_dl_earfcn?: number | null;
+            bandwidth_mhz: number;
+            model: string;
+            scenario: string;
+            mimo: string;
+            polarization: string;
+            /** @default 1 */
+            version: number;
+            description?: string | null;
+        };
+        SCDResponse: components["schemas"]["SCDCreateRequest"] & {
+            /** Format: uuid */
+            id: string;
+            standard_name: string;
+            associated_file_path?: string | null;
+            association_source: string;
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
         SMUProjectSyncItemResponse: {
             relative_path: string;
             instrument_path: string;
@@ -1624,6 +1874,7 @@ export interface components {
             asset_id?: string | null;
             asset_name?: string | null;
             target_arfcn?: number | null;
+            target_lte_dl_earfcn?: number | null;
         };
         SMUProjectSyncPreviewResponse: {
             /** Format: uuid */
