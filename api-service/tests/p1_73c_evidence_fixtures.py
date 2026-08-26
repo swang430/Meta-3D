@@ -10,6 +10,7 @@ REQUESTED_CONFIG = {
     "band": "B3",
     "duplex": "fdd",
     "lte_dl_earfcn": 1300,
+    "lte_transmission_mode": "TM3",
     "bandwidth_mhz": 20.0,
     "mimo_layers": 2,
 }

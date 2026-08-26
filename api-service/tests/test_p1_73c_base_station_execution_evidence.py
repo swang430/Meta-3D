@@ -91,6 +91,22 @@ def test_cmw_lte_2x2_formal_capability_rejects_other_frozen_layer_counts():
     assert base_station_execution_evidence_is_formally_acceptable(evidence) is False
 
 
+@pytest.mark.parametrize("transmission_mode", ["TM1", "TM2", "TM6", "TM7"])
+def test_cmw_lte_2x2_formal_capability_rejects_single_layer_modes(
+    transmission_mode,
+):
+    evidence = valid_cmw_evidence()
+    evidence["requested_config"]["payload"]["lte_transmission_mode"] = (
+        transmission_mode
+    )
+    digest = canonical_snapshot_digest(evidence["requested_config"]["payload"])
+    evidence["requested_config"]["digest"] = digest
+    evidence["measurement_windows"][0]["config_digest"] = digest
+
+    assert parse_base_station_execution_evidence(evidence) == evidence
+    assert base_station_execution_evidence_is_formally_acceptable(evidence) is False
+
+
 def test_default_disabled_cmw_approval_without_timestamp_is_valid_but_not_formal():
     evidence = valid_cmw_evidence()
     evidence["formal_capability_approval"].update(enabled=False, updated_at=None)

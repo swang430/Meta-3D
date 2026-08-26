@@ -453,6 +453,16 @@ def _formal_envelope(
             return False, "formal_capability_not_approved", []
         if evidence.requested_config.payload.get("mimo_layers") != 2:
             return False, "cmw500_mimo_layers_not_2x2", []
+        # R&S CMW500 LTE UE User Manual 1173.9628.02-41, Table 2-32,
+        # printed pp. 65-66: for an nx2 carrier, only TM3/TM4/TM8/TM9
+        # provide a dual-layer spatial-multiplexing/beamforming scheme.
+        if evidence.requested_config.payload.get("lte_transmission_mode") not in {
+            "TM3",
+            "TM4",
+            "TM8",
+            "TM9",
+        }:
+            return False, "cmw500_transmission_mode_not_2x2", []
         duplex = evidence.requested_config.payload.get("duplex")
         required_duplex_option = (
             "CMW-KS500" if duplex == "fdd" else "CMW-KS550" if duplex == "tdd" else None
