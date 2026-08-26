@@ -90,10 +90,13 @@ TX1 connector/converter 和 TX2 connector/converter。保存/API/GUI 只接受�
 未知键、TX1/TX2 connector 或 converter 复用均拒绝。执行开始且尚未发生硬件 I/O 时，runner 从
 所选 LabProfile 与唯一 InstrumentConnection 解析该 profile，并把规范 route 快照冻结进本次
 execution；驱动只消费冻结快照，不从当前数据库重读，也不从已有 applied route、型号或端口名反推。
-共享冻结 helper 必须先从 HAL real-driver registry 与同一 LabProfile binding 得到权威 adapter identity：
-只有 `cmw500` 强制七字段 profile；`uxm` 写入显式 `not_applicable` 并继续既有 UXM route/evidence
-链；adapter 未知、binding/model/registry 冲突才 fail-loud。不得用“缺 profile 就跳过”同时服务
-UXM 与 CMW，因为那会让 CMW 缺配置静默放行。
+共享冻结 helper 必须同时锁定 HAL 实际装载真源 `InstrumentCategory.selected_model_id` 与同一
+LabProfile binding 的 `instrument_model_id`，两者必须存在且精确一致；随后只用这个唯一 model
+查询 HAL real-driver registry，并在取得 Remote 前确认当前已加载 `baseStation` driver 的精确类与
+registry 类一致。只有权威 identity 为 `cmw500` 才强制七字段 profile；`uxm` 写入显式
+`not_applicable` 并继续既有 UXM route/evidence 链。adapter 未知、两种 model 选择分叉、
+registry/已加载类/profile 冲突均在首次硬件 I/O 前 fail-loud，且核对过程不得发送仪器命令。
+不得用“缺 profile 就跳过”同时服务 UXM 与 CMW，因为那会让 CMW 缺配置静默放行。
 
 ### 2.4 通用配置与 debug inherit
 

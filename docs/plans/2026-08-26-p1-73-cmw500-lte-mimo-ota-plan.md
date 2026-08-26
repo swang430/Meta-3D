@@ -787,21 +787,26 @@ class BaseStationAdapterProfileResolution(BaseModel):
 ```
 
 组合白名单只允许 `uxm/not_applicable/profile=None` 或 `cmw500/configured/profile.adapter=cmw500`。
-adapter identity 只从所选 binding 的 `instrument_model_id` 解析模型，再调用与 HAL 装载同源的
-`instrument_hal_service.get_real_driver_class(category_key, model_name)` 并读取注册类固定
-`adapter_id`；不得从型号/类名前缀、endpoint 或 connection params 推断。unknown、重复注册、
-binding/model/registry/profile adapter 冲突均 fail-loud。
+adapter identity 必须与 HAL 实际装载链完全同源：在同一事务锁定 `baseStation`
+`InstrumentCategory`，读取其 `selected_model_id`，并要求它与所选 LabProfile binding 的
+`instrument_model_id` 均非空且精确一致；只用该唯一 `InstrumentModel.model` 调用
+`instrument_hal_service.get_real_driver_class(category_key, model_name)`，读取注册类固定
+`adapter_id`。不得从型号/类名前缀、endpoint 或 connection params 推断。unknown、重复注册、
+binding/selected model/registry/profile adapter 冲突均 fail-loud。
 
 覆盖：CMW 完整 profile 可保存/读取；CMW 缺字段/profile、extra、空白、TX connector 复用、
 TX converter 复用、非 CMW profile、LabProfile binding 与 InstrumentConnection 不一致均在硬件 I/O 前拒绝。GUI 提供
 七个显式字段，不要求操作员编辑自由 JSON。该 profile 只是内部 route 输入，不进入
 型号/固件/选件能力准入，也不扩展为外部 RF router。
 
-新增唯一 `freeze_base_station_adapter_profile(db, execution, selected_lab_profile)`：在同一事务锁定
-execution、所选 LabProfile 和由其 `baseStation` binding 的 `category_id` 解析到的唯一
-InstrumentConnection，校验规范 profile 后把 profile、connection identity 与 digest 写入
-server-owned execution config。已有规范快照时幂等返回且绝不覆盖；缺失、绑定漂移或冲突均在
-取得 Remote/首次硬件 I/O 前 fail-loud。
+新增唯一 `freeze_base_station_adapter_profile(db, hal, execution, selected_lab_profile)`：在同一事务
+锁定 execution、所选 LabProfile、其 `baseStation` binding 指向的 `InstrumentCategory` 和唯一
+InstrumentConnection；先核对 binding model 与 `InstrumentCategory.selected_model_id`，再解析
+registry class/adapter，校验规范 profile 后把 resolution、profile、model/connection identity 与
+digest 写入 server-owned execution config。取得 Remote 前还必须只读检查当前
+`hal.drivers["baseStation"]`：必须存在、不是 mock，且 `type(driver)` 与该 registry class 精确一致；
+检查不得 connect 或发送 SCPI。已有规范快照时幂等返回且绝不覆盖，但仍要核对当前 loaded driver
+与冻结 identity；缺失、选择漂移、绑定漂移或冲突均在首次硬件 I/O 前 fail-loud。
 
 冻结条件必须按权威 adapter 收窄：`cmw500` 缺严格七字段即阻断；`uxm` 不要求、不读取 CMW
 profile，冻结显式 `uxm/not_applicable/profile=None` 后继续现有 UXM 配置、route 与证据链；adapter
@@ -817,7 +822,10 @@ phase 幂等冻结；REPORT-only 或已有 measurements/phase progress 的旧 ex
 RED 分别覆盖 formal runner、session create/首次 phase、adhoc 和 run-all，证明四条路径都在 lease
 取得 Remote 前完成同一冻结；并覆盖第二次调用不覆盖、profile 在执行中被修改不漂移、REPORT-only
 旧执行不补证。四条入口都要成对覆盖：CMW 缺 profile 必须阻断且不 dispatch；UXM 无 CMW profile
-必须冻结 `not_applicable` 并正常进入既有 lease/dispatch。unknown/冲突 adapter 两者都不得放行。
+必须冻结 `not_applicable` 并正常进入既有 lease/dispatch。另以双向 RED 覆盖 binding=CMW 但
+`selected_model_id`=UXM、binding=UXM 但 `selected_model_id`=CMW，以及 registry class 与当前 loaded
+driver class 不一致；三者都必须在 lease/dispatch 前阻断且零仪器 I/O。unknown/冲突 adapter
+同样不得放行。
 
 **Step 2: RED → GREEN 并提交**
 
