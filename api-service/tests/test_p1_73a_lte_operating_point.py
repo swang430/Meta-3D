@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -14,10 +15,14 @@ from app.hal.lte_earfcn import (
     validate_lte_downlink_operating_point,
 )
 from app.hal.base_station import BaseStationRequestedConfig
+from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 from app.schemas.mimo_ota.config import MIMOOTAConfiguration
 from app.services.mimo_ota.executors.measure import (
     _build_pcell_requested_config,
 )
+from app.services.mimo_ota.executors.analysis import AnalysisExecutor
+from app.services.test_execution import StepExecutionStatus
 
 
 LTE_B3_PCELL = {
@@ -207,3 +212,96 @@ async def test_fake_uxm_and_cmw_receive_the_same_typed_request():
     assert await cmw.apply_requested_config(requested) is True
     assert uxm.received is requested
     assert cmw.received is requested
+
+
+@pytest.mark.asyncio
+async def test_real_adapters_reject_mismatched_rat_before_driver_write(monkeypatch):
+    lte = _build_pcell_requested_config(
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [LTE_B3_PCELL]}
+        )
+    )
+    nr = replace(
+        lte,
+        radio_technology="nr5g",
+        channel_kind="nr_arfcn",
+        band="n78",
+        duplex="tdd",
+        nr_arfcn=640000,
+        lte_dl_earfcn=None,
+        subcarrier_spacing_khz=30,
+    )
+    uxm = RealUxmDriver("uxm", {"ip_address": "192.0.2.1"})
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    async def forbidden_write(_payload):
+        raise AssertionError("RAT mismatch must be rejected before driver I/O")
+
+    monkeypatch.setattr(uxm, "set_cell_config", forbidden_write)
+    monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
+
+    assert await uxm.apply_requested_config(lte) is False
+    assert await cmw.apply_requested_config(nr) is False
+
+
+@pytest.mark.asyncio
+async def test_analysis_keeps_lte_ratio_and_verdict_unknown_without_peak(monkeypatch):
+    from app.services.mimo_ota.executors import analysis as analysis_module
+
+    config = SimpleNamespace(
+        theoretical_peak_throughput_mbps=None,
+        pass_criteria=SimpleNamespace(
+            min_throughput_ratio=0.5,
+            min_throughput_mbps=50.0,
+            max_rsrp_variance_db=8.0,
+            min_sinr_db=10.0,
+            min_avg_rank_indicator=1.5,
+        ),
+    )
+    measure = {
+        "measurement_verified": True,
+        "frequency_consistency": {"fully_verified": True},
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+        "throughput_verified": True,
+        "azimuth_results": [{
+            "throughput_mbps": 100.0,
+            "rsrp_dbm": -80.0,
+            "sinr_db": 25.0,
+            "rank_indicator": 2.0,
+        }],
+    }
+    execution = SimpleNamespace(
+        id="lte-no-peak",
+        validation_pass=True,
+        validation_details=None,
+    )
+    context = SimpleNamespace(
+        test_execution=execution,
+        db=SimpleNamespace(commit=lambda: None),
+    )
+    monkeypatch.setattr(analysis_module, "load_mimo_ota_config", lambda _e: config)
+    monkeypatch.setattr(
+        analysis_module,
+        "read_phase_result",
+        lambda _e, phase: measure if phase == "measure" else {"quiet_zone_pass": True},
+    )
+    monkeypatch.setattr(analysis_module, "write_phase_result", lambda *_args: None)
+    monkeypatch.setattr(
+        analysis_module, "path_loss_application_is_formally_verified", lambda _v: True
+    )
+    monkeypatch.setattr(analysis_module, "throughput_scope_is_verified", lambda _v: True)
+    monkeypatch.setattr(analysis_module, "rf_kpi_scope_is_verified", lambda _v: True)
+    monkeypatch.setattr(
+        analysis_module, "quiet_zone_scope_is_formally_verified", lambda _v: True
+    )
+
+    result = await AnalysisExecutor().execute(context)
+
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert result.measurements["avg_throughput_mbps"] == 100.0
+    assert result.measurements["throughput_ratio"] is None
+    assert result.measurements["throughput_pass"] is None
+    assert result.measurements["verdict"] == "UNKNOWN"
+    assert result.measurements["margin_db"] is None
+    assert execution.validation_pass is None

@@ -167,18 +167,26 @@ class AnalysisExecutor(IStepExecutor):
         tputs = [az["throughput_mbps"] for az in azimuth_results]
         avg_tput = sum(tputs) / len(tputs)
         peak = config.theoretical_peak_throughput_mbps
-        ratio = avg_tput / peak if peak > 0 else 0.0
+        ratio = avg_tput / peak if peak is not None else None
         tput_pass = (
             ratio >= criteria.min_throughput_ratio
             and avg_tput >= criteria.min_throughput_mbps
+            if ratio is not None
+            else None
         )
         result["avg_throughput_mbps"] = avg_tput
         result["throughput_ratio"] = ratio
         result["throughput_pass"] = tput_pass
-        details.append(
-            f"Throughput: {avg_tput:.0f} Mbps ({ratio:.0%} of {peak:.0f}), "
-            f"{'PASS' if tput_pass else 'FAIL'}"
-        )
+        if ratio is None:
+            details.append(
+                f"Throughput: {avg_tput:.0f} Mbps; ratio N/A "
+                "(theoretical peak not provided), UNKNOWN"
+            )
+        else:
+            details.append(
+                f"Throughput: {avg_tput:.0f} Mbps ({ratio:.0%} of {peak:.0f}), "
+                f"{'PASS' if tput_pass else 'FAIL'}"
+            )
 
         # --- RSRP variance ---
         rsrps = [az["rsrp_dbm"] for az in azimuth_results]
@@ -222,7 +230,10 @@ class AnalysisExecutor(IStepExecutor):
 
         # --- Overall verdict + margin ---
         all_pass = tput_pass and rsrp_pass and sinr_pass and ri_pass and qz_pass
-        if all_pass:
+        if tput_pass is None:
+            verdict = "UNKNOWN"
+            result["margin_db"] = None
+        elif all_pass:
             margins = [
                 ratio - criteria.min_throughput_ratio,
                 criteria.max_rsrp_variance_db - rsrp_variance,
@@ -241,15 +252,22 @@ class AnalysisExecutor(IStepExecutor):
 
         write_phase_result(context.test_execution, "analysis", result)
         # Also surface the verdict on the canonical execution-level fields
-        context.test_execution.validation_pass = (verdict in ("PASS", "MARGINAL"))
+        context.test_execution.validation_pass = (
+            None if verdict == "UNKNOWN" else verdict in ("PASS", "MARGINAL")
+        )
         context.test_execution.validation_details = result
         context.db.commit()
 
+        margin_text = (
+            f"{result['margin_db']:.2f}"
+            if result["margin_db"] is not None
+            else "N/A"
+        )
         logger.info(
-            "[%s] Phase 4: %s (margin=%.2f)",
+            "[%s] Phase 4: %s (margin=%s)",
             context.test_execution.id,
             verdict,
-            result["margin_db"],
+            margin_text,
         )
 
         return StepExecutionResult(

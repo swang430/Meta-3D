@@ -97,6 +97,40 @@ def test_legacy_uxm_translation_requires_exact_live_uxm_identity():
     assert translator(_legacy_payload(), execution_id="other-execution") is None
 
 
+def test_legacy_uxm_translation_preserves_unrelated_instrument_evidence():
+    payload = _legacy_payload()
+    payload["required"].append({
+        "requirement_id": "f64.model_loaded",
+        "evidence_key": "f64.model_load",
+        "requested": "runtime.smu",
+        "required_evidence_level": "applied",
+    })
+    payload["items"].append({
+        "requirement_id": "f64.model_loaded",
+        "instrument": "propsim_f64",
+        "evidence_key": "f64.model_load",
+        "requested": "runtime.smu",
+        "command_sent": "TASK:OPEN 'runtime.smu'",
+        "readback": "runtime.smu",
+        "exchange_ids": ["exchange-f64"],
+        "evidence_level": "applied",
+        "source_reference": "PROPSIM F64 ATE Manual §4.1",
+        "verdict": "passed",
+        "reason": "model_readback_matched",
+    })
+
+    translated = evidence_service.translate_legacy_uxm_execution_evidence(
+        payload, execution_id="execution-1"
+    )
+
+    assert translated is not None
+    assert translated["required"][0]["requirement_id"] == (
+        "base_station.pcell.config_applied"
+    )
+    assert translated["required"][1] == payload["required"][1]
+    assert translated["items"][1] == payload["items"][1]
+
+
 def test_new_throughput_capture_records_common_key_and_identity_snapshot():
     recorder = getattr(
         evidence_service, "record_base_station_throughput_capture", None

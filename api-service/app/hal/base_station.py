@@ -308,6 +308,19 @@ class BaseStationDriver(InstrumentDriver):
 
         if not isinstance(requested, BaseStationRequestedConfig):
             raise TypeError("requested must be BaseStationRequestedConfig")
+        requested_technology = (
+            RadioTechnology.NR5G
+            if requested.radio_technology == "nr5g"
+            else RadioTechnology.LTE
+        )
+        if requested_technology not in self.get_supported_technologies():
+            logger.error(
+                "[%s] Rejecting %s configuration: adapter %s does not support it",
+                self.instrument_id,
+                requested.radio_technology,
+                self.adapter_id,
+            )
+            return False
         return await self.set_cell_config(requested.to_driver_payload())
 
     def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:

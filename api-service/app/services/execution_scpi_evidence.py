@@ -509,24 +509,45 @@ def translate_legacy_uxm_execution_evidence(
     for requirement in translated.get("required", []):
         if not isinstance(requirement, dict):
             return None
+        raw_requirement_id = str(requirement.get("requirement_id"))
+        raw_evidence_key = str(requirement.get("evidence_key"))
+        is_legacy_requirement = raw_requirement_id.startswith("uxm.")
+        is_legacy_key = raw_evidence_key.startswith("uxm.")
+        if not is_legacy_requirement and not is_legacy_key:
+            continue
+        if is_legacy_requirement != is_legacy_key:
+            return None
         requirement_id = _translate_legacy_uxm_requirement_id(
-            requirement.get("requirement_id")
+            raw_requirement_id
         )
-        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(
-            str(requirement.get("evidence_key"))
-        )
+        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(raw_evidence_key)
         if requirement_id is None or evidence_key is None:
             return None
         requirement["requirement_id"] = requirement_id
         requirement["evidence_key"] = evidence_key
 
     for item in translated.get("items", []):
-        if not isinstance(item, dict) or item.get("instrument") != "uxm":
+        if not isinstance(item, dict):
+            return None
+        raw_requirement_id = str(item.get("requirement_id"))
+        raw_evidence_key = str(item.get("evidence_key"))
+        is_legacy_item = (
+            item.get("instrument") == "uxm"
+            or raw_requirement_id.startswith("uxm.")
+            or raw_evidence_key.startswith("uxm.")
+        )
+        if not is_legacy_item:
+            continue
+        if (
+            item.get("instrument") != "uxm"
+            or not raw_requirement_id.startswith("uxm.")
+            or not raw_evidence_key.startswith("uxm.")
+        ):
             return None
         requirement_id = _translate_legacy_uxm_requirement_id(
-            item.get("requirement_id")
+            raw_requirement_id
         )
-        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(str(item.get("evidence_key")))
+        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(raw_evidence_key)
         if requirement_id is None or evidence_key is None:
             return None
         item["requirement_id"] = requirement_id
@@ -534,6 +555,9 @@ def translate_legacy_uxm_execution_evidence(
 
     translated_missing: list[str] = []
     for value in translated.get("missing_requirements", []):
+        if not str(value).startswith("uxm."):
+            translated_missing.append(str(value))
+            continue
         mapped = _translate_legacy_uxm_requirement_id(value)
         if mapped is None:
             return None
