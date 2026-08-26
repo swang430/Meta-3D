@@ -76,7 +76,8 @@ MIMO OTA 顶层只允许使用：
 选件关系依据本地原始手册 `CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` §2.2.1
 “Overview of options”（第 17–19 页）：CMW-KS500 是 R8 FDD basic signaling，CMW-KS550
 是 R8 TDD basic signaling，CMW-KS520 增加 DL MIMO 2×2/SIMO 1×2。能力门必须按本次显式
-duplex 在首次硬件 I/O 前核对；KS500+KS520 不得放行 TDD，KS550+KS520 不得放行 FDD。
+duplex 在当前会话完成只读 identity/firmware/options snapshot 后、首次 mutating/configuration I/O
+前核对；KS500+KS520 不得放行 TDD，KS550+KS520 不得放行 FDD。
 
 外部 RF router、具体序列号和外部接线路径不属于正式能力准入键。adapter 可以注册，但正式
 能力默认关闭，待用户显式启用。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。

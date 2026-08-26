@@ -181,6 +181,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `api-service/app/api/channel_asset.py`
 - Modify: `api-service/app/api/instrument.py`
 - Modify: `api-service/app/services/channel_asset_service.py`
+- Modify: `api-service/app/hal/channel_emulator.py`
+- Modify: `api-service/app/services/smu_project_inventory.py`
 - Modify: `api-service/app/services/mimo_ota/channel_naming.py`
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/frequency_consistency.py`
@@ -198,6 +200,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `api-service/tests/test_channel_models_crud.py`
 - Modify: `api-service/tests/test_channel_models_db_fallback.py`
 - Modify: `api-service/tests/test_f64_channel_model_listing.py`
+- Modify: `api-service/tests/test_smu_project_inventory.py`
+- Modify: `api-service/tests/test_smu_project_scan_api.py`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - Modify: `gui/src/components/TestCaseConfig/carrierTruth.ts`
 - Modify: `gui/src/api/standardChannelService.ts`
@@ -206,6 +210,7 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx`
 - Create: `gui/src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts`
 - Modify: `gui/src/components/StandardChannelDefinitionCard.tsx`
+- Modify: `gui/src/App.tsx`
 - Create: `gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts`
 - Modify: `api/openapi.yaml`
 - Modify: `gui/src/types/api.generated.ts`
@@ -233,6 +238,13 @@ git commit -m "refactor: canonicalize base station configuration fields"
   `available_channel_models` projection 都必须显式携带两个字段，缺失/冲突在写入前拒绝；
 - `api/instrument.py` 的 channel model CRUD/list 和 GUI channel-model consumer 同样透传并校验
   RAT/channel kind；旧 projection 只经同一个 legacy-NR translator 读取，不另写第二套兼容规则；
+- `channel_emulator.normalize_channel_model_entries` 保留 typed identity，不再为所有频率无条件派生
+  NR ARFCN；`smu_project_inventory` 按目标资产的显式 RAT/kind 选择 LTE/NR converter，再把同一
+  identity 写回 ChannelAsset 与 projection，未知/冲突时 protect 整项；`ChannelModelsCard` 的
+  活跃手工写入口要求 operator 显式选择 RAT/kind，不能继续产生无法分类的新条目；
+- 旧 `available_channel_models` 按身份来源精确分流：带 `scd_id` 的从迁移后 SCD 取 typed identity，
+  带 `channel_asset_id` 的经资产 legacy translator；只有 filename/bare string 的手工项保留显示为
+  `legacy_unknown`，不从文件名补 NR、不参与正式频率匹配，也不因升级而从列表消失；
 - 标准信道命名器也消费 typed identity：legacy NR 继续精确生成/解析现有
   `MF_N78_640000_...`；LTE 新名显式包含 RAT 与 channel kind（例如
   `MF_LTE_B3_EARFCN1575_...`），不得把 LTE EARFCN 填进旧 NR ARFCN 槽或与同号 NR 资产碰撞；
@@ -256,6 +268,8 @@ cd api-service
   tests/test_channel_models_crud.py \
   tests/test_channel_models_db_fallback.py \
   tests/test_f64_channel_model_listing.py \
+  tests/test_smu_project_inventory.py \
+  tests/test_smu_project_scan_api.py \
   tests/test_p1_73a_asset_frequency_identity.py
 cd ../gui
 node --test \
@@ -275,6 +289,8 @@ node --test \
   频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
 - StandardChannel model/API/service、ChannelAsset validator/API、GUI 两个资产入口与三份 API
   镜像同步写入 RAT/channel kind；legacy translator 只在读取旧 NR-only 行时生效，不为新请求补值。
+- normalizer、SMU project scanner/sync、instrument channel-model CRUD 与 `ChannelModelsCard` 复用同一
+  typed identity/legacy source classifier；bare-string 历史项只保留展示，不获得正式身份。
 - channel naming/parser 对 NR 保持字节级兼容，对 LTE 使用不与 NR 混淆的新 canonical family；
   vendor 文件仍以项目内部 `[Channel Group 0] CenterFrequency` 为频率真值，文件名不反压频率。
 - 保留 P1-55 的顶层镜像一致性门，不能因扩展 RAT 放宽旧冲突检查。
@@ -295,6 +311,8 @@ cd api-service
   tests/test_channel_models_crud.py \
   tests/test_channel_models_db_fallback.py \
   tests/test_f64_channel_model_listing.py \
+  tests/test_smu_project_inventory.py \
+  tests/test_smu_project_scan_api.py \
   tests/test_p1_73a_asset_frequency_identity.py \
   tests/test_uxm_cell_config_orchestration.py
 cd ../gui
@@ -309,6 +327,8 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/app/api/channel_asset.py \
   api-service/app/api/instrument.py \
   api-service/app/services/channel_asset_service.py \
+  api-service/app/hal/channel_emulator.py \
+  api-service/app/services/smu_project_inventory.py \
   api-service/app/services/mimo_ota/channel_naming.py \
   api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/frequency_consistency.py \
@@ -326,6 +346,8 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/tests/test_channel_models_crud.py \
   api-service/tests/test_channel_models_db_fallback.py \
   api-service/tests/test_f64_channel_model_listing.py \
+  api-service/tests/test_smu_project_inventory.py \
+  api-service/tests/test_smu_project_scan_api.py \
   api-service/tests/test_p1_73a_asset_frequency_identity.py \
   gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
   gui/src/components/TestCaseConfig/carrierTruth.ts \
@@ -335,6 +357,7 @@ git add api-service/app/schemas/mimo_ota/config.py \
   gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx \
   gui/src/features/ChannelWorkbench/channelFrequencyIdentityTruth.test.ts \
   gui/src/components/StandardChannelDefinitionCard.tsx \
+  gui/src/App.tsx \
   gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
   api/openapi.yaml gui/src/types/api.generated.ts
 git commit -m "feat: add explicit LTE MIMO operating point truth"
@@ -795,7 +818,8 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
 
 - CMW adapter 可由 registry 创建；
 - 正式 LTE 2×2 能力默认 false；
-- 显式启用后仍必须满足型号、固件、KS520，以及本次请求 FDD 对应 KS500 / TDD 对应 KS550；
+- 显式启用后仍必须使用当前会话只读 identity/firmware/options snapshot，满足型号、固件、KS520，
+  以及本次请求 FDD 对应 KS500 / TDD 对应 KS550；
   缺任一项给 Warning/unknown，不声称 ready；KS500-only 不得放行 TDD，KS550-only 不得放行 FDD；
 - 选件判据紧邻引用 CMW LTE UE User Manual §2.2.1 第 17–19 页；不得用“任一 LTE 基础选件”
   泛化本次 duplex 的准入；

@@ -41,7 +41,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 
 > **P1-73 — CMW500 单载波 LTE 2×2 MIMO OTA（固定边界已批准，设计 PR 评审中）**
 >
-> 批准设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。
+> 评审中设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。
 >
 > **可观察缺口**：仓库已有 `CMW500BaseStationDriver`，但当前真实执行契约尚不能发布
 > CMW500 LTE 2×2 OTA 的正式吞吐/BLER 结果：现有路由仍按 `1CC - 1x1` 形态配置，且
