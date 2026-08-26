@@ -3225,6 +3225,23 @@ class DutAttachReadinessResponse(BaseModel):
     detail: str
 
 
+class Cmw500Lte2x2ReadinessResponse(BaseModel):
+    """Current LabProfile-bound CMW500 LTE 2x2 readiness preview."""
+
+    status: Literal["ready", "warning", "diagnostic", "not_applicable"]
+    adapter_registered: bool
+    connection_id: Optional[str] = None
+    model: Optional[str] = None
+    identity_verified: Optional[bool] = None
+    firmware_version: Optional[str] = None
+    options: List[str] = []
+    formal_enabled: bool
+    formal_updated_at: Optional[str] = None
+    fdd_ready: bool
+    tdd_ready: bool
+    detail: str
+
+
 class HALReadinessResponse(BaseModel):
     """Composite snapshot returned by ``GET /instruments/hal/readiness``.
 
@@ -3238,6 +3255,7 @@ class HALReadinessResponse(BaseModel):
     lab_profile: LabProfileReadinessResponse
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
+    cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
     # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
     # hasn't initialised or no drivers carry a parseable IP.
@@ -3269,7 +3287,10 @@ def get_hal_readiness(
     when HAL hasn't initialised yet (lifespan not run, mid-reload). The
     DB-only LabProfile/calibration sections remain live in that state.
     """
-    from app.services.instrument_hal_service import get_hal_service
+    from app.services.instrument_hal_service import (
+        build_cmw500_lte_2x2_readiness,
+        get_hal_service,
+    )
     from app.services.readiness import (
         build_calibration_readiness,
         build_lab_profile_readiness,
@@ -3285,6 +3306,20 @@ def get_hal_readiness(
 
     hal = get_hal_service()
     report = hal.last_readiness_report if hal else None
+    cmw_readiness = (
+        build_cmw500_lte_2x2_readiness(
+            db,
+            lab_profile_id=UUID(lab_section.profile_id),
+            hal=hal,
+        )
+        if lab_section.profile_id is not None
+        else None
+    )
+    cmw_response = (
+        Cmw500Lte2x2ReadinessResponse(**cmw_readiness.__dict__)
+        if cmw_readiness is not None
+        else None
+    )
 
     if report is None:
         # HAL not initialised — return a shaped placeholder so the GUI
@@ -3311,6 +3346,7 @@ def get_hal_readiness(
                 status="not_implemented",
                 detail="HAL not initialised yet",
             ),
+            cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
             subnets=[],
         )
@@ -3347,6 +3383,7 @@ def get_hal_readiness(
             status=report.dut_attach.status,
             detail=report.dut_attach.detail,
         ),
+        cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,
         subnets=[
             SubnetReachabilityResponse(

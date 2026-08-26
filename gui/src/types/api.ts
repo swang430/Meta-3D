@@ -241,12 +241,28 @@ export type ReadinessDutAttach = {
   detail: string
 }
 
+export type Cmw500Lte2x2Readiness = {
+  status: 'ready' | 'warning' | 'diagnostic' | 'not_applicable'
+  adapter_registered: boolean
+  connection_id: string | null
+  model: string | null
+  identity_verified: boolean | null
+  firmware_version: string | null
+  options: string[]
+  formal_enabled: boolean
+  formal_updated_at: string | null
+  fdd_ready: boolean
+  tdd_ready: boolean
+  detail: string
+}
+
 export type HALReadinessResponse = {
   available: boolean
   drivers: ReadinessDriverRow[]
   lab_profile: ReadinessLabProfile
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
+  cmw500_lte_2x2?: Cmw500Lte2x2Readiness | null
   generated_at_iso: string
   subnets: SubnetReachability[]
 }

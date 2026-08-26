@@ -89,6 +89,7 @@ import {
   type TopologyProfileDetail,
   deleteTestCase,
   updateInstrumentCategory,
+  updateCmw500Lte2x2FormalCapability,
   replaceProbes,
   updateProbe,
 } from './api/service'
@@ -1819,6 +1820,49 @@ function EquipmentManager() {
     },
   })
 
+  const cmwFormalCapabilityMutation = useMutation({
+    mutationFn: ({ connectionId, enabled }: { connectionId: string; enabled: boolean }) =>
+      updateCmw500Lte2x2FormalCapability(connectionId, enabled),
+    onSuccess: (approval) => {
+      queryClient.setQueryData(
+        ['instruments', 'catalog'],
+        (previous: InstrumentsResponse | undefined): InstrumentsResponse | undefined => {
+          if (!previous) return previous
+          return {
+            categories: previous.categories.map((item) =>
+              item.connection.id === approval.connection_id
+                ? {
+                    ...item,
+                    connection: {
+                      ...item.connection,
+                      cmw500_lte_2x2_formal_enabled: approval.enabled,
+                      cmw500_lte_2x2_formal_updated_at: approval.updated_at,
+                    },
+                  }
+                : item,
+            ),
+          }
+        },
+      )
+      queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      showFeedback(
+        'baseStation',
+        'success',
+        approval.enabled
+          ? 'CMW500 LTE 2×2 正式能力已显式启用，仅影响后续执行。'
+          : 'CMW500 LTE 2×2 正式能力已关闭，仅影响后续执行。',
+      )
+    },
+    onError: (error: unknown) => {
+      showFeedback(
+        'baseStation',
+        'error',
+        `CMW500 正式能力更新失败: ${diagnosticErrorMessage(error)}`,
+      )
+    },
+  })
+
   const handleModelChange = useCallback(
     (categoryKey: string, modelId: string) => {
       setDrafts((prev) => {
@@ -2245,6 +2289,28 @@ function EquipmentManager() {
                           仅配置 CMW500 内部 BB / connector / converter，不包含外部射频开关或功率补偿。
                         </Text>
                       </Stack>
+                      <Switch
+                        label="CMW500 LTE 2×2 正式能力"
+                        description={
+                          category.connection.cmw500_lte_2x2_formal_updated_at
+                            ? `默认关闭；最后服务器更新 ${category.connection.cmw500_lte_2x2_formal_updated_at}。变更仅影响后续执行。`
+                            : '默认关闭；只能通过专用授权接口启用，不读 connection_params。'
+                        }
+                        checked={category.connection.cmw500_lte_2x2_formal_enabled}
+                        onChange={(event) => {
+                          const connectionId = category.connection.id
+                          if (!connectionId) return
+                          cmwFormalCapabilityMutation.mutate({
+                            connectionId,
+                            enabled: event.currentTarget.checked,
+                          })
+                        }}
+                        disabled={
+                          !category.connection.id
+                          || cmwFormalCapabilityMutation.isPending
+                        }
+                        color="yellow"
+                      />
                       <SimpleGrid cols={{ base: 1, sm: 2 }}>
                         {CMW500_ROUTE_FIELDS.map((field) => (
                           <TextInput
