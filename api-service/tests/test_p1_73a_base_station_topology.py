@@ -147,6 +147,41 @@ def test_orchestrator_filters_logical_dl_connections_by_applied_2x2_mapping():
     assert payload["base_station_ports"][0]["physical_port"] == "RF3OUT"
 
 
+def test_orchestrator_filters_ports_for_a_custom_mimo_mode_id():
+    topology = _template_module().generate_caict_mimo_topology()
+    custom_mode = dict(topology["operating_modes"][0])
+    custom_mode["id"] = "customer_lte_2x2"
+    row = SimpleNamespace(
+        id=uuid4(), name="custom", version="4.0",
+        nodes=topology["nodes"], connections=topology["connections"],
+        operating_modes=[custom_mode],
+    )
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+        def order_by(self, *_args):
+            return self
+        def first(self):
+            return row
+
+    class _Db:
+        def query(self, *_args):
+            return _Query()
+
+    mapping = resolve_base_station_port_mapping(
+        adapter_id="cmw500", mimo_port_preset="2x2", mimo_layers=2,
+        route_snapshot=None,
+    )
+    result = orchestrate_switch_topology(
+        _Db(), uuid4(), mode_id="customer_lte_2x2",
+        base_station_port_mapping=mapping,
+    )
+
+    assert result.active_connection_count == 35
+    assert len(result.base_station_ports) == 3
+
+
 def test_measure_wires_selected_adapter_route_snapshot_into_topology_resolver():
     source = inspect.getsource(MeasureExecutor)
     helper_source = inspect.getsource(_resolve_base_station_route_snapshot)

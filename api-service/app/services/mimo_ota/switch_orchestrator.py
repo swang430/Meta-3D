@@ -121,7 +121,7 @@ def orchestrate_switch_topology(
     active_conn_ids = set(mode.get("active_connections") or [])
     connections = topology.connections or []
     active_conns = [c for c in connections if c.get("id") in active_conn_ids]
-    if mode_id == "mimo_ota" and base_station_port_mapping is not None:
+    if base_station_port_mapping is not None:
         active_ports = base_station_port_mapping.active_logical_ports
 
         def _uses_inactive_base_station_port(connection: Dict[str, Any]) -> bool:
