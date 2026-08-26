@@ -31,14 +31,19 @@ RSRP/SINR/CQI/RI。端到端功率预算、开关/线缆损耗、F64 输入余�
 ### 2.1 逻辑拓扑
 
 LabProfile 中 `baseStation` 是互斥逻辑角色，现场选择 UXM 或 CMW500。两者复用相同的
-`baseStation.DL1`、`baseStation.DL2`、`baseStation.UL1` 以及相同的 F64/MPAC 下游链。
+`baseStation.DL1…DLN`、`baseStation.UL1` 逻辑端口以及相同的 F64/MPAC 下游链；端口数 N
+由本次执行显式选择的 MIMO port preset 和已应用 route snapshot 决定。CMW500 首期固定 N=2；
+UXM 继续支持现有 SISO、普通 2×2、alternate 2×2 与 4×4，不因 CMW500 接入被收窄。
 两台仪表同时存在时，现场射频开关或固定接线决定信号源；当前开发不要求把外部 RF router
 状态纳入正式能力准入或逐次执行门。
 
-MIMO OTA 拓扑节点保存逻辑端口及 adapter 映射：UXM 将 DL1/DL2/UL1 映射到其现有
-RF1/RF2/RF6；CMW500 映射到当前 internal route 回读确认的 TX1/TX2/RX。拓扑编辑器、模板和
-运行解析器只以逻辑端口连接 F64；adapter 物理映射只用于展示与审计，不把外部源选择开关提升
-为硬门。CAICT 模板中既有 TRP/TIS/passive 的 UXM RF5 与 VNA 路径不属于 P1-73，必须原样保留。
+MIMO OTA 拓扑节点保存逻辑端口及 adapter 映射：UXM 物理端口不得硬编码，必须从当前
+`mimo_port_preset`、已应用 topology profile 和 route snapshot 解析，因此普通 2×2 的 RF1/RF2、
+alternate 2×2 的 RF3/RF4、4×4 的 RF1…RF4 与现有 UL 映射均保持原行为；CMW500 首期把
+DL1/DL2/UL1 映射到当前 internal route 回读确认的 TX1/TX2/RX。拓扑编辑器、模板和运行解析器
+只以逻辑端口连接对应数量的 F64 inputs；adapter 物理映射只用于展示与审计，不把外部源选择
+开关提升为硬门。CAICT 模板中既有 TRP/TIS/passive 的 UXM RF5 与 VNA 路径不属于 P1-73，
+必须原样保留。
 
 CMW500 内部仍必须选择 `1CC - nx2` 并配置 RX/TX1/TX2，因为这是仪表生成双路 LTE 下行的
 必要内部状态，不等同于外部 RF router。
@@ -81,8 +86,18 @@ band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽�
 
 `component_carriers[0]` 继续是工作点唯一真值，但必须从 NR-only 扩展为带 RAT 的联合类型：
 NR 保留现有 NR ARFCN/SCS 兼容行为；LTE 要求单载波、显式 LTE band 与 DL EARFCN，禁止调用
-`freq_mhz_to_nr_arfcn()`、禁止带 SCell，也禁止从原型默认 EARFCN 补值。RAT、频率、band、
+`freq_mhz_to_nr_arfcn()`、禁止带 SCell，也禁止从原型默认 EARFCN 补值。`measure.py`、
+`channel_asset_resolver.py` 与 `standard_channel_service.py` 三个现有 NR identity 生产者必须同时
+改为 RAT-aware；SCD/ChannelAsset 必须携带 channel kind，LTE EARFCN 与 NR ARFCN 永不直接
+比较。跨 RAT 只允许在各自有手册/标准出处的转换完成后比较中心频率和带宽。RAT、频率、band、
 channel number 或顶层兼容镜像冲突均在保存或硬件 I/O 前 422。
+
+LTE EARFCN 的首期唯一映射依据为本地原始手册
+`CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` §2.2.23 “Operating bands”，第 91 页的
+`N = 10 × (F - FOffset)/MHz + NOffset`，以及第 92–95 页 Tables 2-54/2-55/2-56 的
+FDD UL、FDD DL 与 TDD channel/frequency ranges。helper 只实现这些表中且当前型号/选件快照
+明确支持的 band；每一组 offset/range 在代码旁标注表号，未列出、SCC-only、需未具备选件或
+超出范围的 band 一律 fail-loud。
 
 `inherit_debug` 默认关闭；启用要求 `DEBUG=true`、`ALLOW_BASE_STATION_INHERIT=true` 和本次
 执行显式选择。它不下发静态小区配置，只读取已有状态并允许必要的可恢复运行控制；危险配置
@@ -213,9 +228,10 @@ API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容�
 ### 5.1 P1-73A：共享 HAL 清理
 
 保持 UXM 行为不变，建立通用 BaseStation 类型、带 RAT 的 LTE/NR 工作点、兼容字段、通用
-executor/evidence key 和 `baseStation.DL1/DL2/UL1` 逻辑拓扑及 adapter 映射。不得修改 UXM
-SCPI/profile/CA/SCell。完成标准是共享 MIMO 路径无 UXM type import、无厂商类判断，UXM fake
-行为不变，最小 CMW fake 能消费显式 LTE EARFCN 并走到同一证据门安全 UNKNOWN。
+executor/evidence key 和 `baseStation.DL1…DLN/UL1` 逻辑拓扑及 adapter 映射。不得修改 UXM
+SCPI/profile/CA/SCell；普通 2×2、alternate 2×2 与 4×4 的现有 port preset 均需回归。完成标准
+是共享 MIMO 路径无 UXM type import、无厂商类判断，UXM fake 行为不变，最小 CMW fake 能消费
+显式 LTE EARFCN 并走到同一证据门安全 UNKNOWN。
 
 ### 5.2 P1-73B：CMW500 驱动核心
 

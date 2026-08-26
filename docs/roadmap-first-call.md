@@ -52,8 +52,10 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 > **或** CMW500；CMW500 复用 UXM 当前使用的两路 F64 输入及其后续 F64 → 功放/开关 →
 > 探头链。两台仪表通常不同时出现；确需共存时，由 F64 上游射频源选择开关切换信号源，
 > 不为 CMW500 复制一套下游拓扑，也不把 CMW500 外部射频口切换设计成逐次执行动作。
-> 拓扑层使用逻辑端口 `baseStation.DL1` / `baseStation.DL2`；禁止把 UXM 的 `RF1`/`RF2`
-> 名字直接套到 CMW500。CMW500 正式能力准入只绑定型号、固件版本与 LTE/KS520 选件；外部
+> 拓扑层使用 profile-driven 逻辑端口 `baseStation.DL1…DLN`；CMW500 首期 N=2，UXM 继续
+> 按当前 preset/route snapshot 保留普通 2×2、alternate 2×2 与 4×4，禁止把 UXM 的物理 RF
+> 名字直接套到 CMW500，也禁止为接入 CMW 把 UXM 既有拓扑收窄为两路。CMW500 正式能力
+> 准入只绑定型号、固件版本与 LTE/KS520 选件；外部
 > RF router/开关状态不进入准入键，也不扩成逐次执行硬门。CMW 内部 `1CC - nx2` route 仍由
 > 驱动按手册配置和回读，因为它是仪表生成双路下行的必要内部状态。
 >

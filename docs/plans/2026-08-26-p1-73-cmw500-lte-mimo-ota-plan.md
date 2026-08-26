@@ -178,9 +178,13 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `api-service/app/schemas/mimo_ota/config.py`
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/frequency_consistency.py`
+- Modify: `api-service/app/services/mimo_ota/channel_asset_resolver.py`
+- Modify: `api-service/app/services/standard_channel_service.py`
 - Create: `api-service/app/hal/lte_earfcn.py`
 - Create: `api-service/tests/test_p1_73a_lte_operating_point.py`
 - Modify: `api-service/tests/test_p1_55_carrier_truth_source.py`
+- Modify: `api-service/tests/test_channel_asset_resolver.py`
+- Modify: `api-service/tests/test_standard_channel.py`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - Modify: `gui/src/components/TestCaseConfig/carrierTruth.ts`
 - Create: `gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts`
@@ -193,7 +197,15 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - `radio_technology="lte"` 时只允许单个 PCell，要求显式 LTE band、`lte_dl_earfcn`、
   frequency、bandwidth、duplex，禁止 SCell、NR ARFCN 与 NR SCS；
 - LTE 的 band/EARFCN/frequency 关系由独立 LTE helper 校验；不调用 `freq_mhz_to_nr_arfcn()`；
+- LTE helper 的唯一映射出处固定为本地 CMW LTE UE User Manual §2.2.23 第 91–95 页：
+  第 91 页公式 `N = 10 × (F - FOffset)/MHz + NOffset`，Tables 2-54/2-55/2-56 的 FDD UL、
+  FDD DL 与 TDD ranges；每组 offset/range 紧邻标注表号，未知/SCC-only/选件不满足 band 拒绝；
 - LTE 缺 EARFCN、沿用原型 1575 默认、RAT/顶层/CC 冲突，全部在保存或硬件 I/O 前 422；
+- `measure.py`、`channel_asset_resolver.py`、`standard_channel_service.py` 三个 NR identity 生产者
+  全部消费同一 RAT-aware working point；SCD/ChannelAsset 明示 channel kind，禁止把
+  `scd_config.arfcn` 无条件解释为 NR，也禁止把 LTE EARFCN 与 NR ARFCN 直接比较；
+- 跨 RAT 的资产一致性仅比较经各自有出处 converter 得到的中心频率与带宽；缺 RAT、缺 converter
+  或 channel kind 冲突都保护资产并在 I/O 前 fail-loud，不从文件名或当前 DB 猜测；
 - executor 将同一个 typed `BaseStationRequestedConfig` 交给 fake UXM/CMW，不按厂商类分支；
 - GUI 选择 LTE 时要求上述显式字段，不写 NR 默认值。
 
@@ -203,7 +215,9 @@ git commit -m "refactor: canonicalize base station configuration fields"
 cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_lte_operating_point.py \
-  tests/test_p1_55_carrier_truth_source.py
+  tests/test_p1_55_carrier_truth_source.py \
+  tests/test_channel_asset_resolver.py \
+  tests/test_standard_channel.py
 cd ../gui
 node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
 ```
@@ -213,9 +227,11 @@ node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
 **Step 3: 最小 GREEN**
 
 - 给 PCell 增加显式 RAT 与互斥 channel-number 字段；旧记录缺 RAT 精确兼容为 NR。
-- LTE converter 只实现本片经手册/3GPP 表确认的 band；未知 band fail-loud，不猜公式。
+- LTE converter 只实现 CMW LTE UE User Manual §2.2.23 Tables 2-54/2-55/2-56 明确列出的、
+  且当前型号/选件快照支持的 band；未知、SCC-only、选件不足 band fail-loud，不猜公式。
 - MEASURE 先按 RAT 建立 requested config，再交给通用 driver；LTE 路径不导入 NR converter。
-- 频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
+- MEASURE、ChannelAsset resolver 与 StandardChannel service 复用同一 typed frequency identity；
+  频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
 - 保留 P1-55 的顶层镜像一致性门，不能因扩展 RAT 放宽旧冲突检查。
 
 **Step 4: 运行 GREEN 并提交**
@@ -226,6 +242,8 @@ cd api-service
   tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_55_carrier_truth_source.py \
   tests/test_frequency_consistency.py \
+  tests/test_channel_asset_resolver.py \
+  tests/test_standard_channel.py \
   tests/test_uxm_cell_config_orchestration.py
 cd ../gui
 node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
@@ -234,9 +252,13 @@ cd ..
 git add api-service/app/schemas/mimo_ota/config.py \
   api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/frequency_consistency.py \
+  api-service/app/services/mimo_ota/channel_asset_resolver.py \
+  api-service/app/services/standard_channel_service.py \
   api-service/app/hal/lte_earfcn.py \
   api-service/tests/test_p1_73a_lte_operating_point.py \
   api-service/tests/test_p1_55_carrier_truth_source.py \
+  api-service/tests/test_channel_asset_resolver.py \
+  api-service/tests/test_standard_channel.py \
   gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
   gui/src/components/TestCaseConfig/carrierTruth.ts \
   gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
@@ -349,24 +371,30 @@ git add api-service/app/services/mimo_ota/executors/measure.py \
 git commit -m "refactor: make MIMO measure base-station neutral"
 ```
 
-### Task 4A：落地 baseStation.DL1/DL2/UL1 逻辑拓扑
+### Task 4A：落地 profile-driven baseStation.DL1…DLN/UL1 逻辑拓扑
 
 **Files:**
 
 - Create: `api-service/app/services/base_station_port_mapping.py`
 - Modify: `api-service/scripts/dev-fixtures/topology-templates/caict_v4.py`
 - Modify: `api-service/app/services/mimo_ota/switch_orchestrator.py`
+- Modify: `api-service/app/hal/uxm_test_profiles.py`
 - Create: `api-service/tests/test_p1_73a_base_station_topology.py`
 - Modify: `api-service/tests/test_switch_topology_chamber_binding.py`
+- Modify: `api-service/tests/test_uxm_driver_profile.py`
 - Modify: `gui/src/features/TopologyEditor/CustomNodes.tsx`
 - Create: `gui/src/features/TopologyEditor/baseStationPortsTruth.test.ts`
 
 **Step 1: 写 RED**
 
-要求 topology 使用一个逻辑 `baseStation` 节点及 `DL1/DL2/UL1`：
+要求 topology 使用一个逻辑 `baseStation` 节点及 profile-driven `DL1…DLN/UL1`：
 
-- MIMO OTA 连接始终是 `baseStation.DL1/DL2 → F64 input 1/2`，UL1 回到当前 baseStation；
-- UXM adapter 映射到既有 RF1/RF2/RF6，确保旧现场显示和行为不退化；
+- MIMO OTA 连接数来自本次显式 `mimo_port_preset` 和已应用 route snapshot：DL1…DLN 对应
+  F64 input 1…N，UL1 回到当前 baseStation；CMW500 首期 N=2；
+- UXM 物理映射不得硬编码：普通 2×2 保留 RF1/RF2，alternate 2×2 保留 RF3/RF4，4×4
+  保留 RF1…RF4，UL 及其他现有映射从当前 profile/route snapshot 取得；
+- RED 分别覆盖 UXM 普通 2×2、alternate 2×2、4×4 与 CMW500 2×2，证明接入 CMW 不会
+  把 UXM 4×4 收窄成两路或把 alternate preset 静默改回 RF1/RF2；
 - CMW adapter 映射到内部 route 的 TX1/TX2/RX 逻辑角色，具体 connector 来自当前驱动回读，
   不在模板猜固定 RF 口；
 - LabProfile 选择不同 baseStation 后，编辑器/解析器显示对应 adapter 映射，但连接图不复制；
@@ -380,15 +408,17 @@ git commit -m "refactor: make MIMO measure base-station neutral"
 cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_base_station_topology.py \
-  tests/test_switch_topology_chamber_binding.py
+  tests/test_switch_topology_chamber_binding.py \
+  tests/test_uxm_driver_profile.py
 cd ../gui
 node --test src/features/TopologyEditor/baseStationPortsTruth.test.ts
 ```
 
 **Step 3: 最小 GREEN**
 
-- 模板仅把 MIMO OTA 信号源从固定 `uxm` 节点改为逻辑 `baseStation`，保留 adapter map 作为
-  显示/审计元数据；非 MIMO 的 UXM/VNA 物理节点和连接不改。
+- 模板仅把 MIMO OTA 信号源从固定 `uxm` 节点改为逻辑 `baseStation`，逻辑 DL 端口数量由
+  preset/profile 决定，保留 adapter map 作为显示/审计元数据；非 MIMO 的 UXM/VNA 物理节点
+  和连接不改。
 - 新 resolver 只消费 OperationalLab 已选中的 baseStation identity 与当前 driver route snapshot；
   不按节点 label 或型号前缀猜 adapter。
 - switch orchestrator 输出逻辑 port 与可选 physical display，不让物理 display 反向成为连接真源。
@@ -401,6 +431,7 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_base_station_topology.py \
   tests/test_switch_topology_chamber_binding.py \
+  tests/test_uxm_driver_profile.py \
   tests/test_p1_57_topology_lab_context.py
 cd ../gui
 node --test src/features/TopologyEditor/baseStationPortsTruth.test.ts
@@ -409,8 +440,10 @@ cd ..
 git add api-service/app/services/base_station_port_mapping.py \
   api-service/scripts/dev-fixtures/topology-templates/caict_v4.py \
   api-service/app/services/mimo_ota/switch_orchestrator.py \
+  api-service/app/hal/uxm_test_profiles.py \
   api-service/tests/test_p1_73a_base_station_topology.py \
   api-service/tests/test_switch_topology_chamber_binding.py \
+  api-service/tests/test_uxm_driver_profile.py \
   gui/src/features/TopologyEditor/CustomNodes.tsx \
   gui/src/features/TopologyEditor/baseStationPortsTruth.test.ts
 git commit -m "feat: model vendor-neutral base station topology ports"
