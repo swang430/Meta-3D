@@ -81,8 +81,8 @@ def resolve_base_station_port_mapping(
 
     if isinstance(mimo_layers, bool) or not isinstance(mimo_layers, int):
         raise TypeError("mimo_layers must be an integer")
-    if mimo_layers < 1 or mimo_layers > 4:
-        raise ValueError("mimo_layers must be in 1..4")
+    if mimo_layers < 1 or mimo_layers > 8:
+        raise ValueError("mimo_layers must be in 1..8")
 
     snapshot = route_snapshot if isinstance(route_snapshot, Mapping) else {}
     tx = snapshot.get("tx")

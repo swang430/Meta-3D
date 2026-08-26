@@ -79,6 +79,21 @@ def test_missing_physical_route_is_warning_not_runtime_blocker():
     assert mapping.warnings
 
 
+def test_eight_layer_mapping_preserves_all_accepted_logical_ports():
+    mapping = resolve_base_station_port_mapping(
+        adapter_id="uxm",
+        mimo_port_preset=None,
+        mimo_layers=8,
+        route_snapshot=None,
+    )
+
+    assert [port.logical_port for port in mapping.ports] == [
+        "DL1", "DL2", "DL3", "DL4", "DL5", "DL6", "DL7", "DL8", "UL1"
+    ]
+    assert mapping.is_runtime_blocker is False
+    assert len(mapping.warnings) == 9
+
+
 def test_caict_template_migrates_only_mimo_connections_to_logical_base_station():
     topology = _template_module().generate_caict_mimo_topology()
     nodes = {node["id"]: node for node in topology["nodes"]}

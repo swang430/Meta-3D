@@ -798,11 +798,19 @@ class MIMOOTAConfiguration(BaseModel):
         - 列表长度必须 ≥ 1 (运行时这是 measure 的输入合同)
         """
         if not self.component_carriers:
+            if (
+                "subcarrier_spacing_khz" in self.model_fields_set
+                and self.subcarrier_spacing_khz is None
+            ):
+                raise ValueError(
+                    "NR PCell requires subcarrier_spacing_khz; explicit null "
+                    "cannot use the legacy default"
+                )
             self.component_carriers = [
                 ComponentCarrierConfig(
                     frequency_hz=self.frequency_hz,
                     bandwidth_mhz=self.bandwidth_mhz,
-                    subcarrier_spacing_khz=self.subcarrier_spacing_khz or 30,
+                    subcarrier_spacing_khz=self.subcarrier_spacing_khz,
                     role="pcell",
                 )
             ]

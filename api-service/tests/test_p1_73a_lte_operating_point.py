@@ -130,6 +130,11 @@ def test_legacy_nr_payload_keeps_existing_defaults():
     assert config.theoretical_peak_throughput_mbps == 450.0
 
 
+def test_legacy_nr_payload_rejects_explicit_null_subcarrier_spacing():
+    with pytest.raises(ValidationError, match="subcarrier_spacing_khz"):
+        MIMOOTAConfiguration.model_validate({"subcarrier_spacing_khz": None})
+
+
 def test_commissioning_lte_request_builds_the_same_explicit_pcell():
     request = CreateSessionRequest.model_validate(
         {
