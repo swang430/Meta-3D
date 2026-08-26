@@ -1,0 +1,252 @@
+# P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 设计
+
+**日期**：2026-08-26  
+**状态**：已获用户批准  
+**安全回滚基线**：`v0.9.1` → `0df700f9e4eb46a5e3f50c6bb22f71c93ff27087`
+
+## 1. 可观察缺口与范围
+
+仓库虽然已有 `RealCmw500Driver`，但它仍是早期原型：普通连接会 preset 并改变仪表，LTE
+route 仍按 `1CC - 1x1` 配置，Extended BLER 的返回字段也没有按厂商手册进入正式 provenance
+白名单。直接接入 MIMO OTA，可能让双路下行没有真正建立，或把状态/可靠性字段误当作 KPI。
+
+本片让 CMW500 通过与 UXM 相同的通用 BaseStation HAL 运行 LTE 单载波 2×2 MIMO OTA，
+只发布有完整仪表证据的 DL transport-block throughput 与 DL BLER。
+
+首期包含：
+
+- LTE 单载波 FDD/TDD（按实机选件启用）；
+- `1CC - nx2`，两路下行和一路上行；
+- CMW500 → 既有两路 F64 输入 → 既有 MPAC 下游链；
+- UE attach；
+- 有边界的 Extended BLER 测量窗口；
+- 统一 evidence、Analysis、报告、历史和 GUI。
+
+首期排除：DAU/IP 层吞吐、LTE CA、4×4、CMW 数字 IQ 外部衰落链，以及无独立手册出处的
+RSRP/SINR/CQI/RI。端到端功率预算、开关/线缆损耗、F64 输入余量与路径补偿延后到正式发布
+阶段，不作为当前 P1-73 开发阻塞项。
+
+## 2. 架构与通用 BaseStation HAL
+
+### 2.1 逻辑拓扑
+
+LabProfile 中 `baseStation` 是互斥逻辑角色，现场选择 UXM 或 CMW500。两者复用相同的
+`baseStation.DL1`、`baseStation.DL2`、`baseStation.UL1` 以及相同的 F64/MPAC 下游链。
+两台仪表同时存在时，现场射频开关或固定接线决定信号源；当前开发不要求把外部 RF router
+状态纳入正式能力准入或逐次执行门。
+
+CMW500 内部仍必须选择 `1CC - nx2` 并配置 RX/TX1/TX2，因为这是仪表生成双路 LTE 下行的
+必要内部状态，不等同于外部 RF router。
+
+### 2.2 顶层契约
+
+MIMO OTA 顶层只允许使用：
+
+- `BaseStationCapabilities`
+- `BaseStationRequestedConfig`
+- `BaseStationAppliedConfig`
+- `BaseStationLinkState`
+- `BaseStationMeasurementWindow`
+- `BaseStationKpiSnapshot`
+- `BaseStationCleanupResult`
+- `BaseStationExecutionEvidence`
+
+顶层不得出现 `uxm_*`、`cmw_*`、具体 SCPI、厂商类判断或 Test Application/Signaling Task
+分支。厂商差异只存在于驱动和 command profile。
+
+### 2.3 能力准入
+
+能力由驱动依据型号、固件版本和选件快照产生，不按名称猜测。CMW500 正式能力准入只绑定：
+
+- 型号；
+- 固件版本；
+- LTE 基础选件；
+- CMW-KS520。
+
+外部 RF router、具体序列号和外部接线路径不属于正式能力准入键。adapter 可以注册，但正式
+能力默认关闭，待用户显式启用。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。
+
+### 2.4 通用配置与 debug inherit
+
+通用请求包含 LTE 制式、双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
+逻辑 DL1/DL2/UL1 和 `config_mode`。不得用默认 EARFCN、route、端口或功率补齐缺失配置；频率、
+band、EARFCN、带宽等显式分叉必须 422。
+
+`inherit_debug` 默认关闭；启用要求 `DEBUG=true`、`ALLOW_BASE_STATION_INHERIT=true` 和本次
+执行显式选择。它不下发静态小区配置，只读取已有状态并允许必要的可恢复运行控制；危险配置
+冲突仍阻断操作。所有结果标记 `debug_inherited`，正式 KPI、pass rate 与 verdict 保持
+`UNKNOWN/N/A`。
+
+## 3. CMW500 驱动状态机与 SCPI 证据
+
+### 3.1 状态机
+
+```text
+DISCONNECTED
+  → TRANSPORT_CONNECTED
+  → IDENTITY_VERIFIED
+  → CAPABILITY_VERIFIED
+  → SAFE_IDLE
+  → INTERNAL_ROUTE_VERIFIED
+  → CELL_CONFIG_VERIFIED
+  → CELL_ON
+  → UE_ATTACHED
+  → MEASURING
+  → MEASUREMENT_COLLECTED
+  → SAFE_IDLE / LOCAL
+```
+
+普通 `connect()` 只能建立会话并查询身份、固件、选件、LTE application、当前 route 和状态；
+不得 preset、切换场景、打开 Cell 或写功率。Preset 只能是单独的显式维护动作。
+
+任一状态无法确认时停止产生正式 KPI，不自动重发带副作用的命令，尝试有出处且幂等的安全动作，
+并把状态不确定写入 cleanup 与告警。
+
+### 3.2 `1CC - nx2` 内部 route
+
+本地原始手册 `CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` 第 630 页定义：
+
+```text
+ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible
+  <PCCBBBoard>,
+  <RXConnector>, <RXConverter>,
+  <TXConnector>, <TXConverter>,
+  <TX2Connector>, <TX2Converter>
+```
+
+该命令激活 `1CC - nx2`，最低版本 V3.5.40，需要 CMW-KS520。写入后用手册第 459–460 页的
+`ROUTe:LTE:SIGN<i>?` 读取 active scenario 与相关 RX/TX1/TX2 参数，确认内部 route 生效。
+内部 route 回读失败影响本次驱动状态和 KPI 可信度，但不扩展成外部 RF router 准入机制。
+
+### 3.3 配置证据与错误处理
+
+关键配置均形成 `requested → dispatched → applied/read back`，至少覆盖 duplex、band、EARFCN、
+bandwidth、transmission mode、TX antenna count、DL power、Cell state、PS connection 和
+application instance。命令传输完成或 `*OPC? == 1` 不证明错误队列干净或配置生效；关键 applied
+字段无法回读时保持 unverified，不从 requested 回填。
+
+每次写操作采用有界旧错误清理、下发、等待、错误队列读取和权威回读。错误队列循环有上限，
+timeout 在 `finally` 恢复，禁止裸 `except: pass`，超时不得自动重发 route、Cell ON、attach 或
+测量启动命令。
+
+### 3.4 Extended BLER 窗口
+
+窗口经过 clear/configure/initiate/running/fetch/stop/stopped 边界。正式 KPI 只取：
+
+| KPI | 查询 | 字段 | 单位 | 手册页 |
+|---|---|---:|---|---:|
+| DL throughput | `FETCh:LTE:SIGN<i>:EBLer[:PCC]:ABSolute?` | 5 `ThroughputAver` | kbit/s | 957–958 |
+| DL BLER | `FETCh:LTE:SIGN<i>:EBLer[:PCC]:RELative?` | 4 `BLER` | % | 959 |
+
+Absolute 字段 1 是 reliability indicator，不是 BLER；Relative 字段 5 是最大可达吞吐的百分比，
+不是 Mbps。两个 KPI 独立可信，一个缺证据不得清空另一个。
+
+每条真实命令必须登记本地手册、revision、页码、固件、选件、操作类型、响应字段、单位、前置
+条件、失败信号、验证查询和 cleanup。缺少出处的命令不得进入真实驱动。
+
+## 4. 统一证据、判决、报告与 GUI
+
+### 4.1 版本化证据
+
+新 UXM 与 CMW500 执行均写 `BaseStationExecutionEvidence(schema_version=1)`，包含 adapter、
+execution mode、identity、capabilities、requested/applied config、内部 route、lifecycle、
+measurement windows 和 cleanup。`adapter_id` 只用于审计显示与 command profile 注册，不允许
+在 Analysis、报告、历史或 GUI 中形成厂商分支。
+
+每个窗口绑定 config digest、内部 route digest、UE link state、开始/停止时间和独立 KPI。
+每个方位再绑定当前窗口、F64 channel evidence、位置回读和路损应用证据。请求方位全集必须精确
+匹配，缺失不当 0，多余历史方位不计入统计。
+
+### 4.2 唯一正式信任函数
+
+Analysis、报告、历史、下载和 GUI 统一消费：
+
+```python
+evaluate_base_station_metric_trust(
+    evidence,
+    metric_name,
+    expected_config,
+    expected_position,
+) -> FormalMetricTrust
+```
+
+它要求规范 schema、dispatch 模式、获准 adapter/profile、真实身份、配置回读、内部 CMW route、
+完整测量窗口、正确字段/单位、当前 execution provenance 和方位绑定。外部 RF router 不进入该
+函数。旧 `throughput_verified`、`kpi_valid` 或 `config_applied` 不能单独恢复正式 PASS。
+
+旧 UXM 只通过精确 legacy translator；冲突时 UNKNOWN。CMW500 原型历史没有 legacy 信任路径。
+
+### 4.3 GUI、API、报告和历史
+
+GUI 继续消费 OperationalLab 唯一 `baseStation`，展示型号、固件、选件、LTE 能力、内部 route、
+模式和 readiness。adapter 可注册，正式能力默认关闭；未完成现场确认显示黄色 Warning，不使用
+`Hardware Blocked`。后端不可达、缓存旧数据或关键仪表状态未知不得复活旧绿。
+
+API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容；GUI 不再写旧字段；新旧
+冲突时 422。live OpenAPI、checked-in YAML 和 GUI generated TS 必须同步。
+
+报告只发布同一 trust 函数确认的 KPI。缺测不写 0，debug 不打印数值后再声明“不可信”，cleanup
+和 Local 交还确定前不发布最终报告。历史列表只返回摘要，详情按 execution ID 读取完整快照；
+旧或畸形 evidence 保持 UNKNOWN，不从当前数据库或旧正文补证。
+
+## 5. 开发拆分与验证
+
+### 5.1 P1-73A：共享 HAL 清理
+
+保持 UXM 行为不变，建立通用 BaseStation 类型、兼容字段、通用 executor/evidence key 和逻辑
+拓扑。不得修改 UXM SCPI/profile/CA/SCell。完成标准是共享 MIMO 路径无 UXM type import、无厂商
+类判断，UXM fake 行为不变，最小 CMW fake 能走到同一证据门并安全 UNKNOWN。
+
+### 5.2 P1-73B：CMW500 驱动核心
+
+重构现有原型：只读 connect、能力探测、command evidence、`1CC - nx2` 内部 route、配置回读、
+Cell/attach 状态机、Extended BLER 窗口、错误队列、timeout、cleanup 和 inherit debug。adapter
+可注册但正式能力默认关闭，并以 Warning 表示现场确认尚未完成。
+
+### 5.3 P1-73C：OTA/GUI/报告集成
+
+把 CMW500 接入 OperationalLab、MIMO OTA 方位证据、F64/位置/路损链、正式信任函数、GUI、
+报告和历史。正式启用只绑定型号、固件版本和选件组合，由用户显式开启，不绑定外部 RF router。
+
+### 5.4 TDD 与回归
+
+每片严格执行 RED → 最小 GREEN → 相关回归 → 全后端 → GUI build → compileall → 单一
+Alembic head → diff-check → fresh 内审 → Codex R1/R2。R2 无 P1立即合并；R2 仍有 P1继续
+P1-only 外审到覆盖最新 HEAD 无 P1。R2+ P2/P3只报告，不自动积压。
+
+验证覆盖通用 HAL contract、UXM 回归、CMW builder/parser、状态机错误注入、F64/位置/路损、
+Analysis/报告/历史、GUI/OpenAPI 和全量回归。模拟驱动复用真实命令拼装和解析器，但模拟值不进入
+正式判决。
+
+## 6. 现场确认、上线与回滚
+
+### 6.1 渐进确认
+
+现场按低风险到高风险执行：只读身份/版本/选件 → Cell/RF 关闭时验证内部 `1CC - nx2` route →
+单小区 attach → 单方位短测量窗口 → 少量方位 OTA smoke → 完整方位重复性测试。
+
+外部 RF router/开关状态只作为现场 Warning 和操作员确认信息，不作为开发或正式能力准入的硬
+阻塞项。端到端功率预算、路径补偿、线缆/开关损耗和 F64 输入余量在正式发布阶段单独评估。
+
+### 6.2 必测失败场景
+
+覆盖缺 KS520、固件过低、LTE app/实例变化、内部 route 回读不一致、配置错误队列、UE 未 attach、
+测量未启动、返回字段不足、reliability 无效、timeout、取消、cleanup 部分失败、Local 交还失败、
+后端重启后的未知状态，以及 inherit debug 尝试生成正式报告。
+
+每种失败都必须给出明确原因，不得折叠成 0 或通用“连接失败”。现场信息尚未确认时显示 Warning，
+允许继续开发调试；正式 KPI 是否可信仍由当前执行的仪表配置和测量证据决定。
+
+### 6.3 上线、版本与回滚
+
+- 当前安全回滚点：`v0.9.1`；
+- 三个软件 PR 合并：建议 `v0.9.2-rc.1`；
+- CMW500 真机正式验收：建议 `v0.10.0`。
+
+P1-73 不做破坏性数据库迁移；新 evidence 放在现有版本化 JSON envelope；新字段只增加不删除。
+回滚优先关闭 CMW500 正式能力并切回 UXM，必要时部署 `v0.9.1`，不删除执行、报告或仪器资料。
+
+P1-73 完成必须满足：顶层与厂商无关、UXM 无回归退化、CMW connect 不修改仪表、LTE 1CC 2×2
+内部 route 与配置有回读、throughput/BLER 来自有边界窗口、模拟/未知/debug 不进入 KPI、GUI/
+Analysis/报告/历史共用信任函数、取消和清理失败可见、型号/版本/选件组合经用户启用、真机 smoke
+通过，并能安全回滚到 `v0.9.1`。
