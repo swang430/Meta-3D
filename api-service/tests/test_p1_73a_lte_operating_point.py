@@ -37,6 +37,16 @@ LTE_B3_PCELL = {
 }
 
 
+def _cmw_safe_idle_query(command: str) -> str:
+    if command == "SOURce:LTE:SIGN1:CELL:STATe:ALL?":
+        return "OFF,ADJusted"
+    if command == "*OPC?":
+        return "1"
+    if command == "SYSTem:ERRor:ALL?":
+        return '0,"No error"'
+    raise AssertionError(f"unexpected CMW query: {command}")
+
+
 def test_lte_downlink_formula_uses_manual_table_2_55():
     assert lte_dl_earfcn_to_frequency_mhz("B3", 1575) == pytest.approx(1842.5)
     assert validate_lte_downlink_operating_point(
@@ -269,7 +279,7 @@ async def test_cmw500_translates_vendor_neutral_lte_band(monkeypatch):
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", lambda _command: "1")
+    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
 
     assert await cmw.set_cell_config({"band": "B3", "earfcn": 1575}) is True
     assert any(command.endswith(" OB3") for command in writes)
@@ -294,7 +304,7 @@ async def test_cmw500_translates_each_supported_lte_bandwidth_exactly(
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", lambda _command: "1")
+    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
 
     assert await cmw.set_cell_config({"bandwidth_mhz": bandwidth_mhz}) is True
     assert any(command.endswith(f" {cmw_token}") for command in writes)
@@ -401,7 +411,7 @@ async def test_cmw500_connect_populates_valid_option_snapshot_before_band_gate(
 
     def query(command: str) -> str:
         if command == "*IDN?":
-            return "Rohde&Schwarz,CMW500,123456,4.0.250"
+            return "Rohde&Schwarz,CMW,123456,4.0.250"
         if command == "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid":
             return '"CMW-KS525"'
         if command == "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional":

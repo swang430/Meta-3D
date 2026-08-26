@@ -159,6 +159,16 @@ def instrument_categories(db):
     for r in rows:
         db.add(r)
     db.commit()
+    base_station = next(r for r in rows if r.category_key == "baseStation")
+    for profile in db.query(LabProfile).all():
+        profile.instrument_bindings = [{
+            "category_id": str(base_station.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "baseStation",
+        }]
+    db.commit()
     return rows
 
 
