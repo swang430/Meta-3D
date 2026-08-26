@@ -195,7 +195,7 @@ class TestInstrumentParamBranches:
             async def establish(self):
                 from app.services.input_level_controller import InputLevelResult
                 return InputLevelResult(
-                    success=True, uxm_dl_power_dbm=-46.0,
+                    success=True, base_station_dl_power_dbm=-46.0,
                     clipping_per_mille=0.0, iterations=1,
                     operating_point=[], system_warnings=[],
                     failure_reason=None,
@@ -203,6 +203,8 @@ class TestInstrumentParamBranches:
 
         emu = AsyncMock()
         bs = AsyncMock()
+        bs.adapter_id = "uxm"
+        bs.input_level_control_supported = True
         emu._tx_antennas = 4  # active_inputs 推导比较用, 不能留 AsyncMock
         # F64R-2 (Codex #224 P1 后): AsyncMock 自动生成的拓扑 getter 返回 coroutine →
         # 被判"拓扑感知但读不到" → fail-loud。本用例测的是 initial_dl_power 透传,
@@ -222,7 +224,6 @@ class TestInstrumentParamBranches:
             payload = await ex._run_input_level_closed_loop(
                 emulator=emu, base_station=bs, config=cfg, execution_id="t",
             )
-        assert captured.get("initial_uxm_dl_power_dbm") == -46.0
+        assert captured.get("initial_base_station_dl_power_dbm") == -46.0
         assert payload.get("success") is True
-
 

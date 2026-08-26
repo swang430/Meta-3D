@@ -415,7 +415,12 @@ def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
         subcarrier_spacing_khz=pcell.subcarrier_spacing_khz,
         mimo_layers=config.mimo_layers,
         downlink_power_dbm=config.target_tx_power_dbm,
-        downlink_power_dbm_per_bandwidth=config.uxm_dl_power_dbm_per_bw,
+        # 旧 UXM 整带宽功率字段不是跨厂商契约；LTE/CMW 不得消费它。
+        downlink_power_dbm_per_bandwidth=(
+            config.uxm_dl_power_dbm_per_bw
+            if pcell.radio_technology == "nr5g"
+            else None
+        ),
         port_preset=config.mimo_port_preset,
         scheduler_algorithm=config.sched_algo,
         csi_rs_ports=config.csi_rs_ports,
@@ -889,11 +894,11 @@ class MeasureExecutor(IStepExecutor):
         await base_station.connect()
         # Anything from here through the azimuth loop must be wrapped so an
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
-        # UXM signaling, F64 emulating, and the turntable mid-rotation.
+        # base-station signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
         ca_setup_blocker: Optional[str] = None
-        uxm_config_capture_manager = None
-        uxm_config_exchanges = []
+        base_station_config_capture_manager = None
+        base_station_config_exchanges = []
         try:
             # --- Phase 2g: PCell from component_carriers[0] (always populated
             # by MIMOOTAConfiguration._resolve_component_carriers); SCells
@@ -902,7 +907,7 @@ class MeasureExecutor(IStepExecutor):
             scells = ccs[1:]
 
             # P2-11 (Codex on PR #109 P1): 从 TestCase 中心频推导规范 ARFCN 显式下发。
-            # 不传 arfcn 时 RealUxmDriver.set_cell_config 走 band fallback (R6 起 =
+            # 不传 arfcn 时既有 NR adapter 的 set_cell_config 走 band fallback (R6 起 =
             # EMQuest 基线, N78→636666=3549.99 MHz), 让 UXM 实际下发频率 ≠ TestCase,
             # 下面的频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback
             # 的真实 run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
@@ -924,7 +929,7 @@ class MeasureExecutor(IStepExecutor):
             # 态 (如 EMQuest 基线); 频率核对改走下方一致性网的 live 读回 (知情
             # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
-            uxm_inherit = config.base_station_config_mode == "inherit"
+            base_station_inherit = config.base_station_config_mode == "inherit"
             pcell_requested_config = _build_pcell_requested_config(config)
             pcell_channel_number = (
                 pcell_requested_config.nr_arfcn
@@ -942,7 +947,7 @@ class MeasureExecutor(IStepExecutor):
                 required_evidence_level=EvidenceLevel.APPLIED,
             )
             context.db.commit()
-            if uxm_inherit:
+            if base_station_inherit:
                 logger.info(
                     "[%s] 开关1 base_station_config_mode=inherit: 跳过基站小区级参数下发 "
                     "(set_cell_config + SCell), 沿用仪器当前态; 频率核对走 live "
@@ -952,12 +957,14 @@ class MeasureExecutor(IStepExecutor):
                 )
             # path B 显式驱动端口路由/调度 (见 _build_pcell_cell_config); None 字段不传 →
             # 保持 HAL profile (backward-compat, 旧 case 不被默认值覆盖)。
-            if not uxm_inherit:
+            if not base_station_inherit:
                 # 配置事务跨越 set_cell_config 与 start_signaling：CELL 已 ON 时
                 # 走 APPLY；初始 OFF 时手册规定后续 CELL ON 自动应用。两条合法
                 # recipe 必须留在同一 capture，不能依赖执行前仪器恰好为 ON。
-                uxm_config_capture_manager = capture_scpi_exchanges()
-                uxm_config_exchanges = uxm_config_capture_manager.__enter__()
+                base_station_config_capture_manager = capture_scpi_exchanges()
+                base_station_config_exchanges = (
+                    base_station_config_capture_manager.__enter__()
+                )
                 # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
                 # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
                 # 小区配置进测量, 正是回读门要拦的实验污染。
@@ -979,7 +986,7 @@ class MeasureExecutor(IStepExecutor):
             scells_added, ca_blocker = await self._configure_requested_secondary_cells(
                 base_station,
                 scells,
-                inherit=uxm_inherit,
+                inherit=base_station_inherit,
                 execution_id=context.test_execution.id,
             )
             if ca_blocker:
@@ -1358,9 +1365,9 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             # --- P2-11 Phase 1: 多方频率一致性 fail-loud 校验 ---
-            # UXM (set_cell_config 后, _arfcn 已设) + F64 (信道加载后) 都已配置; 把各
+            # BaseStation + F64 (信道加载后) 都已配置; 把各
             # 仪表归一到 (中心 ARFCN, 带宽) 跟 TestCase 精确比对。不一致 = 静默错配
-            # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或 UXM 没传 arfcn → 实际
+            # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或基站未下发 channel → 实际
             # 下发 band fallback 基线值 ≠ 标称), strict 模式 FAIL。频率错了下面
             # input level / RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
             from app.services.mimo_ota.frequency_consistency import (
@@ -1373,20 +1380,20 @@ class MeasureExecutor(IStepExecutor):
             if (resolved_asset is not None and resolved_asset.scd_freq_identity is not None
                     and scd_freq_identity is None):
                 scd_freq_identity = resolved_asset.scd_freq_identity
-            # 开关 1 inherit: UXM identity 换源 — 下发记录必 None (没下发过),
+            # 开关 1 inherit: BaseStation identity 换源 — 下发记录必 None (没下发过),
             # 改从仪器 live 读回实际 ARFCN/BW (知情继承); 读不回 (mock / 老
             # profile 无查询能力 / 查询失败) → None 走"未报告跳过"+ 显式告警,
             # 操作员知道核对没发生 (不是静默盲信)。
-            if uxm_inherit:
-                uxm_identity = (
+            if base_station_inherit:
+                base_station_identity = (
                     await base_station.read_live_frequency_identity()
                     if hasattr(base_station, "read_live_frequency_identity")
                     else None
                 )
-                if uxm_identity is None:
+                if base_station_identity is None:
                     logger.warning(
                         "[%s] 开关1 inherit: 仪器实际频率读不回 (mock/无查询"
-                        "能力/失败) — UXM 频率核对未发生, 继承态未经比对",
+                        "能力/失败) — BaseStation 频率核对未发生, 继承态未经比对",
                         context.test_execution.id,
                     )
                 # P0-2 D6 (S5): inherit 此前只核对频率身份, 不核对小区状态。
@@ -1409,7 +1416,7 @@ class MeasureExecutor(IStepExecutor):
                             context.test_execution.id, _cs_txt,
                         )
             else:
-                uxm_identity = (
+                base_station_identity = (
                     base_station.get_frequency_identity()
                     if hasattr(base_station, "get_frequency_identity") else None
                 )
@@ -1460,7 +1467,7 @@ class MeasureExecutor(IStepExecutor):
                     pcell_requested_config
                 ),
                 {
-                    "UXM": uxm_identity,
+                    "BaseStation": base_station_identity,
                     "F64": f64_identity,
                     # slice 4: SCD 声明 ARFCN 进一致性网 (scd_id 给了才非 None; None 时忽略)
                     "SCD": scd_freq_identity,
@@ -1700,14 +1707,14 @@ class MeasureExecutor(IStepExecutor):
                     )
 
             # --- 第一次 DUT attach：只有本次 RF 初始态全部成功后才允许进入 ---
-            # UXM 的 ARFCN/BW/功率已由上面的 set_cell_config 下发并回读；F64
+            # BaseStation 的 channel/BW/功率已由上面的配置入口下发并回读；F64
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
             # 能借用仪表上一次执行的遗留场景。
             signaling_started = await base_station.start_signaling()
-            if uxm_config_capture_manager is not None:
-                uxm_config_capture_manager.__exit__(None, None, None)
-                uxm_config_capture_manager = None
-            if not uxm_inherit and hasattr(
+            if base_station_config_capture_manager is not None:
+                base_station_config_capture_manager.__exit__(None, None, None)
+                base_station_config_capture_manager = None
+            if not base_station_inherit and hasattr(
                 base_station, "build_p0_5_config_evidence"
             ):
                 try:
@@ -1716,7 +1723,7 @@ class MeasureExecutor(IStepExecutor):
                         requirement_id="base_station.pcell.config_applied",
                         requested=pcell_channel_number,
                         driver=base_station,
-                        exchanges=uxm_config_exchanges,
+                        exchanges=base_station_config_exchanges,
                     )
                     context.db.commit()
                 except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
@@ -1728,7 +1735,7 @@ class MeasureExecutor(IStepExecutor):
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
                     error_message=(
-                        "RF 初始化已完成，但 UXM start_signaling 返回 False"
+                        "RF 初始化已完成，但 BaseStation start_signaling 返回 False"
                         "（CELL ON/UE Attach 未确认）；中止测量，防止读取上一轮"
                         "缓存吞吐造成假绿。"
                         + (
@@ -2189,8 +2196,8 @@ class MeasureExecutor(IStepExecutor):
             # 显式 f64_input_ref_dbm/crest 已在 RF 冷启动初始化中下发；这里不得
             # 再写一次。未给定时才用已建立的真实下行信号跑 AUTOSET 闭环。
             if config.f64_input_ref_dbm is None:
-                # capability 检测 (hasattr) 跟项目 pattern 一致 — 任一方缺接口
-                # (mock driver / 新 vendor 未实现) 自动跳, 不影响 mock dry-run。
+                # CE 原子接口 + BS 显式 opt-in capability；任一方不支持时只记录
+                # Warning/UNKNOWN 并跳过，不影响诊断流程，也不把未开放能力当正式证据。
                 input_level_payload = await self._run_input_level_closed_loop(
                     emulator=emulator,
                     base_station=base_station,
@@ -2773,8 +2780,8 @@ class MeasureExecutor(IStepExecutor):
         except _CaSetupBlocked as exc:
             ca_setup_blocker = str(exc)
         finally:
-            if uxm_config_capture_manager is not None:
-                uxm_config_capture_manager.__exit__(None, None, None)
+            if base_station_config_capture_manager is not None:
+                base_station_config_capture_manager.__exit__(None, None, None)
             cleanup_warnings = await cleanup_chamber_instruments(
                 hal,
                 context.test_execution.id,
@@ -2996,10 +3003,18 @@ class MeasureExecutor(IStepExecutor):
     ) -> Dict[str, Any]:
         """跑 InputLevelController + 落遥测。返回 input_level_calibration payload。
 
-        capability hasattr 检测 (mock CE / 未实现 atomic 的 vendor 自动跳); 跑过
+        CE 按原子接口检测，BS 必须显式 opt-in 输入闭环能力；跑过
         controller 后无论成败都返回结构化 payload, 上层据 success/skipped + strict
         flag 决定 phase verdict。
         """
+        adapter_id = getattr(base_station, "adapter_id", None)
+
+        def _power_fields(value: Optional[float]) -> Dict[str, Any]:
+            fields: Dict[str, Any] = {"base_station_dl_power_dbm": value}
+            if adapter_id == "uxm":
+                fields["uxm_dl_power_dbm"] = value
+            return fields
+
         required_ce_methods = (
             "autoset_inputs",
             "measure_input",
@@ -3011,15 +3026,25 @@ class MeasureExecutor(IStepExecutor):
         )
         ce_caps = {m: hasattr(emulator, m) for m in required_ce_methods}
         ce_supports = all(ce_caps.values())
-        bs_supports = hasattr(base_station, "set_downlink_power")
+        bs_power_method = getattr(base_station, "set_downlink_power", None)
+        bs_supports = (
+            getattr(base_station, "input_level_control_supported", False) is True
+            and callable(bs_power_method)
+        )
 
         if not ce_supports or not bs_supports:
             reason_parts: List[str] = []
             missing_ce = [m for m, ok in ce_caps.items() if not ok]
             if missing_ce:
                 reason_parts.append(f"CE 缺接口: {missing_ce}")
-            if not bs_supports:
+            if adapter_id == "cmw500" and not bs_supports:
+                reason_parts.append(
+                    "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
+                )
+            elif not callable(bs_power_method):
                 reason_parts.append("BS 缺 set_downlink_power")
+            elif not bs_supports:
+                reason_parts.append("BS 未显式开放 input_level_control capability")
             skip_reason = (
                 "; ".join(reason_parts)
                 + " — 至少一方缺 capability (e.g. mock driver / 未实现 atomic 的 vendor), "
@@ -3029,7 +3054,11 @@ class MeasureExecutor(IStepExecutor):
                 "[%s] Phase 2b: input-level closed loop SKIPPED — %s",
                 execution_id, skip_reason,
             )
-            return {"skipped": True, "reason": skip_reason}
+            return {
+                "skipped": True,
+                "formal_eligible": False,
+                "reason": skip_reason,
+            }
 
         # active_inputs 推导 (Codex on PR #98): **跟 BS 实际驱动的 layer 数 1:1**,
         # 不是 CE 的 _tx_antennas。execute() 早期已经 set_cell_config(mimo_layers=
@@ -3072,7 +3101,7 @@ class MeasureExecutor(IStepExecutor):
                 "ce_input_ports": ce_inputs,
                 "config_mimo_layers": n_layers,
                 "iterations": 0,
-                "uxm_dl_power_dbm": None,
+                **_power_fields(None),
                 "clipping_per_mille": None,
                 "system_warnings": [],
                 "operating_point": [],
@@ -3105,7 +3134,7 @@ class MeasureExecutor(IStepExecutor):
                     "ce_input_ports": len(_real_in),
                     "config_mimo_layers": n_layers,
                     "iterations": 0,
-                    "uxm_dl_power_dbm": None,
+                    **_power_fields(None),
                     "clipping_per_mille": None,
                     "system_warnings": [],
                     "operating_point": [],
@@ -3134,7 +3163,7 @@ class MeasureExecutor(IStepExecutor):
                 "ce_input_ports": None,
                 "config_mimo_layers": n_layers,
                 "iterations": 0,
-                "uxm_dl_power_dbm": None,
+                **_power_fields(None),
                 "clipping_per_mille": None,
                 "system_warnings": [],
                 "operating_point": [],
@@ -3156,7 +3185,7 @@ class MeasureExecutor(IStepExecutor):
         _ctrl_kwargs: Dict[str, Any] = {}
         _initial = getattr(config, "input_loop_initial_dl_power_dbm", None)
         if _initial is not None:
-            _ctrl_kwargs["initial_uxm_dl_power_dbm"] = _initial
+            _ctrl_kwargs["initial_base_station_dl_power_dbm"] = _initial
         controller = InputLevelController(
             ce_driver=emulator,
             bs_driver=base_station,
@@ -3171,7 +3200,7 @@ class MeasureExecutor(IStepExecutor):
 
         payload: Dict[str, Any] = {
             "success": il_result.success,
-            "uxm_dl_power_dbm": il_result.uxm_dl_power_dbm,
+            **_power_fields(il_result.base_station_dl_power_dbm),
             "clipping_per_mille": il_result.clipping_per_mille,
             "iterations": il_result.iterations,
             "system_warnings": il_result.system_warnings,
@@ -3193,10 +3222,10 @@ class MeasureExecutor(IStepExecutor):
         if il_result.success:
             logger.info(
                 "[%s] Phase 2b: input-level closed loop CONVERGED "
-                "(iter=%d, UXM=%.1f dBm, clipping=%s‰)",
+                "(iter=%d, BaseStation=%.1f dBm, clipping=%s‰)",
                 execution_id,
                 il_result.iterations,
-                il_result.uxm_dl_power_dbm,
+                il_result.base_station_dl_power_dbm,
                 il_result.clipping_per_mille,
             )
         elif config.precheck_strict_input_level:

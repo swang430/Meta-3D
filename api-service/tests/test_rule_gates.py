@@ -421,16 +421,25 @@ def test_g3_gui_labsmoke_covers_all_flags():
     会被"删了赋值、类型声明还在"绕过, 而那正是 #112 的原始形态 (GUI 没接线)。
     `body.` 前缀把检查钉在生效端; 类型声明那一侧删漏由 `npm run build` (tsc) 兜底。
     """
-    api_ts = _REPO_ROOT / "gui" / "src" / "components" / "Commissioning" / "api.ts"
-    assert api_ts.is_file(), f"GUI labSmoke 文件不在预期路径: {api_ts}"
-    text = _strip_ts_comments(api_ts.read_text(encoding="utf-8"))
+    commissioning_dir = (
+        _REPO_ROOT / "gui" / "src" / "components" / "Commissioning"
+    )
+    api_ts = commissioning_dir / "api.ts"
+    body_ts = commissioning_dir / "sessionBody.ts"
+    assert api_ts.is_file(), f"GUI commissioning API 文件不在预期路径: {api_ts}"
+    assert body_ts.is_file(), f"GUI session 请求生产者不在预期路径: {body_ts}"
+    api_text = _strip_ts_comments(api_ts.read_text(encoding="utf-8"))
+    assert re.search(r"buildCreateSessionBody\s*\(\s*params\s*\)", api_text), (
+        "createSession 未消费唯一 buildCreateSessionBody 请求生产者"
+    )
+    text = _strip_ts_comments(body_ts.read_text(encoding="utf-8"))
 
     expected = _authority_strict_flags() - _STRICT_FLAG_EXCEPTIONS
     # ⚠ 两轮变异/审查逐步收紧到"赋值形态":
     #   ① 裸 token `in` 判 → 被子串 (calX) 假绿 (首轮变异抓出);
     #   ② `\bbody\.<flag>\b` → 被"删赋值、别处留读取/插值"假绿 (#232 R2 P2);
     #   ③ 现钉 `body.<flag> = false` 赋值本身 — labSmoke 分支的真实写法
-    #     (api.ts:82-89)。若将来合法改写成别的赋值形态, 门会红一次, 改这条
+    #     (sessionBody.ts 的 labSmoke 分支)。若将来合法改写成别的赋值形态, 门会红一次, 改这条
     #     正则时请保持"钉赋值不钉出现"的原则。
     missing = {
         f
@@ -438,7 +447,7 @@ def test_g3_gui_labsmoke_covers_all_flags():
         if not re.search(rf"\bbody\.{re.escape(f)}\s*=\s*false\b", text)
     }
     assert not missing, (
-        f"GUI labSmoke (Commissioning/api.ts) 缺 `body.<flag> = false` 赋值: {missing} — "
+        f"GUI labSmoke (Commissioning/sessionBody.ts) 缺 `body.<flag> = false` 赋值: {missing} — "
         f"真硬件 bring-up 在 GUI 上将无法跳过该门 (#112/#133 母题)"
     )
 

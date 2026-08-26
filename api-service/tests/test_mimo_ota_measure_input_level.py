@@ -108,6 +108,9 @@ class _FakeRealCE:
 class _FakeRealBS:
     """Real-like BS: just set_downlink_power. Tracks set values."""
 
+    adapter_id = "uxm"
+    input_level_control_supported = True
+
     def __init__(self):
         self.set_calls: List[float] = []
 

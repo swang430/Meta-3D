@@ -167,7 +167,7 @@ class TestUxmPowerAdjustment:
         # UXM=-3 → F64=-13 > -15 → 降。UXM=-6 → F64=-16 < -15, ≥ -23 → 收敛, 3 轮。
         bs = _FakeBS()
         ce = _FakeCE(measure=_coupled_measure(bs))
-        ctrl = InputLevelController(ce, bs, initial_uxm_dl_power_dbm=0.0)
+        ctrl = InputLevelController(ce, bs, initial_base_station_dl_power_dbm=0.0)
         result = await ctrl.establish()
         assert result.success is True
         assert result.iterations == 3
@@ -180,7 +180,7 @@ class TestUxmPowerAdjustment:
         bs = _FakeBS()
         ce = _FakeCE(measure=_coupled_measure(bs))
         ctrl = InputLevelController(
-            ce, bs, initial_uxm_dl_power_dbm=-30.0, max_iterations=10
+            ce, bs, initial_base_station_dl_power_dbm=-30.0, max_iterations=10
         )
         result = await ctrl.establish()
         assert result.success is True

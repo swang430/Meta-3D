@@ -274,6 +274,9 @@ class BaseStationDriver(InstrumentDriver):
     # the fail-closed default until a vendor-documented readback is available.
     SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
     adapter_id: ClassVar[Literal["uxm", "cmw500"]]
+    # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
+    # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
+    input_level_control_supported: ClassVar[bool] = False
 
     # ===================================================================
     # 小区配置
