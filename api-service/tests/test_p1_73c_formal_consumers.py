@@ -301,6 +301,82 @@ def test_report_recomputes_base_station_metrics_from_final_windows():
     ) is True
 
 
+def test_report_even_position_statistics_use_the_arithmetic_median():
+    evidence = valid_cmw_evidence()
+    second_position = {"azimuth_deg": 90.0, "elevation_deg": 0.0}
+    evidence["requested_positions"].append(second_position)
+    second_window = deepcopy(evidence["measurement_windows"][0])
+    second_window.update(
+        {
+            "window_id": "window-2",
+            "lease_id": "lease-2",
+            "session_token": "session-2",
+            "position": second_position,
+            "started_at": "2026-08-26T08:00:03Z",
+            "completed_at": "2026-08-26T08:00:04Z",
+            "lifecycle_exchange_ids": ["life-3", "life-4"],
+        }
+    )
+    second_window["metrics"]["dl_throughput_mbps"].update(
+        {
+            "session_token": "session-2",
+            "value": 48.5,
+            "exchange_ids": ["metric-throughput-2"],
+        }
+    )
+    second_window["metrics"]["dl_bler_percent"].update(
+        {
+            "session_token": "session-2",
+            "value": 3.0,
+            "exchange_ids": ["metric-bler-2"],
+        }
+    )
+    evidence["measurement_windows"].append(second_window)
+    second_release = deepcopy(evidence["control_releases"][0])
+    second_release.update({"lease_id": "lease-2", "session_token": "session-2"})
+    evidence["control_releases"].append(second_release)
+    evidence["exchange_ids"].extend(
+        ["life-3", "life-4", "metric-throughput-2", "metric-bler-2"]
+    )
+    evidence["measurement_windows"][0]["metrics"]["dl_bler_percent"][
+        "value"
+    ] = 1.0
+    execution = SimpleNamespace(
+        config={"base_station_execution_evidence": evidence},
+        measurements={
+            "phases": {
+                "precheck": {},
+                "reference": {},
+                "measure": {
+                    "azimuth_results": [
+                        {"azimuth_deg": 0.0},
+                        {"azimuth_deg": 90.0},
+                    ],
+                    "path_loss_verified": True,
+                    "path_loss_calibration_use_mock": False,
+                    "path_loss_application": {},
+                },
+                "analysis": {"verdict": "UNKNOWN"},
+            }
+        },
+        validation_pass=None,
+        status="completed",
+        duration_sec=1.0,
+        started_at=datetime(2026, 1, 1),
+        completed_at=datetime(2026, 1, 1),
+    )
+
+    with patch(
+        "app.services.mimo_ota.executors.report."
+        "path_loss_application_is_formally_verified",
+        return_value=True,
+    ):
+        content = _build_mimo_ota_content_data(execution, datetime(2026, 1, 1))
+
+    assert content["statistics"]["Throughput_Mbps"]["median"] == 72.5
+    assert content["statistics"]["BLER_%"]["median"] == 2.0
+
+
 def test_report_does_not_aggregate_a_partial_base_station_metric_scope():
     evidence = valid_cmw_evidence()
     second_position = {"azimuth_deg": 90.0, "elevation_deg": 0.0}

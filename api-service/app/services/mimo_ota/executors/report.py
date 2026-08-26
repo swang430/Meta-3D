@@ -15,6 +15,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 from app.models.report import ReportFormat, ReportType
@@ -544,7 +545,7 @@ def _build_mimo_ota_content_data(
                 statistics[f"{kpi_label}_{unit}".strip("_")] = {
                     "metric_name": f"{kpi_label} ({unit})" if unit else kpi_label,
                     "mean": round(vavg, 3),
-                    "median": round(sorted(values)[len(values) // 2], 3),
+                    "median": round(median(values), 3),
                     "std": round(vstd, 3),
                     "min": round(vmin, 3),
                     "max": round(vmax, 3),
@@ -560,9 +561,7 @@ def _build_mimo_ota_content_data(
             statistics["BLER_%"] = {
                 "metric_name": "BLER (%)",
                 "mean": round(sum(trusted_bler_values) / len(trusted_bler_values), 3),
-                "median": round(
-                    sorted(trusted_bler_values)[len(trusted_bler_values) // 2], 3
-                ),
+                "median": round(median(trusted_bler_values), 3),
                 "std": round(_std(trusted_bler_values), 3),
                 "min": round(min(trusted_bler_values), 3),
                 "max": round(max(trusted_bler_values), 3),

@@ -188,3 +188,35 @@ async def test_cmw_release_keeps_transport_open_when_safe_idle_is_unconfirmed():
     assert driver._session_token == "session-1"
     assert session.closed is False
     assert any("SAFE_IDLE" in warning for warning in released.warnings)
+
+
+@pytest.mark.asyncio
+async def test_idle_park_uses_the_real_cmw_safe_idle_release_path():
+    class _Session:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    class _SafeCmw(RealCmw500Driver):
+        async def ensure_safe_idle(self) -> bool:
+            return True
+
+    driver = _SafeCmw("cmw", {"ip_address": "192.0.2.10"})
+    session = _Session()
+    driver._visa_session = session
+    driver._session_token = "session-idle"
+    lease = InstrumentTestLease(lambda: _hal(driver))
+
+    assert await lease.park_idle_instruments() is True
+    assert session.closed is True
+    assert driver._visa_session is None
+    assert driver._session_token is None
+
+
+@pytest.mark.asyncio
+async def test_idle_park_accepts_a_real_cmw_with_no_transport_to_release():
+    driver = RealCmw500Driver("cmw", {"ip_address": "192.0.2.10"})
+    lease = InstrumentTestLease(lambda: _hal(driver))
+
+    assert await lease.park_idle_instruments() is True

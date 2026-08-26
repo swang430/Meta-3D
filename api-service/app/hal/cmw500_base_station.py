@@ -833,6 +833,14 @@ class RealCmw500Driver(BaseStationDriver):
             warnings=tuple(warnings),
         )
 
+    async def release_to_local_control(self) -> bool:
+        """Safely release an idle transport without claiming front-panel Local."""
+
+        if self._visa_session is None and self._session_token is None:
+            return True
+        released = await self.release_remote_session(self._session_token or "")
+        return released.transport_session_released_confirmed is True
+
     async def release_remote_session(
         self,
         expected_session_token: str,
