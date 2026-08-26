@@ -280,6 +280,9 @@ class BaseStationDriver(InstrumentDriver):
     # RRC reconfiguration is opt-in.  The abstract method exists to define
     # the contract, so hasattr() cannot distinguish an implemented adapter.
     rrc_reconfiguration_supported: ClassVar[bool] = False
+    # Formal MAC-throughput configuration is opt-in. A driver without this
+    # capability must not sample a stale scheduler/FRC configuration.
+    mac_throughput_configuration_supported: ClassVar[bool] = False
     max_bandwidth_mhz: ClassVar[float | None] = None
     max_mimo_layers: ClassVar[int | None] = None
 

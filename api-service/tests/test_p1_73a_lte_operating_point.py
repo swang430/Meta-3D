@@ -277,6 +277,31 @@ async def test_cmw500_translates_vendor_neutral_lte_band(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("bandwidth_mhz", "cmw_token"),
+    [
+        (1.4, "B014"),
+        (3.0, "B030"),
+        (5.0, "B050"),
+        (10.0, "B100"),
+        (15.0, "B150"),
+        (20.0, "B200"),
+    ],
+)
+async def test_cmw500_translates_each_supported_lte_bandwidth_exactly(
+    monkeypatch, bandwidth_mhz, cmw_token,
+):
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+    writes: list[str] = []
+    monkeypatch.setattr(cmw, "_write", writes.append)
+    monkeypatch.setattr(cmw, "_query", lambda _command: "1")
+
+    assert await cmw.set_cell_config({"bandwidth_mhz": bandwidth_mhz}) is True
+    assert any(command.endswith(f" {cmw_token}") for command in writes)
+    assert not any("BANDwidth:UL" in command for command in writes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "overrides",
     [
         {"bandwidth_mhz": 100.0},
@@ -296,6 +321,59 @@ async def test_cmw500_rejects_requests_beyond_declared_limits_before_io(
 
     async def forbidden_write(_payload):
         raise AssertionError("adapter limits must be checked before driver I/O")
+
+    monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
+
+    assert await cmw.apply_requested_config(requested) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"bandwidth_mhz": 10.5},
+        {"mimo_layers": 3},
+    ],
+)
+async def test_cmw500_rejects_lossy_parameter_translation_before_io(
+    monkeypatch, overrides,
+):
+    requested = _build_pcell_requested_config(
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [LTE_B3_PCELL]}
+        )
+    )
+    requested = replace(requested, **overrides)
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    async def forbidden_write(_payload):
+        raise AssertionError("lossy adapter translation must be rejected before I/O")
+
+    monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
+
+    assert await cmw.apply_requested_config(requested) is False
+
+
+@pytest.mark.asyncio
+async def test_cmw500_rejects_option_gated_band_when_snapshot_is_unknown(
+    monkeypatch,
+):
+    requested = _build_pcell_requested_config(
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [LTE_B3_PCELL]}
+        )
+    )
+    requested = replace(
+        requested,
+        band="B42",
+        duplex="tdd",
+        lte_dl_earfcn=42590,
+        frequency_mhz=3500.0,
+    )
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    async def forbidden_write(_payload):
+        raise AssertionError("unknown option snapshot must block before driver I/O")
 
     monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
 

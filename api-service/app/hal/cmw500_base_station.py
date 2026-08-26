@@ -37,10 +37,12 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     BaseStationDriver,
+    BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
+from app.hal.lte_earfcn import validate_lte_band_options
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,6 @@ class CmwScpiCommands:
     CELL_BAND = "CONFigure:LTE:SIGN{i}:CELL:BAND"              # e.g., "OB78"
     CELL_DL_FREQ = "CONFigure:LTE:SIGN{i}:RFSettings:CHANnel:DL"  # EARFCN
     CELL_DL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:DL"     # 带宽 (MHz)
-    CELL_UL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:UL"
     CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:CELL:DMOD"             # TDD/FDD
     CELL_PCI = "CONFigure:LTE:SIGN{i}:CELL:PCI"                 # 物理小区 ID
 
@@ -177,6 +178,18 @@ class RealCmw500Driver(BaseStationDriver):
     adapter_id = "cmw500"
     max_bandwidth_mhz = 20.0
     max_mimo_layers = 4
+    # User Manual §2.6.12.1, p.680: <Bandwidth> is exactly
+    # B014/B030/B050/B100/B150/B200 for 1.4/3/5/10/15/20 MHz.
+    bandwidth_token_by_mhz = {
+        1.4: "B014",
+        3.0: "B030",
+        5.0: "B050",
+        10.0: "B100",
+        15.0: "B150",
+        20.0: "B200",
+    }
+    supported_bandwidths_mhz = frozenset(bandwidth_token_by_mhz)
+    supported_mimo_layers = frozenset({1, 2, 4})
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
@@ -209,6 +222,31 @@ class RealCmw500Driver(BaseStationDriver):
     def _fmt(self, template: str) -> str:
         """将命令模板中的 {i} 替换为通道编号"""
         return template.format(i=self._i)
+
+    async def apply_requested_config(
+        self, requested: BaseStationRequestedConfig,
+    ) -> bool:
+        """Reject lossy CMW translations and unverified option-gated bands."""
+
+        if requested.radio_technology == "lte":
+            if requested.bandwidth_mhz not in self.supported_bandwidths_mhz:
+                logger.error(
+                    "[CMW500] Rejecting unsupported exact LTE bandwidth %.3f MHz",
+                    requested.bandwidth_mhz,
+                )
+                return False
+            if requested.mimo_layers not in self.supported_mimo_layers:
+                logger.error(
+                    "[CMW500] Rejecting unsupported exact MIMO layer count %d",
+                    requested.mimo_layers,
+                )
+                return False
+            try:
+                validate_lte_band_options(requested.band, self._installed_options)
+            except ValueError as exc:
+                logger.error("[CMW500] Rejecting LTE band options: %s", exc)
+                return False
+        return await super().apply_requested_config(requested)
 
     # ===================================================================
     # 1. 连接生命周期
@@ -301,7 +339,7 @@ class RealCmw500Driver(BaseStationDriver):
 
         SCPI 序列:
           CONFigure:LTE:SIGN1:CELL:BAND OB3
-          CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B20
+          CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
           CONFigure:LTE:SIGN1:CELL:DMOD FDD
         """
@@ -319,16 +357,14 @@ class RealCmw500Driver(BaseStationDriver):
                     self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}"
                 )
 
-            # 带宽 (CMW 格式: B5, B10, B15, B20)
+            # User Manual §2.6.12.1, p.680: PCC DL bandwidth also applies
+            # to UL; there is no separate PCC CELL:BANDwidth:UL write.
             if "bandwidth_mhz" in config:
-                bw = int(config["bandwidth_mhz"])
-                self._bandwidth_mhz = float(bw)
-                bw_str = f"B{bw}"
+                bw = float(config["bandwidth_mhz"])
+                bw_str = self.bandwidth_token_by_mhz[bw]
+                self._bandwidth_mhz = bw
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_DL_BW) + f" {bw_str}"
-                )
-                self._write(
-                    self._fmt(CmwScpiCommands.CELL_UL_BW) + f" {bw_str}"
                 )
 
             # 双工模式

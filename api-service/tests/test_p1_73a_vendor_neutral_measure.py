@@ -5,11 +5,14 @@ from __future__ import annotations
 import inspect
 
 import app.services.mimo_ota.executors.measure as measure_module
+from app.hal.base_station import MockBaseStation
 from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 from app.services.input_level_controller import InputLevelController, InputLevelResult
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
     _build_pcell_requested_config,
+    _formal_mac_configuration_blocker,
 )
 
 
@@ -82,6 +85,23 @@ def test_measure_source_has_no_vendor_type_branch_or_cmw_scpi():
     assert "uxm_inherit" not in source
     assert "uxm_config_capture_manager" not in source
     assert '"UXM": uxm_identity' not in source
+
+
+def test_real_cmw_is_blocked_before_sampling_without_mac_configuration():
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    blocker = _formal_mac_configuration_blocker(cmw)
+
+    assert blocker is not None
+    assert "MAC" in blocker
+
+
+def test_uxm_and_mock_keep_their_existing_mac_paths():
+    uxm = RealUxmDriver("uxm", {"ip_address": "192.0.2.1"})
+    mock = MockBaseStation("mock", {})
+
+    assert _formal_mac_configuration_blocker(uxm) is None
+    assert _formal_mac_configuration_blocker(mock) is None
 
 
 async def test_cmw_does_not_call_inherited_rrc_stub_after_attach(monkeypatch):

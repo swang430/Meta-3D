@@ -323,6 +323,7 @@ class RealUxmDriver(BaseStationDriver):
     input_level_control_supported = True
 
     rrc_reconfiguration_supported = True
+    mac_throughput_configuration_supported = True
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)

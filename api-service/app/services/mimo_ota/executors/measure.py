@@ -518,6 +518,23 @@ def _resolve_base_station_route_snapshot(
     return effective_preset, snapshot if isinstance(snapshot, dict) else None
 
 
+def _formal_mac_configuration_blocker(base_station) -> Optional[str]:
+    """Return a blocker when real hardware cannot configure this MAC test."""
+
+    from app.services.instrument_hal_service import is_mock_driver
+
+    if is_mock_driver(base_station):
+        return None
+    if not getattr(
+        base_station, "mac_throughput_configuration_supported", False,
+    ):
+        return (
+            "当前基站适配器尚未开放正式 MAC 吞吐配置能力；"
+            "为避免沿用旧调度器/FRC 状态，本次测量在采样前中止。"
+        )
+    return None
+
+
 
 def resolve_model_load_requested(emulator, gen_ok: bool, intent):
     """f64.model_loaded 归档用的 requested 真值（P2-29，内审 F1）。
@@ -1062,7 +1079,13 @@ class MeasureExecutor(IStepExecutor):
             # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
             # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
             # 调用方 fail-loud）；memory: 路径 B 绝不用默认 fallback 静默兜底。
-            if hasattr(base_station, "configure_mac_throughput_test"):
+            _mac_capability_blocker = _formal_mac_configuration_blocker(base_station)
+            if _mac_capability_blocker:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=_mac_capability_blocker,
+                )
+            if base_station.mac_throughput_configuration_supported:
                 mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
                     mcs=config.mcs,
