@@ -151,7 +151,7 @@ git commit -m "refactor: establish vendor-neutral base station contract"
 - Modify: `api-service/tests/test_commissioning_strict_gate_overrides.py`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - Modify: `gui/src/components/Commissioning/api.ts`
-- Create: `gui/src/components/TestCaseConfig/baseStationConfigTruth.test.ts`
+- Create: `gui/test/baseStationConfigTruth.test.ts`
 
 **Step 1: 写 RED**
 
@@ -172,7 +172,7 @@ cd api-service
   tests/test_p1_73a_config_compatibility.py \
   tests/test_commissioning_strict_gate_overrides.py
 cd ../gui
-node --test src/components/TestCaseConfig/baseStationConfigTruth.test.ts
+node --test test/baseStationConfigTruth.test.ts
 ```
 
 **Step 3: 最小 GREEN**
@@ -192,7 +192,7 @@ cd api-service
   tests/test_p1_73a_config_compatibility.py \
   tests/test_commissioning_strict_gate_overrides.py
 cd ../gui
-node --test src/components/TestCaseConfig/baseStationConfigTruth.test.ts
+node --test test/baseStationConfigTruth.test.ts
 npm run build
 ```
 
@@ -205,7 +205,7 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/tests/test_commissioning_strict_gate_overrides.py \
   gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
   gui/src/components/Commissioning/api.ts \
-  gui/src/components/TestCaseConfig/baseStationConfigTruth.test.ts
+  gui/test/baseStationConfigTruth.test.ts
 git commit -m "refactor: canonicalize base station configuration fields"
 ```
 
@@ -1633,7 +1633,7 @@ cd api-service
 ./.venv/bin/alembic heads
 cd ../gui
 node --test \
-  src/components/TestCaseConfig/baseStationConfigTruth.test.ts \
+  test/baseStationConfigTruth.test.ts \
   src/components/TestCaseConfig/cmw500ReadinessTruth.test.ts \
   src/types/baseStationApiTruth.test.ts \
   src/types/cmwAdapterProfileTruth.test.ts \
