@@ -26,6 +26,11 @@ from app.hal.scpi_evidence import (
     ScpiExchangeRef,
     exchange_matches_catalog_role,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    BaseStationExecutionEvidence,
+    parse_base_station_execution_evidence,
+)
 
 
 _SENSITIVE_KEYS = {
@@ -140,6 +145,35 @@ def _save(execution, evidence: ExecutionScpiEvidence) -> None:
     cfg["scpi_evidence"] = evidence.model_dump(mode="json")
     execution.config = cfg
     flag_modified(execution, "config")
+
+
+def save_base_station_execution_evidence(
+    execution,
+    evidence: BaseStationExecutionEvidence | dict[str, Any],
+) -> dict[str, Any]:
+    """Persist only a canonical, execution-bound server evidence snapshot."""
+
+    parsed = BaseStationExecutionEvidence.model_validate(evidence)
+    if parsed.execution_id != str(execution.id):
+        raise ValueError("base station evidence execution_id mismatch")
+    normalized = parsed.model_dump(mode="json")
+    cfg = dict(execution.config or {})
+    cfg[BASE_STATION_EXECUTION_EVIDENCE_FIELD] = normalized
+    execution.config = cfg
+    flag_modified(execution, "config")
+    return normalized
+
+
+def load_base_station_execution_evidence(execution) -> dict[str, Any] | None:
+    """Read brownfield rows strictly; malformed or cross-execution data is unknown."""
+
+    cfg = execution.config if isinstance(execution.config, dict) else {}
+    parsed = parse_base_station_execution_evidence(
+        cfg.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+    )
+    if parsed is None or parsed.get("execution_id") != str(execution.id):
+        return None
+    return parsed
 
 
 def _load_provenance(execution) -> dict[str, dict[str, Any]]:
