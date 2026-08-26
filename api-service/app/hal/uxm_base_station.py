@@ -34,17 +34,18 @@ from app.hal.base import (
     redact_instrument_command_text,
 )
 from app.hal.base_station import (
+    AppliedCellConfig,
     BaseStationDriver,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
-    build_uxm_downlink_power_command,
 )
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
+    build_uxm_downlink_power_command,
     detect_profile,
 )
 
@@ -296,28 +297,6 @@ def _infer_band_from_freq(
     return "N78", "TDD"  # 默认 fallback
 
 
-@dataclass(frozen=True)
-class AppliedCellConfig:
-    """P2-11 Phase 6: UXM/UE **实际能用**的 cell config, 供 measure 跟 TestCase 请求值做
-    "下发后"一致性校验 (频率一致性 Phase 1 的吞吐链延伸)。
-
-    ⚠️ Codex on PR #114: **不能读 `CONF:...:MIMO:LAYers?`** —— 那是 set_cell_config 写入
-    的同一个**配置旋钮**, 回读只会原样返回配置的 4, 抓不到 UE 把 4 层静默 clamp 到 2 的
-    降级。改读 **UE 协商能力** (`query_ue_capability().max_dl_layers`): TestCase 请求的 DL
-    layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
-
-    None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
-
-    P2-11 Phase 6 延伸: 加 ue_max_modulation_dl —— 请求调制阶数超 UE 能力同样会被静默
-    clamp (TestCase 请求 256QAM 但 UE 只协商到 64QAM → 实际跑 64QAM 却当 256QAM 测),
-    跟 layers 同机制 (读 UE 协商能力, 非配置旋钮回读)。调制能力上限是 UE 固有能力, 不受
-    AMC 影响 (AMC 只浮动生效 MCS index, 不改 UE 的最高可协商调制)。
-    """
-
-    ue_max_dl_layers: Optional[int] = None
-    ue_max_modulation_dl: Optional[str] = None
-
-
 class RealUxmDriver(BaseStationDriver):
     """
     Keysight UXM 5G Test Platform 真实 SCPI 驱动 (HAL Layer 3)
@@ -335,6 +314,8 @@ class RealUxmDriver(BaseStationDriver):
       5. get_throughput_metrics() → 轮询 BLER/吞吐量/CQI
       6. stop_signaling() → Cell OFF → 断开
     """
+
+    adapter_id = "uxm"
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)

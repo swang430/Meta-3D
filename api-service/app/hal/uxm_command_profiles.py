@@ -26,7 +26,22 @@ in a given app are set to ``None`` so caller methods can skip / log
 
 from __future__ import annotations
 
-from typing import Optional, Type
+from typing import Any, Dict, Optional, Type
+
+
+def build_uxm_downlink_power_command(
+    config: Dict[str, Any],
+    power_dbm: float,
+    *,
+    cell: str = "CELL0",
+    command_template: Optional[str] = None,
+) -> str:
+    """用真实 UXM Test App profile 构造 mock/real 共用的功率命令。"""
+    if command_template is None:
+        test_app = str(config.get("detected_test_app", "")).upper()
+        profile = UxmLteNrIratProfile if "IRAT" in test_app else Uxm5GNRTestAppProfile
+        command_template = profile.DL_POWER
+    return command_template.format(cell=cell) + f" {power_dbm:.1f}"
 
 
 class UxmTestApp:

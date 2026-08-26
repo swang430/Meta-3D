@@ -174,6 +174,8 @@ class RealCmw500Driver(BaseStationDriver):
       7. stop_signaling() → PS Release → Cell OFF
     """
 
+    adapter_id = "cmw500"
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数

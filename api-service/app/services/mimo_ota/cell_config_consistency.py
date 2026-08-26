@@ -21,7 +21,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from app.hal.uxm_base_station import AppliedCellConfig
+from app.hal.base_station import AppliedCellConfig
 
 
 # 调制方式 → 阶数 (bits/symbol)。比较"请求调制阶数 vs UE 能力上限"用 —— 阶数越高 =

@@ -10,8 +10,9 @@ Supports both 5G NR (Keysight UXM) and LTE (R&S CMW500) base station emulators.
 import asyncio
 import logging
 import random
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, ClassVar, Literal
 from datetime import datetime
 
 from app.hal.base import (
@@ -24,24 +25,65 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
-def build_uxm_downlink_power_command(
-    config: Dict[str, Any],
-    power_dbm: float,
-    *,
-    cell: str = "CELL0",
-    command_template: Optional[str] = None,
-) -> str:
-    """用真实 UXM Test App profile 构造 mock/real 共用的功率命令。"""
-    from app.hal.uxm_command_profiles import (
-        Uxm5GNRTestAppProfile,
-        UxmLteNrIratProfile,
-    )
+@dataclass(frozen=True)
+class BaseStationIdentity:
+    """由已注册驱动提供的基站型号、固件与选件身份快照。"""
 
-    if command_template is None:
-        test_app = str(config.get("detected_test_app", "")).upper()
-        profile = UxmLteNrIratProfile if "IRAT" in test_app else Uxm5GNRTestAppProfile
-        command_template = profile.DL_POWER
-    return command_template.format(cell=cell) + f" {power_dbm:.1f}"
+    adapter_id: Literal["uxm", "cmw500"]
+    model: str
+    firmware_version: str | None
+    options: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AppliedCellConfig:
+    """UE 协商后实际可用的通用小区能力。"""
+
+    ue_max_dl_layers: int | None = None
+    ue_max_modulation_dl: str | None = None
+
+
+@dataclass(frozen=True)
+class BaseStationConfigResult:
+    """基站配置请求与权威回读形成的应用结果。"""
+
+    requested: dict[str, Any]
+    applied: dict[str, Any] | None
+    confirmed: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class BaseStationCleanupResult:
+    """MEASURE 阶段拥有的信令停止与 SAFE_IDLE 结果。"""
+
+    stop_signaling_confirmed: bool
+    safe_idle_confirmed: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BaseStationRemoteSessionResult:
+    """驱动成功建立真实 transport session 后返回的不可伪造身份。"""
+
+    adapter_id: Literal["uxm", "cmw500"]
+    session_token: str
+    acquired_confirmed: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BaseStationControlReleaseResult:
+    """与单次 lease/attempt 绑定的基站控制会话释放结果。"""
+
+    measurement_attempt_id: str | None
+    lease_id: str
+    adapter_id: Literal["uxm", "cmw500"]
+    session_token: str
+    remote_session_acquired_confirmed: bool
+    transport_session_released_confirmed: bool
+    front_panel_local_confirmed: bool | None
+    warnings: tuple[str, ...]
 
 
 # ===========================================================================
@@ -175,6 +217,7 @@ class BaseStationDriver(InstrumentDriver):
     # independently confirm the requested active SCell set. Real drivers keep
     # the fail-closed default until a vendor-documented readback is available.
     SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
+    adapter_id: ClassVar[Literal["uxm", "cmw500"]]
 
     # ===================================================================
     # 小区配置
@@ -569,6 +612,10 @@ class MockBaseStation(BaseStationDriver):
     async def set_downlink_power(self, power_dbm: float) -> bool:
         if power_dbm < -120 or power_dbm > 0:
             return False
+        # 当前 Mock 仍模拟既有 UXM 方言；builder 归 UXM profile 所有，通用 HAL
+        # 只在诊断写方调用同一真实命令拼装函数，不复制命令字面量。
+        from app.hal.uxm_command_profiles import build_uxm_downlink_power_command
+
         self._simulate_scpi_write(
             build_uxm_downlink_power_command(self.config, power_dbm)
         )
