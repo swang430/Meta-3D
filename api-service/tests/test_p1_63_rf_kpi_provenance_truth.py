@@ -521,6 +521,8 @@ def test_pre_p1_63_report_cannot_bypass_new_trust_envelope():
         "quiet_zone_evidence_schema_version": 1,
         "quiet_zone_evidence": build_quiet_zone_evidence(None),
         "formal_quiet_zone_verified": False,
+        "base_station_metric_trust_schema_version": 1,
+        "base_station_metric_projection": [],
     }
 
     assert report_has_provenance_trust(old_envelope) is False

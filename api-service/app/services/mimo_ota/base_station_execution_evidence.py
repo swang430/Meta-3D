@@ -22,6 +22,9 @@ from pydantic import (
 
 BASE_STATION_EXECUTION_EVIDENCE_FIELD = "base_station_execution_evidence"
 BASE_STATION_EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
+MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD = (
+    "mimo_ota_theoretical_peak_throughput_mbps"
+)
 _METRIC_UNITS = {
     "dl_throughput_mbps": "Mbps",
     "dl_bler_percent": "%",
@@ -584,3 +587,50 @@ def evaluate_base_station_metric_trust(
         reason="formal_metric_confirmed",
         exchange_ids=tuple(exchange_ids),
     )
+
+
+def base_station_expected_scope_from_evidence(
+    evidence: Any,
+) -> tuple[dict[str, Any] | None, list[dict[str, float]]]:
+    """Read the immutable requested scope from this execution's strict snapshot."""
+
+    parsed = _parsed(evidence)
+    if parsed is None:
+        return None, []
+    return (
+        parsed.requested_config.payload,
+        [position.model_dump(mode="json") for position in parsed.requested_positions],
+    )
+
+
+def project_base_station_metrics_by_position(
+    evidence: Any,
+    *,
+    expected_config: Any,
+    expected_positions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project both native metrics independently for every frozen position."""
+
+    rows: list[dict[str, Any]] = []
+    for expected_position in expected_positions:
+        position = PositionSnapshot.model_validate(expected_position).model_dump(
+            mode="json"
+        )
+        rows.append(
+            {
+                "position": position,
+                "dl_throughput_mbps": evaluate_base_station_metric_trust(
+                    evidence,
+                    "dl_throughput_mbps",
+                    expected_config,
+                    position,
+                ),
+                "dl_bler_percent": evaluate_base_station_metric_trust(
+                    evidence,
+                    "dl_bler_percent",
+                    expected_config,
+                    position,
+                ),
+            }
+        )
+    return rows

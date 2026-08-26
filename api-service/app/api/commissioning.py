@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
@@ -49,6 +50,11 @@ from app.services.execution_scpi_evidence import (
     begin_execution_base_station_measurement,
     persist_execution_base_station_release,
     record_execution_base_station_attempt_failure,
+)
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    base_station_expected_scope_from_evidence,
+    project_base_station_metrics_by_position,
 )
 from app.services.base_station_adapter_profile import (
     build_frozen_base_station_validator,
@@ -627,6 +633,49 @@ def _phase_status_from_payload(
     return "completed"
 
 
+def _commissioning_measure_projection(
+    execution: TestExecution,
+    test_case: TestCase,
+    measure: Dict[str, Any] | None,
+) -> Dict[str, Any] | None:
+    """Expose raw rows only beside a server-owned formal metric projection."""
+
+    if measure is None:
+        return None
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+    frozen = execution_config.get("base_station_adapter_profile_freeze")
+    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
+    evidence_required = evidence is not None or (
+        isinstance(resolution, dict) and resolution.get("adapter") == "cmw500"
+    )
+    if not evidence_required:
+        return measure
+
+    expected_config, expected_positions = base_station_expected_scope_from_evidence(
+        evidence
+    )
+    rows = (
+        project_base_station_metrics_by_position(
+            evidence,
+            expected_config=expected_config,
+            expected_positions=expected_positions,
+        )
+        if expected_config is not None
+        else []
+    )
+    projected = deepcopy(measure)
+    projected["base_station_metric_projection"] = [
+        {
+            "position": row["position"],
+            "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(mode="json"),
+            "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
+        }
+        for row in rows
+    ]
+    return projected
+
+
 def _execution_to_session_response(
     execution: TestExecution, test_case: TestCase
 ) -> SessionResponse:
@@ -693,7 +742,11 @@ def _execution_to_session_response(
         ),
         precheck=phases.get("precheck"),
         reference=phases.get("reference"),
-        mimo_test=phases.get("measure"),
+        mimo_test=_commissioning_measure_projection(
+            execution,
+            test_case,
+            phases.get("measure"),
+        ),
         analysis=phases.get("analysis"),
         report_id=report_payload.get("report_id"),
     )

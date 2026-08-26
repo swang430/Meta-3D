@@ -151,6 +151,8 @@ def _trusted_unknown_report_fields():
         "quiet_zone_evidence_schema_version": 1,
         "quiet_zone_evidence": build_quiet_zone_evidence(None),
         "formal_quiet_zone_verified": False,
+        "base_station_metric_trust_schema_version": 1,
+        "base_station_metric_projection": [],
     }
 
 

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import os
 import logging
 import json
+import math
 
 from sqlalchemy import String, cast
 
@@ -30,12 +31,22 @@ from app.services.mimo_ota.rf_kpi_trust import (
     RF_KPI_TRUST_SCHEMA_VERSION,
     parse_rf_kpi_trust,
     rf_kpi_trust_is_formally_verified,
+    trusted_rf_kpi_values,
 )
 from app.services.mimo_ota.quiet_zone_evidence import (
     QUIET_ZONE_EVIDENCE_SCHEMA_VERSION,
     parse_quiet_zone_evidence,
     quiet_zone_evidence_is_formally_verified,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
+    FormalMetricTrust,
+    PositionSnapshot,
+    base_station_expected_scope_from_evidence,
+    project_base_station_metrics_by_position,
+)
+from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +81,8 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "quiet_zone_evidence_schema_version",
     "quiet_zone_evidence",
     "formal_quiet_zone_verified",
+    "base_station_metric_trust_schema_version",
+    "base_station_metric_projection",
     "vrt_archive_trust_schema_version",
 })
 
@@ -77,6 +90,7 @@ THROUGHPUT_TRUST_SCHEMA_VERSION = 2
 THROUGHPUT_TRUST_FIELD = "throughput_trust_schema_version"
 VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
 VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
+BASE_STATION_METRIC_TRUST_SCHEMA_VERSION = 1
 _UNCONDITIONAL_REPORT_SNAPSHOT = object()
 
 
@@ -112,6 +126,10 @@ def report_has_provenance_trust(content_data: Any) -> bool:
     quiet_zone_marker = content_data.get("quiet_zone_evidence_schema_version")
     raw_quiet_zone_evidence = content_data.get("quiet_zone_evidence")
     formal_quiet_zone_verified = content_data.get("formal_quiet_zone_verified")
+    base_station_marker = content_data.get(
+        "base_station_metric_trust_schema_version"
+    )
+    base_station_projection = content_data.get("base_station_metric_projection")
     application_is_well_formed = (
         isinstance(raw_application, dict)
         and parse_path_loss_application(raw_application) == raw_application
@@ -146,7 +164,38 @@ def report_has_provenance_trust(content_data: Any) -> bool:
             formal_quiet_zone_verified
             is quiet_zone_evidence_is_formally_verified(raw_quiet_zone_evidence)
         )
+        and type(base_station_marker) is int
+        and base_station_marker == BASE_STATION_METRIC_TRUST_SCHEMA_VERSION
+        and _base_station_projection_is_sanitized(base_station_projection)
     )
+
+
+def _base_station_projection_is_sanitized(value: Any) -> bool:
+    """Validate the exact server-written formal/diagnostic projection shape."""
+    if not isinstance(value, list):
+        return False
+    for row in value:
+        if not isinstance(row, dict) or set(row) != {
+            "position",
+            "dl_throughput_mbps",
+            "dl_bler_percent",
+        }:
+            return False
+        try:
+            position = PositionSnapshot.model_validate(row["position"])
+            throughput = FormalMetricTrust.model_validate(
+                row["dl_throughput_mbps"]
+            )
+            bler = FormalMetricTrust.model_validate(row["dl_bler_percent"])
+        except Exception:
+            return False
+        if (
+            position.model_dump(mode="json") != row["position"]
+            or throughput.model_dump(mode="json") != row["dl_throughput_mbps"]
+            or bler.model_dump(mode="json") != row["dl_bler_percent"]
+        ):
+            return False
+    return True
 
 
 def report_has_vrt_archive_trust(content_data: Any) -> bool:
@@ -1195,17 +1244,97 @@ class ReportComparisonService:
         fail-loud：无 analysis 数据的 execution 不可对比（不猜、不补零）。
         """
         measurements = execution.measurements or {}
-        analysis = (measurements.get("phases") or {}).get("analysis") or {}
+        phases = measurements.get("phases") or {}
+        analysis = phases.get("analysis") or {}
+        measure = phases.get("measure") or {}
+        execution_config = execution.config if isinstance(execution.config, dict) else {}
+        evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+        frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
+        frozen_resolution = (
+            frozen_adapter.get("resolution")
+            if isinstance(frozen_adapter, dict)
+            else None
+        )
+        evidence_required = evidence is not None or (
+            isinstance(frozen_resolution, dict)
+            and frozen_resolution.get("adapter") == "cmw500"
+        )
         # 内审 F5：analysis 存在但 4 个对比指标键全缺 → 同样无可比数据，
         # 不产出"formal 却零指标"的空壳对比
-        if not analysis or all(
+        if not evidence_required and (not analysis or all(
             analysis.get(k) is None for k in COMPARISON_METRIC_KEYS
-        ):
+        )):
             raise ValueError(
                 f"execution {execution.id} 无 measurements.phases.analysis "
                 f"对比指标（status={execution.status}）—— 无指标可对比，"
                 f"不生成对比结果"
             )
+        metrics = {k: analysis.get(k) for k in COMPARISON_METRIC_KEYS}
+        if evidence_required:
+            expected_config, expected_positions = (
+                base_station_expected_scope_from_evidence(evidence)
+            )
+            projection = (
+                project_base_station_metrics_by_position(
+                    evidence,
+                    expected_config=expected_config,
+                    expected_positions=expected_positions,
+                )
+                if expected_config is not None and expected_positions
+                else []
+            )
+            throughput_values = [
+                row["dl_throughput_mbps"].formal_value for row in projection
+            ]
+            throughput_trusted = bool(projection) and all(
+                row["dl_throughput_mbps"].status == "trusted"
+                and row["dl_throughput_mbps"].formal_value is not None
+                for row in projection
+            )
+            avg_throughput = (
+                sum(throughput_values) / len(throughput_values)
+                if throughput_trusted
+                else None
+            )
+            peak = execution_config.get(MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD)
+            peak_trusted = (
+                not isinstance(peak, bool)
+                and isinstance(peak, (int, float))
+                and math.isfinite(float(peak))
+                and float(peak) > 0.0
+            )
+            metrics["avg_throughput_mbps"] = avg_throughput
+            metrics["throughput_ratio"] = (
+                avg_throughput / float(peak)
+                if avg_throughput is not None and peak_trusted
+                else None
+            )
+            rsrp_values = trusted_rf_kpi_values(measure, "rsrp_dbm")
+            sinr_values = trusted_rf_kpi_values(measure, "sinr_db")
+            metrics["rsrp_variance_db"] = (
+                max(rsrp_values) - min(rsrp_values) if rsrp_values else None
+            )
+            metrics["avg_sinr_db"] = (
+                sum(sinr_values) / len(sinr_values) if sinr_values else None
+            )
+            metric_trust = {
+                "avg_throughput_mbps": throughput_trusted,
+                "throughput_ratio": throughput_trusted and peak_trusted,
+                "rsrp_variance_db": rsrp_values is not None,
+                "avg_sinr_db": sinr_values is not None,
+            }
+        else:
+            measurement_trusted = analysis.get("measurement_verified") is True
+            metric_trust = {
+                "avg_throughput_mbps": measurement_trusted
+                and analysis.get("throughput_verified") is True,
+                "throughput_ratio": measurement_trusted
+                and analysis.get("throughput_verified") is True,
+                "rsrp_variance_db": measurement_trusted
+                and analysis.get("rf_kpi_verified") is True,
+                "avg_sinr_db": measurement_trusted
+                and analysis.get("rf_kpi_verified") is True,
+            }
         return {
             "execution_id": str(execution.id),
             "test_case_id": (
@@ -1215,12 +1344,13 @@ class ReportComparisonService:
             "started_at": (
                 execution.started_at.isoformat() if execution.started_at else None
             ),
-            "metrics": {k: analysis.get(k) for k in COMPARISON_METRIC_KEYS},
+            "metrics": metrics,
             "provenance": {
                 "verdict": analysis.get("verdict"),
                 "measurement_verified": analysis.get("measurement_verified"),
                 "throughput_verified": analysis.get("throughput_verified"),
                 "rf_kpi_verified": analysis.get("rf_kpi_verified"),
+                "metric_trust": metric_trust,
             },
         }
 
@@ -1291,6 +1421,9 @@ class ReportComparisonService:
                     and isinstance(comp_v, (int, float))
                     and not isinstance(base_v, bool)
                     and not isinstance(comp_v, bool)
+                    and baseline_entry["provenance"]["metric_trust"].get(key)
+                    is True
+                    and entry["provenance"]["metric_trust"].get(key) is True
                     else None
                 )
             deltas.append(
@@ -1298,8 +1431,9 @@ class ReportComparisonService:
             )
 
         formal = all(
-            entry["provenance"].get("measurement_verified") is True
+            entry["provenance"]["metric_trust"].get(key) is True
             for entry in entries
+            for key in COMPARISON_METRIC_KEYS
         )
 
         comparison.comparison_results = {
@@ -1310,8 +1444,8 @@ class ReportComparisonService:
             "formal": formal,
             "formal_note": (
                 None if formal else
-                "至少一个 execution 的测量含模拟仪器 provenance —— "
-                "本对比不构成正式结论"
+                "至少一个 execution 的测量含模拟仪器 provenance 或缺少"
+                "逐指标正式证据 —— 本对比不构成正式结论"
             ),
         }
 
@@ -1320,7 +1454,8 @@ class ReportComparisonService:
             values = [
                 entry["metrics"].get(key)
                 for entry in entries
-                if isinstance(entry["metrics"].get(key), (int, float))
+                if entry["provenance"]["metric_trust"].get(key) is True
+                and isinstance(entry["metrics"].get(key), (int, float))
                 and not isinstance(entry["metrics"].get(key), bool)
             ]
             if values:

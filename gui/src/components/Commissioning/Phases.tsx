@@ -7,6 +7,7 @@ import {
   describePathLossSelection,
 } from './pathLossApplication'
 import { describeRfKpiEvidence, formatRfKpiValue } from './rfKpiEvidence'
+import { describeBaseStationMetric } from './baseStationMetricTruth'
 import {
   describePrecheckMessages,
   describePrecheckOutcome,
@@ -247,19 +248,39 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
               <Table.Th>RSRP (dBm)</Table.Th>
               <Table.Th>SINR (dB)</Table.Th>
               <Table.Th>吞吐量 (Mbps)</Table.Th>
+              <Table.Th>BLER (%)</Table.Th>
               <Table.Th>Rank</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {data.azimuth_results.map((az: any) => (
-              <Table.Tr key={az.azimuth_deg}>
-                <Table.Td>{az.azimuth_deg}</Table.Td>
-                <Table.Td>{formatRfKpiValue(az.rsrp_dbm, rfKpiView.verified, 1)}</Table.Td>
-                <Table.Td>{formatRfKpiValue(az.sinr_db, rfKpiView.verified, 1)}</Table.Td>
-                <Table.Td>{az.throughput_mbps}</Table.Td>
-                <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 2)}</Table.Td>
-              </Table.Tr>
-            ))}
+            {data.azimuth_results.map((az: any) => {
+              const throughput = describeBaseStationMetric(
+                data.base_station_metric_projection,
+                az.azimuth_deg,
+                'dl_throughput_mbps',
+              )
+              const bler = describeBaseStationMetric(
+                data.base_station_metric_projection,
+                az.azimuth_deg,
+                'dl_bler_percent',
+              )
+              return (
+                <Table.Tr key={az.azimuth_deg}>
+                  <Table.Td>{az.azimuth_deg}</Table.Td>
+                  <Table.Td>{formatRfKpiValue(az.rsrp_dbm, rfKpiView.verified, 1)}</Table.Td>
+                  <Table.Td>{formatRfKpiValue(az.sinr_db, rfKpiView.verified, 1)}</Table.Td>
+                  <Table.Td>
+                    <Text c={throughput.color} size="sm">{throughput.text}</Text>
+                    {throughput.note && <Text c="yellow" size="xs">{throughput.note}</Text>}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text c={bler.color} size="sm">{bler.text}</Text>
+                    {bler.note && <Text c="yellow" size="xs">{bler.note}</Text>}
+                  </Table.Td>
+                  <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 2)}</Table.Td>
+                </Table.Tr>
+              )
+            })}
           </Table.Tbody>
         </Table>
       )}

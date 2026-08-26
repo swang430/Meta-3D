@@ -195,6 +195,53 @@ def rf_kpi_trust_is_formally_verified(value: Any) -> bool:
     )
 
 
+def trusted_rf_kpi_values(measure: Any, metric_name: str) -> list[float] | None:
+    """Return one complete explicit-real RF metric scope, independently."""
+    validity_by_metric = dict(RF_KPI_METRICS)
+    validity_field = validity_by_metric.get(metric_name)
+    if validity_field is None or not isinstance(measure, dict):
+        return None
+    raw_trust = measure.get(RF_KPI_TRUST_FIELD)
+    parsed = parse_rf_kpi_trust(raw_trust)
+    rows = measure.get("azimuth_results")
+    if (
+        parsed is None
+        or parsed != raw_trust
+        or parsed["source"] != "explicit_real"
+        or parsed["metrics"][metric_name]["verified"] is not True
+        or not measurement_provenance_is_explicit_real(measure)
+        or not isinstance(rows, list)
+    ):
+        return None
+    rows_by_azimuth: dict[float, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        raw_azimuth = row.get("azimuth_deg")
+        if (
+            isinstance(raw_azimuth, bool)
+            or not isinstance(raw_azimuth, (int, float))
+            or not math.isfinite(float(raw_azimuth))
+        ):
+            return None
+        azimuth = float(raw_azimuth)
+        if azimuth in rows_by_azimuth:
+            return None
+        rows_by_azimuth[azimuth] = row
+    requested = parsed["requested_azimuths"]
+    if set(rows_by_azimuth) != set(requested):
+        return None
+    values: list[float] = []
+    for azimuth in requested:
+        row = rows_by_azimuth[azimuth]
+        if row.get(validity_field) is not True or not _row_has_finite_metric(
+            row, metric_name
+        ):
+            return None
+        values.append(float(row[metric_name]))
+    return values
+
+
 def measurement_provenance_is_explicit_real(measure: Any) -> bool:
     """Require current phase and every current row to declare real provenance."""
     if not isinstance(measure, dict):

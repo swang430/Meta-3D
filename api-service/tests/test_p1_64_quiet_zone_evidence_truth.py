@@ -213,6 +213,8 @@ def test_report_trust_requires_canonical_quiet_zone_attestation():
         "quiet_zone_evidence_schema_version": 1,
         "quiet_zone_evidence": build_quiet_zone_evidence(None),
         "formal_quiet_zone_verified": False,
+        "base_station_metric_trust_schema_version": 1,
+        "base_station_metric_projection": [],
     }
 
     assert report_has_provenance_trust(old_envelope) is False
