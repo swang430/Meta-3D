@@ -414,3 +414,19 @@ LTE 1CC 2×2 内部 route 与配置有回读、throughput/BLER 来自有边界�
 KPI、GUI/Analysis/报告/历史共用信任函数、取消和清理失败可见、正式能力只按型号/版本/选件判断
 且具备默认关闭的显式启用门、真机 smoke 待确认时明确显示 Warning，并能安全回滚到 `v0.9.1`。
 真机 smoke 通过是后续正式发布启用条件，不是 P1-73A/B/C 合并阻塞项。
+
+## 7. 软件实施结果（2026-08-27）
+
+P1-73A/B 已分别由 PR #400/#401 合并；P1-73C Task 12–17 已按本设计完成本地实现与验证，
+未扩大到功率预算、外部路径补偿或 RF router 准入。CMW500 与 UXM 共用顶层测试流，厂商差异
+保留在 BaseStation HAL 与版本化执行证据内；正式能力仍默认关闭，debug inherit 只产生黄色诊断。
+
+P1-73C 将冻结配置和内部 route、current attempt、lease/session、逐方位 Extended BLER 窗口、
+cleanup 与 transport release 绑定到唯一逐指标信任入口。Analysis、报告、详情/下载、对比、历史、
+commissioning 与 GUI 均从该入口重建公开值；吞吐与 BLER 独立降级，模拟、未知、旧 attempt、
+错配置/错方位、cleanup 未完成或 transport 未确认释放时保持 UNKNOWN/N/A。OperationalLab
+readiness 只读取所选 LabProfile 绑定的同一 InstrumentConnection，现场未确认状态保持 Warning。
+
+Task17 验证结果：focused **499 passed**；全后端 **4964 passed / 5 skipped**；GUI 契约
+**14 passed**及 production build；compileall、单一 Alembic head `d73b5f6a1c20`、diff-check
+通过。fresh 功能内审 P1/P2/P3=0；真机 smoke 与正式发布启用仍按 §6 执行。

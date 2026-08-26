@@ -279,6 +279,57 @@ def test_report_recomputes_base_station_metrics_from_final_windows():
     ) is True
 
 
+def test_report_does_not_aggregate_a_partial_base_station_metric_scope():
+    evidence = valid_cmw_evidence()
+    second_position = {"azimuth_deg": 90.0, "elevation_deg": 0.0}
+    evidence["requested_positions"].append(second_position)
+    second_window = deepcopy(evidence["measurement_windows"][0])
+    second_window["window_id"] = "window-2"
+    second_window["lease_id"] = "lease-2"
+    second_window["position"] = second_position
+    second_window["metrics"]["dl_throughput_mbps"]["exchange_ids"] = []
+    evidence["measurement_windows"].append(second_window)
+    second_release = deepcopy(evidence["control_releases"][0])
+    second_release["lease_id"] = "lease-2"
+    evidence["control_releases"].append(second_release)
+    raw_rows = [
+        {"azimuth_deg": 0.0, "throughput_mbps": 999.0},
+        {"azimuth_deg": 90.0, "throughput_mbps": 999.0},
+    ]
+    execution = SimpleNamespace(
+        config={"base_station_execution_evidence": evidence},
+        measurements={
+            "phases": {
+                "precheck": {},
+                "reference": {},
+                "measure": {
+                    "azimuth_results": raw_rows,
+                    "path_loss_verified": True,
+                    "path_loss_calibration_use_mock": False,
+                    "path_loss_application": {},
+                },
+                "analysis": {"verdict": "UNKNOWN"},
+            }
+        },
+        validation_pass=None,
+        status="completed",
+        duration_sec=1.0,
+        started_at=datetime(2026, 1, 1),
+        completed_at=datetime(2026, 1, 1),
+    )
+
+    with patch(
+        "app.services.mimo_ota.executors.report."
+        "path_loss_application_is_formally_verified",
+        return_value=True,
+    ):
+        content = _build_mimo_ota_content_data(execution, datetime(2026, 1, 1))
+
+    assert "Throughput_Mbps" not in content["statistics"]
+    assert content["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert content["table_data"][1]["Throughput (Mbps)"] == "N/A"
+
+
 def test_client_cannot_self_attest_base_station_metric_projection():
     forged = {
         "title": "client payload",
