@@ -736,11 +736,16 @@ git commit -m "fix: make CMW500 connect read-only"
 **Files:**
 
 - Create: `api-service/app/hal/base_station_adapter_profile.py`
+- Create: `api-service/app/services/base_station_adapter_profile.py`
 - Modify: `api-service/app/schemas/instrument.py`
 - Modify: `api-service/app/api/instrument.py`
+- Modify: `api-service/app/api/commissioning.py`
 - Modify: `api-service/app/services/test_case_runner.py`
 - Create: `api-service/tests/test_p1_73b_cmw_adapter_profile.py`
 - Modify: `api-service/tests/test_instrument_api.py`
+- Modify: `api-service/tests/test_commissioning_smoke.py`
+- Modify: `api-service/tests/test_commissioning_adhoc.py`
+- Modify: `api-service/tests/test_commissioning_strict_gate_overrides.py`
 - Modify: `api-service/tests/test_instrument_test_lease.py`
 - Modify: `gui/src/App.tsx`
 - Create: `gui/src/types/cmwAdapterProfileTruth.test.ts`
@@ -776,10 +781,22 @@ class BaseStationAdapterProfile(BaseModel):
 七个显式字段，不要求操作员编辑自由 JSON。该 profile 只是内部 route 输入，不进入
 型号/固件/选件能力准入，也不扩展为外部 RF router。
 
-runner 必须在执行开始、取得仪表 Remote 之前锁定 execution 与所选 LabProfile，解析唯一连接，
-将规范 profile 与 digest 冻结到 server-owned execution config；commissioning/adhoc/run-all 都走
-同一 runner 路径。后续 driver/evidence 只消费冻结快照；执行中修改 connection params 不得改变旧
-execution，历史/报告也不得从当前数据库补 route。旧执行没有该快照时保持 UNKNOWN，不猜测。
+新增唯一 `freeze_base_station_adapter_profile(db, execution, selected_lab_profile)`：在同一事务锁定
+execution、所选 LabProfile 和由其 `baseStation` binding 的 `category_id` 解析到的唯一
+InstrumentConnection，校验规范 profile 后把 profile、connection identity 与 digest 写入
+server-owned execution config。已有规范快照时幂等返回且绝不覆盖；缺失、绑定漂移或冲突均在
+取得 Remote/首次硬件 I/O 前 fail-loud。
+
+现有活入口并不共用同一 runner，因此必须逐条接线：正式 `test_case_runner._run_case`；
+`/commissioning/sessions` 新建 execution；commissioning 单相位在进入 lease 前；adhoc execution
+建行后且 dispatch 前；run-all 在外层 lease 前。历史 session 若尚未发生硬件 I/O，可由首次硬件
+phase 幂等冻结；REPORT-only 或已有 measurements/phase progress 的旧 execution 缺快照时不得从
+当前 DB 补证，只能 UNKNOWN。后续 driver/evidence 只消费冻结快照；执行中修改 connection params
+不得改变旧 execution，历史/报告也不得从当前数据库补 route。
+
+RED 分别覆盖 formal runner、session create/首次 phase、adhoc 和 run-all，证明四条路径都在 lease
+取得 Remote 前完成同一冻结；并覆盖第二次调用不覆盖、profile 在执行中被修改不漂移、REPORT-only
+旧执行不补证，以及任一路径缺 profile 都不会偷偷直接 dispatch。
 
 **Step 2: RED → GREEN 并提交**
 
@@ -788,17 +805,25 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73b_cmw_adapter_profile.py \
   tests/test_instrument_api.py \
+  tests/test_commissioning_smoke.py \
+  tests/test_commissioning_adhoc.py \
+  tests/test_commissioning_strict_gate_overrides.py \
   tests/test_instrument_test_lease.py
 cd ../gui
 node --test src/types/cmwAdapterProfileTruth.test.ts
 npm run build
 cd ..
 git add api-service/app/hal/base_station_adapter_profile.py \
+  api-service/app/services/base_station_adapter_profile.py \
   api-service/app/schemas/instrument.py \
   api-service/app/api/instrument.py \
+  api-service/app/api/commissioning.py \
   api-service/app/services/test_case_runner.py \
   api-service/tests/test_p1_73b_cmw_adapter_profile.py \
   api-service/tests/test_instrument_api.py \
+  api-service/tests/test_commissioning_smoke.py \
+  api-service/tests/test_commissioning_adhoc.py \
+  api-service/tests/test_commissioning_strict_gate_overrides.py \
   api-service/tests/test_instrument_test_lease.py \
   gui/src/App.tsx \
   gui/src/types/cmwAdapterProfileTruth.test.ts \
