@@ -238,6 +238,36 @@ async def test_attach_accepts_only_documented_exact_states_and_restores_timeout(
     assert driver._cell_state is CellState.CONNECTED
 
 
+@pytest.mark.asyncio
+async def test_connect_action_polls_documented_transitional_state_without_resending():
+    states = iter(["ON,ADJ", "ATT", "CONN", "CEST"])
+
+    class _ConnectingDriver(_StateDriver):
+        def _do_query(self, command: str) -> str:
+            self.queries.append(command)
+            if command in {
+                "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+                "FETCh:LTE:SIGN1:PSWitched:STATe?",
+            }:
+                return next(states)
+            return self.responses[command]
+
+    driver = _ConnectingDriver(
+        {"*OPC?": "1", "SYSTem:ERRor:ALL?": '0,"No error"'}
+    )
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        assert await driver.start_signaling(timeout_s=3.0) is True
+
+    assert driver.writes.count(
+        "CALL:LTE:SIGN1:PSWitched:ACTion CONNect"
+    ) == 1
+    assert driver._cell_state is CellState.CONNECTED
+
+
 def test_ps_state_parser_rejects_substrings_and_keeps_attached_distinct_from_connected():
     assert RealCmw500Driver._parse_ps_state("UNATTACHED") is None
     assert RealCmw500Driver._parse_ps_state("ATT") == "ATTACHED"

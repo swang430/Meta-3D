@@ -156,7 +156,7 @@ def test_uxm_freezes_not_applicable_without_reading_cmw_profile(db):
         params=None,
     )
     hal = SimpleNamespace(
-        drivers={"baseStation": RealUxmDriver("uxm", {"ip_address": "192.0.2.11"})}
+        drivers={"baseStation": RealUxmDriver("uxm", {"ip_address": "192.0.2.10"})}
     )
 
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
@@ -260,6 +260,27 @@ def test_lock_time_validator_rejects_same_driver_class_with_different_endpoint(d
     assert "connection identity" in validate_frozen_base_station_before_remote(
         hal, frozen
     )
+
+
+def test_freeze_rejects_stale_loaded_driver_after_locked_connection_endpoint_changes(db):
+    _, _, connection, lab, execution = _configured_execution(
+        db,
+        model_name="CMW500",
+        params={"base_station_adapter_profile": _profile()},
+    )
+    hal = SimpleNamespace(
+        drivers={"baseStation": RealCmw500Driver("cmw", {"ip_address": "192.0.2.10"})}
+    )
+    connection.endpoint = "192.0.2.99"
+    bindings = list(lab.instrument_bindings)
+    bindings[0] = {**bindings[0], "connection_endpoint": "192.0.2.99"}
+    lab.instrument_bindings = bindings
+    db.commit()
+
+    with pytest.raises(ValueError, match="connection identity"):
+        freeze_base_station_adapter_profile(db, hal, execution, lab)
+
+    assert "base_station_adapter_profile_freeze" not in execution.config
 
 
 def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db):

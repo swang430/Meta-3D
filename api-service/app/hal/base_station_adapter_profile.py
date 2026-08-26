@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from app.hal.cmw500_command_profile import normalize_cmw_route_token
+
 
 class Cmw500Lte2x2InternalRoute(BaseModel):
     """Exact seven-field internal route required by the LTE 2x2 adapter."""
@@ -25,10 +27,7 @@ class Cmw500Lte2x2InternalRoute(BaseModel):
     @field_validator("*")
     @classmethod
     def _non_blank_identifier(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized or "," in normalized or normalized.upper() == "NAV":
-            raise ValueError("route identifiers must be non-blank scalar values")
-        return normalized
+        return normalize_cmw_route_token(value, "adapter profile")
 
     @model_validator(mode="after")
     def _distinct_tx_paths(self):

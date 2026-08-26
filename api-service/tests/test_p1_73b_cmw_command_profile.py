@@ -1,5 +1,9 @@
 """P1-73B Task 6：CMW500 LTE 命令目录必须可审计且共用同一 builder。"""
 
+from dataclasses import replace
+
+import pytest
+
 from app.hal.cmw500_command_profile import (
     CMW500_LTE_COMMANDS,
     Cmw500LteCommandProfile,
@@ -42,6 +46,36 @@ def test_nx2_route_builder_preserves_all_seven_manual_parameters():
         "BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
     )
     assert Cmw500LteCommandProfile.route_query(1) == "ROUTe:LTE:SIGN1?"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "pcc_bb_board",
+        "rx_connector",
+        "rx_converter",
+        "tx1_connector",
+        "tx1_converter",
+        "tx2_connector",
+        "tx2_converter",
+    ),
+)
+def test_nx2_route_builder_rejects_scpi_program_separator_in_every_token(field_name):
+    route = CmwNx2Route(
+        pcc_bb_board="BB1",
+        rx_connector="RF1C",
+        rx_converter="RX1",
+        tx1_connector="RF1C",
+        tx1_converter="TX1",
+        tx2_connector="RF2C",
+        tx2_converter="TX2",
+    )
+
+    with pytest.raises(ValueError, match="route token"):
+        Cmw500LteCommandProfile.build_route_nx2(
+            1,
+            replace(route, **{field_name: "RF1C;*RST"}),
+        )
 
 
 def test_extended_bler_builders_share_the_catalog_templates():

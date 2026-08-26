@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import re
 
 
 @dataclass(frozen=True)
@@ -127,9 +128,20 @@ def _channel(value: int) -> int:
     return value
 
 
-def _route_token(value: str, name: str) -> str:
+_ROUTE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*\Z")
+
+
+def normalize_cmw_route_token(value: str, name: str) -> str:
+    """Accept only the manual's bare alphanumeric signal-path enum tokens.
+
+    R&S CMW LTE UE User Manual 1173.9628.02-41, §2.6.1.4,
+    printed p.363-365 lists the path-selection values as unquoted
+    alphanumeric enumerations.  Rejecting every other character prevents a
+    persisted route field from becoming an additional SCPI program unit.
+    """
+
     token = value.strip()
-    if not token or "," in token or token.upper() == "NAV":
+    if not _ROUTE_TOKEN_RE.fullmatch(token) or token.upper() == "NAV":
         raise ValueError(f"invalid CMW route token: {name}")
     return token
 
@@ -194,7 +206,9 @@ class Cmw500LteCommandProfile:
             (route.tx2_connector, "tx2_connector"),
             (route.tx2_converter, "tx2_converter"),
         )
-        encoded = ",".join(_route_token(value, name) for value, name in values)
+        encoded = ",".join(
+            normalize_cmw_route_token(value, name) for value, name in values
+        )
         return f"{cls._format('route_nx2', sign_channel)} {encoded}"
 
     @classmethod
@@ -237,7 +251,7 @@ class Cmw500LteCommandProfile:
              "tx2_connector", "tx2_converter"),
             start=2,
         ):
-            _route_token(values[index], name)
+            normalize_cmw_route_token(values[index], name)
         return CmwNx2RouteReadback(*values)
 
     @staticmethod

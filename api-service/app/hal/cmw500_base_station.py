@@ -1126,16 +1126,35 @@ class RealCmw500Driver(BaseStationDriver):
                 ):
                     return False
 
-                ps_state = self._parse_ps_state(
-                    self._query(self._fmt(CmwScpiCommands.PS_STATE))
-                )
-                if ps_state == "CONNECTED":
-                    self._cell_state = CellState.CONNECTED
-                    signaling_confirmed = True
-                    logger.info("[CMW500] PS connection established")
-                else:
+                connection_elapsed = 0.0
+                while connection_elapsed <= timeout_s:
+                    ps_state = self._parse_ps_state(
+                        self._query(self._fmt(CmwScpiCommands.PS_STATE))
+                    )
+                    if ps_state == "CONNECTED":
+                        self._cell_state = CellState.CONNECTED
+                        signaling_confirmed = True
+                        logger.info("[CMW500] PS connection established")
+                        break
+                    # LTE UE User Manual 1173.9628.02-41, §2.2.9.1
+                    # printed p.39-40 and §2.6.3.1 printed p.374 define
+                    # CONNecting / SIGNaling as transitory PS states.  Poll
+                    # them within a finite window without repeating CONNect.
+                    if ps_state not in {"CONNECTING", "SIGNALING"}:
+                        logger.warning(
+                            "[CMW500] PS connection not confirmed: %s", ps_state
+                        )
+                        break
+                    if connection_elapsed >= timeout_s:
+                        logger.warning(
+                            "[CMW500] PS connection timeout after %.1fs", timeout_s
+                        )
+                        break
+                    wait_s = min(poll_interval, timeout_s - connection_elapsed)
+                    await asyncio.sleep(wait_s)
+                    connection_elapsed += wait_s
+                if not signaling_confirmed:
                     self._cell_state = CellState.IDLE
-                    logger.warning("[CMW500] PS connection not confirmed: %s", ps_state)
             else:
                 logger.warning(
                     f"[CMW500] UE attach timeout after {timeout_s}s"

@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_adapter_profile import (
     BaseStationAdapterProfile,
     BaseStationAdapterProfileResolution,
@@ -41,6 +42,25 @@ def _driver_connection_identity(driver) -> dict[str, Any]:
         "port": getattr(driver, "_connection_port", None),
         "resource": getattr(driver, "_connection_resource", None),
     }
+
+
+def _locked_connection_identity(connection: InstrumentConnection) -> dict[str, Any]:
+    """Resolve the transport identity from the locked database truth."""
+
+    config = {
+        "endpoint": connection.endpoint,
+        "ip": connection.controller_ip,
+        "port": connection.port,
+        "protocol": connection.protocol,
+    }
+    if isinstance(connection.connection_params, dict):
+        config.update(connection.connection_params)
+    host, port, resource, error = resolve_configured_tcpip_connection(config)
+    if error:
+        raise ValueError(f"selected baseStation connection is invalid: {error}")
+    if not host:
+        raise ValueError("selected baseStation connection has no transport host")
+    return {"host": host, "port": port, "resource": resource}
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -246,7 +266,7 @@ def freeze_base_station_adapter_profile(
         "expected_driver_module": expected_class.__module__,
         "expected_driver_name": expected_class.__name__,
         "expected_driver_connection": (
-            None if simulated else _driver_connection_identity(loaded_driver)
+            None if simulated else _locked_connection_identity(connection)
         ),
     }
     if adapter == "cmw500":
