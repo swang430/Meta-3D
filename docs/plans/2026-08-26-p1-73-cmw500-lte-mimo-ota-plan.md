@@ -70,10 +70,17 @@ class BaseStationCleanupResult:
     warnings: tuple[str, ...]
 
 @dataclass(frozen=True)
+class BaseStationRemoteSessionResult:
+    adapter_id: Literal["uxm", "cmw500"]
+    session_token: str
+    acquired_confirmed: bool
+    warnings: tuple[str, ...]
+
+@dataclass(frozen=True)
 class BaseStationControlReleaseResult:
     lease_id: str
     adapter_id: Literal["uxm", "cmw500"]
-    session_identity_digest: str
+    session_token: str
     remote_session_acquired_confirmed: bool
     transport_session_released_confirmed: bool
     front_panel_local_confirmed: bool | None
@@ -105,6 +112,9 @@ cd api-service
   释放与前面板 Local 状态；它只能由 `instrument_test_lease` 的真实控制会话结果产生，不能用 cleanup、
   finally 或“无异常”推导。关闭 VISA/HiSLIP 只确认 transport release；没有厂商动作与确认信号时
   `front_panel_local_confirmed` 必须为 null/unknown，不能因类名或旧方法名写成 true。
+- `BaseStationRemoteSessionResult` 的 `session_token` 只能由真实驱动在成功建立新 transport session 后
+  生成并返回；使用不可预测 opaque UUID，不编码地址、凭证或仪表身份。每次新 session/重连必须新建
+  token，旧 token 永不复用；业务层和 lease 不得读取 `_visa_session` 或自行造第二个 lease id 代替。
 - UXM 改为导入通用类型，不复制定义。
 - UXM 专属功率 builder 下沉到 UXM profile/driver。
 - 只改归属，不改变 UXM 命令、返回值或执行顺序。
@@ -954,7 +964,11 @@ configure → route confirmed → CELL ON → UE attached/connected → measurem
 - CMW 驱动实现共享 async `acquire_remote_control()` / `release_remote_session()` 契约；前者的控制动作、
   返回值与确认信号必须逐项引用厂商手册，后者只确认本次活跃 VISA/HiSLIP transport 是否精确关闭。
   两者都不能用会话形状、disconnect 或未抛异常推断；前面板 Local 没有明确厂商动作与确认时保持
-  unknown/Warning。共享租约在 P1-73C 才接入并消费这些结果。
+  unknown/Warning。每次真实 session 建立成功后由驱动生成新的 opaque UUID `session_token`，
+  `acquire_remote_control()` 返回该 token；`release_remote_session(expected_session_token)` 必须核对
+  驱动当前 token、关闭对应 session，并在结果中返回同一 token。session/token 缺失或错配时仍保守
+  尝试关闭当前 transport，但 release 不得 confirmed；lease 活跃期间不得透明重连或复用旧 token。
+  共享租约在 P1-73C 才接入并消费这些结果。
 
 **Step 2: RED → GREEN**
 
@@ -1133,7 +1147,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     window_id: str
     lease_id: str
-    session_identity_digest: str
+    session_token: str
     config_digest: str
     route_digest: str | None
     position: PositionSnapshot
@@ -1149,7 +1163,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window；每个 window 自带的结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项精确为 true，且它的 `lease_id` 在 `control_releases` 中恰有一条同 id、同 adapter、同 `session_identity_digest`、`remote_session_acquired_confirmed` 与 `transport_session_released_confirmed` 都精确为 true 的结果。`front_panel_local_confirmed` 没有厂商证据时保持 null/Warning，不得由 close 推断，也不作为测量真值的替代门。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/重复 lease result、跨 lease/session 替换、legacy CMW/inherit/mock/方位集合失配，或本 window cleanup/transport release 的 `False`/`None`/异常/仅无异常返回，均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window；每个 window 自带的结构化 MEASURE cleanup 的 stop signaling、SAFE_IDLE 两项精确为 true，且它的 `lease_id` 在 `control_releases` 中恰有一条同 id、同 adapter、同驱动 opaque `session_token`、`remote_session_acquired_confirmed` 与 `transport_session_released_confirmed` 都精确为 true 的结果；window 内每条 KPI/lifecycle exchange 也必须携带同 token。`front_panel_local_confirmed` 没有厂商证据时保持 null/Warning，不得由 close 推断，也不作为测量真值的替代门。CMW 必须同时携带 Task 7A 的 execution-frozen requested route、逐字段匹配的 applied route 和 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/重复 lease result、跨 lease/token 替换、token 变化或复用、legacy CMW/inherit/mock/方位集合失配，或本 window cleanup/transport release 的 `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -1224,8 +1238,10 @@ git commit -m "feat: add formal base station execution evidence"
   既有安全断开所有权不受此规则改变；
 - `measure.py` 消费该结构化结果并只由 stop/SAFE_IDLE 派生 evidence cleanup；任一失败
   时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
-- outer lease 生成不可由请求体传入的 UUID `lease_id` 与 session identity digest，并通过 server-only
-  context 交给 MEASURE window writer；window 将本次 cleanup 一并冻结。多次 commissioning MEASURE
+- outer lease 生成不可由请求体传入的 UUID `lease_id`；UXM/CMW 驱动在真实新 session 建立后生成
+  独立 opaque UUID `session_token`，`acquire_remote_control()` 返回结构化
+  `BaseStationRemoteSessionResult`。lease 通过 server-only context 把两者交给所有 SCPI exchange 与
+  MEASURE window writer；window 将本次 cleanup 一并冻结。多次 commissioning MEASURE
   产生不同 lease id，后一次 cleanup/release 只能追加，绝不能覆盖或替前一次 window 的证据；
 - `instrument_test_lease` 把当前 `_uxm_driver` 收敛为 vendor-neutral baseStation resolver；CMW 驱动
   必须实现同一 async Remote/session-release 契约，缺方法、返回 `False`/`None` 或抛异常都不得静默跳过；
@@ -1239,7 +1255,7 @@ git commit -m "feat: add formal base station execution evidence"
   的单相位、adhoc、run-all 三类直接 lease owner 都必须在退出后调用同一个幂等持久化 helper，以
   独立事务按 `lease_id` 追加到各自 execution；成功与失败都保存结构化结果，不得覆盖别的 lease、
   只在异常路径写自由文本或从另一个入口补写；每个 measurement window 在产生时冻结同一 lease id、
-  session identity digest 与该 window 的 cleanup；
+  驱动 acquire token 与该 window 的 cleanup；
 - formal runner 把执行链末尾连续的 `MIMO_OTA_ANALYSIS` 与 `MIMO_OTA_REPORT` 一起从租约内延迟，
   持久化同 measurement lease 的 control release 后才严格按 ANALYSIS → REPORT dispatch 并持久化最终 `validation_pass`、
   正式投影和报告。租约内不得先写一份 UNKNOWN Analysis 后只重建公开 projection；若 ANALYSIS/
@@ -1253,10 +1269,14 @@ git commit -m "feat: add formal base station execution evidence"
   `release_remote_session` 进入时原 VISA/HiSLIP session 仍存在；MEASURE 不得提前调用
   `disconnect()`，租约也不得把“session 已经是 None”当作本次交还成功；
 - 用语义准确的共享 `release_remote_session()` 取代基站正式路径上的误导性
-  `release_to_local_control()`：本次调用开始时必须存在活跃 VISA/HiSLIP session，且该 session 的
-  close 精确成功后才确认 transport release；session 已为 `None`、close 失败、取消或仅清空内部
+  `release_to_local_control()`：它接收 lease acquire 得到的 `expected_session_token`。本次调用开始时
+  必须存在活跃 VISA/HiSLIP session，且驱动内当前 session token 与 expected 精确一致、该 session 的
+  close 精确成功后才确认 transport release；session/token 缺失或不匹配、close 失败、取消或仅清空内部
   引用均不得确认。UXM 现有兼容方法可保留为 deprecated wrapper，但不能产生 Local=true；租约只
   消费结构化公共结果，不读取驱动私有字段，也不从 status、finally 或“已断开”反推前面板 Local；
+- 驱动在 lease 活跃期间禁止透明重连；连接丢失即令当前窗口失败。若底层确实换成新 session，必须
+  生成新 token；release 即使为安全而关闭当前新 session，也必须返回 token mismatch/unconfirmed，
+  旧 window 永久 UNKNOWN。RED 要把 acquire 后替换 fake VISA session/复用旧 token 的变异分别跑红；
 - control-session release 失败时保留原业务 winner 与错误全文，再追加 release 失败；不能从
   disconnect、finally、context manager 正常退出或执行终态推导 transport 已释放或前面板 Local；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
@@ -1278,7 +1298,6 @@ cd api-service
   tests/test_p1_73c_cmw_measure_integration.py \
   tests/test_p1_73c_base_station_cleanup_truth.py \
   tests/test_p1_73c_base_station_control_release.py \
-  tests/test_p1_73c_commissioning_control_release.py \
   tests/test_p1_73c_commissioning_control_release.py \
   tests/test_instrument_test_lease.py \
   tests/test_commissioning_smoke.py \

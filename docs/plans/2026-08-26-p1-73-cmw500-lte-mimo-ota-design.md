@@ -59,6 +59,7 @@ MIMO OTA 顶层只允许使用：
 - `BaseStationMeasurementWindow`
 - `BaseStationKpiSnapshot`
 - `BaseStationCleanupResult`
+- `BaseStationRemoteSessionResult`
 - `BaseStationControlReleaseResult`
 - `BaseStationExecutionEvidence`
 
@@ -191,12 +192,20 @@ front-panel Local 是操作状态，不得伪造，也不因缺证据反向否�
 必须 vendor-neutral，CMW500 不得因缺少 UXM 风格方法而被静默跳过。finally 已运行、disconnect
 成功或没有抛异常都不能推导任一确认。release 调用开始时必须仍有本次活跃 VISA/HiSLIP session，
 且 close 精确成功；session 已为 None 或 close 失败都不能确认本次 transport release。
+真实 session identity 的权威源只能在驱动内部：UXM/CMW 每次成功建立新的 VISA/HiSLIP session 后
+生成一个不可由请求体提供、不可从地址/型号反推且不含敏感内容的 opaque UUID `session_token`，并由
+`acquire_remote_control()` 的结构化结果返回给 lease。新 session 必须产生新 token，连接丢失后禁止
+在同一 lease 内透明重连；若确需重连，旧 lease/window 立即失效。所有 SCPI exchange/window 从 lease
+的 server-only context 消费 acquire token；`release_remote_session(expected_token)` 只能对本次实际
+关闭的 session 返回其驱动内 token。当前 session token 缺失或与 expected 不同仍应保守尝试关闭当前
+会话，但 release 结果必须 unconfirmed，不能复用旧 token。业务层不得读取 `_visa_session` 等私有字段。
 `instrument_test_lease` 必须向每个直接持有租约的调用方暴露同一个可在 `__aexit__` 后读取的
 server-owned outcome；formal runner 以及 commissioning 的单相位、adhoc、run-all 三类 lease owner
 都必须在租约退出后，通过同一个持久化 helper 把带唯一 `lease_id` 的结果追加到对应 execution，
 不能覆盖此前 lease、只在异常路径记录自由文本或让 commissioning 依赖 formal runner 代写。每个
-measurement window 必须绑定 lease 生成并通过 server-only context 传入的 `lease_id`、session identity
-digest 以及该 window 自身的 cleanup；正式 evaluator 只消费同 lease/session 的 cleanup 与 release。
+measurement window 必须绑定 lease 生成并通过 server-only context 传入的 `lease_id`、驱动 acquire
+返回的 opaque `session_token` 以及该 window 自身的 cleanup；正式 evaluator 只消费同 lease/token 的
+exchange、cleanup 与 release。
 transport release 未确认时，业务错误仍完整保留，但公开 KPI、历史正式判决和最终报告必须保持
 UNKNOWN/N/A。ANALYSIS/REPORT 本身不控制仪表，不得创建空基站 lease 来生成或替换测量 provenance。
 
