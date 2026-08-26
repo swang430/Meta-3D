@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -354,6 +354,7 @@ class CreateSessionRequest(BaseModel):
     # 设成 2（Butler 直通）可先用直通扶它 attach，挂上后自动撤掉再开衰落。
     # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
     f64_bypass_mode: Optional[int] = None
+    base_station_config_mode: Optional[Literal["dispatch", "inherit"]] = None
 
     @model_validator(mode="after")
     def require_current_gcm_model_source(self) -> "CreateSessionRequest":
@@ -423,6 +424,7 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     # 默认**：那会流进每条新建用例、也会被填进 JSON 里缺这些键的既有用例
     # （2026-08-07 实证：既有 MIMO_OTA 用例的 configuration 里这几个键全缺）。
     for _f in (
+        "base_station_config_mode",
         "uxm_dl_power_dbm_per_bw",
         "f64_input_ref_dbm",
         "f64_crest_db",

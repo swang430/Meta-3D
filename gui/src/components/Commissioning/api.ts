@@ -51,6 +51,7 @@ export interface CreateSessionParams {
   f64OutputLevelDbm?: number
   emulationFile?: string
   f64BypassMode?: number
+  baseStationConfigMode?: 'dispatch' | 'inherit'
   // Lab-smoke mode: relax strict safety gates（cal 在 PRECHECK；managed 流程的
   // DUT 动态门在 MEASURE）so a local rehearsal without real DUT/cal can proceed.
   // Omitted (undefined) → backend keeps its strict default (True) → on-site
@@ -78,6 +79,7 @@ export interface CreateSessionBody {
   f64_output_level_dbm?: number
   emulation_file?: string
   f64_bypass_mode?: number
+  base_station_config_mode?: 'dispatch' | 'inherit'
   precheck_strict_dut?: boolean
   precheck_strict_cal?: boolean
   precheck_strict_frequency?: boolean
@@ -105,6 +107,7 @@ export const buildCreateSessionBody = (
     f64OutputLevelDbm,
     emulationFile,
     f64BypassMode,
+    baseStationConfigMode,
     labSmoke,
     calBypass,
   } = params
@@ -139,6 +142,9 @@ export const buildCreateSessionBody = (
     body.emulation_file = emulationFile
   }
   if (f64BypassMode !== undefined) body.f64_bypass_mode = f64BypassMode
+  if (baseStationConfigMode !== undefined) {
+    body.base_station_config_mode = baseStationConfigMode
+  }
   if (labSmoke) {
     // P2-11/P2-13: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
     // 8 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config/dut_capability/sim_identity),

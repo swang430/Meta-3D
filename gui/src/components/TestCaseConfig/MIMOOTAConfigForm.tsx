@@ -39,6 +39,10 @@ import {
   primaryCarrierValue,
   updatePrimaryCarrierValue,
 } from './carrierTruth'
+import {
+  resolveBaseStationConfigMode,
+  updateBaseStationConfigMode,
+} from './baseStationConfigTruth'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -124,8 +128,8 @@ export interface MIMOOTAConfiguration {
   f64_output_gain_db?: number
   // AUTOSET 闭环的 UXM 起始功率 (留空 = controller 默认 -10 dBm)。
   input_loop_initial_dl_power_dbm?: number
-  // 开关 1: UXM 小区参数来源 — "dispatch" (默认, 主动下发) / "inherit"
-  // (跳过小区下发, read_live 读回实际频率/带宽核对)。
+  base_station_config_mode?: string
+  /** @deprecated 仅用于读取旧 TestCase；表单不再写该键。 */
   uxm_config_mode?: string
   pass_criteria?: PassCriteria
   step_overrides?: Record<string, unknown> | null
@@ -182,6 +186,7 @@ const MIMO_PORT_PRESET_OPTIONS = [
 ]
 
 export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
+  const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const update = <K extends keyof MIMOOTAConfiguration>(
     key: K,
     next: MIMOOTAConfiguration[K],
@@ -990,15 +995,21 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               </Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
                 <Select
-                  label="UXM 小区配置来源 (开关 1)"
-                  description="继承 = 跳过小区下发, 沿用仪器当前态 (如 EMQuest 基线), 但仍读回实际频率/带宽跟本配置核对"
+                  label="基站小区配置来源 (开关 1)"
+                  description="调试继承 = 跳过静态小区下发并核对当前态；所得数据不进入正式 KPI 或判决"
                   data={[
                     { value: 'dispatch', label: '主动下发 (默认) — 下发全套小区参数并回读对账' },
-                    { value: 'inherit', label: '继承仪器当前态 — 跳过小区下发 + 读回核对' },
+                    { value: 'inherit', label: '基站当前态调试继承 — 仅诊断，不参与正式判定' },
                   ]}
-                  value={value.uxm_config_mode === 'inherit' ? 'inherit' : 'dispatch'}
+                  value={baseStationConfigMode.mode}
+                  error={baseStationConfigMode.conflict ? '新旧配置来源字段冲突，请重新选择后保存' : undefined}
                   onChange={(v) =>
-                    update('uxm_config_mode', v === 'inherit' ? 'inherit' : undefined)
+                    onChange(
+                      updateBaseStationConfigMode(
+                        value,
+                        v === 'inherit' ? 'inherit' : 'dispatch',
+                      ),
+                    )
                   }
                   allowDeselect={false}
                   disabled={readOnly}

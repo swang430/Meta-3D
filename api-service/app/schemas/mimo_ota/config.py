@@ -463,25 +463,15 @@ class MIMOOTAConfiguration(BaseModel):
     # -46 基线热 36 dB, #216 门审 F3 披露); 现场可给温和起点 (如 -46) 免大
     # 功率起步冲 F64 输入。仅闭环模式消费 (手动定标不涉及)。
 
-    uxm_config_mode: Literal["dispatch", "inherit"] = "dispatch"
-    # 开关 1 (2026-07-21 现场): UXM **小区级参数**从哪来。
-    # - "dispatch" (默认, 现行为): measure 主动下发全套小区参数 (set_cell_config
-    #   含 ARFCN/BW/功率/层数) + 驱动回读对账; 频率一致性网用驱动下发记录。
-    # - "inherit": 跳过小区级参数下发 (set_cell_config + SCell), 沿用仪器当前态
-    #   (如 EMQuest 配好的基线)。**知情继承**: 频率一致性网改用
-    #   read_live_frequency_identity() 从仪器读回实际 ARFCN/BW 与 TestCase 声明
-    #   比对, 对不上仍按 precheck_strict_frequency 拦 — 不是盲信。
-    #   ⚠ inherit 仍会写 UXM 的 (门审 F2/F3 披露, 操作员须知):
-    #   ① MAC 吞吐配置 (FULLBUFFER/AMC/MCS/TDD pattern/HARQ/CSI-RS/统计窗);
-    #   ② start_signaling (CELL ON); ③ RRC reconfig 仍按 TestCase 推
-    #   mimo_layers/调制 (小区级层数继承但 RRC 请求层数是 TestCase 的 — 层数
-    #   **未纳入 live 核对**, 见 roadmap backlog); ④ 输入电平闭环会调 UXM DL
-    #   功率; ⑤ 跑完 cleanup 会 stop_signaling (CELL OFF) — 第二次 inherit
-    #   (P0-2 S5 补: inherit 还会**读**小区状态 BSE:STATus + live 频率做知情
-    #   继承核对 — 只读不写, OFF 不拦 [CELL ON 时缓存配置自动应用], 读不到才告警)
-    #   继承的是"上次跑完态"非原始 EMQuest 态。
-    #   用途: 复用现场已实证的仪器态; 也是"ON 态同值写触发意外重配"(#214 门审
-    #   F5 零实证雷) 的现场逃生通道。
+    base_station_config_mode: Literal["dispatch", "inherit"] = "dispatch"
+    # 基站静态小区配置来源。dispatch（默认）主动下发并回读；inherit 是“基站当前态
+    # 调试继承”，只用于显式诊断，结果不得进入正式 KPI / verdict。
+    uxm_config_mode: Optional[Literal["dispatch", "inherit"]] = Field(
+        default=None,
+        deprecated="Use base_station_config_mode instead.",
+    )
+    # 旧 TestCase JSON 只读兼容键。新写方统一使用 base_station_config_mode；保留原键
+    # 仅为历史审计，不允许执行器再自行回退。
 
     precheck_strict_input_level: bool = True
     # P0-8 Step 2 Phase 2b (2026-05-28): F64 输入操作点闭环 (InputLevelController)
@@ -596,6 +586,28 @@ class MIMOOTAConfiguration(BaseModel):
     # Keyed by MIMOOTAStepType.value; merged into step.parameters by the factory.
     # Lets tests pin one phase without rewriting the whole config.
     step_overrides: Optional[dict] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _canonicalize_base_station_config_mode(cls, raw: Any) -> Any:
+        """在唯一 schema 边界翻译旧键，并拒绝显式双写分叉。"""
+        if not isinstance(raw, dict):
+            return raw
+
+        data = deepcopy(raw)
+        has_current = "base_station_config_mode" in data
+        has_legacy = "uxm_config_mode" in data
+        current = data.get("base_station_config_mode")
+        legacy = data.get("uxm_config_mode")
+
+        if current is not None and legacy is not None and current != legacy:
+            raise ValueError(
+                "base_station_config_mode conflicts with deprecated "
+                "uxm_config_mode"
+            )
+        if not has_current and has_legacy and legacy is not None:
+            data["base_station_config_mode"] = legacy
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -721,6 +733,7 @@ def canonicalize_mimo_ota_configuration_payload(payload: dict) -> dict:
     """校验并只规范化载波真值字段，保留稀疏 JSON 与前向兼容扩展。"""
     validated = MIMOOTAConfiguration.model_validate(payload)
     canonical = deepcopy(payload)
+    canonical["base_station_config_mode"] = validated.base_station_config_mode
     primary = validated.primary_carrier
     for field in _PCELL_MIRROR_FIELDS:
         canonical[field] = getattr(primary, field)

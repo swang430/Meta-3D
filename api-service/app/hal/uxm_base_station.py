@@ -995,7 +995,7 @@ class RealUxmDriver(BaseStationDriver):
         )
 
     async def read_live_frequency_identity(self):
-        """开关 1 (uxm_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
+        """开关 1 (base_station_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
         当前实际 ARFCN + BW 构造频率标识 — 不是下发记录 (继承模式没下发,
         get_frequency_identity 必 None), 是仪器真实生效态。
 

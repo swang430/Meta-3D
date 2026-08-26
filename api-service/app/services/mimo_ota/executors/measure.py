@@ -494,7 +494,7 @@ class MeasureExecutor(IStepExecutor):
             return [], None
         if inherit:
             return [], (
-                "CA TestCase 不能使用 uxm_config_mode=inherit：本次没有 SCell "
+                "CA TestCase 不能使用 base_station_config_mode=inherit：本次没有 SCell "
                 "写入与激活真值；请改用 dispatch 模式。"
             )
 
@@ -868,11 +868,11 @@ class MeasureExecutor(IStepExecutor):
                         f"P2-11 #1974: {_preset_err}。typo 会让 set_cell_config 静默保留旧路由。"
                     ),
                 )
-            # 开关 1 (uxm_config_mode): "inherit" 跳过小区参数下发, 沿用仪器当前
+            # 开关 1 (base_station_config_mode): "inherit" 跳过小区参数下发, 沿用仪器当前
             # 态 (如 EMQuest 基线); 频率核对改走下方一致性网的 live 读回 (知情
             # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
-            uxm_inherit = config.uxm_config_mode == "inherit"
+            uxm_inherit = config.base_station_config_mode == "inherit"
             pcell_arfcn = freq_mhz_to_nr_arfcn(pcell_freq_mhz)
             # 即使选择 inherit，也必须把“本次 TestCase 期望的 PCell 配置”登记为
             # mandatory。inherit 路径当前没有同事务写入/回读/APPLY 证据，因此应在
@@ -887,7 +887,7 @@ class MeasureExecutor(IStepExecutor):
             context.db.commit()
             if uxm_inherit:
                 logger.info(
-                    "[%s] 开关1 uxm_config_mode=inherit: 跳过 UXM 小区级参数下发 "
+                    "[%s] 开关1 base_station_config_mode=inherit: 跳过基站小区级参数下发 "
                     "(set_cell_config + SCell), 沿用仪器当前态; 频率核对走 live "
                     "读回。仍会写: MAC 吞吐配置 / CELL ON / RRC 按 TestCase 推 "
                     "%d 层 (层数未纳入 live 核对) / 输入闭环调 DL 功率",
