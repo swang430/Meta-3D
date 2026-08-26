@@ -23,6 +23,7 @@ from app.services.instrument_hal_service import get_real_driver_class, is_mock_d
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
+CMW_FORMAL_CAPABILITY_KEY = "cmw500_lte_2x2_formal_capability"
 
 
 def _loaded_base_station(hal):
@@ -248,6 +249,14 @@ def freeze_base_station_adapter_profile(
             None if simulated else _driver_connection_identity(loaded_driver)
         ),
     }
+    if adapter == "cmw500":
+        updated_at = connection.cmw500_lte_2x2_formal_updated_at
+        identity[CMW_FORMAL_CAPABILITY_KEY] = {
+            "schema_version": 1,
+            "instrument_connection_id": str(connection.id),
+            "enabled": connection.cmw500_lte_2x2_formal_enabled is True,
+            "updated_at": updated_at.isoformat() if updated_at is not None else None,
+        }
     frozen = {**identity, "digest": _canonical_digest(identity)}
     error = validate_frozen_base_station_before_remote(hal, frozen)
     if error:

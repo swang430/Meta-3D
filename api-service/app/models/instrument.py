@@ -179,6 +179,20 @@ class InstrumentConnection(Base):
     # 备注
     notes = Column(Text, comment="备注")
 
+    # P1-73B：CMW500 LTE 2x2 正式能力的唯一 rollout 真值源。
+    # 通用 connection_params、环境变量和进程内 flag 都不得启用正式能力。
+    cmw500_lte_2x2_formal_enabled = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="CMW500 LTE 2x2 formal capability approval; dedicated API only",
+    )
+    cmw500_lte_2x2_formal_updated_at = Column(
+        DateTime,
+        nullable=True,
+        comment="Server-owned timestamp of the latest CMW500 formal approval change",
+    )
+
     # 元数据
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

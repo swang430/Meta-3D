@@ -73,6 +73,14 @@ export type InstrumentConnection = {
   controller?: string | null
   notes?: string | null
   connection_params?: Record<string, any> | null
+  cmw500_lte_2x2_formal_enabled: boolean
+  cmw500_lte_2x2_formal_updated_at: string | null
+}
+
+export type Cmw500FormalCapabilityResponse = {
+  connection_id: string
+  enabled: boolean
+  updated_at: string
 }
 
 export type Cmw500Lte2x2InternalRoute = {

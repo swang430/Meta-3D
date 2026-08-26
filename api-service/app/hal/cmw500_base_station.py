@@ -76,6 +76,15 @@ class BaseStationRouteResult:
     exchange_ids: list[str]
 
 
+@dataclass(frozen=True)
+class Cmw500FormalCapabilityDecision:
+    """Read-only admission result; it never mutates the instrument or DB."""
+
+    ready: bool
+    status: str
+    reason: str
+
+
 # ===========================================================================
 # CMW500 SCPI 命令映射表
 # ===========================================================================
@@ -236,6 +245,104 @@ class RealCmw500Driver(BaseStationDriver):
     }
     supported_bandwidths_mhz = frozenset(bandwidth_token_by_mhz)
     supported_mimo_layers = frozenset({1, 2, 4})
+
+    def evaluate_lte_2x2_formal_capability(
+        self,
+        frozen_adapter: dict[str, Any],
+        *,
+        duplex: str,
+        config_mode: str = "dispatch",
+    ) -> Cmw500FormalCapabilityDecision:
+        """Evaluate only a frozen approval and this read-only session snapshot.
+
+        Option semantics: R&S CMW500 LTE UE User Manual 1173.9628.02-41,
+        §2.2.1, printed pp.17-19: LTE FDD signaling uses KS500, LTE TDD
+        signaling uses KS550, and LTE MIMO signaling requires KS520.
+        """
+
+        if config_mode == "inherit":
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="diagnostic",
+                reason="inherit is diagnostic-only and cannot grant formal acceptance",
+            )
+        if config_mode != "dispatch":
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="base-station configuration mode is invalid",
+            )
+        resolution = frozen_adapter.get("resolution")
+        approval = frozen_adapter.get("cmw500_lte_2x2_formal_capability")
+        if not isinstance(resolution, dict) or not isinstance(approval, dict):
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="execution-frozen CMW500 approval is missing",
+            )
+        if (
+            resolution.get("adapter") != "cmw500"
+            or resolution.get("status") != "configured"
+            or resolution.get("execution_mode") != "real"
+        ):
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="execution-frozen CMW500 real adapter is not configured",
+            )
+        if approval.get("enabled") is not True:
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="disabled",
+                reason="CMW500 LTE 2x2 formal capability is not explicitly enabled",
+            )
+        if (
+            approval.get("schema_version") != 1
+            or not isinstance(approval.get("instrument_connection_id"), str)
+            or not approval.get("instrument_connection_id")
+            or approval.get("instrument_connection_id")
+            != frozen_adapter.get("instrument_connection_id")
+            or not isinstance(approval.get("updated_at"), str)
+            or not approval.get("updated_at")
+        ):
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="execution-frozen CMW500 approval is malformed",
+            )
+        normalized_duplex = duplex.strip().lower() if isinstance(duplex, str) else ""
+        if normalized_duplex not in {"fdd", "tdd"}:
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="LTE duplex is missing or invalid",
+            )
+        if not self.identity_snapshot_verified or self._identity_model != "CMW":
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="CMW500 model, firmware, or option snapshot is unverified",
+            )
+        if not self._firmware_at_least(self._firmware_version, "3.5.40"):
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason="CMW500 firmware does not satisfy the LTE 2x2 minimum",
+            )
+        installed = {option.strip().upper() for option in self._installed_options}
+        duplex_option = "CMW-KS500" if normalized_duplex == "fdd" else "CMW-KS550"
+        missing = sorted({"CMW-KS520", duplex_option} - installed)
+        if missing:
+            return Cmw500FormalCapabilityDecision(
+                ready=False,
+                status="unknown",
+                reason=f"CMW500 LTE 2x2 options are missing: {', '.join(missing)}",
+            )
+        return Cmw500FormalCapabilityDecision(
+            ready=True,
+            status="ready",
+            reason="CMW500 LTE 2x2 formal capability is explicitly admitted",
+        )
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)

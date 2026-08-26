@@ -5,6 +5,32 @@ info:
 servers:
   - url: http://localhost:3000
 paths:
+  /api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2:
+    put:
+      summary: Explicitly enable or disable CMW500 LTE 2x2 formal admission
+      description: |
+        The only write path for the durable CMW500 LTE 2x2 rollout approval.
+        Generic connection fields and connection_params cannot enable it.
+        The selected category/model are locked and must resolve to the registered
+        CMW500 base-station adapter.
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Cmw500FormalCapabilityUpdate'}
+      responses:
+        '200':
+          description: Server-owned approval state and timestamp
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Cmw500FormalCapabilityResponse'}
+        '404': {description: Instrument connection not found}
+        '422': {description: Connection is not the selected registered CMW500 base station}
   /api/v1/dashboard:
     get:
       summary: Get dashboard summary metrics
@@ -1751,8 +1777,29 @@ components:
           type: object
           nullable: true
           additionalProperties: true
-      required: [id, endpoint, controller, notes, connection_params]
+        cmw500_lte_2x2_formal_enabled:
+          type: boolean
+          description: Read-only durable rollout approval; generic connection update cannot write it.
+        cmw500_lte_2x2_formal_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, endpoint, controller, notes, connection_params, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at]
       additionalProperties: false
+    Cmw500FormalCapabilityUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled: {type: boolean}
+      required: [enabled]
+    Cmw500FormalCapabilityResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        connection_id: {type: string, format: uuid}
+        enabled: {type: boolean}
+        updated_at: {type: string, format: date-time}
+      required: [connection_id, enabled, updated_at]
     HALReadinessResponse:
       type: object
       description: |
