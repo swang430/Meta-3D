@@ -41,6 +41,8 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 
 > **P1-73 — CMW500 单载波 LTE 2×2 MIMO OTA（设计已批准，待按 P1-73A/B/C 实施）**
 >
+> 批准设计：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；逐任务 TDD 实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`。
+>
 > **可观察缺口**：仓库已有 `CMW500BaseStationDriver`，但当前真实执行契约尚不能发布
 > CMW500 LTE 2×2 OTA 的正式吞吐/BLER 结果：现有路由仍按 `1CC - 1x1` 形态配置，且
 > Extended BLER 回读字段与正式 provenance 白名单尚未按手册闭环。继续沿用现状会产生两种
@@ -621,7 +623,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 完整设计已批准，待按 P1-73A/B/C 实施**（设计稿：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`）。adapter 可注册、正式能力默认关闭；现场待确认项以 Warning 表示，不阻止开发。2026-08-24 批准队列六片均已完成。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 完整设计已批准，待按 P1-73A/B/C 实施**（设计稿：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-design.md`；实施计划：`docs/plans/2026-08-26-p1-73-cmw500-lte-mimo-ota-plan.md`）。adapter 可注册、正式能力默认关闭；现场待确认项以 Warning 表示，不阻止开发。2026-08-24 批准队列六片均已完成。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台及物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
