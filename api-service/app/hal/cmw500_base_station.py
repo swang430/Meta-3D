@@ -68,6 +68,17 @@ class CmwScpiCommands:
     CLS = "*CLS"
     ERR = "SYSTem:ERRor:ALL?"
     PRESET = "SYSTem:PRESet"
+    # R&S CMW500 Base Software User Manual 1173.9463.02-06,
+    # §6.3.10.3, printed p.242: SYSTem:BASE:OPTion:LIST? accepts
+    # SWOPtion/HWOPtion and VALid/FUNCtional filters. Query only the usable
+    # software and hardware sets; an unfiltered list also contains unusable
+    # entries and must not authorize an option-gated band.
+    OPTION_LIST_VALID_SOFTWARE = (
+        "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid"
+    )
+    OPTION_LIST_FUNCTIONAL_HARDWARE = (
+        "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional"
+    )
 
     # --- RF 路由 ---
     # 信令模式单小区, 使用内部 RF 前端
@@ -252,6 +263,28 @@ class RealCmw500Driver(BaseStationDriver):
     # 1. 连接生命周期
     # ===================================================================
 
+    async def _probe_installed_options(self) -> List[str]:
+        """Read the CMW-specific usable option snapshot, fail-closed."""
+
+        try:
+            software = self._parse_options_response(
+                self._query(CmwScpiCommands.OPTION_LIST_VALID_SOFTWARE)
+            )
+            hardware = self._parse_options_response(
+                self._query(CmwScpiCommands.OPTION_LIST_FUNCTIONAL_HARDWARE)
+            )
+        except Exception as exc:
+            logger.warning("[CMW500] Option snapshot unavailable: %s", exc)
+            self._installed_options = []
+            return []
+
+        self._installed_options = software + hardware
+        logger.info(
+            "[CMW500] Installed usable options: %s",
+            self._installed_options or "(none)",
+        )
+        return self._installed_options
+
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 CMW500 的连接"""
         if self._connection_config_error:
@@ -285,6 +318,8 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.warning(
                     f"[CMW500] Unexpected IDN response: {idn}"
                 )
+
+            await self._probe_installed_options()
 
             # 清除状态 + 预设
             self._write("*CLS")

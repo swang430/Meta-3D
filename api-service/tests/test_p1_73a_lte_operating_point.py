@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import FrozenInstanceError, replace
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -378,6 +379,49 @@ async def test_cmw500_rejects_option_gated_band_when_snapshot_is_unknown(
     monkeypatch.setattr(cmw, "set_cell_config", forbidden_write)
 
     assert await cmw.apply_requested_config(requested) is False
+
+
+@pytest.mark.asyncio
+async def test_cmw500_connect_populates_valid_option_snapshot_before_band_gate(
+    monkeypatch,
+):
+    requested = _build_pcell_requested_config(
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [LTE_B3_PCELL]}
+        )
+    )
+    requested = replace(
+        requested,
+        band="B42",
+        duplex="tdd",
+        lte_dl_earfcn=42590,
+        frequency_mhz=3500.0,
+    )
+    session = MagicMock()
+
+    def query(command: str) -> str:
+        if command == "*IDN?":
+            return "Rohde&Schwarz,CMW500,123456,4.0.250"
+        if command == "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid":
+            return '"CMW-KS525"'
+        if command == "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional":
+            return '"CMW-KB036"'
+        return "1"
+
+    session.query.side_effect = query
+    resource_manager = MagicMock()
+    resource_manager.open_resource.return_value = session
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    with patch("pyvisa.ResourceManager", return_value=resource_manager):
+        assert await cmw.connect() is True
+
+    async def accepted_write(_payload):
+        return True
+
+    monkeypatch.setattr(cmw, "set_cell_config", accepted_write)
+    assert cmw._installed_options == ["CMW-KS525", "CMW-KB036"]
+    assert await cmw.apply_requested_config(requested) is True
 
 
 @pytest.mark.asyncio
