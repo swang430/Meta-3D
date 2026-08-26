@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.hal.base_station import ThroughputMetrics
+from app.hal.base_station import CellState, ThroughputMetrics
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 from app.services.mimo_ota.executors.measure import MeasureExecutor
@@ -38,12 +38,14 @@ class _FakeTransportCmw(RealCmw500Driver):
                 "OFF,ADJ",  # config precondition
                 "OFF,ADJ",  # route precondition
                 "ON,ADJ",  # Cell ON
+                "ON,ADJ",  # Extended BLER pre-window live UE check
+                "ON,ADJ",  # Extended BLER post-window live UE check
                 "OFF,ADJ",  # shared stop readback
                 "OFF,ADJ",  # shared SAFE_IDLE readback
                 "OFF,ADJ",  # release-time SAFE_IDLE readback
             ]
         )
-        self.ps_states = deque(["ATT", "CEST"])
+        self.ps_states = deque(["ATT", "CEST", "CEST", "CEST"])
         self.ebler_states = deque(["OFF", "RUN", "RUN", "RDY", "OFF"])
         self.writes: list[str] = []
         self.queries: list[str] = []
@@ -158,3 +160,20 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
     assert session.closed is True
     assert driver._visa_session is None
     assert driver.ebler_states == deque()
+
+
+@pytest.mark.asyncio
+async def test_extended_bler_window_rejects_a_live_ue_drop_before_recording_connected():
+    driver = _FakeTransportCmw()
+    driver._cell_state = CellState.CONNECTED
+    driver.cell_states = deque(["ON,ADJ", "ON,ADJ"])
+    driver.ps_states = deque(["CEST", "ATT"])
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        with pytest.raises(RuntimeError, match="UE link"):
+            await MeasureExecutor._measure_base_station_samples(
+                driver,
+                window_s=0.1,
+                throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+                requested_sample_count=3,
+            )

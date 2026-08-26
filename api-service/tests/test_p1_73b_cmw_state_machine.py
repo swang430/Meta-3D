@@ -419,6 +419,23 @@ def test_ps_state_parser_rejects_substrings_and_keeps_attached_distinct_from_con
 
 
 @pytest.mark.asyncio
+async def test_get_ue_info_uses_live_ps_state_instead_of_cached_connected():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "ON,ADJ",
+            "FETCh:LTE:SIGN1:PSWitched:STATe?": "ATT",
+            "SENSe:LTE:SIGN1:RRCState?": "CONN",
+        }
+    )
+    driver._cell_state = CellState.CONNECTED
+
+    info = await driver.get_ue_info()
+
+    assert info["connected"] is False
+    assert info["rrc_state"] == "CONN"
+
+
+@pytest.mark.asyncio
 async def test_unknown_attach_state_fails_and_performs_confirmed_safe_cleanup():
     cell_states = iter(["ON,ADJ", "OFF,ADJ"])
 

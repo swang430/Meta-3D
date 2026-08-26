@@ -87,13 +87,26 @@ def test_measure_source_has_no_vendor_type_branch_or_cmw_scpi():
     assert '"UXM": uxm_identity' not in source
 
 
-def test_real_cmw_is_blocked_before_sampling_without_mac_configuration():
+def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
     blocker = _formal_mac_configuration_blocker(cmw)
 
     assert blocker is not None
     assert "MAC" in blocker
+
+
+def test_cmw_pcell_confirmation_does_not_cover_missing_mac_configuration():
+    policy = getattr(
+        measure_module,
+        "_formal_base_station_config_confirmed",
+        None,
+    )
+    assert callable(policy)
+
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+
+    assert policy(cmw, pcell_confirmed=True) is False
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():

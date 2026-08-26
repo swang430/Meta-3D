@@ -1460,6 +1460,8 @@ class RealCmw500Driver(BaseStationDriver):
         running_confirmed = False
         ready_confirmed = False
         closed_off_confirmed = False
+        ue_connected_before = False
+        ue_connected_after = False
         stop_attempted = False
         ended_before_stop = False
         lifecycle_failures: list[str] = []
@@ -1514,11 +1516,19 @@ class RealCmw500Driver(BaseStationDriver):
 
         with capture_scpi_exchanges() as exchanges:
             try:
-                preclear_off_confirmed = _write_and_confirm_state(
-                    Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
-                    "OFF",
-                    "pre-clear ABORT/OFF",
+                ue_connected_before = (
+                    await self.get_cell_state() is CellState.CONNECTED
                 )
+                if not ue_connected_before:
+                    lifecycle_failures.append(
+                        "UE link was not CONNECTED before the measurement window"
+                    )
+                else:
+                    preclear_off_confirmed = _write_and_confirm_state(
+                        Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
+                        "OFF",
+                        "pre-clear ABORT/OFF",
+                    )
                 if preclear_off_confirmed:
                     window_configuration_confirmed = all(
                         _write_and_confirm(command, label)
@@ -1631,6 +1641,13 @@ class RealCmw500Driver(BaseStationDriver):
                     "OFF",
                     "final ABORT/OFF",
                 )
+                ue_connected_after = (
+                    await self.get_cell_state() is CellState.CONNECTED
+                )
+                if not ue_connected_after:
+                    lifecycle_failures.append(
+                        "UE link was not CONNECTED after the measurement window"
+                    )
 
         lifecycle_confirmed = all(
             (
@@ -1639,6 +1656,8 @@ class RealCmw500Driver(BaseStationDriver):
                 running_confirmed,
                 ready_confirmed,
                 closed_off_confirmed,
+                ue_connected_before,
+                ue_connected_after,
             )
         )
         if not lifecycle_confirmed:
@@ -1675,6 +1694,8 @@ class RealCmw500Driver(BaseStationDriver):
                 "running_confirmed": running_confirmed,
                 "ready_confirmed": ready_confirmed,
                 "closed_off_confirmed": closed_off_confirmed,
+                "ue_connected_before": ue_connected_before,
+                "ue_connected_after": ue_connected_after,
             },
             exchange_ids=exchange_ids,
             evidence_level=(
@@ -1844,8 +1865,9 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取已连接 UE 的信息"""
+        live_state = await self.get_cell_state()
         info = {
-            "connected": self._cell_state == CellState.CONNECTED,
+            "connected": live_state is CellState.CONNECTED,
             "sign_channel": self._sign_channel,
         }
         try:

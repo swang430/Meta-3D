@@ -564,9 +564,22 @@ def _formal_mac_configuration_blocker(base_station) -> Optional[str]:
     ):
         return (
             "当前基站适配器尚未开放正式 MAC 吞吐配置能力；"
-            "为避免沿用旧调度器/FRC 状态，本次测量在采样前中止。"
+            "为避免沿用旧调度器/FRC 状态，本次结果不得进入正式 KPI。"
         )
     return None
+
+
+def _formal_base_station_config_confirmed(
+    base_station: Any,
+    *,
+    pcell_confirmed: bool,
+) -> bool:
+    """Do not let a confirmed PCell hide an unconfigured formal MAC scope."""
+
+    return (
+        pcell_confirmed is True
+        and _formal_mac_configuration_blocker(base_station) is None
+    )
 
 
 
@@ -1233,7 +1246,10 @@ class MeasureExecutor(IStepExecutor):
                         context.db,
                         context.test_execution.id,
                         attempt_id=cmw_attempt.attempt_id,
-                        config_confirmed=ok is True,
+                        config_confirmed=_formal_base_station_config_confirmed(
+                            base_station,
+                            pcell_confirmed=ok is True,
+                        ),
                         config_exchange_ids=[
                             exchange.exchange_id
                             for exchange in base_station_config_exchanges
@@ -1286,16 +1302,22 @@ class MeasureExecutor(IStepExecutor):
             # —— 于是「一条都没配上」与「全配好了」在这里长得一模一样，测试照常
             # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
             # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
-            # 调用方 fail-loud）；memory: 路径 B 绝不用默认 fallback 静默兜底。
-            _mac_capability_blocker = (
-                None
-                if cmw_attempt is not None
-                else _formal_mac_configuration_blocker(base_station)
+            # 调用方 fail-loud）；CMW 尚无手册支撑的同类配置，只允许保留
+            # UNKNOWN 诊断值，不得用默认 fallback 恢复正式 KPI。
+            _mac_capability_blocker = _formal_mac_configuration_blocker(
+                base_station
             )
             if _mac_capability_blocker:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=_mac_capability_blocker,
+                if cmw_attempt is None:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=_mac_capability_blocker,
+                    )
+                logger.warning(
+                    "[%s] CMW500 MAC configuration unconfirmed; continuing "
+                    "diagnostic measurement with formal KPI forced UNKNOWN: %s",
+                    context.test_execution.id,
+                    _mac_capability_blocker,
                 )
             if (
                 cmw_attempt is None
@@ -2744,8 +2766,9 @@ class MeasureExecutor(IStepExecutor):
                         requested_sample_count=num_windows,
                     )
                 except _BaseStationWindowBlocked as exc:
-                    if cmw_attempt is not None:
-                        pending_cmw_windows.append((float(azimuth), exc.window))
+                    # A rejected native window has no authoritative connected
+                    # link envelope.  Keep its raw SCPI capture in the driver
+                    # log, but do not persist a fabricated "connected" row.
                     raise
                 for sample in base_station_samples:
                     metrics = sample.metrics
