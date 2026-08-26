@@ -61,6 +61,13 @@ class BaseStationConfigResult:
     applied: dict[str, Any] | None
     confirmed: bool
     reason: str
+
+@dataclass(frozen=True)
+class BaseStationCleanupResult:
+    stop_signaling_confirmed: bool
+    disconnect_confirmed: bool
+    local_control_confirmed: bool
+    warnings: tuple[str, ...]
 ```
 
 测试还应证明通用基类不再包含 `build_uxm_downlink_power_command` 这种厂商 builder。
@@ -79,6 +86,8 @@ cd api-service
 **Step 3: 最小 GREEN**
 
 - 把真正跨驱动的类型移到 `base_station.py`。
+- `BaseStationCleanupResult` 是共享 cleanup 与执行 evidence 的唯一基站清理结果；任何字段只有驱动
+  返回精确 `True` 且相应 Local/SAFE_IDLE 回读确认后才为 true，不能用“无异常”推导。
 - UXM 改为导入通用类型，不复制定义。
 - UXM 专属功率 builder 下沉到 UXM profile/driver。
 - 只改归属，不改变 UXM 命令、返回值或执行顺序。
@@ -176,6 +185,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 **Files:**
 
 - Modify: `api-service/app/schemas/mimo_ota/config.py`
+- Modify: `api-service/app/api/commissioning.py`
+- Modify: `api-service/app/services/mimo_ota/factory.py`
 - Modify: `api-service/app/models/standard_channel.py`
 - Modify: `api-service/app/api/standard_channel.py`
 - Modify: `api-service/app/api/channel_asset.py`
@@ -191,6 +202,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Create: `api-service/alembic/versions/c73a19f4e602_add_rat_to_standard_channels.py`
 - Create: `api-service/app/hal/lte_earfcn.py`
 - Create: `api-service/tests/test_p1_73a_lte_operating_point.py`
+- Modify: `api-service/tests/test_commissioning_strict_gate_overrides.py`
+- Modify: `api-service/tests/test_commissioning_smoke.py`
 - Create: `api-service/tests/test_p1_73a_asset_frequency_identity.py`
 - Modify: `api-service/tests/test_p1_55_carrier_truth_source.py`
 - Modify: `api-service/tests/test_channel_naming.py`
@@ -203,6 +216,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - Modify: `api-service/tests/test_smu_project_inventory.py`
 - Modify: `api-service/tests/test_smu_project_scan_api.py`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
+- Modify: `gui/src/components/Commissioning/api.ts`
+- Modify: `gui/src/components/Commissioning/index.tsx`
 - Modify: `gui/src/components/TestCaseConfig/carrierTruth.ts`
 - Modify: `gui/src/api/standardChannelService.ts`
 - Modify: `gui/src/api/channelAssetService.ts`
@@ -227,6 +242,14 @@ git commit -m "refactor: canonicalize base station configuration fields"
   第 91 页公式 `N = 10 × (F - FOffset)/MHz + NOffset`，Tables 2-54/2-55/2-56 的 FDD UL、
   FDD DL 与 TDD ranges；每组 offset/range 紧邻标注表号，未知/SCC-only/选件不满足 band 拒绝；
 - LTE 缺 EARFCN、沿用原型 1575 默认、RAT/顶层/CC 冲突，全部在保存或硬件 I/O 前 422；
+- 活跃 `/commissioning/sessions` 入口同样覆盖：`CreateSessionRequest` 能表达 RAT、LTE duplex、
+  band、DL EARFCN 和可选 LTE theoretical peak，`_request_overrides()` 形成同一个显式 PCell；
+  `build_mimo_ota_test_case()` 必须先调用与普通 TestCase API 相同的 canonicalizer 再持久化，不能
+  直接 `MIMOOTAConfiguration.model_validate()` 后静默落入 NR 默认；adhoc 与 run-all 两个调用点
+  都走同一 factory 契约；
+- 当前 `theoretical_peak_throughput_mbps=450` 只保留为 legacy NR 兼容。LTE 不得继承该默认；
+  LTE 未显式提供有限正值时，绝对吞吐可独立可信，但 `throughput_ratio`、ratio pass、依赖 ratio
+  的 verdict/delta/repeatability 必须 UNKNOWN/N/A，不得从 bandwidth、当前 DB 或 NR 默认猜值；
 - `measure.py`、`channel_asset_resolver.py`、`standard_channel_service.py` 三个 NR identity 生产者
   全部消费同一 RAT-aware working point；SCD/ChannelAsset 明示 channel kind，禁止把
   `scd_config.arfcn` 无条件解释为 NR，也禁止把 LTE EARFCN 与 NR ARFCN 直接比较；
@@ -251,7 +274,8 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - 跨 RAT 的资产一致性仅比较经各自有出处 converter 得到的中心频率与带宽；缺 RAT、缺 converter
   或 channel kind 冲突都保护资产并在 I/O 前 fail-loud，不从文件名或当前 DB 猜测；
 - executor 将同一个 typed `BaseStationRequestedConfig` 交给 fake UXM/CMW，不按厂商类分支；
-- GUI 选择 LTE 时要求上述显式字段，不写 NR 默认值。
+- GUI TestCase 表单与 Commissioning 启动页选择 LTE 时都要求上述显式字段并发送到同一
+  canonicalizer，不写 NR 默认值；LTE peak 未提供时界面明确显示 ratio/相关判决不可用。
 
 **Step 2: 运行 RED**
 
@@ -270,7 +294,9 @@ cd api-service
   tests/test_f64_channel_model_listing.py \
   tests/test_smu_project_inventory.py \
   tests/test_smu_project_scan_api.py \
-  tests/test_p1_73a_asset_frequency_identity.py
+  tests/test_p1_73a_asset_frequency_identity.py \
+  tests/test_commissioning_strict_gate_overrides.py \
+  tests/test_commissioning_smoke.py
 cd ../gui
 node --test \
   src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
@@ -282,6 +308,10 @@ node --test \
 **Step 3: 最小 GREEN**
 
 - 给 PCell 增加显式 RAT 与互斥 channel-number 字段；旧记录缺 RAT 精确兼容为 NR。
+- 把 `theoretical_peak_throughput_mbps` 改成 RAT-aware 输入：legacy NR translator 精确保留现有
+  450 Mbps 行为；LTE 只接受本次显式有限正值，缺失时不生成 ratio 或相关判决。
+- `CreateSessionRequest` / `_request_overrides()` 产生与 TestCase 表单相同的 typed PCell；factory
+  复用唯一 canonicalizer。Commissioning API/GUI 不另写 LTE 默认或第二套转换器。
 - LTE converter 只实现 CMW LTE UE User Manual §2.2.23 Tables 2-54/2-55/2-56 明确列出的、
   且当前型号/选件快照支持的 band；未知、SCC-only、选件不足 band fail-loud，不猜公式。
 - MEASURE 先按 RAT 建立 requested config，再交给通用 driver；LTE 路径不导入 NR converter。
@@ -314,6 +344,8 @@ cd api-service
   tests/test_smu_project_inventory.py \
   tests/test_smu_project_scan_api.py \
   tests/test_p1_73a_asset_frequency_identity.py \
+  tests/test_commissioning_strict_gate_overrides.py \
+  tests/test_commissioning_smoke.py \
   tests/test_uxm_cell_config_orchestration.py
 cd ../gui
 node --test \
@@ -322,6 +354,8 @@ node --test \
 npm run build
 cd ..
 git add api-service/app/schemas/mimo_ota/config.py \
+  api-service/app/api/commissioning.py \
+  api-service/app/services/mimo_ota/factory.py \
   api-service/app/models/standard_channel.py \
   api-service/app/api/standard_channel.py \
   api-service/app/api/channel_asset.py \
@@ -337,6 +371,8 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/alembic/versions/c73a19f4e602_add_rat_to_standard_channels.py \
   api-service/app/hal/lte_earfcn.py \
   api-service/tests/test_p1_73a_lte_operating_point.py \
+  api-service/tests/test_commissioning_strict_gate_overrides.py \
+  api-service/tests/test_commissioning_smoke.py \
   api-service/tests/test_p1_55_carrier_truth_source.py \
   api-service/tests/test_channel_naming.py \
   api-service/tests/test_channel_asset_resolver.py \
@@ -350,6 +386,8 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/tests/test_smu_project_scan_api.py \
   api-service/tests/test_p1_73a_asset_frequency_identity.py \
   gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
+  gui/src/components/Commissioning/api.ts \
+  gui/src/components/Commissioning/index.tsx \
   gui/src/components/TestCaseConfig/carrierTruth.ts \
   gui/src/api/standardChannelService.ts \
   gui/src/api/channelAssetService.ts \
@@ -893,7 +931,7 @@ class BaseStationExecutionEvidence(BaseModel):
     requested_config: BaseStationRequestedConfigSnapshot
     requested_positions: list[PositionSnapshot]
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
-    cleanup_local_confirmed: Literal[True]
+    cleanup: BaseStationCleanupResult
     exchange_ids: list[str]
 
 class BaseStationMeasurementWindowEvidence(BaseModel):
@@ -908,7 +946,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     metrics: dict[str, BaseStationMetricEvidence]
 ```
 
-正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window、cleanup confirmed。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配均 false。
+正式判据必须：real driver、获准 adapter/profile、identity 完整、dispatch、config readback、自身需要的 route readback、所有请求方位均有唯一 window，并且结构化 cleanup 的 stop signaling、disconnect、Local control 三项都精确 confirmed。CMW 必须 route confirmed；UXM 只消费自己的既有权威配置链。任何 extra/missing/legacy CMW/inherit/mock/方位集合失配，或 cleanup `False`/`None`/异常/仅无异常返回，均 false。
 
 本 Task 同时实现设计稿 §4.2 的唯一逐指标入口：
 
@@ -945,8 +983,11 @@ git commit -m "feat: add formal base station execution evidence"
 **Files:**
 
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
+- Modify: `api-service/app/services/mimo_ota/cleanup.py`
 - Modify: `api-service/tests/test_p1_73a_vendor_neutral_measure.py`
 - Create: `api-service/tests/test_p1_73c_cmw_measure_integration.py`
+- Create: `api-service/tests/test_p1_73c_base_station_cleanup_truth.py`
+- Modify: `api-service/tests/test_p1_59_ca_throughput_truth.py`
 
 **Step 1: 写 RED**
 
@@ -957,6 +998,10 @@ git commit -m "feat: add formal base station execution evidence"
 - 每个 window 在产生时冻结 config digest、route digest、position、UE link state、起止时间和
   metric exchange IDs；交换另一配置/route/方位的结构合法 window 也必须 fail-closed；
 - route/config/error/cleanup 任一 unknown 时正式 throughput/BLER 均 UNKNOWN；
+- shared cleanup 对 `stop_signaling()` / `disconnect()` 的返回值逐项要求 `is True`；`False`、`None`
+  和异常都写入 warnings 与 `BaseStationCleanupResult`，不得因 await 完成或 finally 已运行而确认；
+- `measure.py` 消费该结构化结果并由 stop/disconnect/Local 三项共同派生 evidence cleanup；任一失败
+  时保留原业务错误全文、追加 cleanup warning，阻止正式 KPI/报告，且不得掩盖其他仪表 cleanup；
 - 取消、attach timeout、window timeout、F64 失败均无假成功；
 - UXM 仍通过同一个 executor 且原回归行为不变。
 
@@ -966,11 +1011,16 @@ git commit -m "feat: add formal base station execution evidence"
 cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73c_cmw_measure_integration.py \
+  tests/test_p1_73c_base_station_cleanup_truth.py \
   tests/test_p1_73a_vendor_neutral_measure.py \
+  tests/test_p1_59_ca_throughput_truth.py \
   tests/test_uxm_cell_config_orchestration.py
 git add api-service/app/services/mimo_ota/executors/measure.py \
+  api-service/app/services/mimo_ota/cleanup.py \
   api-service/tests/test_p1_73a_vendor_neutral_measure.py \
-  api-service/tests/test_p1_73c_cmw_measure_integration.py
+  api-service/tests/test_p1_73c_cmw_measure_integration.py \
+  api-service/tests/test_p1_73c_base_station_cleanup_truth.py \
+  api-service/tests/test_p1_59_ca_throughput_truth.py
 git commit -m "feat: run CMW500 through the common MIMO measure flow"
 ```
 
@@ -1008,8 +1058,9 @@ git commit -m "feat: run CMW500 through the common MIMO measure flow"
   聚合指标名直接交给 base-station evaluator，也不能继续信任 analysis 聚合值或旧
   `measurement_verified=true`：
   - `avg_throughput_mbps`：对冻结请求的每个方位调用 base-station throughput evaluator 后重算均值；
-  - `throughput_ratio`：只从上述受信均值与该 execution 冻结配置中的
-    `theoretical_peak_throughput_mbps` 重算；
+  - `throughput_ratio`：只从上述受信均值与该 execution 显式提供并冻结的 LTE
+    `theoretical_peak_throughput_mbps` 重算；缺失时 ratio/delta/repeatability/相关 verdict 均
+    UNKNOWN，不得读取 NR 450 Mbps 默认；
   - `rsrp_variance_db` / `avg_sinr_db`：在 `rf_kpi_trust.py` 抽取并复用最小逐指标 scope helper，
     分别要求完整 requested positions 的 `rsrp_dbm` / `sinr_db` explicit-real 当前行，再重算；
   - 未来新增 BLER 对比时才对每个方位调用 base-station BLER evaluator。

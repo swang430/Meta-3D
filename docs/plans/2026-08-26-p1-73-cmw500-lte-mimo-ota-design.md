@@ -90,6 +90,10 @@ band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽�
 字段，也不让 CMW 借用 UXM 的功率口径；UXM 既有行为保持兼容，CMW 功率与外部补偿延后到
 正式发布前单独设计。
 
+保存 TestCase 与活跃 `/commissioning/sessions` 入口必须使用同一 RAT-aware canonicalizer。
+`CreateSessionRequest`、`_request_overrides()` 和 `build_mimo_ota_test_case()` 都要显式传递 RAT、
+LTE duplex、band、DL EARFCN 与 PCell；factory 不得绕过 canonicalizer 后用 NR 默认建行。
+
 `component_carriers[0]` 继续是工作点唯一真值，但必须从 NR-only 扩展为带 RAT 的联合类型：
 NR 保留现有 NR ARFCN/SCS 兼容行为；LTE 要求单载波、显式 LTE band 与 DL EARFCN，禁止调用
 `freq_mhz_to_nr_arfcn()`、禁止带 SCell，也禁止从原型默认 EARFCN 补值。`measure.py`、
@@ -101,6 +105,11 @@ payload validator、工作台表单、OpenAPI 与 generated TS 必须携带 `rad
 通过旧 NR 契约时补成 `nr5g/nr_arfcn`；新写入缺字段一律拒绝，不能按名称或当前 DB 猜。
 LTE EARFCN 与 NR ARFCN 永不直接比较。跨 RAT 只允许在各自有手册/标准出处的转换完成后比较
 中心频率和带宽。RAT、频率、band、channel number 或顶层兼容镜像冲突均在保存或硬件 I/O 前 422。
+
+现有 `theoretical_peak_throughput_mbps=450` 仅是 NR 2×2/256QAM/100 MHz 的兼容默认，LTE
+不得继承。LTE 若要形成 `throughput_ratio`，必须在本次测试配置中显式给出有限正值并冻结；未给
+时绝对吞吐仍可独立发布，但 ratio、ratio pass 及依赖它的 verdict 保持 UNKNOWN/N/A。不得从
+NR 默认、当前数据库、带宽或数值形状猜 LTE 理论峰值。
 
 LTE EARFCN 的首期唯一映射依据为本地原始手册
 `CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` §2.2.23 “Operating bands”，第 91 页的
@@ -142,6 +151,11 @@ DISCONNECTED
 
 任一状态无法确认时停止产生正式 KPI，不自动重发带副作用的命令，尝试有出处且幂等的安全动作，
 并把状态不确定写入 cleanup 与告警。
+
+共享 cleanup 必须返回并消费结构化 `BaseStationCleanupResult`，至少包含
+`stop_signaling_confirmed`、`disconnect_confirmed`、`local_control_confirmed` 和 warnings。
+`False`、`None`、异常均不可当成功；`cleanup_chamber_instruments()` 必须检查每个布尔返回并聚合
+失败。执行证据中的 cleanup 确认只能由这个结果推导，不能由 finally 已运行或无异常直接置 true。
 
 ### 3.2 `1CC - nx2` 内部 route
 
@@ -232,7 +246,8 @@ API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容�
 
 报告只发布对应权威 trust 函数确认的 KPI。报告对比不得把全部聚合指标误交给 base-station
 evaluator，而是按来源换源：`avg_throughput_mbps` 从逐方位受信 throughput 聚合；
-`throughput_ratio` 只由该受信均值和本次执行冻结的 theoretical peak 重算；
+`throughput_ratio` 只由该受信均值和本次执行显式提供并冻结的 LTE theoretical peak 重算，缺失
+时保持 UNKNOWN/N/A，绝不继承 NR 的 450 Mbps 默认；
 `rsrp_variance_db` / `avg_sinr_db` 分别从 P1-63 的逐方位、逐指标 RF trust 后聚合；未来新增
 BLER 对比才调用 base-station BLER evaluator。未获信任的值不得进入 delta、summary statistics、
 repeatability 或 `formal=true`，且一个指标 unknown 不得清空其他独立可信指标。缺测不写 0，
