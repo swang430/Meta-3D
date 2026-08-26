@@ -6,6 +6,11 @@ type MetricView = {
   note: string | null
 }
 
+type LegacyUxmThroughput = {
+  verified: unknown
+  value: unknown
+}
+
 const finiteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
@@ -13,8 +18,21 @@ export function describeBaseStationMetric(
   projection: unknown,
   azimuthDeg: unknown,
   metricName: MetricName,
+  legacyUxmThroughput?: LegacyUxmThroughput,
 ): MetricView {
   if (!Array.isArray(projection) || !finiteNumber(azimuthDeg)) {
+    if (
+      projection === undefined
+      && metricName === 'dl_throughput_mbps'
+      && legacyUxmThroughput?.verified === true
+      && finiteNumber(legacyUxmThroughput.value)
+    ) {
+      return {
+        text: legacyUxmThroughput.value.toFixed(1),
+        color: undefined,
+        note: null,
+      }
+    }
     return { text: 'N/A', color: 'yellow', note: null }
   }
   const row = projection.find((candidate) => {

@@ -258,6 +258,10 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
                 data.base_station_metric_projection,
                 az.azimuth_deg,
                 'dl_throughput_mbps',
+                {
+                  verified: data.throughput_verified,
+                  value: az.throughput_mbps,
+                },
               )
               const bler = describeBaseStationMetric(
                 data.base_station_metric_projection,

@@ -44,3 +44,33 @@ test('missing, malformed, or raw-only payloads render N/A', () => {
     'N/A',
   )
 })
+
+test('legacy UXM keeps only explicitly verified throughput when projection is absent', () => {
+  assert.deepEqual(
+    describeBaseStationMetric(
+      undefined,
+      0,
+      'dl_throughput_mbps',
+      { verified: true, value: 88.25 },
+    ),
+    { text: '88.3', color: undefined, note: null },
+  )
+  assert.equal(
+    describeBaseStationMetric(
+      [],
+      0,
+      'dl_throughput_mbps',
+      { verified: true, value: 999 },
+    ).text,
+    'N/A',
+  )
+  assert.equal(
+    describeBaseStationMetric(
+      undefined,
+      0,
+      'dl_throughput_mbps',
+      { verified: false, value: 88.25 },
+    ).text,
+    'N/A',
+  )
+})
