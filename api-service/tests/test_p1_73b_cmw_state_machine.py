@@ -299,6 +299,29 @@ async def test_config_requires_exact_applied_lte_transmission_mode():
 
 
 @pytest.mark.asyncio
+async def test_config_requires_exact_applied_downlink_rs_epre():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?": "-64.25",
+        }
+    )
+    original = driver._dl_power_dbm
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "dl_power_dbm": -65.25}
+    )
+
+    assert result is False
+    assert driver._dl_power_dbm == original
+    assert "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25" in driver.writes
+    assert driver.queries[-1] == "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?"
+
+
+@pytest.mark.asyncio
 async def test_attach_accepts_only_documented_exact_states_and_restores_timeout():
     states = iter(["ON,ADJ", "ATT", "CEST"])
 

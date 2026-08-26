@@ -118,8 +118,9 @@ real/mock 分类、精确类和 adapter；冻结后发生 reload/model switch �
 通用请求包含显式 RAT、LTE 双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
 逻辑 DL1/DL2/UL1 和 `config_mode`。不得用默认 EARFCN、route 或端口补齐缺失配置；频率、
 band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽功率字段改名后推广为通用
-字段，也不让 CMW 借用 UXM 的功率口径；UXM 既有行为保持兼容，CMW 功率与外部补偿延后到
-正式发布前单独设计。
+字段，也不让 CMW 借用 UXM 的功率口径；UXM 既有行为保持兼容。CMW 只消费通用请求中已有的
+PCC RS-EPRE，并按手册写后回读；input-level 功率闭环、外部补偿与端到端功率预算仍延后到正式
+发布前单独设计。
 
 保存 TestCase 与活跃 `/commissioning/sessions` 入口必须使用同一 RAT-aware canonicalizer。
 `CreateSessionRequest`、`_request_overrides()` 和 `build_mimo_ota_test_case()` 都要显式传递 RAT、
@@ -239,8 +240,8 @@ ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible
 
 关键配置均形成 `requested → dispatched → applied/read back`，至少覆盖 duplex、band、EARFCN、
 bandwidth、transmission mode、TX antenna count、Cell state、PS connection 和 application
-instance。P1-73 不把 CMW 功率纳入正式配置证据。命令传输完成或 `*OPC? == 1` 不证明错误队列
-干净或配置生效；关键 applied
+instance。CMW 的请求 PCC RS-EPRE 也必须形成写后回读证据，但不扩展成 input-level 功率闭环、
+外部补偿或功率预算。命令传输完成或 `*OPC? == 1` 不证明错误队列干净或配置生效；关键 applied
 字段无法回读时保持 unverified，不从 requested 回填。
 
 每次写操作采用有界旧错误清理、下发、等待、错误队列读取和权威回读。错误队列循环有上限，

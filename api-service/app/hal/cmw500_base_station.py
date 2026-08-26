@@ -25,6 +25,7 @@ R&S 命名约定:
 
 import logging
 import asyncio
+import math
 import re
 from uuid import uuid4
 from dataclasses import asdict, dataclass
@@ -143,6 +144,10 @@ class CmwScpiCommands:
     CELL_PCI = "CONFigure:LTE:SIGN{i}:CELL:PCI"                 # 物理小区 ID
 
     # --- 下行功率 ---
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41, §2.6.10,
+    # printed p.656: PCC RS EPRE is writable/queryable as a numeric value
+    # with default unit dBm/15kHz.  Its allowed range is configuration-
+    # dependent, so the instrument error queue and exact readback are the gate.
     DL_POWER_RS = "CONFigure:LTE:SIGN{i}:DL:RSEPre:LEVel"      # RS-EPRE 功率
     DL_POWER_EIRP = "CONFigure:LTE:SIGN{i}:DL:LATTenuation"    # 下行附加衰减
 
@@ -241,8 +246,8 @@ class RealCmw500Driver(BaseStationDriver):
     核心工作流:
       1. connect() → 只读识别型号、版本和选件
       2. 执行期显式配置 route 与小区工作点
-      3. set_cell_config() → Band/BW/DL Freq
-      4. set_downlink_power() → RS-EPRE 功率
+      3. set_cell_config() → Band/BW/DL Freq 与请求的 RS-EPRE
+      4. set_downlink_power() → 可选的独立 RS-EPRE 调整
       5. start_signaling() → Cell ON → PS Establish → 等待连接
       6. get_throughput_metrics() → 诊断回读（正式窗口由独立方法负责）
       7. stop_signaling() → PS Release → Cell OFF
@@ -957,6 +962,7 @@ class RealCmw500Driver(BaseStationDriver):
           CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
           CONFigure:LTE:SIGN1:DMODe FDD
+          CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25
         """
         try:
             band = self._band
@@ -991,6 +997,16 @@ class RealCmw500Driver(BaseStationDriver):
                         config["lte_transmission_mode"],
                     )
                     return False
+            downlink_power_dbm = None
+            if "dl_power_dbm" in config:
+                raw_power = config["dl_power_dbm"]
+                if isinstance(raw_power, bool):
+                    logger.error("[CMW500] Rejecting boolean DL RS-EPRE")
+                    return False
+                downlink_power_dbm = float(raw_power)
+                if not math.isfinite(downlink_power_dbm):
+                    logger.error("[CMW500] Rejecting non-finite DL RS-EPRE")
+                    return False
 
             if not await self.ensure_safe_idle():
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
@@ -1016,6 +1032,12 @@ class RealCmw500Driver(BaseStationDriver):
             self._write(
                 self._fmt(CmwScpiCommands.CELL_DL_FREQ) + f" {earfcn}"
             )
+
+            if downlink_power_dbm is not None:
+                self._write(
+                    self._fmt(CmwScpiCommands.DL_POWER_RS)
+                    + f" {downlink_power_dbm:.12g}"
+                )
 
             # 物理小区 ID
             if "cell_id" in config:
@@ -1094,6 +1116,15 @@ class RealCmw500Driver(BaseStationDriver):
                 if transmission_mode is not None
                 else None
             )
+            downlink_power_readback = (
+                float(
+                    self._query(
+                        self._fmt(CmwScpiCommands.DL_POWER_RS) + "?"
+                    ).strip()
+                )
+                if downlink_power_dbm is not None
+                else None
+            )
             expected_bandwidth = (
                 bandwidth_token
                 if bandwidth_token is not None
@@ -1115,23 +1146,29 @@ class RealCmw500Driver(BaseStationDriver):
                     transmission_mode_readback is not None
                     and transmission_mode_readback != transmission_mode
                 )
+                or (
+                    downlink_power_readback is not None
+                    and downlink_power_readback != downlink_power_dbm
+                )
             ):
                 logger.error(
                     "[CMW500] Cell config readback mismatch: "
-                    "requested=(%s,%s,%s,%s,%s,%s), "
-                    "applied=(%s,%s,%s,%s,%s,%s)",
+                    "requested=(%s,%s,%s,%s,%s,%s,%s), "
+                    "applied=(%s,%s,%s,%s,%s,%s,%s)",
                     band,
                     expected_bandwidth,
                     earfcn,
                     expected_duplex,
                     expected_mimo,
                     transmission_mode,
+                    downlink_power_dbm,
                     band_readback,
                     bandwidth_readback,
                     earfcn_readback,
                     duplex_readback,
                     mimo_readback,
                     transmission_mode_readback,
+                    downlink_power_readback,
                 )
                 return False
 
@@ -1139,6 +1176,8 @@ class RealCmw500Driver(BaseStationDriver):
             self._bandwidth_mhz = bandwidth_mhz
             self._earfcn = earfcn
             self._frequency_mhz = frequency_mhz
+            if downlink_power_dbm is not None:
+                self._dl_power_dbm = downlink_power_dbm
             self._set_status(InstrumentStatus.READY)
             logger.info(
                 f"[CMW500] Cell config: band={self._band}, "

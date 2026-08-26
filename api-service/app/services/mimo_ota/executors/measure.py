@@ -417,10 +417,10 @@ def _build_pcell_cell_config(
         "mimo_layers": config.mimo_layers,
         "dl_power_dbm": config.target_tx_power_dbm,
     }
-    # 整带宽口径优先（2026-08-07）。给了就由驱动**只走** `:DL:POWer:CHANnel`，
-    # 上面那条 dBm/SCS 的 `dl_power_dbm` 在驱动里被跳过 —— 这里仍然照常放进去，
-    # 是为了让 payload 保留"如果走 EPRE 口径会是多少"的审计痕迹，
-    # **不是**让驱动两条都发（驱动侧是 if/elif，见 uxm_base_station 第 8 节）。
+    # UXM 整带宽口径优先（2026-08-07）：给了就由 UXM 驱动**只走**
+    # `:DL:POWer:CHANnel`，上面的 dBm/SCS 仅保留审计痕迹（UXM 驱动侧是
+    # if/elif，见 uxm_base_station 第 8 节）。CMW 不消费这个 UXM 专属字段，
+    # 只按手册写入并回读通用 `dl_power_dbm` 的 PCC RS-EPRE。
     if config.uxm_dl_power_dbm_per_bw is not None:
         cell_cfg["dl_power_dbm_per_bw"] = config.uxm_dl_power_dbm_per_bw
     # 可选字段: 仅 TestCase 显式给 (非 None) 才驱动, 否则保持 HAL profile (backward-compat)
