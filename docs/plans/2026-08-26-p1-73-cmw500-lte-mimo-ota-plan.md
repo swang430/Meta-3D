@@ -1078,8 +1078,9 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
   adapter 为 CMW500，随后更新布尔与服务器时间。通用 connection create/update schema 不接受这两个
   字段，`connection_params` 中的同名/相似键不生效，环境变量和进程内 flag 也不是候选真源；
 - adapter profile freeze 在同一事务锁住同一 connection，把 approval 的 connection id、enabled、
-  updated_at 冻结到 server-owned execution snapshot；readiness、runner 和正式 evaluator 只消费该
-  快照。执行中途启停只影响后续 execution，不重写旧 execution 或历史结果；
+  updated_at 冻结到 server-owned execution snapshot；执行前 readiness 从当前所选 LabProfile binding
+  解析到的同一 connection 显式列做只读预览，runner 只从该列冻结，execution 响应与正式 evaluator
+  只消费冻结快照。执行中途启停只影响后续 execution，不重写旧 execution 或历史结果；
 - 显式启用后仍必须使用当前会话只读 identity/firmware/options snapshot，满足型号、固件、KS520，
   以及本次请求 FDD 对应 KS500 / TDD 对应 KS550；
   缺任一项给 Warning/unknown，不声称 ready；KS500-only 不得放行 TDD，KS550-only 不得放行 FDD；
@@ -1089,7 +1090,8 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
 - `inherit` 只读核对当前 cell/route/状态，不做 preset，且 evidence gate 永远不授予 formal acceptance。
 - RED 覆盖默认 false、专用 endpoint 启停、错误 category/model 422、通用 connection update 与
   `connection_params` 同名键无法启用、执行冻结后数据库开关变化不改旧 execution，以及 readiness/
-  runner/evaluator 三方读取同一冻结 approval；删除任一持久化生产/冻结/消费站点均保持 UNKNOWN。
+  runner/evaluator 三方同源但分时：readiness 读当前列、runner 冻结、execution/evaluator 读快照；
+  删除任一持久化生产/冻结/消费站点均保持 UNKNOWN。
 
 **Step 2: RED → GREEN**
 

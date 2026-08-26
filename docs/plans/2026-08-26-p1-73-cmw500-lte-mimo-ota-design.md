@@ -87,9 +87,10 @@ duplex 在当前会话完成只读 identity/firmware/options snapshot 后、首�
 不是第四个硬件能力键。唯一写源是 `InstrumentConnection.cmw500_lte_2x2_formal_enabled` 显式列，
 默认 false，并由专用 capability endpoint 在锁行后更新，同时由服务器写更新时间；通用 connection
 更新和 `connection_params` 不能写该列。执行开始时与 adapter profile 一起锁定同一 connection，
-把 connection id、enabled 值和服务器更新时间冻结进 execution；readiness 与正式 evaluator 只消费
-这份冻结 approval，不读环境变量、临时进程状态或任意 JSON key。未完成现场确认时 GUI 显示
-Warning，不使用 `Hardware Blocked`。
+把 connection id、enabled 值和服务器更新时间冻结进 execution。执行前 readiness 从当前所选
+LabProfile binding 解析到的同一 connection 显式列做只读预览；runner 只从该列冻结；execution
+响应与正式 evaluator 只消费冻结 approval，后续开关变化不得改写旧执行。三者都不读环境变量、
+临时进程状态或任意 JSON key。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。
 
 CMW500 的内部 `1CC - nx2` 元组不是能力准入键，也不能由驱动猜测。它以版本化
 `base_station_adapter_profile` 持久化在被所选 LabProfile 的 `baseStation` binding 解析到的
