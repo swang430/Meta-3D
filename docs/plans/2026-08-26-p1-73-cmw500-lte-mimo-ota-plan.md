@@ -171,6 +171,78 @@ git add api-service/app/schemas/mimo_ota/config.py \
 git commit -m "refactor: canonicalize base station configuration fields"
 ```
 
+### Task 2A：把 PCell 真值扩展为显式 LTE/NR 联合契约
+
+**Files:**
+
+- Modify: `api-service/app/schemas/mimo_ota/config.py`
+- Modify: `api-service/app/services/mimo_ota/executors/measure.py`
+- Modify: `api-service/app/services/mimo_ota/frequency_consistency.py`
+- Create: `api-service/app/hal/lte_earfcn.py`
+- Create: `api-service/tests/test_p1_73a_lte_operating_point.py`
+- Modify: `api-service/tests/test_p1_55_carrier_truth_source.py`
+- Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
+- Modify: `gui/src/components/TestCaseConfig/carrierTruth.ts`
+- Create: `gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts`
+
+**Step 1: 写 RED**
+
+扩展 `component_carriers[0]`，但不创建第二个工作点真源。契约至少覆盖：
+
+- `radio_technology="nr5g"` 保持当前默认与 NR ARFCN/SCS 行为不变；
+- `radio_technology="lte"` 时只允许单个 PCell，要求显式 LTE band、`lte_dl_earfcn`、
+  frequency、bandwidth、duplex，禁止 SCell、NR ARFCN 与 NR SCS；
+- LTE 的 band/EARFCN/frequency 关系由独立 LTE helper 校验；不调用 `freq_mhz_to_nr_arfcn()`；
+- LTE 缺 EARFCN、沿用原型 1575 默认、RAT/顶层/CC 冲突，全部在保存或硬件 I/O 前 422；
+- executor 将同一个 typed `BaseStationRequestedConfig` 交给 fake UXM/CMW，不按厂商类分支；
+- GUI 选择 LTE 时要求上述显式字段，不写 NR 默认值。
+
+**Step 2: 运行 RED**
+
+```bash
+cd api-service
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73a_lte_operating_point.py \
+  tests/test_p1_55_carrier_truth_source.py
+cd ../gui
+node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+```
+
+预期：当前 schema 是 NR-only，LTE 输入会被 NR ARFCN 路径解释，测试失败。
+
+**Step 3: 最小 GREEN**
+
+- 给 PCell 增加显式 RAT 与互斥 channel-number 字段；旧记录缺 RAT 精确兼容为 NR。
+- LTE converter 只实现本片经手册/3GPP 表确认的 band；未知 band fail-loud，不猜公式。
+- MEASURE 先按 RAT 建立 requested config，再交给通用 driver；LTE 路径不导入 NR converter。
+- 频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
+- 保留 P1-55 的顶层镜像一致性门，不能因扩展 RAT 放宽旧冲突检查。
+
+**Step 4: 运行 GREEN 并提交**
+
+```bash
+cd api-service
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73a_lte_operating_point.py \
+  tests/test_p1_55_carrier_truth_source.py \
+  tests/test_frequency_consistency.py \
+  tests/test_uxm_cell_config_orchestration.py
+cd ../gui
+node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+npm run build
+cd ..
+git add api-service/app/schemas/mimo_ota/config.py \
+  api-service/app/services/mimo_ota/executors/measure.py \
+  api-service/app/services/mimo_ota/frequency_consistency.py \
+  api-service/app/hal/lte_earfcn.py \
+  api-service/tests/test_p1_73a_lte_operating_point.py \
+  api-service/tests/test_p1_55_carrier_truth_source.py \
+  gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
+  gui/src/components/TestCaseConfig/carrierTruth.ts \
+  gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+git commit -m "feat: add explicit LTE MIMO operating point truth"
+```
+
 ### Task 3：将执行证据从 UXM 命名收敛为 BaseStation 命名
 
 **Files:**
@@ -277,6 +349,70 @@ git add api-service/app/services/mimo_ota/executors/measure.py \
 git commit -m "refactor: make MIMO measure base-station neutral"
 ```
 
+### Task 4A：落地 baseStation.DL1/DL2/UL1 逻辑拓扑
+
+**Files:**
+
+- Create: `api-service/app/services/base_station_port_mapping.py`
+- Modify: `api-service/scripts/dev-fixtures/topology-templates/caict_v4.py`
+- Modify: `api-service/app/services/mimo_ota/switch_orchestrator.py`
+- Create: `api-service/tests/test_p1_73a_base_station_topology.py`
+- Modify: `api-service/tests/test_switch_topology_chamber_binding.py`
+- Modify: `gui/src/features/TopologyEditor/CustomNodes.tsx`
+- Create: `gui/src/features/TopologyEditor/baseStationPortsTruth.test.ts`
+
+**Step 1: 写 RED**
+
+要求 topology 使用一个逻辑 `baseStation` 节点及 `DL1/DL2/UL1`：
+
+- MIMO OTA 连接始终是 `baseStation.DL1/DL2 → F64 input 1/2`，UL1 回到当前 baseStation；
+- UXM adapter 映射到既有 RF1/RF2/RF6，确保旧现场显示和行为不退化；
+- CMW adapter 映射到内部 route 的 TX1/TX2/RX 逻辑角色，具体 connector 来自当前驱动回读，
+  不在模板猜固定 RF 口；
+- LabProfile 选择不同 baseStation 后，编辑器/解析器显示对应 adapter 映射，但连接图不复制；
+- 外部源选择开关缺回读只产生 Warning，不把 topology validate 变成运行硬门。
+
+**Step 2: 运行 RED**
+
+```bash
+cd api-service
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73a_base_station_topology.py \
+  tests/test_switch_topology_chamber_binding.py
+cd ../gui
+node --test src/features/TopologyEditor/baseStationPortsTruth.test.ts
+```
+
+**Step 3: 最小 GREEN**
+
+- 模板从固定 `uxm` 节点改为逻辑 `baseStation`，保留 adapter map 作为显示/审计元数据。
+- 新 resolver 只消费 OperationalLab 已选中的 baseStation identity 与当前 driver route snapshot；
+  不按节点 label 或型号前缀猜 adapter。
+- switch orchestrator 输出逻辑 port 与可选 physical display，不让物理 display 反向成为连接真源。
+- GUI 的 port 方向由 port role 决定，不再用 `port === "RF6"` 判断输入/输出。
+
+**Step 4: 运行 GREEN 并提交**
+
+```bash
+cd api-service
+./.venv/bin/python -m pytest -q \
+  tests/test_p1_73a_base_station_topology.py \
+  tests/test_switch_topology_chamber_binding.py \
+  tests/test_p1_57_topology_lab_context.py
+cd ../gui
+node --test src/features/TopologyEditor/baseStationPortsTruth.test.ts
+npm run build
+cd ..
+git add api-service/app/services/base_station_port_mapping.py \
+  api-service/scripts/dev-fixtures/topology-templates/caict_v4.py \
+  api-service/app/services/mimo_ota/switch_orchestrator.py \
+  api-service/tests/test_p1_73a_base_station_topology.py \
+  api-service/tests/test_switch_topology_chamber_binding.py \
+  gui/src/features/TopologyEditor/CustomNodes.tsx \
+  gui/src/features/TopologyEditor/baseStationPortsTruth.test.ts
+git commit -m "feat: model vendor-neutral base station topology ports"
+```
+
 ### Task 5：同步 API 镜像并收口 P1-73A
 
 **Files:**
@@ -306,8 +442,10 @@ cd ../api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_base_station_contract.py \
   tests/test_p1_73a_config_compatibility.py \
+  tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_73a_base_station_evidence.py \
   tests/test_p1_73a_vendor_neutral_measure.py \
+  tests/test_p1_73a_base_station_topology.py \
   tests/test_p1_73a_openapi_contract.py \
   tests/test_p1_47c_execution_scpi_evidence.py \
   tests/test_uxm_cell_config_orchestration.py \
@@ -421,9 +559,10 @@ git commit -m "fix: make CMW500 connect read-only"
 
 覆盖：
 
-- 根据显式 `rx_connector/rx_converter/tx1_connector/tx1_converter/tx2_connector/tx2_converter` 构造 TRO flexible 命令；
-- 写后 `ROUTe:LTE:SIGN<i>?` 回读精确匹配 scenario、TX1、TX2；
-- 固件低于 V3.5.40、缺 KS520、字段缺失、TX1=TX2、readback 不一致、错误队列非空均在正式采样前失败；
+- 根据显式 `pcc_bb_board/rx_connector/rx_converter/tx1_connector/tx1_converter/tx2_connector/tx2_converter` 构造 TRO flexible 命令；
+- 写后 `ROUTe:LTE:SIGN<i>?` 回读精确匹配 scenario、PCCBBBoard 和完整 RX/TX1/TX2 connector/converter 元组；
+- TX1/TX2 的 connector 必须不同，converter/TX module 也必须不同；两个条件分别验证，不能只比较字符串元组；
+- 固件低于 V3.5.40、缺 KS520、任一字段缺失、TX connector/converter 复用、readback 不一致、错误队列非空均在正式采样前失败；
 - 不把外部 RF router 状态加入这个结果。
 
 **Step 2: RED → GREEN**
@@ -453,8 +592,12 @@ git commit -m "feat: confirm CMW500 internal LTE 2x2 route"
 
 **Step 1: 写 RED**
 
-列全状态与失败路径：connected/read-only → configure → route confirmed → CELL ON → UE attached/connected → measurement window → cleanup/local。覆盖：
+列全状态与失败路径：connected/read-only → identity/capability verified → SAFE_IDLE confirmed →
+configure → route confirmed → CELL ON → UE attached/connected → measurement window → SAFE_IDLE/local。
+配置和 route 的先后顺序必须服从厂商前置条件，但二者都不得越过 SAFE_IDLE。覆盖：
 
+- connect 后先读取 Cell/RF；已经 OFF 才可继续。若为 ON，只允许发送有手册出处的关闭动作，
+  且必须回读确认 OFF；unknown、关闭失败或取消均在首条配置/route 写入前停止；
 - 每组写操作后 bounded error drain；非零错误使返回失败。
 - `*OPC?` 只表示完成，不能单独构成成功。
 - VISA timeout 必须在成功、异常、取消、设备拒绝四条路径恢复。
@@ -791,8 +934,10 @@ cd api-service
 ./.venv/bin/python -m pytest -q \
   tests/test_p1_73a_base_station_contract.py \
   tests/test_p1_73a_config_compatibility.py \
+  tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_73a_base_station_evidence.py \
   tests/test_p1_73a_vendor_neutral_measure.py \
+  tests/test_p1_73a_base_station_topology.py \
   tests/test_p1_73b_cmw_command_profile.py \
   tests/test_p1_73b_cmw_parsers.py \
   tests/test_p1_73b_cmw_connect_lifecycle.py \

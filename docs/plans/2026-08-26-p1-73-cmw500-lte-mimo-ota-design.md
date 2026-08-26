@@ -35,6 +35,10 @@ LabProfile 中 `baseStation` 是互斥逻辑角色，现场选择 UXM 或 CMW500
 两台仪表同时存在时，现场射频开关或固定接线决定信号源；当前开发不要求把外部 RF router
 状态纳入正式能力准入或逐次执行门。
 
+拓扑节点保存逻辑端口及 adapter 映射：UXM 将 DL1/DL2/UL1 映射到其现有 RF1/RF2/RF6；
+CMW500 映射到当前 internal route 回读确认的 TX1/TX2/RX。拓扑编辑器、模板和运行解析器只以
+逻辑端口连接 F64；adapter 物理映射只用于展示与审计，不把外部源选择开关提升为硬门。
+
 CMW500 内部仍必须选择 `1CC - nx2` 并配置 RX/TX1/TX2，因为这是仪表生成双路 LTE 下行的
 必要内部状态，不等同于外部 RF router。
 
@@ -68,11 +72,16 @@ MIMO OTA 顶层只允许使用：
 
 ### 2.4 通用配置与 debug inherit
 
-通用请求包含 LTE 制式、双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
+通用请求包含显式 RAT、LTE 双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
 逻辑 DL1/DL2/UL1 和 `config_mode`。不得用默认 EARFCN、route 或端口补齐缺失配置；频率、
 band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽功率字段改名后推广为通用
 字段，也不让 CMW 借用 UXM 的功率口径；UXM 既有行为保持兼容，CMW 功率与外部补偿延后到
 正式发布前单独设计。
+
+`component_carriers[0]` 继续是工作点唯一真值，但必须从 NR-only 扩展为带 RAT 的联合类型：
+NR 保留现有 NR ARFCN/SCS 兼容行为；LTE 要求单载波、显式 LTE band 与 DL EARFCN，禁止调用
+`freq_mhz_to_nr_arfcn()`、禁止带 SCell，也禁止从原型默认 EARFCN 补值。RAT、频率、band、
+channel number 或顶层兼容镜像冲突均在保存或硬件 I/O 前 422。
 
 `inherit_debug` 默认关闭；启用要求 `DEBUG=true`、`ALLOW_BASE_STATION_INHERIT=true` 和本次
 执行显式选择。它不下发静态小区配置，只读取已有状态并允许必要的可恢复运行控制；危险配置
@@ -101,6 +110,10 @@ DISCONNECTED
 普通 `connect()` 只能建立会话并查询身份、固件、选件、LTE application、当前 route 和状态；
 不得 preset、切换场景、打开 Cell 或写功率。Preset 只能是单独的显式维护动作。
 
+任何静态配置或 route 写入前必须进入 `SAFE_IDLE`：读取并确认 Cell/RF 已 OFF；如为 ON，只有在
+有手册出处的关闭动作成功且回读确认 OFF 后才能继续。状态未知、关闭失败或取消都必须在首条
+配置/route 写命令前 fail-closed。
+
 任一状态无法确认时停止产生正式 KPI，不自动重发带副作用的命令，尝试有出处且幂等的安全动作，
 并把状态不确定写入 cleanup 与告警。
 
@@ -117,7 +130,9 @@ ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible
 ```
 
 该命令激活 `1CC - nx2`，最低版本 V3.5.40，需要 CMW-KS520。写入后用手册第 459–460 页的
-`ROUTe:LTE:SIGN<i>?` 读取 active scenario 与相关 RX/TX1/TX2 参数，确认内部 route 生效。
+`ROUTe:LTE:SIGN<i>?` 读取 active scenario、PCCBBBoard 与完整 RX/TX1/TX2 connector/converter
+元组，确认内部 route 生效。两路 DL 的 TX connector 和 TX converter 都必须分别不同；缺字段、
+任一回读不一致或复用同一 TX module 均不得 confirmed。
 内部 route 回读失败影响本次驱动状态和 KPI 可信度，但不扩展成外部 RF router 准入机制。
 
 ### 3.3 配置证据与错误处理
@@ -196,9 +211,10 @@ API 使用 `base_station_*` 通用字段。旧 `uxm_*` 输入 deprecated 兼容�
 
 ### 5.1 P1-73A：共享 HAL 清理
 
-保持 UXM 行为不变，建立通用 BaseStation 类型、兼容字段、通用 executor/evidence key 和逻辑
-拓扑。不得修改 UXM SCPI/profile/CA/SCell。完成标准是共享 MIMO 路径无 UXM type import、无厂商
-类判断，UXM fake 行为不变，最小 CMW fake 能走到同一证据门并安全 UNKNOWN。
+保持 UXM 行为不变，建立通用 BaseStation 类型、带 RAT 的 LTE/NR 工作点、兼容字段、通用
+executor/evidence key 和 `baseStation.DL1/DL2/UL1` 逻辑拓扑及 adapter 映射。不得修改 UXM
+SCPI/profile/CA/SCell。完成标准是共享 MIMO 路径无 UXM type import、无厂商类判断，UXM fake
+行为不变，最小 CMW fake 能消费显式 LTE EARFCN 并走到同一证据门安全 UNKNOWN。
 
 ### 5.2 P1-73B：CMW500 驱动核心
 
