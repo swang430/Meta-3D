@@ -1,7 +1,7 @@
 # P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 设计
 
 **日期**：2026-08-26
-**状态**：已获用户批准
+**状态**：设计评审中；架构方案 #1 与本文“固定边界”已获用户批准，其余细节以本 PR 评审结论为准
 **安全回滚基线**：`v0.9.1` → `0df700f9e4eb46a5e3f50c6bb22f71c93ff27087`
 
 ## 1. 可观察缺口与范围
@@ -70,8 +70,13 @@ MIMO OTA 顶层只允许使用：
 
 - 型号；
 - 固件版本；
-- LTE 基础选件；
-- CMW-KS520。
+- 本次请求为 FDD 时的 CMW-KS500，或本次请求为 TDD 时的 CMW-KS550；
+- DL MIMO 2×2 的 CMW-KS520。
+
+选件关系依据本地原始手册 `CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` §2.2.1
+“Overview of options”（第 17–19 页）：CMW-KS500 是 R8 FDD basic signaling，CMW-KS550
+是 R8 TDD basic signaling，CMW-KS520 增加 DL MIMO 2×2/SIMO 1×2。能力门必须按本次显式
+duplex 在首次硬件 I/O 前核对；KS500+KS520 不得放行 TDD，KS550+KS520 不得放行 FDD。
 
 外部 RF router、具体序列号和外部接线路径不属于正式能力准入键。adapter 可以注册，但正式
 能力默认关闭，待用户显式启用。未完成现场确认时 GUI 显示 Warning，不使用 `Hardware Blocked`。
@@ -88,9 +93,13 @@ band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽�
 NR 保留现有 NR ARFCN/SCS 兼容行为；LTE 要求单载波、显式 LTE band 与 DL EARFCN，禁止调用
 `freq_mhz_to_nr_arfcn()`、禁止带 SCell，也禁止从原型默认 EARFCN 补值。`measure.py`、
 `channel_asset_resolver.py` 与 `standard_channel_service.py` 三个现有 NR identity 生产者必须同时
-改为 RAT-aware；SCD/ChannelAsset 必须携带 channel kind，LTE EARFCN 与 NR ARFCN 永不直接
-比较。跨 RAT 只允许在各自有手册/标准出处的转换完成后比较中心频率和带宽。RAT、频率、band、
-channel number 或顶层兼容镜像冲突均在保存或硬件 I/O 前 422。
+改为 RAT-aware。SCD 的加法 schema、CRUD API 和持久化列，以及 ChannelAsset `scd_config`、
+payload validator、工作台表单、OpenAPI 与 generated TS 必须携带 `radio_technology` 和
+`channel_kind`；`available_channel_models` projection 同源携带这两个字段。迁移前的 SCD 行与
+旧 ChannelAsset payload 来自当时唯一合法的 NR-only schema，精确 legacy translator 只在其完整
+通过旧 NR 契约时补成 `nr5g/nr_arfcn`；新写入缺字段一律拒绝，不能按名称或当前 DB 猜。
+LTE EARFCN 与 NR ARFCN 永不直接比较。跨 RAT 只允许在各自有手册/标准出处的转换完成后比较
+中心频率和带宽。RAT、频率、band、channel number 或顶层兼容镜像冲突均在保存或硬件 I/O 前 422。
 
 LTE EARFCN 的首期唯一映射依据为本地原始手册
 `CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf` §2.2.23 “Operating bands”，第 91 页的

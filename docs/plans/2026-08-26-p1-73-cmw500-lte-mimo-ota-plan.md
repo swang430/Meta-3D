@@ -12,7 +12,7 @@
 
 ## 0. 固定边界与验收口径
 
-实施中不得重新解释以下批准事实：
+实施中不得重新解释以下已获用户批准的固定边界；本文其余细节仍须通过本 PR 设计评审：
 
 - LabProfile 的 `baseStation` 是逻辑角色；一次执行选择 UXM 或 CMW500，不在顶层复制两套流程。
 - CMW500 首期仅 LTE、单载波、2×2、F64 射频域下游链；不做 DAU/IP 吞吐、CA、4×4、数字 IQ 外部衰落。
@@ -176,18 +176,35 @@ git commit -m "refactor: canonicalize base station configuration fields"
 **Files:**
 
 - Modify: `api-service/app/schemas/mimo_ota/config.py`
+- Modify: `api-service/app/models/standard_channel.py`
+- Modify: `api-service/app/api/standard_channel.py`
+- Modify: `api-service/app/api/channel_asset.py`
+- Modify: `api-service/app/api/instrument.py`
+- Modify: `api-service/app/services/channel_asset_service.py`
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Modify: `api-service/app/services/mimo_ota/frequency_consistency.py`
 - Modify: `api-service/app/services/mimo_ota/channel_asset_resolver.py`
 - Modify: `api-service/app/services/standard_channel_service.py`
+- Create: `api-service/alembic/versions/c73a19f4e602_add_rat_to_standard_channels.py`
 - Create: `api-service/app/hal/lte_earfcn.py`
 - Create: `api-service/tests/test_p1_73a_lte_operating_point.py`
+- Create: `api-service/tests/test_p1_73a_asset_frequency_identity.py`
 - Modify: `api-service/tests/test_p1_55_carrier_truth_source.py`
 - Modify: `api-service/tests/test_channel_asset_resolver.py`
 - Modify: `api-service/tests/test_standard_channel.py`
+- Modify: `api-service/tests/test_channel_models_crud.py`
+- Modify: `api-service/tests/test_channel_models_db_fallback.py`
+- Modify: `api-service/tests/test_f64_channel_model_listing.py`
 - Modify: `gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - Modify: `gui/src/components/TestCaseConfig/carrierTruth.ts`
+- Modify: `gui/src/api/standardChannelService.ts`
+- Modify: `gui/src/api/channelAssetService.ts`
+- Modify: `gui/src/api/service.ts`
+- Modify: `gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx`
+- Modify: `gui/src/components/StandardChannelDefinitionCard.tsx`
 - Create: `gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts`
+- Modify: `api/openapi.yaml`
+- Modify: `gui/src/types/api.generated.ts`
 
 **Step 1: 写 RED**
 
@@ -204,6 +221,14 @@ git commit -m "refactor: canonicalize base station configuration fields"
 - `measure.py`、`channel_asset_resolver.py`、`standard_channel_service.py` 三个 NR identity 生产者
   全部消费同一 RAT-aware working point；SCD/ChannelAsset 明示 channel kind，禁止把
   `scd_config.arfcn` 无条件解释为 NR，也禁止把 LTE EARFCN 与 NR ARFCN 直接比较；
+- StandardChannel 加法迁移新增非空 `radio_technology` / `channel_kind`：迁移时现有行因旧 schema
+  唯一只允许 NR 而精确写为 `nr5g/nr_arfcn`；迁移完成后移除数据库默认，新 API 写入必须显式；
+  migration revision=`c73a19f4e602`、down_revision=`b7c9e1f3a5d7`，不得生成第二个 Alembic head；
+- ChannelAsset JSON 不回填历史行；只读 legacy translator 仅接受完整通过旧 NR validator 的
+  pre-P1-73 `scd_config`，映射为 `nr5g/nr_arfcn`。新 create/update、GUI 表单、OpenAPI 与
+  `available_channel_models` projection 都必须显式携带两个字段，缺失/冲突在写入前拒绝；
+- `api/instrument.py` 的 channel model CRUD/list 和 GUI channel-model consumer 同样透传并校验
+  RAT/channel kind；旧 projection 只经同一个 legacy-NR translator 读取，不另写第二套兼容规则；
 - 跨 RAT 的资产一致性仅比较经各自有出处 converter 得到的中心频率与带宽；缺 RAT、缺 converter
   或 channel kind 冲突都保护资产并在 I/O 前 fail-loud，不从文件名或当前 DB 猜测；
 - executor 将同一个 typed `BaseStationRequestedConfig` 交给 fake UXM/CMW，不按厂商类分支；
@@ -217,7 +242,12 @@ cd api-service
   tests/test_p1_73a_lte_operating_point.py \
   tests/test_p1_55_carrier_truth_source.py \
   tests/test_channel_asset_resolver.py \
-  tests/test_standard_channel.py
+  tests/test_standard_channel.py \
+  tests/test_channel_asset_service.py \
+  tests/test_channel_models_crud.py \
+  tests/test_channel_models_db_fallback.py \
+  tests/test_f64_channel_model_listing.py \
+  tests/test_p1_73a_asset_frequency_identity.py
 cd ../gui
 node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
 ```
@@ -232,6 +262,8 @@ node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
 - MEASURE 先按 RAT 建立 requested config，再交给通用 driver；LTE 路径不导入 NR converter。
 - MEASURE、ChannelAsset resolver 与 StandardChannel service 复用同一 typed frequency identity；
   频率一致性结果携带 RAT/channel kind，禁止把 LTE EARFCN 与 NR ARFCN 比较。
+- StandardChannel model/API/service、ChannelAsset validator/API、GUI 两个资产入口与三份 API
+  镜像同步写入 RAT/channel kind；legacy translator 只在读取旧 NR-only 行时生效，不为新请求补值。
 - 保留 P1-55 的顶层镜像一致性门，不能因扩展 RAT 放宽旧冲突检查。
 
 **Step 4: 运行 GREEN 并提交**
@@ -244,24 +276,46 @@ cd api-service
   tests/test_frequency_consistency.py \
   tests/test_channel_asset_resolver.py \
   tests/test_standard_channel.py \
+  tests/test_channel_asset_service.py \
+  tests/test_channel_models_crud.py \
+  tests/test_channel_models_db_fallback.py \
+  tests/test_f64_channel_model_listing.py \
+  tests/test_p1_73a_asset_frequency_identity.py \
   tests/test_uxm_cell_config_orchestration.py
 cd ../gui
 node --test src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
 npm run build
 cd ..
 git add api-service/app/schemas/mimo_ota/config.py \
+  api-service/app/models/standard_channel.py \
+  api-service/app/api/standard_channel.py \
+  api-service/app/api/channel_asset.py \
+  api-service/app/api/instrument.py \
+  api-service/app/services/channel_asset_service.py \
   api-service/app/services/mimo_ota/executors/measure.py \
   api-service/app/services/mimo_ota/frequency_consistency.py \
   api-service/app/services/mimo_ota/channel_asset_resolver.py \
   api-service/app/services/standard_channel_service.py \
+  api-service/alembic/versions/c73a19f4e602_add_rat_to_standard_channels.py \
   api-service/app/hal/lte_earfcn.py \
   api-service/tests/test_p1_73a_lte_operating_point.py \
   api-service/tests/test_p1_55_carrier_truth_source.py \
   api-service/tests/test_channel_asset_resolver.py \
   api-service/tests/test_standard_channel.py \
+  api-service/tests/test_channel_asset_service.py \
+  api-service/tests/test_channel_models_crud.py \
+  api-service/tests/test_channel_models_db_fallback.py \
+  api-service/tests/test_f64_channel_model_listing.py \
+  api-service/tests/test_p1_73a_asset_frequency_identity.py \
   gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx \
   gui/src/components/TestCaseConfig/carrierTruth.ts \
-  gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts
+  gui/src/api/standardChannelService.ts \
+  gui/src/api/channelAssetService.ts \
+  gui/src/api/service.ts \
+  gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx \
+  gui/src/components/StandardChannelDefinitionCard.tsx \
+  gui/src/components/TestCaseConfig/lteOperatingPointTruth.test.ts \
+  api/openapi.yaml gui/src/types/api.generated.ts
 git commit -m "feat: add explicit LTE MIMO operating point truth"
 ```
 
@@ -720,7 +774,10 @@ git commit -m "feat: measure sourced CMW500 LTE throughput and BLER"
 
 - CMW adapter 可由 registry 创建；
 - 正式 LTE 2×2 能力默认 false；
-- 显式启用后仍必须满足型号、固件、LTE 与 KS520 选件；缺任一项给 Warning/unknown，不声称 ready；
+- 显式启用后仍必须满足型号、固件、KS520，以及本次请求 FDD 对应 KS500 / TDD 对应 KS550；
+  缺任一项给 Warning/unknown，不声称 ready；KS500-only 不得放行 TDD，KS550-only 不得放行 FDD；
+- 选件判据紧邻引用 CMW LTE UE User Manual §2.2.1 第 17–19 页；不得用“任一 LTE 基础选件”
+  泛化本次 duplex 的准入；
 - 外部 RF router 的存在与否不会改变能力结果；
 - `inherit` 只读核对当前 cell/route/状态，不做 preset，且 evidence gate 永远不授予 formal acceptance。
 
