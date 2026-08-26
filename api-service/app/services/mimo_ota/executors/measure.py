@@ -744,8 +744,8 @@ class MeasureExecutor(IStepExecutor):
         from app.services.execution_scpi_evidence import (
             record_f64_command_capture,
             record_positioner_capture,
-            record_uxm_config_capture,
-            record_uxm_throughput_capture,
+            record_base_station_config_capture,
+            record_base_station_throughput_capture,
             register_required_scpi_evidence,
         )
         from app.services.path_loss_calibration_service import (
@@ -936,8 +936,8 @@ class MeasureExecutor(IStepExecutor):
             # 正式判定中保持 missing/unknown，不能因跳过控制动作而从证据门消失。
             register_required_scpi_evidence(
                 context.test_execution,
-                requirement_id="uxm.pcell.config_applied",
-                evidence_key="uxm.config_apply",
+                requirement_id="base_station.pcell.config_applied",
+                evidence_key="base_station.config_apply",
                 requested=pcell_channel_number,
                 required_evidence_level=EvidenceLevel.APPLIED,
             )
@@ -1711,9 +1711,9 @@ class MeasureExecutor(IStepExecutor):
                 base_station, "build_p0_5_config_evidence"
             ):
                 try:
-                    record_uxm_config_capture(
+                    record_base_station_config_capture(
                         context.test_execution,
-                        requirement_id="uxm.pcell.config_applied",
+                        requirement_id="base_station.pcell.config_applied",
                         requested=pcell_channel_number,
                         driver=base_station,
                         exchanges=uxm_config_exchanges,
@@ -1721,7 +1721,7 @@ class MeasureExecutor(IStepExecutor):
                     context.db.commit()
                 except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
                     logger.exception(
-                        "[%s] UXM P1-47C 证据归档失败；正式判定将保持 unknown",
+                        "[%s] BaseStation P1-47C 证据归档失败；正式判定将保持 unknown",
                         context.test_execution.id,
                     )
             if not signaling_started:
@@ -2331,8 +2331,8 @@ class MeasureExecutor(IStepExecutor):
                 )
                 register_required_scpi_evidence(
                     context.test_execution,
-                    requirement_id=f"uxm.throughput.azimuth.{az_idx:03d}",
-                    evidence_key="uxm.dl_throughput",
+                    requirement_id=f"base_station.throughput.azimuth.{az_idx:03d}",
+                    evidence_key="base_station.dl_throughput",
                     requested={"azimuth_deg": azimuth, "window_s": window_s},
                     required_evidence_level=EvidenceLevel.OUTCOME,
                 )
@@ -2466,9 +2466,9 @@ class MeasureExecutor(IStepExecutor):
                     and hasattr(base_station, "build_p0_5_throughput_evidence")
                 ):
                     try:
-                        record_uxm_throughput_capture(
+                        record_base_station_throughput_capture(
                             context.test_execution,
-                            requirement_id=f"uxm.throughput.azimuth.{az_idx:03d}",
+                            requirement_id=f"base_station.throughput.azimuth.{az_idx:03d}",
                             requested={
                                 "azimuth_deg": azimuth,
                                 "window_s": window_s,
@@ -2478,7 +2478,7 @@ class MeasureExecutor(IStepExecutor):
                         )
                     except Exception:  # noqa: BLE001
                         logger.exception(
-                            "[%s] UXM %.1f° E4 证据归档失败；正式判定将保持 unknown",
+                            "[%s] BaseStation %.1f° E4 证据归档失败；正式判定将保持 unknown",
                             context.test_execution.id,
                             azimuth,
                         )

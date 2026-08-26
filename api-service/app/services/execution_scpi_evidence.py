@@ -433,6 +433,17 @@ def public_execution_scpi_evidence(execution) -> Optional[dict[str, Any]]:
     raw = cfg.get("scpi_evidence")
     if not isinstance(raw, dict):
         return None
+    if any(
+        str(item.get("requirement_id", "")).startswith("uxm.")
+        or str(item.get("evidence_key", "")).startswith("uxm.")
+        for item in [*(raw.get("required") or []), *(raw.get("items") or [])]
+        if isinstance(item, dict)
+    ):
+        raw = translate_legacy_uxm_execution_evidence(
+            raw, execution_id=str(execution.id)
+        )
+        if raw is None:
+            return None
     try:
         evidence = ExecutionScpiEvidence.model_validate(raw)
     except Exception:
@@ -441,6 +452,94 @@ def public_execution_scpi_evidence(execution) -> Optional[dict[str, Any]]:
         return None
     # 再脱敏一次，防 brownfield 行绕过当前写入口。
     return _sanitize(evidence.model_dump(mode="json"))
+
+
+_LEGACY_UXM_REQUIREMENT_IDS = {
+    "uxm.pcell.config_applied": "base_station.pcell.config_applied",
+    "uxm.pcell.arfcn": "base_station.pcell.channel_number",
+}
+_LEGACY_UXM_EVIDENCE_KEYS = {
+    "uxm.config_apply": "base_station.config_apply",
+    "uxm.config_readback": "base_station.config_readback",
+    "uxm.dl_throughput": "base_station.dl_throughput",
+}
+
+
+def _translate_legacy_uxm_requirement_id(value: Any) -> Optional[str]:
+    text = str(value)
+    if text in _LEGACY_UXM_REQUIREMENT_IDS:
+        return _LEGACY_UXM_REQUIREMENT_IDS[text]
+    prefix = "uxm.throughput.azimuth."
+    if text.startswith(prefix) and text[len(prefix):].isdigit():
+        return "base_station.throughput.azimuth." + text[len(prefix):]
+    return None
+
+
+def translate_legacy_uxm_execution_evidence(
+    raw: Any, *, execution_id: str
+) -> Optional[dict[str, Any]]:
+    """窄读旧 UXM 摘要；身份、字段或映射冲突时整体降级 unknown。
+
+    该 translator 只服务 brownfield 读取。新写方必须直接产生
+    ``base_station.*``，不得借此继续写旧键。
+    """
+    if not isinstance(raw, dict) or raw.get("execution_id") != execution_id:
+        return None
+    environments = raw.get("environments")
+    environment = (
+        environments.get("baseStation")
+        if isinstance(environments, dict)
+        else None
+    )
+    if not isinstance(environment, dict):
+        return None
+    if (
+        environment.get("instrument") != "uxm"
+        or environment.get("captured_from_live_connection") is not True
+        or not str(environment.get("model") or "").strip()
+        or not str(environment.get("firmware_version") or "").strip()
+    ):
+        return None
+
+    translated = _sanitize(raw)
+    translated_environment = translated["environments"]["baseStation"]
+    translated_environment["adapter_id"] = "uxm"
+    translated_environment.setdefault("options", [])
+
+    for requirement in translated.get("required", []):
+        if not isinstance(requirement, dict):
+            return None
+        requirement_id = _translate_legacy_uxm_requirement_id(
+            requirement.get("requirement_id")
+        )
+        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(
+            str(requirement.get("evidence_key"))
+        )
+        if requirement_id is None or evidence_key is None:
+            return None
+        requirement["requirement_id"] = requirement_id
+        requirement["evidence_key"] = evidence_key
+
+    for item in translated.get("items", []):
+        if not isinstance(item, dict) or item.get("instrument") != "uxm":
+            return None
+        requirement_id = _translate_legacy_uxm_requirement_id(
+            item.get("requirement_id")
+        )
+        evidence_key = _LEGACY_UXM_EVIDENCE_KEYS.get(str(item.get("evidence_key")))
+        if requirement_id is None or evidence_key is None:
+            return None
+        item["requirement_id"] = requirement_id
+        item["evidence_key"] = evidence_key
+
+    translated_missing: list[str] = []
+    for value in translated.get("missing_requirements", []):
+        mapped = _translate_legacy_uxm_requirement_id(value)
+        if mapped is None:
+            return None
+        translated_missing.append(mapped)
+    translated["missing_requirements"] = translated_missing
+    return translated
 
 
 def _find_exchange(
@@ -464,13 +563,14 @@ def _find_exchange(
     )
 
 
-def record_uxm_config_capture(
+def record_base_station_config_capture(
     execution,
     *,
     requirement_id: str,
     requested: Any,
     driver,
     exchanges: list[ScpiExchangeRef],
+    _stored_evidence_key: str = "base_station.config_apply",
 ) -> None:
     """绑定 PCell 写→回读→（APPLY 或 CELL ON）→协议状态事务。"""
     from app.hal.scpi_evidence import exchange_matches_uxm_cell_activation
@@ -523,12 +623,20 @@ def record_uxm_config_capture(
             None,
         ),
     )
+    item = item.model_copy(update={"evidence_key": _stored_evidence_key})
     record_execution_scpi_evidence(
         execution,
         requirement_id=requirement_id,
         item=item,
         environment=driver.capture_evidence_environment(),
         exchanges=exchanges,
+    )
+
+
+def record_uxm_config_capture(*args, **kwargs) -> None:
+    """Deprecated compatibility wrapper; new writers use BaseStation naming."""
+    record_base_station_config_capture(
+        *args, _stored_evidence_key="uxm.config_apply", **kwargs
     )
 
 
@@ -638,13 +746,14 @@ def record_positioner_capture(
     )
 
 
-def record_uxm_throughput_capture(
+def record_base_station_throughput_capture(
     execution,
     *,
     requirement_id: str,
     requested: Any,
     driver,
     exchanges: list[ScpiExchangeRef],
+    _stored_evidence_key: str = "base_station.dl_throughput",
 ) -> None:
     item = driver.build_p0_5_throughput_evidence(
         requested=requested,
@@ -652,10 +761,18 @@ def record_uxm_throughput_capture(
             exchanges, "uxm.dl_throughput", "query", reverse=True
         ),
     )
+    item = item.model_copy(update={"evidence_key": _stored_evidence_key})
     record_execution_scpi_evidence(
         execution,
         requirement_id=requirement_id,
         item=item,
         environment=driver.capture_evidence_environment(),
         exchanges=exchanges,
+    )
+
+
+def record_uxm_throughput_capture(*args, **kwargs) -> None:
+    """Deprecated compatibility wrapper; new writers use BaseStation naming."""
+    record_base_station_throughput_capture(
+        *args, _stored_evidence_key="uxm.dl_throughput", **kwargs
     )

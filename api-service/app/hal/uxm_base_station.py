@@ -352,6 +352,22 @@ class RealUxmDriver(BaseStationDriver):
         # 若连接先落平台再重定向 hislip2，保留平台的硬件型号/序列/固件；
         # Framework 的 *IDN? 只描述软件端点，不能冒充仪器硬件身份。
         self._platform_identity_response: Optional[str] = None
+        # 选件只保存调用方显式提供的已核验快照；驱动不得从型号或 Test App
+        # 猜测。现场尚未配置时为空元组，仍与“字段缺失”区分。
+        raw_options = config.get("options", ())
+        self._evidence_options: tuple[str, ...] = (
+            tuple(
+                sorted(
+                    {
+                        str(option).strip()
+                        for option in raw_options
+                        if str(option).strip()
+                    }
+                )
+            )
+            if isinstance(raw_options, (list, tuple, set))
+            else ()
+        )
         # P1-17: fresh-start 系统默认 topology profile id。binding 没显式选
         # profile 时, HAL service _initialize_from_db 读这个 attr 做 fallback
         # (见 UXM_DEFAULT_TOPOLOGY_PROFILE_ID)。operator 经 connection_params
@@ -894,6 +910,8 @@ class RealUxmDriver(BaseStationDriver):
         return InstrumentEnvironment(
             instrument_id=self.instrument_id,
             instrument="uxm",
+            adapter_id=self.adapter_id,
+            options=self._evidence_options,
             model=hardware_identity["model"] if live else None,
             firmware_version=(
                 endpoint_identity["firmware_version"] if live else None

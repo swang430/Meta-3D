@@ -86,6 +86,11 @@ class InstrumentEnvironment(BaseModel):
 
     instrument_id: str
     instrument: str
+    # BaseStation 写方显式保存适配器与选件快照；其它仪表保持 None/空元组。
+    # 真实性仍由 HAL 的 real/mock 白名单与 live connection 判据决定，不能从
+    # adapter 名称本身推导。
+    adapter_id: Optional[str] = None
+    options: tuple[str, ...] = ()
     model: Optional[str]
     # ``firmware_version`` 是当前命令端点的软件/固件版本，用于手册范围匹配。
     firmware_version: Optional[str]
