@@ -317,7 +317,7 @@ cd api-service
   tests/test_channel_asset_resolver.py \
   tests/test_channel_asset_migration.py \
   tests/test_standard_channel.py \
-  tests/test_channel_asset_service.py \
+  tests/test_channel_asset.py \
   tests/test_channel_models_crud.py \
   tests/test_channel_models_db_fallback.py \
   tests/test_f64_channel_model_listing.py \
@@ -366,7 +366,7 @@ cd api-service
   tests/test_channel_asset_resolver.py \
   tests/test_channel_asset_migration.py \
   tests/test_standard_channel.py \
-  tests/test_channel_asset_service.py \
+  tests/test_channel_asset.py \
   tests/test_channel_models_crud.py \
   tests/test_channel_models_db_fallback.py \
   tests/test_f64_channel_model_listing.py \
@@ -407,7 +407,7 @@ git add api-service/app/schemas/mimo_ota/config.py \
   api-service/tests/test_channel_asset_resolver.py \
   api-service/tests/test_channel_asset_migration.py \
   api-service/tests/test_standard_channel.py \
-  api-service/tests/test_channel_asset_service.py \
+  api-service/tests/test_channel_asset.py \
   api-service/tests/test_channel_models_crud.py \
   api-service/tests/test_channel_models_db_fallback.py \
   api-service/tests/test_f64_channel_model_listing.py \
