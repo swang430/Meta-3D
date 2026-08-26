@@ -119,8 +119,8 @@ git commit -m "refactor: establish vendor-neutral base station contract"
 
 覆盖四类输入：
 
-1. 仅新字段 `base_station_config_mode` / `base_station_dl_power_dbm_per_bw`；
-2. 仅旧字段 `uxm_config_mode` / `uxm_dl_power_dbm_per_bw`；
+1. 仅新字段 `base_station_config_mode`；
+2. 仅旧字段 `uxm_config_mode`；
 3. 新旧同时且值相同；
 4. 新旧同时但值冲突，必须在保存或 I/O 前 422/fail-loud。
 
@@ -139,10 +139,11 @@ node --test src/components/TestCaseConfig/baseStationConfigTruth.test.ts
 
 **Step 3: 最小 GREEN**
 
-- 在 `MIMOOTAConfiguration` 增加通用字段，旧字段标记 deprecated。
+- 在 `MIMOOTAConfiguration` 增加通用 `base_station_config_mode`，旧 `uxm_config_mode` 标记 deprecated。
 - `canonicalize_mimo_ota_configuration_payload()` 负责唯一兼容翻译；不得在执行器再写第二份回退。
 - 冲突立即拒绝；缺省模式仍为 `dispatch`。
 - `inherit` 文案改成“基站当前态调试继承”，并明确结果不进入正式判定。
+- 不新增通用整带宽功率字段；`uxm_dl_power_dbm_per_bw` 保持 UXM 兼容语义，CMW 不消费它。
 - 不在本 Task 重命名数据库列或删除旧 JSON 键。
 
 **Step 4: 运行 GREEN**
@@ -234,8 +235,8 @@ git commit -m "refactor: generalize base station execution evidence"
 用一个 UXM fake 和一个最小 CMW fake 跑同一个 executor 入口，断言：
 
 - 顶层不 `isinstance(RealUxmDriver)` 或导入 CMW 类型分支；
-- `dispatch`/`inherit`、功率调节、配置结果、吞吐窗口都只调用通用接口；
-- 返回 payload 使用 `base_station_dl_power_dbm`，旧 `uxm_dl_power_dbm` 仅兼容镜像；
+- `dispatch`/`inherit`、配置结果、吞吐窗口都只调用通用接口；
+- UXM 的既有功率字段/结果保持兼容，但不得晋升为跨厂商契约；
 - CMW fake 证据不完整时安全得到 UNKNOWN，而不是因顶层硬编码 UXM 崩溃。
 
 **Step 2: 运行 RED**
@@ -251,10 +252,12 @@ cd api-service
 
 **Step 3: 最小 GREEN**
 
-- 变量和结果改成 base-station 语义。
+- 变量和结果改成 base-station 语义，但不把 UXM 的功率单位推广成跨厂商契约。
 - 厂商差异只能由 driver/profile 覆写，不允许 executor 拼 CMW SCPI。
 - `inherit` 继续执行安全 cleanup，但显式 evidence gate 阻止正式判定。
-- 保留旧结果键作只读兼容镜像，并在同一 helper 中生成，避免双真源。
+- 保留旧 UXM 结果键作只读兼容镜像，并在同一 helper 中生成，避免双真源。
+- CMW 的 input-level/power capability 在 P1-73 保持关闭并显示 Warning；不得调用 UXM 功率字段或
+  用默认值补齐。UXM 现有 input-level 行为必须原样回归通过。
 
 **Step 4: 运行 GREEN 并提交**
 
@@ -395,7 +398,7 @@ cd api-service
   tests/test_visa_rm_ownership.py
 ```
 
-最小实现：移除 connect 中的 preset/route 写；新增严格 identity snapshot。型号 + 固件 + 选件是唯一正式能力输入，不加入 LabProfile 名称或外部 RF router。
+最小实现：移除 connect 中的 preset/route 写；新增严格 identity snapshot。型号 + 固件 + 选件是唯一正式能力输入，不加入 LabProfile 名称、外部 RF router 或功率预算。
 
 **Step 3: 提交**
 
@@ -719,7 +722,7 @@ readiness/GUI 必须显示：
 - 未真机确认时 Warning/UNKNOWN，允许继续开发与诊断；
 - debug inherit 显式黄色诊断态；
 - 不显示或要求外部 RF router 作为准入项；
-- 不在本片添加端到端功率预算通过/失败判词。
+- 不在本片添加 CMW 功率设置或端到端功率预算通过/失败判词；只显示发布前待确认 Warning。
 
 **Step 2: RED → GREEN 并提交**
 

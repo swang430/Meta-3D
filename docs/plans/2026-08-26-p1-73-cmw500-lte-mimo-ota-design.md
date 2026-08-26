@@ -1,7 +1,7 @@
 # P1-73 CMW500 单载波 LTE 2×2 MIMO OTA 设计
 
-**日期**：2026-08-26  
-**状态**：已获用户批准  
+**日期**：2026-08-26
+**状态**：已获用户批准
 **安全回滚基线**：`v0.9.1` → `0df700f9e4eb46a5e3f50c6bb22f71c93ff27087`
 
 ## 1. 可观察缺口与范围
@@ -69,8 +69,10 @@ MIMO OTA 顶层只允许使用：
 ### 2.4 通用配置与 debug inherit
 
 通用请求包含 LTE 制式、双工、band、DL EARFCN、bandwidth、transmission mode、2 layers、
-逻辑 DL1/DL2/UL1 和 `config_mode`。不得用默认 EARFCN、route、端口或功率补齐缺失配置；频率、
-band、EARFCN、带宽等显式分叉必须 422。
+逻辑 DL1/DL2/UL1 和 `config_mode`。不得用默认 EARFCN、route 或端口补齐缺失配置；频率、
+band、EARFCN、带宽等显式分叉必须 422。P1-73 不把 UXM 的整带宽功率字段改名后推广为通用
+字段，也不让 CMW 借用 UXM 的功率口径；UXM 既有行为保持兼容，CMW 功率与外部补偿延后到
+正式发布前单独设计。
 
 `inherit_debug` 默认关闭；启用要求 `DEBUG=true`、`ALLOW_BASE_STATION_INHERIT=true` 和本次
 执行显式选择。它不下发静态小区配置，只读取已有状态并允许必要的可恢复运行控制；危险配置
@@ -121,8 +123,9 @@ ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible
 ### 3.3 配置证据与错误处理
 
 关键配置均形成 `requested → dispatched → applied/read back`，至少覆盖 duplex、band、EARFCN、
-bandwidth、transmission mode、TX antenna count、DL power、Cell state、PS connection 和
-application instance。命令传输完成或 `*OPC? == 1` 不证明错误队列干净或配置生效；关键 applied
+bandwidth、transmission mode、TX antenna count、Cell state、PS connection 和 application
+instance。P1-73 不把 CMW 功率纳入正式配置证据。命令传输完成或 `*OPC? == 1` 不证明错误队列
+干净或配置生效；关键 applied
 字段无法回读时保持 unverified，不从 requested 回填。
 
 每次写操作采用有界旧错误清理、下发、等待、错误队列读取和权威回读。错误队列循环有上限，
