@@ -14,6 +14,7 @@ class _TriggerTimeoutSession:
         self.timeout = 15000
         self.written: list[str] = []
         self.queried: list[str] = []
+        self.closed = False
 
     def write(self, command: str) -> None:
         self.written.append(command.strip())
@@ -24,6 +25,9 @@ class _TriggerTimeoutSession:
         if command == FsvaScpi.TRIG:
             raise TimeoutError("sweep did not complete")
         raise AssertionError(f"unexpected query after trigger timeout: {command}")
+
+    def close(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.parametrize(
@@ -48,6 +52,8 @@ def test_trigger_timeout_aborts_current_measurement(operation):
         assert "channel power measurement failed" in str(exc)
 
     assert FsvaScpi.ABORT in session.written
+    assert session.closed is True
+    assert driver._visa_session is None
 
 
 class _IdentityTimeoutSession:

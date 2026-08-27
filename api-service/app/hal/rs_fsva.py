@@ -217,13 +217,14 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             return False
 
     def _abort_failed_measurement(self, operation: str, error: Exception) -> None:
-        """Best-effort cleanup after a failed single-sweep transaction."""
-        if self._visa_session is None:
+        """Best-effort abort, then release the poisoned sweep session."""
+        session = self._visa_session
+        if session is None:
             return
         try:
             self._write(FsvaScpi.ABORT)
             logger.warning(
-                "[FSVA] %s failed; current measurement aborted: %s",
+                "[FSVA] %s failed; ABORt sent, recovery unconfirmed: %s",
                 operation,
                 error,
             )
@@ -234,6 +235,20 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
                 error,
                 abort_error,
             )
+        finally:
+            # A write() success only proves the command reached the socket; it
+            # does not prove the timed-out sweep stopped.  Do not retain that
+            # session and let later disconnect/reload traffic queue behind it.
+            try:
+                session.close()
+            except Exception as close_error:
+                logger.warning(
+                    "[FSVA] Failed to close poisoned session after %s failure: %s",
+                    operation,
+                    close_error,
+                )
+            finally:
+                self._visa_session = None
 
     async def disconnect(self) -> bool:
         try:
