@@ -952,14 +952,17 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
     db.add(execution)
     db.flush()
     try:
+        # Commissioning phases share one TestExecution. Freeze both instrument
+        # contracts before any phase progress exists; waiting until MEASURE
+        # would make a preceding PRECHECK an unsafe backfill boundary.
         _freeze_instrument_lease(
-            db, execution, test_case, include_positioner=False
+            db, execution, test_case, include_positioner=True
         )
     except ValueError as error:
         db.rollback()
         raise HTTPException(
             status_code=422,
-            detail=f"baseStation adapter profile cannot be frozen: {error}",
+            detail=f"仪表执行配置无法冻结: {error}",
         ) from error
     db.commit()
     db.refresh(execution)

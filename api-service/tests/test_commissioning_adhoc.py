@@ -588,6 +588,12 @@ class TestSessionsListFilter:
         assert (regular_execution.config or {}).get("managed_rf_attach") is True, (
             "暗室首测与测试管理必须复用按 TestCase 初始化后受控 attach 的标准流程"
         )
+        assert "positioner_coordinate_profile_freeze" in (
+            regular_execution.config or {}
+        ), (
+            "commissioning 会话必须在任何 PRECHECK 进度产生前冻结转台坐标；"
+            "否则后续 MEASURE 不能安全补冻"
+        )
 
         # And an ad-hoc one
         adhoc = client.post(
