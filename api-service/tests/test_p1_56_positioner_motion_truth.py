@@ -115,6 +115,15 @@ async def test_formal_motion_maps_feedback_target_to_program_coordinate():
 
 
 @pytest.mark.asyncio
+async def test_home_with_nonzero_moveabs_offset_is_refused_before_io():
+    driver = _driver(190.0, 90.0)
+    driver.config["motion_truth_coordinate_offset_deg"] = 90.0
+
+    assert await driver.reset() is False
+    assert driver.sent == []
+
+
+@pytest.mark.asyncio
 async def test_formal_aerotech_move_uses_sourced_xf_and_wait_inpos_not_axisstatus():
     driver = _driver(0.0, 90.0)
     assert await driver.move_to(90.0, 0.0) is True

@@ -1068,6 +1068,7 @@ async def run_phase(
                         f"commissioning-phase:{session_id}:{phase_name}",
                         measurement_attempt_id=None,
                         validate_before_remote=validate_adapter,
+                        enable_monitoring=False,
                     ) as lease_outcome:
                         measurement_attempt_id = (
                             _begin_commissioning_measurement_attempt(
@@ -1294,6 +1295,7 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
                     f"commissioning-adhoc:{req.phase_name}",
                     measurement_attempt_id=None,
                     validate_before_remote=validate_adapter,
+                    enable_monitoring=False,
                 ) as lease_outcome:
                     measurement_attempt_id = _begin_commissioning_measurement_attempt(
                         db,
@@ -1510,6 +1512,7 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                     f"commissioning-run-all:{session_id}",
                     measurement_attempt_id=None,
                     validate_before_remote=validate_adapter,
+                    enable_monitoring=False,
                 ) as lease_outcome:
                     measurement_attempt_id = _begin_commissioning_measurement_attempt(
                         db,
@@ -1664,7 +1667,10 @@ class DeviceSelfcheckResult(BaseModel):
 async def device_selfcheck() -> DeviceSelfcheckResult:
     """暗室首测前逐设备快速自检 (连接 + 响应性主动探测)。"""
     items: List[DeviceSelfcheckItem] = []
-    async with instrument_test_lease("commissioning-device-selfcheck"):
+    async with instrument_test_lease(
+        "commissioning-device-selfcheck",
+        enable_monitoring=False,
+    ):
         try:
             from app.services.instrument_hal_service import get_hal_service
             hal = get_hal_service()

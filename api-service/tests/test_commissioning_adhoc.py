@@ -147,6 +147,7 @@ class TestAdhocPhaseEndpoint:
 
         @asynccontextmanager
         async def _lease(purpose, **_kwargs):
+            assert _kwargs.get("enable_monitoring") is False
             events.append(f"enter:{purpose}")
             try:
                 yield SimpleNamespace(measurement_attempt_id=None)
@@ -647,6 +648,7 @@ class TestExecutionStatusVisibleToReloadGate:
 
         @asynccontextmanager
         async def _lease(purpose, **_kwargs):
+            assert _kwargs.get("enable_monitoring") is False
             events.append(f"enter:{purpose}")
             try:
                 yield SimpleNamespace(measurement_attempt_id=None)
@@ -689,6 +691,7 @@ class TestExecutionStatusVisibleToReloadGate:
         @asynccontextmanager
         async def _lease(purpose, **_kwargs):
             assert _kwargs.get("measurement_attempt_id") is None
+            assert _kwargs.get("enable_monitoring") is False
             events.append(f"enter:{purpose}")
             outcome = SimpleNamespace(
                 measurement_attempt_id=None,

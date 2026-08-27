@@ -297,6 +297,33 @@ async def test_sequence_maps_verified_program_to_feedback_coordinate(fast_clock)
 
 
 @pytest.mark.asyncio
+async def test_sequence_bounds_motion_in_feedback_coordinates(fast_clock):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+    driver.config["motion_truth_coordinate_offset_deg"] = 90.0
+    driver.config["motion_truth_max_deg"] = 200.0
+    driver.position = 190.0
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {
+            "step_deg": 30.0,
+            "sample_duration_s": 0.2,
+            "sample_interval_s": 0.2,
+        },
+        log=lambda _message: None,
+    )
+
+    assert result.success is True
+    moves = [command for command in driver.commands if command.startswith("MOVEABS")]
+    assert moves == [
+        "MOVEABS X 70.0000 XF5.0000",
+        "MOVEABS X 100.0000 XF5.0000",
+    ]
+    assert result.extra["segments"][0]["target"] == pytest.approx(160.0)
+
+
+@pytest.mark.asyncio
 async def test_no_encoder_motion_fails_and_forbids_return_segment(fast_clock):
     driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
 

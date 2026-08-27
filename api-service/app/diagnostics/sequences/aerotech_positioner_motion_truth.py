@@ -446,13 +446,13 @@ async def run(
     try:
         start_raw, start_position = await _read_position(driver, axis)
         program_start = start_position - coordinate_offset
-        first_command_target = _bounded_target(
-            program_start,
+        first_feedback_target = _bounded_target(
+            start_position,
             values["step_deg"],
             lower=safe_min,
             upper=safe_max,
         )
-        first_feedback_target = first_command_target + coordinate_offset
+        first_command_target = first_feedback_target - coordinate_offset
         await driver._require_axes_stopped()  # noqa: SLF001
         # Command evidence: the repository copy of the Aerotech Ensemble
         # ASCII/TCP integration guide §§5-7 specifies ENABLE, MOVEABS with an

@@ -80,7 +80,9 @@ F64 使用的目标工程为：
   `20 deg/s`、最大 Jog `120 deg/s` 均已只读归档。
 - 对阻塞式 `MOVEABS` / `WAIT INPOS` 使用动作完成预算，不再拿普通查询超时误判动作失败。
 - 两次独立动作证明 PFBK 与程序坐标存在固定 `+90°` 关系；正式移动只在该偏置和 degree 单位均
-  显式确认后执行。DiagnosticRun `aerotech_positioner_motion_truth` 最终为成功。
+  显式确认后执行。DiagnosticRun `aerotech_positioner_motion_truth` 最终为成功。该现场事实尚未
+  接入 execution-frozen position evidence，因此正式 TestCase 的位置证据继续保持 UNKNOWN；
+  HOME 的最终 PFBK 也未获独立证明，非零偏置站点会在发送 HOME 前拒绝。
 
 ## 5. 硬件诊断状态
 
@@ -106,6 +108,9 @@ F64 使用的目标工程为：
 - [ ] 完成真实路径损耗校准；若要产品化“无校准诊断模式”，先定义 GUI 语义、适用 TestCase、
   审计字段和报告边界，且必须继续排除正式 KPI。
 - [ ] 复核并保存最终 CMW500 七字段 Route 与现场实际射频接线；配置以 CMW500 回读为准。
+- [ ] 将现场已证明的 Aerotech `+90°` 坐标偏置接入 execution-frozen position evidence，并用
+  同一 TestCase 复验四个请求方位；接入前正式位置项保持 UNKNOWN。另行取得 HOME 最终 PFBK
+  的独立现场证据，不能从 MOVEABS 偏置外推。
 - [ ] 生成至少一份真实 LTE execution 日志和报告，核对同一 execution 的 CMW/F64/转台证据、
   cleanup 与 transport release。
 

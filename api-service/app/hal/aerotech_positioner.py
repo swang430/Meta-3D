@@ -1091,6 +1091,14 @@ class RealAerotechDriver(PositionerDriver):
 
         try:
             safe_min, safe_max, _feed = self._require_supported_single_axis_motion()
+            coordinate_offset = self._verified_program_feedback_offset()
+            if not math.isclose(
+                coordinate_offset, 0.0, rel_tol=0.0, abs_tol=1e-12
+            ):
+                raise AerotechError(
+                    "HOME is unavailable because its final PFBK position has not "
+                    "been independently attested for a nonzero MOVEABS offset"
+                )
             if not safe_min <= 0.0 <= safe_max:
                 raise AerotechError("HOME target 0 is outside the verified safe range")
         except Exception as e:
