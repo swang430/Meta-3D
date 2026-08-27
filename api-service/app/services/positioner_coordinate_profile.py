@@ -193,10 +193,24 @@ def validate_frozen_positioner_before_motion(
 ) -> str | None:
     """Pure pre-I/O validation against the loaded driver; never reads the DB."""
 
+    resolution = frozen.get("resolution")
+    unbound_simulated_diagnostic = (
+        isinstance(resolution, dict)
+        and resolution.get("execution_mode") == "simulated"
+        and resolution.get("status") == "diagnostic_unbound"
+        and frozen.get("profile") is None
+        and "digest" not in frozen
+    )
+    digest = frozen.get("digest")
+    identity = {key: value for key, value in frozen.items() if key != "digest"}
+    if (
+        not unbound_simulated_diagnostic
+        and (not isinstance(digest, str) or digest != _canonical_digest(identity))
+    ):
+        return "frozen positioner digest is missing or does not match its payload"
     driver = _loaded_positioner(hal)
     if driver is None:
         return "loaded positioner driver is missing"
-    resolution = frozen.get("resolution")
     if not isinstance(resolution, dict):
         return "frozen positioner resolution is missing"
     mode = resolution.get("execution_mode")

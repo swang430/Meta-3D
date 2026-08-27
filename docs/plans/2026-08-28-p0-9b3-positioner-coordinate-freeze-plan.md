@@ -49,9 +49,10 @@ Expected: FAIL，因为冻结服务尚不存在。
 - 保存 schema version、resolution、同源 identity、坐标字段、source reference、server timestamp 与
   canonical digest 到 `TestExecution.config`；
 - 提供纯本地 `validate_frozen_positioner_before_motion()`；
-- 在 case runner 排入后台前调用，失败转为现有 `CaseNotExecutable`；commissioning session 创建
-  仍只冻结既有 baseStation，单相位/adhoc 的 MEASURE 与 run-all 则在取得 Remote 前补齐并复核
-  positioner 快照，PRECHECK/ANALYSIS/REPORT 不因尚未使用转台而被误阻断。
+- 在 case runner 排入后台前调用，失败转为现有 `CaseNotExecutable`；commissioning session 创建时
+  在任何 phase progress 之前同时冻结 baseStation 与 positioner（否则先跑 PRECHECK 后将无法安全
+  补冻），单相位/adhoc 的 MEASURE 与 run-all 在取得 Remote 前复核同一 positioner 快照；
+  PRECHECK/ANALYSIS/REPORT 不发转台 I/O。
 
 **Step 4: 运行 GREEN**
 

@@ -1,5 +1,7 @@
 """P0-9B-3：Aerotech 坐标合同必须绑定当前 execution。"""
 
+from copy import deepcopy
+
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -16,6 +18,7 @@ from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestExecution
 from app.services.positioner_coordinate_profile import (
     FREEZE_CONFIG_KEY,
+    _canonical_digest,
     freeze_execution_positioner_coordinate_profile,
     freeze_positioner_coordinate_profile,
     validate_frozen_positioner_before_motion,
@@ -229,6 +232,21 @@ def test_lock_time_validator_rejects_offset_axis_endpoint_and_class_drift(db):
         assert validate_frozen_positioner_before_motion(hal, frozen) is not None
 
 
+def test_lock_time_validator_rejects_mutated_frozen_payload_even_if_driver_matches(db):
+    params = _motion_params()
+    _, _, _, lab, execution = _configured_execution(db, params=params)
+    hal = SimpleNamespace(drivers={"positioner": _real_driver(params)})
+    frozen = freeze_positioner_coordinate_profile(db, hal, execution, lab)
+
+    tampered = deepcopy(frozen)
+    tampered["profile"]["coordinate_offset_deg"] = 45.0
+    hal.drivers["positioner"] = _real_driver(
+        _motion_params(motion_truth_coordinate_offset_deg=45.0)
+    )
+
+    assert "digest" in validate_frozen_positioner_before_motion(hal, tampered)
+
+
 def test_old_execution_with_progress_cannot_backfill_current_coordinate(db):
     params = _motion_params()
     _, _, _, lab, execution = _configured_execution(db, params=params)
@@ -289,7 +307,8 @@ def test_real_non_aerotech_resolution_remains_not_applicable():
         port = 2000
 
     driver = _OtherRealPositioner()
-    frozen = {
+    identity = {
+        "schema_version": 1,
         "resolution": {
             "schema_version": 1,
             "adapter": None,
@@ -305,6 +324,7 @@ def test_real_non_aerotech_resolution_remains_not_applicable():
         },
         "profile": None,
     }
+    frozen = {**identity, "digest": _canonical_digest(identity)}
 
     assert validate_frozen_positioner_before_motion(
         SimpleNamespace(drivers={"positioner": driver}), frozen
