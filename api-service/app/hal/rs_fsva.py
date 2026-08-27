@@ -73,6 +73,10 @@ class FsvaScpi:
     INIT_CONT_OFF = "INITiate:CONTinuous OFF"
     INIT_CONT_ON = "INITiate:CONTinuous ON"
     TRIG = "INITiate:IMMediate; *OPC?"
+    # R&S FSVA/FSV Operating Manual 1176.7510.02-13, §6.3.3.1,
+    # printed p.616: ABORt aborts the current measurement and resets the
+    # trigger system.
+    ABORT = "ABORt"
     SWEEP_SINGLE = "SENSe:SWEep:MODE SINGle"
     SET_SWEEP_POINTS = "SENSe:SWEep:POINts {points}"
     SET_SWEEP_TIME = "SENSe:SWEep:TIME {time}"
@@ -199,8 +203,37 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             return True
         except Exception as e:
             logger.error(f"[FSVA] Connection failed ({self.ip_address}:{self.port}): {e}")
+            if self._visa_session is not None:
+                try:
+                    self._visa_session.close()
+                except Exception as close_error:
+                    logger.warning(
+                        "[FSVA] Failed to close session after connection error: %s",
+                        close_error,
+                    )
+                finally:
+                    self._visa_session = None
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+
+    def _abort_failed_measurement(self, operation: str, error: Exception) -> None:
+        """Best-effort cleanup after a failed single-sweep transaction."""
+        if self._visa_session is None:
+            return
+        try:
+            self._write(FsvaScpi.ABORT)
+            logger.warning(
+                "[FSVA] %s failed; current measurement aborted: %s",
+                operation,
+                error,
+            )
+        except Exception as abort_error:
+            logger.error(
+                "[FSVA] Failed to abort measurement after %s failure (%s): %s",
+                operation,
+                error,
+                abort_error,
+            )
 
     async def disconnect(self) -> bool:
         try:
@@ -278,6 +311,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             logger.info(f"[FSVA] Channel power: {power_dbm:.2f} dBm (BW={bandwidth_hz/1e6:.1f} MHz)")
             return power_dbm
         except Exception as e:
+            self._abort_failed_measurement("channel power measurement", e)
             logger.error(f"[FSVA] Channel power measurement failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return -999.0
@@ -300,6 +334,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             self._set_status(InstrumentStatus.READY)
             return {"power_dbm": power_dbm}
         except Exception as e:
+            self._abort_failed_measurement("peak measurement", e)
             logger.error(f"[FSVA] Peak measurement failed: {e}")
             return {"power_dbm": -999.0}
 
@@ -312,6 +347,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             logger.info(f"[FSVA] Read {len(values)} trace points")
             return values
         except Exception as e:
+            self._abort_failed_measurement("trace readout", e)
             logger.error(f"[FSVA] Get trace failed: {e}")
             return []
 
