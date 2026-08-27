@@ -192,6 +192,10 @@ class TestExecuteHappyPath:
             "正式 MIMO OTA 吞吐量执行必须声明由执行器按 TestCase 初始化仪表并"
             "完成受控 UE attach，不能再依赖运行前的仪表/DUT 遗留状态"
         )
+        assert "positioner_coordinate_profile_freeze" in cfg, (
+            "TestExecution 必须在后台任务启动前冻结转台坐标合同；"
+            "Mock 也只能形成 diagnostic_unbound 快照"
+        )
         assert len(cfg.get("phase_progress") or []) == 5
         # 快照是独立行, 不是原用例
         assert ex.test_case_id != source.id
