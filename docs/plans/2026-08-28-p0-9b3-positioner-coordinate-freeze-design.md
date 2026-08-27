@@ -99,3 +99,15 @@ MEASURE 每个方位在首条 positioner I/O 前：
 
 现场仍需：使用同一 LTE MIMO OTA TestCase 保存各请求方位的原始 MOVEABS/PFBK，并单独取得
 HOME 最终 PFBK。未完成现场复验前，P0-9B-3 只标记“本地半完成，待现场复验”。
+
+## 实施结果（2026-08-28）
+
+本地半已按上述边界完成：正式执行冻结 LabProfile/model/connection/driver/坐标合同与摘要；
+commissioning 和 case runner 均在任何转台 I/O 前冻结或复核；逐方位证据分别核对请求物理角、
+实际 MOVEABS 程序角和原始 PFBK。权威 Mock 仅形成 `simulated/diagnostic_unbound` 诊断快照，
+不能进入正式 evidence/KPI；真实驱动缺来源、时间、同源身份或摘要一致性时均 fail-closed。
+
+验证：相关链与完整规则门 **273 passed**；全后端 **5052 passed / 5 skipped**；`compileall`、
+单一 Alembic head `d73b5f6a1c20`、`diff-check` 通过；fresh 功能尾审 **P1/P2/P3=0**。
+本片未改 GUI/OpenAPI，故不伪造 GUI build 或三镜像验证声明。现场同一 TestCase 方位复验与独立
+HOME PFBK 取证仍未完成，状态保持“本地半完成，待现场复验”。

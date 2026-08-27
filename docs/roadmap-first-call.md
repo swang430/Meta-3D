@@ -1233,6 +1233,9 @@ position evidence，也没有一份真实 completed execution 的报告证明 cl
    Aerotech degree / `PFBK - MOVEABS` 偏置的 execution freeze、动作前身份复核和逐方位双坐标
    evidence。下一步在真机保存 Route 原始响应、完成真实路径损耗校准；再用同一 TestCase 复验
    `requested physical → MOVEABS program → PFBK physical`，并独立证明 HOME 最终 PFBK。
+   P0-9B-3 本地半验证：相关链与规则门 **273 passed**、全后端 **5052 passed / 5 skipped**、
+   `compileall`、单一 Alembic head `d73b5f6a1c20`、`diff-check` 通过，fresh 尾审
+   **P1/P2/P3=0**；这些结果不替代现场复验。
 3. **P0-9C 正式验收**：生成至少一份真实 LTE execution 日志和报告，逐项核对同一 execution
    的 CMW500 配置/route/window、F64 模型、转台方位、cleanup 与 transport release；再重复执行
    一次，确认没有读取旧 attempt、旧错误队列或旧仪器缓存。
