@@ -253,6 +253,42 @@ def build_frozen_positioner_validator(frozen: dict[str, Any]):
     return _validate
 
 
+def _persist_unbound_mock_freeze(
+    db,
+    execution,
+    execution_config: dict[str, Any],
+    *,
+    lab_profile_id: Any,
+    category_id: Any = None,
+) -> dict[str, Any]:
+    """Persist a diagnostic-only snapshot for the authoritative mock."""
+
+    identity = {
+        "schema_version": 1,
+        "resolution": {
+            "schema_version": 1,
+            "adapter": None,
+            "status": "diagnostic_unbound",
+            "execution_mode": "simulated",
+        },
+        "category_id": str(category_id) if category_id is not None else None,
+        "instrument_model_id": None,
+        "instrument_connection_id": None,
+        "lab_profile_id": str(lab_profile_id),
+        "expected_driver_module": None,
+        "expected_driver_name": None,
+        "expected_driver_connection": None,
+        "profile": None,
+        "source_reference": None,
+        "frozen_at": datetime.now(timezone.utc).isoformat(),
+    }
+    frozen = {**identity, "digest": _canonical_digest(identity)}
+    execution.config = {**execution_config, FREEZE_CONFIG_KEY: frozen}
+    flag_modified(execution, "config")
+    db.flush()
+    return frozen
+
+
 def freeze_positioner_coordinate_profile(
     db,
     hal,
@@ -280,37 +316,41 @@ def freeze_positioner_coordinate_profile(
         if loaded_driver is not None and not is_mock_driver(loaded_driver):
             raise ValueError("positioner category is not configured")
         simulated = is_mock_driver(loaded_driver)
-        identity = {
-            "schema_version": 1,
-            "resolution": {
-                "schema_version": 1,
-                "adapter": None,
-                "status": "diagnostic_unbound" if simulated else "unavailable",
-                "execution_mode": "simulated" if simulated else "unavailable",
-            },
-            "category_id": None,
-            "instrument_model_id": None,
-            "instrument_connection_id": None,
-            "lab_profile_id": str(selected_lab_profile.id),
-            "expected_driver_module": None,
-            "expected_driver_name": None,
-            "expected_driver_connection": None,
-            "profile": None,
-            "source_reference": None,
-            "frozen_at": datetime.now(timezone.utc).isoformat(),
-        }
-        frozen = {**identity, "digest": _canonical_digest(identity)}
-        execution.config = {**execution_config, FREEZE_CONFIG_KEY: frozen}
-        flag_modified(execution, "config")
-        db.flush()
-        return frozen
+        if not simulated:
+            raise ValueError("loaded positioner driver is missing")
+        return _persist_unbound_mock_freeze(
+            db,
+            execution,
+            execution_config,
+            lab_profile_id=selected_lab_profile.id,
+        )
     binding = _single_positioner_binding(selected_lab_profile, str(category.id))
-    if str(binding.get("instrument_model_id")) != str(category.selected_model_id):
+    binding_model_id = binding.get("instrument_model_id")
+    selected_model_id = category.selected_model_id
+    loaded_driver = _loaded_positioner(hal)
+    if loaded_driver is None:
+        raise ValueError("loaded positioner driver is missing")
+    simulated = is_mock_driver(loaded_driver)
+    if (binding_model_id is None) != (selected_model_id is None):
+        raise ValueError(
+            "positioner binding and selected_model_id must both be configured"
+        )
+    if binding_model_id is None and selected_model_id is None:
+        if not simulated:
+            raise ValueError("unbound positioner diagnostics require the authoritative mock")
+        return _persist_unbound_mock_freeze(
+            db,
+            execution,
+            execution_config,
+            lab_profile_id=selected_lab_profile.id,
+            category_id=category.id,
+        )
+    if str(binding_model_id) != str(selected_model_id):
         raise ValueError("positioner binding does not match selected_model_id")
     model = (
         db.query(InstrumentModel)
         .filter(
-            InstrumentModel.id == category.selected_model_id,
+            InstrumentModel.id == selected_model_id,
             InstrumentModel.category_id == category.id,
         )
         .one_or_none()
@@ -337,10 +377,6 @@ def freeze_positioner_coordinate_profile(
     expected_class = get_real_driver_class("positioner", model.model)
     if expected_class is None:
         raise ValueError("selected positioner model has no registered real driver")
-    loaded_driver = _loaded_positioner(hal)
-    if loaded_driver is None:
-        raise ValueError("loaded positioner driver is missing")
-    simulated = is_mock_driver(loaded_driver)
     connection_config = _connection_config(connection)
 
     if simulated:

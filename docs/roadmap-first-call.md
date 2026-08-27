@@ -51,11 +51,12 @@ P3-20/P3-21 仍不得自动启动。
 1. **现场队列（只有真仪器 / DUT / SIM / 暗室在场时执行）**：当前 CMW500 现场从 P0-9A
    真实 Attach 开始；随后只取得 P0-9B/C 所需的真机回读（含 P0-9B-1 专用 Route query 复验）、校准、转台 HOME/方位和同次执行
    报告证据。P1-2、NEW-2 等不需改代码的已登记诊断可穿插留证。需要先改探针或产品代码的
-   P2-9、NEW-1、P0-9B-3 不在现场临时开发；只记录原始响应，转入非现场队列修好后再
+   P2-9、NEW-1 不在现场临时开发；只记录原始响应，转入非现场队列修好后再
    回现场复验。UXM 不在场时不得启动 P0-5、P1-17、P2-13 或 P1-6。
 2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据，按最小
-   改动完成 P0-9B-3 的 execution-frozen 转台坐标、P2-9 的精确 `ERROR 3` 分类、NEW-1 的活动
-   F64 输出集合；P0-9B-1 已完成手册支持来源、七字段 query/parser 与驱动双回读的本地半，当前
+   改动完成 P2-9 的精确 `ERROR 3` 分类、NEW-1 的活动 F64 输出集合；P0-9B-1 已完成手册支持
+   来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
+   与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。上述当前现场闭环所需本地半处理完后，再执行架构收敛
    P2-42 → P2-43 → P2-44 → P2-45。
 3. **原 First-call / on-site 队列完整保留**：P0-5 → P1-2 → P1-4 → P2-4；以及
@@ -1228,10 +1229,10 @@ position evidence，也没有一份真实 completed execution 的报告证明 cl
 1. **P0-9A 诊断主线**：真实 DUT/SIM 完成 CMW500 UE Attach，并用当前 LTE UMa 20 MHz
    TestCase 跑通 `PRECHECK → MEASURE → ANALYSIS → REPORT`。允许经审计的无校准诊断运行，
    但不发布正式 KPI。
-2. **P0-9B 正式前置**：本地已完成手册有据的 `PCCBBBoard` 七字段 query/parser 与双回读，下一步
-   在真机复现并保存原始响应；完成真实路径
-   损耗校准；把已证明的 degree 单位与 `PFBK - MOVEABS = +90°` 冻结进 execution evidence，
-   独立证明 HOME 最终 PFBK，并用同一 TestCase 复验请求方位。
+2. **P0-9B 正式前置**：本地已完成手册有据的 `PCCBBBoard` 七字段 query/parser 与双回读，以及
+   Aerotech degree / `PFBK - MOVEABS` 偏置的 execution freeze、动作前身份复核和逐方位双坐标
+   evidence。下一步在真机保存 Route 原始响应、完成真实路径损耗校准；再用同一 TestCase 复验
+   `requested physical → MOVEABS program → PFBK physical`，并独立证明 HOME 最终 PFBK。
 3. **P0-9C 正式验收**：生成至少一份真实 LTE execution 日志和报告，逐项核对同一 execution
    的 CMW500 配置/route/window、F64 模型、转台方位、cleanup 与 transport release；再重复执行
    一次，确认没有读取旧 attempt、旧错误队列或旧仪器缓存。

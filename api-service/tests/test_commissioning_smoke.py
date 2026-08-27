@@ -95,6 +95,9 @@ def lab(db, chamber, instrument_categories):
     base_station = next(
         row for row in instrument_categories if row.category_key == "baseStation"
     )
+    positioner = next(
+        row for row in instrument_categories if row.category_key == "positioner"
+    )
     db.add(InstrumentConnection(
         category_id=base_station.id,
         endpoint=None,
@@ -104,13 +107,22 @@ def lab(db, chamber, instrument_categories):
     lp = LabProfile(
         name="Smoke-Test-Lab",
         chamber_config_id=chamber.id,
-        instrument_bindings=[{
-            "category_id": str(base_station.id),
-            "instrument_model_id": None,
-            "connection_endpoint": None,
-            "driver_mode": "mock",
-            "role": "baseStation",
-        }],
+        instrument_bindings=[
+            {
+                "category_id": str(base_station.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "baseStation",
+            },
+            {
+                "category_id": str(positioner.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "positioner",
+            },
+        ],
         is_active=True,
     )
     db.add(lp)
@@ -323,6 +335,9 @@ class TestFivePhaseCommissioningSmoke:
         from app.services.base_station_adapter_profile import (
             freeze_execution_base_station_adapter_profile,
         )
+        from app.services.positioner_coordinate_profile import (
+            freeze_execution_positioner_coordinate_profile,
+        )
         from app.services.instrument_hal_service import get_hal_service
 
         config_overrides = {
@@ -378,6 +393,9 @@ class TestFivePhaseCommissioningSmoke:
         db.add(execution)
         db.flush()
         freeze_execution_base_station_adapter_profile(
+            db, get_hal_service(), execution, test_case
+        )
+        freeze_execution_positioner_coordinate_profile(
             db, get_hal_service(), execution, test_case
         )
         db.commit()

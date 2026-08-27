@@ -57,12 +57,14 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(autouse=True)
 def _db_schema(monkeypatch):
     Base.metadata.create_all(bind=engine)
-    from app.hal import MockBaseStation
+    from app.hal import MockBaseStation, MockPositioner
     from app.services.instrument_hal_service import get_hal_service
 
     hal = get_hal_service()
     saved_base_station = hal.drivers.get("baseStation")
+    saved_positioner = hal.drivers.get("positioner")
     hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    hal.drivers["positioner"] = MockPositioner("mock-positioner", {})
     prev = app.dependency_overrides.get(get_db)
 
     def _override():
@@ -84,6 +86,10 @@ def _db_schema(monkeypatch):
         hal.drivers.pop("baseStation", None)
     else:
         hal.drivers["baseStation"] = saved_base_station
+    if saved_positioner is None:
+        hal.drivers.pop("positioner", None)
+    else:
+        hal.drivers["positioner"] = saved_positioner
     if prev is None:
         app.dependency_overrides.pop(get_db, None)
     else:
@@ -107,16 +113,22 @@ def lab(db):
         ChamberType.TYPE_C.value, name="CaseRunnerLab Chamber")
     db.add(chamber)
     db.flush()
-    category = InstrumentCategory(
+    base_station_category = InstrumentCategory(
         category_key="baseStation",
         category_name="基站仿真器",
         driver_mode="mock",
         is_active=True,
     )
-    db.add(category)
+    positioner_category = InstrumentCategory(
+        category_key="positioner",
+        category_name="转台",
+        driver_mode="mock",
+        is_active=True,
+    )
+    db.add_all([base_station_category, positioner_category])
     db.flush()
     db.add(InstrumentConnection(
-        category_id=category.id,
+        category_id=base_station_category.id,
         endpoint=None,
         connection_params=None,
         created_by="test",
@@ -124,13 +136,22 @@ def lab(db):
     lp = LabProfile(
         name="CaseRunner-Lab",
         chamber_config_id=chamber.id,
-        instrument_bindings=[{
-            "category_id": str(category.id),
-            "instrument_model_id": None,
-            "connection_endpoint": None,
-            "driver_mode": "mock",
-            "role": "baseStation",
-        }],
+        instrument_bindings=[
+            {
+                "category_id": str(base_station_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "baseStation",
+            },
+            {
+                "category_id": str(positioner_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "positioner",
+            },
+        ],
         is_active=True,
     )
     db.add(lp)

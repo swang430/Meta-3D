@@ -300,6 +300,42 @@ def test_authoritative_mock_without_catalog_binding_is_diagnostic_unbound(db):
     assert validate_frozen_positioner_before_motion(hal, frozen) is None
 
 
+def test_authoritative_mock_with_unbound_catalog_model_is_diagnostic_unbound(db):
+    category = InstrumentCategory(
+        category_key="positioner",
+        category_name="Positioner",
+        driver_mode="mock",
+    )
+    db.add(category)
+    db.flush()
+    lab = LabProfile(
+        name=f"lab-{uuid4()}",
+        instrument_bindings=[{
+            "category_id": str(category.id),
+            "instrument_model_id": None,
+            "connection_endpoint": None,
+            "driver_mode": "mock",
+            "role": "positioner",
+        }],
+    )
+    execution = TestExecution(status="pending", config={})
+    db.add_all([lab, execution])
+    db.commit()
+    hal = SimpleNamespace(drivers={"positioner": MockPositioner("mock", {})})
+
+    frozen = freeze_positioner_coordinate_profile(db, hal, execution, lab)
+
+    assert frozen["resolution"] == {
+        "schema_version": 1,
+        "adapter": None,
+        "status": "diagnostic_unbound",
+        "execution_mode": "simulated",
+    }
+    assert frozen["category_id"] == str(category.id)
+    assert frozen["instrument_model_id"] is None
+    assert validate_frozen_positioner_before_motion(hal, frozen) is None
+
+
 def test_real_non_aerotech_resolution_remains_not_applicable():
     class _OtherRealPositioner:
         _connection_host = "192.0.2.17"

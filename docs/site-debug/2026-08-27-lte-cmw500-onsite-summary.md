@@ -129,9 +129,11 @@ P2-42～45 替换。
   七字段 Route 仍只允许诊断，不得用请求值、写入成功或保留 Controller 字段补绿。
 - [ ] **P0-9B-2（现场）**：完成真实路径损耗校准。长期“无校准诊断模式”的产品语义已提升 P2-45，
   不在现场临时扩大正式判定。
-- [ ] **P0-9B-3（非现场实现 → 现场复验）**：将 Aerotech `+90°` 坐标偏置接入
-  execution-frozen position evidence；回现场用同一 TestCase 复验请求方位，并另行取得 HOME
-  最终 PFBK，不能从 MOVEABS 偏置外推。
+- [ ] **P0-9B-3（本地半完成 → 现场复验）**：已将操作员配置且带现场来源/时间的 Aerotech
+  degree、范围、速度、容差与 `PFBK - MOVEABS` 偏置冻结到 execution；动作前复核同一
+  LabProfile/model/connection/driver/digest，逐方位同时核对请求物理角、实际 MOVEABS 程序角和
+  原始 PFBK，不再二次扣减偏置。回现场仍须用同一 TestCase 复验请求方位，并另行取得 HOME
+  最终 PFBK；本地回归不冒充现场完成。
 - [ ] **P0-9C（现场）**：生成真实 LTE execution 日志和报告，核对同一 attempt/lease/session 的
   CMW/F64/转台证据、cleanup 与 transport release；再重复执行一次，证明没有读取旧结果。
 
