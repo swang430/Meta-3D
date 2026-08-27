@@ -203,9 +203,60 @@ async def test_config_error_queue_failure_does_not_update_cached_working_point()
     assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
         "*OPC?",
         "SYSTem:ERRor:ALL?",
     ]
+
+
+@pytest.mark.asyncio
+async def test_config_discards_preexisting_error_before_its_first_write():
+    errors = iter([
+        '-113,"Undefined header;old monitoring query"',
+        '0,"No error"',
+    ])
+
+    class _StaleErrorDriver(_StateDriver):
+        def __init__(self):
+            super().__init__({
+                "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+                "*OPC?": "1",
+                "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "40340",
+            })
+            self.events: list[str] = []
+
+        def _do_write(self, command: str) -> None:
+            self.events.append(f"write:{command}")
+            super()._do_write(command)
+
+        def _do_query(self, command: str) -> str:
+            self.events.append(f"query:{command}")
+            if command == "SYSTem:ERRor:ALL?":
+                self.queries.append(command)
+                return next(errors)
+            return super()._do_query(command)
+
+    driver = _StaleErrorDriver()
+
+    assert await driver.set_cell_config({"earfcn": 40340}) is True
+    first_write = next(i for i, event in enumerate(driver.events) if event.startswith("write:"))
+    stale_drain = driver.events.index("query:SYSTem:ERRor:ALL?")
+    assert stale_drain < first_write
+    assert driver.queries.count("SYSTem:ERRor:ALL?") == 2
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_metrics_do_not_send_unsupported_cmw_sinr_query():
+    class _DiagnosticDriver(_StateDriver):
+        def _do_query(self, command: str) -> str:
+            self.queries.append(command)
+            return ""
+
+    driver = _DiagnosticDriver({})
+
+    await driver.get_throughput_metrics()
+
+    assert "SENSe:LTE:SIGN1:UEReport:SINR?" not in driver.queries
 
 
 @pytest.mark.asyncio

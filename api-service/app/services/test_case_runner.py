@@ -597,6 +597,9 @@ async def _run_case(execution_id: UUID) -> None:
         async with instrument_test_lease(
             f"formal-case:{execution_id}",
             measurement_attempt_id=None,
+            # 正式执行期间禁止后台仪表轮询。监控与执行共用同一条 CMW
+            # transport，异步查询会污染全局错误队列并打乱本次配置回读。
+            enable_monitoring=False,
             validate_before_remote=build_frozen_base_station_validator(frozen),
         ) as lease_outcome:
             # The lease has now acquired/refreshed the active transport identity.

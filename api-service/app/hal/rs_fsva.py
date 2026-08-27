@@ -296,7 +296,8 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             bandwidth_hz: Channel bandwidth in Hz
 
         Returns:
-            Channel power in dBm, or -999.0 on failure
+            Channel power in dBm. Measurement failure raises; it is never
+            represented as a numeric sentinel.
         """
         try:
             self._set_status(InstrumentStatus.BUSY)
@@ -314,7 +315,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             self._abort_failed_measurement("channel power measurement", e)
             logger.error(f"[FSVA] Channel power measurement failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
-            return -999.0
+            raise RuntimeError(f"FSVA channel power measurement failed: {e}") from e
 
     async def measure_peak(self) -> Dict[str, float]:
         """

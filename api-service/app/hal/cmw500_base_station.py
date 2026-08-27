@@ -202,11 +202,9 @@ class CmwScpiCommands:
     EBLER_RELATIVE_PCC = CMW500_LTE_COMMANDS["ebler_relative_query"].template
     EBLER_CQI = "FETCh:LTE:SIGN{i}:EBLer:PCC:CQIReporting:STReam1?"
 
-    # --- UE 测量上报 (RSRP / SINR) ---
-    # CMW500 通过 FETCh 子系统获取 UE 上报的 L3 RSRP 和 SINR
-    # 返回格式: "<value>" (dBm / dB)
+    # --- UE 诊断上报 (仅保留现场已响应的 RSRP) ---
+    # SINR 查询在当前 CMW500 上返回 -113 Undefined header，不在这里猜方言。
     UE_RSRP = "SENSe:LTE:SIGN{i}:UEReport:RSRP?"
-    UE_SINR = "SENSe:LTE:SIGN{i}:UEReport:SINR?"
 
     # --- 信令 BLER (Extended BLER) ---
     INIT_EBLER = CMW500_LTE_COMMANDS["ebler_init"].template
@@ -1029,6 +1027,16 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
                 return False
 
+            # SYSTem:ERRor:ALL? 是设备级队列且读取后清空。先丢弃本次配置
+            # 之前已经存在的错误，避免后台诊断或上一次人工命令被误认成
+            # 当前配置失败；配置写完后仍由 _write_group_confirmed() 独立验错。
+            stale_errors = self._query(CmwScpiCommands.ERR)
+            if not self._error_queue_is_empty(stale_errors):
+                logger.warning(
+                    "[CMW500] Discarded pre-existing error queue before cell config: %s",
+                    stale_errors.strip(),
+                )
+
             # The instrument rejects a TDD-only band while the cell is still
             # in its previous duplex mode.  Select the requested duplex before
             # applying the band and its EARFCN.
@@ -1840,13 +1848,8 @@ class RealCmw500Driver(BaseStationDriver):
         except Exception:
             pass
 
-        # ── SINR (UE 测量上报) ──
-        try:
-            sinr_str = self._query(self._fmt(CmwScpiCommands.UE_SINR))
-            if sinr_str and sinr_str.strip():
-                metrics.sinr_db = float(sinr_str.strip().split(",")[0])
-        except Exception:
-            pass
+        # 当前 CMW500 对 UEReport:SINR? 返回 -113 Undefined header，且仓库
+        # 没有可核对的厂商手册出处。诊断监控保持 unknown，不向真机猜发命令。
 
         # ── 测量数据归档 → measurement.log ──
         metrics.kpi_valid.update(valid)

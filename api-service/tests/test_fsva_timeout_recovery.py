@@ -40,7 +40,12 @@ def test_trigger_timeout_aborts_current_measurement(operation):
     driver = RealRsFsvaDriver("fsva-timeout", {"ip": "192.0.2.10"})
     driver._visa_session = session
 
-    asyncio.run(operation(driver))
+    try:
+        asyncio.run(operation(driver))
+    except RuntimeError as exc:
+        # Channel-power now fails loud instead of returning the old -999.0
+        # numeric sentinel. Peak/trace retain their existing return contracts.
+        assert "channel power measurement failed" in str(exc)
 
     assert FsvaScpi.ABORT in session.written
 
@@ -76,3 +81,14 @@ def test_connect_identity_timeout_closes_its_opened_session(monkeypatch):
 
     assert session.closed is True
     assert driver._visa_session is None
+
+
+def test_channel_power_timeout_is_not_returned_as_a_numeric_measurement():
+    session = _TriggerTimeoutSession()
+    driver = RealRsFsvaDriver("fsva-timeout", {"ip": "192.0.2.10"})
+    driver._visa_session = session
+
+    with pytest.raises(RuntimeError, match="channel power measurement failed"):
+        asyncio.run(driver.measure_channel_power(20e6))
+
+    assert FsvaScpi.ABORT in session.written

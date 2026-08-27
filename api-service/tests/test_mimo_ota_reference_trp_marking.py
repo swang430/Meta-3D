@@ -68,12 +68,12 @@ def lab(db):
     return lp
 
 
-def _ctx(db, lab) -> StepExecutionContext:
+def _ctx(db, lab, *, config_overrides=None) -> StepExecutionContext:
     tc, _ = build_mimo_ota_test_case(
         db,
         name=f"Ref-{uuid.uuid4().hex[:8]}",
         lab_profile_id=lab.id,
-        config_overrides={},
+        config_overrides=config_overrides or {},
         created_by="pytest-ref",
     )
     ex = TestExecution(
@@ -104,6 +104,24 @@ class _RealLikeSA:
 
     async def measure_channel_power(self, **kwargs):
         return -50.0  # +73.5 offset → 23.5 dBm TRP
+
+
+class _RecordingSA(_RealLikeSA):
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def setup_spectrum(self, **kwargs):
+        self.calls.append("setup")
+        return True
+
+    async def measure_channel_power(self, **kwargs):
+        self.calls.append("measure")
+        return -50.0
+
+
+class _FailedPowerSA(_RealLikeSA):
+    async def measure_channel_power(self, **kwargs):
+        raise RuntimeError("FSVA sweep timed out")
 
 
 def _swap_sa(driver):
@@ -170,3 +188,36 @@ async def test_real_sa_trp_verified(db, lab):
     assert m["measurement_source"] == "hal_signal_analyzer"
     assert m["trp_verified"] is True
     assert not any("未验证" in w for w in (result.warnings or [])), result.warnings
+
+
+@pytest.mark.asyncio
+async def test_calibration_bypass_skips_reference_without_touching_sa(db, lab):
+    sa = _RecordingSA()
+    hal, saved = _swap_sa(sa)
+    try:
+        result = await ReferenceExecutor().execute(
+            _ctx(db, lab, config_overrides={"precheck_strict_cal": False})
+        )
+    finally:
+        hal.drivers.clear()
+        hal.drivers.update(saved)
+
+    assert result.status == StepExecutionStatus.SKIPPED
+    assert sa.calls == []
+    assert "measured_trp_dbm" not in (result.measurements or {})
+    assert "compensation_factor_db" not in (result.measurements or {})
+
+
+@pytest.mark.asyncio
+async def test_reference_measurement_failure_does_not_persist_numeric_trp(db, lab):
+    hal, saved = _swap_sa(_FailedPowerSA())
+    try:
+        result = await ReferenceExecutor().execute(_ctx(db, lab))
+    finally:
+        hal.drivers.clear()
+        hal.drivers.update(saved)
+
+    assert result.status == StepExecutionStatus.FAILED
+    assert "FSVA sweep timed out" in (result.error_message or "")
+    assert "measured_trp_dbm" not in (result.measurements or {})
+    assert "compensation_factor_db" not in (result.measurements or {})
