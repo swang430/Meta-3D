@@ -582,6 +582,23 @@ def _formal_base_station_config_confirmed(
     )
 
 
+def _cmw_route_allows_diagnostic_execution(route_result: Any) -> bool:
+    """Allow diagnostics only when every authoritative physical path matches."""
+
+    requested = getattr(route_result, "requested", None)
+    applied = getattr(route_result, "applied", None)
+    if not isinstance(requested, dict) or not isinstance(applied, dict):
+        return False
+    if getattr(route_result, "confirmed", None) is True:
+        return applied == requested
+    requested_physical = {
+        key: value
+        for key, value in requested.items()
+        if key != "pcc_bb_board"
+    }
+    return applied == requested_physical
+
+
 
 def resolve_model_load_requested(emulator, gen_ok: bool, intent):
     """f64.model_loaded 归档用的 requested 真值（P2-29，内审 F1）。
@@ -1268,7 +1285,7 @@ class MeasureExecutor(IStepExecutor):
                 if (
                     cmw_attempt is not None
                     and not cmw_attempt.simulated_diagnostic
-                    and route_result.confirmed is not True
+                    and not _cmw_route_allows_diagnostic_execution(route_result)
                 ):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
