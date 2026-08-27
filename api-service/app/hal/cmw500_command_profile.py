@@ -34,6 +34,9 @@ class CmwNx2Route:
 @dataclass(frozen=True)
 class CmwNx2RouteReadback:
     scenario: str
+    # User Manual 1173.9628.02-41, printed p.459-460: this field is reserved
+    # for future use and its returned value is not relevant.  It is not the
+    # configured PCC baseband board.
     controller: str
     rx_connector: str
     rx_converter: str
@@ -274,8 +277,6 @@ class Cmw500LteCommandProfile:
         values = _csv(response, 8)
         if values[0].upper() != "TRO":
             raise ValueError("CMW route is not the LTE 1CC-nx2 TRO scenario")
-        if values[0] != "TRO" or values[1].upper() == "NAV":
-            raise ValueError("invalid CMW route scenario/controller")
         for index, name in enumerate(
             ("rx_connector", "rx_converter", "tx1_connector", "tx1_converter",
              "tx2_connector", "tx2_converter"),

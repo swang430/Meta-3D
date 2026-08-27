@@ -632,7 +632,13 @@ class RealCmw500Driver(BaseStationDriver):
                 )
 
             applied = {
-                "pcc_bb_board": readback.controller,
+                # ROUTe:LTE:SIGN<i>? does not return PCCBBBoard.  Per the
+                # R&S manual printed p.459-460, its second field is an
+                # irrelevant future-use Controller string.  The accepted
+                # write plus an empty error queue is the available authority
+                # for PCCBBBoard; the query authoritatively confirms TRO and
+                # the six physical path fields.
+                "pcc_bb_board": requested["pcc_bb_board"],
                 "rx_connector": readback.rx_connector,
                 "rx_converter": readback.rx_converter,
                 "tx1_connector": readback.tx1_connector,

@@ -1,4 +1,4 @@
-"""P1-73B Task 8：CMW500 内部 LTE 2x2 route 必须写后精确回读。"""
+"""P1-73B Task 8：CMW500 内部 LTE 2x2 route 必须按手册写后确认。"""
 
 from __future__ import annotations
 
@@ -62,6 +62,18 @@ def _driver(
             "ROUTe:LTE:SIGN1?": readback,
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_route_ignores_irrelevant_controller_readback_and_confirms_physical_paths():
+    driver = _driver(
+        readback='TRO,"No Connection",RF1C,RX1,RF1C,TX1,RF2C,TX2'
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is True
+    assert result.applied == result.requested
 
 
 @pytest.mark.asyncio
