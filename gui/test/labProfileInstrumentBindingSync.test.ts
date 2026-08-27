@@ -45,3 +45,15 @@ test('equipment editor exposes explicit sync for the selected LabProfile', () =>
   assert.match(manager, /syncLabBindingMutation\.mutate\(category\.key\)/)
   assert.match(manager, /同步已保存配置到.*selectedLabProfile\?\.name/)
 })
+
+test('equipment editor keeps the drawer open so save feedback remains visible', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const manager = app.slice(app.indexOf('function EquipmentManager()'))
+
+  assert.doesNotMatch(
+    manager,
+    /handleSaveConnection\(category\.key\);\s*setEditingCategoryKey\(null\)/,
+  )
+  assert.match(manager, /placeholder=\{CMW500_ROUTE_EXAMPLES\[field\]\}/)
+  assert.match(manager, /保存失败: \$\{diagnosticErrorMessage\(error\)\}/)
+})

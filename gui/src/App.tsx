@@ -114,6 +114,7 @@ import type {
   UpdateInstrumentPayload,
 } from './types/api'
 import {
+  CMW500_ROUTE_EXAMPLES,
   CMW500_ROUTE_FIELDS,
   buildCmw500AdapterProfile,
   emptyCmw500Route,
@@ -1819,8 +1820,12 @@ function EquipmentManager() {
           : '配置已保存。',
       )
     },
-    onError: (_error, variables) => {
-      showFeedback(variables.categoryKey, 'error', '保存失败，请重试。')
+    onError: (error: unknown, variables) => {
+      showFeedback(
+        variables.categoryKey,
+        'error',
+        `保存失败: ${diagnosticErrorMessage(error)}`,
+      )
     },
   })
 
@@ -2316,7 +2321,8 @@ function EquipmentManager() {
                       <Stack gap={2}>
                         <Text fw={600} size="sm">CMW500 LTE 2×2 内部 Route</Text>
                         <Text size="xs" c="dimmed">
-                          仅配置 CMW500 内部 BB / connector / converter，不包含外部射频开关或功率补偿。
+                          填写 CMW500 手册枚举（不是面板数字序号），例如 SUA1 / RF3C / RX3 / RF1C / TX1 / RF2C / TX2。
+                          仅配置内部 BB / connector / converter，不包含外部射频开关或功率补偿。
                         </Text>
                       </Stack>
                       <Switch
@@ -2346,6 +2352,7 @@ function EquipmentManager() {
                           <TextInput
                             key={field}
                             label={field}
+                            placeholder={CMW500_ROUTE_EXAMPLES[field]}
                             value={(draft.cmw500_route ?? emptyCmw500Route())[field]}
                             onChange={(event) => {
                               const value = event.currentTarget.value
@@ -2420,10 +2427,7 @@ function EquipmentManager() {
                   </Button>
                   <Button
                     color="brand"
-                    onClick={() => {
-                       handleSaveConnection(category.key);
-                       setEditingCategoryKey(null);
-                    }}
+                    onClick={() => handleSaveConnection(category.key)}
                     loading={instrumentMutation.isPending}
                   >
                     保存配置
