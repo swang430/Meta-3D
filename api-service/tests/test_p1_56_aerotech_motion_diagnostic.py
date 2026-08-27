@@ -47,6 +47,8 @@ class MotionDiagnosticDriver(RealAerotechDriver):
                 "motion_truth_min_deg": 0.0,
                 "motion_truth_max_deg": 360.0,
                 "motion_truth_xf_speed": 5.0,
+                "motion_truth_coordinate_offset_verified": True,
+                "motion_truth_coordinate_offset_deg": 0.0,
             },
         )
         self._axes_present = ["X"]
@@ -83,12 +85,15 @@ class MotionDiagnosticDriver(RealAerotechDriver):
             if self.velocity_responses:
                 return self.velocity_responses.pop(0)
             return self.velocity
-        if command.startswith("MOVEABS X "):
+        if command.startswith("MOVEABS X"):
             has_xf = any(token.startswith("XF") for token in command.split())
             if (has_xf and self.moves_with_xf) or (
                 not has_xf and self.moves_without_xf
             ):
-                self.position = float(command.split()[2])
+                command_target = float(command.split()[2])
+                self.position = command_target + float(
+                    self.config["motion_truth_coordinate_offset_deg"]
+                )
             return ""
         if command == "ENABLE X":
             return ""
@@ -202,6 +207,23 @@ async def test_caller_cannot_override_the_site_approved_motion_feed(fast_clock):
 
 
 @pytest.mark.asyncio
+async def test_unknown_coordinate_offset_fails_before_enable_or_motion(fast_clock):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+    driver.config.pop("motion_truth_coordinate_offset_verified")
+    driver.config.pop("motion_truth_coordinate_offset_deg")
+
+    result = await sequence.run(
+        SimpleNamespace(), _hal(driver), {}, log=lambda _message: None
+    )
+
+    assert result.success is False
+    assert "motion_truth_coordinate_offset" in result.summary
+    assert not any(
+        command.startswith(("ENABLE ", "MOVEABS ")) for command in driver.commands
+    )
+
+
+@pytest.mark.asyncio
 async def test_sequence_uses_only_sourced_xf_motion_and_records_raw_samples(fast_clock):
     driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
 
@@ -245,6 +267,33 @@ async def test_sequence_uses_only_sourced_xf_motion_and_records_raw_samples(fast
         assert segment["command_accepted"] is True
         assert segment["feedback_changed"] is True
         assert segment["target_reached"] is True
+
+
+@pytest.mark.asyncio
+async def test_sequence_maps_verified_program_to_feedback_coordinate(fast_clock):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+    driver.config["motion_truth_coordinate_offset_deg"] = 90.0
+    driver.position = 190.0
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {
+            "step_deg": 10.0,
+            "sample_duration_s": 0.2,
+            "sample_interval_s": 0.2,
+        },
+        log=lambda _message: None,
+    )
+
+    assert result.success is True
+    moves = [command for command in driver.commands if command.startswith("MOVEABS")]
+    assert moves == [
+        "MOVEABS X 110.0000 XF5.0000",
+        "MOVEABS X 100.0000 XF5.0000",
+    ]
+    assert result.extra["coordinate_offset_deg"] == pytest.approx(90.0)
+    assert result.extra["segments"][0]["target"] == pytest.approx(200.0)
 
 
 @pytest.mark.asyncio
@@ -362,7 +411,7 @@ async def test_operator_emergency_stop_during_first_segment_forbids_second_move(
             command,
             expected_operator_stop_generation=expected_operator_stop_generation,
         )
-        if command.startswith("MOVEABS X "):
+        if command.startswith("MOVEABS X"):
             driver.note_operator_stop()
         return response
 
@@ -477,7 +526,7 @@ async def test_unconfirmed_second_segment_abort_does_not_republish_instant_pfbk(
         expected_operator_stop_generation: int | None = None,
     ) -> str:
         nonlocal move_count
-        if command.startswith("MOVEABS X "):
+        if command.startswith("MOVEABS X"):
             move_count += 1
             if move_count == 2:
                 driver.moves_with_xf = False
@@ -536,7 +585,7 @@ async def test_cancelled_move_command_response_still_aborts_diagnostic():
         *,
         expected_operator_stop_generation: int | None = None,
     ) -> str:
-        if command.startswith("MOVEABS X "):
+        if command.startswith("MOVEABS X"):
             driver.commands.append(command)
             raise asyncio.CancelledError
         return await original_send(
@@ -551,7 +600,7 @@ async def test_cancelled_move_command_response_still_aborts_diagnostic():
             SimpleNamespace(), _hal(driver), {}, log=lambda _message: None
         )
 
-    assert any(command.startswith("MOVEABS X ") for command in driver.commands)
+    assert any(command.startswith("MOVEABS X") for command in driver.commands)
     assert "ABORT X" in driver.commands
 
 

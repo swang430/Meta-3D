@@ -79,7 +79,10 @@ class _FakeReader:
         self._server = server
 
     async def readline(self) -> bytes:
-        return await self._server.next_response()
+        return self._server.readline()
+
+    async def readexactly(self, count: int) -> bytes:
+        return self._server.readexactly(count)
 
 
 class _FakeServer:
@@ -100,6 +103,9 @@ class _FakeServer:
         self.sent: List[str] = []
         self._responses: List[bytes] = []
         self._cmd_count = 0
+        self._current_cmd_index = -1
+        self._wire_buffer = bytearray()
+        self._eof_pending = False
         self._drain_fail_on: Optional[int] = None  # 0-indexed cmd number
         self._read_eof_on: Optional[int] = None
 
@@ -116,25 +122,49 @@ class _FakeServer:
 
     # ---- driver-facing hooks ----
     def feed_command(self, data: bytes) -> None:
+        self._current_cmd_index = self._cmd_count
+        self._cmd_count += 1
         self.sent.append(data.decode("ascii").rstrip("\n"))
+        if self._read_eof_on == self._current_cmd_index:
+            self._eof_pending = True
+            return
+        if self._current_cmd_index < len(self._responses):
+            self._wire_buffer.extend(self._responses[self._current_cmd_index])
+        else:
+            self._wire_buffer.extend(b"%\n")
 
     def drain_should_fail(self) -> bool:
-        if self._drain_fail_on is not None and self._cmd_count == self._drain_fail_on:
+        if (
+            self._drain_fail_on is not None
+            and self._current_cmd_index == self._drain_fail_on
+        ):
             return True
         return False
 
-    async def next_response(self) -> bytes:
-        # If this command index is configured for EOF, return empty bytes
-        # to simulate the remote closing the connection cleanly.
-        if self._read_eof_on is not None and self._cmd_count == self._read_eof_on:
-            self._cmd_count += 1
+    def readexactly(self, count: int) -> bytes:
+        if self._eof_pending:
+            self._eof_pending = False
+            raise asyncio.IncompleteReadError(b"", count)
+        if len(self._wire_buffer) < count:
+            partial = bytes(self._wire_buffer)
+            self._wire_buffer.clear()
+            raise asyncio.IncompleteReadError(partial, count)
+        result = bytes(self._wire_buffer[:count])
+        del self._wire_buffer[:count]
+        return result
+
+    def readline(self) -> bytes:
+        if self._eof_pending:
+            self._eof_pending = False
             return b""
-        idx = self._cmd_count
-        self._cmd_count += 1
-        if idx >= len(self._responses):
-            # Default ACK if test didn't queue anything specific.
-            return b"%\n"
-        return self._responses[idx]
+        newline = self._wire_buffer.find(b"\n")
+        if newline < 0:
+            result = bytes(self._wire_buffer)
+            self._wire_buffer.clear()
+            return result
+        result = bytes(self._wire_buffer[: newline + 1])
+        del self._wire_buffer[: newline + 1]
+        return result
 
     def make_streams(self) -> tuple[_FakeReader, _FakeWriter]:
         return _FakeReader(self), _FakeWriter(self)
@@ -352,6 +382,10 @@ class TestCommandTimeoutDoesNotReconnect:
             """``readline()`` blocks forever — caller's ``wait_for`` is
             the only thing that lets the test finish."""
             async def readline(self) -> bytes:
+                await asyncio.sleep(3600)  # effectively forever
+                return b""
+
+            async def readexactly(self, _count: int) -> bytes:
                 await asyncio.sleep(3600)  # effectively forever
                 return b""
 

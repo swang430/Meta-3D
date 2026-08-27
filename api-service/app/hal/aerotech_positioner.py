@@ -58,7 +58,9 @@ class AeroBasicCmd:
     HOME = "HOME {axes}"                  # 回原点
     
     # 运动
-    MOVE_ABS = "MOVEABS {axes} {positions}"   # 绝对定位 (e.g., "MOVEABS X 90.0 Y 0.0")
+    # CAICT Socket2 site-verified 2026-08-27, matching the checked-in
+    # Aerotech ASCII/TCP integration guide §§5–7.
+    MOVE_ABS = "MOVEABS {axis} {position} {axis}F{feed}"
     MOVE_INC = "MOVEINC {axes} {distances}"   # 增量运动
     ABORT = "ABORT {axes}"                     # 紧急停止
     # Checked-in Ensemble ASCII/TCP integration guide §6 literal.
@@ -69,8 +71,9 @@ class AeroBasicCmd:
     AXIS_STATUS = "AXISSTATUS({axis})"    # 轴状态位掩码
     VELOCITY_FEEDBACK = "VFBK({axis})"    # 速度反馈
     
-    # IDN 等效 (A3200 无标准 *IDN?, 用 GETPARM 读取)
-    GET_PARAM = "GETPARM({axis}, {param_id})"  # 读取参数
+    # Ensemble 3.04 Help/RoboHelp/Content/Parameters/Parameter-Reference.chm
+    # and the checked-in Socket2 parameter probe use the numeric form below.
+    GET_PARAM = "GETPARM {axis}, {param_id}"
 
 
 class AerotechError(Exception):
@@ -262,8 +265,13 @@ class RealAerotechDriver(PositionerDriver):
                 return await self._tx_rx(cmd)
 
     async def _tx_rx(self, cmd: str) -> str:
-        """One write + readline cycle. Assumes the lock is held and the
-        socket pair is non-None.
+        """One Socket2 write/response cycle with protocol-exact framing.
+
+        Ensemble 3.04 ``Samples/Cpp/ASCII/OperatorInterface/*/Socket.cpp``
+        reads the response marker with exactly one-byte ``recv``; only a
+        query then reads return data.  Waiting for a newline on a command
+        ACK blocks after the controller has already accepted the command.
+        Assumes the lock is held and the socket pair is non-None.
 
         Raises ``ConnectionResetError`` on EOF (empty readline) so the
         outer retry path treats clean half-closes the same as broken-pipe
@@ -279,17 +287,22 @@ class RealAerotechDriver(PositionerDriver):
             self._writer.write((cmd + "\n").encode("ascii"))
             await self._writer.drain()
 
-            raw = await asyncio.wait_for(
-                self._reader.readline(), timeout=self.timeout_s
-            )
-            if raw == b"":
-                raise ConnectionResetError(
-                    "EOF reading from Aerotech controller (socket closed)"
+            timeout_s = self._response_timeout_s(cmd)
+            marker = await self._read_response_marker(timeout_s=timeout_s)
+            rejected = marker == b"!"
+            task_fault = marker == b"#"
+            payload = b""
+            if operation == "query" or rejected or task_fault:
+                payload = await asyncio.wait_for(
+                    self._reader.readline(), timeout=timeout_s
                 )
+                if payload == b"":
+                    raise ConnectionResetError(
+                        "EOF reading Aerotech response payload"
+                    )
+            raw = marker + payload
             raw_response = raw.decode("ascii", errors="replace")
             response = raw_response.strip()
-            rejected = response.startswith("!")
-            task_fault = response.startswith("#")
             self._log_scpi_response(
                 cmd,
                 raw_response,
@@ -335,6 +348,45 @@ class RealAerotechDriver(PositionerDriver):
                 )
             raise
 
+    def _response_timeout_s(self, cmd: str) -> float:
+        """Use the sourced motion-completion budget for blocking commands."""
+        token = cmd.strip().upper()
+        if token.startswith(("MOVEABS ", "HOME ", "WAIT INPOS ")):
+            return self.settle_timeout_s
+        return self.timeout_s
+
+    async def _read_response_marker(self, *, timeout_s: float) -> bytes:
+        """Read one Socket2 status marker, ignoring only CR/LF framing.
+
+        Ensemble 3.04 ``Samples/Cpp/ASCII/OperatorInterface/*/Socket.cpp``
+        defines the first response byte as ``%`` (success), ``!`` (command
+        error), or ``#`` (task fault).  CAICT 2026-08-27 traces proved that a
+        command's trailing LF may remain buffered after the one-byte marker;
+        accepting that LF as the next response shifts every later query.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            try:
+                marker = await asyncio.wait_for(
+                    self._reader.readexactly(1), timeout=remaining
+                )
+            except asyncio.IncompleteReadError as exc:
+                raise ConnectionResetError(
+                    "EOF reading Aerotech response marker"
+                ) from exc
+            if marker in {b"\r", b"\n"}:
+                continue
+            if marker in {b"%", b"!", b"#"}:
+                return marker
+            raise AerotechError(
+                "Unexpected Aerotech Socket2 response marker "
+                f"0x{marker.hex()}"
+            )
+
     @staticmethod
     def _aerobasic_operation(cmd: str) -> str:
         """AeroBasic 没有 `?` 约定，按生产查询指令族标结构化类型。"""
@@ -345,6 +397,7 @@ class RealAerotechDriver(PositionerDriver):
             "AXISFAULT(",
             "VFBK(",
             "GETPARM(",
+            "GETPARM ",
         )):
             return "query"
         return "command"
@@ -643,6 +696,35 @@ class RealAerotechDriver(PositionerDriver):
                 "formal Aerotech motion is limited to the sourced single-axis form"
             )
         return config
+
+    def _verified_program_feedback_offset(self) -> float:
+        """Return the attested ``PFBK - MOVEABS`` coordinate offset.
+
+        CAICT 2026-08-27 traces observed the same +90 degree relationship
+        across two independent moves.  Formal motion must not assume that
+        the requested PFBK angle is also the controller's program coordinate.
+        """
+        config = self.config or {}
+        if config.get("motion_truth_coordinate_offset_verified") is not True:
+            raise AerotechError(
+                "motion_truth_coordinate_offset_verified must be explicitly true"
+            )
+        raw = config.get("motion_truth_coordinate_offset_deg")
+        if isinstance(raw, bool):
+            raise AerotechError(
+                "motion_truth_coordinate_offset_deg must be finite"
+            )
+        try:
+            offset = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise AerotechError(
+                "motion_truth_coordinate_offset_deg must be finite"
+            ) from exc
+        if not math.isfinite(offset):
+            raise AerotechError(
+                "motion_truth_coordinate_offset_deg must be finite"
+            )
+        return offset
 
     async def _axes_are_stopped(
         self,
@@ -1092,7 +1174,7 @@ class RealAerotechDriver(PositionerDriver):
         """
         命令转台移动到绝对位置。
 
-        仅发送仓内 Ensemble 指南有出处的单轴
+        仅发送 CAICT Socket2 实机与仓内集成指南共同证明的单轴
         ``MOVEABS X <target> XF<feed>``，随后 ``WAIT INPOS X``，并以
         VFBK/PFBK 做最终动作真值门。
         """
@@ -1100,6 +1182,7 @@ class RealAerotechDriver(PositionerDriver):
 
         try:
             safe_min, safe_max, feed = self._require_supported_single_axis_motion()
+            coordinate_offset = self._verified_program_feedback_offset()
             target_azimuth = self._finite_motion_target(azimuth, name="azimuth")
             target_elevation = self._finite_motion_target(
                 elevation, name="elevation"
@@ -1113,6 +1196,9 @@ class RealAerotechDriver(PositionerDriver):
                 raise AerotechError(
                     "single-axis sourced motion requires elevation=0"
                 )
+            program_target = target_azimuth - coordinate_offset
+            if not math.isfinite(program_target):
+                raise AerotechError("mapped MOVEABS program target must be finite")
         except Exception as e:
             logger.error(f"[Aerotech] Move rejected before I/O: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
@@ -1150,9 +1236,10 @@ class RealAerotechDriver(PositionerDriver):
             # Ensemble integration guide §§5–7 / reference implementation:
             # explicit feed is controller user-units per second.  The site
             # attestation above proves those units are degree / degree/s.
-                cmd_str = (
-                    f"MOVEABS {self.az_axis} {target_azimuth:.4f} "
-                    f"{self.az_axis}F{feed:.4f}"
+                cmd_str = AeroBasicCmd.MOVE_ABS.format(
+                    axis=self.az_axis,
+                    position=f"{program_target:.4f}",
+                    feed=f"{feed:.4f}",
                 )
                 command_accepted = True
                 await self._send(

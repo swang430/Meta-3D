@@ -182,6 +182,7 @@ def _build_pos(
     axisstatus=None,   # {axis: int}
     axisfault=None,    # {axis: int}
     vfbk=None,         # {axis: float}
+    parameter_values=None,  # name -> numeric/string controller value
     response_override=None,  # cmd -> exception | str | callable(cmd) -> str
 ):
     """Build a duck-typed positioner driver instance.
@@ -198,6 +199,7 @@ def _build_pos(
     pos._axes_present = list(axes_present)
     pos._writer = object() if connected else None  # truthy sentinel
     pos.is_single_axis = ("X" in axes_present and "Y" not in axes_present)
+    pos.sent_commands = []
 
     pfbk = pfbk if pfbk is not None else {"X": 0.0, "Y": 0.0}
     axisstatus = axisstatus if axisstatus is not None else {
@@ -205,9 +207,19 @@ def _build_pos(
     }
     axisfault = axisfault if axisfault is not None else {"X": 0, "Y": 0}
     vfbk = vfbk if vfbk is not None else {"X": 0.0, "Y": 0.0}
+    parameter_values = parameter_values if parameter_values is not None else {
+        "UnitsName": "degree",
+        "CountsPerUnit": 1000.0,
+        "SoftwareLimitSetup": 1,
+        "SoftwareLimitLow": 0.0,
+        "SoftwareLimitHigh": 360.0,
+        "DefaultSpeed": 5.0,
+        "MaxJogSpeed": 10.0,
+    }
 
     if has_send:
         async def fake_send(cmd):
+            pos.sent_commands.append(cmd)
             # Per-command override (raise / return arbitrary string / call lambda)
             if response_override and cmd in response_override:
                 spec = response_override[cmd]
@@ -231,6 +243,25 @@ def _build_pos(
                     if axis not in mapping:
                         raise AerotechError(f"AeroBasic error for '{cmd}': !")
                     return str(mapping[axis])
+            if cmd.startswith("GETPARM "):
+                axis_and_id = cmd[len("GETPARM "):].split(",", 1)
+                if len(axis_and_id) != 2:
+                    raise AerotechError(f"AeroBasic error for '{cmd}': !")
+                axis, parameter_id = (
+                    token.strip() for token in axis_and_id
+                )
+                parameter_name = {
+                    "2": "CountsPerUnit",
+                    "37": "SoftwareLimitLow",
+                    "38": "SoftwareLimitHigh",
+                    "71": "DefaultSpeed",
+                    "123": "MaxJogSpeed",
+                    "129": "UnitsName",
+                    "210": "SoftwareLimitSetup",
+                }.get(parameter_id)
+                if axis not in axes_present or parameter_name not in parameter_values:
+                    raise AerotechError(f"AeroBasic error for '{cmd}': !")
+                return str(parameter_values[parameter_name])
             return ""
         pos._send = fake_send
 
@@ -374,9 +405,9 @@ class TestHappyPath:
         assert body["success"] is True, body["summary"]
         assert "Aerotech health OK" in body["summary"]
         assert "single-axis turntable" in body["summary"]
-        # 4 read-only commands × 1 axis = 4 probes (no UNSUPPORTED).
+        # 4 axis reads + 7 motion-truth parameter reads (no UNSUPPORTED).
         counts = body["extra"]["counts"]
-        assert counts["SUPPORTED"] == 4
+        assert counts["SUPPORTED"] == 11
         assert counts["UNSUPPORTED"] == 0
         assert counts["SUPPORTED_BUT_FAULT"] == 0
         assert counts["UNKNOWN"] == 0
@@ -395,7 +426,7 @@ class TestHappyPath:
         assert body["success"] is True
         assert "single-axis" not in body["summary"]
         counts = body["extra"]["counts"]
-        assert counts["SUPPORTED"] == 8
+        assert counts["SUPPORTED"] == 15
         assert counts["UNSUPPORTED"] == 0
         assert body["extra"]["single_axis"] is False
 
@@ -628,6 +659,31 @@ class TestAxisFaultBlocker:
 # ---------------------------------------------------------------------------
 
 class TestAxisStatusBitmaskDecode:
+    def test_signed_32_bit_axisstatus_is_valid_and_normalized_unsigned(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(
+            axes_present=("X",),
+            axisstatus={"X": -1740111865},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={
+                "lab_profile_id": str(lab_with_positioner.id),
+                "params": {"include_supported": True, "functional_checks": False},
+            },
+        )
+        body = resp.json()
+        axisstatus_step = next(
+            s for s in body["steps"] if "AXISSTATUS" in s["label"]
+        )
+
+        assert axisstatus_step["success"] is True
+        assert "0x98480007" in axisstatus_step["detail"]
+        assert body["extra"]["axis_status_az"] == 0x98480007
+
     def test_high_bit_status_renders_unsigned_without_unverified_flag_names(
         self, lab_with_positioner, monkeypatch,
     ):
@@ -712,6 +768,78 @@ class TestParamsSchemaFlags:
         default_count = len(resp_default.json()["steps"])
         full_count = len(resp_all.json()["steps"])
         # VFBK_AZ is non-critical; default mode suppresses it, full mode emits.
-        # Default emits only the 3 critical X rows (PFBK_AZ, AXISSTAT_AZ, AXISFAULT_AZ).
-        assert default_count == 3
-        assert full_count == 4  # adds VFBK_AZ
+        # Parameter truth rows are always visible even in the compact view.
+        assert default_count == 10  # 3 critical axis rows + 7 parameters
+        assert full_count == 11  # adds the non-critical VFBK_AZ row
+
+
+class TestMotionTruthParameterProbe:
+    def test_uses_vendor_ascii_numeric_parameter_ids(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(axes_present=("X",))
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={
+                "lab_profile_id": str(lab_with_positioner.id),
+                "params": {"functional_checks": False},
+            },
+        )
+
+        assert [
+            command for command in pos.sent_commands
+            if command.startswith("GETPARM")
+        ] == [
+            "GETPARM X, 129",
+            "GETPARM X, 2",
+            "GETPARM X, 210",
+            "GETPARM X, 37",
+            "GETPARM X, 38",
+            "GETPARM X, 71",
+            "GETPARM X, 123",
+        ]
+
+    def test_reads_and_exposes_current_controller_motion_parameters(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(
+            axes_present=("X",),
+            parameter_values={
+                "UnitsName": "degree",
+                "CountsPerUnit": 4096.0,
+                "SoftwareLimitSetup": 1,
+                "SoftwareLimitLow": -10.0,
+                "SoftwareLimitHigh": 370.0,
+                "DefaultSpeed": 4.5,
+                "MaxJogSpeed": 12.0,
+            },
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={
+                "lab_profile_id": str(lab_with_positioner.id),
+                "params": {"functional_checks": False},
+            },
+        )
+        body = resp.json()
+
+        assert body["success"] is True, body["summary"]
+        assert body["extra"]["units_name_az"] == "degree"
+        assert body["extra"]["counts_per_unit_az"] == 4096.0
+        assert body["extra"]["software_limit_setup_az"] == 1
+        assert body["extra"]["software_limit_low_az"] == -10.0
+        assert body["extra"]["software_limit_high_az"] == 370.0
+        assert body["extra"]["default_speed_az"] == 4.5
+        assert body["extra"]["max_jog_speed_az"] == 12.0
+
+        parameter_steps = [
+            step for step in body["steps"] if "GETPARM " in step["label"]
+        ]
+        assert len(parameter_steps) == 7
+        assert all(step["success"] for step in parameter_steps)
+        assert any("UNITS_NAME_AZ" in step["label"] for step in parameter_steps)
+        assert any("degree" in step["detail"] for step in parameter_steps)

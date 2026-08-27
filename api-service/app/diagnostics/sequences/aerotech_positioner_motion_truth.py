@@ -2,16 +2,17 @@
 
 This sequence deliberately refuses to move until the site configuration
 explicitly records degree user-units and a verified safe coordinate range.
-It proves only that finite PFBK feedback changed and reached the requested
-controller-coordinate target.  Direction, offset and visible mechanical
-movement remain an on-site Hardware Blocker.
+It proves only that finite PFBK feedback changed and reached the expected
+feedback target after applying the explicitly attested program/PFBK offset.
+Physical direction, mechanical zero, and visible movement remain on-site
+Hardware Blockers.
 
-Command source: checked-in
-``Instrument_API_Doc/Aerotech/Aerotech_Ensemble_ASCII_TCP转台控制集成说明.docx``
-§5–§7 explicitly gives ``ENABLE X``, ``MOVEABS X 90 XF10``, ``VFBK(X)`` and
-``PFBK(X)`` plus the wait/readback-before-sampling loop.  The checked-in guide
-does not establish a safe no-XF form or AXISSTATUS bit assignments, so neither
-is used as a success predicate here.
+Command source: the checked-in Aerotech ASCII/TCP integration guide §§5–§7
+and CAICT Socket2 site trace 2026-08-27 use ``MOVEABS X 90 XF10``.  The same
+site trace proves PFBK may have a stable offset from the program coordinate;
+that offset must therefore be explicitly attested before this sequence moves.
+Neither source establishes a safe no-XF form or AXISSTATUS bit assignments, so
+neither is used as a success predicate here.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
 )
 from app.hal.aerotech_positioner import (
+    AeroBasicCmd,
     AerotechOperatorStopRequested,
     RealAerotechDriver,
 )
@@ -40,7 +42,7 @@ metadata = SequenceMetadata(
     description=(
         "破坏性现场诊断：仅在站点已确认 degree user-units 与安全范围后，使用带 XF "
         "的 MOVEABS 小步前进并返回；每段归档 VFBK 与 PFBK 原始时间序列。只证明"
-        "编码器反馈变化/到达控制器坐标，不证明物理方向、偏置或目视运动。"
+        "编码器反馈变化/到达映射后的反馈坐标，不证明物理方向、机械零位或目视运动。"
     ),
     required_categories=["positioner"],
     params_schema=[
@@ -141,12 +143,17 @@ async def _read_position(driver: RealAerotechDriver, axis: str) -> tuple[str, fl
 
 def _verified_degree_motion_config(
     driver: RealAerotechDriver,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
     """Reuse the formal driver's complete site-approved motion truth."""
     try:
-        return driver._require_supported_single_axis_motion()  # noqa: SLF001
+        lower, upper, feed = driver._require_supported_single_axis_motion()  # noqa: SLF001
     except Exception as exc:
         raise ValueError(str(exc)) from exc
+    try:
+        offset = driver._verified_program_feedback_offset()  # noqa: SLF001
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+    return lower, upper, feed, offset
 
 
 def _bounded_target(
@@ -415,7 +422,12 @@ async def run(
         )
 
     try:
-        safe_min, safe_max, approved_feed = _verified_degree_motion_config(driver)
+        (
+            safe_min,
+            safe_max,
+            approved_feed,
+            coordinate_offset,
+        ) = _verified_degree_motion_config(driver)
         if "xf_speed" in params and not math.isclose(
             values["xf_speed"], approved_feed, rel_tol=0.0, abs_tol=1e-12
         ):
@@ -433,12 +445,14 @@ async def run(
     operator_stop_generation = driver.operator_stop_generation()
     try:
         start_raw, start_position = await _read_position(driver, axis)
-        first_target = _bounded_target(
-            start_position,
+        program_start = start_position - coordinate_offset
+        first_command_target = _bounded_target(
+            program_start,
             values["step_deg"],
             lower=safe_min,
             upper=safe_max,
         )
+        first_feedback_target = first_command_target + coordinate_offset
         await driver._require_axes_stopped()  # noqa: SLF001
         # Command evidence: the repository copy of the Aerotech Ensemble
         # ASCII/TCP integration guide §§5-7 specifies ENABLE, MOVEABS with an
@@ -461,12 +475,13 @@ async def run(
         driver,
         axis=axis,
         label="MOVEABS bounded forward with XF",
-        command=(
-            f"MOVEABS {axis} {first_target:.4f} "
-            f"{axis}F{values['xf_speed']:.4f}"
+        command=AeroBasicCmd.MOVE_ABS.format(
+            axis=axis,
+            position=f"{first_command_target:.4f}",
+            feed=f"{values['xf_speed']:.4f}",
         ),
         start_position=start_position,
-        target=first_target,
+        target=first_feedback_target,
         duration_s=values["sample_duration_s"],
         interval_s=values["sample_interval_s"],
         tolerance=values["tolerance_deg"],
@@ -483,6 +498,7 @@ async def run(
                 "axis": axis,
                 "start_position": start_position,
                 "start_pfbk_raw": start_raw,
+                "coordinate_offset_deg": coordinate_offset,
                 "enable_response_raw": enable_raw,
                 "params": values,
                 "segments": segments,
@@ -502,6 +518,7 @@ async def run(
                 "axis": axis,
                 "start_position": start_position,
                 "start_pfbk_raw": start_raw,
+                "coordinate_offset_deg": coordinate_offset,
                 "enable_response_raw": enable_raw,
                 "params": values,
                 "segments": segments,
@@ -509,24 +526,25 @@ async def run(
                 "hardware_blocked": [
                     "controller_model_firmware",
                     "physical_direction",
-                    "coordinate_offset",
                     "visible_mechanical_motion",
                 ],
             },
         )
 
-    second_start = first.get("final_position", first_target)
-    second_target = start_position
+    second_start = first.get("final_position", first_feedback_target)
+    second_command_target = program_start
+    second_feedback_target = start_position
     second = await _sample_segment(
         driver,
         axis=axis,
         label="MOVEABS bounded return with XF",
-        command=(
-            f"MOVEABS {axis} {second_target:.4f} "
-            f"{axis}F{values['xf_speed']:.4f}"
+        command=AeroBasicCmd.MOVE_ABS.format(
+            axis=axis,
+            position=f"{second_command_target:.4f}",
+            feed=f"{values['xf_speed']:.4f}",
         ),
         start_position=float(second_start),
-        target=second_target,
+        target=second_feedback_target,
         duration_s=values["sample_duration_s"],
         interval_s=values["sample_interval_s"],
         tolerance=values["tolerance_deg"],
@@ -563,7 +581,7 @@ async def run(
     if success:
         summary = (
             "编码器动作证据成立：带显式 XF 的小步前进与返回均反馈变化并到达"
-            "已验证 degree 坐标；物理方向/偏置仍待现场目视确认。"
+            "映射后的 degree 反馈坐标；物理方向/机械零位仍待现场目视确认。"
         )
     elif operator_stopped:
         summary = "操作员已急停；诊断结论无效，未声称转台物理位置有效。"
@@ -583,6 +601,7 @@ async def run(
             "axis": axis,
             "start_position": start_position,
             "start_pfbk_raw": start_raw,
+            "coordinate_offset_deg": coordinate_offset,
             "enable_response_raw": enable_raw,
             "params": values,
             "segments": segments,
@@ -591,7 +610,6 @@ async def run(
             "hardware_blocked": [
                 "controller_model_firmware",
                 "physical_direction",
-                "coordinate_offset",
                 "visible_mechanical_motion",
             ],
         },
