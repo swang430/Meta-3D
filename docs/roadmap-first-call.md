@@ -11,8 +11,9 @@
 **当前状态（现场链事实与本地队列截至 2026-08-27）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
-degree 单位与 `PFBK - MOVEABS = +90°` 偏置，但该真值尚未进入 execution-frozen position
-evidence，HOME 最终 PFBK 也未独立证明，故 **P0-5 正式自动化验收仍未关闭**。P0-8
+degree 单位与 `PFBK - MOVEABS = +90°` 偏置；P0-9B-3 已完成该真值及其来源/时间的
+execution freeze、动作前同源复核和逐方位双坐标 evidence。本地结果不能替代同一 TestCase
+方位与独立 HOME 最终 PFBK 的现场复验，故 **P0-5 正式自动化验收仍未关闭**。P0-8
 现场半同样仍 blocked（见 Blocked on hardware 表）。
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
@@ -707,8 +708,8 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 |----|------|---------|---------|
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
-| **P0-9** | **CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环** | 2026-08-27 已证明 CMW500/F64/转台链到 Attach 前；仍缺真实 DUT/SIM Attach、`PCCBBBoard` 专用有据 query 的真机复验、真实路径损耗校准、Aerotech `+90°` 偏置进入 execution freeze、HOME 最终 PFBK，以及同一 attempt 的真实报告/cleanup/release 证据 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase；诊断辅助：CMW500/F64/Aerotech 已登记序列。按 P0-9A/B/C 顺序关闭；任一正式前置未知时允许诊断运行但 KPI 保持 UNKNOWN/N/A |
-| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置；当前阻塞为：把该偏置接入 execution-frozen position evidence、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
+| **P0-9** | **CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环** | 2026-08-27 已证明 CMW500/F64/转台链到 Attach 前；P0-9B-3 已完成 `+90°` 偏置的 execution freeze 与证据消费。本地仍缺真实 DUT/SIM Attach、`PCCBBBoard` 专用有据 query 的真机复验、真实路径损耗校准、同一 TestCase 转台方位/HOME 复验，以及同一 attempt 的真实报告/cleanup/release 证据 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase；诊断辅助：CMW500/F64/Aerotech 已登记序列。按 P0-9A/B/C 顺序关闭；任一正式前置未知时允许诊断运行但 KPI 保持 UNKNOWN/N/A |
+| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **仅余 b 半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | ✅ **2026-08-27 P0-8a 已现场通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b：纳入 P0-9 的同一 LTE MIMO_OTA TestCase，不另造流程 |
 | P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-27 人工接受、程序证据未关闭**：已在清理历史 `-100` 后按手册只读路径对账，操作员判通过；当日没有新的 SUCCESS DiagnosticRun，故仍保留现场半 | ✅ 载体：[`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py)；驱动探针已由 P1-66 删除，能力单源 `SYSTem:INFO?` + `USER:GET?`。只需在干净错误队列上重跑并留 SUCCESS，不恢复无手册命令 |
 | P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
@@ -722,7 +723,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | **2026-08-27 人工接受**：当前使用 16 口全部返回合法窗口；另 16 个未配置口无回复。现有序列仍把 32 口一刀切为 UNDETERMINED，故程序化关闭前需只读取当前活动输出集合，未配置口只披露不阻塞 | ✅ 载体：[`propsim_f64_output_level_windows`](../api-service/app/diagnostics/sequences/propsim_f64_output_level_windows.py)；待完成活动输出集合收窄后重跑 SUCCESS |
 | **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | 2026-08-27 仍只有人工面板理解，数据库中没有可核对的 SUCCESS；代码只可确认 `ate_socket_released`，不得替仪器宣称前面板已 Local | ✅ 载体：[`propsim_f64_local_handback_check`](../api-service/app/diagnostics/sequences/propsim_f64_local_handback_check.py) 两段式人工确认；按 Remote 水印/Local Mode 真实含义复跑并留程序化记录后关闭 |
 | **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 **✅ 载体（P1-65 #380）**：[`uxm_offset_to_carrier_probe`](../api-service/app/diagnostics/sequences/uxm_offset_to_carrier_probe.py) —— 只读采集，显式确认 + 小区 OFF 才写，不 APPLY |
-| **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。[补充 Codex 结论](https://github.com/swang430/Meta-3D/pull/350#issuecomment-5327846839)明确 reviewed commit `0f981339c5`（包含尾修 `bd71879`）且无重大问题。**2026-08-27 更新**：诊断已证明 degree、可见机械运动和固定 +90° 偏置；正式 evidence writer 仍传 `None/False`，HOME 终点也未独立证明，故正式关闭继续 Blocked。 |
+| **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。[补充 Codex 结论](https://github.com/swang430/Meta-3D/pull/350#issuecomment-5327846839)明确 reviewed commit `0f981339c5`（包含尾修 `bd71879`）且无重大问题。**2026-08-28 更新**：P0-9B-3 已把 degree、固定 +90° 偏置及来源/时间冻结进 execution，正式 writer 同源消费；同一 TestCase 方位与 HOME 终点仍须现场独立复验，故正式关闭继续 Blocked。 |
 | P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：同 P2-4 的 `connection_idle_hold_probe` |
 | ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
@@ -1219,9 +1220,9 @@ DL 非 0% ACK/不失真），并入 P0-9 同一 TestCase，不另建流程。正
 
 **可观察故障**：P1-73 与现场修复已让 CMW500/F64/转台链运行到 UE Attach 前，但当前仍
 无法合法发布正式 LTE 吞吐/BLER：UE 尚未 Attach，CMW500 专用七字段 Route query 尚未经
-真机复验，现场无有效路径损耗校准，Aerotech `+90°` 坐标偏置尚未进入 execution-frozen
-position evidence，也没有一份真实 completed execution 的报告证明 cleanup 与 transport release
-属于同一 attempt/lease/session。任何一项缺失时继续保持诊断执行和 UNKNOWN/N/A，不能用
+真机复验，现场无有效路径损耗校准；Aerotech `+90°` 坐标合同虽已完成 execution freeze 与
+evidence 消费，但尚未用同一 TestCase 现场复验方位和独立 HOME PFBK；也没有一份真实 completed
+execution 的报告证明 cleanup 与 transport release 属于同一 attempt/lease/session。任何一项缺失时继续保持诊断执行和 UNKNOWN/N/A，不能用
 人工面板观察或旧标志补绿。
 
 **执行顺序**：
@@ -4233,7 +4234,7 @@ inherit 获得。
 | U-6 | F64 各输入"信号参考"的正确 level (dBm) + crest factor (dB) 真值 (针对 3600M/N78 模型 + UXM DL 功率)? | 下次现场用 `INP:LEV:AUTOSET` 自动测 + 看输入口变绿 + DL 不失真, 关联 P0-8 |
 | U-7 | UXM 正确测试参数集真值 (band/BW/SCS/ARFCN/MIMO/power/FRC for 3600M N78) + remote 机器上现存哪些 `.state` 文件 (路径/内容)? | 下次现场: 盘点 UXM 已存 `.state` + 用默认 Topology Profile (P1-17) 验 cell live + 对齐 F64 频率/MIMO; 关联 P1-17 |
 | U-8 | Aerotech AeroBasic/TCP 活跃控制路径的现场型号与固件如何只读确认？ | P0-5 前从厂商手册确认安全身份查询并接入真实环境快照；数据库/连接配置声明不能代替实时身份 |
-| U-9 | 转台控制坐标到暗室 DUT 物理方位的偏置真值与标定状态是什么？ | 2026-08-27 诊断已证明 `PFBK - MOVEABS = +90°`；下一步是把该真值和可追溯来源冻结进正式 execution，并验证四方位反馈误差 ≤ ±1°。正式 writer 当前仍传 `None/False`，必须保持 unknown；HOME 最终 PFBK 另行取证。 |
+| U-9 | 转台控制坐标到暗室 DUT 物理方位的偏置真值与标定状态是什么？ | 2026-08-27 诊断已证明 `PFBK - MOVEABS = +90°`；P0-9B-3 已把该真值、可追溯来源和验证时间冻结进正式 execution，writer 同时核对请求物理角、实际 MOVEABS 程序角和原始 PFBK。下一步现场验证四方位反馈误差 ≤ ±1°，并另行取得 HOME 最终 PFBK。 |
 | U-10 | CMW500 `PCCBBBoard` 如何权威确认？ | **本地半完成，待现场复验。** 依据 LTE UE Manual 1173.9628.02-41 §2.6.8.1 pp.630–631 与 Remote Control via SCPI 1179.4592.02-04 §3.6 p.22，已实现 `ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible?` 七字段严格回读，并与通用 query 的六个物理路径交叉确认。真机原始响应未取得前 Route 仍只作诊断、正式 KPI UNKNOWN/N/A。 |
 | U-11 | F64 ATE socket 释放与前面板 Local 的精确关系是什么？ | 驱动只能证明 `ate_socket_released`；用 `propsim_f64_local_handback_check` 的两段式人工确认记录 Remote 水印/Local Mode，取得 SUCCESS 前不声称已 Local。 |
 | U-12 | FSVA IQ 参数查询能否贯穿真实 PDP/Doppler 采集？ | 2026-08-27 IQ ON 临时查询已两次 SUCCESS 且恢复 OFF；后续须在不并发 LTE 正式执行时分别跑真实 PDP/Doppler 全采集，能力探针成功不等于测量链已验。FSVA 不参与当前 LTE MIMO OTA 正式必需链。 |
