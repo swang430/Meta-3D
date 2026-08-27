@@ -465,12 +465,15 @@ def _formal_envelope(
             return False, "cmw500_transmission_mode_not_2x2", []
         duplex = evidence.requested_config.payload.get("duplex")
         required_duplex_option = (
-            "CMW-KS500" if duplex == "fdd" else "CMW-KS550" if duplex == "tdd" else None
+            "KS500" if duplex == "fdd" else "KS550" if duplex == "tdd" else None
         )
-        installed_options = {item.upper() for item in evidence.identity.options}
+        installed_options = {
+            item.strip().upper().removeprefix("CMW-")
+            for item in evidence.identity.options
+        }
         if (
             required_duplex_option is None
-            or not {"CMW-KS520", required_duplex_option}.issubset(installed_options)
+            or not {"KS520", required_duplex_option}.issubset(installed_options)
         ):
             return False, "formal_capability_options_not_confirmed", []
         if evidence.route_confirmed is not True:

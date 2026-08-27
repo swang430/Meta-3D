@@ -352,9 +352,15 @@ class RealCmw500Driver(BaseStationDriver):
                 status="unknown",
                 reason="CMW500 firmware does not satisfy the LTE 2x2 minimum",
             )
-        installed = {option.strip().upper() for option in self._installed_options}
-        duplex_option = "CMW-KS500" if normalized_duplex == "fdd" else "CMW-KS550"
-        missing = sorted({"CMW-KS520", duplex_option} - installed)
+        # CMW500 option-list replies use bare product codes (for example
+        # ``KS520``/``KS550``).  The manual's display names add ``CMW-``;
+        # that catalog prefix is not part of the instrument-owned token.
+        installed = {
+            option.strip().upper().removeprefix("CMW-")
+            for option in self._installed_options
+        }
+        duplex_option = "KS500" if normalized_duplex == "fdd" else "KS550"
+        missing = sorted({"KS520", duplex_option} - installed)
         if missing:
             return Cmw500FormalCapabilityDecision(
                 ready=False,
@@ -577,9 +583,14 @@ class RealCmw500Driver(BaseStationDriver):
                     f"{spec.minimum_firmware}"
                 ),
             )
-        installed = {option.upper() for option in self._installed_options}
+        installed = {
+            option.strip().upper().removeprefix("CMW-")
+            for option in self._installed_options
+        }
         missing_options = [
-            option for option in spec.required_options if option.upper() not in installed
+            option
+            for option in spec.required_options
+            if option.strip().upper().removeprefix("CMW-") not in installed
         ]
         if missing_options:
             return _result(

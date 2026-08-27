@@ -76,7 +76,7 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         source_reference=f"{_LTE_MANUAL}, §2.6.8.1, printed p.630-631",
         purpose="Select the LTE 1CC-nx2 internal signal route",
         minimum_firmware="V3.5.40",
-        required_options=("CMW-KS520",),
+        required_options=("KS520",),
     ),
     "route_query": CmwCommandSpec(
         template="ROUTe:LTE:SIGN{i}?",

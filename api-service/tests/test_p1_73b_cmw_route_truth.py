@@ -96,6 +96,16 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
 
 
 @pytest.mark.asyncio
+async def test_route_accepts_ks520_token_exactly_as_cmw500_reports_it():
+    driver = _driver()
+    driver._installed_options = ["KS520"]
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is True
+
+
+@pytest.mark.asyncio
 async def test_missing_frozen_route_does_not_reuse_current_state_or_choose_defaults():
     driver = _driver()
 
@@ -112,7 +122,7 @@ async def test_missing_frozen_route_does_not_reuse_current_state_or_choose_defau
     ("firmware", "options", "reason"),
     [
         ("3.5.39", ["CMW-KS520"], "firmware"),
-        ("3.5.40", [], "CMW-KS520"),
+        ("3.5.40", [], "KS520"),
     ],
 )
 async def test_route_requires_sourced_firmware_and_option_before_write(

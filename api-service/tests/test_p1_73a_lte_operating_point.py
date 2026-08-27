@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.api.commissioning import CreateSessionRequest, _request_overrides
 from app.hal.lte_earfcn import (
     lte_dl_earfcn_to_frequency_mhz,
+    validate_lte_band_options,
     validate_lte_downlink_operating_point,
 )
 from app.hal.base_station import BaseStationRequestedConfig
@@ -66,6 +67,10 @@ def test_lte_tdd_formula_uses_manual_table_2_56():
         dl_earfcn=39150,
         frequency_mhz=2350.0,
     ) == pytest.approx(2350.0)
+
+
+def test_lte_band_gate_accepts_option_tokens_exactly_as_cmw500_reports_them():
+    validate_lte_band_options("B42", ["KB036"])
 
 
 @pytest.mark.parametrize("band,earfcn", [("B29", 9700), ("B46", 50000), ("B999", 1)])

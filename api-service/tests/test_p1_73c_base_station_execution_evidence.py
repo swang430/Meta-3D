@@ -25,6 +25,17 @@ def test_exact_cmw_snapshot_is_canonical_and_formally_acceptable():
     assert base_station_execution_evidence_is_formally_acceptable(evidence) is True
 
 
+def test_formal_evidence_accepts_option_tokens_exactly_as_cmw500_reports_them():
+    evidence = valid_cmw_evidence()
+    evidence["identity"]["options"] = ["KS550", "KS520"]
+    evidence["requested_config"]["payload"]["duplex"] = "tdd"
+    digest = canonical_snapshot_digest(evidence["requested_config"]["payload"])
+    evidence["requested_config"]["digest"] = digest
+    evidence["measurement_windows"][0]["config_digest"] = digest
+
+    assert base_station_execution_evidence_is_formally_acceptable(evidence) is True
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
