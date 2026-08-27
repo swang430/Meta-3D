@@ -128,7 +128,8 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
             }
         ) is True
         route = await driver.apply_internal_lte_2x2_route(_frozen_route())
-        assert route.confirmed is True
+        assert route.confirmed is False
+        assert "PCCBBBoard" in route.reason
         assert await driver.start_signaling(timeout_s=3.0) is True
         samples = await MeasureExecutor._measure_base_station_samples(
             driver,

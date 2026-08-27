@@ -52,8 +52,9 @@ F64 使用的目标工程为：
 
 - 按仪器返回的裸选件 token（如 `KS520`）判定能力，不再要求显示名中的 `CMW-` 前缀。
 - 先选择 FDD/TDD，再下发 band，避免设备按旧双工模式拒绝新 band。
-- Route 回读只把仪器真正返回的字段当权威；`PCCBBBoard` 由本次已接受写入和干净错误队列证明，
-  不再误读回包中的保留 Controller 字段。
+- Route 回读只把仪器真正返回的六个物理路径字段当权威；回包中的保留 Controller 字段不是
+  `PCCBBBoard`。写入被接受且错误队列干净仍不能证明 `PCCBBBoard` 已应用，因此当前 Route
+  只允许诊断使用，正式 KPI 保持 UNKNOWN/N/A。
 - 删除现场不支持且没有手册出处的 `UEReport:SINR?` 后台监控查询。
 - 配置前清理旧错误队列，配置后仍独立核对本次写入，避免旧错误冒充新结果。
 - 正式 LTE 执行不再让无关 FSVA 监控流量或 reference 测量介入；CMW/F64/转台失败立即终止后续动作。
@@ -107,7 +108,8 @@ F64 使用的目标工程为：
 - [ ] 用真实 DUT/SIM 完成 CMW500 UE Attach，并跑完 PRECHECK → MEASURE → ANALYSIS → REPORT。
 - [ ] 完成真实路径损耗校准；若要产品化“无校准诊断模式”，先定义 GUI 语义、适用 TestCase、
   审计字段和报告边界，且必须继续排除正式 KPI。
-- [ ] 复核并保存最终 CMW500 七字段 Route 与现场实际射频接线；配置以 CMW500 回读为准。
+- [ ] 找到手册支持的 `PCCBBBoard` 权威确认来源并完成真机取证；在此之前七字段 Route 只允许
+  诊断使用。另复核最终 Route 与现场实际射频接线，六个物理路径字段以 CMW500 回读为准。
 - [ ] 将现场已证明的 Aerotech `+90°` 坐标偏置接入 execution-frozen position evidence，并用
   同一 TestCase 复验四个请求方位；接入前正式位置项保持 UNKNOWN。另行取得 HOME 最终 PFBK
   的独立现场证据，不能从 MOVEABS 偏置外推。

@@ -65,19 +65,27 @@ def _driver(
 
 
 @pytest.mark.asyncio
-async def test_route_ignores_irrelevant_controller_readback_and_confirms_physical_paths():
+async def test_route_keeps_pcc_board_unverified_when_query_only_confirms_physical_paths():
     driver = _driver(
         readback='TRO,"No Connection",RF1C,RX1,RF1C,TX1,RF2C,TX2'
     )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
-    assert result.confirmed is True
-    assert result.applied == result.requested
+    assert result.confirmed is False
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "PCCBBBoard" in result.reason
 
 
 @pytest.mark.asyncio
-async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirms_all_paths():
+async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_all_physical_paths():
     driver = _driver()
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
@@ -91,7 +99,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1?",
     ]
-    assert result.confirmed is True
+    assert result.confirmed is False
     assert result.requested == {
         "pcc_bb_board": "BB1",
         "rx_connector": "RF1C",
@@ -101,7 +109,15 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
         "tx2_connector": "RF2C",
         "tx2_converter": "TX2",
     }
-    assert result.applied == result.requested
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "PCCBBBoard" in result.reason
     assert "1173.9628.02-41" in result.source_reference
     assert len(result.exchange_ids) == 3
     assert not hasattr(result, "rf_router")
@@ -114,7 +130,8 @@ async def test_route_accepts_ks520_token_exactly_as_cmw500_reports_it():
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
-    assert result.confirmed is True
+    assert driver.writes != []
+    assert "requires KS520" not in result.reason
 
 
 @pytest.mark.asyncio
