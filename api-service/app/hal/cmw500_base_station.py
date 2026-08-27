@@ -969,10 +969,10 @@ class RealCmw500Driver(BaseStationDriver):
         配置 CMW500 LTE 物理小区参数。
 
         SCPI 序列:
+          CONFigure:LTE:SIGN1:DMODe FDD
           CONFigure:LTE:SIGN1:BAND OB3
           CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
-          CONFigure:LTE:SIGN1:DMODe FDD
           CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25
         """
         try:
@@ -1023,6 +1023,15 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
                 return False
 
+            # The instrument rejects a TDD-only band while the cell is still
+            # in its previous duplex mode.  Select the requested duplex before
+            # applying the band and its EARFCN.
+            if "duplex" in config:
+                self._write(
+                    self._fmt(CmwScpiCommands.CELL_DUPLEX)
+                    + f" {config['duplex'].upper()}"
+                )
+
             if "band" in config:
                 self._write(self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}")
 
@@ -1032,12 +1041,6 @@ class RealCmw500Driver(BaseStationDriver):
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_DL_BW)
                     + f" {bandwidth_token}"
-                )
-
-            if "duplex" in config:
-                self._write(
-                    self._fmt(CmwScpiCommands.CELL_DUPLEX)
-                    + f" {config['duplex'].upper()}"
                 )
 
             self._write(

@@ -243,6 +243,33 @@ async def test_config_requires_authoritative_readback_before_updating_cache():
 
 
 @pytest.mark.asyncio
+async def test_tdd_duplex_is_selected_before_tdd_band_and_earfcn():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:BAND?": "OB41",
+            "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?": "B200",
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "40340",
+            "CONFigure:LTE:SIGN1:DMODe?": "TDD",
+        }
+    )
+
+    assert await driver.set_cell_config(
+        {
+            "band": "B41",
+            "earfcn": 40340,
+            "bandwidth_mhz": 20.0,
+            "duplex": "TDD",
+        }
+    ) is True
+    assert driver.writes.index("CONFigure:LTE:SIGN1:DMODe TDD") < driver.writes.index(
+        "CONFigure:LTE:SIGN1:BAND OB41"
+    )
+
+
+@pytest.mark.asyncio
 async def test_config_requires_applied_two_antenna_readback_for_two_layers():
     driver = _StateDriver(
         {
