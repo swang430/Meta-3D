@@ -18,6 +18,10 @@ export interface CarrierTruthConfiguration {
 
 export type RadioTechnology = 'nr5g' | 'lte'
 export type CarrierChannelKind = 'nr_arfcn' | 'lte_dl_earfcn'
+export const LTE_TRANSMISSION_MODES = [
+  'TM1', 'TM2', 'TM3', 'TM4', 'TM6', 'TM7', 'TM8', 'TM9',
+] as const
+export type LteTransmissionMode = typeof LTE_TRANSMISSION_MODES[number]
 
 export interface PrimaryCarrierIdentity {
   radio_technology: RadioTechnology
@@ -29,6 +33,7 @@ export interface PrimaryCarrierIdentity {
   duplex?: 'fdd' | 'tdd'
   nr_arfcn?: number
   lte_dl_earfcn?: number
+  lte_transmission_mode?: LteTransmissionMode
   role: 'pcell'
 }
 
@@ -52,6 +57,9 @@ export function primaryCarrierIdentity(
       || typeof raw.band !== 'string'
       || (raw.duplex !== 'fdd' && raw.duplex !== 'tdd')
       || !finiteNumber(raw.lte_dl_earfcn)
+      || !LTE_TRANSMISSION_MODES.includes(
+        raw.lte_transmission_mode as LteTransmissionMode,
+      )
       || raw.nr_arfcn != null
       || raw.subcarrier_spacing_khz != null
     ) return null
@@ -59,7 +67,9 @@ export function primaryCarrierIdentity(
       radio_technology: 'lte', channel_kind: 'lte_dl_earfcn',
       frequency_hz: raw.frequency_hz, bandwidth_mhz: raw.bandwidth_mhz,
       band: raw.band, duplex: raw.duplex,
-      lte_dl_earfcn: raw.lte_dl_earfcn, role: 'pcell',
+      lte_dl_earfcn: raw.lte_dl_earfcn,
+      lte_transmission_mode: raw.lte_transmission_mode as LteTransmissionMode,
+      role: 'pcell',
     }
   }
   const isLegacy = rat == null && raw.channel_kind == null
@@ -69,6 +79,7 @@ export function primaryCarrierIdentity(
     || !finiteNumber(raw.subcarrier_spacing_khz)
     || (raw.nr_arfcn != null && !finiteNumber(raw.nr_arfcn))
     || raw.lte_dl_earfcn != null
+    || raw.lte_transmission_mode != null
   ) return null
   return {
     radio_technology: 'nr5g', channel_kind: 'nr_arfcn',

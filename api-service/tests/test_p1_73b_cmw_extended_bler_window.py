@@ -41,6 +41,10 @@ class _WindowDriver(RealCmw500Driver):
         self.queries.append(command)
         if command == "FETCh:LTE:SIGN1:EBLer:STATe?":
             return self.states.popleft()
+        if command == "SOURce:LTE:SIGN1:CELL:STATe:ALL?":
+            return "ON,ADJ"
+        if command == "FETCh:LTE:SIGN1:PSWitched:STATe?":
+            return "CEST"
         if command == "SYSTem:ERRor:ALL?":
             return self.errors.popleft()
         if command == "*OPC?":

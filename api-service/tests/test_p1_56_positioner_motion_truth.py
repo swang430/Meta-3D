@@ -420,7 +420,7 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
 
     @asynccontextmanager
     async def lease(_purpose: str, **_kwargs):
-        yield
+        yield SimpleNamespace(measurement_attempt_id=None)
 
     async def run_case_loop(_db, _execution_id, *, defer_report=False) -> None:
         assert defer_report is True

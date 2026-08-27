@@ -25,6 +25,7 @@ R&S 命名约定:
 
 import logging
 import asyncio
+import math
 import re
 from uuid import uuid4
 from dataclasses import asdict, dataclass
@@ -45,6 +46,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
+    LTE_TRANSMISSION_MODES,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
@@ -127,13 +129,25 @@ class CmwScpiCommands:
     ROUTE_SIGN_CAFF = "ROUTe:LTE:SIGN{i}:SCENario:CAFF:FLEXible:INTernal"
 
     # --- 小区配置 (CONFigure:LTE:SIGN) ---
-    CELL_BAND = "CONFigure:LTE:SIGN{i}:CELL:BAND"              # e.g., "OB78"
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41,
+    # printed pp.636-637: PCC band and downlink EARFCN are writable/queryable
+    # with CONFigure:LTE:SIGN<i>[:PCC]:BAND and
+    # CONFigure:LTE:SIGN<i>:RFSettings[:PCC]:CHANnel:DL.
+    CELL_BAND = "CONFigure:LTE:SIGN{i}:BAND"                   # e.g., "OB3"
     CELL_DL_FREQ = "CONFigure:LTE:SIGN{i}:RFSettings:CHANnel:DL"  # EARFCN
+    # Same manual, printed p.680: PCC DL bandwidth is writable/queryable with
+    # CONFigure:LTE:SIGN<i>:CELL:BANDwidth[:PCC]:DL.
     CELL_DL_BW = "CONFigure:LTE:SIGN{i}:CELL:BANDwidth:DL"     # 带宽 (MHz)
-    CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:CELL:DMOD"             # TDD/FDD
+    # Same manual, printed p.366: duplex mode is writable/queryable with
+    # CONFigure:LTE:SIGN<i>[:PCC]:DMODe.
+    CELL_DUPLEX = "CONFigure:LTE:SIGN{i}:DMODe"                # TDD/FDD
     CELL_PCI = "CONFigure:LTE:SIGN{i}:CELL:PCI"                 # 物理小区 ID
 
     # --- 下行功率 ---
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41, §2.6.10,
+    # printed p.656: PCC RS EPRE is writable/queryable as a numeric value
+    # with default unit dBm/15kHz.  Its allowed range is configuration-
+    # dependent, so the instrument error queue and exact readback are the gate.
     DL_POWER_RS = "CONFigure:LTE:SIGN{i}:DL:RSEPre:LEVel"      # RS-EPRE 功率
     DL_POWER_EIRP = "CONFigure:LTE:SIGN{i}:DL:LATTenuation"    # 下行附加衰减
 
@@ -146,8 +160,17 @@ class CmwScpiCommands:
     UL_RB_POS = "CONFigure:LTE:SIGN{i}:CONNection:PCC:UDCH:UL:RBPStart"
 
     # --- MIMO ---
-    MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:MIMO"
-    TM_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:TMODe"     # TM1-TM10
+    # R&S CMW500 LTE UE User Manual 1173.9628.02-41, command reference,
+    # printed p.753: NENBantennas is writable/queryable and returns the exact
+    # ONE | TWO | FOUR downlink TX-antenna configuration.
+    MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:NENBantennas"
+    # Same manual, GUI reference printed p.211 and command reference printed
+    # p.754: TRANsmission is writable/queryable and accepts TM1/TM2/TM3/TM4/
+    # TM6/TM7/TM8/TM9.  TMODe is a different ON/OFF "activate UE test mode"
+    # command (printed p.739) and must not be used as LTE transmission mode.
+    TRANSMISSION_MODE = (
+        "CONFigure:LTE:SIGN{i}:CONNection:PCC:TRANsmission"
+    )
 
     # --- FRC / 测试配置 ---
     FRC_STATE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:FRC:STATe"
@@ -223,8 +246,8 @@ class RealCmw500Driver(BaseStationDriver):
     核心工作流:
       1. connect() → 只读识别型号、版本和选件
       2. 执行期显式配置 route 与小区工作点
-      3. set_cell_config() → Band/BW/DL Freq
-      4. set_downlink_power() → RS-EPRE 功率
+      3. set_cell_config() → Band/BW/DL Freq 与请求的 RS-EPRE
+      4. set_downlink_power() → 可选的独立 RS-EPRE 调整
       5. start_signaling() → Cell ON → PS Establish → 等待连接
       6. get_throughput_metrics() → 诊断回读（正式窗口由独立方法负责）
       7. stop_signaling() → PS Release → Cell OFF
@@ -822,6 +845,14 @@ class RealCmw500Driver(BaseStationDriver):
             warnings=tuple(warnings),
         )
 
+    async def release_to_local_control(self) -> bool:
+        """Safely release an idle transport without claiming front-panel Local."""
+
+        if self._visa_session is None and self._session_token is None:
+            return True
+        released = await self.release_remote_session(self._session_token or "")
+        return released.transport_session_released_confirmed is True
+
     async def release_remote_session(
         self,
         expected_session_token: str,
@@ -829,7 +860,7 @@ class RealCmw500Driver(BaseStationDriver):
         measurement_attempt_id: str | None = None,
         lease_id: str = "",
     ) -> BaseStationControlReleaseResult:
-        """Close the active transport without claiming front-panel Local."""
+        """Close the transport only after the live cell is confirmed safe idle."""
 
         current_session = self._visa_session
         current_token = self._session_token or ""
@@ -845,6 +876,25 @@ class RealCmw500Driver(BaseStationDriver):
         if current_session is None:
             warnings.append("CMW500 transport session is missing")
         else:
+            try:
+                safe_idle_confirmed = await self.ensure_safe_idle()
+            except Exception as exc:
+                safe_idle_confirmed = False
+                warnings.append(f"CMW500 SAFE_IDLE confirmation failed: {exc}")
+            if safe_idle_confirmed is not True:
+                warnings.append(
+                    "CMW500 SAFE_IDLE is unconfirmed; transport remains open for safe recovery"
+                )
+                return BaseStationControlReleaseResult(
+                    measurement_attempt_id=measurement_attempt_id,
+                    lease_id=lease_id,
+                    adapter_id="cmw500",
+                    session_token=current_token,
+                    remote_session_acquired_confirmed=token_matches,
+                    transport_session_released_confirmed=False,
+                    front_panel_local_confirmed=None,
+                    warnings=tuple(warnings),
+                )
             try:
                 current_session.close()
                 close_confirmed = True
@@ -871,9 +921,14 @@ class RealCmw500Driver(BaseStationDriver):
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
         try:
-            cleanup_confirmed = True
             if self._visa_session is not None:
                 cleanup_confirmed = await self.ensure_safe_idle() is True
+                if not cleanup_confirmed:
+                    logger.error(
+                        "[CMW500] SAFE_IDLE unconfirmed; transport remains open "
+                        "for safe recovery"
+                    )
+                    return False
 
             if self._visa_session:
                 self._visa_session.close()
@@ -886,11 +941,7 @@ class RealCmw500Driver(BaseStationDriver):
 
             self._set_status(InstrumentStatus.DISCONNECTED)
             logger.info("[CMW500] Disconnected")
-            if not cleanup_confirmed:
-                logger.error(
-                    "[CMW500] Transport closed, but signaling SAFE cleanup was unconfirmed"
-                )
-            return cleanup_confirmed
+            return True
         except Exception as e:
             logger.error(f"[CMW500] Disconnect error: {e}")
             return False
@@ -907,10 +958,11 @@ class RealCmw500Driver(BaseStationDriver):
         配置 CMW500 LTE 物理小区参数。
 
         SCPI 序列:
-          CONFigure:LTE:SIGN1:CELL:BAND OB3
+          CONFigure:LTE:SIGN1:BAND OB3
           CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
-          CONFigure:LTE:SIGN1:CELL:DMOD FDD
+          CONFigure:LTE:SIGN1:DMODe FDD
+          CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25
         """
         try:
             band = self._band
@@ -934,6 +986,27 @@ class RealCmw500Driver(BaseStationDriver):
             frequency_mhz = float(
                 config.get("frequency_mhz", self._frequency_mhz)
             )
+            transmission_mode = None
+            if "lte_transmission_mode" in config:
+                transmission_mode = str(
+                    config["lte_transmission_mode"]
+                ).upper()
+                if transmission_mode not in LTE_TRANSMISSION_MODES:
+                    logger.error(
+                        "[CMW500] Rejecting invalid LTE transmission mode %r",
+                        config["lte_transmission_mode"],
+                    )
+                    return False
+            downlink_power_dbm = None
+            if "dl_power_dbm" in config:
+                raw_power = config["dl_power_dbm"]
+                if isinstance(raw_power, bool):
+                    logger.error("[CMW500] Rejecting boolean DL RS-EPRE")
+                    return False
+                downlink_power_dbm = float(raw_power)
+                if not math.isfinite(downlink_power_dbm):
+                    logger.error("[CMW500] Rejecting non-finite DL RS-EPRE")
+                    return False
 
             if not await self.ensure_safe_idle():
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
@@ -960,6 +1033,12 @@ class RealCmw500Driver(BaseStationDriver):
                 self._fmt(CmwScpiCommands.CELL_DL_FREQ) + f" {earfcn}"
             )
 
+            if downlink_power_dbm is not None:
+                self._write(
+                    self._fmt(CmwScpiCommands.DL_POWER_RS)
+                    + f" {downlink_power_dbm:.12g}"
+                )
+
             # 物理小区 ID
             if "cell_id" in config:
                 self._write(
@@ -967,16 +1046,15 @@ class RealCmw500Driver(BaseStationDriver):
                     + f" {config['cell_id']}"
                 )
 
-            # MIMO 模式 (TM1-TM10)
-            if "tm_mode" in config:
+            if transmission_mode is not None:
                 self._write(
-                    self._fmt(CmwScpiCommands.TM_MODE)
-                    + f" {config['tm_mode']}"
+                    self._fmt(CmwScpiCommands.TRANSMISSION_MODE)
+                    + f" {transmission_mode}"
                 )
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
-                mimo_map = {1: "TX1", 2: "TX2", 4: "TX4"}
-                mimo_str = mimo_map.get(layers, "TX2")
+                mimo_map = {1: "ONE", 2: "TWO", 4: "FOUR"}
+                mimo_str = mimo_map[layers]
                 self._write(
                     self._fmt(CmwScpiCommands.MIMO_MODE)
                     + f" {mimo_str}"
@@ -986,10 +1064,120 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.error("[CMW500] Cell config rejected by completion/error check")
                 return False
 
+            # OPC only confirms completion and the error queue only confirms
+            # the absence of a reported command error.  Formal execution also
+            # requires the instrument's applied PCC configuration to match the
+            # request exactly before the cached state may be updated.
+            expected_duplex = (
+                str(config["duplex"]).upper() if "duplex" in config else None
+            )
+            band_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_BAND) + "?")
+                .strip()
+                .upper()
+                if "band" in config
+                else None
+            )
+            bandwidth_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_DL_BW) + "?")
+                .strip()
+                .upper()
+                if "bandwidth_mhz" in config
+                else None
+            )
+            earfcn_readback = int(
+                self._query(
+                    self._fmt(CmwScpiCommands.CELL_DL_FREQ) + "?"
+                ).strip()
+            )
+            duplex_readback = (
+                self._query(self._fmt(CmwScpiCommands.CELL_DUPLEX) + "?")
+                .strip()
+                .upper()
+                if expected_duplex is not None
+                else None
+            )
+            expected_mimo = (
+                {1: "ONE", 2: "TWO", 4: "FOUR"}[config["mimo_layers"]]
+                if "mimo_layers" in config
+                else None
+            )
+            mimo_readback = (
+                self._query(self._fmt(CmwScpiCommands.MIMO_MODE) + "?")
+                .strip()
+                .upper()
+                if expected_mimo is not None
+                else None
+            )
+            transmission_mode_readback = (
+                self._query(
+                    self._fmt(CmwScpiCommands.TRANSMISSION_MODE) + "?"
+                ).strip().upper()
+                if transmission_mode is not None
+                else None
+            )
+            downlink_power_readback = (
+                float(
+                    self._query(
+                        self._fmt(CmwScpiCommands.DL_POWER_RS) + "?"
+                    ).strip()
+                )
+                if downlink_power_dbm is not None
+                else None
+            )
+            expected_bandwidth = (
+                bandwidth_token
+                if bandwidth_token is not None
+                else self.bandwidth_token_by_mhz[bandwidth_mhz]
+            )
+            if (
+                (band_readback is not None and band_readback != band)
+                or (
+                    bandwidth_readback is not None
+                    and bandwidth_readback != expected_bandwidth
+                )
+                or earfcn_readback != earfcn
+                or (
+                    duplex_readback is not None
+                    and duplex_readback != expected_duplex
+                )
+                or (mimo_readback is not None and mimo_readback != expected_mimo)
+                or (
+                    transmission_mode_readback is not None
+                    and transmission_mode_readback != transmission_mode
+                )
+                or (
+                    downlink_power_readback is not None
+                    and downlink_power_readback != downlink_power_dbm
+                )
+            ):
+                logger.error(
+                    "[CMW500] Cell config readback mismatch: "
+                    "requested=(%s,%s,%s,%s,%s,%s,%s), "
+                    "applied=(%s,%s,%s,%s,%s,%s,%s)",
+                    band,
+                    expected_bandwidth,
+                    earfcn,
+                    expected_duplex,
+                    expected_mimo,
+                    transmission_mode,
+                    downlink_power_dbm,
+                    band_readback,
+                    bandwidth_readback,
+                    earfcn_readback,
+                    duplex_readback,
+                    mimo_readback,
+                    transmission_mode_readback,
+                    downlink_power_readback,
+                )
+                return False
+
             self._band = band
             self._bandwidth_mhz = bandwidth_mhz
             self._earfcn = earfcn
             self._frequency_mhz = frequency_mhz
+            if downlink_power_dbm is not None:
+                self._dl_power_dbm = downlink_power_dbm
             self._set_status(InstrumentStatus.READY)
             logger.info(
                 f"[CMW500] Cell config: band={self._band}, "
@@ -1272,6 +1460,8 @@ class RealCmw500Driver(BaseStationDriver):
         running_confirmed = False
         ready_confirmed = False
         closed_off_confirmed = False
+        ue_connected_before = False
+        ue_connected_after = False
         stop_attempted = False
         ended_before_stop = False
         lifecycle_failures: list[str] = []
@@ -1326,11 +1516,19 @@ class RealCmw500Driver(BaseStationDriver):
 
         with capture_scpi_exchanges() as exchanges:
             try:
-                preclear_off_confirmed = _write_and_confirm_state(
-                    Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
-                    "OFF",
-                    "pre-clear ABORT/OFF",
+                ue_connected_before = (
+                    await self.get_cell_state() is CellState.CONNECTED
                 )
+                if not ue_connected_before:
+                    lifecycle_failures.append(
+                        "UE link was not CONNECTED before the measurement window"
+                    )
+                else:
+                    preclear_off_confirmed = _write_and_confirm_state(
+                        Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
+                        "OFF",
+                        "pre-clear ABORT/OFF",
+                    )
                 if preclear_off_confirmed:
                     window_configuration_confirmed = all(
                         _write_and_confirm(command, label)
@@ -1443,6 +1641,13 @@ class RealCmw500Driver(BaseStationDriver):
                     "OFF",
                     "final ABORT/OFF",
                 )
+                ue_connected_after = (
+                    await self.get_cell_state() is CellState.CONNECTED
+                )
+                if not ue_connected_after:
+                    lifecycle_failures.append(
+                        "UE link was not CONNECTED after the measurement window"
+                    )
 
         lifecycle_confirmed = all(
             (
@@ -1451,6 +1656,8 @@ class RealCmw500Driver(BaseStationDriver):
                 running_confirmed,
                 ready_confirmed,
                 closed_off_confirmed,
+                ue_connected_before,
+                ue_connected_after,
             )
         )
         if not lifecycle_confirmed:
@@ -1487,6 +1694,8 @@ class RealCmw500Driver(BaseStationDriver):
                 "running_confirmed": running_confirmed,
                 "ready_confirmed": ready_confirmed,
                 "closed_off_confirmed": closed_off_confirmed,
+                "ue_connected_before": ue_connected_before,
+                "ue_connected_after": ue_connected_after,
             },
             exchange_ids=exchange_ids,
             evidence_level=(
@@ -1656,8 +1865,9 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取已连接 UE 的信息"""
+        live_state = await self.get_cell_state()
         info = {
-            "connected": self._cell_state == CellState.CONNECTED,
+            "connected": live_state is CellState.CONNECTED,
             "sign_channel": self._sign_channel,
         }
         try:
@@ -1685,7 +1895,7 @@ class RealCmw500Driver(BaseStationDriver):
                     "max_mimo_layers": self.max_mimo_layers,
                     "tm_modes": [
                         "TM1", "TM2", "TM3", "TM4", "TM6", "TM7",
-                        "TM8", "TM9", "TM10",
+                        "TM8", "TM9",
                     ],
                 },
             ),

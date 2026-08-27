@@ -1845,6 +1845,8 @@ export interface components {
             subcarrier_spacing_khz?: number | null;
             nr_arfcn?: number | null;
             lte_dl_earfcn?: number | null;
+            /** @enum {string|null} */
+            lte_transmission_mode?: "TM1" | "TM2" | "TM3" | "TM4" | "TM6" | "TM7" | "TM8" | "TM9" | null;
             theoretical_peak_throughput_mbps?: number | null;
             /** @default mimo_first_asc */
             engine_mode: string;
@@ -2236,6 +2238,22 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description Current selected-LabProfile CMW500 LTE 2x2 readiness preview. */
+        Cmw500Lte2x2Readiness: {
+            /** @enum {string} */
+            status: "ready" | "warning" | "diagnostic" | "not_applicable";
+            adapter_registered: boolean;
+            connection_id: string | null;
+            model: string | null;
+            identity_verified: boolean | null;
+            firmware_version: string | null;
+            options: string[];
+            formal_enabled: boolean;
+            formal_updated_at: string | null;
+            fdd_ready: boolean;
+            tdd_ready: boolean;
+            detail: string;
+        };
         /**
          * @description P3-5 composite snapshot. `available=false` means HAL is not
          *     initialised; sub-sections still carry valid shapes (with
@@ -2248,6 +2266,7 @@ export interface components {
             lab_profile: components["schemas"]["LabProfileReadiness"];
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
+            cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;
             /**
              * @description P1-11: per-/24-subnet reachability rollup derived from the

@@ -30,12 +30,14 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 
-import { fetchChannelModels } from '../../api/service'
+import { fetchChannelModels, fetchReadiness } from '../../api/service'
 import { fetchDUTProfiles } from '../../api/dutProfileService'
 import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
 import {
+  LTE_TRANSMISSION_MODES,
+  type LteTransmissionMode,
   patchPrimaryCarrierFields,
   primaryCarrierValue,
   updatePrimaryCarrierValue,
@@ -44,6 +46,8 @@ import {
   resolveBaseStationConfigMode,
   updateBaseStationConfigMode,
 } from './baseStationConfigTruth'
+import { useOperationalLab } from '../../features/OperationalLab'
+import { describeCmw500Readiness } from './cmw500ReadinessTruth'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -84,6 +88,7 @@ export interface MIMOOTAConfiguration {
     duplex?: 'fdd' | 'tdd' | null
     nr_arfcn?: number | null
     lte_dl_earfcn?: number | null
+    lte_transmission_mode?: LteTransmissionMode | null
     role?: string
   }>
   mimo_layers?: number
@@ -192,9 +197,23 @@ const MIMO_PORT_PRESET_OPTIONS = [
 ]
 
 export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
+  const { selectedLabProfileId } = useOperationalLab()
   const rawPCell = value.component_carriers?.[0]
   const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
   const baseStationConfigMode = resolveBaseStationConfigMode(value)
+  const cmwReadinessQuery = useQuery({
+    queryKey: ['cmw500-lte-2x2-readiness', selectedLabProfileId ?? 'unselected'],
+    queryFn: () => fetchReadiness(selectedLabProfileId!),
+    enabled: radioTechnology === 'lte' && Boolean(selectedLabProfileId),
+  })
+  const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2
+  const cmwReadinessView = describeCmw500Readiness(
+    cmwReadiness,
+    rawPCell?.duplex,
+    baseStationConfigMode.mode,
+  )
+  const showCmwReadiness = radioTechnology === 'lte'
+    && cmwReadiness?.status !== 'not_applicable'
   const update = <K extends keyof MIMOOTAConfiguration>(
     key: K,
     next: MIMOOTAConfiguration[K],
@@ -229,12 +248,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       ? {
           ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
           band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
+          lte_transmission_mode: undefined,
           nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
         }
       : {
           ...current, radio_technology: 'nr5g' as const, channel_kind: 'nr_arfcn' as const,
           band: undefined, nr_arfcn: undefined, subcarrier_spacing_khz: 30,
           duplex: undefined, lte_dl_earfcn: undefined, role: 'pcell' as const,
+          lte_transmission_mode: undefined,
         }
     const next: MIMOOTAConfiguration = { ...value, component_carriers: [pcell] }
     if (rat === 'lte') {
@@ -459,6 +480,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   value={rawPCell?.lte_dl_earfcn ?? undefined}
                   onChange={(v) => patchPCell({ lte_dl_earfcn: typeof v === 'number' ? v : undefined })}
                   min={0}
+                  disabled={readOnly}
+                  required
+                />
+                <Select
+                  label="LTE 传输模式"
+                  data={LTE_TRANSMISSION_MODES.map((mode) => ({ value: mode, label: mode }))}
+                  value={rawPCell?.lte_transmission_mode ?? null}
+                  onChange={(v) => patchPCell({ lte_transmission_mode: v ?? undefined })}
                   disabled={readOnly}
                   required
                 />
@@ -1079,6 +1108,32 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               <Text size="xs" c="dimmed">
                 全部留空 = 现行为不变：UXM 主动下发小区参数、F64 自动定标闭环、正常衰落回放。
               </Text>
+              {showCmwReadiness && (
+                <Alert
+                  color={cmwReadinessView.color}
+                  variant="light"
+                  title={cmwReadinessView.title}
+                >
+                  <Stack gap={4}>
+                    <Text size="sm">{cmwReadinessView.message}</Text>
+                    {cmwReadiness && (
+                      <Text size="xs">
+                        适配器{cmwReadiness.adapter_registered ? '已注册' : '未注册'} · 型号{' '}
+                        {cmwReadiness.model ?? 'UNKNOWN'} · 固件{' '}
+                        {cmwReadiness.firmware_version ?? 'UNKNOWN'} · 选件{' '}
+                        {cmwReadiness.options.length > 0
+                          ? cmwReadiness.options.join(', ')
+                          : 'UNKNOWN'} · 正式能力{' '}
+                        {cmwReadiness.formal_enabled ? '已显式启用' : '默认关闭'}
+                        {cmwReadiness.formal_updated_at
+                          ? ` · 服务器更新 ${cmwReadiness.formal_updated_at}`
+                          : ''}
+                      </Text>
+                    )}
+                    <Text size="xs">发布前仍需真机确认；本片不做功率预算判定。</Text>
+                  </Stack>
+                </Alert>
+              )}
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
                 <Select
                   label="基站小区配置来源 (开关 1)"

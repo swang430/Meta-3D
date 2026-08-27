@@ -30,6 +30,7 @@ LTE_B3_PCELL = {
     "radio_technology": "lte",
     "band": "B3",
     "duplex": "fdd",
+    "lte_transmission_mode": "TM3",
     "lte_dl_earfcn": 1575,
     "frequency_hz": 1_842_500_000.0,
     "bandwidth_mhz": 20.0,
@@ -81,6 +82,7 @@ def test_lte_pcell_is_explicit_and_does_not_receive_nr_defaults():
     assert len(config.component_carriers or []) == 1
     assert config.primary_carrier.radio_technology == "lte"
     assert config.primary_carrier.lte_dl_earfcn == 1575
+    assert config.primary_carrier.lte_transmission_mode == "TM3"
     assert config.primary_carrier.nr_arfcn is None
     assert config.primary_carrier.subcarrier_spacing_khz is None
     assert config.theoretical_peak_throughput_mbps is None
@@ -154,6 +156,7 @@ def test_commissioning_lte_request_builds_the_same_explicit_pcell():
             "bandwidth_mhz": 20.0,
             "band": "B3",
             "duplex": "fdd",
+            "lte_transmission_mode": "TM3",
             "lte_dl_earfcn": 1575,
         }
     )
@@ -173,6 +176,7 @@ def test_commissioning_lte_request_does_not_accept_prototype_defaults():
                 "bandwidth_mhz": 20.0,
                 "band": "B3",
                 "duplex": "fdd",
+                "lte_transmission_mode": "TM3",
                 "lte_dl_earfcn": 1575,
             }
         )
@@ -185,7 +189,32 @@ def test_commissioning_lte_request_does_not_accept_prototype_defaults():
                 "bandwidth_mhz": 20.0,
                 "band": "B3",
                 "duplex": "fdd",
+                "lte_transmission_mode": "TM3",
             }
+        )
+
+
+def test_lte_requires_explicit_supported_transmission_mode():
+    carrier = {key: value for key, value in LTE_B3_PCELL.items()
+               if key != "lte_transmission_mode"}
+    with pytest.raises(ValidationError, match="lte_transmission_mode"):
+        MIMOOTAConfiguration.model_validate({"component_carriers": [carrier]})
+
+    with pytest.raises(ValidationError, match="lte_transmission_mode"):
+        CreateSessionRequest.model_validate(
+            {
+                "radio_technology": "lte",
+                "frequency_hz": 1_842_500_000.0,
+                "bandwidth_mhz": 20.0,
+                "band": "B3",
+                "duplex": "fdd",
+                "lte_dl_earfcn": 1575,
+            }
+        )
+
+    with pytest.raises(ValidationError, match="lte_transmission_mode"):
+        MIMOOTAConfiguration.model_validate(
+            {"component_carriers": [{**LTE_B3_PCELL, "lte_transmission_mode": "TM10"}]}
         )
 
 
@@ -216,6 +245,8 @@ def test_measure_builds_one_vendor_neutral_lte_request():
     assert requested.lte_dl_earfcn == 1575
     assert requested.nr_arfcn is None
     assert requested.subcarrier_spacing_khz is None
+    assert requested.lte_transmission_mode == "TM3"
+    assert requested.to_driver_payload()["lte_transmission_mode"] == "TM3"
     with pytest.raises(FrozenInstanceError):
         requested.radio_technology = "nr5g"
 
@@ -279,7 +310,14 @@ async def test_cmw500_translates_vendor_neutral_lte_band(monkeypatch):
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
+    def query(command: str) -> str:
+        if command == "CONFigure:LTE:SIGN1:BAND?":
+            return "OB3"
+        if command == "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?":
+            return "1575"
+        return _cmw_safe_idle_query(command)
+
+    monkeypatch.setattr(cmw, "_query", query)
 
     assert await cmw.set_cell_config({"band": "B3", "earfcn": 1575}) is True
     assert any(command.endswith(" OB3") for command in writes)
@@ -304,7 +342,14 @@ async def test_cmw500_translates_each_supported_lte_bandwidth_exactly(
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
     writes: list[str] = []
     monkeypatch.setattr(cmw, "_write", writes.append)
-    monkeypatch.setattr(cmw, "_query", _cmw_safe_idle_query)
+    def query(command: str) -> str:
+        if command == "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?":
+            return cmw_token
+        if command == "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?":
+            return "1575"
+        return _cmw_safe_idle_query(command)
+
+    monkeypatch.setattr(cmw, "_query", query)
 
     assert await cmw.set_cell_config({"bandwidth_mhz": bandwidth_mhz}) is True
     assert any(command.endswith(f" {cmw_token}") for command in writes)

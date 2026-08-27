@@ -63,6 +63,7 @@ def _identity_responses() -> dict[str, str]:
         "*IDN?": "Rohde&Schwarz,CMW,1201.0002K50/123456,4.0.250",
         "SYSTem:BASE:OPTion:LIST? SWOPtion,VALid": "CMW-KS520",
         "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional": "CMW-B570B",
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
     }
 
 
@@ -208,6 +209,119 @@ async def test_config_error_queue_failure_does_not_update_cached_working_point()
 
 
 @pytest.mark.asyncio
+async def test_config_requires_authoritative_readback_before_updating_cache():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:BAND?": "OB3",
+            "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?": "B100",
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:DMODe?": "FDD",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {
+            "band": "B3",
+            "earfcn": 1300,
+            "bandwidth_mhz": 20.0,
+            "duplex": "FDD",
+        }
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert driver.queries[-4:] == [
+        "CONFigure:LTE:SIGN1:BAND?",
+        "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?",
+        "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?",
+        "CONFigure:LTE:SIGN1:DMODe?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_config_requires_applied_two_antenna_readback_for_two_layers():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?": "FOUR",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "mimo_layers": 2}
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas TWO"
+        in driver.writes
+    )
+    assert driver.queries[-1] == (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?"
+    )
+
+
+@pytest.mark.asyncio
+async def test_config_requires_exact_applied_lte_transmission_mode():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?": "TM4",
+        }
+    )
+    original = (driver._band, driver._earfcn, driver._bandwidth_mhz)
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "lte_transmission_mode": "TM3"}
+    )
+
+    assert result is False
+    assert (driver._band, driver._earfcn, driver._bandwidth_mhz) == original
+    assert (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission TM3"
+        in driver.writes
+    )
+    assert driver.queries[-1] == (
+        "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?"
+    )
+
+
+@pytest.mark.asyncio
+async def test_config_requires_exact_applied_downlink_rs_epre():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+            "SYSTem:ERRor:ALL?": '0,"No error"',
+            "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+            "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?": "-64.25",
+        }
+    )
+    original = driver._dl_power_dbm
+
+    result = await driver.set_cell_config(
+        {"earfcn": 1300, "dl_power_dbm": -65.25}
+    )
+
+    assert result is False
+    assert driver._dl_power_dbm == original
+    assert "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25" in driver.writes
+    assert driver.queries[-1] == "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?"
+
+
+@pytest.mark.asyncio
 async def test_attach_accepts_only_documented_exact_states_and_restores_timeout():
     states = iter(["ON,ADJ", "ATT", "CEST"])
 
@@ -305,6 +419,23 @@ def test_ps_state_parser_rejects_substrings_and_keeps_attached_distinct_from_con
 
 
 @pytest.mark.asyncio
+async def test_get_ue_info_uses_live_ps_state_instead_of_cached_connected():
+    driver = _StateDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "ON,ADJ",
+            "FETCh:LTE:SIGN1:PSWitched:STATe?": "ATT",
+            "SENSe:LTE:SIGN1:RRCState?": "CONN",
+        }
+    )
+    driver._cell_state = CellState.CONNECTED
+
+    info = await driver.get_ue_info()
+
+    assert info["connected"] is False
+    assert info["rrc_state"] == "CONN"
+
+
+@pytest.mark.asyncio
 async def test_unknown_attach_state_fails_and_performs_confirmed_safe_cleanup():
     cell_states = iter(["ON,ADJ", "OFF,ADJ"])
 
@@ -379,7 +510,7 @@ async def test_cell_on_rejection_still_attempts_and_confirms_cell_off():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_closes_transport_but_does_not_hide_failed_safe_cleanup():
+async def test_disconnect_preserves_transport_when_safe_cleanup_is_unconfirmed():
     class _CleanupFailureDriver(_StateDriver):
         async def ensure_safe_idle(self) -> bool:
             return False
@@ -389,8 +520,8 @@ async def test_disconnect_closes_transport_but_does_not_hide_failed_safe_cleanup
     driver._cell_state = CellState.CONNECTED
 
     assert await driver.disconnect() is False
-    assert session.closed is True
-    assert driver._visa_session is None
+    assert session.closed is False
+    assert driver._visa_session is session
 
 
 @pytest.mark.asyncio

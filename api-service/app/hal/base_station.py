@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional, List, ClassVar, Literal
 from datetime import datetime
+from uuid import uuid4
 
 from app.hal.base import (
     InstrumentDriver,
@@ -24,6 +25,20 @@ from app.hal.base import (
 from app.hal.scpi_evidence import InstrumentEvidenceItem
 
 logger = logging.getLogger(__name__)
+
+LTE_TRANSMISSION_MODES = (
+    "TM1",
+    "TM2",
+    "TM3",
+    "TM4",
+    "TM6",
+    "TM7",
+    "TM8",
+    "TM9",
+)
+LteTransmissionMode = Literal[
+    "TM1", "TM2", "TM3", "TM4", "TM6", "TM7", "TM8", "TM9",
+]
 
 
 @dataclass(frozen=True)
@@ -53,6 +68,7 @@ class BaseStationRequestedConfig:
     duplex: str | None
     nr_arfcn: int | None
     lte_dl_earfcn: int | None
+    lte_transmission_mode: LteTransmissionMode | None
     subcarrier_spacing_khz: int | None
     mimo_layers: int
     downlink_power_dbm: float
@@ -81,6 +97,7 @@ class BaseStationRequestedConfig:
             payload["lte_dl_earfcn"] = self.lte_dl_earfcn
             payload["earfcn"] = self.lte_dl_earfcn
             payload["duplex"] = self.duplex
+            payload["lte_transmission_mode"] = self.lte_transmission_mode
         if self.downlink_power_dbm_per_bandwidth is not None:
             payload["dl_power_dbm_per_bw"] = self.downlink_power_dbm_per_bandwidth
         if self.port_preset is not None:
@@ -458,6 +475,11 @@ class BaseStationDriver(InstrumentDriver):
         """获取小区当前状态"""
         raise NotImplementedError
 
+    async def ensure_safe_idle(self) -> bool:
+        """Confirm the vendor-neutral SAFE_IDLE boundary after signaling stops."""
+
+        return await self.get_cell_state() is CellState.OFF
+
     # ===================================================================
     # 测量
     # ===================================================================
@@ -677,6 +699,9 @@ class MockBaseStation(BaseStationDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
+        configured_model = str(config.get("model") or "").upper()
+        self.adapter_id = "cmw500" if "CMW" in configured_model else "uxm"
+        self._remote_session_token: str | None = None
         self._cell_running = False
         self._cell_state = CellState.OFF
         self._frequency_mhz = 3500.0
@@ -691,6 +716,47 @@ class MockBaseStation(BaseStationDriver):
         await asyncio.sleep(0.3)
         self._set_status(InstrumentStatus.CONNECTED)
         return True
+
+    async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
+        await self.connect()
+        self._remote_session_token = uuid4().hex
+        return BaseStationRemoteSessionResult(
+            adapter_id=self.adapter_id,
+            session_token=self._remote_session_token,
+            acquired_confirmed=True,
+            warnings=("simulated transport; front-panel Remote not applicable",),
+        )
+
+    async def release_remote_session(
+        self,
+        expected_session_token: str,
+        *,
+        measurement_attempt_id: str | None = None,
+        lease_id: str = "",
+    ) -> BaseStationControlReleaseResult:
+        matched = (
+            bool(expected_session_token)
+            and expected_session_token == self._remote_session_token
+        )
+        if matched:
+            await self.disconnect()
+        self._remote_session_token = None
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id=self.adapter_id,
+            session_token=expected_session_token,
+            remote_session_acquired_confirmed=matched,
+            transport_session_released_confirmed=matched,
+            front_panel_local_confirmed=None,
+            warnings=("simulated transport; front-panel Local not applicable",),
+        )
+
+    async def release_to_local_control(self) -> bool:
+        """Release the simulated transport for idle parking/reload paths."""
+        released = await self.disconnect()
+        self._remote_session_token = None
+        return released is True
 
     async def disconnect(self) -> bool:
         if self._cell_running:

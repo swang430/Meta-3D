@@ -97,6 +97,7 @@ from app.hal.lte_earfcn import (
     normalize_lte_band,
     validate_lte_downlink_operating_point,
 )
+from app.hal.base_station import LteTransmissionMode
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 
 
@@ -177,6 +178,10 @@ class ComponentCarrierConfig(BaseModel):
         ge=0,
         description="LTE 下行 EARFCN；LTE PCell 必填",
     )
+    lte_transmission_mode: Optional[LteTransmissionMode] = Field(
+        default=None,
+        description="LTE transmission mode；LTE PCell 必填，NR 禁止",
+    )
     role: Literal["pcell", "scell"] = Field(
         default="scell",
         description="PCell / SCell 角色; 由 _resolve_component_carriers 强制 cc[0]=pcell",
@@ -208,6 +213,10 @@ class ComponentCarrierConfig(BaseModel):
                 raise ValueError("LTE PCell requires explicit duplex")
             if self.lte_dl_earfcn is None:
                 raise ValueError("LTE PCell requires explicit lte_dl_earfcn")
+            if self.lte_transmission_mode is None:
+                raise ValueError(
+                    "LTE PCell requires explicit lte_transmission_mode"
+                )
             if self.nr_arfcn is not None:
                 raise ValueError("LTE PCell must not set nr_arfcn")
             if self.subcarrier_spacing_khz is not None:
@@ -223,6 +232,8 @@ class ComponentCarrierConfig(BaseModel):
 
         if self.lte_dl_earfcn is not None:
             raise ValueError("NR PCell must not set lte_dl_earfcn")
+        if self.lte_transmission_mode is not None:
+            raise ValueError("NR PCell must not set lte_transmission_mode")
         if self.subcarrier_spacing_khz is None:
             raise ValueError("NR PCell requires subcarrier_spacing_khz")
         if self.nr_arfcn is not None:

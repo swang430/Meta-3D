@@ -21,6 +21,12 @@ from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
 from app.services.mimo_ota.quiet_zone_evidence import (
     quiet_zone_scope_is_formally_verified,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    base_station_expected_scope_from_evidence,
+    project_base_station_metrics_by_position,
+)
+from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -72,7 +78,41 @@ def _formal_validation_pass(
         )
     ):
         return None
-    if not (
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    base_station_evidence = execution_config.get(
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD
+    )
+    frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
+    frozen_resolution = (
+        frozen_adapter.get("resolution") if isinstance(frozen_adapter, dict) else None
+    )
+    base_station_evidence_required = base_station_evidence is not None or (
+        isinstance(frozen_resolution, dict)
+        and frozen_resolution.get("adapter") == "cmw500"
+    )
+    if base_station_evidence_required:
+        expected_config, expected_positions = (
+            base_station_expected_scope_from_evidence(base_station_evidence)
+        )
+        projection = (
+            project_base_station_metrics_by_position(
+                base_station_evidence,
+                expected_config=expected_config,
+                expected_positions=expected_positions,
+            )
+            if expected_config is not None
+            else []
+        )
+        if (
+            not expected_positions
+            or len(projection) != len(expected_positions)
+            or any(
+                row["dl_throughput_mbps"].status != "trusted"
+                for row in projection
+            )
+        ):
+            return None
+    elif not (
         measure.get("throughput_verified") is True
         and throughput_scope_is_verified(measure)
     ):

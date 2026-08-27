@@ -15,6 +15,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 from app.models.report import ReportFormat, ReportType
@@ -43,6 +44,12 @@ from app.services.mimo_ota.throughput_trust import (
     required_throughput_scope as _required_throughput_scope,
     throughput_scope_is_verified,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    base_station_expected_scope_from_evidence,
+    project_base_station_metrics_by_position,
+)
+from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.report_service import (
     ReportService,
     THROUGHPUT_TRUST_SCHEMA_VERSION,
@@ -442,6 +449,37 @@ def _build_mimo_ota_content_data(
         if isinstance(raw_azimuth_results, list)
         else []
     )
+    raw_execution_config = getattr(execution, "config", None)
+    execution_config = (
+        raw_execution_config if isinstance(raw_execution_config, dict) else {}
+    )
+    base_station_evidence = execution_config.get(
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD
+    )
+    frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
+    frozen_resolution = (
+        frozen_adapter.get("resolution") if isinstance(frozen_adapter, dict) else None
+    )
+    base_station_evidence_required = base_station_evidence is not None or (
+        isinstance(frozen_resolution, dict)
+        and frozen_resolution.get("adapter") == "cmw500"
+    )
+    expected_base_station_config, expected_positions = (
+        base_station_expected_scope_from_evidence(base_station_evidence)
+    )
+    base_station_projection = (
+        project_base_station_metrics_by_position(
+            base_station_evidence,
+            expected_config=expected_base_station_config,
+            expected_positions=expected_positions,
+        )
+        if base_station_evidence_required
+        and expected_base_station_config is not None
+        else []
+    )
+    projection_by_azimuth = {
+        row["position"]["azimuth_deg"]: row for row in base_station_projection
+    }
 
     # P1-63: decide trust before touching historical metric values. Old or
     # malformed rows must reach the UNKNOWN/N/A path instead of raising while
@@ -486,6 +524,12 @@ def _build_mimo_ota_content_data(
                 and not _rf_kpi_formally_verified
             ):
                 values = []
+            elif kpi_key == "throughput_mbps" and base_station_evidence_required:
+                values = [
+                    metric.formal_value
+                    for row in base_station_projection
+                    if (metric := row["dl_throughput_mbps"]).status == "trusted"
+                ]
             else:
                 values = [
                     number
@@ -501,19 +545,61 @@ def _build_mimo_ota_content_data(
                 statistics[f"{kpi_label}_{unit}".strip("_")] = {
                     "metric_name": f"{kpi_label} ({unit})" if unit else kpi_label,
                     "mean": round(vavg, 3),
-                    "median": round(sorted(values)[len(values) // 2], 3),
+                    "median": round(median(values), 3),
                     "std": round(vstd, 3),
                     "min": round(vmin, 3),
                     "max": round(vmax, 3),
                     "count": len(values),
                 }
 
+        trusted_bler_values = [
+            metric.formal_value
+            for row in base_station_projection
+            if (metric := row["dl_bler_percent"]).status == "trusted"
+        ]
+        if trusted_bler_values:
+            statistics["BLER_%"] = {
+                "metric_name": "BLER (%)",
+                "mean": round(sum(trusted_bler_values) / len(trusted_bler_values), 3),
+                "median": round(median(trusted_bler_values), 3),
+                "std": round(_std(trusted_bler_values), 3),
+                "min": round(min(trusted_bler_values), 3),
+                "max": round(max(trusted_bler_values), 3),
+                "count": len(trusted_bler_values),
+            }
+
         for a in azimuth_results:
             def _format_metric(value: Any, digits: int, *, visible: bool = True) -> str:
                 numeric = _finite_report_number(value) if visible else None
                 return "N/A" if numeric is None else f"{numeric:.{digits}f}"
 
-            table_data.append({
+            base_station_row = projection_by_azimuth.get(
+                _finite_report_number(a.get("azimuth_deg"))
+            )
+            throughput_value = a.get("throughput_mbps")
+            bler_value = None
+            if base_station_evidence_required:
+                throughput_trust = (
+                    base_station_row.get("dl_throughput_mbps")
+                    if isinstance(base_station_row, dict)
+                    else None
+                )
+                bler_trust = (
+                    base_station_row.get("dl_bler_percent")
+                    if isinstance(base_station_row, dict)
+                    else None
+                )
+                throughput_value = (
+                    throughput_trust.formal_value
+                    if getattr(throughput_trust, "status", None) == "trusted"
+                    else None
+                )
+                bler_value = (
+                    bler_trust.formal_value
+                    if getattr(bler_trust, "status", None) == "trusted"
+                    else None
+                )
+            table_row = {
                 "Azimuth (°)": _format_metric(a.get("azimuth_deg"), 1),
                 "RSRP (dBm)": _format_metric(
                     a.get("rsrp_dbm"), 1, visible=_rf_kpi_formally_verified
@@ -521,11 +607,14 @@ def _build_mimo_ota_content_data(
                 "SINR (dB)": _format_metric(
                     a.get("sinr_db"), 1, visible=_rf_kpi_formally_verified
                 ),
-                "Throughput (Mbps)": _format_metric(a.get("throughput_mbps"), 1),
+                "Throughput (Mbps)": _format_metric(throughput_value, 1),
                 "RI": _format_metric(
                     a.get("rank_indicator"), 2, visible=_rf_kpi_formally_verified
                 ),
-            })
+            }
+            if base_station_evidence_required:
+                table_row["BLER (%)"] = _format_metric(bler_value, 1)
+            table_data.append(table_row)
 
     # P1-64: ProbePattern peak spread is a diagnostic proxy, not a multi-point
     # quiet-zone field scan. Historical booleans/source labels cannot promote
@@ -586,7 +675,16 @@ def _build_mimo_ota_content_data(
     # CA 执行读的是全部 NR cells 而非 PCell。正式报告必须同时核对载波数量、
     # measure 顶层范围和每个方位的同行范围；历史记录缺任一证据都 fail-closed。
     throughput_scope_verified = throughput_scope_is_verified(measure)
-    if _throughput_verified is True and (
+    if base_station_evidence_required:
+        _throughput_verified = (
+            len(base_station_projection) == len(expected_positions)
+            and bool(expected_positions)
+            and all(
+                row["dl_throughput_mbps"].status == "trusted"
+                for row in base_station_projection
+            )
+        )
+    elif _throughput_verified is True and (
         not throughput_scope_verified
         or not measurement_provenance_is_explicit_real(measure)
     ):
@@ -825,6 +923,17 @@ def _build_mimo_ota_content_data(
         "path_loss_application": _path_loss_application,
         "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,
+        "base_station_metric_trust_schema_version": 1,
+        "base_station_metric_projection": [
+            {
+                "position": row["position"],
+                "dl_throughput_mbps": row[
+                    "dl_throughput_mbps"
+                ].model_dump(mode="json"),
+                "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
+            }
+            for row in base_station_projection
+        ],
         "throughput_scope": (
             required_throughput_scope
             if _throughput_verified is True

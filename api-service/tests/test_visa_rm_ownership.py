@@ -289,6 +289,11 @@ class TestDisconnectDoesNotKillPeers:
         setattr(d, rm_attr, shared_rm)
         own = shared_rm.open_resource("TCPIP0::192.0.2.1::5025::SOCKET")
         setattr(d, session_attr, own)
+        if cls_name == "RealCmw500Driver":
+            async def _confirmed_safe_idle():
+                return True
+
+            d.ensure_safe_idle = _confirmed_safe_idle
 
         await d.disconnect()
 
@@ -325,4 +330,3 @@ class TestDisconnectDoesNotKillPeers:
             f"  漏在表外: {sorted(owners - listed)}\n"
             f"  表里多余: {sorted(listed - owners)}"
         )
-

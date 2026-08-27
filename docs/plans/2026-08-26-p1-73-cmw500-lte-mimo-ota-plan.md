@@ -515,8 +515,9 @@ cd api-service
 - 厂商差异只能由 driver/profile 覆写，不允许 executor 拼 CMW SCPI。
 - `inherit` 继续执行安全 cleanup，但显式 evidence gate 阻止正式判定。
 - 保留旧 UXM 结果键作只读兼容镜像，并在同一 helper 中生成，避免双真源。
-- CMW 的 input-level/power capability 在 P1-73 保持关闭并显示 Warning；不得调用 UXM 功率字段或
-  用默认值补齐。UXM 现有 input-level 行为必须原样回归通过。
+- CMW 的 input-level/power **闭环** capability 在 P1-73 保持关闭并显示 Warning；不得调用 UXM
+  功率字段或用派生值补齐。`dispatch` 只允许驱动按手册消费通用请求中已有的 RS-EPRE，并须写后
+  回读精确核对；不加入外部补偿或功率预算。UXM 现有 input-level 行为必须原样回归通过。
 
 **Step 4: 运行 GREEN 并提交**
 
@@ -1526,7 +1527,8 @@ readiness/GUI 必须显示：
 - 未真机确认时 Warning/UNKNOWN，允许继续开发与诊断；
 - debug inherit 显式黄色诊断态；
 - 不显示或要求外部 RF router 作为准入项；
-- 不在本片添加 CMW 功率设置或端到端功率预算通过/失败判词；只显示发布前待确认 Warning。
+- 不在 readiness/API/GUI 添加 CMW 功率控制或端到端功率预算通过/失败判词；只显示发布前待确认
+  Warning。执行期已有通用 RS-EPRE 请求仍由驱动按手册写后回读，不扩展为功率闭环。
 
 **Step 2: RED → GREEN 并提交**
 

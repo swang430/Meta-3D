@@ -106,9 +106,17 @@ async def test_metrics_are_scpi_free_while_local_control_is_reserved():
 async def test_remote_control_is_reacquired_only_for_explicit_operation():
     driver = RealUxmDriver("uxm-reacquire", {"ip": "192.0.2.20"})
     driver._local_control_reserved = True
-    driver.connect = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
-    assert await driver.acquire_remote_control() is True
+    async def connect():
+        driver._visa_session = _Session()
+        driver._session_token = "session-1"
+        return True
+
+    driver.connect = AsyncMock(side_effect=connect)  # type: ignore[method-assign]
+
+    result = await driver.acquire_remote_control()
+    assert result.acquired_confirmed is True
+    assert result.session_token == "session-1"
     assert driver.local_control_reserved is False
     driver.connect.assert_awaited_once()
 
@@ -119,7 +127,9 @@ async def test_failed_or_cancelled_reacquire_restores_local_reservation():
     driver._local_control_reserved = True
     driver.connect = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
-    assert await driver.acquire_remote_control() is False
+    result = await driver.acquire_remote_control()
+    assert result.acquired_confirmed is False
+    assert result.session_token == ""
     assert driver.local_control_reserved is True
 
     driver.connect = AsyncMock(side_effect=asyncio.CancelledError())  # type: ignore[method-assign]

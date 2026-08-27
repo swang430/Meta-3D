@@ -12,13 +12,28 @@ export {
   type CreateSessionBody,
   type CreateSessionParams,
 } from './sessionBody'
+export {
+  LTE_TRANSMISSION_MODES,
+  type LteTransmissionMode,
+} from '../TestCaseConfig/carrierTruth'
+
+export interface CommissioningExecutionConfig extends Record<string, unknown> {
+  base_station_adapter_profile_freeze?: {
+    resolution?: { adapter?: string }
+    cmw500_lte_2x2_formal_capability?: {
+      instrument_connection_id: string
+      enabled: boolean
+      updated_at: string | null
+    }
+  }
+}
 
 export interface SessionResponse {
   session_id: string
   phase: string
   phase_statuses: Record<string, 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'skipped'>
   overall_progress: number
-  config: Record<string, unknown>
+  config: CommissioningExecutionConfig
   started_at: string | null
   completed_at: string | null
   precheck: Record<string, unknown> | null

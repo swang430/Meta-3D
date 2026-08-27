@@ -9,6 +9,11 @@ from uuid import UUID
 
 import pytest
 
+from app.hal.base_station import (
+    BaseStationControlReleaseResult,
+    BaseStationRemoteSessionResult,
+)
+
 
 class _FakeInstrument:
     def __init__(
@@ -39,6 +44,8 @@ class _FakeF64(_FakeInstrument):
 
 
 class _FakeUxm(_FakeInstrument):
+    adapter_id = "uxm"
+
     def __init__(
         self,
         events: list[str],
@@ -51,6 +58,34 @@ class _FakeUxm(_FakeInstrument):
             "uxm",
             acquire_ok=acquire_ok,
             release_ok=release_ok,
+        )
+
+    async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
+        self.events.append("uxm-remote")
+        return BaseStationRemoteSessionResult(
+            adapter_id="uxm",
+            session_token="uxm-session",
+            acquired_confirmed=self.acquire_ok,
+            warnings=(),
+        )
+
+    async def release_remote_session(
+        self,
+        expected_session_token: str,
+        *,
+        measurement_attempt_id: str | None = None,
+        lease_id: str = "",
+    ) -> BaseStationControlReleaseResult:
+        self.events.append("uxm-local")
+        return BaseStationControlReleaseResult(
+            measurement_attempt_id=measurement_attempt_id,
+            lease_id=lease_id,
+            adapter_id="uxm",
+            session_token=expected_session_token,
+            remote_session_acquired_confirmed=self.acquire_ok,
+            transport_session_released_confirmed=self.release_ok,
+            front_panel_local_confirmed=None,
+            warnings=(),
         )
 
 
@@ -425,11 +460,16 @@ async def test_lease_is_visible_while_remote_acquire_is_still_in_progress():
     release = asyncio.Event()
 
     class _SlowUxm(_FakeUxm):
-        async def acquire_remote_control(self) -> bool:
+        async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
             self.events.append("uxm-remote")
             entered.set()
             await release.wait()
-            return True
+            return BaseStationRemoteSessionResult(
+                adapter_id="uxm",
+                session_token="uxm-session",
+                acquired_confirmed=True,
+                warnings=(),
+            )
 
     events: list[str] = []
     lease = InstrumentTestLease(
@@ -510,6 +550,8 @@ async def test_monitoring_source_does_not_touch_hal_while_no_test_is_active(
 @pytest.mark.asyncio
 async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch):
     import app.services.test_case_runner as runner
+    from app.hal.base_station import BaseStationControlReleaseResult
+    from app.services.instrument_test_lease import InstrumentTestLeaseOutcome
 
     events: list[str] = []
 
@@ -537,35 +579,196 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
     async def _lease(purpose: str, **kwargs):
         validator = kwargs.get("validate_before_remote")
         assert getattr(validator, "validation_identity", None) == "formal-freeze"
+        assert kwargs.get("measurement_attempt_id") is None
         events.append(f"lease-enter:{purpose}")
+        outcome = InstrumentTestLeaseOutcome(
+            lease_id="lease-1",
+            measurement_attempt_id=None,
+        )
         try:
-            yield
+            yield outcome
         finally:
+            assert outcome.measurement_attempt_id == "attempt-1"
+            outcome.base_station_release = BaseStationControlReleaseResult(
+                measurement_attempt_id="attempt-1",
+                lease_id="lease-1",
+                adapter_id="cmw500",
+                session_token="session-1",
+                remote_session_acquired_confirmed=True,
+                transport_session_released_confirmed=True,
+                front_panel_local_confirmed=None,
+                warnings=("front-panel Local unconfirmed",),
+            )
             events.append("lease-exit")
+
+    def _begin(_db, _execution):
+        assert events[-1].startswith("lease-enter:")
+        events.append("attempt-begin")
+        return "attempt-1"
 
     async def _loop(_db, _execution_id, *, defer_report=False):
         assert defer_report is True
         events.append("case-loop")
-        return {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}}
+        return [
+            {
+                "id": "analysis",
+                "type": "MIMO_OTA_ANALYSIS",
+                "parameters": {},
+            },
+            {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}},
+        ]
 
-    async def _report_after_handoff(_db, _execution_id, _raw) -> None:
-        events.append("report-after-handoff")
+    def _persist_release(_db, _execution_id, *, attempt_id, outcome) -> None:
+        assert attempt_id == "attempt-1"
+        assert outcome.base_station_release is not None
+        events.append("release-persisted")
+
+    async def _formalize_after_release(_db, _execution_id, _raws) -> None:
+        events.append("formalization-after-release")
 
     monkeypatch.setattr(runner, "SessionLocal", _DB)
     monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "_begin_formal_measurement_attempt", _begin)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
-    monkeypatch.setattr(runner, "_run_deferred_case_report", _report_after_handoff)
+    monkeypatch.setattr(runner, "_persist_formal_measurement_release", _persist_release)
+    monkeypatch.setattr(
+        runner,
+        "_run_deferred_case_formalization",
+        _formalize_after_release,
+    )
 
     execution_id = "00000000-0000-0000-0000-000000000001"
     await runner._run_case(execution_id)
 
     assert events == [
         f"lease-enter:formal-case:{execution_id}",
+        "attempt-begin",
         "case-loop",
         "lease-exit",
-        "report-after-handoff",
+        "release-persisted",
+        "formalization-after-release",
         "db-close",
     ]
+
+
+@pytest.mark.asyncio
+async def test_formal_case_defers_analysis_and_report_as_one_ordered_bundle(
+    monkeypatch,
+):
+    import app.services.test_case_runner as runner
+
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000011"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000012"),
+        status="running",
+        config={
+            "step_descriptors": [
+                {"id": "measure", "type": "MIMO_OTA_MEASURE", "parameters": {}},
+                {
+                    "id": "analysis",
+                    "type": "MIMO_OTA_ANALYSIS",
+                    "parameters": {},
+                },
+                {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}},
+            ],
+            "phase_progress": [],
+        },
+    )
+    test_case = SimpleNamespace(id=execution.test_case_id)
+
+    class _Query:
+        def __init__(self, model):
+            self._model = model
+
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution if self._model is runner.TestExecution else test_case
+
+    class _DB:
+        def query(self, model):
+            return _Query(model)
+
+        def expire(self, *_args):
+            pass
+
+        def refresh(self, *_args):
+            pass
+
+        def commit(self):
+            pass
+
+    dispatched: list[str] = []
+
+    async def _dispatch(context):
+        dispatched.append(context.type)
+        return SimpleNamespace(status=SimpleNamespace(value="success"))
+
+    monkeypatch.setattr(runner, "build_step_context", lambda *_args: _args[-1])
+    monkeypatch.setattr(runner, "dispatch_step", _dispatch)
+    monkeypatch.setattr(runner, "flag_modified", lambda *_args: None)
+
+    bundle = await runner._run_case_loop(
+        _DB(),
+        execution.id,
+        defer_report=True,
+    )
+
+    assert dispatched == ["MIMO_OTA_MEASURE"]
+    assert [raw["type"] for raw in bundle] == [
+        "MIMO_OTA_ANALYSIS",
+        "MIMO_OTA_REPORT",
+    ]
+    assert execution.config["phase_progress"] == [
+        {"type": "MIMO_OTA_MEASURE", "status": "success"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_formal_case_rejects_non_terminal_analysis_report_sequence():
+    import app.services.test_case_runner as runner
+
+    execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000021"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000022"),
+        status="running",
+        config={
+            "step_descriptors": [
+                {
+                    "id": "analysis",
+                    "type": "MIMO_OTA_ANALYSIS",
+                    "parameters": {},
+                },
+                {"id": "measure", "type": "MIMO_OTA_MEASURE", "parameters": {}},
+                {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}},
+            ]
+        },
+    )
+    test_case = SimpleNamespace(id=execution.test_case_id)
+
+    class _Query:
+        def __init__(self, model):
+            self._model = model
+
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return execution if self._model is runner.TestExecution else test_case
+
+    class _DB:
+        def query(self, model):
+            return _Query(model)
+
+        def expire(self, *_args):
+            pass
+
+        def refresh(self, *_args):
+            pass
+
+    with pytest.raises(RuntimeError, match="ANALYSIS"):
+        await runner._run_case_loop(_DB(), execution.id, defer_report=True)
 
 
 @pytest.mark.asyncio
@@ -624,7 +827,7 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
 
     @asynccontextmanager
     async def _lease(_purpose, **_kwargs):
-        yield
+        yield SimpleNamespace(measurement_attempt_id=None)
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
@@ -710,7 +913,7 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
 
     @asynccontextmanager
     async def _lease(_purpose, **_kwargs):
-        yield
+        yield SimpleNamespace(measurement_attempt_id=None)
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):

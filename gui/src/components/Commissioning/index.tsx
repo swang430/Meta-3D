@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput, Switch, NumberInput, SimpleGrid } from '@mantine/core'
 import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconAlertTriangle } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
@@ -8,6 +9,11 @@ import type { SessionResponse, LabResolutionDetail } from './api'
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../../features/OperationalLab'
 import { fetchChannelAssets, type ChannelAsset } from '../../api/channelAssetService'
 import { parseChannelFrequencyIdentity } from '../../features/ChannelWorkbench/channelFrequencyIdentity'
+import { fetchReadiness } from '../../api/service'
+import {
+  compareFrozenCmwApproval,
+  readFrozenCmwApproval,
+} from '../TestCaseConfig/cmw500ReadinessTruth'
 
 const PHASE_STEPS = [
   { id: 'precheck', label: '系统预检', desc: '仪表状态与校准验证' },
@@ -48,6 +54,9 @@ export function CommissioningSandbox() {
   const [duplex, setDuplex] = useState<'fdd' | 'tdd'>('fdd')
   const [nrArfcn, setNrArfcn] = useState<number | string>(636666)
   const [lteDlEarfcn, setLteDlEarfcn] = useState<number | string>('')
+  const [lteTransmissionMode, setLteTransmissionMode] = (
+    useState<api.LteTransmissionMode>('TM3')
+  )
   const [subcarrierSpacingKhz, setSubcarrierSpacingKhz] = useState(30)
   const [theoreticalPeakMbps, setTheoreticalPeakMbps] = useState<number | string>('')
   const [uxmPowerDbmPerBw, setUxmPowerDbmPerBw] = useState(-15)
@@ -95,6 +104,16 @@ export function CommissioningSandbox() {
     beginWork,
     activeWork,
   } = useOperationalLab()
+  const cmwReadinessQuery = useQuery({
+    queryKey: ['cmw500-lte-2x2-readiness', labId ?? 'unselected'],
+    queryFn: () => fetchReadiness(labId!),
+    enabled: Boolean(labId) && Boolean(session),
+  })
+  const frozenCmwApproval = readFrozenCmwApproval(session?.config)
+  const frozenCmwApprovalDrift = compareFrozenCmwApproval(
+    cmwReadinessQuery.data?.cmw500_lte_2x2,
+    session?.config,
+  )
   // 外审 R3：在途硬件工作的唯一真值 = provider 的登记表（页面卸载不消失、
   // 并发各自计数，共享布尔会被先落定的那个提前放行）。本页是目前唯一登记方。
   const hardwareBusy = activeWork.length > 0
@@ -145,6 +164,7 @@ export function CommissioningSandbox() {
         subcarrierSpacingKhz: radioTechnology === 'nr5g' ? subcarrierSpacingKhz : undefined,
         nrArfcn: radioTechnology === 'nr5g' && typeof nrArfcn === 'number' ? nrArfcn : undefined,
         lteDlEarfcn: radioTechnology === 'lte' && typeof lteDlEarfcn === 'number' ? lteDlEarfcn : undefined,
+        lteTransmissionMode: radioTechnology === 'lte' ? lteTransmissionMode : undefined,
         theoreticalPeakThroughputMbps: radioTechnology === 'lte' && typeof theoreticalPeakMbps === 'number' ? theoreticalPeakMbps : undefined,
         uxmDlPowerDbmPerBw: radioTechnology === 'nr5g' ? uxmPowerDbmPerBw : undefined,
         f64InputRefDbm,
@@ -423,6 +443,14 @@ export function CommissioningSandbox() {
                       value={duplex} onChange={(value) => setDuplex(value === 'tdd' ? 'tdd' : 'fdd')} allowDeselect={false} />
                     <NumberInput label="LTE DL EARFCN" value={lteDlEarfcn}
                       onChange={setLteDlEarfcn} min={0} required />
+                    <Select label="LTE 传输模式"
+                      data={[...api.LTE_TRANSMISSION_MODES]}
+                      value={lteTransmissionMode}
+                      onChange={(value) => setLteTransmissionMode(
+                        (value ?? 'TM3') as api.LteTransmissionMode,
+                      )}
+                      allowDeselect={false}
+                      required />
                     <NumberInput label="LTE 理论峰值（可选）" suffix=" Mbps" value={theoreticalPeakMbps}
                       description="留空时绝对吞吐仍可用，ratio 与相关判决为 N/A"
                       onChange={setTheoreticalPeakMbps} min={0} />
@@ -607,6 +635,17 @@ export function CommissioningSandbox() {
               )}
             </Group>
           </Group>
+
+          {frozenCmwApproval && (
+            <Alert color={frozenCmwApprovalDrift ? 'yellow' : 'blue'} variant="light">
+              本次执行冻结的 CMW500 LTE 2×2 正式能力：
+              {frozenCmwApproval.enabled ? '已启用' : '未启用'}
+              {frozenCmwApproval.updated_at
+                ? ` · 授权时间 ${frozenCmwApproval.updated_at}`
+                : ''}
+              {frozenCmwApprovalDrift ? `。${frozenCmwApprovalDrift}` : ''}
+            </Alert>
+          )}
 
           <Divider my="sm" />
           <Switch

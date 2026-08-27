@@ -4,6 +4,7 @@ Replaces commissioning_service.phase4_analysis. Pure compute over the data
 already in TestExecution.measurements — no instruments touched.
 """
 import logging
+import math
 from typing import Any, Dict, List
 
 from app.services.mimo_ota.executors._helpers import (
@@ -19,6 +20,13 @@ from app.services.mimo_ota.rf_kpi_trust import rf_kpi_scope_is_verified
 from app.services.mimo_ota.quiet_zone_evidence import (
     quiet_zone_scope_is_formally_verified,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    base_station_expected_scope_from_evidence,
+    project_base_station_metrics_by_position,
+    MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
+)
+from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.test_execution import (
     IStepExecutor,
     StepExecutionContext,
@@ -55,6 +63,64 @@ class AnalysisExecutor(IStepExecutor):
                 error_message="No azimuth_results in measure phase output",
             )
 
+        raw_execution_config = getattr(context.test_execution, "config", None)
+        execution_config = (
+            raw_execution_config if isinstance(raw_execution_config, dict) else {}
+        )
+        base_station_evidence = execution_config.get(
+            BASE_STATION_EXECUTION_EVIDENCE_FIELD
+        )
+        frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
+        frozen_resolution = (
+            frozen_adapter.get("resolution")
+            if isinstance(frozen_adapter, dict)
+            else None
+        )
+        base_station_evidence_required = (
+            base_station_evidence is not None
+            or (
+                isinstance(frozen_resolution, dict)
+                and frozen_resolution.get("adapter") == "cmw500"
+            )
+        )
+        if base_station_evidence_required:
+            expected_base_station_config, expected_positions = (
+                base_station_expected_scope_from_evidence(base_station_evidence)
+            )
+            base_station_projection = (
+                project_base_station_metrics_by_position(
+                    base_station_evidence,
+                    expected_config=expected_base_station_config,
+                    expected_positions=expected_positions,
+                )
+                if expected_base_station_config is not None
+                else []
+            )
+        else:
+            expected_positions = []
+            base_station_projection = []
+        serialized_base_station_projection = [
+            {
+                "position": row["position"],
+                "dl_throughput_mbps": row[
+                    "dl_throughput_mbps"
+                ].model_dump(mode="json"),
+                "dl_bler_percent": row["dl_bler_percent"].model_dump(
+                    mode="json"
+                ),
+            }
+            for row in base_station_projection
+        ]
+        trusted_throughput = [
+            row["dl_throughput_mbps"].formal_value
+            for row in base_station_projection
+            if row["dl_throughput_mbps"].status == "trusted"
+        ]
+        base_station_throughput_unverified = (
+            base_station_evidence_required
+            and len(trusted_throughput) != len(expected_positions)
+        )
+
         frequency_consistency = measure.get("frequency_consistency")
         frequency_identity_unverified = (
             isinstance(frequency_consistency, dict)
@@ -71,7 +137,7 @@ class AnalysisExecutor(IStepExecutor):
         throughput_unverified = not (
             measure.get("throughput_verified") is True
             and throughput_scope_is_verified(measure)
-        )
+        ) or base_station_throughput_unverified
         rf_kpi_unverified = not rf_kpi_scope_is_verified(measure)
         quiet_zone_unverified = not quiet_zone_scope_is_formally_verified(precheck)
         if (
@@ -144,6 +210,7 @@ class AnalysisExecutor(IStepExecutor):
                 "rank_pass": None,
                 "qz_pass": None,
                 "margin_db": None,
+                "base_station_metric_projection": serialized_base_station_projection,
             }
             write_phase_result(context.test_execution, "analysis", result)
             context.test_execution.validation_pass = None
@@ -164,10 +231,24 @@ class AnalysisExecutor(IStepExecutor):
         result: Dict[str, Any] = {}
 
         # --- Throughput ---
-        tputs = [az["throughput_mbps"] for az in azimuth_results]
+        tputs = (
+            trusted_throughput
+            if base_station_evidence_required
+            else [az["throughput_mbps"] for az in azimuth_results]
+        )
         avg_tput = sum(tputs) / len(tputs)
-        peak = config.theoretical_peak_throughput_mbps
-        ratio = avg_tput / peak if peak is not None else None
+        peak = (
+            execution_config.get(MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD)
+            if base_station_evidence_required
+            else config.theoretical_peak_throughput_mbps
+        )
+        peak_is_usable = (
+            not isinstance(peak, bool)
+            and isinstance(peak, (int, float))
+            and math.isfinite(float(peak))
+            and float(peak) > 0.0
+        )
+        ratio = avg_tput / float(peak) if peak_is_usable else None
         tput_pass = (
             ratio >= criteria.min_throughput_ratio
             and avg_tput >= criteria.min_throughput_mbps
@@ -177,6 +258,7 @@ class AnalysisExecutor(IStepExecutor):
         result["avg_throughput_mbps"] = avg_tput
         result["throughput_ratio"] = ratio
         result["throughput_pass"] = tput_pass
+        result["base_station_metric_projection"] = serialized_base_station_projection
         if ratio is None:
             details.append(
                 f"Throughput: {avg_tput:.0f} Mbps; ratio N/A "

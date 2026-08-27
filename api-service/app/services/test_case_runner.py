@@ -75,6 +75,84 @@ RUNNER_MARKER = "test_case_runner"
 _RUNNING_TASKS: Dict[str, "asyncio.Task[None]"] = {}
 
 
+def _begin_formal_measurement_attempt(db, execution) -> str | None:
+    """Freeze the active CMW identity and switch its attempt before measurement I/O.
+
+    UXM keeps its existing execution path in P1-73C.  CMW is the newly admitted
+    adapter and therefore freezes its strict execution envelope after the outer
+    lease refreshes the transport identity but before the first measurement I/O.
+    """
+
+    frozen = (execution.config or {}).get(FREEZE_CONFIG_KEY)
+    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
+    if not isinstance(resolution, dict) or resolution.get("adapter") != "cmw500":
+        return None
+
+    test_case = (
+        db.query(TestCase).filter(TestCase.id == execution.test_case_id).first()
+    )
+    if test_case is None:
+        raise RuntimeError(
+            f"execution {execution.id} 的快照 TestCase 不存在，无法建立 CMW 测量证据"
+        )
+
+    from app.services.execution_scpi_evidence import (
+        begin_execution_base_station_measurement,
+    )
+
+    driver = (get_hal_service().drivers or {}).get("baseStation")
+    return begin_execution_base_station_measurement(
+        db,
+        execution,
+        test_case,
+        driver=driver,
+    )
+
+
+def _persist_formal_measurement_release(
+    db,
+    execution_id,
+    *,
+    attempt_id: str | None,
+    outcome,
+) -> None:
+    """Persist the actual outer-lease release before formalization is visible."""
+
+    from app.services.execution_scpi_evidence import (
+        persist_execution_base_station_release,
+    )
+
+    persist_execution_base_station_release(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+        outcome=outcome,
+    )
+
+
+def _record_formal_measurement_failure(
+    db,
+    execution_id,
+    *,
+    attempt_id: str | None,
+    outcome,
+    cancelled: bool,
+) -> None:
+    """Fail/cancel the exact attempt without guessing from the current pointer."""
+
+    from app.services.execution_scpi_evidence import (
+        record_execution_base_station_attempt_failure,
+    )
+
+    record_execution_base_station_attempt_failure(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+        outcome=outcome,
+        cancelled=cancelled,
+    )
+
+
 def _finalize_scpi_acceptance(execution):
     """P1-47C：仪器证据是正式通过的必要条件，不替代业务判定。"""
     from app.services.execution_scpi_evidence import (
@@ -500,8 +578,10 @@ async def _run_case(execution_id: UUID) -> None:
     # 但读日志时别把它当成"那个请求还在跑"：请求早返回了，执行还在后台。
     current_execution_id.set(str(execution_id))
     db = SessionLocal()
+    measurement_attempt_id: str | None = None
+    lease_outcome = None
     try:
-        deferred_report = None
+        deferred_formalization = None
         execution = (
             db.query(TestExecution)
             .filter(TestExecution.id == execution_id)
@@ -516,17 +596,60 @@ async def _run_case(execution_id: UUID) -> None:
             raise RuntimeError("formal execution is missing frozen baseStation adapter profile")
         async with instrument_test_lease(
             f"formal-case:{execution_id}",
+            measurement_attempt_id=None,
             validate_before_remote=build_frozen_base_station_validator(frozen),
-        ):
-            deferred_report = await _run_case_loop(
+        ) as lease_outcome:
+            # The lease has now acquired/refreshed the active transport identity.
+            # Freeze that identity before the first measurement operation.
+            measurement_attempt_id = _begin_formal_measurement_attempt(db, execution)
+            lease_outcome.measurement_attempt_id = measurement_attempt_id
+            deferred_formalization = await _run_case_loop(
                 db, execution_id, defer_report=True
             )
-        if deferred_report is not None:
-            await _run_deferred_case_report(db, execution_id, deferred_report)
+        _persist_formal_measurement_release(
+            db,
+            execution_id,
+            attempt_id=measurement_attempt_id,
+            outcome=lease_outcome,
+        )
+        if deferred_formalization is not None:
+            await _run_deferred_case_formalization(
+                db,
+                execution_id,
+                deferred_formalization,
+            )
+    except asyncio.CancelledError:
+        try:
+            _record_formal_measurement_failure(
+                db,
+                execution_id,
+                attempt_id=measurement_attempt_id,
+                outcome=lease_outcome,
+                cancelled=True,
+            )
+        except Exception:  # noqa: BLE001 — preserve cancellation, log failed audit write
+            logger.exception(
+                "[case-runner] execution %s 取消后的 measurement attempt 落库失败",
+                execution_id,
+            )
+        raise
     except Exception as e:  # noqa: BLE001
         logger.exception("[case-runner] execution %s 执行器异常: %s", execution_id, e)
         try:
             db.rollback()
+            try:
+                _record_formal_measurement_failure(
+                    db,
+                    execution_id,
+                    attempt_id=measurement_attempt_id,
+                    outcome=lease_outcome,
+                    cancelled=False,
+                )
+            except Exception:  # noqa: BLE001 — preserve the original business/release error
+                logger.exception(
+                    "[case-runner] execution %s 的 measurement attempt 失败落库失败",
+                    execution_id,
+                )
             ex = (
                 db.query(TestExecution)
                 .filter(TestExecution.id == execution_id).first()
@@ -610,7 +733,7 @@ async def _run_case(execution_id: UUID) -> None:
 
 async def _run_case_loop(
     db, execution_id: UUID, *, defer_report: bool = False
-) -> Optional[dict]:
+) -> Optional[list[dict]]:
     execution = (
         db.query(TestExecution).filter(TestExecution.id == execution_id).first()
     )
@@ -654,13 +777,18 @@ async def _run_case_loop(
             return
 
         d = _descriptor_from_dict(raw)
-        if defer_report and d.type == "MIMO_OTA_REPORT":
-            if index != len(descriptors) - 1:
-                raise RuntimeError("MIMO_OTA_REPORT 必须是执行链最后一个相位")
-            # REPORT 不触碰硬件。正式 PDF/内容与 completed 生命周期只能在
-            # F64/UXM 已成功交还 Local 后发布，消除交接失败/进程崩溃留下的
-            # “报告 completed、仪表仍 Remote”窗口。
-            return raw
+        if defer_report and d.type in {"MIMO_OTA_ANALYSIS", "MIMO_OTA_REPORT"}:
+            remaining = descriptors[index:]
+            remaining_types = [item.get("type") for item in remaining]
+            if remaining_types != ["MIMO_OTA_ANALYSIS", "MIMO_OTA_REPORT"]:
+                raise RuntimeError(
+                    "正式执行的末尾必须是连续 MIMO_OTA_ANALYSIS → "
+                    "MIMO_OTA_REPORT"
+                )
+            # ANALYSIS 和 REPORT 都不触碰硬件。二者作为一个正式化 bundle
+            # 延迟到 measurement lease 的真实 transport release 已落库后，
+            # 避免在租约内先永久写入 UNKNOWN，再只重建公开投影。
+            return remaining
         ctx = build_step_context(db, execution, test_case, d)
         result = await dispatch_step(ctx)
         phase_status = result.status.value
@@ -725,15 +853,20 @@ async def _run_case_loop(
     return None
 
 
-async def _run_deferred_case_report(
-    db, execution_id: UUID, raw: dict
+async def _run_deferred_case_formalization(
+    db, execution_id: UUID, raws: list[dict]
 ) -> None:
-    """在仪表租约成功退出后执行唯一的无硬件 REPORT 相位。"""
+    """在 measurement release 落库后依次执行 ANALYSIS → REPORT。"""
+    if [raw.get("type") for raw in raws] != [
+        "MIMO_OTA_ANALYSIS",
+        "MIMO_OTA_REPORT",
+    ]:
+        raise RuntimeError("deferred formalization bundle is not ANALYSIS → REPORT")
     execution = (
         db.query(TestExecution).filter(TestExecution.id == execution_id).first()
     )
     if execution is None:
-        raise RuntimeError(f"execution {execution_id} 在 REPORT 前不存在")
+        raise RuntimeError(f"execution {execution_id} 在正式化前不存在")
     db.expire(execution)
     db.refresh(execution)
     if execution.status != "running":
@@ -746,19 +879,26 @@ async def _run_deferred_case_report(
     if test_case is None:
         raise RuntimeError(f"execution {execution_id} 的快照 TestCase 不存在")
 
-    descriptor = _descriptor_from_dict(raw)
-    result = await dispatch_step(
-        build_step_context(db, execution, test_case, descriptor)
-    )
-    db.expire(execution)
-    db.refresh(execution)
-    cfg = dict(execution.config or {})
-    cfg.setdefault("phase_progress", []).append(
-        {"type": descriptor.type, "status": result.status.value}
-    )
-    execution.config = cfg
-    flag_modified(execution, "config")
-    db.commit()
+    final_result = None
+    final_descriptor = None
+    for raw in raws:
+        descriptor = _descriptor_from_dict(raw)
+        result = await dispatch_step(
+            build_step_context(db, execution, test_case, descriptor)
+        )
+        db.expire(execution)
+        db.refresh(execution)
+        cfg = dict(execution.config or {})
+        cfg.setdefault("phase_progress", []).append(
+            {"type": descriptor.type, "status": result.status.value}
+        )
+        execution.config = cfg
+        flag_modified(execution, "config")
+        db.commit()
+        final_result = result
+        final_descriptor = descriptor
+        if result.status.value != "success":
+            break
 
     db.expire(execution)
     db.refresh(execution)
@@ -767,12 +907,17 @@ async def _run_deferred_case_report(
         _finalize_scpi_acceptance(execution)
         cfg = dict(execution.config or {})
         terminal_status = "completed"
-        if result.status.value != "success":
+        if final_result is None or final_result.status.value != "success":
             terminal_status = "failed"
-            cfg["failed_phase"] = descriptor.type
+            failed_type = (
+                final_descriptor.type
+                if final_descriptor is not None
+                else "MIMO_OTA_ANALYSIS"
+            )
+            cfg["failed_phase"] = failed_type
             cfg["error_message"] = (
-                result.error_message
-                or "REPORT 未发布正式执行终态，报告保持不可用"
+                getattr(final_result, "error_message", None)
+                or f"{failed_type} 未发布正式执行终态"
             )
         won = _cas_case_execution_terminal(
             db,
@@ -785,6 +930,14 @@ async def _run_deferred_case_report(
         )
         if won and terminal_status == "failed":
             emit_execution_failed_alert(execution.id)
+
+
+async def _run_deferred_case_report(db, execution_id: UUID, raw: dict) -> None:
+    """Deprecated compatibility wrapper; formal execution uses the bundle API."""
+
+    raise RuntimeError(
+        "REPORT cannot be formalized alone; defer ANALYSIS and REPORT together"
+    )
 
 
 def _descriptor_from_dict(raw: dict):

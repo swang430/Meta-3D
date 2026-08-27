@@ -6,9 +6,11 @@
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 import hashlib
 import json
-from typing import Any, Optional
+from typing import Any, Literal, Optional
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm.attributes import flag_modified
@@ -18,6 +20,15 @@ from app.hal.base import (
     redact_instrument_command_text,
     redact_instrument_log_text,
 )
+from app.hal.base_station import (
+    BaseStationCleanupResult,
+    BaseStationControlReleaseResult,
+    BaseStationIdentity,
+    BaseStationMeasurementWindow,
+    BaseStationRequestedConfig,
+)
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfileResolution
+from app.models.test_plan import TestExecution
 from app.hal.scpi_evidence import (
     EvidenceLevel,
     EvidenceVerdict,
@@ -26,6 +37,19 @@ from app.hal.scpi_evidence import (
     ScpiExchangeRef,
     exchange_matches_catalog_role,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    BaseStationControlReleaseEvidence,
+    BaseStationExecutionEvidence,
+    BaseStationMeasurementWindowEvidence,
+    FrozenPayloadSnapshot,
+    PositionSnapshot,
+    base_station_attempt_lifecycle_is_complete,
+    canonical_snapshot_digest,
+    parse_base_station_execution_evidence,
+)
+from app.services.base_station_adapter_profile import CMW_FORMAL_CAPABILITY_KEY
+from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
 
 
 _SENSITIVE_KEYS = {
@@ -140,6 +164,661 @@ def _save(execution, evidence: ExecutionScpiEvidence) -> None:
     cfg["scpi_evidence"] = evidence.model_dump(mode="json")
     execution.config = cfg
     flag_modified(execution, "config")
+
+
+def _base_station_driver_identity(
+    driver,
+    *,
+    adapter: Literal["uxm", "cmw500"],
+    execution_mode: Literal["real", "simulated"],
+) -> BaseStationIdentity:
+    """Read only the already-captured driver identity; never query hardware here."""
+
+    if getattr(driver, "adapter_id", None) != adapter:
+        raise ValueError("loaded driver adapter does not match frozen adapter")
+    simulated = getattr(driver, "simulated", False) is True
+    if execution_mode == "real":
+        if simulated:
+            raise ValueError("real execution cannot use a simulated baseStation driver")
+        if adapter == "cmw500":
+            if getattr(driver, "identity_snapshot_verified", False) is not True:
+                raise ValueError("CMW500 driver identity snapshot is not verified")
+            getter = getattr(driver, "get_base_station_identity", None)
+            identity = getter() if callable(getter) else None
+        else:
+            capture = getattr(driver, "capture_evidence_environment", None)
+            environment = capture() if callable(capture) else None
+            if (
+                environment is None
+                or getattr(environment, "captured_from_live_connection", False)
+                is not True
+            ):
+                raise ValueError("UXM driver identity snapshot is not verified")
+            identity = BaseStationIdentity(
+                adapter_id="uxm",
+                model=getattr(environment, "model", None),
+                firmware_version=getattr(environment, "firmware_version", None),
+                options=tuple(getattr(environment, "options", ()) or ()),
+            )
+        if not isinstance(identity, BaseStationIdentity):
+            raise ValueError("loaded driver did not provide a baseStation identity")
+        if identity.adapter_id != adapter:
+            raise ValueError("driver identity adapter does not match frozen adapter")
+        return identity
+
+    if not simulated:
+        raise ValueError("simulated execution requires the authoritative mock driver")
+    return BaseStationIdentity(
+        adapter_id=adapter,
+        model=f"simulated:{type(driver).__name__}",
+        firmware_version=None,
+        options=(),
+    )
+
+
+def _initial_base_station_execution_evidence(
+    execution,
+    *,
+    frozen_adapter: dict[str, Any],
+    requested_config: BaseStationRequestedConfig,
+    requested_positions: list[dict[str, Any]],
+    driver,
+) -> BaseStationExecutionEvidence:
+    """Build the immutable evidence envelope from execution/server-owned sources."""
+
+    if not isinstance(frozen_adapter, dict):
+        raise ValueError("frozen baseStation adapter snapshot is missing")
+    frozen_digest = frozen_adapter.get("digest")
+    frozen_payload = {key: value for key, value in frozen_adapter.items() if key != "digest"}
+    if (
+        not isinstance(frozen_digest, str)
+        or canonical_snapshot_digest(frozen_payload) != frozen_digest
+    ):
+        raise ValueError("frozen baseStation adapter digest mismatch")
+    try:
+        resolution = BaseStationAdapterProfileResolution.model_validate(
+            frozen_adapter.get("resolution")
+        )
+    except Exception as exc:
+        raise ValueError("frozen baseStation adapter resolution is invalid") from exc
+    if resolution.adapter not in {"uxm", "cmw500"}:
+        raise ValueError("unbound baseStation diagnostics have no execution adapter")
+    if not isinstance(requested_config, BaseStationRequestedConfig):
+        raise TypeError("requested_config must be BaseStationRequestedConfig")
+
+    adapter = resolution.adapter
+    execution_mode = resolution.execution_mode
+    identity = _base_station_driver_identity(
+        driver,
+        adapter=adapter,
+        execution_mode=execution_mode,
+    )
+    connection_id = frozen_adapter.get("instrument_connection_id")
+    if not isinstance(connection_id, str) or not connection_id:
+        raise ValueError("frozen baseStation connection identity is missing")
+
+    route_snapshot = None
+    if adapter == "cmw500":
+        approval = frozen_adapter.get(CMW_FORMAL_CAPABILITY_KEY)
+        if not isinstance(approval, dict):
+            raise ValueError("frozen CMW500 formal capability approval is missing")
+        if approval.get("instrument_connection_id") != connection_id:
+            raise ValueError("frozen CMW500 approval connection mismatch")
+        formal_approval = {
+            "schema_version": 1,
+            "status": "configured",
+            "instrument_connection_id": connection_id,
+            "capability": "cmw500_lte_2x2",
+            "enabled": approval.get("enabled"),
+            "updated_at": approval.get("updated_at"),
+        }
+        if resolution.profile is None:  # pragma: no cover - model invariant
+            raise ValueError("frozen CMW500 route profile is missing")
+        route_payload = resolution.profile.lte_2x2_internal_route.model_dump(
+            mode="json"
+        )
+        route_snapshot = {
+            "payload": route_payload,
+            "digest": canonical_snapshot_digest(route_payload),
+        }
+    else:
+        formal_approval = {
+            "schema_version": 1,
+            "status": "not_applicable",
+            "instrument_connection_id": None,
+            "capability": None,
+            "enabled": None,
+            "updated_at": None,
+        }
+
+    config_payload = asdict(requested_config)
+    positions = [PositionSnapshot.model_validate(item) for item in requested_positions]
+    return BaseStationExecutionEvidence.model_validate(
+        {
+            "schema_version": 1,
+            "execution_id": str(execution.id),
+            "adapter": adapter,
+            "execution_mode": execution_mode,
+            "identity": {
+                "adapter": adapter,
+                "model": identity.model,
+                "firmware_version": identity.firmware_version,
+                "options": sorted(set(identity.options)),
+                "instrument_connection_id": connection_id,
+                "adapter_profile_digest": (
+                    frozen_digest if adapter == "cmw500" else None
+                ),
+            },
+            "formal_capability_approval": formal_approval,
+            "mode": "dispatch",
+            "config_confirmed": False,
+            "route_confirmed": False if adapter == "cmw500" else None,
+            "requested_config": {
+                "payload": config_payload,
+                "digest": canonical_snapshot_digest(config_payload),
+            },
+            "requested_route": route_snapshot,
+            "applied_route": None,
+            "requested_positions": positions,
+            "current_measurement_attempt_id": None,
+            "current_measurement_attempt_state": None,
+            "measurement_windows": [],
+            "control_releases": [],
+            "exchange_ids": [],
+        }
+    )
+
+
+def initialize_base_station_execution_evidence(
+    execution,
+    *,
+    frozen_adapter: dict[str, Any],
+    requested_config: BaseStationRequestedConfig,
+    requested_positions: list[dict[str, Any]],
+    driver,
+) -> dict[str, Any]:
+    """Persist one immutable execution scope without clearing prior attempts."""
+
+    candidate = _initial_base_station_execution_evidence(
+        execution,
+        frozen_adapter=frozen_adapter,
+        requested_config=requested_config,
+        requested_positions=requested_positions,
+        driver=driver,
+    )
+    existing_raw = load_base_station_execution_evidence(execution)
+    if existing_raw is not None:
+        existing = BaseStationExecutionEvidence.model_validate(existing_raw)
+        immutable_fields = (
+            "schema_version",
+            "execution_id",
+            "adapter",
+            "execution_mode",
+            "identity",
+            "formal_capability_approval",
+            "mode",
+            "requested_config",
+            "requested_route",
+            "requested_positions",
+        )
+        if any(
+            getattr(existing, field) != getattr(candidate, field)
+            for field in immutable_fields
+        ):
+            raise ValueError("baseStation evidence immutable scope mismatch")
+        return existing.model_dump(mode="json")
+    return save_base_station_execution_evidence(execution, candidate)
+
+
+def _append_unique_exchange_ids(
+    evidence: BaseStationExecutionEvidence,
+    exchange_ids: list[str],
+) -> None:
+    for exchange_id in exchange_ids:
+        if not isinstance(exchange_id, str) or not exchange_id:
+            raise ValueError("baseStation exchange ids must be non-empty strings")
+        if exchange_id not in evidence.exchange_ids:
+            evidence.exchange_ids.append(exchange_id)
+
+
+def _current_running_base_station_evidence(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+) -> tuple[Any, BaseStationExecutionEvidence]:
+    execution = _locked_execution(db, execution_id)
+    raw = load_base_station_execution_evidence(execution)
+    if raw is None:
+        raise ValueError("canonical base station execution evidence is missing")
+    evidence = BaseStationExecutionEvidence.model_validate(raw)
+    if (
+        evidence.current_measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_state != "running"
+    ):
+        raise ValueError("measurement attempt is not the current running attempt")
+    return execution, evidence
+
+
+def confirm_base_station_configuration_and_route(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    config_confirmed: bool,
+    config_exchange_ids: list[str],
+    route_result=None,
+) -> None:
+    """Persist adapter readback truth without deriving success from no exception."""
+
+    execution, evidence = _current_running_base_station_evidence(
+        db, execution_id, attempt_id=attempt_id
+    )
+    evidence.config_confirmed = config_confirmed is True
+    _append_unique_exchange_ids(evidence, list(config_exchange_ids))
+
+    if evidence.adapter == "cmw500":
+        from app.hal.cmw500_base_station import BaseStationRouteResult
+
+        if route_result is not None and not isinstance(
+            route_result, BaseStationRouteResult
+        ):
+            raise TypeError("route_result must be BaseStationRouteResult")
+        applied = route_result.applied if route_result is not None else None
+        applied_snapshot = (
+            {
+                "payload": applied,
+                "digest": canonical_snapshot_digest(applied),
+            }
+            if isinstance(applied, dict)
+            else None
+        )
+        evidence.applied_route = (
+            FrozenPayloadSnapshot.model_validate(applied_snapshot)
+            if applied_snapshot is not None
+            else None
+        )
+        evidence.route_confirmed = (
+            route_result is not None
+            and route_result.confirmed is True
+            and route_result.requested
+            == (
+                evidence.requested_route.payload
+                if evidence.requested_route is not None
+                else None
+            )
+            and applied
+            == (
+                evidence.requested_route.payload
+                if evidence.requested_route is not None
+                else None
+            )
+        )
+        if route_result is not None:
+            _append_unique_exchange_ids(evidence, list(route_result.exchange_ids))
+    elif route_result is not None:
+        raise ValueError("UXM evidence must not carry a CMW500 route result")
+
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
+def append_base_station_measurement_window(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    position: dict[str, Any],
+    ue_link_state: Literal["connected"],
+    window: BaseStationMeasurementWindow,
+    cleanup: BaseStationCleanupResult,
+) -> None:
+    """Append one driver-native window bound to current attempt and active lease."""
+
+    if not isinstance(lease_identity, ActiveBaseStationLeaseIdentity):
+        raise TypeError("lease_identity must be ActiveBaseStationLeaseIdentity")
+    if not isinstance(window, BaseStationMeasurementWindow):
+        raise TypeError("window must be BaseStationMeasurementWindow")
+    if not isinstance(cleanup, BaseStationCleanupResult):
+        raise TypeError("cleanup must be BaseStationCleanupResult")
+    if (
+        lease_identity.measurement_attempt_id != attempt_id
+        or not lease_identity.lease_id
+        or not lease_identity.session_token
+    ):
+        raise ValueError("active lease identity does not match measurement attempt")
+
+    execution, evidence = _current_running_base_station_evidence(
+        db, execution_id, attempt_id=attempt_id
+    )
+    if lease_identity.adapter_id != evidence.adapter:
+        raise ValueError("active lease adapter does not match execution evidence")
+    parsed_position = PositionSnapshot.model_validate(position)
+    if parsed_position not in evidence.requested_positions:
+        raise ValueError("measurement window position was not requested")
+    if any(item.window_id == window.window_id for item in evidence.measurement_windows):
+        raise ValueError("duplicate measurement window id")
+    if window.completed_at is None:
+        raise ValueError("measurement window completion is missing")
+
+    lifecycle_exchange_ids: list[str] = []
+    for item in window.evidence:
+        for exchange_id in item.exchange_ids:
+            if exchange_id in lifecycle_exchange_ids:
+                raise ValueError("measurement window exchange ids must be unique")
+            lifecycle_exchange_ids.append(exchange_id)
+    _append_unique_exchange_ids(evidence, lifecycle_exchange_ids)
+
+    metrics = window.metrics
+    metric_rows = {
+        "dl_throughput_mbps": {
+            "measurement_attempt_id": attempt_id,
+            "session_token": lease_identity.session_token,
+            "value": (
+                metrics.dl_throughput_mbps
+                if metrics.kpi_valid.get("dl_throughput") is True
+                else None
+            ),
+            "unit": "Mbps",
+            "exchange_ids": lifecycle_exchange_ids,
+        },
+        "dl_bler_percent": {
+            "measurement_attempt_id": attempt_id,
+            "session_token": lease_identity.session_token,
+            "value": (
+                metrics.dl_bler
+                if metrics.kpi_valid.get("dl_bler") is True
+                else None
+            ),
+            "unit": "%",
+            "exchange_ids": lifecycle_exchange_ids,
+        },
+    }
+    evidence.measurement_windows.append(
+        BaseStationMeasurementWindowEvidence.model_validate(
+            {
+                "window_id": window.window_id,
+                "measurement_attempt_id": attempt_id,
+                "lease_id": lease_identity.lease_id,
+                "adapter": evidence.adapter,
+                "session_token": lease_identity.session_token,
+                "config_digest": evidence.requested_config.digest,
+                "route_digest": (
+                    evidence.requested_route.digest
+                    if evidence.requested_route is not None
+                    else None
+                ),
+                "position": parsed_position,
+                "ue_link_state": ue_link_state,
+                "started_at": window.started_at,
+                "completed_at": window.completed_at,
+                "preclear_off_confirmed": window.preclear_off_confirmed is True,
+                "running_confirmed": window.running_confirmed is True,
+                "ready_confirmed": window.ready_confirmed is True,
+                "closed_off_confirmed": window.closed_off_confirmed is True,
+                "cleanup": {
+                    "stop_signaling_confirmed": (
+                        cleanup.stop_signaling_confirmed is True
+                    ),
+                    "safe_idle_confirmed": cleanup.safe_idle_confirmed is True,
+                    "warnings": list(cleanup.warnings),
+                },
+                "lifecycle_exchange_ids": lifecycle_exchange_ids,
+                "metrics": metric_rows,
+            }
+        )
+    )
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
+def save_base_station_execution_evidence(
+    execution,
+    evidence: BaseStationExecutionEvidence | dict[str, Any],
+) -> dict[str, Any]:
+    """Persist only a canonical, execution-bound server evidence snapshot."""
+
+    parsed = BaseStationExecutionEvidence.model_validate(evidence)
+    if parsed.execution_id != str(execution.id):
+        raise ValueError("base station evidence execution_id mismatch")
+    normalized = parsed.model_dump(mode="json")
+    cfg = dict(execution.config or {})
+    cfg[BASE_STATION_EXECUTION_EVIDENCE_FIELD] = normalized
+    execution.config = cfg
+    flag_modified(execution, "config")
+    return normalized
+
+
+def load_base_station_execution_evidence(execution) -> dict[str, Any] | None:
+    """Read brownfield rows strictly; malformed or cross-execution data is unknown."""
+
+    cfg = execution.config if isinstance(execution.config, dict) else {}
+    parsed = parse_base_station_execution_evidence(
+        cfg.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+    )
+    if parsed is None or parsed.get("execution_id") != str(execution.id):
+        return None
+    return parsed
+
+
+def _locked_execution(db, execution_id):
+    execution = (
+        db.query(TestExecution)
+        .filter(TestExecution.id == execution_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if execution is None:
+        raise ValueError("test execution not found")
+    return execution
+
+
+def begin_base_station_measurement_attempt(db, execution_id) -> str:
+    """Lock the execution and switch current truth before any MEASURE I/O."""
+
+    execution = _locked_execution(db, execution_id)
+    raw = load_base_station_execution_evidence(execution)
+    if raw is None:
+        raise ValueError("canonical base station execution evidence is missing")
+    evidence = BaseStationExecutionEvidence.model_validate(raw)
+    if evidence.current_measurement_attempt_state == "running":
+        raise ValueError("base station measurement attempt is already running")
+    attempt_id = str(uuid4())
+    evidence.current_measurement_attempt_id = attempt_id
+    evidence.current_measurement_attempt_state = "running"
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+    return attempt_id
+
+
+def set_base_station_measurement_attempt_state(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    state: Literal["completed", "failed", "cancelled"],
+) -> None:
+    """Finalize only the execution's still-current server-owned attempt."""
+
+    execution = _locked_execution(db, execution_id)
+    raw = load_base_station_execution_evidence(execution)
+    if raw is None:
+        raise ValueError("canonical base station execution evidence is missing")
+    evidence = BaseStationExecutionEvidence.model_validate(raw)
+    if (
+        evidence.current_measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_state != "running"
+    ):
+        raise ValueError("measurement attempt is not the current running attempt")
+    evidence.current_measurement_attempt_state = state
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
+def append_base_station_control_release(
+    db,
+    execution_id,
+    result: BaseStationControlReleaseResult,
+) -> None:
+    """Append one actual lease-owner result without replacing prior audit rows."""
+
+    if not isinstance(result, BaseStationControlReleaseResult):
+        raise TypeError("result must be BaseStationControlReleaseResult")
+    execution = _locked_execution(db, execution_id)
+    raw = load_base_station_execution_evidence(execution)
+    if raw is None:
+        raise ValueError("canonical base station execution evidence is missing")
+    evidence = BaseStationExecutionEvidence.model_validate(raw)
+    candidate = {
+        "measurement_attempt_id": result.measurement_attempt_id,
+        "lease_id": result.lease_id,
+        "adapter_id": result.adapter_id,
+        "session_token": result.session_token,
+        "remote_session_acquired_confirmed": (
+            result.remote_session_acquired_confirmed
+        ),
+        "transport_session_released_confirmed": (
+            result.transport_session_released_confirmed
+        ),
+        "front_panel_local_confirmed": result.front_panel_local_confirmed,
+        "warnings": list(result.warnings),
+    }
+    same_lease = [
+        item
+        for item in evidence.control_releases
+        if item.lease_id == result.lease_id
+    ]
+    if same_lease:
+        if len(same_lease) != 1 or same_lease[0].model_dump(mode="json") != candidate:
+            raise ValueError("conflicting control release for lease_id")
+        return
+    evidence.control_releases.append(
+        BaseStationControlReleaseEvidence.model_validate(candidate)
+    )
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
+def begin_execution_base_station_measurement(
+    db,
+    execution,
+    test_case,
+    *,
+    driver,
+) -> str | None:
+    """Create the CMW evidence scope after acquire and before measurement I/O.
+
+    P1-73C does not rewrite the established UXM evidence path.  A frozen CMW
+    execution, however, cannot enter measurement I/O until its active transport
+    identity, immutable request scope, and server-owned attempt id are committed.
+    """
+
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
+    )
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.mimo_ota.executors.measure import (
+        _build_pcell_requested_config,
+    )
+
+    frozen = (execution.config or {}).get(FREEZE_CONFIG_KEY)
+    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
+    if not isinstance(resolution, dict) or resolution.get("adapter") != "cmw500":
+        return None
+    config = MIMOOTAConfiguration.model_validate(test_case.configuration)
+    execution_config = dict(execution.config or {})
+    frozen_peak = config.theoretical_peak_throughput_mbps
+    if MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD in execution_config:
+        if (
+            execution_config[MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD]
+            != frozen_peak
+        ):
+            raise ValueError("frozen theoretical peak changed within execution")
+    else:
+        execution_config[MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD] = frozen_peak
+        execution.config = execution_config
+    initialize_base_station_execution_evidence(
+        execution,
+        frozen_adapter=frozen,
+        requested_config=_build_pcell_requested_config(config),
+        requested_positions=[
+            {"azimuth_deg": float(azimuth), "elevation_deg": 0.0}
+            for azimuth in config.azimuths_deg
+        ],
+        driver=driver,
+    )
+    attempt_id = begin_base_station_measurement_attempt(db, execution.id)
+    db.commit()
+    return attempt_id
+
+
+def persist_execution_base_station_release(
+    db,
+    execution_id,
+    *,
+    attempt_id: str | None,
+    outcome,
+) -> None:
+    """Append the actual lease release and finalize only its exact attempt."""
+
+    if attempt_id is None:
+        return
+    release = getattr(outcome, "base_station_release", None)
+    if release is None:
+        raise RuntimeError("CMW measurement lease did not produce control release evidence")
+    append_base_station_control_release(db, execution_id, release)
+    execution = (
+        db.query(TestExecution).filter(TestExecution.id == execution_id).first()
+    )
+    execution_status = getattr(execution, "status", None)
+    if (
+        execution_status == "running"
+        and release.transport_session_released_confirmed is True
+        and base_station_attempt_lifecycle_is_complete(
+            load_base_station_execution_evidence(execution), attempt_id
+        )
+    ):
+        state = "completed"
+    elif execution_status == "cancelled":
+        state = "cancelled"
+    else:
+        state = "failed"
+    set_base_station_measurement_attempt_state(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+        state=state,
+    )
+    db.commit()
+    if release.transport_session_released_confirmed is not True:
+        raise RuntimeError("CMW measurement transport release is unconfirmed")
+
+
+def record_execution_base_station_attempt_failure(
+    db,
+    execution_id,
+    *,
+    attempt_id: str | None,
+    outcome,
+    cancelled: bool,
+) -> None:
+    """Fail/cancel the supplied attempt without re-reading a mutable pointer."""
+
+    if attempt_id is None:
+        return
+    db.rollback()
+    release = getattr(outcome, "base_station_release", None)
+    if release is not None:
+        append_base_station_control_release(db, execution_id, release)
+    set_base_station_measurement_attempt_state(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+        state="cancelled" if cancelled else "failed",
+    )
+    db.commit()
 
 
 def _load_provenance(execution) -> dict[str, dict[str, Any]]:

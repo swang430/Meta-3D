@@ -32,6 +32,7 @@ import asyncio
 import inspect
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -98,6 +99,34 @@ async def _reconfigure_rrc_if_supported(
 
 class _CaSetupBlocked(RuntimeError):
     """Carry a CA setup blocker through cleanup before building the result."""
+
+
+@dataclass(frozen=True)
+class _BaseStationSample:
+    """One adapter-native sample plus its optional confirmed lifecycle window."""
+
+    metrics: ThroughputMetrics
+    window: Any | None
+    exchanges: tuple[Any, ...]
+
+
+class _BaseStationWindowBlocked(RuntimeError):
+    """Carry an unconfirmed native window through shared chamber cleanup."""
+
+    def __init__(self, window: Any):
+        self.window = window
+        super().__init__(
+            "CMW500 Extended BLER lifecycle was not confirmed: "
+            f"{window.reason}"
+        )
+
+
+@dataclass(frozen=True)
+class _CmwFormalAttemptContext:
+    frozen_adapter: Dict[str, Any]
+    attempt_id: str
+    lease_identity: Any
+    simulated_diagnostic: bool
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -388,10 +417,10 @@ def _build_pcell_cell_config(
         "mimo_layers": config.mimo_layers,
         "dl_power_dbm": config.target_tx_power_dbm,
     }
-    # 整带宽口径优先（2026-08-07）。给了就由驱动**只走** `:DL:POWer:CHANnel`，
-    # 上面那条 dBm/SCS 的 `dl_power_dbm` 在驱动里被跳过 —— 这里仍然照常放进去，
-    # 是为了让 payload 保留"如果走 EPRE 口径会是多少"的审计痕迹，
-    # **不是**让驱动两条都发（驱动侧是 if/elif，见 uxm_base_station 第 8 节）。
+    # UXM 整带宽口径优先（2026-08-07）：给了就由 UXM 驱动**只走**
+    # `:DL:POWer:CHANnel`，上面的 dBm/SCS 仅保留审计痕迹（UXM 驱动侧是
+    # if/elif，见 uxm_base_station 第 8 节）。CMW 不消费这个 UXM 专属字段，
+    # 只按手册写入并回读通用 `dl_power_dbm` 的 PCC RS-EPRE。
     if config.uxm_dl_power_dbm_per_bw is not None:
         cell_cfg["dl_power_dbm_per_bw"] = config.uxm_dl_power_dbm_per_bw
     # 可选字段: 仅 TestCase 显式给 (非 None) 才驱动, 否则保持 HAL profile (backward-compat)
@@ -430,6 +459,11 @@ def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
         duplex=pcell.duplex,
         nr_arfcn=nr_arfcn,
         lte_dl_earfcn=lte_dl_earfcn,
+        lte_transmission_mode=(
+            pcell.lte_transmission_mode
+            if pcell.radio_technology == "lte"
+            else None
+        ),
         subcarrier_spacing_khz=pcell.subcarrier_spacing_khz,
         mimo_layers=config.mimo_layers,
         downlink_power_dbm=config.target_tx_power_dbm,
@@ -530,9 +564,22 @@ def _formal_mac_configuration_blocker(base_station) -> Optional[str]:
     ):
         return (
             "当前基站适配器尚未开放正式 MAC 吞吐配置能力；"
-            "为避免沿用旧调度器/FRC 状态，本次测量在采样前中止。"
+            "为避免沿用旧调度器/FRC 状态，本次结果不得进入正式 KPI。"
         )
     return None
+
+
+def _formal_base_station_config_confirmed(
+    base_station: Any,
+    *,
+    pcell_confirmed: bool,
+) -> bool:
+    """Do not let a confirmed PCell hide an unconfigured formal MAC scope."""
+
+    return (
+        pcell_confirmed is True
+        and _formal_mac_configuration_blocker(base_station) is None
+    )
 
 
 
@@ -610,6 +657,141 @@ class MeasureExecutor(IStepExecutor):
             return None
         numeric = float(value)
         return numeric if math.isfinite(numeric) else None
+
+    @staticmethod
+    async def _measure_base_station_samples(
+        base_station: Any,
+        *,
+        window_s: float,
+        throughput_scope: str,
+        requested_sample_count: int,
+    ) -> List[_BaseStationSample]:
+        """Select the vendor-native window without borrowing another dialect.
+
+        CMW500 formal LTE uses exactly one independently bounded Extended BLER
+        window per requested position. UXM retains the existing repeated-window
+        behavior until its own confirmed common-window adapter is introduced.
+        """
+
+        from app.hal.scpi_evidence import capture_scpi_exchanges
+
+        if (
+            getattr(base_station, "adapter_id", None) == "cmw500"
+            and getattr(base_station, "simulated", False) is not True
+        ):
+            window = await base_station.measure_base_station_window(
+                window_s,
+                throughput_scope=throughput_scope,
+            )
+            if window.confirmed is not True:
+                raise _BaseStationWindowBlocked(window)
+            return [
+                _BaseStationSample(
+                    metrics=window.metrics,
+                    window=window,
+                    exchanges=(),
+                )
+            ]
+
+        samples: List[_BaseStationSample] = []
+        for _ in range(requested_sample_count):
+            with capture_scpi_exchanges() as exchanges:
+                metrics = await base_station.measure_throughput_window(
+                    window_s,
+                    throughput_scope=throughput_scope,
+                )
+            samples.append(
+                _BaseStationSample(
+                    metrics=metrics,
+                    window=None,
+                    exchanges=tuple(exchanges),
+                )
+            )
+        return samples
+
+    @staticmethod
+    def _cmw_formal_attempt_context(
+        context: StepExecutionContext,
+        base_station: Any,
+        *,
+        duplex: str | None,
+        config_mode: str,
+    ) -> _CmwFormalAttemptContext | None:
+        """Resolve only server-owned frozen/attempt/lease truth before CMW I/O."""
+
+        if getattr(base_station, "adapter_id", None) != "cmw500":
+            return None
+
+        from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+        from app.services.execution_scpi_evidence import (
+            load_base_station_execution_evidence,
+        )
+        from app.services.instrument_test_lease import (
+            active_base_station_lease_identity,
+        )
+        from app.services.mimo_ota.base_station_execution_evidence import (
+            BaseStationExecutionEvidence,
+        )
+
+        execution_config = (
+            context.test_execution.config
+            if isinstance(context.test_execution.config, dict)
+            else {}
+        )
+        frozen = execution_config.get(FREEZE_CONFIG_KEY)
+        if not isinstance(frozen, dict):
+            raise RuntimeError("CMW500 execution is missing its frozen adapter profile")
+        resolution = frozen.get("resolution")
+        execution_mode = (
+            resolution.get("execution_mode")
+            if isinstance(resolution, dict)
+            else None
+        )
+        simulated_diagnostic = execution_mode == "simulated"
+        if simulated_diagnostic:
+            if getattr(base_station, "simulated", False) is not True:
+                raise RuntimeError(
+                    "CMW500 simulated execution is not using the authoritative mock"
+                )
+        else:
+            evaluator = getattr(
+                base_station, "evaluate_lte_2x2_formal_capability", None
+            )
+            if not callable(evaluator):
+                raise RuntimeError("CMW500 driver has no formal capability evaluator")
+            decision = evaluator(
+                frozen,
+                duplex=str(duplex or "").lower(),
+                config_mode=config_mode,
+            )
+            if decision.ready is not True and getattr(decision, "status", None) not in {
+                "disabled",
+                "diagnostic",
+            }:
+                raise RuntimeError(
+                    f"CMW500 formal capability is not ready: {decision.reason}"
+                )
+
+        raw_evidence = load_base_station_execution_evidence(context.test_execution)
+        if raw_evidence is None:
+            raise RuntimeError("CMW500 execution evidence is missing before MEASURE")
+        evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
+        attempt_id = evidence.current_measurement_attempt_id
+        if not attempt_id or evidence.current_measurement_attempt_state != "running":
+            raise RuntimeError("CMW500 current measurement attempt is not running")
+        lease_identity = active_base_station_lease_identity()
+        if (
+            lease_identity is None
+            or lease_identity.measurement_attempt_id != attempt_id
+            or lease_identity.adapter_id != "cmw500"
+        ):
+            raise RuntimeError("CMW500 active lease is not bound to the current attempt")
+        return _CmwFormalAttemptContext(
+            frozen_adapter=frozen,
+            attempt_id=attempt_id,
+            lease_identity=lease_identity,
+            simulated_diagnostic=simulated_diagnostic,
+        )
 
     @staticmethod
     async def _configure_requested_secondary_cells(
@@ -940,6 +1122,12 @@ class MeasureExecutor(IStepExecutor):
                 status=StepExecutionStatus.FAILED,
                 error_message="positioner + baseStation drivers required (HAL)",
             )
+        cmw_attempt = self._cmw_formal_attempt_context(
+            context,
+            base_station,
+            duplex=pcell.duplex,
+            config_mode=config.base_station_config_mode,
+        )
         stop_generation_reader = getattr(
             positioner, "operator_stop_generation", None
         )
@@ -968,6 +1156,7 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # base-station signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
+        pending_cmw_windows: List[tuple[float, Any]] = []
         ca_setup_blocker: Optional[str] = None
         base_station_config_capture_manager = None
         base_station_config_exchanges = []
@@ -1045,12 +1234,47 @@ class MeasureExecutor(IStepExecutor):
                 ok = await base_station.apply_requested_config(
                     pcell_requested_config
                 )
+                if cmw_attempt is not None and not cmw_attempt.simulated_diagnostic:
+                    route_result = await base_station.apply_internal_lte_2x2_route(
+                        cmw_attempt.frozen_adapter
+                    )
+                    from app.services.execution_scpi_evidence import (
+                        confirm_base_station_configuration_and_route,
+                    )
+
+                    confirm_base_station_configuration_and_route(
+                        context.db,
+                        context.test_execution.id,
+                        attempt_id=cmw_attempt.attempt_id,
+                        config_confirmed=_formal_base_station_config_confirmed(
+                            base_station,
+                            pcell_confirmed=ok is True,
+                        ),
+                        config_exchange_ids=[
+                            exchange.exchange_id
+                            for exchange in base_station_config_exchanges
+                        ],
+                        route_result=route_result,
+                    )
+                    context.db.commit()
                 if not ok:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
                             "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
                             "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
+                        ),
+                    )
+                if (
+                    cmw_attempt is not None
+                    and not cmw_attempt.simulated_diagnostic
+                    and route_result.confirmed is not True
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "CMW500 内部 LTE 2x2 route 写后回读未确认；"
+                            f"中止执行: {route_result.reason}"
                         ),
                     )
 
@@ -1078,14 +1302,27 @@ class MeasureExecutor(IStepExecutor):
             # —— 于是「一条都没配上」与「全配好了」在这里长得一模一样，测试照常
             # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
             # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
-            # 调用方 fail-loud）；memory: 路径 B 绝不用默认 fallback 静默兜底。
-            _mac_capability_blocker = _formal_mac_configuration_blocker(base_station)
+            # 调用方 fail-loud）；CMW 尚无手册支撑的同类配置，只允许保留
+            # UNKNOWN 诊断值，不得用默认 fallback 恢复正式 KPI。
+            _mac_capability_blocker = _formal_mac_configuration_blocker(
+                base_station
+            )
             if _mac_capability_blocker:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=_mac_capability_blocker,
+                if cmw_attempt is None:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=_mac_capability_blocker,
+                    )
+                logger.warning(
+                    "[%s] CMW500 MAC configuration unconfirmed; continuing "
+                    "diagnostic measurement with formal KPI forced UNKNOWN: %s",
+                    context.test_execution.id,
+                    _mac_capability_blocker,
                 )
-            if base_station.mac_throughput_configuration_supported:
+            if (
+                cmw_attempt is None
+                and base_station.mac_throughput_configuration_supported
+            ):
                 mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
                     mcs=config.mcs,
@@ -2521,13 +2758,23 @@ class MeasureExecutor(IStepExecutor):
                 if az_path_loss_db is None:
                     az_path_loss_db = avg_path_loss_db
 
-                for _ in range(num_windows):
-                    with capture_scpi_exchanges() as throughput_exchanges:
-                        metrics = await base_station.measure_throughput_window(
-                            window_s,
-                            throughput_scope=throughput_scope,
-                        )
-                    latest_throughput_exchanges = throughput_exchanges
+                try:
+                    base_station_samples = await self._measure_base_station_samples(
+                        base_station,
+                        window_s=window_s,
+                        throughput_scope=throughput_scope,
+                        requested_sample_count=num_windows,
+                    )
+                except _BaseStationWindowBlocked as exc:
+                    # A rejected native window has no authoritative connected
+                    # link envelope.  Keep its raw SCPI capture in the driver
+                    # log, but do not persist a fabricated "connected" row.
+                    raise
+                for sample in base_station_samples:
+                    metrics = sample.metrics
+                    latest_throughput_exchanges = list(sample.exchanges)
+                    if cmw_attempt is not None and sample.window is not None:
+                        pending_cmw_windows.append((float(azimuth), sample.window))
 
                     # P1-63: target power / path loss / probe gain describe the
                     # requested setup; they are not UE RF measurements. Only
@@ -2880,11 +3127,32 @@ class MeasureExecutor(IStepExecutor):
         finally:
             if base_station_config_capture_manager is not None:
                 base_station_config_capture_manager.__exit__(None, None, None)
-            cleanup_warnings = await cleanup_chamber_instruments(
+            cleanup_result = await cleanup_chamber_instruments(
                 hal,
                 context.test_execution.id,
                 expected_operator_stop_generation=motion_stop_generation,
             )
+            cleanup_warnings = list(cleanup_result.warnings)
+            if cmw_attempt is not None and pending_cmw_windows:
+                from app.services.execution_scpi_evidence import (
+                    append_base_station_measurement_window,
+                )
+
+                for azimuth, window in pending_cmw_windows:
+                    append_base_station_measurement_window(
+                        context.db,
+                        context.test_execution.id,
+                        attempt_id=cmw_attempt.attempt_id,
+                        lease_identity=cmw_attempt.lease_identity,
+                        position={
+                            "azimuth_deg": azimuth,
+                            "elevation_deg": 0.0,
+                        },
+                        ue_link_state="connected",
+                        window=window,
+                        cleanup=cleanup_result.base_station,
+                    )
+                context.db.commit()
 
         if ca_setup_blocker is not None:
             error_message = ca_setup_blocker
