@@ -524,6 +524,10 @@ class RealCmw500Driver(BaseStationDriver):
         """Apply only the execution-frozen internal route and confirm readback."""
 
         spec = CMW500_LTE_COMMANDS["route_nx2"]
+        readback_specs = (
+            CMW500_LTE_COMMANDS["route_nx2_query"],
+            CMW500_LTE_COMMANDS["route_query"],
+        )
 
         def _result(
             *,
@@ -536,7 +540,12 @@ class RealCmw500Driver(BaseStationDriver):
             return BaseStationRouteResult(
                 requested=requested,
                 applied=applied,
-                source_reference=spec.source_reference,
+                source_reference="; ".join(
+                    (
+                        spec.source_reference,
+                        *(item.source_reference for item in readback_specs),
+                    )
+                ),
                 confirmed=confirmed,
                 reason=reason,
                 exchange_ids=[exchange.exchange_id for exchange in exchanges],
@@ -617,7 +626,25 @@ class RealCmw500Driver(BaseStationDriver):
                         reason=f"CMW500 error queue rejected route: {queue_result}",
                         exchanges=exchanges,
                     )
-                readback = Cmw500LteCommandProfile.parse_route_readback(
+                nx2_readback = Cmw500LteCommandProfile.parse_route_nx2_readback(
+                    self._query(
+                        Cmw500LteCommandProfile.route_nx2_query(
+                            self._sign_channel
+                        )
+                    )
+                )
+                applied = asdict(nx2_readback)
+                if applied != requested:
+                    return _result(
+                        requested=requested,
+                        applied=applied,
+                        reason=(
+                            "CMW500 nx2 route readback does not match "
+                            "requested route"
+                        ),
+                        exchanges=exchanges,
+                    )
+                physical_readback = Cmw500LteCommandProfile.parse_route_readback(
                     self._query(
                         Cmw500LteCommandProfile.route_query(self._sign_channel)
                     )
@@ -629,40 +656,37 @@ class RealCmw500Driver(BaseStationDriver):
                     exchanges=exchanges,
                 )
 
-            applied = {
-                # ROUTe:LTE:SIGN<i>? does not return PCCBBBoard.  Per the
-                # R&S manual printed p.459-460, its second field is an
-                # irrelevant future-use Controller string.  Preserve only
-                # the six fields the instrument authoritatively returned;
-                # write acceptance and an empty error queue do not prove that
-                # PCCBBBoard was applied.
-                "rx_connector": readback.rx_connector,
-                "rx_converter": readback.rx_converter,
-                "tx1_connector": readback.tx1_connector,
-                "tx1_converter": readback.tx1_converter,
-                "tx2_connector": readback.tx2_connector,
-                "tx2_converter": readback.tx2_converter,
+            generic_physical = {
+                # LTE UE Manual pp.459-460: the generic query's Controller
+                # field is reserved and irrelevant, so it is never used as
+                # PCCBBBoard evidence.  It independently confirms only these
+                # six active physical paths.
+                "rx_connector": physical_readback.rx_connector,
+                "rx_converter": physical_readback.rx_converter,
+                "tx1_connector": physical_readback.tx1_connector,
+                "tx1_converter": physical_readback.tx1_converter,
+                "tx2_connector": physical_readback.tx2_connector,
+                "tx2_converter": physical_readback.tx2_converter,
             }
-            requested_physical = {
+            nx2_physical = {
                 key: value
-                for key, value in requested.items()
+                for key, value in applied.items()
                 if key != "pcc_bb_board"
             }
-            if applied != requested_physical:
+            if generic_physical != nx2_physical:
                 return _result(
                     requested=requested,
-                    applied=applied,
-                    reason="CMW500 route readback does not match requested route",
+                    reason=(
+                        "CMW500 generic physical route readback does not match "
+                        "the nx2 route readback"
+                    ),
                     exchanges=exchanges,
                 )
             return _result(
                 requested=requested,
                 applied=applied,
-                confirmed=False,
-                reason=(
-                    "CMW500 physical route fields confirmed, but PCCBBBoard "
-                    "has no authoritative readback"
-                ),
+                confirmed=True,
+                reason="CMW500 route write and both readbacks confirmed",
                 exchanges=exchanges,
             )
 
