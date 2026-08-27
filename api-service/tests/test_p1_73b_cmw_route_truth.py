@@ -34,7 +34,7 @@ def _frozen_route(**overrides) -> dict:
 
 
 class _RouteDriver(RealCmw500Driver):
-    def __init__(self, responses: dict[str, str]):
+    def __init__(self, responses: dict[str, str | list[str] | BaseException]):
         super().__init__("cmw-route", {"ip_address": "192.0.2.10"})
         self.responses = responses
         self.writes: list[str] = []
@@ -47,14 +47,21 @@ class _RouteDriver(RealCmw500Driver):
 
     def _do_query(self, cmd: str) -> str:
         self.queries.append(cmd)
-        return self.responses[cmd]
+        response = self.responses[cmd]
+        if isinstance(response, BaseException):
+            raise response
+        if isinstance(response, list):
+            return response.pop(0)
+        return response
 
 
 def _driver(
     *,
-    nx2_readback: str | None = "SUA1,RF1C,RX1,RF1C,TX1,RF2C,TX2",
+    nx2_readback: str | BaseException | None = (
+        "SUA1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
+    ),
     readback: str = "TRO,Controller,RF1C,RX1,RF1C,TX1,RF2C,TX2",
-    error: str = '0,"No error"',
+    error: str | list[str] = '0,"No error"',
 ) -> _RouteDriver:
     responses = {
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
@@ -228,7 +235,10 @@ async def test_route_pcc_board_mismatch_keeps_confirmation_false_without_backfil
 
 @pytest.mark.asyncio
 async def test_route_specific_query_unavailable_keeps_confirmation_false():
-    driver = _driver(nx2_readback=None)
+    driver = _driver(
+        nx2_readback=TimeoutError("setting query unsupported"),
+        error=['0,"No error"', '-113,"Undefined header"'],
+    )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
@@ -242,10 +252,12 @@ async def test_route_specific_query_unavailable_keeps_confirmation_false():
         "tx2_converter": "TX2",
     }
     assert "diagnostic execution only" in result.reason
+    assert "Undefined header" in result.reason
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
+        "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1?",
     ]
 

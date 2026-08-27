@@ -642,8 +642,18 @@ class RealCmw500Driver(BaseStationDriver):
                 except Exception as exc:
                     # The generic query remains a sourced, useful physical-path
                     # diagnostic when a particular CMW firmware rejects the
-                    # setting query.  Do not turn that into PCCBBBoard proof.
-                    nx2_readback_error = f"{type(exc).__name__}: {exc}"
+                    # setting query.  The write queue was proven empty just
+                    # before this query, so archive and drain the query-owned
+                    # error before any later CELL ON write can consume it.
+                    probe_queue_result = self._query(CmwScpiCommands.ERR).strip()
+                    if not probe_queue_result:
+                        raise RuntimeError(
+                            "CMW500 nx2 query error queue could not be read"
+                        ) from exc
+                    nx2_readback_error = (
+                        f"{type(exc).__name__}: {exc}; "
+                        f"query error queue: {probe_queue_result}"
+                    )
                 physical_readback = (
                     Cmw500LteCommandProfile.parse_route_readback(
                         self._query(
