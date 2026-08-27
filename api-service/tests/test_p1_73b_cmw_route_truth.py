@@ -9,7 +9,7 @@ from app.hal.cmw500_base_station import RealCmw500Driver
 
 def _frozen_route(**overrides) -> dict:
     route = {
-        "pcc_bb_board": "BB1",
+        "pcc_bb_board": "SUA1",
         "rx_connector": "RF1C",
         "rx_converter": "RX1",
         "tx1_connector": "RF1C",
@@ -34,7 +34,7 @@ def _frozen_route(**overrides) -> dict:
 
 
 class _RouteDriver(RealCmw500Driver):
-    def __init__(self, responses: dict[str, str]):
+    def __init__(self, responses: dict[str, str | list[str] | BaseException]):
         super().__init__("cmw-route", {"ip_address": "192.0.2.10"})
         self.responses = responses
         self.writes: list[str] = []
@@ -47,33 +47,43 @@ class _RouteDriver(RealCmw500Driver):
 
     def _do_query(self, cmd: str) -> str:
         self.queries.append(cmd)
-        return self.responses[cmd]
+        response = self.responses[cmd]
+        if isinstance(response, BaseException):
+            raise response
+        if isinstance(response, list):
+            return response.pop(0)
+        return response
 
 
 def _driver(
     *,
-    readback: str = "TRO,BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2",
-    error: str = '0,"No error"',
+    nx2_readback: str | BaseException | None = (
+        "SUA1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
+    ),
+    readback: str = "TRO,Controller,RF1C,RX1,RF1C,TX1,RF2C,TX2",
+    error: str | list[str] = '0,"No error"',
 ) -> _RouteDriver:
-    return _RouteDriver(
-        {
-            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
-            "SYSTem:ERRor:ALL?": error,
-            "ROUTe:LTE:SIGN1?": readback,
-        }
-    )
+    responses = {
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+        "SYSTem:ERRor:ALL?": error,
+        "ROUTe:LTE:SIGN1?": readback,
+    }
+    if nx2_readback is not None:
+        responses["ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?"] = nx2_readback
+    return _RouteDriver(responses)
 
 
 @pytest.mark.asyncio
-async def test_route_keeps_pcc_board_unverified_when_query_only_confirms_physical_paths():
+async def test_route_uses_specific_query_not_generic_controller_to_confirm_pcc_board():
     driver = _driver(
         readback='TRO,"No Connection",RF1C,RX1,RF1C,TX1,RF2C,TX2'
     )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
-    assert result.confirmed is False
+    assert result.confirmed is True
     assert result.applied == {
+        "pcc_bb_board": "SUA1",
         "rx_connector": "RF1C",
         "rx_converter": "RX1",
         "tx1_connector": "RF1C",
@@ -81,7 +91,7 @@ async def test_route_keeps_pcc_board_unverified_when_query_only_confirms_physica
         "tx2_connector": "RF2C",
         "tx2_converter": "TX2",
     }
-    assert "PCCBBBoard" in result.reason
+    assert result.reason == "CMW500 route write and both readbacks confirmed"
 
 
 @pytest.mark.asyncio
@@ -92,16 +102,18 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
 
     assert driver.writes == [
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible "
-        "BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
+        "SUA1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
     ]
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
         "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
     ]
-    assert result.confirmed is False
+    assert result.confirmed is True
     assert result.requested == {
-        "pcc_bb_board": "BB1",
+        "pcc_bb_board": "SUA1",
         "rx_connector": "RF1C",
         "rx_converter": "RX1",
         "tx1_connector": "RF1C",
@@ -110,6 +122,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
         "tx2_converter": "TX2",
     }
     assert result.applied == {
+        "pcc_bb_board": "SUA1",
         "rx_connector": "RF1C",
         "rx_converter": "RX1",
         "tx1_connector": "RF1C",
@@ -117,9 +130,10 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
         "tx2_connector": "RF2C",
         "tx2_converter": "TX2",
     }
-    assert "PCCBBBoard" in result.reason
+    assert result.reason == "CMW500 route write and both readbacks confirmed"
     assert "1173.9628.02-41" in result.source_reference
-    assert len(result.exchange_ids) == 3
+    assert "1179.4592.02-04" in result.source_reference
+    assert len(result.exchange_ids) == 5
     assert not hasattr(result, "rf_router")
 
 
@@ -190,13 +204,83 @@ async def test_route_rejects_tx_connector_and_converter_reuse_independently(
 
 @pytest.mark.asyncio
 async def test_route_readback_mismatch_keeps_confirmation_false():
-    driver = _driver(readback="TRO,BB1,RF1C,RX1,RF1C,TX1,RF3C,TX2")
+    driver = _driver(readback="TRO,Controller,RF1C,RX1,RF1C,TX1,RF3C,TX2")
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
     assert result.confirmed is False
     assert "readback" in result.reason
-    assert result.applied is not None
+    assert result.applied is None
+
+
+@pytest.mark.asyncio
+async def test_route_pcc_board_mismatch_keeps_confirmation_false_without_backfill():
+    driver = _driver(
+        nx2_readback="SUA2,RF1C,RX1,RF1C,TX1,RF2C,TX2",
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert result.applied == {
+        "pcc_bb_board": "SUA2",
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "readback" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_route_specific_query_unavailable_keeps_confirmation_false():
+    driver = _driver(
+        nx2_readback=TimeoutError("setting query unsupported"),
+        error=['0,"No error"', '-113,"Undefined header"', '0,"No error"'],
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "diagnostic execution only" in result.reason
+    assert "Undefined header" in result.reason
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_route_readback_error_queue_entry_blocks_confirmation():
+    driver = _driver(
+        error=['0,"No error"', '-200,"Execution error"'],
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert "readback error queue" in result.reason
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
+        "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
+    ]
 
 
 @pytest.mark.asyncio

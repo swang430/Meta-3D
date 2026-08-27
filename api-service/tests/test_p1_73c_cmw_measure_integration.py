@@ -63,6 +63,8 @@ class _FakeTransportCmw(RealCmw500Driver):
             return self.ebler_states.popleft()
         if command == "ROUTe:LTE:SIGN1?":
             return "TRO,BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
+        if command == "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?":
+            return "BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
         if command == "CONFigure:LTE:SIGN1:BAND?":
             return "OB3"
         if command == "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?":
@@ -128,8 +130,8 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
             }
         ) is True
         route = await driver.apply_internal_lte_2x2_route(_frozen_route())
-        assert route.confirmed is False
-        assert "PCCBBBoard" in route.reason
+        assert route.confirmed is True
+        assert route.reason == "CMW500 route write and both readbacks confirmed"
         assert await driver.start_signaling(timeout_s=3.0) is True
         samples = await MeasureExecutor._measure_base_station_samples(
             driver,
