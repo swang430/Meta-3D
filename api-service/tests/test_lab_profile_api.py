@@ -21,6 +21,11 @@ from app.models.chamber import (
     create_chamber_from_preset,
 )
 from app.models.lab_profile import LabProfile
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.switch_topology import SwitchTopology
 
 
@@ -182,3 +187,64 @@ class TestGetRFChains:
             params={"operating_mode": "mimo_ota"},
         )
         assert resp.status_code == 422
+
+
+class TestSyncInstrumentBinding:
+    def test_syncs_current_category_configuration_into_existing_lab(self, db, lab):
+        category = InstrumentCategory(
+            category_key="baseStation",
+            category_name="Base Station",
+            selected_model_id=None,
+            driver_mode="real",
+            is_active=True,
+        )
+        db.add(category)
+        db.flush()
+        model = InstrumentModel(
+            category_id=category.id,
+            vendor="R&S",
+            model="CMW500",
+            capabilities={},
+            is_available=True,
+        )
+        db.add(model)
+        db.flush()
+        category.selected_model_id = model.id
+        db.add(InstrumentConnection(
+            category_id=category.id,
+            endpoint="TCPIP0::192.168.100.22::inst0::INSTR",
+        ))
+        lab.instrument_bindings = [
+            {
+                "category_id": str(uuid.uuid4()),
+                "instrument_model_id": str(uuid.uuid4()),
+                "connection_endpoint": "keep-me",
+                "driver_mode": "auto",
+                "role": "other",
+            },
+            {
+                "category_id": str(category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": "stale-endpoint",
+                "driver_mode": "auto",
+                "role": "primary_baseStation",
+            },
+        ]
+        db.commit()
+
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "category_id": str(category.id),
+            "instrument_model_id": str(model.id),
+            "connection_endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
+            "driver_mode": "real",
+            "role": "primary_baseStation",
+        }
+        db.refresh(lab)
+        assert len(lab.instrument_bindings) == 2
+        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-me"
+        assert lab.instrument_bindings[1] == response.json()
