@@ -11,8 +11,9 @@
    （照 test_p1_68 的 _capture 形态：测「字段到了 service」，不测「schema 有字段」）；
 4. Orchestrator ×2（/plan、/execute）use_mock 透传 + 缺省 True；
 5. phase 只读 ×3 去死参回归（构造不再收到显式 use_mock，端点仍 200）；
-6. 诊断序列 rs_fsva_iq_capability：mock/未加载拒绝、只读零写入、
-   四态 verdict（SUCCESS/被拒也是答案、BLOCKER、ABORTED）。
+6. 诊断序列 rs_fsva_iq_capability：mock/未加载拒绝、仅允许受控切换
+   `TRACe:IQ:STATe ON/OFF` 且 finally 恢复、四态 verdict
+   （SUCCESS/被拒也是答案、BLOCKER、ABORTED）。
 
 驱动假会话照 tests/test_p1_67 的 _FakeUxmSession 形态（真实生效端 = 发到
 会话上的命令与手册格式的回复，不钉内部状态）。
@@ -22,7 +23,7 @@
 - M2 orchestrator /execute 换回硬编码 True → 门 4 红；
 - M3 驱动吞错误队列（_assert_error_queue_clean 改 return）→ 门 1 fail-loud 红；
 - M4 PDP 不归一化 → 门 1 0 dB 契约红；
-- M5 序列偷发写命令 → 门 6 零写入红；
+- M5 序列发第三种写命令或漏掉恢复 OFF → 门 6 红；
 - M6 phase 端点加回 use_mock=True 死参 → 门 5 红。
 """
 from __future__ import annotations
@@ -551,16 +552,33 @@ class _ScriptedSa:
         self._err_replies = list(err_replies or [])
         self._raise_for = set(raise_for)
         self.queries: List[str] = []
+        self.writes: List[str] = []
+        self.operations: List[str] = []
+        self.iq_state = str(self._replies.get("TRACe:IQ:STATe?", "0"))
 
     def _query(self, cmd: str) -> str:
         self.queries.append(cmd)
+        self.operations.append(f"query:{cmd}")
         if cmd in self._raise_for:
             raise TimeoutError(f"VI_ERROR_TMO on {cmd}")
         if cmd == "SYST:ERR?":
             return self._err_replies.pop(0) if self._err_replies else '0,"No error"'
+        if cmd == "TRACe:IQ:STATe?":
+            return self.iq_state
         if cmd not in self._replies:
             raise AssertionError(f"序列发了脚本外命令: {cmd!r}")
         return self._replies[cmd]
+
+    def _write(self, cmd: str) -> None:
+        self.writes.append(cmd)
+        self.operations.append(f"write:{cmd}")
+        if cmd == "TRACe:IQ:STATe ON":
+            self.iq_state = "1"
+            return
+        if cmd == "TRACe:IQ:STATe OFF":
+            self.iq_state = "0"
+            return
+        raise AssertionError(f"序列发了脚本外写命令: {cmd!r}")
 
 
 class MockSignalAnalyzer:
@@ -575,10 +593,15 @@ def _run_seq(sa, params=None):
                                log=lambda *_: None))
 
 
-def _assert_read_only(sa: _ScriptedSa) -> None:
-    """零写入门：序列发的每条命令都必须是查询（以 ? 结尾的命令头）。"""
-    for cmd in sa.queries:
-        assert cmd.split(" ", 1)[0].endswith("?"), f"序列发了写命令: {cmd!r}"
+def _assert_bounded_iq_activation(sa: _ScriptedSa) -> None:
+    """探针只允许临时打开 I/Q，并必须恢复最初的 OFF 状态。"""
+    assert sa.writes == ["TRACe:IQ:STATe ON", "TRACe:IQ:STATe OFF"]
+    assert sa.iq_state == "0"
+    on_index = sa.operations.index("write:TRACe:IQ:STATe ON")
+    off_index = sa.operations.index("write:TRACe:IQ:STATe OFF")
+    for cmd in ("TRACe:IQ:SRATe?", "TRACe:IQ:BWIDth?", "TRACe:IQ:RLENgth?"):
+        query_index = sa.operations.index(f"query:{cmd}")
+        assert on_index < query_index < off_index
 
 
 class TestFsvaIqCapabilitySequence:
@@ -598,7 +621,7 @@ class TestFsvaIqCapabilitySequence:
         assert result.success is False
         assert "mock" in result.summary
 
-    def test_all_supported_is_success_and_read_only(self):
+    def test_all_supported_is_success_and_temporarily_activates_iq(self):
         sa = _ScriptedSa(dict(_CAP_REPLIES))
         result = _run_seq(sa)
         assert result.extra["verdict"] == "SUCCESS"
@@ -609,12 +632,60 @@ class TestFsvaIqCapabilitySequence:
         assert all(v["supported"] is True for v in caps.values())
         # 原始回复归档在 raw / extra
         assert caps["TRACe:IQ:SRATe?"]["raw"] == "32000000"
-        _assert_read_only(sa)
+        assert result.extra["initial_iq_state"] == "OFF"
+        assert result.extra["restore_confirmed"] is True
+        _assert_bounded_iq_activation(sa)
+
+    def test_existing_iq_mode_is_preserved_without_writes(self):
+        replies = dict(_CAP_REPLIES)
+        replies["TRACe:IQ:STATe?"] = "1"
+        sa = _ScriptedSa(replies)
+        result = _run_seq(sa)
+        assert result.extra["verdict"] == "SUCCESS", result.summary
+        assert result.extra["initial_iq_state"] == "ON"
+        assert result.extra["restore_confirmed"] is True
+        assert sa.writes == []
+
+    def test_timeout_with_owned_error_is_rejected_then_next_queries_stay_independent(self):
+        sa = _ScriptedSa(
+            dict(_CAP_REPLIES),
+            raise_for={"TRACe:IQ:SRATe?"},
+            err_replies=[
+                '0,"No error"',                    # 初始 STATe? 后
+                '0,"No error"',                    # ON + 确认后
+                '-200,"Function not available"',  # SRATe? 超时后的本命令错误
+                '0,"No error"',
+                '0,"No error"',                    # BWIDth? 后
+                '0,"No error"',                    # RLENgth? 后
+                '0,"No error"',                    # OFF + 确认后
+                '0,"No error"',                    # 最终零残留
+            ],
+        )
+        result = _run_seq(sa)
+        assert result.extra["verdict"] == "SUCCESS", result.summary
+        caps = result.extra["capabilities"]
+        assert caps["TRACe:IQ:SRATe?"]["supported"] is False
+        assert caps["TRACe:IQ:BWIDth?"]["supported"] is True
+        assert caps["TRACe:IQ:RLENgth?"]["supported"] is True
+        assert sa.queries.index("SYST:ERR?") < sa.queries.index("TRACe:IQ:BWIDth?")
+        _assert_bounded_iq_activation(sa)
+
+    def test_unexplained_timeout_is_blocker_but_iq_mode_is_restored(self):
+        sa = _ScriptedSa(
+            dict(_CAP_REPLIES),
+            raise_for={"TRACe:IQ:BWIDth?"},
+        )
+        result = _run_seq(sa)
+        assert result.extra["verdict"] == "BLOCKER"
+        assert "TRACe:IQ:BWIDth?" in result.summary
+        assert result.extra["restore_confirmed"] is True
+        _assert_bounded_iq_activation(sa)
 
     def test_rejected_query_form_is_an_answer_not_a_failure(self):
         # SRATe?（推断查询形）被真机拒：STATe? 后队列干净，SRATe? 后回 -113
         sa = _ScriptedSa(dict(_CAP_REPLIES), err_replies=[
-            '0,"No error"',                # STATe? 后
+            '0,"No error"',                # 初始 STATe? 后
+            '0,"No error"',                # 临时 ON + 确认后
             '-113,"Undefined header"',     # SRATe? 后（第 1 条）
             '0,"No error"',                # SRATe? 后（排水到 0）
         ])
@@ -625,7 +696,7 @@ class TestFsvaIqCapabilitySequence:
         assert any("-113" in e for e in caps["TRACe:IQ:SRATe?"]["errors"])
         assert caps["TRACe:IQ:BWIDth?"]["supported"] is True
         assert "被拒 1 条" in result.summary
-        _assert_read_only(sa)
+        _assert_bounded_iq_activation(sa)
 
     def test_timeout_is_blocker(self):
         sa = _ScriptedSa(dict(_CAP_REPLIES), raise_for={"TRACe:IQ:BWIDth?"})
@@ -644,7 +715,9 @@ class TestFsvaIqCapabilitySequence:
     def test_residue_makes_undetermined(self):
         # 能力查询各自队列干净，但收尾排水读到残留
         sa = _ScriptedSa(dict(_CAP_REPLIES), err_replies=[
-            '0,"No error"', '0,"No error"', '0,"No error"', '0,"No error"',
+            '0,"No error"', '0,"No error"',  # 初始状态、临时 ON
+            '0,"No error"', '0,"No error"', '0,"No error"',  # 三条能力
+            '0,"No error"',  # 恢复 OFF
             '-300,"Device error"', '0,"No error"',   # 收尾残留
         ])
         result = _run_seq(sa)

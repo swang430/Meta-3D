@@ -17,14 +17,16 @@ Reference: R&S FSVA/FSV Operating Manual 1176.7510.02 ─ 13（下文简写「�
 > P0-4 已绑本驱动；本地 Keysight X 系列两份手册均系假文件。故信道验证第一激活批
 > （measure_pdp / measure_doppler_spectrum）落在本驱动。
 >
-> ⚠ 手册家族差距申报（P1-70 内审 F3）：1176.7510.02─13 封面覆盖机型 =
+> 手册家族差距已于 2026-08-27 现场收口：1176.7510.02─13 封面覆盖机型 =
 > FSVA4/7/13/30/40 + FSV 系（1321.3008Kxx/1307.9002Kxx）；现场 FSVA3000
-> （料号 1330.5000Kxx）属 **FSV3000 家族，另有自己的手册**。上表页码出处
-> 对现场机**不构成完备证据** —— TRACe:IQ 命令族在 FSV3000 家族是否同形，
-> 两个方向都无证据（未经查证）。兜底：① 每步错误队列 fail-loud；
-> ② `rs_fsva_iq_capability` 探针序列出发前实测查询形；③ 出发前应补
-> FSV3000/FSVA3000 家族手册核对写路径命令（STATe ON / SET / DATA:FORMat /
-> DATA?）—— 已列入 roadmap P1-70 行现场前置。
+> （料号 1330.5000Kxx）属 FSV/A3000 家族。现已补 R&S FSV/A3000 I/Q Analyzer
+> User Manual 1178.8536.02─16：§10.3 印刷页 150/155 证明快速 I/Q mode 的
+> `STATe ON/OFF` 前置，印刷页 251/252 覆盖 BWIDth、RLENgth、SRATe。现场
+> FSVA3044 实测 `STATe?=0 → ON=1 → SRATe=32000000 / BWIDth=25600000 /
+> RLENgth=1001 → OFF=0`，错误队列零残留。探针 DiagnosticRun 为
+> `df640983-f2e8-4d2c-ab64-de99fa38814f`，操作员复跑为
+> `4241e370-560f-459a-b77a-0754ba7bf7f8`。未被新家族手册逐条覆盖的既有
+> 写路径仍保留错误队列 fail-loud，不从这次能力查询外推支持范围。
 """
 
 import logging

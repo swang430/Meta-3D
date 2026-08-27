@@ -148,8 +148,23 @@ class TestKeepaliveCalledOnConnectAndReconnect:
                     b"%\n",          # ENABLE X
                     b"%0.0\n",       # PFBK(X) initial position read
                 ]
+                self._buffer = b""
+
+            def _fill(self) -> None:
+                if not self._buffer:
+                    self._buffer = (
+                        self._responses.pop(0) if self._responses else b"%\n"
+                    )
+
+            async def readexactly(self, count: int) -> bytes:
+                self._fill()
+                result, self._buffer = self._buffer[:count], self._buffer[count:]
+                return result
+
             async def readline(self) -> bytes:
-                return self._responses.pop(0) if self._responses else b"%\n"
+                self._fill()
+                result, self._buffer = self._buffer, b""
+                return result
 
         class _StubWriter:
             def __init__(self, name: str) -> None:
