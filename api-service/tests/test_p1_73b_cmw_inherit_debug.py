@@ -41,6 +41,16 @@ def test_formal_admission_requires_frozen_approval_and_duplex_specific_options()
     assert tdd.evaluate_lte_2x2_formal_capability(_frozen(True), duplex="fdd").ready is False
 
 
+def test_formal_admission_accepts_option_tokens_exactly_as_cmw500_reports_them():
+    driver = _identified_driver(["KS550", "KS520"])
+
+    decision = driver.evaluate_lte_2x2_formal_capability(
+        _frozen(True), duplex="tdd"
+    )
+
+    assert decision.ready is True
+
+
 def test_unknown_identity_or_options_never_claim_ready():
     driver = _identified_driver(["CMW-KS500", "CMW-KS520"])
     driver._options_snapshot_verified = False

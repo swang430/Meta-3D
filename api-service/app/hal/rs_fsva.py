@@ -17,14 +17,16 @@ Reference: R&S FSVA/FSV Operating Manual 1176.7510.02 ─ 13（下文简写「�
 > P0-4 已绑本驱动；本地 Keysight X 系列两份手册均系假文件。故信道验证第一激活批
 > （measure_pdp / measure_doppler_spectrum）落在本驱动。
 >
-> ⚠ 手册家族差距申报（P1-70 内审 F3）：1176.7510.02─13 封面覆盖机型 =
+> 手册家族差距已于 2026-08-27 现场收口：1176.7510.02─13 封面覆盖机型 =
 > FSVA4/7/13/30/40 + FSV 系（1321.3008Kxx/1307.9002Kxx）；现场 FSVA3000
-> （料号 1330.5000Kxx）属 **FSV3000 家族，另有自己的手册**。上表页码出处
-> 对现场机**不构成完备证据** —— TRACe:IQ 命令族在 FSV3000 家族是否同形，
-> 两个方向都无证据（未经查证）。兜底：① 每步错误队列 fail-loud；
-> ② `rs_fsva_iq_capability` 探针序列出发前实测查询形；③ 出发前应补
-> FSV3000/FSVA3000 家族手册核对写路径命令（STATe ON / SET / DATA:FORMat /
-> DATA?）—— 已列入 roadmap P1-70 行现场前置。
+> （料号 1330.5000Kxx）属 FSV/A3000 家族。现已补 R&S FSV/A3000 I/Q Analyzer
+> User Manual 1178.8536.02─16：§10.3 印刷页 150/155 证明快速 I/Q mode 的
+> `STATe ON/OFF` 前置，印刷页 251/252 覆盖 BWIDth、RLENgth、SRATe。现场
+> FSVA3044 实测 `STATe?=0 → ON=1 → SRATe=32000000 / BWIDth=25600000 /
+> RLENgth=1001 → OFF=0`，错误队列零残留。探针 DiagnosticRun 为
+> `df640983-f2e8-4d2c-ab64-de99fa38814f`，操作员复跑为
+> `4241e370-560f-459a-b77a-0754ba7bf7f8`。未被新家族手册逐条覆盖的既有
+> 写路径仍保留错误队列 fail-loud，不从这次能力查询外推支持范围。
 """
 
 import logging
@@ -73,6 +75,10 @@ class FsvaScpi:
     INIT_CONT_OFF = "INITiate:CONTinuous OFF"
     INIT_CONT_ON = "INITiate:CONTinuous ON"
     TRIG = "INITiate:IMMediate; *OPC?"
+    # R&S FSVA/FSV Operating Manual 1176.7510.02-13, §6.3.3.1,
+    # printed p.616: ABORt aborts the current measurement and resets the
+    # trigger system.
+    ABORT = "ABORt"
     SWEEP_SINGLE = "SENSe:SWEep:MODE SINGle"
     SET_SWEEP_POINTS = "SENSe:SWEep:POINts {points}"
     SET_SWEEP_TIME = "SENSe:SWEep:TIME {time}"
@@ -199,8 +205,52 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             return True
         except Exception as e:
             logger.error(f"[FSVA] Connection failed ({self.ip_address}:{self.port}): {e}")
+            if self._visa_session is not None:
+                try:
+                    self._visa_session.close()
+                except Exception as close_error:
+                    logger.warning(
+                        "[FSVA] Failed to close session after connection error: %s",
+                        close_error,
+                    )
+                finally:
+                    self._visa_session = None
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+
+    def _abort_failed_measurement(self, operation: str, error: Exception) -> None:
+        """Best-effort abort, then release the poisoned sweep session."""
+        session = self._visa_session
+        if session is None:
+            return
+        try:
+            self._write(FsvaScpi.ABORT)
+            logger.warning(
+                "[FSVA] %s failed; ABORt sent, recovery unconfirmed: %s",
+                operation,
+                error,
+            )
+        except Exception as abort_error:
+            logger.error(
+                "[FSVA] Failed to abort measurement after %s failure (%s): %s",
+                operation,
+                error,
+                abort_error,
+            )
+        finally:
+            # A write() success only proves the command reached the socket; it
+            # does not prove the timed-out sweep stopped.  Do not retain that
+            # session and let later disconnect/reload traffic queue behind it.
+            try:
+                session.close()
+            except Exception as close_error:
+                logger.warning(
+                    "[FSVA] Failed to close poisoned session after %s failure: %s",
+                    operation,
+                    close_error,
+                )
+            finally:
+                self._visa_session = None
 
     async def disconnect(self) -> bool:
         try:
@@ -263,7 +313,8 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             bandwidth_hz: Channel bandwidth in Hz
 
         Returns:
-            Channel power in dBm, or -999.0 on failure
+            Channel power in dBm. Measurement failure raises; it is never
+            represented as a numeric sentinel.
         """
         try:
             self._set_status(InstrumentStatus.BUSY)
@@ -278,9 +329,10 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             logger.info(f"[FSVA] Channel power: {power_dbm:.2f} dBm (BW={bandwidth_hz/1e6:.1f} MHz)")
             return power_dbm
         except Exception as e:
+            self._abort_failed_measurement("channel power measurement", e)
             logger.error(f"[FSVA] Channel power measurement failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
-            return -999.0
+            raise RuntimeError(f"FSVA channel power measurement failed: {e}") from e
 
     async def measure_peak(self) -> Dict[str, float]:
         """
@@ -300,6 +352,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             self._set_status(InstrumentStatus.READY)
             return {"power_dbm": power_dbm}
         except Exception as e:
+            self._abort_failed_measurement("peak measurement", e)
             logger.error(f"[FSVA] Peak measurement failed: {e}")
             return {"power_dbm": -999.0}
 
@@ -312,6 +365,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             logger.info(f"[FSVA] Read {len(values)} trace points")
             return values
         except Exception as e:
+            self._abort_failed_measurement("trace readout", e)
             logger.error(f"[FSVA] Get trace failed: {e}")
             return []
 

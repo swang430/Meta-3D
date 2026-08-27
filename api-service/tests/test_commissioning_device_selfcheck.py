@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from app.api.commissioning import device_selfcheck
 
 
@@ -30,6 +32,21 @@ def _patch_hal(monkeypatch, drivers):
 
 
 class TestDeviceSelfcheck:
+    async def test_selfcheck_disables_background_monitoring(self, monkeypatch):
+        @asynccontextmanager
+        async def _lease(_purpose, **kwargs):
+            assert kwargs.get("enable_monitoring") is False
+            yield
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease
+        )
+        _patch_hal(monkeypatch, {"positioner": _FakeDriver()})
+
+        result = await device_selfcheck()
+
+        assert result.all_ready is True
+
     async def test_all_ready(self, monkeypatch):
         _patch_hal(monkeypatch, {
             "channelEmulator": _FakeDriver(),

@@ -42,6 +42,26 @@ class ReferenceExecutor(IStepExecutor):
         config = load_mimo_ota_config(context.test_execution)
         primary_carrier = config.primary_carrier
 
+        # 现场显式选择“无校准测试”时，REFERENCE 也必须真正跳过。原实现只在
+        # PRECHECK 放行，随后仍主动驱动 FSVA，既违背旁路语义，也会制造假的
+        # TRP/补偿数值。
+        if config.precheck_strict_cal is False:
+            result_payload: Dict[str, Any] = {
+                "antenna_model": config.reference_antenna_model,
+                "antenna_gain_dbi": config.reference_antenna_gain_dbi,
+                "measurement_source": "calibration_bypass",
+                "trp_verified": False,
+                "confirmed": False,
+                "bypassed": True,
+            }
+            write_phase_result(context.test_execution, "reference", result_payload)
+            context.db.commit()
+            return StepExecutionResult(
+                status=StepExecutionStatus.SKIPPED,
+                measurements=result_payload,
+                warnings=["校准旁路已启用：未执行 FSVA 参考测量，未产生 TRP 或补偿数值"],
+            )
+
         from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 
         hal = get_hal_service()
@@ -63,14 +83,38 @@ class ReferenceExecutor(IStepExecutor):
                 "[%s] Phase 2: measuring reference antenna via HAL signalAnalyzer",
                 context.test_execution.id,
             )
-            await sa.setup_spectrum(
-                center_freq_hz=primary_carrier.frequency_hz,
-                span_hz=200e6,
-                rbw_hz=1e5,
-            )
-            measured_pwr = await sa.measure_channel_power(
-                bandwidth_hz=primary_carrier.bandwidth_mhz * 1e6
-            )
+            try:
+                setup_confirmed = await sa.setup_spectrum(
+                    center_freq_hz=primary_carrier.frequency_hz,
+                    span_hz=200e6,
+                    rbw_hz=1e5,
+                )
+                if setup_confirmed is not True:
+                    raise RuntimeError("FSVA spectrum setup was not confirmed")
+                measured_pwr = await sa.measure_channel_power(
+                    bandwidth_hz=primary_carrier.bandwidth_mhz * 1e6
+                )
+            except Exception as exc:
+                result_payload.update(
+                    {
+                        "measurement_source": (
+                            "hal_signal_analyzer"
+                            if sa_is_real
+                            else "hal_signal_analyzer_mock"
+                        ),
+                        "trp_verified": False,
+                        "confirmed": False,
+                    }
+                )
+                write_phase_result(
+                    context.test_execution, "reference", result_payload
+                )
+                context.db.commit()
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    measurements=result_payload,
+                    error_message=str(exc),
+                )
             measured_trp_dbm = measured_pwr + _MOCK_SA_TO_TRP_OFFSET_DB
             # 「来源」这一栏要说实话（P1-48）：SA 挂着但是 mock 驱动时，
             # 这个功率是仿真出来的，写 "hal_signal_analyzer" 会让读报告的人

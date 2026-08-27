@@ -21,6 +21,11 @@ from app.models.chamber import (
     create_chamber_from_preset,
 )
 from app.models.lab_profile import LabProfile
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.switch_topology import SwitchTopology
 
 
@@ -182,3 +187,113 @@ class TestGetRFChains:
             params={"operating_mode": "mimo_ota"},
         )
         assert resp.status_code == 422
+
+
+class TestSyncInstrumentBinding:
+    def test_syncs_current_category_configuration_into_existing_lab(self, db, lab):
+        category = InstrumentCategory(
+            category_key="baseStation",
+            category_name="Base Station",
+            selected_model_id=None,
+            driver_mode="real",
+            is_active=True,
+        )
+        db.add(category)
+        db.flush()
+        model = InstrumentModel(
+            category_id=category.id,
+            vendor="R&S",
+            model="CMW500",
+            capabilities={},
+            is_available=True,
+        )
+        db.add(model)
+        db.flush()
+        category.selected_model_id = model.id
+        db.add(InstrumentConnection(
+            category_id=category.id,
+            endpoint="TCPIP0::192.168.100.22::inst0::INSTR",
+            connection_params={
+                "base_station_adapter_profile": {
+                    "schema_version": 1,
+                    "adapter": "cmw500",
+                    "lte_2x2_internal_route": {
+                        "pcc_bb_board": "BB1",
+                        "rx_connector": "RF1C",
+                        "rx_converter": "RX1",
+                        "tx1_connector": "RF1C",
+                        "tx1_converter": "TX1",
+                        "tx2_connector": "RF2C",
+                        "tx2_converter": "TX2",
+                    },
+                },
+            },
+        ))
+        lab.instrument_bindings = [
+            {
+                "category_id": str(uuid.uuid4()),
+                "instrument_model_id": str(uuid.uuid4()),
+                "connection_endpoint": "keep-me",
+                "driver_mode": "auto",
+                "role": "other",
+            },
+            {
+                "category_id": str(category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": "stale-endpoint",
+                "driver_mode": "auto",
+                "role": "primary_baseStation",
+            },
+        ]
+        db.commit()
+
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "category_id": str(category.id),
+            "instrument_model_id": str(model.id),
+            "connection_endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
+            "driver_mode": "real",
+            "role": "primary_baseStation",
+        }
+        db.refresh(lab)
+        assert len(lab.instrument_bindings) == 2
+        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-me"
+        assert lab.instrument_bindings[1] == response.json()
+
+    def test_rejects_cmw500_sync_without_internal_route_profile(self, db, lab):
+        category = InstrumentCategory(
+            category_key="baseStation",
+            category_name="Base Station",
+            driver_mode="real",
+            is_active=True,
+        )
+        db.add(category)
+        db.flush()
+        model = InstrumentModel(
+            category_id=category.id,
+            vendor="R&S",
+            model="CMW500",
+            capabilities={},
+            is_available=True,
+        )
+        db.add(model)
+        db.flush()
+        category.selected_model_id = model.id
+        db.add(InstrumentConnection(
+            category_id=category.id,
+            endpoint="TCPIP0::192.168.100.22::inst0::INSTR",
+            connection_params={"detected_test_app": "LTE_NR_IRAT"},
+        ))
+        db.commit()
+
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+        )
+
+        assert response.status_code == 422
+        assert "CMW500" in response.json()["detail"]
+        assert "Route" in response.json()["detail"]

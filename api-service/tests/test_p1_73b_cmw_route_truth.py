@@ -1,4 +1,4 @@
-"""P1-73B Task 8：CMW500 内部 LTE 2x2 route 必须写后精确回读。"""
+"""P1-73B Task 8：CMW500 内部 LTE 2x2 route 必须按手册写后确认。"""
 
 from __future__ import annotations
 
@@ -65,7 +65,27 @@ def _driver(
 
 
 @pytest.mark.asyncio
-async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirms_all_paths():
+async def test_route_keeps_pcc_board_unverified_when_query_only_confirms_physical_paths():
+    driver = _driver(
+        readback='TRO,"No Connection",RF1C,RX1,RF1C,TX1,RF2C,TX2'
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "PCCBBBoard" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_all_physical_paths():
     driver = _driver()
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
@@ -79,7 +99,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1?",
     ]
-    assert result.confirmed is True
+    assert result.confirmed is False
     assert result.requested == {
         "pcc_bb_board": "BB1",
         "rx_connector": "RF1C",
@@ -89,10 +109,29 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_confirm
         "tx2_connector": "RF2C",
         "tx2_converter": "TX2",
     }
-    assert result.applied == result.requested
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "PCCBBBoard" in result.reason
     assert "1173.9628.02-41" in result.source_reference
     assert len(result.exchange_ids) == 3
     assert not hasattr(result, "rf_router")
+
+
+@pytest.mark.asyncio
+async def test_route_accepts_ks520_token_exactly_as_cmw500_reports_it():
+    driver = _driver()
+    driver._installed_options = ["KS520"]
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert driver.writes != []
+    assert "requires KS520" not in result.reason
 
 
 @pytest.mark.asyncio
@@ -112,7 +151,7 @@ async def test_missing_frozen_route_does_not_reuse_current_state_or_choose_defau
     ("firmware", "options", "reason"),
     [
         ("3.5.39", ["CMW-KS520"], "firmware"),
-        ("3.5.40", [], "CMW-KS520"),
+        ("3.5.40", [], "KS520"),
     ],
 )
 async def test_route_requires_sourced_firmware_and_option_before_write(

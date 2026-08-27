@@ -36,9 +36,10 @@ Why this is read-only
 **No ``ENABLE`` / ``HOME`` / ``MOVEABS`` / ``FAULTACK`` / ``DISABLE``
 ever leaves this probe.** A chamber turntable rotating during what the
 operator thinks is a "health check" risks pulling cabling, RF cables,
-or hitting a probe arm. The probe stays on pure feedback queries:
-``PFBK`` (position), ``VFBK`` (velocity), ``AXISSTATUS`` (status
-bitmask), ``AXISFAULT`` (fault bitmask).
+or hitting a probe arm. The probe stays on pure feedback/parameter
+queries: ``PFBK`` (position), ``VFBK`` (velocity), ``AXISSTATUS``
+(status bitmask), ``AXISFAULT`` (fault bitmask), and ``GETPARM`` reads
+for configured user units, software limits, and speed parameters.
 
 The probe **does not call** ``driver.connect()`` either. It assumes the HAL session already
 came up at startup; if it didn't, it reports "driver not connected"
@@ -75,9 +76,16 @@ from app.services.instrument_hal_service import is_mock_driver
 #
 # *Critical* commands are those used by the supported local truth chain:
 # PFBK gives position feedback, VFBK proves zero velocity, and AXISFAULT is
-# retained as a raw diagnostic value.  AXISSTATUS remains read-only evidence,
-# but the checked-in guide does not define bit assignments, so this probe
-# never interprets its bits.
+# retained as a raw diagnostic value. AXISSTATUS remains raw evidence: the
+# Ensemble 3.04 header defines the bits, but input polarity/configuration must
+# still be interpreted against the live controller setup.
+#
+# GETPARM sources in the local Ensemble 3.04 vendor package:
+# * Ensemble/Samples/Cpp/ASCII/OperatorInterface/Lin/Program.cpp:436 gives
+#   Socket2 ASCII syntax ``GETPARM <axis>, <numeric-parameter-id>``.
+# * Ensemble/CLibrary/Include/ParameterId.h gives the exact IDs below.
+# All reads target only the configured azimuth axis and never mutate
+# controller parameters.
 # ---------------------------------------------------------------------------
 AEROBASIC_READONLY: List[Tuple[str, str, bool, str]] = [
     ("PFBK_AZ",      "PFBK({az})",        True,  "azimuth position feedback (controller user units)"),
@@ -88,7 +96,25 @@ AEROBASIC_READONLY: List[Tuple[str, str, bool, str]] = [
     ("AXISFAULT_EL", "AXISFAULT({el})",   False, "elevation fault bitmask"),
     ("VFBK_AZ",      "VFBK({az})",        True,  "azimuth velocity feedback (controller user units/s; exact 0 proves stopped)"),
     ("VFBK_EL",      "VFBK({el})",        False, "elevation velocity feedback"),
+    ("UNITS_NAME_AZ", "GETPARM {az}, 129", False, "configured azimuth user-unit name (observed, not automatically attested)"),
+    ("COUNTS_PER_UNIT_AZ", "GETPARM {az}, 2", False, "encoder counts per configured azimuth user unit"),
+    ("SOFTWARE_LIMIT_SETUP_AZ", "GETPARM {az}, 210", False, "raw software-limit enable/setup value"),
+    ("SOFTWARE_LIMIT_LOW_AZ", "GETPARM {az}, 37", False, "configured azimuth software low limit (controller user units)"),
+    ("SOFTWARE_LIMIT_HIGH_AZ", "GETPARM {az}, 38", False, "configured azimuth software high limit (controller user units)"),
+    ("DEFAULT_SPEED_AZ", "GETPARM {az}, 71", False, "configured default speed (controller user units/s; not site approval)"),
+    ("MAX_JOG_SPEED_AZ", "GETPARM {az}, 123", False, "configured maximum jog speed (controller user units/s; not site approval)"),
 ]
+
+_MOTION_PARAMETER_PROBES: frozenset[str] = frozenset({
+    "UNITS_NAME_AZ",
+    "COUNTS_PER_UNIT_AZ",
+    "SOFTWARE_LIMIT_SETUP_AZ",
+    "SOFTWARE_LIMIT_LOW_AZ",
+    "SOFTWARE_LIMIT_HIGH_AZ",
+    "DEFAULT_SPEED_AZ",
+    "MAX_JOG_SPEED_AZ",
+})
+_TEXT_RESPONSE_PROBES: frozenset[str] = frozenset({"UNITS_NAME_AZ"})
 
 
 # Names in AEROBASIC_READONLY whose UNSUPPORTED outcome is acceptable.
@@ -150,14 +176,17 @@ def _parse_number(raw: str) -> Optional[float]:
 
 
 def _parse_bitmask(raw: str) -> Optional[int]:
-    """Accept only a complete finite non-negative integer response."""
+    """Accept one 32-bit integer, including signed-decimal wire form."""
     try:
         value = float(raw.strip())
     except (AttributeError, TypeError, ValueError):
         return None
-    if not math.isfinite(value) or value < 0 or not value.is_integer():
+    if not math.isfinite(value) or not value.is_integer():
         return None
-    return int(value)
+    integer = int(value)
+    if integer < -(1 << 31) or integer > 0xFFFFFFFF:
+        return None
+    return integer & 0xFFFFFFFF
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +196,9 @@ metadata = SequenceMetadata(
     name="Aerotech positioner health probe",
     description=(
         "Two-phase Aerotech (A3200 / Ensemble) readiness check over the "
-        "existing AeroBasic ASCII TCP session. Phase A probes 8 read-only "
-        "commands (PFBK / VFBK / AXISSTATUS / AXISFAULT × {az,el}) and "
+        "existing AeroBasic ASCII TCP session. Phase A probes read-only "
+        "PFBK / VFBK / AXISSTATUS / AXISFAULT axis state plus seven "
+        "azimuth GETPARM unit/limit/speed values, and "
         "categorises each as SUPPORTED / FAULT / UNSUPPORTED / UNKNOWN. "
         "Phase B exercises the driver's read-only APIs (get_position, "
         "get_metrics, get_capabilities). ~2 s end-to-end. "
@@ -237,7 +267,15 @@ async def _probe_one(
         detail_parts[0] += " ★"
     if status == "SUPPORTED" and response is not None:
         num = _parse_number(response)
-        if "AXISSTATUS" in command or "AXISFAULT" in command:
+        if name in _TEXT_RESPONSE_PROBES:
+            text = response.strip()
+            if not text:
+                status = "UNKNOWN"
+                detail_parts[0] = "UNKNOWN" + (" ★" if is_critical else "")
+                detail_parts.append(f"invalid text raw={response!r}")
+            else:
+                detail_parts.append(f"= {text!r}")
+        elif "AXISSTATUS" in command or "AXISFAULT" in command:
             bitmask = _parse_bitmask(response)
             if bitmask is None:
                 status = "UNKNOWN"
@@ -356,7 +394,9 @@ async def _run_aerobasic_surface(
         # can use this without re-querying).
         if status == "SUPPORTED" and response is not None:
             num = _parse_number(response)
-            if num is not None:
+            if name == "UNITS_NAME_AZ":
+                extras["units_name_az"] = response.strip().strip('"\'')
+            elif num is not None:
                 if name == "PFBK_AZ":
                     extras["position_az_controller_units"] = num
                     if extras["degree_units_verified"]:
@@ -381,10 +421,25 @@ async def _run_aerobasic_surface(
                     extras["velocity_el_controller_units_s"] = num
                     if extras["degree_units_verified"]:
                         extras["velocity_el_deg_s"] = num
+                elif name == "COUNTS_PER_UNIT_AZ":
+                    extras["counts_per_unit_az"] = num
+                elif name == "SOFTWARE_LIMIT_SETUP_AZ":
+                    extras["software_limit_setup_az"] = (
+                        int(num) if num.is_integer() else num
+                    )
+                elif name == "SOFTWARE_LIMIT_LOW_AZ":
+                    extras["software_limit_low_az"] = num
+                elif name == "SOFTWARE_LIMIT_HIGH_AZ":
+                    extras["software_limit_high_az"] = num
+                elif name == "DEFAULT_SPEED_AZ":
+                    extras["default_speed_az"] = num
+                elif name == "MAX_JOG_SPEED_AZ":
+                    extras["max_jog_speed_az"] = num
 
         emit = (
             include_supported
             or effective_critical
+            or name in _MOTION_PARAMETER_PROBES
             or status in ("SUPPORTED_BUT_FAULT", "UNSUPPORTED", "UNKNOWN")
         )
         if emit:

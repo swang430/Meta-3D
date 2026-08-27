@@ -1,30 +1,31 @@
 """R&S FSVA IQ 采集能力探针（`rs_fsva_iq_capability`，P1-70 出发前载体）。
 
 背景：信道验证第一激活批（P1-69 §1，temporal + doppler）的真驱动
-`RealRsFsvaDriver.measure_pdp / measure_doppler_spectrum` 走 TRACe:IQ 采集
-（手册 R&S FSVA/FSV Operating Manual 1176.7510.02─13，TRACe:IQ Subsystem
-p894-907）。其中三条**查询形式**手册只载设置形（`STATe?` / `SRATe?` /
-`RLENgth?`），驱动按 SCPI 标准派生并靠错误队列 fail-loud —— 本序列在出发前
-把这几条查询形式对真机逐条实测：通不通、返回什么字面值、错误队列报什么。
+`RealRsFsvaDriver.measure_pdp / measure_doppler_spectrum` 走 TRACe:IQ 采集。
+现场 FSVA3044 的权威手册 R&S FSV/A3000 I/Q Analyzer User Manual
+1178.8536.02─16 §10.3（印刷页 150）明确：I/Q 专属配置只有在 I/Q Analyzer
+channel 或 `TRACe:IQ:STATe ON` 快速采集模式下才可用。因此本序列在仪器空闲时
+暂时启用快速 I/Q 模式，逐条实测查询形式，并在 finally 中恢复原始 OFF 状态。
 
-**只读**（禁发任何设置命令），每条命令旁注手册出处：
+**会临时切换 I/Q 模式**（仅允许 STATe ON/OFF），每条命令旁注手册出处：
 
 - `*IDN?`               通用命令（手册 p612 命令清单）—— FSVA/FSV/FSW 身份门
-- `TRACe:IQ:STATe?`     ⚠ 推断：p895 只载设置形（ON|OFF，*RST: OFF），查询形系
-                        SCPI 标准派生（该条未标 setting-only）—— 本序列就是来验它
-- `TRACe:IQ:SRATe?`     ⚠ 推断：p906 只载设置形（*RST: 32 MHz），同上
-- `TRACe:IQ:BWIDth?`    p896 例原文 "TRAC:IQ:BWID?"（查询形有据）
-- `TRACe:IQ:RLENgth?`   ⚠ 推断：p903 只载设置形（*RST: 691），同上
+- `TRACe:IQ:STATe?`     现场已实测；ON/OFF 据 1178.8536.02─16 §10.3 p150、p155
+- `TRACe:IQ:SRATe?`     p252 载设置形，查询形待真机核验
+- `TRACe:IQ:BWIDth?`    p251 明写 "Defines or queries"
+- `TRACe:IQ:RLENgth?`   p251 载设置形，查询形待真机核验
 - `SYST:ERR?`           SYSTem:ERRor[:NEXT]? p969（每读一条删一条，空队列回
                         `0,"No error"`）—— 每条能力查询后读一轮，结尾再排水一轮
 
 判读约定：能力查询**有回复且错误队列干净** = 该查询形式真机支持（SUPPORTED）；
 有回复但错误队列报错（如 -113 Undefined header）= 查询形式被拒（REJECTED，
-这是探针要的答案，不算故障）；超时 / 异常 / 无回复 = BLOCKER。
+这是探针要的答案，不算故障）；查询超时但错误队列明确归属到该命令，也记为
+REJECTED 并先排空队列再测下一条；无可归属错误的超时 / 异常 / 无回复 = BLOCKER。
 
-四态 `extra["verdict"]`（照 P1-65 序列形态）：SUCCESS（所有查询有回复，无论
-支持与否；REJECTED 计数进 summary）/ BLOCKER（任一查询超时 / 异常 / 无回复）/
-UNDETERMINED（查询都有回复但收尾错误队列有残留 / 读不出）/ ABORTED（身份门未过）。
+四态 `extra["verdict"]`（照 P1-65 序列形态）：SUCCESS（所有查询都可判定，无论
+支持与否；REJECTED 计数进 summary）/ BLOCKER（存在无法归属的查询超时 / 异常 /
+无回复）/ UNDETERMINED（查询均可判但收尾错误队列有残留 / 读不出）/
+ABORTED（身份门未过或初始状态不可判）。
 """
 from __future__ import annotations
 
@@ -43,26 +44,25 @@ from app.hal.rs_fsva import FsvaScpi
 metadata = SequenceMetadata(
     name="R&S FSVA IQ 采集能力探针",
     description=(
-        "只读：逐条实测 TRACe:IQ 子系统查询形式（STATe?/SRATe?/BWIDth?/RLENgth?）"
-        "在真机上的支持情况与字面回复 —— 其中 STATe?/SRATe?/RLENgth? 手册只载"
-        "设置形、查询形系 SCPI 标准推断，P1-70 真驱动的 PDP/Doppler 采集依赖它们。"
-        "每条查询后读一轮 SYST:ERR?，结尾排水零残留。禁发任何设置命令。"
+        "空闲时临时启用 TRACe:IQ 快速采集模式，逐条实测 SRATe?/BWIDth?/RLENgth?"
+        "查询形式并立即归属错误队列；最后恢复原始 OFF 状态。仅允许写 STATe ON/OFF，"
+        "不改采样参数、不采集数据。P1-70 真驱动的 PDP/Doppler 采集依赖这些能力。"
     ),
     required_categories=["signalAnalyzer"],
     params_schema=[],
-    safe_during_test=False,  # 结尾 drain SYST:ERR?，会清掉别人排队的错误
+    safe_during_test=False,  # 临时切换 I/Q mode 且 drain SYST:ERR?
 )
 
 # 身份门：驱动面向 FSVA（现场 FSVA3000）；手册为 FSVA/FSV 双机型；FSW 与 FSVA
 # 共核心 SCPI（rs_fsva.py 文件头既有说明）。
 _IDN_MODEL_TAGS = ("FSVA", "FSV", "FSW")
 
-# (命令, 手册证据档位) —— evidence="manual" 查询形有手册原文例；"inferred" 推断。
+# STATe? 在激活前读取并作为 capability 归档；其余命令必须在 I/Q mode 内查询。
+# (命令, 手册证据档位) —— evidence="manual" 查询形有手册原文；"inferred" 推断。
 _CAPABILITY_QUERIES: Tuple[Tuple[str, str], ...] = (
-    (FsvaScpi.IQ_STATE_QUERY, "inferred"),    # p895 只载设置形
-    (FsvaScpi.IQ_SRATE_QUERY, "inferred"),    # p906 只载设置形
-    (FsvaScpi.IQ_BWIDTH_QUERY, "manual"),     # p896 例 "TRAC:IQ:BWID?"
-    (FsvaScpi.IQ_RLENGTH_QUERY, "inferred"),  # p903 只载设置形
+    (FsvaScpi.IQ_SRATE_QUERY, "inferred"),    # 1178.8536.02-16 p252 载设置形
+    (FsvaScpi.IQ_BWIDTH_QUERY, "manual"),     # 同手册 p251 "Defines or queries"
+    (FsvaScpi.IQ_RLENGTH_QUERY, "inferred"),  # 同手册 p251 载设置形
 )
 
 _ERR_DRAIN_CAP = 50
@@ -88,8 +88,10 @@ def _parse_err_code(raw: Optional[str]) -> Optional[int]:
 
 
 class _Recorder:
-    def __init__(self, query_fn: Callable[[str], Any], log: Callable[[str], None]) -> None:
+    def __init__(self, query_fn: Callable[[str], Any], write_fn: Callable[[str], Any],
+                 log: Callable[[str], None]) -> None:
         self._query_fn = query_fn
+        self._write_fn = write_fn
         self._log = log
         self.steps: List[SequenceStepResult] = []
         self.blockers: List[str] = []
@@ -99,6 +101,11 @@ class _Recorder:
         if hasattr(raw, "__await__"):
             raw = await raw
         return raw if isinstance(raw, str) else (None if raw is None else str(raw))
+
+    async def write(self, cmd: str) -> None:
+        result = self._write_fn(cmd)
+        if hasattr(result, "__await__"):
+            await result
 
     def add(self, label: str, success: bool, detail: str,
             raw: Optional[str], started: float) -> None:
@@ -150,17 +157,22 @@ async def run(
     if refusal:
         return SequenceRunResult(success=False, summary=refusal)
     query_fn = getattr(sa, "_query", None)
-    if not callable(query_fn):
+    write_fn = getattr(sa, "_write", None)
+    if not callable(query_fn) or not callable(write_fn):
         return SequenceRunResult(
             success=False,
-            summary=f"signalAnalyzer 驱动 {type(sa).__name__} 没有 _query，无法发 SCPI 查询",
+            summary=(f"signalAnalyzer 驱动 {type(sa).__name__} 没有 _query/_write，"
+                     "无法受控激活并恢复 I/Q mode"),
         )
 
-    rec = _Recorder(query_fn, log)
+    rec = _Recorder(query_fn, write_fn, log)
     extra: Dict[str, Any] = {
         "idn": None,
         "capabilities": {},   # cmd -> {raw, evidence, supported, errors}
         "residue_clean": None,
+        "initial_iq_state": None,
+        "activated_for_probe": False,
+        "restore_confirmed": None,
     }
 
     # ── 身份门 ──────────────────────────────────────────────────────────
@@ -181,47 +193,150 @@ async def run(
                        f"ABORTED: 身份门未过（IDN 不含 {_IDN_MODEL_TAGS} 之一），"
                        f"能力查询未发", rec.steps, extra)
 
-    # ── 逐条能力查询（只读；每条后读一轮错误队列归属到该条） ────────────
-    supported: List[str] = []
+    # ── 读取原始状态；只有明确 OFF 才允许临时激活 ──────────────────────
+    state_started = time.monotonic()
+    try:
+        state_raw = ((await rec.query(FsvaScpi.IQ_STATE_QUERY)) or "").strip()
+    except Exception as e:  # noqa: BLE001
+        rec.add(FsvaScpi.IQ_STATE_QUERY, False,
+                f"查询异常 {type(e).__name__}: {e}", None, state_started)
+        return _result("ABORTED", "ABORTED: I/Q 初始状态不可判，未切换模式",
+                       rec.steps, extra)
+    state_errors, state_decidable = await rec.drain_errors(
+        f"{FsvaScpi.IQ_STATE_QUERY} 后错误队列"
+    )
+    state_token = state_raw.upper()
+    if not state_decidable or state_errors or state_token not in {"0", "1", "OFF", "ON"}:
+        rec.add(FsvaScpi.IQ_STATE_QUERY, False,
+                f"初始状态不可判: raw={state_raw!r}, errors={state_errors}",
+                state_raw, state_started)
+        return _result("ABORTED", "ABORTED: I/Q 初始状态不可判，未切换模式",
+                       rec.steps, extra)
+
+    initially_on = state_token in {"1", "ON"}
+    extra["initial_iq_state"] = "ON" if initially_on else "OFF"
+    extra["capabilities"][FsvaScpi.IQ_STATE_QUERY] = {
+        "raw": state_raw,
+        "evidence": "onsite",
+        "supported": True,
+        "errors": [],
+    }
+    rec.add(FsvaScpi.IQ_STATE_QUERY, True,
+            f"支持；初始 I/Q mode={'ON' if initially_on else 'OFF'}",
+            state_raw, state_started)
+
+    # ── 临时激活后逐条能力查询；finally 恢复原始 OFF ───────────────────
+    supported: List[str] = [FsvaScpi.IQ_STATE_QUERY]
     rejected: List[str] = []
-    for cmd, evidence in _CAPABILITY_QUERIES:
-        started = time.monotonic()
-        entry: Dict[str, Any] = {"raw": None, "evidence": evidence,
-                                 "supported": None, "errors": []}
-        extra["capabilities"][cmd] = entry
-        try:
-            raw = await rec.query(cmd)
-        except Exception as e:  # noqa: BLE001
-            rec.add(cmd, False, f"查询异常 {type(e).__name__}: {e}", None, started)
-            rec.blockers.append(cmd)
-            continue
-        if raw is None:
-            rec.add(cmd, False, "无回复（驱动返回 None）", None, started)
-            rec.blockers.append(cmd)
-            continue
-        entry["raw"] = raw
-        errors, decidable = await rec.drain_errors(f"{cmd} 后错误队列")
-        if not decidable:
-            rec.blockers.append(cmd)
-            entry["supported"] = None
-            continue
-        entry["errors"] = errors
-        if errors:
-            # 有回复但队列报错 = 该查询形式被真机拒绝 —— 这是探针要的答案，
-            # 不算故障。措辞：查询形式被拒 ≠ 子系统不存在。
-            entry["supported"] = False
-            rejected.append(cmd)
-            rec.add(cmd, True,
-                    f"查询形式被拒（错误队列: {errors}）——"
-                    + ("推断的查询形在真机不成立" if evidence == "inferred"
-                       else "手册有例却被拒，异常，字面值已归档"),
-                    raw, started)
+    activation_attempted = False
+    try:
+        if not initially_on:
+            activation_attempted = True
+            started = time.monotonic()
+            try:
+                await rec.write(FsvaScpi.IQ_STATE_ON)
+                extra["activated_for_probe"] = True
+                confirmed = ((await rec.query(FsvaScpi.IQ_STATE_QUERY)) or "").strip().upper()
+                errors, decidable = await rec.drain_errors("TRACe:IQ:STATe ON 后错误队列")
+                activation_ok = decidable and not errors and confirmed in {"1", "ON"}
+                rec.add("临时激活 I/Q mode", activation_ok,
+                        "已确认 ON" if activation_ok
+                        else f"未确认 ON: state={confirmed!r}, errors={errors}",
+                        confirmed or None, started)
+                if not activation_ok:
+                    rec.blockers.append("TRACe:IQ:STATe ON")
+            except Exception as e:  # noqa: BLE001
+                rec.add("临时激活 I/Q mode", False,
+                        f"异常 {type(e).__name__}: {e}", None, started)
+                rec.blockers.append("TRACe:IQ:STATe ON")
+
+        if not rec.blockers:
+            for cmd, evidence in _CAPABILITY_QUERIES:
+                started = time.monotonic()
+                entry: Dict[str, Any] = {"raw": None, "evidence": evidence,
+                                         "supported": None, "errors": []}
+                extra["capabilities"][cmd] = entry
+                try:
+                    raw = await rec.query(cmd)
+                except Exception as e:  # noqa: BLE001
+                    # VISA query 超时本身拿不到回复，但仪器通常会把真正原因写进
+                    # SYST:ERR?。必须在发送下一条查询前立即归属并排空，避免 -400
+                    # 级联污染后续能力项。
+                    errors, decidable = await rec.drain_errors(f"{cmd} 异常后错误队列")
+                    entry["errors"] = errors or []
+                    if decidable and errors:
+                        entry["supported"] = False
+                        rejected.append(cmd)
+                        rec.add(cmd, True,
+                                f"查询未回复但错误队列明确拒绝: {errors} "
+                                f"({type(e).__name__}: {e})",
+                                None, started)
+                    else:
+                        rec.add(cmd, False,
+                                f"查询异常 {type(e).__name__}: {e}; errors={errors}",
+                                None, started)
+                        rec.blockers.append(cmd)
+                        if not decidable:
+                            break
+                    continue
+                if raw is None:
+                    errors, decidable = await rec.drain_errors(f"{cmd} 无回复后错误队列")
+                    entry["errors"] = errors or []
+                    if decidable and errors:
+                        entry["supported"] = False
+                        rejected.append(cmd)
+                        rec.add(cmd, True,
+                                f"无回复但错误队列明确拒绝: {errors}", None, started)
+                    else:
+                        rec.add(cmd, False, f"无回复；errors={errors}", None, started)
+                        rec.blockers.append(cmd)
+                        if not decidable:
+                            break
+                    continue
+                entry["raw"] = raw
+                errors, decidable = await rec.drain_errors(f"{cmd} 后错误队列")
+                if not decidable:
+                    rec.blockers.append(cmd)
+                    entry["supported"] = None
+                    break
+                entry["errors"] = errors
+                if errors:
+                    entry["supported"] = False
+                    rejected.append(cmd)
+                    rec.add(cmd, True,
+                            f"查询形式被拒（错误队列: {errors}）——"
+                            + ("推断的查询形在真机不成立" if evidence == "inferred"
+                               else "手册有据却被拒，字面值已归档"),
+                            raw, started)
+                else:
+                    entry["supported"] = True
+                    supported.append(cmd)
+                    rec.add(cmd, True,
+                            "支持，回复已归档"
+                            + ("（推断查询形得到证实）" if evidence == "inferred" else ""),
+                            raw, started)
+    finally:
+        if activation_attempted:
+            started = time.monotonic()
+            try:
+                await rec.write(FsvaScpi.IQ_STATE_OFF)
+                confirmed = ((await rec.query(FsvaScpi.IQ_STATE_QUERY)) or "").strip().upper()
+                errors, decidable = await rec.drain_errors("TRACe:IQ:STATe OFF 后错误队列")
+                restored = decidable and not errors and confirmed in {"0", "OFF"}
+                extra["restore_confirmed"] = restored
+                rec.add("恢复 I/Q mode", restored,
+                        "已确认恢复 OFF" if restored
+                        else f"未确认 OFF: state={confirmed!r}, errors={errors}",
+                        confirmed or None, started)
+                if not restored:
+                    rec.blockers.append("TRACe:IQ:STATe OFF restore")
+            except Exception as e:  # noqa: BLE001
+                extra["restore_confirmed"] = False
+                rec.add("恢复 I/Q mode", False,
+                        f"异常 {type(e).__name__}: {e}", None, started)
+                rec.blockers.append("TRACe:IQ:STATe OFF restore")
         else:
-            entry["supported"] = True
-            supported.append(cmd)
-            rec.add(cmd, True,
-                    "支持，回复已归档" + ("（推断查询形得到证实）" if evidence == "inferred" else ""),
-                    raw, started)
+            extra["restore_confirmed"] = True
 
     # ── 收尾错误队列排水 ────────────────────────────────────────────────
     residue_started = time.monotonic()
@@ -247,12 +362,12 @@ async def run(
     if extra["residue_clean"] is not True:
         return _result(
             "UNDETERMINED",
-            "UNDETERMINED: 查询都有回复，但收尾错误队列有残留 / 读不出，"
+            "UNDETERMINED: 能力查询均可判，但收尾错误队列有残留 / 读不出，"
             "见「收尾错误队列」步" + suffix,
             rec.steps, extra,
         )
     return _result(
         "SUCCESS",
-        "SUCCESS: 能力查询全部有回复，错误队列零残留" + suffix,
+        "SUCCESS: 能力查询全部可判，错误队列零残留" + suffix,
         rec.steps, extra,
     )

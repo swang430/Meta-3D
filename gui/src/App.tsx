@@ -65,7 +65,10 @@ import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { OperationalLabSelector, useOperationalLab } from './features/OperationalLab'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
-import { fetchLabProfiles } from './api/labProfileService'
+import {
+  fetchLabProfiles,
+  syncCurrentInstrumentBinding,
+} from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
@@ -111,6 +114,7 @@ import type {
   UpdateInstrumentPayload,
 } from './types/api'
 import {
+  CMW500_ROUTE_EXAMPLES,
   CMW500_ROUTE_FIELDS,
   buildCmw500AdapterProfile,
   emptyCmw500Route,
@@ -1698,6 +1702,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 
 function EquipmentManager() {
   const queryClient = useQueryClient()
+  const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
   const { data, isLoading } = useQuery({
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
@@ -1815,8 +1820,12 @@ function EquipmentManager() {
           : '配置已保存。',
       )
     },
-    onError: (_error, variables) => {
-      showFeedback(variables.categoryKey, 'error', '保存失败，请重试。')
+    onError: (error: unknown, variables) => {
+      showFeedback(
+        variables.categoryKey,
+        'error',
+        `保存失败: ${diagnosticErrorMessage(error)}`,
+      )
     },
   })
 
@@ -1859,6 +1868,32 @@ function EquipmentManager() {
         'baseStation',
         'error',
         `CMW500 正式能力更新失败: ${diagnosticErrorMessage(error)}`,
+      )
+    },
+  })
+
+  const syncLabBindingMutation = useMutation({
+    mutationFn: (categoryKey: string) => {
+      if (!selectedLabProfileId) {
+        throw new Error('请先在顶部选择 LabProfile')
+      }
+      return syncCurrentInstrumentBinding(selectedLabProfileId, categoryKey)
+    },
+    onSuccess: (_binding, categoryKey) => {
+      queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
+      queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      showFeedback(
+        categoryKey,
+        'success',
+        `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
+      )
+    },
+    onError: (error: unknown, categoryKey) => {
+      showFeedback(
+        categoryKey,
+        'error',
+        `同步 LabProfile 失败: ${diagnosticErrorMessage(error)}`,
       )
     },
   })
@@ -2286,7 +2321,8 @@ function EquipmentManager() {
                       <Stack gap={2}>
                         <Text fw={600} size="sm">CMW500 LTE 2×2 内部 Route</Text>
                         <Text size="xs" c="dimmed">
-                          仅配置 CMW500 内部 BB / connector / converter，不包含外部射频开关或功率补偿。
+                          填写 CMW500 手册枚举（不是面板数字序号），例如 SUA1 / RF3C / RX3 / RF1C / TX1 / RF2C / TX2。
+                          仅配置内部 BB / connector / converter，不包含外部射频开关或功率补偿。
                         </Text>
                       </Stack>
                       <Switch
@@ -2316,6 +2352,7 @@ function EquipmentManager() {
                           <TextInput
                             key={field}
                             label={field}
+                            placeholder={CMW500_ROUTE_EXAMPLES[field]}
                             value={(draft.cmw500_route ?? emptyCmw500Route())[field]}
                             onChange={(event) => {
                               const value = event.currentTarget.value
@@ -2338,6 +2375,24 @@ function EquipmentManager() {
                 )}
 
                 <Group justify="flex-end" mt="md">
+                  <Button
+                    variant="light"
+                    color="indigo"
+                    disabled={
+                      !selectedLabProfileId
+                      || !category.selectedModelId
+                      || !category.connection.endpoint
+                      || instrumentMutation.isPending
+                    }
+                    loading={syncLabBindingMutation.isPending}
+                    onClick={() => {
+                      if (!selectedLabProfileId) return
+                      syncLabBindingMutation.mutate(category.key)
+                    }}
+                    title="同步的是已保存的型号、控制端点和驱动模式"
+                  >
+                    同步已保存配置到 {selectedLabProfile?.name ?? '当前 LabProfile'}
+                  </Button>
                   <Button
                     variant="outline"
                     color="teal"
@@ -2372,10 +2427,7 @@ function EquipmentManager() {
                   </Button>
                   <Button
                     color="brand"
-                    onClick={() => {
-                       handleSaveConnection(category.key);
-                       setEditingCategoryKey(null);
-                    }}
+                    onClick={() => handleSaveConnection(category.key)}
                     loading={instrumentMutation.isPending}
                   >
                     保存配置

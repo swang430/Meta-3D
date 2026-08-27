@@ -1,4 +1,4 @@
-"""LabProfile API — list + create + RF chain resolution.
+"""LabProfile API — list, create, instrument binding sync, and RF chains.
 
 P2 historic note: the first version of this module was read-only because
 labs were expected to be seeded by deployment scripts. P0-2 (first-call
@@ -16,7 +16,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.models.chamber import ChamberConfiguration
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
 
@@ -251,6 +257,121 @@ def list_lab_profiles(
         )
         for r in rows
     ]
+
+
+@router.put(
+    "/{lab_profile_id}/instrument-bindings/{category_key}/sync-current",
+    response_model=InstrumentBinding,
+)
+def sync_current_instrument_binding(
+    lab_profile_id: UUID,
+    category_key: str,
+    db: Session = Depends(get_db),
+):
+    """Copy one category's current catalog configuration into a LabProfile.
+
+    This is an explicit repair/edit action for existing profiles. It keeps the
+    catalog selection and the LabProfile binding identical instead of asking
+    the browser to reproduce database IDs and connection details.
+    """
+    category = (
+        db.query(InstrumentCategory)
+        .filter(InstrumentCategory.category_key == category_key)
+        .with_for_update()
+        .one_or_none()
+    )
+    if category is None:
+        raise HTTPException(status_code=404, detail="Instrument category not found")
+
+    # Keep the same category → LabProfile lock order as execution freezing.
+    profile = (
+        db.query(LabProfile)
+        .filter(LabProfile.id == lab_profile_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LabProfile not found")
+
+    if category.selected_model_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Select a model for {category_key} before syncing",
+        )
+
+    model = (
+        db.query(InstrumentModel)
+        .filter(
+            InstrumentModel.id == category.selected_model_id,
+            InstrumentModel.category_id == category.id,
+        )
+        .one_or_none()
+    )
+    if model is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Selected model does not belong to {category_key}",
+        )
+
+    connection = (
+        db.query(InstrumentConnection)
+        .filter(InstrumentConnection.category_id == category.id)
+        .one_or_none()
+    )
+    if category_key == "baseStation" and model.model == "CMW500":
+        params = connection.connection_params if connection is not None else None
+        raw_profile = (
+            params.get("base_station_adapter_profile")
+            if isinstance(params, dict)
+            else None
+        )
+        try:
+            BaseStationAdapterProfile.model_validate(raw_profile)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "CMW500 内部 Route 未配置或无效：请先在仪器资源配置中"
+                    "完整填写并保存七个字段"
+                ),
+            ) from error
+    endpoint = (connection.endpoint if connection else "") or ""
+    endpoint = endpoint.strip()
+    if not endpoint:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Configure an endpoint for {category_key} before syncing",
+        )
+
+    driver_mode = category.driver_mode or "auto"
+    if driver_mode not in {"auto", "mock", "real"}:
+        raise HTTPException(status_code=422, detail="Invalid instrument driver mode")
+
+    existing = profile.instrument_bindings or []
+    if not isinstance(existing, list):
+        raise HTTPException(status_code=422, detail="LabProfile instrument_bindings must be a list")
+    category_id = str(category.id)
+    matching = [row for row in existing if str(row.get("category_id")) == category_id]
+    role = next(
+        (
+            row.get("role")
+            for row in matching
+            if isinstance(row.get("role"), str) and row["role"].strip()
+        ),
+        f"primary_{category_key}",
+    )
+    binding = {
+        "category_id": category_id,
+        "instrument_model_id": str(model.id),
+        "connection_endpoint": endpoint,
+        "driver_mode": driver_mode,
+        "role": role,
+    }
+    profile.instrument_bindings = [
+        row for row in existing if str(row.get("category_id")) != category_id
+    ] + [binding]
+    db.commit()
+    return binding
 
 
 @router.get("/{lab_profile_id}/rf-chains", response_model=RFChainResolutionResponse)

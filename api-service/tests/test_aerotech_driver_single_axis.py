@@ -15,6 +15,7 @@ command and returns ACK / NAK based on a configurable axis set.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Set
 
 import pytest
@@ -81,10 +82,12 @@ class FakeController:
         for prefix in ("ENABLE", "DISABLE", "HOME", "ABORT", "MOVEABS"):
             if cmd.startswith(prefix + " "):
                 rest = cmd[len(prefix) + 1:]
-                # The checked-in guide supports the single-axis form
-                # ``MOVEABS X <target> XF<feed>``.
+                # The checked-in integration guide and the CAICT controller
+                # use ``MOVEABS X <target> XF<feed>``.
                 tokens = rest.split()
-                axes_named = tokens[:1] if prefix == "MOVEABS" else tokens
+                axes_named = (
+                    [tokens[0]] if prefix == "MOVEABS" else tokens
+                )
                 for a in axes_named:
                     if a not in self.known_axes:
                         raise AerotechError(f"AeroBasic error for '{cmd}': !")
@@ -140,6 +143,8 @@ def _make_driver(known_axes=("X", "Y"), config=None) -> "tuple[StubbedDriver, Fa
         "motion_truth_min_deg": 0.0,
         "motion_truth_max_deg": 360.0,
         "motion_truth_xf_speed": 5.0,
+        "motion_truth_coordinate_offset_verified": True,
+        "motion_truth_coordinate_offset_deg": 0.0,
         **(config or {}),
     }
     fake = FakeController(known_axes=known_axes)
@@ -221,6 +226,69 @@ class TestMoveToSingleAxis:
         assert await d.move_to(180.0, 45.0) is False
         moveabs = [c for c in fake.sent if c.startswith("MOVEABS")]
         assert moveabs == []
+
+
+class TestSocket2ResponseFraming:
+    class _Writer:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def write(self, payload: bytes) -> None:
+            self.sent.append(payload)
+
+        async def drain(self) -> None:
+            return None
+
+    @pytest.mark.asyncio
+    async def test_command_ack_without_line_terminator_returns_immediately(self):
+        driver = RealAerotechDriver(
+            "aerotech-test",
+            {"ip": "192.0.2.10", "timeout_s": 0.01},
+        )
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"%")
+        writer = self._Writer()
+        driver._reader = reader
+        driver._writer = writer  # type: ignore[assignment]
+
+        assert await driver._tx_rx("ABORT X") == ""
+        assert writer.sent == [b"ABORT X\n"]
+
+    @pytest.mark.asyncio
+    async def test_command_terminator_cannot_be_reused_as_next_query_response(self):
+        driver = RealAerotechDriver(
+            "aerotech-test",
+            {"ip": "192.0.2.10", "timeout_s": 0.05},
+        )
+        reader = asyncio.StreamReader()
+        # CAICT 2026-08-27 trace: a command response can leave LF after the
+        # one-byte ACK.  The following query must skip that framing byte and
+        # consume only its own marker + data.
+        reader.feed_data(b"%\n%12.5\n")
+        writer = self._Writer()
+        driver._reader = reader
+        driver._writer = writer  # type: ignore[assignment]
+
+        assert await driver._tx_rx("ENABLE X") == ""
+        assert await driver._tx_rx("PFBK(X)") == "12.5"
+        assert writer.sent == [b"ENABLE X\n", b"PFBK(X)\n"]
+
+    def test_motion_commands_use_the_settle_timeout_budget(self):
+        driver = RealAerotechDriver(
+            "aerotech-test",
+            {"ip": "192.0.2.10", "timeout_s": 0.01, "settle_timeout_s": 60},
+        )
+
+        assert driver._response_timeout_s("ENABLE X") == pytest.approx(0.01)
+        assert driver._response_timeout_s("MOVEABS X 20 XF5") == pytest.approx(60)
+        assert driver._response_timeout_s("HOME X") == pytest.approx(60)
+        assert driver._response_timeout_s("WAIT INPOS X") == pytest.approx(60)
+
+    def test_space_form_getparm_is_classified_as_query(self):
+        assert (
+            RealAerotechDriver._aerobasic_operation("GETPARM X, 129")
+            == "query"
+        )
 
 
 # ---------------------------------------------------------------------------

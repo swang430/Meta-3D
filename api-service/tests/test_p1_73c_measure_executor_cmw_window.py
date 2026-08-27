@@ -20,7 +20,10 @@ from app.services.execution_scpi_evidence import (
     initialize_base_station_execution_evidence,
 )
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
-from app.services.mimo_ota.executors.measure import MeasureExecutor
+from app.services.mimo_ota.executors.measure import (
+    MeasureExecutor,
+    _cmw_route_allows_diagnostic_execution,
+)
 from tests.test_p1_73c_base_station_evidence_writer import (
     _CmwDriver,
     _frozen,
@@ -73,6 +76,33 @@ class _Uxm:
             throughput_scope=throughput_scope,
             kpi_valid={"dl_throughput": True},
         )
+
+
+def test_cmw_diagnostic_route_requires_all_six_authoritative_physical_fields():
+    requested = {
+        "pcc_bb_board": "BB1",
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    physical = {key: value for key, value in requested.items() if key != "pcc_bb_board"}
+
+    assert _cmw_route_allows_diagnostic_execution(
+        SimpleNamespace(requested=requested, applied=physical, confirmed=False)
+    ) is True
+    assert _cmw_route_allows_diagnostic_execution(
+        SimpleNamespace(
+            requested=requested,
+            applied={**physical, "tx2_connector": "RF3C"},
+            confirmed=False,
+        )
+    ) is False
+    assert _cmw_route_allows_diagnostic_execution(
+        SimpleNamespace(requested=requested, applied=None, confirmed=False)
+    ) is False
 
 
 @pytest.mark.asyncio

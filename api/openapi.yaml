@@ -83,6 +83,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InstrumentCategory'
+  /api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/{category_key}/sync-current:
+    put:
+      summary: Sync one current instrument configuration into an existing LabProfile
+      description: >-
+        Explicitly replaces one category binding with the catalog's saved selected
+        model, connection endpoint, and driver mode while preserving other bindings.
+      parameters:
+        - name: lab_profile_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: category_key
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Persisted LabProfile instrument binding
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InstrumentBinding'}
+        '404': {description: LabProfile or instrument category not found}
+        '422': {description: Current instrument model or endpoint is incomplete}
   /api/v1/instruments/{categoryKey}/channel-models:
     get:
       summary: List typed channel-model entries
@@ -924,6 +947,15 @@ paths:
           description: Execution result
 components:
   schemas:
+    InstrumentBinding:
+      type: object
+      required: [category_id, connection_endpoint]
+      properties:
+        category_id: {type: string, format: uuid}
+        instrument_model_id: {type: string, format: uuid, nullable: true}
+        connection_endpoint: {type: string, minLength: 1}
+        driver_mode: {type: string, enum: [auto, mock, real], default: auto}
+        role: {type: string, nullable: true}
     ChannelCalibrationJobResponse:
       type: object
       required: [calibration_job_id, status]

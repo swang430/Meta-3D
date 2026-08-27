@@ -580,6 +580,9 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
         validator = kwargs.get("validate_before_remote")
         assert getattr(validator, "validation_identity", None) == "formal-freeze"
         assert kwargs.get("measurement_attempt_id") is None
+        assert kwargs.get("enable_monitoring") is False, (
+            "正式执行不得开放后台仪表轮询；监控查询会污染同一台仪表的错误队列"
+        )
         events.append(f"lease-enter:{purpose}")
         outcome = InstrumentTestLeaseOutcome(
             lease_id="lease-1",

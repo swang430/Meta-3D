@@ -39,6 +39,8 @@ class ScriptedMotionDriver(RealAerotechDriver):
                 "motion_truth_min_deg": 0.0,
                 "motion_truth_max_deg": 360.0,
                 "motion_truth_xf_speed": 5.0,
+                "motion_truth_coordinate_offset_verified": True,
+                "motion_truth_coordinate_offset_deg": 0.0,
             },
         )
         self._axes_present = ["X"]
@@ -90,6 +92,34 @@ async def test_formal_aerotech_motion_requires_verified_degree_configuration_bef
     driver.config.pop("motion_truth_units_verified")
 
     assert await driver.move_to(90.0, 0.0) is False
+    assert driver.sent == []
+
+
+@pytest.mark.asyncio
+async def test_formal_motion_requires_verified_program_feedback_offset_before_io():
+    driver = _driver(190.0, 200.0)
+    driver.config.pop("motion_truth_coordinate_offset_verified")
+    driver.config.pop("motion_truth_coordinate_offset_deg")
+
+    assert await driver.move_to(200.0, 0.0) is False
+    assert driver.sent == []
+
+
+@pytest.mark.asyncio
+async def test_formal_motion_maps_feedback_target_to_program_coordinate():
+    driver = _driver(190.0, 200.0)
+    driver.config["motion_truth_coordinate_offset_deg"] = 90.0
+
+    assert await driver.move_to(200.0, 0.0) is True
+    assert "MOVEABS X 110.0000 XF5.0000" in driver.sent
+
+
+@pytest.mark.asyncio
+async def test_home_with_nonzero_moveabs_offset_is_refused_before_io():
+    driver = _driver(190.0, 90.0)
+    driver.config["motion_truth_coordinate_offset_deg"] = 90.0
+
+    assert await driver.reset() is False
     assert driver.sent == []
 
 

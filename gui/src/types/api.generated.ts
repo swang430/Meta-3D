@@ -216,6 +216,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/{category_key}/sync-current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sync one current instrument configuration into an existing LabProfile
+         * @description Explicitly replaces one category binding with the catalog's saved selected model, connection endpoint, and driver mode while preserving other bindings.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    lab_profile_id: string;
+                    category_key: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Persisted LabProfile instrument binding */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InstrumentBinding"];
+                    };
+                };
+                /** @description LabProfile or instrument category not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Current instrument model or endpoint is incomplete */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/{categoryKey}/channel-models": {
         parameters: {
             query?: never;
@@ -1750,6 +1806,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        InstrumentBinding: {
+            /** Format: uuid */
+            category_id: string;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
+            connection_endpoint: string;
+            /**
+             * @default auto
+             * @enum {string}
+             */
+            driver_mode: "auto" | "mock" | "real";
+            role?: string | null;
+        };
         ChannelCalibrationJobResponse: {
             /** Format: uuid */
             calibration_job_id: string;

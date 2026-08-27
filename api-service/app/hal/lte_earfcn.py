@@ -90,12 +90,12 @@ _BANDS = {entry.band: entry for entry in (*_FDD_DOWNLINK, *_TDD)}
 # §2.2.23 p.91: RF above 3.3 GHz needs KB036; Table 2-56 footnote 1:
 # band 250 additionally needs KS525.
 _REQUIRED_OPTIONS = {
-    "B22": frozenset({"CMW-KB036"}),
-    "B42": frozenset({"CMW-KB036"}),
-    "B43": frozenset({"CMW-KB036"}),
-    "B48": frozenset({"CMW-KB036"}),
-    "B52": frozenset({"CMW-KB036"}),
-    "B250": frozenset({"CMW-KB036", "CMW-KS525"}),
+    "B22": frozenset({"KB036"}),
+    "B42": frozenset({"KB036"}),
+    "B43": frozenset({"KB036"}),
+    "B48": frozenset({"KB036"}),
+    "B52": frozenset({"KB036"}),
+    "B250": frozenset({"KB036", "KS525"}),
 }
 
 
@@ -127,8 +127,15 @@ def validate_lte_band_options(
     enabled_options: Iterable[str],
 ) -> None:
     required = required_options_for_lte_band(band)
-    enabled = {str(option).strip().upper() for option in enabled_options}
-    missing = {option for option in required if option.upper() not in enabled}
+    enabled = {
+        str(option).strip().upper().removeprefix("CMW-")
+        for option in enabled_options
+    }
+    missing = {
+        option
+        for option in required
+        if option.upper().removeprefix("CMW-") not in enabled
+    }
     if missing:
         raise ValueError(
             f"LTE {normalize_lte_band(band)} requires instrument options "

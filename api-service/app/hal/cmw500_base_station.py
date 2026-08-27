@@ -202,11 +202,9 @@ class CmwScpiCommands:
     EBLER_RELATIVE_PCC = CMW500_LTE_COMMANDS["ebler_relative_query"].template
     EBLER_CQI = "FETCh:LTE:SIGN{i}:EBLer:PCC:CQIReporting:STReam1?"
 
-    # --- UE 测量上报 (RSRP / SINR) ---
-    # CMW500 通过 FETCh 子系统获取 UE 上报的 L3 RSRP 和 SINR
-    # 返回格式: "<value>" (dBm / dB)
+    # --- UE 诊断上报 (仅保留现场已响应的 RSRP) ---
+    # SINR 查询在当前 CMW500 上返回 -113 Undefined header，不在这里猜方言。
     UE_RSRP = "SENSe:LTE:SIGN{i}:UEReport:RSRP?"
-    UE_SINR = "SENSe:LTE:SIGN{i}:UEReport:SINR?"
 
     # --- 信令 BLER (Extended BLER) ---
     INIT_EBLER = CMW500_LTE_COMMANDS["ebler_init"].template
@@ -352,9 +350,15 @@ class RealCmw500Driver(BaseStationDriver):
                 status="unknown",
                 reason="CMW500 firmware does not satisfy the LTE 2x2 minimum",
             )
-        installed = {option.strip().upper() for option in self._installed_options}
-        duplex_option = "CMW-KS500" if normalized_duplex == "fdd" else "CMW-KS550"
-        missing = sorted({"CMW-KS520", duplex_option} - installed)
+        # CMW500 option-list replies use bare product codes (for example
+        # ``KS520``/``KS550``).  The manual's display names add ``CMW-``;
+        # that catalog prefix is not part of the instrument-owned token.
+        installed = {
+            option.strip().upper().removeprefix("CMW-")
+            for option in self._installed_options
+        }
+        duplex_option = "KS500" if normalized_duplex == "fdd" else "KS550"
+        missing = sorted({"KS520", duplex_option} - installed)
         if missing:
             return Cmw500FormalCapabilityDecision(
                 ready=False,
@@ -577,9 +581,14 @@ class RealCmw500Driver(BaseStationDriver):
                     f"{spec.minimum_firmware}"
                 ),
             )
-        installed = {option.upper() for option in self._installed_options}
+        installed = {
+            option.strip().upper().removeprefix("CMW-")
+            for option in self._installed_options
+        }
         missing_options = [
-            option for option in spec.required_options if option.upper() not in installed
+            option
+            for option in spec.required_options
+            if option.strip().upper().removeprefix("CMW-") not in installed
         ]
         if missing_options:
             return _result(
@@ -621,7 +630,12 @@ class RealCmw500Driver(BaseStationDriver):
                 )
 
             applied = {
-                "pcc_bb_board": readback.controller,
+                # ROUTe:LTE:SIGN<i>? does not return PCCBBBoard.  Per the
+                # R&S manual printed p.459-460, its second field is an
+                # irrelevant future-use Controller string.  Preserve only
+                # the six fields the instrument authoritatively returned;
+                # write acceptance and an empty error queue do not prove that
+                # PCCBBBoard was applied.
                 "rx_connector": readback.rx_connector,
                 "rx_converter": readback.rx_converter,
                 "tx1_connector": readback.tx1_connector,
@@ -629,7 +643,12 @@ class RealCmw500Driver(BaseStationDriver):
                 "tx2_connector": readback.tx2_connector,
                 "tx2_converter": readback.tx2_converter,
             }
-            if applied != requested:
+            requested_physical = {
+                key: value
+                for key, value in requested.items()
+                if key != "pcc_bb_board"
+            }
+            if applied != requested_physical:
                 return _result(
                     requested=requested,
                     applied=applied,
@@ -639,8 +658,11 @@ class RealCmw500Driver(BaseStationDriver):
             return _result(
                 requested=requested,
                 applied=applied,
-                confirmed=True,
-                reason="CMW500 internal LTE 2x2 route confirmed",
+                confirmed=False,
+                reason=(
+                    "CMW500 physical route fields confirmed, but PCCBBBoard "
+                    "has no authoritative readback"
+                ),
                 exchanges=exchanges,
             )
 
@@ -958,10 +980,10 @@ class RealCmw500Driver(BaseStationDriver):
         配置 CMW500 LTE 物理小区参数。
 
         SCPI 序列:
+          CONFigure:LTE:SIGN1:DMODe FDD
           CONFigure:LTE:SIGN1:BAND OB3
           CONFigure:LTE:SIGN1:CELL:BANDwidth:DL B200
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
-          CONFigure:LTE:SIGN1:DMODe FDD
           CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25
         """
         try:
@@ -1012,6 +1034,25 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.error("[CMW500] Cell config blocked: SAFE_IDLE unconfirmed")
                 return False
 
+            # SYSTem:ERRor:ALL? 是设备级队列且读取后清空。先丢弃本次配置
+            # 之前已经存在的错误，避免后台诊断或上一次人工命令被误认成
+            # 当前配置失败；配置写完后仍由 _write_group_confirmed() 独立验错。
+            stale_errors = self._query(CmwScpiCommands.ERR)
+            if not self._error_queue_is_empty(stale_errors):
+                logger.warning(
+                    "[CMW500] Discarded pre-existing error queue before cell config: %s",
+                    stale_errors.strip(),
+                )
+
+            # The instrument rejects a TDD-only band while the cell is still
+            # in its previous duplex mode.  Select the requested duplex before
+            # applying the band and its EARFCN.
+            if "duplex" in config:
+                self._write(
+                    self._fmt(CmwScpiCommands.CELL_DUPLEX)
+                    + f" {config['duplex'].upper()}"
+                )
+
             if "band" in config:
                 self._write(self._fmt(CmwScpiCommands.CELL_BAND) + f" {band}")
 
@@ -1021,12 +1062,6 @@ class RealCmw500Driver(BaseStationDriver):
                 self._write(
                     self._fmt(CmwScpiCommands.CELL_DL_BW)
                     + f" {bandwidth_token}"
-                )
-
-            if "duplex" in config:
-                self._write(
-                    self._fmt(CmwScpiCommands.CELL_DUPLEX)
-                    + f" {config['duplex'].upper()}"
                 )
 
             self._write(
@@ -1820,13 +1855,8 @@ class RealCmw500Driver(BaseStationDriver):
         except Exception:
             pass
 
-        # ── SINR (UE 测量上报) ──
-        try:
-            sinr_str = self._query(self._fmt(CmwScpiCommands.UE_SINR))
-            if sinr_str and sinr_str.strip():
-                metrics.sinr_db = float(sinr_str.strip().split(",")[0])
-        except Exception:
-            pass
+        # 当前 CMW500 对 UEReport:SINR? 返回 -113 Undefined header，且仓库
+        # 没有可核对的厂商手册出处。诊断监控保持 unknown，不向真机猜发命令。
 
         # ── 测量数据归档 → measurement.log ──
         metrics.kpi_valid.update(valid)

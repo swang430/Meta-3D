@@ -90,6 +90,16 @@ export async function createLabProfile(
   return res.data
 }
 
+export async function syncCurrentInstrumentBinding(
+  labProfileId: string,
+  categoryKey: string,
+): Promise<InstrumentBindingPayload> {
+  const res = await apiClient.put<InstrumentBindingPayload>(
+    `/lab-profiles/${labProfileId}/instrument-bindings/${categoryKey}/sync-current`,
+  )
+  return res.data
+}
+
 export async function fetchRFChains(
   labProfileId: string,
   operatingMode = 'mimo_ota',

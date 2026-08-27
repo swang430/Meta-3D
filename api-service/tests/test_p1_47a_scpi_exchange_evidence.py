@@ -698,14 +698,35 @@ class _Writer:
 class _Reader:
     def __init__(self, value: bytes | None = b"%12.5\n") -> None:
         self.value = value
+        self.buffer = None if value is None else bytearray(value)
         self.entered = asyncio.Event()
 
     async def readline(self) -> bytes:
         self.entered.set()
         if self.value is None:
             await asyncio.Event().wait()
-        assert self.value is not None
-        return self.value
+        assert self.buffer is not None
+        newline = self.buffer.find(b"\n")
+        if newline < 0:
+            result = bytes(self.buffer)
+            self.buffer.clear()
+            return result
+        result = bytes(self.buffer[: newline + 1])
+        del self.buffer[: newline + 1]
+        return result
+
+    async def readexactly(self, count: int) -> bytes:
+        self.entered.set()
+        if self.value is None:
+            await asyncio.Event().wait()
+        assert self.buffer is not None
+        if len(self.buffer) < count:
+            partial = bytes(self.buffer)
+            self.buffer.clear()
+            raise asyncio.IncompleteReadError(partial, count)
+        result = bytes(self.buffer[:count])
+        del self.buffer[:count]
+        return result
 
 
 def _aerotech(reader: _Reader, *, timeout_s: float = 1.0):
@@ -747,14 +768,14 @@ async def test_aerotech_empty_whitespace_and_not_ready_are_not_conflated(
     assert _direction(scpi_capture.records, "ERR")[0].result_type == "exception"
 
     scpi_capture.records.clear()
-    assert await _aerotech(_Reader(b"   \n"))._send("PFBK(X)") == ""
-    whitespace = _direction(scpi_capture.records, "RX")[0]
-    assert whitespace.result_type == "whitespace_response"
-    assert whitespace.resp_len == 4
+    with pytest.raises(AerotechError, match="Unexpected Aerotech Socket2"):
+        await _aerotech(_Reader(b"   \n"))._send("PFBK(X)")
+    assert _direction(scpi_capture.records, "ERR")[0].result_type == "exception"
 
     scpi_capture.records.clear()
-    assert await _aerotech(_Reader(b"not ready\n"))._send("PFBK(X)") == "not ready"
-    assert _direction(scpi_capture.records, "RX")[0].result_type == "not_ready"
+    with pytest.raises(AerotechError, match="Unexpected Aerotech Socket2"):
+        await _aerotech(_Reader(b"not ready\n"))._send("PFBK(X)")
+    assert _direction(scpi_capture.records, "ERR")[0].result_type == "exception"
 
 
 @pytest.mark.asyncio
