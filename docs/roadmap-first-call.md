@@ -4097,6 +4097,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
 
+### 2026-08-27 LTE CMW500 现场首测（待 triage，不自动启动）
+
+- `[discovered on-site 2026-08-27 during LTE CMW500 TestCase 首测]` **需要产品化支持“无有效路径损耗校准时仍可执行诊断测试”** —— 当前正式 TestCase 默认 `precheck_strict_cal=true`，CAICT-Lab-1 没有任何 `ProbePathLossCalibration` 时会在 PRECHECK fail-closed；今天经用户明确授权，仅将 LTE UMa 20 MHz CMW500 首测用例显式设为 `precheck_strict_cal=false`，其余频率、信道文件、开关模式、配置一致性、DUT/SIM、cleanup 与 transport release 门保持严格，且无校准数据不得进入路径损耗补偿或正式 KPI。后续应先 triage 无校准模式的用户可见语义、适用测试类型、审计标记和正式报告边界；本条只留存需求，不在现场临时新增机制。
+
 ### 2026-08-23 P1-65 查出的驱动层事实（待 triage，不自动启动）
 
 - ~~`[discovered 2026-08-23 during P1-65 手册对账]` **[P1 候选] F64 驱动连接路径两条"软探针"是手册查无的命令**~~ → **✅ P1-66 #382 已修（2026-08-24）**：`_F64_OPTION_PROBES` 探针机制整体删除（含 `propsim_f64_health` 第三站点），能力单源 `SYSTem:INFO?` 关键字扫描（现场 08-07 实测回复含 "AWGN interferences:32"）+ `USER:GET?` 加 error-payload 守卫；license_truth 序列措辞同步为过去时。原文要点存档：两条命令手册 §20.4.2 / §20.4.9 全文 0 命中，现场 -100 是命令编出来的结果，每次连接各留一条（08-07 一天 269 次连接）。
