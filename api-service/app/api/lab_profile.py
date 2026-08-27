@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.models.chamber import ChamberConfiguration
 from app.models.instrument import (
     InstrumentCategory,
@@ -317,6 +318,23 @@ def sync_current_instrument_binding(
         .filter(InstrumentConnection.category_id == category.id)
         .one_or_none()
     )
+    if category_key == "baseStation" and model.model == "CMW500":
+        params = connection.connection_params if connection is not None else None
+        raw_profile = (
+            params.get("base_station_adapter_profile")
+            if isinstance(params, dict)
+            else None
+        )
+        try:
+            BaseStationAdapterProfile.model_validate(raw_profile)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "CMW500 内部 Route 未配置或无效：请先在仪器资源配置中"
+                    "完整填写并保存七个字段"
+                ),
+            ) from error
     endpoint = (connection.endpoint if connection else "") or ""
     endpoint = endpoint.strip()
     if not endpoint:

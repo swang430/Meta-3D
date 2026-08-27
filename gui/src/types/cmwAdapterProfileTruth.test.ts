@@ -33,8 +33,11 @@ test('seven explicit fields build the only typed CMW500 route payload', () => {
   )
 })
 
-test('blank profile clears, partial or reused TX paths fail loud', () => {
-  assert.equal(buildCmw500AdapterProfile(emptyCmw500Route()), null)
+test('blank, partial or reused TX paths fail loud', () => {
+  assert.throws(
+    () => buildCmw500AdapterProfile(emptyCmw500Route()),
+    /必须完整填写七个字段/,
+  )
   assert.throws(
     () => buildCmw500AdapterProfile({ ...complete, tx2_converter: '' }),
     /七个字段/,

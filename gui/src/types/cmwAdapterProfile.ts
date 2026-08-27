@@ -59,11 +59,10 @@ export function readCmw500Route(value: unknown): Cmw500RouteDraft {
 
 export function buildCmw500AdapterProfile(
   draft: Cmw500RouteDraft,
-): BaseStationAdapterProfile | null {
+): BaseStationAdapterProfile {
   const route = emptyCmw500Route()
   for (const key of CMW500_ROUTE_FIELDS) route[key] = draft[key].trim()
   const present = CMW500_ROUTE_FIELDS.filter((key) => route[key] !== '')
-  if (present.length === 0) return null
   if (present.length !== CMW500_ROUTE_FIELDS.length) {
     throw new Error('CMW500 内部 2×2 route 必须完整填写七个字段')
   }

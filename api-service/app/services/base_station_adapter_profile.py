@@ -239,6 +239,10 @@ def freeze_base_station_adapter_profile(
         if not isinstance(params, dict):
             raise ValueError("CMW500 connection_params are missing")
         raw_profile = params.get("base_station_adapter_profile")
+        if raw_profile is None:
+            raise ValueError(
+                "CMW500 内部 Route 未配置：请在仪器资源配置中完整填写并保存七个字段"
+            )
         profile = BaseStationAdapterProfile.model_validate(raw_profile)
         resolution = BaseStationAdapterProfileResolution(
             schema_version=1,

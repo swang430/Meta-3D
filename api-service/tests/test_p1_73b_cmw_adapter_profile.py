@@ -149,6 +149,20 @@ def test_cmw_real_resolution_freezes_profile_and_identity_once(db):
     assert freeze_base_station_adapter_profile(db, hal, execution, lab) == frozen
 
 
+def test_cmw_missing_profile_fails_with_actionable_route_error(db):
+    _, _, _, lab, execution = _configured_execution(
+        db,
+        model_name="CMW500",
+        params={"operator_note": "route not configured"},
+    )
+    hal = SimpleNamespace(
+        drivers={"baseStation": RealCmw500Driver("cmw", {"ip_address": "192.0.2.10"})}
+    )
+
+    with pytest.raises(ValueError, match="CMW500.*Route.*七个字段"):
+        freeze_base_station_adapter_profile(db, hal, execution, lab)
+
+
 def test_uxm_freezes_not_applicable_without_reading_cmw_profile(db):
     _, _, _, lab, execution = _configured_execution(
         db,
