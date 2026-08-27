@@ -101,37 +101,61 @@ F64 使用的目标工程为：
 | UE Attach / LTE KPI / 报告 | 未完成 | 当日 UE 未 Attach，无正式吞吐/BLER/报告 |
 | UXM | 未测试 | 当日不在现场 |
 
-## 6. 后续 Todo（本 PR 不自动实现）
+## 6. 后续 Todo（已编入 roadmap 优先级）
 
-### 下一次正式 LTE 测试前
+本文件只保留 CMW500 现场视图，不建立第二套总队列。执行时必须先按地点选队列：
 
-- [ ] 用真实 DUT/SIM 完成 CMW500 UE Attach，并跑完 PRECHECK → MEASURE → ANALYSIS → REPORT。
-- [ ] 完成真实路径损耗校准；若要产品化“无校准诊断模式”，先定义 GUI 语义、适用 TestCase、
-  审计字段和报告边界，且必须继续排除正式 KPI。
-- [ ] 找到手册支持的 `PCCBBBoard` 权威确认来源并完成真机取证；在此之前七字段 Route 只允许
-  诊断使用。另复核最终 Route 与现场实际射频接线，六个物理路径字段以 CMW500 回读为准。
-- [ ] 将现场已证明的 Aerotech `+90°` 坐标偏置接入 execution-frozen position evidence，并用
-  同一 TestCase 复验四个请求方位；接入前正式位置项保持 UNKNOWN。另行取得 HOME 最终 PFBK
-  的独立现场证据，不能从 MOVEABS 偏置外推。
-- [ ] 生成至少一份真实 LTE execution 日志和报告，核对同一 execution 的 CMW/F64/转台证据、
-  cleanup 与 transport release。
+- **在现场**：把时间用于真实 Attach、仪器权威回读、校准、转台 HOME/方位、真实报告与
+  cleanup/release 证据；不在仪器旁临时开展 P2-42～45 架构开发。无需代码修改的既有诊断
+  可以穿插留证；发现探针缺口只保存原始回复，回到非现场再修。
+- **非现场**：先处理本次已暴露的最小代码/手册缺口，并明确标记“待现场复验”；随后才按
+  P2-42 → P2-43 → P2-44 → P2-45 做架构收敛。非现场回归不能替代现场通过。
 
-### 诊断载体收口
+原 First-call / on-site Todo 完整保留在 roadmap 的 Blocked 表：P0-5、P1-2、P1-4、P2-4，
+以及 P1-5/P1-17/P2-9/P2-10/P2-12/P2-13 现场半和 P1-6 HOLD，均没有被 P0-9 或
+P2-42～45 替换。
 
-- [ ] EMCenter：按已知固件 2.5.1 的实测事实，将 `ERROR 3` 精确分类为“该互锁查询不支持”，
-  不能把它误报成继电器链故障；不放宽其他错误。
-- [ ] F64 电平窗口：让序列显式读取当前在用输出口集合；在用 16 口全部合法时可判通过，未配置
-  的另 16 口保持披露而不阻塞。
-- [ ] F64 license truth：在干净错误队列上重跑并留一条 SUCCESS 记录；不得恢复已删除的无手册探针。
-- [ ] F64 Local 交还：按面板 Remote 水印 / Local Mode 按钮的真实含义重新完成 observe → confirm，
-  修正操作员布尔值与描述相反的问题。
-- [ ] FSVA：在不并发 LTE 正式执行的条件下，分别跑一次真实 PDP 与 Doppler 测量，验证刚确认的
-  IQ 参数查询能够贯穿完整采集，而不只停在能力探针。
+### P0-9：下一次正式 LTE 测试闭环（Current Focus）
 
-### 下次 UXM 在场时
+- [ ] **P0-9A（现场）**：用真实 DUT/SIM 完成 CMW500 UE Attach，并跑完
+  PRECHECK → MEASURE → ANALYSIS → REPORT。允许现有逐用例、可审计的无校准诊断运行，
+  但正式 KPI 必须保持 UNKNOWN/N/A。
+- [ ] **P0-9B-1（非现场实现 → 现场复验）**：先找到手册支持的 `PCCBBBoard` 权威确认来源并
+  完成最小探针，再回现场真机取证；在此之前七字段 Route 只允许诊断。最终 Route 与现场射频
+  接线复核时，六个物理路径字段只认 CMW500 回读。
+- [ ] **P0-9B-2（现场）**：完成真实路径损耗校准。长期“无校准诊断模式”的产品语义已提升 P2-45，
+  不在现场临时扩大正式判定。
+- [ ] **P0-9B-3（非现场实现 → 现场复验）**：将 Aerotech `+90°` 坐标偏置接入
+  execution-frozen position evidence；回现场用同一 TestCase 复验请求方位，并另行取得 HOME
+  最终 PFBK，不能从 MOVEABS 偏置外推。
+- [ ] **P0-9C（现场）**：生成真实 LTE execution 日志和报告，核对同一 attempt/lease/session 的
+  CMW/F64/转台证据、cleanup 与 transport release；再重复执行一次，证明没有读取旧结果。
+
+### 现场硬件诊断证据收口（不阻塞 P0-9A Attach）
+
+- [ ] **P2-9 现场半**：EMCenter 对固件 2.5.1 的 `ERROR 3` 仅在已确认的
+  `INTLK? SAFETYRELAY` 上精确归类为 unsupported；不放宽其他错误，修后重跑 SUCCESS。
+- [ ] **NEW-1 现场半**：F64 电平窗口序列读取当前活动输出集合；16 个在用口全部合法可通过，
+  另 16 个未配置口只披露、不阻塞。
+- [ ] **P1-2 现场半**：F64 license truth 在干净错误队列上重跑并留 SUCCESS；不得恢复无手册探针。
+- [ ] **NEW-2 现场半**：F64 Local 交还按 Remote 水印 / Local Mode 真实含义完成两段式确认并留记录。
+- [ ] **U-12 非阻塞能力项**：FSVA 在不并发 LTE 正式执行时分别跑真实 PDP 与 Doppler，证明 IQ
+  参数查询贯穿完整采集。FSVA 不属于当前 LTE MIMO OTA 必需链。
+
+### P2-42～P2-45：降低下一种 BS Emulator 接入成本
+
+- [ ] **P2-42**：单一 BaseStation execution session，统一四类入口的生命周期和监控隔离。
+- [ ] **P2-43**：窄 Adapter SPI、逐字段结构化回执、统一正式 metric projection 和认证套件。
+- [ ] **P2-44**：唯一 `ResolvedBaseStationBinding` 与 manifest 驱动的注册/readiness/GUI。
+- [ ] **P2-45**：产品化无校准诊断模式及 Diagnostic/Formal 两阶段站点认证。
+
+P2-42～P2-44 是第三种 BS Emulator 的接入前置；验收目标是新 adapter 不再修改 MEASURE、
+commissioning 多入口、报告/比较/下载/历史和通用 GUI。
+
+### 下次 UXM 在场时（并入 P2-43 认证基线）
 
 - [ ] 恢复 `192.168.1.x` 网段，重跑 UXM identity / fresh-start / SIM / attach 诊断。
-- [ ] 用相同 LTE UMa TestCase 对比 UXM 与 CMW500 的顶层结果形状；adapter 专属证据仍只留在
+- [ ] 用相同 LTE UMa TestCase 对比 UXM 与 CMW500 顶层结果形状；adapter 专属证据只留在
   版本化 evidence envelope，不能降低正式 provenance 白名单。
 
 ## 7. 本次 PR 范围约束
