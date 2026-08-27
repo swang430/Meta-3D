@@ -19,6 +19,7 @@ LabProfile/category/connection 与加载 driver 构造稳定快照；MEASURE 在
 **Files:**
 - Create: `api-service/app/services/positioner_coordinate_profile.py`
 - Modify: `api-service/app/services/test_case_runner.py`
+- Modify: `api-service/app/api/commissioning.py`
 - Create: `api-service/tests/test_p0_9b3_positioner_coordinate_freeze.py`
 
 **Step 1: 写 RED**
@@ -26,7 +27,7 @@ LabProfile/category/connection 与加载 driver 构造稳定快照；MEASURE 在
 覆盖以下全集：
 
 - 真实 Aerotech 从所选 LabProfile 的同一 InstrumentConnection 冻结 degree、+90°、轴、范围、速度、
-  容差和来源引用；
+  容差、现场验证来源与带时区验证时间；
 - binding、selected model、connection endpoint、loaded driver class/endpoint/config 任一分叉即拒绝；
 - `verified` 不是精确 `True`、偏置/范围/速度/容差非有限或单位不是 degree 时拒绝；
 - 已冻结 execution 重复调用不覆盖；已有硬件进度但无快照的旧 execution 拒绝回填；
@@ -48,7 +49,9 @@ Expected: FAIL，因为冻结服务尚不存在。
 - 保存 schema version、resolution、同源 identity、坐标字段、source reference、server timestamp 与
   canonical digest 到 `TestExecution.config`；
 - 提供纯本地 `validate_frozen_positioner_before_motion()`；
-- 在 case runner 排入后台前调用，失败转为现有 `CaseNotExecutable`。
+- 在 case runner 排入后台前调用，失败转为现有 `CaseNotExecutable`；commissioning session 创建
+  仍只冻结既有 baseStation，单相位/adhoc 的 MEASURE 与 run-all 则在取得 Remote 前补齐并复核
+  positioner 快照，PRECHECK/ANALYSIS/REPORT 不因尚未使用转台而被误阻断。
 
 **Step 4: 运行 GREEN**
 

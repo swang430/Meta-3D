@@ -1027,6 +1027,10 @@ class MeasureExecutor(IStepExecutor):
         from app.services.path_loss_calibration_service import (
             ProbePathLossCalibrationService,
         )
+        from app.services.positioner_coordinate_profile import (
+            FREEZE_CONFIG_KEY as POSITIONER_COORDINATE_FREEZE_CONFIG_KEY,
+            validate_frozen_positioner_before_motion,
+        )
 
         hal = get_hal_service()
         chamber: ChamberConfiguration = lab.chamber_config
@@ -1138,6 +1142,45 @@ class MeasureExecutor(IStepExecutor):
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
                 error_message="positioner + baseStation drivers required (HAL)",
+            )
+        execution_config = (
+            context.test_execution.config
+            if isinstance(context.test_execution.config, dict)
+            else {}
+        )
+        frozen_positioner = execution_config.get(
+            POSITIONER_COORDINATE_FREEZE_CONFIG_KEY
+        )
+        if not isinstance(frozen_positioner, dict):
+            if is_mock_driver(positioner):
+                frozen_positioner = {
+                    "resolution": {
+                        "schema_version": 1,
+                        "adapter": None,
+                        "status": "diagnostic_unbound",
+                        "execution_mode": "simulated",
+                    },
+                    "profile": None,
+                }
+            else:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "转台坐标 profile 未在 execution 中冻结；"
+                        "已在任何转台连接或动作前中止。"
+                    ),
+                )
+        positioner_validation_error = validate_frozen_positioner_before_motion(
+            hal,
+            frozen_positioner,
+        )
+        if positioner_validation_error:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message=(
+                    "转台执行冻结坐标与当前驱动不一致；"
+                    f"已在任何转台连接或动作前中止: {positioner_validation_error}"
+                ),
             )
         cmw_attempt = self._cmw_formal_attempt_context(
             context,
@@ -2737,6 +2780,7 @@ class MeasureExecutor(IStepExecutor):
                             context.test_execution,
                             requirement_id=f"positioner.azimuth.{az_idx:03d}",
                             requested_angle_deg=azimuth,
+                            frozen_positioner=frozen_positioner,
                             driver=positioner,
                             exchanges=position_exchanges,
                         )

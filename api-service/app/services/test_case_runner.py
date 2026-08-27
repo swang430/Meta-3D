@@ -348,6 +348,12 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
             execution,
             snapshot,
         )
+    except Exception as e:  # noqa: BLE001 — 配置/绑定冲突必须在排入后台前拒绝
+        db.rollback()
+        raise CaseNotExecutable(
+            f"基站 adapter profile 无法冻结: {e}"
+        ) from e
+    try:
         freeze_execution_positioner_coordinate_profile(
             db,
             get_hal_service(),
@@ -357,7 +363,7 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     except Exception as e:  # noqa: BLE001 — 配置/绑定冲突必须在排入后台前拒绝
         db.rollback()
         raise CaseNotExecutable(
-            f"仪表执行配置无法冻结: {e}"
+            f"转台坐标 profile 无法冻结: {e}"
         ) from e
     db.commit()
     db.refresh(execution)

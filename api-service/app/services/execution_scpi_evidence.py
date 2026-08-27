@@ -50,6 +50,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
 )
 from app.services.base_station_adapter_profile import CMW_FORMAL_CAPABILITY_KEY
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
+from app.services.positioner_coordinate_profile import PositionerCoordinateProfile
 
 
 _SENSITIVE_KEYS = {
@@ -1413,10 +1414,24 @@ def record_positioner_capture(
     *,
     requirement_id: str,
     requested_angle_deg: float,
+    frozen_positioner: dict[str, Any],
     driver,
     exchanges: list[ScpiExchangeRef],
 ) -> None:
-    az_axis = str(getattr(driver, "az_axis", "X")).strip().upper()
+    resolution = frozen_positioner.get("resolution")
+    raw_profile = frozen_positioner.get("profile")
+    profile = None
+    if (
+        isinstance(resolution, dict)
+        and resolution.get("execution_mode") == "real"
+        and resolution.get("status") == "verified"
+        and resolution.get("adapter") == "aerotech"
+        and isinstance(raw_profile, dict)
+    ):
+        profile = PositionerCoordinateProfile.model_validate(raw_profile)
+    az_axis = profile.azimuth_axis if profile is not None else str(
+        getattr(driver, "az_axis", "X")
+    ).strip().upper()
     feedback = next(
         (
             exchange
@@ -1430,9 +1445,13 @@ def record_positioner_capture(
     )
     item = driver.build_p0_5_position_evidence(
         requested_angle_deg=requested_angle_deg,
-        coordinate_offset_deg=None,
-        offset_calibrated=False,
-        tolerance_deg=1.0,
+        coordinate_offset_deg=(
+            profile.coordinate_offset_deg if profile is not None else None
+        ),
+        offset_calibrated=profile is not None,
+        tolerance_deg=(
+            profile.position_tolerance_deg if profile is not None else 1.0
+        ),
         move_exchange=_find_exchange(
             exchanges, "positioner.move_absolute", "command"
         ),

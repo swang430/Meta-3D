@@ -47,6 +47,13 @@ def _motion_params(**overrides) -> dict[str, object]:
         "motion_truth_xf_speed": 5.0,
         "motion_truth_coordinate_offset_verified": True,
         "motion_truth_coordinate_offset_deg": 90.0,
+        "motion_truth_coordinate_offset_verification_source": (
+            "docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md"
+            "#44-aerotech-转台"
+        ),
+        "motion_truth_coordinate_offset_verified_at": (
+            "2026-08-27T16:59:50+08:00"
+        ),
         "position_tolerance_deg": 0.5,
         "azimuth_axis": "X",
         "elevation_axis": "Y",
@@ -126,6 +133,12 @@ def test_real_aerotech_freezes_persisted_coordinate_contract_once(db):
     assert frozen["profile"]["user_units"] == "degree"
     assert frozen["profile"]["coordinate_offset_deg"] == 90.0
     assert frozen["profile"]["coordinate_offset_verified"] is True
+    assert frozen["profile"]["coordinate_offset_verification_source"].endswith(
+        "2026-08-27-lte-cmw500-onsite-summary.md#44-aerotech-转台"
+    )
+    assert frozen["profile"]["coordinate_offset_verified_at"] == (
+        "2026-08-27T16:59:50+08:00"
+    )
     assert frozen["profile"]["azimuth_axis"] == "X"
     assert frozen["source_reference"].endswith(
         "2026-08-27-lte-cmw500-onsite-summary.md#44-aerotech-转台"
@@ -147,6 +160,14 @@ def test_real_aerotech_freezes_persisted_coordinate_contract_once(db):
         ({"motion_truth_units_verified": 1}, "units_verified"),
         ({"motion_truth_user_units": "count"}, "user_units"),
         ({"motion_truth_coordinate_offset_verified": "true"}, "offset_verified"),
+        (
+            {"motion_truth_coordinate_offset_verification_source": ""},
+            "verification_source",
+        ),
+        (
+            {"motion_truth_coordinate_offset_verified_at": "yesterday"},
+            "verified_at",
+        ),
         ({"motion_truth_coordinate_offset_deg": float("nan")}, "offset_deg"),
         ({"motion_truth_min_deg": 10.0, "motion_truth_max_deg": 10.0}, "range"),
         ({"motion_truth_xf_speed": 0.0}, "xf_speed"),
@@ -259,3 +280,32 @@ def test_authoritative_mock_without_catalog_binding_is_diagnostic_unbound(db):
     assert frozen["profile"] is None
     assert frozen["instrument_model_id"] is None
     assert validate_frozen_positioner_before_motion(hal, frozen) is None
+
+
+def test_real_non_aerotech_resolution_remains_not_applicable():
+    class _OtherRealPositioner:
+        _connection_host = "192.0.2.17"
+        _connection_resource = None
+        port = 2000
+
+    driver = _OtherRealPositioner()
+    frozen = {
+        "resolution": {
+            "schema_version": 1,
+            "adapter": None,
+            "status": "not_applicable",
+            "execution_mode": "real",
+        },
+        "expected_driver_module": type(driver).__module__,
+        "expected_driver_name": type(driver).__name__,
+        "expected_driver_connection": {
+            "host": "192.0.2.17",
+            "port": 2000,
+            "resource": None,
+        },
+        "profile": None,
+    }
+
+    assert validate_frozen_positioner_before_motion(
+        SimpleNamespace(drivers={"positioner": driver}), frozen
+    ) is None

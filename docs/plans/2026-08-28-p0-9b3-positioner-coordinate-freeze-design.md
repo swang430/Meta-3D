@@ -39,15 +39,18 @@ expected_feedback = requested_angle_deg
 
 - `motion_truth_coordinate_offset_deg`：偏置数值；
 - `motion_truth_coordinate_offset_verified`：该数值是否已有现场动作证据；
+- `motion_truth_coordinate_offset_verification_source`：本次偏置对应的现场记录；
+- `motion_truth_coordinate_offset_verified_at`：带时区的现场验证时间；
 - `motion_truth_units_verified` / `motion_truth_user_units`：用户单位是否已证明为 degree；
 - 既有安全范围、动作速度和反馈容差字段。
 
-“用户填写 +90°”只证明配置存在；`verified=true` 才声明该值已经由现场原始
-`MOVEABS/PFBK` 记录证明。执行不会自动估算或修改偏置，也不会把一次测试的反馈反写为新配置。
+“用户填写 +90°”只证明配置存在；只有 `verified=true`、非空验证来源与带时区验证时间同时存在，
+才声明该值已经由现场原始 `MOVEABS/PFBK` 记录证明。当前 CAICT 配置的来源应指向
+`docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md` 的 Aerotech 现场记录。执行不会自动估算或
+修改偏置，也不会把一次测试的反馈反写为新配置；任意其他站点或其他偏置必须提供自己的来源，
+不得借用 CAICT 的 +90° 记录。
 
-本次冻结的来源引用固定指向
-`docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md` 的 Aerotech 现场记录；执行快照同时保存
-服务器冻结时间和稳定摘要，后续配置变化只影响新 execution。
+执行快照同时保存现场验证时间、服务器冻结时间和稳定摘要，后续配置变化只影响新 execution。
 
 ## execution-frozen 快照
 

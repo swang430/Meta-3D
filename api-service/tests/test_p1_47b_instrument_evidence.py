@@ -885,13 +885,13 @@ def test_uxm_positive_valid_throughput_is_e4_and_zero_is_rejected():
 
 def test_positioner_requires_calibrated_offset_and_feedback_tolerance():
     uncalibrated = build_positioner_evidence(
-        requested_angle_deg=0.0,
+        requested_angle_deg=200.0,
         coordinate_offset_deg=90.0,
         offset_calibrated=False,
         tolerance_deg=1.0,
-        move_exchange=_exchange("move", "MOVEABS X 90.0000"),
+        move_exchange=_exchange("move", "MOVEABS X 110.0000 XF5.0000"),
         feedback_exchange=_exchange(
-            "feedback", "PFBK(X)", response="90.2", operation="query"
+            "feedback", "PFBK(X)", response="200.2", operation="query"
         ),
         scope=_positioner_scope(),
     )
@@ -899,32 +899,64 @@ def test_positioner_requires_calibrated_offset_and_feedback_tolerance():
     assert uncalibrated.verdict is EvidenceVerdict.UNKNOWN
 
     calibrated = build_positioner_evidence(
-        requested_angle_deg=0.0,
+        requested_angle_deg=200.0,
         coordinate_offset_deg=90.0,
         offset_calibrated=True,
         tolerance_deg=1.0,
-        move_exchange=_exchange("move", "MOVEABS X 90.0000"),
+        move_exchange=_exchange("move", "MOVEABS X 110.0000 XF5.0000"),
         feedback_exchange=_exchange(
-            "feedback", "PFBK(X)", response="90.2", operation="query"
+            "feedback", "PFBK(X)", response="200.2", operation="query"
         ),
         scope=_positioner_scope(),
     )
-    assert calibrated.readback["corrected_angle_deg"] == pytest.approx(0.2)
+    assert calibrated.readback["expected_program_angle_deg"] == pytest.approx(110.0)
+    assert calibrated.readback["actual_program_angle_deg"] == pytest.approx(110.0)
+    assert calibrated.readback["raw_feedback_angle_deg"] == pytest.approx(200.2)
+    assert calibrated.readback["program_error_deg"] == pytest.approx(0.0)
+    assert calibrated.readback["feedback_error_deg"] == pytest.approx(0.2)
     assert calibrated.evidence_level is EvidenceLevel.APPLIED
     assert calibrated.verdict is EvidenceVerdict.PASSED
 
     outside = build_positioner_evidence(
-        requested_angle_deg=0.0,
+        requested_angle_deg=200.0,
         coordinate_offset_deg=90.0,
         offset_calibrated=True,
         tolerance_deg=1.0,
-        move_exchange=_exchange("move", "MOVEABS X 90.0000"),
+        move_exchange=_exchange("move", "MOVEABS X 110.0000 XF5.0000"),
         feedback_exchange=_exchange(
-            "feedback", "PFBK(X)", response="92.0", operation="query"
+            "feedback", "PFBK(X)", response="202.0", operation="query"
         ),
         scope=_positioner_scope(),
     )
     assert outside.verdict is EvidenceVerdict.REJECTED
+
+    wrong_program = build_positioner_evidence(
+        requested_angle_deg=200.0,
+        coordinate_offset_deg=90.0,
+        offset_calibrated=True,
+        tolerance_deg=1.0,
+        move_exchange=_exchange("move", "MOVEABS X 200.0000 XF5.0000"),
+        feedback_exchange=_exchange(
+            "feedback", "PFBK(X)", response="200.0", operation="query"
+        ),
+        scope=_positioner_scope(),
+    )
+    assert wrong_program.verdict is EvidenceVerdict.REJECTED
+    assert "program_target" in wrong_program.reason
+
+    malformed_feedback = build_positioner_evidence(
+        requested_angle_deg=200.0,
+        coordinate_offset_deg=90.0,
+        offset_calibrated=True,
+        tolerance_deg=1.0,
+        move_exchange=_exchange("move", "MOVEABS X 110.0000 XF5.0000"),
+        feedback_exchange=_exchange(
+            "feedback", "PFBK(X)", response="not-a-number", operation="query"
+        ),
+        scope=_positioner_scope(),
+    )
+    assert malformed_feedback.verdict is EvidenceVerdict.UNKNOWN
+    assert malformed_feedback.reason == "position_feedback_not_numeric"
 
 
 def test_f64_good_looking_values_cannot_skip_transport_evidence():
@@ -1313,12 +1345,12 @@ def test_positioner_driver_builder_refuses_formal_green_without_live_identity():
         offset_calibrated=True,
         tolerance_deg=1.0,
         move_exchange=_exchange(
-            "move", "MOVEABS X 90.0000", instrument_id=driver.instrument_id
+            "move", "MOVEABS X -90.0000", instrument_id=driver.instrument_id
         ),
         feedback_exchange=_exchange(
             "feedback",
             "PFBK(X)",
-            response="90.1",
+            response="0.1",
             instrument_id=driver.instrument_id,
             operation="query",
         ),
@@ -1330,13 +1362,13 @@ def test_positioner_driver_builder_refuses_formal_green_without_live_identity():
 
 def test_positioner_real_settle_poll_interleaving_can_reach_e3():
     move = _exchange(
-        "move-real", "MOVEABS X 90.0000", result_type="ok", response=None
+        "move-real", "MOVEABS X -90.0000", result_type="ok", response=None
     )
     _exchange(
         "settle-real", "AXISSTATUS(X)", response="4", operation="query"
     )
     feedback = _exchange(
-        "feedback-real", "PFBK(X)", response="90.1", operation="query"
+        "feedback-real", "PFBK(X)", response="0.1", operation="query"
     )
     item = build_positioner_evidence(
         requested_angle_deg=0.0,
@@ -1741,14 +1773,14 @@ def test_positioner_uses_circular_error_and_caps_formal_tolerance_at_one_degree(
         coordinate_offset_deg=90.0,
         offset_calibrated=True,
         tolerance_deg=1.0,
-        move_exchange=_exchange("ack-m", "MOVEABS X 90", result_type="ok"),
+        move_exchange=_exchange("ack-m", "MOVEABS X -90", result_type="ok"),
         feedback_exchange=_exchange(
-            "ack-f", "PFBK(X)", response="%90.2", operation="query"
+            "ack-f", "PFBK(X)", response="%0.2", operation="query"
         ),
         scope=_positioner_scope(),
     )
     assert ack_prefixed.verdict is EvidenceVerdict.PASSED
-    assert ack_prefixed.readback["raw_feedback_angle_deg"] == pytest.approx(90.2)
+    assert ack_prefixed.readback["raw_feedback_angle_deg"] == pytest.approx(0.2)
 
     wrapped = build_positioner_evidence(
         requested_angle_deg=0.0,
@@ -1762,7 +1794,7 @@ def test_positioner_uses_circular_error_and_caps_formal_tolerance_at_one_degree(
         scope=_positioner_scope(),
     )
     assert wrapped.verdict is EvidenceVerdict.PASSED
-    assert wrapped.readback["error_deg"] == pytest.approx(0.2)
+    assert wrapped.readback["feedback_error_deg"] == pytest.approx(0.2)
 
     cannot_relax = build_positioner_evidence(
         requested_angle_deg=0.0,

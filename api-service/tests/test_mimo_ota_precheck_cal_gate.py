@@ -357,7 +357,9 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     lab,
     hal_with_mocks,
 ):
-    class _Positioner:
+    from app.hal import MockPositioner
+
+    class _Positioner(MockPositioner):
         async def connect(self):
             return True
 
@@ -431,7 +433,7 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
         ],
     }
     db.commit()
-    hal_with_mocks.drivers["positioner"] = _Positioner()
+    hal_with_mocks.drivers["positioner"] = _Positioner("mock-pos", {})
     hal_with_mocks.drivers["baseStation"] = _PartialCaBaseStation()
 
     result = await MeasureExecutor().execute(ctx)
