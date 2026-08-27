@@ -612,6 +612,8 @@ class RealCmw500Driver(BaseStationDriver):
             )
 
         with capture_scpi_exchanges() as exchanges:
+            nx2_applied: dict[str, str] | None = None
+            nx2_readback_error: str | None = None
             try:
                 self._write(
                     Cmw500LteCommandProfile.build_route_nx2(
@@ -626,27 +628,29 @@ class RealCmw500Driver(BaseStationDriver):
                         reason=f"CMW500 error queue rejected route: {queue_result}",
                         exchanges=exchanges,
                     )
-                nx2_readback = Cmw500LteCommandProfile.parse_route_nx2_readback(
-                    self._query(
-                        Cmw500LteCommandProfile.route_nx2_query(
-                            self._sign_channel
+                try:
+                    nx2_readback = (
+                        Cmw500LteCommandProfile.parse_route_nx2_readback(
+                            self._query(
+                                Cmw500LteCommandProfile.route_nx2_query(
+                                    self._sign_channel
+                                )
+                            )
                         )
                     )
-                )
-                applied = asdict(nx2_readback)
-                if applied != requested:
-                    return _result(
-                        requested=requested,
-                        applied=applied,
-                        reason=(
-                            "CMW500 nx2 route readback does not match "
-                            "requested route"
-                        ),
-                        exchanges=exchanges,
-                    )
-                physical_readback = Cmw500LteCommandProfile.parse_route_readback(
-                    self._query(
-                        Cmw500LteCommandProfile.route_query(self._sign_channel)
+                    nx2_applied = asdict(nx2_readback)
+                except Exception as exc:
+                    # The generic query remains a sourced, useful physical-path
+                    # diagnostic when a particular CMW firmware rejects the
+                    # setting query.  Do not turn that into PCCBBBoard proof.
+                    nx2_readback_error = f"{type(exc).__name__}: {exc}"
+                physical_readback = (
+                    Cmw500LteCommandProfile.parse_route_readback(
+                        self._query(
+                            Cmw500LteCommandProfile.route_query(
+                                self._sign_channel
+                            )
+                        )
                     )
                 )
             except Exception as exc:
@@ -668,9 +672,52 @@ class RealCmw500Driver(BaseStationDriver):
                 "tx2_connector": physical_readback.tx2_connector,
                 "tx2_converter": physical_readback.tx2_converter,
             }
+            requested_physical = {
+                key: value
+                for key, value in requested.items()
+                if key != "pcc_bb_board"
+            }
+            if nx2_readback_error is not None:
+                if generic_physical != requested_physical:
+                    return _result(
+                        requested=requested,
+                        applied=generic_physical,
+                        reason=(
+                            "CMW500 nx2 route readback unavailable and generic "
+                            "physical readback does not match requested route: "
+                            f"{nx2_readback_error}"
+                        ),
+                        exchanges=exchanges,
+                    )
+                return _result(
+                    requested=requested,
+                    applied=generic_physical,
+                    confirmed=False,
+                    reason=(
+                        "CMW500 nx2 route readback unavailable; generic physical "
+                        "paths confirmed for diagnostic execution only: "
+                        f"{nx2_readback_error}"
+                    ),
+                    exchanges=exchanges,
+                )
+            if nx2_applied is None:
+                return _result(
+                    requested=requested,
+                    reason="CMW500 nx2 route readback produced no trusted value",
+                    exchanges=exchanges,
+                )
+            if nx2_applied != requested:
+                return _result(
+                    requested=requested,
+                    applied=nx2_applied,
+                    reason=(
+                        "CMW500 nx2 route readback does not match requested route"
+                    ),
+                    exchanges=exchanges,
+                )
             nx2_physical = {
                 key: value
-                for key, value in applied.items()
+                for key, value in nx2_applied.items()
                 if key != "pcc_bb_board"
             }
             if generic_physical != nx2_physical:
@@ -684,7 +731,7 @@ class RealCmw500Driver(BaseStationDriver):
                 )
             return _result(
                 requested=requested,
-                applied=applied,
+                applied=nx2_applied,
                 confirmed=True,
                 reason="CMW500 route write and both readbacks confirmed",
                 exchanges=exchanges,

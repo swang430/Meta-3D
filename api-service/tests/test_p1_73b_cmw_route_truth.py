@@ -233,8 +233,21 @@ async def test_route_specific_query_unavailable_keeps_confirmation_false():
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
 
     assert result.confirmed is False
-    assert result.applied is None
-    assert "readback failed" in result.reason
+    assert result.applied == {
+        "rx_connector": "RF1C",
+        "rx_converter": "RX1",
+        "tx1_connector": "RF1C",
+        "tx1_converter": "TX1",
+        "tx2_connector": "RF2C",
+        "tx2_converter": "TX2",
+    }
+    assert "diagnostic execution only" in result.reason
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
+        "ROUTe:LTE:SIGN1?",
+    ]
 
 
 @pytest.mark.asyncio
