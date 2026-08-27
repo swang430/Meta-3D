@@ -109,6 +109,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
     ]
     assert result.confirmed is True
     assert result.requested == {
@@ -132,7 +133,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
     assert result.reason == "CMW500 route write and both readbacks confirmed"
     assert "1173.9628.02-41" in result.source_reference
     assert "1179.4592.02-04" in result.source_reference
-    assert len(result.exchange_ids) == 4
+    assert len(result.exchange_ids) == 5
     assert not hasattr(result, "rf_router")
 
 
@@ -237,7 +238,7 @@ async def test_route_pcc_board_mismatch_keeps_confirmation_false_without_backfil
 async def test_route_specific_query_unavailable_keeps_confirmation_false():
     driver = _driver(
         nx2_readback=TimeoutError("setting query unsupported"),
-        error=['0,"No error"', '-113,"Undefined header"'],
+        error=['0,"No error"', '-113,"Undefined header"', '0,"No error"'],
     )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
@@ -259,6 +260,26 @@ async def test_route_specific_query_unavailable_keeps_confirmation_false():
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_route_readback_error_queue_entry_blocks_confirmation():
+    driver = _driver(
+        error=['0,"No error"', '-200,"Execution error"'],
+    )
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert "readback error queue" in result.reason
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
+        "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
     ]
 
 

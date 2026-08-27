@@ -663,6 +663,21 @@ class RealCmw500Driver(BaseStationDriver):
                         )
                     )
                 )
+                readback_queue_result = self._query(CmwScpiCommands.ERR).strip()
+                if (
+                    re.fullmatch(
+                        r'\+?0\s*,\s*"[^"]*"', readback_queue_result
+                    )
+                    is None
+                ):
+                    return _result(
+                        requested=requested,
+                        reason=(
+                            "CMW500 readback error queue rejected route "
+                            f"confirmation: {readback_queue_result}"
+                        ),
+                        exchanges=exchanges,
+                    )
             except Exception as exc:
                 return _result(
                     requested=requested,
