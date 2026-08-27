@@ -14,6 +14,7 @@ from app.hal.cmw500_command_profile import (
 def test_reachable_cmw_commands_carry_manual_source_and_purpose():
     required = {
         "route_nx2",
+        "route_nx2_query",
         "route_query",
         "ebler_absolute_query",
         "ebler_relative_query",
@@ -49,6 +50,37 @@ def test_nx2_route_builder_preserves_all_seven_manual_parameters():
         "BB1,RF1C,RX1,RF1C,TX1,RF2C,TX2"
     )
     assert Cmw500LteCommandProfile.route_query(1) == "ROUTe:LTE:SIGN1?"
+    assert Cmw500LteCommandProfile.route_nx2_query(1) == (
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?"
+    )
+
+
+def test_nx2_route_query_parses_all_seven_instrument_returned_parameters():
+    assert Cmw500LteCommandProfile.parse_route_nx2_readback(
+        "SUA1,RF1C,RX1,RF1O,TX1,RF2C,TX2"
+    ) == CmwNx2Route(
+        pcc_bb_board="SUA1",
+        rx_connector="RF1C",
+        rx_converter="RX1",
+        tx1_connector="RF1O",
+        tx1_converter="TX1",
+        tx2_connector="RF2C",
+        tx2_converter="TX2",
+    )
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        "SUA1,RF1C,RX1,RF1O,TX1,RF2C",
+        "NAV,RF1C,RX1,RF1O,TX1,RF2C,TX2",
+        "SUA1,RF1C,RX1,,TX1,RF2C,TX2",
+        "SUA1,RF1C,RX1,RF1O;*RST,TX1,RF2C,TX2",
+    ),
+)
+def test_nx2_route_query_rejects_incomplete_or_untrusted_parameters(response):
+    with pytest.raises(ValueError):
+        Cmw500LteCommandProfile.parse_route_nx2_readback(response)
 
 
 @pytest.mark.parametrize(

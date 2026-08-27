@@ -81,6 +81,17 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         minimum_firmware="V3.5.40",
         required_options=("KS520",),
     ),
+    "route_nx2_query": CmwCommandSpec(
+        template="ROUTe:LTE:SIGN{i}:SCENario:TRO:FLEXible?",
+        source_reference=(
+            f"{_LTE_MANUAL}, §2.6.8.1, printed p.630-631; "
+            "R&S Remote Control via SCPI 1179.4592.02-04, §3.6, "
+            "printed p.22"
+        ),
+        purpose="Read all seven configured LTE 1CC-nx2 route parameters",
+        minimum_firmware="V3.5.40",
+        required_options=("KS520",),
+    ),
     "route_query": CmwCommandSpec(
         template="ROUTe:LTE:SIGN{i}?",
         source_reference=f"{_LTE_MANUAL}, §2.6.2.2, printed p.459-460",
@@ -237,6 +248,10 @@ class Cmw500LteCommandProfile:
         return cls._format("route_query", sign_channel)
 
     @classmethod
+    def route_nx2_query(cls, sign_channel: int) -> str:
+        return cls._format("route_nx2_query", sign_channel)
+
+    @classmethod
     def ebler_absolute_query(cls, sign_channel: int) -> str:
         return cls._format("ebler_absolute_query", sign_channel)
 
@@ -284,6 +299,24 @@ class Cmw500LteCommandProfile:
         ):
             normalize_cmw_route_token(values[index], name)
         return CmwNx2RouteReadback(*values)
+
+    @staticmethod
+    def parse_route_nx2_readback(response: str) -> CmwNx2Route:
+        names = (
+            "pcc_bb_board",
+            "rx_connector",
+            "rx_converter",
+            "tx1_connector",
+            "tx1_converter",
+            "tx2_connector",
+            "tx2_converter",
+        )
+        values = _csv(response, len(names))
+        normalized = [
+            normalize_cmw_route_token(value, name)
+            for value, name in zip(values, names, strict=True)
+        ]
+        return CmwNx2Route(*normalized)
 
     @staticmethod
     def parse_ebler_absolute(response: str) -> CmwExtendedBlerAbsolute:
