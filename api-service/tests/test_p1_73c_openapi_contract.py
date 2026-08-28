@@ -21,6 +21,7 @@ READINESS_FIELDS = {
     "fdd_ready",
     "tdd_ready",
     "detail",
+    "binding_digest",
 }
 
 
