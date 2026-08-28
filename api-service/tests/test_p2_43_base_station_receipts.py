@@ -116,7 +116,7 @@ def test_apply_confirmation_is_derived_from_every_applicable_field():
     assert partial.exchange_ids == ("exchange-1", "exchange-2")
 
 
-def test_apply_receipt_rejects_duplicate_fields_and_exchange_ids():
+def test_apply_receipt_rejects_duplicate_fields_but_allows_shared_evidence():
     with pytest.raises(ValueError, match="field names must be unique"):
         BaseStationApplyReceipt(
             schema_version=1,
@@ -126,17 +126,21 @@ def test_apply_receipt_rejects_duplicate_fields_and_exchange_ids():
             simulated=False,
         )
 
-    with pytest.raises(ValueError, match="exchange ids must be unique"):
-        BaseStationApplyReceipt(
-            schema_version=1,
-            operation="config",
-            fields=(
-                _field("band", exchange_ids=("same",)),
-                _field("bandwidth", exchange_ids=("same",)),
-            ),
-            reason="duplicate evidence",
-            simulated=False,
-        )
+    receipt = BaseStationApplyReceipt(
+        schema_version=1,
+        operation="config",
+        fields=(
+            _field("band", exchange_ids=("shared", "band-only")),
+            _field("bandwidth", exchange_ids=("shared", "bandwidth-only")),
+        ),
+        reason="one authoritative query may prove multiple fields",
+        simulated=False,
+    )
+    assert receipt.exchange_ids == (
+        "shared",
+        "band-only",
+        "bandwidth-only",
+    )
 
 
 def test_receipts_are_immutable_and_adapter_id_is_not_vendor_literal():

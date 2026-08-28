@@ -40,7 +40,9 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
+    BaseStationFieldReceipt,
     BaseStationIdentity,
     BaseStationDriver,
     BaseStationMeasurementWindow,
@@ -762,6 +764,64 @@ class RealCmw500Driver(BaseStationDriver):
                 exchanges=exchanges,
             )
 
+    async def apply_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationApplyReceipt:
+        """Translate existing sourced CMW route truth into the common receipt."""
+
+        result = await self.apply_internal_lte_2x2_route(frozen_adapter)
+        exchange_ids = tuple(result.exchange_ids)
+        if result.requested is None:
+            return BaseStationApplyReceipt(
+                schema_version=1,
+                operation="route",
+                fields=(
+                    BaseStationFieldReceipt(
+                        field="route",
+                        requested=None,
+                        applied=None,
+                        status="unknown",
+                        reason=result.reason,
+                        exchange_ids=exchange_ids,
+                    ),
+                ),
+                reason=result.reason,
+                simulated=False,
+            )
+
+        applied = result.applied if isinstance(result.applied, dict) else {}
+        fields = tuple(
+            BaseStationFieldReceipt(
+                field=name,
+                requested=requested_value,
+                applied=(
+                    applied[name]
+                    if name in applied and applied[name] == requested_value
+                    else None
+                ),
+                status=(
+                    "confirmed"
+                    if name in applied and applied[name] == requested_value
+                    else "unknown"
+                ),
+                reason=(
+                    "authoritative CMW500 route readback matched"
+                    if name in applied and applied[name] == requested_value
+                    else result.reason
+                ),
+                exchange_ids=exchange_ids,
+            )
+            for name, requested_value in result.requested.items()
+        )
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=fields,
+            reason=result.reason,
+            simulated=False,
+        )
+
     async def apply_requested_config(
         self, requested: BaseStationRequestedConfig,
     ) -> bool:
@@ -786,6 +846,69 @@ class RealCmw500Driver(BaseStationDriver):
                 logger.error("[CMW500] Rejecting LTE band options: %s", exc)
                 return False
         return await super().apply_requested_config(requested)
+
+    async def apply_config(
+        self,
+        requested: BaseStationRequestedConfig,
+    ) -> BaseStationApplyReceipt:
+        """Apply CMW config and expose only existing authoritative readbacks."""
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        self._last_common_config_readback = None
+        with capture_scpi_exchanges() as exchanges:
+            await self.apply_requested_config(requested)
+        exchange_ids = tuple(item.exchange_id for item in exchanges)
+        readback = (
+            self._last_common_config_readback
+            if isinstance(self._last_common_config_readback, dict)
+            else {}
+        )
+        requested_fields = (
+            ("band", requested.band),
+            ("bandwidth_mhz", requested.bandwidth_mhz),
+            ("lte_dl_earfcn", requested.lte_dl_earfcn),
+            ("duplex", requested.duplex),
+            ("mimo_layers", requested.mimo_layers),
+            ("lte_transmission_mode", requested.lte_transmission_mode),
+            ("downlink_power_dbm", requested.downlink_power_dbm),
+        )
+        fields = tuple(
+            BaseStationFieldReceipt(
+                field=name,
+                requested=value,
+                applied=(
+                    readback[name]
+                    if name in readback and readback[name] == value
+                    else None
+                ),
+                status=(
+                    "confirmed"
+                    if name in readback and readback[name] == value
+                    else "unknown"
+                ),
+                reason=(
+                    "authoritative CMW500 configuration readback matched"
+                    if name in readback and readback[name] == value
+                    else "CMW500 configuration field was not authoritatively confirmed"
+                ),
+                exchange_ids=exchange_ids,
+            )
+            for name, value in requested_fields
+            if value is not None
+        )
+        receipt = BaseStationApplyReceipt(
+            schema_version=1,
+            operation="config",
+            fields=fields,
+            reason=(
+                "CMW500 configuration readback confirmed"
+                if fields and all(field.status == "confirmed" for field in fields)
+                else "CMW500 configuration readback is partial or unavailable"
+            ),
+            simulated=False,
+        )
+        return receipt
 
     # ===================================================================
     # 1. 连接生命周期
@@ -1261,6 +1384,48 @@ class RealCmw500Driver(BaseStationDriver):
                 if bandwidth_token is not None
                 else self.bandwidth_token_by_mhz[bandwidth_mhz]
             )
+            normalized_band = (
+                f"B{band_readback[2:]}"
+                if isinstance(band_readback, str) and band_readback.startswith("OB")
+                else band_readback
+            )
+            bandwidth_by_token = {
+                token: mhz for mhz, token in self.bandwidth_token_by_mhz.items()
+            }
+            normalized_mimo = {
+                "ONE": 1,
+                "TWO": 2,
+                "FOUR": 4,
+            }.get(mimo_readback)
+            self._last_common_config_readback = {
+                **({"band": normalized_band} if band_readback is not None else {}),
+                **(
+                    {"bandwidth_mhz": bandwidth_by_token.get(bandwidth_readback)}
+                    if bandwidth_readback is not None
+                    else {}
+                ),
+                "lte_dl_earfcn": earfcn_readback,
+                **(
+                    {"duplex": duplex_readback.lower()}
+                    if duplex_readback is not None
+                    else {}
+                ),
+                **(
+                    {"mimo_layers": normalized_mimo}
+                    if mimo_readback is not None
+                    else {}
+                ),
+                **(
+                    {"lte_transmission_mode": transmission_mode_readback}
+                    if transmission_mode_readback is not None
+                    else {}
+                ),
+                **(
+                    {"downlink_power_dbm": downlink_power_readback}
+                    if downlink_power_readback is not None
+                    else {}
+                ),
+            }
             if (
                 (band_readback is not None and band_readback != band)
                 or (

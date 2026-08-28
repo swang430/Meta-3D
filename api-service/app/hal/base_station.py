@@ -192,13 +192,6 @@ class BaseStationApplyReceipt:
         field_names = [item.field for item in self.fields]
         if len(set(field_names)) != len(field_names):
             raise ValueError("apply receipt field names must be unique")
-        exchange_ids = [
-            exchange_id
-            for field in self.fields
-            for exchange_id in field.exchange_ids
-        ]
-        if len(set(exchange_ids)) != len(exchange_ids):
-            raise ValueError("apply receipt exchange ids must be unique")
         if not isinstance(self.reason, str) or not self.reason.strip():
             raise ValueError("apply receipt reason must be non-empty")
         if type(self.simulated) is not bool:
@@ -215,11 +208,12 @@ class BaseStationApplyReceipt:
 
     @property
     def exchange_ids(self) -> tuple[str, ...]:
-        return tuple(
-            exchange_id
-            for field in self.fields
-            for exchange_id in field.exchange_ids
-        )
+        unique: list[str] = []
+        for field in self.fields:
+            for exchange_id in field.exchange_ids:
+                if exchange_id not in unique:
+                    unique.append(exchange_id)
+        return tuple(unique)
 
 
 @dataclass(frozen=True)
