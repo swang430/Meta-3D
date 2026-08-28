@@ -1299,10 +1299,10 @@ class MeasureExecutor(IStepExecutor):
                         cmw_attempt.frozen_adapter
                     )
                     from app.services.execution_scpi_evidence import (
-                        confirm_base_station_configuration_and_route,
+                        confirm_legacy_cmw_configuration_and_route,
                     )
 
-                    confirm_base_station_configuration_and_route(
+                    confirm_legacy_cmw_configuration_and_route(
                         context.db,
                         context.test_execution.id,
                         attempt_id=cmw_attempt.attempt_id,

@@ -6,17 +6,19 @@ from uuid import uuid4
 import pytest
 
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
     BaseStationCleanupResult,
+    BaseStationFieldReceipt,
     BaseStationMeasurementWindow,
     ThroughputMetrics,
 )
-from app.hal.cmw500_base_station import BaseStationRouteResult
 from app.hal.scpi_evidence import (
     EvidenceLevel,
     EvidenceVerdict,
     InstrumentEvidenceItem,
 )
 from app.models.test_plan import TestExecution
+from app.services import execution_scpi_evidence as evidence_writer
 from app.services.execution_scpi_evidence import (
     append_base_station_measurement_window,
     confirm_base_station_configuration_and_route,
@@ -73,13 +75,42 @@ def _execution():
 
 def _route_result(*, confirmed=True):
     route = valid_cmw_evidence()["requested_route"]["payload"]
-    return BaseStationRouteResult(
-        requested=route,
-        applied=route if confirmed else None,
-        source_reference="manual §route",
-        confirmed=confirmed,
+    return BaseStationApplyReceipt(
+        schema_version=1,
+        operation="route",
+        fields=tuple(
+            BaseStationFieldReceipt(
+                field=name,
+                requested=value,
+                applied=value if confirmed else None,
+                status="confirmed" if confirmed else "unknown",
+                reason="confirmed" if confirmed else "rejected",
+                exchange_ids=("route-1", "route-2"),
+            )
+            for name, value in route.items()
+        ),
         reason="confirmed" if confirmed else "rejected",
-        exchange_ids=["route-1", "route-2"],
+        simulated=False,
+    )
+
+
+def _config_receipt(*, confirmed=True):
+    payload = valid_cmw_evidence()["requested_config"]["payload"]
+    return BaseStationApplyReceipt(
+        schema_version=1,
+        operation="config",
+        fields=(
+            BaseStationFieldReceipt(
+                field="bandwidth_mhz",
+                requested=payload["bandwidth_mhz"],
+                applied=payload["bandwidth_mhz"] if confirmed else None,
+                status="confirmed" if confirmed else "unknown",
+                reason="confirmed" if confirmed else "rejected",
+                exchange_ids=("config-1",),
+            ),
+        ),
+        reason="confirmed" if confirmed else "rejected",
+        simulated=False,
     )
 
 
@@ -116,17 +147,30 @@ def _window():
     )
 
 
-def test_config_route_and_window_writer_bind_current_attempt_lease_and_token():
+def test_config_route_and_window_writer_bind_current_attempt_lease_and_token(
+    monkeypatch,
+):
     execution = _execution()
     db = _Db(execution)
+    lease_identity = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-new",
+        measurement_attempt_id="attempt-new",
+        adapter_id="cmw500",
+        session_token="session-new",
+    )
+    monkeypatch.setattr(
+        evidence_writer,
+        "active_base_station_lease_identity",
+        lambda: lease_identity,
+    )
 
     confirm_base_station_configuration_and_route(
         db,
         execution.id,
         attempt_id="attempt-new",
-        config_confirmed=True,
-        config_exchange_ids=["config-1"],
-        route_result=_route_result(),
+        lease_identity=lease_identity,
+        config_receipt=_config_receipt(),
+        route_receipt=_route_result(),
     )
     append_base_station_measurement_window(
         db,
@@ -167,17 +211,28 @@ def test_config_route_and_window_writer_bind_current_attempt_lease_and_token():
     }
 
 
-def test_rejected_route_or_wrong_attempt_never_confirms_or_appends():
+def test_rejected_route_or_wrong_attempt_never_confirms_or_appends(monkeypatch):
     execution = _execution()
     db = _Db(execution)
+    lease_identity = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-new",
+        measurement_attempt_id="attempt-new",
+        adapter_id="cmw500",
+        session_token="session-new",
+    )
+    monkeypatch.setattr(
+        evidence_writer,
+        "active_base_station_lease_identity",
+        lambda: lease_identity,
+    )
 
     confirm_base_station_configuration_and_route(
         db,
         execution.id,
         attempt_id="attempt-new",
-        config_confirmed=True,
-        config_exchange_ids=["config-1"],
-        route_result=_route_result(confirmed=False),
+        lease_identity=lease_identity,
+        config_receipt=_config_receipt(),
+        route_receipt=_route_result(confirmed=False),
     )
     value = execution.config["base_station_execution_evidence"]
     assert value["config_confirmed"] is True

@@ -21,6 +21,7 @@ from app.hal.base import (
     redact_instrument_log_text,
 )
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
     BaseStationCleanupResult,
     BaseStationControlReleaseResult,
     BaseStationIdentity,
@@ -39,6 +40,7 @@ from app.hal.scpi_evidence import (
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    BaseStationAdapterOperationEvidence,
     BaseStationControlReleaseEvidence,
     BaseStationExecutionEvidence,
     BaseStationMeasurementWindowEvidence,
@@ -49,7 +51,10 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     parse_base_station_execution_evidence,
 )
 from app.services.base_station_adapter_profile import CMW_FORMAL_CAPABILITY_KEY
-from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
+from app.services.instrument_test_lease import (
+    ActiveBaseStationLeaseIdentity,
+    active_base_station_lease_identity,
+)
 from app.services.positioner_coordinate_profile import PositionerCoordinateProfile
 
 
@@ -401,65 +406,199 @@ def _current_running_base_station_evidence(
     return execution, evidence
 
 
+def _adapter_operation_evidence(
+    evidence: BaseStationExecutionEvidence,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    receipt: BaseStationApplyReceipt,
+) -> BaseStationAdapterOperationEvidence:
+    if not isinstance(receipt, BaseStationApplyReceipt):
+        raise TypeError("adapter operation must be a BaseStationApplyReceipt")
+    active_identity = active_base_station_lease_identity()
+    if active_identity != lease_identity:
+        raise ValueError("baseStation lease identity is not the active lease truth")
+    if (
+        lease_identity.measurement_attempt_id != attempt_id
+        or lease_identity.adapter_id != evidence.adapter
+        or not lease_identity.lease_id
+        or not lease_identity.session_token
+    ):
+        raise ValueError("baseStation lease identity does not match current evidence")
+
+    if receipt.operation == "config":
+        frozen_snapshot = evidence.requested_config
+        frozen_payload = frozen_snapshot.payload
+        for field in receipt.fields:
+            if field.status == "not_applicable":
+                raise ValueError("configuration fields cannot be not_applicable")
+            if (
+                field.field not in frozen_payload
+                or frozen_payload[field.field] != field.requested
+            ):
+                raise ValueError("adapter receipt does not match frozen request")
+    else:
+        if evidence.requested_route is None:
+            if any(field.status != "not_applicable" for field in receipt.fields):
+                raise ValueError("route receipt does not match frozen request")
+            frozen_snapshot = None
+        else:
+            frozen_snapshot = evidence.requested_route
+            frozen_payload = frozen_snapshot.payload
+            if {field.field for field in receipt.fields} != set(frozen_payload):
+                raise ValueError("route receipt does not cover frozen request")
+            if any(
+                field.requested != frozen_payload[field.field]
+                for field in receipt.fields
+            ):
+                raise ValueError("adapter receipt does not match frozen request")
+
+    exchange_ids = list(receipt.exchange_ids)
+    applicable = [
+        field for field in receipt.fields if field.status != "not_applicable"
+    ]
+    if receipt.confirmed is True and applicable and not exchange_ids:
+        raise ValueError("confirmed adapter receipt requires exchange ids")
+    return BaseStationAdapterOperationEvidence.model_validate(
+        {
+            "schema_version": receipt.schema_version,
+            "measurement_attempt_id": attempt_id,
+            "lease_id": lease_identity.lease_id,
+            "adapter": evidence.adapter,
+            "session_token": lease_identity.session_token,
+            "operation": receipt.operation,
+            "frozen_request_digest": (
+                frozen_snapshot.digest if frozen_snapshot is not None else None
+            ),
+            "fields": [
+                {
+                    "field": field.field,
+                    "requested": field.requested,
+                    "applied": field.applied,
+                    "status": field.status,
+                    "reason": field.reason,
+                    "exchange_ids": list(field.exchange_ids),
+                }
+                for field in receipt.fields
+            ],
+            "confirmed": receipt.confirmed is True and receipt.simulated is False,
+            "simulated": receipt.simulated,
+            "reason": receipt.reason,
+            "exchange_ids": exchange_ids,
+        }
+    )
+
+
 def confirm_base_station_configuration_and_route(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    config_receipt: BaseStationApplyReceipt,
+    route_receipt: BaseStationApplyReceipt,
+) -> None:
+    """Persist only versioned vendor-neutral adapter operation receipts."""
+
+    execution, evidence = _current_running_base_station_evidence(
+        db, execution_id, attempt_id=attempt_id
+    )
+    config_operation = _adapter_operation_evidence(
+        evidence,
+        attempt_id=attempt_id,
+        lease_identity=lease_identity,
+        receipt=config_receipt,
+    )
+    route_operation = _adapter_operation_evidence(
+        evidence,
+        attempt_id=attempt_id,
+        lease_identity=lease_identity,
+        receipt=route_receipt,
+    )
+    if config_operation.operation != "config" or route_operation.operation != "route":
+        raise ValueError("baseStation config/route receipt operations are reversed")
+    keys = {
+        (row.measurement_attempt_id, row.lease_id, row.operation)
+        for row in evidence.adapter_operations
+    }
+    for operation in (config_operation, route_operation):
+        key = (
+            operation.measurement_attempt_id,
+            operation.lease_id,
+            operation.operation,
+        )
+        if key in keys:
+            raise ValueError("baseStation adapter operation already persisted")
+        keys.add(key)
+
+    evidence.adapter_operations.extend((config_operation, route_operation))
+    evidence.config_confirmed = config_operation.confirmed is True
+    _append_unique_exchange_ids(evidence, config_operation.exchange_ids)
+    _append_unique_exchange_ids(evidence, route_operation.exchange_ids)
+
+    if evidence.adapter == "cmw500":
+        route_payload = {
+            field.field: field.applied for field in route_operation.fields
+        }
+        evidence.route_confirmed = route_operation.confirmed is True
+        evidence.applied_route = (
+            FrozenPayloadSnapshot.model_validate(
+                {
+                    "payload": route_payload,
+                    "digest": canonical_snapshot_digest(route_payload),
+                }
+            )
+            if route_operation.confirmed is True
+            else None
+        )
+    else:
+        evidence.route_confirmed = None
+        evidence.applied_route = None
+
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
+def confirm_legacy_cmw_configuration_and_route(
     db,
     execution_id,
     *,
     attempt_id: str,
     config_confirmed: bool,
     config_exchange_ids: list[str],
-    route_result=None,
+    route_result,
 ) -> None:
-    """Persist adapter readback truth without deriving success from no exception."""
+    """Temporary caller bridge removed when MEASURE moves to the common SPI."""
 
     execution, evidence = _current_running_base_station_evidence(
         db, execution_id, attempt_id=attempt_id
     )
+    if evidence.adapter != "cmw500":
+        raise ValueError("legacy route bridge is CMW500-only")
+    requested = getattr(route_result, "requested", None)
+    applied = getattr(route_result, "applied", None)
+    confirmed = getattr(route_result, "confirmed", None) is True
+    exchange_ids = getattr(route_result, "exchange_ids", None)
+    if not isinstance(requested, dict) or not isinstance(exchange_ids, list):
+        raise TypeError("legacy route result shape is invalid")
     evidence.config_confirmed = config_confirmed is True
     _append_unique_exchange_ids(evidence, list(config_exchange_ids))
-
-    if evidence.adapter == "cmw500":
-        from app.hal.cmw500_base_station import BaseStationRouteResult
-
-        if route_result is not None and not isinstance(
-            route_result, BaseStationRouteResult
-        ):
-            raise TypeError("route_result must be BaseStationRouteResult")
-        applied = route_result.applied if route_result is not None else None
-        applied_snapshot = (
+    evidence.route_confirmed = (
+        confirmed
+        and requested == evidence.requested_route.payload
+        and applied == evidence.requested_route.payload
+    )
+    evidence.applied_route = (
+        FrozenPayloadSnapshot.model_validate(
             {
                 "payload": applied,
                 "digest": canonical_snapshot_digest(applied),
             }
-            if isinstance(applied, dict)
-            else None
         )
-        evidence.applied_route = (
-            FrozenPayloadSnapshot.model_validate(applied_snapshot)
-            if applied_snapshot is not None
-            else None
-        )
-        evidence.route_confirmed = (
-            route_result is not None
-            and route_result.confirmed is True
-            and route_result.requested
-            == (
-                evidence.requested_route.payload
-                if evidence.requested_route is not None
-                else None
-            )
-            and applied
-            == (
-                evidence.requested_route.payload
-                if evidence.requested_route is not None
-                else None
-            )
-        )
-        if route_result is not None:
-            _append_unique_exchange_ids(evidence, list(route_result.exchange_ids))
-    elif route_result is not None:
-        raise ValueError("UXM evidence must not carry a CMW500 route result")
-
+        if evidence.route_confirmed is True
+        else None
+    )
+    _append_unique_exchange_ids(evidence, list(exchange_ids))
     save_base_station_execution_evidence(execution, evidence)
     db.flush()
 
