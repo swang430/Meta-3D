@@ -66,7 +66,7 @@ export type InstrumentModel = {
   bandwidth?: string | null
   channels?: string | null
   status: InstrumentStatus
-  base_station_manifest?: BaseStationAdapterManifest | null
+  base_station_manifest: BaseStationAdapterManifest | null
 }
 
 export type InstrumentConnection = {

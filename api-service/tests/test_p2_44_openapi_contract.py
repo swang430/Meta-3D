@@ -17,6 +17,7 @@ def _checked() -> dict:
 def test_catalog_manifest_is_typed_and_nullable_in_both_openapi_documents():
     live = app.openapi()["components"]["schemas"]
     live_property = live["FEInstrumentModel"]["properties"]["base_station_manifest"]
+    assert "base_station_manifest" in live["FEInstrumentModel"]["required"]
     assert live_property["anyOf"][0] == {
         "$ref": "#/components/schemas/BaseStationAdapterManifest"
     }
@@ -24,6 +25,7 @@ def test_catalog_manifest_is_typed_and_nullable_in_both_openapi_documents():
 
     checked = _checked()["components"]["schemas"]
     checked_property = checked["InstrumentModel"]["properties"]["base_station_manifest"]
+    assert "base_station_manifest" in checked["InstrumentModel"]["required"]
     assert checked_property == {
         "allOf": [{"$ref": "#/components/schemas/BaseStationAdapterManifest"}],
         "nullable": True,
@@ -57,4 +59,3 @@ def test_preview_sync_and_readiness_publish_one_binding_shape():
         "nullable": True,
     }
     assert "binding_digest" in schemas["Cmw500Lte2x2Readiness"]["required"]
-

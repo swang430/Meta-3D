@@ -18,6 +18,11 @@ test('generated and handwritten types expose the shared binding truth', () => {
     assert.match(generated, new RegExp(token))
     assert.match(handwritten, new RegExp(token))
   }
+  assert.match(
+    handwritten,
+    /base_station_manifest: BaseStationAdapterManifest \| null/,
+  )
+  assert.doesNotMatch(handwritten, /base_station_manifest\?:/)
 })
 
 test('lab profile service types preview and sync with the common response', () => {
