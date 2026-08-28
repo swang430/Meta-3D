@@ -246,6 +246,17 @@ def resolve_base_station_binding(
         if lab is None:
             raise ValueError("selected LabProfile no longer exists")
     binding = _single_binding(lab, str(category.id))
+    category_driver_mode = category.driver_mode or "auto"
+    binding_driver_mode = binding.get("driver_mode")
+    if category_driver_mode not in {"auto", "mock", "real"}:
+        raise ValueError("baseStation category driver mode is invalid")
+    if binding_driver_mode not in {"auto", "mock", "real"}:
+        raise ValueError("LabProfile baseStation binding driver mode is invalid")
+    if binding_driver_mode != category_driver_mode:
+        raise ValueError(
+            "LabProfile baseStation binding driver mode does not match "
+            "the current category driver mode"
+        )
     binding_model_id = binding.get("instrument_model_id")
     selected_model_id = category.selected_model_id
     driver = _loaded_base_station(hal)
@@ -258,6 +269,10 @@ def resolve_base_station_binding(
     if binding_model_id is None:
         if not simulated:
             raise ValueError("unbound baseStation diagnostics require the authoritative mock")
+        if category_driver_mode == "real":
+            raise ValueError(
+                "loaded driver mode does not match the explicit real category driver mode"
+            )
         persistent = {
             "schema_version": 1,
             "status": "diagnostic_unbound",
@@ -272,16 +287,25 @@ def resolve_base_station_binding(
             "expected_transport": None,
             "formal_capability": None,
             "binding": {
-                "driver_mode": binding.get("driver_mode"),
+                "driver_mode": binding_driver_mode,
                 "role": binding.get("role"),
             },
-            "category_driver_mode": category.driver_mode,
+            "category_driver_mode": category_driver_mode,
         }
         return ResolvedBaseStationBinding(
             **{key: value for key, value in persistent.items() if key not in {"binding", "category_driver_mode"}},
             execution_mode="simulated",
             binding_digest=_canonical_digest(persistent),
             runtime_driver=_runtime_driver_identity(driver, True),
+        )
+
+    if category_driver_mode == "real" and simulated:
+        raise ValueError(
+            "loaded driver mode does not match the explicit real category driver mode"
+        )
+    if category_driver_mode == "mock" and not simulated:
+        raise ValueError(
+            "loaded driver mode does not match the explicit mock category driver mode"
         )
 
     if str(binding_model_id) != str(selected_model_id):
@@ -370,10 +394,10 @@ def resolve_base_station_binding(
         "formal_capability": formal_capability,
         "binding": {
             "connection_endpoint": binding_endpoint.strip(),
-            "driver_mode": binding.get("driver_mode"),
+            "driver_mode": binding_driver_mode,
             "role": binding.get("role"),
         },
-        "category_driver_mode": category.driver_mode,
+        "category_driver_mode": category_driver_mode,
     }
     return ResolvedBaseStationBinding(
         **{

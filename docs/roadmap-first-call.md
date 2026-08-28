@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-44：BaseStation 单一 Binding Resolver + manifest 驱动注册（本地实现与完整回归完成，正在 Ready PR 外审前收口）。**
+Current Focus（非现场）= P2-44：BaseStation 单一 Binding Resolver + manifest 驱动注册（Ready PR 外审中，R2 P1 已收口并进入后续 P1-only 复审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -667,7 +667,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-44（本地实现完成，正在生产路径门与完整回归）**；P2-42/P2-43 已分别由 PR #408/#409 合并，P2-44 合并后才开始 P2-45。前三项共同构成第三种 BS Emulator 的接入前置。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-44（Ready PR 后续 P1-only 外审中）**；P2-42/P2-43 已分别由 PR #408/#409 合并，P2-44 合并后才开始 P2-45。前三项共同构成第三种 BS Emulator 的接入前置。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4210,7 +4210,7 @@ compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
 **验收**：保存后预览的 binding digest 与执行冻结一致；缺字段/歧义/loaded transport 不同源均
 在首个仪器 I/O 前 fail-loud；GUI 不从本地缓存或通用 connection_params 自行授予正式能力。
 
-**实施状态（2026-08-29，本地实现与完整回归完成，正在 Ready PR 外审前收口）**：已建立唯一不可变
+**实施状态（2026-08-29，本地实现与完整回归完成，正在 Ready PR 后续 P1-only 外审）**：已建立唯一不可变
 `ResolvedBaseStationBinding`，real CMW500/UXM、configured mock、diagnostic_unbound 及
 model/binding/connection/endpoint/profile/registry/driver/transport 漂移均由同一 resolver 判定；
 digest 只覆盖持久化真值与 expected transport，runtime identity 独立。preview、sync、readiness 与
@@ -4222,7 +4222,9 @@ checked-in YAML、generated TS 与手写类型已同步；未新增/猜测厂商
 共同 binding 真值，可能在 resolver 已判 invalid 时仍显示总体可开测；现统一展示解析出的 adapter/model/
 connection/digest，invalid/missing 为红灯，simulated/diagnostic_unbound 仅为黄色诊断。Codex R1 进一步
 发现黄色诊断单格仍可能让总判显示绿色可开测；现总判保持三态，诊断 binding 只显示黄色“仅可诊断”，
-不会形成正式就绪假象。设计与实施计划见
+不会形成正式就绪假象。Codex R2 又发现 LabProfile 保存的 driver mode 可能与当前类别模式或实际加载
+驱动分叉；现 resolver 在推导执行模式前精确复核三者，显式 `real`/`mock` 任一不一致均 fail-loud，
+`auto` 只允许跟随实际驱动。设计与实施计划见
 `docs/plans/2026-08-29-p2-44-base-station-binding-manifest-design.md` 与
 `docs/plans/2026-08-29-p2-44-base-station-binding-manifest-plan.md`。
 
@@ -4306,7 +4308,7 @@ inherit 获得。
 - `[discovered on-site 2026-08-27 during LTE CMW500 TestCase 首测]` **需要产品化支持“无有效路径损耗校准时仍可执行诊断测试”** —— 当前正式 TestCase 默认 `precheck_strict_cal=true`，CAICT-Lab-1 没有任何 `ProbePathLossCalibration` 时会在 PRECHECK fail-closed；当天经用户明确授权，仅将 LTE UMa 20 MHz CMW500 首测用例显式设为 `precheck_strict_cal=false`，其余频率、信道文件、开关模式、配置一致性、DUT/SIM、cleanup 与 transport release 门保持严格，且无校准数据不得进入路径损耗补偿或正式 KPI。**出口：→ P2-45**，统一设计 Diagnostic/Formal 两阶段、审计与报告边界；P0-9A 在现有逐用例授权下可继续，不等待 P2-45。
 - `[discovered 2026-08-27 during CMW500 integration retrospective]` **四类执行入口分别缝合 BaseStation freeze/attempt/lease/acquire/cleanup/release，后台监控又与独占执行竞争会话** —— 本次多条现场故障和外审 P1 来自入口顺序漂移、旧 session 回复和无关 FSVA/CMW 监控，而不是厂商命令本身。**出口：→ P2-42（PR #408 已合并）**，四类入口已收敛为单一执行会话并由租约统一隔离监控；不在 P0-9 现场主线边跑边重构。
 - `[resolved 2026-08-29 by P2-43 PR #409；discovered 2026-08-27 during P1-73 A/B/C review rounds]` **配置/route 总布尔值和下游厂商分支让“部分字段未确认”分轮暴露** —— 已由 vendor-neutral Adapter SPI、逐字段结构化回执、统一正式 metric projection 与 UXM/CMW 双实现认证套件收口。
-- `[discovered on-site 2026-08-27 during Instrument Catalog → LabProfile sync]` **selected model、InstrumentConnection、LabProfile binding、七字段 profile、loaded driver 与 execution freeze 曾存在多真值源** —— GUI 显示已填但执行读到 `None`，或保存后需另行同步才生效。现场故障已由 PR #403 最小修复；**出口：→ P2-44（本地实现与完整回归完成，正在 Ready PR 外审前收口）**，唯一 `ResolvedBaseStationBinding`、manifest 驱动注册/readiness/表单与同 digest 已落地；待合并后关闭本结构性缺口，不以本地测试替代现场复验。
+- `[discovered on-site 2026-08-27 during Instrument Catalog → LabProfile sync]` **selected model、InstrumentConnection、LabProfile binding、七字段 profile、loaded driver 与 execution freeze 曾存在多真值源** —— GUI 显示已填但执行读到 `None`，或保存后需另行同步才生效。现场故障已由 PR #403 最小修复；**出口：→ P2-44（完整回归完成，正在 Ready PR 后续 P1-only 外审）**，唯一 `ResolvedBaseStationBinding`、manifest 驱动注册/readiness/表单与同 digest 已落地；待合并后关闭本结构性缺口，不以本地测试替代现场复验。
 - `[discovered 2026-08-27 during integration workload review]` **新增 BS Emulator 的目标改动面必须收窄** —— 下一 adapter 的厂商必要工作只应是 identity/capability、配置/route、Cell/Attach、measurement、safe cleanup/release、厂商 schema 和认证测试。**出口：并入 P2-42/P2-43/P2-44 验收**：不得修改 MEASURE、commissioning 多入口、报告/比较/下载/历史和通用 GUI；若需要，先登记独立平台缺口，禁止混入厂商 PR。
 
 ### 2026-08-23 P1-65 查出的驱动层事实（待 triage，不自动启动）

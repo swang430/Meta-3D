@@ -298,11 +298,16 @@ def test_freeze_rejects_stale_loaded_driver_after_locked_connection_endpoint_cha
 
 
 def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db):
-    _, _, _, lab, execution = _configured_execution(
+    category, _, _, lab, execution = _configured_execution(
         db,
         model_name="CMW500",
         params={"base_station_adapter_profile": _profile()},
     )
+    category.driver_mode = "mock"
+    bindings = [dict(binding) for binding in lab.instrument_bindings]
+    bindings[0]["driver_mode"] = "mock"
+    lab.instrument_bindings = bindings
+    db.commit()
     hal = SimpleNamespace(
         drivers={"baseStation": MockBaseStation("mock", {})}
     )

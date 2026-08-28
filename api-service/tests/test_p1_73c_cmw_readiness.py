@@ -38,6 +38,7 @@ def _configured(db, *, binding_endpoint: str = "192.0.2.10"):
     category = InstrumentCategory(
         category_key="baseStation",
         category_name="Base Station",
+        driver_mode="real",
     )
     db.add(category)
     db.flush()
@@ -167,6 +168,12 @@ def test_readiness_mock_is_diagnostic_and_never_formal_ready(db):
     from app.hal.base_station import MockBaseStation
 
     lab, connection, _driver = _configured(db)
+    category = db.query(InstrumentCategory).filter_by(category_key="baseStation").one()
+    category.driver_mode = "mock"
+    bindings = [dict(binding) for binding in lab.instrument_bindings]
+    bindings[0]["driver_mode"] = "mock"
+    lab.instrument_bindings = bindings
+    db.commit()
     mock = MockBaseStation("mock", {})
 
     readiness = build_cmw500_lte_2x2_readiness(

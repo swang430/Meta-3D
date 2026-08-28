@@ -213,6 +213,20 @@ def test_only_authoritative_mock_may_resolve_diagnostic_unbound(db):
             lab,
         )
 
+    category.driver_mode = "real"
+    bindings = deepcopy(lab.instrument_bindings)
+    bindings[0]["driver_mode"] = "real"
+    lab.instrument_bindings = bindings
+    db.commit()
+    with pytest.raises(ValueError, match="loaded driver mode"):
+        resolve_base_station_binding(
+            db,
+            SimpleNamespace(
+                drivers={"baseStation": MockBaseStation("mock", {})}
+            ),
+            lab,
+        )
+
 
 @pytest.mark.parametrize(
     ("mutation", "message"),
@@ -352,3 +366,66 @@ def test_runtime_driver_identity_is_auditable_but_does_not_pollute_digest(db):
 
     assert first.binding_digest == second.binding_digest
     assert first.runtime_driver != second.runtime_driver
+
+
+@pytest.mark.parametrize(
+    ("category_mode", "stale_binding_mode"),
+    [
+        ("real", "mock"),
+        ("real", "auto"),
+        ("mock", "real"),
+        ("mock", "auto"),
+        ("auto", "real"),
+        ("auto", "mock"),
+    ],
+)
+def test_resolver_rejects_every_stale_lab_profile_driver_mode(
+    db,
+    category_mode,
+    stale_binding_mode,
+):
+    _, _, _, lab = _configured(
+        db,
+        model_name="CMW500",
+        driver_mode=category_mode,
+    )
+    bindings = deepcopy(lab.instrument_bindings)
+    bindings[0]["driver_mode"] = stale_binding_mode
+    lab.instrument_bindings = bindings
+    db.commit()
+    driver = (
+        MockBaseStation("mock", {"model": "CMW500"})
+        if category_mode == "mock"
+        else _real_driver("CMW500")
+    )
+
+    with pytest.raises(ValueError, match="driver mode"):
+        resolve_base_station_binding(
+            db,
+            SimpleNamespace(drivers={"baseStation": driver}),
+            lab,
+        )
+
+
+@pytest.mark.parametrize("category_mode", ["real", "mock"])
+def test_resolver_rejects_loaded_driver_that_violates_explicit_mode(
+    db,
+    category_mode,
+):
+    _, _, _, lab = _configured(
+        db,
+        model_name="CMW500",
+        driver_mode=category_mode,
+    )
+    driver = (
+        MockBaseStation("mock", {"model": "CMW500"})
+        if category_mode == "real"
+        else _real_driver("CMW500")
+    )
+
+    with pytest.raises(ValueError, match="loaded driver mode"):
+        resolve_base_station_binding(
+            db,
+            SimpleNamespace(drivers={"baseStation": driver}),
+            lab,
+        )
