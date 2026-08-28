@@ -10,7 +10,8 @@ P1-45 立的规矩禁止的形态。
   写命令 token（复位 / 清错 / 重启 / 置位）；
 - 四态判定各一条行为门：全部正常 → SUCCESS；互锁=1 / 超时无响应 / 回读值不在
   合法值域 → BLOCKER；无槽位配置 / relay_type 未配置 → UNDETERMINED；
-- `raw` 原样进步骤；`extra` 结构化携带 chassis_idn / version / slots / interlock / verdict。
+- `raw` 原样进步骤；`extra` 结构化携带 chassis_idn / version / slots / interlock /
+  interlock_classification / verdict。
 
 手册出处（`Instrument_API_Doc/ETS-L EMCenter/EMCenter_SCPI_Cmds_and_Errs_RevA_1801188.pdf`，
 pdftotext 行号）：`*IDN?` :136-185、`VERSION_SW?` :287-298、SPDT `INT_RELAY_<R>?` → NO|NC :305-330、
@@ -67,6 +68,8 @@ _HEALTHY_RESPONSES = {
     "5:INT_RELAY_A?": "0",
     "INTLK? SAFETYRELAY": "0",
 }
+
+_KNOWN_UNSUPPORTED_INTERLOCK = "ERROR 3;(INTLK? SAFETYRELAY);"
 
 _WRITE_FORM = re.compile(
     r"INT_RELAY_[A-D]_|EXT_RELAY_[A-B]_|RESET|CLEAR|REBOOT|LOCAL|EXT_VOLTAGE_"
@@ -151,6 +154,7 @@ def test_healthy_two_card_chassis_is_success_with_exact_command_walk():
     assert result.extra["chassis_idn"] == "ETS-Lindgren EMCenter version 4.3.4"
     assert result.extra["version"] == "4.3.4"
     assert result.extra["interlock"] == "0"
+    assert result.extra["interlock_classification"] == "inactive"
     assert result.extra["slots"] == [
         {"slot": "4", "idn": "ETS-Lindgren, EMSwitch 7001-002, 4.3.3",
          "relays": {"A": "NC", "B": "NO"}},
@@ -171,6 +175,28 @@ def test_sp6t_position_six_and_spdt_no_are_in_domain():
     assert result.extra["verdict"] == "SUCCESS"
 
 
+def test_firmware_251_exact_interlock_error_is_known_unsupported_but_undetermined():
+    responses = dict(
+        _HEALTHY_RESPONSES,
+        **{
+            "*IDN?": "ETS Lindgren EMCenter version 2.5.1",
+            "VERSION_SW?": "2.5.1",
+            "INTLK? SAFETYRELAY": _KNOWN_UNSUPPORTED_INTERLOCK,
+        },
+    )
+    result = _run(_ScriptedEmcenter(responses, _MAPPINGS_TWO_CARDS))
+
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert result.extra["interlock"] == _KNOWN_UNSUPPORTED_INTERLOCK
+    assert result.extra["interlock_classification"] == "known_unsupported"
+    assert "安全状态未知" in result.summary
+    assert "互锁 0" not in result.summary
+    step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
+    assert step.success is False
+    assert step.raw == _KNOWN_UNSUPPORTED_INTERLOCK
+
+
 # ── BLOCKER ─────────────────────────────────────────────────────────
 
 def test_interlock_active_is_blocker_naming_relay_a_hardware_lock():
@@ -179,10 +205,50 @@ def test_interlock_active_is_blocker_naming_relay_a_hardware_lock():
     assert result.success is False
     assert result.extra["verdict"] == "BLOCKER"
     assert result.extra["interlock"] == "1"
+    assert result.extra["interlock_classification"] == "active"
     assert "Relay A 被硬件锁" in result.summary
     intlk_step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
     assert intlk_step.success is False
     assert intlk_step.raw == "1"
+
+
+@pytest.mark.parametrize(
+    "version,reply",
+    [
+        ("4.3.4", _KNOWN_UNSUPPORTED_INTERLOCK),
+        ("2.5.1", "ERROR 3"),
+        ("2.5.1", "ERROR 3;(INTLK? OTHER);"),
+        ("2.5.1", "ERROR 4;(INTLK? SAFETYRELAY);"),
+    ],
+)
+def test_known_unsupported_interlock_near_matches_remain_blockers(version, reply):
+    responses = dict(
+        _HEALTHY_RESPONSES,
+        **{"VERSION_SW?": version, "INTLK? SAFETYRELAY": reply},
+    )
+    result = _run(_ScriptedEmcenter(responses, _MAPPINGS_TWO_CARDS))
+
+    assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["interlock"] == reply
+    assert result.extra["interlock_classification"] == "invalid"
+    step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
+    assert step.success is False
+    assert step.raw == reply
+
+
+def test_interlock_no_response_is_classified_without_fabricating_raw_value():
+    responses = dict(_HEALTHY_RESPONSES)
+    del responses["INTLK? SAFETYRELAY"]
+    result = _run(_ScriptedEmcenter(responses, _MAPPINGS_TWO_CARDS))
+
+    assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["interlock"] is None
+    assert result.extra["interlock_classification"] == "no_response"
+    step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
+    assert step.success is False
+    assert step.raw is None
 
 
 def test_relay_readback_timeout_is_blocker_and_walk_continues():
