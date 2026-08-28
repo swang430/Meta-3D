@@ -207,10 +207,12 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     enabled: radioTechnology === 'lte' && Boolean(selectedLabProfileId),
   })
   const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2
+  const siteCertification = cmwReadinessQuery.data?.base_station_site_certification
   const cmwReadinessView = describeCmw500Readiness(
     cmwReadiness,
     rawPCell?.duplex,
     baseStationConfigMode.mode,
+    siteCertification,
   )
   const showCmwReadiness = radioTechnology === 'lte'
     && cmwReadiness?.status !== 'not_applicable'
@@ -1130,6 +1132,19 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                           : ''}
                       </Text>
                     )}
+                    <Text size="xs">
+                      当前现场认证：{siteCertification?.status === 'active'
+                        && siteCertification.binding_digest === cmwReadiness?.binding_digest
+                        ? `有效 · ${siteCertification.certified_at}`
+                        : siteCertification?.status === 'revoked'
+                          ? '已撤销，仅可诊断'
+                          : siteCertification
+                            ? '与当前 binding 不匹配，仅可诊断'
+                            : '未认证，仅可诊断'}
+                    </Text>
+                    <Text size="xs">
+                      上述 CMW 正式能力开关仅为历史兼容快照，不授予本次执行正式资格。
+                    </Text>
                     <Text size="xs">发布前仍需真机确认；本片不做功率预算判定。</Text>
                   </Stack>
                 </Alert>

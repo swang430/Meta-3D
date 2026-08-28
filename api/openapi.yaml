@@ -5,6 +5,66 @@ info:
 servers:
   - url: http://localhost:3000
 paths:
+  /api/v1/test-plans/cases/{test_case_id}/execution-policy:
+    put:
+      summary: Update TestCase Diagnostic/Formal policy
+      parameters:
+        - name: test_case_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TestCaseExecutionPolicyUpdate'}
+      responses:
+        '200':
+          description: Audited server-owned TestCase policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TestCaseExecutionPolicyResponse'}
+        '422': {description: Validation error}
+  /api/v1/instruments/connections/{connection_id}/base-station-site-certification:
+    put:
+      summary: Certify BaseStation site from one completed execution
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BaseStationSiteCertificationCreate'}
+      responses:
+        '200':
+          description: Server-derived site certification
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BaseStationSiteCertification'}
+        '422': {description: Validation error}
+  /api/v1/instruments/connections/{connection_id}/base-station-site-certification/revoke:
+    put:
+      summary: Revoke current BaseStation site certification
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BaseStationSiteCertificationRevoke'}
+      responses:
+        '200':
+          description: Revoked site certification audit row
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BaseStationSiteCertification'}
+        '422': {description: Validation error}
   /api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2:
     put:
       summary: Explicitly enable or disable CMW500 LTE 2x2 formal admission
@@ -962,6 +1022,119 @@ paths:
           description: Execution result
 components:
   schemas:
+    TestCaseExecutionPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        mode: {type: string, enum: [formal, diagnostic]}
+        reason: {type: string}
+        updated_by: {type: string}
+        updated_at: {type: string, format: date-time}
+      required: [schema_version, mode, reason, updated_by, updated_at]
+    TestCaseExecutionPolicyUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        mode: {type: string, enum: [formal, diagnostic]}
+        reason: {type: string}
+        updated_by: {type: string}
+      required: [mode, reason, updated_by]
+    TestCaseExecutionPolicyResponse:
+      type: object
+      properties:
+        test_case_id: {type: string, format: uuid}
+        policy: {$ref: '#/components/schemas/TestCaseExecutionPolicy'}
+      required: [test_case_id, policy]
+    BaseStationCertificationProofs:
+      type: object
+      additionalProperties: false
+      properties:
+        config_readback: {type: boolean}
+        route_readback: {type: boolean}
+        route_not_applicable: {type: boolean}
+        cleanup: {type: boolean}
+        transport_release: {type: boolean}
+      required: [config_readback, route_readback, route_not_applicable, cleanup, transport_release]
+    BaseStationSiteCertification:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        status: {type: string, enum: [active, revoked]}
+        lab_profile_id: {type: string}
+        instrument_connection_id: {type: string}
+        binding_digest: {type: string}
+        adapter_id: {type: string}
+        model: {type: string}
+        firmware_version: {type: string}
+        options: {type: array, items: {type: string}}
+        source_execution_id: {type: string}
+        evidence_digest: {type: string}
+        required_proofs: {$ref: '#/components/schemas/BaseStationCertificationProofs'}
+        certified_by: {type: string}
+        certified_at: {type: string, format: date-time}
+        reason: {type: string}
+        revoked_by: {type: string, nullable: true}
+        revoked_at: {type: string, format: date-time, nullable: true}
+        revocation_reason: {type: string, nullable: true}
+      required: [schema_version, status, lab_profile_id, instrument_connection_id, binding_digest, adapter_id, model, firmware_version, options, source_execution_id, evidence_digest, required_proofs, certified_by, certified_at, reason]
+    BaseStationSiteCertificationCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        source_execution_id: {type: string, format: uuid}
+        certified_by: {type: string}
+        reason: {type: string}
+      required: [source_execution_id, certified_by, reason]
+    BaseStationSiteCertificationRevoke:
+      type: object
+      additionalProperties: false
+      properties:
+        revoked_by: {type: string}
+        reason: {type: string}
+      required: [revoked_by, reason]
+    ExecutionQualification:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        classification: {type: string, enum: [formal, diagnostic]}
+        policy_mode: {type: string, enum: [formal, diagnostic]}
+        policy:
+          allOf: [{$ref: '#/components/schemas/TestCaseExecutionPolicy'}]
+          nullable: true
+        binding_digest: {type: string}
+        binding_status: {type: string, enum: [configured, not_applicable, diagnostic_unbound]}
+        execution_mode: {type: string, enum: [real, simulated]}
+        adapter_id: {type: string, nullable: true}
+        site_certification:
+          allOf: [{$ref: '#/components/schemas/BaseStationSiteCertification'}]
+          nullable: true
+        site_certification_digest: {type: string, nullable: true}
+        reasons: {type: array, items: {type: string}}
+        frozen_at: {type: string, format: date-time}
+        qualification_digest: {type: string}
+      required: [schema_version, classification, policy_mode, policy, binding_digest, binding_status, execution_mode, adapter_id, site_certification, site_certification_digest, reasons, frozen_at, qualification_digest]
+    SessionResponse:
+      type: object
+      properties:
+        session_id: {type: string}
+        phase: {type: string}
+        phase_statuses: {type: object, additionalProperties: {type: string}}
+        overall_progress: {type: number}
+        config: {type: object, additionalProperties: true}
+        started_at: {type: string, nullable: true}
+        completed_at: {type: string, nullable: true}
+        precheck: {type: object, additionalProperties: true, nullable: true}
+        reference: {type: object, additionalProperties: true, nullable: true}
+        mimo_test: {type: object, additionalProperties: true, nullable: true}
+        analysis: {type: object, additionalProperties: true, nullable: true}
+        report_id: {type: string, nullable: true}
+        execution_qualification:
+          allOf: [{$ref: '#/components/schemas/ExecutionQualification'}]
+          nullable: true
+      required: [session_id, phase, phase_statuses, overall_progress, config]
     InstrumentBinding:
       type: object
       required: [category_id, connection_endpoint]
@@ -1547,6 +1720,10 @@ components:
           nullable: true
           items:
             type: string
+        execution_policy:
+          allOf:
+            - $ref: '#/components/schemas/TestCaseExecutionPolicy'
+          nullable: true
       required: [id, name, description, test_type, configuration, pass_criteria,
         expected_results, probe_selection, instrument_config, channel_model,
         channel_parameters, frequency_mhz, tx_power_dbm, bandwidth_mhz,
@@ -1888,7 +2065,7 @@ components:
         diagnostic_supported: {type: boolean}
         formal_gate:
           type: string
-          enum: [legacy_provenance, connection_approval]
+          enum: [site_certification]
       required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, profile_requirement, profile_fields, manual_sources, diagnostic_supported, formal_gate]
     InstrumentConnection:
       type: object
@@ -1916,7 +2093,11 @@ components:
           type: string
           format: date-time
           nullable: true
-      required: [id, endpoint, controller, notes, connection_params, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at]
+        base_station_site_certification:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationSiteCertification'
+          nullable: true
+      required: [id, endpoint, controller, notes, connection_params, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
       additionalProperties: false
     Cmw500FormalCapabilityUpdate:
       type: object
@@ -1979,6 +2160,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
           nullable: true
+        base_station_site_certification:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationSiteCertification'
+          nullable: true
         cmw500_lte_2x2:
           allOf:
             - $ref: '#/components/schemas/Cmw500Lte2x2Readiness'
@@ -1994,7 +2179,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:
@@ -2165,6 +2350,9 @@ components:
         validation_pass:
           type: boolean
           nullable: true
+        execution_classification:
+          type: string
+          enum: [formal, diagnostic, legacy]
         failure_alert_outcome:
           type: string
           nullable: true
@@ -2187,6 +2375,7 @@ components:
         - executed_by
         - error_message
         - validation_pass
+        - execution_classification
         - failure_alert_outcome
     TestExecutionListResponse:
       type: object

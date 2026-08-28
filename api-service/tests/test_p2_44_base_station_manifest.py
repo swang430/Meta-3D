@@ -48,7 +48,7 @@ def _manifest(**overrides) -> BaseStationAdapterManifest:
         "profile_fields": [_field()],
         "manual_sources": ["Instrument_API_Doc/vendor/manual.pdf"],
         "diagnostic_supported": True,
-        "formal_gate": "legacy_provenance",
+        "formal_gate": "site_certification",
     }
     payload.update(overrides)
     return BaseStationAdapterManifest.model_validate(payload)
@@ -70,7 +70,7 @@ def test_registered_base_station_manifests_match_registry_and_profile_contracts(
     assert cmw.manifest.profile_requirement == "required"
     assert {item.path for item in cmw.manifest.profile_fields} == CMW_ROUTE_PATHS
     assert cmw.profile_model is not None
-    assert cmw.manifest.formal_gate == "connection_approval"
+    assert cmw.manifest.formal_gate == "site_certification"
 
     public = cmw.manifest.model_dump(mode="json")
     assert "profile_model" not in public

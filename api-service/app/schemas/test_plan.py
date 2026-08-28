@@ -135,6 +135,7 @@ class TestCaseResponse(BaseModel):
     version: str
     parent_id: Optional[UUID]
     tags: Optional[List[str]]
+    execution_policy: Optional[TestCaseExecutionPolicy] = None
 
     class Config:
         from_attributes = True
@@ -221,6 +222,7 @@ class ExecutionHistoryItem(BaseModel):
     executed_by: Optional[str] = None  # 来源列: test_case_runner / test_plan_runner / commissioning_*
     error_message: Optional[str] = None
     validation_pass: Optional[bool] = None
+    execution_classification: str = "legacy"
     failure_alert_outcome: Optional[str] = None
 
 

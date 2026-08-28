@@ -4,6 +4,7 @@
  * Provides API functions for test plan, test case, and queue management.
  */
 import testPlanClient from './client';
+import type { TestCaseExecutionPolicy } from '../types/api'
 
 // ==================== Type Definitions ====================
 
@@ -75,6 +76,7 @@ export interface TestCase {
   version: string;
   parent_id?: string;
   tags?: string[];
+  execution_policy?: TestCaseExecutionPolicy | null;
 }
 
 export interface TestCaseSummary {
@@ -218,6 +220,17 @@ export async function updateTestCase(
 ): Promise<TestCase> {
   const response = await testPlanClient.patch<TestCase>(`/test-plans/cases/${id}`, payload);
   return response.data;
+}
+
+export async function updateTestCaseExecutionPolicy(
+  id: string,
+  payload: { mode: 'formal' | 'diagnostic'; reason: string; updated_by: string },
+): Promise<TestCaseExecutionPolicy> {
+  const response = await testPlanClient.put(
+    `/test-plans/cases/${id}/execution-policy`,
+    payload,
+  )
+  return response.data.policy
 }
 
 // Queue Management

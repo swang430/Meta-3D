@@ -52,6 +52,8 @@ from app.services.base_station_execution_session import (
 )
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 from app.services.execution_qualification import (
+    EXECUTION_QUALIFICATION_KEY,
+    ExecutionQualification,
     TestCaseExecutionPolicy,
     execution_qualification_classification,
     execution_is_diagnostic,
@@ -499,6 +501,7 @@ class SessionResponse(BaseModel):
     mimo_test: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
     report_id: Optional[str] = None
+    execution_qualification: Optional[ExecutionQualification] = None
 
 
 class PhaseResultResponse(BaseModel):
@@ -788,6 +791,14 @@ def _execution_to_session_response(
         ),
         analysis=phases.get("analysis"),
         report_id=report_payload.get("report_id"),
+        execution_qualification=(
+            ExecutionQualification.model_validate(
+                (execution.config or {}).get(EXECUTION_QUALIFICATION_KEY)
+            )
+            if isinstance(execution.config, dict)
+            and isinstance(execution.config.get(EXECUTION_QUALIFICATION_KEY), dict)
+            else None
+        ),
     )
 
 

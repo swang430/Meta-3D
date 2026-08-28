@@ -78,6 +78,51 @@ export type InstrumentConnection = {
   connection_params?: Record<string, any> | null
   cmw500_lte_2x2_formal_enabled: boolean
   cmw500_lte_2x2_formal_updated_at: string | null
+  base_station_site_certification: BaseStationSiteCertification | null
+}
+
+export type TestCaseExecutionPolicy = {
+  schema_version: 1
+  mode: 'formal' | 'diagnostic'
+  reason: string
+  updated_by: string
+  updated_at: string
+}
+
+export type BaseStationSiteCertification = {
+  schema_version: 1
+  status: 'active' | 'revoked'
+  lab_profile_id: string
+  instrument_connection_id: string
+  binding_digest: string
+  adapter_id: string
+  model: string
+  firmware_version: string
+  options: string[]
+  source_execution_id: string
+  evidence_digest: string
+  required_proofs: {
+    config_readback: boolean
+    route_readback: boolean
+    route_not_applicable: boolean
+    cleanup: boolean
+    transport_release: boolean
+  }
+  certified_by: string
+  certified_at: string
+  reason: string
+  revoked_by?: string | null
+  revoked_at?: string | null
+  revocation_reason?: string | null
+}
+
+export type FrozenExecutionQualification = {
+  schema_version: 1
+  classification: 'formal' | 'diagnostic'
+  reasons: string[]
+  binding_digest: string
+  site_certification_digest: string | null
+  qualification_digest: string
 }
 
 export type Cmw500FormalCapabilityResponse = {
@@ -293,6 +338,7 @@ export type HALReadinessResponse = {
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
   base_station_binding: BaseStationBindingPreviewResponse | null
+  base_station_site_certification: BaseStationSiteCertification | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string
   subnets: SubnetReachability[]
@@ -325,6 +371,7 @@ export type TestExecutionItem = {
   executed_by: string | null
   error_message: string | null
   validation_pass: boolean | null
+  execution_classification: 'formal' | 'diagnostic' | 'legacy'
   // P2-34: 告警发布结果 published | duplicate | failed; null = 未记录 (≠ 已发布)
   failure_alert_outcome: string | null
 }

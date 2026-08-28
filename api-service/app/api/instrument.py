@@ -87,6 +87,7 @@ class FEInstrumentConnection(BaseModel):
     connection_params: Optional[Dict[str, Any]] = None
     cmw500_lte_2x2_formal_enabled: bool = False
     cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
+    base_station_site_certification: Optional[BaseStationSiteCertification] = None
 
 
 class FEInstrumentCategory(BaseModel):
@@ -229,6 +230,7 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         cmw500_lte_2x2_formal_updated_at=(
             conn_db.cmw500_lte_2x2_formal_updated_at
         ),
+        base_station_site_certification=conn_db.base_station_site_certification,
     )
 
 
@@ -3384,6 +3386,7 @@ class HALReadinessResponse(BaseModel):
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
     base_station_binding: Optional[BaseStationBindingPreviewResponse] = None
+    base_station_site_certification: Optional[BaseStationSiteCertification] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
     # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
@@ -3460,6 +3463,18 @@ def get_hal_readiness(
         if cmw_readiness is not None
         else None
     )
+    site_certification = None
+    if binding_preview is not None and binding_preview.instrument_connection_id:
+        connection = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.id == UUID(binding_preview.instrument_connection_id)
+        ).one_or_none()
+        if connection is not None and connection.base_station_site_certification:
+            try:
+                site_certification = BaseStationSiteCertification.model_validate(
+                    connection.base_station_site_certification
+                )
+            except ValidationError:
+                site_certification = None
 
     if report is None:
         # HAL not initialised — return a shaped placeholder so the GUI
@@ -3487,6 +3502,7 @@ def get_hal_readiness(
                 detail="HAL not initialised yet",
             ),
             base_station_binding=binding_response,
+            base_station_site_certification=site_certification,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
             subnets=[],
@@ -3525,6 +3541,7 @@ def get_hal_readiness(
             detail=report.dut_attach.detail,
         ),
         base_station_binding=binding_response,
+        base_station_site_certification=site_certification,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,
         subnets=[

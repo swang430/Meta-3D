@@ -39,6 +39,7 @@ export interface ExecutionOption {
   case_name: string | null
   status: string
   validation_pass: boolean | null
+  execution_classification: 'formal' | 'diagnostic' | 'legacy'
   started_at?: string
   completed_at?: string
   duration_sec?: number
@@ -132,8 +133,19 @@ export function ExecutionSelector({
     return `${(seconds / 3600).toFixed(1)}小时`
   }
 
-  const getStatusBadge = (status: string, pass: boolean | null) => {
+  const getStatusBadge = (
+    status: string,
+    pass: boolean | null,
+    classification: ExecutionOption['execution_classification'],
+  ) => {
     if (status === 'completed') {
+      if (classification === 'diagnostic') {
+        return (
+          <Badge size="xs" color="yellow" variant="light">
+            仅诊断
+          </Badge>
+        )
+      }
       // ⚠️ validation_pass 是**三态** (true / false / null), 不是二值。
       // case-runner 目前一处都不写它 (全为 null), 若把 null 当 false, 挑报告
       // 数据的这一屏会显示"清一色失败" —— 跟同源的「待归档执行」列表矛盾
@@ -266,7 +278,11 @@ export function ExecutionSelector({
                       <Text size="sm" fw={500}>
                         {exec.case_name || '(未命名执行)'}
                       </Text>
-                      {getStatusBadge(exec.status, exec.validation_pass)}
+                      {getStatusBadge(
+                        exec.status,
+                        exec.validation_pass,
+                        exec.execution_classification,
+                      )}
                     </Group>
                     <Group gap="xs">
                       {exec.started_at && (
