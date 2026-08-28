@@ -31,3 +31,13 @@ test('lab profile service types preview and sync with the common response', () =
   assert.match(source, /Promise<BaseStationBindingPreviewResponse>/)
   assert.match(source, /Promise<InstrumentBindingSyncResponse>/)
 })
+
+test('readiness and sync feedback consume the resolved common binding truth', () => {
+  const readiness = read('../features/Dashboard/ZoneReadiness.tsx')
+  const app = read('../App.tsx')
+  assert.match(
+    readiness,
+    /projectBaseStationBindingTruth\(report\.base_station_binding\)/,
+  )
+  assert.match(app, /formatBaseStationSyncTruth\(syncResult\.resolved\)/)
+})

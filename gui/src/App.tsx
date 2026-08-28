@@ -59,6 +59,7 @@ import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
 import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { DashboardCockpit } from './features/Dashboard'
+import { formatBaseStationSyncTruth } from './features/Dashboard/baseStationBindingTruth'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
@@ -1895,14 +1896,16 @@ function EquipmentManager() {
       }
       return syncCurrentInstrumentBinding(selectedLabProfileId, categoryKey)
     },
-    onSuccess: (_binding, categoryKey) => {
+    onSuccess: (syncResult, categoryKey) => {
       queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
       queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       showFeedback(
         categoryKey,
         'success',
-        `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
+        categoryKey === 'baseStation'
+          ? `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}：${formatBaseStationSyncTruth(syncResult.resolved)}`
+          : `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
       )
     },
     onError: (error: unknown, categoryKey) => {

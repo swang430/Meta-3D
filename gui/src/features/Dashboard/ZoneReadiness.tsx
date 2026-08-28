@@ -3,7 +3,7 @@
  *
  * Surfaces the commissioning precheck fail-loud gate信息 (P1-8 校准 /
  * P1-9 DUT-attach) to the first screen: a four-cell traffic light
- * (驱动链 / 活动 Lab / 校准证书 / DUT attach) plus a one-line总判
+ * (驱动链 / 活动 Lab / 校准证书 / DUT attach / BaseStation binding) plus a one-line总判
  * (能不能开测 + 阻塞原因), styled to match the commissioning precheck
  * FAIL voice.
  *
@@ -26,6 +26,7 @@ import {
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
 import { useOperationalLab } from '../OperationalLab'
+import { projectBaseStationBindingTruth } from './baseStationBindingTruth'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -134,6 +135,7 @@ function buildCells(report: HALReadinessResponse): Cell[] {
             : `全部 ${okCount} 个 ok`
 
   const cal = report.calibration
+  const baseStationBinding = projectBaseStationBindingTruth(report.base_station_binding)
   const calValue =
     cal.status === 'valid'
       ? typeof cal.days_remaining === 'number'
@@ -180,6 +182,13 @@ function buildCells(report: HALReadinessResponse): Cell[] {
       light: 'gray',
       valueText: '未实现',
       detail: report.dut_attach.detail,
+    },
+    {
+      key: 'base-station-binding',
+      title: '基站绑定',
+      light: baseStationBinding.light,
+      valueText: baseStationBinding.valueText,
+      detail: baseStationBinding.detail,
     },
   ]
 }
@@ -340,7 +349,7 @@ export function ZoneReadiness() {
         )}
 
         {readiness && (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
             {buildCells(readiness).map((cell) => (
               <Card key={cell.key} withBorder radius="sm" padding="sm">
                 <Stack gap={6}>
