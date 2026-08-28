@@ -55,6 +55,49 @@ def override_get_db():
 client = TestClient(app)
 
 
+def _patch_execution_session_around_lease(monkeypatch, lease):
+    """让入口测试继续观察外层边界；attempt 细节由专用会话测试覆盖。"""
+
+    async def _session(
+        _db,
+        _execution,
+        _test_case,
+        *,
+        purpose,
+        step_type,
+        validate_before_remote,
+        operation,
+    ):
+        result = None
+        try:
+            async with lease(
+                purpose,
+                measurement_attempt_id=None,
+                enable_monitoring=False,
+                validate_before_remote=validate_before_remote,
+            ):
+                result = await operation()
+        except Exception as error:
+            from app.services.base_station_execution_session import (
+                BaseStationExecutionSessionReleaseError,
+            )
+            from app.services.instrument_test_lease import (
+                InstrumentTestLeaseReleaseError,
+            )
+
+            if isinstance(error, InstrumentTestLeaseReleaseError) and result is not None:
+                raise BaseStationExecutionSessionReleaseError(
+                    str(error), operation_value=result.value
+                ) from error
+            raise
+        return result.value
+
+    monkeypatch.setattr(
+        "app.api.commissioning.run_base_station_execution_session",
+        _session,
+    )
+
+
 @pytest.fixture(autouse=True)
 def setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
@@ -164,9 +207,7 @@ class TestAdhocPhaseEndpoint:
             events.append("dispatch")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
 
         resp = client.post(
@@ -187,48 +228,25 @@ class TestAdhocPhaseEndpoint:
 
         events = []
 
-        def _begin(*_args, **_kwargs):
-            assert events[-1].startswith("enter:")
-            events.append("attempt-begin")
-            return "attempt-adhoc"
-
-        @asynccontextmanager
-        async def _lease(purpose, **kwargs):
-            assert kwargs.get("measurement_attempt_id") is None
+        async def _session(
+            _db, _execution, _test_case, *, purpose, operation, **_kwargs
+        ):
             events.append(f"enter:{purpose}")
-            outcome = SimpleNamespace(
-                measurement_attempt_id=None,
-                base_station_release="release-adhoc",
-            )
-            try:
-                yield outcome
-            finally:
-                assert outcome.measurement_attempt_id == "attempt-adhoc"
-                events.append("exit")
+            events.append("attempt-begin")
+            result = await operation()
+            events.append("exit")
+            events.append("release-persisted")
+            return result.value
 
         async def _dispatch(ctx):
             events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
-        def _settle(*_args, **kwargs):
-            assert kwargs["attempt_id"] == "attempt-adhoc"
-            assert kwargs["lease_outcome"].base_station_release == "release-adhoc"
-            assert kwargs["phase_succeeded"] is True
-            assert events[-1] == "exit"
-            events.append("release-persisted")
-
         monkeypatch.setattr(
-            "app.api.commissioning._begin_commissioning_measurement_attempt",
-            _begin,
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+            "app.api.commissioning.run_base_station_execution_session",
+            _session,
         )
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
-        monkeypatch.setattr(
-            "app.api.commissioning._settle_commissioning_measurement_attempt",
-            _settle,
-        )
 
         resp = client.post(
             "/api/v1/commissioning/diagnostic/run-phase",
@@ -412,9 +430,7 @@ class TestAdhocPhaseEndpoint:
             ctx.db.commit()
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
 
         resp = client.post(
@@ -452,9 +468,7 @@ class TestAdhocPhaseEndpoint:
                 error_message="预检业务失败",
             )
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
         sess = client.post(
             "/api/v1/commissioning/sessions",
@@ -501,9 +515,7 @@ class TestAdhocPhaseEndpoint:
                 error_message="adhoc 业务失败",
             )
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
 
         resp = client.post(
@@ -671,9 +683,7 @@ class TestExecutionStatusVisibleToReloadGate:
             events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
         sess = client.post(
             "/api/v1/commissioning/sessions",
@@ -700,47 +710,23 @@ class TestExecutionStatusVisibleToReloadGate:
 
         events = []
 
-        @asynccontextmanager
-        async def _lease(purpose, **_kwargs):
-            assert _kwargs.get("measurement_attempt_id") is None
-            assert _kwargs.get("enable_monitoring") is False
+        async def _session(
+            _db, _execution, _test_case, *, purpose, operation, **_kwargs
+        ):
             events.append(f"enter:{purpose}")
-            outcome = SimpleNamespace(
-                measurement_attempt_id=None,
-                base_station_release="release-run-all",
-            )
-            try:
-                yield outcome
-            finally:
-                assert outcome.measurement_attempt_id == "attempt-run-all"
-                events.append("exit")
-
-        def _begin(*_args, **_kwargs):
-            assert events[-1].startswith("enter:")
             events.append("attempt-begin")
-            return "attempt-run-all"
-
-        def _settle(*_args, **kwargs):
-            assert kwargs["attempt_id"] == "attempt-run-all"
-            assert kwargs["lease_outcome"].base_station_release == "release-run-all"
-            assert kwargs["phase_succeeded"] is True
-            assert events[-1] == "exit"
+            result = await operation()
+            events.append("exit")
             events.append("release-persisted")
+            return result.value
 
         async def _dispatch(ctx):
             events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
         monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning._begin_commissioning_measurement_attempt",
-            _begin,
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning._settle_commissioning_measurement_attempt",
-            _settle,
+            "app.api.commissioning.run_base_station_execution_session",
+            _session,
         )
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
         sess = client.post(
@@ -774,47 +760,25 @@ class TestExecutionStatusVisibleToReloadGate:
 
         events = []
 
-        def _begin(*_args, **_kwargs):
-            assert events[-1].startswith("enter:")
-            events.append("attempt-begin")
-            return "attempt-phase"
-
-        @asynccontextmanager
-        async def _lease(purpose, **kwargs):
-            assert kwargs.get("measurement_attempt_id") is None
+        async def _session(
+            _db, _execution, _test_case, *, purpose, operation, **_kwargs
+        ):
             events.append(f"enter:{purpose}")
-            outcome = SimpleNamespace(
-                measurement_attempt_id=None,
-                base_station_release="release-phase",
-            )
-            try:
-                yield outcome
-            finally:
-                assert outcome.measurement_attempt_id == "attempt-phase"
-                events.append("exit")
+            events.append("attempt-begin")
+            result = await operation()
+            events.append("exit")
+            events.append("release-persisted")
+            return result.value
 
         async def _dispatch(ctx):
             events.append(f"dispatch:{ctx.step.type}")
             return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
 
-        def _settle(*_args, **kwargs):
-            assert kwargs["attempt_id"] == "attempt-phase"
-            assert kwargs["lease_outcome"].base_station_release == "release-phase"
-            assert events[-1] == "exit"
-            events.append("release-persisted")
-
         monkeypatch.setattr(
-            "app.api.commissioning._begin_commissioning_measurement_attempt",
-            _begin,
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+            "app.api.commissioning.run_base_station_execution_session",
+            _session,
         )
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
-        monkeypatch.setattr(
-            "app.api.commissioning._settle_commissioning_measurement_attempt",
-            _settle,
-        )
         sess = client.post(
             "/api/v1/commissioning/sessions",
             json={"lab_profile_id": str(lab.id)},
@@ -845,31 +809,12 @@ class TestExecutionStatusVisibleToReloadGate:
 
         events = []
 
-        def _begin(*_args, **_kwargs):
-            pytest.fail("remote acquire failure must not freeze stale identity")
-
-        @asynccontextmanager
-        async def _lease(_purpose, **kwargs):
-            assert kwargs["measurement_attempt_id"] is None
+        async def _session(*_args, **_kwargs):
             raise InstrumentTestLeaseError("remote acquire rejected")
-            yield  # pragma: no cover
-
-        def _record_failure(*_args, **kwargs):
-            assert kwargs["attempt_id"] is None
-            assert kwargs["outcome"] is None
-            assert kwargs["cancelled"] is False
-            events.append("no-attempt-to-finalize")
 
         monkeypatch.setattr(
-            "app.api.commissioning._begin_commissioning_measurement_attempt",
-            _begin,
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
-        monkeypatch.setattr(
-            "app.api.commissioning.record_execution_base_station_attempt_failure",
-            _record_failure,
+            "app.api.commissioning.run_base_station_execution_session",
+            _session,
         )
         sess = client.post(
             "/api/v1/commissioning/sessions",
@@ -882,7 +827,7 @@ class TestExecutionStatusVisibleToReloadGate:
         )
 
         assert resp.status_code == 409
-        assert events == ["no-attempt-to-finalize"]
+        assert events == []
     """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
     否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
 
@@ -1023,9 +968,7 @@ class TestExecutionStatusVisibleToReloadGate:
                 error_message="链路业务失败",
             )
 
-        monkeypatch.setattr(
-            "app.api.commissioning.instrument_test_lease", _lease, raising=False
-        )
+        _patch_execution_session_around_lease(monkeypatch, _lease)
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
         sess = client.post(
             "/api/v1/commissioning/sessions",

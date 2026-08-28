@@ -56,7 +56,10 @@ from app.services.test_execution.registry import dispatch_step
 from app.utils.human_time import format_human_local_timestamp
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseReleaseError,
-    instrument_test_lease,
+)
+from app.services.base_station_execution_session import (
+    BaseStationSessionOperationResult,
+    run_base_station_execution_session,
 )
 from app.services.instrument_hal_service import get_hal_service
 from app.services.base_station_adapter_profile import (
@@ -76,84 +79,6 @@ RUNNER_MARKER = "test_case_runner"
 
 # 模块级任务表: 单飞判据之一 + 持引用防 asyncio task 被 GC。
 _RUNNING_TASKS: Dict[str, "asyncio.Task[None]"] = {}
-
-
-def _begin_formal_measurement_attempt(db, execution) -> str | None:
-    """Freeze the active CMW identity and switch its attempt before measurement I/O.
-
-    UXM keeps its existing execution path in P1-73C.  CMW is the newly admitted
-    adapter and therefore freezes its strict execution envelope after the outer
-    lease refreshes the transport identity but before the first measurement I/O.
-    """
-
-    frozen = (execution.config or {}).get(FREEZE_CONFIG_KEY)
-    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
-    if not isinstance(resolution, dict) or resolution.get("adapter") != "cmw500":
-        return None
-
-    test_case = (
-        db.query(TestCase).filter(TestCase.id == execution.test_case_id).first()
-    )
-    if test_case is None:
-        raise RuntimeError(
-            f"execution {execution.id} 的快照 TestCase 不存在，无法建立 CMW 测量证据"
-        )
-
-    from app.services.execution_scpi_evidence import (
-        begin_execution_base_station_measurement,
-    )
-
-    driver = (get_hal_service().drivers or {}).get("baseStation")
-    return begin_execution_base_station_measurement(
-        db,
-        execution,
-        test_case,
-        driver=driver,
-    )
-
-
-def _persist_formal_measurement_release(
-    db,
-    execution_id,
-    *,
-    attempt_id: str | None,
-    outcome,
-) -> None:
-    """Persist the actual outer-lease release before formalization is visible."""
-
-    from app.services.execution_scpi_evidence import (
-        persist_execution_base_station_release,
-    )
-
-    persist_execution_base_station_release(
-        db,
-        execution_id,
-        attempt_id=attempt_id,
-        outcome=outcome,
-    )
-
-
-def _record_formal_measurement_failure(
-    db,
-    execution_id,
-    *,
-    attempt_id: str | None,
-    outcome,
-    cancelled: bool,
-) -> None:
-    """Fail/cancel the exact attempt without guessing from the current pointer."""
-
-    from app.services.execution_scpi_evidence import (
-        record_execution_base_station_attempt_failure,
-    )
-
-    record_execution_base_station_attempt_failure(
-        db,
-        execution_id,
-        attempt_id=attempt_id,
-        outcome=outcome,
-        cancelled=cancelled,
-    )
 
 
 def _finalize_scpi_acceptance(execution):
@@ -593,8 +518,6 @@ async def _run_case(execution_id: UUID) -> None:
     # 但读日志时别把它当成"那个请求还在跑"：请求早返回了，执行还在后台。
     current_execution_id.set(str(execution_id))
     db = SessionLocal()
-    measurement_attempt_id: str | None = None
-    lease_outcome = None
     try:
         deferred_formalization = None
         execution = (
@@ -609,26 +532,32 @@ async def _run_case(execution_id: UUID) -> None:
         )
         if not isinstance(frozen, dict):
             raise RuntimeError("formal execution is missing frozen baseStation adapter profile")
-        async with instrument_test_lease(
-            f"formal-case:{execution_id}",
-            measurement_attempt_id=None,
-            # 正式执行期间禁止后台仪表轮询。监控与执行共用同一条 CMW
-            # transport，异步查询会污染全局错误队列并打乱本次配置回读。
-            enable_monitoring=False,
-            validate_before_remote=build_frozen_base_station_validator(frozen),
-        ) as lease_outcome:
-            # The lease has now acquired/refreshed the active transport identity.
-            # Freeze that identity before the first measurement operation.
-            measurement_attempt_id = _begin_formal_measurement_attempt(db, execution)
-            lease_outcome.measurement_attempt_id = measurement_attempt_id
-            deferred_formalization = await _run_case_loop(
+        test_case = (
+            db.query(TestCase).filter(TestCase.id == execution.test_case_id).first()
+        )
+        if test_case is None:
+            raise RuntimeError(
+                f"execution {execution.id} 的快照 TestCase 不存在，"
+                "无法建立 BaseStation 执行会话"
+            )
+
+        async def _run_hardware_phases():
+            deferred = await _run_case_loop(
                 db, execution_id, defer_report=True
             )
-        _persist_formal_measurement_release(
+            return BaseStationSessionOperationResult(
+                value=deferred,
+                succeeded=deferred is not None,
+            )
+
+        deferred_formalization = await run_base_station_execution_session(
             db,
-            execution_id,
-            attempt_id=measurement_attempt_id,
-            outcome=lease_outcome,
+            execution,
+            test_case,
+            purpose=f"formal-case:{execution_id}",
+            step_type="MIMO_OTA_MEASURE",
+            validate_before_remote=build_frozen_base_station_validator(frozen),
+            operation=_run_hardware_phases,
         )
         if deferred_formalization is not None:
             await _run_deferred_case_formalization(
@@ -637,37 +566,11 @@ async def _run_case(execution_id: UUID) -> None:
                 deferred_formalization,
             )
     except asyncio.CancelledError:
-        try:
-            _record_formal_measurement_failure(
-                db,
-                execution_id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=True,
-            )
-        except Exception:  # noqa: BLE001 — preserve cancellation, log failed audit write
-            logger.exception(
-                "[case-runner] execution %s 取消后的 measurement attempt 落库失败",
-                execution_id,
-            )
         raise
     except Exception as e:  # noqa: BLE001
         logger.exception("[case-runner] execution %s 执行器异常: %s", execution_id, e)
         try:
             db.rollback()
-            try:
-                _record_formal_measurement_failure(
-                    db,
-                    execution_id,
-                    attempt_id=measurement_attempt_id,
-                    outcome=lease_outcome,
-                    cancelled=False,
-                )
-            except Exception:  # noqa: BLE001 — preserve the original business/release error
-                logger.exception(
-                    "[case-runner] execution %s 的 measurement attempt 失败落库失败",
-                    execution_id,
-                )
             ex = (
                 db.query(TestExecution)
                 .filter(TestExecution.id == execution_id).first()

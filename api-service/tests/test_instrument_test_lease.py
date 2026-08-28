@@ -550,64 +550,50 @@ async def test_monitoring_source_does_not_touch_hal_while_no_test_is_active(
 @pytest.mark.asyncio
 async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch):
     import app.services.test_case_runner as runner
-    from app.hal.base_station import BaseStationControlReleaseResult
-    from app.services.instrument_test_lease import InstrumentTestLeaseOutcome
 
     events: list[str] = []
 
     execution = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000002"),
         config={
             "base_station_adapter_profile_freeze": {"digest": "formal-freeze"}
         }
     )
+    test_case = SimpleNamespace(id=execution.test_case_id)
 
     class _Query:
+        def __init__(self, model):
+            self.model = model
+
         def filter(self, *_args):
             return self
 
         def first(self):
-            return execution
+            return execution if self.model is runner.TestExecution else test_case
 
     class _DB:
-        def query(self, *_args):
-            return _Query()
+        def query(self, model):
+            return _Query(model)
 
         def close(self) -> None:
             events.append("db-close")
 
-    @asynccontextmanager
-    async def _lease(purpose: str, **kwargs):
-        validator = kwargs.get("validate_before_remote")
+    async def _session(
+        db, session_execution, session_test_case, *, purpose, step_type,
+        validate_before_remote, operation,
+    ):
+        assert db.__class__ is _DB
+        assert session_execution is execution
+        assert session_test_case is test_case
+        assert step_type == "MIMO_OTA_MEASURE"
+        validator = validate_before_remote
         assert getattr(validator, "validation_identity", None) == "formal-freeze"
-        assert kwargs.get("measurement_attempt_id") is None
-        assert kwargs.get("enable_monitoring") is False, (
-            "正式执行不得开放后台仪表轮询；监控查询会污染同一台仪表的错误队列"
-        )
-        events.append(f"lease-enter:{purpose}")
-        outcome = InstrumentTestLeaseOutcome(
-            lease_id="lease-1",
-            measurement_attempt_id=None,
-        )
-        try:
-            yield outcome
-        finally:
-            assert outcome.measurement_attempt_id == "attempt-1"
-            outcome.base_station_release = BaseStationControlReleaseResult(
-                measurement_attempt_id="attempt-1",
-                lease_id="lease-1",
-                adapter_id="cmw500",
-                session_token="session-1",
-                remote_session_acquired_confirmed=True,
-                transport_session_released_confirmed=True,
-                front_panel_local_confirmed=None,
-                warnings=("front-panel Local unconfirmed",),
-            )
-            events.append("lease-exit")
-
-    def _begin(_db, _execution):
-        assert events[-1].startswith("lease-enter:")
-        events.append("attempt-begin")
-        return "attempt-1"
+        events.append(f"session-enter:{purpose}")
+        result = await operation()
+        assert result.succeeded is True
+        events.append("release-persisted")
+        return result.value
 
     async def _loop(_db, _execution_id, *, defer_report=False):
         assert defer_report is True
@@ -621,33 +607,24 @@ async def test_formal_case_background_task_holds_lease_for_whole_run(monkeypatch
             {"id": "report", "type": "MIMO_OTA_REPORT", "parameters": {}},
         ]
 
-    def _persist_release(_db, _execution_id, *, attempt_id, outcome) -> None:
-        assert attempt_id == "attempt-1"
-        assert outcome.base_station_release is not None
-        events.append("release-persisted")
-
     async def _formalize_after_release(_db, _execution_id, _raws) -> None:
         events.append("formalization-after-release")
 
     monkeypatch.setattr(runner, "SessionLocal", _DB)
-    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
-    monkeypatch.setattr(runner, "_begin_formal_measurement_attempt", _begin)
+    monkeypatch.setattr(runner, "run_base_station_execution_session", _session)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
-    monkeypatch.setattr(runner, "_persist_formal_measurement_release", _persist_release)
     monkeypatch.setattr(
         runner,
         "_run_deferred_case_formalization",
         _formalize_after_release,
     )
 
-    execution_id = "00000000-0000-0000-0000-000000000001"
+    execution_id = str(execution.id)
     await runner._run_case(execution_id)
 
     assert events == [
-        f"lease-enter:formal-case:{execution_id}",
-        "attempt-begin",
+        f"session-enter:formal-case:{execution_id}",
         "case-loop",
-        "lease-exit",
         "release-persisted",
         "formalization-after-release",
         "db-close",
@@ -779,13 +756,12 @@ async def test_formal_case_rejects_non_terminal_analysis_report_sequence():
 async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_winner(
     monkeypatch, winner
 ):
-    from contextlib import asynccontextmanager
-
     import app.services.test_case_runner as runner
     from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
 
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000003"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000013"),
         status="running",
         config={
             "error_message": "original phase outcome",
@@ -828,9 +804,8 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
         def close(self):
             pass
 
-    @asynccontextmanager
-    async def _lease(_purpose, **_kwargs):
-        yield SimpleNamespace(measurement_attempt_id=None)
+    async def _session(*_args, operation, **_kwargs):
+        await operation()
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
@@ -841,7 +816,7 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
     alerts = []
 
     monkeypatch.setattr(runner, "SessionLocal", _DB)
-    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "run_base_station_execution_session", _session)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
     monkeypatch.setattr(runner, "flag_modified", lambda *_args: None)
     monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
@@ -866,13 +841,12 @@ async def test_formal_case_is_failed_when_local_handoff_fails_after_terminal_win
 async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
     monkeypatch,
 ):
-    from contextlib import asynccontextmanager
-
     import app.services.test_case_runner as runner
     from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
 
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000004"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000014"),
         status="running",
         config={
             "phase_progress": [{"type": "MEASURE", "status": "success"}],
@@ -914,9 +888,8 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
         def close(self):
             pass
 
-    @asynccontextmanager
-    async def _lease(_purpose, **_kwargs):
-        yield SimpleNamespace(measurement_attempt_id=None)
+    async def _session(*_args, operation, **_kwargs):
+        await operation()
         raise InstrumentTestLeaseReleaseError("Local 交接失败")
 
     async def _loop(_db, _execution_id, *, defer_report=False):
@@ -942,7 +915,7 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
 
     alerts = []
     monkeypatch.setattr(runner, "SessionLocal", _DB)
-    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "run_base_station_execution_session", _session)
     monkeypatch.setattr(runner, "_run_case_loop", _loop)
     monkeypatch.setattr(runner, "_cas_case_execution_terminal", _cas)
     monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
@@ -966,13 +939,12 @@ async def test_local_handoff_failure_retries_after_concurrent_cancel_wins(
 async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
     monkeypatch,
 ):
-    from contextlib import asynccontextmanager
-
     import app.services.test_case_runner as runner
     from app.services.instrument_test_lease import InstrumentTestLeaseError
 
     execution = SimpleNamespace(
         id=UUID("00000000-0000-0000-0000-000000000005"),
+        test_case_id=UUID("00000000-0000-0000-0000-000000000015"),
         status="running",
         config={
             "base_station_adapter_profile_freeze": {"digest": "formal-freeze"}
@@ -1012,13 +984,11 @@ async def test_remote_acquire_failure_is_not_mislabeled_as_local_handoff(
         def close(self):
             pass
 
-    @asynccontextmanager
-    async def _lease(_purpose, **_kwargs):
+    async def _session(*_args, **_kwargs):
         raise InstrumentTestLeaseError("无法取得 UXM Remote 控制")
-        yield
 
     monkeypatch.setattr(runner, "SessionLocal", _DB)
-    monkeypatch.setattr(runner, "instrument_test_lease", _lease)
+    monkeypatch.setattr(runner, "run_base_station_execution_session", _session)
     monkeypatch.setattr(runner, "_finalize_scpi_acceptance", lambda _ex: None)
     monkeypatch.setattr(runner, "emit_execution_failed_alert", lambda _id: None)
 

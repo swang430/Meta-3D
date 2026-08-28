@@ -761,11 +761,11 @@ def persist_execution_base_station_release(
     *,
     attempt_id: str | None,
     outcome,
-) -> None:
+) -> Literal["completed", "failed", "cancelled"] | None:
     """Append the actual lease release and finalize only its exact attempt."""
 
     if attempt_id is None:
-        return
+        return None
     release = getattr(outcome, "base_station_release", None)
     if release is None:
         raise RuntimeError("CMW measurement lease did not produce control release evidence")
@@ -795,6 +795,7 @@ def persist_execution_base_station_release(
     db.commit()
     if release.transport_session_released_confirmed is not True:
         raise RuntimeError("CMW measurement transport release is unconfirmed")
+    return state
 
 
 def record_execution_base_station_attempt_failure(
