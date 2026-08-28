@@ -431,7 +431,7 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
         execution,
         requirement_id=requirement_id,
         evidence_key="positioner.angle",
-        requested={"angle_deg": 45.0},
+        requested={"angle_deg": 200.0},
         required_evidence_level=EvidenceLevel.APPLIED,
     )
     captured = {}
@@ -457,7 +457,7 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
                 evidence_key="positioner.angle",
                 requested={"angle_deg": kwargs["requested_angle_deg"]},
                 command_sent=move.command,
-                readback={"raw_feedback_angle_deg": 45.1},
+                readback={"raw_feedback_angle_deg": 200.1},
                 exchange_ids=[move.exchange_id, feedback.exchange_id],
                 evidence_level=EvidenceLevel.APPLIED,
                 source_reference="notebooklm:source:aerobasic#pfbk",
@@ -468,7 +468,7 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
     exchanges = [
         ScpiExchangeRef(
             exchange_id="move", instrument_id="positioner", operation="command",
-            command="MOVEABS X 45.0000 Y 10.0000", execution_id=str(execution.id),
+            command="MOVEABS X 110.0000 Y 10.0000", execution_id=str(execution.id),
             capture_id="position-capture", sequence=0, result_type="ok",
         ),
         ScpiExchangeRef(
@@ -479,7 +479,7 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
         ScpiExchangeRef(
             exchange_id="feedback-x", instrument_id="positioner", operation="query",
             command="PFBK(X)", execution_id=str(execution.id),
-            capture_id="position-capture", sequence=2, result_type="response", response="45.1",
+            capture_id="position-capture", sequence=2, result_type="response", response="200.1",
         ),
         ScpiExchangeRef(
             exchange_id="feedback-y", instrument_id="positioner", operation="query",
@@ -490,11 +490,39 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
     record_positioner_capture(
         execution,
         requirement_id=requirement_id,
-        requested_angle_deg=45.0,
+        requested_angle_deg=200.0,
+        frozen_positioner={
+            "resolution": {
+                "schema_version": 1,
+                "adapter": "aerotech",
+                "status": "verified",
+                "execution_mode": "real",
+            },
+            "profile": {
+                "schema_version": 1,
+                "user_units": "degree",
+                "units_verified": True,
+                "coordinate_offset_deg": 90.0,
+                "coordinate_offset_verified": True,
+                "coordinate_offset_verification_source": (
+                    "docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md"
+                    "#44-aerotech-转台"
+                ),
+                "coordinate_offset_verified_at": "2026-08-27T16:59:50+08:00",
+                "minimum_deg": 0.0,
+                "maximum_deg": 360.0,
+                "xf_speed": 5.0,
+                "position_tolerance_deg": 0.5,
+                "azimuth_axis": "X",
+            },
+        },
         driver=_Positioner(),
         exchanges=exchanges,
     )
     assert captured["feedback_exchange"].exchange_id == "feedback-x"
+    assert captured["coordinate_offset_deg"] == 90.0
+    assert captured["offset_calibrated"] is True
+    assert captured["tolerance_deg"] == 0.5
     assert finalize_execution_scpi_evidence(execution).formal_acceptance is True
 
 
@@ -1180,8 +1208,12 @@ def test_measure_executor_keeps_all_p0_5_evidence_capture_hooks():
         assert requirement_prefix in source
 
     # 驱动用 False（而非异常）报告转台失败；调用方不得在旧角度继续采样。
+    assert source.index("validate_frozen_positioner_before_motion") < source.index(
+        "await positioner.connect()"
+    )
     assert "moved = await positioner.move_to" in source
     assert "if not moved:" in source
+    assert "frozen_positioner=frozen_positioner" in source
     # Attach 失败同样是 bool 契约，不能继续读取上一轮缓存 KPI。
     assert "signaling_started = await base_station.start_signaling()" in source
     assert "if not signaling_started:" in source

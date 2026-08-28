@@ -61,6 +61,10 @@ from app.services.base_station_adapter_profile import (
     build_frozen_base_station_validator,
     freeze_execution_base_station_adapter_profile,
 )
+from app.services.positioner_coordinate_profile import (
+    build_frozen_positioner_validator,
+    freeze_execution_positioner_coordinate_profile,
+)
 from app.utils.human_time import format_human_local_timestamp
 
 
@@ -948,12 +952,17 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
     db.add(execution)
     db.flush()
     try:
-        _freeze_base_station_lease(db, execution, test_case)
+        # Commissioning phases share one TestExecution. Freeze both instrument
+        # contracts before any phase progress exists; waiting until MEASURE
+        # would make a preceding PRECHECK an unsafe backfill boundary.
+        _freeze_instrument_lease(
+            db, execution, test_case, include_positioner=True
+        )
     except ValueError as error:
         db.rollback()
         raise HTTPException(
             status_code=422,
-            detail=f"baseStation adapter profile cannot be frozen: {error}",
+            detail=f"仪表执行配置无法冻结: {error}",
         ) from error
     db.commit()
     db.refresh(execution)
@@ -1045,8 +1054,11 @@ async def run_phase(
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
     try:
-        validate_adapter = _freeze_base_station_lease(
-            db, execution, test_case
+        validate_adapter = _freeze_instrument_lease(
+            db,
+            execution,
+            test_case,
+            include_positioner=target_step_type == "MIMO_OTA_MEASURE",
         )
         db.commit()
     except ValueError as error:
@@ -1255,8 +1267,11 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     db.add(execution)
     db.flush()
     try:
-        validate_adapter = _freeze_base_station_lease(
-            db, execution, test_case
+        validate_adapter = _freeze_instrument_lease(
+            db,
+            execution,
+            test_case,
+            include_positioner=target_step_type == "MIMO_OTA_MEASURE",
         )
     except ValueError as error:
         db.rollback()
@@ -1488,8 +1503,8 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     """Sequentially dispatch all 5 phases. Aborts early if a phase fails."""
     execution, test_case, descriptors = _resolve_execution(db, session_id)
     try:
-        validate_adapter = _freeze_base_station_lease(
-            db, execution, test_case
+        validate_adapter = _freeze_instrument_lease(
+            db, execution, test_case, include_positioner=True
         )
         db.commit()
     except ValueError as error:
@@ -1705,18 +1720,57 @@ async def device_selfcheck() -> DeviceSelfcheckResult:
         message=("各设备已连接且响应, 可开始暗室首测" if all_ready
                  else "部分设备未就绪 — 去调试维护页单独验证 (转台控制 / 调试序列) 后重试"),
     )
-def _freeze_base_station_lease(
+
+
+def _freeze_instrument_lease(
     db: Session,
     execution: TestExecution,
     test_case: TestCase,
+    *,
+    include_positioner: bool,
 ):
     """Freeze once, then return the lock-time pure validator callback."""
     from app.services.instrument_hal_service import get_hal_service
 
-    frozen = freeze_execution_base_station_adapter_profile(
+    hal = get_hal_service()
+    frozen_base_station = freeze_execution_base_station_adapter_profile(
         db,
-        get_hal_service(),
+        hal,
         execution,
         test_case,
     )
-    return build_frozen_base_station_validator(frozen)
+    validate_base_station = build_frozen_base_station_validator(
+        frozen_base_station
+    )
+    frozen_positioner = None
+    validate_positioner = None
+    if include_positioner:
+        frozen_positioner = freeze_execution_positioner_coordinate_profile(
+            db,
+            hal,
+            execution,
+            test_case,
+        )
+        validate_positioner = build_frozen_positioner_validator(
+            frozen_positioner
+        )
+
+    def _validate(locked_hal):
+        validators = [("baseStation", validate_base_station)]
+        if validate_positioner is not None:
+            validators.append(("positioner", validate_positioner))
+        for label, validator in validators:
+            error = validator(locked_hal)
+            if error:
+                return f"{label} frozen execution profile mismatch: {error}"
+        return None
+
+    _validate.validation_identity = ":".join(
+        digest
+        for digest in (
+            frozen_base_station.get("digest"),
+            frozen_positioner.get("digest") if frozen_positioner else None,
+        )
+        if digest
+    )
+    return _validate

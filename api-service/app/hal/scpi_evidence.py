@@ -1247,6 +1247,20 @@ def build_positioner_evidence(
     scope: ScopeDecision,
 ) -> InstrumentEvidenceItem:
     command_sent = move_exchange.command if move_exchange else None
+    actual_program_angle_deg = None
+    if _is_positioner_move(move_exchange) and command_sent is not None:
+        tokens = command_sent.strip().split()
+        if (
+            len(tokens) >= 3
+            and tokens[0].upper() == "MOVEABS"
+            and tokens[1].upper() == "X"
+        ):
+            try:
+                candidate = float(tokens[2])
+            except (TypeError, ValueError):
+                candidate = math.nan
+            if math.isfinite(candidate):
+                actual_program_angle_deg = candidate
     response = _value_response(feedback_exchange)
     # AeroBasic 的成功响应在线上以 ``%`` 开头；P1-47A 捕获的是驱动剥离
     # ACK 之前的原始响应，因此证据解析必须在这里显式识别该协议前缀。
@@ -1257,17 +1271,19 @@ def build_positioner_evidence(
     raw_feedback_angle_deg = (
         parsed_feedback if isinstance(parsed_feedback, float) else None
     )
-    corrected = (
-        (raw_feedback_angle_deg - coordinate_offset_deg) % 360.0
-        if raw_feedback_angle_deg is not None and coordinate_offset_deg is not None
+    expected_program_angle_deg = (
+        requested_angle_deg - coordinate_offset_deg
+        if coordinate_offset_deg is not None
         else None
     )
     formal_tolerance_deg = min(max(float(tolerance_deg), 0.0), 1.0)
     readback = {
+        "requested_physical_angle_deg": requested_angle_deg,
+        "expected_program_angle_deg": expected_program_angle_deg,
+        "actual_program_angle_deg": actual_program_angle_deg,
         "raw_feedback_angle_deg": raw_feedback_angle_deg,
         "coordinate_offset_deg": coordinate_offset_deg,
         "offset_calibrated": offset_calibrated,
-        "corrected_angle_deg": corrected,
         "tolerance_deg": formal_tolerance_deg,
     }
     level = EvidenceLevel.INTENT
@@ -1292,18 +1308,33 @@ def build_positioner_evidence(
         or _value_response(feedback_exchange) is None
     ):
         reason = "position_feedback_transport_not_confirmed"
-    elif not offset_calibrated or corrected is None:
+    elif not offset_calibrated or expected_program_angle_deg is None:
         reason = "coordinate_offset_not_calibrated"
+    elif raw_feedback_angle_deg is None:
+        reason = "position_feedback_not_numeric"
+    elif actual_program_angle_deg is None:
+        reason = "move_program_target_not_parseable"
     else:
-        error = abs((corrected - requested_angle_deg + 180.0) % 360.0 - 180.0)
-        readback["error_deg"] = error
+        program_error = abs(actual_program_angle_deg - expected_program_angle_deg)
+        feedback_error = abs(
+            (raw_feedback_angle_deg - requested_angle_deg + 180.0) % 360.0
+            - 180.0
+        )
+        readback["program_error_deg"] = program_error
+        readback["feedback_error_deg"] = feedback_error
         level = EvidenceLevel.APPLIED
-        if error <= formal_tolerance_deg:
+        if program_error > formal_tolerance_deg:
+            verdict = EvidenceVerdict.REJECTED
+            reason = (
+                "program_target_error_exceeds_tolerance:"
+                f"{program_error:.6f}"
+            )
+        elif feedback_error <= formal_tolerance_deg:
             verdict = EvidenceVerdict.PASSED
-            reason = "calibrated_feedback_within_tolerance"
+            reason = "frozen_program_and_feedback_within_tolerance"
         else:
             verdict = EvidenceVerdict.REJECTED
-            reason = f"feedback_error_exceeds_tolerance:{error:.6f}"
+            reason = f"feedback_error_exceeds_tolerance:{feedback_error:.6f}"
     level, verdict, reason = _apply_exchange_origin(
         scope,
         level,

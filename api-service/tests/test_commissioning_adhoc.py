@@ -58,12 +58,14 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
-    from app.hal import MockBaseStation
+    from app.hal import MockBaseStation, MockPositioner
     from app.services.instrument_hal_service import get_hal_service
 
     hal = get_hal_service()
     saved_base_station = hal.drivers.get("baseStation")
+    saved_positioner = hal.drivers.get("positioner")
     hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    hal.drivers["positioner"] = MockPositioner("mock-pos", {"model": "Mock"})
     prev = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setattr(
@@ -77,6 +79,10 @@ def setup_db(monkeypatch):
             hal.drivers.pop("baseStation", None)
         else:
             hal.drivers["baseStation"] = saved_base_station
+        if saved_positioner is None:
+            hal.drivers.pop("positioner", None)
+        else:
+            hal.drivers["positioner"] = saved_positioner
         if prev is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -581,6 +587,12 @@ class TestSessionsListFilter:
         ).first()
         assert (regular_execution.config or {}).get("managed_rf_attach") is True, (
             "暗室首测与测试管理必须复用按 TestCase 初始化后受控 attach 的标准流程"
+        )
+        assert "positioner_coordinate_profile_freeze" in (
+            regular_execution.config or {}
+        ), (
+            "commissioning 会话必须在任何 PRECHECK 进度产生前冻结转台坐标；"
+            "否则后续 MEASURE 不能安全补冻"
         )
 
         # And an ad-hoc one

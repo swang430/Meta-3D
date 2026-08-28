@@ -29,7 +29,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
-from app.hal import MockBaseStation
+from app.hal import MockBaseStation, MockPositioner
 from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
 from app.services.instrument_hal_service import get_hal_service
@@ -62,13 +62,22 @@ def setup_db():
     app.dependency_overrides[get_db] = _override_get_db
     hal = get_hal_service()
     prior_base_station = hal.drivers.get("baseStation")
+    prior_positioner = hal.drivers.get("positioner")
     hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    hal.drivers["positioner"] = MockPositioner("mock-positioner", {})
     with TestingSessionLocal() as db:
-        db.add(InstrumentCategory(
-            category_key="baseStation",
-            category_name="Base Station",
-            driver_mode="mock",
-        ))
+        db.add_all([
+            InstrumentCategory(
+                category_key="baseStation",
+                category_name="Base Station",
+                driver_mode="mock",
+            ),
+            InstrumentCategory(
+                category_key="positioner",
+                category_name="Positioner",
+                driver_mode="mock",
+            ),
+        ])
         db.commit()
     try:
         yield
@@ -77,6 +86,10 @@ def setup_db():
             hal.drivers.pop("baseStation", None)
         else:
             hal.drivers["baseStation"] = prior_base_station
+        if prior_positioner is None:
+            hal.drivers.pop("positioner", None)
+        else:
+            hal.drivers["positioner"] = prior_positioner
         if prior is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -94,20 +107,32 @@ def db():
 
 
 def _add_lab(db, *, name: str, active: bool = True) -> LabProfile:
-    category = db.query(InstrumentCategory).filter_by(
+    base_station_category = db.query(InstrumentCategory).filter_by(
         category_key="baseStation"
+    ).one()
+    positioner_category = db.query(InstrumentCategory).filter_by(
+        category_key="positioner"
     ).one()
     lab = LabProfile(
         id=uuid.uuid4(),
         name=name,
         is_active=active,
-        instrument_bindings=[{
-            "category_id": str(category.id),
-            "instrument_model_id": None,
-            "connection_endpoint": None,
-            "driver_mode": "mock",
-            "role": "baseStation",
-        }],
+        instrument_bindings=[
+            {
+                "category_id": str(base_station_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "baseStation",
+            },
+            {
+                "category_id": str(positioner_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "positioner",
+            },
+        ],
     )
     db.add(lab)
     db.commit()
