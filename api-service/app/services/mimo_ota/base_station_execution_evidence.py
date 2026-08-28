@@ -31,6 +31,29 @@ _METRIC_UNITS = {
 }
 
 
+def base_station_metric_projection_required(
+    execution_config: Any,
+) -> bool:
+    """Centralize the strict new-evidence boundary and legacy compatibility.
+
+    Any execution carrying the versioned envelope must use it.  Before the
+    common envelope existed, UXM executions used an older independently
+    attested throughput path, while CMW500 never had such a formal legacy
+    path.  Keep that historical distinction here at the certification
+    boundary so downstream consumers never select behavior by vendor.
+    """
+
+    config = execution_config if isinstance(execution_config, dict) else {}
+    if config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD) is not None:
+        return True
+    frozen = config.get("base_station_adapter_profile_freeze")
+    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
+    return (
+        isinstance(resolution, dict)
+        and resolution.get("adapter") == "cmw500"
+    )
+
+
 def canonical_snapshot_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,

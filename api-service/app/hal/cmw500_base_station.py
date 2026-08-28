@@ -255,6 +255,9 @@ class RealCmw500Driver(BaseStationDriver):
 
     adapter_id = "cmw500"
     measurement_window_cardinality = "single"
+    input_level_unavailable_reason = (
+        "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
+    )
     max_bandwidth_mhz = 20.0
     max_mimo_layers = 4
     # User Manual §2.6.12.1, p.680: <Bandwidth> is exactly

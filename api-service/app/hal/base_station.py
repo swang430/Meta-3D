@@ -403,6 +403,8 @@ class BaseStationDriver(InstrumentDriver):
     # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
     # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
     input_level_control_supported: ClassVar[bool] = False
+    input_level_legacy_power_field: ClassVar[str | None] = None
+    input_level_unavailable_reason: ClassVar[str | None] = None
     # RRC reconfiguration is opt-in.  The abstract method exists to define
     # the contract, so hasattr() cannot distinguish an implemented adapter.
     rrc_reconfiguration_supported: ClassVar[bool] = False

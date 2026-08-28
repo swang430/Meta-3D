@@ -3420,12 +3420,13 @@ class MeasureExecutor(IStepExecutor):
         controller 后无论成败都返回结构化 payload, 上层据 success/skipped + strict
         flag 决定 phase verdict。
         """
-        adapter_id = getattr(base_station, "adapter_id", None)
-
         def _power_fields(value: Optional[float]) -> Dict[str, Any]:
             fields: Dict[str, Any] = {"base_station_dl_power_dbm": value}
-            if adapter_id == "uxm":
-                fields["uxm_dl_power_dbm"] = value
+            legacy_field = getattr(
+                base_station, "input_level_legacy_power_field", None
+            )
+            if isinstance(legacy_field, str) and legacy_field:
+                fields[legacy_field] = value
             return fields
 
         required_ce_methods = (
@@ -3450,10 +3451,11 @@ class MeasureExecutor(IStepExecutor):
             missing_ce = [m for m, ok in ce_caps.items() if not ok]
             if missing_ce:
                 reason_parts.append(f"CE 缺接口: {missing_ce}")
-            if adapter_id == "cmw500" and not bs_supports:
-                reason_parts.append(
-                    "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
-                )
+            unavailable_reason = getattr(
+                base_station, "input_level_unavailable_reason", None
+            )
+            if isinstance(unavailable_reason, str) and unavailable_reason:
+                reason_parts.append(unavailable_reason)
             elif not callable(bs_power_method):
                 reason_parts.append("BS 缺 set_downlink_power")
             elif not bs_supports:

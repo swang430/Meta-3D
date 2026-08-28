@@ -54,6 +54,7 @@ from app.services.execution_failure_alerts import emit_execution_failed_alert
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     base_station_expected_scope_from_evidence,
+    base_station_metric_projection_required,
     project_base_station_metrics_by_position,
 )
 from app.services.base_station_adapter_profile import (
@@ -604,10 +605,8 @@ def _commissioning_measure_projection(
         return None
     execution_config = execution.config if isinstance(execution.config, dict) else {}
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
-    frozen = execution_config.get("base_station_adapter_profile_freeze")
-    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
-    evidence_required = evidence is not None or (
-        isinstance(resolution, dict) and resolution.get("adapter") == "cmw500"
+    evidence_required = base_station_metric_projection_required(
+        execution_config
     )
     if not evidence_required:
         return measure

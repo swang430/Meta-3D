@@ -54,6 +54,7 @@ class _Config:
 class _Uxm:
     adapter_id = "uxm"
     input_level_control_supported = True
+    input_level_legacy_power_field = "uxm_dl_power_dbm"
 
     def __init__(self):
         self.calls: list[float] = []
@@ -66,6 +67,9 @@ class _Uxm:
 class _Cmw:
     adapter_id = "cmw500"
     input_level_control_supported = False
+    input_level_unavailable_reason = (
+        "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
+    )
 
     def __init__(self):
         self.calls: list[float] = []

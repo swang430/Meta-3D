@@ -47,9 +47,9 @@ from app.services.mimo_ota.throughput_trust import (
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     base_station_expected_scope_from_evidence,
+    base_station_metric_projection_required,
     project_base_station_metrics_by_position,
 )
-from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.report_service import (
     ReportService,
     THROUGHPUT_TRUST_SCHEMA_VERSION,
@@ -456,13 +456,8 @@ def _build_mimo_ota_content_data(
     base_station_evidence = execution_config.get(
         BASE_STATION_EXECUTION_EVIDENCE_FIELD
     )
-    frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
-    frozen_resolution = (
-        frozen_adapter.get("resolution") if isinstance(frozen_adapter, dict) else None
-    )
-    base_station_evidence_required = base_station_evidence is not None or (
-        isinstance(frozen_resolution, dict)
-        and frozen_resolution.get("adapter") == "cmw500"
+    base_station_evidence_required = base_station_metric_projection_required(
+        execution_config
     )
     expected_base_station_config, expected_positions = (
         base_station_expected_scope_from_evidence(base_station_evidence)

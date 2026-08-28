@@ -334,6 +334,7 @@ class RealUxmDriver(BaseStationDriver):
 
     adapter_id = "uxm"
     input_level_control_supported = True
+    input_level_legacy_power_field = "uxm_dl_power_dbm"
 
     rrc_reconfiguration_supported = True
     mac_throughput_configuration_supported = True
