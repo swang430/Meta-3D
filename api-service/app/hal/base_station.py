@@ -715,6 +715,18 @@ class BaseStationDriver(InstrumentDriver):
             raise ValueError("requested measurement window count must be positive")
         return 1 if self.measurement_window_cardinality == "single" else requested
 
+    def unconfirmed_window_allows_diagnostic_execution(
+        self,
+        window: BaseStationMeasurementWindow,
+    ) -> bool:
+        """Keep only authoritative simulated windows runnable by default."""
+
+        return (
+            getattr(self, "simulated", False) is True
+            and isinstance(window, BaseStationMeasurementWindow)
+            and window.metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
+        )
+
     async def get_ue_info(self) -> Dict[str, Any]:
         """
         获取已连接 UE 的信息。

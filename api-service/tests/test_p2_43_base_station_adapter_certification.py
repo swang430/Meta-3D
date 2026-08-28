@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -64,6 +65,13 @@ class _CertifiedAdapter:
         self.legacy_calls += 1
         raise AssertionError("production MEASURE must not use the legacy polling API")
 
+    def unconfirmed_window_allows_diagnostic_execution(self, window):
+        return (
+            self.simulated is True
+            and window.metrics.throughput_scope
+            == ThroughputMetrics.SCOPE_SIMULATED
+        )
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adapter_id", ["uxm", "cmw500"])
@@ -103,6 +111,67 @@ async def test_simulated_common_window_remains_diagnostic_for_each_adapter(adapt
     assert samples[0].window.confirmed is False
     assert samples[0].metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
     assert samples[0].metrics.kpi_valid["dl_throughput"] is False
+
+
+@pytest.mark.asyncio
+async def test_real_unconfirmed_window_continues_only_with_explicit_adapter_policy():
+    driver = _CertifiedAdapter(
+        adapter_id="uxm",
+        requested_window_count=1,
+    )
+
+    async def unconfirmed(_window_s, *, throughput_scope):
+        started = datetime.now(timezone.utc)
+        return BaseStationMeasurementWindow(
+            window_id="uxm-unconfirmed",
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            metrics=ThroughputMetrics(
+                dl_throughput_mbps=10.0,
+                throughput_scope=throughput_scope,
+                kpi_valid={"dl_throughput": True},
+            ),
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
+            evidence=(),
+            confirmed=False,
+            reason="legacy UXM window has no sourced closed boundary",
+        )
+
+    driver.measure_base_station_window = unconfirmed
+    driver.unconfirmed_window_allows_diagnostic_execution = lambda _window: True
+
+    samples = await MeasureExecutor._measure_base_station_samples(
+        driver,
+        window_s=0.0,
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        requested_sample_count=1,
+    )
+
+    assert len(samples) == 1
+    assert samples[0].metrics.kpi_valid["dl_throughput"] is True
+
+
+@pytest.mark.asyncio
+async def test_real_uxm_window_preserves_existing_per_metric_attestation():
+    driver = RealUxmDriver("uxm", {"ip": "192.0.2.1"})
+    metrics = ThroughputMetrics(
+        dl_throughput_mbps=10.0,
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        kpi_valid={"dl_throughput": True},
+    )
+    driver.measure_throughput_window = AsyncMock(return_value=metrics)
+
+    window = await driver.measure_base_station_window(
+        0.0,
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+    )
+
+    assert window.confirmed is False
+    assert window.metrics.kpi_valid["dl_throughput"] is True
+    assert driver.unconfirmed_window_allows_diagnostic_execution(window) is True
 
 
 @pytest.mark.parametrize("adapter_id", ["uxm", "cmw500"])
@@ -173,6 +242,40 @@ def test_unbound_authoritative_mock_keeps_diagnostic_session_without_evidence(
     assert resolved.attempt_id is None
     assert resolved.lease_identity == lease
     assert resolved.simulated_diagnostic is True
+
+
+def test_existing_uxm_execution_without_new_envelope_keeps_legacy_attested_path(
+    monkeypatch,
+):
+    execution = _execution(adapter="uxm")
+    execution.config.pop("base_station_execution_evidence")
+    execution.config["base_station_adapter_profile_freeze"] = {
+        "resolution": {
+            "schema_version": 1,
+            "adapter": "uxm",
+            "execution_mode": "real",
+        }
+    }
+    lease = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-legacy-uxm",
+        measurement_attempt_id=None,
+        adapter_id="uxm",
+        session_token="session-legacy-uxm",
+    )
+    monkeypatch.setattr(
+        instrument_test_lease,
+        "active_base_station_lease_identity",
+        lambda: lease,
+    )
+
+    resolved = MeasureExecutor._base_station_attempt_context(
+        SimpleNamespace(test_execution=execution, db=_Db(execution)),
+        SimpleNamespace(adapter_id="uxm", simulated=False),
+    )
+
+    assert resolved.attempt_id is None
+    assert resolved.lease_identity == lease
+    assert resolved.simulated_diagnostic is False
 
 
 def test_measure_window_selector_contains_no_vendor_or_legacy_branch():

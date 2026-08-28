@@ -674,12 +674,12 @@ class MeasureExecutor(IStepExecutor):
                 throughput_scope=throughput_scope,
             )
             if window.confirmed is not True:
-                simulated_diagnostic = (
-                    getattr(base_station, "simulated", False) is True
-                    and window.metrics.throughput_scope
-                    == ThroughputMetrics.SCOPE_SIMULATED
+                diagnostic_policy = getattr(
+                    base_station,
+                    "unconfirmed_window_allows_diagnostic_execution",
+                    None,
                 )
-                if not simulated_diagnostic:
+                if not callable(diagnostic_policy) or diagnostic_policy(window) is not True:
                     raise _BaseStationWindowBlocked(window)
             samples.append(
                 _BaseStationSample(
@@ -771,7 +771,30 @@ class MeasureExecutor(IStepExecutor):
 
         raw_evidence = load_base_station_execution_evidence(context.test_execution)
         if raw_evidence is None:
-            raise RuntimeError("BaseStation execution evidence is missing before MEASURE")
+            from app.services.mimo_ota.base_station_execution_evidence import (
+                base_station_metric_projection_required,
+            )
+
+            execution_config = context.test_execution.config or {}
+            if base_station_metric_projection_required(execution_config):
+                raise RuntimeError(
+                    "BaseStation execution evidence is missing before MEASURE"
+                )
+            lease_identity = active_base_station_lease_identity()
+            if (
+                lease_identity is None
+                or lease_identity.measurement_attempt_id is not None
+                or lease_identity.adapter_id != frozen_adapter_id
+            ):
+                raise RuntimeError(
+                    "legacy BaseStation lease does not match the frozen adapter"
+                )
+            return _BaseStationAttemptContext(
+                frozen_adapter=frozen,
+                attempt_id=None,
+                lease_identity=lease_identity,
+                simulated_diagnostic=simulated_diagnostic,
+            )
         evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
         if evidence.adapter != frozen_adapter_id:
             raise RuntimeError("BaseStation evidence adapter does not match frozen adapter")

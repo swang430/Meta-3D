@@ -3670,8 +3670,10 @@ class RealUxmDriver(BaseStationDriver):
         """Expose the existing UXM clear/read window without inventing closure.
 
         The current sourced UXM profile has an independent clear boundary but
-        no authoritative stop/closed boundary.  Raw values remain diagnostic;
-        every KPI validity bit stays false until that lifecycle is sourced.
+        no authoritative stop/closed boundary.  Preserve the established
+        per-metric attestation for the legacy UXM certification path while the
+        new lifecycle envelope remains unconfirmed and therefore cannot claim
+        formal trust by itself.
         """
 
         started_at = datetime.now(timezone.utc)
@@ -3681,7 +3683,6 @@ class RealUxmDriver(BaseStationDriver):
                 throughput_scope=throughput_scope,
             )
         raw_metrics = metrics.to_dict()
-        metrics.kpi_valid = {key: False for key in metrics.kpi_valid}
         exchange_ids = [exchange.exchange_id for exchange in exchanges]
         evidence = InstrumentEvidenceItem(
             instrument="uxm",
@@ -3719,6 +3720,18 @@ class RealUxmDriver(BaseStationDriver):
             evidence=(evidence,),
             confirmed=False,
             reason=evidence.reason,
+        )
+
+    def unconfirmed_window_allows_diagnostic_execution(
+        self,
+        window: BaseStationMeasurementWindow,
+    ) -> bool:
+        """Retain the pre-P2-43 UXM attested path without claiming closure."""
+
+        return (
+            isinstance(window, BaseStationMeasurementWindow)
+            and window.confirmed is False
+            and bool(window.evidence)
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
