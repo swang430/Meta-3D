@@ -64,6 +64,7 @@ from app.services.test_execution import (
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.hal.base_station import BaseStationRequestedConfig, ThroughputMetrics
+from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 
 logger = logging.getLogger(__name__)
@@ -669,10 +670,11 @@ class MeasureExecutor(IStepExecutor):
 
         samples: List[_BaseStationSample] = []
         for _ in range(window_count):
-            window = await base_station.measure_base_station_window(
-                window_s,
-                throughput_scope=throughput_scope,
-            )
+            with capture_scpi_exchanges() as exchanges:
+                window = await base_station.measure_base_station_window(
+                    window_s,
+                    throughput_scope=throughput_scope,
+                )
             if window.confirmed is not True:
                 diagnostic_policy = getattr(
                     base_station,
@@ -685,7 +687,7 @@ class MeasureExecutor(IStepExecutor):
                 _BaseStationSample(
                     metrics=window.metrics,
                     window=window,
-                    exchanges=(),
+                    exchanges=tuple(exchanges),
                 )
             )
         return samples

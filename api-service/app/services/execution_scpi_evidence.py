@@ -429,6 +429,11 @@ def _adapter_operation_evidence(
     if receipt.operation == "config":
         frozen_snapshot = evidence.requested_config
         frozen_payload = frozen_snapshot.payload
+        applicable_frozen_fields = {
+            key for key, value in frozen_payload.items() if value is not None
+        }
+        if {field.field for field in receipt.fields} != applicable_frozen_fields:
+            raise ValueError("configuration receipt does not cover frozen request")
         for field in receipt.fields:
             if field.status == "not_applicable":
                 raise ValueError("configuration fields cannot be not_applicable")

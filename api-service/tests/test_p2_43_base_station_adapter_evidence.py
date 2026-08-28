@@ -103,13 +103,18 @@ def _config_receipt(execution, *, partial: bool = False, simulated: bool = False
         "requested_config"
     ]["payload"]
     fields = [
-        _field("bandwidth_mhz", payload["bandwidth_mhz"]),
         _field(
-            "mimo_layers",
-            payload["mimo_layers"],
-            status="unknown" if partial else "confirmed",
-            exchange_id="config-2",
-        ),
+            name,
+            value,
+            status=(
+                "unknown"
+                if partial and name == "mimo_layers"
+                else "confirmed"
+            ),
+            exchange_id=("config-2" if name == "mimo_layers" else "config-1"),
+        )
+        for name, value in payload.items()
+        if value is not None
     ]
     return BaseStationApplyReceipt(
         schema_version=1,
@@ -216,7 +221,7 @@ def test_writer_rejects_free_confirmation_boolean_and_wrong_frozen_request(
 
     receipt = _config_receipt(execution)
     bad_fields = list(receipt.fields)
-    bad_fields[0] = _field("bandwidth_mhz", 10.0)
+    bad_fields[0] = _field(bad_fields[0].field, "wrong frozen value")
     bad = BaseStationApplyReceipt(
         schema_version=1,
         operation="config",
@@ -231,6 +236,36 @@ def test_writer_rejects_free_confirmation_boolean_and_wrong_frozen_request(
             attempt_id="attempt-1",
             lease_identity=_lease(),
             config_receipt=bad,
+            route_receipt=_route_receipt(execution),
+        )
+
+
+def test_writer_rejects_config_receipt_that_omits_frozen_non_null_fields(
+    monkeypatch,
+):
+    execution = _execution()
+    monkeypatch.setattr(
+        evidence_writer,
+        "active_base_station_lease_identity",
+        lambda: _lease(),
+    )
+
+    complete = _config_receipt(execution)
+    incomplete = BaseStationApplyReceipt(
+        schema_version=1,
+        operation="config",
+        fields=complete.fields[:-1],
+        reason="missing frozen field",
+        simulated=False,
+    )
+
+    with pytest.raises(ValueError, match="does not cover frozen request"):
+        confirm_base_station_configuration_and_route(
+            _Db(execution),
+            execution.id,
+            attempt_id="attempt-1",
+            lease_identity=_lease(),
+            config_receipt=incomplete,
             route_receipt=_route_receipt(execution),
         )
 
@@ -321,8 +356,10 @@ def test_writer_rejects_confirmed_receipt_without_exchange_evidence(monkeypatch)
     no_evidence = BaseStationApplyReceipt(
         schema_version=1,
         operation="config",
-        fields=(
-            _field("bandwidth_mhz", payload["bandwidth_mhz"], exchange_id=""),
+        fields=tuple(
+            _field(name, value, exchange_id="")
+            for name, value in payload.items()
+            if value is not None
         ),
         reason="unproven",
         simulated=False,

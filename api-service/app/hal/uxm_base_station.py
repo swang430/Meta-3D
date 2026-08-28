@@ -994,24 +994,7 @@ class RealUxmDriver(BaseStationDriver):
             if isinstance(self._last_common_config_readback, dict)
             else {}
         )
-        requested_fields = [
-            ("nr_arfcn", requested.nr_arfcn),
-            ("bandwidth_mhz", requested.bandwidth_mhz),
-            ("duplex", requested.duplex.lower() if requested.duplex else None),
-            ("subcarrier_spacing_khz", requested.subcarrier_spacing_khz),
-            ("mimo_layers", requested.mimo_layers),
-        ]
-        if requested.downlink_power_dbm_per_bandwidth is not None:
-            requested_fields.append(
-                (
-                    "downlink_power_dbm_per_bandwidth",
-                    requested.downlink_power_dbm_per_bandwidth,
-                )
-            )
-        else:
-            requested_fields.append(
-                ("downlink_power_dbm", requested.downlink_power_dbm)
-            )
+        requested_fields = tuple(requested.receipt_payload().items())
         fields = tuple(
             BaseStationFieldReceipt(
                 field=name,
@@ -1034,7 +1017,6 @@ class RealUxmDriver(BaseStationDriver):
                 exchange_ids=exchange_ids,
             )
             for name, value in requested_fields
-            if value is not None
         )
         return BaseStationApplyReceipt(
             schema_version=1,
@@ -1402,13 +1384,10 @@ class RealUxmDriver(BaseStationDriver):
                 norm = resp.upper().lstrip("BW") if resp.upper().startswith("BW") else resp
                 try:
                     parsed = float(norm)
+                    common_readback["bandwidth_mhz"] = parsed
                     if int(parsed) != int(config["bandwidth_mhz"]):
                         mismatches.append(
                             f"BW 下发 {int(config['bandwidth_mhz'])} 回读 {resp}")
-                    else:
-                        common_readback["bandwidth_mhz"] = float(
-                            config["bandwidth_mhz"]
-                        )
                 except ValueError:
                     mismatches.append(f"BW 回读不可解析: {resp!r}")
 
@@ -1420,14 +1399,13 @@ class RealUxmDriver(BaseStationDriver):
             if resp is not None:
                 try:
                     parsed = float(resp)
+                    common_readback[
+                        "downlink_power_dbm_per_bandwidth"
+                    ] = parsed
                     if abs(parsed - float(config["dl_power_dbm_per_bw"])) > 0.1:
                         mismatches.append(
                             f"DL 功率(整带宽) 下发 {config['dl_power_dbm_per_bw']} "
                             f"回读 {resp}")
-                    else:
-                        common_readback[
-                            "downlink_power_dbm_per_bandwidth"
-                        ] = float(config["dl_power_dbm_per_bw"])
                 except ValueError:
                     mismatches.append(f"DL 功率(整带宽) 回读不可解析: {resp!r}")
         elif "dl_power_dbm" in config:
@@ -1435,13 +1413,10 @@ class RealUxmDriver(BaseStationDriver):
             if resp is not None:
                 try:
                     parsed = float(resp)
+                    common_readback["downlink_power_dbm"] = parsed
                     if abs(parsed - float(config["dl_power_dbm"])) > 0.1:
                         mismatches.append(
                             f"DL 功率下发 {config['dl_power_dbm']} 回读 {resp}")
-                    else:
-                        common_readback["downlink_power_dbm"] = float(
-                            config["dl_power_dbm"]
-                        )
                 except ValueError:
                     mismatches.append(f"DL 功率回读不可解析: {resp!r}")
 

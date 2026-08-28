@@ -16,6 +16,7 @@ from app.hal.base_station import (
     ThroughputMetrics,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.scpi_evidence import record_exchange_intent, record_exchange_terminal
 from app.hal.uxm_base_station import RealUxmDriver
 from app.services import instrument_test_lease
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
@@ -89,6 +90,43 @@ async def test_each_adapter_uses_only_the_common_native_window_contract(adapter_
     assert driver.legacy_calls == 0
     assert len(samples) == 2
     assert all(sample.window is not None for sample in samples)
+
+
+@pytest.mark.asyncio
+async def test_common_window_preserves_exchanges_for_generic_evidence_writer():
+    driver = _CertifiedAdapter(adapter_id="uxm", requested_window_count=1)
+
+    async def window_with_exchange(_window_s, *, throughput_scope):
+        exchange_id = "uxm-window-exchange"
+        record_exchange_intent(
+            exchange_id=exchange_id,
+            instrument_id="baseStation",
+            operation="query",
+            command="EXISTING:WINDOW?",
+        )
+        record_exchange_terminal(
+            exchange_id=exchange_id,
+            result_type="response",
+            response="10.0",
+        )
+        return await _CertifiedAdapter.measure_base_station_window(
+            driver,
+            _window_s,
+            throughput_scope=throughput_scope,
+        )
+
+    driver.measure_base_station_window = window_with_exchange
+
+    samples = await MeasureExecutor._measure_base_station_samples(
+        driver,
+        window_s=0.0,
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        requested_sample_count=1,
+    )
+
+    assert [item.exchange_id for item in samples[0].exchanges] == [
+        "uxm-window-exchange"
+    ]
 
 
 @pytest.mark.asyncio

@@ -103,15 +103,24 @@ def _complete_config_responses(**overrides: str) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_common_config_receipt_confirms_every_authoritatively_read_field():
+async def test_common_config_receipt_confirms_only_authoritatively_read_fields():
     driver = _StateDriver(_complete_config_responses())
 
     receipt = await driver.apply_config(_requested_config())
 
     assert isinstance(receipt, BaseStationApplyReceipt)
     assert receipt.operation == "config"
-    assert receipt.confirmed is True
-    assert {field.field: field.applied for field in receipt.fields} == {
+    assert receipt.confirmed is False
+    fields = {field.field: field for field in receipt.fields}
+    assert {name: fields[name].applied for name in {
+        "band",
+        "bandwidth_mhz",
+        "lte_dl_earfcn",
+        "duplex",
+        "mimo_layers",
+        "lte_transmission_mode",
+        "downlink_power_dbm",
+    }} == {
         "band": "B3",
         "bandwidth_mhz": 20.0,
         "lte_dl_earfcn": 1300,
@@ -120,7 +129,22 @@ async def test_common_config_receipt_confirms_every_authoritatively_read_field()
         "lte_transmission_mode": "TM3",
         "downlink_power_dbm": -65.25,
     }
-    assert all(field.status == "confirmed" for field in receipt.fields)
+    assert all(
+        fields[name].status == "confirmed"
+        for name in {
+            "band",
+            "bandwidth_mhz",
+            "lte_dl_earfcn",
+            "duplex",
+            "mimo_layers",
+            "lte_transmission_mode",
+            "downlink_power_dbm",
+        }
+    )
+    assert all(
+        fields[name].status == "unknown" and fields[name].applied is None
+        for name in {"radio_technology", "channel_kind", "frequency_mhz"}
+    )
     assert receipt.exchange_ids
 
 
@@ -140,10 +164,12 @@ async def test_common_config_receipt_keeps_only_mismatched_field_unknown():
     assert receipt.confirmed is False
     assert fields["lte_transmission_mode"].status == "unknown"
     assert fields["lte_transmission_mode"].applied is None
+    non_authoritative = {"radio_technology", "channel_kind", "frequency_mhz"}
     for name, field in fields.items():
-        if name != "lte_transmission_mode":
+        if name not in non_authoritative | {"lte_transmission_mode"}:
             assert field.status == "confirmed"
             assert field.applied == field.requested
+    assert all(fields[name].status == "unknown" for name in non_authoritative)
 
 
 @pytest.mark.asyncio

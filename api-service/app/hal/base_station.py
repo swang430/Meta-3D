@@ -10,7 +10,7 @@ Supports both 5G NR (Keysight UXM) and LTE (R&S CMW500) base station emulators.
 import asyncio
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, Optional, List, ClassVar, Literal
 from datetime import datetime, timezone
@@ -111,6 +111,21 @@ class BaseStationRequestedConfig:
         if self.csi_rs_ports is not None:
             payload["csi_rs_ports"] = self.csi_rs_ports
         return payload
+
+    def receipt_payload(self) -> dict[str, Any]:
+        """Return every non-null field covered by the frozen request receipt.
+
+        This uses the same dataclass field names persisted by the execution
+        evidence writer.  Adapter-specific payload aliases are deliberately
+        excluded: a partial hardware readback must not confirm a larger frozen
+        request merely because the adapter did not include the other fields.
+        """
+
+        return {
+            name: value
+            for name, value in asdict(self).items()
+            if value is not None
+        }
 
 
 @dataclass(frozen=True)
@@ -511,7 +526,7 @@ class BaseStationDriver(InstrumentDriver):
                     status="unknown",
                     reason="adapter did not provide authoritative field readback",
                 )
-                for field, value in requested.to_driver_payload().items()
+                for field, value in requested.receipt_payload().items()
             ),
             reason="adapter configuration readback is unavailable",
             simulated=getattr(self, "simulated", False) is True,

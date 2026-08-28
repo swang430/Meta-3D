@@ -99,15 +99,17 @@ def _config_receipt(*, confirmed=True):
     return BaseStationApplyReceipt(
         schema_version=1,
         operation="config",
-        fields=(
+        fields=tuple(
             BaseStationFieldReceipt(
-                field="bandwidth_mhz",
-                requested=payload["bandwidth_mhz"],
-                applied=payload["bandwidth_mhz"] if confirmed else None,
+                field=name,
+                requested=value,
+                applied=value if confirmed else None,
                 status="confirmed" if confirmed else "unknown",
                 reason="confirmed" if confirmed else "rejected",
                 exchange_ids=("config-1",),
-            ),
+            )
+            for name, value in payload.items()
+            if value is not None
         ),
         reason="confirmed" if confirmed else "rejected",
         simulated=False,

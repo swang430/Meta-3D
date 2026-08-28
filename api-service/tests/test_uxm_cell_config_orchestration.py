@@ -91,7 +91,7 @@ def _requested_nr_config() -> BaseStationRequestedConfig:
 
 
 @pytest.mark.asyncio
-async def test_common_uxm_config_receipt_confirms_existing_authoritative_readbacks(
+async def test_common_uxm_config_receipt_confirms_only_authoritative_readbacks(
     driver_irat,
 ):
     wire_echo_visa(driver_irat)
@@ -100,8 +100,17 @@ async def test_common_uxm_config_receipt_confirms_existing_authoritative_readbac
 
     assert isinstance(receipt, BaseStationApplyReceipt)
     assert receipt.operation == "config"
-    assert receipt.confirmed is True
-    assert {field.field: field.applied for field in receipt.fields} == {
+    assert receipt.confirmed is False
+    fields = {field.field: field for field in receipt.fields}
+    authoritative = {
+        "nr_arfcn",
+        "bandwidth_mhz",
+        "duplex",
+        "subcarrier_spacing_khz",
+        "mimo_layers",
+        "downlink_power_dbm",
+    }
+    assert {name: fields[name].applied for name in authoritative} == {
         "nr_arfcn": 636666,
         "bandwidth_mhz": 100.0,
         "duplex": "tdd",
@@ -109,7 +118,11 @@ async def test_common_uxm_config_receipt_confirms_existing_authoritative_readbac
         "mimo_layers": 2,
         "downlink_power_dbm": -50.0,
     }
-    assert all(field.status == "confirmed" for field in receipt.fields)
+    assert all(fields[name].status == "confirmed" for name in authoritative)
+    assert all(
+        fields[name].status == "unknown" and fields[name].applied is None
+        for name in {"radio_technology", "channel_kind", "frequency_mhz", "band"}
+    )
     assert receipt.exchange_ids
 
 
@@ -125,14 +138,21 @@ async def test_common_uxm_config_receipt_marks_only_mismatched_readback_unknown(
     assert receipt.confirmed is False
     assert fields["mimo_layers"].status == "unknown"
     assert fields["mimo_layers"].applied is None
+    non_authoritative = {
+        "radio_technology",
+        "channel_kind",
+        "frequency_mhz",
+        "band",
+    }
     for name, field in fields.items():
-        if name != "mimo_layers":
+        if name not in non_authoritative | {"mimo_layers"}:
             assert field.status == "confirmed"
             assert field.applied == field.requested
+    assert all(fields[name].status == "unknown" for name in non_authoritative)
 
 
 @pytest.mark.asyncio
-async def test_common_uxm_config_receipt_preserves_existing_power_tolerance(
+async def test_common_uxm_config_receipt_never_replaces_power_readback_with_request(
     driver_irat,
 ):
     wire_echo_visa(driver_irat, overrides={":DL:POWer?": "-49.95"})
@@ -140,8 +160,23 @@ async def test_common_uxm_config_receipt_preserves_existing_power_tolerance(
     receipt = await driver_irat.apply_config(_requested_nr_config())
 
     power = {field.field: field for field in receipt.fields}["downlink_power_dbm"]
-    assert power.status == "confirmed"
-    assert power.applied == -50.0
+    assert driver_irat._last_common_config_readback["downlink_power_dbm"] == -49.95
+    assert power.status == "unknown"
+    assert power.applied is None
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_never_replaces_bandwidth_readback_with_request(
+    driver_irat,
+):
+    wire_echo_visa(driver_irat, overrides={"DL:BW?": "BW100.5"})
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    bandwidth = {field.field: field for field in receipt.fields}["bandwidth_mhz"]
+    assert driver_irat._last_common_config_readback["bandwidth_mhz"] == 100.5
+    assert bandwidth.status == "unknown"
+    assert bandwidth.applied is None
 
 
 @pytest.mark.asyncio
@@ -177,11 +212,18 @@ async def test_common_uxm_config_receipt_keeps_query_timeout_field_unknown(
     fields = {field.field: field for field in receipt.fields}
     assert receipt.confirmed is False
     assert fields["mimo_layers"].status == "unknown"
+    non_authoritative = {
+        "radio_technology",
+        "channel_kind",
+        "frequency_mhz",
+        "band",
+    }
     assert all(
         field.status == "confirmed"
         for name, field in fields.items()
-        if name != "mimo_layers"
+        if name not in non_authoritative | {"mimo_layers"}
     )
+    assert all(fields[name].status == "unknown" for name in non_authoritative)
 
 
 @pytest.mark.asyncio

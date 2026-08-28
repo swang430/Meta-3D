@@ -890,15 +890,7 @@ class RealCmw500Driver(BaseStationDriver):
             if isinstance(self._last_common_config_readback, dict)
             else {}
         )
-        requested_fields = (
-            ("band", requested.band),
-            ("bandwidth_mhz", requested.bandwidth_mhz),
-            ("lte_dl_earfcn", requested.lte_dl_earfcn),
-            ("duplex", requested.duplex),
-            ("mimo_layers", requested.mimo_layers),
-            ("lte_transmission_mode", requested.lte_transmission_mode),
-            ("downlink_power_dbm", requested.downlink_power_dbm),
-        )
+        requested_fields = tuple(requested.receipt_payload().items())
         fields = tuple(
             BaseStationFieldReceipt(
                 field=name,
@@ -921,7 +913,6 @@ class RealCmw500Driver(BaseStationDriver):
                 exchange_ids=exchange_ids,
             )
             for name, value in requested_fields
-            if value is not None
         )
         receipt = BaseStationApplyReceipt(
             schema_version=1,
