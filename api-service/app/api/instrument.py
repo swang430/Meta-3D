@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.db.database import get_db
 from app.hal.base import (
@@ -65,6 +65,7 @@ class FEInstrumentModel(BaseModel):
     bandwidth: Optional[str] = None
     channels: Optional[str] = None
     status: Literal["available", "pending_dev"]
+    base_station_manifest: Optional[Dict[str, Any]] = None
 
 
 class FEInstrumentConnection(BaseModel):
@@ -163,7 +164,10 @@ def _make_summary(model_db: InstrumentModelDB) -> str:
 
 def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrumentModel:
     """DB InstrumentModel → 前端 FEInstrumentModel"""
-    from app.services.instrument_hal_service import get_real_driver_class
+    from app.services.instrument_hal_service import (
+        get_base_station_adapter_registration,
+        get_real_driver_class,
+    )
     caps = model_db.capabilities or {}
 
     # Single lookup serves two purposes: support-status badge (was the
@@ -174,6 +178,11 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
     model_capability_tokens = sorted(
         getattr(driver_cls, "model_capabilities", frozenset()) or frozenset()
     )
+    base_station_manifest = None
+    if category_key == "baseStation" and driver_cls is not None:
+        base_station_manifest = get_base_station_adapter_registration(
+            model_db.model
+        ).manifest.model_dump(mode="json")
 
     return FEInstrumentModel(
         id=str(model_db.id),
@@ -192,6 +201,7 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
             f"{caps['ports']}-Port" if caps.get("ports") else None
         ),
         status=status,
+        base_station_manifest=base_station_manifest,
     )
 
 
@@ -1742,9 +1752,21 @@ def update_instrument_category(
             )
             db.add(connection)
 
-        conn_data = request.connection.dict(exclude_unset=True)
+        conn_data = request.connection.model_dump(exclude_unset=True)
         adapter_profile_supplied = "base_station_adapter_profile" in conn_data
         adapter_profile = conn_data.pop("base_station_adapter_profile", None)
+        requested_params = conn_data.get("connection_params")
+        if (
+            isinstance(requested_params, dict)
+            and "base_station_adapter_profile" in requested_params
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "base_station_adapter_profile must use the dedicated "
+                    "manifest-validated field"
+                ),
+            )
         # 将前端的 controller 字段映射回 DB 的 protocol
         if "controller" in conn_data:
             conn_data["protocol"] = conn_data.pop("controller")
@@ -1759,6 +1781,45 @@ def update_instrument_category(
                 conn_data["port"] = parsed_port
 
         if adapter_profile_supplied:
+            selected_model = db.query(InstrumentModelDB).filter(
+                InstrumentModelDB.id == category.selected_model_id,
+                InstrumentModelDB.category_id == category.id,
+            ).first()
+            if category_key != "baseStation" or selected_model is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="BaseStation adapter profile requires a selected model",
+                )
+            from app.services.instrument_hal_service import (
+                get_base_station_adapter_registration,
+            )
+            try:
+                registration = get_base_station_adapter_registration(
+                    selected_model.model
+                )
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail="selected BaseStation model has no registered adapter manifest",
+                ) from exc
+            if adapter_profile is not None:
+                if (
+                    registration.manifest.profile_requirement != "required"
+                    or registration.profile_model is None
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="selected BaseStation adapter does not accept a vendor profile",
+                    )
+                try:
+                    adapter_profile = registration.profile_model.model_validate(
+                        adapter_profile
+                    ).model_dump(mode="json")
+                except (ValidationError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="BaseStation adapter profile does not match selected manifest",
+                    ) from exc
             params = dict(
                 conn_data.get("connection_params")
                 if "connection_params" in conn_data

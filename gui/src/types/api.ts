@@ -1,5 +1,7 @@
 export type MetricTrend = '↑' | '↓' | '→' | string
 
+import type { BaseStationAdapterManifest } from './baseStationManifest'
+
 export type MetricItem = {
   label: string
   value: string
@@ -64,6 +66,7 @@ export type InstrumentModel = {
   bandwidth?: string | null
   channels?: string | null
   status: InstrumentStatus
+  base_station_manifest?: BaseStationAdapterManifest | null
 }
 
 export type InstrumentConnection = {
@@ -104,7 +107,7 @@ export type InstrumentConnectionUpdate = {
   controller?: string | null
   notes?: string | null
   connection_params?: Record<string, unknown> | null
-  base_station_adapter_profile?: BaseStationAdapterProfile | null
+  base_station_adapter_profile?: Record<string, unknown> | null
 }
 
 export type InstrumentCategory = {
