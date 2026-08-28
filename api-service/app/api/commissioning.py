@@ -46,12 +46,11 @@ from app.services.instrument_test_lease import (
     InstrumentTestLeaseReleaseError,
     instrument_test_lease,
 )
-from app.services.execution_failure_alerts import emit_execution_failed_alert
-from app.services.execution_scpi_evidence import (
-    begin_execution_base_station_measurement,
-    persist_execution_base_station_release,
-    record_execution_base_station_attempt_failure,
+from app.services.base_station_execution_session import (
+    BaseStationSessionOperationResult,
+    run_base_station_execution_session,
 )
+from app.services.execution_failure_alerts import emit_execution_failed_alert
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     base_station_expected_scope_from_evidence,
@@ -80,55 +79,6 @@ def _current_positioner_driver():
     from app.services.instrument_hal_service import get_hal_service
 
     return get_hal_service().drivers.get("positioner")
-
-
-def _begin_commissioning_measurement_attempt(
-    db: Session,
-    execution: TestExecution,
-    test_case: TestCase,
-    *,
-    step_type: str,
-) -> str | None:
-    """Start a CMW MEASURE attempt after acquire and before measurement I/O."""
-
-    if step_type != "MIMO_OTA_MEASURE":
-        return None
-    from app.services.instrument_hal_service import get_hal_service
-
-    driver = (get_hal_service().drivers or {}).get("baseStation")
-    return begin_execution_base_station_measurement(
-        db,
-        execution,
-        test_case,
-        driver=driver,
-    )
-
-
-def _settle_commissioning_measurement_attempt(
-    db: Session,
-    execution: TestExecution,
-    *,
-    attempt_id: str | None,
-    lease_outcome,
-    phase_succeeded: bool,
-) -> None:
-    if attempt_id is None:
-        return
-    if phase_succeeded:
-        persist_execution_base_station_release(
-            db,
-            execution.id,
-            attempt_id=attempt_id,
-            outcome=lease_outcome,
-        )
-        return
-    record_execution_base_station_attempt_failure(
-        db,
-        execution.id,
-        attempt_id=attempt_id,
-        outcome=lease_outcome,
-        cancelled=False,
-    )
 
 
 def reset_stale_running_commissioning_executions() -> None:
@@ -1064,9 +1014,7 @@ async def run_phase(
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(error)) from error
-    measurement_attempt_id = None
     result = None
-    lease_outcome = None
     try:
         with _execution_marked_running(db, execution):
             with retain_positioner_stop_generation(_current_positioner_driver()):
@@ -1076,58 +1024,27 @@ async def run_phase(
                 }:
                     result = await dispatch_step(ctx)
                 else:
-                    async with instrument_test_lease(
-                        f"commissioning-phase:{session_id}:{phase_name}",
-                        measurement_attempt_id=None,
-                        validate_before_remote=validate_adapter,
-                        enable_monitoring=False,
-                    ) as lease_outcome:
-                        measurement_attempt_id = (
-                            _begin_commissioning_measurement_attempt(
-                                db,
-                                execution,
-                                test_case,
-                                step_type=target_step_type,
-                            )
+                    async def _run_phase_operation():
+                        phase_result = await dispatch_step(ctx)
+                        return BaseStationSessionOperationResult(
+                            value=phase_result,
+                            succeeded=phase_result.status.value == "success",
                         )
-                        lease_outcome.measurement_attempt_id = measurement_attempt_id
-                        result = await dispatch_step(ctx)
-                    _settle_commissioning_measurement_attempt(
+
+                    result = await run_base_station_execution_session(
                         db,
                         execution,
-                        attempt_id=measurement_attempt_id,
-                        lease_outcome=lease_outcome,
-                        phase_succeeded=result.status.value == "success",
+                        test_case,
+                        purpose=f"commissioning-phase:{session_id}:{phase_name}",
+                        step_type=target_step_type,
+                        validate_before_remote=validate_adapter,
+                        operation=_run_phase_operation,
                     )
     except asyncio.CancelledError:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=True,
-            )
-        except Exception:  # noqa: BLE001 — preserve request cancellation
-            logger.exception(
-                "[%s] cancelled commissioning measurement attempt write failed",
-                session_id,
-            )
         raise
     except InstrumentTestLeaseReleaseError as error:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the actual release failure
-            logger.exception(
-                "[%s] commissioning phase measurement attempt failure write failed",
-                session_id,
-            )
+        if result is None:
+            result = getattr(error, "operation_value", None)
         combined_error = _record_local_handoff_failure(
             db,
             execution,
@@ -1138,19 +1055,6 @@ async def run_phase(
         )
         raise InstrumentTestLeaseReleaseError(combined_error) from error
     except InstrumentTestLeaseError:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the actual acquire failure
-            logger.exception(
-                "[%s] commissioning phase acquire failure audit write failed",
-                session_id,
-            )
         raise
 
     db.refresh(execution)  # pick up measurements written by executor
@@ -1295,8 +1199,6 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     error_message: Optional[str] = None
     status_value = "failed"
     result = None
-    lease_outcome = None
-    measurement_attempt_id = None
     try:
         ctx = _build_context(db, execution, test_case, step)
         with retain_positioner_stop_generation(_current_positioner_driver()):
@@ -1306,59 +1208,30 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
             }:
                 result = await dispatch_step(ctx)
             else:
-                async with instrument_test_lease(
-                    f"commissioning-adhoc:{req.phase_name}",
-                    measurement_attempt_id=None,
-                    validate_before_remote=validate_adapter,
-                    enable_monitoring=False,
-                ) as lease_outcome:
-                    measurement_attempt_id = _begin_commissioning_measurement_attempt(
-                        db,
-                        execution,
-                        test_case,
-                        step_type=target_step_type,
+                async def _run_adhoc_operation():
+                    phase_result = await dispatch_step(ctx)
+                    return BaseStationSessionOperationResult(
+                        value=phase_result,
+                        succeeded=phase_result.status.value == "success",
                     )
-                    lease_outcome.measurement_attempt_id = measurement_attempt_id
-                    result = await dispatch_step(ctx)
-                _settle_commissioning_measurement_attempt(
+
+                result = await run_base_station_execution_session(
                     db,
                     execution,
-                    attempt_id=measurement_attempt_id,
-                    lease_outcome=lease_outcome,
-                    phase_succeeded=result.status.value == "success",
+                    test_case,
+                    purpose=f"commissioning-adhoc:{req.phase_name}",
+                    step_type=target_step_type,
+                    validate_before_remote=validate_adapter,
+                    operation=_run_adhoc_operation,
                 )
         status_value = result.status.value
         error_message = result.error_message
     except asyncio.CancelledError:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=True,
-            )
-        except Exception:  # noqa: BLE001 — preserve request cancellation
-            logger.exception(
-                "[adhoc] phase=%s cancelled measurement attempt write failed",
-                req.phase_name,
-            )
         raise
     except InstrumentTestLeaseReleaseError as e:
         logger.exception("[adhoc] phase=%s Local 交接失败", req.phase_name)
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the actual release failure
-            logger.exception(
-                "[adhoc] phase=%s measurement attempt failure write failed",
-                req.phase_name,
-            )
+        if result is None:
+            result = getattr(e, "operation_value", None)
         error_message = _record_local_handoff_failure(
             db,
             execution,
@@ -1369,19 +1242,6 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("[adhoc] phase=%s aborted", req.phase_name)
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the original phase error
-            logger.exception(
-                "[adhoc] phase=%s measurement attempt failure write failed",
-                req.phase_name,
-            )
         error_message = str(e)
     duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -1517,25 +1377,14 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    measurement_attempt_id = None
-    lease_outcome = None
     try:
         with _execution_marked_running(db, execution):
             with retain_positioner_stop_generation(_current_positioner_driver()):
                 deferred_formalization = None
-                async with instrument_test_lease(
-                    f"commissioning-run-all:{session_id}",
-                    measurement_attempt_id=None,
-                    validate_before_remote=validate_adapter,
-                    enable_monitoring=False,
-                ) as lease_outcome:
-                    measurement_attempt_id = _begin_commissioning_measurement_attempt(
-                        db,
-                        execution,
-                        test_case,
-                        step_type="MIMO_OTA_MEASURE",
-                    )
-                    lease_outcome.measurement_attempt_id = measurement_attempt_id
+
+                async def _run_hardware_phases():
+                    nonlocal aborted_at, abort_message
+                    hardware_deferred = None
                     for index, step in enumerate(descriptors):
                         if step.type in {
                             "MIMO_OTA_ANALYSIS",
@@ -1549,7 +1398,7 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                                 raise RuntimeError(
                                     "run-all 末尾必须是连续 ANALYSIS → REPORT"
                                 )
-                            deferred_formalization = remaining
+                            hardware_deferred = remaining
                             break
                         ctx = _build_context(db, execution, test_case, step)
                         result = await dispatch_step(ctx)
@@ -1563,12 +1412,19 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                                 result.error_message,
                             )
                             break
-                _settle_commissioning_measurement_attempt(
+                    return BaseStationSessionOperationResult(
+                        value=hardware_deferred,
+                        succeeded=aborted_at is None,
+                    )
+
+                deferred_formalization = await run_base_station_execution_session(
                     db,
                     execution,
-                    attempt_id=measurement_attempt_id,
-                    lease_outcome=lease_outcome,
-                    phase_succeeded=aborted_at is None,
+                    test_case,
+                    purpose=f"commissioning-run-all:{session_id}",
+                    step_type="MIMO_OTA_MEASURE",
+                    validate_before_remote=validate_adapter,
+                    operation=_run_hardware_phases,
                 )
                 if aborted_at is None and deferred_formalization is not None:
                     for step in deferred_formalization:
@@ -1579,34 +1435,8 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
                             abort_message = result.error_message
                             break
     except asyncio.CancelledError:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=True,
-            )
-        except Exception:  # noqa: BLE001 — preserve request cancellation
-            logger.exception(
-                "[%s] cancelled run-all measurement attempt write failed",
-                session_id,
-            )
         raise
     except InstrumentTestLeaseReleaseError as error:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the actual release failure
-            logger.exception(
-                "[%s] run-all measurement attempt failure write failed",
-                session_id,
-            )
         previous_error = None
         if aborted_at is not None:
             previous_error = (
@@ -1621,19 +1451,6 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
         )
         raise InstrumentTestLeaseReleaseError(combined_error) from error
     except InstrumentTestLeaseError:
-        try:
-            record_execution_base_station_attempt_failure(
-                db,
-                execution.id,
-                attempt_id=measurement_attempt_id,
-                outcome=lease_outcome,
-                cancelled=False,
-            )
-        except Exception:  # noqa: BLE001 — preserve the actual acquire failure
-            logger.exception(
-                "[%s] run-all acquire failure audit write failed",
-                session_id,
-            )
         raise
 
     if aborted_at is not None:
