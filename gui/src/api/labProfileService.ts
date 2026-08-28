@@ -7,6 +7,10 @@
  * matches what the backend will actually do.
  */
 import apiClient from './client'
+import type {
+  BaseStationBindingPreviewResponse,
+  InstrumentBindingSyncResponse,
+} from '../types/api'
 
 export interface LabProfileSummary {
   id: string
@@ -93,9 +97,18 @@ export async function createLabProfile(
 export async function syncCurrentInstrumentBinding(
   labProfileId: string,
   categoryKey: string,
-): Promise<InstrumentBindingPayload> {
-  const res = await apiClient.put<InstrumentBindingPayload>(
+): Promise<InstrumentBindingSyncResponse> {
+  const res = await apiClient.put<InstrumentBindingSyncResponse>(
     `/lab-profiles/${labProfileId}/instrument-bindings/${categoryKey}/sync-current`,
+  )
+  return res.data
+}
+
+export async function fetchBaseStationBindingPreview(
+  labProfileId: string,
+): Promise<BaseStationBindingPreviewResponse> {
+  const res = await apiClient.get<BaseStationBindingPreviewResponse>(
+    `/lab-profiles/${labProfileId}/instrument-bindings/baseStation/preview`,
   )
   return res.data
 }

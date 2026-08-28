@@ -24,6 +24,7 @@ import type { components as ApiComponents } from '../types/api.generated'
 
 type ContractTestCaseCreate = ApiComponents['schemas']['TestCaseCreate']
 type ContractTestCaseResponse = ApiComponents['schemas']['TestCaseResponse']
+type ContractHALReadinessResponse = ApiComponents['schemas']['HALReadinessResponse']
 
 export const fetchProbes = async (): Promise<ProbesResponse> => {
   const response = await client.get<ProbesResponse>('/probes')
@@ -73,7 +74,7 @@ export const replaceProbes = async (
  * request-time LabProfile and calibration sections remain live.
  */
 export const fetchReadiness = async (labProfileId?: string): Promise<HALReadinessResponse> => {
-  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness', {
+  const response = await client.get<ContractHALReadinessResponse>('/instruments/hal/readiness', {
     params: labProfileId ? { lab_profile_id: labProfileId } : undefined,
   })
   return response.data

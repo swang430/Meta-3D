@@ -100,12 +100,27 @@ paths:
           schema: {type: string}
       responses:
         '200':
-          description: Persisted LabProfile instrument binding
+          description: Persisted binding and vendor-neutral BaseStation resolution
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/InstrumentBinding'}
+              schema: {$ref: '#/components/schemas/InstrumentBindingSyncResponse'}
         '404': {description: LabProfile or instrument category not found}
         '422': {description: Current instrument model or endpoint is incomplete}
+  /api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/baseStation/preview:
+    get:
+      summary: Preview the resolved BaseStation binding without instrument I/O
+      parameters:
+        - name: lab_profile_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Current immutable BaseStation binding projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BaseStationBindingPreviewResponse'}
+        '404': {description: LabProfile not found}
   /api/v1/instruments/{categoryKey}/channel-models:
     get:
       summary: List typed channel-model entries
@@ -956,6 +971,44 @@ components:
         connection_endpoint: {type: string, minLength: 1}
         driver_mode: {type: string, enum: [auto, mock, real], default: auto}
         role: {type: string, nullable: true}
+    BaseStationBindingPreviewResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [configured, not_applicable, diagnostic_unbound, invalid]
+        binding_digest: {type: string, nullable: true}
+        execution_mode:
+          type: string
+          enum: [real, simulated]
+          nullable: true
+        adapter_id: {type: string, nullable: true}
+        model_name: {type: string, nullable: true}
+        category_id: {type: string, nullable: true}
+        instrument_model_id: {type: string, nullable: true}
+        instrument_connection_id: {type: string, nullable: true}
+        lab_profile_id: {type: string}
+        resolved_binding:
+          type: object
+          additionalProperties: true
+          nullable: true
+        runtime_driver:
+          type: object
+          additionalProperties: true
+          nullable: true
+        detail: {type: string}
+      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail]
+    InstrumentBindingSyncResponse:
+      type: object
+      properties:
+        binding:
+          $ref: '#/components/schemas/InstrumentBinding'
+        resolved:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
+          nullable: true
+      required: [binding]
     ChannelCalibrationJobResponse:
       type: object
       required: [calibration_job_id, status]
@@ -1668,8 +1721,8 @@ components:
           nullable: true
           additionalProperties: true
         base_station_adapter_profile:
-          allOf:
-            - $ref: '#/components/schemas/BaseStationAdapterProfile'
+          type: object
+          additionalProperties: true
           nullable: true
     SystemStatusItem:
       type: object
@@ -1793,7 +1846,50 @@ components:
               maps to this when `get_real_driver_class()` returns None).
               Operators picking a model must see this distinctly so they do
               not try to connect to a model that has no registered driver.
-      required: [id, vendor, model, summary, interfaces, capabilities, model_capabilities, bandwidth, channels, status]
+        base_station_manifest:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationAdapterManifest'
+          nullable: true
+      required: [id, vendor, model, summary, interfaces, capabilities, model_capabilities, bandwidth, channels, status, base_station_manifest]
+    BaseStationProfileFieldManifest:
+      type: object
+      additionalProperties: false
+      properties:
+        path: {type: string}
+        label: {type: string}
+        required: {type: boolean}
+        placeholder: {type: string}
+        description: {type: string}
+      required: [path, label, required, placeholder, description]
+    BaseStationAdapterManifest:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        adapter_id: {type: string}
+        model_name: {type: string}
+        vendor: {type: string}
+        rats:
+          type: array
+          items: {type: string}
+        capabilities:
+          type: array
+          items: {type: string}
+        profile_requirement:
+          type: string
+          enum: [required, not_applicable]
+        profile_fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationProfileFieldManifest'
+        manual_sources:
+          type: array
+          items: {type: string}
+        diagnostic_supported: {type: boolean}
+        formal_gate:
+          type: string
+          enum: [legacy_provenance, connection_approval]
+      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, profile_requirement, profile_fields, manual_sources, diagnostic_supported, formal_gate]
     InstrumentConnection:
       type: object
       properties:
@@ -1857,7 +1953,8 @@ components:
         fdd_ready: {type: boolean}
         tdd_ready: {type: boolean}
         detail: {type: string}
-      required: [status, adapter_registered, connection_id, model, identity_verified, firmware_version, options, formal_enabled, formal_updated_at, fdd_ready, tdd_ready, detail]
+        binding_digest: {type: string, nullable: true}
+      required: [status, adapter_registered, connection_id, model, identity_verified, firmware_version, options, formal_enabled, formal_updated_at, fdd_ready, tdd_ready, detail, binding_digest]
     HALReadinessResponse:
       type: object
       description: |
@@ -1878,6 +1975,10 @@ components:
           $ref: '#/components/schemas/CalibrationReadiness'
         dut_attach:
           $ref: '#/components/schemas/DutAttachReadiness'
+        base_station_binding:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
+          nullable: true
         cmw500_lte_2x2:
           allOf:
             - $ref: '#/components/schemas/Cmw500Lte2x2Readiness'
@@ -1893,7 +1994,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:

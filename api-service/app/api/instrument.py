@@ -22,6 +22,7 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.uxm_base_station import normalize_uxm_connection_selector
 from app.models.diagnostic_run import DiagnosticKind
 from app.models.instrument import (
@@ -65,7 +66,7 @@ class FEInstrumentModel(BaseModel):
     bandwidth: Optional[str] = None
     channels: Optional[str] = None
     status: Literal["available", "pending_dev"]
-    base_station_manifest: Optional[Dict[str, Any]] = None
+    base_station_manifest: Optional[BaseStationAdapterManifest] = None
 
 
 class FEInstrumentConnection(BaseModel):
@@ -182,7 +183,7 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
     if category_key == "baseStation" and driver_cls is not None:
         base_station_manifest = get_base_station_adapter_registration(
             model_db.model
-        ).manifest.model_dump(mode="json")
+        ).manifest
 
     return FEInstrumentModel(
         id=str(model_db.id),

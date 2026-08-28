@@ -240,13 +240,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Persisted LabProfile instrument binding */
+                /** @description Persisted binding and vendor-neutral BaseStation resolution */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["InstrumentBinding"];
+                        "application/json": components["schemas"]["InstrumentBindingSyncResponse"];
                     };
                 };
                 /** @description LabProfile or instrument category not found */
@@ -265,6 +265,51 @@ export interface paths {
                 };
             };
         };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/baseStation/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview the resolved BaseStation binding without instrument I/O */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    lab_profile_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current immutable BaseStation binding projection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BaseStationBindingPreviewResponse"];
+                    };
+                };
+                /** @description LabProfile not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1819,6 +1864,30 @@ export interface components {
             driver_mode: "auto" | "mock" | "real";
             role?: string | null;
         };
+        BaseStationBindingPreviewResponse: {
+            /** @enum {string} */
+            status: "configured" | "not_applicable" | "diagnostic_unbound" | "invalid";
+            binding_digest: string | null;
+            /** @enum {string|null} */
+            execution_mode: "real" | "simulated" | null;
+            adapter_id: string | null;
+            model_name: string | null;
+            category_id: string | null;
+            instrument_model_id: string | null;
+            instrument_connection_id: string | null;
+            lab_profile_id: string;
+            resolved_binding: {
+                [key: string]: unknown;
+            } | null;
+            runtime_driver: {
+                [key: string]: unknown;
+            } | null;
+            detail: string;
+        };
+        InstrumentBindingSyncResponse: {
+            binding: components["schemas"]["InstrumentBinding"];
+            resolved?: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
+        };
         ChannelCalibrationJobResponse: {
             /** Format: uuid */
             calibration_job_id: string;
@@ -2215,7 +2284,9 @@ export interface components {
             connection_params?: {
                 [key: string]: unknown;
             } | null;
-            base_station_adapter_profile?: components["schemas"]["BaseStationAdapterProfile"] | null;
+            base_station_adapter_profile?: {
+                [key: string]: unknown;
+            } | null;
         };
         SystemStatusItem: {
             label: string;
@@ -2283,6 +2354,30 @@ export interface components {
              * @enum {string}
              */
             status: "available" | "pending_dev";
+            base_station_manifest: components["schemas"]["BaseStationAdapterManifest"] | null;
+        };
+        BaseStationProfileFieldManifest: {
+            path: string;
+            label: string;
+            required: boolean;
+            placeholder: string;
+            description: string;
+        };
+        BaseStationAdapterManifest: {
+            /** @enum {integer} */
+            schema_version: 1;
+            adapter_id: string;
+            model_name: string;
+            vendor: string;
+            rats: string[];
+            capabilities: string[];
+            /** @enum {string} */
+            profile_requirement: "required" | "not_applicable";
+            profile_fields: components["schemas"]["BaseStationProfileFieldManifest"][];
+            manual_sources: string[];
+            diagnostic_supported: boolean;
+            /** @enum {string} */
+            formal_gate: "legacy_provenance" | "connection_approval";
         };
         InstrumentConnection: {
             id: string | null;
@@ -2322,6 +2417,7 @@ export interface components {
             fdd_ready: boolean;
             tdd_ready: boolean;
             detail: string;
+            binding_digest: string | null;
         };
         /**
          * @description P3-5 composite snapshot. `available=false` means HAL is not
@@ -2335,6 +2431,7 @@ export interface components {
             lab_profile: components["schemas"]["LabProfileReadiness"];
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
+            base_station_binding: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;
             /**

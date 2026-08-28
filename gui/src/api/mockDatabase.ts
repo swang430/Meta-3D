@@ -81,6 +81,20 @@ const readinessSnapshot: HALReadinessResponse = {
     detail:
       'DUT attach sensing not implemented in this build (no probe-sensing / RFID / session table yet — future P3 item)',
   },
+  base_station_binding: {
+    status: 'diagnostic_unbound',
+    binding_digest: null,
+    execution_mode: 'simulated',
+    adapter_id: 'uxm',
+    model_name: 'UXM 5G E7515B',
+    category_id: null,
+    instrument_model_id: null,
+    instrument_connection_id: null,
+    lab_profile_id: 'lab-001',
+    resolved_binding: null,
+    runtime_driver: { simulated: true },
+    detail: 'Demo fixture only; simulated binding is not formal evidence.',
+  },
   // The demo fixture uses UXM, so CMW readiness is explicitly not present
   // as a value while the serialized response field itself remains required.
   cmw500_lte_2x2: null,
