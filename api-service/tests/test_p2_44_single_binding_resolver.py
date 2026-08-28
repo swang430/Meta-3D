@@ -34,4 +34,3 @@ def test_execution_freeze_does_not_requery_model_connection_or_vendor_profile():
         "BaseStationAdapterProfile.model_validate",
     ):
         assert forbidden not in source
-
