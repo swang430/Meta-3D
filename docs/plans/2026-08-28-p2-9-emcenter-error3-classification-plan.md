@@ -38,7 +38,7 @@ def test_firmware_251_exact_interlock_error_is_known_unsupported_but_undetermine
     assert "安全状态未知" in result.summary
     assert "互锁 0" not in result.summary
     step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
-    assert step.success is True
+    assert step.success is False
     assert step.raw == _KNOWN_UNSUPPORTED_INTERLOCK
 ```
 
@@ -113,7 +113,8 @@ def _classify_interlock(version: Optional[str], reply: Optional[str]) -> str:
     return "invalid"
 ```
 
-出处注释只引用 `docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md` 的现场原始记录；不得把它写成厂商手册通用结论。
+出处注释应如实区分：完整字面量来自 2026-08-27 操作员粘贴的诊断结果并在设计文档中
+首次固化；当日现场摘要只保留了 `ERROR 3` 缩写。不得把它写成厂商手册通用结论。
 
 **Step 3: 用分类结果驱动既有判定**
 
@@ -164,7 +165,9 @@ git commit -m "fix: 精确分类 EMCenter 互锁不支持回复"
 
 **Step 1: 更新当前状态镜像**
 
-把 P2-9 当前描述改为：本地精确分类已完成，现场仍需重跑 `emcenter_switch_health` 取得 SUCCESS；TopologyEditor mapping 仍独立未完成。不要修改现场历史记录。
+把 P2-9 当前描述改为：本地精确分类已完成；现场若仍命中已知不支持，只能留下
+`UNDETERMINED` 证据，必须取得权威互锁 `0` 或独立可审计的安全状态证据后才能关闭；
+TopologyEditor mapping 仍独立未完成。不要修改现场历史记录。
 
 **Step 2: 全仓镜像扫描**
 
