@@ -36,13 +36,17 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     AppliedCellConfig,
+    BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
     BaseStationDriver,
+    BaseStationFieldReceipt,
     BaseStationRemoteSessionResult,
+    BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
+from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -424,6 +428,10 @@ class RealUxmDriver(BaseStationDriver):
         # 功率是 `_dl_power_dbm` 那个 dBm/SCS 值。**两者不可换算比较** ——
         # 换算依赖带宽和 SCS，是派生值，不在驱动里算。
         self._dl_power_dbm_per_bw: Optional[float] = None
+        # Only populated by the existing authoritative configuration readback
+        # path.  Common receipts consume this snapshot; driver request/cache
+        # values must never be used as applied truth.
+        self._last_common_config_readback: Optional[Dict[str, Any]] = None
         self._cell_state: CellState = CellState.OFF
         # Phase 2h: 跨实验室部署允许覆盖 freq→band 推断表 + ARFCN 映射
         # config["freq_to_band_map"] 形如 [[3300, 3800, "N78", "TDD"], ...]
@@ -962,6 +970,77 @@ class RealUxmDriver(BaseStationDriver):
             return await self.load_state_file(state_file)
         return await self.set_cell_config(config)
 
+    async def apply_config(
+        self,
+        requested: BaseStationRequestedConfig,
+    ) -> BaseStationApplyReceipt:
+        """Apply UXM config and expose only existing authoritative readbacks."""
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        self._last_common_config_readback = None
+        with capture_scpi_exchanges() as exchanges:
+            await self.apply_requested_config(requested)
+        exchange_ids = tuple(item.exchange_id for item in exchanges)
+        readback = (
+            self._last_common_config_readback
+            if isinstance(self._last_common_config_readback, dict)
+            else {}
+        )
+        requested_fields = [
+            ("nr_arfcn", requested.nr_arfcn),
+            ("bandwidth_mhz", requested.bandwidth_mhz),
+            ("duplex", requested.duplex.lower() if requested.duplex else None),
+            ("subcarrier_spacing_khz", requested.subcarrier_spacing_khz),
+            ("mimo_layers", requested.mimo_layers),
+        ]
+        if requested.downlink_power_dbm_per_bandwidth is not None:
+            requested_fields.append(
+                (
+                    "downlink_power_dbm_per_bandwidth",
+                    requested.downlink_power_dbm_per_bandwidth,
+                )
+            )
+        else:
+            requested_fields.append(
+                ("downlink_power_dbm", requested.downlink_power_dbm)
+            )
+        fields = tuple(
+            BaseStationFieldReceipt(
+                field=name,
+                requested=value,
+                applied=(
+                    readback[name]
+                    if name in readback and readback[name] == value
+                    else None
+                ),
+                status=(
+                    "confirmed"
+                    if name in readback and readback[name] == value
+                    else "unknown"
+                ),
+                reason=(
+                    "authoritative UXM configuration readback matched"
+                    if name in readback and readback[name] == value
+                    else "UXM configuration field was not authoritatively confirmed"
+                ),
+                exchange_ids=exchange_ids,
+            )
+            for name, value in requested_fields
+            if value is not None
+        )
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="config",
+            fields=fields,
+            reason=(
+                "UXM configuration readback confirmed"
+                if fields and all(field.status == "confirmed" for field in fields)
+                else "UXM configuration readback is partial or unavailable"
+            ),
+            simulated=False,
+        )
+
     def capture_evidence_environment(self):
         """从活 VISA 会话、*IDN? 与实际探测 Test App 生成环境快照。"""
         from app.hal.scpi_evidence import (
@@ -1285,6 +1364,8 @@ class RealUxmDriver(BaseStationDriver):
         BW 回读归一化 "BW100"→100; 功率浮点容差 0.1 dB。
         """
         mismatches: List[str] = []
+        common_readback: Dict[str, Any] = {}
+        self._last_common_config_readback = common_readback
 
         def _read(template_name: str) -> Optional[str]:
             q = self._cmd(template_name, cell=cell)
@@ -1301,7 +1382,9 @@ class RealUxmDriver(BaseStationDriver):
             resp = _read("CELL_DL_ARFCN")
             if resp is not None:
                 try:
-                    if int(float(resp)) != int(self._arfcn):
+                    parsed = int(float(resp))
+                    common_readback["nr_arfcn"] = parsed
+                    if parsed != int(self._arfcn):
                         mismatches.append(f"ARFCN 下发 {self._arfcn} 回读 {resp}")
                 except ValueError:
                     mismatches.append(f"ARFCN 回读不可解析: {resp!r}")
@@ -1311,9 +1394,14 @@ class RealUxmDriver(BaseStationDriver):
             if resp is not None:
                 norm = resp.upper().lstrip("BW") if resp.upper().startswith("BW") else resp
                 try:
-                    if int(float(norm)) != int(config["bandwidth_mhz"]):
+                    parsed = float(norm)
+                    if int(parsed) != int(config["bandwidth_mhz"]):
                         mismatches.append(
                             f"BW 下发 {int(config['bandwidth_mhz'])} 回读 {resp}")
+                    else:
+                        common_readback["bandwidth_mhz"] = float(
+                            config["bandwidth_mhz"]
+                        )
                 except ValueError:
                     mismatches.append(f"BW 回读不可解析: {resp!r}")
 
@@ -1324,19 +1412,29 @@ class RealUxmDriver(BaseStationDriver):
             resp = _read("DL_POWER_CHANNEL")
             if resp is not None:
                 try:
-                    if abs(float(resp) - float(config["dl_power_dbm_per_bw"])) > 0.1:
+                    parsed = float(resp)
+                    if abs(parsed - float(config["dl_power_dbm_per_bw"])) > 0.1:
                         mismatches.append(
                             f"DL 功率(整带宽) 下发 {config['dl_power_dbm_per_bw']} "
                             f"回读 {resp}")
+                    else:
+                        common_readback[
+                            "downlink_power_dbm_per_bandwidth"
+                        ] = float(config["dl_power_dbm_per_bw"])
                 except ValueError:
                     mismatches.append(f"DL 功率(整带宽) 回读不可解析: {resp!r}")
         elif "dl_power_dbm" in config:
             resp = _read("DL_POWER")
             if resp is not None:
                 try:
-                    if abs(float(resp) - float(config["dl_power_dbm"])) > 0.1:
+                    parsed = float(resp)
+                    if abs(parsed - float(config["dl_power_dbm"])) > 0.1:
                         mismatches.append(
                             f"DL 功率下发 {config['dl_power_dbm']} 回读 {resp}")
+                    else:
+                        common_readback["downlink_power_dbm"] = float(
+                            config["dl_power_dbm"]
+                        )
                 except ValueError:
                     mismatches.append(f"DL 功率回读不可解析: {resp!r}")
 
@@ -1346,6 +1444,9 @@ class RealUxmDriver(BaseStationDriver):
             template_name: str,
             config_key: str,
             expected: str,
+            *,
+            common_field: Optional[str] = None,
+            parser=None,
         ) -> None:
             if config_key not in config:
                 return
@@ -1353,15 +1454,30 @@ class RealUxmDriver(BaseStationDriver):
             if resp is None:
                 mismatches.append(f"{config_key} 回读不可用")
                 return
+            if common_field is not None:
+                try:
+                    common_readback[common_field] = (
+                        parser(resp) if parser is not None else resp.strip().lower()
+                    )
+                except (TypeError, ValueError):
+                    mismatches.append(f"{config_key} 回读不可解析: {resp!r}")
+                    return
             if resp.strip().upper() != expected.strip().upper():
                 mismatches.append(f"{config_key} 下发 {expected} 回读 {resp}")
 
-        _required_text("CELL_DUPLEX", "duplex", str(config.get("duplex", "")))
+        _required_text(
+            "CELL_DUPLEX",
+            "duplex",
+            str(config.get("duplex", "")),
+            common_field="duplex",
+        )
         if "scs_khz" in config:
             _required_text(
                 "CELL_SCS",
                 "scs_khz",
                 self._format_scs_value(config["scs_khz"]),
+                common_field="subcarrier_spacing_khz",
+                parser=self._parse_scs_response,
             )
         _required_text("SSB_ARFCN", "ssb_arfcn", str(config.get("ssb_arfcn", "")))
         _required_text(
@@ -1373,6 +1489,8 @@ class RealUxmDriver(BaseStationDriver):
             "MIMO_DL_LAYERS",
             "mimo_layers",
             str(config.get("mimo_layers", "")),
+            common_field="mimo_layers",
+            parser=lambda raw: int(float(raw)),
         )
 
         return mismatches

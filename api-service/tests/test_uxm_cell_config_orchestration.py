@@ -7,10 +7,12 @@
   ④ SSB/PointA 基线自动补 (目标 ARFCN 命中 EMQuest 基线才补, 严格合拍);
   ⑤ 写后回读对账 fail-loud (IRAT 默认开; 老 5G App 查询不支持默认关)。
 """
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.hal.base_station import BaseStationApplyReceipt, BaseStationRequestedConfig
 from app.hal.uxm_base_station import RealUxmDriver
 
 
@@ -69,6 +71,155 @@ def wire_echo_visa(driver, cell_active: bool = False, overrides: dict | None = N
     sess.timeout = 5000
     driver._visa_session = sess
     return sess, written
+
+
+def _requested_nr_config() -> BaseStationRequestedConfig:
+    return BaseStationRequestedConfig(
+        radio_technology="nr5g",
+        channel_kind="nr_arfcn",
+        frequency_mhz=3549.99,
+        bandwidth_mhz=100.0,
+        band="N78",
+        duplex="tdd",
+        nr_arfcn=636666,
+        lte_dl_earfcn=None,
+        lte_transmission_mode=None,
+        subcarrier_spacing_khz=30,
+        mimo_layers=2,
+        downlink_power_dbm=-50.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_confirms_existing_authoritative_readbacks(
+    driver_irat,
+):
+    wire_echo_visa(driver_irat)
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    assert isinstance(receipt, BaseStationApplyReceipt)
+    assert receipt.operation == "config"
+    assert receipt.confirmed is True
+    assert {field.field: field.applied for field in receipt.fields} == {
+        "nr_arfcn": 636666,
+        "bandwidth_mhz": 100.0,
+        "duplex": "tdd",
+        "subcarrier_spacing_khz": 30,
+        "mimo_layers": 2,
+        "downlink_power_dbm": -50.0,
+    }
+    assert all(field.status == "confirmed" for field in receipt.fields)
+    assert receipt.exchange_ids
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_marks_only_mismatched_readback_unknown(
+    driver_irat,
+):
+    wire_echo_visa(driver_irat, overrides={"MIMOlayers?": "4"})
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    fields = {field.field: field for field in receipt.fields}
+    assert receipt.confirmed is False
+    assert fields["mimo_layers"].status == "unknown"
+    assert fields["mimo_layers"].applied is None
+    for name, field in fields.items():
+        if name != "mimo_layers":
+            assert field.status == "confirmed"
+            assert field.applied == field.requested
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_preserves_existing_power_tolerance(
+    driver_irat,
+):
+    wire_echo_visa(driver_irat, overrides={":DL:POWer?": "-49.95"})
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    power = {field.field: field for field in receipt.fields}["downlink_power_dbm"]
+    assert power.status == "confirmed"
+    assert power.applied == -50.0
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_is_unknown_after_apply_error_queue_reject(
+    driver_irat,
+):
+    wire_echo_visa(driver_irat, cell_active=True)
+    driver_irat._drain_errors = MagicMock(return_value=['-221,"Settings conflict"'])
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    assert receipt.confirmed is False
+    assert all(field.status == "unknown" for field in receipt.fields)
+    assert driver_irat._last_common_config_readback is None
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_keeps_query_timeout_field_unknown(
+    driver_irat,
+):
+    sess, _ = wire_echo_visa(driver_irat)
+    normal_query = sess.query.side_effect
+
+    def _timeout_mimo(cmd, **kwargs):
+        if "MIMOlayers?" in cmd:
+            raise TimeoutError("readback timeout")
+        return normal_query(cmd, **kwargs)
+
+    sess.query.side_effect = _timeout_mimo
+
+    receipt = await driver_irat.apply_config(_requested_nr_config())
+
+    fields = {field.field: field for field in receipt.fields}
+    assert receipt.confirmed is False
+    assert fields["mimo_layers"].status == "unknown"
+    assert all(
+        field.status == "confirmed"
+        for name, field in fields.items()
+        if name != "mimo_layers"
+    )
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_propagates_cancellation_without_truth(
+    driver_irat,
+):
+    driver_irat.apply_requested_config = AsyncMock(
+        side_effect=asyncio.CancelledError()
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await driver_irat.apply_config(_requested_nr_config())
+
+    assert driver_irat._last_common_config_readback is None
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_config_receipt_does_not_confirm_unsupported_readback(
+    driver_5g,
+):
+    wire_echo_visa(driver_5g)
+
+    receipt = await driver_5g.apply_config(_requested_nr_config())
+
+    assert receipt.confirmed is False
+    assert all(field.status == "unknown" for field in receipt.fields)
+    assert all(field.applied is None for field in receipt.fields)
+
+
+@pytest.mark.asyncio
+async def test_common_uxm_route_is_explicitly_not_applicable(driver_irat):
+    receipt = await driver_irat.apply_route({})
+
+    assert receipt.operation == "route"
+    assert receipt.confirmed is False
+    assert len(receipt.fields) == 1
+    assert receipt.fields[0].status == "not_applicable"
+    assert receipt.exchange_ids == ()
 
 
 class TestNoneValueTolerance:
