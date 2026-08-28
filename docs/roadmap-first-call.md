@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-44：BaseStation 单一 Binding Resolver + manifest 驱动注册（Ready PR 外审中，R2 P1 已收口并进入后续 P1-only 复审）。**
+Current Focus（非现场）= P2-45：无校准诊断模式 + BS 两阶段现场认证产品化（本地 Task1–6 已完成，正在全量回归与 fresh 功能内审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -58,8 +58,10 @@ P3-20/P3-21 仍不得自动启动。
 2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据；
    **P2-9 的精确 `ERROR 3` 分类与 NEW-1 的活动 F64 输出集合本地半均已完成**；
    P2-42 的单一 BaseStation execution session 已由 PR #408 合并；P2-43 的 vendor-neutral
-   receipt/evidence/measurement 边界已由 PR #409 合并；当前 P2-44 已完成单一 resolver、manifest
-   注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像，完整回归已通过并正在外审前收口。P0-9B-1 已完成手册支持
+   receipt/evidence/measurement 边界已由 PR #409 合并；P2-44 的单一 resolver、manifest
+   注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
+   合并；当前 P2-45 已完成 Diagnostic/Formal policy、站点认证、execution qualification 冻结、正式
+   消费隔离与 GUI/API 镜像的本地实现，正在最终验证。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。上述当前现场闭环所需本地半处理完后，再执行架构收敛
@@ -4210,7 +4212,7 @@ compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
 **验收**：保存后预览的 binding digest 与执行冻结一致；缺字段/歧义/loaded transport 不同源均
 在首个仪器 I/O 前 fail-loud；GUI 不从本地缓存或通用 connection_params 自行授予正式能力。
 
-**实施状态（2026-08-29，本地实现与完整回归完成，正在 Ready PR 后续 P1-only 外审）**：已建立唯一不可变
+**实施状态（2026-08-29，✅ PR #410 已合并，merge `f63ac020`）**：已建立唯一不可变
 `ResolvedBaseStationBinding`，real CMW500/UXM、configured mock、diagnostic_unbound 及
 model/binding/connection/endpoint/profile/registry/driver/transport 漂移均由同一 resolver 判定；
 digest 只覆盖持久化真值与 expected transport，runtime identity 独立。preview、sync、readiness 与
@@ -4242,6 +4244,21 @@ execution。不得引入功率预算、外部路径补偿或 RF router 准入。
 **验收**：无校准诊断绝不产生正式路径损耗补偿、PASS/FAIL 或可汇入正式 KPI 的数值；报告和
 导出显式标诊断；正式晋级可撤销、有服务器时间和审计人，且不通过 env、通用字段或 debug
 inherit 获得。
+
+**实施状态（2026-08-29，本地 Task1–6 已完成，Task7 最终验证中）**：TestCase 已有专用
+Diagnostic/Formal policy，Diagnostic 必须记录操作员与原因；BaseStation site certification 只由服务端
+从当前 binding digest 下真实 completed execution 的身份、config/route readback、current attempt、
+cleanup 与 transport release 证据派生，可撤销且不接受客户端 proof/identity。formal runner 与
+commissioning saved phase/session/run-all/adhoc 统一冻结 policy、P2-44 binding 与 site certification；
+只有 explicit/default Formal + real configured binding + active matching certification 才分类为 Formal，
+其余均为 Diagnostic，后续 policy/cert 变化只影响后续执行。MEASURE、ANALYSIS、REPORT、详情、
+重建、下载、比较、ReportDataCollector、history 与 commissioning 投影统一读取本次冻结 classification；
+诊断执行不应用正式路损补偿，不产生 PASS/FAIL 或正式 KPI，但保留可下载的自洽审计包。readiness、
+TestCase/commissioning GUI、报告/历史标签及 live OpenAPI、checked-in YAML、generated TS、手写类型已
+同步；旧 CMW approval 与 `precheck_strict_cal` 不再授予执行资格。Task5 相关后端 **234 passed**、
+GUI 契约 **14 passed** 与 production build、compileall、diff-check 均通过；Task6 单一资格边界与完整
+规则门 **60 passed**。完整后端/GUI 回归、fresh 功能内审、Ready PR 与 Codex 外审尚在 Task7，
+不得提前记为完成；NEW-1 F64 SUCCESS 与站点真实 certification 仍须现场复验。
 
 ---
 

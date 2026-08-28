@@ -23,6 +23,8 @@ G19 静态路由不被参数兄弟遮蔽 ← P1-29 `/alerts/{alert_id}` 抢先�
    变异: 自测 router 先注册 `/{id}` 再注册 `/summary` → 必须检出；倒序必须放行。
 G20 test_suite 告警写入必须有模块级 SQLite 隔离 ← P1-38 测试污染开发库
    变异: 任意新测试模块写 source=test_suite 但没接 SQLite/get_db/drop_all → 必须检出。
+G23 BaseStation 执行资格只允许一个冻结入口 ← P2-45 Diagnostic/Formal 资格边界
+   变异: 任一生产入口绕过共享 wrapper 直接调用资格 freezer → 必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2485,3 +2487,21 @@ def test_g22_equipment_profile_ui_has_no_vendor_model_or_fixed_field_branch():
     assert not re.search(r"model\s*={2,3}\s*['\"](?:CMW500|UXM)[^'\"]*['\"]", source)
     assert "CMW500_ROUTE_FIELDS" not in source
     assert "cmw500_route" not in source
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G23 BaseStation 执行资格只允许一个冻结入口
+# ─────────────────────────────────────────────────────────────────────
+
+def test_g23_execution_qualification_has_one_production_freeze_wrapper():
+    """P2-45：五类执行入口不得各自重算 Diagnostic/Formal 资格。"""
+    app_root = _API_SERVICE_ROOT / "app"
+    call_sites = sorted(
+        str(path.relative_to(_REPO_ROOT))
+        for path in app_root.rglob("*.py")
+        if "freeze_execution_qualification(" in path.read_text(encoding="utf-8")
+    )
+    assert call_sites == [
+        "api-service/app/services/base_station_adapter_profile.py",
+        "api-service/app/services/execution_qualification.py",
+    ]

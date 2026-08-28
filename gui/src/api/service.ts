@@ -155,17 +155,6 @@ export const updateInstrumentCategory = async (
   return response.data
 }
 
-export const updateCmw500Lte2x2FormalCapability = async (
-  connectionId: string,
-  enabled: boolean,
-): Promise<import('../types/api').Cmw500FormalCapabilityResponse> => {
-  const response = await client.put(
-    `/instruments/connections/${connectionId}/formal-capabilities/cmw500-lte-2x2`,
-    { enabled },
-  )
-  return response.data
-}
-
 export const certifyBaseStationSite = async (
   connectionId: string,
   payload: { source_execution_id: string; certified_by: string; reason: string },
