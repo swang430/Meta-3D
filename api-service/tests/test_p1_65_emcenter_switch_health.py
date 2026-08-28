@@ -178,6 +178,7 @@ def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
     responses = dict(
         _HEALTHY_RESPONSES,
         **{
+            "*IDN?": "ETS Lindgren EMCenter version 2.5.1",
             "VERSION_SW?": "2.5.1",
             "INTLK? SAFETYRELAY": _KNOWN_UNSUPPORTED_INTERLOCK,
         },

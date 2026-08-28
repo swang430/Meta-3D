@@ -24,6 +24,9 @@ P2-9「EMCenter switch bring-up」的现场半（端口通不通 / 每槽插的�
                               06-04 文档：1 = Relay A 被硬件锁，软件无法覆盖）。
                               手册把它列在 "Relay SP6T Card Commands" 下且无示例；这里发的
                               裸形式与生产驱动 ``connect()`` 已在用的完全一致，不另造带槽位的形式。
+                              2026-08-27 CAICT 现场记录：系统软件 2.5.1 对这条精确查询回
+                              ``ERROR 3;(INTLK? SAFETYRELAY);``；该单一组合只标为已知不支持，
+                              不推广为其他固件 / 命令的语义，也不声称互锁为 0。
 
 ⚠ 同名 ``INT_RELAY_<R>?`` 对 SPDT 卡（值域 NC/NO）和 SP6T 卡（值域 0-6）语义不同，
   **从命令名无法区分卡类型**（06-04 文档明示）—— 值域判定只认驱动 ``port_maps`` 配置里
@@ -46,7 +49,8 @@ P2-9「EMCenter switch bring-up」的现场半（端口通不通 / 每槽插的�
 * BLOCKER      任一查询超时 / 无响应（驱动 ``_send_command`` 回 None）；互锁 = 1；
                回读值不在合法值域。机箱 ``*IDN?`` 就不应答时立即停，不再往下敲。
 * UNDETERMINED 没有槽位配置，或某继电器没标 ``relay_type``（值记了、值域判不了）。
-* SUCCESS      机箱 + 每槽 + 每继电器 + 互锁全部在值域内。
+* SUCCESS      机箱 + 每槽 + 每继电器全部在值域内，且互锁为 0；或精确命中
+               2026-08-27 现场确认的系统软件 2.5.1 已知不支持回复。
 * ABORTED      序列自身异常（由 runner 记）。
 措辞：未探测 ≠ 不支持；本序列不对仪器下「支持 / 不支持」断言。
 
@@ -79,6 +83,11 @@ _RELAY_DOMAIN: Dict[str, frozenset] = {
 }
 _INTERLOCK_DOMAIN = frozenset({"0", "1"})
 
+# 现场事实源：docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md。
+# 这不是厂商手册对 ERROR 3 的通用定义，只允许精确的软件版本 + 完整原始回复组合。
+_KNOWN_UNSUPPORTED_INTERLOCK_VERSION = "2.5.1"
+_KNOWN_UNSUPPORTED_INTERLOCK_REPLY = "ERROR 3;(INTLK? SAFETYRELAY);"
+
 # port_maps 的 switch_id 形态（驱动 switch_path 直接拿它拼命令）：``<slot>:INT_RELAY_<R>``
 _INT_RELAY_ID = re.compile(r"^(?P<slot>\d+):INT_RELAY_(?P<relay>[A-D])$")
 
@@ -93,7 +102,8 @@ metadata = SequenceMetadata(
         "只读：*IDN? → VERSION_SW? → 每个配置槽位 <slot>:*IDN? → 每槽每继电器 "
         "<slot>:INT_RELAY_<R>? → INTLK? SAFETYRELAY。槽位 / 继电器 / relay_type 从驱动 "
         "port_maps 派生；没配置就只做机箱级三条。互锁=1 / 超时 / 回读值不在值域 → BLOCKER；"
-        "无槽位配置或缺 relay_type → UNDETERMINED。不发任何写命令。"
+        "系统软件 2.5.1 的现场精确 ERROR 3 回复只标为已知不支持；无槽位配置或缺 "
+        "relay_type → UNDETERMINED。不发任何写命令。"
     ),
     required_categories=["rfSwitch"],
     params_schema=[],
@@ -131,6 +141,23 @@ def _relay_targets(mappings: Any) -> "tuple[Dict[str, Dict[str, Optional[str]]],
         for slot, relays in sorted(targets.items(), key=lambda kv: int(kv[0]))
     }
     return ordered, skipped
+
+
+def _classify_interlock(version: Optional[str], reply: Optional[str]) -> str:
+    """按手册值域和单一现场白名单分类互锁回复，不从近似字符串推断。"""
+    if reply is None:
+        return "no_response"
+    value = reply.strip()
+    if value == "0":
+        return "inactive"
+    if value == "1":
+        return "active"
+    if (
+        (version or "").strip() == _KNOWN_UNSUPPORTED_INTERLOCK_VERSION
+        and value == _KNOWN_UNSUPPORTED_INTERLOCK_REPLY
+    ):
+        return "known_unsupported"
+    return "invalid"
 
 
 async def run(
@@ -208,6 +235,7 @@ async def run(
     skipped: List[str] = []
     slots_out: List[Dict[str, Any]] = []
     interlock: Optional[str] = None
+    interlock_classification: Optional[str] = None
 
     if not walk_aborted:
         # ── 2. 系统软件版本（手册 :287-298）──────────────────────────
@@ -257,12 +285,17 @@ async def run(
         # ── 5. 互锁（手册 :492-500；形式与驱动 connect() 一致）───────
         if not walk_aborted:
             interlock = await _ask("INTLK? SAFETYRELAY")
+            interlock_classification = _classify_interlock(version, interlock)
             if interlock is not None:
-                value = interlock.strip()
-                if value == "1":
+                if interlock_classification == "active":
                     _mark_last(False, "互锁激活：Relay A 被硬件锁，软件无法覆盖（供电继电器断开）")
                     blockers.append("互锁=1：Relay A 被硬件锁，软件无法覆盖")
-                elif value not in _INTERLOCK_DOMAIN:
+                elif interlock_classification == "known_unsupported":
+                    _mark_last(
+                        True,
+                        "系统软件 2.5.1 的现场精确回复：该互锁查询已确认不支持；不等于互锁=0",
+                    )
+                elif interlock_classification == "invalid":
                     _mark_last(False, f"{interlock!r} 不在互锁合法值域 {sorted(_INTERLOCK_DOMAIN)} 内")
                     blockers.append(f"INTLK? SAFETYRELAY 回读 {interlock!r} 不在 0/1 值域")
                 else:
@@ -287,9 +320,15 @@ async def run(
     else:
         verdict = "SUCCESS"
         relay_count = sum(len(s["relays"]) for s in slots_out)
+        interlock_summary = (
+            "互锁查询已确认不支持（系统软件 2.5.1，原始回复已留档）"
+            if interlock_classification == "known_unsupported"
+            else "互锁 0"
+        )
         summary = (
             f"SUCCESS：机箱 {chassis_idn!r} / 软件 {version!r}；"
-            f"{len(slots_out)} 个槽位 {relay_count} 个继电器回读全部在值域内；互锁 0"
+            f"{len(slots_out)} 个槽位 {relay_count} 个继电器回读全部在值域内；"
+            f"{interlock_summary}"
         )
     if skipped:
         summary += f"；未探测的映射（非 <slot>:INT_RELAY_<R> 形式）: {skipped}"
@@ -303,6 +342,7 @@ async def run(
             "version": version,
             "slots": slots_out,
             "interlock": interlock,
+            "interlock_classification": interlock_classification,
             "verdict": verdict,
             "blockers": blockers,
             "undetermined": undetermined,
