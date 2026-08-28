@@ -45,10 +45,14 @@ LteTransmissionMode = Literal[
 class BaseStationIdentity:
     """由已注册驱动提供的基站型号、固件与选件身份快照。"""
 
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     model: str
     firmware_version: str | None
     options: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.adapter_id, str) or not self.adapter_id.strip():
+            raise ValueError("adapter_id must be a non-empty string")
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,97 @@ class BaseStationConfigResult:
 
 
 @dataclass(frozen=True)
+class BaseStationFieldReceipt:
+    """One requested field and the adapter's authoritative applied truth."""
+
+    field: str
+    requested: Any
+    applied: Any
+    status: Literal["confirmed", "unknown", "not_applicable"]
+    reason: str
+    exchange_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str) or not self.field.strip():
+            raise ValueError("field must be a non-empty string")
+        if self.status not in {"confirmed", "unknown", "not_applicable"}:
+            raise ValueError("field receipt status is invalid")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("field receipt reason must be non-empty")
+        if (
+            not isinstance(self.exchange_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.exchange_ids
+            )
+            or len(set(self.exchange_ids)) != len(self.exchange_ids)
+        ):
+            raise ValueError("field exchange ids must be non-empty and unique")
+        if self.status == "confirmed":
+            if self.applied is None:
+                raise ValueError("confirmed field requires an applied value")
+            if self.applied != self.requested:
+                raise ValueError("confirmed field applied value must match requested")
+        elif self.status == "unknown":
+            if self.applied is not None:
+                raise ValueError("unknown field cannot carry an applied value")
+        elif self.requested is not None or self.applied is not None:
+            raise ValueError("not_applicable field cannot carry requested or applied values")
+
+
+@dataclass(frozen=True)
+class BaseStationApplyReceipt:
+    """Versioned vendor-neutral result for config or route application."""
+
+    schema_version: Literal[1]
+    operation: Literal["config", "route"]
+    fields: tuple[BaseStationFieldReceipt, ...]
+    reason: str
+    simulated: bool
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station apply receipt schema")
+        if self.operation not in {"config", "route"}:
+            raise ValueError("base-station apply operation is invalid")
+        if not isinstance(self.fields, tuple) or not self.fields:
+            raise ValueError("base-station apply receipt requires fields")
+        if any(not isinstance(item, BaseStationFieldReceipt) for item in self.fields):
+            raise TypeError("apply receipt fields must be BaseStationFieldReceipt")
+        field_names = [item.field for item in self.fields]
+        if len(set(field_names)) != len(field_names):
+            raise ValueError("apply receipt field names must be unique")
+        exchange_ids = [
+            exchange_id
+            for field in self.fields
+            for exchange_id in field.exchange_ids
+        ]
+        if len(set(exchange_ids)) != len(exchange_ids):
+            raise ValueError("apply receipt exchange ids must be unique")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("apply receipt reason must be non-empty")
+        if type(self.simulated) is not bool:
+            raise TypeError("apply receipt simulated must be bool")
+
+    @property
+    def confirmed(self) -> bool:
+        applicable = [
+            field for field in self.fields if field.status != "not_applicable"
+        ]
+        return bool(applicable) and all(
+            field.status == "confirmed" for field in applicable
+        )
+
+    @property
+    def exchange_ids(self) -> tuple[str, ...]:
+        return tuple(
+            exchange_id
+            for field in self.fields
+            for exchange_id in field.exchange_ids
+        )
+
+
+@dataclass(frozen=True)
 class BaseStationCleanupResult:
     """MEASURE 阶段拥有的信令停止与 SAFE_IDLE 结果。"""
 
@@ -157,7 +252,7 @@ class BaseStationMeasurementWindow:
 class BaseStationRemoteSessionResult:
     """驱动成功建立真实 transport session 后返回的不可伪造身份。"""
 
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     session_token: str
     acquired_confirmed: bool
     warnings: tuple[str, ...]
@@ -169,7 +264,7 @@ class BaseStationControlReleaseResult:
 
     measurement_attempt_id: str | None
     lease_id: str
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     session_token: str
     remote_session_acquired_confirmed: bool
     transport_session_released_confirmed: bool
@@ -310,7 +405,7 @@ class BaseStationDriver(InstrumentDriver):
     # independently confirm the requested active SCell set. Real drivers keep
     # the fail-closed default until a vendor-documented readback is available.
     SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
-    adapter_id: ClassVar[Literal["uxm", "cmw500"]]
+    adapter_id: ClassVar[str]
     # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
     # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
     input_level_control_supported: ClassVar[bool] = False
@@ -391,6 +486,61 @@ class BaseStationDriver(InstrumentDriver):
             )
             return False
         return await self.set_cell_config(requested.to_driver_payload())
+
+    async def apply_config(
+        self,
+        requested: BaseStationRequestedConfig,
+    ) -> BaseStationApplyReceipt:
+        """Apply a typed request without inventing readback absent from a driver.
+
+        Concrete adapters must override this method before a result can be
+        formally confirmed.  The compatibility implementation preserves the
+        existing write path but reports every requested field as unknown.
+        """
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        await self.apply_requested_config(requested)
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="config",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=field,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="adapter did not provide authoritative field readback",
+                )
+                for field, value in requested.to_driver_payload().items()
+            ),
+            reason="adapter configuration readback is unavailable",
+            simulated=getattr(self, "simulated", False) is True,
+        )
+
+    async def apply_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationApplyReceipt:
+        """Return an explicit non-applicable receipt for adapters without route."""
+
+        if not isinstance(frozen_adapter, dict):
+            raise TypeError("frozen_adapter must be a dictionary")
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=(
+                BaseStationFieldReceipt(
+                    field="route",
+                    requested=None,
+                    applied=None,
+                    status="not_applicable",
+                    reason="adapter has no execution route operation",
+                ),
+            ),
+            reason="route is not applicable to this adapter",
+            simulated=getattr(self, "simulated", False) is True,
+        )
 
     def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
         """Optional physical connector projection for topology display.
