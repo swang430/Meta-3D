@@ -32,7 +32,7 @@ from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.alert import Alert
 from app.models.lab_profile import LabProfile
 from app.models.instrument import InstrumentCategory, InstrumentConnection
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -186,6 +186,31 @@ def lab(db, chamber):
 
 
 class TestAdhocPhaseEndpoint:
+    def test_commissioning_session_persists_audited_diagnostic_policy(
+        self, lab, db
+    ):
+        response = client.post(
+            "/api/v1/commissioning/sessions",
+            json={
+                "lab_profile_id": str(lab.id),
+                "execution_policy_mode": "diagnostic",
+                "execution_policy_reason": "现场无校准证书，仅做链路诊断",
+                "execution_policy_updated_by": "operator-a",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        execution = db.get(
+            TestExecution, uuid.UUID(response.json()["session_id"])
+        )
+        test_case = db.get(TestCase, execution.test_case_id)
+        qualification = execution.config["execution_qualification"]
+        assert test_case.execution_policy["mode"] == "diagnostic"
+        assert test_case.execution_policy["updated_by"] == "operator-a"
+        assert test_case.configuration["precheck_strict_cal"] is False
+        assert qualification["classification"] == "diagnostic"
+        assert "test_case_policy_diagnostic" in qualification["reasons"]
+
     def test_adhoc_phase_holds_instrument_lease(self, lab, monkeypatch):
         from app.services.test_execution.executor_base import (
             StepExecutionResult,
@@ -302,6 +327,13 @@ class TestAdhocPhaseEndpoint:
         assert (execution.config or {}).get("phase_overrides") == {
             "skip_calibration_age_check": True
         }
+        qualification = (execution.config or {})["execution_qualification"]
+        assert qualification["classification"] == "diagnostic"
+        assert "adhoc_forced_diagnostic" in qualification["reasons"]
+        test_case = db.get(TestCase, execution.test_case_id)
+        assert test_case.execution_policy["mode"] == "diagnostic"
+        assert test_case.execution_policy["updated_by"] == "pytest"
+        assert test_case.configuration["precheck_strict_cal"] is False
         # Codex #238 迟到 C-2: 行必须收尾 — 不许永久停在建行时的
         # pending (执行历史/仪表盘里会显示"待执行"僵尸行)。
         # 变异 = 砍 handler 的收尾回写块 → 这三条红。
@@ -934,8 +966,7 @@ class TestExecutionStatusVisibleToReloadGate:
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
         sess = client.post(
             "/api/v1/commissioning/sessions",
-            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
-                  "precheck_strict_dut": False},
+            json={"lab_profile_id": str(lab.id), "precheck_strict_dut": False},
         )
         assert sess.status_code in (200, 201), sess.text
         sid = sess.json()["session_id"]
@@ -1016,8 +1047,7 @@ class TestExecutionStatusVisibleToReloadGate:
         monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
         sess = client.post(
             "/api/v1/commissioning/sessions",
-            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
-                  "precheck_strict_dut": False},
+            json={"lab_profile_id": str(lab.id), "precheck_strict_dut": False},
         )
         sid = sess.json()["session_id"]
         client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
@@ -1070,8 +1100,7 @@ class TestExecutionStatusVisibleToReloadGate:
         """
         sess = client.post(
             "/api/v1/commissioning/sessions",
-            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
-                  "precheck_strict_dut": False},
+            json={"lab_profile_id": str(lab.id), "precheck_strict_dut": False},
         )
         sid = sess.json()["session_id"]
         # 模拟"已有相位在跑": 行处于 running

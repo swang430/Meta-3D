@@ -11,6 +11,7 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -23,6 +24,7 @@ from pydantic import (
 
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+EXECUTION_QUALIFICATION_KEY = "execution_qualification"
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -160,6 +162,53 @@ class BaseStationSiteCertification(BaseModel):
         return _canonical_digest(self.model_dump(mode="json"))
 
 
+class ExecutionQualification(BaseModel):
+    """Immutable execution-scoped Diagnostic/Formal classification."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    classification: Literal["formal", "diagnostic"]
+    policy_mode: Literal["formal", "diagnostic"]
+    policy: TestCaseExecutionPolicy | None
+    binding_digest: str
+    binding_status: Literal["configured", "not_applicable", "diagnostic_unbound"]
+    execution_mode: Literal["real", "simulated"]
+    adapter_id: str | None
+    site_certification: BaseStationSiteCertification | None
+    site_certification_digest: str | None
+    reasons: tuple[str, ...]
+    frozen_at: datetime
+    qualification_digest: str
+
+    @field_validator("binding_digest", "qualification_digest")
+    @classmethod
+    def _qualification_digest_shape(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _DIGEST_RE.fullmatch(normalized):
+            raise ValueError("execution qualification digest must be lowercase sha256")
+        return normalized
+
+    @model_validator(mode="after")
+    def _classification_matches_reasons(self):
+        if not self.reasons:
+            if self.classification != "formal":
+                raise ValueError("formal qualification must have no diagnostic reasons")
+        elif self.classification != "diagnostic":
+            raise ValueError("diagnostic reasons require diagnostic classification")
+        if (self.site_certification is None) != (
+            self.site_certification_digest is None
+        ):
+            raise ValueError("site certification and digest must be present together")
+        if (
+            self.site_certification is not None
+            and self.site_certification_digest
+            != self.site_certification.certification_digest
+        ):
+            raise ValueError("site certification digest mismatch")
+        return self
+
+
 def parse_test_case_execution_policy(
     raw: Any,
 ) -> TestCaseExecutionPolicy | None:
@@ -184,6 +233,151 @@ def parse_base_station_site_certification(
         return BaseStationSiteCertification.model_validate(raw)
     except (ValidationError, ValueError, TypeError) as exc:
         raise ValueError("stored BaseStation site certification is invalid") from exc
+
+
+def _qualification_payload_digest(payload: dict[str, Any]) -> str:
+    return _canonical_digest(
+        {key: value for key, value in payload.items() if key != "qualification_digest"}
+    )
+
+
+def validate_frozen_execution_qualification(raw: Any) -> str | None:
+    """Validate the immutable envelope without consulting mutable current state."""
+
+    if not isinstance(raw, dict):
+        return "frozen execution qualification is missing"
+    if raw.get("qualification_digest") != _qualification_payload_digest(raw):
+        return "frozen execution qualification digest mismatch"
+    try:
+        ExecutionQualification.model_validate(raw)
+    except (ValidationError, ValueError, TypeError):
+        return "frozen execution qualification is invalid"
+    return None
+
+
+def freeze_execution_qualification(
+    db,
+    execution,
+    test_case,
+    *,
+    force_diagnostic: bool = False,
+) -> ExecutionQualification:
+    """Freeze current server policy, binding, and certification exactly once."""
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.instrument import InstrumentConnection
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+
+    config = execution.config if isinstance(execution.config, dict) else {}
+    existing = config.get(EXECUTION_QUALIFICATION_KEY)
+    if existing is not None:
+        error = validate_frozen_execution_qualification(existing)
+        if error:
+            raise ValueError(error)
+        return ExecutionQualification.model_validate(existing)
+
+    frozen_binding = config.get(FREEZE_CONFIG_KEY)
+    if not isinstance(frozen_binding, dict):
+        raise ValueError("baseStation binding must be frozen before qualification")
+    resolution = frozen_binding.get("resolution")
+    if not isinstance(resolution, dict):
+        raise ValueError("frozen baseStation resolution is missing")
+    binding_digest = frozen_binding.get("binding_digest")
+    if not isinstance(binding_digest, str) or not _DIGEST_RE.fullmatch(
+        binding_digest
+    ):
+        raise ValueError("frozen baseStation binding digest is invalid")
+
+    policy = parse_test_case_execution_policy(test_case.execution_policy)
+    policy_mode: Literal["formal", "diagnostic"] = (
+        policy.mode if policy is not None else "formal"
+    )
+    connection_id = frozen_binding.get("instrument_connection_id")
+    certification = None
+    if connection_id is not None:
+        try:
+            connection_uuid = UUID(str(connection_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "frozen baseStation instrument_connection_id is invalid"
+            ) from exc
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.id == connection_uuid)
+            .with_for_update()
+            .one_or_none()
+        )
+        if connection is None:
+            raise ValueError("frozen baseStation connection no longer exists")
+        certification = parse_base_station_site_certification(
+            connection.base_station_site_certification
+        )
+
+    reasons: list[str] = []
+    if force_diagnostic:
+        reasons.append("adhoc_forced_diagnostic")
+    if policy_mode == "diagnostic":
+        reasons.append("test_case_policy_diagnostic")
+    execution_mode = resolution.get("execution_mode")
+    binding_status = resolution.get("status")
+    adapter_id = resolution.get("adapter")
+    if execution_mode != "real":
+        reasons.append("base_station_execution_not_real")
+    if binding_status not in {"configured", "not_applicable"}:
+        reasons.append("base_station_binding_not_formal")
+    if certification is None or certification.status != "active":
+        reasons.append("site_certification_not_active")
+    elif (
+        certification.lab_profile_id != str(test_case.lab_profile_id)
+        or certification.instrument_connection_id != str(connection_id)
+        or certification.binding_digest != binding_digest
+        or certification.adapter_id != adapter_id
+    ):
+        reasons.append("site_certification_scope_mismatch")
+
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "classification": "diagnostic" if reasons else "formal",
+        "policy_mode": policy_mode,
+        "policy": policy.model_dump(mode="json") if policy is not None else None,
+        "binding_digest": binding_digest,
+        "binding_status": binding_status,
+        "execution_mode": execution_mode,
+        "adapter_id": adapter_id,
+        "site_certification": (
+            certification.model_dump(mode="json")
+            if certification is not None
+            else None
+        ),
+        "site_certification_digest": (
+            certification.certification_digest
+            if certification is not None
+            else None
+        ),
+        "reasons": reasons,
+        "frozen_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    payload["qualification_digest"] = _qualification_payload_digest(payload)
+    frozen = ExecutionQualification.model_validate(payload)
+    execution.config = {
+        **config,
+        EXECUTION_QUALIFICATION_KEY: frozen.model_dump(mode="json"),
+    }
+    flag_modified(execution, "config")
+    if getattr(test_case, "id", None) != getattr(execution, "test_case_id", None):
+        raise ValueError("execution qualification TestCase identity mismatch")
+    test_case.configuration = {
+        **(
+            test_case.configuration
+            if isinstance(test_case.configuration, dict)
+            else {}
+        ),
+        "precheck_strict_cal": frozen.classification == "formal",
+    }
+    flag_modified(test_case, "configuration")
+    db.flush()
+    return frozen
 
 
 def _audit_text(value: str, field: str) -> str:

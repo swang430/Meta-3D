@@ -30,6 +30,7 @@ from app.schemas.mimo_ota.config import (
 )
 from app.services.lab_resolution import resolve_lab_profile
 from app.services.test_execution import StepDescriptor
+from app.services.execution_qualification import parse_test_case_execution_policy
 
 
 def _build_step_descriptors(
@@ -69,6 +70,7 @@ def build_mimo_ota_test_case(
     is_template: bool = False,
     template_category: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    execution_policy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[TestCase, List[StepDescriptor]]:
     """Persist a MIMO_OTA TestCase + return it together with its 5 step descriptors.
 
@@ -81,7 +83,14 @@ def build_mimo_ota_test_case(
     cert_id = calibration_certificate_id or profile.active_calibration_certificate_id
 
     # Build & validate the MIMOOTAConfiguration with user overrides applied
-    overrides = config_overrides or {}
+    parsed_policy = parse_test_case_execution_policy(execution_policy)
+    overrides = dict(config_overrides or {})
+    # Calibration bypass is qualification-derived.  Historical configuration
+    # values cannot grant it: explicit Diagnostic policy disables the gate;
+    # absent/Formal policy keeps it strict.
+    overrides["precheck_strict_cal"] = not (
+        parsed_policy is not None and parsed_policy.mode == "diagnostic"
+    )
     canonical = canonicalize_mimo_ota_configuration_payload(overrides)
     config = MIMOOTAConfiguration.model_validate(canonical)
     primary_carrier = config.primary_carrier
@@ -107,6 +116,11 @@ def build_mimo_ota_test_case(
         tags=tags,
         lab_profile_id=profile.id,
         calibration_certificate_id=cert_id,
+        execution_policy=(
+            parsed_policy.model_dump(mode="json")
+            if parsed_policy is not None
+            else None
+        ),
     )
     db.add(test_case)
     db.commit()
