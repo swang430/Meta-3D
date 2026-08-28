@@ -175,7 +175,7 @@ def test_sp6t_position_six_and_spdt_no_are_in_domain():
     assert result.extra["verdict"] == "SUCCESS"
 
 
-def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
+def test_firmware_251_exact_interlock_error_is_known_unsupported_but_undetermined():
     responses = dict(
         _HEALTHY_RESPONSES,
         **{
@@ -186,14 +186,14 @@ def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
     )
     result = _run(_ScriptedEmcenter(responses, _MAPPINGS_TWO_CARDS))
 
-    assert result.success is True
-    assert result.extra["verdict"] == "SUCCESS"
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
     assert result.extra["interlock"] == _KNOWN_UNSUPPORTED_INTERLOCK
     assert result.extra["interlock_classification"] == "known_unsupported"
-    assert "已确认不支持" in result.summary
+    assert "安全状态未知" in result.summary
     assert "互锁 0" not in result.summary
     step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
-    assert step.success is True
+    assert step.success is False
     assert step.raw == _KNOWN_UNSUPPORTED_INTERLOCK
 
 
