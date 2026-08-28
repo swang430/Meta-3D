@@ -71,6 +71,30 @@ def _find_model(body: dict, category_key: str, model_name: str) -> dict:
 
 
 class TestCatalogModelCapabilitiesField:
+    def test_registered_base_station_models_expose_public_adapter_manifests(
+        self, test_db
+    ):
+        with TestClient(app) as client:
+            response = client.get("/api/v1/instruments/catalog")
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        cmw = _find_model(body, "baseStation", "CMW500")
+        uxm = _find_model(body, "baseStation", "UXM 5G E7515B")
+        assert cmw["base_station_manifest"]["adapter_id"] == "cmw500"
+        assert cmw["base_station_manifest"]["profile_requirement"] == "required"
+        assert len(cmw["base_station_manifest"]["profile_fields"]) == 7
+        assert cmw["base_station_manifest"]["formal_gate"] == "connection_approval"
+        assert uxm["base_station_manifest"]["adapter_id"] == "uxm"
+        assert uxm["base_station_manifest"]["profile_requirement"] == "not_applicable"
+        assert uxm["base_station_manifest"]["profile_fields"] == []
+
+    def test_non_base_station_models_have_no_adapter_manifest(self, test_db):
+        with TestClient(app) as client:
+            response = client.get("/api/v1/instruments/catalog")
+        f64 = _find_model(response.json(), "channelEmulator", "PROPSIM F64")
+        assert f64["base_station_manifest"] is None
+
     def test_f64_exposes_both_ce_tokens(self, test_db):
         with TestClient(app) as client:
             r = client.get("/api/v1/instruments/catalog")

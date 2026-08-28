@@ -298,11 +298,16 @@ def test_freeze_rejects_stale_loaded_driver_after_locked_connection_endpoint_cha
 
 
 def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db):
-    _, _, _, lab, execution = _configured_execution(
+    category, _, _, lab, execution = _configured_execution(
         db,
         model_name="CMW500",
         params={"base_station_adapter_profile": _profile()},
     )
+    category.driver_mode = "mock"
+    bindings = [dict(binding) for binding in lab.instrument_bindings]
+    bindings[0]["driver_mode"] = "mock"
+    lab.instrument_bindings = bindings
+    db.commit()
     hal = SimpleNamespace(
         drivers={"baseStation": MockBaseStation("mock", {})}
     )
@@ -371,15 +376,39 @@ def test_non_authoritative_fake_driver_is_rejected(db):
         freeze_base_station_adapter_profile(db, hal, execution, lab)
 
 
-def test_connection_update_exposes_typed_adapter_profile_instead_of_free_json():
+def test_connection_update_defers_adapter_profile_validation_to_selected_manifest(db):
     update = FEConnectionUpdate(base_station_adapter_profile=_profile())
-    assert update.base_station_adapter_profile is not None
-    assert update.base_station_adapter_profile.adapter == "cmw500"
+    assert update.base_station_adapter_profile == _profile()
 
     invalid = _profile()
     invalid["lte_2x2_internal_route"].pop("tx2_converter")
-    with pytest.raises(ValidationError):
-        FEConnectionUpdate(base_station_adapter_profile=invalid)
+    request = FEConnectionUpdate(base_station_adapter_profile=invalid)
+    _configured_execution(db, model_name="CMW500", params={})
+    with pytest.raises(Exception) as exc_info:
+        update_instrument_category(
+            "baseStation",
+            UpdateInstrumentCategoryRequest(connection=request),
+            db,
+        )
+    assert getattr(exc_info.value, "status_code", None) == 422
+
+
+def test_uxm_manifest_rejects_cmw_profile_and_smuggled_profile_json(db):
+    _configured_execution(db, model_name="UXM 5G E7515B", params={})
+
+    for connection in (
+        FEConnectionUpdate(base_station_adapter_profile=_profile()),
+        FEConnectionUpdate(
+            connection_params={"base_station_adapter_profile": _profile()}
+        ),
+    ):
+        with pytest.raises(Exception) as exc_info:
+            update_instrument_category(
+                "baseStation",
+                UpdateInstrumentCategoryRequest(connection=connection),
+                db,
+            )
+        assert getattr(exc_info.value, "status_code", None) == 422
 
 
 def test_connection_update_persists_typed_profile_without_erasing_other_params(db):

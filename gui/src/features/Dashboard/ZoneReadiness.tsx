@@ -3,7 +3,7 @@
  *
  * Surfaces the commissioning precheck fail-loud gate信息 (P1-8 校准 /
  * P1-9 DUT-attach) to the first screen: a four-cell traffic light
- * (驱动链 / 活动 Lab / 校准证书 / DUT attach) plus a one-line总判
+ * (驱动链 / 活动 Lab / 校准证书 / DUT attach / BaseStation binding) plus a one-line总判
  * (能不能开测 + 阻塞原因), styled to match the commissioning precheck
  * FAIL voice.
  *
@@ -26,6 +26,10 @@ import {
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
 import { useOperationalLab } from '../OperationalLab'
+import {
+  projectBaseStationBindingTruth,
+  projectReadinessVerdict,
+} from './baseStationBindingTruth'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -134,6 +138,7 @@ function buildCells(report: HALReadinessResponse): Cell[] {
             : `全部 ${okCount} 个 ok`
 
   const cal = report.calibration
+  const baseStationBinding = projectBaseStationBindingTruth(report.base_station_binding)
   const calValue =
     cal.status === 'valid'
       ? typeof cal.days_remaining === 'number'
@@ -181,22 +186,14 @@ function buildCells(report: HALReadinessResponse): Cell[] {
       valueText: '未实现',
       detail: report.dut_attach.detail,
     },
+    {
+      key: 'base-station-binding',
+      title: '基站绑定',
+      light: baseStationBinding.light,
+      valueText: baseStationBinding.valueText,
+      detail: baseStationBinding.detail,
+    },
   ]
-}
-
-// 总判: 任一红 → 不可开测 + 原因; 否则可开测。
-// 文案风格跟 commissioning precheck FAIL 一致。DUT 灰色不阻断开测
-// (后端未实现感知，缺这一格不应误判为"不可开测")。
-function buildVerdict(cells: Cell[], available: boolean): { canStart: boolean; text: string } {
-  if (!available) {
-    return { canStart: false, text: '🔴 不可开测：HAL 未就绪' }
-  }
-  const blockers = cells.filter((c) => c.light === 'red')
-  if (blockers.length > 0) {
-    const reason = blockers.map((c) => `${c.title}（${c.valueText}）`).join('、')
-    return { canStart: false, text: `🔴 不可开测：${reason}` }
-  }
-  return { canStart: true, text: '✅ 可开测' }
 }
 
 // P1-11/P1-13: per-/24-subnet 可达性小节。三态诚实性: 未探测(probed=false,
@@ -273,6 +270,9 @@ export function ZoneReadiness() {
   // last successful data in cache. Publish only after the selected key is idle.
   const readiness =
     fetchStatus === 'idle' && !error && selectedLabProfileId ? data : undefined
+  const verdict = readiness
+    ? projectReadinessVerdict(buildCells(readiness), readiness.available)
+    : undefined
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -284,15 +284,13 @@ export function ZoneReadiness() {
               系统就绪
             </Text>
           </Group>
-          {readiness && (
+          {verdict && (
             <Badge
               size="lg"
-              color={
-                buildVerdict(buildCells(readiness), readiness.available).canStart ? 'green' : 'red'
-              }
+              color={LIGHT_COLOR[verdict.light]}
               variant="filled"
             >
-              {buildVerdict(buildCells(readiness), readiness.available).text}
+              {verdict.text}
             </Badge>
           )}
         </Group>
@@ -340,7 +338,7 @@ export function ZoneReadiness() {
         )}
 
         {readiness && (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
             {buildCells(readiness).map((cell) => (
               <Card key={cell.key} withBorder radius="sm" padding="sm">
                 <Stack gap={6}>

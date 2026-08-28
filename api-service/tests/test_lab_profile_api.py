@@ -7,6 +7,7 @@ preview before the operator hits Start. These tests cover both reads.
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +28,10 @@ from app.models.instrument import (
     InstrumentModel,
 )
 from app.models.switch_topology import SwitchTopology
+from app.models.test_plan import TestExecution
+from app.hal.cmw500_base_station import RealCmw500Driver
+from app.services import instrument_hal_service
+from app.services.base_station_adapter_profile import freeze_base_station_adapter_profile
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -190,7 +195,9 @@ class TestGetRFChains:
 
 
 class TestSyncInstrumentBinding:
-    def test_syncs_current_category_configuration_into_existing_lab(self, db, lab):
+    def test_syncs_current_category_configuration_into_existing_lab(
+        self, db, lab, monkeypatch
+    ):
         category = InstrumentCategory(
             category_key="baseStation",
             category_name="Base Station",
@@ -229,6 +236,15 @@ class TestSyncInstrumentBinding:
                 },
             },
         ))
+        driver = RealCmw500Driver(
+            "cmw",
+            {"endpoint": "TCPIP0::192.168.100.22::inst0::INSTR"},
+        )
+        hal = SimpleNamespace(
+            drivers={"baseStation": driver},
+            last_readiness_report=None,
+        )
+        monkeypatch.setattr(instrument_hal_service, "_hal_service", hal)
         lab.instrument_bindings = [
             {
                 "category_id": str(uuid.uuid4()),
@@ -252,19 +268,52 @@ class TestSyncInstrumentBinding:
         )
 
         assert response.status_code == 200, response.text
-        assert response.json() == {
+        body = response.json()
+        assert body["binding"] == {
             "category_id": str(category.id),
             "instrument_model_id": str(model.id),
             "connection_endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
             "driver_mode": "real",
             "role": "primary_baseStation",
         }
+        assert body["resolved"]["status"] == "configured"
+        assert body["resolved"]["adapter_id"] == "cmw500"
+        assert body["resolved"]["binding_digest"]
         db.refresh(lab)
         assert len(lab.instrument_bindings) == 2
         assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-me"
-        assert lab.instrument_bindings[1] == response.json()
+        assert lab.instrument_bindings[1] == body["binding"]
 
-    def test_rejects_cmw500_sync_without_internal_route_profile(self, db, lab):
+        preview = client.get(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/preview"
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["binding_digest"] == body["resolved"]["binding_digest"]
+
+        execution = TestExecution(status="pending", config={})
+        db.add(execution)
+        db.commit()
+        frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
+        assert frozen["binding_digest"] == body["resolved"]["binding_digest"]
+
+        readiness = client.get(
+            "/api/v1/instruments/hal/readiness",
+            params={"lab_profile_id": str(lab.id)},
+        )
+        assert readiness.status_code == 200, readiness.text
+        readiness_body = readiness.json()
+        assert (
+            readiness_body["base_station_binding"]["binding_digest"]
+            == body["resolved"]["binding_digest"]
+        )
+        assert (
+            readiness_body["cmw500_lte_2x2"]["binding_digest"]
+            == body["resolved"]["binding_digest"]
+        )
+
+    def test_rejects_cmw500_sync_without_internal_route_profile(
+        self, db, lab, monkeypatch
+    ):
         category = InstrumentCategory(
             category_key="baseStation",
             category_name="Base Station",
@@ -288,6 +337,18 @@ class TestSyncInstrumentBinding:
             endpoint="TCPIP0::192.168.100.22::inst0::INSTR",
             connection_params={"detected_test_app": "LTE_NR_IRAT"},
         ))
+        monkeypatch.setattr(
+            instrument_hal_service,
+            "_hal_service",
+            SimpleNamespace(
+                drivers={
+                    "baseStation": RealCmw500Driver(
+                        "cmw",
+                        {"endpoint": "TCPIP0::192.168.100.22::inst0::INSTR"},
+                    )
+                }
+            ),
+        )
         db.commit()
 
         response = client.put(
@@ -297,3 +358,5 @@ class TestSyncInstrumentBinding:
         assert response.status_code == 422
         assert "CMW500" in response.json()["detail"]
         assert "Route" in response.json()["detail"]
+        db.refresh(lab)
+        assert lab.instrument_bindings in (None, [])

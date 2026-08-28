@@ -2448,3 +2448,36 @@ def test_g21_probe_calibration_active_sites_consume_chamber_scope():
         "以下多暗室探头校准入口未显式消费 chamber_id，可能按全局 probe_id "
         "混入其他暗室或 legacy NULL：\n  " + "\n  ".join(missing)
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G22 BaseStation 注册与 GUI profile 必须由 manifest 驱动
+# ─────────────────────────────────────────────────────────────────────
+
+def test_g22_every_registered_base_station_driver_has_a_valid_manifest():
+    """P2-44：registry 中每个 BS model 都必须由同一 manifest 声明身份。"""
+    from app.services.instrument_hal_service import (
+        _real_driver_registry,
+        get_base_station_adapter_registration,
+    )
+
+    drivers = _real_driver_registry()["baseStation"]
+    assert drivers
+    adapter_ids = set()
+    for model_name, driver_class in drivers.items():
+        registration = get_base_station_adapter_registration(model_name)
+        assert registration.driver_class is driver_class
+        assert registration.manifest.model_name == model_name
+        assert registration.manifest.adapter_id == driver_class.adapter_id
+        assert registration.manifest.adapter_id not in adapter_ids
+        adapter_ids.add(registration.manifest.adapter_id)
+
+
+def test_g22_equipment_profile_ui_has_no_vendor_model_or_fixed_field_branch():
+    """P2-44：新增 adapter 不得再修改 App.tsx 的厂商分支或固定字段表。"""
+    source = _strip_ts_comments(
+        (_REPO_ROOT / "gui/src/App.tsx").read_text(encoding="utf-8")
+    )
+    assert not re.search(r"model\s*={2,3}\s*['\"](?:CMW500|UXM)[^'\"]*['\"]", source)
+    assert "CMW500_ROUTE_FIELDS" not in source
+    assert "cmw500_route" not in source

@@ -11,9 +11,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
 from app.services.instrument_hal_service import build_cmw500_lte_2x2_readiness
+from app.services.base_station_binding import build_base_station_binding_preview
 
 
 @pytest.fixture
@@ -36,6 +38,7 @@ def _configured(db, *, binding_endpoint: str = "192.0.2.10"):
     category = InstrumentCategory(
         category_key="baseStation",
         category_name="Base Station",
+        driver_mode="real",
     )
     db.add(category)
     db.flush()
@@ -51,7 +54,21 @@ def _configured(db, *, binding_endpoint: str = "192.0.2.10"):
     connection = InstrumentConnection(
         category_id=category.id,
         endpoint="192.0.2.10",
-        connection_params={},
+        connection_params={
+            "base_station_adapter_profile": {
+                "schema_version": 1,
+                "adapter": "cmw500",
+                "lte_2x2_internal_route": {
+                    "pcc_bb_board": "BB1",
+                    "rx_connector": "RF1C",
+                    "rx_converter": "RX1",
+                    "tx1_connector": "RF1C",
+                    "tx1_converter": "TX1",
+                    "tx2_connector": "RF2C",
+                    "tx2_converter": "TX2",
+                },
+            }
+        },
         cmw500_lte_2x2_formal_enabled=True,
         cmw500_lte_2x2_formal_updated_at=datetime(
             2026, 8, 26, 12, 0, tzinfo=timezone.utc
@@ -100,6 +117,12 @@ def test_readiness_uses_current_bound_connection_and_duplex_specific_options(db)
     assert readiness.fdd_ready is True
     assert readiness.tdd_ready is False
     assert readiness.status == "ready"
+    preview = build_base_station_binding_preview(
+        db,
+        SimpleNamespace(drivers={"baseStation": driver}),
+        lab,
+    )
+    assert readiness.binding_digest == preview.binding_digest
 
 
 def test_readiness_binding_drift_is_warning_not_another_connection_fallback(db):
@@ -112,9 +135,10 @@ def test_readiness_binding_drift_is_warning_not_another_connection_fallback(db):
     )
 
     assert readiness.status == "warning"
-    assert readiness.connection_id == str(connection.id)
+    assert readiness.connection_id is None
     assert readiness.fdd_ready is False
     assert "binding" in readiness.detail.lower()
+    assert readiness.binding_digest is None
 
 
 def test_readiness_rejects_loaded_driver_from_another_connection(db):
@@ -133,16 +157,23 @@ def test_readiness_rejects_loaded_driver_from_another_connection(db):
     )
 
     assert readiness.status == "warning"
-    assert readiness.connection_id == str(connection.id)
+    assert readiness.connection_id is None
     assert readiness.fdd_ready is False
     assert readiness.tdd_ready is False
     assert "connection" in readiness.detail.lower()
+    assert readiness.binding_digest is None
 
 
 def test_readiness_mock_is_diagnostic_and_never_formal_ready(db):
     from app.hal.base_station import MockBaseStation
 
     lab, connection, _driver = _configured(db)
+    category = db.query(InstrumentCategory).filter_by(category_key="baseStation").one()
+    category.driver_mode = "mock"
+    bindings = [dict(binding) for binding in lab.instrument_bindings]
+    bindings[0]["driver_mode"] = "mock"
+    lab.instrument_bindings = bindings
+    db.commit()
     mock = MockBaseStation("mock", {})
 
     readiness = build_cmw500_lte_2x2_readiness(
@@ -155,3 +186,25 @@ def test_readiness_mock_is_diagnostic_and_never_formal_ready(db):
     assert readiness.connection_id == str(connection.id)
     assert readiness.fdd_ready is False
     assert readiness.tdd_ready is False
+    assert readiness.binding_digest
+
+
+def test_uxm_binding_is_not_applicable_to_cmw_mirror_without_profile_requirement(db):
+    lab, connection, _driver = _configured(db)
+    category = db.query(InstrumentCategory).filter_by(category_key="baseStation").one()
+    model = db.query(InstrumentModel).filter_by(category_id=category.id).one()
+    model.vendor = "Keysight"
+    model.model = "UXM 5G E7515B"
+    connection.connection_params = None
+    db.commit()
+    driver = RealUxmDriver("uxm", {"ip_address": connection.endpoint})
+
+    readiness = build_cmw500_lte_2x2_readiness(
+        db,
+        lab_profile_id=lab.id,
+        hal=SimpleNamespace(drivers={"baseStation": driver}),
+    )
+
+    assert readiness.status == "not_applicable"
+    assert readiness.binding_digest
+    assert "profile" not in readiness.detail.lower()

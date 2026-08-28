@@ -59,6 +59,7 @@ import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
 import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { DashboardCockpit } from './features/Dashboard'
+import { formatBaseStationSyncTruth } from './features/Dashboard/baseStationBindingTruth'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
@@ -114,13 +115,11 @@ import type {
   UpdateInstrumentPayload,
 } from './types/api'
 import {
-  CMW500_ROUTE_EXAMPLES,
-  CMW500_ROUTE_FIELDS,
-  buildCmw500AdapterProfile,
-  emptyCmw500Route,
-  readCmw500Route,
-  type Cmw500RouteDraft,
-} from './types/cmwAdapterProfile'
+  buildBaseStationAdapterProfile,
+  emptyBaseStationProfileDraft,
+  readBaseStationProfileDraft,
+  type BaseStationProfileDraft,
+} from './types/baseStationManifest'
 
 const hexToRgba = (hex: string, alpha: number) => {
   const sanitized = hex.replace('#', '')
@@ -212,7 +211,7 @@ type EquipmentDraft = {
   controller: string
   notes: string
   connection_params?: string
-  cmw500_route?: Cmw500RouteDraft
+  base_station_profile?: BaseStationProfileDraft
 }
 
 type EquipmentFeedback = {
@@ -1731,14 +1730,23 @@ function EquipmentManager() {
       const next: Record<string, EquipmentDraft> = {}
       categories.forEach((category) => {
         const previous = prev[category.key]
+        const selectedModel = category.models.find(
+          (model) => model.id === (previous?.modelId ?? category.selectedModelId),
+        )
+        const manifest = selectedModel?.base_station_manifest
         next[category.key] = {
           modelId: previous?.modelId ?? (category.selectedModelId ?? ''),
           endpoint: previous?.endpoint ?? (category.connection.endpoint ?? ''),
           controller: previous?.controller ?? (category.connection.controller ?? ''),
           notes: previous?.notes ?? (category.connection.notes ?? ''),
           connection_params: previous?.connection_params ?? (category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : ''),
-          cmw500_route: previous?.cmw500_route ?? readCmw500Route(
-            category.connection.connection_params?.base_station_adapter_profile,
+          base_station_profile: previous?.base_station_profile ?? (
+            manifest
+              ? readBaseStationProfileDraft(
+                  manifest,
+                  category.connection.connection_params?.base_station_adapter_profile,
+                )
+              : undefined
           ),
         }
       })
@@ -1795,9 +1803,14 @@ function EquipmentManager() {
           }
         },
       )
-      setDrafts((prev) => ({
-        ...prev,
-        [updatedCategory.key]: {
+      setDrafts((prev) => {
+        const selectedModel = updatedCategory.models.find(
+          (model) => model.id === updatedCategory.selectedModelId,
+        )
+        const manifest = selectedModel?.base_station_manifest
+        return {
+          ...prev,
+          [updatedCategory.key]: {
           modelId: updatedCategory.selectedModelId ?? '',
           endpoint: updatedCategory.connection.endpoint ?? '',
           controller: updatedCategory.connection.controller ?? '',
@@ -1805,11 +1818,15 @@ function EquipmentManager() {
           connection_params: updatedCategory.connection.connection_params
             ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
             : '',
-          cmw500_route: readCmw500Route(
-            updatedCategory.connection.connection_params?.base_station_adapter_profile,
-          ),
-        },
-      }))
+            base_station_profile: manifest
+              ? readBaseStationProfileDraft(
+                  manifest,
+                  updatedCategory.connection.connection_params?.base_station_adapter_profile,
+                )
+              : undefined,
+          },
+        }
+      })
       const needsHALReload =
         updatedCategory.key === 'baseStation' || updatedCategory.key === 'channelEmulator'
       showFeedback(
@@ -1879,14 +1896,16 @@ function EquipmentManager() {
       }
       return syncCurrentInstrumentBinding(selectedLabProfileId, categoryKey)
     },
-    onSuccess: (_binding, categoryKey) => {
+    onSuccess: (syncResult, categoryKey) => {
       queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
       queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       showFeedback(
         categoryKey,
         'success',
-        `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
+        categoryKey === 'baseStation'
+          ? `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}：${formatBaseStationSyncTruth(syncResult.resolved)}`
+          : `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
       )
     },
     onError: (error: unknown, categoryKey) => {
@@ -1903,14 +1922,38 @@ function EquipmentManager() {
       setDrafts((prev) => {
         const current =
           prev[categoryKey] ?? ({ modelId: '', endpoint: '', controller: '', notes: '' } as EquipmentDraft)
+        const category = categories.find((item) => item.key === categoryKey)
+        const manifest = category?.models.find(
+          (model) => model.id === modelId,
+        )?.base_station_manifest
         return {
           ...prev,
-          [categoryKey]: { ...current, modelId },
+          [categoryKey]: {
+            ...current,
+            modelId,
+            base_station_profile: manifest
+              ? readBaseStationProfileDraft(
+                  manifest,
+                  category?.connection.connection_params?.base_station_adapter_profile,
+                )
+              : undefined,
+          },
         }
       })
-      instrumentMutation.mutate({ categoryKey, payload: { modelId } })
+      const selectedManifest = categories.find(
+        (item) => item.key === categoryKey,
+      )?.models.find((model) => model.id === modelId)?.base_station_manifest
+      instrumentMutation.mutate({
+        categoryKey,
+        payload: {
+          modelId,
+          ...(selectedManifest?.profile_requirement === 'not_applicable'
+            ? { connection: { base_station_adapter_profile: null } }
+            : {}),
+        },
+      })
     },
-    [instrumentMutation],
+    [categories, instrumentMutation],
   )
 
   const handleFieldChange = useCallback(
@@ -1934,10 +1977,16 @@ function EquipmentManager() {
       const draft = drafts[categoryKey]
       if (!draft) return
       
-      let parsedParams = undefined
+      let parsedParams: Record<string, unknown> | undefined
       if (draft.connection_params) {
         try {
           parsedParams = JSON.parse(draft.connection_params)
+          if (
+            parsedParams === null
+            || typeof parsedParams !== 'object'
+            || Array.isArray(parsedParams)
+          ) throw new Error('connection_params must be an object')
+          delete parsedParams.base_station_adapter_profile
         } catch (e) {
           showFeedback(categoryKey, 'error', 'JSON 配置格式无效')
           return
@@ -1946,17 +1995,19 @@ function EquipmentManager() {
 
       const category = categories.find((item) => item.key === categoryKey)
       const selectedModel = category?.models.find((model) => model.id === draft.modelId)
-      let cmw500Profile
-      if (categoryKey === 'baseStation' && selectedModel?.model === 'CMW500') {
+      const manifest = selectedModel?.base_station_manifest
+      let baseStationProfile: Record<string, unknown> | null | undefined
+      if (categoryKey === 'baseStation' && manifest) {
         try {
-          cmw500Profile = buildCmw500AdapterProfile(
-            draft.cmw500_route ?? emptyCmw500Route(),
+          baseStationProfile = buildBaseStationAdapterProfile(
+            manifest,
+            draft.base_station_profile ?? emptyBaseStationProfileDraft(manifest),
           )
         } catch (error) {
           showFeedback(
             categoryKey,
             'error',
-            error instanceof Error ? error.message : 'CMW500 内部 route 配置无效',
+            error instanceof Error ? error.message : 'BaseStation adapter profile 配置无效',
           )
           return
         }
@@ -1970,8 +2021,8 @@ function EquipmentManager() {
             controller: draft.controller || undefined,
             notes: draft.notes || undefined,
             ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-            ...(cmw500Profile !== undefined
-              ? { base_station_adapter_profile: cmw500Profile }
+            ...(baseStationProfile !== undefined
+              ? { base_station_adapter_profile: baseStationProfile }
               : {}),
           },
         },
@@ -2315,61 +2366,81 @@ function EquipmentManager() {
                   <TopologyProfileCard categoryKey={category.key} />
                 )}
 
-                {category.key === 'baseStation' && drawerSelectedModel?.model === 'CMW500' && (
+                {category.key === 'baseStation'
+                  && drawerSelectedModel?.base_station_manifest
+                  && (
+                    drawerSelectedModel.base_station_manifest.profile_requirement === 'required'
+                    || drawerSelectedModel.base_station_manifest.formal_gate === 'connection_approval'
+                  )
+                  && (
                   <Card withBorder padding="md" radius="md">
                     <Stack gap="sm">
                       <Stack gap={2}>
-                        <Text fw={600} size="sm">CMW500 LTE 2×2 内部 Route</Text>
+                        <Text fw={600} size="sm">
+                          {drawerSelectedModel.base_station_manifest.vendor}{' '}
+                          {drawerSelectedModel.base_station_manifest.model_name} Adapter Profile
+                        </Text>
                         <Text size="xs" c="dimmed">
-                          填写 CMW500 手册枚举（不是面板数字序号），例如 SUA1 / RF3C / RX3 / RF1C / TX1 / RF2C / TX2。
-                          仅配置内部 BB / connector / converter，不包含外部射频开关或功率补偿。
+                          仅填写该 adapter manifest 声明的持久化字段；仪器命令与正式资格仍由后端权威门判定。
                         </Text>
                       </Stack>
-                      <Switch
-                        label="CMW500 LTE 2×2 正式能力"
-                        description={
-                          category.connection.cmw500_lte_2x2_formal_updated_at
-                            ? `默认关闭；最后服务器更新 ${category.connection.cmw500_lte_2x2_formal_updated_at}。变更仅影响后续执行。`
-                            : '默认关闭；只能通过专用授权接口启用，不读 connection_params。'
-                        }
-                        checked={category.connection.cmw500_lte_2x2_formal_enabled}
-                        onChange={(event) => {
-                          const connectionId = category.connection.id
-                          if (!connectionId) return
-                          cmwFormalCapabilityMutation.mutate({
-                            connectionId,
-                            enabled: event.currentTarget.checked,
-                          })
-                        }}
-                        disabled={
-                          !category.connection.id
-                          || cmwFormalCapabilityMutation.isPending
-                        }
-                        color="yellow"
-                      />
-                      <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                        {CMW500_ROUTE_FIELDS.map((field) => (
+                      {drawerSelectedModel.base_station_manifest.formal_gate === 'connection_approval' && (
+                        <Switch
+                          label={`${drawerSelectedModel.base_station_manifest.model_name} 正式能力`}
+                          description={
+                            category.connection.cmw500_lte_2x2_formal_updated_at
+                              ? `默认关闭；最后服务器更新 ${category.connection.cmw500_lte_2x2_formal_updated_at}。变更仅影响后续执行。`
+                              : '默认关闭；只能通过专用授权接口启用，不读 connection_params。'
+                          }
+                          checked={category.connection.cmw500_lte_2x2_formal_enabled}
+                          onChange={(event) => {
+                            const connectionId = category.connection.id
+                            if (!connectionId) return
+                            cmwFormalCapabilityMutation.mutate({
+                              connectionId,
+                              enabled: event.currentTarget.checked,
+                            })
+                          }}
+                          disabled={
+                            !category.connection.id
+                            || cmwFormalCapabilityMutation.isPending
+                          }
+                          color="yellow"
+                        />
+                      )}
+                      {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (
+                        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                        {drawerSelectedModel.base_station_manifest.profile_fields.map((field) => (
                           <TextInput
-                            key={field}
-                            label={field}
-                            placeholder={CMW500_ROUTE_EXAMPLES[field]}
-                            value={(draft.cmw500_route ?? emptyCmw500Route())[field]}
+                            key={field.path}
+                            label={field.label}
+                            description={field.description}
+                            required={field.required}
+                            placeholder={field.placeholder}
+                            value={(draft.base_station_profile
+                              ?? emptyBaseStationProfileDraft(
+                                drawerSelectedModel.base_station_manifest!,
+                              ))[field.path] ?? ''}
                             onChange={(event) => {
                               const value = event.currentTarget.value
                               setDrafts((prev) => ({
                                 ...prev,
                                 [category.key]: {
                                   ...prev[category.key],
-                                  cmw500_route: {
-                                    ...(prev[category.key]?.cmw500_route ?? emptyCmw500Route()),
-                                    [field]: value,
+                                  base_station_profile: {
+                                    ...(prev[category.key]?.base_station_profile
+                                      ?? emptyBaseStationProfileDraft(
+                                        drawerSelectedModel.base_station_manifest!,
+                                      )),
+                                    [field.path]: value,
                                   },
                                 },
                               }))
                             }}
                           />
                         ))}
-                      </SimpleGrid>
+                        </SimpleGrid>
+                      )}
                     </Stack>
                   </Card>
                 )}

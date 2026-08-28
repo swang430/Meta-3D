@@ -1,5 +1,7 @@
 export type MetricTrend = '↑' | '↓' | '→' | string
 
+import type { BaseStationAdapterManifest } from './baseStationManifest'
+
 export type MetricItem = {
   label: string
   value: string
@@ -64,6 +66,7 @@ export type InstrumentModel = {
   bandwidth?: string | null
   channels?: string | null
   status: InstrumentStatus
+  base_station_manifest: BaseStationAdapterManifest | null
 }
 
 export type InstrumentConnection = {
@@ -104,7 +107,7 @@ export type InstrumentConnectionUpdate = {
   controller?: string | null
   notes?: string | null
   connection_params?: Record<string, unknown> | null
-  base_station_adapter_profile?: BaseStationAdapterProfile | null
+  base_station_adapter_profile?: Record<string, unknown> | null
 }
 
 export type InstrumentCategory = {
@@ -254,6 +257,33 @@ export type Cmw500Lte2x2Readiness = {
   fdd_ready: boolean
   tdd_ready: boolean
   detail: string
+  binding_digest: string | null
+}
+
+export type BaseStationBindingPreviewResponse = {
+  status: 'configured' | 'not_applicable' | 'diagnostic_unbound' | 'invalid'
+  binding_digest: string | null
+  execution_mode: 'real' | 'simulated' | null
+  adapter_id: string | null
+  model_name: string | null
+  category_id: string | null
+  instrument_model_id: string | null
+  instrument_connection_id: string | null
+  lab_profile_id: string
+  resolved_binding: Record<string, unknown> | null
+  runtime_driver: Record<string, unknown> | null
+  detail: string
+}
+
+export type InstrumentBindingSyncResponse = {
+  binding: {
+    category_id: string
+    instrument_model_id?: string | null
+    connection_endpoint: string
+    driver_mode?: 'auto' | 'mock' | 'real'
+    role?: string | null
+  }
+  resolved?: BaseStationBindingPreviewResponse | null
 }
 
 export type HALReadinessResponse = {
@@ -262,6 +292,7 @@ export type HALReadinessResponse = {
   lab_profile: ReadinessLabProfile
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
+  base_station_binding: BaseStationBindingPreviewResponse | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string
   subnets: SubnetReachability[]

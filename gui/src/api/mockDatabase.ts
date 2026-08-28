@@ -81,6 +81,20 @@ const readinessSnapshot: HALReadinessResponse = {
     detail:
       'DUT attach sensing not implemented in this build (no probe-sensing / RFID / session table yet — future P3 item)',
   },
+  base_station_binding: {
+    status: 'diagnostic_unbound',
+    binding_digest: null,
+    execution_mode: 'simulated',
+    adapter_id: 'uxm',
+    model_name: 'UXM 5G E7515B',
+    category_id: null,
+    instrument_model_id: null,
+    instrument_connection_id: null,
+    lab_profile_id: 'lab-001',
+    resolved_binding: null,
+    runtime_driver: { simulated: true },
+    detail: 'Demo fixture only; simulated binding is not formal evidence.',
+  },
   // The demo fixture uses UXM, so CMW readiness is explicitly not present
   // as a value while the serialized response field itself remains required.
   cmw500_lte_2x2: null,
@@ -970,6 +984,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         bandwidth: '400 MHz',
         channels: '64 TRX',
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'propsim-f64',
@@ -981,6 +996,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         bandwidth: '400 MHz',
         channels: '64 TRX',
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'spirent-vertex',
@@ -992,6 +1008,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         bandwidth: '500 MHz',
         channels: '64 TRX',
         status: 'reserved',
+        base_station_manifest: null,
       },
     ],
   },
@@ -1013,6 +1030,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ["LAN/SCPI", "GPIO"],
         capabilities: ["8进32出", "插损补偿", "相位校正"],
         status: "available",
+        base_station_manifest: null,
       }
     ],
   },
@@ -1034,6 +1052,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI', 'REST'],
         capabilities: ['NR SA/NSA', 'C-V2X PC5', 'VoNR'],
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'keysight-uxm',
@@ -1043,6 +1062,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI', 'REST'],
         capabilities: ['MIMO/CA', '高阶调制', 'NB-IoT'],
         status: 'maintenance',
+        base_station_manifest: null,
       },
       {
         id: 'anritsu-md8475',
@@ -1052,6 +1072,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI'],
         capabilities: ['LTE/LTE-A', 'WCDMA', 'C-V2X PC5'],
         status: 'available',
+        base_station_manifest: null,
       },
     ],
   },
@@ -1073,6 +1094,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI', 'USB'],
         capabilities: ['时域转换', '脉冲调制', '宽带S参数'],
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'rs-zna43',
@@ -1082,6 +1104,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI', 'GPIB'],
         capabilities: ['四端口', '相位同步', '高动态范围'],
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'copper-mtn-6080',
@@ -1091,6 +1114,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['USB', 'LAN'],
         capabilities: ['2端口', '便携式', '脚本自动化'],
         status: 'offline',
+        base_station_manifest: null,
       },
     ],
   },
@@ -1112,6 +1136,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN/SCPI', 'USB'],
         capabilities: ['ACLR', 'EVM', '多信号存储'],
         status: 'available',
+        base_station_manifest: null,
       },
       {
         id: 'tek-rsa7100',
@@ -1121,6 +1146,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['LAN', 'USB3.0'],
         capabilities: ['实时频谱', '长时捕获', 'IQ导出'],
         status: 'reserved',
+        base_station_manifest: null,
       },
       {
         id: 'rsa-306',
@@ -1130,6 +1156,7 @@ let instrumentCatalog: InstrumentCategory[] = [
         interfaces: ['USB3.0'],
         capabilities: ['便携式', '实时DPX', 'SignalVu-PC'],
         status: 'available',
+        base_station_manifest: null,
       },
     ],
   },

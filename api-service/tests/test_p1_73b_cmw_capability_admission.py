@@ -169,6 +169,7 @@ def test_generic_connection_payload_cannot_accept_or_smuggle_formal_enablement(d
 
 def test_execution_freezes_approval_and_later_toggle_does_not_rewrite_it(db):
     category, model, connection = _configured(db)
+    category.driver_mode = "real"
     connection.cmw500_lte_2x2_formal_enabled = True
     connection.cmw500_lte_2x2_formal_updated_at = datetime(2026, 8, 26, 8, 0, 0)
     lab = LabProfile(

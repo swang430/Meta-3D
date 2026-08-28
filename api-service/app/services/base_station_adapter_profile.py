@@ -8,19 +8,13 @@ from typing import Any
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_adapter_profile import (
-    BaseStationAdapterProfile,
     BaseStationAdapterProfileResolution,
-)
-from app.models.instrument import (
-    InstrumentCategory,
-    InstrumentConnection,
-    InstrumentModel,
 )
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestExecution
-from app.services.instrument_hal_service import get_real_driver_class, is_mock_driver
+from app.services.base_station_binding import resolve_base_station_binding
+from app.services.instrument_hal_service import is_mock_driver
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
@@ -44,25 +38,6 @@ def _driver_connection_identity(driver) -> dict[str, Any]:
     }
 
 
-def _locked_connection_identity(connection: InstrumentConnection) -> dict[str, Any]:
-    """Resolve the transport identity from the locked database truth."""
-
-    config = {
-        "endpoint": connection.endpoint,
-        "ip": connection.controller_ip,
-        "port": connection.port,
-        "protocol": connection.protocol,
-    }
-    if isinstance(connection.connection_params, dict):
-        config.update(connection.connection_params)
-    host, port, resource, error = resolve_configured_tcpip_connection(config)
-    if error:
-        raise ValueError(f"selected baseStation connection is invalid: {error}")
-    if not host:
-        raise ValueError("selected baseStation connection has no transport host")
-    return {"host": host, "port": port, "resource": resource}
-
-
 def _canonical_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -71,21 +46,6 @@ def _canonical_digest(payload: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _single_base_station_binding(selected_lab_profile, category_id: str) -> dict[str, Any]:
-    bindings = selected_lab_profile.instrument_bindings
-    if not isinstance(bindings, list):
-        raise ValueError("LabProfile instrument_bindings must be a list")
-    matches = [
-        binding
-        for binding in bindings
-        if isinstance(binding, dict)
-        and str(binding.get("category_id")) == category_id
-    ]
-    if len(matches) != 1:
-        raise ValueError("LabProfile must contain exactly one baseStation binding")
-    return matches[0]
 
 
 def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> str | None:
@@ -148,139 +108,45 @@ def freeze_base_station_adapter_profile(
         if error:
             raise ValueError(error)
         return existing
-
-    category = (
-        db.query(InstrumentCategory)
-        .filter(InstrumentCategory.category_key == "baseStation")
-        .with_for_update()
-        .one_or_none()
+    resolved = resolve_base_station_binding(
+        db,
+        hal,
+        selected_lab_profile,
+        lock=True,
     )
-    if category is None:
-        raise ValueError("baseStation category is not configured")
-
-    binding = _single_base_station_binding(selected_lab_profile, str(category.id))
-    binding_model_id = binding.get("instrument_model_id")
-    selected_model_id = category.selected_model_id
-    loaded_driver = _loaded_base_station(hal)
-    if loaded_driver is None:
-        raise ValueError("loaded driver is missing")
-    simulated = is_mock_driver(loaded_driver)
-
-    if (binding_model_id is None) != (selected_model_id is None):
-        raise ValueError("baseStation binding and selected_model_id must both be configured")
-    if binding_model_id is None and selected_model_id is None:
-        if not simulated:
-            raise ValueError("unbound baseStation diagnostics require the authoritative mock")
-        resolution = BaseStationAdapterProfileResolution(
-            schema_version=1,
-            adapter=None,
-            status="diagnostic_unbound",
-            execution_mode="simulated",
-            profile=None,
-        )
-        identity = {
+    adapter = resolved.manifest.adapter_id if resolved.manifest is not None else None
+    resolution = BaseStationAdapterProfileResolution.model_validate(
+        {
             "schema_version": 1,
-            "resolution": resolution.model_dump(mode="json"),
-            "category_id": str(category.id),
-            "instrument_model_id": None,
-            "instrument_connection_id": None,
-            "lab_profile_id": str(selected_lab_profile.id),
-            "expected_driver_module": None,
-            "expected_driver_name": None,
+            "adapter": adapter,
+            "status": resolved.status,
+            "execution_mode": resolved.execution_mode,
+            "profile": resolved.profile,
         }
-        frozen = {**identity, "digest": _canonical_digest(identity)}
-        execution.config = {**execution_config, FREEZE_CONFIG_KEY: frozen}
-        flag_modified(execution, "config")
-        db.flush()
-        return frozen
-    if str(binding_model_id) != str(selected_model_id):
-        raise ValueError("baseStation binding does not match selected_model_id")
-
-    model = (
-        db.query(InstrumentModel)
-        .filter(
-            InstrumentModel.id == selected_model_id,
-            InstrumentModel.category_id == category.id,
-        )
-        .one_or_none()
     )
-    if model is None:
-        raise ValueError("selected baseStation model is missing from the registry")
-    connection = (
-        db.query(InstrumentConnection)
-        .filter(InstrumentConnection.category_id == category.id)
-        .with_for_update()
-        .one_or_none()
-    )
-    if connection is None:
-        raise ValueError("selected baseStation connection is missing")
-    binding_endpoint = binding.get("connection_endpoint")
-    if (
-        not isinstance(binding_endpoint, str)
-        or binding_endpoint.strip() != (connection.endpoint or "").strip()
-    ):
-        raise ValueError(
-            "LabProfile baseStation binding connection endpoint does not match "
-            "selected connection"
-        )
-
-    expected_class = get_real_driver_class("baseStation", model.model)
-    if expected_class is None:
-        raise ValueError("selected baseStation model has no registered real driver")
-    adapter = getattr(expected_class, "adapter_id", None)
-    if adapter not in {"uxm", "cmw500"}:
-        raise ValueError("selected baseStation registry class has no valid adapter identity")
-
-    if not simulated and type(loaded_driver) is not expected_class:
-        raise ValueError("loaded driver does not match selected registry class")
-
-    if adapter == "cmw500":
-        params = connection.connection_params
-        if not isinstance(params, dict):
-            raise ValueError("CMW500 connection_params are missing")
-        raw_profile = params.get("base_station_adapter_profile")
-        if raw_profile is None:
-            raise ValueError(
-                "CMW500 内部 Route 未配置：请在仪器资源配置中完整填写并保存七个字段"
-            )
-        profile = BaseStationAdapterProfile.model_validate(raw_profile)
-        resolution = BaseStationAdapterProfileResolution(
-            schema_version=1,
-            adapter="cmw500",
-            status="configured",
-            execution_mode="simulated" if simulated else "real",
-            profile=profile,
-        )
-    else:
-        resolution = BaseStationAdapterProfileResolution(
-            schema_version=1,
-            adapter="uxm",
-            status="not_applicable",
-            execution_mode="simulated" if simulated else "real",
-            profile=None,
-        )
-
+    stable = resolved.stable_projection()
     identity = {
         "schema_version": 1,
         "resolution": resolution.model_dump(mode="json"),
-        "category_id": str(category.id),
-        "instrument_model_id": str(model.id),
-        "instrument_connection_id": str(connection.id),
-        "lab_profile_id": str(selected_lab_profile.id),
-        "expected_driver_module": expected_class.__module__,
-        "expected_driver_name": expected_class.__name__,
+        "category_id": resolved.category_id,
+        "instrument_model_id": resolved.instrument_model_id,
+        "instrument_connection_id": resolved.instrument_connection_id,
+        "lab_profile_id": resolved.lab_profile_id,
+        "expected_driver_module": resolved.expected_driver_module,
+        "expected_driver_name": resolved.expected_driver_name,
         "expected_driver_connection": (
-            None if simulated else _locked_connection_identity(connection)
+            None
+            if resolved.execution_mode == "simulated"
+            or resolved.expected_transport is None
+            else resolved.expected_transport.model_dump(mode="json")
         ),
+        "binding_digest": resolved.binding_digest,
+        "resolved_binding": stable,
     }
-    if adapter == "cmw500":
-        updated_at = connection.cmw500_lte_2x2_formal_updated_at
-        identity[CMW_FORMAL_CAPABILITY_KEY] = {
-            "schema_version": 1,
-            "instrument_connection_id": str(connection.id),
-            "enabled": connection.cmw500_lte_2x2_formal_enabled is True,
-            "updated_at": updated_at.isoformat() if updated_at is not None else None,
-        }
+    if resolved.formal_capability is not None:
+        identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(
+            mode="json"
+        )
     frozen = {**identity, "digest": _canonical_digest(identity)}
     error = validate_frozen_base_station_before_remote(hal, frozen)
     if error:
@@ -331,7 +197,6 @@ def freeze_execution_base_station_adapter_profile(db, hal, execution, test_case)
     selected_lab = (
         db.query(LabProfile)
         .filter(LabProfile.id == lab_profile_id)
-        .with_for_update()
         .one_or_none()
     )
     if selected_lab is None:

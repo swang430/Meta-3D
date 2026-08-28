@@ -14,7 +14,7 @@ from app.hal.cmw500_command_profile import normalize_cmw_route_token
 class Cmw500Lte2x2InternalRoute(BaseModel):
     """Exact seven-field internal route required by the LTE 2x2 adapter."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     pcc_bb_board: str
     rx_connector: str
@@ -41,7 +41,7 @@ class Cmw500Lte2x2InternalRoute(BaseModel):
 class BaseStationAdapterProfile(BaseModel):
     """Persisted CMW500 adapter profile stored on InstrumentConnection."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1]
     adapter: Literal["cmw500"]
