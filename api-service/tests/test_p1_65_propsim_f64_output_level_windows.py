@@ -52,15 +52,30 @@ class MockChannelEmulator:
 
 
 def _base_replies(state="STOPPED", ports=(1, 2)):
+    ports = tuple(ports)
     replies = {
         "*IDN?": IDN,
         "SYSTem:INFO?": SYS_INFO,
         "DIAG:SIMU:STATE?": state,
+        "DIAG:SIMU:MODEL:INFO?": f"2,{2 * len(ports)},{len(ports)}",
+        "GROUP:GET?": "1",
+        "GROUP:OUTPUTS:GET? 1": ",".join(str(port) for port in ports),
     }
     for n in ports:
         replies[f"OUTPut:LEVel:AMPlitude:LIMits? {n}"] = "-68.8401,-23.8401"
         replies[f"OUTPut:LEVel:AMPlitude:CH? {n}"] = "-40"
     return replies
+
+
+def _with_live_topology(replies, *, ports=(1, 2), model_outputs=None):
+    """加入当前仿真的手册拓扑回读；不借驱动缓存声明活动口。"""
+    out = dict(replies)
+    live_ports = list(ports)
+    output_count = len(live_ports) if model_outputs is None else model_outputs
+    out["DIAG:SIMU:MODEL:INFO?"] = f"2,{2 * output_count},{output_count}"
+    out["GROUP:GET?"] = "1"
+    out["GROUP:OUTPUTS:GET? 1"] = ",".join(str(port) for port in live_ports)
+    return out
 
 
 def _run(ce, params=None):
@@ -94,10 +109,9 @@ def test_mock_driver_is_refused():
     assert "mock" in result.summary
 
 
-def test_metadata_declares_channel_emulator_and_outputs_param():
+def test_metadata_declares_channel_emulator_without_manual_output_override():
     assert seq.metadata.required_categories == ["channelEmulator"]
-    names = {p["name"] for p in seq.metadata.params_schema}
-    assert "outputs" in names
+    assert seq.metadata.params_schema == []
     assert seq.metadata.safe_during_test is False
 
 
@@ -112,7 +126,7 @@ def test_all_ports_in_window_is_success_and_read_only():
     assert result.extra["ports"]["1"] == {
         "lower": -68.8401, "higher": -23.8401, "current": -40.0, "in_window": True,
     }
-    assert result.extra["port_source"] == "driver_active_output_ports"
+    assert result.extra["port_source"] == "live_group_output_union"
     _assert_read_only(ce)
     # 逐口两条查询都发了，且拼法是手册 §20.4.5.4/5 的（CH 后直接 ?，不带 GET）
     assert "OUTPut:LEVel:AMPlitude:LIMits? 1" in ce.queries
@@ -202,28 +216,107 @@ def test_query_timeout_is_unknown_then_three_in_a_row_aborts():
 
 # ── 门：口集来源 ─────────────────────────────────────────────────────────────
 
-def test_explicit_outputs_param_overrides_driver_ports():
-    replies = _base_replies(ports=(3, 7))
+def test_cold_cache_uses_live_group_output_union_not_system_channel_count():
+    """现场故障：缓存为空时不得把 SYSTem:INFO? 的 32 个衰落通道当 32 个输出口。"""
+    replies = _with_live_topology(_base_replies(ports=(1, 2)), ports=(1, 2))
+    replies["SYSTem:INFO?"] = "PROPSIM F64,32,RF,v1.0,16,Band: 450MHz - 3000MHz"
+    ce = _ScriptedCe(replies)  # 冷缓存：无 _active_output_ports
+
+    result = _run(ce)
+
+    assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["port_source"] == "live_group_output_union"
+    assert sorted(int(key) for key in result.extra["ports"]) == [1, 2]
+    assert "OUTPut:LEVel:AMPlitude:LIMits? 3" not in ce.queries
+
+
+def test_stale_driver_cache_cannot_override_live_group_output_union():
+    """前面板换场景后旧 32 口缓存不得覆盖本次实时读到的 2 个活动口。"""
+    replies = _with_live_topology(_base_replies(ports=(2, 4)), ports=(2, 4))
+    ce = _ScriptedCe(replies, active_outputs=list(range(1, 33)))
+
+    result = _run(ce)
+
+    assert result.extra["verdict"] == "SUCCESS"
+    assert sorted(int(key) for key in result.extra["ports"]) == [2, 4]
+    assert not [
+        query for query in ce.queries
+        if query.startswith("OUTPut:LEVel") and query.endswith(" 1")
+    ]
+
+
+def test_explicit_outputs_param_cannot_narrow_live_activity_truth():
+    """人工口集不能跳过真实活动口后给出 SUCCESS。"""
+    replies = _with_live_topology(_base_replies(ports=(1, 2)), ports=(1, 2))
     ce = _ScriptedCe(replies, active_outputs=[1, 2])
-    result = _run(ce, {"outputs": "3, 7"})
-    assert result.extra["port_source"] == "param"
-    assert sorted(int(k) for k in result.extra["ports"]) == [3, 7]
-    assert "OUTPut:LEVel:AMPlitude:LIMits? 1" not in ce.queries
+
+    result = _run(ce, {"outputs": "1"})
+
+    assert result.extra["verdict"] == "ABORTED"
+    assert not [query for query in ce.queries if query.startswith("OUTPut:LEVel")]
 
 
-def test_fallback_to_syst_info_channel_count_is_labelled():
-    """驱动没有回读口集时退到 SYSTem:INFO? 第 2 字段，且 extra 如实标注来源
-    （那是整机衰落通道数，不是输出口数 —— 驱动注释明说两者单位不同）。"""
+def test_missing_live_topology_does_not_fallback_to_system_channel_count():
+    """实时拓扑缺失时不得退到 SYSTem:INFO? 的整机衰落通道数。"""
     replies = _base_replies(ports=(1, 2, 3))
     replies["SYSTem:INFO?"] = "PROPSIM F64,3,RF,v1.0,16,Band: 450MHz - 3000MHz,Main license"
-    ce = _ScriptedCe(replies)  # 无 _active_output_ports
+    replies.pop("DIAG:SIMU:MODEL:INFO?")
+    replies.pop("GROUP:GET?")
+    replies.pop("GROUP:OUTPUTS:GET? 1")
+    ce = _ScriptedCe(replies)
     result = _run(ce)
-    assert result.extra["port_source"] == "syst_info_channel_count"
-    assert sorted(int(k) for k in result.extra["ports"]) == [1, 2, 3]
+    assert result.extra["port_source"] is None
+    assert result.extra["ports"] == {}
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert not [query for query in ce.queries if query.startswith("OUTPut:LEVel")]
+
+
+def test_model_output_count_mismatch_is_visible_and_sends_no_level_queries():
+    """MODEL 数量与 group 并集打架时，必须有显式失败 step，不能只在摘要里悄悄降级。"""
+    replies = _with_live_topology(
+        _base_replies(ports=(2, 4)),
+        ports=(2, 4),
+        model_outputs=3,
+    )
+    ce = _ScriptedCe(replies)
+
+    result = _run(ce)
+
+    assert result.extra["verdict"] == "UNDETERMINED"
+    assert not [query for query in ce.queries if query.startswith("OUTPut:LEVel")]
+    cross_checks = [step for step in result.steps if step.label == "活动输出集合交叉核对"]
+    assert len(cross_checks) == 1
+    assert cross_checks[0].success is False
+    assert "outputs=3" in cross_checks[0].detail
+
+
+def test_success_discloses_that_non_active_hardware_ports_were_not_probed():
+    replies = _with_live_topology(_base_replies(ports=(2, 4)), ports=(2, 4))
+    ce = _ScriptedCe(replies, active_outputs=list(range(1, 33)))
+
+    result = _run(ce)
+
     assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["active_output_ports"] == [2, 4]
+    assert "未进入活动集合的硬件口未探测、不影响本次判定" in result.summary
 
 
-def test_invalid_outputs_param_is_aborted_without_scpi_to_ports():
+def test_non_contiguous_live_output_numbers_are_queried_exactly():
+    replies = _with_live_topology(_base_replies(ports=(2, 7)), ports=(2, 7))
+    ce = _ScriptedCe(replies)
+
+    result = _run(ce)
+
+    assert result.extra["verdict"] == "SUCCESS"
+    queried = {
+        int(query.rsplit(" ", 1)[1])
+        for query in ce.queries
+        if query.startswith("OUTPut:LEVel")
+    }
+    assert queried == {2, 7}
+
+
+def test_legacy_outputs_param_is_aborted_without_scpi_to_ports():
     ce = _ScriptedCe(_base_replies(), active_outputs=[1])
     result = _run(ce, {"outputs": "1,abc"})
     assert result.success is False
