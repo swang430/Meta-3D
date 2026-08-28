@@ -716,7 +716,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
-| P2-9 **现场半** | EMCenter switch bring-up | **2026-08-28 本地分类已收口，待现场重跑**：VXI-11、机箱身份与继电器回读已于 08-27 人工接受；序列现只对系统软件 2.5.1 的完整 `ERROR 3;(INTLK? SAFETYRELAY);` 原始回复精确归类为 `known_unsupported`，其他近似值仍 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。回现场重跑取得 SUCCESS 才关闭该现场半；TopologyEditor mapping 与真机切换仍是独立未完成项 |
+| P2-9 **现场半** | EMCenter switch bring-up | **2026-08-28 本地分类已收口，安全真值仍待现场**：VXI-11、机箱身份与继电器回读已于 08-27 人工接受；序列只对系统软件 2.5.1 的完整 `ERROR 3;(INTLK? SAFETYRELAY);` 原始回复精确归类为 `known_unsupported`，并保持 `UNDETERMINED`；其他近似值仍 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。现场若仍为已知不支持，只能留 UNKNOWN 证据；取得权威互锁 0 或独立可审计的安全状态证据后才关闭。TopologyEditor mapping 与真机切换仍是独立未完成项 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_sim_identity_truth`](../api-service/app/diagnostics/sequences/uxm_sim_identity_truth.py) —— `UEReported:IMSI?` 与 SIMProfile 对账，四出口脱敏 |
@@ -3831,7 +3831,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 **2026-08-28 更新**：本地精确分类已按 TDD 收口。`emcenter_switch_health` 只在
 `VERSION_SW?` 精确为 `2.5.1` 且互锁完整原始回复精确为
 `ERROR 3;(INTLK? SAFETYRELAY);` 时标记 `known_unsupported`；其他固件、缩写、不同命令回显
-或其他错误继续 BLOCKER，且成功摘要不把“不支持”写成“互锁 0”。现场仍须重跑取得 SUCCESS；
+或其他错误继续 BLOCKER。`known_unsupported` 不等于安全，整体保持 `UNDETERMINED`，不得写成
+“互锁 0”或绿色通过；现场须取得权威互锁 0 或独立可审计的安全状态证据后才能关闭；
 TopologyEditor mapping 与真机切换仍按原 P2-9 范围另行完成，不阻塞 P0-9A Attach。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day

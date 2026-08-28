@@ -48,9 +48,9 @@ P2-9「EMCenter switch bring-up」的现场半（端口通不通 / 每槽插的�
 ----------------------------------------------------------------
 * BLOCKER      任一查询超时 / 无响应（驱动 ``_send_command`` 回 None）；互锁 = 1；
                回读值不在合法值域。机箱 ``*IDN?`` 就不应答时立即停，不再往下敲。
-* UNDETERMINED 没有槽位配置，或某继电器没标 ``relay_type``（值记了、值域判不了）。
-* SUCCESS      机箱 + 每槽 + 每继电器全部在值域内，且互锁为 0；或精确命中
-               2026-08-27 现场确认的系统软件 2.5.1 已知不支持回复。
+* UNDETERMINED 没有槽位配置；某继电器没标 ``relay_type``；或精确命中 2026-08-27
+               现场观察到的系统软件 2.5.1 已知不支持回复（安全状态仍未知）。
+* SUCCESS      机箱 + 每槽 + 每继电器全部在值域内，且互锁权威回读为 0。
 * ABORTED      序列自身异常（由 runner 记）。
 措辞：除上述现场精确白名单外，未探测 ≠ 不支持；不从近似回复推断仪器能力。
 
@@ -103,7 +103,7 @@ metadata = SequenceMetadata(
         "只读：*IDN? → VERSION_SW? → 每个配置槽位 <slot>:*IDN? → 每槽每继电器 "
         "<slot>:INT_RELAY_<R>? → INTLK? SAFETYRELAY。槽位 / 继电器 / relay_type 从驱动 "
         "port_maps 派生；没配置就只做机箱级三条。互锁=1 / 超时 / 回读值不在值域 → BLOCKER；"
-        "系统软件 2.5.1 的现场精确 ERROR 3 回复只标为已知不支持；无槽位配置或缺 "
+        "系统软件 2.5.1 的现场精确 ERROR 3 回复标为已知不支持且安全状态未知；无槽位配置或缺 "
         "relay_type → UNDETERMINED。不发任何写命令。"
     ),
     required_categories=["rfSwitch"],
@@ -293,8 +293,11 @@ async def run(
                     blockers.append("互锁=1：Relay A 被硬件锁，软件无法覆盖")
                 elif interlock_classification == "known_unsupported":
                     _mark_last(
-                        True,
-                        "系统软件 2.5.1 的现场精确回复：该互锁查询已确认不支持；不等于互锁=0",
+                        False,
+                        "系统软件 2.5.1 的现场精确回复：该互锁查询已知不支持；安全状态未知",
+                    )
+                    undetermined.append(
+                        "INTLK? SAFETYRELAY 已知不支持：未取得 0/1 权威值，安全状态未知"
                     )
                 elif interlock_classification == "invalid":
                     _mark_last(False, f"{interlock!r} 不在互锁合法值域 {sorted(_INTERLOCK_DOMAIN)} 内")
@@ -321,15 +324,10 @@ async def run(
     else:
         verdict = "SUCCESS"
         relay_count = sum(len(s["relays"]) for s in slots_out)
-        interlock_summary = (
-            "互锁查询已确认不支持（系统软件 2.5.1，原始回复已留档）"
-            if interlock_classification == "known_unsupported"
-            else "互锁 0"
-        )
         summary = (
             f"SUCCESS：机箱 {chassis_idn!r} / 软件 {version!r}；"
             f"{len(slots_out)} 个槽位 {relay_count} 个继电器回读全部在值域内；"
-            f"{interlock_summary}"
+            "互锁 0"
         )
     if skipped:
         summary += f"；未探测的映射（非 <slot>:INT_RELAY_<R> 形式）: {skipped}"

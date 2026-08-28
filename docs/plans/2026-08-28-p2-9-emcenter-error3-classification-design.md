@@ -34,15 +34,15 @@ ERROR 3;(INTLK? SAFETYRELAY);
 
 - `inactive`：回复为 `0`，互锁已确认未激活；
 - `active`：回复为 `1`，继续判为 `BLOCKER`；
-- `known_unsupported`：只命中上述精确三元组，步骤成功但只表示“该查询在此现场组合中
-  已确认不支持”；
+- `known_unsupported`：只命中上述精确三元组；步骤失败并使总体为 `UNDETERMINED`，因为
+  该分类只证明查询在此现场组合中已知不支持，未取得可证明安全状态的 `0/1`；
 - `invalid`：其他非空、非 `0/1` 回复，继续判为 `BLOCKER`；
 - `no_response`：无回复或超时，沿用现有 `BLOCKER`。
 
 `extra["interlock"]` 继续保留原始回复以兼容现有消费者，并新增
-`extra["interlock_classification"]`。成功摘要根据分类分别表述：`inactive` 才能写
-“互锁 0”；`known_unsupported` 必须写“互锁查询已确认不支持”，不能把未知安全状态伪装成
-未激活。
+`extra["interlock_classification"]`。只有 `inactive` 才能得到 `SUCCESS` 并写“互锁 0”；
+`known_unsupported` 必须写“安全状态未知”并保持 `UNDETERMINED`，不能把未知安全状态伪装成
+未激活或绿色通过。
 
 若槽位配置缺失或继电器类型未知，仍按现有规则得到 `UNDETERMINED`；精确白名单不覆盖这些
 独立缺口。若其余步骤存在 blocker，整体仍为 `BLOCKER`。
@@ -62,8 +62,8 @@ ERROR 3;(INTLK? SAFETYRELAY);
 
 先写行为测试并观察 RED：
 
-1. 精确 2.5.1 + 完整现场回复，在其他回读健康时得到 `SUCCESS`、
-   `known_unsupported`，且摘要不包含“互锁 0”；
+1. 精确 2.5.1 + 完整现场回复，在其他回读健康时得到 `UNDETERMINED`、
+   `known_unsupported`，且摘要明确“安全状态未知”、不包含“互锁 0”；
 2. 其他固件的相同回复继续 `BLOCKER`；
 3. 2.5.1 下的缩写 `ERROR 3` 继续 `BLOCKER`；
 4. 2.5.1 下的其他错误或不同命令回显继续 `BLOCKER`；
@@ -71,5 +71,6 @@ ERROR 3;(INTLK? SAFETYRELAY);
 
 GREEN 后运行 EMCenter 序列与驱动协议相关测试、规则门、全后端、`compileall`、单一
 Alembic head 和 diff-check。fresh 内审 P1 为 0 后开 Ready PR，按 R1→R2 流程收口。
-本地测试只证明分类逻辑；现场仍需重跑 `emcenter_switch_health` 并取得 SUCCESS 才能关闭
-P2-9 现场半。
+本地测试只证明分类逻辑；现场重跑若仍得到已知不支持，只能留下 `UNDETERMINED` 证据，
+不能关闭 P2-9 的互锁安全真值缺口。只有权威回读为 `0` 或取得独立、可审计的安全状态证据后
+才能关闭该现场半。

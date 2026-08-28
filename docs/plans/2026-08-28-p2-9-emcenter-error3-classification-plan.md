@@ -4,7 +4,7 @@
 
 **Goal:** 让 `emcenter_switch_health` 只对 CAICT 现场已确认的 EMCenter 2.5.1 精确错误回复归类为已知不支持，同时保持其他异常 fail-closed。
 
-**Architecture:** 在诊断序列内部增加一个最小、纯函数式的互锁回复分类器；它只消费序列已经读取的软件版本和原始互锁回复，不改变驱动、不新增 SCPI。现有原始字段保持兼容，新增结构化分类字段，成功摘要不再把“不支持”伪装成“互锁 0”。
+**Architecture:** 在诊断序列内部增加一个最小、纯函数式的互锁回复分类器；它只消费序列已经读取的软件版本和原始互锁回复，不改变驱动、不新增 SCPI。现有原始字段保持兼容，新增结构化分类字段；已知不支持保持 `UNDETERMINED`，不再被伪装成“互锁 0”或绿色通过。
 
 **Tech Stack:** Python 3.13、asyncio、pytest、现有 diagnostics protocol dataclasses。
 
@@ -22,7 +22,7 @@
 ```python
 _KNOWN_UNSUPPORTED_INTERLOCK = "ERROR 3;(INTLK? SAFETYRELAY);"
 
-def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
+def test_firmware_251_exact_interlock_error_is_known_unsupported_but_undetermined():
     responses = dict(
         _HEALTHY_RESPONSES,
         **{
@@ -31,11 +31,11 @@ def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
         },
     )
     result = _run(_ScriptedEmcenter(responses, _MAPPINGS_TWO_CARDS))
-    assert result.success is True
-    assert result.extra["verdict"] == "SUCCESS"
+    assert result.success is False
+    assert result.extra["verdict"] == "UNDETERMINED"
     assert result.extra["interlock"] == _KNOWN_UNSUPPORTED_INTERLOCK
     assert result.extra["interlock_classification"] == "known_unsupported"
-    assert "已确认不支持" in result.summary
+    assert "安全状态未知" in result.summary
     assert "互锁 0" not in result.summary
     step = next(s for s in result.steps if s.label == "INTLK? SAFETYRELAY")
     assert step.success is True
@@ -47,7 +47,7 @@ def test_firmware_251_exact_interlock_error_is_known_unsupported_success():
 Run:
 
 ```bash
-api-service/.venv/bin/pytest -q api-service/tests/test_p1_65_emcenter_switch_health.py::test_firmware_251_exact_interlock_error_is_known_unsupported_success
+api-service/.venv/bin/pytest -q api-service/tests/test_p1_65_emcenter_switch_health.py::test_firmware_251_exact_interlock_error_is_known_unsupported_but_undetermined
 ```
 
 Expected: FAIL，因为现有代码把该回复加入 blockers，且没有 `interlock_classification`。
@@ -118,12 +118,12 @@ def _classify_interlock(version: Optional[str], reply: Optional[str]) -> str:
 **Step 3: 用分类结果驱动既有判定**
 
 - `active`：沿用现有 Relay A BLOCKER；
-- `known_unsupported`：step success，detail 明写仅该现场组合已确认不支持；
+- `known_unsupported`：step failure，detail 明写已知不支持且安全状态未知，并把总体置为 `UNDETERMINED`；
 - `invalid`：沿用现有值域外 BLOCKER；
 - `inactive`：沿用互锁未激活；
 - `no_response`：由 `_ask` 既有逻辑处理。
 
-始终把分类写入 `extra["interlock_classification"]`。SUCCESS 摘要按分类选择“互锁 0”或“互锁查询已确认不支持”。同步 docstring 与 metadata，明确这个精确例外。
+始终把分类写入 `extra["interlock_classification"]`。只有权威 `inactive` 才能生成含“互锁 0”的 SUCCESS 摘要；`known_unsupported` 保持 `UNDETERMINED`。同步 docstring 与 metadata，明确这个精确例外不证明安全状态。
 
 **Step 4: 运行定点测试确认 GREEN**
 
