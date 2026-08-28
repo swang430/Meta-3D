@@ -27,6 +27,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     project_base_station_metrics_by_position,
 )
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+from app.services.execution_qualification import execution_is_diagnostic
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -59,6 +60,8 @@ def _formal_validation_pass(
     """Do not republish legacy MIMO PASS without explicit-real calibration."""
     if not _is_mimo_ota_execution(execution, test_type):
         return execution.validation_pass
+    if execution_is_diagnostic(execution):
+        return None
     phases = (
         (execution.measurements or {}).get("phases")
         if isinstance(execution.measurements, dict)

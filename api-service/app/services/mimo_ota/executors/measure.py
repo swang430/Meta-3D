@@ -66,6 +66,7 @@ from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.hal.base_station import BaseStationRequestedConfig, ThroughputMetrics
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
+from app.services.execution_qualification import execution_is_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,7 @@ def _evaluate_path_loss_provenance_for_measure(
     *,
     channel_emulator_is_real: bool,
     strict: bool,
+    diagnostic: bool = False,
 ) -> tuple[bool, Optional[str]]:
     """判定一张路损证书能否参与本次测量补偿。
 
@@ -234,6 +236,8 @@ def _evaluate_path_loss_provenance_for_measure(
     opt-out 只允许继续做未补偿的调试测量，不能把模拟/未知值洗进正式 KPI。
     mock 仪表链本身不产出正式 KPI，可继续复用 mock 证书做流程演练。
     """
+    if diagnostic:
+        return False, None
     if not channel_emulator_is_real or use_mock is False:
         return True, None
 
@@ -1108,6 +1112,7 @@ class MeasureExecutor(IStepExecutor):
                     selected_path_loss_use_mock,
                     channel_emulator_is_real=channel_emulator_is_real,
                     strict=config.precheck_strict_cal,
+                    diagnostic=execution_is_diagnostic(context.test_execution),
                 )
             )
         path_loss_cert = (

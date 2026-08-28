@@ -35,6 +35,10 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
+from app.services.execution_qualification import (
+    execution_is_diagnostic,
+    execution_qualification_classification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,15 +134,24 @@ class AnalysisExecutor(IStepExecutor):
         ) or base_station_throughput_unverified
         rf_kpi_unverified = not rf_kpi_scope_is_verified(measure)
         quiet_zone_unverified = not quiet_zone_scope_is_formally_verified(precheck)
+        diagnostic_execution = execution_is_diagnostic(context.test_execution)
         if (
-            simulated_measurement
+            diagnostic_execution
+            or simulated_measurement
             or frequency_identity_unverified
             or path_loss_unverified
             or throughput_unverified
             or rf_kpi_unverified
             or quiet_zone_unverified
         ):
-            if simulated_measurement:
+            if diagnostic_execution:
+                detail = (
+                    "N/A: execution is frozen as diagnostic; formal KPI "
+                    "analysis was not performed"
+                )
+                warning = "诊断执行不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "diagnostic execution qualification"
+            elif simulated_measurement:
                 detail = (
                     "N/A: measurement contains simulated instrument provenance; "
                     "formal KPI analysis was not performed"
@@ -181,6 +194,12 @@ class AnalysisExecutor(IStepExecutor):
                 warning = "静区均匀度缺少权威多点场扫描证据，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "quiet-zone evidence is not formally verified"
             result: Dict[str, Any] = {
+                "execution_classification": (
+                    execution_qualification_classification(
+                        context.test_execution
+                    )
+                    or "legacy"
+                ),
                 "verdict": "UNKNOWN",
                 "details": [detail],
                 "measurement_verified": not simulated_measurement,

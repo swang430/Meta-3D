@@ -61,6 +61,10 @@ from app.services.test_execution import (
     StepExecutionStatus,
     register_executor,
 )
+from app.services.execution_qualification import (
+    execution_is_diagnostic,
+    execution_qualification_classification,
+)
 from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.utils.human_time import format_human_local_timestamp
 
@@ -404,6 +408,7 @@ def _build_mimo_ota_content_data(
     reference = phases.get("reference", {}) or {}
     measure = phases.get("measure", {}) or {}
     analysis = phases.get("analysis", {}) or {}
+    diagnostic_execution = execution_is_diagnostic(execution)
 
     # ARCH-1 S2: MIMO_OTA 执行是 TestCase 制不挂 TestPlan, 报告首段的
     # "名字"就是快照用例名 (caller 经 _lookup_case_name 查好传入;
@@ -441,6 +446,9 @@ def _build_mimo_ota_content_data(
         _validation_pass is None
         and _analysis_verdict not in ("PASS", "MARGINAL", "FAIL")
     )
+    if diagnostic_execution:
+        overall_pass = False
+        verdict_unknown = True
 
     # Aggregate per-azimuth stats into one stat-row per KPI
     raw_azimuth_results = measure.get("azimuth_results")
@@ -685,6 +693,28 @@ def _build_mimo_ota_content_data(
     ):
         _throughput_verified = False
 
+    if diagnostic_execution:
+        # A diagnostic run remains downloadable as an audit artifact, so the
+        # whole server trust envelope must be internally consistent as
+        # non-formal—not merely hide cells while leaving promotable flags or
+        # formal values in sibling fields.
+        _path_loss_application = parse_path_loss_application(None)
+        _path_loss_formally_verified = False
+        _path_loss_value_visible = False
+        _throughput_verified = False
+        _rf_kpi_trust = build_rf_kpi_trust(
+            requested_azimuths=[
+                float(row["azimuth_deg"])
+                for row in azimuth_results
+                if _finite_report_number(row.get("azimuth_deg")) is not None
+            ],
+            azimuth_results=[],
+            source="unknown",
+        )
+        _rf_kpi_formally_verified = False
+        _qz_evidence = build_quiet_zone_evidence(None)
+        _qz_verified = False
+
     # A formal KPI/report verdict requires explicit proof that the applied
     # path-loss certificate was real *and* every azimuth contributed a trusted
     # throughput sample. Historical, mock, bypass and missing-read executions
@@ -692,7 +722,8 @@ def _build_mimo_ota_content_data(
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = "UNKNOWN" if verdict_unknown else _analysis_verdict
     if (
-        not _path_loss_formally_verified
+        diagnostic_execution
+        or not _path_loss_formally_verified
         or _throughput_verified is not True
         or not _rf_kpi_formally_verified
         or not _qz_verified
@@ -705,7 +736,16 @@ def _build_mimo_ota_content_data(
         # 总体 PASS/FAIL，但不能顺带抹掉已经通过独立 P1-54/P1-59 门的真实
         # 吞吐量；反方向同理。路损不是 explicit-real 时，所有补偿后数值仍
         # 整体隐藏，避免把未经可信校准的读数重新发布为正式工程量。
-        if not _path_loss_formally_verified:
+        if diagnostic_execution:
+            statistics = {}
+            hidden_table_metrics = (
+                "RSRP (dBm)",
+                "SINR (dB)",
+                "Throughput (Mbps)",
+                "RI",
+                "BLER (%)",
+            )
+        elif not _path_loss_formally_verified:
             statistics = {}
             hidden_table_metrics = (
                 "RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"
@@ -740,6 +780,23 @@ def _build_mimo_ota_content_data(
         if flag is False:
             return f"未验证 ({unverified_note})"
         return "未知 (历史数据未区分真实/兜底)"
+
+    def _serialized_base_station_metric(metric: Any) -> Dict[str, Any]:
+        if not diagnostic_execution:
+            return metric.model_dump(mode="json")
+        diagnostic_value = (
+            metric.diagnostic_value
+            if metric.diagnostic_value is not None
+            else metric.formal_value
+        )
+        return metric.model_copy(
+            update={
+                "status": "diagnostic",
+                "formal_value": None,
+                "diagnostic_value": diagnostic_value,
+                "reason": "execution_qualification_diagnostic",
+            }
+        ).model_dump(mode="json")
 
     def _cell(v):
         """parameters 单元格值卫生 (内审 F1/F3):
@@ -913,6 +970,9 @@ def _build_mimo_ota_content_data(
         # 计划口径/用例口径的字段标签 (名字有无判不了型: 本路径恒有名字)。
         "report_type": "single_execution",
         "report_family": "mimo_ota",
+        "execution_classification": (
+            execution_qualification_classification(execution) or "legacy"
+        ),
         "calibration_trust_schema_version": 1,
         "formal_path_loss_verified": _path_loss_formally_verified,
         "path_loss_application": _path_loss_application,
@@ -922,10 +982,12 @@ def _build_mimo_ota_content_data(
         "base_station_metric_projection": [
             {
                 "position": row["position"],
-                "dl_throughput_mbps": row[
-                    "dl_throughput_mbps"
-                ].model_dump(mode="json"),
-                "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
+                "dl_throughput_mbps": _serialized_base_station_metric(
+                    row["dl_throughput_mbps"]
+                ),
+                "dl_bler_percent": _serialized_base_station_metric(
+                    row["dl_bler_percent"]
+                ),
             }
             for row in base_station_projection
         ],

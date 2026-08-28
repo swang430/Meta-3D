@@ -47,6 +47,10 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     base_station_metric_projection_required,
     project_base_station_metrics_by_position,
 )
+from app.services.execution_qualification import (
+    execution_is_diagnostic,
+    execution_qualification_classification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1247,6 +1251,7 @@ class ReportComparisonService:
         phases = measurements.get("phases") or {}
         analysis = phases.get("analysis") or {}
         measure = phases.get("measure") or {}
+        diagnostic = execution_is_diagnostic(execution)
         execution_config = execution.config if isinstance(execution.config, dict) else {}
         evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
         evidence_required = base_station_metric_projection_required(
@@ -1262,8 +1267,13 @@ class ReportComparisonService:
                 f"对比指标（status={execution.status}）—— 无指标可对比，"
                 f"不生成对比结果"
             )
-        metrics = {k: analysis.get(k) for k in COMPARISON_METRIC_KEYS}
-        if evidence_required:
+        metrics = {
+            k: None if diagnostic else analysis.get(k)
+            for k in COMPARISON_METRIC_KEYS
+        }
+        if diagnostic:
+            metric_trust = {key: False for key in COMPARISON_METRIC_KEYS}
+        elif evidence_required:
             expected_config, expected_positions = (
                 base_station_expected_scope_from_evidence(evidence)
             )
@@ -1339,6 +1349,9 @@ class ReportComparisonService:
             ),
             "metrics": metrics,
             "provenance": {
+                "execution_classification": (
+                    execution_qualification_classification(execution) or "legacy"
+                ),
                 "verdict": analysis.get("verdict"),
                 "measurement_verified": analysis.get("measurement_verified"),
                 "throughput_verified": analysis.get("throughput_verified"),

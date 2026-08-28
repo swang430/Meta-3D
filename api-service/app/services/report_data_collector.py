@@ -16,6 +16,7 @@ import logging
 
 from app.models.test_plan import TestPlan, TestExecution, TestStep
 from app.models.report import TestReport
+from app.services.execution_qualification import execution_is_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,10 @@ class ExecutionSummary:
     failed: int
     pending: int
     total_duration_sec: float
-    pass_rate: float
+    pass_rate: Optional[float]
     first_execution: Optional[datetime] = None
     last_execution: Optional[datetime] = None
+    undetermined: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -96,6 +98,7 @@ class ExecutionSummary:
             "passed": self.passed,
             "failed": self.failed,
             "pending": self.pending,
+            "undetermined": self.undetermined,
             "total_duration_sec": self.total_duration_sec,
             "pass_rate": self.pass_rate,
             "first_execution": self.first_execution.isoformat() if self.first_execution else None,
@@ -364,30 +367,46 @@ class ReportDataCollector:
         passed = sum(
             1
             for e in executions
-            if e.validation_pass is True and formally_accepted[str(e.id)]
+            if not execution_is_diagnostic(e)
+            and e.validation_pass is True
+            and formally_accepted[str(e.id)]
         )
         failed = sum(
             1
             for e in executions
-            if e.validation_pass is False
-            or (e.validation_pass is True and not formally_accepted[str(e.id)])
+            if not execution_is_diagnostic(e)
+            and (
+                e.validation_pass is False
+                or (e.validation_pass is True and not formally_accepted[str(e.id)])
+            )
         )
-        pending = sum(1 for e in executions if e.validation_pass is None)
+        pending = sum(
+            1
+            for e in executions
+            if not execution_is_diagnostic(e) and e.validation_pass is None
+        )
+        undetermined = sum(1 for e in executions if execution_is_diagnostic(e))
         total_duration = sum(e.duration_sec or 0 for e in executions)
 
         execution_times = [e.executed_at for e in executions if e.executed_at]
         first_execution = min(execution_times) if execution_times else None
         last_execution = max(execution_times) if execution_times else None
 
+        formal_decisions = passed + failed
         return ExecutionSummary(
             total_executions=total,
             passed=passed,
             failed=failed,
             pending=pending,
             total_duration_sec=total_duration,
-            pass_rate=round(passed / total * 100, 2) if total > 0 else 0,
+            pass_rate=(
+                round(passed / formal_decisions * 100, 2)
+                if formal_decisions > 0
+                else None
+            ),
             first_execution=first_execution,
             last_execution=last_execution,
+            undetermined=undetermined,
         )
 
     def _extract_measurements(self, executions: List[TestExecution]) -> Dict[str, List[float]]:
@@ -395,6 +414,8 @@ class ReportDataCollector:
         measurements = defaultdict(list)
 
         for execution in executions:
+            if execution_is_diagnostic(execution):
+                continue
             if execution.measurements:
                 for metric, value in execution.measurements.items():
                     if isinstance(value, (int, float)):

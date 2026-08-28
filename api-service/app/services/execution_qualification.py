@@ -255,6 +255,31 @@ def validate_frozen_execution_qualification(raw: Any) -> str | None:
     return None
 
 
+def execution_qualification_classification(
+    execution: Any,
+) -> Literal["formal", "diagnostic"] | None:
+    """Return the immutable class; ``None`` keeps legacy provenance behavior.
+
+    Historical executions without this envelope keep their existing provenance
+    rules.  Once the field exists, malformed or tampered data fails closed as
+    diagnostic; mutable current policy/certification is never consulted.
+    """
+
+    config = getattr(execution, "config", None)
+    if not isinstance(config, dict) or EXECUTION_QUALIFICATION_KEY not in config:
+        return None
+    raw = config.get(EXECUTION_QUALIFICATION_KEY)
+    if validate_frozen_execution_qualification(raw) is not None:
+        return "diagnostic"
+    return ExecutionQualification.model_validate(raw).classification
+
+
+def execution_is_diagnostic(execution: Any) -> bool:
+    """Fail closed for explicit malformed/tampered qualification snapshots."""
+
+    return execution_qualification_classification(execution) == "diagnostic"
+
+
 def freeze_execution_qualification(
     db,
     execution,

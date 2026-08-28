@@ -352,6 +352,10 @@ _STRICT_FLAG_EXCEPTIONS = {
     # #112 用户审计时亦未纳入。是否补 session 旁路 = 语义决策, 记 backlog
     # (onsite-20260721-todo.md), 不由本门裁决。
     "precheck_strict_input_level",
+    # P2-45：校准是否严格不再是 commissioning 客户端可授予的旁路。
+    # 它只由执行冻结的 Diagnostic/Formal qualification 派生；保留请求字段
+    # 仅用于对旧客户端给出明确 422，不能进入 overrides 四站点合同。
+    "precheck_strict_cal",
 }
 
 

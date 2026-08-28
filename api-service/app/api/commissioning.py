@@ -51,7 +51,11 @@ from app.services.base_station_execution_session import (
     run_base_station_execution_session,
 )
 from app.services.execution_failure_alerts import emit_execution_failed_alert
-from app.services.execution_qualification import TestCaseExecutionPolicy
+from app.services.execution_qualification import (
+    TestCaseExecutionPolicy,
+    execution_qualification_classification,
+    execution_is_diagnostic,
+)
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     base_station_expected_scope_from_evidence,
@@ -648,12 +652,16 @@ def _commissioning_measure_projection(
     if measure is None:
         return None
     execution_config = execution.config if isinstance(execution.config, dict) else {}
+    diagnostic = execution_is_diagnostic(execution)
+    classification = execution_qualification_classification(execution) or "legacy"
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     evidence_required = base_station_metric_projection_required(
         execution_config
     )
     if not evidence_required:
-        return measure
+        projected = deepcopy(measure)
+        projected["execution_classification"] = classification
+        return projected
 
     expected_config, expected_positions = base_station_expected_scope_from_evidence(
         evidence
@@ -668,6 +676,34 @@ def _commissioning_measure_projection(
         else []
     )
     projected = deepcopy(measure)
+    projected["execution_classification"] = classification
+    if diagnostic:
+        rows = [
+            {
+                **row,
+                "dl_throughput_mbps": row["dl_throughput_mbps"].model_copy(
+                    update={
+                        "status": "diagnostic",
+                        "formal_value": None,
+                        "diagnostic_value": row["dl_throughput_mbps"].diagnostic_value
+                        if row["dl_throughput_mbps"].diagnostic_value is not None
+                        else row["dl_throughput_mbps"].formal_value,
+                        "reason": "execution_qualification_diagnostic",
+                    }
+                ),
+                "dl_bler_percent": row["dl_bler_percent"].model_copy(
+                    update={
+                        "status": "diagnostic",
+                        "formal_value": None,
+                        "diagnostic_value": row["dl_bler_percent"].diagnostic_value
+                        if row["dl_bler_percent"].diagnostic_value is not None
+                        else row["dl_bler_percent"].formal_value,
+                        "reason": "execution_qualification_diagnostic",
+                    }
+                ),
+            }
+            for row in rows
+        ]
     projected["base_station_metric_projection"] = [
         {
             "position": row["position"],
