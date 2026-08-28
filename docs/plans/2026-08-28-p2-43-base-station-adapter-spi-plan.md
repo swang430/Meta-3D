@@ -152,4 +152,3 @@
 4. 由 fresh 独立审查按 AGENTS.md 0.5 先列全集，缺陷与建议分栏；测试发现上限 P2。功能 P1 收口到 0。
 5. 推送并创建 Ready PR，触发 Codex R1；处理本片功能 P1 与本片内 P2后触发 R2。覆盖最新 HEAD 的 R2 无 P1且 mergeable/checks通过才 merge。
 6. merge 后 fetch 验证 origin/main，本地主目录 `ff-only` 同步，保留未跟踪仪器资料，清理 worktree/本地分支；现场 certification 保持开放。
-

@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-43：BaseStation Adapter SPI、结构化回执与认证套件（本地实现完成，正在验收）。**
+Current Focus（非现场）= P2-43：BaseStation Adapter SPI、结构化回执与认证套件（本地实现及全量回归完成，正在 fresh 内审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -58,7 +58,7 @@ P3-20/P3-21 仍不得自动启动。
 2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据；
    **P2-9 的精确 `ERROR 3` 分类与 NEW-1 的活动 F64 输出集合本地半均已完成**；
    P2-42 的单一 BaseStation execution session 已由 PR #408 合并；P2-43 的 vendor-neutral
-   receipt/evidence/measurement 边界已完成本地实现，正在执行完整回归与外审收口，合并后下一项为
+   receipt/evidence/measurement 边界已完成本地实现与全量回归，正在 fresh 内审与外审收口，合并后下一项为
    P2-44。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
@@ -667,7 +667,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-43（本地实现完成，待完整回归/外审合并）**；合并后严格按 P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。P2-42 已由 PR #408 合并。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-43（本地实现与全量回归完成，待 fresh 内审/外审合并）**；合并后严格按 P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。P2-42 已由 PR #408 合并。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4177,12 +4177,15 @@ apply route、cell/attach、measurement window、safe idle、release。配置与
 历史；若必须修改，先单独登记平台缺口。禁止下游新增 `if adapter_id/vendor` 分支的门只锁生产
 路径，不把测试增强升级为 P1。
 
-**实施状态（2026-08-28，本地实现完成，待完整回归/外审）**：现有 vendor-neutral
+**实施状态（2026-08-29，本地实现与全量回归完成，待 fresh 内审/外审）**：现有 vendor-neutral
 `BaseStationDriver` 已增加不可变逐字段 config/route receipt；CMW500 与 UXM 将既有权威回读映射为
 同一 `requested/applied/confirmed/unknown/not_applicable` 合同，缺失、错误、超时与部分回读均不从
 请求值或旧缓存补真值。版本化 execution evidence、MEASURE 与四类 commissioning 入口只消费共同
 SPI；CMW 专属临时 writer 已移除。生产消费方不再新增 UXM/CMW 判别，历史兼容判断集中在 evidence
-认证边界；未新增或猜测任何厂商命令，也未改变正式 provenance 白名单。设计与实施计划见
+认证边界；内审已收口真实 UXM 被新 lifecycle 缺证据误阻断的功能 P1，既有 UXM 逐指标
+attestation 得以保留，同时新 lifecycle 仍不伪造 confirmed。相关链 296 passed、全后端
+5123 passed / 5 skipped，compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
+未新增或猜测任何厂商命令，也未改变正式 provenance 白名单。设计与实施计划见
 `docs/plans/2026-08-28-p2-43-base-station-adapter-spi-design.md` 和
 `docs/plans/2026-08-28-p2-43-base-station-adapter-spi-plan.md`。
 
