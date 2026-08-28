@@ -295,8 +295,8 @@ def freeze_execution_qualification(
     from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 
     config = execution.config if isinstance(execution.config, dict) else {}
-    existing = config.get(EXECUTION_QUALIFICATION_KEY)
-    if existing is not None:
+    if EXECUTION_QUALIFICATION_KEY in config:
+        existing = config.get(EXECUTION_QUALIFICATION_KEY)
         error = validate_frozen_execution_qualification(existing)
         if error:
             raise ValueError(error)
@@ -392,15 +392,6 @@ def freeze_execution_qualification(
     flag_modified(execution, "config")
     if getattr(test_case, "id", None) != getattr(execution, "test_case_id", None):
         raise ValueError("execution qualification TestCase identity mismatch")
-    test_case.configuration = {
-        **(
-            test_case.configuration
-            if isinstance(test_case.configuration, dict)
-            else {}
-        ),
-        "precheck_strict_cal": frozen.classification == "formal",
-    }
-    flag_modified(test_case, "configuration")
     db.flush()
     return frozen
 

@@ -8,9 +8,9 @@ gate**. An uncalibrated chamber could pass precheck and silently fall back to
 `typical_cable_loss_db + duplexer - pa_gain` in the measure phase, producing
 .asc files based on typical values rather than measured path-loss.
 
-P1-8 fix:
+P1-8 fix（P2-45 后由审计 policy 选择 Diagnostic）：
   - Default `precheck_strict_cal=True`: cal missing/broken → precheck FAIL
-  - Explicit opt-out `precheck_strict_cal=False`: cal gate bypassed but
+  - Explicit Diagnostic policy: effective `precheck_strict_cal=False`, but
     `cal_pass_reason` records "bypassed via precheck_strict_cal=False
     (would-fail-under-strict: ...)" so audit trails know
 
@@ -314,7 +314,6 @@ def _build_context(
         config_overrides={
             **({"frequency_hz": frequency_hz} if frequency_hz is not None else {}),
             **({"channel_asset_id": channel_asset_id} if channel_asset_id is not None else {}),
-            "precheck_strict_cal": strict_mode,
             # P1-9 (2026-05-19): dut gate disabled so it doesn't fight the
             # cal_pass test signal — dut gate is covered by
             # test_mimo_ota_precheck_dut_gate.py. Without this, the cartesian's
@@ -325,6 +324,17 @@ def _build_context(
             # so the precheck QZ ripple gate (default fallback 0.7 dB) passes.
         },
         created_by="pytest-cal-gate",
+        execution_policy=(
+            None
+            if strict_mode
+            else {
+                "schema_version": 1,
+                "mode": "diagnostic",
+                "reason": "calibration gate diagnostic fixture",
+                "updated_by": "pytest-cal-gate",
+                "updated_at": "2026-08-29T00:00:00Z",
+            }
+        ),
     )
     execution = TestExecution(
         test_case_id=test_case.id,

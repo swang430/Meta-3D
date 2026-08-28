@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from app.models.test_plan import TestExecution
 from app.services.base_station_adapter_profile import (
     freeze_base_station_adapter_profile,
@@ -15,6 +17,7 @@ from app.services.execution_qualification import (
     validate_frozen_execution_qualification,
 )
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
+from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
 from tests.test_p2_45_site_certification_api import _source_execution, db  # noqa: F401
 
 
@@ -53,7 +56,7 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
     frozen = freeze_execution_qualification(db, execution, case)
 
     assert frozen.classification == "formal"
-    assert case.configuration["precheck_strict_cal"] is True
+    assert load_mimo_ota_config(execution).precheck_strict_cal is True
     assert frozen.policy_mode == "formal"
     assert frozen.binding_digest == certification.binding_digest
     assert frozen.site_certification_digest == certification.certification_digest
@@ -101,7 +104,7 @@ def test_next_execution_becomes_diagnostic_for_policy_revocation_or_adhoc(db):
     assert diagnostic.classification == "diagnostic"
     assert diagnostic.policy_mode == "diagnostic"
     assert "test_case_policy_diagnostic" in diagnostic.reasons
-    assert case.configuration["precheck_strict_cal"] is False
+    assert load_mimo_ota_config(diagnostic_execution).precheck_strict_cal is False
 
     case.execution_policy = TestCaseExecutionPolicy(
         schema_version=1,
@@ -133,7 +136,30 @@ def test_next_execution_becomes_diagnostic_for_policy_revocation_or_adhoc(db):
     revoked = freeze_execution_qualification(db, revoked_execution, case)
     assert revoked.classification == "diagnostic"
     assert "site_certification_not_active" in revoked.reasons
-    assert case.configuration["precheck_strict_cal"] is False
+
+
+def test_each_execution_reads_calibration_gate_from_its_own_frozen_qualification(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    formal_execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, formal_execution, lab)
+    formal = freeze_execution_qualification(db, formal_execution, case)
+    assert formal.classification == "formal"
+
+    case.execution_policy = TestCaseExecutionPolicy(
+        schema_version=1,
+        mode="diagnostic",
+        reason="later diagnostic run",
+        updated_by="site-operator",
+        updated_at=datetime.now(timezone.utc),
+    ).model_dump(mode="json")
+    db.flush()
+    diagnostic_execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, diagnostic_execution, lab)
+    diagnostic = freeze_execution_qualification(db, diagnostic_execution, case)
+    assert diagnostic.classification == "diagnostic"
+
+    assert load_mimo_ota_config(formal_execution).precheck_strict_cal is True
+    assert load_mimo_ota_config(diagnostic_execution).precheck_strict_cal is False
 
 
 def test_factory_copies_server_policy_to_execution_snapshot(db):
@@ -181,3 +207,20 @@ def test_qualification_digest_tamper_is_rejected(db):
     assert validate_frozen_execution_qualification(frozen) == (
         "frozen execution qualification digest mismatch"
     )
+
+
+def test_explicit_malformed_qualification_is_never_backfilled_from_current_state(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, execution, lab)
+    execution.config = {
+        **execution.config,
+        EXECUTION_QUALIFICATION_KEY: None,
+    }
+    db.flush()
+
+    with pytest.raises(
+        ValueError,
+        match="frozen execution qualification is missing",
+    ):
+        freeze_execution_qualification(db, execution, case)

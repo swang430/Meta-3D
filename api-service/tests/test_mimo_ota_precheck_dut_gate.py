@@ -247,9 +247,15 @@ def _build_context(
             # cal gate is covered by test_mimo_ota_precheck_cal_gate.py.
             # Without this, the cartesian's no-cal default config would fail
             # at cal_pass first and we couldn't observe dut_pass behavior.
-            "precheck_strict_cal": False,
         },
         created_by="pytest-dut-gate",
+        execution_policy={
+            "schema_version": 1,
+            "mode": "diagnostic",
+            "reason": "isolate DUT gate from calibration",
+            "updated_by": "pytest-dut-gate",
+            "updated_at": "2026-08-29T00:00:00Z",
+        },
     )
     measurements: Dict[str, Any] = {}
     if dut_attach is not None:

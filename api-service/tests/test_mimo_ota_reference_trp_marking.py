@@ -68,13 +68,24 @@ def lab(db):
     return lp
 
 
-def _ctx(db, lab, *, config_overrides=None) -> StepExecutionContext:
+def _ctx(db, lab, *, config_overrides=None, diagnostic=False) -> StepExecutionContext:
     tc, _ = build_mimo_ota_test_case(
         db,
         name=f"Ref-{uuid.uuid4().hex[:8]}",
         lab_profile_id=lab.id,
         config_overrides=config_overrides or {},
         created_by="pytest-ref",
+        execution_policy=(
+            {
+                "schema_version": 1,
+                "mode": "diagnostic",
+                "reason": "reference-free diagnostic fixture",
+                "updated_by": "pytest-ref",
+                "updated_at": "2026-08-29T00:00:00Z",
+            }
+            if diagnostic
+            else None
+        ),
     )
     ex = TestExecution(
         test_case_id=tc.id,
@@ -196,7 +207,7 @@ async def test_calibration_bypass_skips_reference_without_touching_sa(db, lab):
     hal, saved = _swap_sa(sa)
     try:
         result = await ReferenceExecutor().execute(
-            _ctx(db, lab, config_overrides={"precheck_strict_cal": False})
+            _ctx(db, lab, diagnostic=True)
         )
     finally:
         hal.drivers.clear()

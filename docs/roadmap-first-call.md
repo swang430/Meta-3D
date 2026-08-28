@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-45：无校准诊断模式 + BS 两阶段现场认证产品化（本地 Task1–6 已完成，正在全量回归与 fresh 功能内审）。**
+Current Focus（非现场）= P2-45：无校准诊断模式 + BS 两阶段现场认证产品化（本地 Task1–7 已完成，正在 Ready PR / Codex 外审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -4245,7 +4245,7 @@ execution。不得引入功率预算、外部路径补偿或 RF router 准入。
 导出显式标诊断；正式晋级可撤销、有服务器时间和审计人，且不通过 env、通用字段或 debug
 inherit 获得。
 
-**实施状态（2026-08-29，本地 Task1–6 已完成，Task7 最终验证中）**：TestCase 已有专用
+**实施状态（2026-08-29，本地 Task1–7 已完成，Ready PR / Codex 外审中）**：TestCase 已有专用
 Diagnostic/Formal policy，Diagnostic 必须记录操作员与原因；BaseStation site certification 只由服务端
 从当前 binding digest 下真实 completed execution 的身份、config/route readback、current attempt、
 cleanup 与 transport release 证据派生，可撤销且不接受客户端 proof/identity。formal runner 与
@@ -4255,10 +4255,12 @@ commissioning saved phase/session/run-all/adhoc 统一冻结 policy、P2-44 bind
 重建、下载、比较、ReportDataCollector、history 与 commissioning 投影统一读取本次冻结 classification；
 诊断执行不应用正式路损补偿，不产生 PASS/FAIL 或正式 KPI，但保留可下载的自洽审计包。readiness、
 TestCase/commissioning GUI、报告/历史标签及 live OpenAPI、checked-in YAML、generated TS、手写类型已
-同步；旧 CMW approval 与 `precheck_strict_cal` 不再授予执行资格。Task5 相关后端 **234 passed**、
-GUI 契约 **14 passed** 与 production build、compileall、diff-check 均通过；Task6 单一资格边界与完整
-规则门 **60 passed**。完整后端/GUI 回归、fresh 功能内审、Ready PR 与 Codex 外审尚在 Task7，
-不得提前记为完成；NEW-1 F64 SUCCESS 与站点真实 certification 仍须现场复验。
+同步；旧 CMW approval 与 `precheck_strict_cal` 不再授予执行资格。fresh 功能内审按严格 TDD 收口
+两条功能 P1：校准门只从各自 execution 的不可变 qualification 派生，后续诊断执行不能改写较早
+正式执行；显式存在但为 null/畸形的 qualification 不得从当前认证回填。另把锁顺序测试与开发库
+迁移状态解耦，未迁移或改动开发数据库。最终资格/消费者/规则门 **74 passed**、全后端 **5222 passed / 5 skipped**、
+GUI 契约 **34 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、diff-check
+均通过，fresh 尾审 **P1/P2/P3=0**；NEW-1 F64 SUCCESS 与站点真实 certification 仍须现场复验。
 
 ---
 
