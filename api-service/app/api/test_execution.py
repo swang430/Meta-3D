@@ -105,6 +105,7 @@ def _formal_validation_pass(
                 base_station_evidence,
                 expected_config=expected_config,
                 expected_positions=expected_positions,
+                execution_config=execution_config,
             )
             if expected_config is not None
             else []

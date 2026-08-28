@@ -1282,6 +1282,7 @@ class ReportComparisonService:
                     evidence,
                     expected_config=expected_config,
                     expected_positions=expected_positions,
+                    execution_config=execution_config,
                 )
                 if expected_config is not None and expected_positions
                 else []

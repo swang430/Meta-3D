@@ -86,6 +86,7 @@ class AnalysisExecutor(IStepExecutor):
                     base_station_evidence,
                     expected_config=expected_base_station_config,
                     expected_positions=expected_positions,
+                    execution_config=execution_config,
                 )
                 if expected_base_station_config is not None
                 else []

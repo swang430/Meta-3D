@@ -567,6 +567,8 @@ def base_station_attempt_lifecycle_is_complete(value: Any, attempt_id: str) -> b
 
 def _formal_envelope(
     evidence: BaseStationExecutionEvidence,
+    *,
+    site_qualification_confirmed: bool = False,
 ) -> tuple[bool, str, list[BaseStationMeasurementWindowEvidence]]:
     if evidence.execution_mode != "real":
         return False, "execution_mode_not_real", []
@@ -580,7 +582,7 @@ def _formal_envelope(
             evidence.identity.firmware_version, (3, 5, 40)
         ):
             return False, "cmw500_identity_not_supported", []
-        if approval.enabled is not True:
+        if approval.enabled is not True and not site_qualification_confirmed:
             return False, "formal_capability_not_approved", []
         if evidence.requested_config.payload.get("mimo_layers") != 2:
             return False, "cmw500_mimo_layers_not_2x2", []
@@ -620,11 +622,70 @@ def _formal_envelope(
     return True, "formal_envelope_confirmed", windows
 
 
-def base_station_execution_evidence_is_formally_acceptable(value: Any) -> bool:
+def _site_qualification_gate(
+    evidence: BaseStationExecutionEvidence,
+    execution_config: Any,
+) -> tuple[bool | None, str]:
+    """Bind new formal admission to this execution's certified live identity.
+
+    ``None`` preserves the pre-P2-45 legacy approval contract only for rows that
+    genuinely predate the qualification snapshot.  Once the snapshot key is
+    present, malformed, diagnostic, stale, or identity-mismatched state fails
+    closed and can never fall back to the retired CMW approval flag.
+    """
+
+    from app.services.execution_qualification import (
+        EXECUTION_QUALIFICATION_KEY,
+        ExecutionQualification,
+        validate_frozen_execution_qualification,
+    )
+
+    if (
+        not isinstance(execution_config, dict)
+        or EXECUTION_QUALIFICATION_KEY not in execution_config
+    ):
+        return None, "legacy_qualification_absent"
+    raw = execution_config.get(EXECUTION_QUALIFICATION_KEY)
+    if validate_frozen_execution_qualification(raw) is not None:
+        return False, "execution_qualification_invalid"
+    qualification = ExecutionQualification.model_validate(raw)
+    certification = qualification.site_certification
+    if qualification.classification != "formal":
+        return False, "execution_qualification_not_formal"
+    if (
+        certification is None
+        or certification.status != "active"
+        or certification.binding_digest != qualification.binding_digest
+        or certification.adapter_id != qualification.adapter_id
+        or certification.adapter_id != evidence.adapter
+        or certification.instrument_connection_id
+        != evidence.identity.instrument_connection_id
+    ):
+        return False, "site_certification_scope_mismatch"
+    if (
+        certification.model != evidence.identity.model
+        or certification.firmware_version != evidence.identity.firmware_version
+        or certification.options != tuple(sorted(set(evidence.identity.options)))
+    ):
+        return False, "site_certification_identity_mismatch"
+    return True, "site_certification_identity_confirmed"
+
+
+def base_station_execution_evidence_is_formally_acceptable(
+    value: Any,
+    *,
+    execution_config: Any = None,
+) -> bool:
     evidence = _parsed(value)
     if evidence is None:
         return False
-    accepted, _, _ = _formal_envelope(evidence)
+    qualified, _ = _site_qualification_gate(evidence, execution_config)
+    if qualified is False:
+        return False
+    accepted, _, _ = _formal_envelope(
+        evidence,
+        site_qualification_confirmed=qualified is True,
+    )
     return accepted
 
 
@@ -703,6 +764,8 @@ def evaluate_base_station_metric_trust(
     metric_name: str,
     expected_config: Any,
     expected_position: Any,
+    *,
+    execution_config: Any = None,
 ) -> FormalMetricTrust:
     """Evaluate one base-station-native metric against execution-frozen scope."""
 
@@ -739,7 +802,21 @@ def evaluate_base_station_metric_trust(
             reason="expected_position_not_requested",
         )
 
-    accepted, reason, windows = _formal_envelope(parsed)
+    qualified, qualification_reason = _site_qualification_gate(
+        parsed,
+        execution_config,
+    )
+    if qualified is False:
+        return _untrusted(
+            evidence,
+            metric_name,
+            qualification_reason,
+            position_payload,
+        )
+    accepted, reason, windows = _formal_envelope(
+        parsed,
+        site_qualification_confirmed=qualified is True,
+    )
     if not accepted:
         return _untrusted(evidence, metric_name, reason, position_payload)
     matching = [
@@ -807,6 +884,7 @@ def project_base_station_metrics_by_position(
     *,
     expected_config: Any,
     expected_positions: list[dict[str, Any]],
+    execution_config: Any = None,
 ) -> list[dict[str, Any]]:
     """Project both native metrics independently for every frozen position."""
 
@@ -823,12 +901,14 @@ def project_base_station_metrics_by_position(
                     "dl_throughput_mbps",
                     expected_config,
                     position,
+                    execution_config=execution_config,
                 ),
                 "dl_bler_percent": evaluate_base_station_metric_trust(
                     evidence,
                     "dl_bler_percent",
                     expected_config,
                     position,
+                    execution_config=execution_config,
                 ),
             }
         )

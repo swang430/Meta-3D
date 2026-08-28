@@ -475,6 +475,7 @@ def _build_mimo_ota_content_data(
             base_station_evidence,
             expected_config=expected_base_station_config,
             expected_positions=expected_positions,
+            execution_config=execution_config,
         )
         if base_station_evidence_required
         and expected_base_station_config is not None

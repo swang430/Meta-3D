@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 
 import pytest
@@ -16,8 +17,13 @@ from app.services.execution_qualification import (
     revoke_base_station_site_certification,
     validate_frozen_execution_qualification,
 )
+from app.services.mimo_ota.base_station_execution_evidence import (
+    BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+    evaluate_base_station_metric_trust,
+)
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+from tests.p1_73c_evidence_fixtures import POSITION, REQUESTED_CONFIG
 from tests.test_p2_45_site_certification_api import _source_execution, db  # noqa: F401
 
 
@@ -83,6 +89,65 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
     db.commit()
 
     assert freeze_execution_qualification(db, execution, case) == frozen
+
+
+def test_formal_metric_uses_site_certification_instead_of_retired_cmw_approval(db):
+    connection, lab, case, source, hal = _source_execution(db)
+    activate_base_station_site_certification(
+        db,
+        hal,
+        connection_id=connection.id,
+        source_execution_id=source.id,
+        certified_by="quality-owner",
+        reason="site evidence complete",
+    )
+    execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, execution, lab)
+    frozen = freeze_execution_qualification(db, execution, case)
+    evidence = deepcopy(source.config[BASE_STATION_EXECUTION_EVIDENCE_FIELD])
+
+    assert frozen.classification == "formal"
+    assert evidence["formal_capability_approval"]["enabled"] is False
+    result = evaluate_base_station_metric_trust(
+        evidence,
+        "dl_throughput_mbps",
+        expected_config=REQUESTED_CONFIG,
+        expected_position=POSITION,
+        execution_config=execution.config,
+    )
+
+    assert result.status == "trusted"
+    assert result.formal_value == 96.5
+
+
+def test_formal_metric_rejects_hardware_identity_changed_after_site_certification(db):
+    connection, lab, case, source, hal = _source_execution(db)
+    activate_base_station_site_certification(
+        db,
+        hal,
+        connection_id=connection.id,
+        source_execution_id=source.id,
+        certified_by="quality-owner",
+        reason="site evidence complete",
+    )
+    execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, execution, lab)
+    freeze_execution_qualification(db, execution, case)
+    evidence = deepcopy(source.config[BASE_STATION_EXECUTION_EVIDENCE_FIELD])
+    evidence["identity"]["firmware_version"] = "3.5.41"
+
+    result = evaluate_base_station_metric_trust(
+        evidence,
+        "dl_throughput_mbps",
+        expected_config=REQUESTED_CONFIG,
+        expected_position=POSITION,
+        execution_config=execution.config,
+    )
+
+    assert result.status == "diagnostic"
+    assert result.formal_value is None
+    assert result.diagnostic_value == 96.5
+    assert result.reason == "site_certification_identity_mismatch"
 
 
 def test_next_execution_becomes_diagnostic_for_policy_revocation_or_adhoc(db):
