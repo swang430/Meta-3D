@@ -83,8 +83,9 @@ _RELAY_DOMAIN: Dict[str, frozenset] = {
 }
 _INTERLOCK_DOMAIN = frozenset({"0", "1"})
 
-# 现场事实源：docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md。
-# 这不是厂商手册对 ERROR 3 的通用定义，只允许精确的软件版本 + 完整原始回复组合。
+# 完整字面量来自 2026-08-27 操作员粘贴的诊断结果，并固化在本片设计文档；当日现场摘要
+# 只保留了缩写 ``ERROR 3``。这不是厂商手册对 ERROR 3 的通用定义，只允许精确的软件
+# 版本 + 完整原始回复组合。
 _KNOWN_UNSUPPORTED_INTERLOCK_VERSION = "2.5.1"
 _KNOWN_UNSUPPORTED_INTERLOCK_REPLY = "ERROR 3;(INTLK? SAFETYRELAY);"
 
