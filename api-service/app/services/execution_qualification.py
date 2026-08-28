@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import (
@@ -184,3 +184,191 @@ def parse_base_station_site_certification(
         return BaseStationSiteCertification.model_validate(raw)
     except (ValidationError, ValueError, TypeError) as exc:
         raise ValueError("stored BaseStation site certification is invalid") from exc
+
+
+def _audit_text(value: str, field: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must be non-blank")
+    return normalized
+
+
+def activate_base_station_site_certification(
+    db,
+    hal,
+    *,
+    connection_id,
+    source_execution_id,
+    certified_by: str,
+    reason: str,
+) -> BaseStationSiteCertification:
+    """Derive certification only from one completed real execution envelope."""
+
+    from app.models.instrument import InstrumentConnection
+    from app.models.lab_profile import LabProfile
+    from app.models.test_plan import TestCase, TestExecution
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.base_station_binding import resolve_base_station_binding
+    from app.services.execution_scpi_evidence import (
+        load_base_station_execution_evidence,
+    )
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        BaseStationExecutionEvidence,
+        base_station_attempt_lifecycle_is_complete,
+        canonical_snapshot_digest,
+    )
+
+    actor = _audit_text(certified_by, "certified_by")
+    audit_reason = _audit_text(reason, "reason")
+    connection = (
+        db.query(InstrumentConnection)
+        .filter(InstrumentConnection.id == connection_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if connection is None:
+        raise LookupError("instrument connection not found")
+    execution = (
+        db.query(TestExecution)
+        .filter(TestExecution.id == source_execution_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if execution is None:
+        raise LookupError("source execution not found")
+    if execution.status != "completed" or execution.test_case_id is None:
+        raise ValueError("site certification requires a completed TestCase execution")
+    test_case = db.query(TestCase).filter(TestCase.id == execution.test_case_id).one_or_none()
+    if test_case is None or test_case.lab_profile_id is None:
+        raise ValueError("source execution has no bound LabProfile")
+    lab = (
+        db.query(LabProfile)
+        .filter(LabProfile.id == test_case.lab_profile_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if lab is None:
+        raise ValueError("source execution LabProfile is missing")
+
+    resolved = resolve_base_station_binding(db, hal, lab, lock=True)
+    if (
+        resolved.execution_mode != "real"
+        or resolved.manifest is None
+        or resolved.instrument_connection_id != str(connection.id)
+    ):
+        raise ValueError("site certification requires the current real BaseStation binding")
+
+    config = execution.config if isinstance(execution.config, dict) else {}
+    frozen = config.get(FREEZE_CONFIG_KEY)
+    if not isinstance(frozen, dict):
+        raise ValueError("source execution binding freeze is missing")
+    if (
+        frozen.get("binding_digest") != resolved.binding_digest
+        or frozen.get("instrument_connection_id") != str(connection.id)
+        or frozen.get("lab_profile_id") != str(lab.id)
+        or frozen.get("resolution", {}).get("adapter")
+        != resolved.manifest.adapter_id
+        or frozen.get("resolution", {}).get("execution_mode") != "real"
+    ):
+        raise ValueError("source execution binding does not match current server truth")
+
+    raw_evidence = load_base_station_execution_evidence(execution)
+    if raw_evidence is None:
+        raise ValueError("source execution evidence is missing or malformed")
+    evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
+    attempt_id = evidence.current_measurement_attempt_id
+    if (
+        evidence.execution_id != str(execution.id)
+        or evidence.execution_mode != "real"
+        or evidence.adapter != resolved.manifest.adapter_id
+        or evidence.identity.instrument_connection_id != str(connection.id)
+        or evidence.identity.firmware_version is None
+        or evidence.config_confirmed is not True
+        or attempt_id is None
+        or evidence.current_measurement_attempt_state != "completed"
+        or not base_station_attempt_lifecycle_is_complete(raw_evidence, attempt_id)
+    ):
+        raise ValueError("source execution does not contain complete formal hardware evidence")
+
+    if evidence.adapter == "cmw500":
+        route_readback = (
+            evidence.route_confirmed is True
+            and evidence.requested_route == evidence.applied_route
+        )
+        route_not_applicable = False
+    else:
+        route_readback = False
+        route_not_applicable = (
+            evidence.route_confirmed is None
+            and evidence.requested_route is None
+            and evidence.applied_route is None
+        )
+    proofs = BaseStationCertificationProofs(
+        config_readback=True,
+        route_readback=route_readback,
+        route_not_applicable=route_not_applicable,
+        cleanup=True,
+        transport_release=True,
+    )
+    certification = BaseStationSiteCertification(
+        schema_version=1,
+        status="active",
+        lab_profile_id=str(lab.id),
+        instrument_connection_id=str(connection.id),
+        binding_digest=resolved.binding_digest,
+        adapter_id=evidence.adapter,
+        model=evidence.identity.model,
+        firmware_version=evidence.identity.firmware_version,
+        options=tuple(evidence.identity.options),
+        source_execution_id=str(execution.id),
+        evidence_digest=canonical_snapshot_digest(raw_evidence),
+        required_proofs=proofs,
+        certified_by=actor,
+        certified_at=datetime.now(timezone.utc),
+        reason=audit_reason,
+    )
+    connection.base_station_site_certification = certification.model_dump(mode="json")
+    db.commit()
+    db.refresh(connection)
+    return certification
+
+
+def revoke_base_station_site_certification(
+    db,
+    *,
+    connection_id,
+    revoked_by: str,
+    reason: str,
+) -> BaseStationSiteCertification:
+    """Revoke without deleting the source proof or historical certification."""
+
+    from app.models.instrument import InstrumentConnection
+
+    actor = _audit_text(revoked_by, "revoked_by")
+    audit_reason = _audit_text(reason, "reason")
+    connection = (
+        db.query(InstrumentConnection)
+        .filter(InstrumentConnection.id == connection_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if connection is None:
+        raise LookupError("instrument connection not found")
+    current = parse_base_station_site_certification(
+        connection.base_station_site_certification
+    )
+    if current is None or current.status != "active":
+        raise ValueError("active BaseStation site certification is missing")
+    revoked = current.model_copy(
+        update={
+            "status": "revoked",
+            "revoked_by": actor,
+            "revoked_at": datetime.now(timezone.utc),
+            "revocation_reason": audit_reason,
+        }
+    )
+    revoked = BaseStationSiteCertification.model_validate(revoked)
+    connection.base_station_site_certification = revoked.model_dump(mode="json")
+    db.commit()
+    db.refresh(connection)
+    return revoked

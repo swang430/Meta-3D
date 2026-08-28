@@ -1,8 +1,10 @@
 """Test Plan and Test Case Pydantic schemas"""
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
+
+from app.services.execution_qualification import TestCaseExecutionPolicy
 
 
 # ==================== Test Plan Schemas ====================
@@ -82,6 +84,29 @@ class TestCaseUpdate(BaseModel):
         description="LabProfile targeted by this TestCase; explicit null clears the binding",
     )
     tags: Optional[List[str]] = None
+
+
+class TestCaseExecutionPolicyUpdate(BaseModel):
+    """Dedicated server-owned Diagnostic/Formal policy update."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(pattern="^(formal|diagnostic)$")
+    reason: str
+    updated_by: str
+
+    @field_validator("reason", "updated_by")
+    @classmethod
+    def _non_blank_audit_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("execution policy audit fields must be non-blank")
+        return normalized
+
+
+class TestCaseExecutionPolicyResponse(BaseModel):
+    test_case_id: UUID
+    policy: TestCaseExecutionPolicy
 
 
 class TestCaseResponse(BaseModel):

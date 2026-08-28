@@ -31,11 +31,18 @@ from app.models.instrument import (
     InstrumentConnection as InstrumentConnectionDB,
 )
 from app.schemas.instrument import (
+    BaseStationSiteCertificationCreate,
+    BaseStationSiteCertificationRevoke,
     UpdateInstrumentCategoryRequest,
 )
 from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
 from app.services.diagnostic_context import build_diagnostic_context
 from app.services.instrument_test_lease import instrument_test_lease
+from app.services.execution_qualification import (
+    BaseStationSiteCertification,
+    activate_base_station_site_certification,
+    revoke_base_station_site_certification,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -236,6 +243,58 @@ class Cmw500FormalCapabilityResponse(BaseModel):
     connection_id: UUID
     enabled: bool
     updated_at: datetime
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/base-station-site-certification",
+    response_model=BaseStationSiteCertification,
+)
+def certify_base_station_connection(
+    connection_id: UUID,
+    request: BaseStationSiteCertificationCreate,
+    db: Session = Depends(get_db),
+):
+    """Certify from an existing server-owned execution evidence envelope."""
+
+    from app.services.instrument_hal_service import get_hal_service
+
+    try:
+        return activate_base_station_site_certification(
+            db,
+            get_hal_service(),
+            connection_id=connection_id,
+            source_execution_id=request.source_execution_id,
+            certified_by=request.certified_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/base-station-site-certification/revoke",
+    response_model=BaseStationSiteCertification,
+)
+def revoke_base_station_connection_certification(
+    connection_id: UUID,
+    request: BaseStationSiteCertificationRevoke,
+    db: Session = Depends(get_db),
+):
+    """Revoke the current server-owned site certification with an audit row."""
+
+    try:
+        return revoke_base_station_site_certification(
+            db,
+            connection_id=connection_id,
+            revoked_by=request.revoked_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _category_tags(cat: InstrumentCategoryModel) -> List[str]:
