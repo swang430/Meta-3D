@@ -981,6 +981,72 @@ class MockBaseStation(BaseStationDriver):
     async def configure(self, config: Dict[str, Any]) -> bool:
         return await self.set_cell_config(config)
 
+    async def apply_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationApplyReceipt:
+        """Mirror a bound CMW route as simulated unknown evidence."""
+
+        if self.adapter_id != "cmw500":
+            return await super().apply_route(frozen_adapter)
+        resolution = frozen_adapter.get("resolution")
+        profile = resolution.get("profile") if isinstance(resolution, dict) else None
+        raw_route = (
+            profile.get("lte_2x2_internal_route")
+            if isinstance(profile, dict)
+            else None
+        )
+        if raw_route is None:
+            return await super().apply_route(frozen_adapter)
+        from app.hal.base_station_adapter_profile import (
+            Cmw500Lte2x2InternalRoute,
+        )
+
+        route = Cmw500Lte2x2InternalRoute.model_validate(raw_route).model_dump()
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="simulated CMW route has no authoritative readback",
+                )
+                for name, value in route.items()
+            ),
+            reason="simulated CMW route excluded from formal evidence",
+            simulated=True,
+            operation_succeeded=True,
+        )
+
+    def route_allows_diagnostic_execution(
+        self,
+        receipt: BaseStationApplyReceipt,
+    ) -> bool:
+        """Allow only the complete simulated CMW route shape for diagnostics."""
+
+        if self.adapter_id != "cmw500":
+            return super().route_allows_diagnostic_execution(receipt)
+        from app.hal.base_station_adapter_profile import (
+            Cmw500Lte2x2InternalRoute,
+        )
+
+        expected_fields = set(Cmw500Lte2x2InternalRoute.model_fields)
+        return (
+            isinstance(receipt, BaseStationApplyReceipt)
+            and receipt.operation == "route"
+            and receipt.simulated is True
+            and {field.field for field in receipt.fields} == expected_fields
+            and all(
+                field.status == "unknown"
+                and field.requested is not None
+                and field.applied is None
+                for field in receipt.fields
+            )
+        )
+
     async def get_capabilities(self) -> list[InstrumentCapability]:
         return [
             InstrumentCapability(

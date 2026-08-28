@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.hal.base_station import BaseStationApplyReceipt, BaseStationFieldReceipt
+from app.hal.base_station import (
+    BaseStationApplyReceipt,
+    BaseStationFieldReceipt,
+    MockBaseStation,
+)
 from app.models.test_plan import TestExecution
 from app.services import execution_scpi_evidence as evidence_writer
 from app.services.execution_scpi_evidence import (
@@ -163,6 +167,47 @@ def _lease(adapter: str = "cmw500") -> ActiveBaseStationLeaseIdentity:
         adapter_id=adapter,
         session_token="session-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_bound_cmw_mock_route_covers_frozen_request_but_stays_simulated(
+    monkeypatch,
+):
+    execution = _execution(adapter="cmw500")
+    route = execution.config["base_station_execution_evidence"][
+        "requested_route"
+    ]["payload"]
+    frozen = {
+        "resolution": {
+            "profile": {"lte_2x2_internal_route": route},
+        }
+    }
+    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+
+    receipt = await driver.apply_route(frozen)
+
+    assert receipt.simulated is True
+    assert receipt.confirmed is False
+    assert {field.field: field.requested for field in receipt.fields} == route
+    assert all(field.status == "unknown" for field in receipt.fields)
+    assert driver.route_allows_diagnostic_execution(receipt) is True
+
+    monkeypatch.setattr(
+        evidence_writer,
+        "active_base_station_lease_identity",
+        lambda: _lease("cmw500"),
+    )
+    confirm_base_station_configuration_and_route(
+        _Db(execution),
+        execution.id,
+        attempt_id="attempt-1",
+        lease_identity=_lease("cmw500"),
+        config_receipt=_config_receipt(execution, simulated=True),
+        route_receipt=receipt,
+    )
+    stored = execution.config["base_station_execution_evidence"]
+    assert stored["route_confirmed"] is False
+    assert stored["applied_route"] is None
 
 
 @pytest.mark.parametrize("adapter", ["cmw500", "uxm"])

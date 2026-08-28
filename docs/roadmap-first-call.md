@@ -667,7 +667,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-43（本地实现、fresh 功能内审 P1 修复与全量回归完成，待 fresh 尾审/外审合并）**；合并后严格按 P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。P2-42 已由 PR #408 合并。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-43（PR #409 R1 P1 修复与全量回归完成，待 fresh 尾审/R2）**；合并后严格按 P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。P2-42 已由 PR #408 合并。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4177,7 +4177,7 @@ apply route、cell/attach、measurement window、safe idle、release。配置与
 历史；若必须修改，先单独登记平台缺口。禁止下游新增 `if adapter_id/vendor` 分支的门只锁生产
 路径，不把测试增强升级为 P1。
 
-**实施状态（2026-08-29，本地实现、fresh 功能内审 P1 修复与全量回归完成，待 fresh 尾审/外审）**：现有 vendor-neutral
+**实施状态（2026-08-29，PR #409 R1 P1 修复与全量回归完成，待 fresh 尾审/R2）**：现有 vendor-neutral
 `BaseStationDriver` 已增加不可变逐字段 config/route receipt；CMW500 与 UXM 将既有权威回读映射为
 同一 `requested/applied/confirmed/unknown/not_applicable` 合同，缺失、错误、超时与部分回读均不从
 请求值或旧缓存补真值。版本化 execution evidence、MEASURE 与四类 commissioning 入口只消费共同
@@ -4187,7 +4187,9 @@ attestation 得以保留，同时新 lifecycle 仍不伪造 confirmed。fresh �
 严格 RED→GREEN 收口：共同窗口保留同一捕获域的 SCPI exchanges；config receipt 必须覆盖全部
 execution-frozen 非空字段；UXM 容差内回读保留仪表实际值而不以请求值替代；配置操作成功与正式
 证据完整性分离，真实仪表已接受且权威硬件字段匹配时可继续诊断，但 metadata unknown 仍令正式 KPI
-fail-closed，设备拒绝仍立即中止。扩大相关链 1066 passed、全后端 5129 passed / 5 skipped，
+fail-closed，设备拒绝仍立即中止。R1 发现的显式绑定 CMW Mock route 回执缺少冻结七字段 P1
+也已收口：模拟 route 按完整字段记录 unknown，只允许诊断且不产生正式 applied route。扩大相关链
+1067 passed、全后端 5130 passed / 5 skipped，
 compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
 未新增或猜测任何厂商命令，也未改变正式 provenance 白名单。设计与实施计划见
 `docs/plans/2026-08-28-p2-43-base-station-adapter-spi-design.md` 和
@@ -4287,7 +4289,7 @@ inherit 获得。
 
 - `[discovered on-site 2026-08-27 during LTE CMW500 TestCase 首测]` **需要产品化支持“无有效路径损耗校准时仍可执行诊断测试”** —— 当前正式 TestCase 默认 `precheck_strict_cal=true`，CAICT-Lab-1 没有任何 `ProbePathLossCalibration` 时会在 PRECHECK fail-closed；当天经用户明确授权，仅将 LTE UMa 20 MHz CMW500 首测用例显式设为 `precheck_strict_cal=false`，其余频率、信道文件、开关模式、配置一致性、DUT/SIM、cleanup 与 transport release 门保持严格，且无校准数据不得进入路径损耗补偿或正式 KPI。**出口：→ P2-45**，统一设计 Diagnostic/Formal 两阶段、审计与报告边界；P0-9A 在现有逐用例授权下可继续，不等待 P2-45。
 - `[discovered 2026-08-27 during CMW500 integration retrospective]` **四类执行入口分别缝合 BaseStation freeze/attempt/lease/acquire/cleanup/release，后台监控又与独占执行竞争会话** —— 本次多条现场故障和外审 P1 来自入口顺序漂移、旧 session 回复和无关 FSVA/CMW 监控，而不是厂商命令本身。**出口：→ P2-42（PR #408 已合并）**，四类入口已收敛为单一执行会话并由租约统一隔离监控；不在 P0-9 现场主线边跑边重构。
-- `[discovered 2026-08-27 during P1-73 A/B/C review rounds]` **配置/route 总布尔值和下游厂商分支让“部分字段未确认”分轮暴露** —— 第三种 BS 若仍靠 OTA 全链外审发现漏字段，会重复本次工作量。**出口：→ P2-43（本地实现、fresh 功能内审 P1 修复与完整回归已完成，待 fresh 尾审/外审）**，稳定 Adapter SPI、逐字段结构化回执、统一正式 metric projection 与 UXM/CMW 双实现认证套件。
+- `[discovered 2026-08-27 during P1-73 A/B/C review rounds]` **配置/route 总布尔值和下游厂商分支让“部分字段未确认”分轮暴露** —— 第三种 BS 若仍靠 OTA 全链外审发现漏字段，会重复本次工作量。**出口：→ P2-43（PR #409 R1 P1 修复与完整回归已完成，待 fresh 尾审/R2）**，稳定 Adapter SPI、逐字段结构化回执、统一正式 metric projection 与 UXM/CMW 双实现认证套件。
 - `[discovered on-site 2026-08-27 during Instrument Catalog → LabProfile sync]` **selected model、InstrumentConnection、LabProfile binding、七字段 profile、loaded driver 与 execution freeze 曾存在多真值源** —— GUI 显示已填但执行读到 `None`，或保存后需另行同步才生效。现场故障已由 PR #403 最小修复；结构性防复发仍需单一 resolver。**出口：→ P2-44**，建立 `ResolvedBaseStationBinding` 与 manifest 驱动的注册/readiness/表单；不重复造数据库真值。
 - `[discovered 2026-08-27 during integration workload review]` **新增 BS Emulator 的目标改动面必须收窄** —— 下一 adapter 的厂商必要工作只应是 identity/capability、配置/route、Cell/Attach、measurement、safe cleanup/release、厂商 schema 和认证测试。**出口：并入 P2-42/P2-43/P2-44 验收**：不得修改 MEASURE、commissioning 多入口、报告/比较/下载/历史和通用 GUI；若需要，先登记独立平台缺口，禁止混入厂商 PR。
 
