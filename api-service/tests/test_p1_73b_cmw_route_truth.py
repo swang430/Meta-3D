@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.hal.base_station import BaseStationApplyReceipt
 from app.hal.cmw500_base_station import RealCmw500Driver
 
 
@@ -92,6 +93,52 @@ async def test_route_uses_specific_query_not_generic_controller_to_confirm_pcc_b
         "tx2_converter": "TX2",
     }
     assert result.reason == "CMW500 route write and both readbacks confirmed"
+
+
+@pytest.mark.asyncio
+async def test_common_route_receipt_confirms_each_authoritatively_read_field():
+    driver = _driver()
+
+    receipt = await driver.apply_route(_frozen_route())
+
+    assert isinstance(receipt, BaseStationApplyReceipt)
+    assert receipt.operation == "route"
+    assert receipt.confirmed is True
+    assert {field.field: field.status for field in receipt.fields} == {
+        "pcc_bb_board": "confirmed",
+        "rx_connector": "confirmed",
+        "rx_converter": "confirmed",
+        "tx1_connector": "confirmed",
+        "tx1_converter": "confirmed",
+        "tx2_connector": "confirmed",
+        "tx2_converter": "confirmed",
+    }
+    assert len(receipt.exchange_ids) == 5
+
+
+@pytest.mark.asyncio
+async def test_common_route_receipt_keeps_only_pcc_unknown_when_specific_query_fails():
+    driver = _driver(
+        nx2_readback=TimeoutError("setting query unsupported"),
+        error=['0,"No error"', '-113,"Undefined header"', '0,"No error"'],
+    )
+
+    receipt = await driver.apply_route(_frozen_route())
+
+    fields = {field.field: field for field in receipt.fields}
+    assert receipt.confirmed is False
+    assert fields["pcc_bb_board"].status == "unknown"
+    assert fields["pcc_bb_board"].applied is None
+    for name in {
+        "rx_connector",
+        "rx_converter",
+        "tx1_connector",
+        "tx1_converter",
+        "tx2_connector",
+        "tx2_converter",
+    }:
+        assert fields[name].status == "confirmed"
+        assert fields[name].applied == fields[name].requested
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.hal.base_station import BaseStationDriver
 from app.models.calibration import CalibrationCertificate
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.instrument import InstrumentCategory
@@ -50,6 +51,8 @@ from app.models.probe_calibration import (
 )
 from app.models.test_plan import TestCase, TestExecution
 from app.services.channel_engine_client import ChannelEngineClient
+from app.services import instrument_test_lease
+from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
 from app.services.mimo_ota import build_mimo_ota_test_case
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
@@ -71,6 +74,40 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def _bind_unbound_mock_measurement(
+    monkeypatch,
+    context: StepExecutionContext,
+    base_station,
+) -> None:
+    """Give direct MEASURE tests the same diagnostic lease truth as production."""
+
+    adapter_id = base_station.adapter_id
+    execution_config = dict(context.test_execution.config or {})
+    execution_config["base_station_adapter_profile_freeze"] = {
+        "resolution": {
+            "schema_version": 1,
+            "adapter": None,
+            "status": "diagnostic_unbound",
+            "execution_mode": "simulated",
+            "profile": None,
+        }
+    }
+    context.test_execution.config = execution_config
+    context.db.add(context.test_execution)
+    context.db.commit()
+    lease = ActiveBaseStationLeaseIdentity(
+        lease_id="legacy-measure-test",
+        measurement_attempt_id=None,
+        adapter_id=adapter_id,
+        session_token="legacy-measure-session",
+    )
+    monkeypatch.setattr(
+        instrument_test_lease,
+        "active_base_station_lease_identity",
+        lambda: lease,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +393,7 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     db,
     lab,
     hal_with_mocks,
+    monkeypatch,
 ):
     from app.hal import MockPositioner
 
@@ -372,6 +410,8 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     class _PartialCaBaseStation:
         MIMO_PORT_PRESETS = {}
         SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
+        adapter_id = "uxm"
+        simulated = True
 
         def __init__(self) -> None:
             self.add_calls = 0
@@ -384,6 +424,18 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
 
         async def apply_requested_config(self, _requested):
             return True
+
+        async def apply_config(self, requested):
+            return await BaseStationDriver.apply_config(self, requested)
+
+        async def apply_route(self, frozen_adapter):
+            return await BaseStationDriver.apply_route(self, frozen_adapter)
+
+        def route_allows_diagnostic_execution(self, receipt):
+            return BaseStationDriver.route_allows_diagnostic_execution(
+                self,
+                receipt,
+            )
 
         async def add_secondary_cell(self, _index, _config):
             self.add_calls += 1
@@ -435,6 +487,11 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     db.commit()
     hal_with_mocks.drivers["positioner"] = _Positioner("mock-pos", {})
     hal_with_mocks.drivers["baseStation"] = _PartialCaBaseStation()
+    _bind_unbound_mock_measurement(
+        monkeypatch,
+        ctx,
+        hal_with_mocks.drivers["baseStation"],
+    )
 
     result = await MeasureExecutor().execute(ctx)
 
@@ -1012,6 +1069,7 @@ async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
     lab,
     chamber,
     hal_with_full_mock_chain,
+    monkeypatch,
 ):
     certificate = _seed_complete_legacy_path_loss_cal(db, chamber)
     ctx = _build_context(
@@ -1033,6 +1091,11 @@ async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
         "precheck_strict_dut": False,
     }
     db.commit()
+    _bind_unbound_mock_measurement(
+        monkeypatch,
+        ctx,
+        hal_with_full_mock_chain.drivers["baseStation"],
+    )
 
     result = await MeasureExecutor().execute(ctx)
 

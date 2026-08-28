@@ -31,6 +31,29 @@ _METRIC_UNITS = {
 }
 
 
+def base_station_metric_projection_required(
+    execution_config: Any,
+) -> bool:
+    """Centralize the strict new-evidence boundary and legacy compatibility.
+
+    Any execution carrying the versioned envelope must use it.  Before the
+    common envelope existed, UXM executions used an older independently
+    attested throughput path, while CMW500 never had such a formal legacy
+    path.  Keep that historical distinction here at the certification
+    boundary so downstream consumers never select behavior by vendor.
+    """
+
+    config = execution_config if isinstance(execution_config, dict) else {}
+    if config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD) is not None:
+        return True
+    frozen = config.get("base_station_adapter_profile_freeze")
+    resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
+    return (
+        isinstance(resolution, dict)
+        and resolution.get("adapter") == "cmw500"
+    )
+
+
 def canonical_snapshot_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -143,6 +166,104 @@ class FrozenPayloadSnapshot(BaseModel):
     def _digest_matches_payload(self):
         if canonical_snapshot_digest(self.payload) != self.digest:
             raise ValueError("snapshot digest does not match payload")
+        return self
+
+
+class BaseStationAdapterFieldEvidence(BaseModel):
+    """JSON-safe copy of one vendor-neutral adapter field receipt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    requested: JsonValue
+    applied: JsonValue
+    status: Literal["confirmed", "unknown", "not_applicable"]
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator("field", "reason")
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("field exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _status_shape(self):
+        if self.status == "confirmed":
+            if self.applied is None or self.applied != self.requested:
+                raise ValueError("confirmed adapter field must match requested")
+        elif self.status == "unknown":
+            if self.applied is not None:
+                raise ValueError("unknown adapter field cannot carry applied truth")
+        elif self.requested is not None or self.applied is not None:
+            raise ValueError("not-applicable adapter field must contain null values")
+        return self
+
+
+class BaseStationAdapterOperationEvidence(BaseModel):
+    """One adapter operation bound to the active execution lease identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    measurement_attempt_id: str
+    lease_id: str
+    adapter: Literal["uxm", "cmw500"]
+    session_token: str
+    operation: Literal["config", "route"]
+    frozen_request_digest: str | None
+    fields: list[BaseStationAdapterFieldEvidence]
+    confirmed: StrictBool
+    simulated: StrictBool
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator(
+        "measurement_attempt_id",
+        "lease_id",
+        "session_token",
+        "reason",
+    )
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @field_validator("frozen_request_digest")
+    @classmethod
+    def _optional_digest(cls, value: str | None):
+        return None if value is None else _non_empty(value, "frozen_request_digest")
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("adapter operation exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _derived_confirmation(self):
+        if not self.fields:
+            raise ValueError("adapter operation requires field evidence")
+        applicable = [
+            field for field in self.fields if field.status != "not_applicable"
+        ]
+        if applicable and self.frozen_request_digest is None:
+            raise ValueError("applicable adapter operation requires a frozen request")
+        if not applicable and self.frozen_request_digest is not None:
+            raise ValueError("not-applicable adapter operation has no frozen request")
+        expected = (
+            bool(applicable)
+            and all(field.status == "confirmed" for field in applicable)
+            and self.simulated is False
+        )
+        if self.confirmed is not expected:
+            raise ValueError("adapter operation confirmation must be derived")
         return self
 
 
@@ -270,6 +391,9 @@ class BaseStationExecutionEvidence(BaseModel):
     current_measurement_attempt_state: Literal[
         "running", "completed", "failed", "cancelled"
     ] | None
+    adapter_operations: list[BaseStationAdapterOperationEvidence] = Field(
+        default_factory=list
+    )
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -289,6 +413,8 @@ class BaseStationExecutionEvidence(BaseModel):
             raise ValueError("identity adapter mismatch")
         if any(window.adapter != self.adapter for window in self.measurement_windows):
             raise ValueError("window adapter mismatch")
+        if any(row.adapter != self.adapter for row in self.adapter_operations):
+            raise ValueError("adapter operation mismatch")
         if any(release.adapter_id != self.adapter for release in self.control_releases):
             raise ValueError("control release adapter mismatch")
         if self.adapter == "cmw500":
@@ -335,6 +461,11 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
     except Exception:
         return None
     normalized = parsed.model_dump(mode="json")
+    # Version-1 brownfield rows predate adapter operation receipts.  Absence is
+    # preserved as absence so strict equality does not relabel every historical
+    # row malformed; once the writer appends an operation the field is explicit.
+    if "adapter_operations" not in value:
+        normalized.pop("adapter_operations", None)
     return normalized if normalized == value else None
 
 

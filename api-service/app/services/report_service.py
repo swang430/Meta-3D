@@ -44,9 +44,9 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     FormalMetricTrust,
     PositionSnapshot,
     base_station_expected_scope_from_evidence,
+    base_station_metric_projection_required,
     project_base_station_metrics_by_position,
 )
-from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -1249,15 +1249,8 @@ class ReportComparisonService:
         measure = phases.get("measure") or {}
         execution_config = execution.config if isinstance(execution.config, dict) else {}
         evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
-        frozen_adapter = execution_config.get(FREEZE_CONFIG_KEY)
-        frozen_resolution = (
-            frozen_adapter.get("resolution")
-            if isinstance(frozen_adapter, dict)
-            else None
-        )
-        evidence_required = evidence is not None or (
-            isinstance(frozen_resolution, dict)
-            and frozen_resolution.get("adapter") == "cmw500"
+        evidence_required = base_station_metric_projection_required(
+            execution_config
         )
         # 内审 F5：analysis 存在但 4 个对比指标键全缺 → 同样无可比数据，
         # 不产出"formal 却零指标"的空壳对比

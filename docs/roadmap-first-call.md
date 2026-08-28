@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-42：BaseStation 单一执行会话与监控隔离（待外审合并）。**
+Current Focus（非现场）= P2-43：BaseStation Adapter SPI、结构化回执与认证套件（本地实现及全量回归完成，正在 fresh 内审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -57,8 +57,9 @@ P3-20/P3-21 仍不得自动启动。
    回现场复验。UXM 不在场时不得启动 P0-5、P1-17、P2-13 或 P1-6。
 2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据；
    **P2-9 的精确 `ERROR 3` 分类与 NEW-1 的活动 F64 输出集合本地半均已完成**；
-   P2-42 的单一 BaseStation execution session 已完成本地实现、正在执行回归与外审收口，合并后
-   下一项为 P2-43。P0-9B-1 已完成手册支持
+   P2-42 的单一 BaseStation execution session 已由 PR #408 合并；P2-43 的 vendor-neutral
+   receipt/evidence/measurement 边界已完成本地实现与全量回归，正在 fresh 内审与外审收口，合并后下一项为
+   P2-44。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。上述当前现场闭环所需本地半处理完后，再执行架构收敛
@@ -666,7 +667,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-42（本地实现完成，待回归/外审合并）**；合并后严格按 P2-43→P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-43（PR #409 R1 P1 修复与全量回归完成，待 fresh 尾审/R2）**；合并后严格按 P2-44→P2-45 开发，前三项是第三种 BS Emulator 的接入前置。P2-42 已由 PR #408 合并。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4136,7 +4137,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ### P2-42 — BaseStation 单一执行会话 + 监控隔离（接入第三种 BS 前置 1/3）
 
-**实施状态（2026-08-28，待外审合并）**：已提取唯一
+**实施状态（2026-08-28，PR #408 已合并，merge commit `d2192c2b`）**：已提取唯一
 `BaseStationExecutionSession`，formal runner、commissioning saved phase、adhoc 与 run-all
 四类入口均复用同一生命周期：锁内冻结校验 → Remote acquire/transport identity 刷新 →
 current attempt/lease/session 绑定 → operation → cleanup/release → terminal evidence。执行期间统一
@@ -4175,6 +4176,24 @@ apply route、cell/attach、measurement window、safe idle、release。配置与
 **验收**：新增 adapter 不修改 MEASURE、commissioning 多入口、Analysis、报告、比较、下载、
 历史；若必须修改，先单独登记平台缺口。禁止下游新增 `if adapter_id/vendor` 分支的门只锁生产
 路径，不把测试增强升级为 P1。
+
+**实施状态（2026-08-29，PR #409 R1 P1 修复与全量回归完成，待 fresh 尾审/R2）**：现有 vendor-neutral
+`BaseStationDriver` 已增加不可变逐字段 config/route receipt；CMW500 与 UXM 将既有权威回读映射为
+同一 `requested/applied/confirmed/unknown/not_applicable` 合同，缺失、错误、超时与部分回读均不从
+请求值或旧缓存补真值。版本化 execution evidence、MEASURE 与四类 commissioning 入口只消费共同
+SPI；CMW 专属临时 writer 已移除。生产消费方不再新增 UXM/CMW 判别，历史兼容判断集中在 evidence
+认证边界；内审已收口真实 UXM 被新 lifecycle 缺证据误阻断的功能 P1，既有 UXM 逐指标
+attestation 得以保留，同时新 lifecycle 仍不伪造 confirmed。fresh 功能内审发现的四条 P1 已按
+严格 RED→GREEN 收口：共同窗口保留同一捕获域的 SCPI exchanges；config receipt 必须覆盖全部
+execution-frozen 非空字段；UXM 容差内回读保留仪表实际值而不以请求值替代；配置操作成功与正式
+证据完整性分离，真实仪表已接受且权威硬件字段匹配时可继续诊断，但 metadata unknown 仍令正式 KPI
+fail-closed，设备拒绝仍立即中止。R1 发现的显式绑定 CMW Mock route 回执缺少冻结七字段 P1
+也已收口：模拟 route 按完整字段记录 unknown，只允许诊断且不产生正式 applied route。扩大相关链
+1067 passed、全后端 5130 passed / 5 skipped，
+compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
+未新增或猜测任何厂商命令，也未改变正式 provenance 白名单。设计与实施计划见
+`docs/plans/2026-08-28-p2-43-base-station-adapter-spi-design.md` 和
+`docs/plans/2026-08-28-p2-43-base-station-adapter-spi-plan.md`。
 
 ### P2-44 — BaseStation 单一 Binding Resolver + manifest 驱动注册（接入第三种 BS 前置 3/3）
 
@@ -4269,8 +4288,8 @@ inherit 获得。
 ### 2026-08-27 LTE CMW500 现场首测与接入复盘（已 triage）
 
 - `[discovered on-site 2026-08-27 during LTE CMW500 TestCase 首测]` **需要产品化支持“无有效路径损耗校准时仍可执行诊断测试”** —— 当前正式 TestCase 默认 `precheck_strict_cal=true`，CAICT-Lab-1 没有任何 `ProbePathLossCalibration` 时会在 PRECHECK fail-closed；当天经用户明确授权，仅将 LTE UMa 20 MHz CMW500 首测用例显式设为 `precheck_strict_cal=false`，其余频率、信道文件、开关模式、配置一致性、DUT/SIM、cleanup 与 transport release 门保持严格，且无校准数据不得进入路径损耗补偿或正式 KPI。**出口：→ P2-45**，统一设计 Diagnostic/Formal 两阶段、审计与报告边界；P0-9A 在现有逐用例授权下可继续，不等待 P2-45。
-- `[discovered 2026-08-27 during CMW500 integration retrospective]` **四类执行入口分别缝合 BaseStation freeze/attempt/lease/acquire/cleanup/release，后台监控又与独占执行竞争会话** —— 本次多条现场故障和外审 P1 来自入口顺序漂移、旧 session 回复和无关 FSVA/CMW 监控，而不是厂商命令本身。**出口：→ P2-42（本地实现完成，待外审合并）**，四类入口已收敛为单一执行会话并由租约统一隔离监控；不在 P0-9 现场主线边跑边重构。
-- `[discovered 2026-08-27 during P1-73 A/B/C review rounds]` **配置/route 总布尔值和下游厂商分支让“部分字段未确认”分轮暴露** —— 第三种 BS 若仍靠 OTA 全链外审发现漏字段，会重复本次工作量。**出口：→ P2-43**，稳定 Adapter SPI、逐字段结构化回执、统一正式 metric projection 与 UXM/CMW 双实现认证套件。
+- `[discovered 2026-08-27 during CMW500 integration retrospective]` **四类执行入口分别缝合 BaseStation freeze/attempt/lease/acquire/cleanup/release，后台监控又与独占执行竞争会话** —— 本次多条现场故障和外审 P1 来自入口顺序漂移、旧 session 回复和无关 FSVA/CMW 监控，而不是厂商命令本身。**出口：→ P2-42（PR #408 已合并）**，四类入口已收敛为单一执行会话并由租约统一隔离监控；不在 P0-9 现场主线边跑边重构。
+- `[discovered 2026-08-27 during P1-73 A/B/C review rounds]` **配置/route 总布尔值和下游厂商分支让“部分字段未确认”分轮暴露** —— 第三种 BS 若仍靠 OTA 全链外审发现漏字段，会重复本次工作量。**出口：→ P2-43（PR #409 R1 P1 修复与完整回归已完成，待 fresh 尾审/R2）**，稳定 Adapter SPI、逐字段结构化回执、统一正式 metric projection 与 UXM/CMW 双实现认证套件。
 - `[discovered on-site 2026-08-27 during Instrument Catalog → LabProfile sync]` **selected model、InstrumentConnection、LabProfile binding、七字段 profile、loaded driver 与 execution freeze 曾存在多真值源** —— GUI 显示已填但执行读到 `None`，或保存后需另行同步才生效。现场故障已由 PR #403 最小修复；结构性防复发仍需单一 resolver。**出口：→ P2-44**，建立 `ResolvedBaseStationBinding` 与 manifest 驱动的注册/readiness/表单；不重复造数据库真值。
 - `[discovered 2026-08-27 during integration workload review]` **新增 BS Emulator 的目标改动面必须收窄** —— 下一 adapter 的厂商必要工作只应是 identity/capability、配置/route、Cell/Attach、measurement、safe cleanup/release、厂商 schema 和认证测试。**出口：并入 P2-42/P2-43/P2-44 验收**：不得修改 MEASURE、commissioning 多入口、报告/比较/下载/历史和通用 GUI；若需要，先登记独立平台缺口，禁止混入厂商 PR。
 

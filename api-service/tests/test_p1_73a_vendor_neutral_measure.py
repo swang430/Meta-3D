@@ -54,6 +54,7 @@ class _Config:
 class _Uxm:
     adapter_id = "uxm"
     input_level_control_supported = True
+    input_level_legacy_power_field = "uxm_dl_power_dbm"
 
     def __init__(self):
         self.calls: list[float] = []
@@ -66,6 +67,9 @@ class _Uxm:
 class _Cmw:
     adapter_id = "cmw500"
     input_level_control_supported = False
+    input_level_unavailable_reason = (
+        "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
+    )
 
     def __init__(self):
         self.calls: list[float] = []
@@ -96,17 +100,10 @@ def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
     assert "MAC" in blocker
 
 
-def test_cmw_pcell_confirmation_does_not_cover_missing_mac_configuration():
-    policy = getattr(
-        measure_module,
-        "_formal_base_station_config_confirmed",
-        None,
-    )
-    assert callable(policy)
-
+def test_cmw_pcell_confirmation_does_not_remove_missing_mac_blocker():
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
-    assert policy(cmw, pcell_confirmed=True) is False
+    assert _formal_mac_configuration_blocker(cmw) is not None
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():

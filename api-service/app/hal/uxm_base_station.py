@@ -24,7 +24,7 @@ import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.hal.base import (
@@ -36,12 +36,22 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     AppliedCellConfig,
+    BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
     BaseStationDriver,
+    BaseStationFieldReceipt,
+    BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
+    BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
+)
+from app.hal.scpi_evidence import (
+    EvidenceLevel,
+    EvidenceVerdict,
+    InstrumentEvidenceItem,
+    capture_scpi_exchanges,
 )
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
@@ -324,6 +334,7 @@ class RealUxmDriver(BaseStationDriver):
 
     adapter_id = "uxm"
     input_level_control_supported = True
+    input_level_legacy_power_field = "uxm_dl_power_dbm"
 
     rrc_reconfiguration_supported = True
     mac_throughput_configuration_supported = True
@@ -424,6 +435,10 @@ class RealUxmDriver(BaseStationDriver):
         # 功率是 `_dl_power_dbm` 那个 dBm/SCS 值。**两者不可换算比较** ——
         # 换算依赖带宽和 SCS，是派生值，不在驱动里算。
         self._dl_power_dbm_per_bw: Optional[float] = None
+        # Only populated by the existing authoritative configuration readback
+        # path.  Common receipts consume this snapshot; driver request/cache
+        # values must never be used as applied truth.
+        self._last_common_config_readback: Optional[Dict[str, Any]] = None
         self._cell_state: CellState = CellState.OFF
         # Phase 2h: 跨实验室部署允许覆盖 freq→band 推断表 + ARFCN 映射
         # config["freq_to_band_map"] 形如 [[3300, 3800, "N78", "TDD"], ...]
@@ -962,6 +977,60 @@ class RealUxmDriver(BaseStationDriver):
             return await self.load_state_file(state_file)
         return await self.set_cell_config(config)
 
+    async def apply_config(
+        self,
+        requested: BaseStationRequestedConfig,
+    ) -> BaseStationApplyReceipt:
+        """Apply UXM config and expose only existing authoritative readbacks."""
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        self._last_common_config_readback = None
+        with capture_scpi_exchanges() as exchanges:
+            operation_succeeded = await self.apply_requested_config(requested)
+        exchange_ids = tuple(item.exchange_id for item in exchanges)
+        readback = (
+            self._last_common_config_readback
+            if isinstance(self._last_common_config_readback, dict)
+            else {}
+        )
+        requested_fields = tuple(requested.receipt_payload().items())
+        fields = tuple(
+            BaseStationFieldReceipt(
+                field=name,
+                requested=value,
+                applied=(
+                    readback[name]
+                    if name in readback and readback[name] == value
+                    else None
+                ),
+                status=(
+                    "confirmed"
+                    if name in readback and readback[name] == value
+                    else "unknown"
+                ),
+                reason=(
+                    "authoritative UXM configuration readback matched"
+                    if name in readback and readback[name] == value
+                    else "UXM configuration field was not authoritatively confirmed"
+                ),
+                exchange_ids=exchange_ids,
+            )
+            for name, value in requested_fields
+        )
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="config",
+            fields=fields,
+            reason=(
+                "UXM configuration readback confirmed"
+                if fields and all(field.status == "confirmed" for field in fields)
+                else "UXM configuration readback is partial or unavailable"
+            ),
+            simulated=False,
+            operation_succeeded=operation_succeeded is True,
+        )
+
     def capture_evidence_environment(self):
         """从活 VISA 会话、*IDN? 与实际探测 Test App 生成环境快照。"""
         from app.hal.scpi_evidence import (
@@ -1285,6 +1354,8 @@ class RealUxmDriver(BaseStationDriver):
         BW 回读归一化 "BW100"→100; 功率浮点容差 0.1 dB。
         """
         mismatches: List[str] = []
+        common_readback: Dict[str, Any] = {}
+        self._last_common_config_readback = common_readback
 
         def _read(template_name: str) -> Optional[str]:
             q = self._cmd(template_name, cell=cell)
@@ -1301,7 +1372,9 @@ class RealUxmDriver(BaseStationDriver):
             resp = _read("CELL_DL_ARFCN")
             if resp is not None:
                 try:
-                    if int(float(resp)) != int(self._arfcn):
+                    parsed = int(float(resp))
+                    common_readback["nr_arfcn"] = parsed
+                    if parsed != int(self._arfcn):
                         mismatches.append(f"ARFCN 下发 {self._arfcn} 回读 {resp}")
                 except ValueError:
                     mismatches.append(f"ARFCN 回读不可解析: {resp!r}")
@@ -1311,7 +1384,9 @@ class RealUxmDriver(BaseStationDriver):
             if resp is not None:
                 norm = resp.upper().lstrip("BW") if resp.upper().startswith("BW") else resp
                 try:
-                    if int(float(norm)) != int(config["bandwidth_mhz"]):
+                    parsed = float(norm)
+                    common_readback["bandwidth_mhz"] = parsed
+                    if int(parsed) != int(config["bandwidth_mhz"]):
                         mismatches.append(
                             f"BW 下发 {int(config['bandwidth_mhz'])} 回读 {resp}")
                 except ValueError:
@@ -1324,7 +1399,11 @@ class RealUxmDriver(BaseStationDriver):
             resp = _read("DL_POWER_CHANNEL")
             if resp is not None:
                 try:
-                    if abs(float(resp) - float(config["dl_power_dbm_per_bw"])) > 0.1:
+                    parsed = float(resp)
+                    common_readback[
+                        "downlink_power_dbm_per_bandwidth"
+                    ] = parsed
+                    if abs(parsed - float(config["dl_power_dbm_per_bw"])) > 0.1:
                         mismatches.append(
                             f"DL 功率(整带宽) 下发 {config['dl_power_dbm_per_bw']} "
                             f"回读 {resp}")
@@ -1334,7 +1413,9 @@ class RealUxmDriver(BaseStationDriver):
             resp = _read("DL_POWER")
             if resp is not None:
                 try:
-                    if abs(float(resp) - float(config["dl_power_dbm"])) > 0.1:
+                    parsed = float(resp)
+                    common_readback["downlink_power_dbm"] = parsed
+                    if abs(parsed - float(config["dl_power_dbm"])) > 0.1:
                         mismatches.append(
                             f"DL 功率下发 {config['dl_power_dbm']} 回读 {resp}")
                 except ValueError:
@@ -1346,6 +1427,9 @@ class RealUxmDriver(BaseStationDriver):
             template_name: str,
             config_key: str,
             expected: str,
+            *,
+            common_field: Optional[str] = None,
+            parser=None,
         ) -> None:
             if config_key not in config:
                 return
@@ -1353,15 +1437,30 @@ class RealUxmDriver(BaseStationDriver):
             if resp is None:
                 mismatches.append(f"{config_key} 回读不可用")
                 return
+            if common_field is not None:
+                try:
+                    common_readback[common_field] = (
+                        parser(resp) if parser is not None else resp.strip().lower()
+                    )
+                except (TypeError, ValueError):
+                    mismatches.append(f"{config_key} 回读不可解析: {resp!r}")
+                    return
             if resp.strip().upper() != expected.strip().upper():
                 mismatches.append(f"{config_key} 下发 {expected} 回读 {resp}")
 
-        _required_text("CELL_DUPLEX", "duplex", str(config.get("duplex", "")))
+        _required_text(
+            "CELL_DUPLEX",
+            "duplex",
+            str(config.get("duplex", "")),
+            common_field="duplex",
+        )
         if "scs_khz" in config:
             _required_text(
                 "CELL_SCS",
                 "scs_khz",
                 self._format_scs_value(config["scs_khz"]),
+                common_field="subcarrier_spacing_khz",
+                parser=self._parse_scs_response,
             )
         _required_text("SSB_ARFCN", "ssb_arfcn", str(config.get("ssb_arfcn", "")))
         _required_text(
@@ -1373,6 +1472,8 @@ class RealUxmDriver(BaseStationDriver):
             "MIMO_DL_LAYERS",
             "mimo_layers",
             str(config.get("mimo_layers", "")),
+            common_field="mimo_layers",
+            parser=lambda raw: int(float(raw)),
         )
 
         return mismatches
@@ -3534,6 +3635,79 @@ class RealUxmDriver(BaseStationDriver):
         return await self.get_throughput_metrics(
             throughput_scope=throughput_scope,
             _read_ue_report=ue_report_window_ready,
+        )
+
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """Expose the existing UXM clear/read window without inventing closure.
+
+        The current sourced UXM profile has an independent clear boundary but
+        no authoritative stop/closed boundary.  Preserve the established
+        per-metric attestation for the legacy UXM certification path while the
+        new lifecycle envelope remains unconfirmed and therefore cannot claim
+        formal trust by itself.
+        """
+
+        started_at = datetime.now(timezone.utc)
+        with capture_scpi_exchanges() as exchanges:
+            metrics = await self.measure_throughput_window(
+                window_s,
+                throughput_scope=throughput_scope,
+            )
+        raw_metrics = metrics.to_dict()
+        exchange_ids = [exchange.exchange_id for exchange in exchanges]
+        evidence = InstrumentEvidenceItem(
+            instrument="uxm",
+            evidence_key="uxm.throughput.window",
+            requested={
+                "window_s": window_s,
+                "throughput_scope": throughput_scope,
+            },
+            command_sent=self._cmds.MEAS_BTHROUGHPUT_CLEAR,
+            readback={
+                "metrics": raw_metrics,
+                "closed_boundary_confirmed": False,
+            },
+            exchange_ids=exchange_ids,
+            evidence_level=EvidenceLevel.TRANSPORT,
+            source_reference=(
+                "existing UXM profile clear/read path; authoritative closed "
+                "window boundary unavailable"
+            ),
+            verdict=EvidenceVerdict.UNKNOWN,
+            reason=(
+                "UXM independent window has no authoritative closed lifecycle; "
+                "values are diagnostic only"
+            ),
+        )
+        return BaseStationMeasurementWindow(
+            window_id=uuid4().hex,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            metrics=metrics,
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
+            evidence=(evidence,),
+            confirmed=False,
+            reason=evidence.reason,
+        )
+
+    def unconfirmed_window_allows_diagnostic_execution(
+        self,
+        window: BaseStationMeasurementWindow,
+    ) -> bool:
+        """Retain the pre-P2-43 UXM attested path without claiming closure."""
+
+        return (
+            isinstance(window, BaseStationMeasurementWindow)
+            and window.confirmed is False
+            and bool(window.evidence)
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

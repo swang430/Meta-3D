@@ -10,10 +10,10 @@ Supports both 5G NR (Keysight UXM) and LTE (R&S CMW500) base station emulators.
 import asyncio
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, Optional, List, ClassVar, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.hal.base import (
@@ -45,10 +45,14 @@ LteTransmissionMode = Literal[
 class BaseStationIdentity:
     """由已注册驱动提供的基站型号、固件与选件身份快照。"""
 
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     model: str
     firmware_version: str | None
     options: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.adapter_id, str) or not self.adapter_id.strip():
+            raise ValueError("adapter_id must be a non-empty string")
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,21 @@ class BaseStationRequestedConfig:
             payload["csi_rs_ports"] = self.csi_rs_ports
         return payload
 
+    def receipt_payload(self) -> dict[str, Any]:
+        """Return every non-null field covered by the frozen request receipt.
+
+        This uses the same dataclass field names persisted by the execution
+        evidence writer.  Adapter-specific payload aliases are deliberately
+        excluded: a partial hardware readback must not confirm a larger frozen
+        request merely because the adapter did not include the other fields.
+        """
+
+        return {
+            name: value
+            for name, value in asdict(self).items()
+            if value is not None
+        }
+
 
 @dataclass(frozen=True)
 class AppliedCellConfig:
@@ -125,6 +144,107 @@ class BaseStationConfigResult:
     applied: dict[str, Any] | None
     confirmed: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class BaseStationFieldReceipt:
+    """One requested field and the adapter's authoritative applied truth."""
+
+    field: str
+    requested: Any
+    applied: Any
+    status: Literal["confirmed", "unknown", "not_applicable"]
+    reason: str
+    exchange_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str) or not self.field.strip():
+            raise ValueError("field must be a non-empty string")
+        if self.status not in {"confirmed", "unknown", "not_applicable"}:
+            raise ValueError("field receipt status is invalid")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("field receipt reason must be non-empty")
+        if (
+            not isinstance(self.exchange_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.exchange_ids
+            )
+            or len(set(self.exchange_ids)) != len(self.exchange_ids)
+        ):
+            raise ValueError("field exchange ids must be non-empty and unique")
+        if self.status == "confirmed":
+            if self.applied is None:
+                raise ValueError("confirmed field requires an applied value")
+            if self.applied != self.requested:
+                raise ValueError("confirmed field applied value must match requested")
+        elif self.status == "unknown":
+            if self.applied is not None:
+                raise ValueError("unknown field cannot carry an applied value")
+        elif self.requested is not None or self.applied is not None:
+            raise ValueError("not_applicable field cannot carry requested or applied values")
+
+
+@dataclass(frozen=True)
+class BaseStationApplyReceipt:
+    """Versioned vendor-neutral result for config or route application."""
+
+    schema_version: Literal[1]
+    operation: Literal["config", "route"]
+    fields: tuple[BaseStationFieldReceipt, ...]
+    reason: str
+    simulated: bool
+    operation_succeeded: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station apply receipt schema")
+        if self.operation not in {"config", "route"}:
+            raise ValueError("base-station apply operation is invalid")
+        if not isinstance(self.fields, tuple) or not self.fields:
+            raise ValueError("base-station apply receipt requires fields")
+        if any(not isinstance(item, BaseStationFieldReceipt) for item in self.fields):
+            raise TypeError("apply receipt fields must be BaseStationFieldReceipt")
+        field_names = [item.field for item in self.fields]
+        if len(set(field_names)) != len(field_names):
+            raise ValueError("apply receipt field names must be unique")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("apply receipt reason must be non-empty")
+        if type(self.simulated) is not bool:
+            raise TypeError("apply receipt simulated must be bool")
+        if (
+            self.operation_succeeded is not None
+            and type(self.operation_succeeded) is not bool
+        ):
+            raise TypeError("apply receipt operation_succeeded must be bool or None")
+
+    @property
+    def confirmed(self) -> bool:
+        applicable = [
+            field for field in self.fields if field.status != "not_applicable"
+        ]
+        return bool(applicable) and all(
+            field.status == "confirmed" for field in applicable
+        )
+
+    @property
+    def diagnostic_execution_allowed(self) -> bool:
+        """Separate accepted device operation from formal evidence completeness."""
+
+        if self.operation != "config":
+            return False
+        if self.operation_succeeded is not None:
+            return self.operation_succeeded
+        return self.confirmed is True or self.simulated is True
+
+    @property
+    def exchange_ids(self) -> tuple[str, ...]:
+        unique: list[str] = []
+        for field in self.fields:
+            for exchange_id in field.exchange_ids:
+                if exchange_id not in unique:
+                    unique.append(exchange_id)
+        return tuple(unique)
 
 
 @dataclass(frozen=True)
@@ -157,7 +277,7 @@ class BaseStationMeasurementWindow:
 class BaseStationRemoteSessionResult:
     """驱动成功建立真实 transport session 后返回的不可伪造身份。"""
 
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     session_token: str
     acquired_confirmed: bool
     warnings: tuple[str, ...]
@@ -169,7 +289,7 @@ class BaseStationControlReleaseResult:
 
     measurement_attempt_id: str | None
     lease_id: str
-    adapter_id: Literal["uxm", "cmw500"]
+    adapter_id: str
     session_token: str
     remote_session_acquired_confirmed: bool
     transport_session_released_confirmed: bool
@@ -310,10 +430,12 @@ class BaseStationDriver(InstrumentDriver):
     # independently confirm the requested active SCell set. Real drivers keep
     # the fail-closed default until a vendor-documented readback is available.
     SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
-    adapter_id: ClassVar[Literal["uxm", "cmw500"]]
+    adapter_id: ClassVar[str]
     # 输入电平闭环是显式 opt-in 能力，不能因某驱动恰好实现同名方法而推断。
     # P1-73A 的 CMW500 功率能力尚未开放，保持默认 False。
     input_level_control_supported: ClassVar[bool] = False
+    input_level_legacy_power_field: ClassVar[str | None] = None
+    input_level_unavailable_reason: ClassVar[str | None] = None
     # RRC reconfiguration is opt-in.  The abstract method exists to define
     # the contract, so hasattr() cannot distinguish an implemented adapter.
     rrc_reconfiguration_supported: ClassVar[bool] = False
@@ -322,6 +444,9 @@ class BaseStationDriver(InstrumentDriver):
     mac_throughput_configuration_supported: ClassVar[bool] = False
     max_bandwidth_mhz: ClassVar[float | None] = None
     max_mimo_layers: ClassVar[int | None] = None
+    measurement_window_cardinality: ClassVar[Literal["requested", "single"]] = (
+        "requested"
+    )
 
     # ===================================================================
     # 小区配置
@@ -391,6 +516,76 @@ class BaseStationDriver(InstrumentDriver):
             )
             return False
         return await self.set_cell_config(requested.to_driver_payload())
+
+    async def apply_config(
+        self,
+        requested: BaseStationRequestedConfig,
+    ) -> BaseStationApplyReceipt:
+        """Apply a typed request without inventing readback absent from a driver.
+
+        Concrete adapters must override this method before a result can be
+        formally confirmed.  The compatibility implementation preserves the
+        existing write path but reports every requested field as unknown.
+        """
+
+        if not isinstance(requested, BaseStationRequestedConfig):
+            raise TypeError("requested must be BaseStationRequestedConfig")
+        operation_succeeded = await self.apply_requested_config(requested)
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="config",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=field,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="adapter did not provide authoritative field readback",
+                )
+                for field, value in requested.receipt_payload().items()
+            ),
+            reason="adapter configuration readback is unavailable",
+            simulated=getattr(self, "simulated", False) is True,
+            operation_succeeded=operation_succeeded is True,
+        )
+
+    async def apply_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationApplyReceipt:
+        """Return an explicit non-applicable receipt for adapters without route."""
+
+        if not isinstance(frozen_adapter, dict):
+            raise TypeError("frozen_adapter must be a dictionary")
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=(
+                BaseStationFieldReceipt(
+                    field="route",
+                    requested=None,
+                    applied=None,
+                    status="not_applicable",
+                    reason="adapter has no execution route operation",
+                ),
+            ),
+            reason="route is not applicable to this adapter",
+            simulated=getattr(self, "simulated", False) is True,
+        )
+
+    def route_allows_diagnostic_execution(
+        self,
+        receipt: BaseStationApplyReceipt,
+    ) -> bool:
+        """Accept a route only when it is confirmed or truly not applicable."""
+
+        if not isinstance(receipt, BaseStationApplyReceipt):
+            return False
+        if receipt.operation != "route":
+            return False
+        return receipt.confirmed is True or all(
+            field.status == "not_applicable" for field in receipt.fields
+        )
 
     def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
         """Optional physical connector projection for topology display.
@@ -543,6 +738,25 @@ class BaseStationDriver(InstrumentDriver):
 
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a confirmed measurement window"
+        )
+
+    def measurement_window_count(self, requested: int) -> int:
+        """Let the adapter own whether one position uses one or N native windows."""
+
+        if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
+            raise ValueError("requested measurement window count must be positive")
+        return 1 if self.measurement_window_cardinality == "single" else requested
+
+    def unconfirmed_window_allows_diagnostic_execution(
+        self,
+        window: BaseStationMeasurementWindow,
+    ) -> bool:
+        """Keep only authoritative simulated windows runnable by default."""
+
+        return (
+            getattr(self, "simulated", False) is True
+            and isinstance(window, BaseStationMeasurementWindow)
+            and window.metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
@@ -767,6 +981,72 @@ class MockBaseStation(BaseStationDriver):
     async def configure(self, config: Dict[str, Any]) -> bool:
         return await self.set_cell_config(config)
 
+    async def apply_route(
+        self,
+        frozen_adapter: dict[str, Any],
+    ) -> BaseStationApplyReceipt:
+        """Mirror a bound CMW route as simulated unknown evidence."""
+
+        if self.adapter_id != "cmw500":
+            return await super().apply_route(frozen_adapter)
+        resolution = frozen_adapter.get("resolution")
+        profile = resolution.get("profile") if isinstance(resolution, dict) else None
+        raw_route = (
+            profile.get("lte_2x2_internal_route")
+            if isinstance(profile, dict)
+            else None
+        )
+        if raw_route is None:
+            return await super().apply_route(frozen_adapter)
+        from app.hal.base_station_adapter_profile import (
+            Cmw500Lte2x2InternalRoute,
+        )
+
+        route = Cmw500Lte2x2InternalRoute.model_validate(raw_route).model_dump()
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="simulated CMW route has no authoritative readback",
+                )
+                for name, value in route.items()
+            ),
+            reason="simulated CMW route excluded from formal evidence",
+            simulated=True,
+            operation_succeeded=True,
+        )
+
+    def route_allows_diagnostic_execution(
+        self,
+        receipt: BaseStationApplyReceipt,
+    ) -> bool:
+        """Allow only the complete simulated CMW route shape for diagnostics."""
+
+        if self.adapter_id != "cmw500":
+            return super().route_allows_diagnostic_execution(receipt)
+        from app.hal.base_station_adapter_profile import (
+            Cmw500Lte2x2InternalRoute,
+        )
+
+        expected_fields = set(Cmw500Lte2x2InternalRoute.model_fields)
+        return (
+            isinstance(receipt, BaseStationApplyReceipt)
+            and receipt.operation == "route"
+            and receipt.simulated is True
+            and {field.field for field in receipt.fields} == expected_fields
+            and all(
+                field.status == "unknown"
+                and field.requested is not None
+                and field.applied is None
+                for field in receipt.fields
+            )
+        )
+
     async def get_capabilities(self) -> list[InstrumentCapability]:
         return [
             InstrumentCapability(
@@ -882,6 +1162,36 @@ class MockBaseStation(BaseStationDriver):
             mcs_dl=random.randint(24, 27),
             mcs_ul=random.randint(20, 24),
             throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
+        )
+
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """Return a same-shape simulated window that can never be formal."""
+
+        started_at = datetime.now(timezone.utc)
+        await asyncio.sleep(max(float(window_s), 0.0))
+        metrics = await self.get_throughput_metrics(
+            throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
+        )
+        metrics.kpi_valid = {
+            key: False for key in metrics.kpi_valid
+        }
+        return BaseStationMeasurementWindow(
+            window_id=uuid4().hex,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            metrics=metrics,
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
+            evidence=(),
+            confirmed=False,
+            reason="simulated diagnostic window; excluded from formal KPI",
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

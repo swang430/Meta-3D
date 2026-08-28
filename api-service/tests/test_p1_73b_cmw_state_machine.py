@@ -8,8 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
     BaseStationRemoteSessionResult,
+    BaseStationRequestedConfig,
     CellState,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
@@ -65,6 +67,136 @@ def _identity_responses() -> dict[str, str]:
         "SYSTem:BASE:OPTion:LIST? HWOPtion,FUNCtional": "CMW-B570B",
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
     }
+
+
+def _requested_config() -> BaseStationRequestedConfig:
+    return BaseStationRequestedConfig(
+        radio_technology="lte",
+        channel_kind="lte_dl_earfcn",
+        frequency_mhz=1815.0,
+        bandwidth_mhz=20.0,
+        band="B3",
+        duplex="fdd",
+        nr_arfcn=None,
+        lte_dl_earfcn=1300,
+        lte_transmission_mode="TM3",
+        subcarrier_spacing_khz=None,
+        mimo_layers=2,
+        downlink_power_dbm=-65.25,
+    )
+
+
+def _complete_config_responses(**overrides: str) -> dict[str, str]:
+    return {
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+        "*OPC?": "1",
+        "SYSTem:ERRor:ALL?": '0,"No error"',
+        "CONFigure:LTE:SIGN1:BAND?": "OB3",
+        "CONFigure:LTE:SIGN1:CELL:BANDwidth:DL?": "B200",
+        "CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1300",
+        "CONFigure:LTE:SIGN1:DMODe?": "FDD",
+        "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?": "TWO",
+        "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?": "TM3",
+        "CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?": "-65.25",
+        **overrides,
+    }
+
+
+@pytest.mark.asyncio
+async def test_common_config_receipt_confirms_only_authoritatively_read_fields():
+    driver = _StateDriver(_complete_config_responses())
+
+    receipt = await driver.apply_config(_requested_config())
+
+    assert isinstance(receipt, BaseStationApplyReceipt)
+    assert receipt.operation == "config"
+    assert receipt.operation_succeeded is True
+    assert receipt.confirmed is False
+    fields = {field.field: field for field in receipt.fields}
+    assert {name: fields[name].applied for name in {
+        "band",
+        "bandwidth_mhz",
+        "lte_dl_earfcn",
+        "duplex",
+        "mimo_layers",
+        "lte_transmission_mode",
+        "downlink_power_dbm",
+    }} == {
+        "band": "B3",
+        "bandwidth_mhz": 20.0,
+        "lte_dl_earfcn": 1300,
+        "duplex": "fdd",
+        "mimo_layers": 2,
+        "lte_transmission_mode": "TM3",
+        "downlink_power_dbm": -65.25,
+    }
+    assert all(
+        fields[name].status == "confirmed"
+        for name in {
+            "band",
+            "bandwidth_mhz",
+            "lte_dl_earfcn",
+            "duplex",
+            "mimo_layers",
+            "lte_transmission_mode",
+            "downlink_power_dbm",
+        }
+    )
+    assert all(
+        fields[name].status == "unknown" and fields[name].applied is None
+        for name in {"radio_technology", "channel_kind", "frequency_mhz"}
+    )
+    assert receipt.exchange_ids
+
+
+@pytest.mark.asyncio
+async def test_common_config_receipt_keeps_only_mismatched_field_unknown():
+    driver = _StateDriver(
+        _complete_config_responses(
+            **{
+                "CONFigure:LTE:SIGN1:CONNection:PCC:TRANsmission?": "TM4",
+            }
+        )
+    )
+
+    receipt = await driver.apply_config(_requested_config())
+
+    fields = {field.field: field for field in receipt.fields}
+    assert receipt.confirmed is False
+    assert fields["lte_transmission_mode"].status == "unknown"
+    assert fields["lte_transmission_mode"].applied is None
+    non_authoritative = {"radio_technology", "channel_kind", "frequency_mhz"}
+    for name, field in fields.items():
+        if name not in non_authoritative | {"lte_transmission_mode"}:
+            assert field.status == "confirmed"
+            assert field.applied == field.requested
+    assert all(fields[name].status == "unknown" for name in non_authoritative)
+
+
+@pytest.mark.asyncio
+async def test_common_config_receipt_never_backfills_request_after_error_queue_rejects():
+    errors = iter(['0,"No error"', '-221,"Settings conflict"'])
+
+    class _RejectedConfigDriver(_StateDriver):
+        def _do_query(self, command: str) -> str:
+            if command == "SYSTem:ERRor:ALL?":
+                self.queries.append(command)
+                return next(errors)
+            return super()._do_query(command)
+
+    driver = _RejectedConfigDriver(
+        {
+            "SOURce:LTE:SIGN1:CELL:STATe:ALL?": "OFF,ADJ",
+            "*OPC?": "1",
+        }
+    )
+
+    receipt = await driver.apply_config(_requested_config())
+
+    assert receipt.operation_succeeded is False
+    assert receipt.confirmed is False
+    assert all(field.status == "unknown" for field in receipt.fields)
+    assert all(field.applied is None for field in receipt.fields)
 
 
 @pytest.mark.asyncio
