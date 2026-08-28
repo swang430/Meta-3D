@@ -4220,7 +4220,9 @@ UXM 切换会清除不适用 profile，通用 `connection_params` 不能绕过�
 checked-in YAML、generated TS 与手写类型已同步；未新增/猜测厂商命令，未改变正式 provenance
 白名单，也未提前实现 P2-45。fresh 内审发现并收口一条功能 P1：Readiness 与同步成功提示原未消费
 共同 binding 真值，可能在 resolver 已判 invalid 时仍显示总体可开测；现统一展示解析出的 adapter/model/
-connection/digest，invalid/missing 为红灯，simulated/diagnostic_unbound 仅为黄色诊断。设计与实施计划见
+connection/digest，invalid/missing 为红灯，simulated/diagnostic_unbound 仅为黄色诊断。Codex R1 进一步
+发现黄色诊断单格仍可能让总判显示绿色可开测；现总判保持三态，诊断 binding 只显示黄色“仅可诊断”，
+不会形成正式就绪假象。设计与实施计划见
 `docs/plans/2026-08-29-p2-44-base-station-binding-manifest-design.md` 与
 `docs/plans/2026-08-29-p2-44-base-station-binding-manifest-plan.md`。
 

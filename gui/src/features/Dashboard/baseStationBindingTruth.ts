@@ -2,6 +2,20 @@ import type { BaseStationBindingPreviewResponse } from '../../types/api'
 
 export type BaseStationBindingLight = 'green' | 'yellow' | 'red'
 
+export type ReadinessLight = BaseStationBindingLight | 'gray'
+
+export type ReadinessVerdictCell = {
+  key: string
+  title: string
+  light: ReadinessLight
+  valueText: string
+}
+
+export type ReadinessVerdict = {
+  light: BaseStationBindingLight
+  text: string
+}
+
 export type BaseStationBindingTruth = {
   light: BaseStationBindingLight
   valueText: string
@@ -50,4 +64,30 @@ export const projectBaseStationBindingTruth = (
     valueText: `${binding.adapter_id ?? 'BaseStation'} · 已解析`,
     detail: formatBaseStationSyncTruth(binding),
   }
+}
+
+export const projectReadinessVerdict = (
+  cells: ReadinessVerdictCell[],
+  available: boolean,
+): ReadinessVerdict => {
+  if (!available) {
+    return { light: 'red', text: '🔴 不可开测：HAL 未就绪' }
+  }
+  const blockers = cells.filter((cell) => cell.light === 'red')
+  if (blockers.length > 0) {
+    const reason = blockers
+      .map((cell) => `${cell.title}（${cell.valueText}）`)
+      .join('、')
+    return { light: 'red', text: `🔴 不可开测：${reason}` }
+  }
+  const diagnosticBinding = cells.find(
+    (cell) => cell.key === 'base-station-binding' && cell.light === 'yellow',
+  )
+  if (diagnosticBinding) {
+    return {
+      light: 'yellow',
+      text: `🟡 仅可诊断：${diagnosticBinding.title}（${diagnosticBinding.valueText}）`,
+    }
+  }
+  return { light: 'green', text: '✅ 可开测' }
 }

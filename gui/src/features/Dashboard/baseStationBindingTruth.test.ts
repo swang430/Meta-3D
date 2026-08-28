@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   formatBaseStationSyncTruth,
   projectBaseStationBindingTruth,
+  projectReadinessVerdict,
 } from './baseStationBindingTruth.ts'
 
 const configured = {
@@ -68,4 +69,45 @@ test('invalid or absent binding is red and never contributes a green verdict', (
   assert.equal(invalid.light, 'red')
   assert.match(invalid.detail, /drifted/)
   assert.equal(projectBaseStationBindingTruth(null).light, 'red')
+})
+
+test('diagnostic binding makes the aggregate verdict yellow instead of formally ready', () => {
+  const binding = projectBaseStationBindingTruth({
+    ...configured,
+    execution_mode: 'simulated',
+  })
+  const verdict = projectReadinessVerdict(
+    [
+      {
+        key: 'base-station-binding',
+        title: '基站绑定',
+        light: binding.light,
+        valueText: binding.valueText,
+      },
+    ],
+    true,
+  )
+
+  assert.equal(verdict.light, 'yellow')
+  assert.match(verdict.text, /仅可诊断/)
+  assert.doesNotMatch(verdict.text, /✅ 可开测/)
+})
+
+test('aggregate verdict preserves unavailable, blocking, and formal-ready states', () => {
+  const cell = {
+    key: 'drivers',
+    title: '驱动链',
+    light: 'green' as const,
+    valueText: '全部 ok',
+  }
+  assert.equal(projectReadinessVerdict([cell], false).light, 'red')
+  assert.equal(
+    projectReadinessVerdict([{ ...cell, light: 'red', valueText: '1 个失败' }], true)
+      .light,
+    'red',
+  )
+  assert.deepEqual(projectReadinessVerdict([cell], true), {
+    light: 'green',
+    text: '✅ 可开测',
+  })
 })

@@ -39,5 +39,6 @@ test('readiness and sync feedback consume the resolved common binding truth', ()
     readiness,
     /projectBaseStationBindingTruth\(report\.base_station_binding\)/,
   )
+  assert.match(readiness, /projectReadinessVerdict\(buildCells\(readiness\)/)
   assert.match(app, /formatBaseStationSyncTruth\(syncResult\.resolved\)/)
 })

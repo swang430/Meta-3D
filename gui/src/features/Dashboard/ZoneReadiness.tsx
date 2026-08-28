@@ -26,7 +26,10 @@ import {
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
 import { useOperationalLab } from '../OperationalLab'
-import { projectBaseStationBindingTruth } from './baseStationBindingTruth'
+import {
+  projectBaseStationBindingTruth,
+  projectReadinessVerdict,
+} from './baseStationBindingTruth'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -193,21 +196,6 @@ function buildCells(report: HALReadinessResponse): Cell[] {
   ]
 }
 
-// 总判: 任一红 → 不可开测 + 原因; 否则可开测。
-// 文案风格跟 commissioning precheck FAIL 一致。DUT 灰色不阻断开测
-// (后端未实现感知，缺这一格不应误判为"不可开测")。
-function buildVerdict(cells: Cell[], available: boolean): { canStart: boolean; text: string } {
-  if (!available) {
-    return { canStart: false, text: '🔴 不可开测：HAL 未就绪' }
-  }
-  const blockers = cells.filter((c) => c.light === 'red')
-  if (blockers.length > 0) {
-    const reason = blockers.map((c) => `${c.title}（${c.valueText}）`).join('、')
-    return { canStart: false, text: `🔴 不可开测：${reason}` }
-  }
-  return { canStart: true, text: '✅ 可开测' }
-}
-
 // P1-11/P1-13: per-/24-subnet 可达性小节。三态诚实性: 未探测(probed=false,
 // mock 模式不探网络 / binding 无 host:port) → 灰色"未探测", 不假装可达;
 // 探到可达 → 绿; 探到不可达(preflight 超时, 无路由) → 红 + runbook 提示。
@@ -282,6 +270,9 @@ export function ZoneReadiness() {
   // last successful data in cache. Publish only after the selected key is idle.
   const readiness =
     fetchStatus === 'idle' && !error && selectedLabProfileId ? data : undefined
+  const verdict = readiness
+    ? projectReadinessVerdict(buildCells(readiness), readiness.available)
+    : undefined
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -293,15 +284,13 @@ export function ZoneReadiness() {
               系统就绪
             </Text>
           </Group>
-          {readiness && (
+          {verdict && (
             <Badge
               size="lg"
-              color={
-                buildVerdict(buildCells(readiness), readiness.available).canStart ? 'green' : 'red'
-              }
+              color={LIGHT_COLOR[verdict.light]}
               variant="filled"
             >
-              {buildVerdict(buildCells(readiness), readiness.available).text}
+              {verdict.text}
             </Badge>
           )}
         </Group>
