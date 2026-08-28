@@ -184,7 +184,7 @@ Run:
 api-service/.venv/bin/pytest -q \
   api-service/tests/test_p1_65_emcenter_switch_health.py \
   api-service/tests/test_etsl_switch_protocol.py \
-  api-service/tests/test_diagnostic_sequences_api.py \
+  api-service/tests/test_diagnostic_sequences.py \
   api-service/tests/test_rule_gates.py
 ```
 

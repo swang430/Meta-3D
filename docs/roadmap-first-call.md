@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前状态（现场链事实与本地队列截至 2026-08-27）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态（现场链事实与本地队列截至 2026-08-28）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
 degree 单位与 `PFBK - MOVEABS = +90°` 偏置；P0-9B-3 已完成该真值及其来源/时间的
@@ -54,8 +54,8 @@ P3-20/P3-21 仍不得自动启动。
    报告证据。P1-2、NEW-2 等不需改代码的已登记诊断可穿插留证。需要先改探针或产品代码的
    P2-9、NEW-1 不在现场临时开发；只记录原始响应，转入非现场队列修好后再
    回现场复验。UXM 不在场时不得启动 P0-5、P1-17、P2-13 或 P1-6。
-2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据，按最小
-   改动完成 P2-9 的精确 `ERROR 3` 分类、NEW-1 的活动 F64 输出集合；P0-9B-1 已完成手册支持
+2. **非现场队列（本地开发 / 手册取证 / 自动化验证）**：先消化已经取得的现场证据；
+   **P2-9 的精确 `ERROR 3` 分类本地半已完成**，下一项是 NEW-1 的活动 F64 输出集合；P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。上述当前现场闭环所需本地半处理完后，再执行架构收敛
@@ -716,7 +716,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
-| P2-9 **现场半** | EMCenter switch bring-up | **2026-08-27 人工接受**：VXI-11、机箱身份与继电器回读可用；固件 2.5.1 对 `INTLK? SAFETYRELAY` 返回 `ERROR 3`，当前序列仍误记 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。只对已确认的固件/命令组合把 `ERROR 3` 精确归类为 unsupported；不得放宽其他错误。修后重跑 SUCCESS 才关闭现场半 |
+| P2-9 **现场半** | EMCenter switch bring-up | **2026-08-28 本地分类已收口，待现场重跑**：VXI-11、机箱身份与继电器回读已于 08-27 人工接受；序列现只对系统软件 2.5.1 的完整 `ERROR 3;(INTLK? SAFETYRELAY);` 原始回复精确归类为 `known_unsupported`，其他近似值仍 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。回现场重跑取得 SUCCESS 才关闭该现场半；TopologyEditor mapping 与真机切换仍是独立未完成项 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_sim_identity_truth`](../api-service/app/diagnostics/sequences/uxm_sim_identity_truth.py) —— `UEReported:IMSI?` 与 SIMProfile 对账，四出口脱敏 |
@@ -3815,7 +3815,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
-### P2-9 — EMCenter switch bring-up (协议/地址/EMQuest 调研) 🔄 本地半 done (协议调研 + driver 协议修正)
+### P2-9 — EMCenter switch bring-up (协议/地址/EMQuest 调研) 🔄 本地实现 done，待现场复验 / mapping
 
 **What**: ETS-Lindgren EMCenter (AMS8947 RF switch matrix, 真实地址 `192.168.0.50`) 接入 HAL。
 现状: GPIB 血统仪表, 经 EMQuest 软件控制, **不监听 raw SCPI socket** —— 5/27 现场直连探测无 SCPI
@@ -3828,11 +3828,11 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 **Status**: 🔄 本地半 done (本 PR) — ① 协议调研 ✅ + ② driver 协议修正 ✅; ③ 接入 TopologyEditor + 现场实测 🚧 blocked。**关键发现**: `EtslSwitchDriver` 早已存在但有协议 bug (Write/Query 前缀误读文档动作标签 + LF 终止符, 极可能是 5/27 现场 raw socket 无响应真因) + 零协议单测。**① 调研结论**: AMS8947-195-1 = ETS-Lindgren EMCenter + EMSwitch 插卡, 原生 SCPI over LAN/GPIB **不必经 EMQuest** (EMQuest 是可选上位软件; 系统图 "EMQuest NET Port" 只是物理接线盘标签); 命令裸 `<slot>:<cmd>` + CR 终止 (非 Write/Query 包装)。**② 修正**: driver 改默认裸命令 + CR + 可配置回退 (`command_style`/`line_terminator`, 现场只调配置不改代码, 同 P0-8) + SP6T reset 安全跳过 + 18 例协议单测; 完整调研 + 命令集 + 拓扑 + 现场 runbook 见 [docs/site-debug/2026-06-04-emcenter-switch-protocol.md](site-debug/2026-06-04-emcenter-switch-protocol.md)。**现场缺口**: TCP 端口 (官方手册都不写; SCPI 标准 5025 首选 + 串口 9600 plan B, web 调研已收敛, 详见调研文档) + 每槽卡型号 + SP6T↔天线映射 + SP6T 复位语义。
 **下一步**: ③ 现场按 runbook 定端口 (raw+CR 默认, 逃生开关试 verbose/lf) + `<slot>:*IDN?` 认卡 + 标定 SP6T 映射 → 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。
 **▶ 2026-07-03 现场半收口**: **老固件 2.5.1 的 LAN = VXI-11 (非 raw socket)** —— rpcinfo 见 Core/Abort 通道; pyvisa `TCPIP0::192.168.0.50::inst0::INSTR`(现有绑定本就是此形式)+ 裸命令 + CR **实测全通**: 机箱 IDN / 逐槽认卡 (Slot1 EMControl 7006-001, Slot2-4 EMSwitch 7001-002/B, Slot5 7001-003/B SP6T 值域实证, Slot8 Processor 7000-009) / 继电器读态; **当日人工通路快照 Slot4 A/B/C=NO/NO/NO + Slot5 A/B=1/1**; 响应尾带 `\n\x00` NUL; `INTLK? SAFETYRELAY` 回 ERROR 3 (此固件不支持)。2025-08 RevA 文档的 raw 5025 仅适用新固件。**剩余本地半② ✅ Done (2026-07-04 #198)**: EtslSwitchDriver VXI-11 transport 落地 (`transport` 默认 vxi11 = 现场唯一实证形态, raw 保留给新固件/串口桥; pyvisa `TCPIP0::{ip}::inst0::INSTR` @py 后端 + 裸命令 + CR 交 write_termination) + NUL 尾清洗 + INTLK "ERROR 3" 容错放行 + 5 协议单测。SP6T 值域硬校验留到接 TopologyEditor mapping 时做 (需 mapping 携带 relay_type 卡型, 值域实证已录 docstring)。**剩余现场半③**: 按通路快照验证真机切换 + 接 TopologyEditor mapping。详见 [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered "EMCenter 复盘"条。
-**2026-08-27 更新**：VXI-11、机箱身份和继电器回读再次人工接受；独立
-`emcenter_switch_health` 序列仍把 `INTLK? SAFETYRELAY` 的已知 `ERROR 3` 记成 BLOCKER，
-说明驱动容错与诊断判决尚未同源。当前剩余最小修复是只对固件 2.5.1 + 该精确命令归类为
-unsupported，并重跑 SUCCESS；不得把 `ERROR 3` 全局当成功。TopologyEditor mapping 仍按原
-P2-9 范围另行完成，不阻塞 P0-9A Attach。
+**2026-08-28 更新**：本地精确分类已按 TDD 收口。`emcenter_switch_health` 只在
+`VERSION_SW?` 精确为 `2.5.1` 且互锁完整原始回复精确为
+`ERROR 3;(INTLK? SAFETYRELAY);` 时标记 `known_unsupported`；其他固件、缩写、不同命令回显
+或其他错误继续 BLOCKER，且成功摘要不把“不支持”写成“互锁 0”。现场仍须重跑取得 SUCCESS；
+TopologyEditor mapping 与真机切换仍按原 P2-9 范围另行完成，不阻塞 P0-9A Attach。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day
 
@@ -4247,6 +4247,10 @@ inherit 获得。
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+### 2026-08-28 P2-9 精确分类枚举（待 triage，不自动启动）
+
+- `[discovered 2026-08-28 during P2-9 interlock classification]` **EtslSwitchDriver 连接门只阻断互锁精确为 `"1"`，`None`、`"2"` 或其他错误回复仍会把驱动置为 CONNECTED** —— 这是生产驱动的既有宽松兼容，与本片“诊断序列只放行精确 2.5.1 现场回复”的安全边界不一致。若后续 triage 决定处理，应先取得版本真值并设计安全代价不对称；不得把诊断白名单直接提升为全局错误语义。本片不改驱动。
 
 ### 2026-08-27 LTE CMW500 现场首测与接入复盘（已 triage）
 

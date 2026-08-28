@@ -10,7 +10,8 @@ P1-45 立的规矩禁止的形态。
   写命令 token（复位 / 清错 / 重启 / 置位）；
 - 四态判定各一条行为门：全部正常 → SUCCESS；互锁=1 / 超时无响应 / 回读值不在
   合法值域 → BLOCKER；无槽位配置 / relay_type 未配置 → UNDETERMINED；
-- `raw` 原样进步骤；`extra` 结构化携带 chassis_idn / version / slots / interlock / verdict。
+- `raw` 原样进步骤；`extra` 结构化携带 chassis_idn / version / slots / interlock /
+  interlock_classification / verdict。
 
 手册出处（`Instrument_API_Doc/ETS-L EMCenter/EMCenter_SCPI_Cmds_and_Errs_RevA_1801188.pdf`，
 pdftotext 行号）：`*IDN?` :136-185、`VERSION_SW?` :287-298、SPDT `INT_RELAY_<R>?` → NO|NC :305-330、
