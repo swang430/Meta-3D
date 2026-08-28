@@ -399,8 +399,6 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
     monkeypatch,
 ):
     """A stop during PRECHECK/REFERENCE must still cancel later MEASURE motion."""
-    from contextlib import asynccontextmanager
-
     import app.hal.positioner as positioner_module
     import app.services.test_case_runner as runner
     from app.services.mimo_ota.executors.measure import MeasureExecutor
@@ -440,17 +438,21 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
             def first(self):
                 return self.execution
 
-        def query(self, *_args, **_kwargs):
-            return self.Query(SimpleNamespace(
-                config={runner.FREEZE_CONFIG_KEY: {"digest": "test-freeze"}},
-            ))
+        def query(self, model, *_args, **_kwargs):
+            if model is runner.TestExecution:
+                value = SimpleNamespace(
+                    config={runner.FREEZE_CONFIG_KEY: {"digest": "test-freeze"}},
+                    test_case_id="test-case",
+                )
+            else:
+                value = SimpleNamespace(id="test-case")
+            return self.Query(value)
 
         def close(self) -> None:
             return None
 
-    @asynccontextmanager
-    async def lease(_purpose: str, **_kwargs):
-        yield SimpleNamespace(measurement_attempt_id=None)
+    async def execution_session(*_args, operation, **_kwargs):
+        return (await operation()).value
 
     async def run_case_loop(_db, _execution_id, *, defer_report=False) -> None:
         assert defer_report is True
@@ -459,7 +461,11 @@ async def test_formal_case_inherits_stop_generation_from_launch_before_precheck(
         )
 
     monkeypatch.setattr(runner, "SessionLocal", DB)
-    monkeypatch.setattr(runner, "instrument_test_lease", lease)
+    monkeypatch.setattr(
+        runner,
+        "run_base_station_execution_session",
+        execution_session,
+    )
     monkeypatch.setattr(runner, "_run_case_loop", run_case_loop)
     monkeypatch.setattr(
         runner,
@@ -495,7 +501,7 @@ def test_commissioning_entrypoints_retain_stop_generation_before_lease():
         source = inspect.getsource(owner)
         assert source.index(
             "retain_positioner_stop_generation"
-        ) < source.index("instrument_test_lease("), owner.__name__
+        ) < source.index("run_base_station_execution_session("), owner.__name__
 
 
 @pytest.mark.asyncio
