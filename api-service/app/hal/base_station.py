@@ -13,7 +13,7 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional, List, ClassVar, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.hal.base import (
@@ -411,6 +411,9 @@ class BaseStationDriver(InstrumentDriver):
     mac_throughput_configuration_supported: ClassVar[bool] = False
     max_bandwidth_mhz: ClassVar[float | None] = None
     max_mimo_layers: ClassVar[int | None] = None
+    measurement_window_cardinality: ClassVar[Literal["requested", "single"]] = (
+        "requested"
+    )
 
     # ===================================================================
     # 小区配置
@@ -534,6 +537,20 @@ class BaseStationDriver(InstrumentDriver):
             ),
             reason="route is not applicable to this adapter",
             simulated=getattr(self, "simulated", False) is True,
+        )
+
+    def route_allows_diagnostic_execution(
+        self,
+        receipt: BaseStationApplyReceipt,
+    ) -> bool:
+        """Accept a route only when it is confirmed or truly not applicable."""
+
+        if not isinstance(receipt, BaseStationApplyReceipt):
+            return False
+        if receipt.operation != "route":
+            return False
+        return receipt.confirmed is True or all(
+            field.status == "not_applicable" for field in receipt.fields
         )
 
     def get_mimo_route_snapshot(self, preset: str) -> Dict[str, Any]:
@@ -688,6 +705,13 @@ class BaseStationDriver(InstrumentDriver):
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a confirmed measurement window"
         )
+
+    def measurement_window_count(self, requested: int) -> int:
+        """Let the adapter own whether one position uses one or N native windows."""
+
+        if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
+            raise ValueError("requested measurement window count must be positive")
+        return 1 if self.measurement_window_cardinality == "single" else requested
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """
@@ -1026,6 +1050,36 @@ class MockBaseStation(BaseStationDriver):
             mcs_dl=random.randint(24, 27),
             mcs_ul=random.randint(20, 24),
             throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
+        )
+
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """Return a same-shape simulated window that can never be formal."""
+
+        started_at = datetime.now(timezone.utc)
+        await asyncio.sleep(max(float(window_s), 0.0))
+        metrics = await self.get_throughput_metrics(
+            throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
+        )
+        metrics.kpi_valid = {
+            key: False for key in metrics.kpi_valid
+        }
+        return BaseStationMeasurementWindow(
+            window_id=uuid4().hex,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            metrics=metrics,
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
+            evidence=(),
+            confirmed=False,
+            reason="simulated diagnostic window; excluded from formal KPI",
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

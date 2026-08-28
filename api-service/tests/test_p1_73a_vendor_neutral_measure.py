@@ -96,17 +96,10 @@ def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
     assert "MAC" in blocker
 
 
-def test_cmw_pcell_confirmation_does_not_cover_missing_mac_configuration():
-    policy = getattr(
-        measure_module,
-        "_formal_base_station_config_confirmed",
-        None,
-    )
-    assert callable(policy)
-
+def test_cmw_pcell_confirmation_does_not_remove_missing_mac_blocker():
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
-    assert policy(cmw, pcell_confirmed=True) is False
+    assert _formal_mac_configuration_blocker(cmw) is not None
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():

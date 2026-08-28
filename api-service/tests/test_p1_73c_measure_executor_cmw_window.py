@@ -10,20 +10,20 @@ from uuid import uuid4
 import pytest
 
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
+    BaseStationFieldReceipt,
     BaseStationMeasurementWindow,
     MockBaseStation,
     ThroughputMetrics,
 )
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.models.test_plan import TestExecution
 from app.services.execution_scpi_evidence import (
     begin_base_station_measurement_attempt,
     initialize_base_station_execution_evidence,
 )
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
-from app.services.mimo_ota.executors.measure import (
-    MeasureExecutor,
-    _cmw_route_allows_diagnostic_execution,
-)
+from app.services.mimo_ota.executors.measure import MeasureExecutor
 from tests.test_p1_73c_base_station_evidence_writer import (
     _CmwDriver,
     _frozen,
@@ -36,6 +36,9 @@ class _Cmw:
     adapter_id: str = "cmw500"
     native_calls: int = 0
     legacy_calls: int = 0
+
+    def measurement_window_count(self, _requested: int) -> int:
+        return 1
 
     async def measure_base_station_window(self, window_s, *, throughput_scope):
         self.native_calls += 1
@@ -67,14 +70,27 @@ class _Cmw:
 @dataclass
 class _Uxm:
     adapter_id: str = "uxm"
-    legacy_calls: int = 0
+    native_calls: int = 0
 
-    async def measure_throughput_window(self, _window_s, *, throughput_scope):
-        self.legacy_calls += 1
-        return ThroughputMetrics(
-            dl_throughput_mbps=float(self.legacy_calls),
-            throughput_scope=throughput_scope,
-            kpi_valid={"dl_throughput": True},
+    async def measure_base_station_window(self, _window_s, *, throughput_scope):
+        self.native_calls += 1
+        started = datetime.now(timezone.utc)
+        return BaseStationMeasurementWindow(
+            window_id=f"uxm-window-{self.native_calls}",
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            metrics=ThroughputMetrics(
+                dl_throughput_mbps=float(self.native_calls),
+                throughput_scope=throughput_scope,
+                kpi_valid={"dl_throughput": True},
+            ),
+            preclear_off_confirmed=True,
+            running_confirmed=True,
+            ready_confirmed=True,
+            closed_off_confirmed=True,
+            evidence=(),
+            confirmed=True,
+            reason="confirmed",
         )
 
 
@@ -88,21 +104,38 @@ def test_cmw_diagnostic_route_requires_all_six_authoritative_physical_fields():
         "tx2_connector": "RF2C",
         "tx2_converter": "TX2",
     }
-    physical = {key: value for key, value in requested.items() if key != "pcc_bb_board"}
-
-    assert _cmw_route_allows_diagnostic_execution(
-        SimpleNamespace(requested=requested, applied=physical, confirmed=False)
-    ) is True
-    assert _cmw_route_allows_diagnostic_execution(
-        SimpleNamespace(
-            requested=requested,
-            applied={**physical, "tx2_connector": "RF3C"},
-            confirmed=False,
+    def receipt(*, bad_field: str | None = None, all_unknown: bool = False):
+        return BaseStationApplyReceipt(
+            schema_version=1,
+            operation="route",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=value,
+                    applied=(
+                        None
+                        if all_unknown or name == "pcc_bb_board" or name == bad_field
+                        else value
+                    ),
+                    status=(
+                        "unknown"
+                        if all_unknown or name == "pcc_bb_board" or name == bad_field
+                        else "confirmed"
+                    ),
+                    reason="test route truth",
+                )
+                for name, value in requested.items()
+            ),
+            reason="test route truth",
+            simulated=False,
         )
+
+    driver = object.__new__(RealCmw500Driver)
+    assert driver.route_allows_diagnostic_execution(receipt()) is True
+    assert driver.route_allows_diagnostic_execution(
+        receipt(bad_field="tx2_connector")
     ) is False
-    assert _cmw_route_allows_diagnostic_execution(
-        SimpleNamespace(requested=requested, applied=None, confirmed=False)
-    ) is False
+    assert driver.route_allows_diagnostic_execution(receipt(all_unknown=True)) is False
 
 
 @pytest.mark.asyncio
@@ -125,7 +158,7 @@ async def test_cmw_measure_scan_uses_one_driver_native_extended_bler_window():
 
 
 @pytest.mark.asyncio
-async def test_uxm_measure_scan_preserves_requested_legacy_window_count():
+async def test_uxm_measure_scan_preserves_requested_common_window_count():
     driver = _Uxm()
 
     samples = await MeasureExecutor._measure_base_station_samples(
@@ -135,9 +168,9 @@ async def test_uxm_measure_scan_preserves_requested_legacy_window_count():
         requested_sample_count=3,
     )
 
-    assert driver.legacy_calls == 3
+    assert driver.native_calls == 3
     assert [item.metrics.dl_throughput_mbps for item in samples] == [1.0, 2.0, 3.0]
-    assert all(item.window is None for item in samples)
+    assert all(item.window is not None for item in samples)
 
 
 @pytest.mark.asyncio
@@ -245,11 +278,9 @@ def test_cmw_formal_attempt_requires_the_server_current_attempt_and_active_lease
     )
     context = SimpleNamespace(test_execution=execution, db=db)
 
-    resolved = MeasureExecutor._cmw_formal_attempt_context(
+    resolved = MeasureExecutor._base_station_attempt_context(
         context,
         _FormalCmw(),
-        duplex="fdd",
-        config_mode="dispatch",
     )
 
     assert resolved.attempt_id == attempt_id
@@ -283,11 +314,9 @@ def test_cmw_formal_attempt_rejects_a_lease_from_an_old_attempt(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="not bound to the current attempt"):
-        MeasureExecutor._cmw_formal_attempt_context(
+        MeasureExecutor._base_station_attempt_context(
             SimpleNamespace(test_execution=execution, db=db),
             _FormalCmw(),
-            duplex="fdd",
-            config_mode="dispatch",
         )
 
 
@@ -326,11 +355,9 @@ def test_cmw_disabled_or_inherit_keeps_the_measurement_attempt_diagnostic(
         lambda: lease,
     )
 
-    resolved = MeasureExecutor._cmw_formal_attempt_context(
+    resolved = MeasureExecutor._base_station_attempt_context(
         SimpleNamespace(test_execution=execution, db=db),
         driver,
-        duplex="fdd",
-        config_mode=config_mode,
     )
 
     assert resolved.attempt_id == attempt_id
@@ -364,11 +391,9 @@ def test_explicit_cmw_mock_can_enter_a_simulated_diagnostic_attempt(monkeypatch)
         lambda: lease,
     )
 
-    resolved = MeasureExecutor._cmw_formal_attempt_context(
+    resolved = MeasureExecutor._base_station_attempt_context(
         SimpleNamespace(test_execution=execution, db=db),
         driver,
-        duplex="fdd",
-        config_mode="dispatch",
     )
 
     assert resolved.attempt_id == attempt_id
@@ -388,5 +413,5 @@ async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window()
     )
 
     assert len(samples) == 2
-    assert all(sample.window is None for sample in samples)
+    assert all(sample.window is not None for sample in samples)
     assert all(sample.metrics.throughput_scope == "simulated" for sample in samples)

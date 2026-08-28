@@ -559,46 +559,18 @@ def confirm_base_station_configuration_and_route(
     db.flush()
 
 
-def confirm_legacy_cmw_configuration_and_route(
+def mark_base_station_configuration_unconfirmed(
     db,
     execution_id,
     *,
     attempt_id: str,
-    config_confirmed: bool,
-    config_exchange_ids: list[str],
-    route_result,
 ) -> None:
-    """Temporary caller bridge removed when MEASURE moves to the common SPI."""
+    """Only downgrade formal configuration truth; never manufacture success."""
 
     execution, evidence = _current_running_base_station_evidence(
         db, execution_id, attempt_id=attempt_id
     )
-    if evidence.adapter != "cmw500":
-        raise ValueError("legacy route bridge is CMW500-only")
-    requested = getattr(route_result, "requested", None)
-    applied = getattr(route_result, "applied", None)
-    confirmed = getattr(route_result, "confirmed", None) is True
-    exchange_ids = getattr(route_result, "exchange_ids", None)
-    if not isinstance(requested, dict) or not isinstance(exchange_ids, list):
-        raise TypeError("legacy route result shape is invalid")
-    evidence.config_confirmed = config_confirmed is True
-    _append_unique_exchange_ids(evidence, list(config_exchange_ids))
-    evidence.route_confirmed = (
-        confirmed
-        and requested == evidence.requested_route.payload
-        and applied == evidence.requested_route.payload
-    )
-    evidence.applied_route = (
-        FrozenPayloadSnapshot.model_validate(
-            {
-                "payload": applied,
-                "digest": canonical_snapshot_digest(applied),
-            }
-        )
-        if evidence.route_confirmed is True
-        else None
-    )
-    _append_unique_exchange_ids(evidence, list(exchange_ids))
+    evidence.config_confirmed = False
     save_base_station_execution_evidence(execution, evidence)
     db.flush()
 

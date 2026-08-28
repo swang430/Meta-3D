@@ -254,6 +254,7 @@ class RealCmw500Driver(BaseStationDriver):
     """
 
     adapter_id = "cmw500"
+    measurement_window_cardinality = "single"
     max_bandwidth_mhz = 20.0
     max_mimo_layers = 4
     # User Manual §2.6.12.1, p.680: <Bandwidth> is exactly
@@ -820,6 +821,28 @@ class RealCmw500Driver(BaseStationDriver):
             fields=fields,
             reason=result.reason,
             simulated=False,
+        )
+
+    def route_allows_diagnostic_execution(
+        self,
+        receipt: BaseStationApplyReceipt,
+    ) -> bool:
+        """Require every physical CMW path even when PCC readback is unavailable."""
+
+        if not isinstance(receipt, BaseStationApplyReceipt):
+            return False
+        by_name = {field.field: field for field in receipt.fields}
+        physical_fields = {
+            "rx_connector",
+            "rx_converter",
+            "tx1_connector",
+            "tx1_converter",
+            "tx2_connector",
+            "tx2_converter",
+        }
+        return receipt.operation == "route" and all(
+            name in by_name and by_name[name].status == "confirmed"
+            for name in physical_fields
         )
 
     async def apply_requested_config(

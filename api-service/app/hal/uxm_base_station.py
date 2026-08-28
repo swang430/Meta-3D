@@ -24,7 +24,7 @@ import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.hal.base import (
@@ -40,13 +40,19 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationDriver,
     BaseStationFieldReceipt,
+    BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
-from app.hal.scpi_evidence import capture_scpi_exchanges
+from app.hal.scpi_evidence import (
+    EvidenceLevel,
+    EvidenceVerdict,
+    InstrumentEvidenceItem,
+    capture_scpi_exchanges,
+)
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -3652,6 +3658,66 @@ class RealUxmDriver(BaseStationDriver):
         return await self.get_throughput_metrics(
             throughput_scope=throughput_scope,
             _read_ue_report=ue_report_window_ready,
+        )
+
+    async def measure_base_station_window(
+        self,
+        window_s: float,
+        *,
+        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+    ) -> BaseStationMeasurementWindow:
+        """Expose the existing UXM clear/read window without inventing closure.
+
+        The current sourced UXM profile has an independent clear boundary but
+        no authoritative stop/closed boundary.  Raw values remain diagnostic;
+        every KPI validity bit stays false until that lifecycle is sourced.
+        """
+
+        started_at = datetime.now(timezone.utc)
+        with capture_scpi_exchanges() as exchanges:
+            metrics = await self.measure_throughput_window(
+                window_s,
+                throughput_scope=throughput_scope,
+            )
+        raw_metrics = metrics.to_dict()
+        metrics.kpi_valid = {key: False for key in metrics.kpi_valid}
+        exchange_ids = [exchange.exchange_id for exchange in exchanges]
+        evidence = InstrumentEvidenceItem(
+            instrument="uxm",
+            evidence_key="uxm.throughput.window",
+            requested={
+                "window_s": window_s,
+                "throughput_scope": throughput_scope,
+            },
+            command_sent=self._cmds.MEAS_BTHROUGHPUT_CLEAR,
+            readback={
+                "metrics": raw_metrics,
+                "closed_boundary_confirmed": False,
+            },
+            exchange_ids=exchange_ids,
+            evidence_level=EvidenceLevel.TRANSPORT,
+            source_reference=(
+                "existing UXM profile clear/read path; authoritative closed "
+                "window boundary unavailable"
+            ),
+            verdict=EvidenceVerdict.UNKNOWN,
+            reason=(
+                "UXM independent window has no authoritative closed lifecycle; "
+                "values are diagnostic only"
+            ),
+        )
+        return BaseStationMeasurementWindow(
+            window_id=uuid4().hex,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            metrics=metrics,
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
+            evidence=(evidence,),
+            confirmed=False,
+            reason=evidence.reason,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

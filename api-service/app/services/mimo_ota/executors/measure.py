@@ -77,8 +77,8 @@ _DEV_SAMPLE_WINDOWS = 3
 _MOCK_WINDOW_FLOOR_S = 0.05
 
 # Phase 2m: DUT 掉线检测周期 (每 N 个 azimuth 检查一次而非每窗口, 节省 SCPI 流量)
-# 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
-# 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
+# 单 azimuth 内不检查（adapter-native 统计窗口自身负责确认窗口边界与链路状态）；
+# azimuth 间隔检查能在转台移动期间发现掉线。
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
@@ -116,15 +116,15 @@ class _BaseStationWindowBlocked(RuntimeError):
     def __init__(self, window: Any):
         self.window = window
         super().__init__(
-            "CMW500 Extended BLER lifecycle was not confirmed: "
+            "BaseStation measurement-window lifecycle was not confirmed: "
             f"{window.reason}"
         )
 
 
 @dataclass(frozen=True)
-class _CmwFormalAttemptContext:
+class _BaseStationAttemptContext:
     frozen_adapter: Dict[str, Any]
-    attempt_id: str
+    attempt_id: str | None
     lease_identity: Any
     simulated_diagnostic: bool
 
@@ -569,37 +569,6 @@ def _formal_mac_configuration_blocker(base_station) -> Optional[str]:
     return None
 
 
-def _formal_base_station_config_confirmed(
-    base_station: Any,
-    *,
-    pcell_confirmed: bool,
-) -> bool:
-    """Do not let a confirmed PCell hide an unconfigured formal MAC scope."""
-
-    return (
-        pcell_confirmed is True
-        and _formal_mac_configuration_blocker(base_station) is None
-    )
-
-
-def _cmw_route_allows_diagnostic_execution(route_result: Any) -> bool:
-    """Allow diagnostics only when every authoritative physical path matches."""
-
-    requested = getattr(route_result, "requested", None)
-    applied = getattr(route_result, "applied", None)
-    if not isinstance(requested, dict) or not isinstance(applied, dict):
-        return False
-    if getattr(route_result, "confirmed", None) is True:
-        return applied == requested
-    requested_physical = {
-        key: value
-        for key, value in requested.items()
-        if key != "pcc_bb_board"
-    }
-    return applied == requested_physical
-
-
-
 def resolve_model_load_requested(emulator, gen_ok: bool, intent):
     """f64.model_loaded 归档用的 requested 真值（P2-29，内审 F1）。
 
@@ -683,61 +652,50 @@ class MeasureExecutor(IStepExecutor):
         throughput_scope: str,
         requested_sample_count: int,
     ) -> List[_BaseStationSample]:
-        """Select the vendor-native window without borrowing another dialect.
+        """Collect only adapter-native structured windows through the common SPI."""
 
-        CMW500 formal LTE uses exactly one independently bounded Extended BLER
-        window per requested position. UXM retains the existing repeated-window
-        behavior until its own confirmed common-window adapter is introduced.
-        """
-
-        from app.hal.scpi_evidence import capture_scpi_exchanges
-
+        count_resolver = getattr(base_station, "measurement_window_count", None)
+        window_count = (
+            count_resolver(requested_sample_count)
+            if callable(count_resolver)
+            else requested_sample_count
+        )
         if (
-            getattr(base_station, "adapter_id", None) == "cmw500"
-            and getattr(base_station, "simulated", False) is not True
+            isinstance(window_count, bool)
+            or not isinstance(window_count, int)
+            or window_count <= 0
         ):
+            raise ValueError("baseStation measurement window count must be positive")
+
+        samples: List[_BaseStationSample] = []
+        for _ in range(window_count):
             window = await base_station.measure_base_station_window(
                 window_s,
                 throughput_scope=throughput_scope,
             )
             if window.confirmed is not True:
-                raise _BaseStationWindowBlocked(window)
-            return [
+                simulated_diagnostic = (
+                    getattr(base_station, "simulated", False) is True
+                    and window.metrics.throughput_scope
+                    == ThroughputMetrics.SCOPE_SIMULATED
+                )
+                if not simulated_diagnostic:
+                    raise _BaseStationWindowBlocked(window)
+            samples.append(
                 _BaseStationSample(
                     metrics=window.metrics,
                     window=window,
                     exchanges=(),
                 )
-            ]
-
-        samples: List[_BaseStationSample] = []
-        for _ in range(requested_sample_count):
-            with capture_scpi_exchanges() as exchanges:
-                metrics = await base_station.measure_throughput_window(
-                    window_s,
-                    throughput_scope=throughput_scope,
-                )
-            samples.append(
-                _BaseStationSample(
-                    metrics=metrics,
-                    window=None,
-                    exchanges=tuple(exchanges),
-                )
             )
         return samples
 
     @staticmethod
-    def _cmw_formal_attempt_context(
+    def _base_station_attempt_context(
         context: StepExecutionContext,
         base_station: Any,
-        *,
-        duplex: str | None,
-        config_mode: str,
-    ) -> _CmwFormalAttemptContext | None:
-        """Resolve only server-owned frozen/attempt/lease truth before CMW I/O."""
-
-        if getattr(base_station, "adapter_id", None) != "cmw500":
-            return None
+    ) -> _BaseStationAttemptContext:
+        """Resolve server-owned frozen/attempt/lease truth for every adapter."""
 
         from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
         from app.services.execution_scpi_evidence import (
@@ -757,53 +715,79 @@ class MeasureExecutor(IStepExecutor):
         )
         frozen = execution_config.get(FREEZE_CONFIG_KEY)
         if not isinstance(frozen, dict):
-            raise RuntimeError("CMW500 execution is missing its frozen adapter profile")
+            raise RuntimeError("BaseStation execution is missing its frozen adapter profile")
         resolution = frozen.get("resolution")
+        frozen_adapter_id = (
+            resolution.get("adapter") if isinstance(resolution, dict) else None
+        )
         execution_mode = (
             resolution.get("execution_mode")
             if isinstance(resolution, dict)
             else None
         )
+        resolution_status = (
+            resolution.get("status") if isinstance(resolution, dict) else None
+        )
+        if frozen_adapter_id is None:
+            if (
+                resolution_status != "diagnostic_unbound"
+                or execution_mode != "simulated"
+                or getattr(base_station, "simulated", False) is not True
+            ):
+                raise RuntimeError(
+                    "unbound BaseStation execution is not an authoritative diagnostic"
+                )
+            lease_identity = active_base_station_lease_identity()
+            if (
+                lease_identity is None
+                or lease_identity.measurement_attempt_id is not None
+                or lease_identity.adapter_id
+                != getattr(base_station, "adapter_id", None)
+            ):
+                raise RuntimeError(
+                    "unbound BaseStation diagnostic lease does not match the loaded mock"
+                )
+            return _BaseStationAttemptContext(
+                frozen_adapter=frozen,
+                attempt_id=None,
+                lease_identity=lease_identity,
+                simulated_diagnostic=True,
+            )
+        if (
+            not isinstance(frozen_adapter_id, str)
+            or frozen_adapter_id != getattr(base_station, "adapter_id", None)
+        ):
+            raise RuntimeError(
+                "BaseStation loaded adapter does not match the frozen execution adapter"
+            )
         simulated_diagnostic = execution_mode == "simulated"
         if simulated_diagnostic:
             if getattr(base_station, "simulated", False) is not True:
                 raise RuntimeError(
-                    "CMW500 simulated execution is not using the authoritative mock"
+                    "BaseStation simulated execution is not using the authoritative mock"
                 )
-        else:
-            evaluator = getattr(
-                base_station, "evaluate_lte_2x2_formal_capability", None
-            )
-            if not callable(evaluator):
-                raise RuntimeError("CMW500 driver has no formal capability evaluator")
-            decision = evaluator(
-                frozen,
-                duplex=str(duplex or "").lower(),
-                config_mode=config_mode,
-            )
-            if decision.ready is not True and getattr(decision, "status", None) not in {
-                "disabled",
-                "diagnostic",
-            }:
-                raise RuntimeError(
-                    f"CMW500 formal capability is not ready: {decision.reason}"
-                )
+        elif getattr(base_station, "simulated", False) is True:
+            raise RuntimeError("real execution cannot use a simulated BaseStation adapter")
 
         raw_evidence = load_base_station_execution_evidence(context.test_execution)
         if raw_evidence is None:
-            raise RuntimeError("CMW500 execution evidence is missing before MEASURE")
+            raise RuntimeError("BaseStation execution evidence is missing before MEASURE")
         evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
+        if evidence.adapter != frozen_adapter_id:
+            raise RuntimeError("BaseStation evidence adapter does not match frozen adapter")
         attempt_id = evidence.current_measurement_attempt_id
         if not attempt_id or evidence.current_measurement_attempt_state != "running":
-            raise RuntimeError("CMW500 current measurement attempt is not running")
+            raise RuntimeError("BaseStation current measurement attempt is not running")
         lease_identity = active_base_station_lease_identity()
         if (
             lease_identity is None
             or lease_identity.measurement_attempt_id != attempt_id
-            or lease_identity.adapter_id != "cmw500"
+            or lease_identity.adapter_id != frozen_adapter_id
         ):
-            raise RuntimeError("CMW500 active lease is not bound to the current attempt")
-        return _CmwFormalAttemptContext(
+            raise RuntimeError(
+                "BaseStation active lease is not bound to the current attempt"
+            )
+        return _BaseStationAttemptContext(
             frozen_adapter=frozen,
             attempt_id=attempt_id,
             lease_identity=lease_identity,
@@ -1182,11 +1166,9 @@ class MeasureExecutor(IStepExecutor):
                     f"已在任何转台连接或动作前中止: {positioner_validation_error}"
                 ),
             )
-        cmw_attempt = self._cmw_formal_attempt_context(
+        base_station_attempt = self._base_station_attempt_context(
             context,
             base_station,
-            duplex=pcell.duplex,
-            config_mode=config.base_station_config_mode,
         )
         stop_generation_reader = getattr(
             positioner, "operator_stop_generation", None
@@ -1216,7 +1198,7 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # base-station signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
-        pending_cmw_windows: List[tuple[float, Any]] = []
+        pending_base_station_windows: List[tuple[float, Any]] = []
         ca_setup_blocker: Optional[str] = None
         base_station_config_capture_manager = None
         base_station_config_exchanges = []
@@ -1291,33 +1273,30 @@ class MeasureExecutor(IStepExecutor):
                 # 小区配置进测量, 正是回读门要拦的实验污染。
                 # 先落“必需项”，即使 HAL 调用随后异常/进程中断，收尾也会显示
                 # missing，而不是空集合误绿。
-                ok = await base_station.apply_requested_config(
-                    pcell_requested_config
+                config_receipt = await base_station.apply_config(
+                    pcell_requested_config,
                 )
-                if cmw_attempt is not None and not cmw_attempt.simulated_diagnostic:
-                    route_result = await base_station.apply_internal_lte_2x2_route(
-                        cmw_attempt.frozen_adapter
-                    )
-                    from app.services.execution_scpi_evidence import (
-                        confirm_legacy_cmw_configuration_and_route,
-                    )
+                route_receipt = await base_station.apply_route(
+                    base_station_attempt.frozen_adapter
+                )
+                from app.services.execution_scpi_evidence import (
+                    confirm_base_station_configuration_and_route,
+                )
 
-                    confirm_legacy_cmw_configuration_and_route(
+                if base_station_attempt.attempt_id is not None:
+                    confirm_base_station_configuration_and_route(
                         context.db,
                         context.test_execution.id,
-                        attempt_id=cmw_attempt.attempt_id,
-                        config_confirmed=_formal_base_station_config_confirmed(
-                            base_station,
-                            pcell_confirmed=ok is True,
-                        ),
-                        config_exchange_ids=[
-                            exchange.exchange_id
-                            for exchange in base_station_config_exchanges
-                        ],
-                        route_result=route_result,
+                        attempt_id=base_station_attempt.attempt_id,
+                        lease_identity=base_station_attempt.lease_identity,
+                        config_receipt=config_receipt,
+                        route_receipt=route_receipt,
                     )
                     context.db.commit()
-                if not ok:
+                if (
+                    config_receipt.confirmed is not True
+                    and config_receipt.simulated is not True
+                ):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
@@ -1325,16 +1304,12 @@ class MeasureExecutor(IStepExecutor):
                             "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
                         ),
                     )
-                if (
-                    cmw_attempt is not None
-                    and not cmw_attempt.simulated_diagnostic
-                    and not _cmw_route_allows_diagnostic_execution(route_result)
-                ):
+                if not base_station.route_allows_diagnostic_execution(route_receipt):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
-                            "CMW500 内部 LTE 2x2 route 写后回读未确认；"
-                            f"中止执行: {route_result.reason}"
+                            "BaseStation execution route 未获足够权威确认；"
+                            f"中止执行: {route_receipt.reason}"
                         ),
                     )
 
@@ -1368,21 +1343,27 @@ class MeasureExecutor(IStepExecutor):
                 base_station
             )
             if _mac_capability_blocker:
-                if cmw_attempt is None:
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=_mac_capability_blocker,
-                    )
                 logger.warning(
-                    "[%s] CMW500 MAC configuration unconfirmed; continuing "
+                    "[%s] BaseStation MAC configuration unconfirmed; continuing "
                     "diagnostic measurement with formal KPI forced UNKNOWN: %s",
                     context.test_execution.id,
                     _mac_capability_blocker,
                 )
-            if (
-                cmw_attempt is None
-                and base_station.mac_throughput_configuration_supported
-            ):
+                if (
+                    not base_station_inherit
+                    and base_station_attempt.attempt_id is not None
+                ):
+                    from app.services.execution_scpi_evidence import (
+                        mark_base_station_configuration_unconfirmed,
+                    )
+
+                    mark_base_station_configuration_unconfirmed(
+                        context.db,
+                        context.test_execution.id,
+                        attempt_id=base_station_attempt.attempt_id,
+                    )
+                    context.db.commit()
+            if base_station.mac_throughput_configuration_supported:
                 mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
                     mcs=config.mcs,
@@ -2834,8 +2815,10 @@ class MeasureExecutor(IStepExecutor):
                 for sample in base_station_samples:
                     metrics = sample.metrics
                     latest_throughput_exchanges = list(sample.exchanges)
-                    if cmw_attempt is not None and sample.window is not None:
-                        pending_cmw_windows.append((float(azimuth), sample.window))
+                    if sample.window is not None:
+                        pending_base_station_windows.append(
+                            (float(azimuth), sample.window)
+                        )
 
                     # P1-63: target power / path loss / probe gain describe the
                     # requested setup; they are not UE RF measurements. Only
@@ -3194,17 +3177,20 @@ class MeasureExecutor(IStepExecutor):
                 expected_operator_stop_generation=motion_stop_generation,
             )
             cleanup_warnings = list(cleanup_result.warnings)
-            if cmw_attempt is not None and pending_cmw_windows:
+            if (
+                pending_base_station_windows
+                and base_station_attempt.attempt_id is not None
+            ):
                 from app.services.execution_scpi_evidence import (
                     append_base_station_measurement_window,
                 )
 
-                for azimuth, window in pending_cmw_windows:
+                for azimuth, window in pending_base_station_windows:
                     append_base_station_measurement_window(
                         context.db,
                         context.test_execution.id,
-                        attempt_id=cmw_attempt.attempt_id,
-                        lease_identity=cmw_attempt.lease_identity,
+                        attempt_id=base_station_attempt.attempt_id,
+                        lease_identity=base_station_attempt.lease_identity,
                         position={
                             "azimuth_deg": azimuth,
                             "elevation_deg": 0.0,
