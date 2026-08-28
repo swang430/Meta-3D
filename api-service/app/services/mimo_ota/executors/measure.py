@@ -1318,10 +1318,7 @@ class MeasureExecutor(IStepExecutor):
                         route_receipt=route_receipt,
                     )
                     context.db.commit()
-                if (
-                    config_receipt.confirmed is not True
-                    and config_receipt.simulated is not True
-                ):
+                if config_receipt.diagnostic_execution_allowed is not True:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(

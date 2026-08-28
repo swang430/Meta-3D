@@ -194,6 +194,7 @@ class BaseStationApplyReceipt:
     fields: tuple[BaseStationFieldReceipt, ...]
     reason: str
     simulated: bool
+    operation_succeeded: bool | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -211,6 +212,11 @@ class BaseStationApplyReceipt:
             raise ValueError("apply receipt reason must be non-empty")
         if type(self.simulated) is not bool:
             raise TypeError("apply receipt simulated must be bool")
+        if (
+            self.operation_succeeded is not None
+            and type(self.operation_succeeded) is not bool
+        ):
+            raise TypeError("apply receipt operation_succeeded must be bool or None")
 
     @property
     def confirmed(self) -> bool:
@@ -220,6 +226,16 @@ class BaseStationApplyReceipt:
         return bool(applicable) and all(
             field.status == "confirmed" for field in applicable
         )
+
+    @property
+    def diagnostic_execution_allowed(self) -> bool:
+        """Separate accepted device operation from formal evidence completeness."""
+
+        if self.operation != "config":
+            return False
+        if self.operation_succeeded is not None:
+            return self.operation_succeeded
+        return self.confirmed is True or self.simulated is True
 
     @property
     def exchange_ids(self) -> tuple[str, ...]:
@@ -514,7 +530,7 @@ class BaseStationDriver(InstrumentDriver):
 
         if not isinstance(requested, BaseStationRequestedConfig):
             raise TypeError("requested must be BaseStationRequestedConfig")
-        await self.apply_requested_config(requested)
+        operation_succeeded = await self.apply_requested_config(requested)
         return BaseStationApplyReceipt(
             schema_version=1,
             operation="config",
@@ -530,6 +546,7 @@ class BaseStationDriver(InstrumentDriver):
             ),
             reason="adapter configuration readback is unavailable",
             simulated=getattr(self, "simulated", False) is True,
+            operation_succeeded=operation_succeeded is True,
         )
 
     async def apply_route(

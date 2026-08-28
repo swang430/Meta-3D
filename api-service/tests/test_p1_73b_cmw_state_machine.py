@@ -110,6 +110,7 @@ async def test_common_config_receipt_confirms_only_authoritatively_read_fields()
 
     assert isinstance(receipt, BaseStationApplyReceipt)
     assert receipt.operation == "config"
+    assert receipt.operation_succeeded is True
     assert receipt.confirmed is False
     fields = {field.field: field for field in receipt.fields}
     assert {name: fields[name].applied for name in {
@@ -192,6 +193,7 @@ async def test_common_config_receipt_never_backfills_request_after_error_queue_r
 
     receipt = await driver.apply_config(_requested_config())
 
+    assert receipt.operation_succeeded is False
     assert receipt.confirmed is False
     assert all(field.status == "unknown" for field in receipt.fields)
     assert all(field.applied is None for field in receipt.fields)

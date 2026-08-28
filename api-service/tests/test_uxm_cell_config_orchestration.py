@@ -100,6 +100,7 @@ async def test_common_uxm_config_receipt_confirms_only_authoritative_readbacks(
 
     assert isinstance(receipt, BaseStationApplyReceipt)
     assert receipt.operation == "config"
+    assert receipt.operation_succeeded is True
     assert receipt.confirmed is False
     fields = {field.field: field for field in receipt.fields}
     authoritative = {
@@ -188,6 +189,7 @@ async def test_common_uxm_config_receipt_is_unknown_after_apply_error_queue_reje
 
     receipt = await driver_irat.apply_config(_requested_nr_config())
 
+    assert receipt.operation_succeeded is False
     assert receipt.confirmed is False
     assert all(field.status == "unknown" for field in receipt.fields)
     assert driver_irat._last_common_config_readback is None

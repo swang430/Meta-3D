@@ -4183,11 +4183,12 @@ apply route、cell/attach、measurement window、safe idle、release。配置与
 请求值或旧缓存补真值。版本化 execution evidence、MEASURE 与四类 commissioning 入口只消费共同
 SPI；CMW 专属临时 writer 已移除。生产消费方不再新增 UXM/CMW 判别，历史兼容判断集中在 evidence
 认证边界；内审已收口真实 UXM 被新 lifecycle 缺证据误阻断的功能 P1，既有 UXM 逐指标
-attestation 得以保留，同时新 lifecycle 仍不伪造 confirmed。fresh 功能内审发现的三条 P1 已按
+attestation 得以保留，同时新 lifecycle 仍不伪造 confirmed。fresh 功能内审发现的四条 P1 已按
 严格 RED→GREEN 收口：共同窗口保留同一捕获域的 SCPI exchanges；config receipt 必须覆盖全部
-execution-frozen 非空字段；UXM 容差内回读保留仪表实际值而不以请求值替代。扩大相关链
-1063 passed、全后端 5126 passed / 5 skipped，compileall、单一 Alembic head 与基线到 HEAD 的
-diff-check 通过。
+execution-frozen 非空字段；UXM 容差内回读保留仪表实际值而不以请求值替代；配置操作成功与正式
+证据完整性分离，真实仪表已接受且权威硬件字段匹配时可继续诊断，但 metadata unknown 仍令正式 KPI
+fail-closed，设备拒绝仍立即中止。扩大相关链 1066 passed、全后端 5129 passed / 5 skipped，
+compileall、单一 Alembic head 与基线到 HEAD 的 diff-check 通过。
 未新增或猜测任何厂商命令，也未改变正式 provenance 白名单。设计与实施计划见
 `docs/plans/2026-08-28-p2-43-base-station-adapter-spi-design.md` 和
 `docs/plans/2026-08-28-p2-43-base-station-adapter-spi-plan.md`。

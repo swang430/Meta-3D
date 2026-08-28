@@ -10,7 +10,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.hal.base_station import (
+    BaseStationApplyReceipt,
     BaseStationDriver,
+    BaseStationFieldReceipt,
     BaseStationMeasurementWindow,
     MockBaseStation,
     ThroughputMetrics,
@@ -22,6 +24,55 @@ from app.services import instrument_test_lease
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from tests.test_p2_43_base_station_adapter_evidence import _Db, _execution
+
+
+def _partial_config_receipt(*, operation_succeeded: bool):
+    return BaseStationApplyReceipt(
+        schema_version=1,
+        operation="config",
+        fields=(
+            BaseStationFieldReceipt(
+                field="bandwidth_mhz",
+                requested=100.0,
+                applied=100.0,
+                status="confirmed",
+                reason="authoritative hardware readback matched",
+            ),
+            BaseStationFieldReceipt(
+                field="frequency_mhz",
+                requested=3500.0,
+                applied=None,
+                status="unknown",
+                reason="metadata has no authoritative hardware readback",
+            ),
+        ),
+        reason="complete evidence remains partial",
+        simulated=False,
+        operation_succeeded=operation_succeeded,
+    )
+
+
+def test_config_operation_success_allows_diagnostic_while_formal_receipt_stays_partial():
+    receipt = _partial_config_receipt(operation_succeeded=True)
+
+    assert receipt.confirmed is False
+    assert receipt.diagnostic_execution_allowed is True
+
+
+def test_config_operation_rejection_blocks_diagnostic_even_with_matching_fields():
+    receipt = _partial_config_receipt(operation_succeeded=False)
+
+    assert receipt.confirmed is False
+    assert receipt.diagnostic_execution_allowed is False
+
+
+def test_measure_execution_uses_operation_truth_not_formal_receipt_completeness():
+    import inspect
+
+    source = inspect.getsource(MeasureExecutor.execute)
+
+    assert "config_receipt.diagnostic_execution_allowed" in source
+    assert "config_receipt.confirmed is not True" not in source
 
 
 @dataclass

@@ -987,7 +987,7 @@ class RealUxmDriver(BaseStationDriver):
             raise TypeError("requested must be BaseStationRequestedConfig")
         self._last_common_config_readback = None
         with capture_scpi_exchanges() as exchanges:
-            await self.apply_requested_config(requested)
+            operation_succeeded = await self.apply_requested_config(requested)
         exchange_ids = tuple(item.exchange_id for item in exchanges)
         readback = (
             self._last_common_config_readback
@@ -1028,6 +1028,7 @@ class RealUxmDriver(BaseStationDriver):
                 else "UXM configuration readback is partial or unavailable"
             ),
             simulated=False,
+            operation_succeeded=operation_succeeded is True,
         )
 
     def capture_evidence_environment(self):
