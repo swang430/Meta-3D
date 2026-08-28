@@ -8,22 +8,26 @@
 本序列**只读**，每条命令旁注手册章节（Propsim User Reference Rev 10.2）：
 
 - `*IDN?`                                  §20.4.1.5  身份门（PROPSIM / F8800 任一命中）
-- `SYSTem:INFO?`                           §20.4.2.4  身份兜底 + 第 2 字段 `<Number of channels>`
+- `SYSTem:INFO?`                           §20.4.2.4  仅作身份兜底；通道数不是输出口数
 - `DIAG:SIMU:STATE?`                       §20.4.3.14 前置：§20.4 开篇原文 "Most PROPSIM ATE
                                                        commands are only available when emulation
                                                        has been opened" → CLOSED 不盲发逐口查询
+- `DIAG:SIMU:MODEL:INFO?`                  §20.4.3.6  当前仿真 `<inputs>,<channels>,<outputs>`
+- `GROUP:GET?`                             §20.4.7.1  当前仿真信道组数量
+- `GROUP:OUTPUTS:GET? <group>`             §20.4.7.3  每组物理输出口 CSV；逐组取并集
 - `OUTPut:LEVel:AMPlitude:LIMits? <n>`     §20.4.5.5  `<lower limit>,<higher limit>` dBm
 - `OUTPut:LEVel:AMPlitude:CH? <n>`         §20.4.5.4  当前平均输出电平 dBm（CH 后直接 ?，不带 GET）
 - `SYSTem:ERRor?`                          §20.4.2.1  结尾读到 `0,"No error"` 为止（上限 100）
 
-**口集来源**（`extra["port_source"]`）：① `outputs` 参数；② 驱动加载仿真时已回读的
-物理输出口 `_active_output_ports`（`GROUP:OUTPUTS:GET?` 的结果，本序列不重发）；
-③ 退到 `SYSTem:INFO?` 的通道数 1..N —— 那是**整机衰落通道数**（F64 = 64），不是输出口数
-（驱动 `_parse_topology` 注释明说两者单位不同），只当兜底并在 extra 标明，不当真值。
+**口集来源**（`extra["port_source"]`）：每次运行实时读取 `MODEL:INFO?`、`GROUP:GET?`
+与各组 `GROUP:OUTPUTS:GET?`，逐组取并集并与模型输出数量交叉核对。驱动缓存可能来自上一
+个前面板场景，`SYSTem:INFO?` 第 2 字段是整机衰落通道数，人工 `outputs` 参数可漏掉活动
+口；三者均不得授予本序列 SUCCESS。
 
-四态 `extra["verdict"]`：SUCCESS（全部在窗内）/ UNDETERMINED（任一口解析不出、无已加载
-仿真、或错误队列有残留）/ BLOCKER（任一口当前值落在窗外，summary 点名口号与窗口）/
-ABORTED（身份不符、参数非法、三连超时）。措辞：未探测 ≠ 不支持。
+四态 `extra["verdict"]`：SUCCESS（全部活动口在窗内）/ UNDETERMINED（实时拓扑不完整、
+任一活动口解析不出、无已加载仿真、或错误队列有残留）/ BLOCKER（任一活动口当前值落在
+窗外，summary 点名口号与窗口）/ ABORTED（身份不符、旧人工口集参数非空、三连超时）。
+措辞：未探测 ≠ 不支持。
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ from app.diagnostics.sequences.propsim_f64_health import (
 )
 from app.diagnostics.sequences.propsim_f64_state_machine import classify_state
 from app.hal.channel_emulator import F64_STATE_QUERY
-from app.hal.propsim_f64 import parse_f64_sys_info
+from app.hal.propsim_f64 import _GROUP_COUNT_HARD_MAX, _TOPOLOGY_SANITY_MAX
 from app.services.diagnostic_context import DiagnosticContext
 
 
@@ -54,22 +58,18 @@ metadata = SequenceMetadata(
         "只读：先 DIAG:SIMU:STATE? 确认仿真已加载，再逐口读 "
         "OUTPut:LEVel:AMPlitude:LIMits? 与 CH?，任一口当前电平落在它自己的 "
         "<lower>,<higher> 窗外即 BLOCKER 并点名口号与窗口；结尾读 SYSTem:ERRor? 零残留。"
-        "口集默认取驱动已回读的物理输出口，可用 outputs 参数指定。"
+        "口集每次从当前仿真的 group 输出并集实时回读；未进入活动集合的硬件口不探测、不阻塞。"
     ),
     required_categories=["channelEmulator"],
-    params_schema=[
-        {
-            "name": "outputs",
-            "label": "要核对的输出口号（逗号分隔；留空 = 驱动已回读的物理输出口）",
-            "type": "string",
-            "default": "",
-        },
-    ],
+    params_schema=[],
     safe_during_test=False,  # 结尾 drain SYSTem:ERRor?，会吃掉在测任务要看的错误
 )
 
 _ERR_QUERY = "SYSTem:ERRor?"          # §20.4.2.1
 _INFO_QUERY = "SYSTem:INFO?"          # §20.4.2.4
+_MODEL_INFO_QUERY = "DIAG:SIMU:MODEL:INFO?"         # §20.4.3.6
+_GROUP_COUNT_QUERY = "GROUP:GET?"                    # §20.4.7.1
+_GROUP_OUTPUTS_QUERY = "GROUP:OUTPUTS:GET? {group}"  # §20.4.7.3
 _LIMITS_QUERY = "OUTPut:LEVel:AMPlitude:LIMits? {n}"   # §20.4.5.5
 _LEVEL_QUERY = "OUTPut:LEVel:AMPlitude:CH? {n}"        # §20.4.5.4
 _RESIDUE_CAP = 100
@@ -84,24 +84,20 @@ def _result(verdict: str, summary: str, steps: List[SequenceStepResult],
                              steps=steps, extra=extra)
 
 
-def _parse_outputs_param(raw: Any) -> Tuple[Optional[List[int]], Optional[str]]:
-    """`outputs` 参数 → 正整数列表（去重保序）；空 = None；非法 → (None, 原因)。"""
-    text = str(raw or "").strip()
-    if not text:
-        return None, None
-    ports: List[int] = []
-    for tok in text.split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        if not tok.isdigit() or int(tok) <= 0:
-            return None, f"outputs 参数含非法口号 {tok!r}（只接受正整数，逗号分隔）"
-        n = int(tok)
-        if n not in ports:
-            ports.append(n)
-    if not ports:
-        return None, "outputs 参数解析后为空"
-    return ports, None
+def _parse_positive_csv_ints(raw: Optional[str]) -> Optional[List[int]]:
+    """解析完整正整数 CSV；任一片段非法就整体未知，不采信残缺口集。"""
+    if not raw:
+        return None
+    values: List[int] = []
+    for segment in raw.strip().split(","):
+        try:
+            value = float(segment.strip())
+        except (TypeError, ValueError):
+            return None
+        if not value.is_integer() or value <= 0 or value > _TOPOLOGY_SANITY_MAX:
+            return None
+        values.append(int(value))
+    return values or None
 
 
 def _parse_pair(raw: Optional[str]) -> Optional[Tuple[float, float]]:
@@ -193,6 +189,80 @@ async def _identity_gate(rec: _Recorder) -> Tuple[bool, str, Optional[str]]:
     return ok, idn, info
 
 
+async def _read_live_output_ports(rec: _Recorder) -> Tuple[Optional[List[int]], str]:
+    """按厂商手册实时遍历当前仿真，并返回活动物理输出口并集。"""
+    started = time.monotonic()
+    try:
+        model_raw = await rec.query(_MODEL_INFO_QUERY)
+    except Exception as e:  # noqa: BLE001
+        rec.add(_MODEL_INFO_QUERY, False, f"查询异常 {type(e).__name__}: {e}", None, started)
+        return None, "MODEL:INFO? 查询异常"
+    dims = _parse_positive_csv_ints(model_raw)
+    if dims is None or len(dims) != 3:
+        rec.add(_MODEL_INFO_QUERY, False,
+                f"回复不是 <inputs>,<channels>,<outputs> 三个正整数: {model_raw!r}",
+                model_raw, started)
+        return None, "MODEL:INFO? 回复无效"
+    input_count, channel_count, output_count = dims
+    rec.add(_MODEL_INFO_QUERY, True,
+            f"当前仿真 inputs={input_count}, channels={channel_count}, outputs={output_count}",
+            model_raw, started)
+
+    started = time.monotonic()
+    try:
+        group_raw = await rec.query(_GROUP_COUNT_QUERY)
+    except Exception as e:  # noqa: BLE001
+        rec.add(_GROUP_COUNT_QUERY, False, f"查询异常 {type(e).__name__}: {e}", None, started)
+        return None, "GROUP:GET? 查询异常"
+    group_values = _parse_positive_csv_ints(group_raw)
+    if group_values is None or len(group_values) != 1:
+        rec.add(_GROUP_COUNT_QUERY, False,
+                f"回复不是单个正整数组数: {group_raw!r}", group_raw, started)
+        return None, "GROUP:GET? 回复无效"
+    group_count = group_values[0]
+    group_ceiling = min(channel_count, _GROUP_COUNT_HARD_MAX)
+    if group_count > group_ceiling:
+        rec.add(_GROUP_COUNT_QUERY, False,
+                f"组数 {group_count} 超出安全上限 {group_ceiling}，疑似回复错位",
+                group_raw, started)
+        return None, "GROUP:GET? 组数超出安全上限"
+    rec.add(_GROUP_COUNT_QUERY, True, f"当前仿真共 {group_count} 组", group_raw, started)
+
+    active: set[int] = set()
+    for group in range(1, group_count + 1):
+        command = _GROUP_OUTPUTS_QUERY.format(group=group)
+        started = time.monotonic()
+        try:
+            raw = await rec.query(command)
+        except Exception as e:  # noqa: BLE001
+            rec.add(command, False, f"查询异常 {type(e).__name__}: {e}", None, started)
+            return None, f"组 {group} 输出口查询异常"
+        group_ports = _parse_positive_csv_ints(raw)
+        if group_ports is None:
+            rec.add(command, False, f"回复解析不出完整正整数口号列表: {raw!r}", raw, started)
+            return None, f"组 {group} 输出口回复无效"
+        active.update(group_ports)
+        rec.add(command, True, f"组 {group} 输出口 {group_ports}", raw, started)
+
+    ports = sorted(active)
+    started = time.monotonic()
+    if len(ports) != output_count:
+        detail = (
+            f"GROUP 输出口并集 {ports} 共 {len(ports)} 口，与 MODEL:INFO? 的 "
+            f"outputs={output_count} 不一致"
+        )
+        rec.add("活动输出集合交叉核对", False, detail, None, started)
+        return None, detail
+    rec.add(
+        "活动输出集合交叉核对",
+        True,
+        f"GROUP 输出口并集 {ports} 与 MODEL:INFO? outputs={output_count} 一致",
+        None,
+        started,
+    )
+    return ports, ""
+
+
 async def run(
     ctx: DiagnosticContext,
     hal: Any,
@@ -221,12 +291,16 @@ async def run(
         "out_of_window": [], "unknown_ports": [], "residue_clean": None,
     }
 
-    # 参数先于任何 SCPI：非法就不碰仪器。
-    param_ports, param_err = _parse_outputs_param(params.get("outputs"))
-    if param_err:
-        return _result("ABORTED", f"ABORTED: {param_err}；未发任何 SCPI", rec.steps, extra)
+    # 旧人工口集会漏掉真实活动口，不能再作为 SUCCESS 的授权来源。
+    if str(params.get("outputs") or "").strip():
+        return _result(
+            "ABORTED",
+            "ABORTED: outputs 人工口集参数已停用；请留空并按当前仿真实时拓扑核查。未发任何 SCPI。",
+            rec.steps,
+            extra,
+        )
 
-    ok, idn, info_raw = await _identity_gate(rec)
+    ok, idn, _info_raw = await _identity_gate(rec)
     extra["idn"] = idn
     if not ok:
         return _result("ABORTED", "ABORTED: 身份门未过（IDN / SYSTem:INFO? 都不含 PROPSIM / F8800），"
@@ -253,37 +327,19 @@ async def run(
             rec.steps, extra,
         )
 
-    # 口集
-    if param_ports is not None:
-        ports, source = param_ports, "param"
-    else:
-        active = getattr(ce, "_active_output_ports", None)
-        if isinstance(active, (list, tuple)) and active and all(
-            isinstance(p, int) and p > 0 for p in active
-        ):
-            ports, source = list(active), "driver_active_output_ports"
-        else:
-            if info_raw is None:
-                started = time.monotonic()
-                try:
-                    info_raw = await rec.query(_INFO_QUERY)
-                except Exception as e:  # noqa: BLE001
-                    rec.add(_INFO_QUERY, False, f"查询异常 {type(e).__name__}: {e}", None, started)
-                    info_raw = None
-                else:
-                    rec.add(_INFO_QUERY, True, "读取通道数（兜底口集）", info_raw, started)
-            n = parse_f64_sys_info(info_raw).channel_count if info_raw else None
-            if not n or n <= 0:
-                extra["residue_clean"] = await rec.residue()
-                return _result(
-                    "UNDETERMINED",
-                    "UNDETERMINED: 口集无法确定 —— 无 outputs 参数、驱动未回读物理输出口、"
-                    "SYSTem:INFO? 也解析不出通道数；逐口查询未发。",
-                    rec.steps, extra,
-                )
-            ports, source = list(range(1, n + 1)), "syst_info_channel_count"
-            log(f"  · 口集退到 SYSTem:INFO? 通道数 1..{n}（整机衰落通道数，非输出口数，只当兜底）")
+    ports, topology_error = await _read_live_output_ports(rec)
+    if ports is None:
+        extra["residue_clean"] = await rec.residue()
+        return _result(
+            "UNDETERMINED",
+            f"UNDETERMINED: 当前活动输出集合无法权威确认（{topology_error}）；"
+            "逐口 LIMits?/CH? 未发。",
+            rec.steps,
+            extra,
+        )
+    source = "live_group_output_union"
     extra["port_source"] = source
+    extra["active_output_ports"] = ports
 
     # 逐口
     port_table: Dict[str, Dict[str, Any]] = {}
@@ -377,6 +433,7 @@ async def run(
         )
     return _result(
         "SUCCESS",
-        f"SUCCESS: {len(ports)} 口当前电平均在各自窗口内（口集来源 {source}），错误队列零残留。",
+        f"SUCCESS: {len(ports)} 个当前活动口的电平均在各自窗口内（口集来源 {source}），"
+        "错误队列零残留；未进入活动集合的硬件口未探测、不影响本次判定。",
         rec.steps, extra,
     )
