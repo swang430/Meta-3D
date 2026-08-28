@@ -32,6 +32,7 @@ from app.models.instrument import (
 from app.schemas.instrument import (
     UpdateInstrumentCategoryRequest,
 )
+from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
 from app.services.diagnostic_context import build_diagnostic_context
 from app.services.instrument_test_lease import instrument_test_lease
 
@@ -3245,6 +3246,7 @@ class Cmw500Lte2x2ReadinessResponse(BaseModel):
     fdd_ready: bool
     tdd_ready: bool
     detail: str
+    binding_digest: Optional[str] = None
 
 
 class HALReadinessResponse(BaseModel):
@@ -3260,6 +3262,7 @@ class HALReadinessResponse(BaseModel):
     lab_profile: LabProfileReadinessResponse
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
+    base_station_binding: Optional[BaseStationBindingPreviewResponse] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
     # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
@@ -3296,6 +3299,8 @@ def get_hal_readiness(
         build_cmw500_lte_2x2_readiness,
         get_hal_service,
     )
+    from app.services.base_station_binding import build_base_station_binding_preview
+    from app.services.lab_resolution import resolve_lab_profile
     from app.services.readiness import (
         build_calibration_readiness,
         build_lab_profile_readiness,
@@ -3311,11 +3316,20 @@ def get_hal_readiness(
 
     hal = get_hal_service()
     report = hal.last_readiness_report if hal else None
+    binding_preview = None
+    binding_response = None
+    if lab_section.profile_id is not None:
+        selected_lab = resolve_lab_profile(db, UUID(lab_section.profile_id))
+        binding_preview = build_base_station_binding_preview(db, hal, selected_lab)
+        binding_response = BaseStationBindingPreviewResponse.model_validate(
+            binding_preview.model_dump(mode="json")
+        )
     cmw_readiness = (
         build_cmw500_lte_2x2_readiness(
             db,
             lab_profile_id=UUID(lab_section.profile_id),
             hal=hal,
+            binding_preview=binding_preview,
         )
         if lab_section.profile_id is not None
         else None
@@ -3351,6 +3365,7 @@ def get_hal_readiness(
                 status="not_implemented",
                 detail="HAL not initialised yet",
             ),
+            base_station_binding=binding_response,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
             subnets=[],
@@ -3388,6 +3403,7 @@ def get_hal_readiness(
             status=report.dut_attach.status,
             detail=report.dut_attach.detail,
         ),
+        base_station_binding=binding_response,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,
         subnets=[

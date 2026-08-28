@@ -78,6 +78,78 @@ class ResolvedBaseStationBinding(BaseModel):
         return projection
 
 
+class BaseStationBindingPreview(BaseModel):
+    """Structured read-only projection used by API sync/readiness surfaces."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal[
+        "configured", "not_applicable", "diagnostic_unbound", "invalid"
+    ]
+    binding_digest: str | None
+    execution_mode: Literal["real", "simulated"] | None
+    adapter_id: str | None
+    model_name: str | None
+    category_id: str | None
+    instrument_model_id: str | None
+    instrument_connection_id: str | None
+    lab_profile_id: str
+    resolved_binding: dict[str, Any] | None
+    runtime_driver: dict[str, Any] | None
+    detail: str
+
+    @classmethod
+    def from_resolved(
+        cls,
+        resolved: ResolvedBaseStationBinding,
+    ) -> "BaseStationBindingPreview":
+        return cls(
+            status=resolved.status,
+            binding_digest=resolved.binding_digest,
+            execution_mode=resolved.execution_mode,
+            adapter_id=(
+                resolved.manifest.adapter_id if resolved.manifest is not None else None
+            ),
+            model_name=(
+                resolved.manifest.model_name if resolved.manifest is not None else None
+            ),
+            category_id=resolved.category_id,
+            instrument_model_id=resolved.instrument_model_id,
+            instrument_connection_id=resolved.instrument_connection_id,
+            lab_profile_id=resolved.lab_profile_id,
+            resolved_binding=resolved.stable_projection(),
+            runtime_driver=resolved.runtime_driver.model_dump(mode="json"),
+            detail="BaseStation binding resolved from current server truth",
+        )
+
+
+def build_base_station_binding_preview(
+    db,
+    hal,
+    selected_lab_profile: LabProfile,
+) -> BaseStationBindingPreview:
+    """Resolve a preview; invalid truth stays explicit and never looks ready."""
+
+    try:
+        resolved = resolve_base_station_binding(db, hal, selected_lab_profile)
+    except ValueError as exc:
+        return BaseStationBindingPreview(
+            status="invalid",
+            binding_digest=None,
+            execution_mode=None,
+            adapter_id=None,
+            model_name=None,
+            category_id=None,
+            instrument_model_id=None,
+            instrument_connection_id=None,
+            lab_profile_id=str(selected_lab_profile.id),
+            resolved_binding=None,
+            runtime_driver=None,
+            detail=str(exc),
+        )
+    return BaseStationBindingPreview.from_resolved(resolved)
+
+
 def _canonical_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,

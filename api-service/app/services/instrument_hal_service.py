@@ -334,6 +334,7 @@ class Cmw500Lte2x2Readiness:
     fdd_ready: bool
     tdd_ready: bool
     detail: str
+    binding_digest: str | None = None
 
 
 def build_cmw500_lte_2x2_readiness(
@@ -341,14 +342,11 @@ def build_cmw500_lte_2x2_readiness(
     *,
     lab_profile_id,
     hal,
+    binding_preview=None,
 ) -> Cmw500Lte2x2Readiness:
     """Project current CMW readiness without opening or changing a session."""
 
-    from app.models.instrument import (
-        InstrumentCategory,
-        InstrumentConnection,
-        InstrumentModel,
-    )
+    from app.services.base_station_binding import build_base_station_binding_preview
     from app.services.lab_resolution import resolve_lab_profile
 
     def unavailable(
@@ -356,101 +354,52 @@ def build_cmw500_lte_2x2_readiness(
         *,
         status: str = "warning",
         adapter_registered: bool = False,
-        connection=None,
+        preview=None,
         model: str | None = None,
     ) -> Cmw500Lte2x2Readiness:
+        resolved = (
+            preview.resolved_binding
+            if preview is not None and isinstance(preview.resolved_binding, dict)
+            else {}
+        )
+        formal = resolved.get("formal_capability")
+        if not isinstance(formal, dict):
+            formal = {}
         return Cmw500Lte2x2Readiness(
             status=status,
             adapter_registered=adapter_registered,
-            connection_id=str(connection.id) if connection is not None else None,
-            model=model,
+            connection_id=(
+                preview.instrument_connection_id if preview is not None else None
+            ),
+            model=model or (preview.model_name if preview is not None else None),
             identity_verified=None,
             firmware_version=None,
             options=[],
-            formal_enabled=(
-                connection.cmw500_lte_2x2_formal_enabled is True
-                if connection is not None
-                else False
-            ),
-            formal_updated_at=(
-                connection.cmw500_lte_2x2_formal_updated_at.isoformat()
-                if connection is not None
-                and connection.cmw500_lte_2x2_formal_updated_at is not None
-                else None
-            ),
+            formal_enabled=formal.get("enabled") is True,
+            formal_updated_at=formal.get("updated_at"),
             fdd_ready=False,
             tdd_ready=False,
             detail=detail,
+            binding_digest=(preview.binding_digest if preview is not None else None),
         )
 
     lab = resolve_lab_profile(db, lab_profile_id)
-    category = (
-        db.query(InstrumentCategory)
-        .filter(InstrumentCategory.category_key == "baseStation")
-        .one_or_none()
-    )
-    if category is None:
-        return unavailable("baseStation category is not configured")
-    bindings = lab.instrument_bindings
-    matches = (
-        [
-            item
-            for item in bindings
-            if isinstance(item, dict)
-            and str(item.get("category_id")) == str(category.id)
-        ]
-        if isinstance(bindings, list)
-        else []
-    )
-    connection = (
-        db.query(InstrumentConnection)
-        .filter(InstrumentConnection.category_id == category.id)
-        .one_or_none()
-    )
-    if len(matches) != 1:
-        return unavailable(
-            "LabProfile must contain exactly one baseStation binding",
-            connection=connection,
-        )
-    if category.selected_model_id is None:
-        return unavailable("selected baseStation model is missing", connection=connection)
-    model_row = (
-        db.query(InstrumentModel)
-        .filter(
-            InstrumentModel.id == category.selected_model_id,
-            InstrumentModel.category_id == category.id,
-        )
-        .one_or_none()
-    )
-    if model_row is None:
-        return unavailable("selected baseStation model is missing", connection=connection)
-    expected_class = get_real_driver_class("baseStation", model_row.model)
-    adapter_registered = getattr(expected_class, "adapter_id", None) == "cmw500"
-    if not adapter_registered:
+    if binding_preview is None:
+        binding_preview = build_base_station_binding_preview(db, hal, lab)
+    if binding_preview.status == "invalid":
+        return unavailable(binding_preview.detail, preview=binding_preview)
+    if binding_preview.adapter_id != "cmw500":
         return unavailable(
             "selected baseStation is not the registered CMW500 adapter",
             status="not_applicable",
-            connection=connection,
-            model=model_row.model,
+            preview=binding_preview,
         )
-    if connection is None:
+    if binding_preview.execution_mode == "simulated":
         return unavailable(
-            "selected CMW500 connection is missing",
+            "CMW500 is using the diagnostic mock driver",
+            status="diagnostic",
             adapter_registered=True,
-            model=model_row.model,
-        )
-    binding = matches[0]
-    if (
-        str(binding.get("instrument_model_id")) != str(model_row.id)
-        or not isinstance(binding.get("connection_endpoint"), str)
-        or binding["connection_endpoint"].strip()
-        != (connection.endpoint or "").strip()
-    ):
-        return unavailable(
-            "LabProfile baseStation binding does not match the selected connection",
-            adapter_registered=True,
-            connection=connection,
-            model=model_row.model,
+            preview=binding_preview,
         )
     drivers = getattr(hal, "drivers", None)
     driver = drivers.get("baseStation") if isinstance(drivers, dict) else None
@@ -458,71 +407,20 @@ def build_cmw500_lte_2x2_readiness(
         return unavailable(
             "selected CMW500 driver is not loaded",
             adapter_registered=True,
-            connection=connection,
-            model=model_row.model,
-        )
-    if is_mock_driver(driver):
-        return unavailable(
-            "CMW500 is using the diagnostic mock driver",
-            status="diagnostic",
-            adapter_registered=True,
-            connection=connection,
-            model=model_row.model,
-        )
-    if type(driver) is not expected_class:
-        return unavailable(
-            "loaded baseStation driver does not match the selected CMW500 model",
-            adapter_registered=True,
-            connection=connection,
-            model=model_row.model,
-        )
-    connection_config = {
-        "endpoint": connection.endpoint,
-        "ip": connection.controller_ip,
-        "port": connection.port,
-        "protocol": connection.protocol,
-    }
-    if isinstance(connection.connection_params, dict):
-        connection_config.update(connection.connection_params)
-    host, port, resource, error = resolve_configured_tcpip_connection(
-        connection_config
-    )
-    loaded_connection = {
-        "host": getattr(driver, "_connection_host", None),
-        "port": getattr(driver, "_connection_port", None),
-        "resource": getattr(driver, "_connection_resource", None),
-    }
-    if error or not host or loaded_connection != {
-        "host": host,
-        "port": port,
-        "resource": resource,
-    }:
-        return unavailable(
-            "loaded CMW500 driver connection does not match the selected connection",
-            adapter_registered=True,
-            connection=connection,
-            model=model_row.model,
+            preview=binding_preview,
         )
 
     identity = driver.get_base_station_identity()
     identity_verified = driver.identity_snapshot_verified is True
-    approval = {
-        "schema_version": 1,
-        "instrument_connection_id": str(connection.id),
-        "enabled": connection.cmw500_lte_2x2_formal_enabled is True,
-        "updated_at": (
-            connection.cmw500_lte_2x2_formal_updated_at.isoformat()
-            if connection.cmw500_lte_2x2_formal_updated_at is not None
-            else None
-        ),
-    }
+    resolved = binding_preview.resolved_binding or {}
+    approval = resolved.get("formal_capability") or {}
     preview = {
         "resolution": {
             "adapter": "cmw500",
             "status": "configured",
             "execution_mode": "real",
         },
-        "instrument_connection_id": str(connection.id),
+        "instrument_connection_id": binding_preview.instrument_connection_id,
         "cmw500_lte_2x2_formal_capability": approval,
     }
     fdd = driver.evaluate_lte_2x2_formal_capability(preview, duplex="fdd")
@@ -531,8 +429,8 @@ def build_cmw500_lte_2x2_readiness(
     return Cmw500Lte2x2Readiness(
         status=status,
         adapter_registered=True,
-        connection_id=str(connection.id),
-        model=identity.model or model_row.model,
+        connection_id=binding_preview.instrument_connection_id,
+        model=identity.model or binding_preview.model_name,
         identity_verified=identity_verified,
         firmware_version=identity.firmware_version,
         options=list(identity.options),
@@ -541,6 +439,7 @@ def build_cmw500_lte_2x2_readiness(
         fdd_ready=fdd.ready,
         tdd_ready=tdd.ready,
         detail=f"FDD: {fdd.reason}; TDD: {tdd.reason}",
+        binding_digest=binding_preview.binding_digest,
     )
 
 

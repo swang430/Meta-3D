@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.models.chamber import ChamberConfiguration
 from app.models.instrument import (
     InstrumentCategory,
@@ -25,6 +24,12 @@ from app.models.instrument import (
 )
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
+from app.services.base_station_binding import (
+    BaseStationBindingPreview,
+    build_base_station_binding_preview,
+    resolve_base_station_binding,
+)
 
 router = APIRouter(prefix="/lab-profiles", tags=["Lab Profiles"])
 
@@ -93,6 +98,11 @@ class InstrumentBinding(BaseModel):
         None,
         description="Human-readable role for this binding, e.g. 'primary_channel_emulator'",
     )
+
+
+class InstrumentBindingSyncResponse(BaseModel):
+    binding: InstrumentBinding
+    resolved: Optional[BaseStationBindingPreviewResponse] = None
 
 
 class LabProfileCreateRequest(BaseModel):
@@ -261,7 +271,7 @@ def list_lab_profiles(
 
 @router.put(
     "/{lab_profile_id}/instrument-bindings/{category_key}/sync-current",
-    response_model=InstrumentBinding,
+    response_model=InstrumentBindingSyncResponse,
 )
 def sync_current_instrument_binding(
     lab_profile_id: UUID,
@@ -318,23 +328,6 @@ def sync_current_instrument_binding(
         .filter(InstrumentConnection.category_id == category.id)
         .one_or_none()
     )
-    if category_key == "baseStation" and model.model == "CMW500":
-        params = connection.connection_params if connection is not None else None
-        raw_profile = (
-            params.get("base_station_adapter_profile")
-            if isinstance(params, dict)
-            else None
-        )
-        try:
-            BaseStationAdapterProfile.model_validate(raw_profile)
-        except ValueError as error:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "CMW500 内部 Route 未配置或无效：请先在仪器资源配置中"
-                    "完整填写并保存七个字段"
-                ),
-            ) from error
     endpoint = (connection.endpoint if connection else "") or ""
     endpoint = endpoint.strip()
     if not endpoint:
@@ -370,8 +363,58 @@ def sync_current_instrument_binding(
     profile.instrument_bindings = [
         row for row in existing if str(row.get("category_id")) != category_id
     ] + [binding]
+    resolved = None
+    if category_key == "baseStation":
+        from app.services.instrument_hal_service import get_hal_service
+
+        db.flush()
+        try:
+            resolved_binding = resolve_base_station_binding(
+                db,
+                get_hal_service(),
+                profile,
+                lock=False,
+            )
+        except ValueError as error:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        resolved = BaseStationBindingPreview.from_resolved(resolved_binding)
     db.commit()
-    return binding
+    return InstrumentBindingSyncResponse(
+        binding=InstrumentBinding.model_validate(binding),
+        resolved=(
+            BaseStationBindingPreviewResponse.model_validate(
+                resolved.model_dump(mode="json")
+            )
+            if resolved is not None
+            else None
+        ),
+    )
+
+
+@router.get(
+    "/{lab_profile_id}/instrument-bindings/baseStation/preview",
+    response_model=BaseStationBindingPreviewResponse,
+)
+def preview_base_station_binding(
+    lab_profile_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Read current BaseStation binding truth without connecting to hardware."""
+
+    profile = (
+        db.query(LabProfile)
+        .filter(LabProfile.id == lab_profile_id)
+        .one_or_none()
+    )
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LabProfile not found")
+    from app.services.instrument_hal_service import get_hal_service
+
+    preview = build_base_station_binding_preview(db, get_hal_service(), profile)
+    return BaseStationBindingPreviewResponse.model_validate(
+        preview.model_dump(mode="json")
+    )
 
 
 @router.get("/{lab_profile_id}/rf-chains", response_model=RFChainResolutionResponse)
