@@ -110,6 +110,7 @@ class _FakeRealBS:
 
     adapter_id = "uxm"
     input_level_control_supported = True
+    input_level_legacy_power_field = "uxm_dl_power_dbm"
 
     def __init__(self):
         self.set_calls: List[float] = []
