@@ -53,6 +53,7 @@ from app.hal.scpi_evidence import (
     InstrumentEvidenceItem,
     capture_scpi_exchanges,
 )
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -333,6 +334,27 @@ class RealUxmDriver(BaseStationDriver):
     """
 
     adapter_id = "uxm"
+    adapter_manifest = BaseStationAdapterManifest(
+        schema_version=1,
+        adapter_id=adapter_id,
+        model_name="UXM 5G E7515B",
+        vendor="Keysight",
+        rats=("lte", "nr"),
+        capabilities=(
+            "identity",
+            "config",
+            "cell_attach",
+            "measurement_window",
+            "safe_idle_release",
+        ),
+        profile_requirement="not_applicable",
+        profile_fields=(),
+        manual_sources=(
+            "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip",
+        ),
+        diagnostic_supported=True,
+        formal_gate="legacy_provenance",
+    )
     input_level_control_supported = True
     input_level_legacy_power_field = "uxm_dl_power_dbm"
 

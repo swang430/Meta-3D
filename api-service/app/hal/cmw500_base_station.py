@@ -60,6 +60,10 @@ from app.hal.cmw500_command_profile import (
     CmwNx2Route,
 )
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
+from app.hal.base_station_manifest import (
+    BaseStationAdapterManifest,
+    BaseStationProfileFieldManifest,
+)
 from app.hal.scpi_evidence import (
     EvidenceLevel,
     EvidenceVerdict,
@@ -254,6 +258,45 @@ class RealCmw500Driver(BaseStationDriver):
     """
 
     adapter_id = "cmw500"
+    adapter_manifest = BaseStationAdapterManifest(
+        schema_version=1,
+        adapter_id=adapter_id,
+        model_name="CMW500",
+        vendor="Rohde & Schwarz",
+        rats=("lte",),
+        capabilities=(
+            "identity",
+            "config",
+            "internal_route",
+            "cell_attach",
+            "measurement_window",
+            "safe_idle_release",
+        ),
+        profile_requirement="required",
+        profile_fields=tuple(
+            BaseStationProfileFieldManifest(
+                path=f"lte_2x2_internal_route.{name}",
+                label=name,
+                required=True,
+                placeholder="VALUE",
+                description="Laboratory-configured CMW500 LTE 2x2 internal route field",
+            )
+            for name in (
+                "pcc_bb_board",
+                "rx_connector",
+                "rx_converter",
+                "tx1_connector",
+                "tx1_converter",
+                "tx2_connector",
+                "tx2_converter",
+            )
+        ),
+        manual_sources=(
+            "Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf",
+        ),
+        diagnostic_supported=True,
+        formal_gate="connection_approval",
+    )
     measurement_window_cardinality = "single"
     input_level_unavailable_reason = (
         "Warning: CMW500 input-level/power capability remains disabled in P1-73A"

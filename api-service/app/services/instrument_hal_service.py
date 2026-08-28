@@ -21,6 +21,10 @@ from app.hal.base import (
     InstrumentStatus,
     resolve_configured_tcpip_connection,
 )
+from app.hal.base_station_manifest import (
+    BaseStationAdapterRegistration,
+    validate_base_station_adapter_registrations,
+)
 
 if TYPE_CHECKING:
     # P3-5: only needed for the type annotation on _log_readiness_report;
@@ -45,15 +49,10 @@ _REAL_DRIVER_REGISTRY_CACHE: Optional[Dict[str, Dict[str, type]]] = None
 
 
 def _validate_base_station_adapter_ids(drivers: Dict[str, type]) -> None:
-    """保证注册类提供唯一、显式且受支持的基站 adapter identity。"""
-    supported = {"uxm", "cmw500"}
+    """兼容旧调用点：由声明式 manifest 校验注册身份。"""
     seen: Dict[str, str] = {}
     for model_name, driver_class in drivers.items():
         adapter_id = getattr(driver_class, "adapter_id", None)
-        if adapter_id not in supported:
-            raise ValueError(
-                f"unknown base-station adapter_id for {model_name}: {adapter_id!r}"
-            )
         previous_model = seen.get(adapter_id)
         if previous_model is not None:
             raise ValueError(
@@ -61,6 +60,41 @@ def _validate_base_station_adapter_ids(drivers: Dict[str, type]) -> None:
                 f"{adapter_id!r}: {previous_model!r} and {model_name!r}"
             )
         seen[adapter_id] = model_name
+    registrations = {
+        model_name: BaseStationAdapterRegistration(
+            manifest=getattr(driver_class, "adapter_manifest", None),
+            driver_class=driver_class,
+            profile_model=(
+                _base_station_profile_model(getattr(driver_class, "adapter_id", None))
+            ),
+        )
+        for model_name, driver_class in drivers.items()
+    }
+    validate_base_station_adapter_registrations(registrations)
+
+
+def _base_station_profile_model(adapter_id: str | None):
+    if adapter_id == "cmw500":
+        from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
+
+        return BaseStationAdapterProfile
+    return None
+
+
+def get_base_station_adapter_registration(
+    model_name: str,
+) -> BaseStationAdapterRegistration:
+    """Return the single registered adapter declaration for a catalog model."""
+    driver_class = _real_driver_registry()["baseStation"].get(model_name)
+    if driver_class is None:
+        raise KeyError(f"unknown base-station model: {model_name!r}")
+    registration = BaseStationAdapterRegistration(
+        manifest=driver_class.adapter_manifest,
+        driver_class=driver_class,
+        profile_model=_base_station_profile_model(driver_class.adapter_id),
+    )
+    validate_base_station_adapter_registrations({model_name: registration})
+    return registration
 
 
 def _real_driver_registry() -> Dict[str, Dict[str, type]]:
