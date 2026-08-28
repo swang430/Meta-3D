@@ -295,7 +295,7 @@ class RealCmw500Driver(BaseStationDriver):
             "Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf",
         ),
         diagnostic_supported=True,
-        formal_gate="connection_approval",
+        formal_gate="site_certification",
     )
     measurement_window_cardinality = "single"
     input_level_unavailable_reason = (

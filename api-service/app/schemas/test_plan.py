@@ -1,8 +1,10 @@
 """Test Plan and Test Case Pydantic schemas"""
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
+
+from app.services.execution_qualification import TestCaseExecutionPolicy
 
 
 # ==================== Test Plan Schemas ====================
@@ -84,6 +86,29 @@ class TestCaseUpdate(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class TestCaseExecutionPolicyUpdate(BaseModel):
+    """Dedicated server-owned Diagnostic/Formal policy update."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(pattern="^(formal|diagnostic)$")
+    reason: str
+    updated_by: str
+
+    @field_validator("reason", "updated_by")
+    @classmethod
+    def _non_blank_audit_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("execution policy audit fields must be non-blank")
+        return normalized
+
+
+class TestCaseExecutionPolicyResponse(BaseModel):
+    test_case_id: UUID
+    policy: TestCaseExecutionPolicy
+
+
 class TestCaseResponse(BaseModel):
     """Test case response"""
     id: UUID
@@ -110,6 +135,7 @@ class TestCaseResponse(BaseModel):
     version: str
     parent_id: Optional[UUID]
     tags: Optional[List[str]]
+    execution_policy: Optional[TestCaseExecutionPolicy] = None
 
     class Config:
         from_attributes = True
@@ -196,6 +222,7 @@ class ExecutionHistoryItem(BaseModel):
     executed_by: Optional[str] = None  # 来源列: test_case_runner / test_plan_runner / commissioning_*
     error_message: Optional[str] = None
     validation_pass: Optional[bool] = None
+    execution_classification: str = "legacy"
     failure_alert_outcome: Optional[str] = None
 
 

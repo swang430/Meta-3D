@@ -6,6 +6,7 @@ import {
   buildCreateSessionBody,
   type CreateSessionParams,
 } from './sessionBody'
+import type { FrozenExecutionQualification } from '../../types/api'
 
 export {
   buildCreateSessionBody,
@@ -41,6 +42,7 @@ export interface SessionResponse {
   mimo_test: Record<string, unknown> | null
   analysis: Record<string, unknown> | null
   report_id: string | null
+  execution_qualification: FrozenExecutionQualification | null
 }
 
 export interface LabResolutionDetail {

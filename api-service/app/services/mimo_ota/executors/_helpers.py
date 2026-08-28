@@ -66,7 +66,19 @@ def load_mimo_ota_config(execution: TestExecution) -> MIMOOTAConfiguration:
         raise RuntimeError(
             f"TestCase {execution.test_case_id} missing or has empty configuration"
         )
-    return MIMOOTAConfiguration.model_validate(tc.configuration)
+    payload = dict(tc.configuration)
+    # P2-45: the calibration gate belongs to this immutable execution, not to
+    # the shared TestCase row.  A later policy/certification change or a
+    # concurrent execution must never relabel an already-frozen run.  Legacy
+    # executions without a qualification envelope keep their stored config.
+    from app.services.execution_qualification import (
+        execution_qualification_classification,
+    )
+
+    classification = execution_qualification_classification(execution)
+    if classification is not None:
+        payload["precheck_strict_cal"] = classification == "formal"
+    return MIMOOTAConfiguration.model_validate(payload)
 
 
 def _session_for(execution: TestExecution):

@@ -353,7 +353,7 @@ class RealUxmDriver(BaseStationDriver):
             "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip",
         ),
         diagnostic_supported=True,
-        formal_gate="legacy_provenance",
+        formal_gate="site_certification",
     )
     input_level_control_supported = True
     input_level_legacy_power_field = "uxm_dl_power_dbm"

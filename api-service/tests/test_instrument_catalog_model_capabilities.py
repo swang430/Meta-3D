@@ -84,7 +84,7 @@ class TestCatalogModelCapabilitiesField:
         assert cmw["base_station_manifest"]["adapter_id"] == "cmw500"
         assert cmw["base_station_manifest"]["profile_requirement"] == "required"
         assert len(cmw["base_station_manifest"]["profile_fields"]) == 7
-        assert cmw["base_station_manifest"]["formal_gate"] == "connection_approval"
+        assert cmw["base_station_manifest"]["formal_gate"] == "site_certification"
         assert uxm["base_station_manifest"]["adapter_id"] == "uxm"
         assert uxm["base_station_manifest"]["profile_requirement"] == "not_applicable"
         assert uxm["base_station_manifest"]["profile_fields"] == []

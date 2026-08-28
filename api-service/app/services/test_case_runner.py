@@ -239,6 +239,7 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
             config_overrides=dict(source.configuration or {}),
             created_by=RUNNER_MARKER,
             tags=["case_run"],
+            execution_policy=source.execution_policy,
         )
     except (LookupError, CaseNotExecutable):
         raise

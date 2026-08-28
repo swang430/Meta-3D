@@ -192,6 +192,14 @@ class InstrumentConnection(Base):
         nullable=True,
         comment="Server-owned timestamp of the latest CMW500 formal approval change",
     )
+    base_station_site_certification = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "Server-owned BaseStation site certification; dedicated API only. "
+            "Never written through connection_params."
+        ),
+    )
 
     # 元数据
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

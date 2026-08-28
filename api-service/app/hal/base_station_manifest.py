@@ -60,7 +60,7 @@ class BaseStationAdapterManifest(BaseModel):
     profile_fields: tuple[BaseStationProfileFieldManifest, ...]
     manual_sources: tuple[str, ...]
     diagnostic_supported: bool
-    formal_gate: Literal["legacy_provenance", "connection_approval"]
+    formal_gate: Literal["site_certification"]
 
     @field_validator("adapter_id")
     @classmethod

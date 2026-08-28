@@ -218,6 +218,14 @@ class TestCase(Base):
         comment="Specific calibration certificate to apply at execution. If null, "
                 "executor falls back to LabProfile.active_calibration_certificate_id.",
     )
+    execution_policy = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "Server-owned Diagnostic/Formal policy; dedicated endpoint only. "
+            "Null is the backward-compatible formal default."
+        ),
+    )
 
 
 class TestExecution(Base):

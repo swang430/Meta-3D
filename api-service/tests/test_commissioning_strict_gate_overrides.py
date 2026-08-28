@@ -22,7 +22,11 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from app.api.commissioning import CreateSessionRequest, _request_overrides
+from app.api.commissioning import (
+    CreateSessionRequest,
+    _request_execution_policy,
+    _request_overrides,
+)
 
 
 # P2-11: Phase 1/2/3 加了 3 道新 strict 门 + Phase 6 (#114/#124/#126) 加 cell_config 门;
@@ -38,7 +42,7 @@ _P2_11_FLAGS = (
     "precheck_strict_dut_capability",
     "precheck_strict_sim_identity",
 )
-_ALL_STRICT_FLAGS = ("precheck_strict_dut", "precheck_strict_cal", *_P2_11_FLAGS)
+_ALL_STRICT_FLAGS = ("precheck_strict_dut", *_P2_11_FLAGS)
 
 
 def test_strict_flags_omitted_are_absent_from_overrides():
@@ -49,11 +53,10 @@ def test_strict_flags_omitted_are_absent_from_overrides():
 
 
 def test_strict_flags_false_pass_through():
-    """Lab-smoke toggle → explicit False is carried into overrides (全 7 道门)。"""
+    """非校准门仍保留显式诊断覆盖；校准资格改走专用策略。"""
     overrides = _request_overrides(
         CreateSessionRequest(
             precheck_strict_dut=False,
-            precheck_strict_cal=False,
             precheck_strict_frequency=False,
             precheck_strict_emulation_file=False,
             precheck_strict_switch_mode=False,
@@ -69,10 +72,9 @@ def test_strict_flags_false_pass_through():
 def test_strict_flags_true_pass_through():
     """Explicit True is carried (distinct from omitted, though same effect)."""
     overrides = _request_overrides(
-        CreateSessionRequest(precheck_strict_dut=True, precheck_strict_cal=True)
+        CreateSessionRequest(precheck_strict_dut=True)
     )
     assert overrides["precheck_strict_dut"] is True
-    assert overrides["precheck_strict_cal"] is True
 
 
 def test_one_flag_set_other_omitted():
@@ -91,8 +93,34 @@ def test_p2_11_flag_set_others_omitted():
     for flag in ("precheck_strict_emulation_file", "precheck_strict_switch_mode",
                  "precheck_strict_cell_config", "precheck_strict_dut_capability",
                  "precheck_strict_sim_identity",
-                 "precheck_strict_cal", "precheck_strict_dut"):
+                 "precheck_strict_dut"):
         assert flag not in overrides
+
+
+@pytest.mark.parametrize("value", [False, True])
+def test_legacy_calibration_override_is_rejected(value):
+    """客户端布尔值不能再授权或伪装正式校准资格。"""
+    with pytest.raises(ValidationError, match="execution_policy"):
+        CreateSessionRequest(precheck_strict_cal=value)
+
+
+def test_diagnostic_commissioning_policy_requires_complete_audit():
+    with pytest.raises(ValidationError, match="reason|updated_by"):
+        CreateSessionRequest(execution_policy_mode="diagnostic")
+    with pytest.raises(ValidationError, match="mode"):
+        CreateSessionRequest(execution_policy_reason="现场无校准证书")
+
+    req = CreateSessionRequest(
+        execution_policy_mode="diagnostic",
+        execution_policy_reason="现场无校准证书，仅做链路诊断",
+        execution_policy_updated_by="operator-a",
+    )
+    policy = _request_execution_policy(req)
+    assert policy is not None
+    assert policy["mode"] == "diagnostic"
+    assert policy["reason"] == "现场无校准证书，仅做链路诊断"
+    assert policy["updated_by"] == "operator-a"
+    assert "precheck_strict_cal" not in _request_overrides(req)
 
 
 def test_p2_11_flags_true_pass_through():

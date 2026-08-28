@@ -1,4 +1,6 @@
 """Test Plan Management API endpoints"""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -13,11 +15,14 @@ from app.schemas.test_plan import (
     TestCaseSummary,
     TestCaseListResponse,
     TestCaseGroupedResponse,
+    TestCaseExecutionPolicyResponse,
+    TestCaseExecutionPolicyUpdate,
 )
 from app.services.test_plan_service import MIMOOTACarrierTruthError, TestCaseService
 from app.services.lab_resolution import resolve_lab_profile
 from app.models.test_plan import TestCase
 from app.services.execution_scpi_evidence import ExecutionScpiEvidence
+from app.services.execution_qualification import TestCaseExecutionPolicy
 
 router = APIRouter(prefix="/test-plans", tags=["Test Plan Management"])
 
@@ -42,6 +47,41 @@ def _validate_explicit_lab_profile(db: Session, lab_profile_id: UUID) -> None:
 # ==================== Test Case Endpoints ====================
 # NOTE: /cases routes MUST be registered BEFORE /{test_plan_id}
 # to prevent FastAPI from matching "cases" as a UUID path parameter.
+
+
+@router.put(
+    "/cases/{test_case_id}/execution-policy",
+    response_model=TestCaseExecutionPolicyResponse,
+)
+def update_test_case_execution_policy(
+    test_case_id: UUID,
+    request: TestCaseExecutionPolicyUpdate,
+    db: Session = Depends(get_db),
+):
+    """Audit an explicit Diagnostic/Formal policy without touching case config."""
+
+    test_case = (
+        db.query(TestCase)
+        .filter(TestCase.id == test_case_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if test_case is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    policy = TestCaseExecutionPolicy(
+        schema_version=1,
+        mode=request.mode,
+        reason=request.reason,
+        updated_by=request.updated_by,
+        updated_at=datetime.now(timezone.utc),
+    )
+    test_case.execution_policy = policy.model_dump(mode="json")
+    db.commit()
+    db.refresh(test_case)
+    return TestCaseExecutionPolicyResponse(
+        test_case_id=test_case.id,
+        policy=policy,
+    )
 
 @router.post("/cases", response_model=TestCaseResponse, status_code=201)
 def create_test_case(

@@ -31,11 +31,18 @@ from app.models.instrument import (
     InstrumentConnection as InstrumentConnectionDB,
 )
 from app.schemas.instrument import (
+    BaseStationSiteCertificationCreate,
+    BaseStationSiteCertificationRevoke,
     UpdateInstrumentCategoryRequest,
 )
 from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
 from app.services.diagnostic_context import build_diagnostic_context
 from app.services.instrument_test_lease import instrument_test_lease
+from app.services.execution_qualification import (
+    BaseStationSiteCertification,
+    activate_base_station_site_certification,
+    revoke_base_station_site_certification,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -80,6 +87,7 @@ class FEInstrumentConnection(BaseModel):
     connection_params: Optional[Dict[str, Any]] = None
     cmw500_lte_2x2_formal_enabled: bool = False
     cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
+    base_station_site_certification: Optional[BaseStationSiteCertification] = None
 
 
 class FEInstrumentCategory(BaseModel):
@@ -222,6 +230,7 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         cmw500_lte_2x2_formal_updated_at=(
             conn_db.cmw500_lte_2x2_formal_updated_at
         ),
+        base_station_site_certification=conn_db.base_station_site_certification,
     )
 
 
@@ -236,6 +245,58 @@ class Cmw500FormalCapabilityResponse(BaseModel):
     connection_id: UUID
     enabled: bool
     updated_at: datetime
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/base-station-site-certification",
+    response_model=BaseStationSiteCertification,
+)
+def certify_base_station_connection(
+    connection_id: UUID,
+    request: BaseStationSiteCertificationCreate,
+    db: Session = Depends(get_db),
+):
+    """Certify from an existing server-owned execution evidence envelope."""
+
+    from app.services.instrument_hal_service import get_hal_service
+
+    try:
+        return activate_base_station_site_certification(
+            db,
+            get_hal_service(),
+            connection_id=connection_id,
+            source_execution_id=request.source_execution_id,
+            certified_by=request.certified_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/base-station-site-certification/revoke",
+    response_model=BaseStationSiteCertification,
+)
+def revoke_base_station_connection_certification(
+    connection_id: UUID,
+    request: BaseStationSiteCertificationRevoke,
+    db: Session = Depends(get_db),
+):
+    """Revoke the current server-owned site certification with an audit row."""
+
+    try:
+        return revoke_base_station_site_certification(
+            db,
+            connection_id=connection_id,
+            revoked_by=request.revoked_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _category_tags(cat: InstrumentCategoryModel) -> List[str]:
@@ -3325,6 +3386,7 @@ class HALReadinessResponse(BaseModel):
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
     base_station_binding: Optional[BaseStationBindingPreviewResponse] = None
+    base_station_site_certification: Optional[BaseStationSiteCertification] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
     # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
@@ -3401,6 +3463,18 @@ def get_hal_readiness(
         if cmw_readiness is not None
         else None
     )
+    site_certification = None
+    if binding_preview is not None and binding_preview.instrument_connection_id:
+        connection = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.id == UUID(binding_preview.instrument_connection_id)
+        ).one_or_none()
+        if connection is not None and connection.base_station_site_certification:
+            try:
+                site_certification = BaseStationSiteCertification.model_validate(
+                    connection.base_station_site_certification
+                )
+            except ValidationError:
+                site_certification = None
 
     if report is None:
         # HAL not initialised — return a shaped placeholder so the GUI
@@ -3428,6 +3502,7 @@ def get_hal_readiness(
                 detail="HAL not initialised yet",
             ),
             base_station_binding=binding_response,
+            base_station_site_certification=site_certification,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
             subnets=[],
@@ -3466,6 +3541,7 @@ def get_hal_readiness(
             detail=report.dut_attach.detail,
         ),
         base_station_binding=binding_response,
+        base_station_site_certification=site_certification,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,
         subnets=[

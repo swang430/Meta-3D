@@ -494,7 +494,9 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                     正式判定:
                   </Text>
                   <Text size="sm">
-                    {selectedRecord.validation_pass === null
+                    {selectedRecord.execution_classification === 'diagnostic'
+                      ? '仅诊断 · 不形成正式判定'
+                      : selectedRecord.validation_pass === null
                       ? '未判定'
                       : detailQuery.isLoading
                         ? '核验指令证据中'

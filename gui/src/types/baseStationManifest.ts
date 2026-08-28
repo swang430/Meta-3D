@@ -17,7 +17,7 @@ export type BaseStationAdapterManifest = {
   profile_fields: BaseStationProfileFieldManifest[]
   manual_sources: string[]
   diagnostic_supported: boolean
-  formal_gate: 'legacy_provenance' | 'connection_approval'
+  formal_gate: 'site_certification'
 }
 
 export type BaseStationProfileDraft = Record<string, string>

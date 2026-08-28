@@ -93,7 +93,8 @@ import {
   type TopologyProfileDetail,
   deleteTestCase,
   updateInstrumentCategory,
-  updateCmw500Lte2x2FormalCapability,
+  certifyBaseStationSite,
+  revokeBaseStationSiteCertification,
   replaceProbes,
   updateProbe,
 } from './api/service'
@@ -1712,6 +1713,9 @@ function EquipmentManager() {
     const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
   const [editingCategoryKey, setEditingCategoryKey] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Record<string, EquipmentFeedback>>({})
+  const [certificationExecutionId, setCertificationExecutionId] = useState('')
+  const [certificationOperator, setCertificationOperator] = useState('')
+  const [certificationReason, setCertificationReason] = useState('')
   const feedbackTimers = useRef<Record<string, number>>({})
 
   // SCPI 终端状态
@@ -1846,45 +1850,36 @@ function EquipmentManager() {
     },
   })
 
-  const cmwFormalCapabilityMutation = useMutation({
-    mutationFn: ({ connectionId, enabled }: { connectionId: string; enabled: boolean }) =>
-      updateCmw500Lte2x2FormalCapability(connectionId, enabled),
-    onSuccess: (approval) => {
-      queryClient.setQueryData(
-        ['instruments', 'catalog'],
-        (previous: InstrumentsResponse | undefined): InstrumentsResponse | undefined => {
-          if (!previous) return previous
-          return {
-            categories: previous.categories.map((item) =>
-              item.connection.id === approval.connection_id
-                ? {
-                    ...item,
-                    connection: {
-                      ...item.connection,
-                      cmw500_lte_2x2_formal_enabled: approval.enabled,
-                      cmw500_lte_2x2_formal_updated_at: approval.updated_at,
-                    },
-                  }
-                : item,
-            ),
-          }
-        },
-      )
+  const siteCertificationMutation = useMutation({
+    mutationFn: async ({ connectionId, revoke }: { connectionId: string; revoke: boolean }) => (
+      revoke
+        ? revokeBaseStationSiteCertification(connectionId, {
+            revoked_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+        : certifyBaseStationSite(connectionId, {
+            source_execution_id: certificationExecutionId.trim(),
+            certified_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+    ),
+    onSuccess: (certification) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
       queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       showFeedback(
         'baseStation',
         'success',
-        approval.enabled
-          ? 'CMW500 LTE 2×2 正式能力已显式启用，仅影响后续执行。'
-          : 'CMW500 LTE 2×2 正式能力已关闭，仅影响后续执行。',
+        certification.status === 'active'
+          ? 'BaseStation 现场认证已从服务端执行证据激活，仅影响后续执行。'
+          : 'BaseStation 现场认证已撤销，仅影响后续执行。',
       )
     },
     onError: (error: unknown) => {
       showFeedback(
         'baseStation',
         'error',
-        `CMW500 正式能力更新失败: ${diagnosticErrorMessage(error)}`,
+        `BaseStation 现场认证更新失败: ${diagnosticErrorMessage(error)}`,
       )
     },
   })
@@ -2370,7 +2365,7 @@ function EquipmentManager() {
                   && drawerSelectedModel?.base_station_manifest
                   && (
                     drawerSelectedModel.base_station_manifest.profile_requirement === 'required'
-                    || drawerSelectedModel.base_station_manifest.formal_gate === 'connection_approval'
+                    || drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification'
                   )
                   && (
                   <Card withBorder padding="md" radius="md">
@@ -2384,29 +2379,50 @@ function EquipmentManager() {
                           仅填写该 adapter manifest 声明的持久化字段；仪器命令与正式资格仍由后端权威门判定。
                         </Text>
                       </Stack>
-                      {drawerSelectedModel.base_station_manifest.formal_gate === 'connection_approval' && (
-                        <Switch
-                          label={`${drawerSelectedModel.base_station_manifest.model_name} 正式能力`}
-                          description={
-                            category.connection.cmw500_lte_2x2_formal_updated_at
-                              ? `默认关闭；最后服务器更新 ${category.connection.cmw500_lte_2x2_formal_updated_at}。变更仅影响后续执行。`
-                              : '默认关闭；只能通过专用授权接口启用，不读 connection_params。'
-                          }
-                          checked={category.connection.cmw500_lte_2x2_formal_enabled}
-                          onChange={(event) => {
-                            const connectionId = category.connection.id
-                            if (!connectionId) return
-                            cmwFormalCapabilityMutation.mutate({
-                              connectionId,
-                              enabled: event.currentTarget.checked,
-                            })
-                          }}
-                          disabled={
-                            !category.connection.id
-                            || cmwFormalCapabilityMutation.isPending
-                          }
-                          color="yellow"
-                        />
+                      {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (
+                        <Alert
+                          color={category.connection.base_station_site_certification?.status === 'active' ? 'green' : 'yellow'}
+                          variant="light"
+                        >
+                          当前现场认证：{category.connection.base_station_site_certification?.status === 'active'
+                            ? `已认证 · ${category.connection.base_station_site_certification.certified_at}`
+                            : '未认证或已撤销，仅可诊断'}。服务器认证变化仅影响后续执行。
+                        </Alert>
+                      )}
+                      {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (
+                        <Stack gap="xs">
+                          <TextInput
+                            label="来源执行 ID"
+                            description="服务端只接受当前 binding 下已完成的真实执行；客户端不提交 identity/proof。"
+                            value={certificationExecutionId}
+                            onChange={(event) => setCertificationExecutionId(event.currentTarget.value)}
+                          />
+                          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                            <TextInput label="操作人" value={certificationOperator} onChange={(event) => setCertificationOperator(event.currentTarget.value)} />
+                            <TextInput label="认证/撤销原因" value={certificationReason} onChange={(event) => setCertificationReason(event.currentTarget.value)} />
+                          </SimpleGrid>
+                          <Group>
+                            <Button
+                              size="xs"
+                              color="yellow"
+                              loading={siteCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationExecutionId.trim() || !certificationOperator.trim() || !certificationReason.trim()}
+                              onClick={() => category.connection.id && siteCertificationMutation.mutate({ connectionId: category.connection.id, revoke: false })}
+                            >
+                              从执行证据认证现场
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="outline"
+                              loading={siteCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationOperator.trim() || !certificationReason.trim() || category.connection.base_station_site_certification?.status !== 'active'}
+                              onClick={() => category.connection.id && siteCertificationMutation.mutate({ connectionId: category.connection.id, revoke: true })}
+                            >
+                              撤销现场认证
+                            </Button>
+                          </Group>
+                        </Stack>
                       )}
                       {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (
                         <SimpleGrid cols={{ base: 1, sm: 2 }}>

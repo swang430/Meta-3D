@@ -5,6 +5,7 @@ from ._datetime import UTCDateTime
 from uuid import UUID
 
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.services.execution_qualification import BaseStationSiteCertification
 
 
 # ==================== Model Schemas ====================
@@ -94,9 +95,25 @@ class InstrumentConnectionResponse(InstrumentConnectionBase):
     created_by: str
     cmw500_lte_2x2_formal_enabled: bool
     cmw500_lte_2x2_formal_updated_at: Optional[UTCDateTime]
+    base_station_site_certification: Optional[BaseStationSiteCertification] = None
 
     class Config:
         from_attributes = True
+
+
+class BaseStationSiteCertificationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_execution_id: UUID
+    certified_by: str
+    reason: str
+
+
+class BaseStationSiteCertificationRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revoked_by: str
+    reason: str
 
 
 # ==================== Category Schemas ====================

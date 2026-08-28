@@ -51,6 +51,13 @@ from app.services.base_station_execution_session import (
     run_base_station_execution_session,
 )
 from app.services.execution_failure_alerts import emit_execution_failed_alert
+from app.services.execution_qualification import (
+    EXECUTION_QUALIFICATION_KEY,
+    ExecutionQualification,
+    TestCaseExecutionPolicy,
+    execution_qualification_classification,
+    execution_is_diagnostic,
+)
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     base_station_expected_scope_from_evidence,
@@ -341,7 +348,14 @@ class CreateSessionRequest(BaseModel):
     # a literal False must override, but None must leave the default untouched
     # (passing None into the config would falsy-bypass the gate for everyone).
     precheck_strict_dut: Optional[bool] = None
+    # Deprecated authority surface.  It remains in the request schema only so
+    # old clients receive a precise validation error instead of silently
+    # changing qualification.  Diagnostic calibration bypass is derived from
+    # the audited TestCase execution policy below.
     precheck_strict_cal: Optional[bool] = None
+    execution_policy_mode: Optional[Literal["formal", "diagnostic"]] = None
+    execution_policy_reason: Optional[str] = None
+    execution_policy_updated_by: Optional[str] = None
     # P2-11: 暗室首测 (路径 A) 的 "强制跳过严格门" 还要覆盖 Phase 1/2/3 新加的门, 否则
     # 真仪表空跑会撞上它们而无法绕过 (cal/dut 之外的捷径缺口)。同 Optional[bool] 语义:
     # 显式 False = real-mode operator override; None = 留 schema 默认 (strict)。
@@ -450,6 +464,29 @@ class CreateSessionRequest(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def require_audited_execution_policy(self) -> "CreateSessionRequest":
+        if self.precheck_strict_cal is not None:
+            raise ValueError(
+                "precheck_strict_cal no longer grants qualification; use "
+                "execution_policy_mode with reason and updated_by"
+            )
+        audit_values = (
+            self.execution_policy_reason,
+            self.execution_policy_updated_by,
+        )
+        if self.execution_policy_mode is None:
+            if any(value is not None for value in audit_values):
+                raise ValueError(
+                    "execution_policy_reason/updated_by require execution_policy_mode"
+                )
+            return self
+        if any(value is None or not value.strip() for value in audit_values):
+            raise ValueError(
+                "execution_policy_mode requires non-blank reason and updated_by"
+            )
+        return self
+
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -464,6 +501,7 @@ class SessionResponse(BaseModel):
     mimo_test: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
     report_id: Optional[str] = None
+    execution_qualification: Optional[ExecutionQualification] = None
 
 
 class PhaseResultResponse(BaseModel):
@@ -561,8 +599,6 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     # override (Lab-smoke toggle); None leaks nothing.
     if req.precheck_strict_dut is not None:
         overrides["precheck_strict_dut"] = req.precheck_strict_dut
-    if req.precheck_strict_cal is not None:
-        overrides["precheck_strict_cal"] = req.precheck_strict_cal
     # P2-11: Phase 1/2/3 新门同样的 explicit-False-override / None-leaves-default 语义。
     if req.precheck_strict_frequency is not None:
         overrides["precheck_strict_frequency"] = req.precheck_strict_frequency
@@ -577,6 +613,21 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     if req.precheck_strict_sim_identity is not None:
         overrides["precheck_strict_sim_identity"] = req.precheck_strict_sim_identity
     return overrides
+
+
+def _request_execution_policy(req: CreateSessionRequest) -> Dict[str, Any] | None:
+    """Build the server-owned TestCase policy from complete request audit."""
+
+    if req.execution_policy_mode is None:
+        return None
+    policy = TestCaseExecutionPolicy(
+        schema_version=1,
+        mode=req.execution_policy_mode,
+        reason=req.execution_policy_reason,
+        updated_by=req.execution_policy_updated_by,
+        updated_at=datetime.now(timezone.utc),
+    )
+    return policy.model_dump(mode="json")
 
 
 def _phase_status_from_payload(
@@ -604,12 +655,16 @@ def _commissioning_measure_projection(
     if measure is None:
         return None
     execution_config = execution.config if isinstance(execution.config, dict) else {}
+    diagnostic = execution_is_diagnostic(execution)
+    classification = execution_qualification_classification(execution) or "legacy"
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     evidence_required = base_station_metric_projection_required(
         execution_config
     )
     if not evidence_required:
-        return measure
+        projected = deepcopy(measure)
+        projected["execution_classification"] = classification
+        return projected
 
     expected_config, expected_positions = base_station_expected_scope_from_evidence(
         evidence
@@ -619,11 +674,40 @@ def _commissioning_measure_projection(
             evidence,
             expected_config=expected_config,
             expected_positions=expected_positions,
+            execution_config=execution_config,
         )
         if expected_config is not None
         else []
     )
     projected = deepcopy(measure)
+    projected["execution_classification"] = classification
+    if diagnostic:
+        rows = [
+            {
+                **row,
+                "dl_throughput_mbps": row["dl_throughput_mbps"].model_copy(
+                    update={
+                        "status": "diagnostic",
+                        "formal_value": None,
+                        "diagnostic_value": row["dl_throughput_mbps"].diagnostic_value
+                        if row["dl_throughput_mbps"].diagnostic_value is not None
+                        else row["dl_throughput_mbps"].formal_value,
+                        "reason": "execution_qualification_diagnostic",
+                    }
+                ),
+                "dl_bler_percent": row["dl_bler_percent"].model_copy(
+                    update={
+                        "status": "diagnostic",
+                        "formal_value": None,
+                        "diagnostic_value": row["dl_bler_percent"].diagnostic_value
+                        if row["dl_bler_percent"].diagnostic_value is not None
+                        else row["dl_bler_percent"].formal_value,
+                        "reason": "execution_qualification_diagnostic",
+                    }
+                ),
+            }
+            for row in rows
+        ]
     projected["base_station_metric_projection"] = [
         {
             "position": row["position"],
@@ -708,6 +792,14 @@ def _execution_to_session_response(
         ),
         analysis=phases.get("analysis"),
         report_id=report_payload.get("report_id"),
+        execution_qualification=(
+            ExecutionQualification.model_validate(
+                (execution.config or {}).get(EXECUTION_QUALIFICATION_KEY)
+            )
+            if isinstance(execution.config, dict)
+            and isinstance(execution.config.get(EXECUTION_QUALIFICATION_KEY), dict)
+            else None
+        ),
     )
 
 
@@ -875,6 +967,7 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             config_overrides=overrides,
             created_by="commissioning_api",
             tags=["mimo_ota_session", "commissioning"],
+            execution_policy=_request_execution_policy(req),
         )
     except LabResolutionError as err:
         raise _lab_resolution_to_422(err) from err
@@ -1125,6 +1218,13 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     # Build a regular MIMO_OTA TestCase but tag it so the commissioning list
     # view can filter these out.
     overrides = req.config_overrides or {}
+    adhoc_policy = TestCaseExecutionPolicy(
+        schema_version=1,
+        mode="diagnostic",
+        reason=f"Commissioning ad-hoc phase: {req.phase_name}",
+        updated_by=(req.run_by or "commissioning_adhoc"),
+        updated_at=datetime.now(timezone.utc),
+    ).model_dump(mode="json")
     try:
         test_case, descriptors = build_mimo_ota_test_case(
             db,
@@ -1137,6 +1237,7 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
             config_overrides=overrides,
             created_by="commissioning_adhoc",
             tags=["diagnostic_ad_hoc", f"phase:{req.phase_name}"],
+            execution_policy=adhoc_policy,
         )
     except LabResolutionError as err:
         raise _lab_resolution_to_422(err) from err
@@ -1554,6 +1655,7 @@ def _freeze_instrument_lease(
         hal,
         execution,
         test_case,
+        force_diagnostic=execution.executed_by == "commissioning_adhoc",
     )
     validate_base_station = build_frozen_base_station_validator(
         frozen_base_station

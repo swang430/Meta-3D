@@ -369,8 +369,10 @@ def resolve_base_station_binding(
         profile = None
         status = "not_applicable"
 
+    # P2-45: retain the historical CMW approval projection for old readers,
+    # but it is no longer a formal gate and must not influence binding_digest.
     formal_capability = None
-    if registration.manifest.formal_gate == "connection_approval":
+    if registration.manifest.adapter_id == "cmw500":
         updated_at = connection.cmw500_lte_2x2_formal_updated_at
         formal_capability = {
             "schema_version": 1,
@@ -399,6 +401,7 @@ def resolve_base_station_binding(
         },
         "category_driver_mode": category_driver_mode,
     }
+    digest_payload = {**persistent, "formal_capability": None}
     return ResolvedBaseStationBinding(
         **{
             key: value
@@ -407,6 +410,6 @@ def resolve_base_station_binding(
         },
         execution_mode="simulated" if simulated else "real",
         manifest=registration.manifest,
-        binding_digest=_canonical_digest(persistent),
+        binding_digest=_canonical_digest(digest_payload),
         runtime_driver=_runtime_driver_identity(driver, simulated),
     )

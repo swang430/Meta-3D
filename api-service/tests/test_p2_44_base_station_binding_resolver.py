@@ -310,7 +310,10 @@ def test_binding_digest_is_stable_and_changes_for_each_persisted_truth(db):
     connection.cmw500_lte_2x2_formal_enabled = False
     db.commit()
     approval_changed = resolve_base_station_binding(db, hal, lab)
-    assert approval_changed.binding_digest != original
+    # P2-45: the retired CMW approval is not binding truth and must not churn
+    # the binding digest. Formal qualification freezes site certification
+    # separately from the P2-44 binding digest.
+    assert approval_changed.binding_digest == original
 
     connection.connection_params = {
         "base_station_adapter_profile": _cmw_profile("RF3C")

@@ -138,7 +138,27 @@ function buildCells(report: HALReadinessResponse): Cell[] {
             : `全部 ${okCount} 个 ok`
 
   const cal = report.calibration
-  const baseStationBinding = projectBaseStationBindingTruth(report.base_station_binding)
+  const rawBaseStationBinding = projectBaseStationBindingTruth(report.base_station_binding)
+  const certification = report.base_station_site_certification
+  const certificationMatches = certification?.status === 'active'
+    && certification.binding_digest === report.base_station_binding?.binding_digest
+  const baseStationBinding = rawBaseStationBinding.light !== 'green'
+    ? rawBaseStationBinding
+    : certificationMatches
+      ? {
+          ...rawBaseStationBinding,
+          valueText: `${rawBaseStationBinding.valueText} · 已现场认证`,
+          detail: `${rawBaseStationBinding.detail} · 现场认证 ${certification.certified_at}`,
+        }
+      : {
+          light: 'yellow' as const,
+          valueText: '仅诊断 · 未取得匹配现场认证',
+          detail: certification?.status === 'revoked'
+            ? `${rawBaseStationBinding.detail} · 现场认证已撤销`
+            : certification
+              ? `${rawBaseStationBinding.detail} · 现场认证与当前 binding 不匹配`
+              : `${rawBaseStationBinding.detail} · 当前 connection 尚无现场认证`,
+        }
   const calValue =
     cal.status === 'valid'
       ? typeof cal.days_remaining === 'number'
@@ -338,26 +358,31 @@ export function ZoneReadiness() {
         )}
 
         {readiness && (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
-            {buildCells(readiness).map((cell) => (
-              <Card key={cell.key} withBorder radius="sm" padding="sm">
-                <Stack gap={6}>
-                  <Group justify="space-between" wrap="nowrap">
-                    <Text size="sm" c="dimmed">
-                      {cell.title}
+          <>
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
+              {buildCells(readiness).map((cell) => (
+                <Card key={cell.key} withBorder radius="sm" padding="sm">
+                  <Stack gap={6}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text size="sm" c="dimmed">
+                        {cell.title}
+                      </Text>
+                      <LightIcon light={cell.light} />
+                    </Group>
+                    <Badge color={LIGHT_COLOR[cell.light]} variant="light" size="sm">
+                      {cell.valueText}
+                    </Badge>
+                    <Text size="xs" c="dimmed" lineClamp={2} title={cell.detail}>
+                      {cell.detail}
                     </Text>
-                    <LightIcon light={cell.light} />
-                  </Group>
-                  <Badge color={LIGHT_COLOR[cell.light]} variant="light" size="sm">
-                    {cell.valueText}
-                  </Badge>
-                  <Text size="xs" c="dimmed" lineClamp={2} title={cell.detail}>
-                    {cell.detail}
-                  </Text>
-                </Stack>
-              </Card>
-            ))}
-          </SimpleGrid>
+                  </Stack>
+                </Card>
+              ))}
+            </SimpleGrid>
+            <Text size="xs" c="dimmed" ta="right">
+              服务器快照时间：{readiness.generated_at_iso}
+            </Text>
+          </>
         )}
 
         {readiness && readiness.subnets && readiness.subnets.length > 0 && (

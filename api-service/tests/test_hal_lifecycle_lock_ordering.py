@@ -30,7 +30,7 @@ from app.services import instrument_test_lease as lease_mod
 
 
 @pytest.mark.asyncio
-async def test_reload_paths_do_not_deadlock_on_opposite_lock_order():
+async def test_reload_paths_do_not_deadlock_on_opposite_lock_order(monkeypatch):
     """⭐ 行为门：两条取锁顺序相反的路径并发时必须都能返回。
 
     变异：把 `await _park_after_lifecycle()` 挪回 `reload_hal_service_atomic`
@@ -40,6 +40,15 @@ async def test_reload_paths_do_not_deadlock_on_opposite_lock_order():
     没有异常可抓。用 `wait_for` 把"不返回"变成可观察的失败。
     """
     order: list[str] = []
+
+    async def _initialize_without_database(_service) -> None:
+        """锁顺序门只需要空 HAL；不得依赖开发库是否已升级到最新迁移。"""
+
+    monkeypatch.setattr(
+        hal_service.InstrumentHALService,
+        "_initialize_from_db",
+        _initialize_without_database,
+    )
 
     # ⚠ 必须调**真函数**，不能手工复刻路径 —— 复刻等于测我自己写的副本，
     #   而且很容易把"修复前"的顺序抄进来当基线（本门第一版就这么假红的）。

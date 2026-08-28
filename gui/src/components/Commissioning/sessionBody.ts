@@ -23,7 +23,9 @@ export interface CreateSessionParams {
   f64BypassMode?: number
   baseStationConfigMode?: 'dispatch' | 'inherit'
   labSmoke?: boolean
-  calBypass?: boolean
+  executionPolicyMode?: 'formal' | 'diagnostic'
+  executionPolicyReason?: string
+  executionPolicyUpdatedBy?: string
 }
 
 export interface CreateSessionBody {
@@ -49,7 +51,9 @@ export interface CreateSessionBody {
   f64_bypass_mode?: number
   base_station_config_mode?: 'dispatch' | 'inherit'
   precheck_strict_dut?: boolean
-  precheck_strict_cal?: boolean
+  execution_policy_mode?: 'formal' | 'diagnostic'
+  execution_policy_reason?: string
+  execution_policy_updated_by?: string
   precheck_strict_frequency?: boolean
   precheck_strict_emulation_file?: boolean
   precheck_strict_switch_mode?: boolean
@@ -85,7 +89,9 @@ export const buildCreateSessionBody = (
     f64BypassMode,
     baseStationConfigMode,
     labSmoke,
-    calBypass,
+    executionPolicyMode,
+    executionPolicyReason,
+    executionPolicyUpdatedBy,
   } = params
   const body: CreateSessionBody = {
     radio_technology: radioTechnology,
@@ -133,7 +139,6 @@ export const buildCreateSessionBody = (
   }
   if (labSmoke) {
     body.precheck_strict_dut = false
-    body.precheck_strict_cal = false
     body.precheck_strict_frequency = false
     body.precheck_strict_emulation_file = false
     body.precheck_strict_switch_mode = false
@@ -141,6 +146,10 @@ export const buildCreateSessionBody = (
     body.precheck_strict_dut_capability = false
     body.precheck_strict_sim_identity = false
   }
-  if (calBypass) body.precheck_strict_cal = false
+  if (executionPolicyMode) {
+    body.execution_policy_mode = executionPolicyMode
+    body.execution_policy_reason = executionPolicyReason
+    body.execution_policy_updated_by = executionPolicyUpdatedBy
+  }
   return body
 }

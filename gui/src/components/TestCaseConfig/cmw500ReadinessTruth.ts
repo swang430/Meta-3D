@@ -1,4 +1,7 @@
-import type { Cmw500Lte2x2Readiness } from '../../types/api.ts'
+import type {
+  BaseStationSiteCertification,
+  Cmw500Lte2x2Readiness,
+} from '../../types/api.ts'
 
 export type Cmw500ReadinessView = {
   status: Cmw500Lte2x2Readiness['status']
@@ -18,6 +21,7 @@ export function describeCmw500Readiness(
   readiness: Cmw500Lte2x2Readiness | null | undefined,
   duplex: string | null | undefined,
   configMode: string | null | undefined,
+  certification?: BaseStationSiteCertification | null,
 ): Cmw500ReadinessView {
   if (!readiness) {
     return {
@@ -47,7 +51,9 @@ export function describeCmw500Readiness(
     }
   }
   const duplexReady = duplex === 'tdd' ? readiness.tdd_ready : readiness.fdd_ready
-  if (duplexReady && readiness.formal_enabled) {
+  const certificationMatches = certification?.status === 'active'
+    && certification.binding_digest === readiness.binding_digest
+  if (duplexReady && certificationMatches) {
     return {
       status: 'ready',
       color: 'green',
@@ -60,7 +66,7 @@ export function describeCmw500Readiness(
     status: 'warning',
     color: 'yellow',
     title: 'CMW500 LTE 2×2 · Warning',
-    message: `${readiness.detail}；当前只作 Warning，不阻止开发与诊断。`,
+    message: `${readiness.detail}；当前现场认证缺失、已撤销或与 binding 不匹配，只作 Warning，不阻止开发与诊断。`,
     blocksDevelopment: false,
   }
 }

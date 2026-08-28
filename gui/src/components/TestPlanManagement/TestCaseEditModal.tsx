@@ -39,6 +39,7 @@ import { notifications } from '@mantine/notifications'
 import {
   getTestCase,
   updateTestCase,
+  updateTestCaseExecutionPolicy,
   type TestCase,
 } from '../../api/testPlanService'
 import {
@@ -87,6 +88,10 @@ export function TestCaseEditModal({
   const [originalLabProfileId, setOriginalLabProfileId] = useState<string | null>(null)
   const [selectedLabId, setSelectedLabId] = useState(UNBOUND_LAB)
   const [jsonError, setJsonError] = useState<string | null>(null)
+  const [policyMode, setPolicyMode] = useState<'formal' | 'diagnostic'>('formal')
+  const [originalPolicyMode, setOriginalPolicyMode] = useState<'formal' | 'diagnostic'>('formal')
+  const [policyReason, setPolicyReason] = useState('')
+  const [policyUpdatedBy, setPolicyUpdatedBy] = useState('')
   const labRequestId = useRef(0)
 
   // 类型化表单只对 MIMO_OTA 生效; 其余 test_type 仍是 raw JSON。
@@ -171,6 +176,11 @@ export function TestCaseEditModal({
             ? (cfg as MIMOOTAConfiguration)
             : {},
         )
+        const mode = data.execution_policy?.mode === 'diagnostic' ? 'diagnostic' : 'formal'
+        setPolicyMode(mode)
+        setOriginalPolicyMode(mode)
+        setPolicyReason('')
+        setPolicyUpdatedBy('')
       })
       .catch((e) => {
         if (cancelled) return
@@ -212,6 +222,11 @@ export function TestCaseEditModal({
   const handleSave = async () => {
     // 类型化表单没有 JSON 解析这一步, jsonError 只约束 raw JSON 那一路。
     if (!testCaseId || (!useTypedForm && jsonError)) return
+    const policyChanged = policyMode !== originalPolicyMode
+    if (policyChanged && (!policyReason.trim() || !policyUpdatedBy.trim())) {
+      setJsonError('切换 Diagnostic / Formal 必须填写操作人和原因')
+      return
+    }
     setSaving(true)
     try {
       const config = useTypedForm ? mimoConfig : JSON.parse(configText)
@@ -228,6 +243,13 @@ export function TestCaseEditModal({
           selectedLabProfileId,
         }),
       })
+      if (policyChanged) {
+        updated.execution_policy = await updateTestCaseExecutionPolicy(testCaseId, {
+          mode: policyMode,
+          reason: policyReason.trim(),
+          updated_by: policyUpdatedBy.trim(),
+        })
+      }
       notifications.show({
         title: 'TestCase 已更新',
         message: name,
@@ -304,6 +326,34 @@ export function TestCaseEditModal({
             onChange={setTags}
             placeholder="按回车添加..."
           />
+          <Select
+            label="执行资格"
+            description="Formal 仍须由当前现场认证与本次冻结证据共同放行；Diagnostic 只生成黄色审计结果，不进入正式 KPI。"
+            value={policyMode}
+            onChange={(value) => setPolicyMode(value === 'diagnostic' ? 'diagnostic' : 'formal')}
+            data={[
+              { value: 'formal', label: 'Formal（正式）' },
+              { value: 'diagnostic', label: 'Diagnostic（仅可诊断）' },
+            ]}
+            allowDeselect={false}
+          />
+          {policyMode !== originalPolicyMode && (
+            <Group grow align="flex-start">
+              <TextInput
+                required
+                label="操作人"
+                value={policyUpdatedBy}
+                onChange={(event) => setPolicyUpdatedBy(event.currentTarget.value)}
+              />
+              <Textarea
+                required
+                label="切换原因"
+                value={policyReason}
+                onChange={(event) => setPolicyReason(event.currentTarget.value)}
+                minRows={2}
+              />
+            </Group>
+          )}
           <Select
             label="LabProfile"
             description="绑定后执行使用该实验室的暗室与仪表；不绑定时要求系统只有一个活动 LabProfile"

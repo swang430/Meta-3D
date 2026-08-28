@@ -74,7 +74,9 @@ export function CommissioningSandbox() {
   // 2026-08-07 现场: 只放过校准证书那一道门。跟 labSmoke 分开是因为 labSmoke
   // 一开就废掉全部 8 道。校准没做完 vs DUT 能不能在本次 RF 配置下 attach
   // 是两件事，后者仍由 MEASURE 的受控 attach 动态门负责。
-  const [calBypass, setCalBypass] = useState(false)
+  const [diagnosticMode, setDiagnosticMode] = useState(false)
+  const [diagnosticOperator, setDiagnosticOperator] = useState('')
+  const [diagnosticReason, setDiagnosticReason] = useState('')
   // U-5: 暗室首测前逐设备自检 (借鉴转台/EMCenter standalone 验证, 首测前先单独验各仪表通)
   const [selfcheck, setSelfcheck] = useState<api.DeviceSelfcheckResult | null>(null)
   const [selfcheckLoading, setSelfcheckLoading] = useState(false)
@@ -173,7 +175,9 @@ export function CommissioningSandbox() {
         emulationFile: emulationFile.trim() || undefined,
         f64BypassMode: f64BypassAssist ? 2 : undefined,
         labSmoke,
-        calBypass,
+        executionPolicyMode: diagnosticMode || labSmoke ? 'diagnostic' : undefined,
+        executionPolicyReason: diagnosticMode || labSmoke ? diagnosticReason.trim() : undefined,
+        executionPolicyUpdatedBy: diagnosticMode || labSmoke ? diagnosticOperator.trim() : undefined,
       })
       setSession(res.data)
       setActiveStep(0)
@@ -539,10 +543,10 @@ export function CommissioningSandbox() {
 
               <Divider my={4} />
               <Switch
-                checked={calBypass}
-                onChange={(e) => setCalBypass(e.currentTarget.checked)}
-                label="只跳过校准证书门（其余 7 道照常守着）"
-                description="lab 未绑校准证书（P0-3 未做完）但要继续验证真实 RF 链时使用。DUT 动态门、频率门和 .smu 门仍然生效。"
+                checked={diagnosticMode}
+                onChange={(e) => setDiagnosticMode(e.currentTarget.checked)}
+                label="Diagnostic（仅可诊断）"
+                description="本次执行冻结为黄色诊断资格；数值不会进入正式 KPI。"
               />
               <Switch
                 checked={labSmoke}
@@ -550,6 +554,12 @@ export function CommissioningSandbox() {
                 label="强制跳过严格 DUT / 校准门（real 模式 override）"
                 description="mock 模式（无真实仪表）已自动跳过严格门，无需开此开关。仅当你接了真实仪表、但想在没有 DUT / 校准的情况下空跑预检时才打开。默认关闭，以保留 P1-8/P1-9 fail-loud 保护。"
               />
+              {(diagnosticMode || labSmoke) && (
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput required label="操作人" value={diagnosticOperator} onChange={(e) => setDiagnosticOperator(e.currentTarget.value)} />
+                  <TextInput required label="诊断原因" value={diagnosticReason} onChange={(e) => setDiagnosticReason(e.currentTarget.value)} />
+                </SimpleGrid>
+              )}
             </Stack>
           </Paper>
 
@@ -646,13 +656,23 @@ export function CommissioningSandbox() {
               {frozenCmwApprovalDrift ? `。${frozenCmwApprovalDrift}` : ''}
             </Alert>
           )}
+          {session?.execution_qualification && (
+            <Alert color={session.execution_qualification.classification === 'formal' ? 'green' : 'yellow'} variant="light">
+              本次执行冻结资格：{session.execution_qualification.classification === 'formal'
+                ? 'Formal（正式）'
+                : 'Diagnostic（仅可诊断）'}
+              {session.execution_qualification.reasons.length > 0
+                ? ` · ${session.execution_qualification.reasons.join(', ')}`
+                : ''}
+            </Alert>
+          )}
 
           <Divider my="sm" />
           <Switch
-            checked={calBypass}
-            onChange={(e) => setCalBypass(e.currentTarget.checked)}
-            label="只跳过校准证书门（其余 7 道照常守着）"
-            description="lab 未绑校准证书（P0-3 未做完）但要继续验证真实 RF 链时使用。DUT 动态门、频率门和 .smu 门仍然生效；切换后点「重置会话」生效。"
+            checked={diagnosticMode}
+            onChange={(e) => setDiagnosticMode(e.currentTarget.checked)}
+            label="Diagnostic（仅可诊断）"
+            description="切换后重置会话；本次冻结结果以黄色展示，后续认证变化只影响下一次执行。"
           />
           <Switch
             checked={labSmoke}
@@ -660,6 +680,12 @@ export function CommissioningSandbox() {
             label="强制跳过严格 DUT / 校准门（real 模式 override）"
             description="mock 模式已自动跳过严格门，无需开此开关。仅真实仪表 + 无 DUT/校准空跑时才需要；切换后点「重置会话」生效。默认关闭以保留 fail-loud 保护。"
           />
+          {(diagnosticMode || labSmoke) && (
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <TextInput required label="操作人" value={diagnosticOperator} onChange={(e) => setDiagnosticOperator(e.currentTarget.value)} />
+              <TextInput required label="诊断原因" value={diagnosticReason} onChange={(e) => setDiagnosticReason(e.currentTarget.value)} />
+            </SimpleGrid>
+          )}
 
           <Divider my={4} />
           <Group justify="space-between" align="center">

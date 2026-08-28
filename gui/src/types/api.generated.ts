@@ -4,6 +4,153 @@
  */
 
 export interface paths {
+    "/api/v1/test-plans/cases/{test_case_id}/execution-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update TestCase Diagnostic/Formal policy */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    test_case_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestCaseExecutionPolicyUpdate"];
+                };
+            };
+            responses: {
+                /** @description Audited server-owned TestCase policy */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCaseExecutionPolicyResponse"];
+                    };
+                };
+                /** @description Validation error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/connections/{connection_id}/base-station-site-certification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Certify BaseStation site from one completed execution */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    connection_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BaseStationSiteCertificationCreate"];
+                };
+            };
+            responses: {
+                /** @description Server-derived site certification */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BaseStationSiteCertification"];
+                    };
+                };
+                /** @description Validation error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/connections/{connection_id}/base-station-site-certification/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Revoke current BaseStation site certification */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    connection_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BaseStationSiteCertificationRevoke"];
+                };
+            };
+            responses: {
+                /** @description Revoked site certification audit row */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BaseStationSiteCertification"];
+                    };
+                };
+                /** @description Validation error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2": {
         parameters: {
             query?: never;
@@ -1851,6 +1998,116 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        TestCaseExecutionPolicy: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            mode: "formal" | "diagnostic";
+            reason: string;
+            updated_by: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        TestCaseExecutionPolicyUpdate: {
+            /** @enum {string} */
+            mode: "formal" | "diagnostic";
+            reason: string;
+            updated_by: string;
+        };
+        TestCaseExecutionPolicyResponse: {
+            /** Format: uuid */
+            test_case_id: string;
+            policy: components["schemas"]["TestCaseExecutionPolicy"];
+        };
+        BaseStationCertificationProofs: {
+            config_readback: boolean;
+            route_readback: boolean;
+            route_not_applicable: boolean;
+            cleanup: boolean;
+            transport_release: boolean;
+        };
+        BaseStationSiteCertification: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            status: "active" | "revoked";
+            lab_profile_id: string;
+            instrument_connection_id: string;
+            binding_digest: string;
+            adapter_id: string;
+            model: string;
+            firmware_version: string;
+            options: string[];
+            source_execution_id: string;
+            evidence_digest: string;
+            required_proofs: components["schemas"]["BaseStationCertificationProofs"];
+            certified_by: string;
+            /** Format: date-time */
+            certified_at: string;
+            reason: string;
+            revoked_by?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            revocation_reason?: string | null;
+        };
+        BaseStationSiteCertificationCreate: {
+            /** Format: uuid */
+            source_execution_id: string;
+            certified_by: string;
+            reason: string;
+        };
+        BaseStationSiteCertificationRevoke: {
+            revoked_by: string;
+            reason: string;
+        };
+        ExecutionQualification: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            classification: "formal" | "diagnostic";
+            /** @enum {string} */
+            policy_mode: "formal" | "diagnostic";
+            policy: components["schemas"]["TestCaseExecutionPolicy"] | null;
+            binding_digest: string;
+            /** @enum {string} */
+            binding_status: "configured" | "not_applicable" | "diagnostic_unbound";
+            /** @enum {string} */
+            execution_mode: "real" | "simulated";
+            adapter_id: string | null;
+            site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
+            site_certification_digest: string | null;
+            reasons: string[];
+            /** Format: date-time */
+            frozen_at: string;
+            qualification_digest: string;
+        };
+        SessionResponse: {
+            session_id: string;
+            phase: string;
+            phase_statuses: {
+                [key: string]: string;
+            };
+            overall_progress: number;
+            config: {
+                [key: string]: unknown;
+            };
+            started_at?: string | null;
+            completed_at?: string | null;
+            precheck?: {
+                [key: string]: unknown;
+            } | null;
+            reference?: {
+                [key: string]: unknown;
+            } | null;
+            mimo_test?: {
+                [key: string]: unknown;
+            } | null;
+            analysis?: {
+                [key: string]: unknown;
+            } | null;
+            report_id?: string | null;
+            execution_qualification?: components["schemas"]["ExecutionQualification"] | null;
+        };
         InstrumentBinding: {
             /** Format: uuid */
             category_id: string;
@@ -2208,6 +2465,7 @@ export interface components {
             /** Format: uuid */
             parent_id: string | null;
             tags: string[] | null;
+            execution_policy?: components["schemas"]["TestCaseExecutionPolicy"] | null;
         };
         TestCaseSummary: {
             /** Format: uuid */
@@ -2377,7 +2635,7 @@ export interface components {
             manual_sources: string[];
             diagnostic_supported: boolean;
             /** @enum {string} */
-            formal_gate: "legacy_provenance" | "connection_approval";
+            formal_gate: "site_certification";
         };
         InstrumentConnection: {
             id: string | null;
@@ -2391,6 +2649,7 @@ export interface components {
             cmw500_lte_2x2_formal_enabled: boolean;
             /** Format: date-time */
             cmw500_lte_2x2_formal_updated_at: string | null;
+            base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
         };
         Cmw500FormalCapabilityUpdate: {
             enabled: boolean;
@@ -2432,6 +2691,7 @@ export interface components {
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
             base_station_binding: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
+            base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;
             /**
@@ -2551,6 +2811,8 @@ export interface components {
             executed_by: string | null;
             error_message: string | null;
             validation_pass: boolean | null;
+            /** @enum {string} */
+            execution_classification: "formal" | "diagnostic" | "legacy";
             /** @description P2-34: execution-failure alert publication outcome recorded on this row (published | duplicate | failed). null = not recorded (rows predating P2-34 / record write failed / not applicable) — null does NOT mean the alert was published. */
             failure_alert_outcome: string | null;
         };

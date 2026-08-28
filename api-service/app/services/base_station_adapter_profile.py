@@ -158,7 +158,14 @@ def freeze_base_station_adapter_profile(
     return frozen
 
 
-def freeze_execution_base_station_adapter_profile(db, hal, execution, test_case):
+def freeze_execution_base_station_adapter_profile(
+    db,
+    hal,
+    execution,
+    test_case,
+    *,
+    force_diagnostic: bool = False,
+):
     """Lock execution/lab and freeze before the first hardware operation.
 
     Old rows that already contain hardware progress cannot acquire provenance
@@ -201,9 +208,18 @@ def freeze_execution_base_station_adapter_profile(db, hal, execution, test_case)
     )
     if selected_lab is None:
         raise ValueError("selected LabProfile no longer exists")
-    return freeze_base_station_adapter_profile(
+    frozen = freeze_base_station_adapter_profile(
         db,
         hal,
         locked_execution,
         selected_lab,
     )
+    from app.services.execution_qualification import freeze_execution_qualification
+
+    freeze_execution_qualification(
+        db,
+        locked_execution,
+        test_case,
+        force_diagnostic=force_diagnostic,
+    )
+    return frozen

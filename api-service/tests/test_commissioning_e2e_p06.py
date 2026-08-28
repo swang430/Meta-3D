@@ -214,11 +214,11 @@ def _create_fast_session(lab: LabProfile, db, *, set_strict_false: bool = True) 
     factory the looser smoke uses, lifted into this file so the strict
     test is self-contained.
 
-    ``set_strict_false`` (default True): pin precheck_strict_cal/dut=False
-    explicitly (the historic smoke path). Pass ``False`` to leave them at the
-    schema default (True) and exercise the *operator's actual GUI path* —
-    where the mock-aware runtime gate (precheck.py: mock CE/BS → gate N/A)
-    is what lets the default-config sandbox flow complete.
+    ``set_strict_false`` (default True): use audited Diagnostic policy for the
+    calibration gate and pin the independent DUT gate off. Pass ``False`` to
+    leave the TestCase policy at Formal; the mock binding still freezes this
+    execution as Diagnostic, so the effective calibration gate is derived
+    from the execution snapshot rather than from a client boolean.
     """
     from app.services.mimo_ota import build_mimo_ota_test_case
 
@@ -236,7 +236,6 @@ def _create_fast_session(lab: LabProfile, db, *, set_strict_false: bool = True) 
         # P1-8/P1-9 (2026-05-19): historic smoke path — pin gates off so the
         # 5-phase chain runs without a real cal/DUT. The gates themselves are
         # covered by test_mimo_ota_precheck_{cal,dut}_gate.py.
-        overrides["precheck_strict_cal"] = False
         overrides["precheck_strict_dut"] = False
     test_case, descriptors = build_mimo_ota_test_case(
         db,
@@ -255,6 +254,17 @@ def _create_fast_session(lab: LabProfile, db, *, set_strict_false: bool = True) 
             },
         },
         created_by="pytest-p06",
+        execution_policy=(
+            {
+                "schema_version": 1,
+                "mode": "diagnostic",
+                "reason": "P0-6 mock rehearsal",
+                "updated_by": "pytest-p06",
+                "updated_at": "2026-08-29T00:00:00Z",
+            }
+            if set_strict_false
+            else None
+        ),
     )
     execution = TestExecution(
         test_case_id=test_case.id,
@@ -423,13 +433,9 @@ class TestP06MockFirstCall:
         )
         phases = (execution.measurements or {}).get("phases", {})
 
-        # First lock that this session really used the DEFAULT *strict* config —
-        # otherwise the "gate N/A" assertion below is a false guard: precheck.py
-        # emits "gate N/A — baseStation is mock/absent" whenever the BS is mock,
-        # REGARDLESS of the flag value (the not-bs_is_real branch fires first).
-        # So if the schema default ever flipped to non-strict, the reason string
-        # alone wouldn't catch it. Assert the effective flags are True. (Codex
-        # on PR #78.)
+        # The TestCase policy is Formal by default, but a mock binding cannot
+        # become a formal execution.  The frozen execution qualification is
+        # therefore the sole source for the effective calibration gate.
         from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
 
         cfg = load_mimo_ota_config(execution)
@@ -437,8 +443,9 @@ class TestP06MockFirstCall:
             "this test must exercise the DEFAULT strict config (schema default "
             f"True), not an override — got precheck_strict_dut={cfg.precheck_strict_dut!r}"
         )
-        assert cfg.precheck_strict_cal is True, (
-            f"expected default strict_cal=True, got {cfg.precheck_strict_cal!r}"
+        assert cfg.precheck_strict_cal is False, (
+            "mock execution must derive diagnostic calibration behavior from "
+            f"its frozen qualification, got {cfg.precheck_strict_cal!r}"
         )
 
         # With strict=True confirmed, the precheck still passing + dut_pass=True
