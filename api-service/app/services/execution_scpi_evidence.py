@@ -27,6 +27,7 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationIdentity,
     BaseStationMeasurementWindow,
+    BaseStationMetricRegistry,
     BaseStationRequestedConfig,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
@@ -262,6 +263,21 @@ def _initial_base_station_execution_evidence(
         adapter=adapter,
         execution_mode=execution_mode,
     )
+    resolver = getattr(driver, "resolve_metric_registry", None)
+    metric_registry = resolver() if callable(resolver) else None
+    if not isinstance(metric_registry, BaseStationMetricRegistry):
+        raise ValueError("loaded driver did not provide a metric registry")
+    if metric_registry.adapter_id != adapter:
+        raise ValueError("metric registry adapter does not match frozen adapter")
+    metric_registry_payload = {
+        "schema_version": metric_registry.schema_version,
+        "adapter_id": metric_registry.adapter_id,
+        "profile_id": metric_registry.profile_id,
+        "metrics": [
+            metric.model_dump(mode="json") for metric in metric_registry.metrics
+        ],
+        "digest": metric_registry.digest,
+    }
     connection_id = frozen_adapter.get("instrument_connection_id")
     if not isinstance(connection_id, str) or not connection_id:
         raise ValueError("frozen baseStation connection identity is missing")
@@ -333,6 +349,8 @@ def _initial_base_station_execution_evidence(
             "current_measurement_attempt_state": None,
             "attach_operations": [],
             "measurement_window_contract_version": 1,
+            "metric_registry_contract_version": 1,
+            "metric_registry": metric_registry_payload,
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -371,6 +389,8 @@ def initialize_base_station_execution_evidence(
             "requested_config",
             "requested_route",
             "requested_positions",
+            "metric_registry_contract_version",
+            "metric_registry",
         )
         if any(
             getattr(existing, field) != getattr(candidate, field)
@@ -726,31 +746,90 @@ def append_base_station_measurement_window(
         trust_payload = asdict(trust)
     _append_unique_exchange_ids(evidence, lifecycle_exchange_ids)
 
-    metrics = window.metrics
-    metric_rows = {
-        "dl_throughput_mbps": {
-            "measurement_attempt_id": attempt_id,
-            "session_token": lease_identity.session_token,
-            "value": (
-                metrics.dl_throughput_mbps
-                if metrics.kpi_valid.get("dl_throughput") is True
-                else None
-            ),
-            "unit": "Mbps",
-            "exchange_ids": lifecycle_exchange_ids,
-        },
-        "dl_bler_percent": {
-            "measurement_attempt_id": attempt_id,
-            "session_token": lease_identity.session_token,
-            "value": (
-                metrics.dl_bler
-                if metrics.kpi_valid.get("dl_bler") is True
-                else None
-            ),
-            "unit": "%",
-            "exchange_ids": lifecycle_exchange_ids,
-        },
-    }
+    current_metric_registry = evidence.metric_registry_contract_version == 1
+    metric_registry_digest = None
+    if current_metric_registry:
+        registry = evidence.metric_registry
+        if registry is None:
+            raise ValueError("current execution metric registry is missing")
+        if (
+            window.metric_registry is None
+            or window.metric_registry.digest != registry.digest
+            or window.metric_registry.adapter_id != registry.adapter_id
+            or window.metric_registry.profile_id != registry.profile_id
+            or [
+                metric.model_dump(mode="json")
+                for metric in window.metric_registry.metrics
+            ]
+            != [metric.model_dump(mode="json") for metric in registry.metrics]
+        ):
+            raise ValueError("measurement window metric registry drift")
+        if window.trust is None:  # current metric contract requires frozen scope
+            raise ValueError("current metric registry requires window trust")
+        expected = {
+            metric.key: metric
+            for metric in registry.metrics
+            if window.trust.request.scope in metric.scopes
+        }
+        observations = {item.key: item for item in window.metric_observations}
+        if set(observations) != set(expected):
+            raise ValueError("measurement observations do not cover registry scope")
+        metric_rows = {}
+        for key in sorted(expected):
+            capability = expected[key]
+            observation = observations[key]
+            if (
+                observation.registry_digest != registry.digest
+                or observation.scope != window.trust.request.scope
+                or observation.capability.model_dump(mode="json")
+                != capability.model_dump(mode="json")
+                or observation.simulated is not window.trust.simulated
+                or not set(observation.exchange_ids).issubset(
+                    set(lifecycle_exchange_ids)
+                )
+            ):
+                raise ValueError("measurement observation semantics drift")
+            metric_rows[key] = {
+                "measurement_attempt_id": attempt_id,
+                "session_token": lease_identity.session_token,
+                "registry_digest": registry.digest,
+                "scope": observation.scope,
+                "direction": capability.direction,
+                "value": observation.value,
+                "unit": capability.unit,
+                "evidence": capability.evidence,
+                "source_reference": capability.source_reference,
+                "simulated": observation.simulated,
+                "reason": observation.reason,
+                "exchange_ids": list(observation.exchange_ids),
+            }
+        metric_registry_digest = registry.digest
+    else:
+        metrics = window.metrics
+        metric_rows = {
+            "dl_throughput_mbps": {
+                "measurement_attempt_id": attempt_id,
+                "session_token": lease_identity.session_token,
+                "value": (
+                    metrics.dl_throughput_mbps
+                    if metrics.kpi_valid.get("dl_throughput") is True
+                    else None
+                ),
+                "unit": "Mbps",
+                "exchange_ids": lifecycle_exchange_ids,
+            },
+            "dl_bler_percent": {
+                "measurement_attempt_id": attempt_id,
+                "session_token": lease_identity.session_token,
+                "value": (
+                    metrics.dl_bler
+                    if metrics.kpi_valid.get("dl_bler") is True
+                    else None
+                ),
+                "unit": "%",
+                "exchange_ids": lifecycle_exchange_ids,
+            },
+        }
     evidence.measurement_windows.append(
         BaseStationMeasurementWindowEvidence.model_validate(
             {
@@ -783,6 +862,11 @@ def append_base_station_measurement_window(
                 "lifecycle_exchange_ids": lifecycle_exchange_ids,
                 "metrics": metric_rows,
                 **({"trust": trust_payload} if current_window_contract else {}),
+                **(
+                    {"metric_registry_digest": metric_registry_digest}
+                    if current_metric_registry
+                    else {}
+                ),
             }
         )
     )
@@ -804,12 +888,33 @@ def save_base_station_execution_evidence(
         normalized.pop("attach_operations", None)
     if "measurement_window_contract_version" not in parsed.model_fields_set:
         normalized.pop("measurement_window_contract_version", None)
+    if "metric_registry_contract_version" not in parsed.model_fields_set:
+        normalized.pop("metric_registry_contract_version", None)
+    if "metric_registry" not in parsed.model_fields_set:
+        normalized.pop("metric_registry", None)
     for parsed_window, normalized_window in zip(
         parsed.measurement_windows,
         normalized["measurement_windows"],
     ):
         if "trust" not in parsed_window.model_fields_set:
             normalized_window.pop("trust", None)
+        if "metric_registry_digest" not in parsed_window.model_fields_set:
+            normalized_window.pop("metric_registry_digest", None)
+        for parsed_metric, normalized_metric in zip(
+            parsed_window.metrics.values(),
+            normalized_window["metrics"].values(),
+        ):
+            for field in (
+                "registry_digest",
+                "scope",
+                "direction",
+                "evidence",
+                "source_reference",
+                "simulated",
+                "reason",
+            ):
+                if field not in parsed_metric.model_fields_set:
+                    normalized_metric.pop(field, None)
     cfg = dict(execution.config or {})
     cfg[BASE_STATION_EXECUTION_EVIDENCE_FIELD] = normalized
     execution.config = cfg

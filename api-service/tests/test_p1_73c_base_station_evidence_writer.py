@@ -29,6 +29,13 @@ class _CmwDriver:
     simulated = False
     identity_snapshot_verified = True
 
+    def resolve_metric_registry(self):
+        from app.hal.cmw500_base_station import RealCmw500Driver
+
+        return RealCmw500Driver(
+            "cmw", {"ip_address": "192.0.2.10"}
+        ).resolve_metric_registry()
+
     def get_base_station_identity(self):
         return BaseStationIdentity(
             adapter_id="cmw500",

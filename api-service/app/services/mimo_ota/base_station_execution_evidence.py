@@ -25,12 +25,6 @@ BASE_STATION_EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
 MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD = (
     "mimo_ota_theoretical_peak_throughput_mbps"
 )
-_METRIC_UNITS = {
-    "dl_throughput_mbps": "Mbps",
-    "dl_bler_percent": "%",
-}
-
-
 def base_station_metric_projection_required(
     execution_config: Any,
 ) -> bool:
@@ -427,6 +421,84 @@ class PositionSnapshot(BaseModel):
         return float(value)
 
 
+class BaseStationMetricCapabilityEvidence(BaseModel):
+    """JSON-safe immutable copy of one adapter metric declaration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str
+    direction: Literal["downlink", "uplink", "link", "not_applicable"]
+    unit: Literal[
+        "mbps", "percent", "ratio", "index", "raw", "not_applicable"
+    ]
+    scopes: tuple[Literal["pcell", "all_cells"], ...]
+    evidence: Literal["authoritative", "diagnostic_only", "unavailable"]
+    source_reference: str | None
+
+    @field_validator("key")
+    @classmethod
+    def _required_key(cls, value: str):
+        return _non_empty(value, "key")
+
+    @field_validator("scopes")
+    @classmethod
+    def _unique_scopes(cls, value: tuple[str, ...]):
+        if not value or len(set(value)) != len(value):
+            raise ValueError("metric capability scopes must be non-empty and unique")
+        return value
+
+    @field_validator("source_reference")
+    @classmethod
+    def _optional_source(cls, value: str | None):
+        return None if value is None else _non_empty(value, "source_reference")
+
+    @model_validator(mode="after")
+    def _authoritative_source(self):
+        if self.evidence == "authoritative" and self.source_reference is None:
+            raise ValueError("authoritative metric requires a source reference")
+        return self
+
+
+class BaseStationMetricRegistryEvidence(BaseModel):
+    """Execution-frozen adapter/profile metric semantics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    adapter_id: Literal["uxm", "cmw500"]
+    profile_id: str
+    metrics: tuple[BaseStationMetricCapabilityEvidence, ...]
+    digest: str
+
+    @field_validator("profile_id", "digest")
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _stable_registry(self):
+        if not self.metrics:
+            raise ValueError("metric registry requires capabilities")
+        keys = tuple(item.key for item in self.metrics)
+        if len(set(keys)) != len(keys) or keys != tuple(sorted(keys)):
+            raise ValueError("metric registry keys must be unique and sorted")
+        payload = {
+            "schema_version": self.schema_version,
+            "adapter_id": self.adapter_id,
+            "profile_id": self.profile_id,
+            "metrics": [item.model_dump(mode="json") for item in self.metrics],
+        }
+        if canonical_snapshot_digest(payload) != self.digest:
+            raise ValueError("metric registry digest mismatch")
+        return self
+
+    def capability(self, key: str) -> BaseStationMetricCapabilityEvidence:
+        for item in self.metrics:
+            if item.key == key:
+                return item
+        raise KeyError(key)
+
+
 class BaseStationMetricEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -435,6 +507,13 @@ class BaseStationMetricEvidence(BaseModel):
     value: float | None
     unit: str
     exchange_ids: list[str] = Field(default_factory=list)
+    registry_digest: str | None = None
+    scope: Literal["pcell", "all_cells"] | None = None
+    direction: Literal["downlink", "uplink", "link", "not_applicable"] | None = None
+    evidence: Literal["authoritative", "diagnostic_only", "unavailable"] | None = None
+    source_reference: str | None = None
+    simulated: StrictBool | None = None
+    reason: str | None = None
 
     @field_validator("measurement_attempt_id", "session_token", "unit")
     @classmethod
@@ -449,6 +528,18 @@ class BaseStationMetricEvidence(BaseModel):
         ):
             raise ValueError("metric value must be finite")
         return None if value is None else float(value)
+
+    @field_validator("registry_digest", "source_reference", "reason")
+    @classmethod
+    def _optional_text(cls, value: str | None, info):
+        return None if value is None else _non_empty(value, info.field_name)
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_metric_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("metric exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
 
 
 class BaseStationCleanupEvidence(BaseModel):
@@ -600,6 +691,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     lifecycle_exchange_ids: list[str]
     metrics: dict[str, BaseStationMetricEvidence]
     trust: BaseStationMeasurementWindowTrustEvidence | None = None
+    metric_registry_digest: str | None = None
 
     @field_validator(
         "window_id",
@@ -662,6 +754,8 @@ class BaseStationExecutionEvidence(BaseModel):
     )
     attach_operations: list[BaseStationAttachOperationEvidence] | None = None
     measurement_window_contract_version: Literal[1] | None = None
+    metric_registry_contract_version: Literal[1] | None = None
+    metric_registry: BaseStationMetricRegistryEvidence | None = None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -685,6 +779,40 @@ class BaseStationExecutionEvidence(BaseModel):
             window.trust is None for window in self.measurement_windows
         ):
             raise ValueError("current measurement windows require trust receipts")
+        if self.metric_registry_contract_version == 1:
+            registry = self.metric_registry
+            if registry is None or registry.adapter_id != self.adapter:
+                raise ValueError("current execution requires its adapter metric registry")
+            for window in self.measurement_windows:
+                if window.trust is None:
+                    raise ValueError("registered metric window requires trust receipt")
+                if window.metric_registry_digest != registry.digest:
+                    raise ValueError("measurement window metric registry drift")
+                capabilities = {
+                    item.key: item
+                    for item in registry.metrics
+                    if window.trust.request.scope in item.scopes
+                }
+                if set(window.metrics) != set(capabilities):
+                    raise ValueError("measurement metrics do not cover registry scope")
+                for key, metric in window.metrics.items():
+                    capability = capabilities[key]
+                    if (
+                        metric.registry_digest != registry.digest
+                        or metric.scope != window.trust.request.scope
+                        or metric.direction != capability.direction
+                        or metric.unit != capability.unit
+                        or metric.evidence != capability.evidence
+                        or metric.source_reference != capability.source_reference
+                        or metric.simulated is not window.trust.simulated
+                        or metric.reason is None
+                        or not set(metric.exchange_ids).issubset(
+                            set(window.lifecycle_exchange_ids)
+                        )
+                    ):
+                        raise ValueError("measurement metric semantics drifted")
+        elif self.metric_registry is not None:
+            raise ValueError("historical evidence cannot carry an unfrozen registry")
         if any(row.adapter != self.adapter for row in self.adapter_operations):
             raise ValueError("adapter operation mismatch")
         if self.attach_operations is not None and any(
@@ -739,6 +867,11 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         and value.get("measurement_window_contract_version") is None
     ):
         return None
+    if (
+        "metric_registry_contract_version" in value
+        and value.get("metric_registry_contract_version") is None
+    ):
+        return None
     try:
         parsed = BaseStationExecutionEvidence.model_validate(value)
     except Exception:
@@ -753,12 +886,36 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         normalized.pop("attach_operations", None)
     if "measurement_window_contract_version" not in value:
         normalized.pop("measurement_window_contract_version", None)
+    if "metric_registry_contract_version" not in value:
+        normalized.pop("metric_registry_contract_version", None)
+    if "metric_registry" not in value:
+        normalized.pop("metric_registry", None)
     raw_windows = value.get("measurement_windows")
     normalized_windows = normalized.get("measurement_windows")
     if isinstance(raw_windows, list) and isinstance(normalized_windows, list):
         for raw_window, normalized_window in zip(raw_windows, normalized_windows):
             if isinstance(raw_window, dict) and "trust" not in raw_window:
                 normalized_window.pop("trust", None)
+            if isinstance(raw_window, dict) and "metric_registry_digest" not in raw_window:
+                normalized_window.pop("metric_registry_digest", None)
+            raw_metrics = raw_window.get("metrics") if isinstance(raw_window, dict) else None
+            normalized_metrics = normalized_window.get("metrics")
+            if isinstance(raw_metrics, dict) and isinstance(normalized_metrics, dict):
+                optional_metric_fields = (
+                    "registry_digest",
+                    "scope",
+                    "direction",
+                    "evidence",
+                    "source_reference",
+                    "simulated",
+                    "reason",
+                )
+                for key, raw_metric in raw_metrics.items():
+                    normalized_metric = normalized_metrics.get(key)
+                    if isinstance(raw_metric, dict) and isinstance(normalized_metric, dict):
+                        for field in optional_metric_fields:
+                            if field not in raw_metric:
+                                normalized_metric.pop(field, None)
     return normalized if normalized == value else None
 
 
