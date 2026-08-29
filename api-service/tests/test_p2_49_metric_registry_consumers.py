@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+
+import pytest
 from datetime import datetime, timezone
 
 from app.services.execution_qualification import (
@@ -13,7 +15,10 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     evaluate_base_station_metric_trust,
     project_base_station_metrics_by_position,
 )
-from app.services.report_service import _base_station_projection_is_sanitized
+from app.services.report_service import (
+    _base_station_projection_is_sanitized,
+    build_base_station_metric_projection_attestation,
+)
 from tests.p1_73c_evidence_fixtures import POSITION, REQUESTED_CONFIG
 from tests.test_p2_48_measurement_window_evidence import _current_formal_value
 
@@ -236,14 +241,35 @@ def test_report_projection_validator_accepts_generic_map_and_rejects_drift():
         for row in rows
     ]
 
-    assert _base_station_projection_is_sanitized(payload) is True
+    attestation = build_base_station_metric_projection_attestation(
+        evidence,
+        payload,
+    )
+    assert _base_station_projection_is_sanitized(payload, attestation) is True
     drifted = deepcopy(payload)
     drifted[0]["dl_throughput_mbps"]["formal_value"] = 1.0
-    assert _base_station_projection_is_sanitized(drifted) is False
+    assert _base_station_projection_is_sanitized(drifted, attestation) is False
 
 
 def test_report_projection_validator_accepts_registry_without_legacy_bler_metric():
     evidence = _current_registry_evidence()
+    registry = evidence["metric_registry"]
+    for metric in registry["metrics"]:
+        if metric["key"] == "dl_bler_percent":
+            metric["key"] = "dl_bler_ratio"
+            metric["unit"] = "ratio"
+    registry["metrics"] = sorted(registry["metrics"], key=lambda item: item["key"])
+    registry_payload = {
+        key: value for key, value in registry.items() if key != "digest"
+    }
+    registry["digest"] = canonical_snapshot_digest(registry_payload)
+    window = evidence["measurement_windows"][0]
+    window["metric_registry_digest"] = registry["digest"]
+    for metric in window["metrics"].values():
+        metric["registry_digest"] = registry["digest"]
+    bler = window["metrics"].pop("dl_bler_percent")
+    bler["unit"] = "ratio"
+    window["metrics"]["dl_bler_ratio"] = bler
     rows = project_base_station_metrics_by_position(
         evidence,
         expected_config=REQUESTED_CONFIG,
@@ -251,34 +277,72 @@ def test_report_projection_validator_accepts_registry_without_legacy_bler_metric
         execution_config=_formal_execution_config(evidence),
     )
     row = rows[0]
-    metrics = {
-        key: metric.model_dump(mode="json")
-        for key, metric in row["metrics"].items()
-    }
-    metrics["dl_bler_ratio"] = metrics.pop("dl_bler_percent")
-    metrics["dl_bler_ratio"]["unit"] = "ratio"
-    legacy_unknown = {
-        "status": "unknown",
-        "formal_value": None,
-        "diagnostic_value": None,
-        "unit": None,
-        "reason": "metric_not_declared_in_registry",
-        "exchange_ids": [],
-    }
     payload = [
         {
             "position": row["position"],
-            "metrics": metrics,
+            "metrics": {
+                key: metric.model_dump(mode="json")
+                for key, metric in row["metrics"].items()
+            },
             "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(
                 mode="json"
             ),
-            "dl_bler_percent": legacy_unknown,
+            "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
         }
     ]
 
-    assert _base_station_projection_is_sanitized(payload) is True
+    attestation = build_base_station_metric_projection_attestation(
+        evidence,
+        payload,
+    )
+    assert _base_station_projection_is_sanitized(payload, attestation) is True
     drifted = deepcopy(payload)
     drifted[0]["dl_bler_percent"] = deepcopy(
         drifted[0]["metrics"]["dl_bler_ratio"]
     )
-    assert _base_station_projection_is_sanitized(drifted) is False
+    assert _base_station_projection_is_sanitized(drifted, attestation) is False
+
+
+def test_report_projection_attestation_rejects_tampered_generic_metric():
+    evidence = _current_registry_evidence()
+    rows = project_base_station_metrics_by_position(
+        evidence,
+        expected_config=REQUESTED_CONFIG,
+        expected_positions=[POSITION],
+        execution_config=_formal_execution_config(evidence),
+    )
+    payload = [
+        {
+            "position": row["position"],
+            "metrics": {
+                key: metric.model_dump(mode="json")
+                for key, metric in row["metrics"].items()
+            },
+            "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(
+                mode="json"
+            ),
+            "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
+        }
+        for row in rows
+    ]
+    attestation = build_base_station_metric_projection_attestation(
+        evidence,
+        payload,
+    )
+
+    assert _base_station_projection_is_sanitized(payload, attestation) is True
+    tampered = deepcopy(payload)
+    tampered[0]["metrics"]["cqi_index"]["formal_value"] = 99.0
+    tampered[0]["metrics"]["cqi_index"]["diagnostic_value"] = 99.0
+    assert _base_station_projection_is_sanitized(tampered, attestation) is False
+
+    injected = deepcopy(payload)
+    injected[0]["metrics"]["fabricated_metric"] = deepcopy(
+        injected[0]["metrics"]["cqi_index"]
+    )
+    assert _base_station_projection_is_sanitized(injected, attestation) is False
+    with pytest.raises(
+        ValueError,
+        match="projection disagrees with frozen registry",
+    ):
+        build_base_station_metric_projection_attestation(evidence, injected)

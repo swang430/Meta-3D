@@ -4340,7 +4340,7 @@ compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 均�
 逐指标声明稳定键、方向、单位、作用域、来源与 formal/diagnostic 资格；共同投影由 registry 驱动，保留
 UXM 的 UL throughput/BLER、CQI/RI 等真实能力，同时不把原始/单位未知值升级成正式工程量。
 
-**实施状态（2026-08-29，本地实现、完整验证与 fresh 内审完成，待 Ready PR/外审）**：新增 profile-scoped、
+**实施状态（2026-08-29，PR #415 外审收口中）**：新增 profile-scoped、
 execution-frozen 的共同 metric registry 与 observation；CMW500 保留 DL throughput/BLER percent，
 UXM IRAT 保留 DL/UL throughput、DL/UL BLER ratio、CQI/RI index，未确认单位的 UE report 只以
 raw/diagnostic 暴露，NR profile 不继承 IRAT 命令。每个值精确绑定本次 query exchange，缺失为 null，
@@ -4350,9 +4350,11 @@ Mock 全部 simulated/diagnostic。writer 冻结 registry snapshot/digest，投�
 白名单，也未提前实现 P2-50～P2-53。fresh 内审按严格 TDD 收口三条功能 P1：UXM execution entry
 现在与 CMW500 一样在首个测量 I/O 前冻结 registry；UXM 手册引用绑定仓库 zip 内真实存在的 HTML
 member；报告读取校验允许 adapter 未声明旧兼容指标时保留严格无值 UNKNOWN 镜像，但拒绝任何正式/
-诊断值借此绕入。最终 focused **364 passed**、全后端 **5370 passed / 5 skipped**、GUI 契约
-**32 passed** 与 production build；compileall、单一 Alembic head `e6a8c0d2f4b6`、base-to-HEAD
-diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
+诊断值借此绕入。Codex R1 指出的报告通用指标开放映射 P1 也已按严格 TDD 收口：服务端生成的
+projection attestation 绑定完整冻结 evidence digest、registry digest 与逐方位通用投影；客户端不能
+自证，任一新增/修改指标或摘要漂移均 fail-closed，旧 evidence 只允许固定两项兼容指标。修后全后端
+**5371 passed / 5 skipped**，适用 GUI 契约与 production build、compileall、单一 Alembic head
+`e6a8c0d2f4b6`、base-to-HEAD diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
 
 ### P2-50 — Capability-driven BaseStation Execution Plan
 

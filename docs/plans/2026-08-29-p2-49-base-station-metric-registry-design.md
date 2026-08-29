@@ -159,5 +159,7 @@ P2-47，属于测试镜像陈旧，不是产品功能回归；按仓库规则严
 设计已按边界落地：registry/observation、CMW500/UXM/Mock 映射、execution freeze、共同投影、全部正式
 消费者与 GUI/API 四镜像均已接通；未新增仪器命令、数据库迁移或正式 provenance 放宽。fresh 内审收口
 UXM 入口漏冻结、不可审计手册 member 与 UXM 缺旧 BLER percent 时报告校验误拒三条功能 P1，尾审
-P1/P2/P3=0。最终验证：focused 364 passed，全后端 5370 passed / 5 skipped，GUI 契约 32 passed，
-production build、compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 通过。
+P1/P2/P3=0。Codex R1 的功能 P1 已继续按严格 TDD 收口：报告 generic metric map 由服务端
+attestation 绑定冻结 evidence/registry/projection，客户端自证、增删指标或改值均 fail-closed；旧 evidence
+只允许固定两项兼容指标。修后全后端 5371 passed / 5 skipped，适用 GUI 契约与 production build、
+compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 通过。
