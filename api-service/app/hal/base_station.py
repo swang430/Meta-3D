@@ -247,6 +247,195 @@ class BaseStationApplyReceipt:
         return tuple(unique)
 
 
+BASE_STATION_ATTACH_STAGES = (
+    "cell_ready",
+    "ue_registered",
+    "rrc_connected",
+    "data_bearer_established",
+)
+BaseStationAttachStage = Literal[
+    "cell_ready",
+    "ue_registered",
+    "rrc_connected",
+    "data_bearer_established",
+]
+BaseStationAttachEvidence = Literal[
+    "authoritative",
+    "diagnostic_only",
+    "unavailable",
+    "not_applicable",
+]
+
+
+@dataclass(frozen=True)
+class BaseStationAttachStageReceipt:
+    """One attach milestone observed during the current adapter operation."""
+
+    stage: BaseStationAttachStage
+    requested: bool | None
+    applied: bool | None
+    status: Literal["confirmed", "unknown", "not_applicable"]
+    evidence: BaseStationAttachEvidence
+    reason: str
+    exchange_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.stage not in BASE_STATION_ATTACH_STAGES:
+            raise ValueError("attach stage is invalid")
+        if self.requested is not None and type(self.requested) is not bool:
+            raise TypeError("attach stage requested must be bool or None")
+        if self.applied is not None and type(self.applied) is not bool:
+            raise TypeError("attach stage applied must be bool or None")
+        if self.status not in {"confirmed", "unknown", "not_applicable"}:
+            raise ValueError("attach stage status is invalid")
+        if self.evidence not in {
+            "authoritative",
+            "diagnostic_only",
+            "unavailable",
+            "not_applicable",
+        }:
+            raise ValueError("attach stage evidence is invalid")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("attach stage reason must be non-empty")
+        if (
+            not isinstance(self.exchange_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.exchange_ids
+            )
+            or len(set(self.exchange_ids)) != len(self.exchange_ids)
+        ):
+            raise ValueError("attach stage exchange ids must be non-empty and unique")
+        if self.evidence == "unavailable" and self.status != "unknown":
+            raise ValueError("unavailable stage must be unknown")
+        if self.evidence == "not_applicable" and self.status != "not_applicable":
+            raise ValueError(
+                "not-applicable evidence requires not-applicable status"
+            )
+        if self.status == "not_applicable":
+            if self.evidence != "not_applicable":
+                raise ValueError(
+                    "not-applicable status requires not-applicable evidence"
+                )
+            if self.requested is not None or self.applied is not None:
+                raise ValueError(
+                    "not-applicable stage cannot carry requested or applied truth"
+                )
+            if self.exchange_ids:
+                raise ValueError("not-applicable stage cannot carry exchange ids")
+        elif self.requested is not True:
+            raise ValueError("applicable attach stage must be explicitly requested")
+        if self.status == "confirmed":
+            if self.applied is None:
+                raise ValueError("confirmed stage requires applied truth")
+            if not self.exchange_ids:
+                raise ValueError("confirmed stage requires exchange ids")
+        elif self.status == "unknown":
+            if self.applied is not None:
+                raise ValueError("unknown stage cannot carry applied truth")
+            if self.exchange_ids:
+                raise ValueError("unknown stage cannot carry exchange ids")
+
+
+@dataclass(frozen=True)
+class BaseStationAttachReceipt:
+    """Versioned vendor-neutral outcome of one BaseStation attach operation."""
+
+    schema_version: Literal[1]
+    adapter_id: str
+    stages: tuple[BaseStationAttachStageReceipt, ...]
+    reason: str
+    simulated: bool
+    operation_succeeded: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station attach receipt schema")
+        if not isinstance(self.adapter_id, str) or not self.adapter_id.strip():
+            raise ValueError("attach receipt adapter_id must be non-empty")
+        if (
+            not isinstance(self.stages, tuple)
+            or any(
+                not isinstance(item, BaseStationAttachStageReceipt)
+                for item in self.stages
+            )
+            or tuple(item.stage for item in self.stages)
+            != BASE_STATION_ATTACH_STAGES
+        ):
+            raise ValueError("attach receipt requires exact ordered attach stages")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("attach receipt reason must be non-empty")
+        if type(self.simulated) is not bool:
+            raise TypeError("attach receipt simulated must be bool")
+        if (
+            self.operation_succeeded is not None
+            and type(self.operation_succeeded) is not bool
+        ):
+            raise TypeError("attach operation_succeeded must be bool or None")
+        if not self.simulated and self.operation_succeeded is not None:
+            raise ValueError(
+                "real attach success must be derived from the terminal stage"
+            )
+
+    @property
+    def terminal_stage(self) -> BaseStationAttachStage | None:
+        for stage in reversed(self.stages):
+            if stage.evidence not in {"unavailable", "not_applicable"}:
+                return stage.stage
+        return None
+
+    @property
+    def terminal_stage_receipt(self) -> BaseStationAttachStageReceipt | None:
+        terminal = self.terminal_stage
+        return next((stage for stage in self.stages if stage.stage == terminal), None)
+
+    @property
+    def diagnostic_execution_allowed(self) -> bool:
+        if self.simulated:
+            return self.operation_succeeded is True
+        terminal = self.terminal_stage_receipt
+        return bool(
+            terminal
+            and terminal.status == "confirmed"
+            and terminal.applied is True
+        )
+
+    @property
+    def formally_confirmed(self) -> bool:
+        terminal = self.terminal_stage_receipt
+        if (
+            self.simulated
+            or terminal is None
+            or terminal.evidence != "authoritative"
+            or terminal.status != "confirmed"
+            or terminal.applied is not True
+        ):
+            return False
+        authoritative = [
+            stage for stage in self.stages if stage.evidence == "authoritative"
+        ]
+        return bool(authoritative) and all(
+            stage.status == "confirmed"
+            and stage.applied is True
+            and bool(stage.exchange_ids)
+            for stage in authoritative
+        )
+
+    @property
+    def exchange_ids(self) -> tuple[str, ...]:
+        unique: list[str] = []
+        for stage in self.stages:
+            for exchange_id in stage.exchange_ids:
+                if exchange_id not in unique:
+                    unique.append(exchange_id)
+        return tuple(unique)
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationAttachReceipt must not be used as bool; inspect its stage truth"
+        )
+
+
 @dataclass(frozen=True)
 class BaseStationCleanupResult:
     """MEASURE 阶段拥有的信令停止与 SAFE_IDLE 结果。"""
@@ -635,6 +824,11 @@ class BaseStationDriver(InstrumentDriver):
     # 信令控制
     # ===================================================================
 
+    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
+        """Run one attach operation and return current-operation stage truth."""
+
+        raise NotImplementedError
+
     async def start_signaling(self, timeout_s: float = 60.0) -> bool:
         """
         开启物理小区信令, 激活小区并等待 UE Attach。
@@ -647,7 +841,8 @@ class BaseStationDriver(InstrumentDriver):
         Returns:
             True if UE successfully attached within timeout
         """
-        raise NotImplementedError
+        receipt = await self.attach(timeout_s=timeout_s)
+        return receipt.diagnostic_execution_allowed
 
     async def stop_signaling(self) -> bool:
         """
@@ -1139,12 +1334,29 @@ class MockBaseStation(BaseStationDriver):
         self._dl_power_dbm = power_dbm
         return True
 
-    async def start_signaling(self, timeout_s: float = 60.0) -> bool:
+    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
         self._set_status(InstrumentStatus.BUSY)
         self._cell_running = True
         self._cell_state = CellState.CONNECTED
         await asyncio.sleep(0.2)
-        return True
+        return BaseStationAttachReceipt(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            stages=tuple(
+                BaseStationAttachStageReceipt(
+                    stage=stage,
+                    requested=True,
+                    applied=None,
+                    status="unknown",
+                    evidence="diagnostic_only",
+                    reason="mock attach state is simulated and not instrument truth",
+                )
+                for stage in BASE_STATION_ATTACH_STAGES
+            ),
+            reason="mock attach operation completed with simulated state",
+            simulated=True,
+            operation_succeeded=True,
+        )
 
     async def stop_signaling(self) -> bool:
         self._cell_running = False
