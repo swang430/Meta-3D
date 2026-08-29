@@ -98,7 +98,11 @@ def test_measure_source_has_no_vendor_type_branch_or_cmw_scpi():
     assert '"UXM": uxm_identity' not in source
 
 
-def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
+def test_real_cmw_declared_mac_capability_passes_the_formal_gate():
+    """P2-51：CMW500 声明手册取证的 MAC 配置能力后，计划项 planned=True，
+    正式 KPI 不再被能力 blocker 拦（配置本身仍逐组回读 fail-loud，见
+    tests/test_p2_51_cmw_mac_config.py）。"""
+
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
     blocker = _formal_mac_configuration_blocker(
@@ -106,17 +110,27 @@ def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
         plan=_plan(cmw, RealCmw500Driver.adapter_manifest).mac_throughput,
     )
 
+    assert blocker is None
+
+
+def test_undeclared_mac_capability_still_blocks_formal_kpi():
+    """原不变量保留：计划项未 planned 的真实适配器必须被拦 ——
+    PCell 确认等旁路不能移除 MAC 能力 blocker。"""
+
+    from app.hal.base_station import BaseStationExecutionPlanItem
+
+    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
+    unplanned = BaseStationExecutionPlanItem(
+        dimension="mac_throughput",
+        planned=False,
+        capability_source="adapter_attribute:mac_throughput_configuration_supported",
+        reason="适配器未声明正式 MAC 吞吐配置能力",
+    )
+
+    blocker = _formal_mac_configuration_blocker(cmw, plan=unplanned)
+
     assert blocker is not None
     assert "MAC" in blocker
-
-
-def test_cmw_pcell_confirmation_does_not_remove_missing_mac_blocker():
-    cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
-
-    assert _formal_mac_configuration_blocker(
-        cmw,
-        plan=_plan(cmw, RealCmw500Driver.adapter_manifest).mac_throughput,
-    ) is not None
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():
