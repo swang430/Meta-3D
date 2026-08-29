@@ -74,10 +74,9 @@ def test_measure_orchestration_has_no_adapter_identity_capability_branch():
     assert forbidden == []
 
 
-def test_roadmap_marks_p2_46_merged_and_advances_to_p2_47():
+def test_roadmap_keeps_p2_46_merged_truth_after_queue_advances():
     roadmap = (REPO_ROOT / "docs/roadmap-first-call.md").read_text()
 
-    assert "Current Focus（非现场）= P2-47" in roadmap
-    assert "当前非现场 WIP=P2-47（实现、完整回归与 fresh 内审完成，Ready PR/外审中）" in roadmap
-    assert "P2-46 已由 PR #412" in roadmap
+    assert "P2-46 已由 PR #412 以 merge commit" in roadmap
+    assert "P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414" in roadmap
     assert "P2-44（Ready PR 后续 P1-only 外审中）" not in roadmap

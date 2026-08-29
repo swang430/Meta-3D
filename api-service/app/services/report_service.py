@@ -41,10 +41,13 @@ from app.services.mimo_ota.quiet_zone_evidence import (
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
+    _LEGACY_METRIC_UNITS,
+    BaseStationExecutionEvidence,
     FormalMetricTrust,
     PositionSnapshot,
     base_station_expected_scope_from_evidence,
     base_station_metric_projection_required,
+    canonical_snapshot_digest,
     project_base_station_metrics_by_position,
 )
 from app.services.execution_qualification import (
@@ -87,6 +90,7 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "formal_quiet_zone_verified",
     "base_station_metric_trust_schema_version",
     "base_station_metric_projection",
+    "base_station_metric_projection_attestation",
     "vrt_archive_trust_schema_version",
 })
 
@@ -96,6 +100,78 @@ VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
 VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
 BASE_STATION_METRIC_TRUST_SCHEMA_VERSION = 1
 _UNCONDITIONAL_REPORT_SNAPSHOT = object()
+
+
+def build_base_station_metric_projection_attestation(
+    evidence: Any,
+    projection: Any,
+) -> dict[str, Any] | None:
+    """Bind a server-written generic projection to its frozen evidence."""
+
+    if not isinstance(evidence, dict):
+        return None
+    parsed = BaseStationExecutionEvidence.model_validate(evidence)
+    registry = parsed.metric_registry
+    if registry is not None:
+        capabilities = {item.key: item for item in registry.metrics}
+        if not isinstance(projection, list):
+            raise ValueError("base-station metric projection must be a list")
+        for row in projection:
+            raw_metrics = row.get("metrics") if isinstance(row, dict) else None
+            if not isinstance(raw_metrics, dict) or set(raw_metrics) != set(
+                capabilities
+            ):
+                raise ValueError(
+                    "base-station metric projection disagrees with frozen registry"
+                )
+            for key, raw_metric in raw_metrics.items():
+                metric = FormalMetricTrust.model_validate(raw_metric)
+                capability = capabilities[key]
+                if metric.unit not in {None, capability.unit} or (
+                    metric.status == "trusted"
+                    and capability.evidence != "authoritative"
+                ):
+                    raise ValueError(
+                        "base-station metric projection semantics drifted"
+                    )
+    else:
+        if not isinstance(projection, list):
+            raise ValueError("base-station metric projection must be a list")
+        for row in projection:
+            raw_metrics = row.get("metrics") if isinstance(row, dict) else None
+            if not isinstance(raw_metrics, dict) or set(raw_metrics) != set(
+                _LEGACY_METRIC_UNITS
+            ):
+                raise ValueError(
+                    "legacy base-station projection has unexpected metrics"
+                )
+            for key, raw_metric in raw_metrics.items():
+                metric = FormalMetricTrust.model_validate(raw_metric)
+                if metric.unit not in {None, _LEGACY_METRIC_UNITS[key]}:
+                    raise ValueError(
+                        "legacy base-station projection semantics drifted"
+                    )
+    evidence_payload = parsed.model_dump(mode="json")
+    evidence_digest = canonical_snapshot_digest(evidence_payload)
+    registry_digest = (
+        parsed.metric_registry.digest
+        if parsed.metric_registry_contract_version == 1
+        and parsed.metric_registry is not None
+        else None
+    )
+    projection_digest = canonical_snapshot_digest(
+        {
+            "evidence_digest": evidence_digest,
+            "metric_registry_digest": registry_digest,
+            "projection": projection,
+        }
+    )
+    return {
+        "schema_version": 1,
+        "evidence_digest": evidence_digest,
+        "metric_registry_digest": registry_digest,
+        "projection_digest": projection_digest,
+    }
 
 
 def _strip_untrusted_report_attestation(
@@ -134,6 +210,9 @@ def report_has_provenance_trust(content_data: Any) -> bool:
         "base_station_metric_trust_schema_version"
     )
     base_station_projection = content_data.get("base_station_metric_projection")
+    base_station_attestation = content_data.get(
+        "base_station_metric_projection_attestation"
+    )
     application_is_well_formed = (
         isinstance(raw_application, dict)
         and parse_path_loss_application(raw_application) == raw_application
@@ -170,20 +249,48 @@ def report_has_provenance_trust(content_data: Any) -> bool:
         )
         and type(base_station_marker) is int
         and base_station_marker == BASE_STATION_METRIC_TRUST_SCHEMA_VERSION
-        and _base_station_projection_is_sanitized(base_station_projection)
+        and _base_station_projection_is_sanitized(
+            base_station_projection,
+            base_station_attestation,
+        )
     )
 
 
-def _base_station_projection_is_sanitized(value: Any) -> bool:
+def _base_station_projection_is_sanitized(
+    value: Any,
+    attestation: Any = None,
+) -> bool:
     """Validate the exact server-written formal/diagnostic projection shape."""
+
+    def compatibility_mirror_matches(
+        metrics: dict[str, FormalMetricTrust],
+        key: str,
+        mirror: FormalMetricTrust,
+    ) -> bool:
+        registered = metrics.get(key)
+        if registered is not None:
+            return registered == mirror
+        return (
+            mirror.status == "unknown"
+            and mirror.formal_value is None
+            and mirror.diagnostic_value is None
+            and mirror.unit is None
+            and mirror.exchange_ids == ()
+        )
+
     if not isinstance(value, list):
         return False
+    generic_projection = False
     for row in value:
-        if not isinstance(row, dict) or set(row) != {
-            "position",
-            "dl_throughput_mbps",
-            "dl_bler_percent",
-        }:
+        if not isinstance(row, dict) or set(row) not in (
+            {"position", "dl_throughput_mbps", "dl_bler_percent"},
+            {
+                "position",
+                "metrics",
+                "dl_throughput_mbps",
+                "dl_bler_percent",
+            },
+        ):
             return False
         try:
             position = PositionSnapshot.model_validate(row["position"])
@@ -193,13 +300,80 @@ def _base_station_projection_is_sanitized(value: Any) -> bool:
             bler = FormalMetricTrust.model_validate(row["dl_bler_percent"])
         except Exception:
             return False
+        raw_metrics = row.get("metrics")
+        parsed_metrics: dict[str, FormalMetricTrust] | None = None
+        if raw_metrics is not None:
+            generic_projection = True
+            if not isinstance(raw_metrics, dict) or not raw_metrics:
+                return False
+            try:
+                parsed_metrics = {
+                    key: FormalMetricTrust.model_validate(metric)
+                    for key, metric in raw_metrics.items()
+                    if isinstance(key, str) and key
+                }
+            except Exception:
+                return False
+            if (
+                len(parsed_metrics) != len(raw_metrics)
+                or any(
+                    parsed_metrics[key].model_dump(mode="json") != metric
+                    for key, metric in raw_metrics.items()
+                )
+                or not compatibility_mirror_matches(
+                    parsed_metrics, "dl_throughput_mbps", throughput
+                )
+                or not compatibility_mirror_matches(
+                    parsed_metrics, "dl_bler_percent", bler
+                )
+            ):
+                return False
         if (
             position.model_dump(mode="json") != row["position"]
             or throughput.model_dump(mode="json") != row["dl_throughput_mbps"]
             or bler.model_dump(mode="json") != row["dl_bler_percent"]
         ):
             return False
+    if generic_projection:
+        if not isinstance(attestation, dict) or set(attestation) != {
+            "schema_version",
+            "evidence_digest",
+            "metric_registry_digest",
+            "projection_digest",
+        }:
+            return False
+        evidence_digest = attestation.get("evidence_digest")
+        registry_digest = attestation.get("metric_registry_digest")
+        projection_digest = attestation.get("projection_digest")
+        if (
+            type(attestation.get("schema_version")) is not int
+            or attestation["schema_version"] != 1
+            or not _is_sha256_digest(evidence_digest)
+            or not (
+                registry_digest is None
+                or _is_sha256_digest(registry_digest)
+            )
+            or not _is_sha256_digest(projection_digest)
+        ):
+            return False
+        expected_digest = canonical_snapshot_digest(
+            {
+                "evidence_digest": evidence_digest,
+                "metric_registry_digest": registry_digest,
+                "projection": value,
+            }
+        )
+        if projection_digest != expected_digest:
+            return False
     return True
+
+
+def _is_sha256_digest(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def report_has_vrt_archive_trust(content_data: Any) -> bool:

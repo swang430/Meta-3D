@@ -164,7 +164,9 @@ class BaseStationMetricCapability(BaseModel):
 
     key: str
     direction: Literal["downlink", "uplink", "link", "not_applicable"]
-    unit: Literal["mbps", "percent", "index", "raw", "not_applicable"]
+    unit: Literal[
+        "mbps", "percent", "ratio", "index", "raw", "not_applicable"
+    ]
     scopes: tuple[Literal["pcell", "all_cells"], ...]
     evidence: Literal["authoritative", "diagnostic_only", "unavailable"]
     source_reference: str | None

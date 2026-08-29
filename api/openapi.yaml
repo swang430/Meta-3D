@@ -2082,7 +2082,7 @@ components:
           enum: [downlink, uplink, link, not_applicable]
         unit:
           type: string
-          enum: [mbps, percent, index, raw, not_applicable]
+          enum: [mbps, percent, ratio, index, raw, not_applicable]
         scopes:
           type: array
           items: {type: string, enum: [pcell, all_cells]}

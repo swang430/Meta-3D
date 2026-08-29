@@ -297,7 +297,8 @@ def test_report_recomputes_base_station_metrics_from_final_windows():
     assert content["table_data"][0]["BLER (%)"] == "0.4"
     assert content["base_station_metric_trust_schema_version"] == 1
     assert _base_station_projection_is_sanitized(
-        content["base_station_metric_projection"]
+        content["base_station_metric_projection"],
+        content["base_station_metric_projection_attestation"],
     ) is True
 
 
@@ -433,6 +434,12 @@ def test_client_cannot_self_attest_base_station_metric_projection():
         "title": "client payload",
         "base_station_metric_trust_schema_version": 1,
         "base_station_metric_projection": [],
+        "base_station_metric_projection_attestation": {
+            "schema_version": 1,
+            "evidence_digest": "0" * 64,
+            "metric_registry_digest": "1" * 64,
+            "projection_digest": "2" * 64,
+        },
     }
 
     assert _strip_untrusted_report_attestation(forged) == {

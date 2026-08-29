@@ -97,6 +97,10 @@ class AnalysisExecutor(IStepExecutor):
         serialized_base_station_projection = [
             {
                 "position": row["position"],
+                "metrics": {
+                    key: metric.model_dump(mode="json")
+                    for key, metric in row["metrics"].items()
+                },
                 "dl_throughput_mbps": row[
                     "dl_throughput_mbps"
                 ].model_dump(mode="json"),

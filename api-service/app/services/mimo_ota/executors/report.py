@@ -53,6 +53,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
 from app.services.report_service import (
     ReportService,
     THROUGHPUT_TRUST_SCHEMA_VERSION,
+    build_base_station_metric_projection_attestation,
 )
 from app.services.test_execution import (
     IStepExecutor,
@@ -965,6 +966,29 @@ def _build_mimo_ota_content_data(
          "parameters": {"verdict": reported_verdict}},
     ]
 
+    serialized_base_station_projection = [
+        {
+            "position": row["position"],
+            "metrics": {
+                key: _serialized_base_station_metric(metric)
+                for key, metric in row["metrics"].items()
+            },
+            "dl_throughput_mbps": _serialized_base_station_metric(
+                row["dl_throughput_mbps"]
+            ),
+            "dl_bler_percent": _serialized_base_station_metric(
+                row["dl_bler_percent"]
+            ),
+        }
+        for row in base_station_projection
+    ]
+    base_station_metric_projection_attestation = (
+        build_base_station_metric_projection_attestation(
+            base_station_evidence,
+            serialized_base_station_projection,
+        )
+    )
+
     return {
         "title": f"MIMO OTA Test Report — {plan_info['name']}",
         # P1-22 (Codex #256): 报告类型进 content_data — PDFGenerator 靠它分流
@@ -980,18 +1004,10 @@ def _build_mimo_ota_content_data(
         "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,
         "base_station_metric_trust_schema_version": 1,
-        "base_station_metric_projection": [
-            {
-                "position": row["position"],
-                "dl_throughput_mbps": _serialized_base_station_metric(
-                    row["dl_throughput_mbps"]
-                ),
-                "dl_bler_percent": _serialized_base_station_metric(
-                    row["dl_bler_percent"]
-                ),
-            }
-            for row in base_station_projection
-        ],
+        "base_station_metric_projection": serialized_base_station_projection,
+        "base_station_metric_projection_attestation": (
+            base_station_metric_projection_attestation
+        ),
         "throughput_scope": (
             required_throughput_scope
             if _throughput_verified is True
