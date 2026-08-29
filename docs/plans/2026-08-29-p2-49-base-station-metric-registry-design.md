@@ -57,7 +57,8 @@ closed-window。
 
 - UXM DL/UL OTA throughput 与 BLER：
   `Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip` 中
-  `UXM5G_SCPI_02_NR_PHY_Measurements.md` 的 “NR BLER/Tput > DL OTA / UL OTA”。BLER 数组字段名是
+  `Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip!5G_NR_Test_Application_SCPI_Reference.html`
+  的 “NR BLER/Tput > DL OTA / UL OTA”。BLER 数组字段名是
   `ack-ratio`、`nack-ratio`、`pdschBlerRatio`，因此稳定键使用 `*_bler_ratio`，不把原值改名为 percent。
 - UXM CQI：同文件 “NR CSI > CQI”，索引 4 明确为 `cqi_average`，稳定键使用 `cqi_index`。
 - UXM RI：同文件 “NR CSI > RI”，histogram bin 是 RI 值 0..7。共同 observation 保留应用层加权得到的
