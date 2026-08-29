@@ -16,7 +16,7 @@ import random
 import re
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Dict, Any, Optional, List, ClassVar, Literal
+from typing import Dict, Any, Optional, List, ClassVar, Literal, Mapping, Sequence
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -792,7 +792,7 @@ class BaseStationMetricObservation:
             raise ValueError("metric observation exchange ids must be non-empty strings")
         if len(set(self.exchange_ids)) != len(self.exchange_ids):
             raise ValueError("metric observation exchange ids must be unique")
-        if self.value is not None and not self.exchange_ids:
+        if self.value is not None and not self.exchange_ids and not self.simulated:
             raise ValueError("metric observation value requires exchange ids")
         if not isinstance(self.reason, str) or not self.reason.strip():
             raise ValueError("metric observation reason must be non-empty")
@@ -832,8 +832,47 @@ class BaseStationMeasurementWindow:
     confirmed: bool
     reason: str
     trust: BaseStationMeasurementWindowTrust | None = None
+    metric_registry: BaseStationMetricRegistry | None = None
+    metric_observations: tuple[BaseStationMetricObservation, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.metric_registry is None:
+            if self.metric_observations:
+                raise ValueError(
+                    "measurement window observations require a metric registry"
+                )
+        else:
+            if not isinstance(self.metric_registry, BaseStationMetricRegistry):
+                raise TypeError("measurement window metric registry is invalid")
+            if not isinstance(self.metric_observations, tuple) or any(
+                not isinstance(item, BaseStationMetricObservation)
+                for item in self.metric_observations
+            ):
+                raise TypeError("measurement window metric observations are invalid")
+            if any(
+                item.registry_digest != self.metric_registry.digest
+                for item in self.metric_observations
+            ):
+                raise ValueError(
+                    "measurement window observation registry disagrees with registry"
+                )
+            keys = tuple(item.key for item in self.metric_observations)
+            if len(set(keys)) != len(keys) or keys != tuple(sorted(keys)):
+                raise ValueError(
+                    "measurement window observation keys must be unique and sorted"
+                )
+            expected_scope = (
+                self.trust.request.scope if self.trust is not None else None
+            )
+            expected_keys = tuple(
+                metric.key
+                for metric in self.metric_registry.metrics
+                if expected_scope is None or expected_scope in metric.scopes
+            )
+            if keys != expected_keys:
+                raise ValueError(
+                    "measurement window observations do not cover the registry scope"
+                )
         if self.trust is None:
             return
         if not isinstance(self.trust, BaseStationMeasurementWindowTrust):
@@ -954,6 +993,8 @@ class ThroughputMetrics:
         ul_throughput_current_mbps: Optional[float] = None,
         kpi_valid: Optional[Dict[str, bool]] = None,
         throughput_scope: str = SCOPE_UNKNOWN,
+        registered_values: Optional[Dict[str, Optional[float]]] = None,
+        raw_unverified: Optional[Dict[str, float]] = None,
     ):
         self.dl_throughput_mbps = dl_throughput_mbps
         self.ul_throughput_mbps = ul_throughput_mbps
@@ -972,6 +1013,10 @@ class ThroughputMetrics:
             if throughput_scope in self.VALID_SCOPES
             else self.SCOPE_UNKNOWN
         )
+        self.registered_values: Dict[str, Optional[float]] = dict(
+            registered_values or {}
+        )
+        self.raw_unverified: Dict[str, float] = dict(raw_unverified or {})
         # 显式白名单：真实 0.0 是有效值；缺测 None 不是。真实驱动可以用
         # ``kpi_valid`` 覆盖/补充其余 KPI 的解析真值，正式调用方不得从数值大小猜。
         self.kpi_valid: Dict[str, bool] = {
@@ -1005,6 +1050,8 @@ class ThroughputMetrics:
             "sinr_db": self.sinr_db,
             "kpi_valid": dict(self.kpi_valid),
             "throughput_scope": self.throughput_scope,
+            "registered_values": dict(self.registered_values),
+            "raw_unverified": dict(self.raw_unverified),
         }
 
 
@@ -1065,6 +1112,57 @@ class BaseStationDriver(InstrumentDriver):
             profile_id=profile_id,
             metrics=tuple(sorted(metrics, key=lambda metric: metric.key)),
         )
+
+    def build_metric_observations(
+        self,
+        *,
+        registry: BaseStationMetricRegistry,
+        metrics: "ThroughputMetrics",
+        scope: Literal["pcell", "all_cells"],
+        exchanges: Sequence[Any],
+        query_commands: Mapping[str, str | None],
+        simulated: bool,
+    ) -> tuple[BaseStationMetricObservation, ...]:
+        """Bind registered values to the exact query exchange that produced them."""
+
+        if registry.adapter_id != self.adapter_id:
+            raise ValueError("metric registry adapter does not match loaded driver")
+        observations: list[BaseStationMetricObservation] = []
+        for capability in registry.metrics:
+            if scope not in capability.scopes:
+                continue
+            query = query_commands.get(capability.key)
+            query_key = str(query).strip().upper() if query else None
+            exchange_ids = tuple(
+                str(exchange.exchange_id)
+                for exchange in exchanges
+                if query_key is not None
+                and str(getattr(exchange, "command", "")).strip().upper()
+                == query_key
+            )
+            value = metrics.registered_values.get(capability.key)
+            observations.append(
+                BaseStationMetricObservation(
+                    schema_version=1,
+                    registry=registry,
+                    registry_digest=registry.digest,
+                    key=capability.key,
+                    scope=scope,
+                    value=value,
+                    simulated=simulated,
+                    exchange_ids=exchange_ids,
+                    reason=(
+                        "simulated diagnostic metric"
+                        if simulated
+                        else (
+                            "current-window instrument readback"
+                            if value is not None
+                            else "current-window metric unavailable"
+                        )
+                    ),
+                )
+            )
+        return tuple(observations)
 
     # ===================================================================
     # 小区配置
@@ -1825,7 +1923,7 @@ class MockBaseStation(BaseStationDriver):
     ) -> ThroughputMetrics:
         if not self._cell_running:
             return ThroughputMetrics()
-        return ThroughputMetrics(
+        metrics = ThroughputMetrics(
             dl_throughput_mbps=420.0 + random.gauss(0, 15),
             ul_throughput_mbps=80.0 + random.gauss(0, 5),
             dl_bler=random.uniform(0, 0.05),
@@ -1836,6 +1934,21 @@ class MockBaseStation(BaseStationDriver):
             mcs_ul=random.randint(20, 24),
             throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
         )
+        registry = self.resolve_metric_registry()
+        simulated_values: dict[str, float | None] = {
+            "dl_throughput_mbps": metrics.dl_throughput_mbps,
+            "ul_throughput_mbps": metrics.ul_throughput_mbps,
+            "dl_bler_percent": metrics.dl_bler,
+            "dl_bler_ratio": metrics.dl_bler,
+            "ul_bler_ratio": metrics.ul_bler,
+            "cqi_index": float(metrics.cqi),
+            "ri_index": float(metrics.rank_indicator - 1),
+        }
+        metrics.registered_values = {
+            capability.key: simulated_values.get(capability.key)
+            for capability in registry.metrics
+        }
+        return metrics
 
     async def measure_base_station_window(
         self,
@@ -1856,6 +1969,7 @@ class MockBaseStation(BaseStationDriver):
         metrics.kpi_valid = {
             key: False for key in metrics.kpi_valid
         }
+        metric_registry = self.resolve_metric_registry()
         trust = BaseStationMeasurementWindowTrust(
             schema_version=1,
             request=request,
@@ -1873,6 +1987,14 @@ class MockBaseStation(BaseStationDriver):
             reason="simulated diagnostic window; excluded from formal KPI",
             context_confirmed=False,
         )
+        metric_observations = self.build_metric_observations(
+            registry=metric_registry,
+            metrics=metrics,
+            scope=request.scope,
+            exchanges=(),
+            query_commands={},
+            simulated=True,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -1886,6 +2008,8 @@ class MockBaseStation(BaseStationDriver):
             confirmed=False,
             reason="simulated diagnostic window; excluded from formal KPI",
             trust=trust,
+            metric_registry=metric_registry,
+            metric_observations=metric_observations,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

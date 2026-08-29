@@ -2410,6 +2410,10 @@ class RealCmw500Driver(BaseStationDriver):
             dl_throughput_mbps=throughput_mbps,
             dl_bler=bler_percent,
             throughput_scope=throughput_scope,
+            registered_values={
+                "dl_throughput_mbps": throughput_mbps,
+                "dl_bler_percent": bler_percent,
+            },
             kpi_valid={
                 "dl_throughput": lifecycle_confirmed
                 and throughput_mbps is not None,
@@ -2487,6 +2491,26 @@ class RealCmw500Driver(BaseStationDriver):
             reason=reason,
             context_confirmed=lifecycle_confirmed,
         )
+        metric_registry = self.resolve_metric_registry()
+        metric_observations = self.build_metric_observations(
+            registry=metric_registry,
+            metrics=metrics,
+            scope="pcell",
+            exchanges=exchanges,
+            query_commands={
+                "dl_throughput_mbps": (
+                    Cmw500LteCommandProfile.ebler_absolute_query(
+                        self._sign_channel
+                    )
+                ),
+                "dl_bler_percent": (
+                    Cmw500LteCommandProfile.ebler_relative_query(
+                        self._sign_channel
+                    )
+                ),
+            },
+            simulated=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=window_id,
             started_at=started_at,
@@ -2500,6 +2524,8 @@ class RealCmw500Driver(BaseStationDriver):
             confirmed=trust.formally_confirmed,
             reason=reason,
             trust=trust,
+            metric_registry=metric_registry,
+            metric_observations=metric_observations,
         )
 
     async def get_throughput_metrics(

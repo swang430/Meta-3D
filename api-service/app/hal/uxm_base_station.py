@@ -3861,6 +3861,7 @@ class RealUxmDriver(BaseStationDriver):
             else ThroughputMetrics.SCOPE_UNKNOWN
         )
         metrics = ThroughputMetrics(throughput_scope=effective_scope)
+        registered_values: Dict[str, Optional[float]] = {}
         self._warn_once_if_profile_has_no_kpi_commands()
         # 哪些字段这一轮真的拿到了数 —— 进 measurement.log, 让读日志的人
         # 能分辨"测出来是 0"和"根本没测到"(P1-30 同一个母题)。
@@ -3887,8 +3888,10 @@ class RealUxmDriver(BaseStationDriver):
         dl_avg, dl_cur = self._pick(dl, 4), self._pick(dl, 1)
         if dl_avg is not None:
             metrics.dl_throughput_mbps = dl_avg / 1e6
+            registered_values["dl_throughput_mbps"] = dl_avg / 1e6
         if dl_cur is not None:
             metrics.dl_throughput_current_mbps = dl_cur / 1e6
+            registered_values["dl_throughput_current_mbps"] = dl_cur / 1e6
         valid["dl_throughput"] = dl_avg is not None
         valid["dl_throughput_current"] = dl_cur is not None
 
@@ -3897,8 +3900,10 @@ class RealUxmDriver(BaseStationDriver):
         ul_avg, ul_cur = self._pick(ul, 4), self._pick(ul, 1)
         if ul_avg is not None:
             metrics.ul_throughput_mbps = ul_avg / 1e6
+            registered_values["ul_throughput_mbps"] = ul_avg / 1e6
         if ul_cur is not None:
             metrics.ul_throughput_current_mbps = ul_cur / 1e6
+            registered_values["ul_throughput_current_mbps"] = ul_cur / 1e6
         valid["ul_throughput"] = ul_avg is not None
         valid["ul_throughput_current"] = ul_cur is not None
 
@@ -3907,6 +3912,7 @@ class RealUxmDriver(BaseStationDriver):
         v = self._pick(dl_bler, 8)
         if v is not None:
             metrics.dl_bler = v
+            registered_values["dl_bler_ratio"] = v
         valid["dl_bler"] = v is not None
 
         # ── UL BLER (idx4 = nack-ratio) ────────────────────────
@@ -3914,6 +3920,7 @@ class RealUxmDriver(BaseStationDriver):
         v = self._pick(ul_bler, 4)
         if v is not None:
             metrics.ul_bler = v
+            registered_values["ul_bler_ratio"] = v
         valid["ul_bler"] = v is not None
 
         # ── CQI ────────────────────────────────────────────────
@@ -3928,22 +3935,24 @@ class RealUxmDriver(BaseStationDriver):
         v = self._pick(cqi_vals, 4)
         if v is not None:
             metrics.cqi = int(round(v))
+            registered_values["cqi_index"] = v
         valid["cqi"] = v is not None
 
         # ── RI (直方图) ────────────────────────────────────────
         # 8 个 bin = 手册的 "RI value [0..7]" —— 那是 **3GPP 上报码点**不是层数:
         # 手册同处把它与 "CQI value (0..15)" 并列, CQI 0..15 同样是码点。
-        # rank = 码点 + 1（rank 0 物理上不存在, 而 rank_indicator 全仓契约是
-        # **层数** —— 默认 1、mock 产 1..2、analysis.py 拿它跟
-        # min_avg_rank_indicator（默认 1.8）比）。
-        # ⚠ 2026-08-03: 我一度把权重从 (i+1) 改成 i，**那是回归** ——
-        #   会让真跑 rank 2 的 DUT 报 1.0 而必然 FAIL。已改回。
+        # P2-49：共同 registry 只保留手册定义的 RI index（权重 i）。旧的
+        # rank_indicator 镜像继续按 i+1 生成，专供历史消费者兼容；新 execution
+        # 的正式消费方不得再把该镜像当成权威层数。
         ri_hist = _read_doubles(self._cmds.MEAS_CSI_RI, "RI histogram")
         counts = [c for c in ri_hist if c is not None]
         total = sum(counts)
         if counts and total > 0:
-            weighted = sum((i + 1) * c for i, c in enumerate(ri_hist) if c is not None)
-            metrics.rank_indicator = int(round(weighted / total))
+            weighted_index = sum(
+                i * c for i, c in enumerate(ri_hist) if c is not None
+            ) / total
+            registered_values["ri_index"] = weighted_index
+            metrics.rank_indicator = int(round(weighted_index + 1.0))
             valid["rank_indicator"] = True
         else:
             valid["rank_indicator"] = False
@@ -3974,8 +3983,10 @@ class RealUxmDriver(BaseStationDriver):
                 # 口径待现场用诊断序列对着面板读数比对后再接线。
                 if rsrp is not None:
                     raw_unverified["rsrp_raw"] = rsrp
+                    registered_values["rsrp_raw"] = rsrp
                 if sinr is not None:
                     raw_unverified["sinr_raw"] = sinr
+                    registered_values["sinr_raw"] = sinr
             except Exception as e:
                 logger.warning(f"[UXM] UE 测量报告读取失败: {e}")
         else:
@@ -3987,6 +3998,8 @@ class RealUxmDriver(BaseStationDriver):
         # ⚠ 每个 KPI 都带一个 *_valid 标志 —— 没有它, "DL=0.0Mbps" 与
         # "这一项根本没读到" 在日志里长得一模一样 (P1-30 同一个母题)。
         metrics.kpi_valid.update(valid)
+        metrics.registered_values = registered_values
+        metrics.raw_unverified = raw_unverified
         missing = [k for k, ok in metrics.kpi_valid.items() if not ok]
 
         def _throughput_text(value: Optional[float], digits: int = 1) -> str:
@@ -4137,6 +4150,7 @@ class RealUxmDriver(BaseStationDriver):
             raise TypeError("UXM measurement requires a frozen window request")
         if request.lifecycle != "unavailable" or request.cardinality != "requested":
             raise ValueError("UXM window request disagrees with its frozen manifest")
+        metric_registry = self.resolve_metric_registry()
         throughput_scope = (
             ThroughputMetrics.SCOPE_PCELL
             if request.scope == "pcell"
@@ -4193,6 +4207,36 @@ class RealUxmDriver(BaseStationDriver):
             reason=evidence.reason,
             context_confirmed=False,
         )
+        if request.scope == "pcell":
+            dl_tput_query = self._cmds.MEAS_TPUT_DL_OTA
+            ul_tput_query = self._cmds.MEAS_TPUT_UL_OTA
+        else:
+            dl_tput_query = getattr(self._cmds, "MEAS_TPUT_DL_OTA_ALL", None)
+            ul_tput_query = getattr(self._cmds, "MEAS_TPUT_UL_OTA_ALL", None)
+
+        def formatted(template: Optional[str]) -> Optional[str]:
+            return template.format(cell=self._cell_id) if template else None
+
+        query_commands = {
+            "dl_throughput_mbps": formatted(dl_tput_query),
+            "dl_throughput_current_mbps": formatted(dl_tput_query),
+            "ul_throughput_mbps": formatted(ul_tput_query),
+            "ul_throughput_current_mbps": formatted(ul_tput_query),
+            "dl_bler_ratio": formatted(self._cmds.MEAS_BLER_DL),
+            "ul_bler_ratio": formatted(self._cmds.MEAS_BLER_UL),
+            "cqi_index": formatted(self._cmds.MEAS_CSI_CQI),
+            "ri_index": formatted(self._cmds.MEAS_CSI_RI),
+            "rsrp_raw": formatted(self._cmds.MEAS_UE_REPORT_JSON),
+            "sinr_raw": formatted(self._cmds.MEAS_UE_REPORT_JSON),
+        }
+        metric_observations = self.build_metric_observations(
+            registry=metric_registry,
+            metrics=metrics,
+            scope=request.scope,
+            exchanges=exchanges,
+            query_commands=query_commands,
+            simulated=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -4206,6 +4250,8 @@ class RealUxmDriver(BaseStationDriver):
             confirmed=False,
             reason=evidence.reason,
             trust=trust,
+            metric_registry=metric_registry,
+            metric_observations=metric_observations,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
