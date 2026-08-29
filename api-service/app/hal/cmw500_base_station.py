@@ -1978,6 +1978,10 @@ class RealCmw500Driver(BaseStationDriver):
                 reason="固件低于命令集下限",
             )
 
+        # 外审 #420 R2：with 之前的异常路径（如 SAFE_IDLE 查询抛）会让
+        # except 分支引用未定义的 exchanges —— 预初始化；with 内异常传播时
+        # exchanges 是逐步填充的 list 引用，已捕获交互如实带回
+        exchanges: list | tuple = ()
         try:
             if not await self.ensure_safe_idle():
                 return _result(
@@ -2054,8 +2058,27 @@ class RealCmw500Driver(BaseStationDriver):
                 ) -> None:
                     """一组：可选写 → OPC/错误队列门 → 查询回读严格比对。"""
                     if write_command is not None:
-                        self._write(write_command)
-                        gate = _group_gate()
+                        # 内审 F2（R2 high 兄弟站点）：写 + 写验证门的瞬时异常
+                        # 同样走单组记账，不中断整方法；已发出的写如实记 receipt
+                        try:
+                            self._write(write_command)
+                            gate = _group_gate()
+                        except Exception as exc:  # noqa: BLE001 — 单组记账
+                            rejected.append(f"{group}(写入验证失败)")
+                            field_rows.append(
+                                (field, expected, None, "unknown",
+                                 f"写入/验证查询失败: {exc}")
+                            )
+                            try:
+                                self._query(CmwScpiCommands.ERR)
+                            except Exception as drain_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "[CMW500] MAC write error-queue drain "
+                                    "failed for %s: %s",
+                                    group,
+                                    drain_exc,
+                                )
+                            return
                         if gate is not None:
                             rejected.append(group)
                             field_rows.append(
@@ -2065,11 +2088,15 @@ class RealCmw500Driver(BaseStationDriver):
                             return
                     try:
                         raw = self._query(query_command)
+                        # 外审 #420 R2 high：_group_gate 的 *OPC?/ERR 查询也可能
+                        # 瞬时异常——留在 try 外会中断整方法，违背「单组失败
+                        # 逐组记账」；移入后统一走「回读不可用」+ 排空
+                        query_gate = _group_gate()
                     except Exception as exc:  # noqa: BLE001 — 单组失败逐组记账
                         rejected.append(f"{group}(回读不可用)")
                         field_rows.append(
                             (field, expected, None, "unknown",
-                             f"回读查询失败: {exc}")
+                             f"回读/验错查询失败: {exc}")
                         )
                         # 外审 #420 R1 high：查询异常时仪器队列可能残留错误
                         # （-113/-221 等），不排空会污染下一组 _group_gate 的
@@ -2085,7 +2112,6 @@ class RealCmw500Driver(BaseStationDriver):
                                 drain_exc,
                             )
                         return
-                    query_gate = _group_gate()
                     if query_gate is not None:
                         rejected.append(f"{group}(回读被拒)")
                         field_rows.append(
@@ -2268,7 +2294,7 @@ class RealCmw500Driver(BaseStationDriver):
             # error 非空使 ok=False；没轮到发的组不冒充 skipped。
             return _result(
                 f"下发过程中出错: {e}",
-                (),
+                exchanges,
                 reason=f"CMW500 MAC 配置中断: {e}",
             )
 

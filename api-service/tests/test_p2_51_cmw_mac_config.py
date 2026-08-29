@@ -575,3 +575,101 @@ async def test_readback_exception_drains_queue_without_poisoning_next_group():
     assert not any(
         "回读被拒" in item for item in result.rejected
     ), f"残留错误污染了后续组: {result.rejected}"
+
+
+@pytest.mark.asyncio
+async def test_gate_exception_during_readback_is_per_group_not_fatal():
+    """外审 #420 R2 high：回读后 _group_gate 的 *OPC?/ERR 瞬时异常必须
+    走单组记账（回读不可用），不许中断整个配置方法——把 query_gate
+    移回 try 外本门要红。"""
+
+    class _GateExplodesAfterReadback(_MacDriver):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._explode_next_opc = False
+
+        def _do_query(self, command: str) -> str:
+            if command == "*OPC?" and self._explode_next_opc:
+                self._explode_next_opc = False
+                raise RuntimeError("simulated transient OPC timeout")
+            response = super()._do_query(command)
+            if command.endswith("STYPe?"):
+                self._explode_next_opc = True
+            return response
+
+    driver = _GateExplodesAfterReadback()
+    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+
+    assert any("回读不可用" in item for item in result.rejected), result.rejected
+    # 后续组仍被处理（方法没有整体中断成「下发过程中出错」）
+    assert result.error is None or "下发过程中出错" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_pre_capture_exception_returns_result_not_nameerror():
+    """外审 #420 R2 medium：with capture 之前的异常（SAFE_IDLE 查询抛）
+    不许因 exchanges 未定义炸 NameError——删预初始化本门要红。"""
+
+    class _SafeIdleExplodes(_MacDriver):
+        async def ensure_safe_idle(self) -> bool:
+            raise RuntimeError("simulated cell-state query failure")
+
+    driver = _SafeIdleExplodes()
+    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+
+    assert not result.ok
+    assert "下发过程中出错" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_write_gate_exception_is_per_group_not_fatal():
+    """内审 F2（R2 high 兄弟站点）：写成功后写验证门的 *OPC?/ERR 瞬时异常
+    必须单组记账（写入验证失败），不许中断整方法——把写 gate 移回裸奔
+    本门要红。"""
+
+    class _GateExplodesAfterWrite(_MacDriver):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._explode_next_opc = False
+
+        def _do_write(self, command: str) -> None:
+            super()._do_write(command)
+            if command.startswith(
+                "CONFigure:LTE:SIGN1:CONNection:PCC:STYPe "
+            ):
+                self._explode_next_opc = True
+
+        def _do_query(self, command: str) -> str:
+            if command == "*OPC?" and self._explode_next_opc:
+                self._explode_next_opc = False
+                raise RuntimeError("simulated transient OPC timeout")
+            return super()._do_query(command)
+
+    driver = _GateExplodesAfterWrite()
+    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+
+    assert any("写入验证失败" in item for item in result.rejected), result.rejected
+    assert result.error is None or "下发过程中出错" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_midflight_exception_result_carries_captured_exchanges():
+    """内审 F1：with 内不可归组的异常（如 live 工作点查询直接炸穿）走外层
+    except 时，已捕获的 SCPI 交互必须如实带回——except 改传 () 本门要红。"""
+
+    class _LiveQueryExplodes(_MacDriver):
+        def _do_query(self, command: str) -> str:
+            if command.endswith("DUPLexer?") or command.endswith("DMODe?"):
+                raise ZeroDivisionError("simulated hard fault mid-flight")
+            return super()._do_query(command)
+
+    driver = _LiveQueryExplodes()
+    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+
+    assert not result.ok
+    assert "下发过程中出错" in (result.error or "")
+    assert result.receipt is not None
+    # 进入 with 后至少发生过 stale-drain ERR 查询——异常路径不许丢交互
+    assert len(result.receipt.fields[0].exchange_ids or ()) > 0 or any(
+        f.exchange_ids for f in result.receipt.fields
+    ), "外层异常路径丢弃了已捕获的 SCPI 交互"
