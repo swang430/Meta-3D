@@ -221,8 +221,13 @@ class TestInstrumentParamBranches:
             "app.services.input_level_controller.InputLevelController",
             _FakeController,
         ):
+            from app.hal.base_station import resolve_base_station_execution_plan
+
             payload = await ex._run_input_level_closed_loop(
                 emulator=emu, base_station=bs, config=cfg, execution_id="t",
+                plan=resolve_base_station_execution_plan(
+                    bs, manifest=None
+                ).input_level_control,
             )
         assert captured.get("initial_base_station_dl_power_dbm") == -46.0
         assert payload.get("success") is True

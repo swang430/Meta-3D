@@ -816,6 +816,226 @@ class BaseStationMetricObservation:
         )
 
 
+# P2-50: 共同执行器的能力维度（顺序即 canonical payload 顺序）。
+# (计划维度名, manifest operation token（无则 None）, adapter 声明属性名)
+_EXECUTION_PLAN_DIMENSIONS: tuple[tuple[str, str | None, str], ...] = (
+    ("scell", None, "SCELL_ACTIVATION_READBACK_AUTHORITATIVE"),
+    (
+        "mac_throughput",
+        "mac_throughput_config",
+        "mac_throughput_configuration_supported",
+    ),
+    ("rrc_reconfiguration", "rrc_reconfiguration", "rrc_reconfiguration_supported"),
+    ("input_level_control", "input_level_control", "input_level_control_supported"),
+)
+
+
+@dataclass(frozen=True)
+class BaseStationExecutionPlanItem:
+    """一条 execution-frozen 能力计划项（vendor-neutral）。
+
+    ``planned`` 是共同执行器唯一的能力判据；``capability_source`` 记录该判据
+    来自哪条声明（manifest operation token 或 adapter 声明属性），``reason``
+    是给操作员看的一句依据。计划说 planned 但 adapter 缺方法属于
+    计划/实现漂移，消费方必须 fail-loud，而不是回退成跳过。
+    """
+
+    dimension: Literal[
+        "scell", "mac_throughput", "rrc_reconfiguration", "input_level_control"
+    ]
+    planned: bool
+    capability_source: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.dimension not in {item[0] for item in _EXECUTION_PLAN_DIMENSIONS}:
+            raise ValueError("execution plan dimension is not a known capability")
+        if type(self.planned) is not bool:
+            raise TypeError("execution plan planned must be bool")
+        for name, value in (
+            ("capability_source", self.capability_source),
+            ("reason", self.reason),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"execution plan {name} must be non-empty")
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationExecutionPlanItem must not be used as bool; read .planned"
+        )
+
+
+@dataclass(frozen=True)
+class BaseStationExecutionPlan:
+    """Execution-frozen、vendor-neutral 的 BaseStation 能力执行计划（P2-50）。
+
+    把 MEASURE 中分散的 SCell / MAC / RRC / 输入电平能力判断收敛为一份
+    冻结计划；窗口维度不重造，只引用既有 P2-48 冻结契约
+    （``measurement_window_contract_version``）。
+    """
+
+    schema_version: Literal[1]
+    adapter_id: str
+    scell: BaseStationExecutionPlanItem
+    mac_throughput: BaseStationExecutionPlanItem
+    rrc_reconfiguration: BaseStationExecutionPlanItem
+    input_level_control: BaseStationExecutionPlanItem
+    # 引用 P2-48 既有窗口冻结契约版本（evidence 的
+    # measurement_window_contract_version），不在此重造窗口计划。
+    measurement_window_contract_version: Literal[1]
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station execution plan schema")
+        if (
+            not isinstance(self.adapter_id, str)
+            or not _METRIC_REGISTRY_TOKEN_RE.fullmatch(self.adapter_id)
+        ):
+            raise ValueError("execution plan adapter_id must be a stable token")
+        for dimension, _token, _attr in _EXECUTION_PLAN_DIMENSIONS:
+            item = getattr(self, dimension)
+            if not isinstance(item, BaseStationExecutionPlanItem):
+                raise TypeError(f"execution plan {dimension} must be a plan item")
+            if item.dimension != dimension:
+                raise ValueError(
+                    f"execution plan {dimension} item carries a foreign dimension"
+                )
+        if self.measurement_window_contract_version != 1:
+            raise ValueError(
+                "execution plan must reference measurement window contract v1"
+            )
+
+    def as_payload(self) -> Dict[str, Any]:
+        """canonical JSON-safe payload（不含 digest，digest 对它计算）。"""
+
+        payload: Dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "adapter_id": self.adapter_id,
+        }
+        for dimension, _token, _attr in _EXECUTION_PLAN_DIMENSIONS:
+            item = getattr(self, dimension)
+            payload[dimension] = {
+                "planned": item.planned,
+                "capability_source": item.capability_source,
+                "reason": item.reason,
+            }
+        payload["measurement_window_contract_version"] = (
+            self.measurement_window_contract_version
+        )
+        return payload
+
+    @property
+    def digest(self) -> str:
+        encoded = json.dumps(
+            self.as_payload(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationExecutionPlan must not be used as bool; inspect its items"
+        )
+
+
+def resolve_base_station_execution_plan(
+    driver: Any,
+    *,
+    manifest: Any,
+) -> BaseStationExecutionPlan:
+    """从 manifest + adapter 声明推导冻结执行计划（vendor-neutral，无 adapter 分支）。
+
+    判据与既有散点站点一致：每个维度取 adapter 实例声明（ClassVar 或
+    profile 派生属性）``is True``。manifest（可为 None——simulated mock /
+    无 manifest 的诊断驱动）只做交叉校验与 capability_source 溯源：
+    manifest 声明了 operation token 而实例声明为 False 属于声明漂移，
+    fail-loud；反向（token 缺席、实例声明 True）是合法的 profile 派生
+    opt-in（如 UXM 按 Test App profile 开放 RRC/MAC）。
+    """
+
+    adapter_id = getattr(driver, "adapter_id", None)
+    if (
+        not isinstance(adapter_id, str)
+        or not _METRIC_REGISTRY_TOKEN_RE.fullmatch(adapter_id)
+    ):
+        raise ValueError("execution plan requires a stable driver adapter_id")
+    manifest_operations: tuple[str, ...] = ()
+    if manifest is not None:
+        manifest_adapter_id = getattr(manifest, "adapter_id", None)
+        operations = getattr(manifest, "operations", None)
+        # 外审 #417 R1：operations 生产源是 Pydantic tuple，但 JSON 反序列化
+        # 直传 / mock 场景是 list——两种都接受并归一 tuple，其余类型仍拒绝
+        if manifest_adapter_id != adapter_id or not isinstance(
+            operations, (tuple, list)
+        ):
+            raise ValueError(
+                "execution plan manifest does not belong to the loaded adapter"
+            )
+        manifest_operations = tuple(operations)
+
+    reasons_when_planned = {
+        "scell": "适配器声明逐 SCell 激活态权威回读，正式 CA 允许按计划执行",
+        "mac_throughput": "适配器声明正式 MAC 吞吐配置能力，按计划下发调度/FRC 配置",
+        "rrc_reconfiguration": "适配器声明 RRC 重配能力，attach 后按计划下发层数/调制",
+        "input_level_control": "适配器声明输入电平闭环能力，按计划执行 DL 功率闭环",
+    }
+    reasons_when_unplanned = {
+        "scell": (
+            "适配器未声明逐 SCell 激活态权威回读"
+            "（SCELL_ACTIVATION_READBACK_AUTHORITATIVE），"
+            "已在首次 SCell 写入前阻断正式 CA"
+        ),
+        "mac_throughput": (
+            "适配器未声明正式 MAC 吞吐配置能力；"
+            "为避免沿用旧调度器/FRC 状态，正式 KPI 保持 fail-closed"
+        ),
+        "rrc_reconfiguration": "适配器未声明 RRC 重配能力，attach 后跳过 RRC 重配",
+        "input_level_control": "BS 未显式开放 input_level_control capability",
+    }
+
+    items: Dict[str, BaseStationExecutionPlanItem] = {}
+    for dimension, token, attr in _EXECUTION_PLAN_DIMENSIONS:
+        declared = getattr(driver, attr, False) is True
+        token_declared = token is not None and token in manifest_operations
+        if token_declared and not declared:
+            raise ValueError(
+                f"execution plan declaration drift for {dimension}: manifest "
+                f"declares {token!r} but adapter {attr} is not True"
+            )
+        if token_declared:
+            capability_source = f"manifest.operations:{token}"
+        else:
+            capability_source = f"adapter_attribute:{attr}"
+        if declared:
+            reason = reasons_when_planned[dimension]
+        else:
+            reason = reasons_when_unplanned[dimension]
+            if dimension == "input_level_control":
+                unavailable_reason = getattr(
+                    driver, "input_level_unavailable_reason", None
+                )
+                if isinstance(unavailable_reason, str) and unavailable_reason:
+                    reason = unavailable_reason
+        items[dimension] = BaseStationExecutionPlanItem(
+            dimension=dimension,  # type: ignore[arg-type]
+            planned=declared,
+            capability_source=capability_source,
+            reason=reason,
+        )
+
+    return BaseStationExecutionPlan(
+        schema_version=1,
+        adapter_id=adapter_id,
+        scell=items["scell"],
+        mac_throughput=items["mac_throughput"],
+        rrc_reconfiguration=items["rrc_reconfiguration"],
+        input_level_control=items["input_level_control"],
+        measurement_window_contract_version=1,
+    )
+
+
 @dataclass(frozen=True)
 class BaseStationMeasurementWindow:
     """由单一厂商测量边界产生的结构化 KPI 窗口。"""

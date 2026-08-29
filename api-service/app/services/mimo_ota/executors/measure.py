@@ -64,9 +64,12 @@ from app.services.test_execution import (
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.hal.base_station import (
+    BaseStationExecutionPlan,
+    BaseStationExecutionPlanItem,
     BaseStationMeasurementWindowRequest,
     BaseStationRequestedConfig,
     ThroughputMetrics,
+    resolve_base_station_execution_plan,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.scpi_evidence import capture_scpi_exchanges
@@ -92,13 +95,24 @@ _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 async def _reconfigure_rrc_if_supported(
     base_station: Any,
     *,
+    plan: BaseStationExecutionPlanItem,
     mimo_layers: int,
     modulation: str,
 ) -> Optional[bool]:
-    """Call only an adapter that explicitly opts into the RRC operation."""
-    if not getattr(base_station, "rrc_reconfiguration_supported", False):
+    """只按 execution-frozen 计划项决定是否下发 RRC 重配（P2-50）。
+
+    计划说 planned 但 adapter 缺 ``reconfigure_rrc`` 属于计划/实现漂移，
+    fail-loud，不回退成跳过。
+    """
+    if plan.planned is not True:
         return None
-    return await base_station.reconfigure_rrc(
+    method = getattr(base_station, "reconfigure_rrc", None)
+    if not callable(method):
+        raise RuntimeError(
+            "执行计划声明 RRC 重配能力，但 adapter 缺 reconfigure_rrc"
+            "（计划与实现漂移）"
+        )
+    return await method(
         mimo_layers=mimo_layers,
         modulation=modulation,
     )
@@ -134,6 +148,9 @@ class _BaseStationAttemptContext:
     attempt_id: str | None
     lease_identity: Any
     simulated_diagnostic: bool
+    # P2-50: execution-frozen vendor-neutral 能力计划；attempt 路径上已与
+    # evidence 里冻结的计划做过 digest 对账（漂移 fail-loud）。
+    execution_plan: BaseStationExecutionPlan
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -562,19 +579,26 @@ def _resolve_base_station_route_snapshot(
     return effective_preset, snapshot if isinstance(snapshot, dict) else None
 
 
-def _formal_mac_configuration_blocker(base_station) -> Optional[str]:
-    """Return a blocker when real hardware cannot configure this MAC test."""
+def _formal_mac_configuration_blocker(
+    base_station,
+    *,
+    plan: BaseStationExecutionPlanItem,
+) -> Optional[str]:
+    """Return a blocker when real hardware cannot configure this MAC test.
+
+    P2-50：能力判据只来自 execution-frozen 计划项；mock 的 simulated
+    语义不变（mock 本来就不进正式 KPI，不需要 MAC 配置 blocker）。
+    """
 
     from app.services.instrument_hal_service import is_mock_driver
 
     if is_mock_driver(base_station):
         return None
-    if not getattr(
-        base_station, "mac_throughput_configuration_supported", False,
-    ):
+    if plan.planned is not True:
         return (
             "当前基站适配器尚未开放正式 MAC 吞吐配置能力；"
             "为避免沿用旧调度器/FRC 状态，本次结果不得进入正式 KPI。"
+            f"（{plan.reason}）"
         )
     return None
 
@@ -786,6 +810,13 @@ class MeasureExecutor(IStepExecutor):
         frozen = execution_config.get(FREEZE_CONFIG_KEY)
         if not isinstance(frozen, dict):
             raise RuntimeError("BaseStation execution is missing its frozen adapter profile")
+        # P2-50: 由当前加载的 adapter 声明推导 live 计划。attempt 路径随后
+        # 与 evidence 冻结计划做 digest 对账；无 evidence 的 legacy/unbound
+        # 诊断路径直接消费 live 计划（与窗口计划的 manifest=None 形态同构）。
+        live_execution_plan = resolve_base_station_execution_plan(
+            base_station,
+            manifest=getattr(base_station, "adapter_manifest", None),
+        )
         resolution = frozen.get("resolution")
         frozen_adapter_id = (
             resolution.get("adapter") if isinstance(resolution, dict) else None
@@ -822,6 +853,7 @@ class MeasureExecutor(IStepExecutor):
                 attempt_id=None,
                 lease_identity=lease_identity,
                 simulated_diagnostic=True,
+                execution_plan=live_execution_plan,
             )
         if (
             not isinstance(frozen_adapter_id, str)
@@ -864,10 +896,24 @@ class MeasureExecutor(IStepExecutor):
                 attempt_id=None,
                 lease_identity=lease_identity,
                 simulated_diagnostic=simulated_diagnostic,
+                execution_plan=live_execution_plan,
             )
         evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
         if evidence.adapter != frozen_adapter_id:
             raise RuntimeError("BaseStation evidence adapter does not match frozen adapter")
+        # P2-50: 本次 attempt 的 evidence 由同一会话在首个测量 I/O 前冻结，
+        # 计划必须在场且与当前加载 adapter 推导结果一致；缺席/漂移都是缺陷。
+        if (
+            evidence.execution_plan_contract_version != 1
+            or evidence.execution_plan is None
+        ):
+            raise RuntimeError(
+                "BaseStation execution plan is not frozen for the current attempt"
+            )
+        if evidence.execution_plan.digest != live_execution_plan.digest:
+            raise RuntimeError(
+                "BaseStation frozen execution plan does not match the loaded adapter"
+            )
         attempt_id = evidence.current_measurement_attempt_id
         if not attempt_id or evidence.current_measurement_attempt_state != "running":
             raise RuntimeError("BaseStation current measurement attempt is not running")
@@ -885,6 +931,7 @@ class MeasureExecutor(IStepExecutor):
             attempt_id=attempt_id,
             lease_identity=lease_identity,
             simulated_diagnostic=simulated_diagnostic,
+            execution_plan=live_execution_plan,
         )
 
     @staticmethod
@@ -892,10 +939,16 @@ class MeasureExecutor(IStepExecutor):
         base_station: Any,
         scells: List[Any],
         *,
+        plan: BaseStationExecutionPlanItem,
         inherit: bool,
         execution_id: Any,
     ) -> tuple[List[Dict[str, Any]], Optional[str]]:
-        """配置并确认完整 CA 集合；任何未知/部分成功都阻断正式采样。"""
+        """配置并确认完整 CA 集合；任何未知/部分成功都阻断正式采样。
+
+        P2-50：能力判据只来自 execution-frozen 计划项。计划未 planned →
+        在首次 SCell 写入前阻断（沿用既有 fail-closed 语义）；计划 planned
+        但 adapter 缺方法 → 计划/实现漂移，fail-loud。
+        """
         if not scells:
             return [], None
         if inherit:
@@ -903,6 +956,8 @@ class MeasureExecutor(IStepExecutor):
                 "CA TestCase 不能使用 base_station_config_mode=inherit：本次没有 SCell "
                 "写入与激活真值；请改用 dispatch 模式。"
             )
+        if plan.planned is not True:
+            return [], f"正式 CA 未列入执行计划：{plan.reason}。"
 
         add_secondary_cell = getattr(base_station, "add_secondary_cell", None)
         activate_secondary_cells = getattr(
@@ -910,23 +965,20 @@ class MeasureExecutor(IStepExecutor):
             "activate_secondary_cells",
             None,
         )
-        if not callable(add_secondary_cell):
-            return [], "baseStation driver 缺少 add_secondary_cell，不能执行正式 CA。"
-        if not callable(activate_secondary_cells):
-            return [], (
-                "baseStation driver 缺少 activate_secondary_cells，不能确认正式 CA。"
-            )
-        if (
-            getattr(
-                base_station,
-                "SCELL_ACTIVATION_READBACK_AUTHORITATIVE",
-                False,
-            )
-            is not True
+        if not callable(add_secondary_cell) or not callable(
+            activate_secondary_cells
         ):
-            return [], (
-                "baseStation driver 缺少逐 SCell 激活态权威回读；"
-                "已在首次 SCell 写入前阻断正式 CA。"
+            missing = [
+                name
+                for name, method in (
+                    ("add_secondary_cell", add_secondary_cell),
+                    ("activate_secondary_cells", activate_secondary_cells),
+                )
+                if not callable(method)
+            ]
+            raise RuntimeError(
+                "执行计划声明 SCell 能力，但 adapter 缺 "
+                f"{'/'.join(missing)}（计划与实现漂移）"
             )
 
         added: List[Dict[str, Any]] = []
@@ -1408,6 +1460,7 @@ class MeasureExecutor(IStepExecutor):
             scells_added, ca_blocker = await self._configure_requested_secondary_cells(
                 base_station,
                 scells,
+                plan=base_station_attempt.execution_plan.scell,
                 inherit=base_station_inherit,
                 execution_id=context.test_execution.id,
             )
@@ -1431,7 +1484,8 @@ class MeasureExecutor(IStepExecutor):
             # 调用方 fail-loud）；CMW 尚无手册支撑的同类配置，只允许保留
             # UNKNOWN 诊断值，不得用默认 fallback 恢复正式 KPI。
             _mac_capability_blocker = _formal_mac_configuration_blocker(
-                base_station
+                base_station,
+                plan=base_station_attempt.execution_plan.mac_throughput,
             )
             if _mac_capability_blocker:
                 logger.warning(
@@ -1454,7 +1508,15 @@ class MeasureExecutor(IStepExecutor):
                         attempt_id=base_station_attempt.attempt_id,
                     )
                     context.db.commit()
-            if base_station.mac_throughput_configuration_supported:
+            if base_station_attempt.execution_plan.mac_throughput.planned is True:
+                # P2-50: 计划 planned 但 adapter 缺方法 = 计划/实现漂移，fail-loud。
+                if not callable(
+                    getattr(base_station, "configure_mac_throughput_test", None)
+                ):
+                    raise RuntimeError(
+                        "执行计划声明 MAC 吞吐配置能力，但 adapter 缺 "
+                        "configure_mac_throughput_test（计划与实现漂移）"
+                    )
                 mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
                     mcs=config.mcs,
@@ -2248,6 +2310,7 @@ class MeasureExecutor(IStepExecutor):
             # --- Phase 2e: attach 后 RRC reconfig ---
             rrc_ok = await _reconfigure_rrc_if_supported(
                 base_station,
+                plan=base_station_attempt.execution_plan.rrc_reconfiguration,
                 mimo_layers=config.mimo_layers,
                 modulation=config.modulation,
             )
@@ -2785,6 +2848,7 @@ class MeasureExecutor(IStepExecutor):
                     base_station=base_station,
                     config=config,
                     execution_id=context.test_execution.id,
+                    plan=base_station_attempt.execution_plan.input_level_control,
                 )
             assert input_level_payload is not None
             if (
@@ -3645,12 +3709,15 @@ class MeasureExecutor(IStepExecutor):
         base_station: Any,
         config: Any,
         execution_id: Any,
+        plan: BaseStationExecutionPlanItem,
     ) -> Dict[str, Any]:
         """跑 InputLevelController + 落遥测。返回 input_level_calibration payload。
 
-        CE 按原子接口检测，BS 必须显式 opt-in 输入闭环能力；跑过
-        controller 后无论成败都返回结构化 payload, 上层据 success/skipped + strict
-        flag 决定 phase verdict。
+        CE 按原子接口检测；BS 侧判据只来自 execution-frozen 计划项（P2-50）：
+        计划未 planned → 跳过闭环（沿用既有 Warning/UNKNOWN 语义）；计划
+        planned 但 adapter 缺 ``set_downlink_power`` → 计划/实现漂移，
+        fail-loud。跑过 controller 后无论成败都返回结构化 payload, 上层据
+        success/skipped + strict flag 决定 phase verdict。
         """
         def _power_fields(value: Optional[float]) -> Dict[str, Any]:
             fields: Dict[str, Any] = {"base_station_dl_power_dbm": value}
@@ -3672,26 +3739,23 @@ class MeasureExecutor(IStepExecutor):
         )
         ce_caps = {m: hasattr(emulator, m) for m in required_ce_methods}
         ce_supports = all(ce_caps.values())
+        bs_supports = plan.planned is True
         bs_power_method = getattr(base_station, "set_downlink_power", None)
-        bs_supports = (
-            getattr(base_station, "input_level_control_supported", False) is True
-            and callable(bs_power_method)
-        )
+        if bs_supports and not callable(bs_power_method):
+            raise RuntimeError(
+                "执行计划声明输入电平闭环能力，但 adapter 缺 set_downlink_power"
+                "（计划与实现漂移）"
+            )
 
         if not ce_supports or not bs_supports:
             reason_parts: List[str] = []
             missing_ce = [m for m, ok in ce_caps.items() if not ok]
             if missing_ce:
                 reason_parts.append(f"CE 缺接口: {missing_ce}")
-            unavailable_reason = getattr(
-                base_station, "input_level_unavailable_reason", None
-            )
-            if isinstance(unavailable_reason, str) and unavailable_reason:
-                reason_parts.append(unavailable_reason)
-            elif not callable(bs_power_method):
-                reason_parts.append("BS 缺 set_downlink_power")
-            elif not bs_supports:
-                reason_parts.append("BS 未显式开放 input_level_control capability")
+            if not bs_supports:
+                # 计划项的 reason 已在冻结时吸收 input_level_unavailable_reason
+                # （声明层的解释），这里不再另行探测 adapter。
+                reason_parts.append(plan.reason)
             skip_reason = (
                 "; ".join(reason_parts)
                 + " — 至少一方缺 capability (e.g. mock driver / 未实现 atomic 的 vendor), "

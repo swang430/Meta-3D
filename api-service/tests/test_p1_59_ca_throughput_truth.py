@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.hal.base_station import ThroughputMetrics
+from app.hal.base_station import (
+    BaseStationExecutionPlanItem,
+    ThroughputMetrics,
+    resolve_base_station_execution_plan,
+)
 from app.hal.scpi_evidence import (
     ScpiExchangeRef,
     exchange_matches_catalog_role,
@@ -183,6 +187,23 @@ def test_all_nr_query_matches_the_sourced_throughput_evidence_role() -> None:
     ) is True
 
 
+def _scell_plan(planned: bool) -> BaseStationExecutionPlanItem:
+    """P2-50：直接构造 helper 消费的 execution-frozen SCell 计划项。"""
+
+    return BaseStationExecutionPlanItem(
+        dimension="scell",
+        planned=planned,
+        capability_source=(
+            "adapter_attribute:SCELL_ACTIVATION_READBACK_AUTHORITATIVE"
+        ),
+        reason=(
+            "测试计划项：声明逐 SCell 激活态权威回读"
+            if planned
+            else "测试计划项：未声明逐 SCell 激活态权威回读"
+        ),
+    )
+
+
 def _scell(frequency_hz: float = 3.7e9) -> SimpleNamespace:
     return SimpleNamespace(
         frequency_hz=frequency_hz,
@@ -211,6 +232,7 @@ async def test_no_scell_needs_no_ca_driver_capability() -> None:
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         SimpleNamespace(),
         [],
+        plan=_scell_plan(False),
         inherit=False,
         execution_id="single-carrier",
     )
@@ -229,6 +251,7 @@ async def test_ca_inherit_mode_fails_before_sampling() -> None:
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell()],
+        plan=_scell_plan(True),
         inherit=True,
         execution_id="ca-inherit",
     )
@@ -247,19 +270,51 @@ async def test_ca_inherit_mode_fails_before_sampling() -> None:
     ],
 )
 @pytest.mark.asyncio
-async def test_ca_requires_both_driver_capabilities(
+async def test_ca_planned_but_missing_method_is_plan_drift(
     driver: SimpleNamespace,
     missing_name: str,
 ) -> None:
+    """P2-50：计划说 planned 但 adapter 缺方法 = 计划/实现漂移，fail-loud。"""
+
+    with pytest.raises(RuntimeError, match=missing_name):
+        await MeasureExecutor._configure_requested_secondary_cells(
+            driver,
+            [_scell()],
+            plan=_scell_plan(True),
+            inherit=False,
+            execution_id="ca-capability",
+        )
+    driver_methods = [
+        getattr(driver, name, None)
+        for name in ("add_secondary_cell", "activate_secondary_cells")
+    ]
+    for method in driver_methods:
+        if method is not None:
+            method.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ca_unplanned_blocks_before_first_scell_write() -> None:
+    """P2-50：计划未 planned → 首次 SCell 写入前阻断，理由取自计划项。"""
+
+    driver = SimpleNamespace(
+        add_secondary_cell=AsyncMock(return_value=True),
+        activate_secondary_cells=AsyncMock(return_value=True),
+    )
+
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell()],
+        plan=_scell_plan(False),
         inherit=False,
-        execution_id="ca-capability",
+        execution_id="ca-unplanned",
     )
 
     assert added == []
-    assert blocker and missing_name in blocker
+    assert blocker and "未列入执行计划" in blocker
+    assert "未声明逐 SCell 激活态权威回读" in blocker
+    driver.add_secondary_cell.assert_not_awaited()
+    driver.activate_secondary_cells.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -273,6 +328,7 @@ async def test_any_scell_add_failure_blocks_activation_and_sampling() -> None:
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell(), _scell(3.8e9)],
+        plan=_scell_plan(True),
         inherit=False,
         execution_id="ca-add-failure",
     )
@@ -293,6 +349,7 @@ async def test_scell_activation_false_blocks_sampling() -> None:
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell()],
+        plan=_scell_plan(True),
         inherit=False,
         execution_id="ca-activation-failure",
     )
@@ -325,6 +382,7 @@ async def test_ca_driver_exception_is_an_actionable_blocker(
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell()],
+        plan=_scell_plan(True),
         inherit=False,
         execution_id="ca-exception",
     )
@@ -346,6 +404,7 @@ async def test_all_scells_must_activate_before_all_nr_scope_is_allowed() -> None
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell(), _scell(3.8e9)],
+        plan=_scell_plan(True),
         inherit=False,
         execution_id="ca-success",
     )
@@ -387,9 +446,17 @@ async def test_real_uxm_ca_blocks_before_first_scell_write_without_readback() ->
     )
     driver.add_secondary_cell = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
+    # P2-50：真实驱动的计划项由推导函数从声明层得出（UXM 未声明 SCell 权威回读）。
+    plan = resolve_base_station_execution_plan(
+        driver,
+        manifest=RealUxmDriver.adapter_manifest,
+    ).scell
+    assert plan.planned is False
+
     added, blocker = await MeasureExecutor._configure_requested_secondary_cells(
         driver,
         [_scell()],
+        plan=plan,
         inherit=False,
         execution_id="ca-no-readback",
     )

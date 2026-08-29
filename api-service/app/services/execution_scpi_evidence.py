@@ -25,10 +25,12 @@ from app.hal.base_station import (
     BaseStationApplyReceipt,
     BaseStationCleanupResult,
     BaseStationControlReleaseResult,
+    BaseStationExecutionPlan,
     BaseStationIdentity,
     BaseStationMeasurementWindow,
     BaseStationMetricRegistry,
     BaseStationRequestedConfig,
+    resolve_base_station_execution_plan,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfileResolution
@@ -278,6 +280,21 @@ def _initial_base_station_execution_evidence(
         ],
         "digest": metric_registry.digest,
     }
+    # P2-50: 与 metric registry 同一冻结时点（acquire 后、首个测量 I/O 前）
+    # 冻结 vendor-neutral 能力执行计划。manifest 取 driver 自己的声明——
+    # simulated mock 无 manifest（None），计划只由其实例声明推导。
+    execution_plan = resolve_base_station_execution_plan(
+        driver,
+        manifest=getattr(driver, "adapter_manifest", None),
+    )
+    if not isinstance(execution_plan, BaseStationExecutionPlan):
+        raise ValueError("loaded driver did not provide an execution plan")
+    if execution_plan.adapter_id != adapter:
+        raise ValueError("execution plan adapter does not match frozen adapter")
+    execution_plan_payload = {
+        **execution_plan.as_payload(),
+        "digest": execution_plan.digest,
+    }
     connection_id = frozen_adapter.get("instrument_connection_id")
     if not isinstance(connection_id, str) or not connection_id:
         raise ValueError("frozen baseStation connection identity is missing")
@@ -351,6 +368,8 @@ def _initial_base_station_execution_evidence(
             "measurement_window_contract_version": 1,
             "metric_registry_contract_version": 1,
             "metric_registry": metric_registry_payload,
+            "execution_plan_contract_version": 1,
+            "execution_plan": execution_plan_payload,
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -391,6 +410,8 @@ def initialize_base_station_execution_evidence(
             "requested_positions",
             "metric_registry_contract_version",
             "metric_registry",
+            "execution_plan_contract_version",
+            "execution_plan",
         )
         if any(
             getattr(existing, field) != getattr(candidate, field)
@@ -892,6 +913,10 @@ def save_base_station_execution_evidence(
         normalized.pop("metric_registry_contract_version", None)
     if "metric_registry" not in parsed.model_fields_set:
         normalized.pop("metric_registry", None)
+    if "execution_plan_contract_version" not in parsed.model_fields_set:
+        normalized.pop("execution_plan_contract_version", None)
+    if "execution_plan" not in parsed.model_fields_set:
+        normalized.pop("execution_plan", None)
     for parsed_window, normalized_window in zip(
         parsed.measurement_windows,
         normalized["measurement_windows"],
