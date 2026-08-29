@@ -72,9 +72,6 @@ class _Cmw:
     native_calls: int = 0
     legacy_calls: int = 0
 
-    def measurement_window_count(self, _requested: int) -> int:
-        return 1
-
     async def measure_base_station_window(self, window_s, *, request):
         self.native_calls += 1
         started = datetime.now(timezone.utc)

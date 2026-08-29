@@ -1209,25 +1209,6 @@ class BaseStationDriver(InstrumentDriver):
             f"{type(self).__name__} does not provide a confirmed measurement window"
         )
 
-    def measurement_window_count(self, requested: int) -> int:
-        """Let the adapter own whether one position uses one or N native windows."""
-
-        if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
-            raise ValueError("requested measurement window count must be positive")
-        return 1 if self.measurement_window_cardinality == "single" else requested
-
-    def unconfirmed_window_allows_diagnostic_execution(
-        self,
-        window: BaseStationMeasurementWindow,
-    ) -> bool:
-        """Keep only authoritative simulated windows runnable by default."""
-
-        return (
-            getattr(self, "simulated", False) is True
-            and isinstance(window, BaseStationMeasurementWindow)
-            and window.metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
-        )
-
     async def get_ue_info(self) -> Dict[str, Any]:
         """
         获取已连接 UE 的信息。

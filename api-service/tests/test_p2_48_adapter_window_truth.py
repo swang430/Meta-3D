@@ -206,6 +206,16 @@ async def test_measure_executor_uses_frozen_requests_not_driver_count_or_policy(
     assert samples[0].window.trust.request == requests[0]
 
 
+def test_production_window_path_has_no_legacy_count_policy_or_boolean_gate():
+    import inspect
+
+    source = inspect.getsource(MeasureExecutor._measure_base_station_samples)
+
+    assert "measurement_window_count" not in source
+    assert "unconfirmed_window_allows_diagnostic_execution" not in source
+    assert "window.confirmed" not in source
+
+
 @pytest.mark.asyncio
 async def test_measure_executor_rejects_missing_or_mismatched_window_trust():
     request = _request()

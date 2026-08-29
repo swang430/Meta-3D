@@ -401,10 +401,9 @@ def test_measure_window_selector_contains_no_vendor_or_legacy_branch():
     assert "measure_throughput_window" not in source
 
 
-def test_registered_adapters_own_their_common_window_cardinality_and_contract():
-    assert RealCmw500Driver.measurement_window_cardinality == "single"
-    assert RealUxmDriver.measurement_window_cardinality == "requested"
-    assert MockBaseStation.measurement_window_cardinality == "requested"
+def test_registered_manifests_own_their_common_window_cardinality_and_contract():
+    assert RealCmw500Driver.adapter_manifest.measurement.cardinality == "single"
+    assert RealUxmDriver.adapter_manifest.measurement.cardinality == "requested"
     assert (
         RealUxmDriver.measure_base_station_window
         is not BaseStationDriver.measure_base_station_window

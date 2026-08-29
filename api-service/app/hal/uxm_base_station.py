@@ -4081,18 +4081,6 @@ class RealUxmDriver(BaseStationDriver):
             trust=trust,
         )
 
-    def unconfirmed_window_allows_diagnostic_execution(
-        self,
-        window: BaseStationMeasurementWindow,
-    ) -> bool:
-        """Retain the pre-P2-43 UXM attested path without claiming closure."""
-
-        return (
-            isinstance(window, BaseStationMeasurementWindow)
-            and window.confirmed is False
-            and bool(window.evidence)
-        )
-
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取 UE 信息 (TODO: 从 UXM 查询)"""
         return {
