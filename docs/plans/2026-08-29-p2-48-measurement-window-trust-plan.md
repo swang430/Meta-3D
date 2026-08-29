@@ -109,4 +109,3 @@ Codex R1→R2。覆盖最新 HEAD 的 R2 无 P1才 merge commit；R2 若仍有 P
 复审。合并后同步本地 main、保留未跟踪仪器资料、清理 worktree/分支，再开始 P2-49。
 
 **Commit:** `test: close measurement window trust contract`
-

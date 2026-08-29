@@ -95,4 +95,3 @@ def test_window_plan_builder_has_no_adapter_identity_branch():
     assert "cmw500" not in source.lower()
     assert "uxm" not in source.lower()
     assert "measurement_window_cardinality" not in source
-

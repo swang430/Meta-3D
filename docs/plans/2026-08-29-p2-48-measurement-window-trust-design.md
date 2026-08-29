@@ -131,4 +131,3 @@ request/trust、畸形字段或混入旧窗口一律 fail-closed，绝不从当�
 - 不把 UXM clear/read 或累计读数升级为 closed-window（P2-52）。
 - 不新增数据库真值、自动发现或迁移。
 - 不改变 Diagnostic/Formal policy、site certification 或正式 provenance 白名单。
-
