@@ -685,32 +685,39 @@ def _commissioning_measure_projection(
         rows = [
             {
                 **row,
-                "dl_throughput_mbps": row["dl_throughput_mbps"].model_copy(
-                    update={
-                        "status": "diagnostic",
-                        "formal_value": None,
-                        "diagnostic_value": row["dl_throughput_mbps"].diagnostic_value
-                        if row["dl_throughput_mbps"].diagnostic_value is not None
-                        else row["dl_throughput_mbps"].formal_value,
-                        "reason": "execution_qualification_diagnostic",
-                    }
-                ),
-                "dl_bler_percent": row["dl_bler_percent"].model_copy(
-                    update={
-                        "status": "diagnostic",
-                        "formal_value": None,
-                        "diagnostic_value": row["dl_bler_percent"].diagnostic_value
-                        if row["dl_bler_percent"].diagnostic_value is not None
-                        else row["dl_bler_percent"].formal_value,
-                        "reason": "execution_qualification_diagnostic",
-                    }
-                ),
+                "metrics": {
+                    key: metric.model_copy(
+                        update={
+                            "status": "diagnostic"
+                            if metric.diagnostic_value is not None
+                            or metric.formal_value is not None
+                            else "unknown",
+                            "formal_value": None,
+                            "diagnostic_value": metric.diagnostic_value
+                            if metric.diagnostic_value is not None
+                            else metric.formal_value,
+                            "reason": "execution_qualification_diagnostic",
+                        }
+                    )
+                    for key, metric in row["metrics"].items()
+                },
             }
             for row in rows
         ]
+        for row in rows:
+            row["dl_throughput_mbps"] = row["metrics"].get(
+                "dl_throughput_mbps", row["dl_throughput_mbps"]
+            )
+            row["dl_bler_percent"] = row["metrics"].get(
+                "dl_bler_percent", row["dl_bler_percent"]
+            )
     projected["base_station_metric_projection"] = [
         {
             "position": row["position"],
+            "metrics": {
+                key: metric.model_dump(mode="json")
+                for key, metric in row["metrics"].items()
+            },
             "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(mode="json"),
             "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
         }

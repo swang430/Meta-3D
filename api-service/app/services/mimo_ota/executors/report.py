@@ -983,6 +983,10 @@ def _build_mimo_ota_content_data(
         "base_station_metric_projection": [
             {
                 "position": row["position"],
+                "metrics": {
+                    key: _serialized_base_station_metric(metric)
+                    for key, metric in row["metrics"].items()
+                },
                 "dl_throughput_mbps": _serialized_base_station_metric(
                     row["dl_throughput_mbps"]
                 ),

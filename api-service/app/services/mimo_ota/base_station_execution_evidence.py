@@ -25,6 +25,12 @@ BASE_STATION_EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
 MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD = (
     "mimo_ota_theoretical_peak_throughput_mbps"
 )
+_LEGACY_METRIC_UNITS = {
+    "dl_throughput_mbps": "Mbps",
+    "dl_bler_percent": "%",
+}
+
+
 def base_station_metric_projection_required(
     execution_config: Any,
 ) -> bool:
@@ -1175,6 +1181,8 @@ def _site_qualification_gate(
         not isinstance(execution_config, dict)
         or EXECUTION_QUALIFICATION_KEY not in execution_config
     ):
+        if evidence.metric_registry_contract_version == 1:
+            return False, "execution_qualification_missing"
         return None, "legacy_qualification_absent"
     raw = execution_config.get(EXECUTION_QUALIFICATION_KEY)
     if validate_frozen_execution_qualification(raw) is not None:
@@ -1305,15 +1313,34 @@ def evaluate_base_station_metric_trust(
     except Exception:
         return _untrusted(evidence, metric_name, "invalid_expected_position")
     position_payload = position.model_dump(mode="json")
-    if metric_name not in _METRIC_UNITS:
-        return _untrusted(
-            evidence, metric_name, "unsupported_metric", position_payload
-        )
     parsed = _parsed(evidence)
     if parsed is None:
         return _untrusted(
             evidence, metric_name, "invalid_evidence_schema", position_payload
         )
+    capability = None
+    if parsed.metric_registry_contract_version == 1:
+        registry = parsed.metric_registry
+        if registry is None:  # guarded by model validation
+            return _untrusted(
+                evidence, metric_name, "metric_registry_missing", position_payload
+            )
+        try:
+            capability = registry.capability(metric_name)
+        except KeyError:
+            return _untrusted(
+                evidence,
+                metric_name,
+                "metric_not_declared_in_registry",
+                position_payload,
+            )
+        expected_unit = capability.unit
+    else:
+        expected_unit = _LEGACY_METRIC_UNITS.get(metric_name)
+        if expected_unit is None:
+            return _untrusted(
+                evidence, metric_name, "unsupported_metric", position_payload
+            )
     if expected_config != parsed.requested_config.payload:
         return FormalMetricTrust(
             status="unknown",
@@ -1362,7 +1389,6 @@ def evaluate_base_station_metric_trust(
         )
     window = matching[0]
     metric = window.metrics.get(metric_name)
-    expected_unit = _METRIC_UNITS[metric_name]
     if (
         metric is None
         or metric.measurement_attempt_id != parsed.current_measurement_attempt_id
@@ -1372,6 +1398,21 @@ def evaluate_base_station_metric_trust(
     ):
         return _untrusted(
             evidence, metric_name, "metric_evidence_mismatch", position_payload
+        )
+    if parsed.metric_registry_contract_version == 1 and (
+        capability is None
+        or capability.evidence != "authoritative"
+        or metric.registry_digest != parsed.metric_registry.digest
+        or metric.evidence != capability.evidence
+        or metric.source_reference != capability.source_reference
+        or metric.simulated is not False
+        or metric.scope is None
+    ):
+        return _untrusted(
+            evidence,
+            metric_name,
+            "metric_semantics_not_authoritative",
+            position_payload,
         )
     try:
         exchange_ids = _unique_non_empty(metric.exchange_ids, "metric_exchange_ids")
@@ -1417,30 +1458,41 @@ def project_base_station_metrics_by_position(
     expected_positions: list[dict[str, Any]],
     execution_config: Any = None,
 ) -> list[dict[str, Any]]:
-    """Project both native metrics independently for every frozen position."""
+    """Project every frozen registry metric plus two stable compatibility mirrors."""
 
+    parsed = _parsed(evidence)
+    metric_names = (
+        [item.key for item in parsed.metric_registry.metrics]
+        if parsed is not None
+        and parsed.metric_registry_contract_version == 1
+        and parsed.metric_registry is not None
+        else list(_LEGACY_METRIC_UNITS)
+    )
     rows: list[dict[str, Any]] = []
     for expected_position in expected_positions:
         position = PositionSnapshot.model_validate(expected_position).model_dump(
             mode="json"
         )
-        rows.append(
-            {
-                "position": position,
-                "dl_throughput_mbps": evaluate_base_station_metric_trust(
-                    evidence,
-                    "dl_throughput_mbps",
-                    expected_config,
-                    position,
-                    execution_config=execution_config,
-                ),
-                "dl_bler_percent": evaluate_base_station_metric_trust(
-                    evidence,
-                    "dl_bler_percent",
-                    expected_config,
-                    position,
-                    execution_config=execution_config,
-                ),
-            }
-        )
+        metrics = {
+            metric_name: evaluate_base_station_metric_trust(
+                evidence,
+                metric_name,
+                expected_config,
+                position,
+                execution_config=execution_config,
+            )
+            for metric_name in metric_names
+        }
+        compatibility = {
+            metric_name: metrics.get(metric_name)
+            or evaluate_base_station_metric_trust(
+                evidence,
+                metric_name,
+                expected_config,
+                position,
+                execution_config=execution_config,
+            )
+            for metric_name in _LEGACY_METRIC_UNITS
+        }
+        rows.append({"position": position, "metrics": metrics, **compatibility})
     return rows

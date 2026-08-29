@@ -179,11 +179,15 @@ def _base_station_projection_is_sanitized(value: Any) -> bool:
     if not isinstance(value, list):
         return False
     for row in value:
-        if not isinstance(row, dict) or set(row) != {
-            "position",
-            "dl_throughput_mbps",
-            "dl_bler_percent",
-        }:
+        if not isinstance(row, dict) or set(row) not in (
+            {"position", "dl_throughput_mbps", "dl_bler_percent"},
+            {
+                "position",
+                "metrics",
+                "dl_throughput_mbps",
+                "dl_bler_percent",
+            },
+        ):
             return False
         try:
             position = PositionSnapshot.model_validate(row["position"])
@@ -193,6 +197,29 @@ def _base_station_projection_is_sanitized(value: Any) -> bool:
             bler = FormalMetricTrust.model_validate(row["dl_bler_percent"])
         except Exception:
             return False
+        raw_metrics = row.get("metrics")
+        parsed_metrics: dict[str, FormalMetricTrust] | None = None
+        if raw_metrics is not None:
+            if not isinstance(raw_metrics, dict) or not raw_metrics:
+                return False
+            try:
+                parsed_metrics = {
+                    key: FormalMetricTrust.model_validate(metric)
+                    for key, metric in raw_metrics.items()
+                    if isinstance(key, str) and key
+                }
+            except Exception:
+                return False
+            if (
+                len(parsed_metrics) != len(raw_metrics)
+                or any(
+                    parsed_metrics[key].model_dump(mode="json") != metric
+                    for key, metric in raw_metrics.items()
+                )
+                or parsed_metrics.get("dl_throughput_mbps") != throughput
+                or parsed_metrics.get("dl_bler_percent") != bler
+            ):
+                return False
         if (
             position.model_dump(mode="json") != row["position"]
             or throughput.model_dump(mode="json") != row["dl_throughput_mbps"]
