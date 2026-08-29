@@ -116,7 +116,9 @@ def test_window_rejects_legacy_confirmed_boolean_that_disagrees_with_trust():
 
 
 @pytest.mark.asyncio
-async def test_uxm_maps_existing_read_window_to_unavailable_diagnostic_trust():
+async def test_uxm_maps_existing_read_window_to_clear_read_only_diagnostic_trust():
+    """P2-52：lifecycle 升级为 clear_read_only 后，窗口内没发成 CLEar 时
+    clear 阶段必须如实记 unavailable —— 声明升级不制造证据。"""
     driver = RealUxmDriver("uxm", {"ip": "192.0.2.1"})
     async def diagnostic_window(*_args, **_kwargs):
         record_exchange_intent(
@@ -136,7 +138,7 @@ async def test_uxm_maps_existing_read_window_to_unavailable_diagnostic_trust():
             kpi_valid={"dl_throughput": True},
         )
     driver.measure_throughput_window = AsyncMock(side_effect=diagnostic_window)
-    request = _request(lifecycle="unavailable", expected=3)
+    request = _request(lifecycle="clear_read_only", expected=3)
 
     window = await driver.measure_base_station_window(0.0, request=request)
 
@@ -145,7 +147,18 @@ async def test_uxm_maps_existing_read_window_to_unavailable_diagnostic_trust():
     assert window.trust.formally_confirmed is False
     assert window.trust.diagnostic_execution_allowed is True
     assert window.confirmed is False
+    assert window.preclear_off_confirmed is False
     assert all(stage.status == "unavailable" for stage in window.trust.stages)
+
+
+@pytest.mark.asyncio
+async def test_uxm_rejects_request_lifecycle_that_disagrees_with_manifest():
+    """冻结请求与驱动 manifest 漂移必须 fail-loud，不静默换档。"""
+    driver = RealUxmDriver("uxm", {"ip": "192.0.2.1"})
+    request = _request(lifecycle="unavailable", expected=3)
+
+    with pytest.raises(ValueError, match="frozen manifest"):
+        await driver.measure_base_station_window(0.0, request=request)
 
 
 @pytest.mark.asyncio

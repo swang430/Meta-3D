@@ -237,8 +237,16 @@ def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
     assert manifest.measurement is not None
     assert manifest.measurement.cardinality == "requested"
     assert manifest.measurement.scopes == ("pcell", "all_cells")
-    assert manifest.measurement.lifecycle == "unavailable"
-    assert manifest.measurement.metrics == ()
+    # P2-52：clear 边界双证据（CLEar 手册原文 + IRAT 现场实测）→ clear_read_only；
+    # closed 无出处（IRAT 适用性未说明 + [:STATe]? 查询形无原文）→ 不升
+    # authoritative_closed。metrics = 两个可选 profile registry 的保守交集
+    # （逐字段一致性由 test_p2_52 的不变量门守着）。
+    assert manifest.measurement.lifecycle == "clear_read_only"
+    assert manifest.measurement.source_reference is not None
+    assert {metric.key for metric in manifest.measurement.metrics} == {
+        "cqi_index",
+        "ri_index",
+    }
     assert not any(
         field.readback == "authoritative"
         for field in manifest.config_fields
@@ -251,12 +259,21 @@ def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
 
 def test_uxm_authoritative_capability_sources_resolve_to_tracked_archive_anchors():
     manifest = RealUxmDriver.adapter_manifest
+    assert manifest.measurement is not None
     authoritative_sources = [
         *(item.source_reference for item in manifest.rat_capabilities),
         *(
             item.source_reference
             for item in manifest.config_fields
             if item.support == "authoritative" or item.readback == "authoritative"
+        ),
+        # P2-52：测量窗口的 clear 边界出处 + 交集 metrics 的 authoritative
+        # 出处也必须解析到 tracked archive 锚点，不许编。
+        manifest.measurement.source_reference,
+        *(
+            metric.source_reference
+            for metric in manifest.measurement.metrics
+            if metric.evidence == "authoritative"
         ),
     ]
 

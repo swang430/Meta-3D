@@ -533,17 +533,62 @@ class RealUxmDriver(BaseStationDriver):
                 source_reference=None,
             ),
         ),
-        # Adapter-level truth is the conservative intersection of every Test
-        # App profile this driver can select.  The common SPI can request and
-        # read diagnostic windows, but no profile-independent authoritative
-        # lifecycle or metric proof is available.  P2-52 must freeze the
-        # resolved Test App before this declaration can be strengthened.
+        # metrics 走两 profile registry 的保守交集（门 A 钉着）；
+        # lifecycle 是**上界声明**而非交集 —— 5G_NR_Test 方言无 CLEar，
+        # 其实际生命周期由 per-window trust 记账如实兜底（clear 阶段
+        # 在该方言下恒 unavailable），上界声明不产生过声明。
+        #
+        # P2-52（2026-08-30）裁决 —— lifecycle = "clear_read_only"：
+        #   · 手册原文（本地 zip HTML + NotebookLM 双源互证）：NR 域
+        #     BTHRoughput 树的控制命令恰 4 条（[:STATe] / CONTinuous[:ALL] /
+        #     LENGth[:ALL] / CLEar，其余全 Query only，无独立 STARt/STOP）。
+        #     CLEar = "Resets the BLER measurement. NB if a measurement is
+        #     in-progress it will automatically be restarted."（Imm Action /
+        #     No query）—— 即窗口边界的最强手册事实是 **clear**，不是 closed。
+        #   · 现场实测：IRAT 真机已实发 `BTHRoughput:STATe ON` 与每窗口
+        #     `CLEar`（2026-07-03 / 08-27 执行链），写形有效。
+        #   **不升 authoritative_closed** —— 两个缺口都在：① 上述条目
+        #   AppMode 全标 NSA|SA，`SYSTem:APPLication` 里 NSA 与 LTE_NR_IRAT
+        #   并列互斥，手册无一处说明 NSA|SA 命令在 IRAT 下是否可用（P1-32
+        #   规矩：两个方向都没证据 = 未经查证）；② `BTHRoughput[:STATe]?`
+        #   查询形手册未列，closed/OFF 回读无原文出处。
+        #   每个窗口里 clear 是否真的发生仍由 per-window trust 的 stage
+        #   receipt 逐次如实记录（5G_NR_Test 方言无 CLEar → clear 记
+        #   unavailable；IRAT 发成 → confirmed 携 exchange 证据）。
+        # metrics = 两个可选 profile（lte_nr_irat / nr5g_test）metric
+        # registry 的 key 交集（resolve_metric_registry 的保守交集，由
+        # test_p2_52 的不变量门守着）；两方言的 CQI/RI 命令各有手册出处。
         measurement=BaseStationMeasurementCapability(
             cardinality="requested",
             scopes=("pcell", "all_cells"),
-            lifecycle="unavailable",
-            metrics=(),
-            source_reference=None,
+            lifecycle="clear_read_only",
+            metrics=(
+                BaseStationMetricCapability(
+                    key="cqi_index",
+                    direction="link",
+                    unit="index",
+                    scopes=("pcell",),
+                    evidence="authoritative",
+                    source_reference=(
+                        f"{_UXM_MANUAL_SOURCE}"
+                        "#scpi/bse:measure:nr5g:(cell):csi:cqi:statistics?"
+                    ),
+                ),
+                BaseStationMetricCapability(
+                    key="ri_index",
+                    direction="link",
+                    unit="index",
+                    scopes=("pcell",),
+                    evidence="authoritative",
+                    source_reference=(
+                        f"{_UXM_MANUAL_SOURCE}"
+                        "#scpi/bse:measure:nr5g:(cell):csi:ri:histogram?"
+                    ),
+                ),
+            ),
+            source_reference=(
+                f"{_UXM_MANUAL_SOURCE}#scpi/bse:measure:nr5g:bthroughput:clear"
+            ),
         ),
         profile_requirement="not_applicable",
         profile_schema_version=None,
@@ -4137,16 +4182,19 @@ class RealUxmDriver(BaseStationDriver):
     ) -> BaseStationMeasurementWindow:
         """Expose the existing UXM clear/read window without inventing closure.
 
-        The current sourced UXM profile has an independent clear boundary but
-        no authoritative stop/closed boundary.  Preserve the established
-        per-metric attestation for the legacy UXM certification path while the
-        new lifecycle envelope remains unconfirmed and therefore cannot claim
-        formal trust by itself.
+        P2-52（2026-08-30，手册双源取证）：NR 域 BTHRoughput 树只有 clear
+        边界（`CLEar` —— "if a measurement is in-progress it will
+        automatically be restarted"），**没有**权威 stop/closed 边界，
+        `[:STATe]?` 查询形也无手册原文。所以 lifecycle 冻结为
+        ``clear_read_only``：clear 阶段按本窗口内 CLEar 是否真的发成逐次
+        记账（confirmed 携 exchange 证据 / 发不成如实 unavailable），
+        run/ready/closed 永远不 confirmed —— ``clear_read_only`` 依契约
+        （base_station.py）不可能 formally_confirmed，值保持 diagnostic。
         """
 
         if not isinstance(request, BaseStationMeasurementWindowRequest):
             raise TypeError("UXM measurement requires a frozen window request")
-        if request.lifecycle != "unavailable" or request.cardinality != "requested":
+        if request.lifecycle != "clear_read_only" or request.cardinality != "requested":
             raise ValueError("UXM window request disagrees with its frozen manifest")
         metric_registry = self.resolve_metric_registry()
         throughput_scope = (
@@ -4162,6 +4210,59 @@ class RealUxmDriver(BaseStationDriver):
             )
         raw_metrics = metrics.to_dict()
         exchange_ids = [exchange.exchange_id for exchange in exchanges]
+        # clear 边界证据：本窗口内 CLEar 写命令确实走完（result_type="ok"，
+        # 非模拟）。measure_throughput_window 里 CLEar 失败只 warning ——
+        # 这里不复推断，只认 transport 层的终态记录。
+        clear_command = self._cmds.MEAS_BTHROUGHPUT_CLEAR
+        clear_exchange_ids = tuple(
+            exchange.exchange_id
+            for exchange in exchanges
+            if clear_command
+            and exchange.command == clear_command
+            # 内审 F1（P1）：传输层写命令 intent 记的是 "command"
+            # （base.py 模板方法；scpi_evidence 目录匹配器同源），
+            # "write" 只出现在 mock 模拟边界（且 simulated=True 已被下条排除）
+            and exchange.operation == "command"
+            and exchange.result_type == "ok"
+            and exchange.simulated is False
+        )
+        clear_confirmed = bool(clear_exchange_ids)
+        if clear_confirmed:
+            clear_receipt = BaseStationMeasurementStageReceipt(
+                stage="clear",
+                status="confirmed",
+                reason=(
+                    "BTHRoughput:CLEar completed in this window (manual: "
+                    "Resets the BLER measurement; in-progress measurement "
+                    "automatically restarts)"
+                ),
+                exchange_ids=clear_exchange_ids,
+            )
+        else:
+            clear_receipt = BaseStationMeasurementStageReceipt(
+                stage="clear",
+                status="unavailable",
+                reason=(
+                    "BTHRoughput:CLEar did not complete in this window "
+                    "(profile has no clear command, or the write failed); "
+                    "values are cumulative, not a fresh window sample"
+                ),
+            )
+        unconfirmed_stage_reasons = {
+            "run": (
+                "BTHRoughput[:STATe]? query form has no manual source; "
+                "running state cannot be read back authoritatively"
+            ),
+            "ready": (
+                "manual defines no readiness boundary for the NR BTHRoughput "
+                "tree; readiness cannot be confirmed"
+            ),
+            "closed": (
+                "manual defines no stop/closed boundary for the NR "
+                "BTHRoughput tree (control commands are [:STATe]/CONTinuous/"
+                "LENGth/CLEar only); clear_read_only never confirms closure"
+            ),
+        }
         evidence = InstrumentEvidenceItem(
             instrument="uxm",
             evidence_key="uxm.throughput.window",
@@ -4172,33 +4273,36 @@ class RealUxmDriver(BaseStationDriver):
             command_sent=self._cmds.MEAS_BTHROUGHPUT_CLEAR,
             readback={
                 "metrics": raw_metrics,
+                "clear_boundary_confirmed": clear_confirmed,
                 "closed_boundary_confirmed": False,
             },
             exchange_ids=exchange_ids,
             evidence_level=EvidenceLevel.TRANSPORT,
             source_reference=(
-                "existing UXM profile clear/read path; authoritative closed "
-                "window boundary unavailable"
+                f"{_UXM_MANUAL_SOURCE}"
+                "#scpi/bse:measure:nr5g:bthroughput:clear ; sourced clear "
+                "boundary only — no authoritative closed window boundary"
             ),
             verdict=EvidenceVerdict.UNKNOWN,
             reason=(
-                "UXM independent window has no authoritative closed lifecycle; "
-                "values are diagnostic only"
+                "UXM window has a sourced clear boundary but no authoritative "
+                "closed lifecycle; values are diagnostic only"
             ),
         )
         trust = BaseStationMeasurementWindowTrust(
             schema_version=1,
             request=request,
             request_digest=request.digest,
-            stages=tuple(
-                BaseStationMeasurementStageReceipt(
-                    stage=stage,
-                    status="unavailable",
-                    reason=(
-                        "profile-independent authoritative lifecycle is unavailable"
-                    ),
-                )
-                for stage in ("clear", "run", "ready", "closed")
+            stages=(
+                clear_receipt,
+                *(
+                    BaseStationMeasurementStageReceipt(
+                        stage=stage,
+                        status="unavailable",
+                        reason=unconfirmed_stage_reasons[stage],
+                    )
+                    for stage in ("run", "ready", "closed")
+                ),
             ),
             simulated=False,
             exchange_ids=tuple(exchange_ids),
@@ -4240,7 +4344,9 @@ class RealUxmDriver(BaseStationDriver):
             started_at=started_at,
             completed_at=datetime.now(timezone.utc),
             metrics=metrics,
-            preclear_off_confirmed=False,
+            # 镜像 trust 的 stage receipt（base_station.py 的 mirror 校验）：
+            # clear 有 exchange 证据才 True，其余边界无出处恒 False。
+            preclear_off_confirmed=clear_confirmed,
             running_confirmed=False,
             ready_confirmed=False,
             closed_off_confirmed=False,

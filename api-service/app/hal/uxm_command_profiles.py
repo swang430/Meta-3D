@@ -166,6 +166,15 @@ class UxmTestApp:
     # 全局累积开关 + 清零 (不带 cell —— 手册明确是技术层全局设置)
     MEAS_BTHROUGHPUT_STATE: Optional[str] = None
     MEAS_BTHROUGHPUT_CLEAR: Optional[str] = None
+    # ⚠ STATe 的**查询形**（P2-52 取证，2026-08-30）：手册条目
+    #   `BSE:MEASure:NR5G:BTHRoughput[:STATe]`（5G_NR_Test_Application_SCPI_
+    #   Reference.zip!...html#scpi/bse:measure:nr5g:bthroughput(:state)，
+    #   "Enables/disables BLER measurement"，Boolean，Default 0）**只载设置形**；
+    #   带 `?` 的查询形手册未列（对比 `CSI:STATe?` 显式带 `?` 并标 Query only）。
+    #   所以本字段是**推断**：显式 `:STATe` 展开 = 方括号可选节点的 SCPI 标准
+    #   等价；查询形 = 未经手册证实的投机形式。**仅供诊断探针读取现状**
+    #   （uxm_window_boundary_probe），不进正式 MEASURE 路径，读不到属预期。
+    MEAS_BTHROUGHPUT_STATE_QUERY: Optional[str] = None
     # OTA 吞吐量: 6 doubles
     #   {progress-count, current, min, max, average, current-scheduled}, 单位 bps
     MEAS_TPUT_DL_OTA: Optional[str] = None
@@ -517,9 +526,24 @@ class UxmLteNrIratProfile(UxmTestApp):
     MEAS_UE_RSRP = None           # 手册无 UEReport:*:STATistics
     MEAS_UE_SINR = None
 
-    # 全局累积开关 / 清零 (手册: 技术层全局, 不带 cell)
+    # 全局累积开关 / 清零 (手册: 技术层全局, 不带 cell)。
+    # P2-52 取证（2026-08-30，本地 zip HTML + NotebookLM 双源手册原文）：
+    #   · STATe 手册条目形是 `BTHRoughput[:STATe]`（方括号可选节点），
+    #     "Enables/disables BLER measurement"，AppMode NSA|SA；这里的显式
+    #     `:STATe` 写形已在 IRAT 真机实发有效（2026-07-03/08-27 现场执行链）。
+    #   · CLEar 手册原文："Resets the BLER measurement. NB if a measurement
+    #     is in-progress it will automatically be restarted."（Imm Action /
+    #     No query）—— 即 NR 域 BTHRoughput 树只有 clear 边界，**没有**
+    #     独立的 STARt/STOP 或权威 closed 边界（控制命令恰 4 条：
+    #     [:STATe] / CONTinuous[:ALL] / LENGth[:ALL] / CLEar，其余全 Query only）。
+    #   出处锚：#scpi/bse:measure:nr5g:bthroughput(:state) 与
+    #   #scpi/bse:measure:nr5g:bthroughput:clear。
     MEAS_BTHROUGHPUT_STATE = "BSE:MEASure:NR5G:BTHRoughput:STATe"
     MEAS_BTHROUGHPUT_CLEAR = "BSE:MEASure:NR5G:BTHRoughput:CLEar"
+    # ⚠ 推断形（基类注释有完整依据）：方括号展开 + 查询形无手册原文。
+    #   只供诊断探针（uxm_window_boundary_probe）读现状；AppMode NSA|SA 在
+    #   LTE_NR_IRAT 下认不认同样未经手册说明 —— 探针读完立即归属错误队列定案。
+    MEAS_BTHROUGHPUT_STATE_QUERY = "BSE:MEASure:NR5G:BTHRoughput:STATe?"
     # OTA 吞吐量 — 6 doubles {progress, current, min, max, average, current-scheduled}
     # 单位 **bps** (GUI 显示 Mbps, SCPI 层是 bps)
     MEAS_TPUT_DL_OTA = "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:{cell}?"
