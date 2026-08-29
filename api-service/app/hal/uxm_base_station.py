@@ -43,6 +43,7 @@ from app.hal.base_station import (
     BaseStationDriver,
     BaseStationFieldReceipt,
     BaseStationMeasurementStageReceipt,
+    BaseStationMetricRegistry,
     BaseStationMeasurementWindow,
     BaseStationMeasurementWindowRequest,
     BaseStationMeasurementWindowTrust,
@@ -62,6 +63,7 @@ from app.hal.base_station_manifest import (
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
+    BaseStationMetricCapability,
     BaseStationRatCapability,
 )
 from app.hal.nr_band_baselines import get_band_baseline
@@ -89,6 +91,11 @@ _UXM_MANUAL_SOURCE = (
     "Instrument_API_Doc/Keysight UXM NR SCPI/"
     "5G_NR_Test_Application_SCPI_Reference.zip!"
     "5G_NR_Test_Application_SCPI_Reference.html"
+)
+_UXM_PHY_MEASUREMENT_SOURCE = (
+    "Instrument_API_Doc/Keysight UXM NR SCPI/"
+    "5G_NR_Test_Application_SCPI_Reference.zip!"
+    "UXM5G_SCPI_02_NR_PHY_Measurements.md"
 )
 
 logger = logging.getLogger(__name__)
@@ -549,6 +556,126 @@ class RealUxmDriver(BaseStationDriver):
         diagnostic_supported=True,
         formal_gate="site_certification",
     )
+
+    def resolve_metric_registry(self) -> BaseStationMetricRegistry:
+        """Describe only metrics exposed by the currently loaded Test App.
+
+        This is a pure profile projection.  It performs no instrument I/O and
+        adds no command spelling; the actual templates remain owned by the
+        sourced command-profile classes.
+        """
+
+        profile_ids = {
+            "LTE_NR_IRAT": "lte_nr_irat",
+            "5G_NR_Test": "nr5g_test",
+        }
+        profile_name = str(getattr(self._cmds, "PROFILE_NAME", ""))
+        profile_id = profile_ids.get(profile_name)
+        if profile_id is None:
+            raise ValueError(
+                f"UXM metric registry has no registered profile for {profile_name!r}"
+            )
+
+        metrics: list[BaseStationMetricCapability] = []
+
+        def add(
+            key: str,
+            direction: str,
+            unit: str,
+            scopes: tuple[str, ...],
+            *,
+            evidence: str = "authoritative",
+            source_section: str,
+        ) -> None:
+            metrics.append(
+                BaseStationMetricCapability(
+                    key=key,
+                    direction=direction,
+                    unit=unit,
+                    scopes=scopes,
+                    evidence=evidence,
+                    source_reference=(
+                        f"{_UXM_PHY_MEASUREMENT_SOURCE} :: {source_section}"
+                    ),
+                )
+            )
+
+        for direction, prefix in (("downlink", "dl"), ("uplink", "ul")):
+            tput_name = f"MEAS_TPUT_{prefix.upper()}_OTA"
+            tput_all_name = f"MEAS_TPUT_{prefix.upper()}_OTA_ALL"
+            if getattr(self._cmds, tput_name, None):
+                scopes = (
+                    ("pcell", "all_cells")
+                    if getattr(self._cmds, tput_all_name, None)
+                    else ("pcell",)
+                )
+                add(
+                    f"{prefix}_throughput_current_mbps",
+                    direction,
+                    "mbps",
+                    scopes,
+                    source_section=(
+                        f"NR BLER/Tput > {prefix.upper()} OTA Results > "
+                        "throughput current"
+                    ),
+                )
+                add(
+                    f"{prefix}_throughput_mbps",
+                    direction,
+                    "mbps",
+                    scopes,
+                    source_section=(
+                        f"NR BLER/Tput > {prefix.upper()} OTA Results > "
+                        "throughput average"
+                    ),
+                )
+            if getattr(self._cmds, f"MEAS_BLER_{prefix.upper()}", None):
+                add(
+                    f"{prefix}_bler_ratio",
+                    direction,
+                    "ratio",
+                    ("pcell",),
+                    source_section=(
+                        f"NR BLER/Tput > {prefix.upper()} OTA Results > BLER ratio"
+                    ),
+                )
+
+        if getattr(self._cmds, "MEAS_CSI_CQI", None):
+            add(
+                "cqi_index",
+                "link",
+                "index",
+                ("pcell",),
+                source_section="NR CSI > CQI > cqi_average",
+            )
+        if getattr(self._cmds, "MEAS_CSI_RI", None):
+            add(
+                "ri_index",
+                "link",
+                "index",
+                ("pcell",),
+                source_section="NR CSI > RI > RI histogram values 0..7",
+            )
+        if getattr(self._cmds, "MEAS_UE_REPORT_JSON", None):
+            for key in ("rsrp_raw", "sinr_raw"):
+                add(
+                    key,
+                    "link",
+                    "raw",
+                    ("pcell",),
+                    evidence="diagnostic_only",
+                    source_section=(
+                        "NR UE Measurement Report JSON; engineering unit/range "
+                        "not specified"
+                    ),
+                )
+
+        return BaseStationMetricRegistry(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            profile_id=profile_id,
+            metrics=tuple(sorted(metrics, key=lambda metric: metric.key)),
+        )
     input_level_control_supported = True
     input_level_legacy_power_field = "uxm_dl_power_dbm"
 

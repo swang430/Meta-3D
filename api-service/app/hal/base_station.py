@@ -1046,6 +1046,25 @@ class BaseStationDriver(InstrumentDriver):
     measurement_window_cardinality: ClassVar[Literal["requested", "single"]] = (
         "requested"
     )
+    metric_registry_profile_id: ClassVar[str | None] = None
+
+    def resolve_metric_registry(self) -> BaseStationMetricRegistry:
+        """Resolve static manifest metrics without touching the instrument."""
+
+        manifest = getattr(type(self), "adapter_manifest", None)
+        measurement = getattr(manifest, "measurement", None)
+        metrics = getattr(measurement, "metrics", ())
+        profile_id = self.metric_registry_profile_id
+        if not metrics or not profile_id:
+            raise ValueError(
+                "base-station metric registry requires a declared adapter profile"
+            )
+        return BaseStationMetricRegistry(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            profile_id=profile_id,
+            metrics=tuple(sorted(metrics, key=lambda metric: metric.key)),
+        )
 
     # ===================================================================
     # 小区配置
@@ -1511,6 +1530,9 @@ class MockBaseStation(BaseStationDriver):
         super().__init__(instrument_id, config)
         configured_model = str(config.get("model") or "").upper()
         self.adapter_id = "cmw500" if "CMW" in configured_model else "uxm"
+        self._metric_registry_profile_hint = str(
+            config.get("uxm_profile") or "5g_nr"
+        ).strip().casefold()
         self._remote_session_token: str | None = None
         self._cell_running = False
         self._cell_state = CellState.OFF
@@ -1520,6 +1542,44 @@ class MockBaseStation(BaseStationDriver):
         self._dl_power_dbm = -50.0
         self._mimo_layers = 2
         self._frc = ""
+
+    def resolve_metric_registry(self) -> BaseStationMetricRegistry:
+        """Preserve adapter metric shape while making mock truth diagnostic."""
+
+        if self.adapter_id == "cmw500":
+            from app.hal.cmw500_base_station import RealCmw500Driver
+
+            source = RealCmw500Driver(
+                f"{self.instrument_id}-shape",
+                {"ip_address": "192.0.2.1"},
+            ).resolve_metric_registry()
+        else:
+            from app.hal.uxm_base_station import RealUxmDriver
+
+            source = RealUxmDriver(
+                f"{self.instrument_id}-shape",
+                {
+                    "ip_address": "192.0.2.1",
+                    "uxm_profile": self._metric_registry_profile_hint,
+                },
+            ).resolve_metric_registry()
+        metrics = tuple(
+            BaseStationMetricCapability(
+                key=metric.key,
+                direction=metric.direction,
+                unit=metric.unit,
+                scopes=metric.scopes,
+                evidence="diagnostic_only",
+                source_reference=metric.source_reference,
+            )
+            for metric in source.metrics
+        )
+        return BaseStationMetricRegistry(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            profile_id=f"mock_{source.profile_id}",
+            metrics=metrics,
+        )
 
     async def connect(self) -> bool:
         self._set_status(InstrumentStatus.CONNECTING)
