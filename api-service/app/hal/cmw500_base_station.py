@@ -40,6 +40,8 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.base_station import (
+    BaseStationAttachReceipt,
+    BaseStationAttachStageReceipt,
     BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
     BaseStationFieldReceipt,
@@ -1811,7 +1813,176 @@ class RealCmw500Driver(BaseStationDriver):
     # 3. 信令控制
     # ===================================================================
 
-    async def start_signaling(self, timeout_s: float = 60.0) -> bool:
+    def _build_attach_receipt(
+        self,
+        exchanges: list[Any],
+        *,
+        operation_succeeded: bool,
+    ) -> BaseStationAttachReceipt:
+        """Map only this operation's existing CMW readbacks to attach stages."""
+
+        cell_set = self._fmt(CmwScpiCommands.CELL_STATE_SET)
+        attach_exchanges: list[Any] = []
+        for exchange in exchanges:
+            if exchange.command == f"{cell_set} OFF":
+                break
+            attach_exchanges.append(exchange)
+
+        cell_query = self._fmt(CmwScpiCommands.CELL_STATE_ALL)
+        ps_query = self._fmt(CmwScpiCommands.PS_STATE)
+        connect_command = f"{self._fmt(CmwScpiCommands.PS_ACTION)} CONNect"
+        connect_index = next(
+            (
+                index
+                for index, exchange in enumerate(attach_exchanges)
+                if exchange.command == connect_command
+            ),
+            None,
+        )
+        before_connect = (
+            attach_exchanges
+            if connect_index is None
+            else attach_exchanges[:connect_index]
+        )
+        after_connect = (
+            [] if connect_index is None else attach_exchanges[connect_index + 1 :]
+        )
+
+        def _queries(rows: list[Any], command: str) -> list[Any]:
+            return [
+                exchange
+                for exchange in rows
+                if exchange.command == command
+                and exchange.result_type == "response"
+                and isinstance(exchange.response, str)
+            ]
+
+        def _stage(
+            stage: str,
+            *,
+            rows: list[Any],
+            parser,
+            achieved,
+            achieved_reason: str,
+            not_achieved_reason: str,
+        ) -> BaseStationAttachStageReceipt:
+            capability = next(
+                item
+                for item in self.adapter_manifest.attach_stages
+                if item.stage == stage
+            )
+            if capability.evidence == "unavailable":
+                return BaseStationAttachStageReceipt(
+                    stage=stage,
+                    requested=True,
+                    applied=None,
+                    status="unknown",
+                    evidence="unavailable",
+                    reason=capability.reason,
+                )
+            parsed_rows = [
+                (exchange, parser(exchange.response)) for exchange in rows
+            ]
+            matching = [
+                exchange
+                for exchange, parsed in parsed_rows
+                if parsed is not None and achieved(parsed)
+            ]
+            if matching:
+                exchange = matching[-1]
+                return BaseStationAttachStageReceipt(
+                    stage=stage,
+                    requested=True,
+                    applied=True,
+                    status="confirmed",
+                    evidence=capability.evidence,
+                    reason=achieved_reason,
+                    exchange_ids=(exchange.exchange_id,),
+                )
+            known = [
+                exchange for exchange, parsed in parsed_rows if parsed is not None
+            ]
+            if known:
+                exchange = known[-1]
+                return BaseStationAttachStageReceipt(
+                    stage=stage,
+                    requested=True,
+                    applied=False,
+                    status="confirmed",
+                    evidence=capability.evidence,
+                    reason=not_achieved_reason,
+                    exchange_ids=(exchange.exchange_id,),
+                )
+            return BaseStationAttachStageReceipt(
+                stage=stage,
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence=capability.evidence,
+                reason=f"{stage} readback was not available in this attach operation",
+            )
+
+        stages = (
+            _stage(
+                "cell_ready",
+                rows=_queries(attach_exchanges, cell_query),
+                parser=self._parse_cell_all,
+                achieved=lambda value: value == ("ON", "ADJUSTED"),
+                achieved_reason="CMW500 reported CELL ON,ADJUSTED",
+                not_achieved_reason="CMW500 cell state did not reach ON,ADJUSTED",
+            ),
+            _stage(
+                "ue_registered",
+                rows=_queries(before_connect, ps_query),
+                parser=self._parse_ps_state,
+                achieved=lambda value: value == "ATTACHED",
+                achieved_reason="CMW500 reported PS ATTACHED",
+                not_achieved_reason="CMW500 PS state did not reach ATTACHED",
+            ),
+            BaseStationAttachStageReceipt(
+                stage="rrc_connected",
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence="unavailable",
+                reason=next(
+                    item.reason
+                    for item in self.adapter_manifest.attach_stages
+                    if item.stage == "rrc_connected"
+                ),
+            ),
+            _stage(
+                "data_bearer_established",
+                rows=_queries(after_connect, ps_query),
+                parser=self._parse_ps_state,
+                achieved=lambda value: value == "CONNECTED",
+                achieved_reason="CMW500 reported PS CONNECTED",
+                not_achieved_reason=(
+                    "CMW500 PS state did not reach CONNECTED after connect action"
+                ),
+            ),
+        )
+        return BaseStationAttachReceipt(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            stages=stages,
+            reason=(
+                "CMW500 attach terminal stage confirmed"
+                if operation_succeeded
+                else "CMW500 attach terminal stage was not confirmed"
+            ),
+            simulated=False,
+        )
+
+    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
+        with capture_scpi_exchanges() as exchanges:
+            operation_succeeded = await self._run_attach_operation(timeout_s)
+        return self._build_attach_receipt(
+            exchanges,
+            operation_succeeded=operation_succeeded,
+        )
+
+    async def _run_attach_operation(self, timeout_s: float = 60.0) -> bool:
         """
         激活小区、等待 UE Attach 并建立 PS 数据连接。
 
