@@ -30,8 +30,14 @@ def test_uxm_manifest_freezes_requested_diagnostic_windows_without_closed_claim(
     manifest = RealUxmDriver.adapter_manifest
 
     assert manifest.measurement is not None
-    assert manifest.measurement.lifecycle == "unavailable"
-    assert manifest.measurement.metrics == ()
+    # P2-52：clear 边界有手册出处（CLEar）+ IRAT 现场实测 → clear_read_only；
+    # closed 仍无出处，绝不声明 authoritative_closed。
+    assert manifest.measurement.lifecycle == "clear_read_only"
+    assert manifest.measurement.source_reference is not None
+    assert {metric.key for metric in manifest.measurement.metrics} == {
+        "cqi_index",
+        "ri_index",
+    }
     requests = MeasureExecutor._measurement_window_requests(
         manifest,
         throughput_scope="nr_all_cells",
@@ -43,7 +49,7 @@ def test_uxm_manifest_freezes_requested_diagnostic_windows_without_closed_claim(
     assert [request.window_index for request in requests] == [0, 1, 2]
     assert {request.scope for request in requests} == {"all_cells"}
     assert {request.cardinality for request in requests} == {"requested"}
-    assert {request.lifecycle for request in requests} == {"unavailable"}
+    assert {request.lifecycle for request in requests} == {"clear_read_only"}
     assert len({request.digest for request in requests}) == 3
 
 
