@@ -965,11 +965,15 @@ def resolve_base_station_execution_plan(
     if manifest is not None:
         manifest_adapter_id = getattr(manifest, "adapter_id", None)
         operations = getattr(manifest, "operations", None)
-        if manifest_adapter_id != adapter_id or not isinstance(operations, tuple):
+        # 外审 #417 R1：operations 生产源是 Pydantic tuple，但 JSON 反序列化
+        # 直传 / mock 场景是 list——两种都接受并归一 tuple，其余类型仍拒绝
+        if manifest_adapter_id != adapter_id or not isinstance(
+            operations, (tuple, list)
+        ):
             raise ValueError(
                 "execution plan manifest does not belong to the loaded adapter"
             )
-        manifest_operations = operations
+        manifest_operations = tuple(operations)
 
     reasons_when_planned = {
         "scell": "适配器声明逐 SCell 激活态权威回读，正式 CA 允许按计划执行",

@@ -648,3 +648,26 @@ def test_evidence_rejects_foreign_adapter_execution_plan():
     )
     with pytest.raises(ValueError, match="requires its adapter execution plan"):
         BaseStationExecutionEvidence.model_validate(foreign)
+
+
+def test_resolve_accepts_list_operations_and_normalizes(monkeypatch):
+    """外审 #417 R1：JSON 反序列化直传的 manifest.operations 是 list——
+    必须与 tuple 行为等价（归一后溯源/digest 一致），其余类型仍拒绝。"""
+    loaded = _ManifestBearingCmwDriver()
+    plan_tuple = resolve_base_station_execution_plan(
+        loaded, manifest=loaded.adapter_manifest
+    )
+    list_manifest = SimpleNamespace(
+        adapter_id="cmw500",
+        operations=list(loaded.adapter_manifest.operations),
+    )
+    plan_list = resolve_base_station_execution_plan(loaded, manifest=list_manifest)
+    assert plan_list.digest == plan_tuple.digest
+
+    with pytest.raises(ValueError, match="does not belong"):
+        resolve_base_station_execution_plan(
+            loaded,
+            manifest=SimpleNamespace(
+                adapter_id="cmw500", operations="input_level_control"
+            ),
+        )
