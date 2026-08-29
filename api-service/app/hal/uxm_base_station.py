@@ -43,7 +43,6 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
-    RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
@@ -53,7 +52,14 @@ from app.hal.scpi_evidence import (
     InstrumentEvidenceItem,
     capture_scpi_exchanges,
 )
-from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_manifest import (
+    BaseStationAdapterManifest,
+    BaseStationAttachStageCapability,
+    BaseStationConfigFieldCapability,
+    BaseStationMeasurementCapability,
+    BaseStationMetricCapability,
+    BaseStationRatCapability,
+)
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -335,19 +341,265 @@ class RealUxmDriver(BaseStationDriver):
 
     adapter_id = "uxm"
     adapter_manifest = BaseStationAdapterManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id=adapter_id,
         model_name="UXM 5G E7515B",
         vendor="Keysight",
-        rats=("lte", "nr"),
-        capabilities=(
+        rat_capabilities=(
+            BaseStationRatCapability(
+                rat="nr5g",
+                source_reference=(
+                    "Keysight UXM 5G NR Test Application SCPI Reference"
+                ),
+            ),
+        ),
+        operations=(
             "identity",
             "config",
             "cell_attach",
             "measurement_window",
             "safe_idle_release",
+            "input_level_control",
+            "rrc_reconfiguration",
+            "mac_throughput_config",
+        ),
+        config_fields=tuple(
+            BaseStationConfigFieldCapability(
+                field=name,
+                support=support,
+                readback=readback,
+                reason=reason,
+                source_reference=source_reference,
+            )
+            for name, support, readback, reason, source_reference in (
+                (
+                    "radio_technology",
+                    "diagnostic_only",
+                    "unavailable",
+                    "NR5G is selected by the adapter manifest, not independently read back",
+                    None,
+                ),
+                (
+                    "channel_kind",
+                    "diagnostic_only",
+                    "unavailable",
+                    "NR ARFCN request shape is application-owned and has no device field readback",
+                    None,
+                ),
+                (
+                    "frequency_mhz",
+                    "diagnostic_only",
+                    "unavailable",
+                    "frequency is represented by the band and NR ARFCN request",
+                    None,
+                ),
+                (
+                    "bandwidth_mhz",
+                    "authoritative",
+                    "authoritative",
+                    "NR downlink bandwidth is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DL BW",
+                ),
+                (
+                    "band",
+                    "authoritative",
+                    "unavailable",
+                    "NR band is written but the common receipt has no independent band readback",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL BAND",
+                ),
+                (
+                    "duplex",
+                    "authoritative",
+                    "authoritative",
+                    "NR duplex mode is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DUPLEX",
+                ),
+                (
+                    "nr_arfcn",
+                    "authoritative",
+                    "authoritative",
+                    "NR downlink ARFCN is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DL ARFCN",
+                ),
+                (
+                    "lte_dl_earfcn",
+                    "not_applicable",
+                    "not_applicable",
+                    "LTE EARFCN is outside the registered NR5G adapter contract",
+                    None,
+                ),
+                (
+                    "lte_transmission_mode",
+                    "not_applicable",
+                    "not_applicable",
+                    "LTE transmission mode is outside the registered NR5G adapter contract",
+                    None,
+                ),
+                (
+                    "subcarrier_spacing_khz",
+                    "authoritative",
+                    "authoritative",
+                    "NR common subcarrier spacing is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL SCS",
+                ),
+                (
+                    "mimo_layers",
+                    "authoritative",
+                    "authoritative",
+                    "NR PDSCH maximum MIMO layers are written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: MIMO DL LAYERS",
+                ),
+                (
+                    "downlink_power_dbm",
+                    "authoritative",
+                    "authoritative",
+                    "NR EPRE power is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: DL POWER EPRE",
+                ),
+                (
+                    "downlink_power_dbm_per_bandwidth",
+                    "authoritative",
+                    "authoritative",
+                    "NR whole-band channel power is written and read back",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: DL POWER CHANNEL",
+                ),
+                (
+                    "port_preset",
+                    "authoritative",
+                    "unavailable",
+                    "NR MIMO port preset is applied but absent from the common config receipt readback",
+                    "Keysight UXM 5G NR Test Application SCPI Reference: MIMO port mapping",
+                ),
+                (
+                    "scheduler_algorithm",
+                    "diagnostic_only",
+                    "unavailable",
+                    "scheduler selection belongs to the later MAC setup and is not applied by common config",
+                    None,
+                ),
+                (
+                    "csi_rs_ports",
+                    "diagnostic_only",
+                    "unavailable",
+                    "CSI-RS ports belong to the later MAC setup and are not applied by common config",
+                    None,
+                ),
+            )
+        ),
+        attach_stages=(
+            BaseStationAttachStageCapability(
+                stage="cell_ready",
+                evidence="diagnostic_only",
+                reason="current profiles do not expose one common authoritative cell-ready proof",
+            ),
+            BaseStationAttachStageCapability(
+                stage="ue_registered",
+                evidence="diagnostic_only",
+                reason="current state parsing does not preserve a separate registration milestone",
+            ),
+            BaseStationAttachStageCapability(
+                stage="rrc_connected",
+                evidence="diagnostic_only",
+                reason="current profiles collapse connected-like states into one CellState value",
+            ),
+            BaseStationAttachStageCapability(
+                stage="data_bearer_established",
+                evidence="unavailable",
+                reason="the adapter has no independent data-bearer establishment proof",
+            ),
+        ),
+        measurement=BaseStationMeasurementCapability(
+            cardinality="requested",
+            scopes=("pcell", "all_cells"),
+            lifecycle="clear_read_only",
+            metrics=tuple(
+                BaseStationMetricCapability(
+                    key=key,
+                    direction=direction,
+                    unit=unit,
+                    scopes=scopes,
+                    evidence="diagnostic_only",
+                    source_reference=source_reference,
+                )
+                for key, direction, unit, scopes, source_reference in (
+                    (
+                        "dl_throughput_mbps",
+                        "downlink",
+                        "mbps",
+                        ("pcell", "all_cells"),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: DL OTA throughput",
+                    ),
+                    (
+                        "dl_throughput_current_mbps",
+                        "downlink",
+                        "mbps",
+                        ("pcell", "all_cells"),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: DL OTA throughput",
+                    ),
+                    (
+                        "ul_throughput_mbps",
+                        "uplink",
+                        "mbps",
+                        ("pcell", "all_cells"),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: UL OTA throughput",
+                    ),
+                    (
+                        "ul_throughput_current_mbps",
+                        "uplink",
+                        "mbps",
+                        ("pcell", "all_cells"),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: UL OTA throughput",
+                    ),
+                    (
+                        "dl_bler_percent",
+                        "downlink",
+                        "percent",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: DL BLER",
+                    ),
+                    (
+                        "ul_bler_percent",
+                        "uplink",
+                        "percent",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: UL BLER",
+                    ),
+                    (
+                        "cqi",
+                        "downlink",
+                        "index",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: CSI CQI statistics",
+                    ),
+                    (
+                        "rank_indicator",
+                        "downlink",
+                        "index",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: CSI RI histogram",
+                    ),
+                    (
+                        "rsrp_raw",
+                        "downlink",
+                        "raw",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: UE measurement JSON",
+                    ),
+                    (
+                        "sinr_raw",
+                        "downlink",
+                        "raw",
+                        ("pcell",),
+                        "Keysight UXM 5G NR Test Application SCPI Reference: UE measurement JSON",
+                    ),
+                )
+            ),
+            source_reference=(
+                "existing UXM profile clear/read path; authoritative closed window boundary unavailable"
+            ),
         ),
         profile_requirement="not_applicable",
+        profile_schema_version=None,
         profile_fields=(),
         manual_sources=(
             "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip",
@@ -4008,9 +4260,6 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[UXM] reset failed: {e}")
             return False
-
-    def get_supported_technologies(self) -> List[RadioTechnology]:
-        return [RadioTechnology.NR5G]
 
     # ===================================================================
     # 内部 VISA 工具方法 (SCPI 日志由基类 _write/_query 自动处理)

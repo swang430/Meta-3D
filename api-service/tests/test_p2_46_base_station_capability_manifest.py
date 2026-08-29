@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.hal.base_station import BaseStationRequestedConfig
+from app.hal.base_station import BaseStationDriver, RadioTechnology
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationAttachStageCapability,
@@ -15,6 +16,8 @@ from app.hal.base_station_manifest import (
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
 )
+from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 
 
 CONFIG_FIELD_NAMES = tuple(field.name for field in fields(BaseStationRequestedConfig))
@@ -159,3 +162,71 @@ def test_not_applicable_profile_has_no_profile_version_or_fields():
     )
     assert manifest.profile_schema_version is None
     assert manifest.profile_fields == ()
+
+
+def test_cmw500_manifest_v2_declares_lte_closed_window_and_profile_version():
+    manifest = RealCmw500Driver.adapter_manifest
+
+    assert manifest.schema_version == 2
+    assert manifest.rats == ("lte",)
+    assert manifest.profile_requirement == "required"
+    assert manifest.profile_schema_version == 1
+    assert manifest.measurement is not None
+    assert manifest.measurement.cardinality == "single"
+    assert manifest.measurement.scopes == ("pcell",)
+    assert manifest.measurement.lifecycle == "authoritative_closed"
+    assert {
+        (metric.key, metric.direction, metric.unit, metric.evidence)
+        for metric in manifest.measurement.metrics
+    } == {
+        ("dl_throughput_mbps", "downlink", "mbps", "authoritative"),
+        ("dl_bler_percent", "downlink", "percent", "authoritative"),
+    }
+
+
+def test_uxm_manifest_v2_declares_nr_only_and_diagnostic_clear_read_window():
+    manifest = RealUxmDriver.adapter_manifest
+
+    assert manifest.schema_version == 2
+    assert manifest.rats == ("nr5g",)
+    assert manifest.profile_requirement == "not_applicable"
+    assert manifest.profile_schema_version is None
+    assert {
+        "input_level_control",
+        "rrc_reconfiguration",
+        "mac_throughput_config",
+    }.issubset(manifest.operations)
+    assert manifest.measurement is not None
+    assert manifest.measurement.cardinality == "requested"
+    assert manifest.measurement.scopes == ("pcell", "all_cells")
+    assert manifest.measurement.lifecycle == "clear_read_only"
+    assert all(
+        metric.evidence == "diagnostic_only"
+        for metric in manifest.measurement.metrics
+    )
+    assert {metric.key for metric in manifest.measurement.metrics} == {
+        "dl_throughput_mbps",
+        "dl_throughput_current_mbps",
+        "ul_throughput_mbps",
+        "ul_throughput_current_mbps",
+        "dl_bler_percent",
+        "ul_bler_percent",
+        "cqi",
+        "rank_indicator",
+        "rsrp_raw",
+        "sinr_raw",
+    }
+
+
+def test_real_driver_rat_support_is_derived_from_the_manifest():
+    assert RealCmw500Driver.get_supported_technologies is (
+        BaseStationDriver.get_supported_technologies
+    )
+    assert RealUxmDriver.get_supported_technologies is (
+        BaseStationDriver.get_supported_technologies
+    )
+
+    cmw = RealCmw500Driver.__new__(RealCmw500Driver)
+    uxm = RealUxmDriver.__new__(RealUxmDriver)
+    assert cmw.get_supported_technologies() == [RadioTechnology.LTE]
+    assert uxm.get_supported_technologies() == [RadioTechnology.NR5G]

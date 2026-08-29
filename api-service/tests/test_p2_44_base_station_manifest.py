@@ -63,7 +63,7 @@ def test_registered_base_station_manifests_match_registry_and_profile_contracts(
     assert uxm.manifest.profile_requirement == "not_applicable"
     assert uxm.manifest.profile_fields == ()
     assert uxm.profile_model is None
-    assert set(uxm.manifest.rats) == {"lte", "nr"}
+    assert uxm.manifest.rats == ("nr5g",)
 
     assert cmw.driver_class.adapter_id == cmw.manifest.adapter_id == "cmw500"
     assert cmw.manifest.model_name == "CMW500"

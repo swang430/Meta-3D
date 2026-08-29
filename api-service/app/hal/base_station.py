@@ -854,12 +854,22 @@ class BaseStationDriver(InstrumentDriver):
 
     def get_supported_technologies(self) -> List[RadioTechnology]:
         """
-        声明该基站仿真器支持的无线接入技术。
+        从注册 adapter manifest 的单一真值声明无线接入技术。
 
         Returns:
             支持的 RadioTechnology 列表
         """
-        return [RadioTechnology.LTE]  # 默认支持 LTE
+        manifest = getattr(type(self), "adapter_manifest", None)
+        rat_capabilities = getattr(manifest, "rat_capabilities", ())
+        if rat_capabilities:
+            by_manifest_token = {
+                "lte": RadioTechnology.LTE,
+                "nr5g": RadioTechnology.NR5G,
+            }
+            return [by_manifest_token[item.rat] for item in rat_capabilities]
+        # 未注册的历史/测试驱动继续使用旧默认；所有真实注册 adapter 会由
+        # registry gate 强制 schema v2，因此不会落到此兼容分支。
+        return [RadioTechnology.LTE]
 
     # ===================================================================
     # 配置文件管理 (一键配置)

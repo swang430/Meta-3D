@@ -49,7 +49,6 @@ from app.hal.base_station import (
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     LTE_TRANSMISSION_MODES,
-    RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
@@ -62,7 +61,12 @@ from app.hal.cmw500_command_profile import (
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
+    BaseStationAttachStageCapability,
+    BaseStationConfigFieldCapability,
+    BaseStationMeasurementCapability,
+    BaseStationMetricCapability,
     BaseStationProfileFieldManifest,
+    BaseStationRatCapability,
 )
 from app.hal.scpi_evidence import (
     EvidenceLevel,
@@ -259,12 +263,19 @@ class RealCmw500Driver(BaseStationDriver):
 
     adapter_id = "cmw500"
     adapter_manifest = BaseStationAdapterManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id=adapter_id,
         model_name="CMW500",
         vendor="Rohde & Schwarz",
-        rats=("lte",),
-        capabilities=(
+        rat_capabilities=(
+            BaseStationRatCapability(
+                rat="lte",
+                source_reference=(
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41"
+                ),
+            ),
+        ),
+        operations=(
             "identity",
             "config",
             "internal_route",
@@ -272,7 +283,195 @@ class RealCmw500Driver(BaseStationDriver):
             "measurement_window",
             "safe_idle_release",
         ),
+        config_fields=tuple(
+            BaseStationConfigFieldCapability(
+                field=name,
+                support=support,
+                readback=readback,
+                reason=reason,
+                source_reference=source_reference,
+            )
+            for name, support, readback, reason, source_reference in (
+                (
+                    "radio_technology",
+                    "diagnostic_only",
+                    "unavailable",
+                    "LTE is selected by the adapter manifest, not independently read back",
+                    None,
+                ),
+                (
+                    "channel_kind",
+                    "diagnostic_only",
+                    "unavailable",
+                    "LTE EARFCN request shape is application-owned and has no device field readback",
+                    None,
+                ),
+                (
+                    "frequency_mhz",
+                    "diagnostic_only",
+                    "unavailable",
+                    "frequency is derived from the LTE band/EARFCN request and is not independently written",
+                    None,
+                ),
+                (
+                    "bandwidth_mhz",
+                    "authoritative",
+                    "authoritative",
+                    "PCC bandwidth is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.680",
+                ),
+                (
+                    "band",
+                    "authoritative",
+                    "authoritative",
+                    "PCC band is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed pp.636-637",
+                ),
+                (
+                    "duplex",
+                    "authoritative",
+                    "authoritative",
+                    "LTE duplex is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.366",
+                ),
+                (
+                    "nr_arfcn",
+                    "not_applicable",
+                    "not_applicable",
+                    "NR ARFCN is outside the LTE adapter contract",
+                    None,
+                ),
+                (
+                    "lte_dl_earfcn",
+                    "authoritative",
+                    "authoritative",
+                    "PCC LTE downlink EARFCN is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed pp.636-637",
+                ),
+                (
+                    "lte_transmission_mode",
+                    "authoritative",
+                    "authoritative",
+                    "PCC LTE transmission mode is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.754",
+                ),
+                (
+                    "subcarrier_spacing_khz",
+                    "not_applicable",
+                    "not_applicable",
+                    "NR subcarrier spacing is outside the LTE adapter contract",
+                    None,
+                ),
+                (
+                    "mimo_layers",
+                    "authoritative",
+                    "authoritative",
+                    "PCC antenna count is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.753",
+                ),
+                (
+                    "downlink_power_dbm",
+                    "authoritative",
+                    "authoritative",
+                    "PCC RS-EPRE is written and read back",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.656",
+                ),
+                (
+                    "downlink_power_dbm_per_bandwidth",
+                    "not_applicable",
+                    "not_applicable",
+                    "whole-band UXM power is outside the CMW500 RS-EPRE contract",
+                    None,
+                ),
+                (
+                    "port_preset",
+                    "not_applicable",
+                    "not_applicable",
+                    "CMW500 routing is supplied by the dedicated internal-route profile",
+                    None,
+                ),
+                (
+                    "scheduler_algorithm",
+                    "not_applicable",
+                    "not_applicable",
+                    "scheduler configuration is not implemented by this adapter",
+                    None,
+                ),
+                (
+                    "csi_rs_ports",
+                    "not_applicable",
+                    "not_applicable",
+                    "NR CSI-RS configuration is outside the LTE adapter contract",
+                    None,
+                ),
+            )
+        ),
+        attach_stages=(
+            BaseStationAttachStageCapability(
+                stage="cell_ready",
+                evidence="authoritative",
+                reason="CELL ON,ADJUSTED is read from the instrument",
+                source_reference=(
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.371"
+                ),
+            ),
+            BaseStationAttachStageCapability(
+                stage="ue_registered",
+                evidence="authoritative",
+                reason="PS ATTACHED is read from the instrument",
+                source_reference=(
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.374"
+                ),
+            ),
+            BaseStationAttachStageCapability(
+                stage="rrc_connected",
+                evidence="unavailable",
+                reason="the adapter does not expose an independent RRC milestone",
+            ),
+            BaseStationAttachStageCapability(
+                stage="data_bearer_established",
+                evidence="authoritative",
+                reason="PS CONNECTED is read after the explicit connect action",
+                source_reference=(
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed pp.372-374"
+                ),
+            ),
+        ),
+        measurement=BaseStationMeasurementCapability(
+            cardinality="single",
+            scopes=("pcell",),
+            lifecycle="authoritative_closed",
+            metrics=(
+                BaseStationMetricCapability(
+                    key="dl_throughput_mbps",
+                    direction="downlink",
+                    unit="mbps",
+                    scopes=("pcell",),
+                    evidence="authoritative",
+                    source_reference=(
+                        "R&S CMW500 LTE UE User Manual 1173.9628.02-41 §3.4.4 "
+                        "printed pp.957-959"
+                    ),
+                ),
+                BaseStationMetricCapability(
+                    key="dl_bler_percent",
+                    direction="downlink",
+                    unit="percent",
+                    scopes=("pcell",),
+                    evidence="authoritative",
+                    source_reference=(
+                        "R&S CMW500 LTE UE User Manual 1173.9628.02-41 §3.4.4 "
+                        "printed pp.957-959"
+                    ),
+                ),
+            ),
+            source_reference=(
+                "R&S CMW500 LTE UE User Manual 1173.9628.02-41 §3.4.2 "
+                "printed pp.950-951"
+            ),
+        ),
         profile_requirement="required",
+        profile_schema_version=1,
         profile_fields=tuple(
             BaseStationProfileFieldManifest(
                 path=f"lte_2x2_internal_route.{name}",
@@ -2279,9 +2478,6 @@ class RealCmw500Driver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[CMW500] reset failed: {e}")
             return False
-
-    def get_supported_technologies(self) -> List[RadioTechnology]:
-        return [RadioTechnology.LTE]
 
     # ===================================================================
     # 内部 VISA 工具方法 (SCPI 日志由基类 _write/_query 自动处理)
