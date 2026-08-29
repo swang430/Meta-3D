@@ -2215,6 +2215,7 @@ class MeasureExecutor(IStepExecutor):
                 exchange_ids: tuple[str, ...] = (),
                 simulated: bool = False,
                 cell_state: Any = None,
+                semantic_state_confirmed: bool = True,
             ) -> Dict[str, Any]:
                 manifest_stages = tuple(attach_receipt.stages)
                 terminal = next(
@@ -2229,6 +2230,7 @@ class MeasureExecutor(IStepExecutor):
                 for item in manifest_stages:
                     confirmed = (
                         not simulated
+                        and semantic_state_confirmed
                         and item.stage == terminal
                         and attached is not None
                         and bool(exchange_ids)
@@ -2323,7 +2325,18 @@ class MeasureExecutor(IStepExecutor):
                         exchange_ids=exchange_ids,
                         cell_state=raw,
                     )
-                # ON = 小区开着但没 UE 连上；ERROR = 读不到/枚举外。都不算挂上。
+                if state == CellState.ERROR:
+                    return _attach_milestone(
+                        stage,
+                        # 保持 False 让现有安全门中止，不带着未知链路继续测量；
+                        # 但 ERROR 只表示回读不可解释，不能写成 confirmed false。
+                        attached=False,
+                        reason=f"小区状态 {raw!r} 不可解释 — Attach 真值 unknown",
+                        exchange_ids=exchange_ids,
+                        cell_state=raw,
+                        semantic_state_confirmed=False,
+                    )
+                # ON/IDLE/OFF 是已解析的真实状态，均明确表示 UE 未连接。
                 return _attach_milestone(
                     stage,
                     attached=False,

@@ -4308,9 +4308,10 @@ Mock 只给 simulated/unknown。receipt 已绑定当前 execution attempt、leas
 新 execution 缺本次正式 attach 证据时 fail-closed，历史缺字段保持原兼容读取。MEASURE 先持久化
 receipt 再决定诊断是否继续，生产路径不再消费 `start_signaling()` 布尔，里程碑只投影逐阶段真值；
 未新增/猜测 SCPI，未改变正式 provenance 白名单，也未提前实现 P2-48～P2-53。最终 focused
-**310 passed**、全后端 **5287 passed / 5 skipped**、compileall、单一 Alembic head
+**310 passed**、全后端 **5288 passed / 5 skipped**、compileall、单一 Alembic head
 `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 均通过；GUI/OpenAPI 未改，故未运行其契约/build；
-fresh 尾审 **P1/P2/P3=0**。
+fresh 尾审 **P1/P2/P3=0**。Codex R1 指出的不可解释 `CellState.ERROR` 假确认已按严格 TDD
+最小收口：安全流程仍中止，但阶段证据保持 `unknown`，不再伪装为 `confirmed=false`。
 
 ### P2-48 — Measurement Window Trust Contract
 

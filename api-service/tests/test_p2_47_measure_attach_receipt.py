@@ -37,3 +37,14 @@ def test_live_attach_milestones_publish_stage_truth_and_keep_rrc_as_compatibilit
     assert '"attach_stage_truth": final_attach.get("stage_truth")' in source
     assert '"rrc_connected": final_attach.get("attached")' in source
     assert "manifest_stages = tuple(attach_receipt.stages)" in source
+
+
+def test_unreadable_cell_state_cannot_be_published_as_confirmed_false():
+    """ERROR 只证明回读不可解释；流程可停，但逐阶段真值必须保持 unknown。"""
+    source = inspect.getsource(MeasureExecutor.execute)
+
+    assert "semantic_state_confirmed: bool = True" in source
+    assert "and semantic_state_confirmed" in source
+    error_branch = source[source.index("if state == CellState.CONNECTED") :]
+    assert "if state == CellState.ERROR:" in error_branch
+    assert "semantic_state_confirmed=False" in error_branch

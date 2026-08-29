@@ -136,5 +136,6 @@ Codex R1→R2。覆盖最新 HEAD 的 R2 无 P1才 merge commit；R2 若仍有 P
 Task 1–6 已按顺序完成：共同 receipt、CMW500/UXM/Mock 保守映射、execution-bound evidence、
 MEASURE/commissioning 共同消费及 G25 生产门均已落地。实现没有新增 SCPI、数据库迁移、GUI/OpenAPI
 合同或正式 provenance 白名单，也没有跨入 P2-48。最终 focused **310 passed**、全后端
-**5287 passed / 5 skipped**、compileall、单一 Alembic head `e6a8c0d2f4b6`、base-to-HEAD
+**5288 passed / 5 skipped**、compileall、单一 Alembic head `e6a8c0d2f4b6`、base-to-HEAD
 diff-check 均通过；GUI/OpenAPI 未改，故未运行其契约/build；fresh 尾审 **P1/P2/P3=0**。
+R1 的不可解释 `CellState.ERROR` 假确认已按 RED→GREEN 收窄为 `unknown`，同时保留安全中止。
