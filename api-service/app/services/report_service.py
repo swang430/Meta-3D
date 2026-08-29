@@ -176,6 +176,23 @@ def report_has_provenance_trust(content_data: Any) -> bool:
 
 def _base_station_projection_is_sanitized(value: Any) -> bool:
     """Validate the exact server-written formal/diagnostic projection shape."""
+
+    def compatibility_mirror_matches(
+        metrics: dict[str, FormalMetricTrust],
+        key: str,
+        mirror: FormalMetricTrust,
+    ) -> bool:
+        registered = metrics.get(key)
+        if registered is not None:
+            return registered == mirror
+        return (
+            mirror.status == "unknown"
+            and mirror.formal_value is None
+            and mirror.diagnostic_value is None
+            and mirror.unit is None
+            and mirror.exchange_ids == ()
+        )
+
     if not isinstance(value, list):
         return False
     for row in value:
@@ -216,8 +233,12 @@ def _base_station_projection_is_sanitized(value: Any) -> bool:
                     parsed_metrics[key].model_dump(mode="json") != metric
                     for key, metric in raw_metrics.items()
                 )
-                or parsed_metrics.get("dl_throughput_mbps") != throughput
-                or parsed_metrics.get("dl_bler_percent") != bler
+                or not compatibility_mirror_matches(
+                    parsed_metrics, "dl_throughput_mbps", throughput
+                )
+                or not compatibility_mirror_matches(
+                    parsed_metrics, "dl_bler_percent", bler
+                )
             ):
                 return False
         if (

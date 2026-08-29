@@ -4319,7 +4319,7 @@ HEAD 的 Codex R2 无 P1，merge commit `db939a62`。
 冻结并验证 clear/run/ready/closed、PCell/all-cells、窗口基数、当前 attempt/session 与 cleanup/release；
 声明可诊断但缺 closed 边界的窗口必须保持 unconfirmed，不得因 adapter 名称或旧布尔恢复正式值。
 
-**实施状态（2026-08-29，实现、完整回归与 fresh 内审完成，待 Ready PR/外审）**：共同 HAL
+**实施状态（2026-08-29，已由 PR #414 合并）**：共同 HAL
 新增 execution-frozen request 与逐阶段 trust receipt，显式冻结 scope、lifecycle、cardinality、
 requested/expected count、window index 与 request digest；CMW500 只把既有 Extended BLER
 clear/run/ready/closed 与同窗口 UE context 回读映射为 authoritative truth，UXM 既有读取窗口保持
@@ -4332,7 +4332,8 @@ fail-closed。fresh 内审按严格 TDD 收口两条功能 P1：`context_confirm
 优先级。未新增/猜测 SCPI，未改变正式 provenance 白名单，也未提前实现 P2-49～P2-53。
 最终 focused **179 passed**、fresh 定点 **61 passed**、全后端 **5332 passed / 5 skipped**、
 compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 均通过；GUI/OpenAPI
-未改，故未运行其契约/build；fresh 尾审 **P1/P2/P3=0**。
+未改，故未运行其契约/build；fresh 尾审 **P1/P2/P3=0**。覆盖最终 HEAD 的 Codex R1/R2
+均无 P1，merge commit `2cad9d8c`。
 
 ### P2-49 — BaseStation Metric Capability Registry
 

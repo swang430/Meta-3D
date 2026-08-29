@@ -240,3 +240,45 @@ def test_report_projection_validator_accepts_generic_map_and_rejects_drift():
     drifted = deepcopy(payload)
     drifted[0]["dl_throughput_mbps"]["formal_value"] = 1.0
     assert _base_station_projection_is_sanitized(drifted) is False
+
+
+def test_report_projection_validator_accepts_registry_without_legacy_bler_metric():
+    evidence = _current_registry_evidence()
+    rows = project_base_station_metrics_by_position(
+        evidence,
+        expected_config=REQUESTED_CONFIG,
+        expected_positions=[POSITION],
+        execution_config=_formal_execution_config(evidence),
+    )
+    row = rows[0]
+    metrics = {
+        key: metric.model_dump(mode="json")
+        for key, metric in row["metrics"].items()
+    }
+    metrics["dl_bler_ratio"] = metrics.pop("dl_bler_percent")
+    metrics["dl_bler_ratio"]["unit"] = "ratio"
+    legacy_unknown = {
+        "status": "unknown",
+        "formal_value": None,
+        "diagnostic_value": None,
+        "unit": None,
+        "reason": "metric_not_declared_in_registry",
+        "exchange_ids": [],
+    }
+    payload = [
+        {
+            "position": row["position"],
+            "metrics": metrics,
+            "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(
+                mode="json"
+            ),
+            "dl_bler_percent": legacy_unknown,
+        }
+    ]
+
+    assert _base_station_projection_is_sanitized(payload) is True
+    drifted = deepcopy(payload)
+    drifted[0]["dl_bler_percent"] = deepcopy(
+        drifted[0]["metrics"]["dl_bler_ratio"]
+    )
+    assert _base_station_projection_is_sanitized(drifted) is False
