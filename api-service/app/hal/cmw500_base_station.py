@@ -2071,6 +2071,19 @@ class RealCmw500Driver(BaseStationDriver):
                             (field, expected, None, "unknown",
                              f"回读查询失败: {exc}")
                         )
+                        # 外审 #420 R1 high：查询异常时仪器队列可能残留错误
+                        # （-113/-221 等），不排空会污染下一组 _group_gate 的
+                        # 归属判定 —— 照 HARQ 探测段模式尽力排空
+                        try:
+                            self._query(CmwScpiCommands.ERR)
+                        except Exception as drain_exc:  # noqa: BLE001
+                            # 排空尽力而为；吞异常不吞信息（G4）
+                            logger.warning(
+                                "[CMW500] MAC readback error-queue drain "
+                                "failed for %s: %s",
+                                group,
+                                drain_exc,
+                            )
                         return
                     query_gate = _group_gate()
                     if query_gate is not None:

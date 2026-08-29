@@ -195,7 +195,7 @@ class MacThroughputConfigResult:
     # P2-51：逐字段 requested/applied/exchange_ids 证据回执
     # （BaseStationApplyReceipt, operation="mac_throughput_config"）。
     # CMW500 驱动产出；UXM 暂不产（默认 None，消费方按可选处理）。
-    receipt: Optional[Any] = None
+    receipt: Optional[BaseStationApplyReceipt] = None
 
     @property
     def ok(self) -> bool:

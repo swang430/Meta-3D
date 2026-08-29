@@ -550,3 +550,28 @@ async def test_error_after_readback_rejects_group():
 
     assert not result.ok
     assert any("回读被拒" in item for item in result.rejected), result.rejected
+
+
+@pytest.mark.asyncio
+async def test_readback_exception_drains_queue_without_poisoning_next_group():
+    """外审 #420 R1 high：某组回读查询抛异常且仪器同时残留错误时，
+    必须尽力排空——否则残留污染下一组 _group_gate 的归属判定
+    （原本成功的组被误判 rejected）。删排空段本门要红。"""
+
+    class _ReadbackExplodes(_MacDriver):
+        def _do_query(self, command: str) -> str:
+            if command == "CONFigure:LTE:SIGN1:CONNection:PCC:STYPe?":
+                # 异常伴随仪器压错（典型 -113/-221 形态）
+                self.pending_errors.append('-221,"Settings conflict"')
+                raise RuntimeError("simulated readback timeout")
+            return super()._do_query(command)
+
+    driver = _ReadbackExplodes()
+    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+
+    # 异常组如实记「回读不可用」
+    assert any("回读不可用" in item for item in result.rejected), result.rejected
+    # 残留被排空：后续组不得因它被误判「回读被拒」
+    assert not any(
+        "回读被拒" in item for item in result.rejected
+    ), f"残留错误污染了后续组: {result.rejected}"
