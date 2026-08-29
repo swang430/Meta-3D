@@ -138,6 +138,8 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
             window_s=0.1,
             throughput_scope=ThroughputMetrics.SCOPE_PCELL,
             requested_sample_count=3,
+            manifest=RealCmw500Driver.adapter_manifest,
+            simulated_diagnostic=False,
         )
         cleanup = await cleanup_chamber_instruments(
             SimpleNamespace(drivers={"baseStation": driver}), "execution-1"
@@ -179,4 +181,6 @@ async def test_extended_bler_window_rejects_a_live_ue_drop_before_recording_conn
                 window_s=0.1,
                 throughput_scope=ThroughputMetrics.SCOPE_PCELL,
                 requested_sample_count=3,
+                manifest=RealCmw500Driver.adapter_manifest,
+                simulated_diagnostic=False,
             )

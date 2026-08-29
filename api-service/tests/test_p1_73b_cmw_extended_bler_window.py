@@ -8,12 +8,24 @@ from unittest.mock import patch
 
 import pytest
 
-from app.hal.base_station import ThroughputMetrics
+from app.hal.base_station import BaseStationMeasurementWindowRequest, ThroughputMetrics
 from app.hal.cmw500_base_station import RealCmw500Driver
 
 
 ABSOLUTE = "0,900,100,1000,123456.5,120000,125000,0,1000,15"
 RELATIVE = "0,99.5,0.5,0.5,87.25,0"
+
+
+def _window_request(*, scope: str = "pcell") -> BaseStationMeasurementWindowRequest:
+    return BaseStationMeasurementWindowRequest(
+        schema_version=1,
+        scope=scope,
+        lifecycle="authoritative_closed",
+        cardinality="single",
+        requested_window_count=1,
+        expected_window_count=1,
+        window_index=0,
+    )
 
 
 class _WindowDriver(RealCmw500Driver):
@@ -69,7 +81,9 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
     driver = _WindowDriver(states=["OFF", "RUN", "RUN", "RDY", "OFF"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
-        window = await driver.measure_base_station_window(0.1)
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
 
     assert window.confirmed is True
     assert window.preclear_off_confirmed is True
@@ -103,7 +117,9 @@ async def test_continuous_window_rejects_uncommanded_early_ready():
     driver = _WindowDriver(states=["OFF", "RUN", "RDY", "OFF"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
-        window = await driver.measure_base_station_window(0.1)
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
 
     assert window.confirmed is False
     assert "STOP:LTE:SIGN1:EBLer" not in driver.writes
@@ -119,7 +135,7 @@ async def test_pcc_window_rejects_an_all_cells_scope_before_instrument_io():
     with pytest.raises(ValueError, match="pcell"):
         await driver.measure_base_station_window(
             0.1,
-            throughput_scope=ThroughputMetrics.SCOPE_NR_ALL_CELLS,
+            request=_window_request(scope="all_cells"),
         )
 
     assert driver.writes == []
@@ -145,7 +161,9 @@ async def test_kpi_fields_fail_independently_without_borrowing_each_other(
     )
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
-        window = await driver.measure_base_station_window(0.1)
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
 
     assert window.confirmed is True
     assert window.metrics.is_valid("dl_throughput") is throughput_valid
@@ -170,7 +188,9 @@ async def test_stop_rejection_prevents_fetch_and_still_confirms_final_abort():
     )
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
-        window = await driver.measure_base_station_window(0.1)
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
 
     assert window.confirmed is False
     assert window.ready_confirmed is False
@@ -186,7 +206,9 @@ async def test_final_off_failure_discards_previously_fetched_formal_values():
     driver = _WindowDriver(states=["OFF", "RUN", "RUN", "RDY", "RUN"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
-        window = await driver.measure_base_station_window(0.1)
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
 
     assert window.confirmed is False
     assert window.closed_off_confirmed is False
@@ -206,7 +228,9 @@ async def test_cancel_propagates_only_after_final_abort_and_off_confirmation():
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _cancel):
         with pytest.raises(asyncio.CancelledError):
-            await driver.measure_base_station_window(0.1)
+            await driver.measure_base_station_window(
+                0.1, request=_window_request()
+            )
 
     assert driver.writes[-1] == "ABORt:LTE:SIGN1:EBLer"
     assert driver.states == deque()

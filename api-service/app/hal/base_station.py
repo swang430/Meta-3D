@@ -581,6 +581,7 @@ class BaseStationMeasurementWindowTrust:
     simulated: bool
     exchange_ids: tuple[str, ...]
     reason: str
+    context_confirmed: bool = True
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -603,6 +604,10 @@ class BaseStationMeasurementWindowTrust:
             )
         if type(self.simulated) is not bool:
             raise TypeError("measurement window trust simulated must be bool")
+        if type(self.context_confirmed) is not bool:
+            raise TypeError(
+                "measurement window trust context_confirmed must be bool"
+            )
         if (
             not isinstance(self.exchange_ids, tuple)
             or any(
@@ -642,6 +647,7 @@ class BaseStationMeasurementWindowTrust:
     def formally_confirmed(self) -> bool:
         return (
             self.simulated is False
+            and self.context_confirmed is True
             and self.request.lifecycle == "authoritative_closed"
             and all(stage.status == "confirmed" for stage in self.stages)
             and bool(self.exchange_ids)
@@ -689,6 +695,45 @@ class BaseStationMeasurementWindow:
     evidence: tuple[InstrumentEvidenceItem, ...]
     confirmed: bool
     reason: str
+    trust: BaseStationMeasurementWindowTrust | None = None
+
+    def __post_init__(self) -> None:
+        if self.trust is None:
+            return
+        if not isinstance(self.trust, BaseStationMeasurementWindowTrust):
+            raise TypeError("measurement window trust has an invalid type")
+        stage_confirmed = {
+            stage.stage: stage.status == "confirmed"
+            for stage in self.trust.stages
+        }
+        lifecycle_mirrors = {
+            "clear": self.preclear_off_confirmed,
+            "run": self.running_confirmed,
+            "ready": self.ready_confirmed,
+            "closed": self.closed_off_confirmed,
+        }
+        if any(
+            type(value) is not bool or value is not stage_confirmed[stage]
+            for stage, value in lifecycle_mirrors.items()
+        ):
+            raise ValueError(
+                "measurement window lifecycle mirrors disagree with trust receipt"
+            )
+        if self.confirmed is not self.trust.formally_confirmed:
+            raise ValueError(
+                "measurement window confirmed mirror disagrees with trust receipt"
+            )
+        expected_scope = (
+            ThroughputMetrics.SCOPE_SIMULATED
+            if self.trust.simulated
+            else (
+                ThroughputMetrics.SCOPE_PCELL
+                if self.trust.request.scope == "pcell"
+                else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+            )
+        )
+        if self.metrics.throughput_scope != expected_scope:
+            raise ValueError("measurement window metric scope disagrees with request")
 
 
 @dataclass(frozen=True)
@@ -1152,7 +1197,7 @@ class BaseStationDriver(InstrumentDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """采集带厂商生命周期确认的结构化窗口。
 
@@ -1619,18 +1664,38 @@ class MockBaseStation(BaseStationDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """Return a same-shape simulated window that can never be formal."""
 
+        if not isinstance(request, BaseStationMeasurementWindowRequest):
+            raise TypeError("mock measurement requires a frozen window request")
         started_at = datetime.now(timezone.utc)
         await asyncio.sleep(max(float(window_s), 0.0))
         metrics = await self.get_throughput_metrics(
             throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
         )
+        metrics.throughput_scope = ThroughputMetrics.SCOPE_SIMULATED
         metrics.kpi_valid = {
             key: False for key in metrics.kpi_valid
         }
+        trust = BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=tuple(
+                BaseStationMeasurementStageReceipt(
+                    stage=stage,
+                    status="unavailable",
+                    reason="simulated window has no hardware lifecycle proof",
+                )
+                for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES
+            ),
+            simulated=True,
+            exchange_ids=(),
+            reason="simulated diagnostic window; excluded from formal KPI",
+            context_confirmed=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -1643,6 +1708,7 @@ class MockBaseStation(BaseStationDriver):
             evidence=(),
             confirmed=False,
             reason="simulated diagnostic window; excluded from formal KPI",
+            trust=trust,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

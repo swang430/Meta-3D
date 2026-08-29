@@ -10,10 +10,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.hal.base_station import (
+    BASE_STATION_MEASUREMENT_WINDOW_STAGES,
     BaseStationApplyReceipt,
     BaseStationDriver,
     BaseStationFieldReceipt,
+    BaseStationMeasurementStageReceipt,
     BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
     MockBaseStation,
     ThroughputMetrics,
 )
@@ -24,6 +28,41 @@ from app.services import instrument_test_lease
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 from tests.test_p2_43_base_station_adapter_evidence import _Db, _execution
+
+
+def _manifest(adapter_id: str):
+    return (
+        RealCmw500Driver.adapter_manifest
+        if adapter_id == "cmw500"
+        else RealUxmDriver.adapter_manifest
+    )
+
+
+def _window_trust(
+    request: BaseStationMeasurementWindowRequest,
+    *,
+    simulated: bool,
+    exchange_id: str = "window-observation",
+) -> BaseStationMeasurementWindowTrust:
+    formal = not simulated and request.lifecycle == "authoritative_closed"
+    exchange_ids = () if simulated else (exchange_id,)
+    return BaseStationMeasurementWindowTrust(
+        schema_version=1,
+        request=request,
+        request_digest=request.digest,
+        stages=tuple(
+            BaseStationMeasurementStageReceipt(
+                stage=stage,
+                status="confirmed" if formal else "unavailable",
+                reason="test common window trust",
+                exchange_ids=exchange_ids if formal else (),
+            )
+            for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES
+        ),
+        simulated=simulated,
+        exchange_ids=exchange_ids,
+        reason="test common window trust",
+    )
 
 
 def _partial_config_receipt(*, operation_succeeded: bool):
@@ -83,14 +122,11 @@ class _CertifiedAdapter:
     native_calls: int = 0
     legacy_calls: int = 0
 
-    def measurement_window_count(self, requested: int) -> int:
-        assert requested > 0
-        return self.requested_window_count
-
-    async def measure_base_station_window(self, _window_s, *, throughput_scope):
+    async def measure_base_station_window(self, _window_s, *, request):
         self.native_calls += 1
         started = datetime.now(timezone.utc)
         simulated = self.simulated is True
+        trust = _window_trust(request, simulated=simulated)
         return BaseStationMeasurementWindow(
             window_id=f"{self.adapter_id}-{self.native_calls}",
             started_at=started,
@@ -100,30 +136,27 @@ class _CertifiedAdapter:
                 throughput_scope=(
                     ThroughputMetrics.SCOPE_SIMULATED
                     if simulated
-                    else throughput_scope
+                    else (
+                        ThroughputMetrics.SCOPE_PCELL
+                        if request.scope == "pcell"
+                        else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+                    )
                 ),
                 kpi_valid={"dl_throughput": not simulated},
             ),
-            preclear_off_confirmed=not simulated,
-            running_confirmed=not simulated,
-            ready_confirmed=not simulated,
-            closed_off_confirmed=not simulated,
+            preclear_off_confirmed=trust.stages[0].status == "confirmed",
+            running_confirmed=trust.stages[1].status == "confirmed",
+            ready_confirmed=trust.stages[2].status == "confirmed",
+            closed_off_confirmed=trust.stages[3].status == "confirmed",
             evidence=(),
-            confirmed=not simulated,
+            confirmed=trust.formally_confirmed,
             reason="simulated diagnostic" if simulated else "confirmed",
+            trust=trust,
         )
 
     async def measure_throughput_window(self, *_args, **_kwargs):
         self.legacy_calls += 1
         raise AssertionError("production MEASURE must not use the legacy polling API")
-
-    def unconfirmed_window_allows_diagnostic_execution(self, window):
-        return (
-            self.simulated is True
-            and window.metrics.throughput_scope
-            == ThroughputMetrics.SCOPE_SIMULATED
-        )
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adapter_id", ["uxm", "cmw500"])
@@ -135,11 +168,13 @@ async def test_each_adapter_uses_only_the_common_native_window_contract(adapter_
         window_s=1.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=3,
+        manifest=_manifest(adapter_id),
+        simulated_diagnostic=False,
     )
 
-    assert driver.native_calls == 2
+    assert driver.native_calls == (1 if adapter_id == "cmw500" else 3)
     assert driver.legacy_calls == 0
-    assert len(samples) == 2
+    assert len(samples) == (1 if adapter_id == "cmw500" else 3)
     assert all(sample.window is not None for sample in samples)
 
 
@@ -147,7 +182,7 @@ async def test_each_adapter_uses_only_the_common_native_window_contract(adapter_
 async def test_common_window_preserves_exchanges_for_generic_evidence_writer():
     driver = _CertifiedAdapter(adapter_id="uxm", requested_window_count=1)
 
-    async def window_with_exchange(_window_s, *, throughput_scope):
+    async def window_with_exchange(_window_s, *, request):
         exchange_id = "uxm-window-exchange"
         record_exchange_intent(
             exchange_id=exchange_id,
@@ -163,7 +198,7 @@ async def test_common_window_preserves_exchanges_for_generic_evidence_writer():
         return await _CertifiedAdapter.measure_base_station_window(
             driver,
             _window_s,
-            throughput_scope=throughput_scope,
+            request=request,
         )
 
     driver.measure_base_station_window = window_with_exchange
@@ -173,6 +208,8 @@ async def test_common_window_preserves_exchanges_for_generic_evidence_writer():
         window_s=0.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=1,
+        manifest=RealUxmDriver.adapter_manifest,
+        simulated_diagnostic=False,
     )
 
     assert [item.exchange_id for item in samples[0].exchanges] == [
@@ -194,49 +231,30 @@ async def test_simulated_common_window_remains_diagnostic_for_each_adapter(adapt
         window_s=0.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=3,
+        manifest=None,
+        simulated_diagnostic=True,
     )
 
-    assert len(samples) == 1
+    assert len(samples) == 3
     assert samples[0].window.confirmed is False
     assert samples[0].metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
     assert samples[0].metrics.kpi_valid["dl_throughput"] is False
 
 
 @pytest.mark.asyncio
-async def test_real_unconfirmed_window_continues_only_with_explicit_adapter_policy():
+async def test_real_unconfirmed_window_continues_only_with_auditable_common_trust():
     driver = _CertifiedAdapter(
         adapter_id="uxm",
         requested_window_count=1,
     )
-
-    async def unconfirmed(_window_s, *, throughput_scope):
-        started = datetime.now(timezone.utc)
-        return BaseStationMeasurementWindow(
-            window_id="uxm-unconfirmed",
-            started_at=started,
-            completed_at=started + timedelta(seconds=1),
-            metrics=ThroughputMetrics(
-                dl_throughput_mbps=10.0,
-                throughput_scope=throughput_scope,
-                kpi_valid={"dl_throughput": True},
-            ),
-            preclear_off_confirmed=False,
-            running_confirmed=False,
-            ready_confirmed=False,
-            closed_off_confirmed=False,
-            evidence=(),
-            confirmed=False,
-            reason="legacy UXM window has no sourced closed boundary",
-        )
-
-    driver.measure_base_station_window = unconfirmed
-    driver.unconfirmed_window_allows_diagnostic_execution = lambda _window: True
 
     samples = await MeasureExecutor._measure_base_station_samples(
         driver,
         window_s=0.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=1,
+        manifest=RealUxmDriver.adapter_manifest,
+        simulated_diagnostic=False,
     )
 
     assert len(samples) == 1
@@ -255,12 +273,19 @@ async def test_real_uxm_window_preserves_existing_per_metric_attestation():
 
     window = await driver.measure_base_station_window(
         0.0,
-        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        request=MeasureExecutor._measurement_window_requests(
+            RealUxmDriver.adapter_manifest,
+            throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+            requested_sample_count=1,
+            simulated_diagnostic=False,
+        )[0],
     )
 
     assert window.confirmed is False
     assert window.metrics.kpi_valid["dl_throughput"] is True
-    assert driver.unconfirmed_window_allows_diagnostic_execution(window) is True
+    assert window.trust is not None
+    assert window.trust.formally_confirmed is False
+    assert window.trust.diagnostic_execution_allowed is False
 
 
 @pytest.mark.parametrize("adapter_id", ["uxm", "cmw500"])

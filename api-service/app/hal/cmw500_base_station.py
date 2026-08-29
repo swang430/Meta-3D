@@ -47,7 +47,10 @@ from app.hal.base_station import (
     BaseStationFieldReceipt,
     BaseStationIdentity,
     BaseStationDriver,
+    BaseStationMeasurementStageReceipt,
     BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     LTE_TRANSMISSION_MODES,
@@ -2170,7 +2173,7 @@ class RealCmw500Driver(BaseStationDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """采集同一 Extended BLER 生命周期内的 DL throughput 与 BLER。
 
@@ -2179,8 +2182,17 @@ class RealCmw500Driver(BaseStationDriver):
         §3.4.4 printed p.957-959（Absolute/Relative 字段与单位）。
         """
 
-        if throughput_scope != ThroughputMetrics.SCOPE_PCELL:
+        if not isinstance(request, BaseStationMeasurementWindowRequest):
+            raise TypeError("CMW500 measurement requires a frozen window request")
+        if request.scope != "pcell":
             raise ValueError("CMW500 Extended BLER window supports pcell scope only")
+        if (
+            request.lifecycle != "authoritative_closed"
+            or request.cardinality != "single"
+            or request.expected_window_count != 1
+        ):
+            raise ValueError("CMW500 window request disagrees with its frozen manifest")
+        throughput_scope = ThroughputMetrics.SCOPE_PCELL
 
         started_at = datetime.now(timezone.utc)
         window_id = uuid4().hex
@@ -2446,6 +2458,34 @@ class RealCmw500Driver(BaseStationDriver):
         completed_at = datetime.now(timezone.utc)
         if cancelled is not None:
             raise cancelled
+        trust_exchange_ids = tuple(exchange_ids)
+        trust = BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=tuple(
+                BaseStationMeasurementStageReceipt(
+                    stage=stage,
+                    status="confirmed" if confirmed else "unknown",
+                    reason=(
+                        f"{stage} lifecycle confirmed"
+                        if confirmed
+                        else f"{stage} lifecycle was not confirmed"
+                    ),
+                    exchange_ids=trust_exchange_ids if confirmed else (),
+                )
+                for stage, confirmed in (
+                    ("clear", preclear_off_confirmed),
+                    ("run", running_confirmed),
+                    ("ready", ready_confirmed),
+                    ("closed", closed_off_confirmed),
+                )
+            ),
+            simulated=False,
+            exchange_ids=trust_exchange_ids,
+            reason=reason,
+            context_confirmed=lifecycle_confirmed,
+        )
         return BaseStationMeasurementWindow(
             window_id=window_id,
             started_at=started_at,
@@ -2456,8 +2496,9 @@ class RealCmw500Driver(BaseStationDriver):
             ready_confirmed=ready_confirmed,
             closed_off_confirmed=closed_off_confirmed,
             evidence=(evidence,),
-            confirmed=lifecycle_confirmed,
+            confirmed=trust.formally_confirmed,
             reason=reason,
+            trust=trust,
         )
 
     async def get_throughput_metrics(

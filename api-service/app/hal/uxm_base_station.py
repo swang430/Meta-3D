@@ -42,7 +42,10 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationDriver,
     BaseStationFieldReceipt,
+    BaseStationMeasurementStageReceipt,
     BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     CellState,
@@ -3992,7 +3995,7 @@ class RealUxmDriver(BaseStationDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """Expose the existing UXM clear/read window without inventing closure.
 
@@ -4003,6 +4006,15 @@ class RealUxmDriver(BaseStationDriver):
         formal trust by itself.
         """
 
+        if not isinstance(request, BaseStationMeasurementWindowRequest):
+            raise TypeError("UXM measurement requires a frozen window request")
+        if request.lifecycle != "unavailable" or request.cardinality != "requested":
+            raise ValueError("UXM window request disagrees with its frozen manifest")
+        throughput_scope = (
+            ThroughputMetrics.SCOPE_PCELL
+            if request.scope == "pcell"
+            else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+        )
         started_at = datetime.now(timezone.utc)
         with capture_scpi_exchanges() as exchanges:
             metrics = await self.measure_throughput_window(
@@ -4035,6 +4047,25 @@ class RealUxmDriver(BaseStationDriver):
                 "values are diagnostic only"
             ),
         )
+        trust = BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=tuple(
+                BaseStationMeasurementStageReceipt(
+                    stage=stage,
+                    status="unavailable",
+                    reason=(
+                        "profile-independent authoritative lifecycle is unavailable"
+                    ),
+                )
+                for stage in ("clear", "run", "ready", "closed")
+            ),
+            simulated=False,
+            exchange_ids=tuple(exchange_ids),
+            reason=evidence.reason,
+            context_confirmed=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -4047,6 +4078,7 @@ class RealUxmDriver(BaseStationDriver):
             evidence=(evidence,),
             confirmed=False,
             reason=evidence.reason,
+            trust=trust,
         )
 
     def unconfirmed_window_allows_diagnostic_execution(

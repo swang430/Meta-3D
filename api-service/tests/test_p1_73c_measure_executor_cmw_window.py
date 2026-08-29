@@ -10,13 +10,18 @@ from uuid import uuid4
 import pytest
 
 from app.hal.base_station import (
+    BASE_STATION_MEASUREMENT_WINDOW_STAGES,
     BaseStationApplyReceipt,
     BaseStationFieldReceipt,
+    BaseStationMeasurementStageReceipt,
     BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
     MockBaseStation,
     ThroughputMetrics,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 from app.models.test_plan import TestExecution
 from app.services.execution_scpi_evidence import (
     begin_base_station_measurement_attempt,
@@ -31,6 +36,36 @@ from tests.test_p1_73c_base_station_evidence_writer import (
 )
 
 
+def _window_trust(
+    request: BaseStationMeasurementWindowRequest,
+    *,
+    confirmed: bool,
+    simulated: bool = False,
+) -> BaseStationMeasurementWindowTrust:
+    exchange_ids = () if simulated or not confirmed else ("window-proof",)
+    if request.lifecycle in {"clear_read_only", "unavailable"} and not simulated:
+        exchange_ids = ("diagnostic-observation",)
+    return BaseStationMeasurementWindowTrust(
+        schema_version=1,
+        request=request,
+        request_digest=request.digest,
+        stages=tuple(
+            BaseStationMeasurementStageReceipt(
+                stage=stage,
+                status="confirmed" if confirmed else (
+                    "unavailable" if request.lifecycle == "unavailable" else "unknown"
+                ),
+                reason="test window truth",
+                exchange_ids=exchange_ids if confirmed else (),
+            )
+            for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES
+        ),
+        simulated=simulated,
+        exchange_ids=exchange_ids,
+        reason="test window truth",
+    )
+
+
 @dataclass
 class _Cmw:
     adapter_id: str = "cmw500"
@@ -40,9 +75,10 @@ class _Cmw:
     def measurement_window_count(self, _requested: int) -> int:
         return 1
 
-    async def measure_base_station_window(self, window_s, *, throughput_scope):
+    async def measure_base_station_window(self, window_s, *, request):
         self.native_calls += 1
         started = datetime.now(timezone.utc)
+        trust = _window_trust(request, confirmed=True)
         return BaseStationMeasurementWindow(
             window_id="cmw-window",
             started_at=started,
@@ -60,6 +96,7 @@ class _Cmw:
             evidence=(),
             confirmed=True,
             reason="confirmed",
+            trust=trust,
         )
 
     async def measure_throughput_window(self, *_args, **_kwargs):
@@ -72,25 +109,31 @@ class _Uxm:
     adapter_id: str = "uxm"
     native_calls: int = 0
 
-    async def measure_base_station_window(self, _window_s, *, throughput_scope):
+    async def measure_base_station_window(self, _window_s, *, request):
         self.native_calls += 1
         started = datetime.now(timezone.utc)
+        trust = _window_trust(request, confirmed=False)
         return BaseStationMeasurementWindow(
             window_id=f"uxm-window-{self.native_calls}",
             started_at=started,
             completed_at=started + timedelta(seconds=1),
             metrics=ThroughputMetrics(
                 dl_throughput_mbps=float(self.native_calls),
-                throughput_scope=throughput_scope,
+                throughput_scope=(
+                    ThroughputMetrics.SCOPE_PCELL
+                    if request.scope == "pcell"
+                    else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+                ),
                 kpi_valid={"dl_throughput": True},
             ),
-            preclear_off_confirmed=True,
-            running_confirmed=True,
-            ready_confirmed=True,
-            closed_off_confirmed=True,
+            preclear_off_confirmed=False,
+            running_confirmed=False,
+            ready_confirmed=False,
+            closed_off_confirmed=False,
             evidence=(),
-            confirmed=True,
-            reason="confirmed",
+            confirmed=False,
+            reason="diagnostic observation without sourced lifecycle",
+            trust=trust,
         )
 
 
@@ -147,6 +190,8 @@ async def test_cmw_measure_scan_uses_one_driver_native_extended_bler_window():
         window_s=1.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=3,
+        manifest=RealCmw500Driver.adapter_manifest,
+        simulated_diagnostic=False,
     )
 
     assert driver.native_calls == 1
@@ -166,6 +211,8 @@ async def test_uxm_measure_scan_preserves_requested_common_window_count():
         window_s=1.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=3,
+        manifest=RealUxmDriver.adapter_manifest,
+        simulated_diagnostic=False,
     )
 
     assert driver.native_calls == 3
@@ -180,8 +227,18 @@ async def test_rejected_cmw_lifecycle_stops_before_any_legacy_or_extra_window():
 
     async def rejected(*args, **kwargs):
         window = await original(*args, **kwargs)
+        trust = _window_trust(kwargs["request"], confirmed=False)
         return BaseStationMeasurementWindow(
-            **{**window.__dict__, "confirmed": False, "reason": "final OFF unconfirmed"}
+            **{
+                **window.__dict__,
+                "preclear_off_confirmed": False,
+                "running_confirmed": False,
+                "ready_confirmed": False,
+                "closed_off_confirmed": False,
+                "confirmed": False,
+                "reason": "final OFF unconfirmed",
+                "trust": trust,
+            }
         )
 
     driver.measure_base_station_window = rejected
@@ -192,6 +249,8 @@ async def test_rejected_cmw_lifecycle_stops_before_any_legacy_or_extra_window():
             window_s=1.0,
             throughput_scope=ThroughputMetrics.SCOPE_PCELL,
             requested_sample_count=3,
+            manifest=RealCmw500Driver.adapter_manifest,
+            simulated_diagnostic=False,
         )
 
     assert driver.native_calls == 1
@@ -410,6 +469,8 @@ async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window()
         window_s=0.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=2,
+        manifest=None,
+        simulated_diagnostic=True,
     )
 
     assert len(samples) == 2
