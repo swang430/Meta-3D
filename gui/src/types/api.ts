@@ -1,6 +1,7 @@
 export type MetricTrend = '↑' | '↓' | '→' | string
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
+export type { BaseStationAdapterManifest }
 
 export type MetricItem = {
   label: string

@@ -491,21 +491,25 @@ class RealUxmDriver(BaseStationDriver):
                 stage="cell_ready",
                 evidence="diagnostic_only",
                 reason="current profiles do not expose one common authoritative cell-ready proof",
+                source_reference=None,
             ),
             BaseStationAttachStageCapability(
                 stage="ue_registered",
                 evidence="diagnostic_only",
                 reason="current state parsing does not preserve a separate registration milestone",
+                source_reference=None,
             ),
             BaseStationAttachStageCapability(
                 stage="rrc_connected",
                 evidence="diagnostic_only",
                 reason="current profiles collapse connected-like states into one CellState value",
+                source_reference=None,
             ),
             BaseStationAttachStageCapability(
                 stage="data_bearer_established",
                 evidence="unavailable",
                 reason="the adapter has no independent data-bearer establishment proof",
+                source_reference=None,
             ),
         ),
         measurement=BaseStationMeasurementCapability(

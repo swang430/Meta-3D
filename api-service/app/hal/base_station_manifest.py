@@ -71,7 +71,7 @@ class BaseStationConfigFieldCapability(BaseModel):
     support: Literal["authoritative", "diagnostic_only", "not_applicable"]
     readback: Literal["authoritative", "unavailable", "not_applicable"]
     reason: str
-    source_reference: str | None = None
+    source_reference: str | None
 
     @field_validator("field")
     @classmethod
@@ -130,7 +130,7 @@ class BaseStationAttachStageCapability(BaseModel):
         "not_applicable",
     ]
     reason: str
-    source_reference: str | None = None
+    source_reference: str | None
 
     @field_validator("reason")
     @classmethod
@@ -167,7 +167,7 @@ class BaseStationMetricCapability(BaseModel):
     unit: Literal["mbps", "percent", "index", "raw", "not_applicable"]
     scopes: tuple[Literal["pcell", "all_cells"], ...]
     evidence: Literal["authoritative", "diagnostic_only", "unavailable"]
-    source_reference: str | None = None
+    source_reference: str | None
 
     @field_validator("key")
     @classmethod
@@ -210,7 +210,7 @@ class BaseStationMeasurementCapability(BaseModel):
     scopes: tuple[Literal["pcell", "all_cells"], ...]
     lifecycle: Literal["authoritative_closed", "clear_read_only", "unavailable"]
     metrics: tuple[BaseStationMetricCapability, ...]
-    source_reference: str | None = None
+    source_reference: str | None
 
     @field_validator("scopes")
     @classmethod
@@ -246,21 +246,19 @@ class BaseStationAdapterManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Schema 1 remains readable only while registered adapters migrate in
-    # P2-46.  Registry validation will require schema 2 before this slice ends.
-    schema_version: Literal[1, 2]
+    schema_version: Literal[2]
     adapter_id: str
     model_name: str
     vendor: str
     rats: tuple[str, ...]
     capabilities: tuple[str, ...]
-    rat_capabilities: tuple[BaseStationRatCapability, ...] = ()
-    operations: tuple[str, ...] = ()
-    config_fields: tuple[BaseStationConfigFieldCapability, ...] = ()
-    attach_stages: tuple[BaseStationAttachStageCapability, ...] = ()
-    measurement: BaseStationMeasurementCapability | None = None
+    rat_capabilities: tuple[BaseStationRatCapability, ...]
+    operations: tuple[str, ...]
+    config_fields: tuple[BaseStationConfigFieldCapability, ...]
+    attach_stages: tuple[BaseStationAttachStageCapability, ...]
+    measurement: BaseStationMeasurementCapability | None
     profile_requirement: Literal["required", "not_applicable"]
-    profile_schema_version: int | None = None
+    profile_schema_version: int | None
     profile_fields: tuple[BaseStationProfileFieldManifest, ...]
     manual_sources: tuple[str, ...]
     diagnostic_supported: bool
@@ -331,8 +329,6 @@ class BaseStationAdapterManifest(BaseModel):
             raise ValueError("required profile must declare profile_fields")
         if self.profile_requirement == "not_applicable" and self.profile_fields:
             raise ValueError("not_applicable profile cannot declare profile_fields")
-        if self.schema_version == 1:
-            return self
         if self.profile_requirement == "required":
             if type(self.profile_schema_version) is not int or self.profile_schema_version < 1:
                 raise ValueError("required profile needs a positive profile_schema_version")

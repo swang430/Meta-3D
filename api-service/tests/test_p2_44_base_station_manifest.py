@@ -12,6 +12,7 @@ from app.hal.base_station_manifest import (
     validate_base_station_adapter_registrations,
 )
 from app.hal.uxm_base_station import RealUxmDriver
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.instrument_hal_service import (
     get_base_station_adapter_registration,
 )
@@ -39,19 +40,14 @@ def _field(path: str = "route.a") -> BaseStationProfileFieldManifest:
 
 
 def _manifest(**overrides) -> BaseStationAdapterManifest:
-    payload = {
-        "schema_version": 1,
-        "adapter_id": "adapter-a",
-        "model_name": "Model A",
-        "vendor": "Vendor",
-        "rats": ["lte"],
-        "capabilities": ["config", "measurement_window"],
-        "profile_requirement": "required",
-        "profile_fields": [_field()],
-        "manual_sources": ["Instrument_API_Doc/vendor/manual.pdf"],
-        "diagnostic_supported": True,
-        "formal_gate": "site_certification",
-    }
+    payload = RealCmw500Driver.adapter_manifest.model_dump(mode="python")
+    payload.update(
+        adapter_id="adapter-a",
+        model_name="Model A",
+        vendor="Vendor",
+        profile_fields=[_field()],
+        manual_sources=["Instrument_API_Doc/vendor/manual.pdf"],
+    )
     payload.update(overrides)
     return BaseStationAdapterManifest.model_validate(payload)
 

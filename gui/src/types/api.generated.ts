@@ -2621,16 +2621,64 @@ export interface components {
             placeholder: string;
             description: string;
         };
+        BaseStationRatCapability: {
+            /** @enum {string} */
+            rat: "lte" | "nr5g";
+            source_reference: string;
+        };
+        BaseStationConfigFieldCapability: {
+            field: string;
+            /** @enum {string} */
+            support: "authoritative" | "diagnostic_only" | "not_applicable";
+            /** @enum {string} */
+            readback: "authoritative" | "unavailable" | "not_applicable";
+            reason: string;
+            source_reference: string | null;
+        };
+        BaseStationAttachStageCapability: {
+            /** @enum {string} */
+            stage: "cell_ready" | "ue_registered" | "rrc_connected" | "data_bearer_established";
+            /** @enum {string} */
+            evidence: "authoritative" | "diagnostic_only" | "unavailable" | "not_applicable";
+            reason: string;
+            source_reference: string | null;
+        };
+        BaseStationMetricCapability: {
+            key: string;
+            /** @enum {string} */
+            direction: "downlink" | "uplink" | "link" | "not_applicable";
+            /** @enum {string} */
+            unit: "mbps" | "percent" | "index" | "raw" | "not_applicable";
+            scopes: ("pcell" | "all_cells")[];
+            /** @enum {string} */
+            evidence: "authoritative" | "diagnostic_only" | "unavailable";
+            source_reference: string | null;
+        };
+        BaseStationMeasurementCapability: {
+            /** @enum {string} */
+            cardinality: "requested" | "single";
+            scopes: ("pcell" | "all_cells")[];
+            /** @enum {string} */
+            lifecycle: "authoritative_closed" | "clear_read_only" | "unavailable";
+            metrics: components["schemas"]["BaseStationMetricCapability"][];
+            source_reference: string | null;
+        };
         BaseStationAdapterManifest: {
             /** @enum {integer} */
-            schema_version: 1;
+            schema_version: 2;
             adapter_id: string;
             model_name: string;
             vendor: string;
             rats: string[];
             capabilities: string[];
+            rat_capabilities: components["schemas"]["BaseStationRatCapability"][];
+            operations: string[];
+            config_fields: components["schemas"]["BaseStationConfigFieldCapability"][];
+            attach_stages: components["schemas"]["BaseStationAttachStageCapability"][];
+            measurement: components["schemas"]["BaseStationMeasurementCapability"] | null;
             /** @enum {string} */
             profile_requirement: "required" | "not_applicable";
+            profile_schema_version: number | null;
             profile_fields: components["schemas"]["BaseStationProfileFieldManifest"][];
             manual_sources: string[];
             diagnostic_supported: boolean;

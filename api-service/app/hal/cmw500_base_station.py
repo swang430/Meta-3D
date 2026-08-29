@@ -427,6 +427,7 @@ class RealCmw500Driver(BaseStationDriver):
                 stage="rrc_connected",
                 evidence="unavailable",
                 reason="the adapter does not expose an independent RRC milestone",
+                source_reference=None,
             ),
             BaseStationAttachStageCapability(
                 stage="data_bearer_established",
