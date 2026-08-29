@@ -62,6 +62,7 @@ def _trust(request, *, confirmed=True, simulated=False):
         simulated=simulated,
         exchange_ids=exchange_ids,
         reason="window trust",
+        context_confirmed=confirmed,
     )
 
 

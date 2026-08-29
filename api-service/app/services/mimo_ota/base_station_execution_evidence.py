@@ -813,6 +813,7 @@ def _attempt_lifecycle_envelope(
             grouped[key].append(window)
         if any(not group for group in grouped.values()):
             return False, "current_attempt_positions_mismatch", []
+        frozen_shape: tuple[str, str, str, int, int] | None = None
         for group in grouped.values():
             trusts = [window.trust for window in group]
             if any(trust is None for trust in trusts):
@@ -826,6 +827,10 @@ def _attempt_lifecycle_envelope(
                 reference.requested_window_count,
                 reference.expected_window_count,
             )
+            if frozen_shape is None:
+                frozen_shape = common_shape
+            elif common_shape != frozen_shape:
+                return False, "measurement_window_shape_drift", []
             if (
                 len(group) != reference.expected_window_count
                 or {request.window_index for request in requests}

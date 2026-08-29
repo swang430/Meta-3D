@@ -35,7 +35,14 @@ def _stage(stage: str, status: str = "confirmed"):
     )
 
 
-def _trust(request=None, *, stages=None, simulated=False, exchange_ids=None):
+def _trust(
+    request=None,
+    *,
+    stages=None,
+    simulated=False,
+    exchange_ids=None,
+    context_confirmed=True,
+):
     request = _request() if request is None else request
     stages = (
         tuple(_stage(stage) for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES)
@@ -56,6 +63,7 @@ def _trust(request=None, *, stages=None, simulated=False, exchange_ids=None):
         simulated=simulated,
         exchange_ids=exchange_ids,
         reason="window truth",
+        context_confirmed=context_confirmed,
     )
 
 
@@ -107,6 +115,28 @@ def test_authoritative_closed_trust_is_formal_only_with_all_four_stage_proofs():
     assert trust.diagnostic_execution_allowed is True
     with pytest.raises(TypeError, match="must not be used as bool"):
         bool(trust)
+
+
+def test_window_trust_requires_explicit_context_confirmation():
+    request = _request()
+    stages = tuple(
+        _stage(stage) for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES
+    )
+
+    with pytest.raises(TypeError, match="context_confirmed"):
+        BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=stages,
+            simulated=False,
+            exchange_ids=tuple(
+                exchange_id
+                for stage in stages
+                for exchange_id in stage.exchange_ids
+            ),
+            reason="window truth",
+        )
 
 
 def test_authoritative_lifecycle_with_one_unknown_stage_blocks_execution():
@@ -237,6 +267,7 @@ def test_trust_rejects_digest_stage_lifecycle_and_simulation_drift(mutator, mess
             for exchange_id in stage.exchange_ids
         ),
         "reason": "window truth",
+        "context_confirmed": True,
     }
     mutator(values)
     if (

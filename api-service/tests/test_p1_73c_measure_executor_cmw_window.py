@@ -63,6 +63,7 @@ def _window_trust(
         simulated=simulated,
         exchange_ids=exchange_ids,
         reason="test window truth",
+        context_confirmed=confirmed,
     )
 
 

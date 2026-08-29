@@ -581,7 +581,7 @@ class BaseStationMeasurementWindowTrust:
     simulated: bool
     exchange_ids: tuple[str, ...]
     reason: str
-    context_confirmed: bool = True
+    context_confirmed: bool
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:

@@ -193,3 +193,28 @@ def test_current_formal_envelope_requires_common_trust_and_exact_cardinality():
     assert base_station_execution_evidence_is_formally_acceptable(
         cardinality_drift
     ) is False
+
+
+def test_current_formal_envelope_requires_one_window_shape_across_positions():
+    value = _current_formal_value()
+    second_position = {"azimuth_deg": 90.0, "elevation_deg": 0.0}
+    value["requested_positions"].append(second_position)
+
+    second_window = deepcopy(value["measurement_windows"][0])
+    second_window.update(
+        window_id="window-2",
+        lease_id="lease-2",
+        position=second_position,
+    )
+    second_request = second_window["trust"]["request"]
+    second_request["scope"] = "all_cells"
+    second_window["trust"]["request_digest"] = canonical_snapshot_digest(
+        second_request
+    )
+    value["measurement_windows"].append(second_window)
+
+    second_release = deepcopy(value["control_releases"][0])
+    second_release["lease_id"] = "lease-2"
+    value["control_releases"].append(second_release)
+
+    assert base_station_execution_evidence_is_formally_acceptable(value) is False

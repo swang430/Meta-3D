@@ -62,6 +62,7 @@ def _window_trust(
         simulated=simulated,
         exchange_ids=exchange_ids,
         reason="test common window trust",
+        context_confirmed=formal,
     )
 
 
