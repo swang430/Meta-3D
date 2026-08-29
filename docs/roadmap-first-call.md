@@ -4351,8 +4351,11 @@ Mock 全部 simulated/diagnostic。writer 冻结 registry snapshot/digest，投�
 现在与 CMW500 一样在首个测量 I/O 前冻结 registry；UXM 手册引用绑定仓库 zip 内真实存在的 HTML
 member；报告读取校验允许 adapter 未声明旧兼容指标时保留严格无值 UNKNOWN 镜像，但拒绝任何正式/
 诊断值借此绕入。Codex R1 指出的报告通用指标开放映射 P1 也已按严格 TDD 收口：服务端生成的
-projection attestation 绑定完整冻结 evidence digest、registry digest 与逐方位通用投影；客户端不能
-自证，任一新增/修改指标或摘要漂移均 fail-closed，旧 evidence 只允许固定两项兼容指标。修后全后端
+projection attestation 绑定冻结 evidence digest、registry digest 与逐方位通用投影；客户端提交的
+projection/attestation 在创建期一律剥除（这是真正的信任边界），attestation 本身是服务端重写后的
+自洽校验——懒惰篡改（改值不重算摘要）fail-closed，但摘要为无密钥 SHA-256，不针对直接改库的
+协调伪造提供加密真实性保证（接手复核实证，与 path_loss/rf_kpi 等信任字段同一架构前提）；
+旧 evidence 只允许固定两项兼容指标。修后全后端
 **5371 passed / 5 skipped**，适用 GUI 契约与 production build、compileall、单一 Alembic head
 `e6a8c0d2f4b6`、base-to-HEAD diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
 

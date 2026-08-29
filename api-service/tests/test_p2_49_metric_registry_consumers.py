@@ -346,3 +346,63 @@ def test_report_projection_attestation_rejects_tampered_generic_metric():
         match="projection disagrees with frozen registry",
     ):
         build_base_station_metric_projection_attestation(evidence, injected)
+
+
+def test_attestation_rejects_trusted_metric_on_non_authoritative_capability():
+    """内审 F1 行为门：篡改 registry 能力等级必须被冻结链拒绝。
+
+    实证（2026-08-29 双层旁路探针）：「非 authoritative 能力 + trusted
+    指标」在 evidence 冻结链里是**不可表达的状态**——本测试把 cqi_index
+    能力降级为 diagnostic_only 并如实重算 registry digest + 窗口
+    registry_digest 引用，仍被模型层拒绝（窗口内每条 metric 记录还
+    各自钉着 registry digest 与 evidence 等级镜像，单点篡改必然漂移）。
+    report_service.build_...attestation 里的显式「trusted 需
+    authoritative」判据是合法数据流内不可达的纵深防线（探针证实
+    删它两层仍拒），本门锁的是拒绝行为本身，不锁哪一层实现。
+    """
+    evidence = _current_registry_evidence()
+    rows = project_base_station_metrics_by_position(
+        evidence,
+        expected_config=REQUESTED_CONFIG,
+        expected_positions=[POSITION],
+        execution_config=_formal_execution_config(evidence),
+    )
+    payload = [
+        {
+            "position": row["position"],
+            "metrics": {
+                key: metric.model_dump(mode="json")
+                for key, metric in row["metrics"].items()
+            },
+            "dl_throughput_mbps": row["dl_throughput_mbps"].model_dump(
+                mode="json"
+            ),
+            "dl_bler_percent": row["dl_bler_percent"].model_dump(mode="json"),
+        }
+        for row in rows
+    ]
+    # 前置自检：payload 里 cqi_index 确实是 trusted（否则本门测不到目标判据）
+    assert payload[0]["metrics"]["cqi_index"]["status"] == "trusted"
+
+    demoted = deepcopy(evidence)
+    registry = demoted["metric_registry"]
+    for capability in registry["metrics"]:
+        if capability["key"] == "cqi_index":
+            capability["evidence"] = "diagnostic_only"
+    # registry 是 digest 密封的（改能力不重算 digest 会先撞
+    # "metric registry digest mismatch"——那是另一道门）；这里如实重算
+    # digest，让本门打到目标判据「trusted 需 authoritative」上
+    registry["digest"] = canonical_snapshot_digest(
+        {
+            "schema_version": registry["schema_version"],
+            "adapter_id": registry["adapter_id"],
+            "profile_id": registry["profile_id"],
+            "metrics": registry["metrics"],
+        }
+    )
+    # measurement window（P2-48）同样引用 registry digest，冻结链逐层密封，
+    # 一并如实更新——本门要打的是最后那道「trusted 需 authoritative」判据
+    for window in demoted.get("measurement_windows", []):
+        window["metric_registry_digest"] = registry["digest"]
+    with pytest.raises(ValueError, match="semantics drifted"):
+        build_base_station_metric_projection_attestation(demoted, payload)
