@@ -1039,11 +1039,11 @@ def begin_execution_base_station_measurement(
     *,
     driver,
 ) -> str | None:
-    """Create the CMW evidence scope after acquire and before measurement I/O.
+    """Create the BaseStation evidence scope after acquire and before I/O.
 
-    P1-73C does not rewrite the established UXM evidence path.  A frozen CMW
-    execution, however, cannot enter measurement I/O until its active transport
-    identity, immutable request scope, and server-owned attempt id are committed.
+    Every registered execution adapter freezes the active transport identity,
+    immutable request/metric scope, and server-owned attempt id here.  An
+    unbound diagnostic has no adapter-owned measurement evidence.
     """
 
     from app.schemas.mimo_ota.config import MIMOOTAConfiguration
@@ -1057,7 +1057,10 @@ def begin_execution_base_station_measurement(
 
     frozen = (execution.config or {}).get(FREEZE_CONFIG_KEY)
     resolution = frozen.get("resolution") if isinstance(frozen, dict) else None
-    if not isinstance(resolution, dict) or resolution.get("adapter") != "cmw500":
+    if not isinstance(resolution, dict) or resolution.get("adapter") not in {
+        "uxm",
+        "cmw500",
+    }:
         return None
     config = MIMOOTAConfiguration.model_validate(test_case.configuration)
     execution_config = dict(execution.config or {})
@@ -1099,7 +1102,9 @@ def persist_execution_base_station_release(
         return None
     release = getattr(outcome, "base_station_release", None)
     if release is None:
-        raise RuntimeError("CMW measurement lease did not produce control release evidence")
+        raise RuntimeError(
+            "BaseStation measurement lease did not produce control release evidence"
+        )
     append_base_station_control_release(db, execution_id, release)
     execution = (
         db.query(TestExecution).filter(TestExecution.id == execution_id).first()

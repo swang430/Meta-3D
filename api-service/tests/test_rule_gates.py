@@ -2613,3 +2613,37 @@ def test_g25_base_station_attach_truth_is_structured_and_execution_bound():
         isinstance(node, ast.Attribute) and node.attr == "attach_operations"
         for node in ast.walk(formal_envelope)
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G26 BaseStation 指标只读 execution-frozen registry/observation
+# ─────────────────────────────────────────────────────────────────────
+
+def test_g26_base_station_metric_projection_is_registry_driven():
+    """P2-49：新增指标不得再扩展 writer/evaluator 的厂商或固定键分支。"""
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.uxm_base_station import RealUxmDriver
+
+    cmw = RealCmw500Driver(
+        "cmw", {"ip_address": "192.0.2.10"}
+    ).resolve_metric_registry()
+    uxm = RealUxmDriver(
+        "uxm", {"ip_address": "192.0.2.11", "uxm_profile": "irat"}
+    ).resolve_metric_registry()
+    assert cmw.adapter_id == "cmw500"
+    assert uxm.adapter_id == "uxm"
+    assert cmw.digest != uxm.digest
+    assert "dl_bler_percent" in {item.key for item in cmw.metrics}
+    assert "dl_bler_ratio" in {item.key for item in uxm.metrics}
+
+    writer = (
+        _API_SERVICE_ROOT / "app/services/execution_scpi_evidence.py"
+    ).read_text(encoding="utf-8")
+    projection = (
+        _API_SERVICE_ROOT
+        / "app/services/mimo_ota/base_station_execution_evidence.py"
+    ).read_text(encoding="utf-8")
+    assert "window.metric_observations" in writer
+    assert "metric_registry_contract_version" in writer
+    assert "for item in parsed.metric_registry.metrics" in projection
+    assert "metric_not_declared_in_registry" in projection

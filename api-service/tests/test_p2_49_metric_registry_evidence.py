@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +14,7 @@ from app.hal.base_station import (
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.execution_scpi_evidence import (
     append_base_station_measurement_window,
+    begin_execution_base_station_measurement,
     initialize_base_station_execution_evidence,
 )
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
@@ -104,6 +106,53 @@ def test_initial_writer_freezes_exact_adapter_metric_registry():
         ],
         "digest": registry.digest,
     }
+
+
+def test_execution_entry_freezes_uxm_registry_before_measurement_io(monkeypatch):
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services import execution_scpi_evidence as module
+
+    calls: list[tuple[str, object]] = []
+    execution = SimpleNamespace(
+        id="execution-uxm",
+        config={
+            "base_station_adapter_profile_freeze": {
+                "resolution": {"adapter": "uxm"}
+            }
+        },
+    )
+    test_case = SimpleNamespace(
+        configuration=MIMOOTAConfiguration().model_dump(mode="json")
+    )
+    driver = object()
+    db = SimpleNamespace(commit=lambda: calls.append(("commit", None)))
+
+    def initialize(target, **kwargs):
+        calls.append(("initialize", kwargs["driver"]))
+        assert target is execution
+
+    monkeypatch.setattr(
+        module, "initialize_base_station_execution_evidence", initialize
+    )
+    monkeypatch.setattr(
+        module,
+        "begin_base_station_measurement_attempt",
+        lambda target_db, execution_id: (
+            calls.append(("attempt", execution_id)) or "attempt-uxm"
+        ),
+    )
+
+    assert begin_execution_base_station_measurement(
+        db,
+        execution,
+        test_case,
+        driver=driver,
+    ) == "attempt-uxm"
+    assert calls == [
+        ("initialize", driver),
+        ("attempt", "execution-uxm"),
+        ("commit", None),
+    ]
 
 
 def test_current_writer_persists_registered_observations_not_legacy_aliases():
