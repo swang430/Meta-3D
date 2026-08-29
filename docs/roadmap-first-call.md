@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-50：Capability-driven BaseStation Execution Plan（P2-49 已由 PR #415 合并——Codex R1 P1 修复 + 接手补审 2 P2 + Gemini R1 两 medium 修复、R2 明文 clean）。**
+Current Focus（非现场）= P2-51：CMW500 MAC/调度配置正式证据闭环——非现场取证/实现半（P2-50 已由 PR #417 合并：内审 2 findings + Gemini R1 1 medium 全修、R2 明文 clean、变异 19 条全红）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -62,12 +62,12 @@ P3-20/P3-21 仍不得自动启动。
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
    qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414
-   合并；P2-49 已由 PR #415 合并；当前按 **P2-50 → P2-51 → P2-52 → P2-53**，先收敛共同能力与
+   合并；P2-49/P2-50 已由 PR #415/#417 合并；当前按 **P2-51 → P2-52 → P2-53**，先收敛共同能力与
    证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
-   的上一轮架构收敛已经全部合并；当前只从 P2-48 继续执行上述新追加队列。
+   的上一轮架构收敛已经全部合并（队列现状见上一条，不在此重复）。
 3. **原 First-call / on-site 队列完整保留**：P0-5 → P1-2 → P1-4 → P2-4；以及
    P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半，P1-6 继续 HOLD。它们按对应仪器
    到场情况进入现场队列；非现场只能准备载体，不能把本地测试或文档更新记成现场完成。
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-50（Capability-driven BaseStation Execution Plan）**；NEW-1/P2-42/P2-43/P2-44/P2-45/P2-46/P2-47/P2-48/P2-49 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415 合并。后续严格按 P2-50→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-51（CMW500 MAC/调度配置正式证据闭环，非现场半）**；NEW-1/P2-42～P2-50 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417 合并。后续严格按 P2-51→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4361,7 +4361,15 @@ projection/attestation 在创建期一律剥除（这是真正的信任边界）
 
 ### P2-50 — Capability-driven BaseStation Execution Plan
 
-把 MEASURE 中分散的 SCell、MAC、RRC、输入电平与窗口能力判断收敛为 execution-frozen vendor-neutral
+**✅ 已由 PR #417 合并（2026-08-29）**：BaseStationExecutionPlan digest 密封入
+evidence（P2-49 同冻结点）、四类站点（SCell/MAC/RRC/输入电平）散点 getattr 清零改
+消费 planned、planned 缺方法 fail-loud、manifest 交叉校验（声明漂移 raise）、窗口维度
+引用 P2-48 契约；三 adapter 行为逐维等价（探针实证）。内审 2 findings（freeze/live
+manifest 实参对称性双半边门 + evidence adapter 错配负向门）+ 外审 Gemini R1 1 medium
+（operations 类型放宽归一）全修，R2 明文 clean，变异 19 条全红，全量 5402 passed / 5 skipped。
+7 处其它鸭子探测 / SCell manifest token 化 / mock 豁免计划化 → Discovered 候选（P2-53 评估）。
+
+原条目：把 MEASURE 中分散的 SCell、MAC、RRC、输入电平与窗口能力判断收敛为 execution-frozen vendor-neutral
 计划；共同执行器只编排计划与消费 receipt。新增 adapter 原则上不得修改 MEASURE、commissioning、
 Analysis、报告、下载、比较或历史。
 
