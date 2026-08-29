@@ -116,11 +116,26 @@ def test_registered_base_station_adapters_have_unique_fixed_identities():
 
 
 def test_registry_validation_rejects_duplicate_base_station_adapter_ids():
-    class FirstDriver:
-        adapter_id = "uxm"
+    first_manifest = uxm_base_station.RealUxmDriver.adapter_manifest.model_copy(
+        update={"adapter_id": "uxm", "model_name": "first"}
+    )
+    duplicate_manifest = uxm_base_station.RealUxmDriver.adapter_manifest.model_copy(
+        update={"adapter_id": "uxm", "model_name": "duplicate"}
+    )
 
-    class DuplicateDriver:
+    class FirstDriver(base_station.BaseStationDriver):
         adapter_id = "uxm"
+        adapter_manifest = first_manifest
+        input_level_control_supported = True
+        rrc_reconfiguration_supported = True
+        mac_throughput_configuration_supported = True
+
+    class DuplicateDriver(base_station.BaseStationDriver):
+        adapter_id = "uxm"
+        adapter_manifest = duplicate_manifest
+        input_level_control_supported = True
+        rrc_reconfiguration_supported = True
+        mac_throughput_configuration_supported = True
 
     with pytest.raises(ValueError, match="duplicate base-station adapter_id"):
         instrument_hal_service._validate_base_station_adapter_ids(

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from typing import Literal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.hal.base_station import BaseStationRequestedConfig
 from app.hal.base_station import BaseStationDriver, RadioTechnology
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
+    BaseStationAdapterRegistration,
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
     BaseStationMetricCapability,
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
+    validate_base_station_adapter_registrations,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
@@ -230,3 +233,145 @@ def test_real_driver_rat_support_is_derived_from_the_manifest():
     uxm = RealUxmDriver.__new__(RealUxmDriver)
     assert cmw.get_supported_technologies() == [RadioTechnology.LTE]
     assert uxm.get_supported_technologies() == [RadioTechnology.NR5G]
+
+
+def _third_adapter_registration(
+    *,
+    manifest: BaseStationAdapterManifest | None = None,
+    driver_attributes: dict | None = None,
+    profile_model: type[BaseModel] | None = None,
+) -> BaseStationAdapterRegistration:
+    manifest = manifest or BaseStationAdapterManifest.model_validate(
+        _payload(
+            adapter_id="third_adapter",
+            model_name="Third Adapter",
+            profile_requirement="not_applicable",
+            profile_schema_version=None,
+            profile_fields=[],
+        )
+    )
+    attributes = {
+        "adapter_id": manifest.adapter_id,
+        "adapter_manifest": manifest,
+        **(driver_attributes or {}),
+    }
+    driver_class = type("ThirdAdapterDriver", (BaseStationDriver,), attributes)
+    return BaseStationAdapterRegistration(
+        manifest=manifest,
+        driver_class=driver_class,
+        profile_model=profile_model,
+    )
+
+
+def test_registration_accepts_a_new_adapter_without_registry_code_changes():
+    registration = _third_adapter_registration()
+
+    validate_base_station_adapter_registrations(
+        {"Third Adapter": registration}
+    )
+
+
+@pytest.mark.parametrize(
+    "driver_attributes, message",
+    [
+        ({"input_level_control_supported": True}, "input_level_control"),
+        ({"rrc_reconfiguration_supported": True}, "rrc_reconfiguration"),
+        ({"mac_throughput_configuration_supported": True}, "mac_throughput_config"),
+        ({"measurement_window_cardinality": "single"}, "cardinality"),
+    ],
+)
+def test_registration_rejects_driver_class_capability_drift(
+    driver_attributes, message
+):
+    registration = _third_adapter_registration(
+        driver_attributes=driver_attributes
+    )
+
+    with pytest.raises(ValueError, match=message):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": registration}
+        )
+
+
+@pytest.mark.parametrize(
+    "operation, message",
+    [
+        ("input_level_control", "input_level_control"),
+        ("rrc_reconfiguration", "rrc_reconfiguration"),
+        ("mac_throughput_config", "mac_throughput_config"),
+    ],
+)
+def test_registration_rejects_manifest_operation_without_class_support(
+    operation, message
+):
+    manifest = BaseStationAdapterManifest.model_validate(
+        _payload(
+            adapter_id="third_adapter",
+            model_name="Third Adapter",
+            operations=[
+                "identity",
+                "config",
+                "cell_attach",
+                "measurement_window",
+                operation,
+            ],
+            profile_requirement="not_applicable",
+            profile_schema_version=None,
+            profile_fields=[],
+        )
+    )
+    registration = _third_adapter_registration(manifest=manifest)
+
+    with pytest.raises(ValueError, match=message):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": registration}
+        )
+
+
+def test_registration_rejects_legacy_mirror_or_class_manifest_drift():
+    registration = _third_adapter_registration()
+    split_manifest = registration.manifest.model_copy(
+        update={"rats": ("nr5g",)}
+    )
+    split_registration = BaseStationAdapterRegistration(
+        manifest=split_manifest,
+        driver_class=registration.driver_class,
+        profile_model=None,
+    )
+
+    with pytest.raises(ValueError, match="rats"):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": split_registration}
+        )
+
+
+def test_registration_rejects_profile_schema_version_drift():
+    class ProfileV2(BaseModel):
+        model_config = ConfigDict(extra="forbid", frozen=True)
+        schema_version: Literal[2]
+
+    manifest = BaseStationAdapterManifest.model_validate(
+        _payload(adapter_id="third_adapter", model_name="Third Adapter")
+    )
+    registration = _third_adapter_registration(
+        manifest=manifest,
+        profile_model=ProfileV2,
+    )
+
+    with pytest.raises(ValueError, match="profile_schema_version"):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": registration}
+        )
+
+
+def test_registration_rejects_rat_accessor_override():
+    registration = _third_adapter_registration(
+        driver_attributes={
+            "get_supported_technologies": lambda self: [RadioTechnology.NR5G]
+        }
+    )
+
+    with pytest.raises(ValueError, match="get_supported_technologies"):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": registration}
+        )

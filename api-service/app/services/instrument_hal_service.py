@@ -50,16 +50,6 @@ _REAL_DRIVER_REGISTRY_CACHE: Optional[Dict[str, Dict[str, type]]] = None
 
 def _validate_base_station_adapter_ids(drivers: Dict[str, type]) -> None:
     """兼容旧调用点：由声明式 manifest 校验注册身份。"""
-    seen: Dict[str, str] = {}
-    for model_name, driver_class in drivers.items():
-        adapter_id = getattr(driver_class, "adapter_id", None)
-        previous_model = seen.get(adapter_id)
-        if previous_model is not None:
-            raise ValueError(
-                "duplicate base-station adapter_id "
-                f"{adapter_id!r}: {previous_model!r} and {model_name!r}"
-            )
-        seen[adapter_id] = model_name
     registrations = {
         model_name: BaseStationAdapterRegistration(
             manifest=getattr(driver_class, "adapter_manifest", None),

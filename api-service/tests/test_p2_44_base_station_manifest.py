@@ -5,11 +5,13 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from app.hal.base_station import BaseStationDriver
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationProfileFieldManifest,
     validate_base_station_adapter_registrations,
 )
+from app.hal.uxm_base_station import RealUxmDriver
 from app.services.instrument_hal_service import (
     get_base_station_adapter_registration,
 )
@@ -99,15 +101,43 @@ def test_manifest_rejects_ambiguous_or_unverifiable_public_contract(overrides):
 
 
 def test_registration_validation_rejects_missing_or_duplicate_adapter_identity():
+    first_manifest = RealUxmDriver.adapter_manifest.model_copy(
+        update={"adapter_id": "adapter-a", "model_name": "Model A"}
+    )
+    duplicate_manifest = RealUxmDriver.adapter_manifest.model_copy(
+        update={"adapter_id": "adapter-a", "model_name": "Model B"}
+    )
+    first_driver = type(
+        "FirstDriver",
+        (BaseStationDriver,),
+        {
+            "adapter_id": "adapter-a",
+            "adapter_manifest": first_manifest,
+            "input_level_control_supported": True,
+            "rrc_reconfiguration_supported": True,
+            "mac_throughput_configuration_supported": True,
+        },
+    )
+    duplicate_driver = type(
+        "DuplicateDriver",
+        (BaseStationDriver,),
+        {
+            "adapter_id": "adapter-a",
+            "adapter_manifest": duplicate_manifest,
+            "input_level_control_supported": True,
+            "rrc_reconfiguration_supported": True,
+            "mac_throughput_configuration_supported": True,
+        },
+    )
     first = SimpleNamespace(
-        manifest=_manifest(adapter_id="adapter-a", model_name="Model A"),
-        driver_class=SimpleNamespace(adapter_id="adapter-a"),
-        profile_model=object(),
+        manifest=first_manifest,
+        driver_class=first_driver,
+        profile_model=None,
     )
     duplicate = SimpleNamespace(
-        manifest=_manifest(adapter_id="adapter-a", model_name="Model B"),
-        driver_class=SimpleNamespace(adapter_id="adapter-a"),
-        profile_model=object(),
+        manifest=duplicate_manifest,
+        driver_class=duplicate_driver,
+        profile_model=None,
     )
 
     with pytest.raises(ValueError, match="duplicate base-station adapter_id"):

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, get_args
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -390,7 +390,13 @@ class BaseStationAdapterRegistration:
 def validate_base_station_adapter_registrations(
     registrations: Mapping[str, object],
 ) -> None:
-    """Fail loudly when registry identity and declared manifest diverge."""
+    """Fail loudly when locally checkable adapter declarations diverge.
+
+    Validation is static by design: it never instantiates a driver, connects
+    transport, or asks an instrument for runtime capabilities.
+    """
+
+    from app.hal.base_station import BaseStationDriver
 
     seen: dict[str, str] = {}
     for model_name, registration in registrations.items():
@@ -399,6 +405,20 @@ def validate_base_station_adapter_registrations(
             raise ValueError(f"base-station manifest missing for {model_name!r}")
         driver_class = getattr(registration, "driver_class", None)
         driver_adapter_id = getattr(driver_class, "adapter_id", None)
+        if manifest.schema_version != 2:
+            raise ValueError(
+                f"base-station manifest schema_version for {model_name} must be 2"
+            )
+        structured_rats = tuple(item.rat for item in manifest.rat_capabilities)
+        if manifest.rats != structured_rats:
+            raise ValueError(
+                f"base-station rats mirror drift for {model_name}: "
+                f"{manifest.rats!r} != {structured_rats!r}"
+            )
+        if manifest.capabilities != manifest.operations:
+            raise ValueError(
+                f"base-station capabilities mirror drift for {model_name}"
+            )
         if manifest.model_name != model_name:
             raise ValueError(
                 f"base-station manifest model mismatch: {model_name!r} != "
@@ -408,6 +428,64 @@ def validate_base_station_adapter_registrations(
             raise ValueError(
                 f"base-station adapter_id mismatch for {model_name}: "
                 f"{driver_adapter_id!r} != {manifest.adapter_id!r}"
+            )
+        driver_manifest = getattr(driver_class, "adapter_manifest", None)
+        if driver_manifest != manifest:
+            raise ValueError(
+                f"base-station class manifest drift for {model_name}"
+            )
+        if (
+            getattr(driver_class, "get_supported_technologies", None)
+            is not BaseStationDriver.get_supported_technologies
+        ):
+            raise ValueError(
+                "base-station get_supported_technologies must derive from the "
+                f"manifest for {model_name}"
+            )
+
+        operation_mirrors = (
+            ("input_level_control_supported", "input_level_control"),
+            ("rrc_reconfiguration_supported", "rrc_reconfiguration"),
+            (
+                "mac_throughput_configuration_supported",
+                "mac_throughput_config",
+            ),
+        )
+        for class_var, operation in operation_mirrors:
+            class_value = getattr(driver_class, class_var, False) is True
+            manifest_value = operation in manifest.operations
+            if class_value != manifest_value:
+                raise ValueError(
+                    f"base-station {operation} capability drift for {model_name}: "
+                    f"{class_var}={class_value!r}, manifest={manifest_value!r}"
+                )
+        if manifest.measurement is None:
+            raise ValueError(
+                f"base-station measurement declaration missing for {model_name}"
+            )
+        class_cardinality = getattr(
+            driver_class, "measurement_window_cardinality", None
+        )
+        if class_cardinality != manifest.measurement.cardinality:
+            raise ValueError(
+                f"base-station measurement cardinality drift for {model_name}: "
+                f"{class_cardinality!r} != {manifest.measurement.cardinality!r}"
+            )
+
+        config_by_name = {item.field: item for item in manifest.config_fields}
+        if (
+            "input_level_control" in manifest.operations
+            and all(
+                config_by_name[name].support == "not_applicable"
+                for name in (
+                    "downlink_power_dbm",
+                    "downlink_power_dbm_per_bandwidth",
+                )
+            )
+        ):
+            raise ValueError(
+                f"base-station input_level_control has no applicable config field "
+                f"for {model_name}"
             )
         previous_model = seen.get(manifest.adapter_id)
         if previous_model is not None:
@@ -422,3 +500,25 @@ def validate_base_station_adapter_registrations(
             raise ValueError(f"required profile model missing for {model_name!r}")
         if manifest.profile_requirement == "not_applicable" and profile_model is not None:
             raise ValueError(f"unexpected profile model for {model_name!r}")
+        if profile_model is not None:
+            schema_field = getattr(profile_model, "model_fields", {}).get(
+                "schema_version"
+            )
+            allowed_schema_versions = (
+                set(get_args(schema_field.annotation)) if schema_field else set()
+            )
+            if manifest.profile_schema_version not in allowed_schema_versions:
+                raise ValueError(
+                    "base-station profile_schema_version drift for "
+                    f"{model_name}: manifest={manifest.profile_schema_version!r}, "
+                    f"model={sorted(allowed_schema_versions)!r}"
+                )
+            adapter_field = getattr(profile_model, "model_fields", {}).get("adapter")
+            allowed_adapters = (
+                set(get_args(adapter_field.annotation)) if adapter_field else set()
+            )
+            if manifest.adapter_id not in allowed_adapters:
+                raise ValueError(
+                    f"base-station profile adapter drift for {model_name}: "
+                    f"{manifest.adapter_id!r} not in {sorted(allowed_adapters)!r}"
+                )
