@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-52：UXM 权威测量窗口关闭边界——非现场取证/实现半（P2-51 已由 PR #420 合并：内审 5+1+3 findings（R2 轮复核再收 3） + Gemini R1/R2 各 1 high 逐轮修复、R3 明文 clean、变异 28 条全红；CMW500 真机复验为现场半，见取证清单 §7）。**
+Current Focus（非现场）= P2-53：第三种 BaseStation Adapter 接入认证套件——队列末片（P2-52 已由 PR #422 合并：内审 P1〔clear 记账 wire token 不同源〕修复 + 真实传输模板成因门、Gemini R1 首轮明文 clean、变异 16 条全红；UXM 到场复验为现场半，见取证 md §6）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -62,7 +62,7 @@ P3-20/P3-21 仍不得自动启动。
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
    qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414
-   合并；P2-49/P2-50/P2-51 已由 PR #415/#417/#420 合并；当前按 **P2-52 → P2-53**，先收敛共同能力与
+   合并；P2-49～P2-52 已由 PR #415/#417/#420/#422 合并；当前只余 **P2-53**（队列末片），先收敛共同能力与
    证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-52（UXM 权威测量窗口关闭边界，非现场半）**；NEW-1/P2-42～P2-51 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420 合并。后续严格按 P2-52→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-53（第三 adapter 认证套件，队列末片）**；NEW-1/P2-42～P2-52 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422 合并。P2-53 完成即本队列收官，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4390,7 +4390,18 @@ diagnostic，不从 UXM 方言、请求值或旧状态补真。分为非现场�
 
 ### P2-52 — UXM 权威测量窗口关闭边界
 
-按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
+**✅ 非现场半已由 PR #422 合并（2026-08-30）**：取证双源互证（本地 zip HTML +
+NotebookLM 手册原文）——NR 域 BTHRoughput 控制命令恰 4 条（[:STATe]/CONTinuous/
+LENGth/CLEar）、无独立 STARt/STOP；IRAT 适用性手册未说明（P1-32 规矩不猜）。裁决：
+lifecycle 升 clear_read_only（CLEar 原文 + IRAT 现场双证据）；不升 authoritative_closed
+（IRAT 适用性 + 查询形无原文两缺口冻结留档）；clear 逐窗记账携真实 exchange id；
+STATe 查询形只进零写探针（uxm_window_boundary_probe，撞 cap 一律不可判）不进正式
+路径。内审 P1（记账过滤 wire token "write"≠传输层 "command"，测试 fake 曾 pin 住错误
+契约）修复 + 真实传输模板成因门；Gemini R1 首轮明文 clean。变异 16 条全红，全量
+5444 passed / 5 skipped。**UXM 到场复验为现场半**（取证 md §6：探针 → 操作员 OFF
+写形剧本 → authoritative_closed 升级前置）。
+
+原条目：按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
 永久声明 clear/read-only、diagnostic。分为非现场取证/实现与 UXM 到场复验，不盲试命令。
 
 ### P2-53 — 第三种 BaseStation Adapter 接入认证套件
