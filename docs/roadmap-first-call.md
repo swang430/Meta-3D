@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-53：第三种 BaseStation Adapter 接入认证套件——队列末片（P2-52 已由 PR #422 合并：内审 P1〔clear 记账 wire token 不同源〕修复 + 真实传输模板成因门、Gemini R1 首轮明文 clean、变异 16 条全红；UXM 到场复验为现场半，见取证 md §6）。**
+Current Focus（非现场）= P2-53：第三种 BaseStation Adapter 接入认证套件——队列末片（P2-52 已由 PR #422 合并：内审 P1〔clear 记账 wire token 不同源〕修复 + 真实传输模板成因门、Gemini R1 首轮明文 clean、变异 16 条全红；UXM 到场复验为现场半，见取证 evidence.md §6）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -4398,7 +4398,7 @@ lifecycle 升 clear_read_only（CLEar 原文 + IRAT 现场双证据）；不升 
 STATe 查询形只进零写探针（uxm_window_boundary_probe，撞 cap 一律不可判）不进正式
 路径。内审 P1（记账过滤 wire token "write"≠传输层 "command"，测试 fake 曾 pin 住错误
 契约）修复 + 真实传输模板成因门；Gemini R1 首轮明文 clean。变异 16 条全红，全量
-5444 passed / 5 skipped。**UXM 到场复验为现场半**（取证 md §6：探针 → 操作员 OFF
+5444 passed / 5 skipped。**UXM 到场复验为现场半**（取证 evidence.md §6：探针 → 操作员 OFF
 写形剧本 → authoritative_closed 升级前置）。
 
 原条目：按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
