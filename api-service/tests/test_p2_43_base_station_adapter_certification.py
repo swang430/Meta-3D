@@ -20,6 +20,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindowTrust,
     MockBaseStation,
     ThroughputMetrics,
+    resolve_base_station_execution_plan,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.scpi_evidence import record_exchange_intent, record_exchange_terminal
@@ -298,6 +299,19 @@ def test_current_attempt_and_lease_context_is_vendor_neutral(adapter_id, monkeyp
             "adapter": adapter_id,
             "execution_mode": "real",
         }
+    }
+    # P2-50：attempt 路径要求 evidence 携带冻结执行计划，且与当前加载
+    # adapter 的推导结果 digest 一致（此处驱动是无声明的 SimpleNamespace）。
+    frozen_plan = resolve_base_station_execution_plan(
+        SimpleNamespace(adapter_id=adapter_id, simulated=False),
+        manifest=None,
+    )
+    evidence = execution.config["base_station_execution_evidence"]
+    evidence["measurement_window_contract_version"] = 1
+    evidence["execution_plan_contract_version"] = 1
+    evidence["execution_plan"] = {
+        **frozen_plan.as_payload(),
+        "digest": frozen_plan.digest,
     }
     lease = ActiveBaseStationLeaseIdentity(
         lease_id="lease-1",

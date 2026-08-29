@@ -9,11 +9,18 @@ from app.hal.base_station import MockBaseStation
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.services.input_level_controller import InputLevelController, InputLevelResult
+from app.hal.base_station import resolve_base_station_execution_plan
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
     _build_pcell_requested_config,
     _formal_mac_configuration_blocker,
 )
+
+
+def _plan(driver, manifest=None):
+    """P2-50：从驱动声明推导 execution-frozen 计划（测试消费入口同产线）。"""
+
+    return resolve_base_station_execution_plan(driver, manifest=manifest)
 
 
 class _Ce:
@@ -94,7 +101,10 @@ def test_measure_source_has_no_vendor_type_branch_or_cmw_scpi():
 def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
-    blocker = _formal_mac_configuration_blocker(cmw)
+    blocker = _formal_mac_configuration_blocker(
+        cmw,
+        plan=_plan(cmw, RealCmw500Driver.adapter_manifest).mac_throughput,
+    )
 
     assert blocker is not None
     assert "MAC" in blocker
@@ -103,7 +113,10 @@ def test_real_cmw_is_blocked_from_formal_kpi_without_mac_configuration():
 def test_cmw_pcell_confirmation_does_not_remove_missing_mac_blocker():
     cmw = RealCmw500Driver("cmw", {"ip_address": "192.0.2.2"})
 
-    assert _formal_mac_configuration_blocker(cmw) is not None
+    assert _formal_mac_configuration_blocker(
+        cmw,
+        plan=_plan(cmw, RealCmw500Driver.adapter_manifest).mac_throughput,
+    ) is not None
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():
@@ -117,9 +130,21 @@ def test_uxm_and_mock_keep_their_existing_mac_paths():
     )
     mock = MockBaseStation("mock", {})
 
-    assert _formal_mac_configuration_blocker(uxm) is None
-    assert _formal_mac_configuration_blocker(unsupported_profile) is not None
-    assert _formal_mac_configuration_blocker(mock) is None
+    assert _formal_mac_configuration_blocker(
+        uxm,
+        plan=_plan(uxm, RealUxmDriver.adapter_manifest).mac_throughput,
+    ) is None
+    assert _formal_mac_configuration_blocker(
+        unsupported_profile,
+        plan=_plan(
+            unsupported_profile, RealUxmDriver.adapter_manifest
+        ).mac_throughput,
+    ) is not None
+    # mock 的 simulated 语义不变：无论计划项如何，mock 不产生 MAC blocker。
+    assert _formal_mac_configuration_blocker(
+        mock,
+        plan=_plan(mock).mac_throughput,
+    ) is None
 
 
 async def test_cmw_does_not_call_inherited_rrc_stub_after_attach(monkeypatch):
@@ -132,11 +157,16 @@ async def test_cmw_does_not_call_inherited_rrc_stub_after_attach(monkeypatch):
         raise AssertionError("CMW must not call the inherited RRC stub")
 
     monkeypatch.setattr(cmw, "reconfigure_rrc", forbidden_stub)
-    assert await helper(cmw, mimo_layers=2, modulation="64QAM") is None
+    plan = _plan(cmw, RealCmw500Driver.adapter_manifest).rrc_reconfiguration
+    assert plan.planned is False
+    assert await helper(
+        cmw, plan=plan, mimo_layers=2, modulation="64QAM"
+    ) is None
 
 
 async def test_explicit_rrc_capability_keeps_supported_adapter_path():
     class _Supported:
+        adapter_id = "test_rrc"
         rrc_reconfiguration_supported = True
 
         def __init__(self):
@@ -149,7 +179,11 @@ async def test_explicit_rrc_capability_keeps_supported_adapter_path():
     helper = getattr(measure_module, "_reconfigure_rrc_if_supported", None)
     assert callable(helper)
     adapter = _Supported()
-    assert await helper(adapter, mimo_layers=4, modulation="256QAM") is True
+    plan = _plan(adapter).rrc_reconfiguration
+    assert plan.planned is True
+    assert await helper(
+        adapter, plan=plan, mimo_layers=4, modulation="256QAM"
+    ) is True
     assert adapter.calls == [{"mimo_layers": 4, "modulation": "256QAM"}]
 
 
@@ -160,6 +194,7 @@ async def test_uxm_input_loop_keeps_behavior_with_common_result_and_legacy_mirro
         base_station=uxm,
         config=_Config(),
         execution_id="execution-uxm",
+        plan=_plan(uxm).input_level_control,
     )
 
     assert payload["success"] is True
@@ -175,6 +210,7 @@ async def test_cmw_input_loop_is_warning_only_and_never_uses_uxm_power_path():
         base_station=cmw,
         config=_Config(),
         execution_id="execution-cmw",
+        plan=_plan(cmw).input_level_control,
     )
 
     assert payload["skipped"] is True

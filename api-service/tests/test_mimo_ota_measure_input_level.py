@@ -26,7 +26,16 @@ from app.services.input_level_controller import (
     InputLevelResult,
     InputOperatingPoint,
 )
+from app.hal.base_station import resolve_base_station_execution_plan
 from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+
+def _input_plan(base_station):
+    """P2-50：由驱动声明推导输入闭环计划项（测试消费入口同产线）。"""
+
+    return resolve_base_station_execution_plan(
+        base_station, manifest=None
+    ).input_level_control
 
 
 # ---------------------------------------------------------------------------
@@ -129,11 +138,11 @@ class _FakeMockCE:
 
 
 class _FakeMockBS:
-    """Stand-in for MockBaseStation lacking set_downlink_power. (The real
-    MockBaseStation does implement it; this fake only exists to test the
-    CE-yes-BS-no half of the capability matrix.)"""
+    """Stand-in for a BS that never declared the input-level capability. (The
+    real MockBaseStation keeps the default opt-out too; this fake only exists
+    to test the CE-yes-BS-no half of the capability matrix.)"""
 
-    pass
+    adapter_id = "uxm"
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +172,7 @@ class TestCapabilityDetection:
         ce = _FakeMockCE()
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
         )
         assert payload["skipped"] is True
         assert "CE 缺接口" in payload["reason"]
@@ -175,10 +184,10 @@ class TestCapabilityDetection:
         ce = _FakeRealCE()
         bs = _FakeMockBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
         )
         assert payload["skipped"] is True
-        assert "BS 缺 set_downlink_power" in payload["reason"]
+        assert "BS 未显式开放 input_level_control capability" in payload["reason"]
         # CE 不应被调用 (跳过路径, controller 都没起来)
         assert ce.calls == {}
 
@@ -187,7 +196,7 @@ class TestCapabilityDetection:
         ce = _FakeRealCE()
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
         )
         # controller 跑了 → 不是 skipped
         assert payload.get("skipped") is not True
@@ -208,7 +217,7 @@ class TestActiveInputsDerivation:
         ce = _FakeRealCE(tx_antennas=4)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         assert payload["active_inputs"] == [1, 2]
 
@@ -231,7 +240,7 @@ class TestActiveInputsDerivation:
         ce = _CEWithoutTxAttr()
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         # 无 sanity bound, 直接 config.mimo_layers=2
         assert payload["active_inputs"] == [1, 2]
@@ -250,7 +259,7 @@ class TestActiveInputsDerivation:
         ce.get_active_input_ports = lambda: [3, 5]        # 非连续口
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         assert payload["active_inputs"] == [3, 5], "按 1..n 推了, 没用回读口号"
 
@@ -273,7 +282,7 @@ class TestActiveInputsDerivation:
         ce.get_active_input_ports = lambda: None if ce._cold else [3, 5]
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs,
+            emulator=ce, base_station=bs, plan=_input_plan(bs),
             config=_MiniConfig(mimo_layers=4),      # 4 层 > 实际 2 个输入口
             execution_id="t1",
         )
@@ -289,7 +298,7 @@ class TestActiveInputsDerivation:
         ce.get_active_input_ports = lambda: [3, 5]  # 口号只回读到 2 个 (不一致)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=4), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=4), execution_id="t1",
         )
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
@@ -303,7 +312,7 @@ class TestActiveInputsDerivation:
         ce.get_active_input_ports = lambda: None       # 有能力、读不到
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
@@ -325,7 +334,7 @@ class TestActiveInputsDerivation:
         ce = _NoTopoCE()
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         assert payload["active_inputs"] == [1, 2]
         assert payload.get("success") is True
@@ -341,7 +350,7 @@ class TestTopologyMismatch:
         ce = _FakeRealCE(tx_antennas=4)  # 当前 .smu 4x4
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs,
+            emulator=ce, base_station=bs, plan=_input_plan(bs),
             config=_MiniConfig(mimo_layers=8),  # BS 想发 8 layer > 4 端口
             execution_id="t1",
         )
@@ -360,7 +369,7 @@ class TestTopologyMismatch:
         ce = _FakeRealCE(tx_antennas=4)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs,
+            emulator=ce, base_station=bs, plan=_input_plan(bs),
             config=_MiniConfig(mimo_layers=4),
             execution_id="t1",
         )
@@ -377,7 +386,7 @@ class TestPayloadShape:
         ce = _FakeRealCE(tx_antennas=4)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
         )
         assert payload["success"] is True
         assert payload["failure_reason"] is None
@@ -400,7 +409,7 @@ class TestPayloadShape:
         ce.autoset_inputs = AsyncMock(return_value=False)  # always fail
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs, config=_MiniConfig(), execution_id="t1",
+            emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
         )
         assert payload["success"] is False
         # InputLevelController 跑满 max_iter (default=5) 还是不收敛 → 5 轮未收敛
@@ -418,7 +427,7 @@ class TestStrictFlagInPayload:
         ce.autoset_inputs = AsyncMock(return_value=False)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
-            emulator=ce, base_station=bs,
+            emulator=ce, base_station=bs, plan=_input_plan(bs),
             config=_MiniConfig(precheck_strict_input_level=False),
             execution_id="t1",
         )

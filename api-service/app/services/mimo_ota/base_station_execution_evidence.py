@@ -505,6 +505,61 @@ class BaseStationMetricRegistryEvidence(BaseModel):
         raise KeyError(key)
 
 
+class BaseStationExecutionPlanItemEvidence(BaseModel):
+    """一条 execution-frozen 能力计划项的 JSON-safe 镜像（P2-50）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    planned: StrictBool
+    capability_source: str
+    reason: str
+
+    @field_validator("capability_source", "reason")
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+
+class BaseStationExecutionPlanEvidence(BaseModel):
+    """Execution-frozen、vendor-neutral 的能力执行计划（P2-50）。
+
+    窗口维度只引用既有 P2-48 冻结契约版本，不重造窗口计划。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    adapter_id: Literal["uxm", "cmw500"]
+    scell: BaseStationExecutionPlanItemEvidence
+    mac_throughput: BaseStationExecutionPlanItemEvidence
+    rrc_reconfiguration: BaseStationExecutionPlanItemEvidence
+    input_level_control: BaseStationExecutionPlanItemEvidence
+    measurement_window_contract_version: Literal[1]
+    digest: str
+
+    @field_validator("digest")
+    @classmethod
+    def _required_digest(cls, value: str):
+        return _non_empty(value, "digest")
+
+    @model_validator(mode="after")
+    def _stable_plan(self):
+        payload = {
+            "schema_version": self.schema_version,
+            "adapter_id": self.adapter_id,
+            "scell": self.scell.model_dump(mode="json"),
+            "mac_throughput": self.mac_throughput.model_dump(mode="json"),
+            "rrc_reconfiguration": self.rrc_reconfiguration.model_dump(mode="json"),
+            "input_level_control": self.input_level_control.model_dump(mode="json"),
+            "measurement_window_contract_version": (
+                self.measurement_window_contract_version
+            ),
+        }
+        if canonical_snapshot_digest(payload) != self.digest:
+            raise ValueError("execution plan digest mismatch")
+        return self
+
+
 class BaseStationMetricEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -762,6 +817,8 @@ class BaseStationExecutionEvidence(BaseModel):
     measurement_window_contract_version: Literal[1] | None = None
     metric_registry_contract_version: Literal[1] | None = None
     metric_registry: BaseStationMetricRegistryEvidence | None = None
+    execution_plan_contract_version: Literal[1] | None = None
+    execution_plan: BaseStationExecutionPlanEvidence | None = None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -819,6 +876,23 @@ class BaseStationExecutionEvidence(BaseModel):
                         raise ValueError("measurement metric semantics drifted")
         elif self.metric_registry is not None:
             raise ValueError("historical evidence cannot carry an unfrozen registry")
+        if self.execution_plan_contract_version == 1:
+            plan = self.execution_plan
+            if plan is None or plan.adapter_id != self.adapter:
+                raise ValueError(
+                    "current execution requires its adapter execution plan"
+                )
+            if (
+                plan.measurement_window_contract_version
+                != self.measurement_window_contract_version
+            ):
+                raise ValueError(
+                    "execution plan window reference disagrees with evidence contract"
+                )
+        elif self.execution_plan is not None:
+            raise ValueError(
+                "historical evidence cannot carry an unfrozen execution plan"
+            )
         if any(row.adapter != self.adapter for row in self.adapter_operations):
             raise ValueError("adapter operation mismatch")
         if self.attach_operations is not None and any(
@@ -878,6 +952,11 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         and value.get("metric_registry_contract_version") is None
     ):
         return None
+    if (
+        "execution_plan_contract_version" in value
+        and value.get("execution_plan_contract_version") is None
+    ):
+        return None
     try:
         parsed = BaseStationExecutionEvidence.model_validate(value)
     except Exception:
@@ -896,6 +975,10 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         normalized.pop("metric_registry_contract_version", None)
     if "metric_registry" not in value:
         normalized.pop("metric_registry", None)
+    if "execution_plan_contract_version" not in value:
+        normalized.pop("execution_plan_contract_version", None)
+    if "execution_plan" not in value:
+        normalized.pop("execution_plan", None)
     raw_windows = value.get("measurement_windows")
     normalized_windows = normalized.get("measurement_windows")
     if isinstance(raw_windows, list) and isinstance(normalized_windows, list):
