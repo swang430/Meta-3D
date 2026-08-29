@@ -196,7 +196,11 @@ class BaseStationApplyReceipt:
     """Versioned vendor-neutral result for config or route application."""
 
     schema_version: Literal[1]
-    operation: Literal["config", "route"]
+    # P2-51: "mac_throughput_config" 是 configure_mac_throughput_test 的
+    # 证据回执；它不进入 adapter_operations 持久化链（那条链的
+    # BaseStationAdapterOperationEvidence 仍只收 config/route），只随
+    # MacThroughputConfigResult.receipt 返回给调用方。
+    operation: Literal["config", "route", "mac_throughput_config"]
     fields: tuple[BaseStationFieldReceipt, ...]
     reason: str
     simulated: bool
@@ -205,7 +209,7 @@ class BaseStationApplyReceipt:
     def __post_init__(self) -> None:
         if self.schema_version != 1:
             raise ValueError("unsupported base-station apply receipt schema")
-        if self.operation not in {"config", "route"}:
+        if self.operation not in {"config", "route", "mac_throughput_config"}:
             raise ValueError("base-station apply operation is invalid")
         if not isinstance(self.fields, tuple) or not self.fields:
             raise ValueError("base-station apply receipt requires fields")

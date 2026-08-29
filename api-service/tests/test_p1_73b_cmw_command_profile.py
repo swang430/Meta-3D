@@ -25,6 +25,24 @@ def test_reachable_cmw_commands_carry_manual_source_and_purpose():
         "ebler_timeout",
         "ebler_repetition",
         "ebler_stop_condition",
+        # P2-51: LTE MAC/调度配置（取证清单
+        # docs/plans/2026-08-30-p2-51-cmw500-mac-scheduling-evidence.md）
+        "mac_sched_type",
+        "mac_sched_type_query",
+        "mac_rmc_dl",
+        "mac_rmc_dl_query",
+        "mac_rmc_ul",
+        "mac_rmc_ul_query",
+        "mac_rmc_rbpos_dl",
+        "mac_rmc_rbpos_dl_query",
+        "mac_rmc_rbpos_ul",
+        "mac_rmc_rbpos_ul_query",
+        "mac_dl_stream_coupling",
+        "mac_dl_stream_coupling_query",
+        "mac_dl_padding",
+        "mac_dl_padding_query",
+        "mac_ul_multicluster_query",
+        "mac_harq_dl_enable_query",
     }
 
     assert required == set(CMW500_LTE_COMMANDS)

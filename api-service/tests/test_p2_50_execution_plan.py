@@ -105,7 +105,12 @@ def test_real_cmw_plan_keeps_input_level_fail_closed_with_declared_reason():
 
     assert plan.adapter_id == "cmw500"
     assert plan.input_level_control.planned is False
-    assert plan.mac_throughput.planned is False
+    # P2-51：CMW500 声明手册取证的正式 MAC 配置能力（manifest token 镜像）。
+    assert plan.mac_throughput.planned is True
+    assert (
+        plan.mac_throughput.capability_source
+        == "manifest.operations:mac_throughput_config"
+    )
     assert plan.rrc_reconfiguration.planned is False
     assert plan.scell.planned is False
     # CMW 声明了 input_level_unavailable_reason → 吸收进计划项 reason

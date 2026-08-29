@@ -60,9 +60,14 @@ from app.hal.base_station import (
 from app.hal.lte_earfcn import validate_lte_band_options
 from app.hal.cmw500_command_profile import (
     CMW500_LTE_COMMANDS,
+    CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH,
     Cmw500LteCommandProfile,
+    CmwLteFullRbRmcPlan,
     CmwNx2Route,
 )
+# P2-51：共享 SPI 结果类型（P1-32 起的既有契约）。定义仍在 uxm_base_station
+# —— vendor-neutral 归位（挪 base_station.py）已记 Discovered，本片不动定义站点。
+from app.hal.uxm_base_station import MacThroughputConfigResult
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
@@ -289,6 +294,12 @@ class RealCmw500Driver(BaseStationDriver):
             "cell_attach",
             "measurement_window",
             "safe_idle_release",
+            # P2-51: manual-evidenced LTE MAC/scheduling configuration
+            # (STYPe RMC + full-RB RMC + DLPadding, see
+            # docs/plans/2026-08-30-p2-51-cmw500-mac-scheduling-evidence.md).
+            # Mirrored by the mac_throughput_configuration_supported ClassVar
+            # (validate_base_station_adapter_registrations operation mirror).
+            "mac_throughput_config",
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
@@ -401,8 +412,12 @@ class RealCmw500Driver(BaseStationDriver):
                     "scheduler_algorithm",
                     "not_applicable",
                     "not_applicable",
-                    "scheduler configuration is not implemented by this adapter",
-                    None,
+                    # P2-51: scheduling is driven by the dedicated MAC
+                    # throughput operation (STYPe RMC, manual printed p.743),
+                    # not by the generic config request field.
+                    "scheduling type is owned by the dedicated MAC throughput "
+                    "operation (STYPe RMC), not by the generic config request",
+                    "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.743",
                 ),
                 (
                     "csi_rs_ports",
@@ -505,6 +520,52 @@ class RealCmw500Driver(BaseStationDriver):
         formal_gate="site_certification",
     )
     measurement_window_cardinality = "single"
+    # P2-51：正式 MAC/调度配置能力（manifest operations 的
+    # "mac_throughput_config" token 镜像；镜像门 =
+    # validate_base_station_adapter_registrations 的 operation_mirrors）。
+    mac_throughput_configuration_supported = True
+    # P2-51：configure_mac_throughput_test 的组名。missing_mandatory 语义与
+    # UXM 相同（mandatory ∩ skipped）；本驱动 skipped 只用于「没轮到发/选件域
+    # 不发」，被仪器拒/回读不符走 rejected。
+    MAC_CFG_MANDATORY: tuple = (
+        "SCHED_TYPE_RMC",
+        "DL_STREAM_COUPLING",
+        "RMC_DL",
+        "RMC_RBPOS_DL",
+        "RMC_UL",
+        "RMC_RBPOS_UL",
+        "DL_PADDING",
+    )
+    # P2-51：手册无对应命令 / 不可如实翻译的 SPI 维度（取证清单 §4 逐条）。
+    # ⚠ 两个方向都不补真：不从 UXM 方言抄、不从请求值/旧状态猜。
+    MAC_CFG_NO_EQUIVALENT: Dict[str, str] = {
+        "NR_MCS_INDEX": (
+            "LTE RMC 由 #RB/调制/TBS 三元组描述（手册 §2.2.19 p.69、pp.799-801），"
+            "无「MCS 索引」命令；不发明 36.213 映射，实配组合见 receipt 的 rmc_dl/rmc_ul"
+        ),
+        "TDD_SLOT_PATTERN": (
+            "FDD 无子帧配比维度；LTE TDD 配比是 CELL[:PCC]:ULDL 0..6（p.687），"
+            "NR slot 字符串不可如实翻译 —— TDD duplex 下本方法整体 fail-loud"
+        ),
+        "HARQ_PROCESSES": (
+            "LTE DL HARQ 进程数无手册命令（HARQ 组 pp.783-785 仅 "
+            "ENABle/NHT/RVCSequence/UDSequence）"
+        ),
+        "MEAS_TPUT_STAT_COUNT": (
+            "EBLer:SFRames（p.953）有对应命令：p.953『只影响 trace 长度』"
+            "限定 confidence 模式（SCONdition CLEVel），而正式窗口是"
+            "continuous（SCONdition NONE，P1-73B）——该模式下 SFRames ="
+            "每周期统计子帧数（§3.3.1 p.940 示例明示）。命令归窗口层所有、"
+            "当前全仓未驱动：统计基继承仪器旧状态是已登记缺口"
+            "（Discovered：窗口层驱动 SFRames），不在 MAC 配置层越权下发"
+        ),
+        "NR_SCS": "LTE 子载波间隔固定 15 kHz，手册无配置命令",
+        "CSI_RS_PORTS": "NR 概念；本驱动 LTE 正式路径 TM3 2x2，无对应命令",
+    }
+    # P2-51：本方法所用命令集的最低固件下限 = 各 mac_* 规格 minimum_firmware
+    # 的最大值（MCLuster:UL 探测 V3.5.20 > DLEQual V3.2.60）。
+    # 门测试断言该常量与规格表派生值一致，防单边改动漂移。
+    MAC_CFG_MIN_FIRMWARE = "V3.5.20"
     input_level_unavailable_reason = (
         "Warning: CMW500 input-level/power capability remains disabled in P1-73A"
     )
@@ -1790,6 +1851,452 @@ class RealCmw500Driver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[CMW500] set_frc_config failed: {e}")
             return False
+
+    async def configure_mac_throughput_test(
+        self,
+        mimo_layers: int = 2,
+        mcs: int = 28,
+        rb_alloc: str = "ALL",
+        enable_amc: bool = False,
+        tdd_pattern: str = "DDDDDDDSUU",
+        tdd_period: str = "5MS",
+        harq_max_trans: int = 4,
+        harq_processes: int = 16,
+        stat_count: int = 5000,
+        scs_khz: Optional[int] = None,
+        csi_rs_ports: Optional[int] = None,
+    ) -> MacThroughputConfigResult:
+        """P2-51：LTE 正式 throughput/BLER 的 MAC/调度配置（手册逐条取证）。
+
+        取证清单（命令→页码→设置/查询→选件依赖）：
+        docs/plans/2026-08-30-p2-51-cmw500-mac-scheduling-evidence.md
+
+        写序（每组独立 `*OPC?` + `SYSTem:ERRor:ALL?` 验错 + 查询回读比对）：
+        STYPe RMC（p.743）→ MCLuster:UL 探测（pp.743-744，仅查询）→
+        DLEQual ON（p.794）→ RMC:DL1 满配行（表 2-38 p.78）+ RBPosition:DL1 LOW
+        （2 层再回读 DL2 验证耦合）→ RMC:UL 满配行（表 2-33 pp.70-71）+
+        RBPosition:UL LOW → DLPadding ON（p.742，BLER 前置 §3.1 p.921）→
+        HARQ:DL:ENABle 探测记档（pp.783-784 选件域，不驱动）。
+
+        ⚠ 不可如实翻译的 SPI 维度（NR MCS 索引 / NR TDD pattern / HARQ 进程数 /
+        stat_count / SCS / CSI-RS）见类常量 ``MAC_CFG_NO_EQUIVALENT`` —— 不从
+        UXM 方言抄命令、不从请求值或旧状态补真；TDD duplex 整体 fail-loud。
+        """
+
+        applied: List[str] = []
+        skipped: List[str] = []
+        rejected: List[str] = []
+        # (field, requested, applied_value, status, reason) —— 统一在结尾装配
+        # BaseStationFieldReceipt（exchange_ids 取整段 capture，与 apply_config
+        # / apply_route 的既有证据形态一致）。
+        field_rows: List[tuple] = []
+        no_equivalent = tuple(self.MAC_CFG_NO_EQUIVALENT)
+        sign = self._sign_channel
+        profile = Cmw500LteCommandProfile
+
+        def _result(
+            error: Optional[str],
+            exchanges=(),
+            *,
+            reason: str,
+        ) -> MacThroughputConfigResult:
+            exchange_ids = tuple(item.exchange_id for item in exchanges)
+            receipt_fields = tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=requested,
+                    applied=applied_value,
+                    status=status,
+                    reason=field_reason,
+                    exchange_ids=exchange_ids,
+                )
+                for name, requested, applied_value, status, field_reason in field_rows
+            ) or (
+                BaseStationFieldReceipt(
+                    field="mac_throughput_config",
+                    requested=None,
+                    applied=None,
+                    status="not_applicable",
+                    reason=reason,
+                    exchange_ids=exchange_ids,
+                ),
+            )
+            missing = tuple(n for n in self.MAC_CFG_MANDATORY if n in skipped)
+            receipt = BaseStationApplyReceipt(
+                schema_version=1,
+                operation="mac_throughput_config",
+                fields=receipt_fields,
+                reason=reason,
+                simulated=False,
+                operation_succeeded=(
+                    error is None and not rejected and not missing
+                ),
+            )
+            return MacThroughputConfigResult(
+                applied=tuple(applied),
+                skipped=tuple(skipped),
+                missing_mandatory=missing,
+                undefined_on_profile=(),
+                error=error,
+                rejected=tuple(rejected),
+                no_equivalent=no_equivalent,
+                receipt=receipt,
+            )
+
+        # ---- 无副作用前置（不碰仪器）--------------------------------------
+        if enable_amc:
+            return _result(
+                "enable_amc=True 在 CMW500 上无正式路径：AMC 对应 CQI 调度类型"
+                "（follow wideband CQI），STYPe=CQI 非 TTIB 需 KS510/KS512 选件"
+                "（手册 p.743 Options）；选件依赖类型保持 diagnostic，固定传输"
+                "格式请用 enable_amc=False 的 RMC 路径。",
+                reason="enable_amc 选件依赖拒绝",
+            )
+        # 内审 F2：满配 DL 行取自手册表 2-38（multiple TX antennas，TM2-6
+        # 专用）；单天线表 2-37 同带宽行无本表的 16-QAM/TBS 组合 —— mimo=1
+        # 下发即为适用域外的行。收窄到 =2（与 manifest 声明的 TM3 2x2 一致）。
+        if mimo_layers != 2:
+            return _result(
+                f"mimo_layers={mimo_layers} 无手册证据路径：满配 DL 行取自"
+                "表 2-38（TM2-6 多天线专用，§2.2.19.4）；单天线表 2-37 同带宽"
+                "行是另一组调制/TBS，4 流无 RMC 表 —— 只取证了 2 流，不猜。",
+                reason="mimo_layers 超出手册 RMC 证据范围（仅 2 流取证）",
+            )
+        if str(rb_alloc).strip().upper() != "ALL":
+            return _result(
+                f"rb_alloc={rb_alloc!r} 不支持：本片只取证了满 RB 分配行"
+                "（表 2-33/2-38 满配行）；部分分配不猜。",
+                reason="rb_alloc 非满配拒绝",
+            )
+        if not self._firmware_at_least(
+            self._firmware_version, self.MAC_CFG_MIN_FIRMWARE
+        ):
+            return _result(
+                f"CMW500 固件 {self._firmware_version!r} 低于 MAC 配置命令集"
+                f"下限 {self.MAC_CFG_MIN_FIRMWARE}（MCLuster:UL 探测 V3.5.20，"
+                "见取证清单 §1），拒绝下发。",
+                reason="固件低于命令集下限",
+            )
+
+        # 外审 #420 R2：with 之前的异常路径（如 SAFE_IDLE 查询抛）会让
+        # except 分支引用未定义的 exchanges —— 预初始化；with 内异常传播时
+        # exchanges 是逐步填充的 list 引用，已捕获交互如实带回
+        exchanges: list | tuple = ()
+        try:
+            if not await self.ensure_safe_idle():
+                return _result(
+                    "SAFE_IDLE 未确认（Cell 非 OFF,ADJUSTED），不下发 MAC 配置。",
+                    reason="SAFE_IDLE 未确认",
+                )
+
+            with capture_scpi_exchanges() as exchanges:
+                # 归属隔离：丢弃进入本方法前已存在的错误队列（同 set_cell_config）
+                stale_errors = self._query(CmwScpiCommands.ERR)
+                if not self._error_queue_is_empty(stale_errors):
+                    logger.warning(
+                        "[CMW500] Discarded pre-existing error queue before "
+                        "MAC config: %s",
+                        stale_errors.strip(),
+                    )
+
+                def _group_gate() -> Optional[str]:
+                    """OPC + 错误队列独立验错；被拒返回队列文本。"""
+                    if self._query(CmwScpiCommands.OPC).strip() != "1":
+                        return "operation-complete gate failed"
+                    queue = self._query(CmwScpiCommands.ERR).strip()
+                    if not self._error_queue_is_empty(queue):
+                        return queue
+                    return None
+
+                # ---- 活体工作点（不用缓存值，不从旧状态补真）----------------
+                live_duplex = (
+                    self._query(self._fmt(CmwScpiCommands.CELL_DUPLEX) + "?")
+                    .strip()
+                    .upper()
+                )
+                live_bw_token = (
+                    self._query(self._fmt(CmwScpiCommands.CELL_DL_BW) + "?")
+                    .strip()
+                    .upper()
+                )
+                live_gate = _group_gate()
+                if live_gate is not None:
+                    return _result(
+                        f"活体 duplex/带宽查询被拒（{live_gate}），"
+                        "无法确定 RMC 满配行 —— fail-loud。",
+                        exchanges,
+                        reason="活体工作点查询被拒",
+                    )
+                if live_duplex != "FDD":
+                    return _result(
+                        f"活体 duplex={live_duplex!r}：LTE TDD 配比是 "
+                        "CELL[:PCC]:ULDL 0..6（p.687）+ 特殊子帧，NR 形态 "
+                        f"tdd_pattern={tdd_pattern!r} 不可如实翻译，TDD 歧义 RMC "
+                        "还需 VERSion:DL<s>（p.803）——TDD 正式 MAC 配置为平台"
+                        "缺口（Discovered），本次 fail-loud。",
+                        exchanges,
+                        reason="TDD duplex 无正式取证路径",
+                    )
+                rmc_plan: Optional[CmwLteFullRbRmcPlan] = (
+                    CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH.get(live_bw_token)
+                )
+                if rmc_plan is None:
+                    return _result(
+                        f"活体带宽回读 {live_bw_token!r} 不在手册满配 RMC 表"
+                        "（表 2-33 pp.70-71 / 表 2-38 p.78）里 —— 不猜。",
+                        exchanges,
+                        reason="活体带宽无满配 RMC 行",
+                    )
+
+                def _confirm(
+                    group: str,
+                    field: str,
+                    write_command: Optional[str],
+                    query_command: str,
+                    expected,
+                    parse,
+                ) -> None:
+                    """一组：可选写 → OPC/错误队列门 → 查询回读严格比对。"""
+                    if write_command is not None:
+                        # 内审 F2（R2 high 兄弟站点）：写 + 写验证门的瞬时异常
+                        # 同样走单组记账，不中断整方法；已发出的写如实记 receipt
+                        try:
+                            self._write(write_command)
+                            gate = _group_gate()
+                        except Exception as exc:  # noqa: BLE001 — 单组记账
+                            rejected.append(f"{group}(写入验证失败)")
+                            field_rows.append(
+                                (field, expected, None, "unknown",
+                                 f"写入/验证查询失败: {exc}")
+                            )
+                            try:
+                                self._query(CmwScpiCommands.ERR)
+                            except Exception as drain_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "[CMW500] MAC write error-queue drain "
+                                    "failed for %s: %s",
+                                    group,
+                                    drain_exc,
+                                )
+                            return
+                        if gate is not None:
+                            rejected.append(group)
+                            field_rows.append(
+                                (field, expected, None, "unknown",
+                                 f"仪器拒绝写入: {gate}")
+                            )
+                            return
+                    try:
+                        raw = self._query(query_command)
+                        # 外审 #420 R2 high：_group_gate 的 *OPC?/ERR 查询也可能
+                        # 瞬时异常——留在 try 外会中断整方法，违背「单组失败
+                        # 逐组记账」；移入后统一走「回读不可用」+ 排空
+                        query_gate = _group_gate()
+                    except Exception as exc:  # noqa: BLE001 — 单组失败逐组记账
+                        rejected.append(f"{group}(回读不可用)")
+                        field_rows.append(
+                            (field, expected, None, "unknown",
+                             f"回读/验错查询失败: {exc}")
+                        )
+                        # 外审 #420 R1 high：查询异常时仪器队列可能残留错误
+                        # （-113/-221 等），不排空会污染下一组 _group_gate 的
+                        # 归属判定 —— 照 HARQ 探测段模式尽力排空
+                        try:
+                            self._query(CmwScpiCommands.ERR)
+                        except Exception as drain_exc:  # noqa: BLE001
+                            # 排空尽力而为；吞异常不吞信息（G4）
+                            logger.warning(
+                                "[CMW500] MAC readback error-queue drain "
+                                "failed for %s: %s",
+                                group,
+                                drain_exc,
+                            )
+                        return
+                    if query_gate is not None:
+                        rejected.append(f"{group}(回读被拒)")
+                        field_rows.append(
+                            (field, expected, None, "unknown",
+                             f"回读被仪器拒绝: {query_gate}")
+                        )
+                        return
+                    try:
+                        observed = parse(raw)
+                    except ValueError as exc:
+                        rejected.append(f"{group}(回读不可解析)")
+                        field_rows.append(
+                            (field, expected, None, "unknown", str(exc))
+                        )
+                        return
+                    if observed != expected:
+                        rejected.append(f"{group}(回读={observed}≠{expected})")
+                        field_rows.append(
+                            (field, expected, None, "unknown",
+                             f"回读 {observed!r} 与请求 {expected!r} 不一致")
+                        )
+                        return
+                    if write_command is not None:
+                        applied.append(group)
+                    field_rows.append(
+                        (field, expected, observed, "confirmed",
+                         "authoritative CMW500 readback matched")
+                    )
+
+                def _parse_rmc(direction: str):
+                    def _inner(raw: str) -> str:
+                        return profile.parse_mac_rmc_readback(
+                            raw, direction=direction
+                        ).encoded()
+                    return _inner
+
+                # 1. 调度类型 RMC（p.743；RMC 无选件标注）
+                _confirm(
+                    "SCHED_TYPE_RMC",
+                    "scheduling_type",
+                    profile.mac_scheduling_type_rmc(sign),
+                    profile.mac_scheduling_type_query(sign),
+                    "RMC",
+                    profile.parse_mac_scheduling_type,
+                )
+                # 2. UL contiguous 前提探测（pp.743-744；multi-cluster 特性
+                #    KS510/KS512 选件门控 → 只查询确认 OFF，被拒即 fail-closed）
+                _confirm(
+                    "UL_MULTICLUSTER_PROBE",
+                    "ul_multicluster",
+                    None,
+                    profile.mac_ul_multicluster_query(sign),
+                    "OFF",
+                    profile.parse_mac_on_off,
+                )
+                # 3. DL 流耦合（p.794：stream-1 设置应用到全部 DL 流）
+                _confirm(
+                    "DL_STREAM_COUPLING",
+                    "dl_stream_coupling",
+                    profile.mac_dl_stream_coupling_on(sign),
+                    profile.mac_dl_stream_coupling_query(sign),
+                    "ON",
+                    profile.parse_mac_on_off,
+                )
+                # 4. DL RMC 满配行（表 2-38 p.78）
+                dl_encoded = rmc_plan.downlink.encoded()
+                _confirm(
+                    "RMC_DL",
+                    "rmc_dl",
+                    profile.build_mac_rmc_dl(sign, 1, rmc_plan.downlink),
+                    profile.mac_rmc_dl_query(sign, 1),
+                    dl_encoded,
+                    _parse_rmc("dl"),
+                )
+                if mimo_layers == 2:
+                    # DLEQual 耦合的生效端证据：流 2 必须回读到同一行
+                    _confirm(
+                        "RMC_DL_STREAM2_COUPLED",
+                        "rmc_dl_stream2",
+                        None,
+                        profile.mac_rmc_dl_query(sign, 2),
+                        dl_encoded,
+                        _parse_rmc("dl"),
+                    )
+                _confirm(
+                    "RMC_RBPOS_DL",
+                    "rmc_rb_position_dl",
+                    profile.mac_rbposition_dl_low(sign, 1),
+                    profile.mac_rbposition_dl_query(sign, 1),
+                    "LOW",
+                    lambda raw: profile.parse_mac_rb_position(raw, direction="dl"),
+                )
+                # 5. UL RMC 满配行（表 2-33 pp.70-71，QPSK 列）
+                _confirm(
+                    "RMC_UL",
+                    "rmc_ul",
+                    profile.build_mac_rmc_ul(sign, rmc_plan.uplink),
+                    profile.mac_rmc_ul_query(sign),
+                    rmc_plan.uplink.encoded(),
+                    _parse_rmc("ul"),
+                )
+                _confirm(
+                    "RMC_RBPOS_UL",
+                    "rmc_rb_position_ul",
+                    profile.mac_rbposition_ul_low(sign),
+                    profile.mac_rbposition_ul_query(sign),
+                    "LOW",
+                    lambda raw: profile.parse_mac_rb_position(raw, direction="ul"),
+                )
+                # 6. DL MAC padding（p.742；Extended BLER 手册明示前置 §3.1 p.921）
+                _confirm(
+                    "DL_PADDING",
+                    "dl_padding",
+                    profile.mac_dl_padding_on(sign),
+                    profile.mac_dl_padding_query(sign),
+                    "ON",
+                    profile.parse_mac_on_off,
+                )
+                # 7. DL HARQ：NHT（p.784）存在但 DL HARQ 组需 KS510/KS512
+                #    （pp.783-784 Options）→ 选件域不写，仅探测 ENABle 记档。
+                skipped.append("HARQ_DL_NHT")
+                harq_note = "探测不可用"
+                try:
+                    harq_raw = self._query(
+                        profile.mac_harq_dl_enable_query(sign)
+                    )
+                    harq_gate = _group_gate()
+                    if harq_gate is None:
+                        harq_note = (
+                            f"观测 ENABle={profile.parse_mac_on_off(harq_raw)}"
+                        )
+                    else:
+                        harq_note = f"探测被拒: {harq_gate}"
+                except Exception as exc:  # noqa: BLE001 — 探测失败≠配置失败
+                    harq_note = f"探测异常: {exc}"
+                    try:
+                        self._query(CmwScpiCommands.ERR)
+                    except Exception as drain_exc:  # noqa: BLE001
+                        # 排空尽力而为；吞异常不吞信息（G4）
+                        logger.warning(
+                            "[CMW500] HARQ probe error-queue drain failed: %s",
+                            drain_exc,
+                        )
+                field_rows.append(
+                    (
+                        "harq_max_trans",
+                        harq_max_trans,
+                        None,
+                        "unknown",
+                        "HARQ:DL:NHT（p.784）存在；手册只在 ENABle（p.783-784）"
+                        "挂 KS510/KS512 Options，NHT 条目无 Options 行 ——"
+                        "『组整体选件门控』为 ⚠ 推断（ENABle 不开则 NHT 无意义），"
+                        f"保守不驱动；{harq_note}",
+                    )
+                )
+
+                summary_error: Optional[str] = None
+                if rejected:
+                    reason = (
+                        f"CMW500 MAC 配置 {len(rejected)} 组被拒/未确认: "
+                        + ", ".join(rejected)
+                    )
+                    logger.error("[CMW500] %s", reason)
+                else:
+                    reason = (
+                        "CMW500 MAC 配置全组写入并经权威回读确认: "
+                        f"STYPe=RMC, DL={dl_encoded}@LOW, "
+                        f"UL={rmc_plan.uplink.encoded()}@LOW, "
+                        f"coupling=ON, padding=ON ({live_bw_token}, FDD)"
+                    )
+                    logger.info("[CMW500] %s", reason)
+                return _result(summary_error, exchanges, reason=reason)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[CMW500] configure_mac_throughput_test failed: {e}")
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            # 同 UXM 契约：异常不裸抛也不谎报 —— 已发/已拒如实带回，
+            # error 非空使 ok=False；没轮到发的组不冒充 skipped。
+            return _result(
+                f"下发过程中出错: {e}",
+                exchanges,
+                reason=f"CMW500 MAC 配置中断: {e}",
+            )
 
     async def set_downlink_power(self, power_dbm: float) -> bool:
         """

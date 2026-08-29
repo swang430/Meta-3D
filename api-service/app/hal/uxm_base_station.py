@@ -192,6 +192,10 @@ class MacThroughputConfigResult:
     # P1-33：**手册里根本没有对应命令**的设置（如吞吐量统计窗口）。
     #   既不是 profile 缺项、也不是被拒 —— 单列，报告里写明不受控。
     no_equivalent: Tuple[str, ...] = ()
+    # P2-51：逐字段 requested/applied/exchange_ids 证据回执
+    # （BaseStationApplyReceipt, operation="mac_throughput_config"）。
+    # CMW500 驱动产出；UXM 暂不产（默认 None，消费方按可选处理）。
+    receipt: Optional[BaseStationApplyReceipt] = None
 
     @property
     def ok(self) -> bool:
