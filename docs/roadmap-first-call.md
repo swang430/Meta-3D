@@ -4362,12 +4362,12 @@ projection/attestation 在创建期一律剥除（这是真正的信任边界）
 ### P2-50 — Capability-driven BaseStation Execution Plan
 
 **✅ 已由 PR #417 合并（2026-08-29）**：BaseStationExecutionPlan digest 密封入
-evidence（P2-49 同冻结点）、四类站点（SCell/MAC/RRC/输入电平）散点 getattr 清零改
+evidence（P2-49 同冻结点）、四类站点（SCell/MAC/RRC/输入电平）散点 getattr 清零，改为
 消费 planned、planned 缺方法 fail-loud、manifest 交叉校验（声明漂移 raise）、窗口维度
 引用 P2-48 契约；三 adapter 行为逐维等价（探针实证）。内审 2 findings（freeze/live
 manifest 实参对称性双半边门 + evidence adapter 错配负向门）+ 外审 Gemini R1 1 medium
 （operations 类型放宽归一）全修，R2 明文 clean，变异 19 条全红，全量 5402 passed / 5 skipped。
-7 处其它鸭子探测 / SCell manifest token 化 / mock 豁免计划化 → Discovered 候选（P2-53 评估）。
+7 处其它鸭子类型探测 / SCell manifest token 化 / mock 豁免计划化 → Discovered 候选（P2-53 评估）。
 
 原条目：把 MEASURE 中分散的 SCell、MAC、RRC、输入电平与窗口能力判断收敛为 execution-frozen vendor-neutral
 计划；共同执行器只编排计划与消费 receipt。新增 adapter 原则上不得修改 MEASURE、commissioning、
