@@ -21,6 +21,7 @@ from app.hal.base import (
     redact_instrument_log_text,
 )
 from app.hal.base_station import (
+    BaseStationAttachReceipt,
     BaseStationApplyReceipt,
     BaseStationCleanupResult,
     BaseStationControlReleaseResult,
@@ -28,6 +29,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationRequestedConfig,
 )
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfileResolution
 from app.models.test_plan import TestExecution
 from app.hal.scpi_evidence import (
@@ -41,6 +43,7 @@ from app.hal.scpi_evidence import (
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     BaseStationAdapterOperationEvidence,
+    BaseStationAttachOperationEvidence,
     BaseStationControlReleaseEvidence,
     BaseStationExecutionEvidence,
     BaseStationMeasurementWindowEvidence,
@@ -328,6 +331,7 @@ def _initial_base_station_execution_evidence(
             "requested_positions": positions,
             "current_measurement_attempt_id": None,
             "current_measurement_attempt_state": None,
+            "attach_operations": [],
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -564,6 +568,87 @@ def confirm_base_station_configuration_and_route(
     db.flush()
 
 
+def confirm_base_station_attach(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    manifest: BaseStationAdapterManifest,
+    receipt: BaseStationAttachReceipt,
+) -> None:
+    """Persist one manifest-checked attach receipt for the active lease."""
+
+    if not isinstance(manifest, BaseStationAdapterManifest):
+        raise TypeError("manifest must be a BaseStationAdapterManifest")
+    if not isinstance(receipt, BaseStationAttachReceipt):
+        raise TypeError("receipt must be a BaseStationAttachReceipt")
+    execution, evidence = _current_running_base_station_evidence(
+        db, execution_id, attempt_id=attempt_id
+    )
+    active_identity = active_base_station_lease_identity()
+    if active_identity != lease_identity:
+        raise ValueError("baseStation lease identity is not the active lease truth")
+    if (
+        lease_identity.measurement_attempt_id != attempt_id
+        or lease_identity.adapter_id != evidence.adapter
+        or not lease_identity.lease_id
+        or not lease_identity.session_token
+    ):
+        raise ValueError("baseStation lease identity does not match current evidence")
+    if (
+        manifest.adapter_id != evidence.adapter
+        or receipt.adapter_id != evidence.adapter
+    ):
+        raise ValueError("baseStation attach manifest does not match current adapter")
+    manifest_stages = {item.stage: item for item in manifest.attach_stages}
+    if any(
+        manifest_stages.get(stage.stage) is None
+        or manifest_stages[stage.stage].evidence != stage.evidence
+        for stage in receipt.stages
+    ):
+        raise ValueError("baseStation attach receipt disagrees with manifest")
+
+    if evidence.attach_operations is None:
+        evidence.attach_operations = []
+    key = (attempt_id, lease_identity.lease_id)
+    if any(
+        (item.measurement_attempt_id, item.lease_id) == key
+        for item in evidence.attach_operations
+    ):
+        raise ValueError("baseStation attach operation already persisted")
+    operation = BaseStationAttachOperationEvidence.model_validate(
+        {
+            "schema_version": receipt.schema_version,
+            "measurement_attempt_id": attempt_id,
+            "lease_id": lease_identity.lease_id,
+            "adapter": evidence.adapter,
+            "session_token": lease_identity.session_token,
+            "stages": [
+                {
+                    "stage": stage.stage,
+                    "requested": stage.requested,
+                    "applied": stage.applied,
+                    "status": stage.status,
+                    "evidence": stage.evidence,
+                    "reason": stage.reason,
+                    "exchange_ids": list(stage.exchange_ids),
+                }
+                for stage in receipt.stages
+            ],
+            "terminal_stage": receipt.terminal_stage,
+            "formally_confirmed": receipt.formally_confirmed,
+            "simulated": receipt.simulated,
+            "reason": receipt.reason,
+            "exchange_ids": list(receipt.exchange_ids),
+        }
+    )
+    evidence.attach_operations.append(operation)
+    _append_unique_exchange_ids(evidence, operation.exchange_ids)
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
+
+
 def mark_base_station_configuration_unconfirmed(
     db,
     execution_id,
@@ -700,6 +785,8 @@ def save_base_station_execution_evidence(
     if parsed.execution_id != str(execution.id):
         raise ValueError("base station evidence execution_id mismatch")
     normalized = parsed.model_dump(mode="json")
+    if parsed.attach_operations is None:
+        normalized.pop("attach_operations", None)
     cfg = dict(execution.config or {})
     cfg[BASE_STATION_EXECUTION_EVIDENCE_FIELD] = normalized
     execution.config = cfg

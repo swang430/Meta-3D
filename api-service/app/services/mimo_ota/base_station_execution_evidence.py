@@ -267,6 +267,152 @@ class BaseStationAdapterOperationEvidence(BaseModel):
         return self
 
 
+class BaseStationAttachStageEvidence(BaseModel):
+    """JSON-safe truth for one common attach milestone."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal[
+        "cell_ready",
+        "ue_registered",
+        "rrc_connected",
+        "data_bearer_established",
+    ]
+    requested: StrictBool | None
+    applied: StrictBool | None
+    status: Literal["confirmed", "unknown", "not_applicable"]
+    evidence: Literal[
+        "authoritative",
+        "diagnostic_only",
+        "unavailable",
+        "not_applicable",
+    ]
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator("reason")
+    @classmethod
+    def _required_reason(cls, value: str):
+        return _non_empty(value, "reason")
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("attach stage exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _truth_shape(self):
+        if self.evidence == "unavailable" and self.status != "unknown":
+            raise ValueError("unavailable attach evidence must be unknown")
+        if self.evidence == "not_applicable" and self.status != "not_applicable":
+            raise ValueError("not-applicable attach evidence has invalid status")
+        if self.status == "not_applicable":
+            if (
+                self.evidence != "not_applicable"
+                or self.requested is not None
+                or self.applied is not None
+                or self.exchange_ids
+            ):
+                raise ValueError("not-applicable attach stage has invalid truth")
+        elif self.requested is not True:
+            raise ValueError("applicable attach stage must be requested")
+        if self.status == "confirmed":
+            if self.applied is None or not self.exchange_ids:
+                raise ValueError("confirmed attach stage requires instrument truth")
+        elif self.status == "unknown" and (
+            self.applied is not None or self.exchange_ids
+        ):
+            raise ValueError("unknown attach stage cannot carry applied truth")
+        return self
+
+
+class BaseStationAttachOperationEvidence(BaseModel):
+    """One attach operation bound to the current execution lease."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    measurement_attempt_id: str
+    lease_id: str
+    adapter: Literal["uxm", "cmw500"]
+    session_token: str
+    stages: list[BaseStationAttachStageEvidence]
+    terminal_stage: Literal[
+        "cell_ready",
+        "ue_registered",
+        "rrc_connected",
+        "data_bearer_established",
+    ] | None
+    formally_confirmed: StrictBool
+    simulated: StrictBool
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator(
+        "measurement_attempt_id", "lease_id", "session_token", "reason"
+    )
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("attach operation exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _derived_shape(self):
+        expected_stages = [
+            "cell_ready",
+            "ue_registered",
+            "rrc_connected",
+            "data_bearer_established",
+        ]
+        if [item.stage for item in self.stages] != expected_stages:
+            raise ValueError("attach evidence requires exact ordered stages")
+        terminal = next(
+            (
+                item
+                for item in reversed(self.stages)
+                if item.evidence not in {"unavailable", "not_applicable"}
+            ),
+            None,
+        )
+        if self.terminal_stage != (terminal.stage if terminal else None):
+            raise ValueError("attach terminal stage must be derived")
+        authoritative = [
+            item for item in self.stages if item.evidence == "authoritative"
+        ]
+        expected_formal = bool(
+            not self.simulated
+            and terminal is not None
+            and terminal.evidence == "authoritative"
+            and terminal.status == "confirmed"
+            and terminal.applied is True
+            and authoritative
+            and all(
+                item.status == "confirmed"
+                and item.applied is True
+                and bool(item.exchange_ids)
+                for item in authoritative
+            )
+        )
+        if self.formally_confirmed is not expected_formal:
+            raise ValueError("attach formal confirmation must be derived")
+        stage_exchange_ids = []
+        for item in self.stages:
+            for exchange_id in item.exchange_ids:
+                if exchange_id not in stage_exchange_ids:
+                    stage_exchange_ids.append(exchange_id)
+        if self.exchange_ids != stage_exchange_ids:
+            raise ValueError("attach operation exchange ids must be derived")
+        return self
+
+
 class PositionSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -394,6 +540,7 @@ class BaseStationExecutionEvidence(BaseModel):
     adapter_operations: list[BaseStationAdapterOperationEvidence] = Field(
         default_factory=list
     )
+    attach_operations: list[BaseStationAttachOperationEvidence] | None = None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -415,6 +562,10 @@ class BaseStationExecutionEvidence(BaseModel):
             raise ValueError("window adapter mismatch")
         if any(row.adapter != self.adapter for row in self.adapter_operations):
             raise ValueError("adapter operation mismatch")
+        if self.attach_operations is not None and any(
+            row.adapter != self.adapter for row in self.attach_operations
+        ):
+            raise ValueError("attach operation mismatch")
         if any(release.adapter_id != self.adapter for release in self.control_releases):
             raise ValueError("control release adapter mismatch")
         if self.adapter == "cmw500":
@@ -456,6 +607,8 @@ class FormalMetricTrust(BaseModel):
 def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
+    if "attach_operations" in value and value.get("attach_operations") is None:
+        return None
     try:
         parsed = BaseStationExecutionEvidence.model_validate(value)
     except Exception:
@@ -466,6 +619,8 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
     # row malformed; once the writer appends an operation the field is explicit.
     if "adapter_operations" not in value:
         normalized.pop("adapter_operations", None)
+    if "attach_operations" not in value:
+        normalized.pop("attach_operations", None)
     return normalized if normalized == value else None
 
 
@@ -616,9 +771,36 @@ def _formal_envelope(
     attempt_id = evidence.current_measurement_attempt_id
     if not attempt_id or evidence.current_measurement_attempt_state != "completed":
         return False, "current_attempt_not_completed", []
+    if evidence.attach_operations is not None:
+        attach_operations = [
+            item
+            for item in evidence.attach_operations
+            if item.measurement_attempt_id == attempt_id
+        ]
+        if len(attach_operations) != 1:
+            return False, "current_attempt_attach_receipt_missing", []
+        attach_operation = attach_operations[0]
+        if (
+            attach_operation.formally_confirmed is not True
+            or attach_operation.simulated is True
+            or not set(attach_operation.exchange_ids).issubset(evidence.exchange_ids)
+        ):
+            return False, "current_attempt_attach_not_confirmed", []
     accepted, reason, windows = _attempt_lifecycle_envelope(evidence, attempt_id)
     if not accepted:
         return False, reason, []
+    if evidence.attach_operations is not None:
+        attach_operation = [
+            item
+            for item in evidence.attach_operations
+            if item.measurement_attempt_id == attempt_id
+        ][0]
+        if not any(
+            window.lease_id == attach_operation.lease_id
+            and window.session_token == attach_operation.session_token
+            for window in windows
+        ):
+            return False, "current_attempt_attach_lease_mismatch", []
     return True, "formal_envelope_confirmed", windows
 
 
