@@ -153,3 +153,14 @@ receipt 也当 `True`。本片不应依赖一次全仓原子迁移来避免假�
 
 本片不改 GUI/OpenAPI：receipt 先作为 execution evidence 内部版本化 envelope；公开投影若确有用户入口，
 必须先证明现有 API 消费路径，不能为“可能以后显示”提前扩面。
+
+## 实施结果（2026-08-29）
+
+- `BaseStationAttachReceipt` 已成为生产 MEASURE 的唯一 Attach 结果；旧 `start_signaling()` 仅保留诊断兼容。
+- CMW500 以本次 CELL/PS 回读映射权威阶段；UXM 保守保留 diagnostic-only/unknown；Mock 始终
+  simulated/unknown，不进入正式 KPI。
+- 新 execution evidence 把 receipt 绑定 current attempt、lease、session、adapter manifest 与 exchange ids；
+  显式存在的新 envelope 缺失或弱证据时 fail-closed，历史字段缺失不从当前状态回填。
+- MEASURE 在业务继续判定前持久化 receipt，失败提示 terminal stage/evidence；后续里程碑只作结构化
+  stage truth 投影，不覆盖初始 execution-bound 事实。
+- 未新增或猜测任何 SCPI，未改正式 provenance 白名单，未改 GUI/OpenAPI，也未提前实现 P2-48。

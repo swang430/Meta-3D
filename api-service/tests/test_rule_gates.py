@@ -28,6 +28,9 @@ G23 BaseStation 执行资格只允许一个冻结入口 ← P2-45 Diagnostic/For
 G24 BaseStation 静态能力只读 manifest v2 ← P2-46 Capability Manifest v2
    变异: real driver 覆写 RAT accessor、注册声明与 class var 分叉、GUI profile 再读
    manifest schema version，任一项必须检出。
+G25 BaseStation Attach 只读结构化 receipt ← P2-47 Attach Receipt
+   变异: production MEASURE 退回 start_signaling 布尔、manifest 阶段缺项或正式证据门
+   不消费 execution-bound attach operation，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2545,3 +2548,68 @@ def test_g24_base_station_capability_truth_is_manifest_v2():
     assert "schema_version: manifest.schema_version" not in gui_helper
     assert "cmw500" not in gui_helper.lower()
     assert "uxm" not in gui_helper.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G25 BaseStation Attach 只读结构化 receipt
+# ─────────────────────────────────────────────────────────────────────
+
+def test_g25_base_station_attach_truth_is_structured_and_execution_bound():
+    """P2-47：生产执行、manifest 与正式证据门必须共用四阶段 receipt。"""
+    from app.hal.base_station import BASE_STATION_ATTACH_STAGES
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.uxm_base_station import RealUxmDriver
+
+    assert BASE_STATION_ATTACH_STAGES == (
+        "cell_ready",
+        "ue_registered",
+        "rrc_connected",
+        "data_bearer_established",
+    )
+    for driver_class in (RealCmw500Driver, RealUxmDriver):
+        assert tuple(
+            item.stage for item in driver_class.adapter_manifest.attach_stages
+        ) == BASE_STATION_ATTACH_STAGES
+
+    measure_tree = ast.parse(
+        (
+            _API_SERVICE_ROOT
+            / "app/services/mimo_ota/executors/measure.py"
+        ).read_text(encoding="utf-8")
+    )
+    measure_execute = next(
+        child
+        for node in measure_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "MeasureExecutor"
+        for child in node.body
+        if isinstance(child, ast.AsyncFunctionDef) and child.name == "execute"
+    )
+    called_attributes = {
+        call.func.attr
+        for call in ast.walk(measure_execute)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+    }
+    called_names = {
+        call.func.id
+        for call in ast.walk(measure_execute)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    }
+    assert "attach" in called_attributes
+    assert "start_signaling" not in called_attributes
+    assert "confirm_base_station_attach" in called_names
+
+    evidence_tree = ast.parse(
+        (
+            _API_SERVICE_ROOT
+            / "app/services/mimo_ota/base_station_execution_evidence.py"
+        ).read_text(encoding="utf-8")
+    )
+    formal_envelope = next(
+        node
+        for node in evidence_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_formal_envelope"
+    )
+    assert any(
+        isinstance(node, ast.Attribute) and node.attr == "attach_operations"
+        for node in ast.walk(formal_envelope)
+    )
