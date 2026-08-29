@@ -2038,11 +2038,81 @@ components:
         placeholder: {type: string}
         description: {type: string}
       required: [path, label, required, placeholder, description]
+    BaseStationRatCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        rat: {type: string, enum: [lte, nr5g]}
+        source_reference: {type: string}
+      required: [rat, source_reference]
+    BaseStationConfigFieldCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        field: {type: string}
+        support:
+          type: string
+          enum: [authoritative, diagnostic_only, not_applicable]
+        readback:
+          type: string
+          enum: [authoritative, unavailable, not_applicable]
+        reason: {type: string}
+        source_reference: {type: string, nullable: true}
+      required: [field, support, readback, reason, source_reference]
+    BaseStationAttachStageCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        stage:
+          type: string
+          enum: [cell_ready, ue_registered, rrc_connected, data_bearer_established]
+        evidence:
+          type: string
+          enum: [authoritative, diagnostic_only, unavailable, not_applicable]
+        reason: {type: string}
+        source_reference: {type: string, nullable: true}
+      required: [stage, evidence, reason, source_reference]
+    BaseStationMetricCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        key: {type: string}
+        direction:
+          type: string
+          enum: [downlink, uplink, link, not_applicable]
+        unit:
+          type: string
+          enum: [mbps, percent, index, raw, not_applicable]
+        scopes:
+          type: array
+          items: {type: string, enum: [pcell, all_cells]}
+        evidence:
+          type: string
+          enum: [authoritative, diagnostic_only, unavailable]
+        source_reference: {type: string, nullable: true}
+      required: [key, direction, unit, scopes, evidence, source_reference]
+    BaseStationMeasurementCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        cardinality: {type: string, enum: [requested, single]}
+        scopes:
+          type: array
+          items: {type: string, enum: [pcell, all_cells]}
+        lifecycle:
+          type: string
+          enum: [authoritative_closed, clear_read_only, unavailable]
+        metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationMetricCapability'
+        source_reference: {type: string, nullable: true}
+      required: [cardinality, scopes, lifecycle, metrics, source_reference]
     BaseStationAdapterManifest:
       type: object
       additionalProperties: false
       properties:
-        schema_version: {type: integer, enum: [1]}
+        schema_version: {type: integer, enum: [2]}
         adapter_id: {type: string}
         model_name: {type: string}
         vendor: {type: string}
@@ -2052,9 +2122,29 @@ components:
         capabilities:
           type: array
           items: {type: string}
+        rat_capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationRatCapability'
+        operations:
+          type: array
+          items: {type: string}
+        config_fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationConfigFieldCapability'
+        attach_stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationAttachStageCapability'
+        measurement:
+          allOf:
+            - $ref: '#/components/schemas/BaseStationMeasurementCapability'
+          nullable: true
         profile_requirement:
           type: string
           enum: [required, not_applicable]
+        profile_schema_version: {type: integer, nullable: true}
         profile_fields:
           type: array
           items:
@@ -2066,7 +2156,7 @@ components:
         formal_gate:
           type: string
           enum: [site_certification]
-      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, profile_requirement, profile_fields, manual_sources, diagnostic_supported, formal_gate]
+      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
     InstrumentConnection:
       type: object
       properties:

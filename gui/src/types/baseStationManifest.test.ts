@@ -11,13 +11,21 @@ import {
 } from './baseStationManifest.ts'
 
 const thirdAdapter: BaseStationAdapterManifest = {
-  schema_version: 1,
+  schema_version: 2,
   adapter_id: 'adapter-c',
   model_name: 'Model C',
   vendor: 'Vendor C',
   rats: ['lte'],
   capabilities: ['config'],
+  rat_capabilities: [
+    { rat: 'lte', source_reference: 'Vendor C Manual §1' },
+  ],
+  operations: ['config'],
+  config_fields: [],
+  attach_stages: [],
+  measurement: null,
   profile_requirement: 'required',
+  profile_schema_version: 1,
   profile_fields: [
     {
       path: 'radio.port',
@@ -36,7 +44,7 @@ const thirdAdapter: BaseStationAdapterManifest = {
   ],
   manual_sources: ['Instrument_API_Doc/vendor/manual.pdf'],
   diagnostic_supported: true,
-  formal_gate: 'legacy_provenance',
+  formal_gate: 'site_certification',
 }
 
 test('manifest paths drive empty values and nested profile readback', () => {
@@ -77,10 +85,35 @@ test('manifest constructs the adapter envelope without model-specific branches',
 test('not-applicable manifests produce no profile payload', () => {
   assert.equal(
     buildBaseStationAdapterProfile(
-      { ...thirdAdapter, profile_requirement: 'not_applicable', profile_fields: [] },
+      {
+        ...thirdAdapter,
+        profile_requirement: 'not_applicable',
+        profile_schema_version: null,
+        profile_fields: [],
+      },
       {},
     ),
     null,
+  )
+})
+
+test('manifest v2 keeps the persisted profile envelope at schema v1', () => {
+  const profile = buildBaseStationAdapterProfile(thirdAdapter, {
+    'radio.port': 'PORT1',
+    'radio.converter': 'CONV1',
+  })
+
+  assert.equal(profile?.schema_version, 1)
+  assert.deepEqual(readBaseStationProfileDraft(thirdAdapter, profile), {
+    'radio.port': 'PORT1',
+    'radio.converter': 'CONV1',
+  })
+  assert.deepEqual(
+    readBaseStationProfileDraft(thirdAdapter, {
+      ...profile,
+      schema_version: 2,
+    }),
+    { 'radio.port': '', 'radio.converter': '' },
   )
 })
 

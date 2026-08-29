@@ -7,6 +7,7 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 test('generated and handwritten types expose the shared binding truth', () => {
   const generated = read('./api.generated.ts')
   const handwritten = read('./api.ts')
+  const manifest = read('./baseStationManifest.ts')
   for (const token of [
     'BaseStationAdapterManifest',
     'BaseStationBindingPreviewResponse',
@@ -23,6 +24,19 @@ test('generated and handwritten types expose the shared binding truth', () => {
     /base_station_manifest: BaseStationAdapterManifest \| null/,
   )
   assert.doesNotMatch(handwritten, /base_station_manifest\?:/)
+  assert.match(handwritten, /export type \{ BaseStationAdapterManifest \}/)
+  assert.match(generated, /schema_version: 2;/)
+  for (const token of [
+    'profile_schema_version',
+    'rat_capabilities',
+    'config_fields',
+    'attach_stages',
+    'BaseStationMeasurementCapability',
+    'BaseStationMetricCapability',
+  ]) {
+    assert.match(generated, new RegExp(token))
+    assert.match(manifest, new RegExp(token))
+  }
 })
 
 test('lab profile service types preview and sync with the common response', () => {

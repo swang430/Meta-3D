@@ -107,10 +107,18 @@ def test_cmw_pcell_confirmation_does_not_remove_missing_mac_blocker():
 
 
 def test_uxm_and_mock_keep_their_existing_mac_paths():
-    uxm = RealUxmDriver("uxm", {"ip_address": "192.0.2.1"})
+    uxm = RealUxmDriver(
+        "uxm",
+        {"ip_address": "192.0.2.1", "uxm_profile": "irat"},
+    )
+    unsupported_profile = RealUxmDriver(
+        "uxm-default",
+        {"ip_address": "192.0.2.1", "uxm_profile": "5g_nr"},
+    )
     mock = MockBaseStation("mock", {})
 
     assert _formal_mac_configuration_blocker(uxm) is None
+    assert _formal_mac_configuration_blocker(unsupported_profile) is not None
     assert _formal_mac_configuration_blocker(mock) is None
 
 

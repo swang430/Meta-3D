@@ -43,7 +43,6 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
-    RadioTechnology,
     CellState,
     ThroughputMetrics,
 )
@@ -53,7 +52,12 @@ from app.hal.scpi_evidence import (
     InstrumentEvidenceItem,
     capture_scpi_exchanges,
 )
-from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_manifest import (
+    BaseStationAdapterManifest,
+    BaseStationAttachStageCapability,
+    BaseStationConfigFieldCapability,
+    BaseStationRatCapability,
+)
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -73,6 +77,13 @@ if TYPE_CHECKING:
     # constructed instance, so we don't need the import at runtime.
     from app.hal.uxm_test_profiles import UxmTopologyProfile  # noqa: F401
     from app.hal.scpi_evidence import ScpiExchangeRef
+
+
+_UXM_MANUAL_SOURCE = (
+    "Instrument_API_Doc/Keysight UXM NR SCPI/"
+    "5G_NR_Test_Application_SCPI_Reference.zip!"
+    "5G_NR_Test_Application_SCPI_Reference.html"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -335,19 +346,189 @@ class RealUxmDriver(BaseStationDriver):
 
     adapter_id = "uxm"
     adapter_manifest = BaseStationAdapterManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id=adapter_id,
         model_name="UXM 5G E7515B",
         vendor="Keysight",
-        rats=("lte", "nr"),
-        capabilities=(
+        rat_capabilities=(
+            BaseStationRatCapability(
+                rat="nr5g",
+                source_reference=f"{_UXM_MANUAL_SOURCE}#nr-cell",
+            ),
+        ),
+        operations=(
             "identity",
             "config",
             "cell_attach",
-            "measurement_window",
             "safe_idle_release",
+            "input_level_control",
         ),
+        config_fields=tuple(
+            BaseStationConfigFieldCapability(
+                field=name,
+                support=support,
+                readback=readback,
+                reason=reason,
+                source_reference=source_reference,
+            )
+            for name, support, readback, reason, source_reference in (
+                (
+                    "radio_technology",
+                    "diagnostic_only",
+                    "unavailable",
+                    "NR5G is selected by the adapter manifest, not independently read back",
+                    None,
+                ),
+                (
+                    "channel_kind",
+                    "diagnostic_only",
+                    "unavailable",
+                    "NR ARFCN request shape is application-owned and has no device field readback",
+                    None,
+                ),
+                (
+                    "frequency_mhz",
+                    "diagnostic_only",
+                    "unavailable",
+                    "frequency is represented by the band and NR ARFCN request",
+                    None,
+                ),
+                (
+                    "bandwidth_mhz",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "band",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source",
+                    None,
+                ),
+                (
+                    "duplex",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "nr_arfcn",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "lte_dl_earfcn",
+                    "not_applicable",
+                    "not_applicable",
+                    "LTE EARFCN is outside the registered NR5G adapter contract",
+                    None,
+                ),
+                (
+                    "lte_transmission_mode",
+                    "not_applicable",
+                    "not_applicable",
+                    "LTE transmission mode is outside the registered NR5G adapter contract",
+                    None,
+                ),
+                (
+                    "subcarrier_spacing_khz",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "mimo_layers",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "downlink_power_dbm",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "downlink_power_dbm_per_bandwidth",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
+                ),
+                (
+                    "port_preset",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source",
+                    None,
+                ),
+                (
+                    "scheduler_algorithm",
+                    "diagnostic_only",
+                    "unavailable",
+                    "scheduler selection belongs to the later MAC setup and is not applied by common config",
+                    None,
+                ),
+                (
+                    "csi_rs_ports",
+                    "diagnostic_only",
+                    "unavailable",
+                    "CSI-RS ports belong to the later MAC setup and are not applied by common config",
+                    None,
+                ),
+            )
+        ),
+        attach_stages=(
+            BaseStationAttachStageCapability(
+                stage="cell_ready",
+                evidence="diagnostic_only",
+                reason="current profiles do not expose one common authoritative cell-ready proof",
+                source_reference=None,
+            ),
+            BaseStationAttachStageCapability(
+                stage="ue_registered",
+                evidence="diagnostic_only",
+                reason="current state parsing does not preserve a separate registration milestone",
+                source_reference=None,
+            ),
+            BaseStationAttachStageCapability(
+                stage="rrc_connected",
+                evidence="diagnostic_only",
+                reason="current profiles collapse connected-like states into one CellState value",
+                source_reference=None,
+            ),
+            BaseStationAttachStageCapability(
+                stage="data_bearer_established",
+                evidence="unavailable",
+                reason="the adapter has no independent data-bearer establishment proof",
+                source_reference=None,
+            ),
+        ),
+        # Adapter-level truth is the conservative intersection of every Test
+        # App profile this driver can select.  Only the IRAT profile currently
+        # has sourced clear/OTA-throughput/BLER commands, so no unconditional
+        # measurement window is advertised here.  Profile-scoped projection
+        # must wait until the resolved Test App itself is frozen as truth.
+        measurement=None,
         profile_requirement="not_applicable",
+        profile_schema_version=None,
         profile_fields=(),
         manual_sources=(
             "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip",
@@ -358,8 +539,27 @@ class RealUxmDriver(BaseStationDriver):
     input_level_control_supported = True
     input_level_legacy_power_field = "uxm_dl_power_dbm"
 
-    rrc_reconfiguration_supported = True
-    mac_throughput_configuration_supported = True
+    @property
+    def rrc_reconfiguration_supported(self) -> bool:
+        """Return true only for the active Test App's complete RRC command set."""
+
+        return all(
+            getattr(self._cmds, name, None)
+            for name in (
+                "RRC_RECONFIG_LAYERS",
+                "RRC_RECONFIG_MODULATION",
+                "RRC_RECONFIG_APPLY",
+            )
+        )
+
+    @property
+    def mac_throughput_configuration_supported(self) -> bool:
+        """Return true only when the active Test App exposes every MAC primitive."""
+
+        return all(
+            getattr(self._cmds, name, None)
+            for name in self.MAC_CFG_MANDATORY
+        )
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
@@ -4008,9 +4208,6 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[UXM] reset failed: {e}")
             return False
-
-    def get_supported_technologies(self) -> List[RadioTechnology]:
-        return [RadioTechnology.NR5G]
 
     # ===================================================================
     # 内部 VISA 工具方法 (SCPI 日志由基类 _write/_query 自动处理)

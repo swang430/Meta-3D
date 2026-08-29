@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前状态（现场链事实与本地队列截至 2026-08-28）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态（现场链事实与本地队列截至 2026-08-29）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
 degree 单位与 `PFBK - MOVEABS = +90°` 偏置；P0-9B-3 已完成该真值及其来源/时间的
@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-45：无校准诊断模式 + BS 两阶段现场认证产品化（本地 Task1–7 已完成，正在 Ready PR / Codex 外审）。**
+Current Focus（非现场）= P2-46：BaseStation Capability Manifest v2。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -60,12 +60,14 @@ P3-20/P3-21 仍不得自动启动。
    P2-42 的单一 BaseStation execution session 已由 PR #408 合并；P2-43 的 vendor-neutral
    receipt/evidence/measurement 边界已由 PR #409 合并；P2-44 的单一 resolver、manifest
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
-   合并；当前 P2-45 已完成 Diagnostic/Formal policy、站点认证、execution qualification 冻结、正式
-   消费隔离与 GUI/API 镜像的本地实现，正在最终验证。P0-9B-1 已完成手册支持
+   合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
+   qualification 冻结、正式消费隔离与 GUI/API 镜像。其后按用户批准顺序追加
+   **P2-46 → P2-47 → P2-48 → P2-49 → P2-50 → P2-51 → P2-52 → P2-53**，先收敛共同能力与
+   证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
-   等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。上述当前现场闭环所需本地半处理完后，再执行架构收敛
-   P2-42 → P2-43 → P2-44 → P2-45。
+   等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
+   的上一轮架构收敛已经全部合并；当前只从 P2-46 开始执行上述新追加队列。
 3. **原 First-call / on-site 队列完整保留**：P0-5 → P1-2 → P1-4 → P2-4；以及
    P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半，P1-6 继续 HOLD。它们按对应仪器
    到场情况进入现场队列；非现场只能准备载体，不能把本地测试或文档更新记成现场完成。
@@ -669,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-44（Ready PR 后续 P1-only 外审中）**；P2-42/P2-43 已分别由 PR #408/#409 合并，P2-44 合并后才开始 P2-45。前三项共同构成第三种 BS Emulator 的接入前置。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-46（本地实现、完整回归与 fresh 内审完成，Ready PR/外审中）**；NEW-1/P2-42/P2-43/P2-44/P2-45 已分别由 PR #407/#408/#409/#410/#411 合并。后续严格按 P2-47→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4245,7 +4247,7 @@ execution。不得引入功率预算、外部路径补偿或 RF router 准入。
 导出显式标诊断；正式晋级可撤销、有服务器时间和审计人，且不通过 env、通用字段或 debug
 inherit 获得。
 
-**实施状态（2026-08-29，本地 Task1–7 已完成，Ready PR / Codex 外审中）**：TestCase 已有专用
+**实施状态（2026-08-29，✅ PR #411 已合并，merge `cb1a4387`）**：TestCase 已有专用
 Diagnostic/Formal policy，Diagnostic 必须记录操作员与原因；BaseStation site certification 只由服务端
 从当前 binding digest 下真实 completed execution 的身份、config/route readback、current attempt、
 cleanup 与 transport release 证据派生，可撤销且不接受客户端 proof/identity。formal runner 与
@@ -4261,6 +4263,76 @@ TestCase/commissioning GUI、报告/历史标签及 live OpenAPI、checked-in YA
 迁移状态解耦，未迁移或改动开发数据库。最终资格/消费者/规则门 **74 passed**、全后端 **5222 passed / 5 skipped**、
 GUI 契约 **34 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、diff-check
 均通过，fresh 尾审 **P1/P2/P3=0**；NEW-1 F64 SUCCESS 与站点真实 certification 仍须现场复验。
+
+### P2-46 — BaseStation Capability Manifest v2
+
+**可观察故障**：扁平 manifest 与运行时能力分叉。UXM manifest 声明 LTE + NR，但执行访问器只支持
+NR5G；UXM/CMW500 都显示 `measurement_window`，却没有表达 closed lifecycle、指标范围和正式证明
+强度，未来 adapter 会让 GUI/readiness 再次把“能诊断”显示成“可正式使用”。
+
+**范围/验收**：拆分 manifest schema 与厂商 profile schema；结构化声明 RAT、共同配置字段、Attach
+阶段、窗口、作用域与指标，旧 token 只作派生兼容镜像；registry 拒绝任一分叉。零新 SCPI、零数据库
+迁移，不改变正式白名单。设计见
+`docs/plans/2026-08-29-p2-46-base-station-capability-manifest-v2-design.md`。
+
+**实施状态（2026-08-29，本地实现、完整回归与 fresh 内审完成，Ready PR/外审中）**：manifest v2 已把 RAT、
+共同配置字段、Attach 四阶段、测量窗口生命周期/基数/作用域与逐指标证据强度收敛为不可变结构；
+CMW500 精确声明 LTE + PCC 单一权威闭环窗口；UXM 精确声明 NR5G，但其可选 `5G_NR_Test` 与
+`LTE_NR_IRAT` 方言没有共同的 clear/OTA throughput/BLER 命令集，因此 adapter 级 measurement 保守为
+`null`，IRAT 专属诊断能力不再冒充整机无条件能力。real driver 的 RAT 访问器统一从 manifest 派生，
+registry 在零仪器 I/O 下拒绝 adapter/model/profile version、legacy mirror、class var、未实现窗口与
+窗口基数分叉；厂商 profile 类型由 driver 自声明，第三 adapter 不再依赖 CMW500 专属核心分支。GUI 使用独立 `profile_schema_version`，所以
+manifest v2 仍读写既有 CMW profile v1；第三 adapter 的 RAT/Attach/window/metric 由通用投影显示，
+诊断/不可用能力不会形成正式绿色假象。live OpenAPI、checked-in YAML、generated TS 与手写类型已同步；
+未新增/猜测 SCPI、未迁移数据库、未改变正式 provenance 白名单，也未提前实现 P2-47～P2-53。
+fresh 功能内审及 R1 已按严格 TDD 收口：无测量窗口的第三 adapter 可用显式 `null` 注册，且
+`measurement_window` operation 与能力对象必须同生共灭；已声明窗口必须有 concrete override；UXM
+绿色权威配置出处改为仓库 tracked ZIP 内 HTML 成员与真实 anchor，测试逐条验证归档、成员和 anchor；
+adapter 级能力与 config support/readback 只取有受控出处的方言交集，运行时 IRAT MAC/RRC 与权威
+配置 receipt 仍按当前 profile 精确派生；required profile 缺失提示也从 CMW500 七字段硬编码换成
+manifest 模型与必填字段。最终相关链与规则门
+**554 passed**、全后端 **5259 passed / 5 skipped**、
+GUI 契约 **26 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、
+base-to-HEAD diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
+
+### P2-47 — BaseStation 结构化 Attach Receipt
+
+把 `start_signaling() -> bool` 收敛成逐阶段 receipt，分别记录 cell ready、注册/Attach、RRC 与数据承载
+的 requested/applied/confirmed/unknown/not-applicable 及 exchange ids。CMW500/UXM 只映射现有权威
+回读，不新增命令；共同消费者不得把不同强度的 `True` 当成同一事实。
+
+### P2-48 — Measurement Window Trust Contract
+
+冻结并验证 clear/run/ready/closed、PCell/all-cells、窗口基数、当前 attempt/session 与 cleanup/release；
+声明可诊断但缺 closed 边界的窗口必须保持 unconfirmed，不得因 adapter 名称或旧布尔恢复正式值。
+
+### P2-49 — BaseStation Metric Capability Registry
+
+逐指标声明稳定键、方向、单位、作用域、来源与 formal/diagnostic 资格；共同投影由 registry 驱动，保留
+UXM 的 UL throughput/BLER、CQI/RI 等真实能力，同时不把原始/单位未知值升级成正式工程量。
+
+### P2-50 — Capability-driven BaseStation Execution Plan
+
+把 MEASURE 中分散的 SCell、MAC、RRC、输入电平与窗口能力判断收敛为 execution-frozen vendor-neutral
+计划；共同执行器只编排计划与消费 receipt。新增 adapter 原则上不得修改 MEASURE、commissioning、
+Analysis、报告、下载、比较或历史。
+
+### P2-51 — CMW500 MAC/调度配置正式证据闭环
+
+只依据仓库本地 R&S 手册补齐适用 LTE throughput/BLER 测试配置与回读；手册查不到的能力明确保持
+diagnostic，不从 UXM 方言、请求值或旧状态补真。分为非现场取证/实现与 CMW500 真机复验，后者不由
+本地测试替代。
+
+### P2-52 — UXM 权威测量窗口关闭边界
+
+按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
+永久声明 clear/read-only、diagnostic。分为非现场取证/实现与 UXM 到场复验，不盲试命令。
+
+### P2-53 — 第三种 BaseStation Adapter 接入认证套件
+
+固化 fake transport、部分回读、错误队列、超时/取消、Attach 阶段、窗口、逐指标 trust、SAFE_IDLE、
+release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只需 adapter、manifest、profile/schema、
+手册来源和认证测试，若必须修改共同消费者先登记新的平台缺口。
 
 ---
 

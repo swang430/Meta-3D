@@ -50,35 +50,15 @@ _REAL_DRIVER_REGISTRY_CACHE: Optional[Dict[str, Dict[str, type]]] = None
 
 def _validate_base_station_adapter_ids(drivers: Dict[str, type]) -> None:
     """兼容旧调用点：由声明式 manifest 校验注册身份。"""
-    seen: Dict[str, str] = {}
-    for model_name, driver_class in drivers.items():
-        adapter_id = getattr(driver_class, "adapter_id", None)
-        previous_model = seen.get(adapter_id)
-        if previous_model is not None:
-            raise ValueError(
-                "duplicate base-station adapter_id "
-                f"{adapter_id!r}: {previous_model!r} and {model_name!r}"
-            )
-        seen[adapter_id] = model_name
     registrations = {
         model_name: BaseStationAdapterRegistration(
             manifest=getattr(driver_class, "adapter_manifest", None),
             driver_class=driver_class,
-            profile_model=(
-                _base_station_profile_model(getattr(driver_class, "adapter_id", None))
-            ),
+            profile_model=getattr(driver_class, "adapter_profile_model", None),
         )
         for model_name, driver_class in drivers.items()
     }
     validate_base_station_adapter_registrations(registrations)
-
-
-def _base_station_profile_model(adapter_id: str | None):
-    if adapter_id == "cmw500":
-        from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
-
-        return BaseStationAdapterProfile
-    return None
 
 
 def get_base_station_adapter_registration(
@@ -91,7 +71,7 @@ def get_base_station_adapter_registration(
     registration = BaseStationAdapterRegistration(
         manifest=driver_class.adapter_manifest,
         driver_class=driver_class,
-        profile_model=_base_station_profile_model(driver_class.adapter_id),
+        profile_model=getattr(driver_class, "adapter_profile_model", None),
     )
     validate_base_station_adapter_registrations({model_name: registration})
     return registration
