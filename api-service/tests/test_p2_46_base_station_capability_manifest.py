@@ -231,10 +231,14 @@ def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
     assert manifest.profile_requirement == "not_applicable"
     assert manifest.profile_schema_version is None
     assert "input_level_control" in manifest.operations
-    assert "measurement_window" not in manifest.operations
+    assert "measurement_window" in manifest.operations
     assert "rrc_reconfiguration" not in manifest.operations
     assert "mac_throughput_config" not in manifest.operations
-    assert manifest.measurement is None
+    assert manifest.measurement is not None
+    assert manifest.measurement.cardinality == "requested"
+    assert manifest.measurement.scopes == ("pcell", "all_cells")
+    assert manifest.measurement.lifecycle == "unavailable"
+    assert manifest.measurement.metrics == ()
     assert not any(
         field.readback == "authoritative"
         for field in manifest.config_fields

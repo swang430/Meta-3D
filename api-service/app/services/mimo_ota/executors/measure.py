@@ -63,7 +63,12 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
-from app.hal.base_station import BaseStationRequestedConfig, ThroughputMetrics
+from app.hal.base_station import (
+    BaseStationMeasurementWindowRequest,
+    BaseStationRequestedConfig,
+    ThroughputMetrics,
+)
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_qualification import execution_is_diagnostic
@@ -650,43 +655,102 @@ class MeasureExecutor(IStepExecutor):
         return numeric if math.isfinite(numeric) else None
 
     @staticmethod
+    def _measurement_window_requests(
+        manifest: BaseStationAdapterManifest | None,
+        *,
+        throughput_scope: str,
+        requested_sample_count: int,
+        simulated_diagnostic: bool,
+    ) -> tuple[BaseStationMeasurementWindowRequest, ...]:
+        """Freeze one vendor-neutral native-window plan before any window I/O."""
+
+        if (
+            isinstance(requested_sample_count, bool)
+            or not isinstance(requested_sample_count, int)
+            or requested_sample_count <= 0
+        ):
+            raise TypeError("requested measurement window count must be positive")
+        scope_by_runtime_value = {
+            ThroughputMetrics.SCOPE_PCELL: "pcell",
+            ThroughputMetrics.SCOPE_NR_ALL_CELLS: "all_cells",
+        }
+        scope = scope_by_runtime_value.get(throughput_scope)
+        if scope is None:
+            raise ValueError("measurement window scope is not a formal request scope")
+
+        if manifest is None:
+            if simulated_diagnostic is not True:
+                raise ValueError("frozen manifest has no measurement capability")
+            lifecycle = "unavailable"
+            cardinality = "requested"
+        else:
+            if not isinstance(manifest, BaseStationAdapterManifest):
+                raise TypeError("measurement plan requires a frozen adapter manifest")
+            measurement = manifest.measurement
+            if measurement is None:
+                if simulated_diagnostic is not True:
+                    raise ValueError("frozen manifest has no measurement capability")
+                lifecycle = "unavailable"
+                cardinality = "requested"
+            else:
+                if scope not in measurement.scopes:
+                    raise ValueError(
+                        "measurement window scope is outside the frozen manifest"
+                    )
+                lifecycle = measurement.lifecycle
+                cardinality = measurement.cardinality
+
+        expected_count = 1 if cardinality == "single" else requested_sample_count
+        return tuple(
+            BaseStationMeasurementWindowRequest(
+                schema_version=1,
+                scope=scope,
+                lifecycle=lifecycle,
+                cardinality=cardinality,
+                requested_window_count=requested_sample_count,
+                expected_window_count=expected_count,
+                window_index=index,
+            )
+            for index in range(expected_count)
+        )
+
+    @staticmethod
     async def _measure_base_station_samples(
         base_station: Any,
         *,
         window_s: float,
         throughput_scope: str,
         requested_sample_count: int,
+        manifest: BaseStationAdapterManifest | None,
+        simulated_diagnostic: bool,
     ) -> List[_BaseStationSample]:
         """Collect only adapter-native structured windows through the common SPI."""
 
-        count_resolver = getattr(base_station, "measurement_window_count", None)
-        window_count = (
-            count_resolver(requested_sample_count)
-            if callable(count_resolver)
-            else requested_sample_count
+        requests = MeasureExecutor._measurement_window_requests(
+            manifest,
+            throughput_scope=throughput_scope,
+            requested_sample_count=requested_sample_count,
+            simulated_diagnostic=simulated_diagnostic,
         )
-        if (
-            isinstance(window_count, bool)
-            or not isinstance(window_count, int)
-            or window_count <= 0
-        ):
-            raise ValueError("baseStation measurement window count must be positive")
 
         samples: List[_BaseStationSample] = []
-        for _ in range(window_count):
+        for request in requests:
             with capture_scpi_exchanges() as exchanges:
                 window = await base_station.measure_base_station_window(
                     window_s,
-                    throughput_scope=throughput_scope,
+                    request=request,
                 )
-            if window.confirmed is not True:
-                diagnostic_policy = getattr(
-                    base_station,
-                    "unconfirmed_window_allows_diagnostic_execution",
-                    None,
+            trust = getattr(window, "trust", None)
+            if trust is None:
+                raise RuntimeError(
+                    "BaseStation measurement-window trust receipt is missing"
                 )
-                if not callable(diagnostic_policy) or diagnostic_policy(window) is not True:
-                    raise _BaseStationWindowBlocked(window)
+            if trust.request != request or trust.request_digest != request.digest:
+                raise RuntimeError(
+                    "BaseStation measurement-window frozen request mismatch"
+                )
+            if trust.diagnostic_execution_allowed is not True:
+                raise _BaseStationWindowBlocked(window)
             samples.append(
                 _BaseStationSample(
                     metrics=window.metrics,
@@ -2943,11 +3007,37 @@ class MeasureExecutor(IStepExecutor):
                     az_path_loss_db = avg_path_loss_db
 
                 try:
+                    resolved_binding = base_station_attempt.frozen_adapter.get(
+                        "resolved_binding"
+                    )
+                    raw_manifest = (
+                        resolved_binding.get("manifest")
+                        if isinstance(resolved_binding, dict)
+                        else None
+                    )
+                    if raw_manifest is not None:
+                        measurement_manifest = (
+                            BaseStationAdapterManifest.model_validate(raw_manifest)
+                        )
+                    elif base_station_attempt.attempt_id is not None:
+                        raise RuntimeError(
+                            "BaseStation current attempt is missing its frozen manifest"
+                        )
+                    else:
+                        measurement_manifest = (
+                            None
+                            if base_station_attempt.simulated_diagnostic
+                            else getattr(base_station, "adapter_manifest", None)
+                        )
                     base_station_samples = await self._measure_base_station_samples(
                         base_station,
                         window_s=window_s,
                         throughput_scope=throughput_scope,
                         requested_sample_count=num_windows,
+                        manifest=measurement_manifest,
+                        simulated_diagnostic=(
+                            base_station_attempt.simulated_diagnostic
+                        ),
                     )
                 except _BaseStationWindowBlocked as exc:
                     # A rejected native window has no authoritative connected

@@ -8,6 +8,8 @@ Supports both 5G NR (Keysight UXM) and LTE (R&S CMW500) base station emulators.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import random
 from dataclasses import asdict, dataclass
@@ -436,6 +438,239 @@ class BaseStationAttachReceipt:
         )
 
 
+BASE_STATION_MEASUREMENT_WINDOW_STAGES = (
+    "clear",
+    "run",
+    "ready",
+    "closed",
+)
+BaseStationMeasurementWindowStage = Literal[
+    "clear",
+    "run",
+    "ready",
+    "closed",
+]
+BaseStationMeasurementLifecycle = Literal[
+    "authoritative_closed",
+    "clear_read_only",
+    "unavailable",
+]
+
+
+@dataclass(frozen=True)
+class BaseStationMeasurementWindowRequest:
+    """One execution-frozen native-window request.
+
+    The request owns scope and cardinality.  Drivers may only report what
+    happened for this exact request; they cannot silently choose another
+    number of windows or widen PCell into all-cells.
+    """
+
+    schema_version: Literal[1]
+    scope: Literal["pcell", "all_cells"]
+    lifecycle: BaseStationMeasurementLifecycle
+    cardinality: Literal["single", "requested"]
+    requested_window_count: int
+    expected_window_count: int
+    window_index: int
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported measurement window request schema")
+        if self.scope not in {"pcell", "all_cells"}:
+            raise ValueError("measurement window scope is invalid")
+        if self.lifecycle not in {
+            "authoritative_closed",
+            "clear_read_only",
+            "unavailable",
+        }:
+            raise ValueError("measurement window lifecycle is invalid")
+        if self.cardinality not in {"single", "requested"}:
+            raise ValueError("measurement window cardinality is invalid")
+        for field_name in ("requested_window_count", "expected_window_count"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise TypeError(
+                    field_name.replace("_", " ") + " must be a positive integer"
+                )
+        if self.cardinality == "single" and self.expected_window_count != 1:
+            raise ValueError("single cardinality requires one expected window")
+        if (
+            self.cardinality == "requested"
+            and self.expected_window_count != self.requested_window_count
+        ):
+            raise ValueError(
+                "requested cardinality requires expected count to match request"
+            )
+        if (
+            isinstance(self.window_index, bool)
+            or not isinstance(self.window_index, int)
+            or not 0 <= self.window_index < self.expected_window_count
+        ):
+            raise ValueError("measurement window index is outside the frozen batch")
+
+    @property
+    def digest(self) -> str:
+        payload = {
+            "schema_version": self.schema_version,
+            "scope": self.scope,
+            "lifecycle": self.lifecycle,
+            "cardinality": self.cardinality,
+            "requested_window_count": self.requested_window_count,
+            "expected_window_count": self.expected_window_count,
+            "window_index": self.window_index,
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationMeasurementWindowRequest must not be used as bool; "
+            "inspect its frozen fields"
+        )
+
+
+@dataclass(frozen=True)
+class BaseStationMeasurementStageReceipt:
+    """One clear/run/ready/closed observation from the current window."""
+
+    stage: BaseStationMeasurementWindowStage
+    status: Literal["confirmed", "unknown", "unavailable"]
+    reason: str
+    exchange_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.stage not in BASE_STATION_MEASUREMENT_WINDOW_STAGES:
+            raise ValueError("measurement window stage is invalid")
+        if self.status not in {"confirmed", "unknown", "unavailable"}:
+            raise ValueError("measurement window stage status is invalid")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("measurement window stage reason must be non-empty")
+        if (
+            not isinstance(self.exchange_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.exchange_ids
+            )
+            or len(set(self.exchange_ids)) != len(self.exchange_ids)
+        ):
+            raise ValueError(
+                "measurement window stage exchange ids must be non-empty and unique"
+            )
+        if self.status == "confirmed" and not self.exchange_ids:
+            raise ValueError("confirmed stage requires exchange ids")
+        if self.status != "confirmed" and self.exchange_ids:
+            raise ValueError(
+                "unknown or unavailable stage cannot carry exchange ids"
+            )
+
+
+@dataclass(frozen=True)
+class BaseStationMeasurementWindowTrust:
+    """Versioned lifecycle truth for one exact frozen window request."""
+
+    schema_version: Literal[1]
+    request: BaseStationMeasurementWindowRequest
+    request_digest: str
+    stages: tuple[BaseStationMeasurementStageReceipt, ...]
+    simulated: bool
+    exchange_ids: tuple[str, ...]
+    reason: str
+    context_confirmed: bool
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported measurement window trust schema")
+        if not isinstance(self.request, BaseStationMeasurementWindowRequest):
+            raise TypeError("measurement window trust requires a frozen request")
+        if self.request_digest != self.request.digest:
+            raise ValueError("measurement window request digest mismatch")
+        if (
+            not isinstance(self.stages, tuple)
+            or any(
+                not isinstance(item, BaseStationMeasurementStageReceipt)
+                for item in self.stages
+            )
+            or tuple(item.stage for item in self.stages)
+            != BASE_STATION_MEASUREMENT_WINDOW_STAGES
+        ):
+            raise ValueError(
+                "measurement window trust requires exact ordered lifecycle stages"
+            )
+        if type(self.simulated) is not bool:
+            raise TypeError("measurement window trust simulated must be bool")
+        if type(self.context_confirmed) is not bool:
+            raise TypeError(
+                "measurement window trust context_confirmed must be bool"
+            )
+        if (
+            not isinstance(self.exchange_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.exchange_ids
+            )
+            or len(set(self.exchange_ids)) != len(self.exchange_ids)
+        ):
+            raise ValueError("measurement window exchange ids must be non-empty and unique")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("measurement window trust reason must be non-empty")
+        stage_exchange_ids = {
+            exchange_id
+            for stage in self.stages
+            for exchange_id in stage.exchange_ids
+        }
+        if not stage_exchange_ids.issubset(set(self.exchange_ids)):
+            raise ValueError(
+                "measurement stage exchange ids must belong to the window"
+            )
+        statuses = {stage.stage: stage.status for stage in self.stages}
+        if self.simulated and any(
+            status == "confirmed" for status in statuses.values()
+        ):
+            raise ValueError("simulated window cannot carry confirmed lifecycle truth")
+        if (
+            self.request.lifecycle == "clear_read_only"
+            and statuses["closed"] == "confirmed"
+        ):
+            raise ValueError("clear-read-only lifecycle cannot confirm a closed boundary")
+        if self.request.lifecycle == "unavailable" and any(
+            status == "confirmed" for status in statuses.values()
+        ):
+            raise ValueError("unavailable lifecycle cannot carry confirmed stages")
+
+    @property
+    def formally_confirmed(self) -> bool:
+        return (
+            self.simulated is False
+            and self.context_confirmed is True
+            and self.request.lifecycle == "authoritative_closed"
+            and all(stage.status == "confirmed" for stage in self.stages)
+            and bool(self.exchange_ids)
+        )
+
+    @property
+    def diagnostic_execution_allowed(self) -> bool:
+        if self.simulated:
+            return True
+        if self.formally_confirmed:
+            return True
+        return (
+            self.request.lifecycle in {"clear_read_only", "unavailable"}
+            and bool(self.exchange_ids)
+        )
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationMeasurementWindowTrust must not be used as bool; "
+            "inspect formal or diagnostic qualification"
+        )
+
+
 @dataclass(frozen=True)
 class BaseStationCleanupResult:
     """MEASURE 阶段拥有的信令停止与 SAFE_IDLE 结果。"""
@@ -460,6 +695,45 @@ class BaseStationMeasurementWindow:
     evidence: tuple[InstrumentEvidenceItem, ...]
     confirmed: bool
     reason: str
+    trust: BaseStationMeasurementWindowTrust | None = None
+
+    def __post_init__(self) -> None:
+        if self.trust is None:
+            return
+        if not isinstance(self.trust, BaseStationMeasurementWindowTrust):
+            raise TypeError("measurement window trust has an invalid type")
+        stage_confirmed = {
+            stage.stage: stage.status == "confirmed"
+            for stage in self.trust.stages
+        }
+        lifecycle_mirrors = {
+            "clear": self.preclear_off_confirmed,
+            "run": self.running_confirmed,
+            "ready": self.ready_confirmed,
+            "closed": self.closed_off_confirmed,
+        }
+        if any(
+            type(value) is not bool or value is not stage_confirmed[stage]
+            for stage, value in lifecycle_mirrors.items()
+        ):
+            raise ValueError(
+                "measurement window lifecycle mirrors disagree with trust receipt"
+            )
+        if self.confirmed is not self.trust.formally_confirmed:
+            raise ValueError(
+                "measurement window confirmed mirror disagrees with trust receipt"
+            )
+        expected_scope = (
+            ThroughputMetrics.SCOPE_SIMULATED
+            if self.trust.simulated
+            else (
+                ThroughputMetrics.SCOPE_PCELL
+                if self.trust.request.scope == "pcell"
+                else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+            )
+        )
+        if self.metrics.throughput_scope != expected_scope:
+            raise ValueError("measurement window metric scope disagrees with request")
 
 
 @dataclass(frozen=True)
@@ -923,7 +1197,7 @@ class BaseStationDriver(InstrumentDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """采集带厂商生命周期确认的结构化窗口。
 
@@ -933,25 +1207,6 @@ class BaseStationDriver(InstrumentDriver):
 
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a confirmed measurement window"
-        )
-
-    def measurement_window_count(self, requested: int) -> int:
-        """Let the adapter own whether one position uses one or N native windows."""
-
-        if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
-            raise ValueError("requested measurement window count must be positive")
-        return 1 if self.measurement_window_cardinality == "single" else requested
-
-    def unconfirmed_window_allows_diagnostic_execution(
-        self,
-        window: BaseStationMeasurementWindow,
-    ) -> bool:
-        """Keep only authoritative simulated windows runnable by default."""
-
-        return (
-            getattr(self, "simulated", False) is True
-            and isinstance(window, BaseStationMeasurementWindow)
-            and window.metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
@@ -1390,18 +1645,38 @@ class MockBaseStation(BaseStationDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """Return a same-shape simulated window that can never be formal."""
 
+        if not isinstance(request, BaseStationMeasurementWindowRequest):
+            raise TypeError("mock measurement requires a frozen window request")
         started_at = datetime.now(timezone.utc)
         await asyncio.sleep(max(float(window_s), 0.0))
         metrics = await self.get_throughput_metrics(
             throughput_scope=ThroughputMetrics.SCOPE_SIMULATED,
         )
+        metrics.throughput_scope = ThroughputMetrics.SCOPE_SIMULATED
         metrics.kpi_valid = {
             key: False for key in metrics.kpi_valid
         }
+        trust = BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=tuple(
+                BaseStationMeasurementStageReceipt(
+                    stage=stage,
+                    status="unavailable",
+                    reason="simulated window has no hardware lifecycle proof",
+                )
+                for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES
+            ),
+            simulated=True,
+            exchange_ids=(),
+            reason="simulated diagnostic window; excluded from formal KPI",
+            context_confirmed=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -1414,6 +1689,7 @@ class MockBaseStation(BaseStationDriver):
             evidence=(),
             confirmed=False,
             reason="simulated diagnostic window; excluded from formal KPI",
+            trust=trust,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

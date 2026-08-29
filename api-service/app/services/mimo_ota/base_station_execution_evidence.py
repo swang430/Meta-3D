@@ -459,6 +459,125 @@ class BaseStationCleanupEvidence(BaseModel):
     warnings: list[str]
 
 
+class BaseStationMeasurementWindowRequestEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    scope: Literal["pcell", "all_cells"]
+    lifecycle: Literal["authoritative_closed", "clear_read_only", "unavailable"]
+    cardinality: Literal["single", "requested"]
+    requested_window_count: int
+    expected_window_count: int
+    window_index: int
+
+    @model_validator(mode="after")
+    def _valid_shape(self):
+        counts = (
+            self.requested_window_count,
+            self.expected_window_count,
+            self.window_index,
+        )
+        if any(isinstance(value, bool) for value in counts):
+            raise ValueError("measurement window counts must be integers")
+        if self.requested_window_count <= 0 or self.expected_window_count <= 0:
+            raise ValueError("measurement window counts must be positive")
+        expected = 1 if self.cardinality == "single" else self.requested_window_count
+        if self.expected_window_count != expected:
+            raise ValueError("measurement window cardinality/count mismatch")
+        if not 0 <= self.window_index < self.expected_window_count:
+            raise ValueError("measurement window index is outside the frozen plan")
+        return self
+
+    @property
+    def digest(self) -> str:
+        return canonical_snapshot_digest(self.model_dump(mode="json"))
+
+
+class BaseStationMeasurementStageEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal["clear", "run", "ready", "closed"]
+    status: Literal["confirmed", "unknown", "unavailable"]
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator("reason")
+    @classmethod
+    def _required_reason(cls, value: str):
+        return _non_empty(value, "reason")
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("measurement stage exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _status_shape(self):
+        if self.status == "confirmed" and not self.exchange_ids:
+            raise ValueError("confirmed measurement stage requires exchange ids")
+        if self.status != "confirmed" and self.exchange_ids:
+            raise ValueError("unconfirmed measurement stage cannot carry exchange ids")
+        return self
+
+
+class BaseStationMeasurementWindowTrustEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    request: BaseStationMeasurementWindowRequestEvidence
+    request_digest: str
+    stages: list[BaseStationMeasurementStageEvidence]
+    simulated: StrictBool
+    exchange_ids: list[str]
+    reason: str
+    context_confirmed: StrictBool
+
+    @field_validator("request_digest", "reason")
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("measurement window exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _derived_truth(self):
+        if self.request_digest != self.request.digest:
+            raise ValueError("measurement window request digest mismatch")
+        if [stage.stage for stage in self.stages] != [
+            "clear", "run", "ready", "closed"
+        ]:
+            raise ValueError("measurement window stages must be exact and ordered")
+        stage_ids = {
+            exchange_id
+            for stage in self.stages
+            for exchange_id in stage.exchange_ids
+        }
+        if not stage_ids.issubset(set(self.exchange_ids)):
+            raise ValueError("measurement stage proof is outside its window")
+        if self.simulated and any(
+            stage.status == "confirmed" for stage in self.stages
+        ):
+            raise ValueError("simulated window cannot confirm lifecycle truth")
+        return self
+
+    @property
+    def formally_confirmed(self) -> bool:
+        return (
+            self.simulated is False
+            and self.context_confirmed is True
+            and self.request.lifecycle == "authoritative_closed"
+            and all(stage.status == "confirmed" for stage in self.stages)
+            and bool(self.exchange_ids)
+        )
+
+
 class BaseStationMeasurementWindowEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -480,6 +599,7 @@ class BaseStationMeasurementWindowEvidence(BaseModel):
     cleanup: BaseStationCleanupEvidence
     lifecycle_exchange_ids: list[str]
     metrics: dict[str, BaseStationMetricEvidence]
+    trust: BaseStationMeasurementWindowTrustEvidence | None = None
 
     @field_validator(
         "window_id",
@@ -541,6 +661,7 @@ class BaseStationExecutionEvidence(BaseModel):
         default_factory=list
     )
     attach_operations: list[BaseStationAttachOperationEvidence] | None = None
+    measurement_window_contract_version: Literal[1] | None = None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -560,6 +681,10 @@ class BaseStationExecutionEvidence(BaseModel):
             raise ValueError("identity adapter mismatch")
         if any(window.adapter != self.adapter for window in self.measurement_windows):
             raise ValueError("window adapter mismatch")
+        if self.measurement_window_contract_version == 1 and any(
+            window.trust is None for window in self.measurement_windows
+        ):
+            raise ValueError("current measurement windows require trust receipts")
         if any(row.adapter != self.adapter for row in self.adapter_operations):
             raise ValueError("adapter operation mismatch")
         if self.attach_operations is not None and any(
@@ -609,6 +734,11 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         return None
     if "attach_operations" in value and value.get("attach_operations") is None:
         return None
+    if (
+        "measurement_window_contract_version" in value
+        and value.get("measurement_window_contract_version") is None
+    ):
+        return None
     try:
         parsed = BaseStationExecutionEvidence.model_validate(value)
     except Exception:
@@ -621,6 +751,14 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         normalized.pop("adapter_operations", None)
     if "attach_operations" not in value:
         normalized.pop("attach_operations", None)
+    if "measurement_window_contract_version" not in value:
+        normalized.pop("measurement_window_contract_version", None)
+    raw_windows = value.get("measurement_windows")
+    normalized_windows = normalized.get("measurement_windows")
+    if isinstance(raw_windows, list) and isinstance(normalized_windows, list):
+        for raw_window, normalized_window in zip(raw_windows, normalized_windows):
+            if isinstance(raw_window, dict) and "trust" not in raw_window:
+                normalized_window.pop("trust", None)
     return normalized if normalized == value else None
 
 
@@ -664,7 +802,55 @@ def _attempt_lifecycle_envelope(
         if window.measurement_attempt_id == attempt_id
     ]
     window_keys = [_position_key(window.position) for window in windows]
-    if len(windows) != len(requested_keys) or sorted(window_keys) != sorted(requested_keys):
+    current_window_contract = evidence.measurement_window_contract_version == 1
+    if current_window_contract:
+        grouped: dict[tuple[float, float], list[BaseStationMeasurementWindowEvidence]] = {
+            key: [] for key in requested_keys
+        }
+        for window, key in zip(windows, window_keys):
+            if key not in grouped:
+                return False, "current_attempt_positions_mismatch", []
+            grouped[key].append(window)
+        if any(not group for group in grouped.values()):
+            return False, "current_attempt_positions_mismatch", []
+        frozen_shape: tuple[str, str, str, int, int] | None = None
+        for group in grouped.values():
+            trusts = [window.trust for window in group]
+            if any(trust is None for trust in trusts):
+                return False, "measurement_window_trust_missing", []
+            requests = [trust.request for trust in trusts if trust is not None]
+            reference = requests[0]
+            common_shape = (
+                reference.scope,
+                reference.lifecycle,
+                reference.cardinality,
+                reference.requested_window_count,
+                reference.expected_window_count,
+            )
+            if frozen_shape is None:
+                frozen_shape = common_shape
+            elif common_shape != frozen_shape:
+                return False, "measurement_window_shape_drift", []
+            if (
+                len(group) != reference.expected_window_count
+                or {request.window_index for request in requests}
+                != set(range(reference.expected_window_count))
+                or any(
+                    (
+                        request.scope,
+                        request.lifecycle,
+                        request.cardinality,
+                        request.requested_window_count,
+                        request.expected_window_count,
+                    )
+                    != common_shape
+                    for request in requests
+                )
+            ):
+                return False, "measurement_window_cardinality_mismatch", []
+    elif len(windows) != len(requested_keys) or sorted(window_keys) != sorted(
+        requested_keys
+    ):
         return False, "current_attempt_positions_mismatch", []
     if len(set(window.window_id for window in windows)) != len(windows):
         return False, "current_attempt_window_ids_not_unique", []
@@ -701,6 +887,12 @@ def _attempt_lifecycle_envelope(
             or release.transport_session_released_confirmed is not True
         ):
             return False, "current_attempt_lifecycle_not_confirmed", []
+        if current_window_contract and (
+            window.trust is None
+            or window.trust.formally_confirmed is not True
+            or window.trust.exchange_ids != window.lifecycle_exchange_ids
+        ):
+            return False, "measurement_window_trust_not_confirmed", []
         try:
             _unique_non_empty(window.lifecycle_exchange_ids, "lifecycle_exchange_ids")
         except ValueError:

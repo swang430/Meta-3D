@@ -332,6 +332,7 @@ def _initial_base_station_execution_evidence(
             "current_measurement_attempt_id": None,
             "current_measurement_attempt_state": None,
             "attach_operations": [],
+            "measurement_window_contract_version": 1,
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -376,7 +377,7 @@ def initialize_base_station_execution_evidence(
             for field in immutable_fields
         ):
             raise ValueError("baseStation evidence immutable scope mismatch")
-        return existing.model_dump(mode="json")
+        return existing_raw
     return save_base_station_execution_evidence(execution, candidate)
 
 
@@ -703,6 +704,9 @@ def append_base_station_measurement_window(
         raise ValueError("duplicate measurement window id")
     if window.completed_at is None:
         raise ValueError("measurement window completion is missing")
+    current_window_contract = evidence.measurement_window_contract_version == 1
+    if current_window_contract and window.trust is None:
+        raise ValueError("current measurement window requires a trust receipt")
 
     lifecycle_exchange_ids: list[str] = []
     for item in window.evidence:
@@ -710,6 +714,16 @@ def append_base_station_measurement_window(
             if exchange_id in lifecycle_exchange_ids:
                 raise ValueError("measurement window exchange ids must be unique")
             lifecycle_exchange_ids.append(exchange_id)
+    trust_payload = None
+    if current_window_contract:
+        trust = window.trust
+        if trust is None:  # narrowed above; keeps type check explicit
+            raise ValueError("current measurement window requires a trust receipt")
+        if list(trust.exchange_ids) != lifecycle_exchange_ids:
+            raise ValueError(
+                "measurement window trust exchanges disagree with captured evidence"
+            )
+        trust_payload = asdict(trust)
     _append_unique_exchange_ids(evidence, lifecycle_exchange_ids)
 
     metrics = window.metrics
@@ -768,6 +782,7 @@ def append_base_station_measurement_window(
                 },
                 "lifecycle_exchange_ids": lifecycle_exchange_ids,
                 "metrics": metric_rows,
+                **({"trust": trust_payload} if current_window_contract else {}),
             }
         )
     )
@@ -787,6 +802,14 @@ def save_base_station_execution_evidence(
     normalized = parsed.model_dump(mode="json")
     if parsed.attach_operations is None:
         normalized.pop("attach_operations", None)
+    if "measurement_window_contract_version" not in parsed.model_fields_set:
+        normalized.pop("measurement_window_contract_version", None)
+    for parsed_window, normalized_window in zip(
+        parsed.measurement_windows,
+        normalized["measurement_windows"],
+    ):
+        if "trust" not in parsed_window.model_fields_set:
+            normalized_window.pop("trust", None)
     cfg = dict(execution.config or {})
     cfg[BASE_STATION_EXECUTION_EVIDENCE_FIELD] = normalized
     execution.config = cfg

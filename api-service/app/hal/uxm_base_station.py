@@ -42,7 +42,10 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationDriver,
     BaseStationFieldReceipt,
+    BaseStationMeasurementStageReceipt,
     BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     CellState,
@@ -58,6 +61,7 @@ from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
+    BaseStationMeasurementCapability,
     BaseStationRatCapability,
 )
 from app.hal.nr_band_baselines import get_band_baseline
@@ -364,6 +368,7 @@ class RealUxmDriver(BaseStationDriver):
             "cell_attach",
             "safe_idle_release",
             "input_level_control",
+            "measurement_window",
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
@@ -524,11 +529,17 @@ class RealUxmDriver(BaseStationDriver):
             ),
         ),
         # Adapter-level truth is the conservative intersection of every Test
-        # App profile this driver can select.  Only the IRAT profile currently
-        # has sourced clear/OTA-throughput/BLER commands, so no unconditional
-        # measurement window is advertised here.  Profile-scoped projection
-        # must wait until the resolved Test App itself is frozen as truth.
-        measurement=None,
+        # App profile this driver can select.  The common SPI can request and
+        # read diagnostic windows, but no profile-independent authoritative
+        # lifecycle or metric proof is available.  P2-52 must freeze the
+        # resolved Test App before this declaration can be strengthened.
+        measurement=BaseStationMeasurementCapability(
+            cardinality="requested",
+            scopes=("pcell", "all_cells"),
+            lifecycle="unavailable",
+            metrics=(),
+            source_reference=None,
+        ),
         profile_requirement="not_applicable",
         profile_schema_version=None,
         profile_fields=(),
@@ -3984,7 +3995,7 @@ class RealUxmDriver(BaseStationDriver):
         self,
         window_s: float,
         *,
-        throughput_scope: str = ThroughputMetrics.SCOPE_PCELL,
+        request: BaseStationMeasurementWindowRequest,
     ) -> BaseStationMeasurementWindow:
         """Expose the existing UXM clear/read window without inventing closure.
 
@@ -3995,6 +4006,15 @@ class RealUxmDriver(BaseStationDriver):
         formal trust by itself.
         """
 
+        if not isinstance(request, BaseStationMeasurementWindowRequest):
+            raise TypeError("UXM measurement requires a frozen window request")
+        if request.lifecycle != "unavailable" or request.cardinality != "requested":
+            raise ValueError("UXM window request disagrees with its frozen manifest")
+        throughput_scope = (
+            ThroughputMetrics.SCOPE_PCELL
+            if request.scope == "pcell"
+            else ThroughputMetrics.SCOPE_NR_ALL_CELLS
+        )
         started_at = datetime.now(timezone.utc)
         with capture_scpi_exchanges() as exchanges:
             metrics = await self.measure_throughput_window(
@@ -4027,6 +4047,25 @@ class RealUxmDriver(BaseStationDriver):
                 "values are diagnostic only"
             ),
         )
+        trust = BaseStationMeasurementWindowTrust(
+            schema_version=1,
+            request=request,
+            request_digest=request.digest,
+            stages=tuple(
+                BaseStationMeasurementStageReceipt(
+                    stage=stage,
+                    status="unavailable",
+                    reason=(
+                        "profile-independent authoritative lifecycle is unavailable"
+                    ),
+                )
+                for stage in ("clear", "run", "ready", "closed")
+            ),
+            simulated=False,
+            exchange_ids=tuple(exchange_ids),
+            reason=evidence.reason,
+            context_confirmed=False,
+        )
         return BaseStationMeasurementWindow(
             window_id=uuid4().hex,
             started_at=started_at,
@@ -4039,18 +4078,7 @@ class RealUxmDriver(BaseStationDriver):
             evidence=(evidence,),
             confirmed=False,
             reason=evidence.reason,
-        )
-
-    def unconfirmed_window_allows_diagnostic_execution(
-        self,
-        window: BaseStationMeasurementWindow,
-    ) -> bool:
-        """Retain the pre-P2-43 UXM attested path without claiming closure."""
-
-        return (
-            isinstance(window, BaseStationMeasurementWindow)
-            and window.confirmed is False
-            and bool(window.evidence)
+            trust=trust,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:

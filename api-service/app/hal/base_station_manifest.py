@@ -232,8 +232,12 @@ class BaseStationMeasurementCapability(BaseModel):
     @model_validator(mode="after")
     def _valid_measurement_shape(self):
         keys = [metric.key for metric in self.metrics]
-        if not keys or len(set(keys)) != len(keys):
-            raise ValueError("measurement metric keys must be non-empty and unique")
+        if len(set(keys)) != len(keys):
+            raise ValueError("measurement metric keys must be unique")
+        if self.lifecycle != "unavailable" and not keys:
+            raise ValueError(
+                "available measurement lifecycle requires metric declarations"
+            )
         if self.lifecycle == "authoritative_closed" and self.source_reference is None:
             raise ValueError("authoritative closed lifecycle requires source_reference")
         if any(not set(metric.scopes).issubset(self.scopes) for metric in self.metrics):
@@ -403,6 +407,18 @@ def validate_base_station_adapter_registrations(
         manifest = getattr(registration, "manifest", None)
         if not isinstance(manifest, BaseStationAdapterManifest):
             raise ValueError(f"base-station manifest missing for {model_name!r}")
+        previous_model = seen.get(manifest.adapter_id)
+        if previous_model is not None:
+            raise ValueError(
+                "duplicate base-station adapter_id "
+                f"{manifest.adapter_id!r}: {previous_model!r} and {model_name!r}"
+            )
+        seen[manifest.adapter_id] = model_name
+
+    for model_name, registration in registrations.items():
+        manifest = getattr(registration, "manifest", None)
+        if not isinstance(manifest, BaseStationAdapterManifest):
+            raise ValueError(f"base-station manifest missing for {model_name!r}")
         driver_class = getattr(registration, "driver_class", None)
         driver_adapter_id = getattr(driver_class, "adapter_id", None)
         if manifest.schema_version != 2:
@@ -492,14 +508,6 @@ def validate_base_station_adapter_registrations(
                 f"base-station input_level_control has no applicable config field "
                 f"for {model_name}"
             )
-        previous_model = seen.get(manifest.adapter_id)
-        if previous_model is not None:
-            raise ValueError(
-                "duplicate base-station adapter_id "
-                f"{manifest.adapter_id!r}: {previous_model!r} and {model_name!r}"
-            )
-        seen[manifest.adapter_id] = model_name
-
         profile_model = getattr(registration, "profile_model", None)
         declared_profile_model = getattr(
             driver_class, "adapter_profile_model", None
