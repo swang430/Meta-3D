@@ -702,7 +702,7 @@ class BaseStationMetricRegistry:
         ):
             if (
                 not isinstance(value, str)
-                or not _METRIC_REGISTRY_TOKEN_RE.fullmatch(value.strip())
+                or not _METRIC_REGISTRY_TOKEN_RE.fullmatch(value)
             ):
                 raise ValueError(f"metric registry {name} must be a stable token")
         if (
@@ -1137,8 +1137,8 @@ class BaseStationDriver(InstrumentDriver):
                 str(exchange.exchange_id)
                 for exchange in exchanges
                 if query_key is not None
-                and str(getattr(exchange, "command", "")).strip().upper()
-                == query_key
+                and getattr(exchange, "command", None) is not None
+                and str(exchange.command).strip().upper() == query_key
             )
             value = metrics.registered_values.get(capability.key)
             observations.append(

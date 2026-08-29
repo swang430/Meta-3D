@@ -49,7 +49,17 @@ def test_metric_capability_accepts_ratio_without_relabeling_as_percent():
     assert metric.unit == "ratio"
 
 
-@pytest.mark.parametrize("field,value", [("adapter_id", ""), ("profile_id", "NR 5G")])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("adapter_id", ""),
+        ("profile_id", "NR 5G"),
+        # Gemini R1：带首尾空格的 token 必须整体拒绝——strip 后校验会放行
+        # 但 frozen dataclass 存的是原值，严格相等比较与 digest 随即错配
+        ("adapter_id", "uxm "),
+        ("profile_id", " lte_nr_irat"),
+    ],
+)
 def test_metric_registry_rejects_invalid_identity(field: str, value: str):
     payload = {
         "schema_version": 1,

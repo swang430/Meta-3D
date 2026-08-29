@@ -216,3 +216,32 @@ def test_measurement_window_rejects_registry_observation_drift():
             metric_registry=registry,
             metric_observations=(observation,),
         )
+
+
+def test_none_command_exchange_never_matches_none_like_query_key():
+    """外审 #415 Gemini R1：command=None 的 exchange 不许因 str(None)=="None"
+    与恰为 "None" 的 query 命令误绑定——None 必须显式排除在匹配之外。"""
+    driver = RealUxmDriver(
+        "uxm",
+        {"ip_address": "192.0.2.11", "uxm_profile": "irat"},
+    )
+    registry = driver.resolve_metric_registry()
+    metrics = ThroughputMetrics(
+        throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+        registered_values={"dl_throughput_mbps": 4.0},
+    )
+    # 修复后：None 命令不参与匹配 → 带值 observation 无 exchange_ids →
+    # 下游模型 fail-loud；回退版（str(None)=="None" 误配）反而"成功"
+    # 产出把 ghost exchange 当证据的 observation
+    with pytest.raises(ValueError, match="requires exchange ids"):
+        driver.build_metric_observations(
+            registry=registry,
+            metrics=metrics,
+            scope="pcell",
+            exchanges=(
+                SimpleNamespace(command=None, exchange_id="ghost"),
+            ),
+            # 异常配置形态：查询命令字面上是 "None"（解析错误的典型产物）
+            query_commands={"dl_throughput_mbps": "None"},
+            simulated=False,
+        )
