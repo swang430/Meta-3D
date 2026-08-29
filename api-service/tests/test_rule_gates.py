@@ -25,6 +25,9 @@ G20 test_suite 告警写入必须有模块级 SQLite 隔离 ← P1-38 测试污�
    变异: 任意新测试模块写 source=test_suite 但没接 SQLite/get_db/drop_all → 必须检出。
 G23 BaseStation 执行资格只允许一个冻结入口 ← P2-45 Diagnostic/Formal 资格边界
    变异: 任一生产入口绕过共享 wrapper 直接调用资格 freezer → 必须检出。
+G24 BaseStation 静态能力只读 manifest v2 ← P2-46 Capability Manifest v2
+   变异: real driver 覆写 RAT accessor、注册声明与 class var 分叉、GUI profile 再读
+   manifest schema version，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2505,3 +2508,40 @@ def test_g23_execution_qualification_has_one_production_freeze_wrapper():
         "api-service/app/services/base_station_adapter_profile.py",
         "api-service/app/services/execution_qualification.py",
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G24 BaseStation 静态能力只读 manifest v2
+# ─────────────────────────────────────────────────────────────────────
+
+def test_g24_base_station_capability_truth_is_manifest_v2():
+    """P2-46：real registry 与 GUI profile helper 不得再造能力/版本镜像。"""
+    from app.hal.base_station import BaseStationDriver
+    from app.hal.base_station_manifest import (
+        validate_base_station_adapter_registrations,
+    )
+    from app.services.instrument_hal_service import (
+        _real_driver_registry,
+        get_base_station_adapter_registration,
+    )
+
+    registrations = {
+        model_name: get_base_station_adapter_registration(model_name)
+        for model_name in _real_driver_registry()["baseStation"]
+    }
+    validate_base_station_adapter_registrations(registrations)
+    assert registrations
+    for registration in registrations.values():
+        assert registration.manifest.schema_version == 2
+        assert (
+            registration.driver_class.get_supported_technologies
+            is BaseStationDriver.get_supported_technologies
+        )
+
+    gui_helper = (
+        _REPO_ROOT / "gui/src/types/baseStationManifest.ts"
+    ).read_text(encoding="utf-8")
+    assert "manifest.profile_schema_version" in gui_helper
+    assert "schema_version: manifest.schema_version" not in gui_helper
+    assert "cmw500" not in gui_helper.lower()
+    assert "uxm" not in gui_helper.lower()

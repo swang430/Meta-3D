@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前状态（现场链事实与本地队列截至 2026-08-28）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态（现场链事实与本地队列截至 2026-08-29）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
 degree 单位与 `PFBK - MOVEABS = +90°` 偏置；P0-9B-3 已完成该真值及其来源/时间的
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-44（Ready PR 后续 P1-only 外审中）**；P2-42/P2-43 已分别由 PR #408/#409 合并，P2-44 合并后才开始 P2-45。前三项共同构成第三种 BS Emulator 的接入前置。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-46（本地实现完成，待完整回归、fresh 内审与外审）**；NEW-1/P2-42/P2-43/P2-44/P2-45 已分别由 PR #407/#408/#409/#410/#411 合并。后续严格按 P2-47→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4274,6 +4274,15 @@ NR5G；UXM/CMW500 都显示 `measurement_window`，却没有表达 closed lifecy
 阶段、窗口、作用域与指标，旧 token 只作派生兼容镜像；registry 拒绝任一分叉。零新 SCPI、零数据库
 迁移，不改变正式白名单。设计见
 `docs/plans/2026-08-29-p2-46-base-station-capability-manifest-v2-design.md`。
+
+**实施状态（2026-08-29，本地实现完成，待完整回归/fresh 内审/外审）**：manifest v2 已把 RAT、
+共同配置字段、Attach 四阶段、测量窗口生命周期/基数/作用域与逐指标证据强度收敛为不可变结构；
+CMW500 精确声明 LTE + PCC 单一权威闭环窗口，UXM 精确声明 NR5G + PCell/all-cells clear/read-only
+诊断窗口。real driver 的 RAT 访问器统一从 manifest 派生，registry 在零仪器 I/O 下拒绝 adapter/model/
+profile version、legacy mirror、class var 与窗口基数分叉。GUI 使用独立 `profile_schema_version`，所以
+manifest v2 仍读写既有 CMW profile v1；第三 adapter 的 RAT/Attach/window/metric 由通用投影显示，
+诊断/不可用能力不会形成正式绿色假象。live OpenAPI、checked-in YAML、generated TS 与手写类型已同步；
+未新增/猜测 SCPI、未迁移数据库、未改变正式 provenance 白名单，也未提前实现 P2-47～P2-53。
 
 ### P2-47 — BaseStation 结构化 Attach Receipt
 
