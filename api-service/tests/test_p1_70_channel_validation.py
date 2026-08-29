@@ -89,7 +89,7 @@ _WIRE_WHITELIST = (
     "SENSe:FREQuency:CENTer ",       # p809
     "TRACe:IQ:STATe ON",             # p895
     "TRACe:IQ:STATe OFF",            # p895
-    "TRACe:IQ:SET NORM,10MHz,",      # p904（占位值照 p897 例）
+    "TRACe:IQ:SET NORM,0,",          # 家册 1178.8536.02 p251：第二参恒 0
     "TRACe:IQ:SRATe?",               # p906（查询形推断，错误队列核对）
     "TRACe:IQ:DATA:FORMat IQBLock",  # p897-898
     "FORMat:DATA ASCii",             # p933
