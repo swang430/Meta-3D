@@ -76,6 +76,15 @@ def test_uxm_irat_registry_exposes_only_existing_profile_commands_without_io(
     assert metrics["sinr_raw"].evidence == "diagnostic_only"
     assert metrics["dl_throughput_mbps"].scopes == ("pcell", "all_cells")
     assert metrics["ul_throughput_mbps"].scopes == ("pcell", "all_cells")
+    assert all(
+        (
+            "5G_NR_Test_Application_SCPI_Reference.zip!"
+            "5G_NR_Test_Application_SCPI_Reference.html ::"
+        )
+        in item.source_reference
+        for item in registry.metrics
+        if item.evidence == "authoritative"
+    )
 
 
 def test_uxm_nr_profile_does_not_inherit_irat_throughput_or_bler_commands(

@@ -92,12 +92,6 @@ _UXM_MANUAL_SOURCE = (
     "5G_NR_Test_Application_SCPI_Reference.zip!"
     "5G_NR_Test_Application_SCPI_Reference.html"
 )
-_UXM_PHY_MEASUREMENT_SOURCE = (
-    "Instrument_API_Doc/Keysight UXM NR SCPI/"
-    "5G_NR_Test_Application_SCPI_Reference.zip!"
-    "UXM5G_SCPI_02_NR_PHY_Measurements.md"
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -595,7 +589,7 @@ class RealUxmDriver(BaseStationDriver):
                     scopes=scopes,
                     evidence=evidence,
                     source_reference=(
-                        f"{_UXM_PHY_MEASUREMENT_SOURCE} :: {source_section}"
+                        f"{_UXM_MANUAL_SOURCE} :: {source_section}"
                     ),
                 )
             )
