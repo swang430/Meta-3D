@@ -118,6 +118,7 @@ import type {
 import {
   buildBaseStationAdapterProfile,
   emptyBaseStationProfileDraft,
+  projectBaseStationCapabilities,
   readBaseStationProfileDraft,
   type BaseStationProfileDraft,
 } from './types/baseStationManifest'
@@ -2187,6 +2188,9 @@ function EquipmentManager() {
           const draft = drafts[category.key]
           if (!draft) return null
           const drawerSelectedModel = category.models.find((model) => model.id === draft.modelId) ?? null
+          const baseStationCapabilityProjection = drawerSelectedModel?.base_station_manifest
+            ? projectBaseStationCapabilities(drawerSelectedModel.base_station_manifest)
+            : null
 
           return (
             <Stack gap="xl">
@@ -2256,6 +2260,41 @@ function EquipmentManager() {
                               </Badge>
                             ))}
                           </Group>
+                        </Stack>
+                      )}
+                      {baseStationCapabilityProjection && (
+                        <Stack gap="xs">
+                          <Text size="xs" fw={600}>
+                            BaseStation 静态能力（不代表实时就绪或现场认证）
+                          </Text>
+                          <Group gap="xs" wrap="wrap">
+                            {baseStationCapabilityProjection.rats.map((item) => (
+                              <Tooltip key={`rat-${item.key}`} label={item.detail}>
+                                <Badge variant="light" color={item.tone}>{item.label}</Badge>
+                              </Tooltip>
+                            ))}
+                            {baseStationCapabilityProjection.attach.map((item) => (
+                              <Tooltip key={`attach-${item.key}`} label={item.detail}>
+                                <Badge variant="light" color={item.tone}>{item.label}</Badge>
+                              </Tooltip>
+                            ))}
+                            <Tooltip label={baseStationCapabilityProjection.measurementWindow.detail}>
+                              <Badge
+                                variant="light"
+                                color={baseStationCapabilityProjection.measurementWindow.tone}
+                              >
+                                {baseStationCapabilityProjection.measurementWindow.label}
+                              </Badge>
+                            </Tooltip>
+                            {baseStationCapabilityProjection.metrics.map((item) => (
+                              <Tooltip key={`metric-${item.key}`} label={item.detail}>
+                                <Badge variant="light" color={item.tone}>{item.label}</Badge>
+                              </Tooltip>
+                            ))}
+                          </Group>
+                          <Text size="xs" c="dimmed">
+                            绿色=有权威合同，黄色=仅诊断，灰色=不可用/不适用；正式放行仍由本次执行冻结资格判定。
+                          </Text>
                         </Stack>
                       )}
                     </Stack>
