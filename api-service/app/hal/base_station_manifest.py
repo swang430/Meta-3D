@@ -369,8 +369,12 @@ class BaseStationAdapterManifest(BaseModel):
             raise ValueError("rat_capabilities must be non-empty")
         if not self.operations:
             raise ValueError("operations must be non-empty")
-        if self.measurement is None:
-            raise ValueError("measurement capability is required")
+        declares_measurement = "measurement_window" in self.operations
+        if declares_measurement != (self.measurement is not None):
+            raise ValueError(
+                "measurement_window operation and measurement capability "
+                "must be declared together"
+            )
         return self
 
 
@@ -455,18 +459,15 @@ def validate_base_station_adapter_registrations(
                     f"base-station {operation} capability drift for {model_name}: "
                     f"{class_var}={class_value!r}, manifest={manifest_value!r}"
                 )
-        if manifest.measurement is None:
-            raise ValueError(
-                f"base-station measurement declaration missing for {model_name}"
+        if manifest.measurement is not None:
+            class_cardinality = getattr(
+                driver_class, "measurement_window_cardinality", None
             )
-        class_cardinality = getattr(
-            driver_class, "measurement_window_cardinality", None
-        )
-        if class_cardinality != manifest.measurement.cardinality:
-            raise ValueError(
-                f"base-station measurement cardinality drift for {model_name}: "
-                f"{class_cardinality!r} != {manifest.measurement.cardinality!r}"
-            )
+            if class_cardinality != manifest.measurement.cardinality:
+                raise ValueError(
+                    f"base-station measurement cardinality drift for {model_name}: "
+                    f"{class_cardinality!r} != {manifest.measurement.cardinality!r}"
+                )
 
         config_by_name = {item.field: item for item in manifest.config_fields}
         if (

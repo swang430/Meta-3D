@@ -80,6 +80,15 @@ if TYPE_CHECKING:
     from app.hal.uxm_test_profiles import UxmTopologyProfile  # noqa: F401
     from app.hal.scpi_evidence import ScpiExchangeRef
 
+
+_UXM_NR_CORE_SOURCE = (
+    "Instrument_API_Doc/Keysight UXM NR SCPI/UXM5G_SCPI_01_NR_Core.md"
+)
+_UXM_NR_PHY_SOURCE = (
+    "Instrument_API_Doc/Keysight UXM NR SCPI/"
+    "UXM5G_SCPI_02_NR_PHY_Measurements.md"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -349,7 +358,7 @@ class RealUxmDriver(BaseStationDriver):
             BaseStationRatCapability(
                 rat="nr5g",
                 source_reference=(
-                    "Keysight UXM 5G NR Test Application SCPI Reference"
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell"
                 ),
             ),
         ),
@@ -398,28 +407,28 @@ class RealUxmDriver(BaseStationDriver):
                     "authoritative",
                     "authoritative",
                     "NR downlink bandwidth is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DL BW",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > NR DL Bandwidth",
                 ),
                 (
                     "band",
                     "authoritative",
                     "unavailable",
                     "NR band is written but the common receipt has no independent band readback",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL BAND",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > NR Operating Band",
                 ),
                 (
                     "duplex",
                     "authoritative",
                     "authoritative",
                     "NR duplex mode is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DUPLEX",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > NR Duplex Mode",
                 ),
                 (
                     "nr_arfcn",
                     "authoritative",
                     "authoritative",
                     "NR downlink ARFCN is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL DL ARFCN",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > NR DL ARFCN",
                 ),
                 (
                     "lte_dl_earfcn",
@@ -440,35 +449,35 @@ class RealUxmDriver(BaseStationDriver):
                     "authoritative",
                     "authoritative",
                     "NR common subcarrier spacing is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: CELL SCS",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Subcarrier Spacing Common",
                 ),
                 (
                     "mimo_layers",
                     "authoritative",
                     "authoritative",
                     "NR PDSCH maximum MIMO layers are written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: MIMO DL LAYERS",
+                    f"{_UXM_NR_PHY_SOURCE} § NR PHY > PDSCH Max MIMO Layers",
                 ),
                 (
                     "downlink_power_dbm",
                     "authoritative",
                     "authoritative",
                     "NR EPRE power is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: DL POWER EPRE",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL Reference Signal Power",
                 ),
                 (
                     "downlink_power_dbm_per_bandwidth",
                     "authoritative",
                     "authoritative",
                     "NR whole-band channel power is written and read back",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: DL POWER CHANNEL",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL Reference Signal Power Per Bandwidth",
                 ),
                 (
                     "port_preset",
                     "authoritative",
                     "unavailable",
                     "NR MIMO port preset is applied but absent from the common config receipt readback",
-                    "Keysight UXM 5G NR Test Application SCPI Reference: MIMO port mapping",
+                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL MIMO Configuration",
                 ),
                 (
                     "scheduler_algorithm",

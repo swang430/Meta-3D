@@ -167,6 +167,38 @@ def test_not_applicable_profile_has_no_profile_version_or_fields():
     assert manifest.profile_fields == ()
 
 
+def test_adapter_without_measurement_operation_declares_explicit_null_capability():
+    manifest = BaseStationAdapterManifest.model_validate(
+        _payload(
+            operations=["identity", "config", "cell_attach"],
+            measurement=None,
+            profile_requirement="not_applicable",
+            profile_schema_version=None,
+            profile_fields=[],
+        )
+    )
+    registration = _third_adapter_registration(manifest=manifest)
+
+    assert manifest.measurement is None
+    validate_base_station_adapter_registrations({"Model A": registration})
+
+
+@pytest.mark.parametrize(
+    "operations, measurement",
+    [
+        (["identity", "config", "cell_attach", "measurement_window"], None),
+        (["identity", "config", "cell_attach"], _payload()["measurement"]),
+    ],
+)
+def test_measurement_operation_and_capability_must_be_declared_together(
+    operations, measurement
+):
+    with pytest.raises(ValidationError, match="measurement_window"):
+        BaseStationAdapterManifest.model_validate(
+            _payload(operations=operations, measurement=measurement)
+        )
+
+
 def test_cmw500_manifest_v2_declares_lte_closed_window_and_profile_version():
     manifest = RealCmw500Driver.adapter_manifest
 
@@ -219,6 +251,25 @@ def test_uxm_manifest_v2_declares_nr_only_and_diagnostic_clear_read_window():
         "rsrp_raw",
         "sinr_raw",
     }
+
+
+def test_uxm_authoritative_capability_sources_are_local_and_auditable():
+    manifest = RealUxmDriver.adapter_manifest
+    authoritative_sources = [
+        *(item.source_reference for item in manifest.rat_capabilities),
+        *(
+            item.source_reference
+            for item in manifest.config_fields
+            if item.support == "authoritative" or item.readback == "authoritative"
+        ),
+    ]
+
+    assert all(
+        source is not None
+        and source.startswith("Instrument_API_Doc/Keysight UXM NR SCPI/")
+        and ".md § " in source
+        for source in authoritative_sources
+    )
 
 
 def test_real_driver_rat_support_is_derived_from_the_manifest():
