@@ -35,7 +35,7 @@ export type BaseStationAttachStageCapability = {
 export type BaseStationMetricCapability = {
   key: string
   direction: 'downlink' | 'uplink' | 'link' | 'not_applicable'
-  unit: 'mbps' | 'percent' | 'index' | 'raw' | 'not_applicable'
+  unit: 'mbps' | 'percent' | 'ratio' | 'index' | 'raw' | 'not_applicable'
   scopes: Array<'pcell' | 'all_cells'>
   evidence: Exclude<BaseStationCapabilityEvidence, 'not_applicable'>
   source_reference: string | null

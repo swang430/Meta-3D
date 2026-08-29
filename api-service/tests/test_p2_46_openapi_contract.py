@@ -77,6 +77,7 @@ def test_profile_version_and_nullable_capability_fields_are_not_manifest_version
         ]
 
         metric = schemas["BaseStationMetricCapability"]
+        assert "ratio" in metric["properties"]["unit"]["enum"]
         assert metric["properties"]["evidence"]["enum"] == [
             "authoritative",
             "diagnostic_only",

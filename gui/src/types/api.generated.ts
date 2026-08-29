@@ -2648,7 +2648,7 @@ export interface components {
             /** @enum {string} */
             direction: "downlink" | "uplink" | "link" | "not_applicable";
             /** @enum {string} */
-            unit: "mbps" | "percent" | "index" | "raw" | "not_applicable";
+            unit: "mbps" | "percent" | "ratio" | "index" | "raw" | "not_applicable";
             scopes: ("pcell" | "all_cells")[];
             /** @enum {string} */
             evidence: "authoritative" | "diagnostic_only" | "unavailable";

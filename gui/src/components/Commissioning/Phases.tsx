@@ -7,7 +7,10 @@ import {
   describePathLossSelection,
 } from './pathLossApplication'
 import { describeRfKpiEvidence, formatRfKpiValue } from './rfKpiEvidence'
-import { describeBaseStationMetric } from './baseStationMetricTruth'
+import {
+  describeBaseStationMetric,
+  describeRegisteredBaseStationMetrics,
+} from './baseStationMetricTruth'
 import {
   describePrecheckMessages,
   describePrecheckOutcome,
@@ -250,6 +253,7 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
               <Table.Th>吞吐量 (Mbps)</Table.Th>
               <Table.Th>BLER (%)</Table.Th>
               <Table.Th>Rank</Table.Th>
+              <Table.Th>基站注册指标</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -268,6 +272,10 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
                 az.azimuth_deg,
                 'dl_bler_percent',
               )
+              const registeredMetrics = describeRegisteredBaseStationMetrics(
+                data.base_station_metric_projection,
+                az.azimuth_deg,
+              )
               return (
                 <Table.Tr key={az.azimuth_deg}>
                   <Table.Td>{az.azimuth_deg}</Table.Td>
@@ -282,6 +290,16 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
                     {bler.note && <Text c="yellow" size="xs">{bler.note}</Text>}
                   </Table.Td>
                   <Table.Td>{formatRfKpiValue(az.rank_indicator, rfKpiView.verified, 2)}</Table.Td>
+                  <Table.Td>
+                    <Stack gap={2}>
+                      {registeredMetrics.map((metric) => (
+                        <Text key={metric.key} c={metric.color} size="xs">
+                          {metric.key}: {metric.text} {metric.unitLabel}
+                          {metric.note ? ` · ${metric.note}` : ''}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Table.Td>
                 </Table.Tr>
               )
             })}
