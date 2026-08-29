@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-51：CMW500 MAC/调度配置正式证据闭环——非现场取证/实现半（P2-50 已由 PR #417 合并：内审 2 findings + Gemini R1 1 medium 全修、R2 明文 clean、变异 19 条全红）。**
+Current Focus（非现场）= P2-52：UXM 权威测量窗口关闭边界——非现场取证/实现半（P2-51 已由 PR #420 合并：内审 5+1+3 findings（R2 轮复核再收 3） + Gemini R1/R2 各 1 high 逐轮修复、R3 明文 clean、变异 28 条全红；CMW500 真机复验为现场半，见取证清单 §7）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -62,7 +62,7 @@ P3-20/P3-21 仍不得自动启动。
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
    qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414
-   合并；P2-49/P2-50 已由 PR #415/#417 合并；当前按 **P2-51 → P2-52 → P2-53**，先收敛共同能力与
+   合并；P2-49/P2-50/P2-51 已由 PR #415/#417/#420 合并；当前按 **P2-52 → P2-53**，先收敛共同能力与
    证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-51（CMW500 MAC/调度配置正式证据闭环，非现场半）**；NEW-1/P2-42～P2-50 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417 合并。后续严格按 P2-51→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-52（UXM 权威测量窗口关闭边界，非现场半）**；NEW-1/P2-42～P2-51 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420 合并。后续严格按 P2-52→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4375,7 +4375,16 @@ Analysis、报告、下载、比较或历史。
 
 ### P2-51 — CMW500 MAC/调度配置正式证据闭环
 
-只依据仓库本地 R&S 手册补齐适用 LTE throughput/BLER 测试配置与回读；手册查不到的能力明确保持
+**✅ 非现场半已由 PR #420 合并（2026-08-30）**：16 条 mac_* 命令逐页取证
+（1173.9628.02─41）、满配 RMC 表取无选件行、选件门控不驱动、NR 不可翻译维度
+no_equivalent、TDD fail-loud（LTE ULDL p.687 平台缺口登记 Discovered）、mimo 收窄 =2
+（表 2-38 适用域）；configure_mac_throughput_test 异常路径全域单组记账。manifest
+token → P2-50 计划维度自动接通、MEASURE 零改动。内审 5+1+3 findings（R2 轮复核再收 3）（含 stat_count
+confidence/continuous 错引纠偏 + SFRames 统计基缺口登记 Discovered）+ 外审 R1/R2 各
+1 high 逐轮修复、R3 明文 clean，变异 28 条全红，全量 5432 passed / 5 skipped。
+**真机复验为现场半**（取证清单 §7，本地测试不替代）。
+
+原条目：只依据仓库本地 R&S 手册补齐适用 LTE throughput/BLER 测试配置与回读；手册查不到的能力明确保持
 diagnostic，不从 UXM 方言、请求值或旧状态补真。分为非现场取证/实现与 CMW500 真机复验，后者不由
 本地测试替代。
 
@@ -4445,6 +4454,11 @@ release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只�
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+### 2026-08-30 P2-51 取证期平台缺口（待 triage，不自动启动）
+
+- `[discovered 2026-08-30 during P2-51 CMW500 MAC 取证]` **LTE TDD 正式路径缺口（P2）** —— TestCase 契约无 LTE TDD 配比字段；`CELL[:PCC]:ULDL`（手册 p.687）+ `RMC:VERSion:DL<s>`（p.803）未实现。NR slot 字符串不可如实翻译为 LTE 0..6 配比，当前 TDD duplex 下 configure_mac_throughput_test 整体 fail-loud。详见取证清单 §8。
+- `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。修法方向：窗口层驱动 SFRames（换源到 TestCase 的 stat_count）。
 
 ### 2026-08-28 P2-9 精确分类枚举（待 triage，不自动启动）
 
