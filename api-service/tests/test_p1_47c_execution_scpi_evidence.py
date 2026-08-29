@@ -1215,5 +1215,5 @@ def test_measure_executor_keeps_all_p0_5_evidence_capture_hooks():
     assert "if not moved:" in source
     assert "frozen_positioner=frozen_positioner" in source
     # Attach 失败同样是 bool 契约，不能继续读取上一轮缓存 KPI。
-    assert "signaling_started = await base_station.start_signaling()" in source
-    assert "if not signaling_started:" in source
+    assert "attach_receipt = await base_station.attach()" in source
+    assert "attach_receipt.diagnostic_execution_allowed" in source

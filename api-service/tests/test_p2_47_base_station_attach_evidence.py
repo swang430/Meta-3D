@@ -9,6 +9,7 @@ import pytest
 from app.hal.base_station import (
     BaseStationAttachReceipt,
     BaseStationAttachStageReceipt,
+    MockBaseStation,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
@@ -193,6 +194,45 @@ def test_writer_rejects_receipt_evidence_that_disagrees_with_manifest(monkeypatc
             manifest=RealCmw500Driver.adapter_manifest,
             receipt=forged,
         )
+
+
+@pytest.mark.asyncio
+async def test_writer_accepts_simulated_unknown_attach_but_never_marks_it_formal(
+    monkeypatch,
+):
+    execution = _execution(adapter="cmw500")
+    execution.config["base_station_execution_evidence"]["execution_mode"] = (
+        "simulated"
+    )
+    monkeypatch.setattr(
+        evidence_writer,
+        "active_base_station_lease_identity",
+        lambda: _lease("cmw500"),
+    )
+    receipt = await MockBaseStation("mock-cmw", {"model": "CMW500"}).attach()
+
+    confirm_base_station_attach(
+        _Db(execution),
+        execution.id,
+        attempt_id="attempt-1",
+        lease_identity=_lease("cmw500"),
+        manifest=RealCmw500Driver.adapter_manifest,
+        receipt=receipt,
+    )
+
+    operation = execution.config["base_station_execution_evidence"][
+        "attach_operations"
+    ][0]
+    assert operation["simulated"] is True
+    assert operation["formally_confirmed"] is False
+    assert {item["status"] for item in operation["stages"]} == {"unknown"}
+    assert {item["applied"] for item in operation["stages"]} == {None}
+    assert (
+        base_station_execution_evidence_is_formally_acceptable(
+            execution.config["base_station_execution_evidence"]
+        )
+        is False
+    )
 
 
 def test_writer_rejects_duplicate_attach_for_same_attempt_and_lease(monkeypatch):

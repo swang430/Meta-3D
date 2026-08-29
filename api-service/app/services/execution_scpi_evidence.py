@@ -602,7 +602,7 @@ def confirm_base_station_attach(
     ):
         raise ValueError("baseStation attach manifest does not match current adapter")
     manifest_stages = {item.stage: item for item in manifest.attach_stages}
-    if any(
+    if receipt.simulated is False and any(
         manifest_stages.get(stage.stage) is None
         or manifest_stages[stage.stage].evidence != stage.evidence
         for stage in receipt.stages

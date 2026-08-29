@@ -3,7 +3,7 @@
 2026-08-07 现场：`_probe_ue_attached` 拿 `query_ue_capability()` 判 DUT 挂没挂上，
 而那查的是**能力**（支持几层、什么调制）不是**状态**（现在连上了没有）；IRAT 方言
 上那几条命令全是 `None`，恒返回 `source="unavailable"` → 里程碑恒判 False →
-相位必然 FAILED。换源到 `get_cell_state()`（`start_signaling()` 已经在用、当天
+相位必然 FAILED。换源到 `get_cell_state()`（attach 流程已经在用、当天
 双向验证过：17:38:29 读到 `CONN` 判成功、17:42:29 一直读 `'ON'` 判超时）。
 
 内审造的变异「判据放宽成 `!= OFF`」在 70 个用例下全绿 —— 换源本身没有任何门。
@@ -85,7 +85,7 @@ class TestAttachJudgement:
         """⭐ 内审 F6 的另一半：mock 下**不许**报 attached=True。
 
         `hasattr(bs, "get_cell_state")` 恒为真（抽象基类与 MockBaseStation 都有
-        定义），而 mock 的 `start_signaling()` 直接把 `_cell_state = CONNECTED`
+        定义），而 mock 的 attach 实现直接把 `_cell_state = CONNECTED`
         —— 旧判据会让 mock 跑出绿色里程碑并一路写进报告。
         """
         probe = _probe_factory(_FakeBS(CellState.CONNECTED), is_mock=True)
@@ -154,7 +154,7 @@ class TestBypassAssistOrdering:
     """「扶一把」必须在 attach **之前**建立直通 —— 外审 #304 P1。
 
     上一版把直通建立放在 F64 段（`_probe_ue_attached` 之后 500 多行），而
-    `start_signaling()` 等 attach 失败就直接 return —— 于是这个开关**只在
+    attach 等待失败就直接 return —— 于是这个开关**只在
     DUT 已经自己挂上之后才生效**，救不了它宣称要救的场景。顺序反了，
     开关就是装饰。
     """
@@ -166,14 +166,14 @@ class TestBypassAssistOrdering:
 
     def test_bypass_is_established_before_the_first_attach_attempt(self):
         """⭐ 顺序不变量。变异：把 attach 前那段直通建立删掉/挪到
-        `start_signaling()` 之后 → 本条红。"""
+        attach 之后 → 本条红。"""
         src = self._src()
 
         assist = src.index("attach 前已置 F64 直通")
-        signaling = src.index("signaling_started = await base_station.start_signaling()")
+        signaling = src.index("attach_receipt = await base_station.attach()")
 
         assert assist < signaling, (
-            "直通建立排在 start_signaling 之后 —— attach 失败会直接 return，"
+            "直通建立排在 attach 之后 —— attach 失败会直接 return，"
             "这个开关只能在 DUT 已经自己挂上之后才生效，救不了它要救的场景"
         )
 
@@ -199,7 +199,7 @@ class TestBypassAssistOrdering:
 class TestColdStartRfInitializationOrdering:
     """暗室首测必须由**本次 execution** 建好 F64 初始态再尝试 attach。
 
-    2026-08-07 的旧顺序先执行 ``start_signaling``，DUT attach 成功后才加载
+    2026-08-07 的旧顺序先执行 attach，DUT attach 成功后才加载
     ``.smu``。这会静默依赖 F64 上一轮残留的模型、中心频率和 STATIC 档位；
     冷启动或换场景时不可重复。
     """
@@ -213,7 +213,7 @@ class TestColdStartRfInitializationOrdering:
         """模型加载、频率门、输出与显式输入工作点均早于第一次 attach。"""
         src = self._src()
         signaling = src.index(
-            "signaling_started = await base_station.start_signaling()"
+            "attach_receipt = await base_station.attach()"
         )
 
         required_before_attach = {
@@ -224,7 +224,7 @@ class TestColdStartRfInitializationOrdering:
         }
         for label, token in required_before_attach.items():
             assert src.index(token) < signaling, (
-                f"{label} 仍在 start_signaling 之后 —— attach 会继续依赖仪表遗留状态"
+                f"{label} 仍在 attach 之后 —— attach 会继续依赖仪表遗留状态"
             )
 
     def test_passthrough_is_built_after_model_load_and_before_attach(self):
@@ -232,7 +232,7 @@ class TestColdStartRfInitializationOrdering:
         src = self._src()
         load = src.index("gen_ok = await generator.generate_and_load")
         signaling = src.index(
-            "signaling_started = await base_station.start_signaling()"
+            "attach_receipt = await base_station.attach()"
         )
         between = src[load:signaling]
 
@@ -248,12 +248,12 @@ class TestColdStartRfInitializationOrdering:
         src = self._src()
         load = src.index("gen_ok = await generator.generate_and_load")
         signaling = src.index(
-            "signaling_started = await base_station.start_signaling()"
+            "attach_receipt = await base_station.attach()"
         )
         initialization = src[load:signaling]
 
         assert initialization.count("StepExecutionStatus.FAILED") >= 8, (
-            "RF 初始化的 fail-loud 分支没有完整位于 start_signaling 之前"
+            "RF 初始化的 fail-loud 分支没有完整位于 attach 之前"
         )
 
 

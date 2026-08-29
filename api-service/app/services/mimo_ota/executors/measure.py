@@ -1235,7 +1235,7 @@ class MeasureExecutor(IStepExecutor):
         try:
             # --- Phase 2g: PCell from component_carriers[0] (always populated
             # by MIMOOTAConfiguration._resolve_component_carriers); SCells
-            # added below before start_signaling so RRC reconfig sees full set.
+            # added below before attach so RRC reconfig sees full set.
             ccs = list(config.component_carriers or [])
             scells = ccs[1:]
 
@@ -1260,7 +1260,7 @@ class MeasureExecutor(IStepExecutor):
                 )
             # 开关 1 (base_station_config_mode): "inherit" 跳过小区参数下发, 沿用仪器当前
             # 态 (如 EMQuest 基线); 频率核对改走下方一致性网的 live 读回 (知情
-            # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
+            # 继承)。MAC 吞吐配置 / attach / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
             base_station_inherit = config.base_station_config_mode == "inherit"
             pcell_requested_config = _build_pcell_requested_config(config)
@@ -1291,7 +1291,7 @@ class MeasureExecutor(IStepExecutor):
             # path B 显式驱动端口路由/调度 (见 _build_pcell_cell_config); None 字段不传 →
             # 保持 HAL profile (backward-compat, 旧 case 不被默认值覆盖)。
             if not base_station_inherit:
-                # 配置事务跨越 set_cell_config 与 start_signaling：CELL 已 ON 时
+                # 配置事务跨越 set_cell_config 与 attach：CELL 已 ON 时
                 # 走 APPLY；初始 OFF 时手册规定后续 CELL ON 自动应用。两条合法
                 # recipe 必须留在同一 capture，不能依赖执行前仪器恰好为 ON。
                 base_station_config_capture_manager = capture_scpi_exchanges()
@@ -1360,7 +1360,7 @@ class MeasureExecutor(IStepExecutor):
             )
 
             # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
-            # P1-32: 返回值**必须消费**。上一版丢弃它、然后无条件 start_signaling
+            # P1-32: 返回值**必须消费**。上一版丢弃它、然后无条件 attach
             # —— 于是「一条都没配上」与「全配好了」在这里长得一模一样，测试照常
             # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
             # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
@@ -1416,7 +1416,7 @@ class MeasureExecutor(IStepExecutor):
                     )
 
             # --- RF 冷启动初始化：第一次 attach 前准备本次信道与工作点 ---
-            # 2026-08-07 的旧顺序在这里先 start_signaling，attach 成功后才加载
+            # 2026-08-07 的旧顺序在这里先发起 attach，成功后才加载
             # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
             # 允许第一次 attach，任何失败都直接返回。
             ce_client = ChannelEngineClient(context.db)
@@ -1799,7 +1799,7 @@ class MeasureExecutor(IStepExecutor):
                 # P0-2 D6 (S5): inherit 此前只核对频率身份, 不核对小区状态。
                 # 补一次真值源读取 (get_cell_state 已换 BSE:STATus:NR5G, D1)
                 # 当现场证据行: OFF **不算错** (手册: OFF 态缓存的配置在
-                # CELL ON 时自动应用, 后续 start_signaling 会拉起); 但读不到
+                # CELL ON 时自动应用, 后续 attach 会拉起); 但读不到
                 # (ERROR) 要大声 — 那说明"继承了什么"完全不可知。
                 if hasattr(base_station, "get_cell_state"):
                     _inherit_cs = await base_station.get_cell_state()
@@ -2113,7 +2113,30 @@ class MeasureExecutor(IStepExecutor):
             # BaseStation 的 channel/BW/功率已由上面的配置入口下发并回读；F64
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
             # 能借用仪表上一次执行的遗留场景。
-            signaling_started = await base_station.start_signaling()
+            attach_receipt = await base_station.attach()
+            if base_station_attempt.attempt_id is not None:
+                from app.hal.base_station_manifest import BaseStationAdapterManifest
+                from app.services.execution_scpi_evidence import (
+                    confirm_base_station_attach,
+                )
+
+                resolved_binding = base_station_attempt.frozen_adapter.get(
+                    "resolved_binding"
+                )
+                execution_manifest = BaseStationAdapterManifest.model_validate(
+                    resolved_binding.get("manifest")
+                    if isinstance(resolved_binding, dict)
+                    else None
+                )
+                confirm_base_station_attach(
+                    context.db,
+                    context.test_execution.id,
+                    attempt_id=base_station_attempt.attempt_id,
+                    lease_identity=base_station_attempt.lease_identity,
+                    manifest=execution_manifest,
+                    receipt=attach_receipt,
+                )
+                context.db.commit()
             if base_station_config_capture_manager is not None:
                 base_station_config_capture_manager.__exit__(None, None, None)
                 base_station_config_capture_manager = None
@@ -2134,12 +2157,16 @@ class MeasureExecutor(IStepExecutor):
                         "[%s] BaseStation P1-47C 证据归档失败；正式判定将保持 unknown",
                         context.test_execution.id,
                     )
-            if not signaling_started:
+            if attach_receipt.diagnostic_execution_allowed is not True:
+                terminal_attach_stage = attach_receipt.terminal_stage_receipt
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
                     error_message=(
-                        "RF 初始化已完成，但 BaseStation start_signaling 返回 False"
-                        "（CELL ON/UE Attach 未确认）；中止测量，防止读取上一轮"
+                        "RF 初始化已完成，但 BaseStation 本次 attach 未确认可继续；"
+                        f"终止阶段={attach_receipt.terminal_stage or 'none'}，"
+                        "证据="
+                        f"{terminal_attach_stage.evidence if terminal_attach_stage else 'none'}，"
+                        f"原因={attach_receipt.reason}。中止测量，防止读取上一轮"
                         "缓存吞吐造成假绿。"
                         + (
                             "\n💡 若这个 DUT 在衰落下反复挂不上：把 `f64_bypass_mode` "
@@ -2180,6 +2207,55 @@ class MeasureExecutor(IStepExecutor):
                 "throughput": None,
             }
 
+            def _attach_milestone(
+                stage: str,
+                *,
+                attached: bool | None,
+                reason: str,
+                exchange_ids: tuple[str, ...] = (),
+                simulated: bool = False,
+                cell_state: Any = None,
+            ) -> Dict[str, Any]:
+                manifest_stages = tuple(attach_receipt.stages)
+                terminal = next(
+                    (
+                        item.stage
+                        for item in reversed(manifest_stages)
+                        if item.evidence not in {"unavailable", "not_applicable"}
+                    ),
+                    None,
+                )
+                stage_truth = []
+                for item in manifest_stages:
+                    confirmed = (
+                        not simulated
+                        and item.stage == terminal
+                        and attached is not None
+                        and bool(exchange_ids)
+                    )
+                    stage_truth.append(
+                        {
+                            "stage": item.stage,
+                            "requested": True,
+                            "applied": attached if confirmed else None,
+                            "status": "confirmed" if confirmed else "unknown",
+                            "evidence": item.evidence,
+                            "reason": reason if item.stage == terminal else item.reason,
+                            "exchange_ids": list(exchange_ids) if confirmed else [],
+                        }
+                    )
+                payload: Dict[str, Any] = {
+                    "stage": stage,
+                    # Compatibility mirror for existing precheck/report readers.
+                    "attached": attached,
+                    "simulated": simulated,
+                    "reason": reason,
+                    "stage_truth": stage_truth,
+                }
+                if cell_state is not None:
+                    payload["cell_state"] = cell_state
+                return payload
+
             async def _probe_ue_attached(stage: str) -> Dict[str, Any]:
                 """读一次**小区连接状态**判断 DUT 挂上没有。**只报实况, 不推断。**
 
@@ -2192,7 +2268,7 @@ class MeasureExecutor(IStepExecutor):
                 （能力），不是"现在连上了没有"（状态）。而且 IRAT 方言的 profile 上
                 `UE_CAPABILITY_*` 四条命令全是 `None`，一调就崩、恒返回
                 `source="unavailable"` → 里程碑恒判 False → 相位必然 FAILED。
-                真正的判据就在旁边、`start_signaling()` 已经在用、当天还双向验证过：
+                真正的判据就在旁边、attach 流程已经在用、当天还双向验证过：
                 17:38:29 读到 `CONN` 判 attach 成功、17:42:29 一直读 `'ON'` 判超时。
                 （memory `feedback_effective_end_not_nominal`：不从"能拿到的相似
                 属性"取，要从 caller 已经在用的那个源取。）
@@ -2206,30 +2282,55 @@ class MeasureExecutor(IStepExecutor):
                 # ⚠ 判据必须问「这是不是真驱动」，**不能**用 `hasattr(...)`
                 #   （内审 F6）：`get_cell_state` 在抽象基类 `base_station.py:232`
                 #   **和** `MockBaseStation:533` 都有定义 → `hasattr` **恒为真**，
-                #   那个 mock 分支是死分支。而 mock 的 `start_signaling()` 直接把
+                #   那个 mock 分支是死分支。而 mock 的 attach 实现直接把
                 #   `_cell_state = CONNECTED`，于是 mock 下里程碑会报 attached=True
                 #   并一路写进 result_payload → 报告 —— 正是本 docstring 下面那句
                 #   「别让 mock 跑出绿色里程碑」要防的事，那句话此前是假的。
                 #   （memory: mock 回读侧必须标 simulated，且绝不进报告/KPI。）
                 if is_mock_driver(base_station):
-                    return {"stage": stage, "attached": None, "simulated": True,
-                            "reason": "BS 是 mock 驱动 — 未测（mock 的小区状态是编的）"}
+                    return _attach_milestone(
+                        stage,
+                        attached=None,
+                        simulated=True,
+                        reason="BS 是 mock 驱动 — 未测（mock 的小区状态是编的）",
+                    )
                 if not hasattr(base_station, "get_cell_state"):
-                    return {"stage": stage, "attached": None,
-                            "reason": "BS 驱动无 get_cell_state — 未测"}
+                    return _attach_milestone(
+                        stage,
+                        attached=None,
+                        reason="BS 驱动无 get_cell_state — 未测",
+                    )
                 try:
-                    state = await base_station.get_cell_state()
+                    with capture_scpi_exchanges() as attach_probe_exchanges:
+                        state = await base_station.get_cell_state()
                 except Exception as e:  # noqa: BLE001
-                    return {"stage": stage, "attached": False,
-                            "reason": f"小区状态查询抛异常: {type(e).__name__}: {e}"}
+                    return _attach_milestone(
+                        stage,
+                        attached=False,
+                        reason=f"小区状态查询抛异常: {type(e).__name__}: {e}",
+                    )
+                exchange_ids = tuple(
+                    item.exchange_id
+                    for item in attach_probe_exchanges
+                    if item.result_type == "response"
+                )
                 raw = getattr(state, "value", state)
                 if state == CellState.CONNECTED:
-                    return {"stage": stage, "attached": True,
-                            "reason": "ok", "cell_state": raw}
+                    return _attach_milestone(
+                        stage,
+                        attached=True,
+                        reason="ok",
+                        exchange_ids=exchange_ids,
+                        cell_state=raw,
+                    )
                 # ON = 小区开着但没 UE 连上；ERROR = 读不到/枚举外。都不算挂上。
-                return {"stage": stage, "attached": False,
-                        "reason": f"小区状态 {raw!r} ≠ CONN — DUT 未 attach",
-                        "cell_state": raw}
+                return _attach_milestone(
+                    stage,
+                    attached=False,
+                    reason=f"小区状态 {raw!r} ≠ CONN — DUT 未 attach",
+                    exchange_ids=exchange_ids,
+                    cell_state=raw,
+                )
 
             if config.f64_bypass_mode is not None and config.f64_fade_after_attach:
                 # ① 直通态确认 DUT 已挂上
@@ -2389,6 +2490,7 @@ class MeasureExecutor(IStepExecutor):
             controlled_attach.update(
                 {
                     "rrc_connected": final_attach.get("attached"),
+                    "attach_stage_truth": final_attach.get("stage_truth"),
                     "controlled_attach": True,
                     "attach_stage": final_attach.get("stage"),
                     "checked_at": attach_checked_at,
