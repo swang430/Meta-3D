@@ -357,8 +357,14 @@ def resolve_base_station_binding(
     raw_profile = params.get("base_station_adapter_profile")
     if registration.manifest.profile_requirement == "required":
         if raw_profile is None:
+            required_fields = ", ".join(
+                field.label
+                for field in registration.manifest.profile_fields
+                if field.required
+            )
             raise ValueError(
-                "CMW500 内部 Route 未配置：请在仪器资源配置中完整填写并保存七个字段"
+                f"{registration.manifest.model_name} required adapter profile "
+                f"is missing; configure and save required fields: {required_fields}"
             )
         assert registration.profile_model is not None
         profile = registration.profile_model.model_validate(raw_profile).model_dump(mode="json")

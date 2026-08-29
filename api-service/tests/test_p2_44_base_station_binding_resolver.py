@@ -237,7 +237,7 @@ def test_only_authoritative_mock_may_resolve_diagnostic_unbound(db):
         ("binding_missing", "exactly one"),
         ("binding_duplicate", "exactly one"),
         ("binding_endpoint", "endpoint"),
-        ("profile_missing", "Route|profile"),
+        ("profile_missing", "required adapter profile is missing"),
         ("profile_unexpected", "not applicable"),
         ("driver_missing", "loaded driver"),
         ("driver_class", "registry class"),

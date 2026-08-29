@@ -96,7 +96,9 @@ RED 覆盖：
 - CMW500 structured RAT 仅 LTE；UXM 仅 NR5G；
 - `get_supported_technologies()` 对 real driver 从 manifest 派生，不再由各厂商覆写另一份列表；
 - CMW 配置字段、Attach、PCC 单窗口与 DL throughput/BLER 声明精确反映现有实现；
-- UXM 配置/MAC/RRC/input-level、PCell/all-cells、clear-read-only 与现有指标声明精确反映现有实现；
+- UXM adapter 级声明只取全部可选 Test App 方言的有出处保守交集；IRAT 专属 MAC/RRC/clear-read
+  指标不冒充整机无条件能力，只有 IRAT 具备受控出处的配置下发/回读也不静态声明为整机权威能力；
+  当前 profile 的运行时能力与 receipt 仍由命令全集和真实回读派生；
 - 诊断原始 RSRP/SINR 不声明工程单位或 formal eligibility；
 - 没有任何新 SCPI 字面量。
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from pathlib import Path
 from typing import Literal
+from zipfile import ZipFile
 
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -21,9 +23,11 @@ from app.hal.base_station_manifest import (
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
+from app.services.instrument_hal_service import _validate_base_station_adapter_ids
 
 
 CONFIG_FIELD_NAMES = tuple(field.name for field in fields(BaseStationRequestedConfig))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ATTACH_STAGES = (
     "cell_ready",
     "ue_registered",
@@ -219,41 +223,29 @@ def test_cmw500_manifest_v2_declares_lte_closed_window_and_profile_version():
     }
 
 
-def test_uxm_manifest_v2_declares_nr_only_and_diagnostic_clear_read_window():
+def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
     manifest = RealUxmDriver.adapter_manifest
 
     assert manifest.schema_version == 2
     assert manifest.rats == ("nr5g",)
     assert manifest.profile_requirement == "not_applicable"
     assert manifest.profile_schema_version is None
-    assert {
-        "input_level_control",
-        "rrc_reconfiguration",
-        "mac_throughput_config",
-    }.issubset(manifest.operations)
-    assert manifest.measurement is not None
-    assert manifest.measurement.cardinality == "requested"
-    assert manifest.measurement.scopes == ("pcell", "all_cells")
-    assert manifest.measurement.lifecycle == "clear_read_only"
-    assert all(
-        metric.evidence == "diagnostic_only"
-        for metric in manifest.measurement.metrics
+    assert "input_level_control" in manifest.operations
+    assert "measurement_window" not in manifest.operations
+    assert "rrc_reconfiguration" not in manifest.operations
+    assert "mac_throughput_config" not in manifest.operations
+    assert manifest.measurement is None
+    assert not any(
+        field.readback == "authoritative"
+        for field in manifest.config_fields
     )
-    assert {metric.key for metric in manifest.measurement.metrics} == {
-        "dl_throughput_mbps",
-        "dl_throughput_current_mbps",
-        "ul_throughput_mbps",
-        "ul_throughput_current_mbps",
-        "dl_bler_percent",
-        "ul_bler_percent",
-        "cqi",
-        "rank_indicator",
-        "rsrp_raw",
-        "sinr_raw",
-    }
+    assert not any(
+        field.support == "authoritative"
+        for field in manifest.config_fields
+    )
 
 
-def test_uxm_authoritative_capability_sources_are_local_and_auditable():
+def test_uxm_authoritative_capability_sources_resolve_to_tracked_archive_anchors():
     manifest = RealUxmDriver.adapter_manifest
     authoritative_sources = [
         *(item.source_reference for item in manifest.rat_capabilities),
@@ -264,12 +256,16 @@ def test_uxm_authoritative_capability_sources_are_local_and_auditable():
         ),
     ]
 
-    assert all(
-        source is not None
-        and source.startswith("Instrument_API_Doc/Keysight UXM NR SCPI/")
-        and ".md § " in source
-        for source in authoritative_sources
-    )
+    assert all(source is not None for source in authoritative_sources)
+    for source in authoritative_sources:
+        archive_path, member_anchor = source.split("!", 1)
+        member_name, anchor = member_anchor.split("#", 1)
+        archive = REPO_ROOT / archive_path
+        assert archive.is_file()
+        with ZipFile(archive) as manual:
+            assert member_name in manual.namelist()
+            html = manual.read(member_name)
+        assert f'id="{anchor}"'.encode() in html
 
 
 def test_real_driver_rat_support_is_derived_from_the_manifest():
@@ -301,9 +297,14 @@ def _third_adapter_registration(
             profile_fields=[],
         )
     )
+    async def _measure_base_station_window(self, window_s, **kwargs):
+        raise RuntimeError("test-only concrete measurement implementation")
+
     attributes = {
         "adapter_id": manifest.adapter_id,
         "adapter_manifest": manifest,
+        "adapter_profile_model": profile_model,
+        "measure_base_station_window": _measure_base_station_window,
         **(driver_attributes or {}),
     }
     driver_class = type("ThirdAdapterDriver", (BaseStationDriver,), attributes)
@@ -320,6 +321,41 @@ def test_registration_accepts_a_new_adapter_without_registry_code_changes():
     validate_base_station_adapter_registrations(
         {"Third Adapter": registration}
     )
+
+
+def test_production_registration_uses_driver_declared_profile_model_for_third_adapter():
+    class ThirdAdapterProfile(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        schema_version: Literal[1] = 1
+        adapter: Literal["third_adapter"] = "third_adapter"
+        route: dict
+
+    manifest = BaseStationAdapterManifest.model_validate(
+        _payload(adapter_id="third_adapter", model_name="Third Adapter")
+    )
+    registration = _third_adapter_registration(
+        manifest=manifest,
+        profile_model=ThirdAdapterProfile,
+        driver_attributes={"adapter_profile_model": ThirdAdapterProfile},
+    )
+
+    _validate_base_station_adapter_ids(
+        {"Third Adapter": registration.driver_class}
+    )
+
+
+def test_registration_rejects_inherited_unimplemented_measurement_operation():
+    registration = _third_adapter_registration(
+        driver_attributes={
+            "measure_base_station_window": BaseStationDriver.measure_base_station_window,
+        }
+    )
+
+    with pytest.raises(ValueError, match="measure_base_station_window"):
+        validate_base_station_adapter_registrations(
+            {"Third Adapter": registration}
+        )
 
 
 @pytest.mark.parametrize(

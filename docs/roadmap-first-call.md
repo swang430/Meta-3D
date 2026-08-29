@@ -4277,16 +4277,22 @@ NR5G；UXM/CMW500 都显示 `measurement_window`，却没有表达 closed lifecy
 
 **实施状态（2026-08-29，本地实现、完整回归与 fresh 内审完成，Ready PR/外审中）**：manifest v2 已把 RAT、
 共同配置字段、Attach 四阶段、测量窗口生命周期/基数/作用域与逐指标证据强度收敛为不可变结构；
-CMW500 精确声明 LTE + PCC 单一权威闭环窗口，UXM 精确声明 NR5G + PCell/all-cells clear/read-only
-诊断窗口。real driver 的 RAT 访问器统一从 manifest 派生，registry 在零仪器 I/O 下拒绝 adapter/model/
-profile version、legacy mirror、class var 与窗口基数分叉。GUI 使用独立 `profile_schema_version`，所以
+CMW500 精确声明 LTE + PCC 单一权威闭环窗口；UXM 精确声明 NR5G，但其可选 `5G_NR_Test` 与
+`LTE_NR_IRAT` 方言没有共同的 clear/OTA throughput/BLER 命令集，因此 adapter 级 measurement 保守为
+`null`，IRAT 专属诊断能力不再冒充整机无条件能力。real driver 的 RAT 访问器统一从 manifest 派生，
+registry 在零仪器 I/O 下拒绝 adapter/model/profile version、legacy mirror、class var、未实现窗口与
+窗口基数分叉；厂商 profile 类型由 driver 自声明，第三 adapter 不再依赖 CMW500 专属核心分支。GUI 使用独立 `profile_schema_version`，所以
 manifest v2 仍读写既有 CMW profile v1；第三 adapter 的 RAT/Attach/window/metric 由通用投影显示，
 诊断/不可用能力不会形成正式绿色假象。live OpenAPI、checked-in YAML、generated TS 与手写类型已同步；
 未新增/猜测 SCPI、未迁移数据库、未改变正式 provenance 白名单，也未提前实现 P2-47～P2-53。
-fresh 功能内审按严格 TDD 收口两条功能 P1：无测量窗口的第三 adapter 可用显式 `null` 注册，且
-`measurement_window` operation 与能力对象必须同生共灭；UXM 绿色权威配置声明全部收窄为仓库内
-手册分卷与稳定章节锚点。最终相关链与规则门 **342 passed**、全后端 **5257 passed / 5 skipped**、
-GUI 契约 **21 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、
+fresh 功能内审及 R1 已按严格 TDD 收口：无测量窗口的第三 adapter 可用显式 `null` 注册，且
+`measurement_window` operation 与能力对象必须同生共灭；已声明窗口必须有 concrete override；UXM
+绿色权威配置出处改为仓库 tracked ZIP 内 HTML 成员与真实 anchor，测试逐条验证归档、成员和 anchor；
+adapter 级能力与 config support/readback 只取有受控出处的方言交集，运行时 IRAT MAC/RRC 与权威
+配置 receipt 仍按当前 profile 精确派生；required profile 缺失提示也从 CMW500 七字段硬编码换成
+manifest 模型与必填字段。最终相关链与规则门
+**554 passed**、全后端 **5259 passed / 5 skipped**、
+GUI 契约 **26 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、
 base-to-HEAD diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
 
 ### P2-47 — BaseStation 结构化 Attach Receipt

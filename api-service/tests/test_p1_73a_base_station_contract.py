@@ -127,15 +127,15 @@ def test_registry_validation_rejects_duplicate_base_station_adapter_ids():
         adapter_id = "uxm"
         adapter_manifest = first_manifest
         input_level_control_supported = True
-        rrc_reconfiguration_supported = True
-        mac_throughput_configuration_supported = True
+        rrc_reconfiguration_supported = False
+        mac_throughput_configuration_supported = False
 
     class DuplicateDriver(base_station.BaseStationDriver):
         adapter_id = "uxm"
         adapter_manifest = duplicate_manifest
         input_level_control_supported = True
-        rrc_reconfiguration_supported = True
-        mac_throughput_configuration_supported = True
+        rrc_reconfiguration_supported = False
+        mac_throughput_configuration_supported = False
 
     with pytest.raises(ValueError, match="duplicate base-station adapter_id"):
         instrument_hal_service._validate_base_station_adapter_ids(

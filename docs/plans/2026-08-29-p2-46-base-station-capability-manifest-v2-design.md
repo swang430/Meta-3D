@@ -81,8 +81,9 @@ registry 在启动时校验它们与 manifest 一致；P2-50 再移除分散消�
    - 声明窗口基数、作用域、生命周期证明级别和 metric 列表；
    - metric 声明稳定键、方向、单位、作用域与当前证据资格；
    - CMW500 如实声明 PCC、单窗口、完整生命周期、DL throughput/DL BLER；
-   - UXM 如实声明 requested-position、PCell/all-cells、clear/read-only，以及当前已有 DL/UL throughput、
-     DL/UL BLER、CQI、RI 和只作诊断的原始 RSRP/SINR。
+   - UXM 可选择的 `5G_NR_Test` 与 `LTE_NR_IRAT` 方言没有共同的 clear/OTA throughput/BLER
+     命令集，因此 adapter 级 manifest 保守声明 `measurement=null`，不把 IRAT 专属能力并成
+     整台 UXM 的无条件能力；已有 IRAT 诊断路径继续可运行，后续由 profile-scoped registry 投影。
 5. `operations`
    - 替代手写扁平 `capabilities` 的来源；旧 `capabilities` 由它派生。
 
@@ -93,8 +94,11 @@ registry 在启动时校验它们与 manifest 一致；P2-50 再移除分散消�
 
 - real adapter 的 `get_supported_technologies()` 从 `adapter_manifest.rat_capabilities` 派生，移除 UXM/
   CMW 的重复覆写；Mock 继续使用自己的模拟合同且不进入 real registry。
-- registry 校验：adapter/model/profile、manifest v2、legacy mirrors、class var 能力与结构化声明必须
-  一致，分叉时服务启动 fail-loud。
+- registry 校验：adapter/model/profile、manifest v2、legacy mirrors、adapter 级 class var 能力与结构化
+  声明必须一致；声明 measurement window 时必须覆写共同方法，分叉时服务启动 fail-loud。UXM 的
+  RRC/MAC 可用性由当前 Test App 命令全集实时派生，不提升成 adapter 级无条件声明；配置字段的
+  adapter 级 support/readback 同样取“受控出处 + 方言交集”，只有 IRAT 具备出处与权威回读的能力
+  留在运行时 receipt，不把另一套无受控出处的 pure-5G 命令静态标绿。
 - `get_capabilities()` 保留为瞬时监控展示，不得反向覆盖 manifest 或执行资格。
 - Binding digest 已包含完整 manifest identity；manifest 改变只影响后续 preview/freeze，不改历史
   execution。
@@ -119,7 +123,8 @@ registry 在启动时校验它们与 manifest 一致；P2-50 再移除分散消�
 2. structured → legacy mirrors 唯一派生，显式矛盾输入被拒绝。
 3. config field 声明覆盖全部共同请求字段；Attach/measurement/metric token 无重复且状态合法。
 4. CMW profile v1 在 manifest v2 下仍可由 GUI 读取与构造；UXM 不产生 profile。
-5. registry 对 model/adapter/profile/RAT/class var/窗口声明任一分叉 fail-loud。
+5. registry 对 model/adapter/profile/RAT/class var/窗口声明任一分叉 fail-loud；profile 类型由 driver
+   自声明，第三 adapter 不需要修改核心 adapter-id 分支。
 6. 第三 adapter fixture 只增加 manifest 即能通过 catalog/OpenAPI/GUI 类型合同，不新增厂商分支。
 7. 相关后端与 GUI 契约、production build、全后端、compileall、单一 Alembic head、diff-check 和 fresh
    功能内审通过。

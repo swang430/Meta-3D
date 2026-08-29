@@ -78,5 +78,5 @@ def test_roadmap_current_focus_and_local_open_mirror_p2_46():
     roadmap = (REPO_ROOT / "docs/roadmap-first-call.md").read_text()
 
     assert "Current Focus（非现场）= P2-46" in roadmap
-    assert "当前非现场 WIP=P2-46（本地实现完成" in roadmap
+    assert "当前非现场 WIP=P2-46（本地实现、完整回归与 fresh 内审完成" in roadmap
     assert "P2-44（Ready PR 后续 P1-only 外审中）" not in roadmap

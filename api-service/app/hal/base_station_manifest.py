@@ -460,6 +460,14 @@ def validate_base_station_adapter_registrations(
                     f"{class_var}={class_value!r}, manifest={manifest_value!r}"
                 )
         if manifest.measurement is not None:
+            if (
+                getattr(driver_class, "measure_base_station_window", None)
+                is BaseStationDriver.measure_base_station_window
+            ):
+                raise ValueError(
+                    "base-station measurement_window requires a concrete "
+                    f"measure_base_station_window implementation for {model_name}"
+                )
             class_cardinality = getattr(
                 driver_class, "measurement_window_cardinality", None
             )
@@ -493,6 +501,13 @@ def validate_base_station_adapter_registrations(
         seen[manifest.adapter_id] = model_name
 
         profile_model = getattr(registration, "profile_model", None)
+        declared_profile_model = getattr(
+            driver_class, "adapter_profile_model", None
+        )
+        if profile_model is not declared_profile_model:
+            raise ValueError(
+                f"base-station profile model registration drift for {model_name!r}"
+            )
         if manifest.profile_requirement == "required" and profile_model is None:
             raise ValueError(f"required profile model missing for {model_name!r}")
         if manifest.profile_requirement == "not_applicable" and profile_model is not None:

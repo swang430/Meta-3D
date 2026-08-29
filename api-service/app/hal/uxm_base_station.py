@@ -56,8 +56,6 @@ from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
-    BaseStationMeasurementCapability,
-    BaseStationMetricCapability,
     BaseStationRatCapability,
 )
 from app.hal.nr_band_baselines import get_band_baseline
@@ -81,12 +79,10 @@ if TYPE_CHECKING:
     from app.hal.scpi_evidence import ScpiExchangeRef
 
 
-_UXM_NR_CORE_SOURCE = (
-    "Instrument_API_Doc/Keysight UXM NR SCPI/UXM5G_SCPI_01_NR_Core.md"
-)
-_UXM_NR_PHY_SOURCE = (
+_UXM_MANUAL_SOURCE = (
     "Instrument_API_Doc/Keysight UXM NR SCPI/"
-    "UXM5G_SCPI_02_NR_PHY_Measurements.md"
+    "5G_NR_Test_Application_SCPI_Reference.zip!"
+    "5G_NR_Test_Application_SCPI_Reference.html"
 )
 
 logger = logging.getLogger(__name__)
@@ -357,20 +353,15 @@ class RealUxmDriver(BaseStationDriver):
         rat_capabilities=(
             BaseStationRatCapability(
                 rat="nr5g",
-                source_reference=(
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell"
-                ),
+                source_reference=f"{_UXM_MANUAL_SOURCE}#nr-cell",
             ),
         ),
         operations=(
             "identity",
             "config",
             "cell_attach",
-            "measurement_window",
             "safe_idle_release",
             "input_level_control",
-            "rrc_reconfiguration",
-            "mac_throughput_config",
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
@@ -404,31 +395,35 @@ class RealUxmDriver(BaseStationDriver):
                 ),
                 (
                     "bandwidth_mhz",
-                    "authoritative",
-                    "authoritative",
-                    "NR downlink bandwidth is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > NR DL Bandwidth",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "band",
-                    "authoritative",
+                    "diagnostic_only",
                     "unavailable",
-                    "NR band is written but the common receipt has no independent band readback",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > NR Operating Band",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source",
+                    None,
                 ),
                 (
                     "duplex",
-                    "authoritative",
-                    "authoritative",
-                    "NR duplex mode is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > NR Duplex Mode",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "nr_arfcn",
-                    "authoritative",
-                    "authoritative",
-                    "NR downlink ARFCN is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > NR DL ARFCN",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "lte_dl_earfcn",
@@ -446,38 +441,43 @@ class RealUxmDriver(BaseStationDriver):
                 ),
                 (
                     "subcarrier_spacing_khz",
-                    "authoritative",
-                    "authoritative",
-                    "NR common subcarrier spacing is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Subcarrier Spacing Common",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "mimo_layers",
-                    "authoritative",
-                    "authoritative",
-                    "NR PDSCH maximum MIMO layers are written and read back",
-                    f"{_UXM_NR_PHY_SOURCE} § NR PHY > PDSCH Max MIMO Layers",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "downlink_power_dbm",
-                    "authoritative",
-                    "authoritative",
-                    "NR EPRE power is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL Reference Signal Power",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "downlink_power_dbm_per_bandwidth",
-                    "authoritative",
-                    "authoritative",
-                    "NR whole-band channel power is written and read back",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL Reference Signal Power Per Bandwidth",
+                    "diagnostic_only",
+                    "unavailable",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source and readback",
+                    None,
                 ),
                 (
                     "port_preset",
-                    "authoritative",
+                    "diagnostic_only",
                     "unavailable",
-                    "NR MIMO port preset is applied but absent from the common config receipt readback",
-                    f"{_UXM_NR_CORE_SOURCE} § NR Cell > Config > Downlink > DL MIMO Configuration",
+                    "selectable profiles use different write dialects and "
+                    "only IRAT has a controlled manual source",
+                    None,
                 ),
                 (
                     "scheduler_algorithm",
@@ -521,96 +521,12 @@ class RealUxmDriver(BaseStationDriver):
                 source_reference=None,
             ),
         ),
-        measurement=BaseStationMeasurementCapability(
-            cardinality="requested",
-            scopes=("pcell", "all_cells"),
-            lifecycle="clear_read_only",
-            metrics=tuple(
-                BaseStationMetricCapability(
-                    key=key,
-                    direction=direction,
-                    unit=unit,
-                    scopes=scopes,
-                    evidence="diagnostic_only",
-                    source_reference=source_reference,
-                )
-                for key, direction, unit, scopes, source_reference in (
-                    (
-                        "dl_throughput_mbps",
-                        "downlink",
-                        "mbps",
-                        ("pcell", "all_cells"),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: DL OTA throughput",
-                    ),
-                    (
-                        "dl_throughput_current_mbps",
-                        "downlink",
-                        "mbps",
-                        ("pcell", "all_cells"),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: DL OTA throughput",
-                    ),
-                    (
-                        "ul_throughput_mbps",
-                        "uplink",
-                        "mbps",
-                        ("pcell", "all_cells"),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: UL OTA throughput",
-                    ),
-                    (
-                        "ul_throughput_current_mbps",
-                        "uplink",
-                        "mbps",
-                        ("pcell", "all_cells"),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: UL OTA throughput",
-                    ),
-                    (
-                        "dl_bler_percent",
-                        "downlink",
-                        "percent",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: DL BLER",
-                    ),
-                    (
-                        "ul_bler_percent",
-                        "uplink",
-                        "percent",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: UL BLER",
-                    ),
-                    (
-                        "cqi",
-                        "downlink",
-                        "index",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: CSI CQI statistics",
-                    ),
-                    (
-                        "rank_indicator",
-                        "downlink",
-                        "index",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: CSI RI histogram",
-                    ),
-                    (
-                        "rsrp_raw",
-                        "downlink",
-                        "raw",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: UE measurement JSON",
-                    ),
-                    (
-                        "sinr_raw",
-                        "downlink",
-                        "raw",
-                        ("pcell",),
-                        "Keysight UXM 5G NR Test Application SCPI Reference: UE measurement JSON",
-                    ),
-                )
-            ),
-            source_reference=(
-                "existing UXM profile clear/read path; authoritative closed window boundary unavailable"
-            ),
-        ),
+        # Adapter-level truth is the conservative intersection of every Test
+        # App profile this driver can select.  Only the IRAT profile currently
+        # has sourced clear/OTA-throughput/BLER commands, so no unconditional
+        # measurement window is advertised here.  Profile-scoped projection
+        # must wait until the resolved Test App itself is frozen as truth.
+        measurement=None,
         profile_requirement="not_applicable",
         profile_schema_version=None,
         profile_fields=(),
@@ -623,8 +539,27 @@ class RealUxmDriver(BaseStationDriver):
     input_level_control_supported = True
     input_level_legacy_power_field = "uxm_dl_power_dbm"
 
-    rrc_reconfiguration_supported = True
-    mac_throughput_configuration_supported = True
+    @property
+    def rrc_reconfiguration_supported(self) -> bool:
+        """Return true only for the active Test App's complete RRC command set."""
+
+        return all(
+            getattr(self._cmds, name, None)
+            for name in (
+                "RRC_RECONFIG_LAYERS",
+                "RRC_RECONFIG_MODULATION",
+                "RRC_RECONFIG_APPLY",
+            )
+        )
+
+    @property
+    def mac_throughput_configuration_supported(self) -> bool:
+        """Return true only when the active Test App exposes every MAC primitive."""
+
+        return all(
+            getattr(self._cmds, name, None)
+            for name in self.MAC_CFG_MANDATORY
+        )
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)

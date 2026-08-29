@@ -159,7 +159,10 @@ def test_cmw_missing_profile_fails_with_actionable_route_error(db):
         drivers={"baseStation": RealCmw500Driver("cmw", {"ip_address": "192.0.2.10"})}
     )
 
-    with pytest.raises(ValueError, match="CMW500.*Route.*七个字段"):
+    with pytest.raises(
+        ValueError,
+        match="CMW500.*required adapter profile.*pcc_bb_board",
+    ):
         freeze_base_station_adapter_profile(db, hal, execution, lab)
 
 

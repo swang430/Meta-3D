@@ -110,8 +110,8 @@ def test_registration_validation_rejects_missing_or_duplicate_adapter_identity()
             "adapter_id": "adapter-a",
             "adapter_manifest": first_manifest,
             "input_level_control_supported": True,
-            "rrc_reconfiguration_supported": True,
-            "mac_throughput_configuration_supported": True,
+            "rrc_reconfiguration_supported": False,
+            "mac_throughput_configuration_supported": False,
         },
     )
     duplicate_driver = type(
@@ -121,8 +121,8 @@ def test_registration_validation_rejects_missing_or_duplicate_adapter_identity()
             "adapter_id": "adapter-a",
             "adapter_manifest": duplicate_manifest,
             "input_level_control_supported": True,
-            "rrc_reconfiguration_supported": True,
-            "mac_throughput_configuration_supported": True,
+            "rrc_reconfiguration_supported": False,
+            "mac_throughput_configuration_supported": False,
         },
     )
     first = SimpleNamespace(

@@ -357,6 +357,7 @@ class TestSyncInstrumentBinding:
 
         assert response.status_code == 422
         assert "CMW500" in response.json()["detail"]
-        assert "Route" in response.json()["detail"]
+        assert "required adapter profile is missing" in response.json()["detail"]
+        assert "pcc_bb_board" in response.json()["detail"]
         db.refresh(lab)
         assert lab.instrument_bindings in (None, [])

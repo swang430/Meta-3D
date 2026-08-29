@@ -262,6 +262,7 @@ class RealCmw500Driver(BaseStationDriver):
     """
 
     adapter_id = "cmw500"
+    adapter_profile_model = BaseStationAdapterProfile
     adapter_manifest = BaseStationAdapterManifest(
         schema_version=2,
         adapter_id=adapter_id,
