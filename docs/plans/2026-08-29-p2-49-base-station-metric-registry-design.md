@@ -153,3 +153,11 @@ profile、legacy `kpi_valid` 或 sentinel 回填。
 P2-49 focused 基线共 412 项：411 passed、1 failed。唯一失败是旧测试仍要求 roadmap Current Focus 为
 P2-47，属于测试镜像陈旧，不是产品功能回归；按仓库规则严重度上限 P2。本片只在同步 roadmap 当前事实时
 最小更新该镜像，不围绕测试债务扩张范围。
+
+## 实施结果（2026-08-29）
+
+设计已按边界落地：registry/observation、CMW500/UXM/Mock 映射、execution freeze、共同投影、全部正式
+消费者与 GUI/API 四镜像均已接通；未新增仪器命令、数据库迁移或正式 provenance 放宽。fresh 内审收口
+UXM 入口漏冻结、不可审计手册 member 与 UXM 缺旧 BLER percent 时报告校验误拒三条功能 P1，尾审
+P1/P2/P3=0。最终验证：focused 364 passed，全后端 5370 passed / 5 skipped，GUI 契约 32 passed，
+production build、compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 通过。

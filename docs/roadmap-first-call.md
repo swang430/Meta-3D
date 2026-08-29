@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-49：BaseStation Metric Capability Registry。**
+Current Focus（非现场）= P2-49：BaseStation Metric Capability Registry（完整验证与 fresh 内审完成，待 Ready PR/外审）。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-49（实现完成，正在完整验证与 fresh 内审）**；NEW-1/P2-42/P2-43/P2-44/P2-45/P2-46/P2-47/P2-48 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414 合并。后续严格按 P2-50→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-49（完整验证与 fresh 内审完成，待 Ready PR/外审）**；NEW-1/P2-42/P2-43/P2-44/P2-45/P2-46/P2-47/P2-48 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414 合并。后续严格按 P2-50→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4340,14 +4340,19 @@ compileall、单一 Alembic head `e6a8c0d2f4b6` 与 base-to-HEAD diff-check 均�
 逐指标声明稳定键、方向、单位、作用域、来源与 formal/diagnostic 资格；共同投影由 registry 驱动，保留
 UXM 的 UL throughput/BLER、CQI/RI 等真实能力，同时不把原始/单位未知值升级成正式工程量。
 
-**实施状态（2026-08-29，本地实现完成，待完整验证/fresh 内审/外审）**：新增 profile-scoped、
+**实施状态（2026-08-29，本地实现、完整验证与 fresh 内审完成，待 Ready PR/外审）**：新增 profile-scoped、
 execution-frozen 的共同 metric registry 与 observation；CMW500 保留 DL throughput/BLER percent，
 UXM IRAT 保留 DL/UL throughput、DL/UL BLER ratio、CQI/RI index，未确认单位的 UE report 只以
 raw/diagnostic 暴露，NR profile 不继承 IRAT 命令。每个值精确绑定本次 query exchange，缺失为 null，
 Mock 全部 simulated/diagnostic。writer 冻结 registry snapshot/digest，投影、Analysis、报告、详情、
 下载、比较、历史与 commissioning 共用 generic map；原两项只作兼容镜像。GUI 按 unit 显示全部
 注册指标，ratio 不伪装成百分比，raw 不伪装成工程单位。未新增/猜测 SCPI，未改变正式 provenance
-白名单，也未提前实现 P2-50～P2-53。
+白名单，也未提前实现 P2-50～P2-53。fresh 内审按严格 TDD 收口三条功能 P1：UXM execution entry
+现在与 CMW500 一样在首个测量 I/O 前冻结 registry；UXM 手册引用绑定仓库 zip 内真实存在的 HTML
+member；报告读取校验允许 adapter 未声明旧兼容指标时保留严格无值 UNKNOWN 镜像，但拒绝任何正式/
+诊断值借此绕入。最终 focused **364 passed**、全后端 **5370 passed / 5 skipped**、GUI 契约
+**32 passed** 与 production build；compileall、单一 Alembic head `e6a8c0d2f4b6`、base-to-HEAD
+diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
 
 ### P2-50 — Capability-driven BaseStation Execution Plan
 
