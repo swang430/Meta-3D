@@ -36,6 +36,8 @@ from app.hal.base import (
 )
 from app.hal.base_station import (
     AppliedCellConfig,
+    BaseStationAttachReceipt,
+    BaseStationAttachStageReceipt,
     BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
     BaseStationDriver,
@@ -3114,7 +3116,126 @@ class RealUxmDriver(BaseStationDriver):
     # 3. 信令控制
     # ===================================================================
 
-    async def start_signaling(self, timeout_s: float = 60.0) -> bool:
+    def _build_attach_receipt(
+        self,
+        exchanges: list[Any],
+        *,
+        operation_succeeded: bool,
+    ) -> BaseStationAttachReceipt:
+        """Project the existing UXM status query without inventing stages."""
+
+        status_query = self._cmd("CELL_STATUS_QUERY", cell=self._cell_id)
+        poll_query = status_query or self._cmds.CELL_STATE_QUERY.format(
+            cell=self._cell_id
+        )
+        status_exchanges = [
+            exchange
+            for exchange in exchanges
+            if exchange.command == poll_query
+            and exchange.result_type == "response"
+            and isinstance(exchange.response, str)
+        ]
+        parsed_exchange = next(
+            (
+                (exchange, parsed)
+                for exchange in reversed(status_exchanges)
+                if (parsed := self._parse_cell_status(exchange.response)) is not None
+            ),
+            None,
+        )
+        capability = {
+            item.stage: item for item in self.adapter_manifest.attach_stages
+        }
+
+        def _observed_stage(
+            stage: str,
+            applied: bool,
+            reason: str,
+            exchange_id: str,
+        ) -> BaseStationAttachStageReceipt:
+            return BaseStationAttachStageReceipt(
+                stage=stage,
+                requested=True,
+                applied=applied,
+                status="confirmed",
+                evidence=capability[stage].evidence,
+                reason=reason,
+                exchange_ids=(exchange_id,),
+            )
+
+        if parsed_exchange is None:
+            cell_ready = BaseStationAttachStageReceipt(
+                stage="cell_ready",
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence=capability["cell_ready"].evidence,
+                reason="UXM cell status was not available in this attach operation",
+            )
+            rrc_connected = BaseStationAttachStageReceipt(
+                stage="rrc_connected",
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence=capability["rrc_connected"].evidence,
+                reason="UXM connected-like status was not available",
+            )
+        else:
+            exchange, parsed = parsed_exchange
+            cell_ready = _observed_stage(
+                "cell_ready",
+                parsed is not CellState.OFF,
+                "UXM diagnostic cell status was observed",
+                exchange.exchange_id,
+            )
+            rrc_connected = _observed_stage(
+                "rrc_connected",
+                parsed is CellState.CONNECTED,
+                "UXM connected-like status was observed without independent RRC proof",
+                exchange.exchange_id,
+            )
+
+        stages = (
+            cell_ready,
+            BaseStationAttachStageReceipt(
+                stage="ue_registered",
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence=capability["ue_registered"].evidence,
+                reason=capability["ue_registered"].reason,
+            ),
+            rrc_connected,
+            BaseStationAttachStageReceipt(
+                stage="data_bearer_established",
+                requested=True,
+                applied=None,
+                status="unknown",
+                evidence=capability["data_bearer_established"].evidence,
+                reason=capability["data_bearer_established"].reason,
+            ),
+        )
+        return BaseStationAttachReceipt(
+            schema_version=1,
+            adapter_id=self.adapter_id,
+            stages=stages,
+            reason=(
+                "UXM diagnostic connected-like terminal stage observed"
+                if operation_succeeded
+                else "UXM diagnostic connected-like terminal stage not observed"
+            ),
+            simulated=False,
+        )
+
+    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
+        with capture_scpi_exchanges() as exchanges:
+            operation_succeeded = await self._run_attach_operation(timeout_s)
+        return self._build_attach_receipt(
+            exchanges,
+            operation_succeeded=operation_succeeded,
+        )
+
+    async def _run_attach_operation(self, timeout_s: float = 60.0) -> bool:
         """
         激活小区并等待 UE Attach。
 

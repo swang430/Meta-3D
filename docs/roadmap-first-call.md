@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-46：BaseStation Capability Manifest v2。**
+Current Focus（非现场）= P2-47：BaseStation 结构化 Attach Receipt。**
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -61,13 +61,13 @@ P3-20/P3-21 仍不得自动启动。
    receipt/evidence/measurement 边界已由 PR #409 合并；P2-44 的单一 resolver、manifest
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
-   qualification 冻结、正式消费隔离与 GUI/API 镜像。其后按用户批准顺序追加
-   **P2-46 → P2-47 → P2-48 → P2-49 → P2-50 → P2-51 → P2-52 → P2-53**，先收敛共同能力与
+   qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46 已由 PR #412 合并；当前按
+   **P2-47 → P2-48 → P2-49 → P2-50 → P2-51 → P2-52 → P2-53**，先收敛共同能力与
    证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
-   的上一轮架构收敛已经全部合并；当前只从 P2-46 开始执行上述新追加队列。
+   的上一轮架构收敛已经全部合并；当前只从 P2-47 继续执行上述新追加队列。
 3. **原 First-call / on-site 队列完整保留**：P0-5 → P1-2 → P1-4 → P2-4；以及
    P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半，P1-6 继续 HOLD。它们按对应仪器
    到场情况进入现场队列；非现场只能准备载体，不能把本地测试或文档更新记成现场完成。
@@ -671,7 +671,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-46（本地实现、完整回归与 fresh 内审完成，Ready PR/外审中）**；NEW-1/P2-42/P2-43/P2-44/P2-45 已分别由 PR #407/#408/#409/#410/#411 合并。后续严格按 P2-47→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-47（实现、完整回归与 fresh 内审完成，Ready PR/外审中）**；NEW-1/P2-42/P2-43/P2-44/P2-45/P2-46 已分别由 PR #407/#408/#409/#410/#411/#412 合并。后续严格按 P2-48→P2-53，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4275,7 +4275,7 @@ NR5G；UXM/CMW500 都显示 `measurement_window`，却没有表达 closed lifecy
 迁移，不改变正式白名单。设计见
 `docs/plans/2026-08-29-p2-46-base-station-capability-manifest-v2-design.md`。
 
-**实施状态（2026-08-29，本地实现、完整回归与 fresh 内审完成，Ready PR/外审中）**：manifest v2 已把 RAT、
+**实施状态（2026-08-29，已由 PR #412 合并）**：manifest v2 已把 RAT、
 共同配置字段、Attach 四阶段、测量窗口生命周期/基数/作用域与逐指标证据强度收敛为不可变结构；
 CMW500 精确声明 LTE + PCC 单一权威闭环窗口；UXM 精确声明 NR5G，但其可选 `5G_NR_Test` 与
 `LTE_NR_IRAT` 方言没有共同的 clear/OTA throughput/BLER 命令集，因此 adapter 级 measurement 保守为
@@ -4294,12 +4294,24 @@ manifest 模型与必填字段。最终相关链与规则门
 **554 passed**、全后端 **5259 passed / 5 skipped**、
 GUI 契约 **26 passed** 与 production build、compileall、单一 Alembic head `e6a8c0d2f4b6`、
 base-to-HEAD diff-check 均通过，fresh 尾审 **P1/P2/P3=0**。
+P2-46 已由 PR #412 以 merge commit `0330ad93` 合入。
 
 ### P2-47 — BaseStation 结构化 Attach Receipt
 
 把 `start_signaling() -> bool` 收敛成逐阶段 receipt，分别记录 cell ready、注册/Attach、RRC 与数据承载
 的 requested/applied/confirmed/unknown/not-applicable 及 exchange ids。CMW500/UXM 只映射现有权威
 回读，不新增命令；共同消费者不得把不同强度的 `True` 当成同一事实。
+
+**实施状态（2026-08-29，实现、完整回归与 fresh 内审完成，Ready PR/外审中）**：共同 HAL 已以不可变四阶段
+receipt 表达 cell ready、UE registration、RRC 与 data bearer；CMW500/UXM 只映射既有同次回读，
+Mock 只给 simulated/unknown。receipt 已绑定当前 execution attempt、lease、session 与 exchange ids；
+新 execution 缺本次正式 attach 证据时 fail-closed，历史缺字段保持原兼容读取。MEASURE 先持久化
+receipt 再决定诊断是否继续，生产路径不再消费 `start_signaling()` 布尔，里程碑只投影逐阶段真值；
+未新增/猜测 SCPI，未改变正式 provenance 白名单，也未提前实现 P2-48～P2-53。最终 focused
+**310 passed**、全后端 **5288 passed / 5 skipped**、compileall、单一 Alembic head
+`e6a8c0d2f4b6` 与 base-to-HEAD diff-check 均通过；GUI/OpenAPI 未改，故未运行其契约/build；
+fresh 尾审 **P1/P2/P3=0**。Codex R1 指出的不可解释 `CellState.ERROR` 假确认已按严格 TDD
+最小收口：安全流程仍中止，但阶段证据保持 `unknown`，不再伪装为 `confirmed=false`。
 
 ### P2-48 — Measurement Window Trust Contract
 

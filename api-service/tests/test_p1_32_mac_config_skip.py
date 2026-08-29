@@ -467,7 +467,7 @@ class TestCallerConsumesTheResult:
                                                                  type_ignores=[]))):
                 ok = True
         assert ok, (
-            f"`{var}` 没有守住一个 return —— 报了失败仍会继续 start_signaling")
+            f"`{var}` 没有守住一个 return —— 报了失败仍会继续 attach")
 
     def test_transport_error_is_reported_before_blaming_the_profile(self):
         """⭐ Codex #279 P2 —— 传输层炸了却报「profile 未定义」，
@@ -593,9 +593,9 @@ class TestCallerConsumesTheResult:
         assert c is not None
         assert "**本驱动的 profile 未定义**" in c and "整组没下发" in c
 
-    def test_start_signaling_is_not_reached_when_mandatory_missing(self):
+    def test_attach_is_not_reached_when_mandatory_missing(self):
         """⭐ **生效端** —— 光断言"返回 FAILED"不够，
-        要证明 `start_signaling()` **根本没被调用**。
+        要证明 `attach()` **根本没被调用**。
         上一版的病就是"报了失败还照样往下跑"。
         """
         import inspect
@@ -604,7 +604,7 @@ class TestCallerConsumesTheResult:
 
         src = _strip_comments(inspect.getsource(measure))
         i = src.index("configure_mac_throughput_test(")
-        j = src.index("await base_station.start_signaling()", i)
+        j = src.index("await base_station.attach()", i)
         between = src[i:j]
         assert "return StepExecutionResult" in between, (
-            "FAILED 分支不在 start_signaling 之前 —— 报了失败仍会继续下发信令")
+            "FAILED 分支不在 attach 之前 —— 报了失败仍会继续下发信令")
