@@ -11,7 +11,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import random
+import re
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Any, Optional, List, ClassVar, Literal
@@ -25,6 +27,7 @@ from app.hal.base import (
     InstrumentMetrics,
 )
 from app.hal.scpi_evidence import InstrumentEvidenceItem
+from app.hal.base_station_manifest import BaseStationMetricCapability
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ LTE_TRANSMISSION_MODES = (
     "TM8",
     "TM9",
 )
+_METRIC_REGISTRY_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 LteTransmissionMode = Literal[
     "TM1", "TM2", "TM3", "TM4", "TM6", "TM7", "TM8", "TM9",
 ]
@@ -678,6 +682,138 @@ class BaseStationCleanupResult:
     stop_signaling_confirmed: bool
     safe_idle_confirmed: bool
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BaseStationMetricRegistry:
+    """Execution-frozen metric semantics for one loaded adapter profile."""
+
+    schema_version: Literal[1]
+    adapter_id: str
+    profile_id: str
+    metrics: tuple[BaseStationMetricCapability, ...]
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station metric registry schema")
+        for name, value in (
+            ("adapter_id", self.adapter_id),
+            ("profile_id", self.profile_id),
+        ):
+            if (
+                not isinstance(value, str)
+                or not _METRIC_REGISTRY_TOKEN_RE.fullmatch(value.strip())
+            ):
+                raise ValueError(f"metric registry {name} must be a stable token")
+        if (
+            not isinstance(self.metrics, tuple)
+            or not self.metrics
+            or any(
+                not isinstance(metric, BaseStationMetricCapability)
+                for metric in self.metrics
+            )
+        ):
+            raise ValueError("metric registry requires declared capabilities")
+        keys = tuple(metric.key for metric in self.metrics)
+        if len(set(keys)) != len(keys):
+            raise ValueError("metric registry keys must be unique")
+        if keys != tuple(sorted(keys)):
+            raise ValueError("metric registry keys must be stably sorted")
+
+    @property
+    def digest(self) -> str:
+        payload = {
+            "schema_version": self.schema_version,
+            "adapter_id": self.adapter_id,
+            "profile_id": self.profile_id,
+            "metrics": [
+                metric.model_dump(mode="json") for metric in self.metrics
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def capability(self, key: str) -> BaseStationMetricCapability:
+        for metric in self.metrics:
+            if metric.key == key:
+                return metric
+        raise KeyError(key)
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationMetricRegistry must not be used as bool; inspect its fields"
+        )
+
+
+@dataclass(frozen=True)
+class BaseStationMetricObservation:
+    """One value bound to the exact execution-frozen metric registry."""
+
+    schema_version: Literal[1]
+    registry: BaseStationMetricRegistry
+    registry_digest: str
+    key: str
+    scope: Literal["pcell", "all_cells"]
+    value: float | None
+    simulated: bool
+    exchange_ids: tuple[str, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported base-station metric observation schema")
+        if not isinstance(self.registry, BaseStationMetricRegistry):
+            raise TypeError("metric observation requires a frozen registry")
+        if self.registry_digest != self.registry.digest:
+            raise ValueError("metric observation registry digest mismatch")
+        try:
+            capability = self.registry.capability(self.key)
+        except KeyError as exc:
+            raise ValueError("metric observation key is not declared") from exc
+        if self.scope not in capability.scopes:
+            raise ValueError("metric observation scope is not declared")
+        if self.value is not None and (
+            isinstance(self.value, bool)
+            or not isinstance(self.value, (int, float))
+            or not math.isfinite(float(self.value))
+        ):
+            raise ValueError("metric observation value must be finite or null")
+        if type(self.simulated) is not bool:
+            raise TypeError("metric observation simulated must be bool")
+        if not isinstance(self.exchange_ids, tuple) or any(
+            not isinstance(item, str) or not item.strip()
+            for item in self.exchange_ids
+        ):
+            raise ValueError("metric observation exchange ids must be non-empty strings")
+        if len(set(self.exchange_ids)) != len(self.exchange_ids):
+            raise ValueError("metric observation exchange ids must be unique")
+        if self.value is not None and not self.exchange_ids:
+            raise ValueError("metric observation value requires exchange ids")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("metric observation reason must be non-empty")
+
+    @property
+    def capability(self) -> BaseStationMetricCapability:
+        return self.registry.capability(self.key)
+
+    @property
+    def metric_semantics_confirmed(self) -> bool:
+        return (
+            self.value is not None
+            and self.simulated is False
+            and self.capability.evidence == "authoritative"
+            and bool(self.exchange_ids)
+        )
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "BaseStationMetricObservation must not be used as bool; inspect its truth"
+        )
 
 
 @dataclass(frozen=True)
