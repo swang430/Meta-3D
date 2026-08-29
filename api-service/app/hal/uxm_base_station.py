@@ -58,6 +58,7 @@ from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
+    BaseStationMeasurementCapability,
     BaseStationRatCapability,
 )
 from app.hal.nr_band_baselines import get_band_baseline
@@ -364,6 +365,7 @@ class RealUxmDriver(BaseStationDriver):
             "cell_attach",
             "safe_idle_release",
             "input_level_control",
+            "measurement_window",
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
@@ -524,11 +526,17 @@ class RealUxmDriver(BaseStationDriver):
             ),
         ),
         # Adapter-level truth is the conservative intersection of every Test
-        # App profile this driver can select.  Only the IRAT profile currently
-        # has sourced clear/OTA-throughput/BLER commands, so no unconditional
-        # measurement window is advertised here.  Profile-scoped projection
-        # must wait until the resolved Test App itself is frozen as truth.
-        measurement=None,
+        # App profile this driver can select.  The common SPI can request and
+        # read diagnostic windows, but no profile-independent authoritative
+        # lifecycle or metric proof is available.  P2-52 must freeze the
+        # resolved Test App before this declaration can be strengthened.
+        measurement=BaseStationMeasurementCapability(
+            cardinality="requested",
+            scopes=("pcell", "all_cells"),
+            lifecycle="unavailable",
+            metrics=(),
+            source_reference=None,
+        ),
         profile_requirement="not_applicable",
         profile_schema_version=None,
         profile_fields=(),

@@ -232,8 +232,12 @@ class BaseStationMeasurementCapability(BaseModel):
     @model_validator(mode="after")
     def _valid_measurement_shape(self):
         keys = [metric.key for metric in self.metrics]
-        if not keys or len(set(keys)) != len(keys):
-            raise ValueError("measurement metric keys must be non-empty and unique")
+        if len(set(keys)) != len(keys):
+            raise ValueError("measurement metric keys must be unique")
+        if self.lifecycle != "unavailable" and not keys:
+            raise ValueError(
+                "available measurement lifecycle requires metric declarations"
+            )
         if self.lifecycle == "authoritative_closed" and self.source_reference is None:
             raise ValueError("authoritative closed lifecycle requires source_reference")
         if any(not set(metric.scopes).issubset(self.scopes) for metric in self.metrics):

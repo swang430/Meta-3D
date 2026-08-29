@@ -63,7 +63,12 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
-from app.hal.base_station import BaseStationRequestedConfig, ThroughputMetrics
+from app.hal.base_station import (
+    BaseStationMeasurementWindowRequest,
+    BaseStationRequestedConfig,
+    ThroughputMetrics,
+)
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_qualification import execution_is_diagnostic
@@ -648,6 +653,66 @@ class MeasureExecutor(IStepExecutor):
             return None
         numeric = float(value)
         return numeric if math.isfinite(numeric) else None
+
+    @staticmethod
+    def _measurement_window_requests(
+        manifest: BaseStationAdapterManifest | None,
+        *,
+        throughput_scope: str,
+        requested_sample_count: int,
+        simulated_diagnostic: bool,
+    ) -> tuple[BaseStationMeasurementWindowRequest, ...]:
+        """Freeze one vendor-neutral native-window plan before any window I/O."""
+
+        if (
+            isinstance(requested_sample_count, bool)
+            or not isinstance(requested_sample_count, int)
+            or requested_sample_count <= 0
+        ):
+            raise TypeError("requested measurement window count must be positive")
+        scope_by_runtime_value = {
+            ThroughputMetrics.SCOPE_PCELL: "pcell",
+            ThroughputMetrics.SCOPE_NR_ALL_CELLS: "all_cells",
+        }
+        scope = scope_by_runtime_value.get(throughput_scope)
+        if scope is None:
+            raise ValueError("measurement window scope is not a formal request scope")
+
+        if manifest is None:
+            if simulated_diagnostic is not True:
+                raise ValueError("frozen manifest has no measurement capability")
+            lifecycle = "unavailable"
+            cardinality = "requested"
+        else:
+            if not isinstance(manifest, BaseStationAdapterManifest):
+                raise TypeError("measurement plan requires a frozen adapter manifest")
+            measurement = manifest.measurement
+            if measurement is None:
+                if simulated_diagnostic is not True:
+                    raise ValueError("frozen manifest has no measurement capability")
+                lifecycle = "unavailable"
+                cardinality = "requested"
+            else:
+                if scope not in measurement.scopes:
+                    raise ValueError(
+                        "measurement window scope is outside the frozen manifest"
+                    )
+                lifecycle = measurement.lifecycle
+                cardinality = measurement.cardinality
+
+        expected_count = 1 if cardinality == "single" else requested_sample_count
+        return tuple(
+            BaseStationMeasurementWindowRequest(
+                schema_version=1,
+                scope=scope,
+                lifecycle=lifecycle,
+                cardinality=cardinality,
+                requested_window_count=requested_sample_count,
+                expected_window_count=expected_count,
+                window_index=index,
+            )
+            for index in range(expected_count)
+        )
 
     @staticmethod
     async def _measure_base_station_samples(
