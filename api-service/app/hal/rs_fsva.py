@@ -27,6 +27,13 @@ Reference: R&S FSVA/FSV Operating Manual 1176.7510.02 ─ 13（下文简写「�
 > `df640983-f2e8-4d2c-ab64-de99fa38814f`，操作员复跑为
 > `4241e370-560f-459a-b77a-0754ba7bf7f8`。未被新家族手册逐条覆盖的既有
 > 写路径仍保留错误队列 fail-loud，不从这次能力查询外推支持范围。
+>
+> 写路径核对（2026-08-29，家册 1178.8536.02─16）：TRACe:IQ:SET 第二参
+> 新家册 p251 明文恒 0（旧家族为不求值占位、曾发 "10MHz"）——已改发 0；
+> <SampleRate> "Default unit: HZ" 明文化了速率裸数值推断；
+> TRACe:IQ:DATA:FORMat 取值 COMPatible|IQBLock|IQPair 与 IQBLock
+> 排列（"First all I-values are listed, then the Q-values"）见 p334，
+> TRACe:IQ:DATA? 语义（= INIT:IMM;*WAI;:TRACe:IQ:DATA:MEMory?）同页。
 """
 
 import logging
@@ -112,14 +119,18 @@ class FsvaScpi:
     IQ_STATE_QUERY = "TRACe:IQ:STATe?"      # ⚠ 推断：p895 只载设置形（ON|OFF），查询形
     #                                         是 SCPI 标准派生（该条未标 setting-only），
     #                                         运行时以错误队列核对
-    # p904：TRACe<n>:IQ:SET NORM,<Placeholder>,<SampleRate>,<TriggerMode>,
-    #       <TriggerSlope>,<PretriggerSamp>,<NumberSamples>；NORM 与 <Placeholder>
-    #       "is not evaluated, but must be inserted"（占位值照 p897 例 "10MHz"）；
-    #       IMM = free-run 触发（p905 "For IMM mode, gating is automatically
-    #       deactivated"），显式下发以免继承面板残留的 EXT 触发挂死采集。
-    #       速率数值不带单位 = Hz —— ⚠ 推断：p904 例子带 "MHz" 单位，裸数值默认 Hz
-    #       是本机频率参数惯例（p809 FREQ:CENT 明写 "Default unit: Hz"），错误队列核对。
-    IQ_SET = "TRACe:IQ:SET NORM,10MHz,{srate_hz},IMM,POS,0,{num_samples}"
+    # 家册 1178.8536.02─16 p251：TRACe:IQ:SET <NORM>,<0>,<SampleRate>,
+    #       <TriggerMode>,<TriggerSlope>,<PretriggerSamp>,<NumberSamples>；
+    #       第二参手册明文 "This value is always 0"（例句
+    #       TRAC:IQ:SET NORM,0,32MHz,EXT,POS,0,2048）。旧家族手册
+    #       1176.7510.02 p904 该位是不求值占位（曾照 p897 例发 "10MHz"）——
+    #       现场机型属 FSV/A3000 家族，按新家册发 0；0 在两家族语义下都合法
+    #       （旧=不求值、新=恒 0），2026-08-29 家册写路径核对修正。
+    #       IMM = free-run 触发（新家册 p251 同句 "For IMM mode, gating is
+    #       automatically deactivated"），显式下发以免继承面板残留的 EXT 触发。
+    #       速率裸数值 = Hz：新家册 p251 <SampleRate> 明文 "Default unit: HZ"
+    #       （原推断升级为有据）。
+    IQ_SET = "TRACe:IQ:SET NORM,0,{srate_hz},IMM,POS,0,{num_samples}"
     IQ_SRATE_QUERY = "TRACe:IQ:SRATe?"      # ⚠ 推断：p906 只载设置形，同上核对
     IQ_BWIDTH_QUERY = "TRACe:IQ:BWIDth?"    # p896 例原文 "TRAC:IQ:BWID?"（查询形有据）
     IQ_RLENGTH_QUERY = "TRACe:IQ:RLENgth?"  # ⚠ 推断：p903 只载设置形，同上核对
@@ -710,7 +721,7 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
         工序（逐条手册出处见 FsvaScpi 常量注释）：
           1. FREQ:CENT（p809）
           2. TRAC:IQ:STAT ON（p895；样例程序 p1036 注释要求先于 SET）
-          3. TRAC:IQ:SET 请求速率 + 占位样本数 128（p904 *RST 值）
+          3. TRAC:IQ:SET 请求速率 + 占位样本数 128（合法范围内小值；新家册 1178.8536.02 p251 *RST=1001）
           4. TRAC:IQ:SRAT? 回读实际速率（推断查询形，错误队列核对）
           5. TRAC:IQ:SET 实际速率 + 最终样本数（把仪器自报的值回传，消除歧义）
           6. TRAC:IQ:DATA:FORM IQBL + FORM ASC（p897/933）
