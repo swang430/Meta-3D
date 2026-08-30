@@ -729,6 +729,19 @@ class BaseStationMeasurementWindowTrustEvidence(BaseModel):
             and bool(self.exchange_ids)
         )
 
+    @property
+    def diagnostic_execution_allowed(self) -> bool:
+        """Mirror the HAL receipt without promoting diagnostic truth to formal."""
+
+        if self.simulated:
+            return True
+        if self.formally_confirmed:
+            return True
+        return (
+            self.request.lifecycle in {"clear_read_only", "unavailable"}
+            and bool(self.exchange_ids)
+        )
+
 
 class BaseStationMeasurementWindowEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -1019,6 +1032,96 @@ def _position_key(position: PositionSnapshot) -> tuple[float, float]:
     return position.azimuth_deg, position.elevation_deg
 
 
+def _attempt_window_shape_envelope(
+    evidence: BaseStationExecutionEvidence,
+    attempt_id: str,
+) -> tuple[
+    bool,
+    str,
+    list[BaseStationMeasurementWindowEvidence],
+    dict[str, BaseStationControlReleaseEvidence],
+]:
+    """Validate requested-position, window-cardinality, and release shape."""
+
+    requested_keys = [_position_key(item) for item in evidence.requested_positions]
+    if not requested_keys or len(set(requested_keys)) != len(requested_keys):
+        return False, "requested_positions_invalid", [], {}
+    windows = [
+        window
+        for window in evidence.measurement_windows
+        if window.measurement_attempt_id == attempt_id
+    ]
+    window_keys = [_position_key(window.position) for window in windows]
+    current_window_contract = evidence.measurement_window_contract_version == 1
+    if current_window_contract:
+        grouped: dict[tuple[float, float], list[BaseStationMeasurementWindowEvidence]] = {
+            key: [] for key in requested_keys
+        }
+        for window, key in zip(windows, window_keys):
+            if key not in grouped:
+                return False, "current_attempt_positions_mismatch", [], {}
+            grouped[key].append(window)
+        if any(not group for group in grouped.values()):
+            return False, "current_attempt_positions_mismatch", [], {}
+        frozen_shape: tuple[str, str, str, int, int] | None = None
+        for group in grouped.values():
+            trusts = [window.trust for window in group]
+            if any(trust is None for trust in trusts):
+                return False, "measurement_window_trust_missing", [], {}
+            requests = [trust.request for trust in trusts if trust is not None]
+            reference = requests[0]
+            common_shape = (
+                reference.scope,
+                reference.lifecycle,
+                reference.cardinality,
+                reference.requested_window_count,
+                reference.expected_window_count,
+            )
+            if frozen_shape is None:
+                frozen_shape = common_shape
+            elif common_shape != frozen_shape:
+                return False, "measurement_window_shape_drift", [], {}
+            if (
+                len(group) != reference.expected_window_count
+                or {request.window_index for request in requests}
+                != set(range(reference.expected_window_count))
+                or any(
+                    (
+                        request.scope,
+                        request.lifecycle,
+                        request.cardinality,
+                        request.requested_window_count,
+                        request.expected_window_count,
+                    )
+                    != common_shape
+                    for request in requests
+                )
+            ):
+                return False, "measurement_window_cardinality_mismatch", [], {}
+    elif len(windows) != len(requested_keys) or sorted(window_keys) != sorted(
+        requested_keys
+    ):
+        return False, "current_attempt_positions_mismatch", [], {}
+    if len(set(window.window_id for window in windows)) != len(windows):
+        return False, "current_attempt_window_ids_not_unique", [], {}
+
+    releases = [
+        release
+        for release in evidence.control_releases
+        if release.measurement_attempt_id == attempt_id
+    ]
+    expected_lease_ids = {window.lease_id for window in windows}
+    if (
+        len(releases) != len(expected_lease_ids)
+        or {release.lease_id for release in releases} != expected_lease_ids
+    ):
+        return False, "current_attempt_control_releases_mismatch", [], {}
+    releases_by_lease = {release.lease_id: release for release in releases}
+    if len(releases_by_lease) != len(releases):
+        return False, "current_attempt_control_releases_not_unique", [], {}
+    return True, "attempt_window_shape_confirmed", windows, releases_by_lease
+
+
 def _attempt_lifecycle_envelope(
     evidence: BaseStationExecutionEvidence,
     attempt_id: str,
@@ -1038,83 +1141,12 @@ def _attempt_lifecycle_envelope(
         _unique_non_empty(evidence.exchange_ids, "exchange_ids")
     except ValueError:
         return False, "execution_exchange_ids_invalid", []
-
-    requested_keys = [_position_key(item) for item in evidence.requested_positions]
-    if not requested_keys or len(set(requested_keys)) != len(requested_keys):
-        return False, "requested_positions_invalid", []
-    windows = [
-        window
-        for window in evidence.measurement_windows
-        if window.measurement_attempt_id == attempt_id
-    ]
-    window_keys = [_position_key(window.position) for window in windows]
+    accepted, reason, windows, releases_by_lease = _attempt_window_shape_envelope(
+        evidence, attempt_id
+    )
+    if not accepted:
+        return False, reason, []
     current_window_contract = evidence.measurement_window_contract_version == 1
-    if current_window_contract:
-        grouped: dict[tuple[float, float], list[BaseStationMeasurementWindowEvidence]] = {
-            key: [] for key in requested_keys
-        }
-        for window, key in zip(windows, window_keys):
-            if key not in grouped:
-                return False, "current_attempt_positions_mismatch", []
-            grouped[key].append(window)
-        if any(not group for group in grouped.values()):
-            return False, "current_attempt_positions_mismatch", []
-        frozen_shape: tuple[str, str, str, int, int] | None = None
-        for group in grouped.values():
-            trusts = [window.trust for window in group]
-            if any(trust is None for trust in trusts):
-                return False, "measurement_window_trust_missing", []
-            requests = [trust.request for trust in trusts if trust is not None]
-            reference = requests[0]
-            common_shape = (
-                reference.scope,
-                reference.lifecycle,
-                reference.cardinality,
-                reference.requested_window_count,
-                reference.expected_window_count,
-            )
-            if frozen_shape is None:
-                frozen_shape = common_shape
-            elif common_shape != frozen_shape:
-                return False, "measurement_window_shape_drift", []
-            if (
-                len(group) != reference.expected_window_count
-                or {request.window_index for request in requests}
-                != set(range(reference.expected_window_count))
-                or any(
-                    (
-                        request.scope,
-                        request.lifecycle,
-                        request.cardinality,
-                        request.requested_window_count,
-                        request.expected_window_count,
-                    )
-                    != common_shape
-                    for request in requests
-                )
-            ):
-                return False, "measurement_window_cardinality_mismatch", []
-    elif len(windows) != len(requested_keys) or sorted(window_keys) != sorted(
-        requested_keys
-    ):
-        return False, "current_attempt_positions_mismatch", []
-    if len(set(window.window_id for window in windows)) != len(windows):
-        return False, "current_attempt_window_ids_not_unique", []
-
-    releases = [
-        release
-        for release in evidence.control_releases
-        if release.measurement_attempt_id == attempt_id
-    ]
-    expected_lease_ids = {window.lease_id for window in windows}
-    if (
-        len(releases) != len(expected_lease_ids)
-        or {release.lease_id for release in releases} != expected_lease_ids
-    ):
-        return False, "current_attempt_control_releases_mismatch", []
-    releases_by_lease = {release.lease_id: release for release in releases}
-    if len(releases_by_lease) != len(releases):
-        return False, "current_attempt_control_releases_not_unique", []
 
     for window in windows:
         release = releases_by_lease[window.lease_id]
@@ -1156,6 +1188,52 @@ def base_station_attempt_lifecycle_is_complete(value: Any, attempt_id: str) -> b
         return False
     accepted, _, _ = _attempt_lifecycle_envelope(evidence, attempt_id)
     return accepted
+
+
+def base_station_attempt_diagnostic_lifecycle_is_complete(
+    value: Any, attempt_id: str
+) -> bool:
+    """Confirm diagnostic scheduling, cleanup, and release without formal truth."""
+
+    evidence = _parsed(value)
+    if (
+        evidence is None
+        or not isinstance(attempt_id, str)
+        or not attempt_id
+        or evidence.current_measurement_attempt_id != attempt_id
+        or evidence.measurement_window_contract_version != 1
+    ):
+        return False
+    accepted, _, windows, releases_by_lease = _attempt_window_shape_envelope(
+        evidence, attempt_id
+    )
+    if not accepted:
+        return False
+    for window in windows:
+        release = releases_by_lease[window.lease_id]
+        trust = window.trust
+        if (
+            window.config_digest != evidence.requested_config.digest
+            or window.route_digest
+            != (evidence.requested_route.digest if evidence.requested_route else None)
+            or trust is None
+            or trust.diagnostic_execution_allowed is not True
+            or window.cleanup.stop_signaling_confirmed is not True
+            or window.cleanup.safe_idle_confirmed is not True
+            or release.session_token != window.session_token
+            or release.remote_session_acquired_confirmed is not True
+            or release.transport_session_released_confirmed is not True
+        ):
+            return False
+        if trust.exchange_ids:
+            if (
+                trust.exchange_ids != window.lifecycle_exchange_ids
+                or not set(window.lifecycle_exchange_ids).issubset(
+                    evidence.exchange_ids
+                )
+            ):
+                return False
+    return True
 
 
 def _formal_envelope(

@@ -52,6 +52,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     BaseStationMeasurementWindowEvidence,
     FrozenPayloadSnapshot,
     PositionSnapshot,
+    base_station_attempt_diagnostic_lifecycle_is_complete,
     base_station_attempt_lifecycle_is_complete,
     canonical_snapshot_digest,
     parse_base_station_execution_evidence,
@@ -1135,11 +1136,31 @@ def persist_execution_base_station_release(
         db.query(TestExecution).filter(TestExecution.id == execution_id).first()
     )
     execution_status = getattr(execution, "status", None)
+    raw_evidence = load_base_station_execution_evidence(execution)
+    diagnostic_complete = False
+    config = getattr(execution, "config", None)
+    if isinstance(config, dict):
+        from app.services.execution_qualification import (
+            EXECUTION_QUALIFICATION_KEY,
+            ExecutionQualification,
+            validate_frozen_execution_qualification,
+        )
+
+        raw_qualification = config.get(EXECUTION_QUALIFICATION_KEY)
+        if validate_frozen_execution_qualification(raw_qualification) is None:
+            qualification = ExecutionQualification.model_validate(raw_qualification)
+            diagnostic_complete = (
+                qualification.classification == "diagnostic"
+                and base_station_attempt_diagnostic_lifecycle_is_complete(
+                    raw_evidence, attempt_id
+                )
+            )
     if (
         execution_status == "running"
         and release.transport_session_released_confirmed is True
-        and base_station_attempt_lifecycle_is_complete(
-            load_base_station_execution_evidence(execution), attempt_id
+        and (
+            base_station_attempt_lifecycle_is_complete(raw_evidence, attempt_id)
+            or diagnostic_complete
         )
     ):
         state = "completed"
