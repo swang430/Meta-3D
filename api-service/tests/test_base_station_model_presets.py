@@ -66,4 +66,3 @@ def test_preset_rejects_blank_endpoint_and_embedded_profile_in_generic_params():
 def test_server_owned_preset_map_has_dedicated_storage_and_no_write_field():
     assert hasattr(InstrumentConnection, "base_station_model_presets")
     assert "base_station_model_presets" not in FEConnectionUpdate.model_fields
-

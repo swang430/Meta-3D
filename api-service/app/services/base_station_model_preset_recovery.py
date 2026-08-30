@@ -97,19 +97,14 @@ def recover_cmw500_model_preset(
         raise ValueError("confirmed applied route does not match frozen profile")
 
     resource = str(expected_connection.get("resource") or "").strip()
-    if not resource or resource != (connection.endpoint or "").strip():
-        raise ValueError(
-            "frozen CMW500 endpoint does not match the current connection; "
-            "manual endpoint review is required"
-        )
-    generic_params = dict(connection.connection_params or {})
-    generic_params.pop("base_station_adapter_profile", None)
+    if not resource:
+        raise ValueError("frozen CMW500 evidence has no transport resource")
     preset = BaseStationModelPreset(
         model_id=model.id,
         endpoint=resource,
-        controller=connection.protocol or "",
-        notes=connection.notes or "",
-        connection_params=generic_params,
+        controller="",
+        notes="",
+        connection_params={},
         base_station_adapter_profile=profile,
     )
 

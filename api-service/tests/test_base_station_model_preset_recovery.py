@@ -69,18 +69,18 @@ def _records(db, *, execution_mode="real", route_confirmed=True, applied_route=N
     category.selected_model_id = uxm.id
     connection = InstrumentConnection(
         category_id=category.id,
-        endpoint="TCPIP0::192.168.0.149::hislip0::INSTR",
-        protocol="VISA/SCPI",
-        notes="site endpoint",
-        connection_params={"detected_test_app": "LTE_NR_IRAT"},
+        endpoint="192.168.1.112",
+        protocol="SOCKET",
+        notes="active UXM",
+        connection_params={"uxm_only": True},
         base_station_model_presets={
             str(uxm.id): {
                 "schema_version": 1,
                 "model_id": str(uxm.id),
-                "endpoint": "TCPIP0::192.168.0.149::hislip0::INSTR",
-                "controller": "VISA/SCPI",
-                "notes": "site endpoint",
-                "connection_params": {"detected_test_app": "LTE_NR_IRAT"},
+                "endpoint": "192.168.1.112",
+                "controller": "SOCKET",
+                "notes": "active UXM",
+                "connection_params": {"uxm_only": True},
                 "base_station_adapter_profile": None,
             }
         },
@@ -150,6 +150,10 @@ def test_recovery_preserves_active_uxm_and_adds_only_evidence_backed_cmw_preset(
         apply=True,
     )
     assert applied.changed is True
+    assert applied.preset.endpoint == "TCPIP0::192.168.0.149::hislip0::INSTR"
+    assert applied.preset.controller == ""
+    assert applied.preset.notes == ""
+    assert applied.preset.connection_params == {}
     assert applied.preset.base_station_adapter_profile["lte_2x2_internal_route"] == ROUTE
     assert set(connection.base_station_model_presets) == {str(uxm.id), str(cmw.id)}
     assert (category.selected_model_id, connection.endpoint, connection.connection_params) == before

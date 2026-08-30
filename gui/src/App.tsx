@@ -104,7 +104,10 @@ import {
   buildDiagnosticTarget,
   diagnosticErrorMessage,
 } from './features/Equipment/diagnosticTarget'
-import { draftForBaseStationModel } from './features/Equipment/baseStationModelPresetDraft'
+import {
+  draftForBaseStationModel,
+  explicitBaseStationConnectionDraft,
+} from './features/Equipment/baseStationModelPresetDraft'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1982,7 +1985,8 @@ function EquipmentManager() {
       const draft = drafts[categoryKey]
       if (!draft) return
       
-      let parsedParams: Record<string, unknown> | undefined
+      let parsedParams: Record<string, unknown> | undefined =
+        categoryKey === 'baseStation' ? {} : undefined
       if (draft.connection_params) {
         try {
           parsedParams = JSON.parse(draft.connection_params)
@@ -2022,15 +2026,18 @@ function EquipmentManager() {
         categoryKey,
         payload: {
           ...(categoryKey === 'baseStation' ? { modelId: draft.modelId } : {}),
-          connection: {
-            endpoint: draft.endpoint || undefined,
-            controller: draft.controller || undefined,
-            notes: draft.notes || undefined,
-            ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-            ...(baseStationProfile !== undefined
-              ? { base_station_adapter_profile: baseStationProfile }
-              : {}),
-          },
+          connection: categoryKey === 'baseStation'
+            ? explicitBaseStationConnectionDraft(
+                draft,
+                parsedParams ?? {},
+                baseStationProfile ?? null,
+              )
+            : {
+                endpoint: draft.endpoint || undefined,
+                controller: draft.controller || undefined,
+                notes: draft.notes || undefined,
+                ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+              },
         },
       })
     },

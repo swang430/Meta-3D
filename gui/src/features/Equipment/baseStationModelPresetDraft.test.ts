@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { draftForBaseStationModel } from './baseStationModelPresetDraft.ts'
+import {
+  draftForBaseStationModel,
+  explicitBaseStationConnectionDraft,
+} from './baseStationModelPresetDraft.ts'
 import type { InstrumentCategory } from '../../types/api.ts'
 
 const category = {
@@ -110,4 +113,34 @@ test('BaseStation model selection is draft-only and save carries modelId', () =>
     app.indexOf('const modelSelectData'),
   )
   assert.match(saveHandler, /categoryKey === 'baseStation'.*\? \{ modelId: draft\.modelId \}/s)
+})
+
+test('BaseStation save submits cleared fields instead of silently keeping the old preset', () => {
+  assert.deepEqual(
+    explicitBaseStationConnectionDraft(
+      {
+        modelId: 'uxm',
+        endpoint: '',
+        controller: '',
+        notes: '',
+        connection_params: '',
+      },
+      {},
+      null,
+    ),
+    {
+      endpoint: '',
+      controller: '',
+      notes: '',
+      connection_params: {},
+      base_station_adapter_profile: null,
+    },
+  )
+
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  const saveHandler = app.slice(
+    app.indexOf('const handleSaveConnection'),
+    app.indexOf('const modelSelectData'),
+  )
+  assert.match(saveHandler, /explicitBaseStationConnectionDraft\(/)
 })

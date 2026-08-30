@@ -1,4 +1,7 @@
-import type { InstrumentCategory } from '../../types/api.ts'
+import type {
+  InstrumentCategory,
+  InstrumentConnectionUpdate,
+} from '../../types/api.ts'
 import {
   readBaseStationProfileDraft,
   type BaseStationProfileDraft,
@@ -11,6 +14,20 @@ export type SavedBaseStationDraft = {
   notes: string
   connection_params: string
   base_station_profile?: BaseStationProfileDraft
+}
+
+export function explicitBaseStationConnectionDraft(
+  draft: Pick<SavedBaseStationDraft, 'endpoint' | 'controller' | 'notes'>,
+  connectionParams: Record<string, unknown>,
+  baseStationAdapterProfile: Record<string, unknown> | null,
+): InstrumentConnectionUpdate {
+  return {
+    endpoint: draft.endpoint,
+    controller: draft.controller,
+    notes: draft.notes,
+    connection_params: connectionParams,
+    base_station_adapter_profile: baseStationAdapterProfile,
+  }
 }
 
 export function draftForBaseStationModel(
