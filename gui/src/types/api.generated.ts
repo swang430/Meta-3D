@@ -2685,6 +2685,21 @@ export interface components {
             /** @enum {string} */
             formal_gate: "site_certification";
         };
+        BaseStationModelPreset: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** Format: uuid */
+            model_id: string;
+            endpoint: string;
+            controller: string;
+            notes: string;
+            connection_params: {
+                [key: string]: unknown;
+            };
+            base_station_adapter_profile: {
+                [key: string]: unknown;
+            } | null;
+        };
         InstrumentConnection: {
             id: string | null;
             endpoint: string | null;
@@ -2693,6 +2708,9 @@ export interface components {
             connection_params: {
                 [key: string]: unknown;
             } | null;
+            base_station_model_presets: {
+                [key: string]: components["schemas"]["BaseStationModelPreset"];
+            };
             /** @description Read-only durable rollout approval; generic connection update cannot write it. */
             cmw500_lte_2x2_formal_enabled: boolean;
             /** Format: date-time */

@@ -43,6 +43,7 @@ from app.services.execution_qualification import (
     activate_base_station_site_certification,
     revoke_base_station_site_certification,
 )
+from app.services.base_station_model_preset import BaseStationModelPreset
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -85,7 +86,9 @@ class FEInstrumentConnection(BaseModel):
     controller: Optional[str] = None
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None
-    base_station_model_presets: Dict[str, Dict[str, Any]] = {}
+    base_station_model_presets: Dict[str, BaseStationModelPreset] = Field(
+        default_factory=dict
+    )
     cmw500_lte_2x2_formal_enabled: bool = False
     cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
