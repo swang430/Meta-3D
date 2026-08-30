@@ -430,13 +430,15 @@ def activate_base_station_site_certification(
 
     actor = _audit_text(certified_by, "certified_by")
     audit_reason = _audit_text(reason, "reason")
-    connection = (
-        db.query(InstrumentConnection)
+    # 只读存在性预检，不先持 connection 锁。全仓 BaseStation 写路径的主锁序为
+    # execution（若有）→ category → LabProfile → connection；先锁 connection
+    # 会与 execution freeze / topology apply 形成 ABBA。
+    requested_connection_id = (
+        db.query(InstrumentConnection.id)
         .filter(InstrumentConnection.id == connection_id)
-        .with_for_update()
-        .one_or_none()
+        .scalar()
     )
-    if connection is None:
+    if requested_connection_id is None:
         raise LookupError("instrument connection not found")
     execution = (
         db.query(TestExecution)
@@ -454,7 +456,6 @@ def activate_base_station_site_certification(
     lab = (
         db.query(LabProfile)
         .filter(LabProfile.id == test_case.lab_profile_id)
-        .with_for_update()
         .one_or_none()
     )
     if lab is None:
@@ -464,9 +465,16 @@ def activate_base_station_site_certification(
     if (
         resolved.execution_mode != "real"
         or resolved.manifest is None
-        or resolved.instrument_connection_id != str(connection.id)
+        or resolved.instrument_connection_id != str(requested_connection_id)
     ):
         raise ValueError("site certification requires the current real BaseStation binding")
+    # resolver 已按 category→LabProfile→connection 锁定此行；这里仅取得同一
+    # Session 中的已锁对象，不再反序追加 connection FOR UPDATE。
+    connection = (
+        db.query(InstrumentConnection)
+        .filter(InstrumentConnection.id == requested_connection_id)
+        .one()
+    )
 
     config = execution.config if isinstance(execution.config, dict) else {}
     frozen = config.get(FREEZE_CONFIG_KEY)

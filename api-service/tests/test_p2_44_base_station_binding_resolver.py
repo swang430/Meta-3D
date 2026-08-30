@@ -432,3 +432,43 @@ def test_resolver_rejects_loaded_driver_that_violates_explicit_mode(
             SimpleNamespace(drivers={"baseStation": driver}),
             lab,
         )
+
+
+def test_locked_resolver_refreshes_cached_binding_and_connection_from_database(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'binding-refresh.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    db = session_factory()
+    writer = session_factory()
+    try:
+        _, _, connection, lab = _configured(db, model_name="CMW500")
+
+        writer_connection = writer.get(InstrumentConnection, connection.id)
+        writer_lab = writer.get(LabProfile, lab.id)
+        assert writer_connection is not None
+        assert writer_lab is not None
+        writer_connection.endpoint = "192.0.2.20"
+        bindings = deepcopy(writer_lab.instrument_bindings)
+        bindings[0]["connection_endpoint"] = "192.0.2.20"
+        writer_lab.instrument_bindings = bindings
+        writer.commit()
+
+        resolved = resolve_base_station_binding(
+            db,
+            SimpleNamespace(
+                drivers={"baseStation": _real_driver("CMW500", "192.0.2.20")}
+            ),
+            lab,
+            lock=True,
+        )
+
+        assert resolved.expected_transport is not None
+        assert resolved.expected_transport.host == "192.0.2.20"
+    finally:
+        writer.close()
+        db.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()

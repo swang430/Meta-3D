@@ -911,13 +911,11 @@ class InstrumentHALService:
                             )
                             extras = {}
 
-                        # Update connection status in DB.
-                        # P2-1: persist detected_test_app (UXM) into
-                        # connection_params so operator-facing GUI can
-                        # show "currently running LTE_NR_IRAT" without
-                        # poking the readiness endpoint; also pre-warm
-                        # the binding-time topology compat check before
-                        # HAL is queried again.
+                        # Update connection status in DB.  Driver-detected
+                        # Test App is runtime observation only and stays on
+                        # the live driver/readiness metadata; persisting it
+                        # into shared connection_params can overwrite a model
+                        # switch that completed while connect() was in flight.
                         if conn:
                             conn.status = "connected"
                             conn.last_error = None
@@ -925,11 +923,6 @@ class InstrumentHALService:
                             # ``from datetime import datetime`` would shadow it and
                             # UnboundLocalError later when every driver fails.
                             conn.last_connected_at = datetime.utcnow()
-                            detected = extras.get("detected_test_app")
-                            if detected is not None:
-                                params = dict(conn.connection_params or {})
-                                params["detected_test_app"] = detected
-                                conn.connection_params = params
                             db.commit()
 
                         # P2-1: auto-apply the binding's operator-selected

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
@@ -159,6 +159,35 @@ def test_active_certification_is_derived_only_from_server_execution_evidence(db)
         mode="json"
     )
     assert connection.cmw500_lte_2x2_formal_enabled is False
+
+
+def test_site_certification_locks_category_before_connection(db, monkeypatch):
+    """与执行/拓扑冻结共用 category→connection 主锁序，避免 ABBA。"""
+
+    connection, _lab, _case, execution, hal = _source_execution(db)
+    locked_entities = []
+    original = Query.with_for_update
+
+    def _tracked_with_for_update(query, *args, **kwargs):
+        locked_entities.append(query.column_descriptions[0].get("entity"))
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", _tracked_with_for_update)
+    activate_base_station_site_certification(
+        db,
+        hal,
+        connection_id=connection.id,
+        source_execution_id=execution.id,
+        certified_by="quality-owner",
+        reason="lock order proof",
+    )
+
+    assert locked_entities[:4] == [
+        TestExecution,
+        InstrumentCategory,
+        LabProfile,
+        InstrumentConnection,
+    ]
 
 
 @pytest.mark.parametrize(

@@ -235,6 +235,29 @@ class TestSyncInstrumentBinding:
                     },
                 },
             },
+            base_station_model_presets={
+                str(model.id): {
+                    "schema_version": 1,
+                    "model_id": str(model.id),
+                    "endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
+                    "controller": "",
+                    "notes": "",
+                    "connection_params": {},
+                    "base_station_adapter_profile": {
+                        "schema_version": 1,
+                        "adapter": "cmw500",
+                        "lte_2x2_internal_route": {
+                            "pcc_bb_board": "BB1",
+                            "rx_connector": "RF1C",
+                            "rx_converter": "RX1",
+                            "tx1_connector": "RF1C",
+                            "tx1_converter": "TX1",
+                            "tx2_connector": "RF2C",
+                            "tx2_converter": "TX2",
+                        },
+                    },
+                },
+            },
         ))
         driver = RealCmw500Driver(
             "cmw",
@@ -336,6 +359,17 @@ class TestSyncInstrumentBinding:
             category_id=category.id,
             endpoint="TCPIP0::192.168.100.22::inst0::INSTR",
             connection_params={"detected_test_app": "LTE_NR_IRAT"},
+            base_station_model_presets={
+                str(model.id): {
+                    "schema_version": 1,
+                    "model_id": str(model.id),
+                    "endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
+                    "controller": "",
+                    "notes": "",
+                    "connection_params": {},
+                    "base_station_adapter_profile": None,
+                },
+            },
         ))
         monkeypatch.setattr(
             instrument_hal_service,
@@ -361,3 +395,73 @@ class TestSyncInstrumentBinding:
         assert "pcc_bb_board" in response.json()["detail"]
         db.refresh(lab)
         assert lab.instrument_bindings in (None, [])
+
+    def test_rejects_unsaved_or_drifted_base_station_before_mutating_lab(
+        self, db, lab, monkeypatch
+    ):
+        category = InstrumentCategory(
+            category_key="baseStation",
+            category_name="Base Station",
+            driver_mode="real",
+            is_active=True,
+        )
+        db.add(category)
+        db.flush()
+        model = InstrumentModel(
+            category_id=category.id,
+            vendor="Keysight",
+            model="UXM 5G E7515B",
+            capabilities={},
+            is_available=True,
+        )
+        db.add(model)
+        db.flush()
+        category.selected_model_id = model.id
+        connection = InstrumentConnection(
+            category_id=category.id,
+            endpoint="192.168.1.112",
+            protocol="socket",
+            connection_params={"timeout_ms": 30000},
+        )
+        db.add(connection)
+        monkeypatch.setattr(
+            instrument_hal_service,
+            "_hal_service",
+            SimpleNamespace(drivers={"baseStation": object()}),
+        )
+        lab.instrument_bindings = [{
+            "category_id": str(category.id),
+            "instrument_model_id": str(model.id),
+            "connection_endpoint": "keep-existing",
+            "driver_mode": "real",
+            "role": "primary_baseStation",
+        }]
+        db.commit()
+
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+        )
+        assert response.status_code == 422
+        assert "保存配置" in response.json()["detail"]
+        db.refresh(lab)
+        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-existing"
+
+        connection.base_station_model_presets = {
+            str(model.id): {
+                "schema_version": 1,
+                "model_id": str(model.id),
+                "endpoint": "192.168.1.113",
+                "controller": "socket",
+                "notes": "",
+                "connection_params": {"timeout_ms": 30000},
+                "base_station_adapter_profile": None,
+            },
+        }
+        db.commit()
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+        )
+        assert response.status_code == 422
+        assert "已保存 preset 不一致" in response.json()["detail"]
+        db.refresh(lab)
+        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-existing"

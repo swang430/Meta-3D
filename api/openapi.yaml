@@ -2157,6 +2157,31 @@ components:
           type: string
           enum: [site_certification]
       required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
+    BaseStationModelPreset:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        model_id:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+          minLength: 1
+        controller:
+          type: string
+        notes:
+          type: string
+        connection_params:
+          type: object
+          additionalProperties: true
+        base_station_adapter_profile:
+          type: object
+          nullable: true
+          additionalProperties: true
+      required: [schema_version, model_id, endpoint, controller, notes, connection_params, base_station_adapter_profile]
     InstrumentConnection:
       type: object
       properties:
@@ -2176,6 +2201,10 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+        base_station_model_presets:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/BaseStationModelPreset'
         cmw500_lte_2x2_formal_enabled:
           type: boolean
           description: Read-only durable rollout approval; generic connection update cannot write it.
@@ -2187,7 +2216,7 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
           nullable: true
-      required: [id, endpoint, controller, notes, connection_params, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
+      required: [id, endpoint, controller, notes, connection_params, base_station_model_presets, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
       additionalProperties: false
     Cmw500FormalCapabilityUpdate:
       type: object

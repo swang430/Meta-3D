@@ -104,6 +104,10 @@ import {
   buildDiagnosticTarget,
   diagnosticErrorMessage,
 } from './features/Equipment/diagnosticTarget'
+import {
+  draftForBaseStationModel,
+  explicitBaseStationConnectionDraft,
+} from './features/Equipment/baseStationModelPresetDraft'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1915,6 +1919,14 @@ function EquipmentManager() {
 
   const handleModelChange = useCallback(
     (categoryKey: string, modelId: string) => {
+      const category = categories.find((item) => item.key === categoryKey)
+      if (categoryKey === 'baseStation' && category) {
+        setDrafts((prev) => ({
+          ...prev,
+          [categoryKey]: draftForBaseStationModel(category, modelId),
+        }))
+        return
+      }
       setDrafts((prev) => {
         const current =
           prev[categoryKey] ?? ({ modelId: '', endpoint: '', controller: '', notes: '' } as EquipmentDraft)
@@ -1973,7 +1985,8 @@ function EquipmentManager() {
       const draft = drafts[categoryKey]
       if (!draft) return
       
-      let parsedParams: Record<string, unknown> | undefined
+      let parsedParams: Record<string, unknown> | undefined =
+        categoryKey === 'baseStation' ? {} : undefined
       if (draft.connection_params) {
         try {
           parsedParams = JSON.parse(draft.connection_params)
@@ -2012,15 +2025,19 @@ function EquipmentManager() {
       instrumentMutation.mutate({
         categoryKey,
         payload: {
-          connection: {
-            endpoint: draft.endpoint || undefined,
-            controller: draft.controller || undefined,
-            notes: draft.notes || undefined,
-            ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-            ...(baseStationProfile !== undefined
-              ? { base_station_adapter_profile: baseStationProfile }
-              : {}),
-          },
+          ...(categoryKey === 'baseStation' ? { modelId: draft.modelId } : {}),
+          connection: categoryKey === 'baseStation'
+            ? explicitBaseStationConnectionDraft(
+                draft,
+                parsedParams ?? {},
+                baseStationProfile ?? null,
+              )
+            : {
+                endpoint: draft.endpoint || undefined,
+                controller: draft.controller || undefined,
+                notes: draft.notes || undefined,
+                ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+              },
         },
       })
     },
@@ -2393,10 +2410,11 @@ function EquipmentManager() {
                   )
                 })()}
 
-                {category.key === 'baseStation' && (
-                  // P2-1: UXM topology profile picker. Component itself
-                  // bails (returns null) if backend says reason='not_a_uxm'
-                  // — safe to render unconditionally for baseStation.
+                {category.key === 'baseStation'
+                  && drawerSelectedModel?.base_station_manifest?.adapter_id === 'uxm'
+                  && (
+                  // P2-1: topology profiles belong to the saved/draft UXM
+                  // adapter only; CMW500 must never expose or persist them.
                   <TopologyProfileCard categoryKey={category.key} />
                 )}
 

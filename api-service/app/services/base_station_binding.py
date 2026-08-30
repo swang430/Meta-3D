@@ -192,6 +192,84 @@ def _expected_transport(connection: InstrumentConnection) -> dict[str, Any]:
     return {"host": host, "port": port, "resource": resource}
 
 
+def validate_loaded_base_station_driver_binding(
+    model: InstrumentModel,
+    connection: InstrumentConnection,
+    driver,
+) -> str | None:
+    """Validate a loaded real driver against saved model and transport truth."""
+
+    if driver is None:
+        return "loaded driver is missing"
+    if is_mock_driver(driver):
+        return "loaded driver is simulated"
+    try:
+        registration = get_base_station_adapter_registration(model.model)
+    except KeyError:
+        return "selected baseStation model has no registered real driver"
+    if type(driver) is not registration.driver_class:
+        return "loaded driver does not match selected registry class"
+    if getattr(driver, "adapter_id", None) != registration.manifest.adapter_id:
+        return "loaded driver adapter does not match selected adapter"
+    try:
+        expected_transport = _expected_transport(connection)
+    except ValueError as exc:
+        return str(exc)
+    if _driver_transport(driver) != expected_transport:
+        return (
+            "loaded driver connection identity/transport does not match "
+            "selected connection"
+        )
+    return None
+
+
+def build_saved_base_station_driver_validator(
+    model: InstrumentModel,
+    connection: InstrumentConnection,
+):
+    """Freeze saved driver identity for a lease-time pre-I/O validation."""
+
+    try:
+        registration = get_base_station_adapter_registration(model.model)
+    except KeyError as exc:
+        raise ValueError(
+            "selected baseStation model has no registered real driver"
+        ) from exc
+    expected_class = registration.driver_class
+    expected_adapter = registration.manifest.adapter_id
+    expected_transport = _expected_transport(connection)
+    identity = _canonical_digest(
+        {
+            "driver_module": expected_class.__module__,
+            "driver_name": expected_class.__name__,
+            "adapter_id": expected_adapter,
+            "transport": expected_transport,
+        }
+    )
+
+    def _validate(hal):
+        driver = _loaded_base_station(hal)
+        if driver is None:
+            detail = "loaded driver is missing"
+        elif is_mock_driver(driver):
+            detail = "loaded driver is simulated"
+        elif type(driver) is not expected_class:
+            detail = "loaded driver does not match selected registry class"
+        elif getattr(driver, "adapter_id", None) != expected_adapter:
+            detail = "loaded driver adapter does not match selected adapter"
+        elif _driver_transport(driver) != expected_transport:
+            detail = (
+                "loaded driver connection identity/transport does not match "
+                "selected connection"
+            )
+        else:
+            return None
+        return f"baseStation driver binding mismatch: {detail}"
+
+    _validate.validation_identity = identity
+    return _validate
+
+
 def _single_binding(lab: LabProfile, category_id: str) -> dict[str, Any]:
     bindings = lab.instrument_bindings
     if not isinstance(bindings, list):
@@ -230,7 +308,9 @@ def resolve_base_station_binding(
         InstrumentCategory.category_key == "baseStation"
     )
     if lock:
-        category_query = category_query.with_for_update()
+        category_query = category_query.execution_options(
+            populate_existing=True
+        ).with_for_update()
     category = category_query.one_or_none()
     if category is None:
         raise ValueError("baseStation category is not configured")
@@ -240,6 +320,7 @@ def resolve_base_station_binding(
         lab = (
             db.query(LabProfile)
             .filter(LabProfile.id == selected_lab_profile.id)
+            .execution_options(populate_existing=True)
             .with_for_update()
             .one_or_none()
         )
@@ -310,14 +391,16 @@ def resolve_base_station_binding(
 
     if str(binding_model_id) != str(selected_model_id):
         raise ValueError("baseStation binding does not match selected_model_id")
-    model = (
-        db.query(InstrumentModel)
-        .filter(
-            InstrumentModel.id == selected_model_id,
-            InstrumentModel.category_id == category.id,
-        )
-        .one_or_none()
+    model_query = db.query(InstrumentModel).filter(
+        InstrumentModel.id == selected_model_id,
+        InstrumentModel.category_id == category.id,
     )
+    if lock:
+        # InstrumentModel rows are registry metadata and are not mutated in this
+        # workflow, but a preloaded identity-map value must not become binding
+        # truth after the surrounding persistent rows have been locked.
+        model_query = model_query.execution_options(populate_existing=True)
+    model = model_query.one_or_none()
     if model is None:
         raise ValueError("selected baseStation model is missing from the registry")
 
@@ -325,7 +408,9 @@ def resolve_base_station_binding(
         InstrumentConnection.category_id == category.id
     )
     if lock:
-        connection_query = connection_query.with_for_update()
+        connection_query = connection_query.execution_options(
+            populate_existing=True
+        ).with_for_update()
     connection = connection_query.one_or_none()
     if connection is None:
         raise ValueError("selected baseStation connection is missing")
@@ -343,15 +428,16 @@ def resolve_base_station_binding(
         registration = get_base_station_adapter_registration(model.model)
     except KeyError as exc:
         raise ValueError("selected baseStation model has no registered real driver") from exc
-    expected_class = registration.driver_class
-    if not simulated and type(driver) is not expected_class:
-        raise ValueError("loaded driver does not match selected registry class")
-
     expected_transport = _expected_transport(connection)
-    if not simulated and _driver_transport(driver) != expected_transport:
-        raise ValueError(
-            "loaded driver connection identity/transport does not match selected connection"
+    expected_class = registration.driver_class
+    if not simulated:
+        driver_binding_error = validate_loaded_base_station_driver_binding(
+            model,
+            connection,
+            driver,
         )
+        if driver_binding_error is not None:
+            raise ValueError(driver_binding_error)
 
     params = connection.connection_params if isinstance(connection.connection_params, dict) else {}
     raw_profile = params.get("base_station_adapter_profile")

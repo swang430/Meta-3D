@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.instrument import (
@@ -115,6 +115,25 @@ def test_formal_capability_defaults_false_and_only_dedicated_endpoint_can_toggle
     assert connection.cmw500_lte_2x2_formal_enabled is True
     assert isinstance(connection.cmw500_lte_2x2_formal_updated_at, datetime)
     assert category.category_key == "baseStation"
+
+
+def test_formal_capability_locks_category_before_connection(db, monkeypatch):
+    category, _, connection = _configured(db)
+    locked_entities = []
+    original = Query.with_for_update
+
+    def _tracked_with_for_update(query, *args, **kwargs):
+        locked_entities.append(query.column_descriptions[0].get("entity"))
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", _tracked_with_for_update)
+    update_cmw500_lte_2x2_formal_capability(
+        connection.id,
+        Cmw500FormalCapabilityUpdate(enabled=True),
+        db,
+    )
+
+    assert locked_entities[:2] == [InstrumentCategory, InstrumentConnection]
 
 
 def test_cmw500_remains_registered_as_the_base_station_adapter():
