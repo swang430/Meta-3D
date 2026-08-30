@@ -312,7 +312,7 @@ def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db)
     lab.instrument_bindings = bindings
     db.commit()
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock", {})}
+        drivers={"baseStation": MockBaseStation("mock", {"model": "CMW500"})}
     )
 
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)

@@ -428,6 +428,15 @@ def resolve_base_station_binding(
         registration = get_base_station_adapter_registration(model.model)
     except KeyError as exc:
         raise ValueError("selected baseStation model has no registered real driver") from exc
+    if (
+        simulated
+        and getattr(driver, "adapter_id", None)
+        != registration.manifest.adapter_id
+    ):
+        raise ValueError(
+            "loaded mock driver adapter does not match selected adapter; "
+            "reload HAL after BaseStation model change"
+        )
     expected_transport = _expected_transport(connection)
     expected_class = registration.driver_class
     if not simulated:

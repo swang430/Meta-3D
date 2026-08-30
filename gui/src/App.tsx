@@ -1769,7 +1769,12 @@ function EquipmentManager() {
     }
   }, [])
 
-  const showFeedback = useCallback((categoryKey: string, type: 'success' | 'error', message: string) => {
+  const showFeedback = useCallback((
+    categoryKey: string,
+    type: 'success' | 'error',
+    message: string,
+    durationMs = 2000,
+  ) => {
     const activeTimer = feedbackTimers.current[categoryKey]
     if (activeTimer) {
       window.clearTimeout(activeTimer)
@@ -1781,7 +1786,7 @@ function EquipmentManager() {
         return rest
       })
       delete feedbackTimers.current[categoryKey]
-    }, 2000)
+    }, durationMs)
   }, [])
 
   const diagnosticTargetFor = useCallback((
@@ -1842,8 +1847,9 @@ function EquipmentManager() {
         variables.categoryKey,
         'success',
         needsHALReload
-          ? '配置已保存；请重新加载 HAL 后再进行连接测试或 SCPI 操作。'
+          ? '配置已保存；请点击页面顶部「↻ 重新加载驱动」，再进行同步、连接测试或用例执行。'
           : '配置已保存。',
+        updatedCategory.key === 'baseStation' ? 12000 : 2000,
       )
     },
     onError: (error: unknown, variables) => {

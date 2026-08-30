@@ -169,6 +169,39 @@ def test_configured_authoritative_mock_keeps_manifest_and_profile_but_is_simulat
     assert resolved.runtime_driver.simulated is True
 
 
+@pytest.mark.parametrize(
+    ("selected_model", "loaded_model"),
+    [
+        ("CMW500", "UXM 5G E7515B"),
+        ("UXM 5G E7515B", "CMW500"),
+    ],
+)
+def test_configured_mock_rejects_stale_adapter_until_hal_is_reloaded(
+    db,
+    selected_model,
+    loaded_model,
+):
+    _, _, _, lab = _configured(
+        db,
+        model_name=selected_model,
+        driver_mode="mock",
+    )
+    stale_mock = MockBaseStation("mock", {"model": loaded_model})
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "loaded mock driver adapter does not match selected adapter; "
+            "reload HAL after BaseStation model change"
+        ),
+    ):
+        resolve_base_station_binding(
+            db,
+            SimpleNamespace(drivers={"baseStation": stale_mock}),
+            lab,
+        )
+
+
 def test_only_authoritative_mock_may_resolve_diagnostic_unbound(db):
     category = InstrumentCategory(
         category_key="baseStation",
