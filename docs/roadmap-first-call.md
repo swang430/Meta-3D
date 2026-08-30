@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前状态（现场链事实与本地队列截至 2026-08-29）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态（现场链事实与本地队列截至 2026-08-30）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
 degree 单位与 `PFBK - MOVEABS = +90°` 偏置；P0-9B-3 已完成该真值及其来源/时间的
@@ -4408,7 +4408,17 @@ STATe 查询形只进零写探针（uxm_window_boundary_probe，撞 cap 一律�
 
 固化 fake transport、部分回读、错误队列、超时/取消、Attach 阶段、窗口、逐指标 trust、SAFE_IDLE、
 release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只需 adapter、manifest、profile/schema、
-手册来源和认证测试，若必须修改共同消费者先登记新的平台缺口。
+手册来源和认证测试即可完成 HAL/诊断认证；零修改实证仅覆盖 manifest 注册、计划 resolve 与 MEASURE
+原生窗口。正式 binding/profile-freeze/evidence 若需泛化，先登记并独立处理平台缺口。
+
+**本地实现完成（2026-08-30，待 PR 外审）**：新增 14 个可参数化认证函数与测试域第三 adapter
+`certfake`，UXM / CMW500 / certfake 共同覆盖上述十类边界、注册门、执行计划中立性及 MEASURE
+原生窗口消费；3 个判定器自测证明 clear 写拒绝、Attach 永不达标、跳过错误队列时认证会红，另有
+生产代码零 `certfake` 泄漏门。专项 **46 passed**，扩大相关链 **254 passed**。该夹具不注册生产 HAL，
+不新增或猜测 SCPI，也不把本地认证当成第三真机已接入；正式 binding/profile-freeze 的封闭 adapter
+枚举已如实登记为平台缺口候选。全后端 **5490 passed / 5 skipped**、规则门 **59 passed**，
+`compileall`、单一 Alembic head `e6a8c0d2f4b6` 与 staged diff-check 通过；本片未改 GUI/OpenAPI，
+故未运行其契约与 production build。
 
 ---
 
@@ -4470,6 +4480,13 @@ release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只�
 
 - `[discovered 2026-08-30 during P2-51 CMW500 MAC 取证]` **LTE TDD 正式路径缺口（P2）** —— TestCase 契约无 LTE TDD 配比字段；`CELL[:PCC]:ULDL`（手册 p.687）+ `RMC:VERSion:DL<s>`（p.803）未实现。NR slot 字符串不可如实翻译为 LTE 0..6 配比，当前 TDD duplex 下 configure_mac_throughput_test 整体 fail-loud。详见取证清单 §8。
 - `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。修法方向：窗口层驱动 SFRames（换源到 TestCase 的 stat_count）。
+
+### 2026-08-30 P2-53 第三 adapter 认证期平台缺口（待 triage，不自动启动）
+
+- `[discovered 2026-08-30 during P2-53]` **第三 adapter 的正式 binding/profile-freeze 与 execution evidence 仍被封闭枚举阻断** —— `BaseStationAdapterProfileResolution.adapter` 仍是 `Literal["uxm", "cmw500"]`，`base_station_binding.py` 只有两家分支；`base_station_execution_evidence.py` 的 identity/config/attach/window/metric/release/总 envelope 以及 `execution_scpi_evidence.py` 的初始化/解析也仍是两厂商边界。认证套件已证明 HAL/manifest/receipt/Attach/window/metric/SAFE_IDLE/release 与 MEASURE 原生窗口无需新增厂商分支，但没有经过正式 evidence 持久化/解析链；真实第三厂商进入正式执行前须把上述边界统一改成注册驱动。本片不借测试夹具扩大生产范围。
+- `[discovered 2026-08-30 during P2-53]` **MEASURE 尚有 7 处可选能力散点探测，其中部分 `hasattr` 对基类抽象方法恒真** —— 当前第三 adapter 缺这些可选能力仍能完成认证，因此不阻塞接入；若后续出现实际故障，应收敛为 execution-plan 维度并用 planned/method drift fail-loud，不能继续增加厂商分支。
+- `[discovered 2026-08-30 during P2-53]` **SCell 计划仍由类属性而非 manifest operation token 声明** —— 当前无真实 adapter 声明该权威能力，不为零覆盖机制提前施工；首个有手册依据的 SCell adapter 到来时，再同时裁决类属性/实例 property 镜像语义。
+- `[discovered 2026-08-30 during P2-53]` **MAC blocker 的 mock 豁免仍在计划判据外** —— 现有 mock 不进入正式 KPI，当前无可观察故障；仅当后续第三 adapter 的 simulated 变体被误伤时再独立 triage，不在认证套件中改共同消费者。
 
 ### 2026-08-28 P2-9 精确分类枚举（待 triage，不自动启动）
 
