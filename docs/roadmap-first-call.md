@@ -3467,9 +3467,8 @@ across UXM / CMW500 / CMP200"). Investigation found:
     `set_cell_config` or returns structured refusal dict (caller
     surfaces test_app + compatible_with to operator).
 - HAL service `_initialize_from_db` post-connect:
-  - Persists driver's `detected_test_app` into
-    `InstrumentConnection.connection_params["detected_test_app"]` for
-    GUI audit / pre-warming the binding's compat check.
+  - Exposes driver's `detected_test_app` only as live readiness metadata;
+    runtime observation never mutates the saved connection preset.
   - If binding has `connection_params["topology_profile_id"]` set,
     auto-calls `driver.apply_topology_profile()` (incompat is logged
     WARNING but doesn't fail HAL init — operator fixes via PUT

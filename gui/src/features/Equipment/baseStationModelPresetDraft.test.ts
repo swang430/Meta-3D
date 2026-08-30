@@ -144,3 +144,11 @@ test('BaseStation save submits cleared fields instead of silently keeping the ol
   )
   assert.match(saveHandler, /explicitBaseStationConnectionDraft\(/)
 })
+
+test('UXM topology card is rendered only for the draft UXM adapter', () => {
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  assert.match(
+    app,
+    /drawerSelectedModel\?\.base_station_manifest\?\.adapter_id === ['"]uxm['"][\s\S]*?<TopologyProfileCard/,
+  )
+})

@@ -11,6 +11,18 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.instrument import InstrumentConnection, InstrumentModel
 
 
+BASE_STATION_RUNTIME_CONNECTION_PARAM_KEYS = frozenset({"detected_test_app"})
+
+
+def persistent_base_station_connection_params(raw: Any) -> dict[str, Any]:
+    """Return only operator-saved parameters, excluding runtime observations."""
+
+    params = dict(raw or {})
+    for key in BASE_STATION_RUNTIME_CONNECTION_PARAM_KEYS:
+        params.pop(key, None)
+    return params
+
+
 class BaseStationModelPreset(BaseModel):
     """One saved model draft; never used directly as execution truth."""
 
@@ -93,8 +105,9 @@ def _snapshot_active_connection(
     endpoint = (connection.endpoint or "").strip()
     if not endpoint:
         return None
-    params = dict(connection.connection_params or {})
-    raw_profile = params.pop("base_station_adapter_profile", None)
+    raw_params = dict(connection.connection_params or {})
+    raw_profile = raw_params.pop("base_station_adapter_profile", None)
+    params = persistent_base_station_connection_params(raw_params)
     profile = _validated_profile_for_model(model, raw_profile)
     return BaseStationModelPreset(
         model_id=model.id,
@@ -137,6 +150,7 @@ def save_base_station_model_preset(
         raise ValueError(
             "base_station_adapter_profile must use the dedicated manifest-validated field"
         )
+    generic_params = persistent_base_station_connection_params(generic_params)
     profile = _validated_profile_for_model(
         target_model, base_station_adapter_profile
     )
@@ -185,8 +199,10 @@ def require_saved_active_base_station_preset(
             "BaseStation 当前型号没有已保存配置；请先在仪器资源配置中点击保存配置"
         )
 
-    active_params = dict(connection.connection_params or {})
-    active_profile = active_params.pop("base_station_adapter_profile", None)
+    raw_active_params = dict(connection.connection_params or {})
+    active_profile = raw_active_params.get("base_station_adapter_profile")
+    active_params = persistent_base_station_connection_params(raw_active_params)
+    active_params.pop("base_station_adapter_profile", None)
     mismatches: list[str] = []
     if (connection.endpoint or "").strip() != preset.endpoint:
         mismatches.append("endpoint")
@@ -205,3 +221,34 @@ def require_saved_active_base_station_preset(
             + "；请重新保存配置后再同步 LabProfile"
         )
     return preset
+
+
+def synchronize_saved_active_base_station_preset_params(
+    *,
+    selected_model_id: Any,
+    connection: InstrumentConnection,
+) -> bool:
+    """Mirror an operator-persisted active parameter edit into its saved preset."""
+
+    if selected_model_id is None:
+        return False
+    presets = parse_base_station_model_presets(connection.base_station_model_presets)
+    key = str(selected_model_id)
+    preset = presets.get(key)
+    if preset is None:
+        return False
+    active_params = persistent_base_station_connection_params(
+        connection.connection_params
+    )
+    active_params.pop("base_station_adapter_profile", None)
+    presets[key] = preset.model_copy(
+        update={
+            "connection_params": active_params
+        }
+    )
+    connection.base_station_model_presets = {
+        preset_key: value.model_dump(mode="json")
+        for preset_key, value in presets.items()
+    }
+    flag_modified(connection, "base_station_model_presets")
+    return True

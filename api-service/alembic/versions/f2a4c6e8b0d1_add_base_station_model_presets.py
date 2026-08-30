@@ -66,6 +66,7 @@ def upgrade() -> None:
             raw_params = json.loads(raw_params)
         params = dict(raw_params or {})
         profile = params.pop("base_station_adapter_profile", None)
+        params.pop("detected_test_app", None)
         model_id = str(row["selected_model_id"])
         preset = {
             "schema_version": 1,

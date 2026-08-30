@@ -1,4 +1,5 @@
 from uuid import uuid4
+from inspect import getsource
 
 import pytest
 from sqlalchemy import create_engine
@@ -193,3 +194,12 @@ def test_recovery_rejects_simulated_unconfirmed_or_mismatched_evidence(
             source_execution_id=execution.id,
             apply=True,
         )
+
+
+def test_recovery_locks_category_then_connection_before_merging_preset_map():
+    source = getsource(recover_cmw500_model_preset)
+    category_lock = source.index("InstrumentCategory")
+    connection_lock = source.index("InstrumentConnection")
+    merge = source.index("parse_base_station_model_presets")
+    assert "with_for_update" in source[category_lock:connection_lock]
+    assert "with_for_update" in source[connection_lock:merge]

@@ -7,7 +7,11 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.instrument import InstrumentConnection, InstrumentModel
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.test_plan import TestExecution
 from app.services.base_station_model_preset import (
     BaseStationModelPreset,
@@ -45,10 +49,26 @@ def recover_cmw500_model_preset(
     reusable saved draft only; it does not grant formal qualification.
     """
 
-    connection = db.get(InstrumentConnection, connection_id)
+    category = (
+        db.query(InstrumentCategory)
+        .filter(InstrumentCategory.category_key == "baseStation")
+        .with_for_update()
+        .one_or_none()
+    )
+    connection = None
+    if category is not None:
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(
+                InstrumentConnection.id == connection_id,
+                InstrumentConnection.category_id == category.id,
+            )
+            .with_for_update()
+            .one_or_none()
+        )
     model = db.get(InstrumentModel, model_id)
     execution = db.get(TestExecution, source_execution_id)
-    if connection is None or model is None or execution is None:
+    if category is None or connection is None or model is None or execution is None:
         raise ValueError("recovery target connection, model, or execution is missing")
     if model.category_id != connection.category_id or model.model != "CMW500":
         raise ValueError("recovery target must be the CMW500 model on this connection")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -66,3 +67,21 @@ def test_preset_rejects_blank_endpoint_and_embedded_profile_in_generic_params():
 def test_server_owned_preset_map_has_dedicated_storage_and_no_write_field():
     assert hasattr(InstrumentConnection, "base_station_model_presets")
     assert "base_station_model_presets" not in FEConnectionUpdate.model_fields
+
+
+def test_preset_backfill_never_promotes_runtime_detected_app_to_saved_truth():
+    migration = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "f2a4c6e8b0d1_add_base_station_model_presets.py"
+    ).read_text(encoding="utf-8")
+    assert 'params.pop("detected_test_app", None)' in migration
+
+
+def test_hal_connect_does_not_persist_runtime_detected_test_app():
+    source = (
+        Path(__file__).parents[1]
+        / "app/services/instrument_hal_service.py"
+    ).read_text(encoding="utf-8")
+    assert 'params["detected_test_app"] = detected' not in source

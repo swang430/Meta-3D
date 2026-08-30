@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,9 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base, get_db
 from app.main import app
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
+from app.services.base_station_model_preset import (
+    require_saved_active_base_station_preset,
+)
 
 
 def _cmw_profile(rx: str = "RF1C") -> dict:
@@ -215,3 +219,78 @@ def test_catalog_response_exposes_server_owned_presets_after_save(atomic_db):
     presets = body["connection"]["base_station_model_presets"]
     assert set(presets) == {str(cmw_id), str(uxm_id)}
     assert presets[str(uxm_id)]["endpoint"] == "192.168.1.112"
+
+
+def test_runtime_detected_app_does_not_make_saved_uxm_preset_drift(atomic_db):
+    Session, category_id, _cmw_id, uxm_id = atomic_db
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/v1/instruments/baseStation",
+            json={
+                "modelId": str(uxm_id),
+                "connection": {
+                    "endpoint": "192.168.1.112",
+                    "controller": "socket",
+                    "connection_params": {"timeout_ms": 30000},
+                    "base_station_adapter_profile": None,
+                },
+            },
+        )
+    assert response.status_code == 200, response.text
+
+    with Session() as db:
+        model = db.get(InstrumentModel, uxm_id)
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.category_id == category_id)
+            .one()
+        )
+        connection.connection_params = {
+            **connection.connection_params,
+            "detected_test_app": "LTE_NR_IRAT",
+        }
+        db.flush()
+        assert require_saved_active_base_station_preset(
+            model=model,
+            connection=connection,
+        ).connection_params == {"timeout_ms": 30000}
+
+
+def test_topology_selection_updates_the_selected_saved_uxm_preset(atomic_db):
+    Session, category_id, _cmw_id, uxm_id = atomic_db
+    with TestClient(app) as client:
+        saved = client.put(
+            "/api/v1/instruments/baseStation",
+            json={
+                "modelId": str(uxm_id),
+                "connection": {
+                    "endpoint": "192.168.1.112",
+                    "controller": "socket",
+                    "connection_params": {"timeout_ms": 30000},
+                    "base_station_adapter_profile": None,
+                },
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=None,
+        ):
+            selected = client.put(
+                "/api/v1/instruments/baseStation/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+    assert selected.status_code == 200, selected.text
+
+    with Session() as db:
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.category_id == category_id)
+            .one()
+        )
+        assert connection.base_station_model_presets[str(uxm_id)][
+            "connection_params"
+        ] == {
+            "timeout_ms": 30000,
+            "topology_profile_id": "caict_n78_2x2",
+        }

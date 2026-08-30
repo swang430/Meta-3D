@@ -10,6 +10,7 @@ from uuid import UUID
 import logging
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Literal, Optional
 
@@ -37,7 +38,10 @@ from app.schemas.instrument import (
 )
 from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
 from app.services.diagnostic_context import build_diagnostic_context
-from app.services.instrument_test_lease import instrument_test_lease
+from app.services.instrument_test_lease import (
+    InstrumentTestLeaseError,
+    instrument_test_lease,
+)
 from app.services.execution_qualification import (
     BaseStationSiteCertification,
     activate_base_station_site_certification,
@@ -855,6 +859,27 @@ def _resolve_current_test_app(driver: Any) -> Optional[str]:
     return raw if isinstance(raw, str) else None
 
 
+def _selected_base_station_adapter_id(
+    db: Session,
+    category: InstrumentCategoryModel,
+) -> Optional[str]:
+    """Resolve the adapter from the currently persisted model selection."""
+
+    if category.category_key != "baseStation" or category.selected_model_id is None:
+        return None
+    model = db.get(InstrumentModelDB, category.selected_model_id)
+    if model is None:
+        return None
+    from app.services.instrument_hal_service import (
+        get_base_station_adapter_registration,
+    )
+
+    try:
+        return get_base_station_adapter_registration(model.model).manifest.adapter_id
+    except KeyError:
+        return None
+
+
 @router.get(
     "/instruments/{category_key}/topology-profiles",
     response_model=TopologyProfilesListResult,
@@ -883,6 +908,14 @@ def list_topology_profiles_endpoint(
         raise HTTPException(
             status_code=404,
             detail=f"Instrument category '{category_key}' not found",
+        )
+
+    if _selected_base_station_adapter_id(db, cat) != "uxm":
+        return TopologyProfilesListResult(
+            items=[],
+            current_test_app=None,
+            selected_topology_profile_id=None,
+            reason="not_a_uxm",
         )
 
     raw = _list_topology_profiles_for_category(db, category_key)
@@ -986,6 +1019,12 @@ async def select_topology_profile_endpoint(
             detail=f"No connection row for category '{category_key}' — configure endpoint first",
         )
 
+    if _selected_base_station_adapter_id(db, cat) != "uxm":
+        raise HTTPException(
+            status_code=422,
+            detail="Topology profiles are only valid for a saved UXM binding",
+        )
+
     profile_id = request.profile_id
 
     # Validate profile_id (if non-null) exists. P2-1 Phase 2.1: source of
@@ -993,12 +1032,15 @@ async def select_topology_profile_endpoint(
     # custom profiles). Fall back to in-code registry for the greenfield
     # first-boot window where bootstrap hasn't run yet.
     proposed_dc = None
+    proposed_source: Optional[Literal["db", "registry"]] = None
+    frozen_profile_payload: Optional[Dict[str, Any]] = None
     if profile_id is not None:
         from app.services.topology_profile_service import (
-            TopologyProfileNotFound, get_dataclass,
+            TopologyProfileNotFound, get_row, to_dataclass,
         )
         try:
-            proposed_dc = get_dataclass(db, profile_id)
+            proposed_dc = to_dataclass(get_row(db, profile_id))
+            proposed_source = "db"
         except TopologyProfileNotFound:
             from app.hal.uxm_test_profiles import (
                 _PROFILE_REGISTRY, _register_builtin_profiles,
@@ -1017,50 +1059,81 @@ async def select_topology_profile_endpoint(
                     detail=f"Topology profile {profile_id!r} not found. "
                            f"Available: {available}",
                 )
+            proposed_source = "registry"
+        frozen_profile_payload = asdict(proposed_dc)
 
-    # Get live driver (if any) for compat check + immediate apply.
-    try:
-        from app.services.instrument_hal_service import get_hal_service
-        hal = get_hal_service()
-    except Exception:
-        hal = None
-    driver = (hal.drivers or {}).get(category_key) if hal else None
+    from app.services.base_station_binding import (
+        build_saved_base_station_driver_validator,
+        validate_loaded_base_station_driver_binding,
+    )
+    from app.services.base_station_model_preset import (
+        require_saved_active_base_station_preset,
+        synchronize_saved_active_base_station_preset_params,
+    )
 
-    # Compat check BEFORE DB write — refuses don't half-persist.
-    if proposed_dc is not None and driver is not None:
-        if hasattr(driver, "apply_topology_profile"):
-            current_app = _resolve_current_test_app(driver)
-            if not proposed_dc.is_compatible_with(current_app):
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "refused": True,
-                        "reason": "incompatible_test_app",
-                        "profile_id": profile_id,
-                        "test_app": current_app,
-                        "profile_compatible_with": list(proposed_dc.compatible_test_apps),
-                        "detail": (
-                            f"Topology profile {profile_id!r} compatible with "
-                            f"{proposed_dc.compatible_test_apps}, but UXM is currently "
-                            f"running Test App {current_app!r}. Pick a compatible "
-                            f"profile or switch the UXM hardware to a matching Test App."
-                        ),
-                    },
-                )
-
-    # 持有 UXM-only 租约跨过“最终兼容性复查→持久化→立即下发”，避免 reload
-    # 在拿 driver 与首条 SCPI 之间换实例，也避免空闲 Local 门让本端点静默退化。
+    # 第一段只在 HAL 协调锁内保存操作员意图，不取得任何仪表 Remote。这样即使
+    # loaded driver 还是旧 endpoint，也不会在确认绑定之前触碰错误硬件。
+    driver = None
+    driver_binding_error: Optional[str] = None
+    saved_binding_validator = None
+    selected_model_id: Optional[UUID] = None
+    connection_id: Optional[UUID] = None
+    frozen_saved_preset_payload: Optional[Dict[str, Any]] = None
     async with instrument_test_lease(
-        f"uxm-topology-profile:{category_key}",
+        f"uxm-topology-profile-save:{category_key}",
         control_f64=False,
-        control_uxm=(category_key == "baseStation"),
+        control_uxm=False,
         enable_monitoring=False,
     ):
+        locked_cat = (
+            db.query(InstrumentCategoryModel)
+            .filter(InstrumentCategoryModel.id == cat.id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .one()
+        )
+        locked_conn = (
+            db.query(InstrumentConnectionDB)
+            .filter(
+                InstrumentConnectionDB.id == conn.id,
+                InstrumentConnectionDB.category_id == locked_cat.id,
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .one()
+        )
+        if _selected_base_station_adapter_id(db, locked_cat) != "uxm":
+            db.rollback()
+            raise HTTPException(
+                status_code=422,
+                detail="Topology profiles are only valid for a saved UXM binding",
+            )
+        selected_model = db.get(InstrumentModelDB, locked_cat.selected_model_id)
+        if selected_model is None:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Saved UXM model is missing")
+        try:
+            require_saved_active_base_station_preset(
+                model=selected_model,
+                connection=locked_conn,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         from app.services.instrument_hal_service import get_hal_service
         live_hal = get_hal_service()
         driver = (live_hal.drivers or {}).get(category_key) if live_hal else None
-        if proposed_dc is not None and driver is not None and hasattr(
-            driver, "apply_topology_profile"
+        driver_binding_error = validate_loaded_base_station_driver_binding(
+            selected_model,
+            locked_conn,
+            driver,
+        )
+        if (
+            proposed_dc is not None
+            and driver is not None
+            and driver_binding_error is None
+            and hasattr(driver, "apply_topology_profile")
         ):
             current_app = _resolve_current_test_app(driver)
             if not proposed_dc.is_compatible_with(current_app):
@@ -1083,37 +1156,238 @@ async def select_topology_profile_endpoint(
                     },
                 )
 
-        params = dict(conn.connection_params or {})
+        saved_binding_validator = build_saved_base_station_driver_validator(
+            selected_model,
+            locked_conn,
+        )
+        selected_model_id = locked_cat.selected_model_id
+        connection_id = locked_conn.id
+
+        params = dict(locked_conn.connection_params or {})
         if profile_id is None:
             params.pop("topology_profile_id", None)
         else:
             params["topology_profile_id"] = profile_id
-        conn.connection_params = params
+        locked_conn.connection_params = params
+        synchronized = synchronize_saved_active_base_station_preset_params(
+            selected_model_id=locked_cat.selected_model_id,
+            connection=locked_conn,
+        )
+        if not synchronized:
+            db.rollback()
+            raise HTTPException(
+                status_code=422,
+                detail="Saved UXM preset is missing; save the instrument configuration first",
+            )
+        frozen_saved_preset = require_saved_active_base_station_preset(
+            model=selected_model,
+            connection=locked_conn,
+        )
+        frozen_saved_preset_payload = {
+            "category_id": str(locked_cat.id),
+            "selected_model_id": str(locked_cat.selected_model_id),
+            "connection_id": str(locked_conn.id),
+            "preset": frozen_saved_preset.model_dump(mode="json"),
+        }
         db.commit()
 
-        applied_now = False
-        apply_skipped_reason: Optional[str] = None
-        test_app: Optional[str] = None
-        if profile_id is None:
-            apply_skipped_reason = "no_selection"
-        elif driver is None:
-            apply_skipped_reason = "no_live_driver"
-        elif not hasattr(driver, "apply_topology_profile"):
-            apply_skipped_reason = "driver_does_not_support_topology_profiles"
-        else:
-            result = await driver.apply_topology_profile(proposed_dc)
-            applied_now = bool(result.get("applied"))
-            test_app = result.get("test_app")
-            if not applied_now:
-                apply_skipped_reason = result.get("reason") or "unknown"
-
+    if profile_id is None:
         return SelectTopologyProfileResult(
             persisted=True,
             profile_id=profile_id,
-            applied_now=applied_now,
-            apply_skipped_reason=apply_skipped_reason,
-            test_app=test_app,
+            apply_skipped_reason="no_selection",
         )
+    if driver is None:
+        return SelectTopologyProfileResult(
+            persisted=True,
+            profile_id=profile_id,
+            apply_skipped_reason="no_live_driver",
+        )
+    if driver_binding_error is not None:
+        return SelectTopologyProfileResult(
+            persisted=True,
+            profile_id=profile_id,
+            apply_skipped_reason="driver_binding_mismatch",
+        )
+    if not hasattr(driver, "apply_topology_profile"):
+        return SelectTopologyProfileResult(
+            persisted=True,
+            profile_id=profile_id,
+            apply_skipped_reason="driver_does_not_support_topology_profiles",
+        )
+
+    assert saved_binding_validator is not None
+    assert selected_model_id is not None
+    assert connection_id is not None
+    assert frozen_saved_preset_payload is not None
+    assert frozen_profile_payload is not None
+    assert proposed_source is not None
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        canonical_snapshot_digest,
+    )
+    frozen_validation_identity = canonical_snapshot_digest(
+        {
+            "driver_binding": saved_binding_validator.validation_identity,
+            "saved_preset": frozen_saved_preset_payload,
+            "topology_profile_source": proposed_source,
+            "topology_profile": frozen_profile_payload,
+        }
+    )
+    validated_driver: Dict[str, Any] = {}
+    validated_profile: Dict[str, Any] = {}
+
+    def _validate_current_saved_binding(hal) -> Optional[str]:
+        """Re-check DB + loaded driver under the lease lock before any I/O."""
+
+        current_cat = (
+            db.query(InstrumentCategoryModel)
+            .filter(InstrumentCategoryModel.id == cat.id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .one_or_none()
+        )
+        current_conn = (
+            db.query(InstrumentConnectionDB)
+            .filter(
+                InstrumentConnectionDB.id == connection_id,
+                InstrumentConnectionDB.category_id == cat.id,
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .one_or_none()
+        )
+        if (
+            current_cat is None
+            or current_conn is None
+            or current_cat.selected_model_id != selected_model_id
+        ):
+            return "baseStation driver binding mismatch: saved selection changed"
+        current_model = db.get(InstrumentModelDB, selected_model_id)
+        if current_model is None:
+            return "baseStation driver binding mismatch: saved model is missing"
+        try:
+            current_preset = require_saved_active_base_station_preset(
+                model=current_model,
+                connection=current_conn,
+            )
+            current_validator = build_saved_base_station_driver_validator(
+                current_model,
+                current_conn,
+            )
+        except ValueError as exc:
+            return f"baseStation driver binding mismatch: {exc}"
+        current_saved_preset_payload = {
+            "category_id": str(current_cat.id),
+            "selected_model_id": str(current_cat.selected_model_id),
+            "connection_id": str(current_conn.id),
+            "preset": current_preset.model_dump(mode="json"),
+        }
+        if current_saved_preset_payload != frozen_saved_preset_payload:
+            return "baseStation saved binding changed: saved preset changed"
+        if (
+            current_validator.validation_identity
+            != saved_binding_validator.validation_identity
+        ):
+            return "baseStation driver binding mismatch: saved binding changed"
+
+        if proposed_source == "db":
+            from app.models.instrument_topology_profile import (
+                InstrumentTopologyProfile,
+            )
+            from app.services.topology_profile_service import to_dataclass
+
+            current_profile_row = (
+                db.query(InstrumentTopologyProfile)
+                .filter(InstrumentTopologyProfile.profile_id == profile_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+                .one_or_none()
+            )
+            if current_profile_row is None:
+                return "baseStation topology profile mismatch: profile was deleted"
+            current_profile = to_dataclass(current_profile_row)
+        else:
+            from app.hal.uxm_test_profiles import (
+                _PROFILE_REGISTRY,
+                _register_builtin_profiles,
+            )
+            if not _PROFILE_REGISTRY:
+                _register_builtin_profiles()
+            current_profile = _PROFILE_REGISTRY.get(profile_id)
+            if current_profile is None:
+                return "baseStation topology profile mismatch: profile is missing"
+        if asdict(current_profile) != frozen_profile_payload:
+            return "baseStation topology profile mismatch: profile changed"
+
+        driver_error = saved_binding_validator(hal)
+        if driver_error:
+            return driver_error
+        drivers = getattr(hal, "drivers", None)
+        current_driver = (
+            drivers.get(category_key)
+            if isinstance(drivers, dict)
+            else None
+        )
+        if current_driver is None:
+            return "baseStation driver binding mismatch: loaded driver is missing"
+        validated_driver["value"] = current_driver
+        validated_profile["value"] = current_profile
+        return None
+
+    _validate_current_saved_binding.validation_identity = frozen_validation_identity
+
+    # 第二段由租约在同一协调锁内依次完成：复核最新 DB/driver → Remote →
+    # apply → release。HAL reload 无法插进校验与首条仪器命令之间。
+    try:
+        try:
+            async with instrument_test_lease(
+                f"uxm-topology-profile-apply:{category_key}",
+                control_f64=False,
+                control_uxm=True,
+                enable_monitoring=False,
+                validate_before_remote=_validate_current_saved_binding,
+            ):
+                # 必须使用 validator 从同一个 lease HAL 冻结的实例；force reload
+                # 最多会关闭该实例并令操作失败，绝不能把 apply 转向未取 Remote 的新实例。
+                result = await validated_driver["value"].apply_topology_profile(
+                    validated_profile["value"]
+                )
+        except InstrumentTestLeaseError as exc:
+            detail = str(exc)
+            if detail.startswith("baseStation saved binding changed:"):
+                return SelectTopologyProfileResult(
+                    persisted=True,
+                    profile_id=profile_id,
+                    apply_skipped_reason="saved_binding_changed",
+                )
+            if detail.startswith("baseStation topology profile mismatch:"):
+                return SelectTopologyProfileResult(
+                    persisted=True,
+                    profile_id=profile_id,
+                    apply_skipped_reason="topology_profile_changed",
+                )
+            if detail.startswith("baseStation driver binding mismatch:"):
+                return SelectTopologyProfileResult(
+                    persisted=True,
+                    profile_id=profile_id,
+                    apply_skipped_reason="driver_binding_mismatch",
+                )
+            raise
+    finally:
+        # phase2 的 category→connection→profile 行锁必须覆盖 Remote、apply、
+        # release 全段；离开租约后统一 rollback 只释放只读事务与锁。
+        db.rollback()
+
+    applied_now = bool(result.get("applied"))
+    return SelectTopologyProfileResult(
+        persisted=True,
+        profile_id=profile_id,
+        applied_now=applied_now,
+        apply_skipped_reason=(
+            None if applied_now else result.get("reason") or "unknown"
+        ),
+        test_app=result.get("test_app"),
+    )
 
 
 # ============================================================
@@ -2063,17 +2337,16 @@ def update_cmw500_lte_2x2_formal_capability(
 ) -> Cmw500FormalCapabilityResponse:
     """显式启停一个 CMW500 connection 的 LTE 2x2 正式准入。"""
 
-    connection = (
-        db.query(InstrumentConnectionDB)
+    category_id = (
+        db.query(InstrumentConnectionDB.category_id)
         .filter(InstrumentConnectionDB.id == connection_id)
-        .with_for_update()
-        .one_or_none()
+        .scalar()
     )
-    if connection is None:
+    if category_id is None:
         raise HTTPException(status_code=404, detail="instrument connection not found")
     category = (
         db.query(InstrumentCategoryModel)
-        .filter(InstrumentCategoryModel.id == connection.category_id)
+        .filter(InstrumentCategoryModel.id == category_id)
         .with_for_update()
         .one_or_none()
     )
@@ -2083,6 +2356,20 @@ def update_cmw500_lte_2x2_formal_capability(
         raise HTTPException(
             status_code=422,
             detail="CMW500 LTE 2x2 formal capability requires selected baseStation model",
+        )
+    connection = (
+        db.query(InstrumentConnectionDB)
+        .filter(
+            InstrumentConnectionDB.id == connection_id,
+            InstrumentConnectionDB.category_id == category.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if connection is None:
+        raise HTTPException(
+            status_code=422,
+            detail="instrument connection changed category during update",
         )
     model = (
         db.query(InstrumentModelDB)

@@ -769,10 +769,8 @@ class RealUxmDriver(BaseStationDriver):
         # SYSTem:APPLication:NAME?), as opposed to the resolved-from-
         # config initial guess. ``None`` pre-connect / when probe failed
         # — distinguishes "we don't know" from "5G_NR_Test confirmed".
-        # Surfaced in readiness_metadata + written to
-        # InstrumentConnection.connection_params["detected_test_app"]
-        # by the HAL service post-connect for GUI audit / P3-5 readiness
-        # panel.
+        # Surfaced only from the live driver through readiness_metadata;
+        # runtime observation must not mutate the saved connection preset.
         self.detected_test_app: Optional[str] = None
         # P1-47B：最终落到业务端点后的真实 *IDN?，只由 connect() 写入。
         self._identity_response: Optional[str] = None

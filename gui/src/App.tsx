@@ -2410,10 +2410,11 @@ function EquipmentManager() {
                   )
                 })()}
 
-                {category.key === 'baseStation' && (
-                  // P2-1: UXM topology profile picker. Component itself
-                  // bails (returns null) if backend says reason='not_a_uxm'
-                  // — safe to render unconditionally for baseStation.
+                {category.key === 'baseStation'
+                  && drawerSelectedModel?.base_station_manifest?.adapter_id === 'uxm'
+                  && (
+                  // P2-1: topology profiles belong to the saved/draft UXM
+                  // adapter only; CMW500 must never expose or persist them.
                   <TopologyProfileCard categoryKey={category.key} />
                 )}
 

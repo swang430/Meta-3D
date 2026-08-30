@@ -366,7 +366,7 @@ class TestSyncInstrumentBinding:
                     "endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
                     "controller": "",
                     "notes": "",
-                    "connection_params": {"detected_test_app": "LTE_NR_IRAT"},
+                    "connection_params": {},
                     "base_station_adapter_profile": None,
                 },
             },

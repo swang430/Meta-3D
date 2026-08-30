@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
@@ -54,6 +54,7 @@ from app.main import app
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
     InstrumentConnection as InstrumentConnectionDB,
+    InstrumentModel,
 )
 
 # 内置 profile 数量从 registry 算, 不硬编码 (P1-17 加了第 8 个 caict_n78_3600_4x4;
@@ -82,7 +83,7 @@ def _override_get_db():
 client = TestClient(app)
 
 
-def _attach_base_station_lease_contract(fake_driver: MagicMock) -> None:
+def _attach_base_station_lease_contract(fake_driver: Any) -> None:
     session_token = "topology-profile-test-session"
     fake_driver.adapter_id = "uxm"
     fake_driver.acquire_remote_control = AsyncMock(
@@ -118,6 +119,28 @@ def _attach_base_station_lease_contract(fake_driver: MagicMock) -> None:
     fake_driver.release_remote_session = AsyncMock(side_effect=_release)
 
 
+def _make_live_uxm_driver(
+    *,
+    endpoint: str = "TCPIP0::10.0.0.1::5025::SOCKET",
+    detected_test_app: str = "5G_NR_Test",
+    uxm_profile: str | None = None,
+) -> RealUxmDriver:
+    config = {"endpoint": endpoint}
+    if uxm_profile is not None:
+        config["uxm_profile"] = uxm_profile
+    driver = RealUxmDriver("baseStation_test", config)
+    driver.detected_test_app = detected_test_app
+    driver.apply_topology_profile = AsyncMock(
+        return_value={
+            "applied": True,
+            "profile_id": "caict_n78_2x2",
+            "test_app": "5G_NR_Test",
+        },
+    )
+    _attach_base_station_lease_contract(driver)
+    return driver
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)
@@ -149,6 +172,18 @@ def _make_basestation_category(db) -> InstrumentCategoryModel:
         category_name="Base Station",
     )
     db.add(cat)
+    db.flush()
+    model = InstrumentModel(
+        id=uuid.uuid4(),
+        category_id=cat.id,
+        vendor="Keysight",
+        model="UXM 5G E7515B",
+        full_name="Keysight UXM 5G E7515B",
+        capabilities={},
+    )
+    db.add(model)
+    db.flush()
+    cat.selected_model_id = model.id
     db.commit()
     db.refresh(cat)
     return cat
@@ -157,6 +192,9 @@ def _make_basestation_category(db) -> InstrumentCategoryModel:
 def _make_connection(
     db, cat: InstrumentCategoryModel, params: Dict[str, Any] | None = None,
 ) -> InstrumentConnectionDB:
+    saved_params = dict(params or {})
+    saved_params.pop("detected_test_app", None)
+    endpoint = "TCPIP0::10.0.0.1::5025::SOCKET"
     conn = InstrumentConnectionDB(
         id=uuid.uuid4(),
         category_id=cat.id,
@@ -164,6 +202,18 @@ def _make_connection(
         port="5025",
         protocol="SOCKET",
         connection_params=params or {},
+        endpoint=endpoint,
+        base_station_model_presets={
+            str(cat.selected_model_id): {
+                "schema_version": 1,
+                "model_id": str(cat.selected_model_id),
+                "endpoint": endpoint,
+                "controller": "SOCKET",
+                "notes": "",
+                "connection_params": saved_params,
+                "base_station_adapter_profile": None,
+            }
+        },
     )
     db.add(conn)
     db.commit()
@@ -344,6 +394,33 @@ class TestReadinessMetadata:
 
 
 class TestListTopologyProfilesEndpoint:
+    def test_cmw_binding_does_not_expose_uxm_topology_profiles(self, db):
+        cat = _make_basestation_category(db)
+        cmw = InstrumentModel(
+            id=uuid.uuid4(),
+            category_id=cat.id,
+            vendor="Rohde & Schwarz",
+            model="CMW500",
+            full_name="Rohde & Schwarz CMW500",
+            capabilities={},
+        )
+        db.add(cmw)
+        db.flush()
+        cat.selected_model_id = cmw.id
+        db.commit()
+
+        response = client.get(
+            f"/api/v1/instruments/{cat.category_key}/topology-profiles"
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "items": [],
+            "current_test_app": None,
+            "selected_topology_profile_id": None,
+            "reason": "not_a_uxm",
+        }
+
     def test_returns_404_when_category_not_found(self, db):
         resp = client.get("/api/v1/instruments/nonexistent/topology-profiles")
         assert resp.status_code == 404
@@ -472,6 +549,55 @@ class TestListTopologyProfilesEndpoint:
 
 
 class TestSelectTopologyProfileEndpoint:
+    def test_cmw_binding_rejects_uxm_topology_without_mutating_active_or_preset(self, db):
+        cat = _make_basestation_category(db)
+        cmw = InstrumentModel(
+            id=uuid.uuid4(),
+            category_id=cat.id,
+            vendor="Rohde & Schwarz",
+            model="CMW500",
+            full_name="Rohde & Schwarz CMW500",
+            capabilities={},
+        )
+        db.add(cmw)
+        db.flush()
+        cat.selected_model_id = cmw.id
+        db.commit()
+        conn = _make_connection(db, cat, params={"cmw_only": True})
+        before_active = dict(conn.connection_params)
+        before_presets = dict(conn.base_station_model_presets)
+
+        response = client.put(
+            f"/api/v1/instruments/{cat.category_key}/topology-profile",
+            json={"profile_id": "caict_n78_2x2"},
+        )
+
+        assert response.status_code == 422
+        db.expire_all()
+        persisted = db.get(InstrumentConnectionDB, conn.id)
+        assert persisted.connection_params == before_active
+        assert persisted.base_station_model_presets == before_presets
+
+    def test_missing_saved_uxm_preset_rejects_instead_of_reporting_persisted(self, db):
+        cat = _make_basestation_category(db)
+        conn = _make_connection(db, cat)
+        conn.base_station_model_presets = {}
+        db.commit()
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=None,
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+
+        assert response.status_code == 422
+        db.expire_all()
+        persisted = db.get(InstrumentConnectionDB, conn.id)
+        assert "topology_profile_id" not in (persisted.connection_params or {})
+
     def test_persists_selection_when_no_live_driver(self, db):
         """No HAL driver bound → persist to connection_params,
         applied_now=False with apply_skipped_reason='no_live_driver'.
@@ -543,11 +669,10 @@ class TestSelectTopologyProfileEndpoint:
         cat = _make_basestation_category(db)
         _make_connection(db, cat)
 
-        fake_driver = MagicMock()
-        fake_driver.detected_test_app = "LTE_NR_IRAT"
-        # Make hasattr() return True for apply_topology_profile so the
-        # endpoint's compat pre-flight path runs.
-        fake_driver.apply_topology_profile = AsyncMock()
+        fake_driver = _make_live_uxm_driver(
+            detected_test_app="LTE_NR_IRAT",
+            uxm_profile="irat",
+        )
 
         class FakeHal:
             drivers = {"baseStation": fake_driver}
@@ -583,13 +708,7 @@ class TestSelectTopologyProfileEndpoint:
         cat = _make_basestation_category(db)
         _make_connection(db, cat)
 
-        fake_driver = MagicMock()
-        fake_driver.detected_test_app = "5G_NR_Test"
-        fake_driver.apply_topology_profile = AsyncMock(
-            return_value={"applied": True, "profile_id": "caict_n78_2x2",
-                          "test_app": "5G_NR_Test"},
-        )
-        _attach_base_station_lease_contract(fake_driver)
+        fake_driver = _make_live_uxm_driver()
 
         class FakeHal:
             drivers = {"baseStation": fake_driver}
@@ -623,14 +742,8 @@ class TestSelectTopologyProfileEndpoint:
         cat = _make_basestation_category(db)
         _make_connection(db, cat)
 
-        fake_driver = MagicMock()
-        fake_driver.detected_test_app = "5G NR Test"  # raw alias
+        fake_driver = _make_live_uxm_driver(detected_test_app="5G NR Test")
         fake_driver._cmds = Uxm5GNRTestAppProfile      # resolved
-        fake_driver.apply_topology_profile = AsyncMock(
-            return_value={"applied": True, "profile_id": "caict_n78_2x2",
-                          "test_app": "5G_NR_Test"},
-        )
-        _attach_base_station_lease_contract(fake_driver)
 
         class FakeHal:
             drivers = {"baseStation": fake_driver}
@@ -650,6 +763,242 @@ class TestSelectTopologyProfileEndpoint:
         fake_driver.apply_topology_profile.assert_awaited_once()
         (profile_arg,) = fake_driver.apply_topology_profile.await_args.args
         assert profile_arg.profile_id == "caict_n78_2x2"
+
+    def test_stale_loaded_uxm_endpoint_persists_but_never_applies(self, db):
+        """保存真值已经指向 UXM-B 时，仍连 UXM-A 的旧 driver 只能被跳过。"""
+
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+        stale_driver = _make_live_uxm_driver(
+            endpoint="TCPIP0::10.0.0.2::5025::SOCKET"
+        )
+
+        class FakeHal:
+            drivers = {"baseStation": stale_driver}
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=FakeHal(),
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json() == {
+            "persisted": True,
+            "profile_id": "caict_n78_2x2",
+            "applied_now": False,
+            "apply_skipped_reason": "driver_binding_mismatch",
+            "test_app": None,
+        }
+        stale_driver.apply_topology_profile.assert_not_awaited()
+        stale_driver.acquire_remote_control.assert_not_awaited()
+        db.expire_all()
+        connection = (
+            db.query(InstrumentConnectionDB)
+            .filter_by(category_id=cat.id)
+            .one()
+        )
+        assert connection.connection_params["topology_profile_id"] == "caict_n78_2x2"
+
+    def test_reload_to_stale_driver_before_lease_never_acquires_remote(self, db):
+        """HAL 在初检后换成旧 endpoint 时，租约动作前校验必须先于 Remote。"""
+
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+        matching_driver = _make_live_uxm_driver()
+        stale_driver = _make_live_uxm_driver(
+            endpoint="TCPIP0::10.0.0.2::5025::SOCKET"
+        )
+
+        class MatchingHal:
+            drivers = {"baseStation": matching_driver}
+
+        class StaleHal:
+            drivers = {"baseStation": stale_driver}
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            side_effect=[MatchingHal(), MatchingHal(), StaleHal()],
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["apply_skipped_reason"] == "driver_binding_mismatch"
+        stale_driver.acquire_remote_control.assert_not_awaited()
+        stale_driver.apply_topology_profile.assert_not_awaited()
+
+    def test_force_reload_after_remote_never_switches_apply_target(self, db):
+        """校验/Remote 后全局 HAL 被 force reload，也只能继续用已租用实例。"""
+
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+        leased_driver = _make_live_uxm_driver()
+        replacement_driver = _make_live_uxm_driver()
+
+        class LeasedHal:
+            drivers = {"baseStation": leased_driver}
+
+        class ReplacementHal:
+            drivers = {"baseStation": replacement_driver}
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            side_effect=[LeasedHal(), LeasedHal(), LeasedHal(), ReplacementHal()],
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["applied_now"] is True
+        leased_driver.acquire_remote_control.assert_awaited_once()
+        leased_driver.apply_topology_profile.assert_awaited_once()
+        replacement_driver.acquire_remote_control.assert_not_awaited()
+        replacement_driver.apply_topology_profile.assert_not_awaited()
+
+    def test_phase2_locks_saved_binding_and_profile_until_apply_finishes(self, db):
+        """第二阶段必须重新锁定 category→connection→profile 三份 DB 真值。"""
+
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+        topology_profiles_seeder.run(db)
+        custom = duplicate(db, "caict_n78_2x2")
+        db.commit()
+        driver = _make_live_uxm_driver()
+
+        class FakeHal:
+            drivers = {"baseStation": driver}
+
+        locked_entities = []
+        original = Query.with_for_update
+
+        def _tracked_with_for_update(query, *args, **kwargs):
+            entity = query.column_descriptions[0].get("entity")
+            locked_entities.append(entity)
+            return original(query, *args, **kwargs)
+
+        with (
+            patch.object(Query, "with_for_update", _tracked_with_for_update),
+            patch(
+                "app.services.instrument_hal_service.get_hal_service",
+                return_value=FakeHal(),
+            ),
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": custom.profile_id},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert locked_entities.count(InstrumentCategoryModel) >= 2
+        assert locked_entities.count(InstrumentConnectionDB) >= 2
+        assert locked_entities.count(InstrumentTopologyProfile) >= 1
+
+    def test_profile_change_before_remote_is_rejected_without_hardware_io(self, db):
+        """初检后的自定义 profile 漂移不能把旧 payload 下发给真机。"""
+
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+        topology_profiles_seeder.run(db)
+        custom = duplicate(db, "caict_n78_2x2")
+        db.commit()
+        driver = _make_live_uxm_driver()
+
+        class FakeHal:
+            drivers = {"baseStation": driver}
+
+        calls = 0
+
+        def _get_hal_with_profile_change():
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                writer = TestingSessionLocal()
+                try:
+                    row = (
+                        writer.query(InstrumentTopologyProfile)
+                        .filter_by(profile_id=custom.profile_id)
+                        .one()
+                    )
+                    row.target_mcs += 1
+                    writer.commit()
+                finally:
+                    writer.close()
+            return FakeHal()
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            side_effect=_get_hal_with_profile_change,
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": custom.profile_id},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["apply_skipped_reason"] == "topology_profile_changed"
+        driver.acquire_remote_control.assert_not_awaited()
+        driver.apply_topology_profile.assert_not_awaited()
+
+    def test_saved_preset_change_between_phases_is_rejected(self, db):
+        """同 endpoint 的另一笔保存也不能让旧请求覆盖新 preset。"""
+
+        from sqlalchemy.orm.attributes import flag_modified
+
+        cat = _make_basestation_category(db)
+        connection = _make_connection(db, cat)
+        driver = _make_live_uxm_driver()
+
+        class FakeHal:
+            drivers = {"baseStation": driver}
+
+        calls = 0
+
+        def _get_hal_with_saved_preset_change():
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                writer = TestingSessionLocal()
+                try:
+                    current = writer.get(InstrumentConnectionDB, connection.id)
+                    params = dict(current.connection_params or {})
+                    params["timeout_ms"] = 12345
+                    current.connection_params = params
+                    presets = dict(current.base_station_model_presets or {})
+                    key = str(cat.selected_model_id)
+                    preset = dict(presets[key])
+                    preset_params = dict(preset.get("connection_params") or {})
+                    preset_params["timeout_ms"] = 12345
+                    preset["connection_params"] = preset_params
+                    presets[key] = preset
+                    current.base_station_model_presets = presets
+                    flag_modified(current, "connection_params")
+                    flag_modified(current, "base_station_model_presets")
+                    writer.commit()
+                finally:
+                    writer.close()
+            return FakeHal()
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            side_effect=_get_hal_with_saved_preset_change,
+        ):
+            response = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["apply_skipped_reason"] == "saved_binding_changed"
+        driver.acquire_remote_control.assert_not_awaited()
+        driver.apply_topology_profile.assert_not_awaited()
 
     def test_404_when_no_connection_row(self, db):
         """Operator must configure endpoint first — without a
