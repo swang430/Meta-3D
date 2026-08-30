@@ -4,7 +4,7 @@
 
 **Goal:** 在 BaseStation 型号从 UXM 切换为 CMW500（或反向切换）但 HAL 尚未重载时，于同步、就绪和执行冻结前明确拒绝旧 Mock adapter，并引导操作员安全重载 HAL。
 
-**Architecture:** 保留“保存配置”和“重载全部仪器会话”两步式安全边界，不在保存时自动断开硬件。唯一的权威修复放在 `resolve_base_station_binding()`：无论 Real/Mock，loaded driver 的 `adapter_id` 都必须匹配所选 adapter manifest；最终 execution-evidence 安全门保持不变。GUI 仅延长 BaseStation 保存后的重载提示，不新增第二份配置真值。
+**Architecture:** 保留“保存配置”和“重载全部仪器会话”两步式安全边界，不在保存时自动断开硬件。新冻结在 `resolve_base_station_binding()` 中核对 loaded Mock 与所选 adapter manifest；复用既有冻结时在纯 lock-time validator 中核对 loaded Mock 与 frozen adapter。最终 execution-evidence 安全门保持不变。GUI 仅延长 BaseStation 保存后的重载提示，不新增第二份配置真值。
 
 **Tech Stack:** Python / FastAPI / SQLAlchemy / Pytest；React / TypeScript / Node test
 
@@ -18,7 +18,7 @@
 
 1. 新增失败测试：冻结 CMW500 配置、loaded driver 为 UXM `MockBaseStation` 时，resolver 必须以包含“reload HAL”的可操作错误拒绝；反向 UXM 配置 + CMW Mock 同样拒绝。
 2. 运行定点测试，确认旧实现错误放行。
-3. 在 adapter registration 解析后，对 simulated driver 复用 manifest `adapter_id` 做精确相等核对；不放宽 real validator，不修改 execution-evidence 最终门。
+3. 在 adapter registration 解析后，对 simulated driver 复用 manifest `adapter_id` 做精确相等核对；复用既有 configured simulated freeze 时对 frozen adapter 做相同核对，`diagnostic_unbound` 的空 adapter 保持原合同。不放宽 real validator，不修改 execution-evidence 最终门。
 4. 运行 resolver、LabProfile sync、readiness、execution qualification 相关测试，确认共同入口一致 fail-closed。
 
 ### Task 2: 保存后的 HAL 重载提示可见且可执行

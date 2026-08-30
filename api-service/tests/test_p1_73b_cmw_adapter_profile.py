@@ -323,6 +323,36 @@ def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db)
     assert frozen["resolution"]["profile"] == _profile()
 
 
+def test_reused_simulated_freeze_rejects_mock_adapter_reload_before_remote(db):
+    category, _, _, lab, execution = _configured_execution(
+        db,
+        model_name="CMW500",
+        params={"base_station_adapter_profile": _profile()},
+    )
+    category.driver_mode = "mock"
+    bindings = [dict(binding) for binding in lab.instrument_bindings]
+    bindings[0]["driver_mode"] = "mock"
+    lab.instrument_bindings = bindings
+    db.commit()
+    hal = SimpleNamespace(
+        drivers={"baseStation": MockBaseStation("mock-cmw", {"model": "CMW500"})}
+    )
+    frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
+
+    hal.drivers["baseStation"] = MockBaseStation(
+        "mock-uxm",
+        {"model": "UXM 5G E7515B"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="loaded driver adapter does not match frozen adapter",
+    ):
+        freeze_base_station_adapter_profile(db, hal, execution, lab)
+
+    assert execution.config["base_station_adapter_profile_freeze"] == frozen
+
+
 def test_authoritative_mock_without_selected_model_is_diagnostic_unbound(db):
     category = InstrumentCategory(
         category_key="baseStation",

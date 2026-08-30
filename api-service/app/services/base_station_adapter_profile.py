@@ -79,6 +79,12 @@ def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> s
     if mode == "simulated":
         if not is_mock_driver(driver):
             return "loaded driver changed from mock to real"
+        frozen_adapter = resolution.get("adapter")
+        if (
+            frozen_adapter is not None
+            and getattr(driver, "adapter_id", None) != frozen_adapter
+        ):
+            return "loaded driver adapter does not match frozen adapter"
         return None
     return "frozen execution mode is invalid"
 
