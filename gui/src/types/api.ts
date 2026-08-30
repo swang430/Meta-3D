@@ -77,9 +77,20 @@ export type InstrumentConnection = {
   controller?: string | null
   notes?: string | null
   connection_params?: Record<string, any> | null
+  base_station_model_presets?: Record<string, BaseStationModelPreset>
   cmw500_lte_2x2_formal_enabled: boolean
   cmw500_lte_2x2_formal_updated_at: string | null
   base_station_site_certification: BaseStationSiteCertification | null
+}
+
+export type BaseStationModelPreset = {
+  schema_version: 1
+  model_id: string
+  endpoint: string
+  controller: string
+  notes: string
+  connection_params: Record<string, unknown>
+  base_station_adapter_profile: Record<string, unknown> | null
 }
 
 export type TestCaseExecutionPolicy = {

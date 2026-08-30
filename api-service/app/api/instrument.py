@@ -85,6 +85,7 @@ class FEInstrumentConnection(BaseModel):
     controller: Optional[str] = None
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None
+    base_station_model_presets: Dict[str, Dict[str, Any]] = {}
     cmw500_lte_2x2_formal_enabled: bool = False
     cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
@@ -218,12 +219,23 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
     """DB InstrumentConnection → 前端 FEInstrumentConnection"""
     if not conn_db:
         return FEInstrumentConnection()
+    from app.services.base_station_model_preset import (
+        parse_base_station_model_presets,
+    )
+
+    presets = parse_base_station_model_presets(
+        conn_db.base_station_model_presets
+    )
     return FEInstrumentConnection(
         id=str(conn_db.id),
         endpoint=conn_db.endpoint or "",
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",
         connection_params=conn_db.connection_params,
+        base_station_model_presets={
+            key: preset.model_dump(mode="json")
+            for key, preset in presets.items()
+        },
         cmw500_lte_2x2_formal_enabled=(
             conn_db.cmw500_lte_2x2_formal_enabled is True
         ),

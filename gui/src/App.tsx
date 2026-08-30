@@ -104,6 +104,7 @@ import {
   buildDiagnosticTarget,
   diagnosticErrorMessage,
 } from './features/Equipment/diagnosticTarget'
+import { draftForBaseStationModel } from './features/Equipment/baseStationModelPresetDraft'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1915,6 +1916,14 @@ function EquipmentManager() {
 
   const handleModelChange = useCallback(
     (categoryKey: string, modelId: string) => {
+      const category = categories.find((item) => item.key === categoryKey)
+      if (categoryKey === 'baseStation' && category) {
+        setDrafts((prev) => ({
+          ...prev,
+          [categoryKey]: draftForBaseStationModel(category, modelId),
+        }))
+        return
+      }
       setDrafts((prev) => {
         const current =
           prev[categoryKey] ?? ({ modelId: '', endpoint: '', controller: '', notes: '' } as EquipmentDraft)
@@ -2012,6 +2021,7 @@ function EquipmentManager() {
       instrumentMutation.mutate({
         categoryKey,
         payload: {
+          ...(categoryKey === 'baseStation' ? { modelId: draft.modelId } : {}),
           connection: {
             endpoint: draft.endpoint || undefined,
             controller: draft.controller || undefined,

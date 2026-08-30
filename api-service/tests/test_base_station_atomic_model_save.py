@@ -191,3 +191,27 @@ def test_invalid_target_profile_rolls_back_model_connection_and_presets(atomic_d
         assert category.selected_model_id == cmw_id
         assert connection.endpoint.endswith("hislip0::INSTR")
         assert connection.base_station_model_presets is None
+
+
+def test_catalog_response_exposes_server_owned_presets_after_save(atomic_db):
+    _Session, _category_id, cmw_id, uxm_id = atomic_db
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/v1/instruments/baseStation",
+            json={
+                "modelId": str(uxm_id),
+                "connection": {
+                    "endpoint": "192.168.1.112",
+                    "controller": "socket",
+                    "connection_params": {"timeout_ms": 30000},
+                    "base_station_adapter_profile": None,
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["selectedModelId"] == str(uxm_id)
+    presets = body["connection"]["base_station_model_presets"]
+    assert set(presets) == {str(cmw_id), str(uxm_id)}
+    assert presets[str(uxm_id)]["endpoint"] == "192.168.1.112"
