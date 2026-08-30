@@ -176,6 +176,15 @@ class InstrumentConnection(Base):
     #   ...
     # }
 
+    base_station_model_presets = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "Server-owned saved BaseStation drafts keyed by InstrumentModel.id; "
+            "active connection fields remain execution truth"
+        ),
+    )
+
     # 备注
     notes = Column(Text, comment="备注")
 
