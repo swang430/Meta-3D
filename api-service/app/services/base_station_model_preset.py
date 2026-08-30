@@ -167,3 +167,41 @@ def save_base_station_model_preset(
     connection.connection_params = active_params
     flag_modified(connection, "connection_params")
     category.selected_model_id = target.model_id
+
+
+def require_saved_active_base_station_preset(
+    *,
+    model: InstrumentModel,
+    connection: InstrumentConnection,
+) -> BaseStationModelPreset:
+    """Require active execution truth to equal its server-owned saved preset."""
+
+    presets = parse_base_station_model_presets(
+        connection.base_station_model_presets
+    )
+    preset = presets.get(str(model.id))
+    if preset is None:
+        raise ValueError(
+            "BaseStation 当前型号没有已保存配置；请先在仪器资源配置中点击保存配置"
+        )
+
+    active_params = dict(connection.connection_params or {})
+    active_profile = active_params.pop("base_station_adapter_profile", None)
+    mismatches: list[str] = []
+    if (connection.endpoint or "").strip() != preset.endpoint:
+        mismatches.append("endpoint")
+    if (connection.protocol or "").strip() != preset.controller:
+        mismatches.append("controller")
+    if (connection.notes or "").strip() != preset.notes:
+        mismatches.append("notes")
+    if active_params != preset.connection_params:
+        mismatches.append("connection_params")
+    if active_profile != preset.base_station_adapter_profile:
+        mismatches.append("adapter_profile")
+    if mismatches:
+        raise ValueError(
+            "BaseStation 当前活动配置与已保存 preset 不一致："
+            + ", ".join(mismatches)
+            + "；请重新保存配置后再同步 LabProfile"
+        )
+    return preset

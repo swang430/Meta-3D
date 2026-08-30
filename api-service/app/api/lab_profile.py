@@ -326,6 +326,7 @@ def sync_current_instrument_binding(
     connection = (
         db.query(InstrumentConnection)
         .filter(InstrumentConnection.category_id == category.id)
+        .with_for_update()
         .one_or_none()
     )
     endpoint = (connection.endpoint if connection else "") or ""
@@ -335,6 +336,25 @@ def sync_current_instrument_binding(
             status_code=422,
             detail=f"Configure an endpoint for {category_key} before syncing",
         )
+
+    if category_key == "baseStation":
+        from app.services.base_station_model_preset import (
+            require_saved_active_base_station_preset,
+        )
+
+        if connection is None:
+            raise HTTPException(
+                status_code=422,
+                detail="BaseStation 当前型号没有已保存配置；请先保存配置",
+            )
+        try:
+            require_saved_active_base_station_preset(
+                model=model,
+                connection=connection,
+            )
+        except (TypeError, ValueError) as error:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     driver_mode = category.driver_mode or "auto"
     if driver_mode not in {"auto", "mock", "real"}:
