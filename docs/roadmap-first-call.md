@@ -40,7 +40,12 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-53：第三种 BaseStation Adapter 接入认证套件——队列末片（P2-52 已由 PR #422 合并：内审 P1〔clear 记账 wire token 不同源〕修复 + 真实传输模板成因门、Gemini R1 首轮明文 clean、变异 16 条全红；UXM 到场复验为现场半，见取证 evidence.md §6）。**
+Current Focus（非现场）= 无活动开发片。** P2-53 已由 PR #424 合并；随后 PR #425 修复
+Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
+原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
+adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
+顺序为 **P1-74 → P2-54 → P2-55 → P2-56 → P2-57 → P2-58 → P2-59 → P2-60 →
+P2-61 → P2-62**；P2-63 在真实型号与手册确定前保持 HOLD。以上均未自动启动，WIP 仍为 0。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -62,8 +67,10 @@ P3-20/P3-21 仍不得自动启动。
    注册、preview/sync/readiness/freeze 同 digest、manifest 驱动 GUI 与 OpenAPI 三镜像已由 PR #410
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
    qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414
-   合并；P2-49～P2-52 已由 PR #415/#417/#420/#422 合并；当前只余 **P2-53**（队列末片），先收敛共同能力与
-   证据合同，再处理 CMW500/UXM 各自缺口，最后固化第三 adapter 认证套件。P0-9B-1 已完成手册支持
+   合并；P2-49～P2-53 已由 PR #415/#417/#420/#422/#424 合并；后续现场热修与配置保存完整性
+   已由 PR #425/#426/#427 合并。下一批已批准进入雷达但尚未启动：先做 P1-74 与 P2-54～P2-56
+   收口 CMW500 MAC 真值，再做 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实
+   型号和手册。P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
@@ -671,7 +678,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P2-53（第三 adapter 认证套件，队列末片）**；NEW-1/P2-42～P2-52 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422 合并。P2-53 完成即本队列收官，WIP=1。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=无**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准但未启动的雷达顺序为 P1-74 → P2-54～P2-62；P2-63 HOLD。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3422,6 +3429,25 @@ async 执行端点的 execution ContextVar 能回到汇总行。同步取消端�
 `request.state.execution_id` 回传。HTTP/WebSocket 均初始化 request id，并在 `finally`
 复位 session/execution token；同 task 连续请求反向门确认不串链。
 
+### P1-74 — CMW500 Extended BLER 统计基真值闭环（批准入雷达，未启动）
+
+**可观察故障**：P2-51 已证明 CMW500 LTE FDD 2×2 满 RB 固定 RMC 的配置与回读，但正式
+Extended BLER 窗口没有从 TestCase 的 `stat_count` 驱动并回读 `EBLer:SFRames`。在 continuous
+窗口下，仪表可能继承上一 session 的统计子帧数；业务参数看似相同，吞吐/BLER 的统计基却不同，
+正式 KPI 因而不可重复。
+
+**范围**：统计基归 Measurement Window 所有，不塞回 MAC 配置层。执行冻结明确的 LTE 统计请求，
+在窗口清理/启动前按 R&S 手册有据的命令写入并回读 SFrames，把 requested/applied/confirmed、
+exchange ids、attempt/lease/session 与窗口 digest 一并持久化；任何写入、回读、错误队列、超时、
+取消或窗口形状异常均 fail-closed。不得从请求值、默认值、旧缓存或 Mock 回填确认。
+
+**验收与地点**：非现场半完成严格 TDD、全部正式消费者审计与旧证据兼容；现场半在真实 CMW500
+上用至少两个不同统计长度连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase
+变化且不继承旧状态。现场半完成前 CMW Extended BLER 正式 KPI 保持 UNKNOWN/N/A。
+
+**依赖/顺序**：先于 P2-54～P2-56；来源为 2026-08-30 P2-51 内审发现，设计边界见
+`docs/plans/2026-08-30-cmw-mac-channel-emulator-roadmap-design.md`。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -4410,7 +4436,7 @@ release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只�
 手册来源和认证测试即可完成 HAL/诊断认证；零修改实证仅覆盖 manifest 注册、计划 resolve 与 MEASURE
 原生窗口。正式 binding/profile-freeze/evidence 若需泛化，先登记并独立处理平台缺口。
 
-**本地实现完成（2026-08-30，待 PR 外审）**：新增 14 个可参数化认证函数与测试域第三 adapter
+**✅ 已由 PR #424 合并（2026-08-30，merge `0efc2cff`）**：新增 14 个可参数化认证函数与测试域第三 adapter
 `certfake`，UXM / CMW500 / certfake 共同覆盖上述十类边界、注册门、执行计划中立性及 MEASURE
 原生窗口消费；3 个判定器自测证明 clear 写拒绝、Attach 永不达标、跳过错误队列时认证会红，另有
 生产代码零 `certfake` 泄漏门。专项 **46 passed**，扩大相关链 **254 passed**。该夹具不注册生产 HAL，
@@ -4418,6 +4444,134 @@ release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只�
 枚举已如实登记为平台缺口候选。全后端 **5490 passed / 5 skipped**、规则门 **59 passed**，
 `compileall`、单一 Alembic head `e6a8c0d2f4b6` 与 staged diff-check 通过；本片未改 GUI/OpenAPI，
 故未运行其契约与 production build。
+
+### P2-54 — RAT-neutral MAC Test Profile（批准入雷达，未启动）
+
+**可观察故障**：当前共同 MAC 请求由 NR 语义主导；LTE CMW500 只能把大量字段记为
+`no_equivalent`，而 `mcs`、NR TDD pattern、HARQ processes、SCS、CSI-RS 与 LTE RMC/RB/TM
+并不是同一组可互换参数。继续扩充一张“万能参数表”会让 adapter 接收无法如实表达的请求，或让
+调用方把“操作成功”误读成“全部测试意图已生效”。
+
+**范围/验收**：建立可辨识的 MAC Test Profile：共同层只保留 RAT-neutral 的测试意图、统计窗口与
+指标需求；NR profile 与 LTE RMC profile 分别拥有自己的必填/可选字段、单位、枚举、手册来源和
+profile digest。adapter manifest 声明接受的 profile kind/version；不支持或不可翻译的 profile 在首个
+仪器 I/O 前拒绝。执行、commissioning、GUI、OpenAPI 与证据只按冻结 profile 消费，不新增厂商分支，
+也不把 `no_equivalent` 当成功确认。
+
+**地点/依赖**：纯非现场架构片；依赖 P1-74 的窗口统计基边界，先于 P2-55/P2-56。
+
+### P2-55 — CMW500 LTE FDD MAC capability matrix（批准入雷达，未启动）
+
+**可观察故障**：P2-51 只闭环了 LTE FDD、2×2、满 RB、固定 RMC 的窄切片；系统尚不能在下发前
+准确回答 1×1/2×2、满/部分 RB、DL/UL RMC、调制/TBS/TM、固定/AMC 与 HARQ 哪些组合可正式配置、
+哪些只能诊断、哪些没有手册依据。当前“支持 MAC 配置”的单一布尔过宽。
+
+**范围/验收**：只依据仓库 R&S 原始手册建立 profile-scoped capability matrix，并逐组合绑定命令、
+参数域、回读、错误队列与证据强度；没有出处的维度保持 unavailable/diagnostic。CMW adapter 只把
+既有或本片有据实现映射为逐字段 receipt，共同消费者零厂商判断。每个受支持组合均需请求/应用/回读
+一致，部分确认不得发布总 confirmed；不允许用相邻配置、前面板观测或请求值补真。
+
+**地点/依赖**：非现场取证/实现 + CMW 真机矩阵抽样复验；依赖 P2-54。现场复验完成前只开放已获
+真实证据的窄组合，其余保持诊断或拒绝。
+
+### P2-56 — CMW500 LTE TDD 与真机认证（批准入雷达，未启动）
+
+**可观察故障**：TestCase 没有 LTE ULDL 配比与 special-subframe/RMC version 真值，NR slot pattern
+无法诚实翻译为 LTE 0..6 配比，因此 P2-51 在 TDD 下只能整体 fail-loud。
+
+**范围/验收**：在 P2-54 的 LTE profile 中加入有手册出处的 ULDL configuration、special subframe
+及 RMC version；配置、回读、错误队列与窗口证据绑定同一次 execution。先做 FDD 不回归、非法组合
+I/O 前拒绝和 TDD receipt 的非现场半；再用真实 CMW500、对应选件与真实 DUT/SIM 完成 Attach、业务
+窗口、SAFE_IDLE、release 和正式证据认证。不得从 NR 字段推导 LTE 配比。
+
+**地点/依赖**：混合项，依赖 P2-54/P2-55；真机认证是关闭条件，本地测试不能替代。
+
+### P2-57 — Channel Emulator Capability Manifest（批准入雷达，未启动）
+
+**可观察故障**：共同 `ChannelEmulatorDriver` 目前默认宣称所有信道仿真器支持
+`EXTERNAL_WAVEFORM`，但 FS16 的 upload/start/path loss/doppler/MIMO 能力仍未实现；F64 的
+Native/ASC/TDL、输入/输出控制和权威回读则散落在厂商类与 MEASURE 分支。新增型号会继承假的共同能力。
+
+**范围/验收**：建立不可变、版本化 Channel Emulator manifest，结构化声明 load mode、资产类型、
+通道/端口基数、输入/输出控制、模型启动/停止、频率/level/path-loss/doppler 回读、错误队列、
+SAFE_IDLE/release 与 diagnostic/formal 证据强度。registry 拒绝 manifest、类实现与运行时能力漂移；
+FS16 在真实实现前不得宣称 waveform upload/playback。零新 SCPI，现有 F64 行为不变。
+
+**地点/依赖**：纯非现场平台片；Channel Emulator 队列第一片。
+
+### P2-58 — ResolvedChannelEmulatorBinding + 分型号 saved presets（批准入雷达，未启动）
+
+**可观察故障**：信道仿真器仍缺少与 BaseStation 同等的单一 binding 真值；model、connection、
+LabProfile、ChannelAsset、厂商参数、loaded driver 与 execution freeze 可由不同入口读取。下一型号会
+复现“GUI 已保存，执行使用另一份 endpoint/profile”的故障。
+
+**范围/验收**：由 InstrumentConnection + LabProfile binding + manifest/profile + selected asset 解析
+唯一不可变 `ResolvedChannelEmulatorBinding`；preview、保存、同步、readiness、HAL reload 与 execution
+freeze 复用同一 digest。切换型号只改 GUI 草稿，保存原子持久化活动型号与该型号 preset，不覆盖其他
+型号；同步只读已保存且 resolver-valid 的配置。解析过程零仪器 I/O，首个 I/O 前复核 loaded driver/
+endpoint/transport。
+
+**地点/依赖**：纯非现场平台片；依赖 P2-57。
+
+### P2-59 — ChannelEmulatorExecutionPlan + 单一会话（批准入雷达，未启动）
+
+**可观察故障**：MEASURE 仍通过 F64 专属字段、`hasattr` 与私有缓存选择 load/run/调参路径；formal、
+commissioning、adhoc 与 run-all 没有 execution-frozen 的共同 CE 计划和单一生命周期所有者。
+
+**范围/验收**：把 manifest + binding + ChannelAsset 解析为不可变 execution plan，冻结 load mode、
+必需操作、阶段顺序、预期回读与 cleanup/release；四类入口经同一 session 执行 acquire → identity →
+load/configure → run/window → safe idle → release → terminal evidence。计划声明与方法缺失/漂移在 I/O 前
+fail-loud；共同执行器不得出现 F64/FS16/未来厂商分支。
+
+**地点/依赖**：纯非现场平台片；依赖 P2-57/P2-58。
+
+### P2-60 — Vendor-neutral Channel Operation Receipt（批准入雷达，未启动）
+
+**可观察故障**：F64 的文件加载、运行态、output gain/loss、输入电平/crest、频率与模式证据形态
+各自不同，FS16 又有 no-op/未实现路径；写成功、设备接受、状态生效和业务窗口之间缺少共同逐字段真值。
+
+**范围/验收**：为 load/configure/start/adjust/stop/cleanup/release 建立 requested/applied/confirmed/
+unknown/not-applicable receipt，保存原始 exchange ids、错误队列、attempt/lease/session、asset/binding/
+plan digest 与 provenance。每个写操作的拒绝、超时、取消和安全恢复均有消费方；模拟值只能 diagnostic，
+不得进入正式 KPI。F64 只映射现有有据回读，FS16 未实现操作明确 unavailable，不补占位成功。
+
+**地点/依赖**：纯非现场平台片；依赖 P2-59。
+
+### P2-61 — Channel Emulator Diagnostic/Formal certification（批准入雷达，未启动）
+
+**可观察故障**：当前 F64 的本地测试、诊断序列、现场成功与正式报告资格之间没有 Channel Emulator
+专用的统一晋级记录；未来型号可能“驱动能跑”即被误当成“本站点可发布正式 KPI”。
+
+**范围/验收**：复用但不复制 BaseStation 两阶段原则：Diagnostic 允许缺部分站点证明，但黄色披露、
+记录操作员/原因且正式 KPI UNKNOWN/N/A；Formal certification 只能由同一真实 completed execution 的
+binding/plan/asset、identity/options、逐操作 receipt、频率/level/path-loss 真值、SAFE_IDLE 与 release
+证据派生，可撤销且变化只影响后续执行。不得让客户端、env、旧布尔或 Mock 授权。
+
+**地点/依赖**：非现场产品化 + 各型号现场认证；依赖 P2-60。
+
+### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（批准入雷达，未启动）
+
+**可观察故障**：没有参数化套件能证明新信道仿真器只需 adapter/manifest/profile/manual evidence 即可
+接入；缺口会在真实第三型号 PR 中再次扩散到 MEASURE、commissioning、报告和 GUI。
+
+**范围/验收**：测试域第三 adapter + fake transport 覆盖注册五件套、binding/preset、计划解析、
+部分回读、错误队列、超时/取消、资产加载、运行/停止、动态调参、SAFE_IDLE、release、模拟排除、
+正式消费者中立性与 certification fail-closed。生产代码零测试 adapter 泄漏；认证套件失败必须指向
+adapter/manifest/profile 缺口，不要求修改共同消费者。不新增或猜测任何厂商命令。
+
+**地点/依赖**：纯非现场平台片；依赖 P2-57～P2-61。
+
+### P2-63 — 下一真实 Channel Emulator Adapter（HOLD，型号/手册待定）
+
+**启动条件**：用户确定真实厂商/型号、连接协议、现有选件与可取得的原始手册，并能安排至少一次
+真机窗口。禁止先用 F64/FS16 方言猜一套命令或为了占位把未实现能力声明为支持。
+
+**范围/验收**：只实现 P2-57 manifest 声明的该型号能力与有手册出处的 adapter/profile；通过 P2-62
+认证套件后进入 Diagnostic，完成同一真实 execution 的 load/configure/run/adjust/SAFE_IDLE/release、
+身份/选件/错误队列和站点 certification 后才开放 Formal。原则上不得修改 MEASURE、commissioning、
+Analysis、报告、下载、比较或历史；若必须修改，先登记独立平台缺口并单开 roadmap 项。
+
+**地点/依赖**：HOLD；依赖 P2-57～P2-62，且现场认证不可由本地测试替代。
 
 ---
 
@@ -4475,10 +4629,10 @@ release 与模拟排除模板；以第三 adapter fixture 证明厂商接入只�
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
 
-### 2026-08-30 P2-51 取证期平台缺口（待 triage，不自动启动）
+### 2026-08-30 P2-51 取证期平台缺口（已 triage）
 
-- `[discovered 2026-08-30 during P2-51 CMW500 MAC 取证]` **LTE TDD 正式路径缺口（P2）** —— TestCase 契约无 LTE TDD 配比字段；`CELL[:PCC]:ULDL`（手册 p.687）+ `RMC:VERSion:DL<s>`（p.803）未实现。NR slot 字符串不可如实翻译为 LTE 0..6 配比，当前 TDD duplex 下 configure_mac_throughput_test 整体 fail-loud。详见取证清单 §8。
-- `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。修法方向：窗口层驱动 SFRames（换源到 TestCase 的 stat_count）。
+- `[discovered 2026-08-30 during P2-51 CMW500 MAC 取证]` **LTE TDD 正式路径缺口（P2）** —— TestCase 契约无 LTE TDD 配比字段；`CELL[:PCC]:ULDL`（手册 p.687）+ `RMC:VERSion:DL<s>`（p.803）未实现。NR slot 字符串不可如实翻译为 LTE 0..6 配比，当前 TDD duplex 下 configure_mac_throughput_test 整体 fail-loud。详见取证清单 §8。**出口：→ P2-54（RAT-neutral profile）+ P2-56（LTE TDD 与真机认证）。**
+- `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。**出口：→ P1-74**，由窗口层驱动并回读 SFrames，换源到本次 TestCase 的 `stat_count`。
 
 ### 2026-08-30 P2-53 第三 adapter 认证期平台缺口（待 triage，不自动启动）
 
