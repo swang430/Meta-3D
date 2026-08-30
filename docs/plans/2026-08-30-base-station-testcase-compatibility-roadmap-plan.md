@@ -2,6 +2,12 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+> ⚠️ **状态（2026-08-31）**：本计划已于 2026-08-30 执行完毕，以下内容是**当时的施工依据**，
+> 不再表示当前顺序真值。其中的执行顺序（`P2-54～P2-63 → P2-64～P2-67`）已在 2026-08-31 修订为
+> **P2-64～P2-67 整组前移到 P1-75 之后**。当前顺序以
+> [`docs/roadmap-first-call.md`](../roadmap-first-call.md) 顶部 Current Focus 段为唯一真值，
+> 修订理由见本目录下两份 `2026-08-30-*-design.md`。本文件不回写，避免改写历史施工记录。
+
 **Goal:** 把已批准的 P1-75、P2-64～P2-67 按既有优先级写入单一 roadmap，并让 Current Focus、正式条目与 Discovered 出口保持一致。
 
 **Architecture:** 本片只维护文档真值，不改生产代码。P1-75 插在 P1-74 后，P2-64～P2-67 追加到既有 P2-63 后；所有现状镜像引用同一顺序，Discovered 只记录证据与正式条目出口。
