@@ -56,10 +56,11 @@ P1-75 插在既有 P1-74 之后；其余派生治理严格叠加在既有 P2-63 
 
 ### P1-75 — TestCase × Adapter 执行兼容性硬门
 
-从 TestCase 的 `primary_carrier.radio_technology`、冻结 MAC profile kind/version 与执行所需 operations
-构造不可变需求投影，在首次仪表 I/O 前与冻结 Adapter Manifest 对账。Real、Mock、Diagnostic 使用
-同一判据；不兼容即拒绝创建可运行 execution，不生成报告。兼容性 verdict 与输入 digest 一并冻结，
-锁内复核 binding/manifest/driver 漂移。不得按测试例名称或 adapter 名称前缀判断。
+先从当前已有的 `primary_carrier.radio_technology` 与执行所需 operations 构造不可变需求投影，在首次
+仪表 I/O 前与冻结 Adapter Manifest 对账。P2-54 落地后只扩展同一 projection 的 MAC profile
+kind/version 槽位，不另建判据。Real、Mock、Diagnostic 使用同一判据；不兼容即拒绝创建可运行
+execution，不生成报告。兼容性 verdict 与输入 digest 一并冻结，锁内复核 binding/manifest/driver
+漂移。不得按测试例名称或 adapter 名称前缀判断。
 
 ### P2-64 — Adapter-scoped Mock 能力
 

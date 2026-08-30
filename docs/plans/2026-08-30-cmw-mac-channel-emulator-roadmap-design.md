@@ -4,7 +4,7 @@
 
 **状态**：用户批准进入 roadmap 雷达；未授权自动启动开发
 
-**对应条目**：P1-74、P2-54～P2-63
+**对应条目**：P1-74、P1-75、P2-54～P2-67
 
 ## 1. 决策摘要
 
@@ -14,10 +14,12 @@
 执行顺序固定为：
 
 1. P1-74：先消除 CMW500 Extended BLER 统计基继承旧 session 的正式数据风险；
-2. P2-54～P2-56：把 RAT-neutral 测试意图、LTE FDD 能力矩阵与 LTE TDD 真机认证分开；
-3. P2-57～P2-62：依次建立 Channel Emulator manifest、binding/preset、execution plan/session、
+2. P1-75：在首次仪表 I/O 前拒绝 TestCase 与所选 BaseStation Adapter Manifest 的能力冲突；
+3. P2-54～P2-56：把 RAT-neutral 测试意图、LTE FDD 能力矩阵与 LTE TDD 真机认证分开；
+4. P2-57～P2-62：依次建立 Channel Emulator manifest、binding/preset、execution plan/session、
    operation receipt、Diagnostic/Formal certification 与第三 adapter 认证套件；
-4. P2-63：真实型号与原始手册确定后才启动，当前 HOLD。
+5. P2-63：真实型号与原始手册确定后才启动，当前 HOLD；它是条件项，不阻断后续已批准条目；
+6. P2-64～P2-67：依次收口 Adapter-scoped Mock、共用兼容性 Readiness、证据终态与日志导出。
 
 当前非现场 WIP 为 0。上述条目进入正式雷达不等于开始开发；启动时仍按 WIP=1、独立 worktree、
 严格 TDD、fresh 功能内审、Ready PR、Codex R1→R2、覆盖最新 HEAD 无 P1 才合并的既有流程。
@@ -82,16 +84,21 @@ GUI 与现场认证，无法维持 WIP=1，也会把厂商命令与平台抽象�
 | 顺序 | 条目 | 主要交付 | 地点 |
 |---|---|---|---|
 | 1 | P1-74 | SFrames 统计基冻结、回读、窗口证据 | 非现场 + CMW 真机 |
-| 2 | P2-54 | RAT-neutral + NR/LTE discriminated MAC profile | 非现场 |
-| 3 | P2-55 | CMW LTE FDD 组合能力矩阵 | 非现场 + CMW 抽样 |
-| 4 | P2-56 | LTE TDD 配置、回读与站点认证 | 非现场 + CMW/DUT/SIM |
-| 5 | P2-57 | Channel Emulator manifest/registry | 非现场 |
-| 6 | P2-58 | 单一 binding、分型号 preset、同步/freeze 同 digest | 非现场 |
-| 7 | P2-59 | execution-frozen plan 与单一会话 | 非现场 |
-| 8 | P2-60 | 逐操作共同 receipt/evidence | 非现场 |
-| 9 | P2-61 | Diagnostic/Formal site certification | 非现场 + 各型号现场 |
-| 10 | P2-62 | 第三 adapter 参数化认证套件 | 非现场 |
+| 2 | P1-75 | TestCase requirements × Adapter Manifest 首次 I/O 前兼容性硬门 | 非现场 |
+| 3 | P2-54 | RAT-neutral + NR/LTE discriminated MAC profile | 非现场 |
+| 4 | P2-55 | CMW LTE FDD 组合能力矩阵 | 非现场 + CMW 抽样 |
+| 5 | P2-56 | LTE TDD 配置、回读与站点认证 | 非现场 + CMW/DUT/SIM |
+| 6 | P2-57 | Channel Emulator manifest/registry | 非现场 |
+| 7 | P2-58 | 单一 binding、分型号 preset、同步/freeze 同 digest | 非现场 |
+| 8 | P2-59 | execution-frozen plan 与单一会话 | 非现场 |
+| 9 | P2-60 | 逐操作共同 receipt/evidence | 非现场 |
+| 10 | P2-61 | Diagnostic/Formal site certification | 非现场 + 各型号现场 |
+| 11 | P2-62 | 第三 adapter 参数化认证套件 | 非现场 |
 | HOLD | P2-63 | 下一真实型号 adapter | 手册到位后非现场 + 真机 |
+| 12 | P2-64 | Adapter-scoped Mock 能力与注册身份 | 非现场 |
+| 13 | P2-65 | Preview/Readiness/Freeze 共用兼容性判定 | 非现场 |
+| 14 | P2-66 | 执行证据不变量与终态语义 | 非现场 |
+| 15 | P2-67 | adapter-neutral 日志与 execution-scoped 导出 | 非现场 |
 
 各片启动前必须重新按 AGENTS.md 0.5 枚举该值/状态的全部产生方、消费方、入口、历史读取和失败路径；
 此设计只规定边界与顺序，不代替每片的独立实施计划。
