@@ -145,6 +145,26 @@ test('BaseStation save submits cleared fields instead of silently keeping the ol
   assert.match(saveHandler, /explicitBaseStationConnectionDraft\(/)
 })
 
+test('BaseStation save keeps an actionable HAL reload reminder visible', () => {
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  const feedbackHelper = app.slice(
+    app.indexOf('const showFeedback'),
+    app.indexOf('const diagnosticTargetFor'),
+  )
+  assert.match(feedbackHelper, /durationMs\s*=\s*2000/)
+  assert.match(feedbackHelper, /},\s*durationMs\)/)
+
+  const saveMutation = app.slice(
+    app.indexOf('const instrumentMutation'),
+    app.indexOf('const siteCertificationMutation'),
+  )
+  assert.match(saveMutation, /页面顶部「↻ 重新加载驱动」/)
+  assert.match(
+    saveMutation,
+    /updatedCategory\.key\s*===\s*['"]baseStation['"]\s*\?\s*12000\s*:\s*2000/,
+  )
+})
+
 test('UXM topology card is rendered only for the draft UXM adapter', () => {
   const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
   assert.match(

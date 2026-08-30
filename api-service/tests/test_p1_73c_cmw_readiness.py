@@ -174,7 +174,7 @@ def test_readiness_mock_is_diagnostic_and_never_formal_ready(db):
     bindings[0]["driver_mode"] = "mock"
     lab.instrument_bindings = bindings
     db.commit()
-    mock = MockBaseStation("mock", {})
+    mock = MockBaseStation("mock", {"model": "CMW500"})
 
     readiness = build_cmw500_lte_2x2_readiness(
         db,
