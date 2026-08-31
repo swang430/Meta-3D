@@ -481,6 +481,11 @@ class BaseStationMeasurementWindowRequest:
     requested_window_count: int
     expected_window_count: int
     window_index: int
+    # P1-74：统计基（本窗口要统计多少个子帧），由 TestCase 随 execution 冻结。
+    # ``None`` = 本次执行没有冻结统计基 —— 那是遗留形态，驱动必须据此 fail
+    # closed，绝不能当作「用仪器保留的旧值也行」。厂商参数域由各驱动按自己的
+    # 手册出处校验（本层只保证正整数），本层不猜任何厂商上下限。
+    statistical_basis_subframes: int | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -516,6 +521,17 @@ class BaseStationMeasurementWindowRequest:
             or not 0 <= self.window_index < self.expected_window_count
         ):
             raise ValueError("measurement window index is outside the frozen batch")
+        if self.statistical_basis_subframes is not None:
+            # 外审 R1：类型不符 → TypeError，值越界 → ValueError。三个校验点
+            # （此处 / 持久化模型 / 执行器）统一这套契约，调用方才能只捕一种。
+            if isinstance(self.statistical_basis_subframes, bool) or not isinstance(
+                self.statistical_basis_subframes, int
+            ):
+                raise TypeError(
+                    "statistical basis subframes must be an integer or None"
+                )
+            if self.statistical_basis_subframes <= 0:
+                raise ValueError("statistical basis subframes must be positive")
 
     @property
     def digest(self) -> str:
@@ -528,6 +544,12 @@ class BaseStationMeasurementWindowRequest:
             "expected_window_count": self.expected_window_count,
             "window_index": self.window_index,
         }
+        # P1-74：统计基缺省时**不进 digest**，否则历史证据里已存的
+        # ``request_digest`` 会全部失配，旧 execution 的窗口证据再也读不回来。
+        # 持久化侧 (BaseStationMeasurementWindowRequestEvidence.digest) 用同一
+        # 条 omit-when-None 规则，两侧由 test_p1_74_* 的不变量门锁死。
+        if self.statistical_basis_subframes is not None:
+            payload["statistical_basis_subframes"] = self.statistical_basis_subframes
         encoded = json.dumps(
             payload,
             ensure_ascii=False,

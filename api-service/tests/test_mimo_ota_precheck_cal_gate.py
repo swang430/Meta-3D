@@ -1074,6 +1074,69 @@ def hal_with_full_mock_chain(instrument_categories):
 
 
 @pytest.mark.asyncio
+async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
+    db,
+    lab,
+    chamber,
+    hal_with_full_mock_chain,
+    monkeypatch,
+):
+    """P1-74: TestCase 的 stat_count 必须真的驱动窗口请求的统计基。
+
+    行为门，不是存在性门：断言值取自 TestCase 而非任何字面量。用 3000 这个
+    既非 schema 默认(5000)、也非本文件其它用例所用(1)的值 —— 把
+    ``statistical_basis_subframes=config.stat_count`` 改成任何常量都会红。
+
+    这一跳此前零覆盖：内审实测把它换成字面量 5000 后 176 个相关用例全绿。
+    """
+
+    _seed_complete_legacy_path_loss_cal(db, chamber)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=False,
+        frequency_hz=3500e6,
+    )
+    test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+    test_case.configuration = {
+        **test_case.configuration,
+        "engine_mode": "keysight_gcm",
+        "switch_mode_id": "mimo_ota",
+        "azimuths_deg": [0.0],
+        "stat_count": 3000,
+        "settling_time_s": 0.0,
+        "num_samples_per_azimuth": 1,
+        "precheck_strict_dut": False,
+    }
+    db.commit()
+    _bind_unbound_mock_measurement(
+        monkeypatch,
+        ctx,
+        hal_with_full_mock_chain.drivers["baseStation"],
+    )
+
+    captured: dict = {}
+    original = MeasureExecutor._measure_base_station_samples
+
+    async def _spy(base_station, **kwargs):
+        captured.update(kwargs)
+        return await original(base_station, **kwargs)
+
+    monkeypatch.setattr(
+        MeasureExecutor,
+        "_measure_base_station_samples",
+        staticmethod(_spy),
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.SUCCESS, result.error_message
+    assert captured, "measure 从未走到 BaseStation 窗口采样"
+    assert captured["statistical_basis_subframes"] == 3000
+
+
+@pytest.mark.asyncio
 async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
     db,
     lab,

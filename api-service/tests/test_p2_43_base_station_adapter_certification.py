@@ -172,6 +172,7 @@ async def test_each_adapter_uses_only_the_common_native_window_contract(adapter_
         requested_sample_count=3,
         manifest=_manifest(adapter_id),
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert driver.native_calls == (1 if adapter_id == "cmw500" else 3)
@@ -212,6 +213,7 @@ async def test_common_window_preserves_exchanges_for_generic_evidence_writer():
         requested_sample_count=1,
         manifest=RealUxmDriver.adapter_manifest,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert [item.exchange_id for item in samples[0].exchanges] == [
@@ -235,6 +237,7 @@ async def test_simulated_common_window_remains_diagnostic_for_each_adapter(adapt
         requested_sample_count=3,
         manifest=None,
         simulated_diagnostic=True,
+        statistical_basis_subframes=5000,
     )
 
     assert len(samples) == 3
@@ -257,6 +260,7 @@ async def test_real_unconfirmed_window_continues_only_with_auditable_common_trus
         requested_sample_count=1,
         manifest=RealUxmDriver.adapter_manifest,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert len(samples) == 1
@@ -280,6 +284,7 @@ async def test_real_uxm_window_preserves_existing_per_metric_attestation():
             throughput_scope=ThroughputMetrics.SCOPE_PCELL,
             requested_sample_count=1,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )[0],
     )
 

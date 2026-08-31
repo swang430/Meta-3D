@@ -25,6 +25,9 @@ def test_reachable_cmw_commands_carry_manual_source_and_purpose():
         "ebler_timeout",
         "ebler_repetition",
         "ebler_stop_condition",
+        # P1-74：Extended BLER 统计基（每 measurement cycle 的子帧数）
+        "ebler_subframes",
+        "ebler_subframes_query",
         # P2-51: LTE MAC/调度配置（取证清单
         # docs/plans/2026-08-30-p2-51-cmw500-mac-scheduling-evidence.md）
         "mac_sched_type",

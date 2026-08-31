@@ -15,6 +15,7 @@ def test_cmw_manifest_freezes_one_pcell_authoritative_window():
         throughput_scope="pcell",
         requested_sample_count=5,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert len(requests) == 1
@@ -43,6 +44,7 @@ def test_uxm_manifest_freezes_requested_diagnostic_windows_without_closed_claim(
         throughput_scope="nr_all_cells",
         requested_sample_count=3,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert len(requests) == 3
@@ -59,6 +61,7 @@ def test_unbound_mock_gets_explicit_unavailable_diagnostic_plan():
         throughput_scope="pcell",
         requested_sample_count=2,
         simulated_diagnostic=True,
+        statistical_basis_subframes=5000,
     )
 
     assert len(requests) == 2
@@ -73,6 +76,7 @@ def test_real_execution_cannot_invent_plan_when_manifest_has_no_measurement():
             throughput_scope="pcell",
             requested_sample_count=2,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
 
 
@@ -92,6 +96,7 @@ def test_frozen_plan_rejects_scope_and_count_drift(manifest, scope, count, messa
             throughput_scope=scope,
             requested_sample_count=count,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
 
 

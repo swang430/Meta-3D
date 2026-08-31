@@ -61,6 +61,8 @@ from app.hal.lte_earfcn import validate_lte_band_options
 from app.hal.cmw500_command_profile import (
     CMW500_LTE_COMMANDS,
     CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH,
+    EBLER_SUBFRAMES_MAX,
+    EBLER_SUBFRAMES_MIN,
     Cmw500LteCommandProfile,
     CmwLteFullRbRmcPlan,
     CmwNx2Route,
@@ -555,9 +557,11 @@ class RealCmw500Driver(BaseStationDriver):
             "EBLer:SFRames（p.953）有对应命令：p.953『只影响 trace 长度』"
             "限定 confidence 模式（SCONdition CLEVel），而正式窗口是"
             "continuous（SCONdition NONE，P1-73B）——该模式下 SFRames ="
-            "每周期统计子帧数（§3.3.1 p.940 示例明示）。命令归窗口层所有、"
-            "当前全仓未驱动：统计基继承仪器旧状态是已登记缺口"
-            "（Discovered：窗口层驱动 SFRames），不在 MAC 配置层越权下发"
+            "每周期统计子帧数（§3.3.1 p.940 示例明示）。命令归窗口层所有："
+            "P1-74 起由 measure_base_station_window 从 execution 冻结的统计基"
+            "下发并回读确认（回读不符/不可读一律 fail-closed），"
+            "**仍不在 MAC 配置层下发** —— 统计基是测量窗口的属性，"
+            "在这里下发会把它跟业务配置绑死"
         ),
         "NR_SCS": "LTE 子载波间隔固定 15 kHz，手册无配置命令",
         "CSI_RS_PORTS": "NR 概念；本驱动 LTE 正式路径 TM3 2x2，无对应命令",
@@ -2702,6 +2706,31 @@ class RealCmw500Driver(BaseStationDriver):
             raise ValueError("CMW500 window request disagrees with its frozen manifest")
         throughput_scope = ThroughputMetrics.SCOPE_PCELL
 
+        # P1-74：统计基（每 measurement cycle 的子帧数）在任何 I/O 之前定型。
+        # 手册 §3.4.3 printed p.953 给出参数域 100..400E+3；越界一律拒绝，
+        # **绝不 clamp** —— clamp 会静默换成另一个统计基，正是本片要消灭的形态。
+        # 请求缺失（旧执行没冻结）同样拒绝：那等于让仪器沿用保留值（*RST 10E+3
+        # 或上一 session 的任意值），也就是原故障本身。
+        statistical_basis_requested = request.statistical_basis_subframes
+        statistical_basis_applied: int | None = None
+        statistical_basis_confirmed = False
+        statistical_basis_command: str | None = None
+        statistical_basis_rejection: str | None = None
+        if statistical_basis_requested is None:
+            statistical_basis_rejection = (
+                "statistical basis: this execution froze no subframe count; "
+                "EBLer:SFRames would keep the instrument's retained value"
+            )
+        else:
+            try:
+                statistical_basis_command = (
+                    Cmw500LteCommandProfile.build_ebler_subframes(
+                        self._sign_channel, statistical_basis_requested
+                    )
+                )
+            except (TypeError, ValueError) as exc:
+                statistical_basis_rejection = f"statistical basis rejected: {exc}"
+
         started_at = datetime.now(timezone.utc)
         window_id = uuid4().hex
         preclear_off_confirmed = False
@@ -2763,6 +2792,59 @@ class RealCmw500Driver(BaseStationDriver):
                 lifecycle_failures.append(f"{label}: {exc}")
                 return False
 
+        def _drive_statistical_basis() -> bool:
+            """Write the frozen statistical basis and prove it took effect.
+
+            Manual §3.4.3 printed p.953 documents the command form and its
+            domain; §3.3.1 printed p.940 puts it inside the very continuous
+            configuration block written here, and p.937 defines SCONdition
+            "None" as running "according to its Repetition mode and the
+            specified No. of Subframes".
+
+            It must stay **before** INIT: CMW500 Base Software User Manual
+            1173.9463.02-06 printed p.139 — changing a parameter with
+            direct impact on the results restarts a running measurement and
+            resets the statistics counters to zero.
+
+            A successful write is not proof (repo invariant 3), so the value is
+            read back and compared; any unequal, unreadable, or errored outcome
+            leaves the window unconfirmed instead of publishing a KPI on an
+            unknown basis.
+            """
+
+            nonlocal statistical_basis_applied, statistical_basis_confirmed
+            if statistical_basis_command is None:  # narrowed by the caller
+                return False
+            if not _write_and_confirm(
+                statistical_basis_command, "continuous window statistical basis"
+            ):
+                return False
+            try:
+                applied = Cmw500LteCommandProfile.parse_ebler_subframes(
+                    self._query(
+                        Cmw500LteCommandProfile.ebler_subframes_query(
+                            self._sign_channel
+                        )
+                    )
+                )
+            except Exception as exc:
+                lifecycle_failures.append(f"statistical basis readback: {exc}")
+                return False
+            statistical_basis_applied = applied
+            if applied != statistical_basis_requested:
+                lifecycle_failures.append(
+                    "statistical basis: requested "
+                    f"{statistical_basis_requested} subframes, instrument "
+                    f"reports {applied}"
+                )
+                return False
+            statistical_basis_confirmed = True
+            return True
+
+        if statistical_basis_rejection is not None:
+            # 请求层事实，与 I/O 无关：先记账，再让配置组整体不执行。
+            lifecycle_failures.append(statistical_basis_rejection)
+
         with capture_scpi_exchanges() as exchanges:
             try:
                 ue_connected_before = (
@@ -2778,7 +2860,9 @@ class RealCmw500Driver(BaseStationDriver):
                         "OFF",
                         "pre-clear ABORT/OFF",
                     )
-                if preclear_off_confirmed:
+                if preclear_off_confirmed and statistical_basis_command is not None:
+                    # 统计基不可用时整组不下发：不确认的统计基下开窗口，
+                    # 只会产出一个统计基未知的 KPI。
                     window_configuration_confirmed = all(
                         _write_and_confirm(command, label)
                         for command, label in (
@@ -2801,7 +2885,7 @@ class RealCmw500Driver(BaseStationDriver):
                                 "continuous window stop condition",
                             ),
                         )
-                    )
+                    ) and _drive_statistical_basis()
                 if window_configuration_confirmed:
                     running_confirmed = _write_and_confirm_state(
                         Cmw500LteCommandProfile.ebler_init(self._sign_channel),
@@ -2929,21 +3013,126 @@ class RealCmw500Driver(BaseStationDriver):
         )
         exchange_ids = [exchange.exchange_id for exchange in exchanges]
         details = (*lifecycle_failures, *metric_failures)
-        reason = (
-            "; ".join(details)
-            if details
-            else "Extended BLER lifecycle and KPI fetch confirmed"
+        if details:
+            reason = "; ".join(details)
+        else:
+            # 内审 F4（换源，非新机制）：窗口证据项的 requested/readback 不进
+            # 落库载荷 —— append_base_station_measurement_window 只取各项的
+            # exchange_ids 做账本校验，item 本身被丢弃。因此仪器回读的 applied
+            # 值在成功路径上原本零持久化，现场排障看不到「仪器当时报了多少」。
+            # trust.reason 是既有落库字段，把 applied 值带上去零契约改动。
+            reason = "Extended BLER lifecycle and KPI fetch confirmed"
+            if statistical_basis_confirmed:
+                reason += (
+                    "; statistical basis "
+                    f"{statistical_basis_applied} subframes applied "
+                    f"(requested {statistical_basis_requested})"
+                )
+        # P1-74：统计基的往返证据。写命令的 intent token 是 "command"
+        # （base.py 模板方法；"write" 只出现在 mock 模拟边界），查询是 "query"。
+        # 这两条 id 只写进本证据项的 readback，**不进** exchange_ids 字段 ——
+        # execution_scpi_evidence.append_base_station_measurement_window 要求
+        # 各证据项 exchange_ids 顺序拼接后恰好等于窗口账本且互不重复，第二条
+        # 证据项去认领账本里已有的 id 会让落库当场失败。
+        statistical_basis_exchange_ids = [
+            exchange.exchange_id
+            for exchange in exchanges
+            if exchange.simulated is False
+            and (
+                (
+                    statistical_basis_command is not None
+                    and exchange.command == statistical_basis_command
+                    and exchange.operation == "command"
+                )
+                or (
+                    exchange.command
+                    == Cmw500LteCommandProfile.ebler_subframes_query(
+                        self._sign_channel
+                    )
+                    and exchange.operation == "query"
+                )
+            )
+        ]
+        if statistical_basis_confirmed:
+            statistical_basis_verdict = EvidenceVerdict.PASSED
+            statistical_basis_level = EvidenceLevel.APPLIED
+            statistical_basis_reason = (
+                f"EBLer:SFRames readback confirms {statistical_basis_applied} "
+                "subframes per measurement cycle for this window"
+            )
+        elif (
+            statistical_basis_rejection is not None
+            or statistical_basis_applied is not None
+        ):
+            # 请求越界/缺失，或仪器明确报了另一个值 —— 两者都是「这个统计基
+            # 不是本次 TestCase 要的」，判 REJECTED。
+            statistical_basis_verdict = EvidenceVerdict.REJECTED
+            statistical_basis_level = (
+                EvidenceLevel.INTENT
+                if statistical_basis_command is None
+                else EvidenceLevel.ACCEPTED
+            )
+            statistical_basis_reason = (
+                statistical_basis_rejection
+                or (
+                    f"EBLer:SFRames readback reports {statistical_basis_applied} "
+                    f"subframes, not the requested {statistical_basis_requested}"
+                )
+            )
+        else:
+            # 写失败 / 错误队列非空 / 回读拿不到 —— 生效端未知，不判 REJECTED。
+            statistical_basis_verdict = EvidenceVerdict.UNKNOWN
+            statistical_basis_level = EvidenceLevel.TRANSPORT
+            statistical_basis_reason = (
+                "EBLer:SFRames could not be confirmed for this window; the "
+                "statistical basis in effect is unknown"
+            )
+        statistical_basis_evidence = InstrumentEvidenceItem(
+            instrument="cmw500",
+            evidence_key="cmw500.extended_bler.statistical_basis",
+            requested={
+                "statistical_basis_subframes": statistical_basis_requested,
+                "documented_range": [
+                    EBLER_SUBFRAMES_MIN,
+                    EBLER_SUBFRAMES_MAX,
+                ],
+            },
+            command_sent=statistical_basis_command,
+            readback={
+                "requested_subframes": statistical_basis_requested,
+                "applied_subframes": statistical_basis_applied,
+                "confirmed": statistical_basis_confirmed,
+                "exchange_ids": statistical_basis_exchange_ids,
+            },
+            evidence_level=statistical_basis_level,
+            source_reference=(
+                "R&S CMW LTE UE User Manual 1173.9628.02-41 "
+                "§3.4.3 printed p.953 (CONFigure:LTE:SIGN<i>:EBLer:SFRames, "
+                "Range 100 to 400E+3, *RST 10E+3); §3.3.1 printed p.937, 938, "
+                "940 (subframes per measurement cycle without stop condition); "
+                "CMW500 Base Software User Manual 1173.9463.02-06 §5.4.2 "
+                "printed p.139 (result-affecting changes restart the "
+                "measurement, so the basis is written before INIT)"
+            ),
+            verdict=statistical_basis_verdict,
+            reason=statistical_basis_reason,
         )
         evidence = InstrumentEvidenceItem(
             instrument="cmw500",
             evidence_key="cmw500.extended_bler.window",
-            requested={"window_s": window_s, "throughput_scope": throughput_scope},
+            requested={
+                "window_s": window_s,
+                "throughput_scope": throughput_scope,
+                "statistical_basis_subframes": statistical_basis_requested,
+            },
             command_sent=Cmw500LteCommandProfile.ebler_init(self._sign_channel),
             readback={
                 "absolute": absolute_raw,
                 "relative": relative_raw,
                 "preclear_off_confirmed": preclear_off_confirmed,
                 "window_configuration_confirmed": window_configuration_confirmed,
+                "statistical_basis_confirmed": statistical_basis_confirmed,
+                "statistical_basis_applied_subframes": statistical_basis_applied,
                 "running_confirmed": running_confirmed,
                 "ready_confirmed": ready_confirmed,
                 "closed_off_confirmed": closed_off_confirmed,
@@ -3027,7 +3216,7 @@ class RealCmw500Driver(BaseStationDriver):
             running_confirmed=running_confirmed,
             ready_confirmed=ready_confirmed,
             closed_off_confirmed=closed_off_confirmed,
-            evidence=(evidence,),
+            evidence=(evidence, statistical_basis_evidence),
             confirmed=trust.formally_confirmed,
             reason=reason,
             trust=trust,

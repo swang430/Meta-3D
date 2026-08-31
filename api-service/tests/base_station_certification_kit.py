@@ -1097,6 +1097,7 @@ def _window_request_for(
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=requested_sample_count,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
 
@@ -1262,6 +1263,7 @@ async def certify_simulated_exclusion(
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=1,
         simulated_diagnostic=True,
+        statistical_basis_subframes=5000,
     )[0]
     window = await driver.measure_base_station_window(0.0, request=request)
     assert window.trust is not None
@@ -1362,6 +1364,7 @@ async def certify_common_consumer_native_window(
             requested_sample_count=2,
             manifest=manifest,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
     expected = 1 if manifest.measurement.cardinality == "single" else 2
     assert len(samples) == expected

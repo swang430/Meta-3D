@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     JsonValue,
     StrictBool,
+    StrictInt,
     field_validator,
     model_validator,
 )
@@ -621,6 +622,12 @@ class BaseStationMeasurementWindowRequestEvidence(BaseModel):
     requested_window_count: int
     expected_window_count: int
     window_index: int
+    # P1-74：与 HAL 的 BaseStationMeasurementWindowRequest 同形；历史证据没有
+    # 这个键，缺省即 None。
+    # 外审 R1 修复期实测：普通 `int` 下 Pydantic 会把 `True` 静默归一成 `1`，
+    # 于是 validator 里的 `isinstance(..., bool)` 恒为 False —— 那是一道
+    # 永不触发的假门。`StrictInt` 在类型层直接拒 bool/float/str。
+    statistical_basis_subframes: StrictInt | None = None
 
     @model_validator(mode="after")
     def _valid_shape(self):
@@ -638,11 +645,22 @@ class BaseStationMeasurementWindowRequestEvidence(BaseModel):
             raise ValueError("measurement window cardinality/count mismatch")
         if not 0 <= self.window_index < self.expected_window_count:
             raise ValueError("measurement window index is outside the frozen plan")
+        if (
+            self.statistical_basis_subframes is not None
+            and self.statistical_basis_subframes <= 0
+        ):
+            # 类型由 StrictInt 在字段层把关；此处只管值域。
+            raise ValueError("statistical basis subframes must be positive")
         return self
 
     @property
     def digest(self) -> str:
-        return canonical_snapshot_digest(self.model_dump(mode="json"))
+        payload = self.model_dump(mode="json")
+        # P1-74：omit-when-None，与 HAL 侧 digest 逐字同规则 —— 否则历史
+        # request_digest 全部失配（该字段是后加的，旧载荷里根本没有这个键）。
+        if payload.get("statistical_basis_subframes") is None:
+            payload.pop("statistical_basis_subframes", None)
+        return canonical_snapshot_digest(payload)
 
 
 class BaseStationMeasurementStageEvidence(BaseModel):
@@ -1000,6 +1018,22 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
                 normalized_window.pop("trust", None)
             if isinstance(raw_window, dict) and "metric_registry_digest" not in raw_window:
                 normalized_window.pop("metric_registry_digest", None)
+            # P1-74 brownfield：统计基是后加的槽位，历史窗口请求里根本没有这个
+            # 键。缺席保留为缺席，否则 normalized != value 会把**每一行**历史
+            # BaseStation 证据判成 malformed（同 adapter_operations 的处理）。
+            raw_trust = (
+                raw_window.get("trust") if isinstance(raw_window, dict) else None
+            )
+            normalized_trust = normalized_window.get("trust")
+            if isinstance(raw_trust, dict) and isinstance(normalized_trust, dict):
+                raw_request = raw_trust.get("request")
+                normalized_request = normalized_trust.get("request")
+                if (
+                    isinstance(raw_request, dict)
+                    and isinstance(normalized_request, dict)
+                    and "statistical_basis_subframes" not in raw_request
+                ):
+                    normalized_request.pop("statistical_basis_subframes", None)
             raw_metrics = raw_window.get("metrics") if isinstance(raw_window, dict) else None
             normalized_metrics = normalized_window.get("metrics")
             if isinstance(raw_metrics, dict) and isinstance(normalized_metrics, dict):

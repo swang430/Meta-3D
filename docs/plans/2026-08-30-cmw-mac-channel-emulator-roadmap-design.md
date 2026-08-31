@@ -33,8 +33,11 @@
 - `api-service/app/hal/cmw500_base_station.py::configure_mac_throughput_test()` 已闭环窄范围 LTE FDD
   2×2、满 RB、固定 RMC，但其输入仍承接 `uxm_base_station.py::MacThroughputConfigResult` 及 NR-shaped
   参数；LTE 无等价语义被压进 `no_equivalent`。
-- `api-service/app/hal/cmw500_base_station.py` 已明确把 `EBLer:SFRames` 归属窗口层，但当前未驱动；
-  TestCase 的 `stat_count` 因此没有成为本次仪表统计基真值。
+- ~~`api-service/app/hal/cmw500_base_station.py` 已明确把 `EBLer:SFRames` 归属窗口层，但当前未驱动；
+  TestCase 的 `stat_count` 因此没有成为本次仪表统计基真值。~~ **✅ 非现场半已由 P1-74 收口**
+  （2026-08-31）：窗口层在 `SCONdition NONE` 之后下发 `EBLer:SFRames` 并回读比对，值取自
+  TestCase 的 `stat_count` 并随 execution 冻结；不一致/越界/缺失一律 fail-closed。
+  **现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成。**
 - P2-51 已查明 LTE TDD 需要 LTE ULDL/RMC 专用字段，NR slot pattern 不能诚实翻译。
 
 因此不能把 P2-51 继续扩大成“完善所有 CMW MAC”。首先要拆开三件不同的事：统计窗口真值、

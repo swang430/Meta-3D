@@ -14,6 +14,7 @@ from app.hal.cmw500_base_station import RealCmw500Driver
 
 ABSOLUTE = "0,900,100,1000,123456.5,120000,125000,0,1000,15"
 RELATIVE = "0,99.5,0.5,0.5,87.25,0"
+SUBFRAMES = 5000
 
 
 def _window_request(*, scope: str = "pcell") -> BaseStationMeasurementWindowRequest:
@@ -25,6 +26,9 @@ def _window_request(*, scope: str = "pcell") -> BaseStationMeasurementWindowRequ
         requested_window_count=1,
         expected_window_count=1,
         window_index=0,
+        # P1-74：正式窗口必须携带 execution 冻结的统计基，否则窗口 fail-closed
+        # （统计基未确认 = 仪器沿用保留值）。取值域见 printed p.953。
+        statistical_basis_subframes=SUBFRAMES,
     )
 
 
@@ -40,7 +44,7 @@ class _WindowDriver(RealCmw500Driver):
         super().__init__("cmw-window", {"ip_address": "192.0.2.10"})
         self._visa_session = object()
         self.states = deque(states)
-        self.errors = deque(errors or ['0,"No error"'] * 8)
+        self.errors = deque(errors or ['0,"No error"'] * 12)
         self.absolute = absolute
         self.relative = relative
         self.writes: list[str] = []
@@ -61,6 +65,8 @@ class _WindowDriver(RealCmw500Driver):
             return self.errors.popleft()
         if command == "*OPC?":
             return "1"
+        if command == "CONFigure:LTE:SIGN1:EBLer:SFRames?":
+            return str(SUBFRAMES)
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?":
             if isinstance(self.absolute, Exception):
                 raise self.absolute
@@ -106,6 +112,7 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
         "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
         "CONFigure:LTE:SIGN1:EBLer:REPetition CONTinuous",
         "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
+        f"CONFigure:LTE:SIGN1:EBLer:SFRames {SUBFRAMES}",
         "INITiate:LTE:SIGN1:EBLer",
         "STOP:LTE:SIGN1:EBLer",
         "ABORt:LTE:SIGN1:EBLer",
@@ -176,7 +183,10 @@ async def test_kpi_fields_fail_independently_without_borrowing_each_other(
 async def test_stop_rejection_prevents_fetch_and_still_confirms_final_abort():
     driver = _WindowDriver(
         states=["OFF", "RUN", "RUN", "OFF"],
+        # 写组顺序：pre-clear / TOUT / REPetition / SCONdition / SFRames /
+        # INIT / STOP / final ABORT —— -221 落在 STOP 那一组。
         errors=[
+            '0,"No error"',
             '0,"No error"',
             '0,"No error"',
             '0,"No error"',
