@@ -196,14 +196,32 @@ def test_out_of_domain_requests_are_rejected_never_clamped(subframes):
 
 @pytest.mark.parametrize(
     ("response", "expected"),
-    [("5000", 5000), ("+5000", 5000), ("  400000  ", 400_000), ("100", 100)],
+    [
+        ("5000", 5000),
+        ("+5000", 5000),
+        ("  400000  ", 400_000),
+        ("100", 100),
+        # 外审 R3：docstring 声称接受 `5.0E+03` 这类科学计数形态，此前却无用例
+        # 守着 —— 「声称 X 但无门」。SCPI 仪器回读常用指数形式，现场半在真机上
+        # 才发现解析不了会直接 fail-closed 掉整个窗口。
+        ("5.0E+03", 5000),
+        ("4.00000E+05", 400_000),
+        ("1.0E+02", 100),
+        ("5.5E+03", 5500),
+    ],
 )
 def test_readback_parser_accepts_documented_forms(response, expected):
     assert Cmw500LteCommandProfile.parse_ebler_subframes(response) == expected
 
 
 @pytest.mark.parametrize(
-    "response", ["99", "400001", "5000.5", "NAV", "", "  ", "5000,1", "ON"]
+    "response",
+    [
+        "99", "400001", "5000.5", "NAV", "", "  ", "5000,1", "ON",
+        # 外审 R3：科学计数形态同样要走域校验与整数校验，不能因为「长得像
+        # 合法数字」就放行。9.9E+01 = 99（越界）、5.0005E+03 = 5000.5（非整数）。
+        "9.9E+01", "5.0005E+03", "4.00001E+05",
+    ],
 )
 def test_readback_parser_rejects_undocumented_forms(response):
     with pytest.raises(ValueError):
