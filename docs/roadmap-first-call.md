@@ -3455,7 +3455,8 @@ exchange ids、attempt/lease/session 与窗口 digest 一并持久化；任何�
 
 **验收与地点**：非现场半完成严格 TDD、全部正式消费者审计与旧证据兼容；现场半在真实 CMW500
 上用至少两个不同统计长度连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase
-变化且不继承旧状态。现场半完成前 CMW Extended BLER 正式 KPI 保持 UNKNOWN/N/A。
+变化且不继承旧状态。
+⚠️ **2026-08-31 更正**：本条原写「现场半完成前 CMW Extended BLER 正式 KPI 保持 UNKNOWN/N/A」，**该闸从未存在**（P1-74 内审实跑探针得 `kpi_valid={'dl_throughput': True, 'dl_bler': True}`，全仓 `field_verified`/`bench_only`/`onsite_verified` 零命中；此状态自 P1-73B/C 即如此，非 P1-74 引入）。P1-74 非现场半交付的是**统计基本身**的下发/回读/fail-closed，**不包含**给 KPI 加现场认证闸 —— 那要新增机制并推翻 P1-73B/C 既有行为，属越界，已登记 Discovered 待 triage。
 
 **依赖/顺序**：位于已批准队列首位，先于其后全部已批准片；完整顺序只看本页顶部 Current Focus
 段的顺序串，本条不复制清单。来源为 2026-08-30 P2-51 内审发现，设计边界见
@@ -4740,13 +4741,16 @@ execution id，不硬编码 F64/UXM；execution-filtered 导出文件名与首�
 - `[discovered 2026-08-30 during UXM/CMW500 Mock 对照执行]` **Readiness 在线判据被展示成 TestCase 可执行（P2）** —— 错误组合仍显示 `5/5 instruments ready`；该值只证明资源在线，不覆盖 RAT/operation/profile 兼容性。**出口：→ P2-65**，资源、binding 与 TestCase compatibility 三判分列并复用 P1-75 verdict。
 - `[discovered 2026-08-30 during UXM/CMW500 Mock 对照执行]` **执行证据允许 manifest 与 requested config 自相矛盾且 `completed` 易形成成功假象（P2）** —— 第一组证据同时保存 UXM/NR5G/LTE 三个冲突事实，报告虽为 Diagnostic/UNKNOWN 仍以完成态生成。**出口：→ P2-66**，证据不变量与 pipeline/diagnostic/valid-test 终态分层。
 - `[discovered 2026-08-30 during 双执行日志取证]` **公共 release 日志硬编码 UXM、execution-filtered 导出文件名不含 execution id（P2）** —— CMW500 execution `31d3e29d-3b0f-4e5c-b391-0b629824e72d` 仍输出“F64/UXM 控制会话已释放”；用户提供的 `app_export.jsonl` 与 `app_export (1).jsonl` SHA-256 完全相同且只含第一组执行，第二组实际存在于应用日志/数据库。附件不足以区分“过滤器仍停在第一组”还是“同一文件重复附加”，但文件命名与导出元数据无法防止这种混淆。**出口：→ P2-67**。
+- `[discovered 2026-08-31 during P1-74 内审 F1]` **CMW Extended BLER 正式 KPI 没有任何现场认证闸（P2，非 P1-74 引入）** —— 多份文档写着「现场半完成前正式 KPI 保持 UNKNOWN/N/A」，但该闸**从未存在**：内审实跑探针（真 CMW 驱动 + 可控传输层，happy path）得 `kpi_valid={'dl_throughput': True, 'dl_bler': True}`，该值经 `measure.py::_trusted_throughput_value` → `samples_tput` → `az["throughput_mbps"]` 直接进正式结果与报告；全仓 `field_verified` / `bench_only` / `onsite_verified` **零命中**（我已独立复核）。此状态自 P1-73B/C 即如此。**出口：待 triage** —— 真加闸 = 新增机制且推翻 P1-73B/C 既有行为，须用户裁决范围；在此之前，凡写「现场半前 KPI 保持 N/A」的文档都应视为**描述意图而非现状**。
+- `[discovered 2026-08-31 during P1-74 内审 F4]` **测量窗口证据项的内容整体不落库（P2，既有架构缺口）** —— `execution_scpi_evidence.append_base_station_measurement_window` 只取各 `window.evidence` 项的 `exchange_ids` 做账本校验，item 自身的 `requested` / `readback` / `verdict` / `reason` **全部丢弃**（不只统计基，`cmw500.extended_bler.window` 同样被丢）。P1-74 已用换源规避（applied 值随 `trust.reason` 落库），但结构化的窗口级证据仍无持久化通道。相关联的是同一处的封闭约束：`trust.exchange_ids` 必须与各证据项顺序拼接**严格列表相等**，因此第二条证据项无法认领自己的 exchange id。**出口：待 triage**（属 P2-66 执行证据不变量的邻域，triage 时先判是否并入）。
+- `[discovered 2026-08-31 during P1-74 内审 F5]` **仪器参数域只在窗口 I/O 时刻校验，配置层与 GUI 无上下限（P2）** —— CMW `EBLer:SFRames` 手册域为 100..400E+3，但 `schemas/mimo_ota/config.py::stat_count` 无 `ge/le`，GUI 两处输入（`MIMOOTAConfigForm.tsx` / `TopologyProfileEditor.tsx`）**只有 `min={100}` 无 `max`**。真机上 `stat_count>400000` 会在**第一个窗口**才 fail-closed，此时转台已移动、UE 已 attach，且用户在配置界面拿不到任何提示。⚠️ **不宜简单地在共同配置层加 CMW 的域**：`stat_count` 是 adapter-neutral 字段，把某一厂商的域写进去会让厂商约束泄漏到共同层，且仓内已有 `stat_count: 50` / `stat_count: 1` 的合法 mock 用法（mock 路径无仪器约束）。**出口：待 triage**，正解方向应是由所选 adapter 的 manifest 声明其域、在 freeze/preview 期按 adapter 校验（P1-75 的 requirements projection 是天然载体）。
 - `[discovered 2026-08-31 during P2-64～P2-67 前移内审]` **roadmap 的顺序串、条目依赖图与 `docs/plans/` 相对链接三类漂移零门保护（P2）** —— 内审实测 5 条变异全部不红（只回滚四处顺序镜像中的一处、design 交付表与顶部顺序串分叉、plan 稿相对链接改成死链、把某条依赖行改成倒序依赖、顺序串里删掉一个条目），`api-service/tests/test_rule_gates.py` 均 59 passed。根因：该文件的 `_DOC_ARCHIVE_FILES` 显式把 `docs/roadmap-first-call.md` 排除在活文档网外（历史决定：该文件正文主体是完成记录，G8 在它上面真阳性率 0/5），因此这三类漂移在这份文件上**结构性**无门，只能靠 ⓪③⁺ 的人工 grep。**出口：待 triage**；若要做，唯一可行形态是从顶部那条顺序串**派生**（不是新写一份清单）断言 ① 四处镜像顺序串相等 ② 每条依赖项下标 < 自身下标 ③ `docs/plans/*.md` 相对链接可解析，且三条都须旁配行为门 + 判定器自测，否则又是一道假门。
 - `[discovered 2026-08-30 during compatibility 全集审计]` **兼容性缺口可能扩散到 bandwidth、MIMO、duplex、attach stages、measurement window 与 MAC operations（P2 风险，尚未逐项真机复现）** —— 当前 freeze 未统一投影这些 TestCase requirements，部分只靠后置真实 driver 拒绝，宽松 Mock 可能继续放行。**出口：并入 P1-75 的 requirements 全集审计与 P2-64 的 manifest-scoped Mock 验收**；没有当前结构化真值或手册证据的维度保持 unavailable，不为补门猜字段。
 
 ### 2026-08-30 P2-51 取证期平台缺口（已 triage）
 
 - `[discovered 2026-08-30 during P2-51 CMW500 MAC 取证]` **LTE TDD 正式路径缺口（P2）** —— TestCase 契约无 LTE TDD 配比字段；`CELL[:PCC]:ULDL`（手册 p.687）+ `RMC:VERSion:DL<s>`（p.803）未实现。NR slot 字符串不可如实翻译为 LTE 0..6 配比，当前 TDD duplex 下 configure_mac_throughput_test 整体 fail-loud。详见取证清单 §8。**出口：→ P2-54（RAT-neutral profile）+ P2-56（LTE TDD 与真机认证）。**
-- `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。**出口：→ P1-74**，由窗口层驱动并回读 SFrames，换源到本次 TestCase 的 `stat_count`。
+- `[discovered 2026-08-30 during P2-51 内审 F1]` **Extended BLER 统计基继承仪器旧状态（P2）** —— `EBLer:SFRames`（p.953）在 continuous 模式下即每周期统计子帧数（§3.3.1 p.940 示例明示），命令归测量窗口层所有、当前全仓未驱动 —— 正式 KPI 的统计基取决于上一个 session 设过什么（*RST=10E+3）。**出口：→ P1-74**，由窗口层驱动并回读 SFrames，换源到本次 TestCase 的 `stat_count`。 **✅ 非现场半已落地（2026-08-31，P1-74）**：写入 + 回读 + 全域 fail-closed 已实现并有变异实跑的门；**现场半仍未完成**，真机复验前 CMW Extended BLER 的窗口 outcome 未经真机确认。
 
 ### 2026-08-30 P2-53 第三 adapter 认证期平台缺口（待 triage，不自动启动）
 

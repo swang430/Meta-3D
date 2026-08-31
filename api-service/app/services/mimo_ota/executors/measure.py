@@ -685,8 +685,17 @@ class MeasureExecutor(IStepExecutor):
         throughput_scope: str,
         requested_sample_count: int,
         simulated_diagnostic: bool,
+        statistical_basis_subframes: int,
     ) -> tuple[BaseStationMeasurementWindowRequest, ...]:
-        """Freeze one vendor-neutral native-window plan before any window I/O."""
+        """Freeze one vendor-neutral native-window plan before any window I/O.
+
+        ``statistical_basis_subframes`` is the TestCase's requested statistics
+        length (how many subframes this window must accumulate).  It is a
+        required argument on purpose: a default here would be exactly the
+        "backfill truth from a default" shape the window invariants forbid.
+        Vendor parameter domains are checked by each driver against its own
+        manual; this layer only freezes what the TestCase asked for.
+        """
 
         if (
             isinstance(requested_sample_count, bool)
@@ -694,6 +703,12 @@ class MeasureExecutor(IStepExecutor):
             or requested_sample_count <= 0
         ):
             raise TypeError("requested measurement window count must be positive")
+        if (
+            isinstance(statistical_basis_subframes, bool)
+            or not isinstance(statistical_basis_subframes, int)
+            or statistical_basis_subframes <= 0
+        ):
+            raise TypeError("statistical basis subframes must be positive")
         scope_by_runtime_value = {
             ThroughputMetrics.SCOPE_PCELL: "pcell",
             ThroughputMetrics.SCOPE_NR_ALL_CELLS: "all_cells",
@@ -734,6 +749,7 @@ class MeasureExecutor(IStepExecutor):
                 requested_window_count=requested_sample_count,
                 expected_window_count=expected_count,
                 window_index=index,
+                statistical_basis_subframes=statistical_basis_subframes,
             )
             for index in range(expected_count)
         )
@@ -747,6 +763,7 @@ class MeasureExecutor(IStepExecutor):
         requested_sample_count: int,
         manifest: BaseStationAdapterManifest | None,
         simulated_diagnostic: bool,
+        statistical_basis_subframes: int,
     ) -> List[_BaseStationSample]:
         """Collect only adapter-native structured windows through the common SPI."""
 
@@ -755,6 +772,7 @@ class MeasureExecutor(IStepExecutor):
             throughput_scope=throughput_scope,
             requested_sample_count=requested_sample_count,
             simulated_diagnostic=simulated_diagnostic,
+            statistical_basis_subframes=statistical_basis_subframes,
         )
 
         samples: List[_BaseStationSample] = []
@@ -3102,6 +3120,10 @@ class MeasureExecutor(IStepExecutor):
                         simulated_diagnostic=(
                             base_station_attempt.simulated_diagnostic
                         ),
+                        # P1-74：TestCase 的统计基随 execution 冻结进窗口请求。
+                        # window_s 仍只是「等多久」，它不是统计基，也证明不了
+                        # 仪器统计了多少子帧。
+                        statistical_basis_subframes=config.stat_count,
                     )
                 except _BaseStationWindowBlocked as exc:
                     # A rejected native window has no authoritative connected

@@ -79,6 +79,9 @@ class _FakeTransportCmw(RealCmw500Driver):
             return "0,900,100,1000,123456.5,120000,125000,0,1000,15"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:RELative?":
             return "0,99.5,0.5,0.5,87.25,0"
+        if command == "CONFigure:LTE:SIGN1:EBLer:SFRames?":
+            # P1-74：统计基回读，与本用例冻结的 5000 子帧一致
+            return "5000"
         if command == "*OPC?":
             return "1"
         if command == "SYSTem:ERRor:ALL?":
@@ -140,6 +143,7 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
             requested_sample_count=3,
             manifest=RealCmw500Driver.adapter_manifest,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
         cleanup = await cleanup_chamber_instruments(
             SimpleNamespace(drivers={"baseStation": driver}), "execution-1"
@@ -183,4 +187,5 @@ async def test_extended_bler_window_rejects_a_live_ue_drop_before_recording_conn
                 requested_sample_count=3,
                 manifest=RealCmw500Driver.adapter_manifest,
                 simulated_diagnostic=False,
+                statistical_basis_subframes=5000,
             )

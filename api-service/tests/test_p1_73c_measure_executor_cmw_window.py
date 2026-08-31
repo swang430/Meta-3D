@@ -190,6 +190,7 @@ async def test_cmw_measure_scan_uses_one_driver_native_extended_bler_window():
         requested_sample_count=3,
         manifest=RealCmw500Driver.adapter_manifest,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert driver.native_calls == 1
@@ -211,6 +212,7 @@ async def test_uxm_measure_scan_preserves_requested_common_window_count():
         requested_sample_count=3,
         manifest=RealUxmDriver.adapter_manifest,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert driver.native_calls == 3
@@ -249,6 +251,7 @@ async def test_rejected_cmw_lifecycle_stops_before_any_legacy_or_extra_window():
             requested_sample_count=3,
             manifest=RealCmw500Driver.adapter_manifest,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
 
     assert driver.native_calls == 1
@@ -469,6 +472,7 @@ async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window()
         requested_sample_count=2,
         manifest=None,
         simulated_diagnostic=True,
+        statistical_basis_subframes=5000,
     )
 
     assert len(samples) == 2

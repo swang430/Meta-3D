@@ -203,6 +203,7 @@ async def test_measure_executor_uses_frozen_requests_not_driver_count_or_policy(
         throughput_scope="pcell",
         requested_sample_count=3,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
     driver = _Driver(_window(requests[0]))
 
@@ -213,6 +214,7 @@ async def test_measure_executor_uses_frozen_requests_not_driver_count_or_policy(
         requested_sample_count=3,
         manifest=RealCmw500Driver.adapter_manifest,
         simulated_diagnostic=False,
+        statistical_basis_subframes=5000,
     )
 
     assert driver.calls == list(requests)
@@ -242,6 +244,7 @@ async def test_measure_executor_rejects_missing_or_mismatched_window_trust():
             requested_sample_count=3,
             manifest=RealCmw500Driver.adapter_manifest,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )
 
     other = replace(request, requested_window_count=4)
@@ -254,4 +257,5 @@ async def test_measure_executor_rejects_missing_or_mismatched_window_trust():
             requested_sample_count=3,
             manifest=RealCmw500Driver.adapter_manifest,
             simulated_diagnostic=False,
+            statistical_basis_subframes=5000,
         )

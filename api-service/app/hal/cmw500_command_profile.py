@@ -138,9 +138,10 @@ _LTE_MANUAL = "R&S CMW LTE UE User Manual 1173.9628.02-41"
 
 # 查询形通则（P2-51）：手册 §1.2.4, printed p.15 —— "Most commands have a
 # command form and a query form. Exceptions are marked by 'Setting only',
-# 'Query only' or 'Event'."  下方 mac_* 查询形所引用的命令均无 Setting only
-# 标记；查询**响应**的字面形态手册未逐条给出 → 解析器按严格白名单 + 错误
-# 队列核对处理（同 rs_fsva 的「⚠ 推断」形态），真机复验见取证清单 §7。
+# 'Query only' or 'Event'."  下方引用本通则的查询形（mac_* 与 P1-74 的
+# ebler_subframes_query）所对应的命令块均无这些例外标记；查询**响应**的字面
+# 形态手册未逐条给出 → 解析器按严格白名单 + 错误队列核对处理（同 rs_fsva 的
+# 「⚠ 推断」形态），真机复验见取证清单 §7。
 _QUERY_FORM_RULE = f"{_LTE_MANUAL}, §1.2.4, printed p.15 (query-form rule)"
 
 # Every literal below is adjacent to an auditable vendor-manual reference.
@@ -220,6 +221,31 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         template="CONFigure:LTE:SIGN{i}:EBLer:SCONdition",
         source_reference=f"{_LTE_MANUAL}, §3.3.3 and §3.4.3, printed p.941, 953",
         purpose="Disable retained confidence-level early termination",
+        minimum_firmware="V3.0.30",
+    ),
+    # P1-74：统计基（每 measurement cycle 处理的子帧数）。p.937 的 SCONdition
+    # "None" 定义直说「测量按 Repetition 模式与指定的 No. of Subframes 执行」，
+    # p.938 与 §3.3.1 示例 p.940 也把它放在 continuous 配置里；p.953 的
+    # 「只影响 trace 长度」一句**限定 confidence 模式**（SCONdition CLEVel），
+    # 不适用于正式窗口。
+    "ebler_subframes": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:EBLer:SFRames",
+        source_reference=(
+            f"{_LTE_MANUAL}, §3.2.4 printed p.937-938, §3.3.1 printed p.940, "
+            f"§3.4.3 printed p.953"
+        ),
+        purpose=(
+            "Drive the number of subframes processed per measurement cycle so "
+            "the statistical basis comes from the TestCase, not retained state"
+        ),
+        minimum_firmware="V3.0.30",
+    ),
+    "ebler_subframes_query": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:EBLer:SFRames?",
+        source_reference=(
+            f"{_LTE_MANUAL}, §3.4.3, printed p.953; {_QUERY_FORM_RULE}"
+        ),
+        purpose="Read back the statistical basis that is actually in effect",
         minimum_firmware="V3.0.30",
     ),
     # ------------------------------------------------------------------
@@ -391,6 +417,38 @@ def _dl_stream(value: int) -> int:
     return value
 
 
+# P1-74: `CONFigure:LTE:SIGN<i>:EBLer:SFRames <Subframes>` parameter block,
+# printed p.953 — integer, Range 100 to 400E+3, *RST 10E+3.  The reset value is
+# recorded so the driver can name the retained-state hazard it is closing; it is
+# never used as a fallback (a defaulted statistical basis is the very failure
+# P1-74 removes).
+EBLER_SUBFRAMES_MIN = 100
+EBLER_SUBFRAMES_MAX = 400_000
+EBLER_SUBFRAMES_RESET = 10_000
+
+
+def validate_ebler_subframes(value: object) -> int:
+    """Accept only the manual's documented statistical basis; never clamp.
+
+    Clamping an out-of-range request would silently substitute a different
+    statistical basis — the exact class of silent KPI corruption this command
+    exists to remove.  Out-of-domain requests are rejected so the window can
+    fail closed with the requested number still visible in its evidence.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            "CMW Extended BLER subframes must be an integer number of subframes"
+        )
+    if not EBLER_SUBFRAMES_MIN <= value <= EBLER_SUBFRAMES_MAX:
+        raise ValueError(
+            f"CMW Extended BLER subframes {value} is outside the documented "
+            f"range {EBLER_SUBFRAMES_MIN}..{EBLER_SUBFRAMES_MAX} "
+            f"({_LTE_MANUAL}, printed p.953)"
+        )
+    return value
+
+
 # P2-51 readback token vocabularies — copied verbatim from the manual enums.
 # NumberRB: printed p.799 (DL) / p.800 (UL share the same list).
 RMC_NUMBER_RB_TOKENS = frozenset(
@@ -545,6 +603,17 @@ class Cmw500LteCommandProfile:
     @classmethod
     def ebler_stop_condition_none(cls, sign_channel: int) -> str:
         return f"{cls._format('ebler_stop_condition', sign_channel)} NONE"
+
+    @classmethod
+    def build_ebler_subframes(cls, sign_channel: int, subframes: object) -> str:
+        """Encode the execution-frozen statistical basis (printed p.953)."""
+
+        validated = validate_ebler_subframes(subframes)
+        return f"{cls._format('ebler_subframes', sign_channel)} {validated}"
+
+    @classmethod
+    def ebler_subframes_query(cls, sign_channel: int) -> str:
+        return cls._format("ebler_subframes_query", sign_channel)
 
     # ------------------------------------------------------------------
     # P2-51: LTE MAC/调度配置 builder（wire 形态唯一出口，白名单式）
@@ -702,6 +771,21 @@ class Cmw500LteCommandProfile:
             throughput_average_percent=_percent(values[4], "throughput percent"),
             dtx_percent=_percent(values[5], "DTX percent"),
         )
+
+    @staticmethod
+    def parse_ebler_subframes(response: str) -> int:
+        """Parse the SFRames readback strictly against the manual's domain.
+
+        The manual gives the parameter domain (integer, 100..400E+3, printed
+        p.953) but not the literal response spelling, so the numeric forms SCPI
+        instruments commonly echo (``5000`` / ``+5000`` / ``5.0E+03``) are all
+        accepted and everything outside the documented domain is rejected —
+        an out-of-domain readback proves the statistical basis is not the one
+        that was requested, which must fail closed rather than be interpreted.
+        """
+
+        parsed = _integer(response.strip(), "Extended BLER subframes")
+        return validate_ebler_subframes(parsed)
 
     @staticmethod
     def parse_ebler_state(response: str) -> str:
