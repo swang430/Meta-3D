@@ -40,12 +40,13 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= 无活动开发片。** P2-53 已由 PR #424 合并；随后 PR #425 修复
+Current Focus（非现场）= **P1-75**（TestCase × BaseStation Adapter 执行兼容性硬门）。**
+P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。 P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
 adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
 并在 Mock UXM 接受 LTE TestCase 的复盘后批准插入执行兼容性硬门；顺序为
-**P1-74 → P1-75 → P2-64 → P2-65 → P2-66 → P2-67 → P2-54 → P2-55 → P2-56 →
+**~~P1-74~~（✅ 非现场半 #429，现场半待真机） → P1-75 → P2-64 → P2-65 → P2-66 → P2-67 → P2-54 → P2-55 → P2-56 →
 P2-57 → P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
 2026-08-31 用户批准把 P2-64～P2-67 整组前移到 P1-75 之后。理由有二：这四片是同一次 Mock 复盘的
 直接派生，旧顺序下它们前面压着 P2-54～P2-56、P2-57～P2-62 与 P2-63 共十片，轮到时本次复盘的
@@ -78,9 +79,10 @@ P3-20/P3-21 仍不得自动启动。
    合并；P2-45 已由 PR #411 合并，完成 Diagnostic/Formal policy、站点认证、execution
    qualification 冻结、正式消费隔离与 GUI/API 镜像。P2-46/P2-47/P2-48 已分别由 PR #412/#413/#414
    合并；P2-49～P2-53 已由 PR #415/#417/#420/#422/#424 合并；后续现场热修与配置保存完整性
-   已由 PR #425/#426/#427 合并。下一批已批准进入雷达但尚未启动：先做 P1-74 收口 CMW500
-   Extended BLER 统计基，再做 P1-75 与 P2-64～P2-67 一次性收口本次 Mock 复盘暴露的执行兼容性、
-   Mock 能力、Readiness、证据终态与日志导出；随后 P2-54～P2-56 收口 CMW500 MAC 真值，
+   已由 PR #425/#426/#427 合并。**P1-74 的非现场半已由 PR #429 合并**（CMW500 Extended BLER
+   统计基下发 + 回读 + 全域 fail-closed；其现场半待真机）。下一批：**当前非现场 WIP = P1-75**，
+   随后 P2-64～P2-67 一次性收口本次 Mock 复盘暴露的执行兼容性、Mock 能力、Readiness、
+   证据终态与日志导出；再往后 P2-54～P2-56 收口 CMW500 MAC 真值，
    最后 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
@@ -690,7 +692,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=无**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准但未启动的雷达顺序为 P1-74 → P1-75 → P2-64～P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=P1-75**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ **P1-75（当前非现场 WIP）** → P2-64～P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半（详见下方「Blocked on hardware」）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3441,7 +3443,7 @@ async 执行端点的 execution ContextVar 能回到汇总行。同步取消端�
 `request.state.execution_id` 回传。HTTP/WebSocket 均初始化 request id，并在 `finally`
 复位 session/execution token；同 task 连续请求反向门确认不串链。
 
-### P1-74 — CMW500 Extended BLER 统计基真值闭环（批准入雷达，未启动）
+### P1-74 — CMW500 Extended BLER 统计基真值闭环 ✅ 非现场半（#429）/ 🚧 现场半
 
 **可观察故障**：P2-51 已证明 CMW500 LTE FDD 2×2 满 RB 固定 RMC 的配置与回读，但正式
 Extended BLER 窗口没有从 TestCase 的 `stat_count` 驱动并回读 `EBLer:SFRames`。在 continuous
