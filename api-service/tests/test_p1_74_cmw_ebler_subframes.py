@@ -223,6 +223,24 @@ def test_request_carries_the_execution_frozen_statistical_basis():
     assert legacy.statistical_basis_subframes is None
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, TypeError), (False, TypeError), (5000.0, TypeError),
+     ("5000", TypeError), (0, ValueError), (-1, ValueError)],
+)
+def test_request_raises_the_documented_exception_kind(value, expected):
+    """外审 R1：类型不符 → TypeError，值越界 → ValueError。
+
+    此前三个校验点（请求 / 持久化 / 执行器）分别抛 TypeError / ValueError /
+    TypeError —— 同一个字段三种行为，调用方按其中一种捕获就会漏掉另一种。
+    下面那条用 (TypeError, ValueError) 元组的旧断言抓不到这种不一致，保留它
+    作为「拒绝」的粗筛，由本条负责钉住异常种类。
+    """
+
+    with pytest.raises(expected):
+        _window_request(statistical_basis_subframes=value)
+
+
 @pytest.mark.parametrize("value", [0, -1, True, False, 5000.0, "5000"])
 def test_request_rejects_a_non_positive_or_non_integer_statistical_basis(value):
     with pytest.raises((TypeError, ValueError)):
@@ -623,6 +641,24 @@ def test_window_plan_requires_an_explicit_statistical_basis():
             throughput_scope="pcell",
             requested_sample_count=1,
             simulated_diagnostic=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, TypeError), (5000.0, TypeError), ("5000", TypeError),
+     (0, ValueError), (-1, ValueError)],
+)
+def test_window_plan_raises_the_documented_exception_kind(value, expected):
+    """外审 R1：执行器层与请求层共用同一套异常契约。"""
+
+    with pytest.raises(expected):
+        MeasureExecutor._measurement_window_requests(
+            RealCmw500Driver.adapter_manifest,
+            throughput_scope="pcell",
+            requested_sample_count=1,
+            simulated_diagnostic=False,
+            statistical_basis_subframes=value,
         )
 
 

@@ -521,14 +521,17 @@ class BaseStationMeasurementWindowRequest:
             or not 0 <= self.window_index < self.expected_window_count
         ):
             raise ValueError("measurement window index is outside the frozen batch")
-        if self.statistical_basis_subframes is not None and (
-            isinstance(self.statistical_basis_subframes, bool)
-            or not isinstance(self.statistical_basis_subframes, int)
-            or self.statistical_basis_subframes <= 0
-        ):
-            raise TypeError(
-                "statistical basis subframes must be a positive integer or None"
-            )
+        if self.statistical_basis_subframes is not None:
+            # 外审 R1：类型不符 → TypeError，值越界 → ValueError。三个校验点
+            # （此处 / 持久化模型 / 执行器）统一这套契约，调用方才能只捕一种。
+            if isinstance(self.statistical_basis_subframes, bool) or not isinstance(
+                self.statistical_basis_subframes, int
+            ):
+                raise TypeError(
+                    "statistical basis subframes must be an integer or None"
+                )
+            if self.statistical_basis_subframes <= 0:
+                raise ValueError("statistical basis subframes must be positive")
 
     @property
     def digest(self) -> str:

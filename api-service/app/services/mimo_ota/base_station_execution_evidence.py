@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     JsonValue,
     StrictBool,
+    StrictInt,
     field_validator,
     model_validator,
 )
@@ -623,7 +624,10 @@ class BaseStationMeasurementWindowRequestEvidence(BaseModel):
     window_index: int
     # P1-74：与 HAL 的 BaseStationMeasurementWindowRequest 同形；历史证据没有
     # 这个键，缺省即 None。
-    statistical_basis_subframes: int | None = None
+    # 外审 R1 修复期实测：普通 `int` 下 Pydantic 会把 `True` 静默归一成 `1`，
+    # 于是 validator 里的 `isinstance(..., bool)` 恒为 False —— 那是一道
+    # 永不触发的假门。`StrictInt` 在类型层直接拒 bool/float/str。
+    statistical_basis_subframes: StrictInt | None = None
 
     @model_validator(mode="after")
     def _valid_shape(self):
@@ -641,10 +645,11 @@ class BaseStationMeasurementWindowRequestEvidence(BaseModel):
             raise ValueError("measurement window cardinality/count mismatch")
         if not 0 <= self.window_index < self.expected_window_count:
             raise ValueError("measurement window index is outside the frozen plan")
-        if self.statistical_basis_subframes is not None and (
-            isinstance(self.statistical_basis_subframes, bool)
-            or self.statistical_basis_subframes <= 0
+        if (
+            self.statistical_basis_subframes is not None
+            and self.statistical_basis_subframes <= 0
         ):
+            # 类型由 StrictInt 在字段层把关；此处只管值域。
             raise ValueError("statistical basis subframes must be positive")
         return self
 

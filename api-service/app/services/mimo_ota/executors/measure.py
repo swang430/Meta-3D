@@ -703,12 +703,12 @@ class MeasureExecutor(IStepExecutor):
             or requested_sample_count <= 0
         ):
             raise TypeError("requested measurement window count must be positive")
-        if (
-            isinstance(statistical_basis_subframes, bool)
-            or not isinstance(statistical_basis_subframes, int)
-            or statistical_basis_subframes <= 0
+        if isinstance(statistical_basis_subframes, bool) or not isinstance(
+            statistical_basis_subframes, int
         ):
-            raise TypeError("statistical basis subframes must be positive")
+            raise TypeError("statistical basis subframes must be an integer")
+        if statistical_basis_subframes <= 0:
+            raise ValueError("statistical basis subframes must be positive")
         scope_by_runtime_value = {
             ThroughputMetrics.SCOPE_PCELL: "pcell",
             ThroughputMetrics.SCOPE_NR_ALL_CELLS: "all_cells",
