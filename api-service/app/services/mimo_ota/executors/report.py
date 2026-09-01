@@ -62,9 +62,9 @@ from app.services.test_execution import (
     StepExecutionStatus,
     register_executor,
 )
-from app.services.execution_qualification import (
-    execution_is_diagnostic,
-    execution_qualification_classification,
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.utils.human_time import format_human_local_timestamp
@@ -409,7 +409,8 @@ def _build_mimo_ota_content_data(
     reference = phases.get("reference", {}) or {}
     measure = phases.get("measure", {}) or {}
     analysis = phases.get("analysis", {}) or {}
-    diagnostic_execution = execution_is_diagnostic(execution)
+    evidence_outcome = project_execution_evidence_outcome(execution)
+    diagnostic_execution = execution_evidence_blocks_formal_outputs(execution)
 
     # ARCH-1 S2: MIMO_OTA 执行是 TestCase 制不挂 TestPlan, 报告首段的
     # "名字"就是快照用例名 (caller 经 _lookup_case_name 查好传入;
@@ -989,15 +990,20 @@ def _build_mimo_ota_content_data(
         )
     )
 
+    title_suffix = {
+        "diagnostic": " — 诊断审计",
+        "invalid": " — 证据无效",
+    }.get(evidence_outcome.compatibility_classification, "")
     return {
-        "title": f"MIMO OTA Test Report — {plan_info['name']}",
+        "title": f"MIMO OTA Test Report — {plan_info['name']}{title_suffix}",
         # P1-22 (Codex #256): 报告类型进 content_data — PDFGenerator 靠它分流
         # 计划口径/用例口径的字段标签 (名字有无判不了型: 本路径恒有名字)。
         "report_type": "single_execution",
         "report_family": "mimo_ota",
         "execution_classification": (
-            execution_qualification_classification(execution) or "legacy"
+            evidence_outcome.compatibility_classification
         ),
+        "execution_evidence_outcome": evidence_outcome.model_dump(mode="json"),
         "calibration_trust_schema_version": 1,
         "formal_path_loss_verified": _path_loss_formally_verified,
         "path_loss_application": _path_loss_application,

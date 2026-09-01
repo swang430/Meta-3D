@@ -145,6 +145,16 @@ def test_historical_row_without_freeze_remains_legacy_pipeline_completion():
     assert outcome.compatibility_digest is None
 
 
+def test_historical_explicit_diagnostic_qualification_stays_diagnostic():
+    outcome = project_execution_evidence_outcome(
+        _execution(qualification="diagnostic", include_freeze=False)
+    )
+
+    assert outcome.compatibility_classification == "diagnostic"
+    assert outcome.completion_semantic == "diagnostic_completed"
+    assert outcome.formal_eligible is False
+
+
 def test_outer_freeze_digest_tamper_fails_closed():
     execution = _execution()
     execution.config[FREEZE_CONFIG_KEY]["binding_digest"] = "c" * 64

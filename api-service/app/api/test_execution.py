@@ -27,9 +27,9 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     project_base_station_metrics_by_position,
 )
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
-from app.services.execution_qualification import (
-    execution_is_diagnostic,
-    execution_qualification_classification,
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
@@ -63,7 +63,7 @@ def _formal_validation_pass(
     """Do not republish legacy MIMO PASS without explicit-real calibration."""
     if not _is_mimo_ota_execution(execution, test_type):
         return execution.validation_pass
-    if execution_is_diagnostic(execution):
+    if execution_evidence_blocks_formal_outputs(execution):
         return None
     phases = (
         (execution.measurements or {}).get("phases")
@@ -179,9 +179,9 @@ def _to_history_item(
         error_message=execution.error_message or _str_or_none(
             cfg.get("error_message")),
         validation_pass=_formal_validation_pass(execution, test_type),
-        execution_classification=(
-            execution_qualification_classification(execution) or "legacy"
-        ),
+        execution_classification=project_execution_evidence_outcome(
+            execution
+        ).compatibility_classification,
         # P2-34: 告警发布结果 (白名单解析); None = 未记录, 不是"已发布"
         failure_alert_outcome=resolve_recorded_outcome(cfg),
     )

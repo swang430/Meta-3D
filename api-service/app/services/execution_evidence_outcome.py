@@ -152,7 +152,9 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
     if frozen is None or (
         isinstance(frozen, Mapping) and "compatibility" not in frozen
     ):
-        classification: CompatibilityClassification = "legacy"
+        classification: CompatibilityClassification = (
+            "diagnostic" if qualification == "diagnostic" else "legacy"
+        )
         reasons.append("execution has no frozen compatibility snapshot")
     else:
         error = validate_frozen_compatibility_snapshot(frozen)
@@ -195,3 +197,15 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
         reasons=tuple(dict.fromkeys(reasons)),
         pipeline_status=pipeline_status,
     )
+
+
+def execution_evidence_blocks_formal_outputs(execution: Any) -> bool:
+    """Return whether this execution must be excluded from every formal output.
+
+    Legacy rows intentionally retain the pre-P1-75 provenance rules.  Explicit
+    diagnostic or invalid evidence is fail-closed everywhere.
+    """
+
+    return project_execution_evidence_outcome(
+        execution
+    ).compatibility_classification in {"diagnostic", "invalid"}

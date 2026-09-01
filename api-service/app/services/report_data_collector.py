@@ -16,7 +16,9 @@ import logging
 
 from app.models.test_plan import TestPlan, TestExecution, TestStep
 from app.models.report import TestReport
-from app.services.execution_qualification import execution_is_diagnostic
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,14 +369,14 @@ class ReportDataCollector:
         passed = sum(
             1
             for e in executions
-            if not execution_is_diagnostic(e)
+            if not execution_evidence_blocks_formal_outputs(e)
             and e.validation_pass is True
             and formally_accepted[str(e.id)]
         )
         failed = sum(
             1
             for e in executions
-            if not execution_is_diagnostic(e)
+            if not execution_evidence_blocks_formal_outputs(e)
             and (
                 e.validation_pass is False
                 or (e.validation_pass is True and not formally_accepted[str(e.id)])
@@ -383,9 +385,12 @@ class ReportDataCollector:
         pending = sum(
             1
             for e in executions
-            if not execution_is_diagnostic(e) and e.validation_pass is None
+            if not execution_evidence_blocks_formal_outputs(e)
+            and e.validation_pass is None
         )
-        undetermined = sum(1 for e in executions if execution_is_diagnostic(e))
+        undetermined = sum(
+            1 for e in executions if execution_evidence_blocks_formal_outputs(e)
+        )
         total_duration = sum(e.duration_sec or 0 for e in executions)
 
         execution_times = [e.executed_at for e in executions if e.executed_at]
@@ -414,7 +419,7 @@ class ReportDataCollector:
         measurements = defaultdict(list)
 
         for execution in executions:
-            if execution_is_diagnostic(execution):
+            if execution_evidence_blocks_formal_outputs(execution):
                 continue
             if execution.measurements:
                 for metric, value in execution.measurements.items():

@@ -1513,6 +1513,24 @@ def public_execution_scpi_evidence(execution) -> Optional[dict[str, Any]]:
         return None
     if evidence.execution_id != str(execution.id):
         return None
+    from app.services.execution_evidence_outcome import (
+        execution_evidence_blocks_formal_outputs,
+        project_execution_evidence_outcome,
+    )
+
+    if execution_evidence_blocks_formal_outputs(execution):
+        outcome = project_execution_evidence_outcome(execution)
+        evidence = evidence.model_copy(
+            update={
+                "formal_verdict": EvidenceVerdict.UNKNOWN,
+                "formal_acceptance": False,
+                "reason": (
+                    "execution_compatibility_invalid"
+                    if outcome.compatibility_classification == "invalid"
+                    else "execution_classified_diagnostic"
+                ),
+            }
+        )
     # 再脱敏一次，防 brownfield 行绕过当前写入口。
     return _sanitize(evidence.model_dump(mode="json"))
 

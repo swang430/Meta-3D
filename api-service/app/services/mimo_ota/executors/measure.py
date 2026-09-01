@@ -77,7 +77,9 @@ from app.hal.base_station_compatibility import (
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
-from app.services.execution_qualification import execution_is_diagnostic
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1263,7 +1265,9 @@ class MeasureExecutor(IStepExecutor):
                     selected_path_loss_use_mock,
                     channel_emulator_is_real=channel_emulator_is_real,
                     strict=config.precheck_strict_cal,
-                    diagnostic=execution_is_diagnostic(context.test_execution),
+                    diagnostic=execution_evidence_blocks_formal_outputs(
+                        context.test_execution
+                    ),
                 )
             )
         path_loss_cert = (

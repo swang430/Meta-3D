@@ -50,9 +50,9 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     canonical_snapshot_digest,
     project_base_station_metrics_by_position,
 )
-from app.services.execution_qualification import (
-    execution_is_diagnostic,
-    execution_qualification_classification,
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 
 logger = logging.getLogger(__name__)
@@ -1425,7 +1425,8 @@ class ReportComparisonService:
         phases = measurements.get("phases") or {}
         analysis = phases.get("analysis") or {}
         measure = phases.get("measure") or {}
-        diagnostic = execution_is_diagnostic(execution)
+        outcome = project_execution_evidence_outcome(execution)
+        diagnostic = execution_evidence_blocks_formal_outputs(execution)
         execution_config = execution.config if isinstance(execution.config, dict) else {}
         evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
         evidence_required = base_station_metric_projection_required(
@@ -1525,7 +1526,7 @@ class ReportComparisonService:
             "metrics": metrics,
             "provenance": {
                 "execution_classification": (
-                    execution_qualification_classification(execution) or "legacy"
+                    outcome.compatibility_classification
                 ),
                 "verdict": analysis.get("verdict"),
                 "measurement_verified": analysis.get("measurement_verified"),

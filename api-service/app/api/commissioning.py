@@ -55,8 +55,10 @@ from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
     ExecutionQualification,
     TestCaseExecutionPolicy,
-    execution_qualification_classification,
-    execution_is_diagnostic,
+)
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
@@ -655,8 +657,9 @@ def _commissioning_measure_projection(
     if measure is None:
         return None
     execution_config = execution.config if isinstance(execution.config, dict) else {}
-    diagnostic = execution_is_diagnostic(execution)
-    classification = execution_qualification_classification(execution) or "legacy"
+    outcome = project_execution_evidence_outcome(execution)
+    diagnostic = execution_evidence_blocks_formal_outputs(execution)
+    classification = outcome.compatibility_classification
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     evidence_required = base_station_metric_projection_required(
         execution_config
