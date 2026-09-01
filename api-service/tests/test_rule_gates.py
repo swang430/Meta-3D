@@ -39,6 +39,9 @@ G27 BaseStation Mock 只读所选注册 manifest ← P2-64 Adapter-scoped Mock
 G28 BaseStation Preview/Readiness/Freeze 共用兼容性判定 ← P2-65
    变异: preview/sync/readiness/freeze 任一入口复制判定、GUI 新增厂商分支或 aggregate
    绕过黄色诊断态，任一项必须检出。
+G29 BaseStation 执行终态只读共同 evidence outcome ← P2-66
+   变异: 任一正式消费者退回旧 qualification 二态、历史/报告/GUI 把 raw completed
+   直接画绿，或关键界面不消费 completion semantic，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2880,3 +2883,135 @@ def test_g28_base_station_compatibility_has_one_projection_chain():
     assert "cells.find((cell) => cell.light === 'yellow')" in gui_truth
     assert "CMW500" not in gui_truth
     assert "UXM" not in gui_truth
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G29 BaseStation 执行终态只读共同 evidence outcome
+# ─────────────────────────────────────────────────────────────────────
+
+_G29_SHARED_CALLS = {
+    "project_execution_evidence_outcome",
+    "execution_evidence_blocks_formal_outputs",
+    "_report_execution_outcome_state",
+}
+
+_G29_PRODUCTION_CONSUMERS = (
+    "api-service/app/services/execution_scpi_evidence.py",
+    "api-service/app/services/mimo_ota/executors/_helpers.py",
+    "api-service/app/services/mimo_ota/executors/analysis.py",
+    "api-service/app/services/mimo_ota/executors/measure.py",
+    "api-service/app/services/mimo_ota/executors/report.py",
+    "api-service/app/services/report_data_collector.py",
+    "api-service/app/services/report_service.py",
+    "api-service/app/api/commissioning.py",
+    "api-service/app/api/test_execution.py",
+    "api-service/app/api/test_plan.py",
+    "api-service/app/api/report.py",
+)
+
+_G29_GUI_CONSUMERS = (
+    "gui/src/features/TestManagement/components/HistoryTab/HistoryTab.tsx",
+    "gui/src/features/Reports/components/ExecutionSelector.tsx",
+    "gui/src/features/Reports/components/ReportList.tsx",
+    "gui/src/components/Report/ReportViewer.tsx",
+)
+
+
+def _g29_execution_outcome_gaps(
+    production_sources: dict[str, str],
+    gui_sources: dict[str, str],
+) -> list[str]:
+    gaps: list[str] = []
+    forbidden = {
+        "execution_is_diagnostic",
+        "execution_qualification_classification",
+    }
+
+    for relative_path, source in production_sources.items():
+        tree = ast.parse(source)
+        calls = {
+            name
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            for name in [_call_name(call)]
+            if name is not None
+        }
+        if not calls.intersection(_G29_SHARED_CALLS):
+            gaps.append(f"shared_outcome:{relative_path}")
+        old_calls = sorted(calls.intersection(forbidden))
+        if old_calls:
+            gaps.append(f"legacy_qualification:{relative_path}:{','.join(old_calls)}")
+
+    for relative_path, source in gui_sources.items():
+        source = _strip_ts_comments(source)
+        if "execution_evidence_outcome" not in source:
+            gaps.append(f"gui_outcome:{relative_path}")
+        if "completion_semantic" not in source:
+            gaps.append(f"gui_semantic:{relative_path}")
+
+    return gaps
+
+
+def test_g29_execution_terminal_consumers_use_shared_outcome():
+    """P2-66：正式消费者和关键界面不得从旧二态或 raw completed 恢复成功。"""
+    production_sources = {
+        path: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in _G29_PRODUCTION_CONSUMERS
+    }
+    gui_sources = {
+        path: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in _G29_GUI_CONSUMERS
+    }
+    assert _g29_execution_outcome_gaps(production_sources, gui_sources) == []
+
+    qualification_source = (
+        _API_SERVICE_ROOT / "app/services/execution_qualification.py"
+    ).read_text(encoding="utf-8")
+    for path in (_API_SERVICE_ROOT / "app").rglob("*.py"):
+        if path.name == "execution_qualification.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        calls = {
+            _call_name(call)
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+        }
+        assert not {
+            "execution_is_diagnostic",
+            "execution_qualification_classification",
+        }.intersection(calls), f"{path} 仍调用旧 qualification 二态"
+    assert "def execution_is_diagnostic" in qualification_source
+
+
+def test_g29_checker_rejects_known_terminal_regressions():
+    """G29 判定器自测：后端退回旧二态与 GUI 不读终态语义都必须变红。"""
+    production_sources = {
+        path: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in _G29_PRODUCTION_CONSUMERS
+    }
+    gui_sources = {
+        path: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in _G29_GUI_CONSUMERS
+    }
+
+    backend_path = "api-service/app/api/test_plan.py"
+    backend_bad = dict(production_sources)
+    backend_bad[backend_path] = backend_bad[backend_path].replace(
+        "project_execution_evidence_outcome(execution)",
+        "execution_qualification_classification(execution)",
+        1,
+    )
+    backend_gaps = _g29_execution_outcome_gaps(backend_bad, gui_sources)
+    assert f"shared_outcome:{backend_path}" in backend_gaps
+    assert any(gap.startswith(f"legacy_qualification:{backend_path}:") for gap in backend_gaps)
+
+    gui_path = "gui/src/features/Reports/components/ExecutionSelector.tsx"
+    gui_bad = dict(gui_sources)
+    gui_bad[gui_path] = gui_bad[gui_path].replace(
+        "completion_semantic",
+        "pipeline_status",
+    )
+    assert f"gui_semantic:{gui_path}" in _g29_execution_outcome_gaps(
+        production_sources,
+        gui_bad,
+    )

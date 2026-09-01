@@ -2,7 +2,7 @@
 
 **日期**：2026-08-30
 
-**状态**：P1-75 已合并；P2-64 已由 PR #433 完成；P2-65 本地实现完成、待审查合并；P2-66～P2-67 未启动
+**状态**：P1-75 已合并；P2-64/P2-65 已由 PR #433/#434 完成；P2-66 本地实现完成、正在验证/审查；P2-67 未启动
 
 **对应条目**：P1-75、P2-64～P2-67
 
@@ -84,15 +84,20 @@ fail-loud，未声明可选操作 fail-closed，`diagnostic_unbound` 只借 mani
 保存预览、LabProfile 同步、Readiness 与执行冻结消费 P1-75 的同一纯判定器与同一 digest；资源在线
 与 TestCase 可执行分别显示。GUI 只能展示服务器判定，不复制能力矩阵或自建 vendor 分支。
 
-**2026-09-01 本地实现状态**：preview、sync、readiness 与 execution freeze 已共用同一 requirements
+**2026-09-01 实现状态（PR #434）**：preview、sync、readiness 与 execution freeze 已共用同一 requirements
 projection、compatibility evaluator 与 digest；API 单独发布 resource/binding/TestCase compatibility，
 GUI 只消费服务端 status/reasons，并在未保存 TestCase/LabProfile 草稿时 fail-closed。OpenAPI、生成 TS、
-手写类型与 Mock 数据镜像已同步；当前等待完整回归、fresh 内审与 PR 外审，不提前宣称已合并。
+手写类型与 Mock 数据镜像已同步；覆盖最终 HEAD 的 Codex R2 无 P1 后合并。
 
 ### P2-66 — 执行证据与终态语义
 
 证据初始化/解析拒绝 adapter manifest 与 requested config 自相矛盾；显式区分流程完成、诊断完成与
 有效测试完成。Diagnostic 报告可作为审计包保留，但不得形成“配置正确”或“正式成功”的假象。
+
+**2026-09-01 本地实现状态**：冻结 compatibility 的外层/内层 digest、requirements、verdict 与
+resolution 已在读取时重验；共同 outcome 已接入 SCPI evidence、执行阶段、报告、历史、比较、下载、
+commissioning 和 GUI。显式畸形/不兼容 fail-closed，Diagnostic 审计包保留但正式指标隐藏，历史无
+snapshot 沿旧 provenance。四份 API/TS 镜像与 G29 永久门已完成，当前等待全量验证与内外审。
 
 ### P2-67 — 日志与导出可追溯性
 
