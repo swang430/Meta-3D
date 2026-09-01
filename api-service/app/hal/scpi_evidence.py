@@ -544,6 +544,44 @@ def _is_error_query(exchange: Optional[ScpiExchangeRef]) -> bool:
     return _matches_catalog_role(exchange, "f64.error_queue", "query")
 
 
+def exchange_is_error_queue_query(
+    exchange: Optional[ScpiExchangeRef],
+    *,
+    instrument: str,
+) -> bool:
+    """Match only this instrument's confirmed error-queue catalog entry."""
+
+    evidence_key = f"{instrument}.error_queue"
+    entry = load_default_p0_5_catalog().entries.get(evidence_key)
+    return bool(
+        entry
+        and entry.instrument == instrument
+        and entry.status is EvidenceStatus.CONFIRMED
+        and _matches_catalog_role(exchange, evidence_key, "query")
+    )
+
+
+def exchange_has_clean_error_queue_response(
+    exchange: Optional[ScpiExchangeRef],
+    *,
+    instrument: str,
+) -> bool:
+    """Return true only for a real terminal error-queue response with code zero."""
+
+    if (
+        not exchange_is_error_queue_query(exchange, instrument=instrument)
+        or exchange is None
+    ):
+        return False
+    response = _value_response(exchange)
+    if response is None:
+        return False
+    try:
+        return int(response.split(",", 1)[0].strip()) == 0
+    except ValueError:
+        return False
+
+
 def _is_opc_query(exchange: Optional[ScpiExchangeRef]) -> bool:
     return _matches_catalog_role(exchange, "f64.operation_complete", "query")
 

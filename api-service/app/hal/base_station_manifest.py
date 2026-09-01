@@ -70,6 +70,10 @@ class BaseStationMacProfileCapability(BaseModel):
     kind: str
     profile_version: int
     rat: Literal["lte", "nr5g"]
+    application_evidence: Literal[
+        "authoritative_readback",
+        "command_error_queue",
+    ]
     source_reference: str
 
     @field_validator("kind")

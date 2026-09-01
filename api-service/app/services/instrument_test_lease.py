@@ -40,6 +40,7 @@ class InstrumentTestLeaseOutcome:
     measurement_attempt_id: str | None
     base_station_remote: BaseStationRemoteSessionResult | None = None
     base_station_release: BaseStationControlReleaseResult | None = None
+    base_station_instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class ActiveBaseStationLeaseIdentity:
     measurement_attempt_id: str | None
     adapter_id: str
     session_token: str
+    instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,7 @@ class InstrumentTestLease:
             measurement_attempt_id=outcome.measurement_attempt_id,
             adapter_id=remote.adapter_id,
             session_token=remote.session_token,
+            instrument_id=outcome.base_station_instrument_id,
         )
 
     def _get_lock(self) -> asyncio.Lock:
@@ -231,6 +234,12 @@ class InstrumentTestLease:
                 raise InstrumentTestLeaseError(
                     f"测试 {purpose!r} 无法取得 UXM Remote（baseStation transport 未确认）"
                 )
+            instrument_id = getattr(driver, "instrument_id", None)
+            if not isinstance(instrument_id, str) or not instrument_id:
+                raise InstrumentTestLeaseError(
+                    "baseStation driver has no authoritative runtime instrument identity"
+                )
+            outcome.base_station_instrument_id = instrument_id
             return
         if acquired is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()

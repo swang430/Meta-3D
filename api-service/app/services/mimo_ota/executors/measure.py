@@ -23,9 +23,9 @@ switch orchestrate(switch_mode_id)/ 路损 cert(operating_mode 过滤)/ SA /
 positioner 全 TestCase 派生, 下发后多方频率一致性 + GCM .smu + switch mode 三道
 fail-loud 门挡静默错配 (Phase 1/2/3)。路径 A (bring-up 默认: P0-8 F64 .smu /
 P1-17 UXM profile) 主要在 HAL-init 用 —— F64 .smu 这里由 emulation_file 覆盖,
-UXM port routing / TDD / scheduler (mimo_port_preset/tdd_pattern/sched_algo/
-csi_rs_ports) **P2-11 #1974 已补**: path B 经 _build_pcell_cell_config 从 TestCase
-显式驱动 set_cell_config, 不再残留 HAL-init 默认 profile (原 Codex on PR #112 缺口)。
+UXM port routing 仍由 PCell config 处理；scheduler / CSI-RS 只从本次 execution
+冻结的 NR MAC profile 读取，TDD 则只由 MAC profile adapter 下发。path B 不再读取
+TestCase 平面字段重建第二份 MAC 真值，也不残留 HAL-init 默认 profile。
 边界总览见 docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
 """
 import asyncio
@@ -454,16 +454,10 @@ def _build_pcell_cell_config(
 ) -> Dict[str, Any]:
     """构造 measure path B 的 PCell set_cell_config dict (P2-11 #1974)。
 
-    path B 显式驱动端口路由/调度 (mimo_port_preset/sched_algo/csi_rs_ports), 避免残留
-    HAL-init 默认 topology profile 的值 (如 2x2 TestCase 跑在残留 4x4 端口路由上)。
-
-    ⚠️ 三个可选字段 **None 时不放进 dict** (Codex P1 #127): None = "TestCase 未指定",
-    不传则 set_cell_config 不改该项 → 保持 HAL profile (旧 saved case 没这些字段, 反序列
-    化得 None, 不被强加值覆盖; 否则旧 4x4 case 被默认 "2x2" 强制成 2x2 路由)。显式给才
-    驱动。csi_rs_ports 额外语义: 不传时 set_cell_config 按 mimo_layers 自动推断。
-
-    tdd_pattern/tdd_period **不在这里** —— 已由 configure_mac_throughput_test 驱动 (见
-    execute), 这里再传是冗余 + 引入默认覆盖风险。频率/arfcn 由 caller 算好传入。
+    path B 的端口路由仍由 PCell config 处理；scheduler / CSI-RS 只从本次 execution
+    冻结的 NR MAC profile 读取。TDD pattern / period 不在这里，它们只由
+    configure_mac_throughput_test 消费同一冻结 profile。频率 / ARFCN 由 caller
+    算好传入。
     """
     cell_cfg: Dict[str, Any] = {
         "frequency_mhz": frequency_mhz,

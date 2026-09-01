@@ -239,23 +239,6 @@ class UxmTopologyProfile:
 
         return config
 
-    def to_mac_throughput_kwargs(self) -> Dict[str, Any]:
-        """
-        转换为 configure_mac_throughput_test() 所需的参数字典。
-
-        在 set_cell_config() 之后调用，单独配置 MAC 测试专用参数。
-        """
-        return {
-            "mimo_layers":    self.mimo_layers,
-            "mcs":            self.target_mcs,
-            "enable_amc":     self.enable_amc,
-            "tdd_pattern":    self.tdd_pattern,
-            "tdd_period":     self.tdd_period,
-            "harq_max_trans": self.harq_max_trans,
-            "harq_processes": self.harq_processes,
-            "stat_count":     self.stat_count,
-        }
-
     def to_json(self) -> str:
         """序列化为 JSON 字符串"""
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)

@@ -16,6 +16,7 @@ from app.schemas.mimo_ota.config import (
     MIMOOTAConfiguration,
     canonicalize_mimo_ota_configuration_payload,
 )
+from app.hal.uxm_test_profiles import UxmTopologyProfile
 
 
 def _nr_profile(**updates) -> NrMacTestProfileV1:
@@ -149,6 +150,51 @@ def test_nr_and_lte_profiles_reject_each_others_fields():
         _lte_profile(subcarrier_spacing_khz=30)
     with pytest.raises(ValidationError):
         _lte_profile(csi_rs_ports=4)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("mcs", 31),
+        ("enable_amc", True),
+        ("mimo_layers", 3),
+        ("mimo_layers", 5),
+        ("tdd_pattern", ""),
+        ("tdd_pattern", "DUS"),
+        ("tdd_period", "BANANA"),
+        ("harq_max_trans", 9),
+        ("harq_processes", 3),
+        ("subcarrier_spacing_khz", 20),
+        ("csi_rs_ports", 3),
+    ),
+)
+def test_nr_profile_rejects_values_outside_the_audited_uxm_domain(field, value):
+    with pytest.raises(ValidationError):
+        _nr_profile(**{field: value})
+
+
+def test_nr_profile_rejects_tdd_pattern_that_does_not_fill_its_period():
+    with pytest.raises(ValidationError, match="TDD pattern duration"):
+        _nr_profile(
+            tdd_pattern="DDDSU",
+            tdd_period="5MS",
+            subcarrier_spacing_khz=30,
+        )
+
+    assert _nr_profile(
+        tdd_pattern="DDDSU",
+        tdd_period="2.5MS",
+        subcarrier_spacing_khz=30,
+    ).tdd_pattern == "DDDSU"
+
+
+@pytest.mark.parametrize("layers", (1, 2, 4))
+def test_nr_profile_accepts_only_audited_uxm_mimo_layers(layers):
+    assert _nr_profile(mimo_layers=layers).mimo_layers == layers
+
+
+def test_topology_profile_cannot_recreate_the_removed_kwargs_mac_spi():
+    assert not hasattr(UxmTopologyProfile, "to_mac_throughput_kwargs")
 
 
 def test_lte_v1_is_the_existing_narrow_fdd_fixed_rmc_shape():

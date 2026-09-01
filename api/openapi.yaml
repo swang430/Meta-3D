@@ -1258,7 +1258,7 @@ components:
         schema_version: {type: integer, const: 1}
         profile_version: {type: integer, const: 1}
         test_intent: {type: string, const: downlink_throughput}
-        mimo_layers: {type: integer, minimum: 1, maximum: 8}
+        mimo_layers: {type: integer, enum: [1, 2, 4]}
         statistical_window: {$ref: '#/components/schemas/MacStatisticalWindow'}
         metric_requirements:
           type: array
@@ -1270,14 +1270,20 @@ components:
         rat: {type: string, const: nr5g}
         rb_allocation: {type: string, const: all}
         scheduler_algorithm: {type: string, const: full_throughput}
-        mcs: {type: integer, minimum: 0}
-        enable_amc: {type: boolean}
-        tdd_pattern: {type: string, minLength: 1}
-        tdd_period: {type: string, minLength: 1}
-        harq_max_trans: {type: integer, exclusiveMinimum: 0}
-        harq_processes: {type: integer, exclusiveMinimum: 0}
-        subcarrier_spacing_khz: {type: integer, exclusiveMinimum: 0}
-        csi_rs_ports: {type: integer, exclusiveMinimum: 0}
+        mcs: {type: integer, minimum: 0, maximum: 28}
+        enable_amc: {type: boolean, const: false}
+        tdd_pattern: {type: string, minLength: 1, pattern: '^D*S?U*$'}
+        tdd_period:
+          type: string
+          enum: [0.5MS, 0.625MS, 1MS, 1.25MS, 2MS, 2.5MS, 3MS, 4MS, 5MS, 10MS]
+        harq_max_trans:
+          type: integer
+          enum: [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28]
+        harq_processes:
+          type: integer
+          enum: [1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32]
+        subcarrier_spacing_khz: {type: integer, enum: [15, 30, 60, 120]}
+        csi_rs_ports: {type: integer, enum: [1, 2, 4, 8, 12, 16, 24, 32]}
       required: [schema_version, profile_version, test_intent, mimo_layers, statistical_window, metric_requirements, source_reference, kind, rat, rb_allocation, scheduler_algorithm, mcs, enable_amc, tdd_pattern, tdd_period, harq_max_trans, harq_processes, subcarrier_spacing_khz, csi_rs_ports]
     LteRmcMacTestProfileV1:
       type: object
@@ -2280,8 +2286,11 @@ components:
         kind: {type: string}
         profile_version: {type: integer}
         rat: {type: string, enum: [lte, nr5g]}
+        application_evidence:
+          type: string
+          enum: [authoritative_readback, command_error_queue]
         source_reference: {type: string}
-      required: [kind, profile_version, rat, source_reference]
+      required: [kind, profile_version, rat, application_evidence, source_reference]
     BaseStationConfigFieldCapability:
       type: object
       additionalProperties: false

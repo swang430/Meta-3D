@@ -44,6 +44,7 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
             "kind": "nr_throughput",
             "profile_version": 1,
             "rat": "nr5g",
+            "application_evidence": "command_error_queue",
             "source_reference": (
                 "Instrument_API_Doc/Keysight UXM NR SCPI/"
                 "5G_NR_Test_Application_SCPI_Reference.zip"
@@ -58,6 +59,7 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
             "kind": "lte_rmc",
             "profile_version": 1,
             "rat": "lte",
+            "application_evidence": "authoritative_readback",
             "source_reference": (
                 "Instrument_API_Doc/R&S CMW500/"
                 "CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf"
@@ -131,6 +133,7 @@ def test_manifest_profile_declaration_is_structured_and_consistent():
             profile_version=0,
             rat="nr5g",
             source_reference="manual",
+            application_evidence="command_error_queue",
         )
     with pytest.raises(ValidationError):
         BaseStationMacProfileCapability(
@@ -138,6 +141,7 @@ def test_manifest_profile_declaration_is_structured_and_consistent():
             profile_version=1,
             rat="nr5g",
             source_reference="manual",
+            application_evidence="command_error_queue",
         )
     with pytest.raises(ValidationError):
         BaseStationMacProfileCapability(
@@ -145,6 +149,7 @@ def test_manifest_profile_declaration_is_structured_and_consistent():
             profile_version=1,
             rat="nr5g",
             source_reference=" ",
+            application_evidence="command_error_queue",
         )
 
 

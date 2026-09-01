@@ -21,6 +21,7 @@ export type BaseStationMacProfileCapability = {
   kind: string
   profile_version: number
   rat: 'lte' | 'nr5g'
+  application_evidence: 'authoritative_readback' | 'command_error_queue'
   source_reference: string
 }
 

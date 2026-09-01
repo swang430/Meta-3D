@@ -268,6 +268,85 @@ class BaseStationAdapterOperationEvidence(BaseModel):
         return self
 
 
+class BaseStationMacApplicationExchangeEvidence(BaseModel):
+    """Redacted terminal exchange proof; raw command/response remain in SCPI logs."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    exchange_id: str
+    role: Literal["command", "error_queue", "observation"]
+    sequence: StrictInt = Field(ge=0)
+    result_type: Literal[
+        "ok", "response", "empty_response", "whitespace_response", "not_ready"
+    ]
+    error_queue_clean: StrictBool | None = None
+
+    @field_validator("exchange_id")
+    @classmethod
+    def _required_exchange_id(cls, value: str):
+        return _non_empty(value, "exchange_id")
+
+    @model_validator(mode="after")
+    def _role_shape(self):
+        if self.role == "command" and self.result_type != "ok":
+            raise ValueError("MAC command evidence must have an ok terminal")
+        if self.role == "error_queue":
+            if self.result_type != "response" or self.error_queue_clean is None:
+                raise ValueError("MAC error-queue evidence must carry a parsed response")
+        elif self.error_queue_clean is not None:
+            raise ValueError("only MAC error-queue evidence may carry clean status")
+        return self
+
+
+class BaseStationMacApplicationEvidence(BaseModel):
+    """Digest-bound proof that one real UXM MAC command window completed cleanly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    mode: Literal["command_error_queue"]
+    execution_id: str
+    instrument_id: str
+    capture_id: str
+    exchanges: list[BaseStationMacApplicationExchangeEvidence]
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("execution_id", "instrument_id", "capture_id")
+    @classmethod
+    def _required_identity(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _validate_proof(self):
+        if not self.exchanges:
+            raise ValueError("MAC application evidence requires exchanges")
+        ids = [item.exchange_id for item in self.exchanges]
+        sequences = [item.sequence for item in self.exchanges]
+        if len(set(ids)) != len(ids) or len(set(sequences)) != len(sequences):
+            raise ValueError("MAC application evidence exchanges must be unique")
+        if sequences != sorted(sequences):
+            raise ValueError("MAC application evidence exchanges must preserve order")
+        if not any(item.role == "command" for item in self.exchanges):
+            raise ValueError("MAC application evidence requires a command terminal")
+        final_command_sequence = max(
+            item.sequence for item in self.exchanges if item.role == "command"
+        )
+        if not any(
+            item.role == "error_queue"
+            and item.error_queue_clean is True
+            and item.sequence > final_command_sequence
+            for item in self.exchanges
+        ):
+            raise ValueError(
+                "MAC application evidence requires a clean error queue after "
+                "the final command"
+            )
+        payload = self.model_dump(mode="json", exclude={"digest"})
+        if self.digest != canonical_snapshot_digest(payload):
+            raise ValueError("MAC application evidence digest mismatch")
+        return self
+
+
 class BaseStationMacProfileReceiptEvidence(BaseModel):
     """Profile-scoped MAC apply truth bound to one execution attempt."""
 
@@ -281,9 +360,11 @@ class BaseStationMacProfileReceiptEvidence(BaseModel):
     profile_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     fields: list[BaseStationAdapterFieldEvidence]
     confirmed: StrictBool
+    operation_succeeded: StrictBool
     simulated: StrictBool
     reason: str
     exchange_ids: list[str]
+    application_evidence: BaseStationMacApplicationEvidence | None = None
 
     @field_validator(
         "measurement_attempt_id",
@@ -326,6 +407,16 @@ class BaseStationMacProfileReceiptEvidence(BaseModel):
         )
         if self.confirmed is not expected:
             raise ValueError("MAC receipt confirmation must be derived")
+        if self.confirmed is True and self.operation_succeeded is not True:
+            raise ValueError("confirmed MAC receipt requires operation success")
+        if self.application_evidence is not None:
+            proof_ids = [
+                item.exchange_id for item in self.application_evidence.exchanges
+            ]
+            if proof_ids != self.exchange_ids:
+                raise ValueError(
+                    "MAC application evidence exchanges must match receipt"
+                )
         return self
 
 

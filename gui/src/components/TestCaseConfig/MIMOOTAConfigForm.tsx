@@ -53,6 +53,12 @@ import {
   describeFrozenMacProfile,
   profileDraftForConfiguration,
   updateMacProfileDraft,
+  validateMacProfileDraftForSave,
+  UXM_NR_CSI_RS_PORTS_VALUES,
+  UXM_NR_HARQ_MAX_TRANS_VALUES,
+  UXM_NR_HARQ_PROCESSES_VALUES,
+  UXM_NR_MIMO_LAYERS_VALUES,
+  UXM_NR_TDD_PERIOD_VALUES,
   type FrozenMacTestProfile,
 } from '../../types/macTestProfile'
 
@@ -223,6 +229,7 @@ export function MIMOOTAConfigForm({
   const rawPCell = value.component_carriers?.[0]
   const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
   const macProfileDraft = profileDraftForConfiguration(value, radioTechnology)
+  const macProfileDraftError = validateMacProfileDraftForSave(value)
   const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const cmwReadinessQuery = useQuery({
     queryKey: [
@@ -649,11 +656,15 @@ export function MIMOOTAConfigForm({
             MIMO 配置
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-            <NumberInput
+            <Select
               label="MIMO 层数"
               description="layer 数, 不是天线数"
-              value={value.mimo_layers}
+              value={String(value.mimo_layers ?? 2)}
+              data={(radioTechnology === 'lte' ? [2] : UXM_NR_MIMO_LAYERS_VALUES).map(
+                (layers) => ({ value: String(layers), label: String(layers) }),
+              )}
               onChange={(v) => {
+                if (!v) return
                 const editable = updateMacProfileDraft(
                   value,
                   radioTechnology,
@@ -661,11 +672,9 @@ export function MIMOOTAConfigForm({
                 ) as MIMOOTAConfiguration
                 onChange({
                   ...editable,
-                  mimo_layers: typeof v === 'number' ? v : undefined,
+                  mimo_layers: Number(v),
                 })
               }}
-              min={1}
-              max={radioTechnology === 'lte' ? 2 : 8}
               disabled={readOnly || radioTechnology === 'lte'}
             />
             <Select
@@ -687,15 +696,17 @@ export function MIMOOTAConfigForm({
               placeholder="(用 profile 默认)"
             />
             {radioTechnology === 'nr5g' && macProfileDraft.kind === 'nr_throughput' ? (
-              <NumberInput
+              <Select
                 label="CSI-RS 端口数"
                 description="NR 吞吐量 profile；LTE RMC 不提交此字段"
-                value={macProfileDraft.csi_rs_ports}
+                value={String(macProfileDraft.csi_rs_ports)}
+                data={UXM_NR_CSI_RS_PORTS_VALUES.map((ports) => ({
+                  value: String(ports),
+                  label: String(ports),
+                }))}
                 onChange={(v) => {
-                  if (typeof v === 'number') updateMacDraft({ csi_rs_ports: v })
+                  if (v) updateMacDraft({ csi_rs_ports: Number(v) })
                 }}
-                min={1}
-                max={32}
                 disabled={readOnly}
               />
             ) : null}
@@ -1064,26 +1075,30 @@ export function MIMOOTAConfigForm({
                   ? 'NR 使用 nr_throughput@1；以下编辑由服务器重新校验并冻结。'
                   : 'LTE 使用固定 lte_rmc@1（FDD / TM3 / 全资源 / AMC 关闭），不会提交 NR 专属字段。'}
               </Alert>
+              {macProfileDraftError ? (
+                <Alert color="red" variant="light" title="MAC 配置尚不可保存">
+                  {macProfileDraftError}
+                </Alert>
+              ) : null}
               <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
                 {macProfileDraft.kind === 'nr_throughput' ? (
                   <>
                     <NumberInput
                       label="MCS 索引"
-                      description="NR profile MCS 0-31"
+                      description="NR profile MCS 0-28"
                       value={macProfileDraft.mcs}
                       onChange={(v) => {
                         if (typeof v === 'number') updateMacDraft({ mcs: v })
                       }}
                       min={0}
-                      max={31}
+                      max={28}
                       disabled={readOnly}
                     />
                     <Switch
                       label="启用 AMC"
-                      description="关闭=固定 MCS，结果可重复"
-                      checked={macProfileDraft.enable_amc}
-                      onChange={(e) => updateMacDraft({ enable_amc: e.currentTarget.checked })}
-                      disabled={readOnly}
+                      description="nr_throughput@1 仅支持已验证的固定 MCS 路径"
+                      checked={false}
+                      disabled
                     />
                     <TextInput
                       label="TDD 时隙模式"
@@ -1091,10 +1106,16 @@ export function MIMOOTAConfigForm({
                       onChange={(e) => updateMacDraft({ tdd_pattern: e.target.value })}
                       disabled={readOnly}
                     />
-                    <TextInput
+                    <Select
                       label="TDD 周期"
                       value={macProfileDraft.tdd_period}
-                      onChange={(e) => updateMacDraft({ tdd_period: e.target.value })}
+                      data={UXM_NR_TDD_PERIOD_VALUES.map((period) => ({
+                        value: period,
+                        label: period,
+                      }))}
+                      onChange={(period) => {
+                        if (period) updateMacDraft({ tdd_period: period })
+                      }}
                       disabled={readOnly}
                     />
                     <TextInput
@@ -1103,24 +1124,28 @@ export function MIMOOTAConfigForm({
                       value="full_throughput"
                       disabled
                     />
-                    <NumberInput
+                    <Select
                       label="HARQ 最大重传次数"
-                      value={macProfileDraft.harq_max_trans}
-                      onChange={(v) => {
-                        if (typeof v === 'number') updateMacDraft({ harq_max_trans: v })
+                      value={String(macProfileDraft.harq_max_trans)}
+                      data={UXM_NR_HARQ_MAX_TRANS_VALUES.map((count) => ({
+                        value: String(count),
+                        label: String(count),
+                      }))}
+                      onChange={(count) => {
+                        if (count) updateMacDraft({ harq_max_trans: Number(count) })
                       }}
-                      min={1}
-                      max={16}
                       disabled={readOnly}
                     />
-                    <NumberInput
+                    <Select
                       label="HARQ 进程数"
-                      value={macProfileDraft.harq_processes}
-                      onChange={(v) => {
-                        if (typeof v === 'number') updateMacDraft({ harq_processes: v })
+                      value={String(macProfileDraft.harq_processes)}
+                      data={UXM_NR_HARQ_PROCESSES_VALUES.map((count) => ({
+                        value: String(count),
+                        label: String(count),
+                      }))}
+                      onChange={(count) => {
+                        if (count) updateMacDraft({ harq_processes: Number(count) })
                       }}
-                      min={1}
-                      max={32}
                       disabled={readOnly}
                     />
                   </>

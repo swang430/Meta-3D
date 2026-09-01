@@ -26,13 +26,14 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
-from app.hal.scpi_evidence import InstrumentEvidenceItem
+from app.hal.scpi_evidence import InstrumentEvidenceItem, ScpiExchangeRef
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationMetricCapability,
 )
 from app.hal.base_station_mac_profile import (
     FrozenMacTestProfile,
+    build_mac_throughput_command_inputs,
     require_frozen_mac_profile,
 )
 
@@ -282,6 +283,7 @@ class MacThroughputConfigResult:
     no_equivalent: tuple[str, ...] = ()
     receipt: Optional[BaseStationApplyReceipt] = None
     profile_digest: str | None = None
+    application_exchanges: tuple[ScpiExchangeRef, ...] = ()
 
     def __post_init__(self) -> None:
         if self.profile_digest is not None and not re.fullmatch(
@@ -293,6 +295,11 @@ class MacThroughputConfigResult:
             and self.receipt.profile_digest != self.profile_digest
         ):
             raise ValueError("MAC result and receipt profile digests must match")
+        if any(
+            not isinstance(exchange, ScpiExchangeRef)
+            for exchange in self.application_exchanges
+        ):
+            raise TypeError("MAC application exchanges must be ScpiExchangeRef values")
 
     @property
     def ok(self) -> bool:
@@ -2070,7 +2077,12 @@ class MockBaseStation(BaseStationDriver):
             expected_kind=declaration.kind,
             expected_rat=declaration.rat,
         )
-        requested = frozen.profile.model_dump(mode="json")
+        command_inputs = build_mac_throughput_command_inputs(frozen)
+        requested = {
+            key: value
+            for key, value in command_inputs.items()
+            if key not in {"profile_payload", "profile_digest"}
+        }
         declared = "mac_throughput_config" in self.adapter_manifest.operations
         receipt = BaseStationApplyReceipt(
             schema_version=1,

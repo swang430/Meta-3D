@@ -127,13 +127,10 @@ def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> s
 
 
 def _saved_test_case_configuration(db, execution) -> Any:
-    """Return the saved TestCase configuration consumed by compatibility.
+    """Return the raw saved TestCase configuration for canonical validation.
 
-    只读 ``primary_carrier``（``component_carriers[0]``）的
-    ``radio_technology`` 一个字段；缺省按 schema 默认 ``"nr5g"``
-    （``ComponentCarrierConfig.radio_technology`` 的默认值 —— 旧记录缺失时
-    精确兼容为 nr5g）。刻意不做整份 MIMOOTAConfiguration 校验：无关校验
-    失败不得混进兼容性门的失败语义（P1-75 设计稿 §4）。
+    The caller canonicalizes the complete MIMO OTA payload and derives the
+    shared RAT/MAC execution requirements before compatibility is frozen.
     """
 
     test_case_id = getattr(execution, "test_case_id", None)

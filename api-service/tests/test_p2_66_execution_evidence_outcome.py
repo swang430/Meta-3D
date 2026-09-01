@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.hal.base_station_compatibility import (
+    BaseStationCompatibilityVerdict,
+    BaseStationExecutionRequirements,
     build_frozen_compatibility_payload,
     build_measure_execution_requirements,
     build_measure_execution_requirements_from_configuration,
@@ -22,6 +24,7 @@ from app.services.base_station_adapter_profile import (
 )
 from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 from app.services.execution_evidence_outcome import (
+    _historical_manifest_compatibility_error,
     project_execution_evidence_outcome,
     validate_frozen_compatibility_snapshot,
 )
@@ -31,6 +34,9 @@ from app.services.execution_qualification import (
     _qualification_payload_digest,
 )
 from tests.p1_73c_evidence_fixtures import valid_cmw_evidence
+from app.services.mimo_ota.base_station_execution_evidence import (
+    canonical_snapshot_digest,
+)
 
 
 LAB_PROFILE_ID = "lab-profile-1"
@@ -112,6 +118,37 @@ def _pre_p2_54_compatibility() -> dict:
     return build_frozen_compatibility_payload(requirements, verdict)
 
 
+def _historical_pre_p2_54_compatibility(
+    driver=RealUxmDriver,
+) -> tuple[dict, dict]:
+    """Return the exact pre-P2-54 manifest shape and its frozen verdict."""
+
+    rat = "nr5g" if driver.adapter_id == "uxm" else "lte"
+    requirements = build_measure_execution_requirements(rat)
+    manifest = driver.adapter_manifest.model_dump(mode="json")
+    manifest.pop("mac_profiles")
+    if driver.adapter_id == "uxm":
+        manifest["operations"] = [
+            operation
+            for operation in manifest["operations"]
+            if operation != "mac_throughput_config"
+        ]
+        manifest["capabilities"] = list(manifest["operations"])
+    compatibility = {
+        "schema_version": 1,
+        "requirements": requirements.model_dump(mode="json"),
+        "verdict": {
+            "schema_version": 1,
+            "status": "compatible",
+            "compatible": True,
+            "reasons": [],
+            "requirements_digest": requirements.digest,
+            "manifest_digest": canonical_payload_digest(manifest),
+        },
+    }
+    return compatibility, manifest
+
+
 def _modern_uxm_mac_evidence() -> dict:
     raw = valid_cmw_evidence()
     raw["adapter"] = "uxm"
@@ -141,6 +178,29 @@ def _modern_uxm_mac_evidence() -> dict:
         release["adapter_id"] = "uxm"
     frozen_profile = _compatibility()["requirements"]["mac_profile"]
     profile_digest = frozen_profile["profile_digest"]
+    application_payload = {
+        "schema_version": 1,
+        "mode": "command_error_queue",
+        "execution_id": raw["execution_id"],
+        "instrument_id": "uxm",
+        "capture_id": "mac-capture-1",
+        "exchanges": [
+            {
+                "exchange_id": "mac-write-1",
+                "role": "command",
+                "sequence": 0,
+                "result_type": "ok",
+                "error_queue_clean": None,
+            },
+            {
+                "exchange_id": "mac-error-queue-1",
+                "role": "error_queue",
+                "sequence": 1,
+                "result_type": "response",
+                "error_queue_clean": True,
+            },
+        ],
+    }
     raw.update(
         {
             "mac_profile_contract_version": 1,
@@ -157,21 +217,29 @@ def _modern_uxm_mac_evidence() -> dict:
                         {
                             "field": "scheduler_algorithm",
                             "requested": "full_throughput",
-                            "applied": "full_throughput",
-                            "status": "confirmed",
-                            "reason": "confirmed",
-                            "exchange_ids": ["mac-1"],
+                            "applied": None,
+                            "status": "unknown",
+                            "reason": "command/error-queue evidence",
+                            "exchange_ids": [
+                                "mac-write-1",
+                                "mac-error-queue-1",
+                            ],
                         }
                     ],
-                    "confirmed": True,
+                    "confirmed": False,
+                    "operation_succeeded": True,
                     "simulated": False,
-                    "reason": "confirmed",
-                    "exchange_ids": ["mac-1"],
+                    "reason": "command/error-queue evidence",
+                    "exchange_ids": ["mac-write-1", "mac-error-queue-1"],
+                    "application_evidence": {
+                        **application_payload,
+                        "digest": canonical_snapshot_digest(application_payload),
+                    },
                 }
             ],
         }
     )
-    raw["exchange_ids"].append("mac-1")
+    raw["exchange_ids"].extend(["mac-write-1", "mac-error-queue-1"])
     return raw
 
 
@@ -274,6 +342,21 @@ def test_completed_modern_formal_requires_completed_measurement_attempt():
     assert any("attempt" in reason for reason in outcome.reasons)
 
 
+def test_running_execution_with_completed_attempt_cannot_bypass_formal_mac_gate():
+    execution = _execution(status="running")
+    receipt = execution.config["base_station_execution_evidence"][
+        "mac_profile_receipts"
+    ][0]
+    receipt["application_evidence"] = None
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "not_completed"
+    assert outcome.formal_eligible is False
+    assert any("command/error-queue" in reason for reason in outcome.reasons)
+
+
 def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
     execution = _execution(include_base_station_evidence=False)
     frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
@@ -289,6 +372,65 @@ def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
     assert outcome.compatibility_classification == "legacy"
     assert outcome.formal_eligible is False
     assert any("pre-P2-54" in reason for reason in outcome.reasons)
+
+
+def test_historical_manifest_without_mac_profiles_preserves_legacy_digest():
+    execution = _execution(include_base_station_evidence=False)
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    compatibility, historical_manifest = _historical_pre_p2_54_compatibility()
+    frozen["compatibility"] = compatibility
+    frozen["resolved_binding"]["manifest"] = historical_manifest
+    frozen.pop("mimo_ota_configuration")
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = frozen
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "legacy"
+    assert outcome.formal_eligible is False
+    assert any("pre-P2-54" in reason for reason in outcome.reasons)
+
+
+@pytest.mark.parametrize("driver", (RealUxmDriver, RealCmw500Driver))
+def test_exact_pre_p2_54_manifest_shape_is_accepted_without_digest_rewrite(
+    driver,
+):
+    compatibility, historical_manifest = (
+        _historical_pre_p2_54_compatibility(driver)
+    )
+
+    assert (
+        _historical_manifest_compatibility_error(
+            historical_manifest,
+            requirements=BaseStationExecutionRequirements.model_validate(
+                compatibility["requirements"]
+            ),
+            verdict=BaseStationCompatibilityVerdict.model_validate(
+                compatibility["verdict"]
+            ),
+            adapter=driver.adapter_id,
+        )
+        is None
+    )
+
+
+def test_recomputed_modern_manifest_missing_mac_contract_is_not_legacy():
+    frozen = _freeze()
+    compatibility, historical_manifest = _historical_pre_p2_54_compatibility()
+    historical_manifest["vendor"] = "tampered-modern-shape"
+    compatibility["verdict"]["manifest_digest"] = canonical_payload_digest(
+        historical_manifest
+    )
+    frozen["resolved_binding"]["manifest"] = historical_manifest
+    frozen["compatibility"] = compatibility
+    frozen.pop("mimo_ota_configuration")
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+
+    assert "historical manifest" in validate_frozen_compatibility_snapshot(frozen)
 
 
 def test_pre_p2_54_snapshot_cannot_hide_qualification_binding_drift():

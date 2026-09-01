@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import * as macProfileTruth from './macTestProfile.ts'
 
 import {
   profileDraftForConfiguration,
   updateMacProfileDraft,
+  UXM_NR_HARQ_MAX_TRANS_VALUES,
+  UXM_NR_HARQ_PROCESSES_VALUES,
+  UXM_NR_TDD_PERIOD_VALUES,
 } from './macTestProfile.ts'
 
 const frozenNr = {
@@ -79,4 +83,52 @@ test('LTE draft never submits NR-only controls', () => {
   for (const key of ['mcs', 'tdd_pattern', 'harq_processes', 'csi_rs_ports']) {
     assert.equal(next[key], undefined)
   }
+})
+
+test('NR editor choices mirror the server-audited UXM enum domain', () => {
+  assert.deepEqual(UXM_NR_TDD_PERIOD_VALUES, [
+    '0.5MS', '0.625MS', '1MS', '1.25MS', '2MS',
+    '2.5MS', '3MS', '4MS', '5MS', '10MS',
+  ])
+  assert.deepEqual(UXM_NR_HARQ_MAX_TRANS_VALUES, [
+    1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28,
+  ])
+  assert.deepEqual(UXM_NR_HARQ_PROCESSES_VALUES, [
+    1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32,
+  ])
+  assert.deepEqual(macProfileTruth.UXM_NR_MIMO_LAYERS_VALUES, [1, 2, 4])
+  assert.deepEqual(macProfileTruth.UXM_NR_CSI_RS_PORTS_VALUES, [
+    1, 2, 4, 8, 12, 16, 24, 32,
+  ])
+})
+
+test('NR draft keeps AMC fixed off and validates the frozen TDD duration', () => {
+  const withAmc = updateMacProfileDraft(
+    { component_carriers: [{ radio_technology: 'nr5g', subcarrier_spacing_khz: 30 }] },
+    'nr5g',
+    { enable_amc: true },
+  )
+  assert.equal(withAmc.enable_amc, false)
+
+  assert.equal(typeof macProfileTruth.validateMacProfileDraftForSave, 'function')
+  assert.match(
+    macProfileTruth.validateMacProfileDraftForSave({
+      component_carriers: [{ radio_technology: 'nr5g', subcarrier_spacing_khz: 30 }],
+      mimo_layers: 2,
+      tdd_pattern: 'DDDSU',
+      tdd_period: '5MS',
+      csi_rs_ports: 4,
+    }) ?? '',
+    /TDD/,
+  )
+  assert.equal(
+    macProfileTruth.validateMacProfileDraftForSave({
+      component_carriers: [{ radio_technology: 'nr5g', subcarrier_spacing_khz: 30 }],
+      mimo_layers: 4,
+      tdd_pattern: 'DDDDDDDSUU',
+      tdd_period: '5MS',
+      csi_rs_ports: 8,
+    }),
+    null,
+  )
 })

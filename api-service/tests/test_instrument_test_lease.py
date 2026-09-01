@@ -45,6 +45,7 @@ class _FakeF64(_FakeInstrument):
 
 class _FakeUxm(_FakeInstrument):
     adapter_id = "uxm"
+    instrument_id = "base-station-test"
 
     def __init__(
         self,

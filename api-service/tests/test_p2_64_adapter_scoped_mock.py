@@ -17,6 +17,7 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.base_station_compatibility import (
     build_measure_execution_requirements_from_configuration,
 )
+from app.hal.base_station_mac_profile import build_mac_throughput_command_inputs
 
 
 UXM_MODEL_NAME = "UXM 5G E7515B"
@@ -258,9 +259,12 @@ async def test_cmw_mock_implements_manifest_declared_mac_configuration():
     assert result.receipt.simulated is True
     assert result.receipt.operation_succeeded is True
     assert result.receipt.confirmed is False
-    assert {field.field for field in result.receipt.fields} == set(
-        frozen_profile.profile.model_dump(mode="json")
-    )
+    expected_command_inputs = build_mac_throughput_command_inputs(frozen_profile)
+    assert {field.field for field in result.receipt.fields} == {
+        field
+        for field in expected_command_inputs
+        if field not in {"profile_payload", "profile_digest"}
+    }
     assert result.receipt.profile_digest == frozen_profile.profile_digest
     assert all(
         field.status == "unknown" and field.applied is None

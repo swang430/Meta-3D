@@ -425,6 +425,7 @@ def test_registration_rejects_manifest_operation_without_class_support(
                 kind="lte_rmc",
                 profile_version=1,
                 rat="lte",
+                application_evidence="authoritative_readback",
                 source_reference="Instrument_API_Doc/vendor/manual.pdf",
             )
         ]

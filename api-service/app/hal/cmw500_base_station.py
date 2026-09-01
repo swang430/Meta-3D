@@ -83,6 +83,7 @@ from app.hal.base_station_mac_profile import (
     CMW500_LTE_PROFILE_SOURCE,
     FrozenMacTestProfile,
     LteRmcMacTestProfileV1,
+    build_mac_throughput_command_inputs,
     require_frozen_mac_profile,
 )
 from app.hal.scpi_evidence import (
@@ -313,6 +314,7 @@ class RealCmw500Driver(BaseStationDriver):
                 kind="lte_rmc",
                 profile_version=1,
                 rat="lte",
+                application_evidence="authoritative_readback",
                 source_reference=CMW500_LTE_PROFILE_SOURCE,
             ),
         ),
@@ -1882,12 +1884,7 @@ class RealCmw500Driver(BaseStationDriver):
         if not isinstance(mac_profile, LteRmcMacTestProfileV1):
             raise ValueError("frozen MAC profile is not an LTE RMC profile")
         return await self._configure_mac_throughput_values(
-            mimo_layers=mac_profile.mimo_layers,
-            enable_amc=mac_profile.enable_amc,
-            rb_alloc=(
-                "ALL" if mac_profile.resource_allocation == "full" else ""
-            ),
-            profile_digest=frozen.profile_digest,
+            **build_mac_throughput_command_inputs(frozen)
         )
 
     async def _configure_mac_throughput_values(

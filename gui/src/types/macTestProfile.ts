@@ -8,6 +8,45 @@ export type MacMetricRequirement = {
   scope: 'pcell' | 'all_cells'
 }
 
+export const UXM_NR_TDD_PERIOD_VALUES = [
+  '0.5MS', '0.625MS', '1MS', '1.25MS', '2MS',
+  '2.5MS', '3MS', '4MS', '5MS', '10MS',
+] as const
+
+export const UXM_NR_HARQ_MAX_TRANS_VALUES = [
+  1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28,
+] as const
+
+export const UXM_NR_HARQ_PROCESSES_VALUES = [
+  1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32,
+] as const
+
+export const UXM_NR_MIMO_LAYERS_VALUES = [1, 2, 4] as const
+
+export const UXM_NR_CSI_RS_PORTS_VALUES = [
+  1, 2, 4, 8, 12, 16, 24, 32,
+] as const
+
+const UXM_NR_SLOT_DURATION_MS: Record<number, number> = {
+  15: 1,
+  30: 0.5,
+  60: 0.25,
+  120: 0.125,
+}
+
+const UXM_NR_TDD_PERIOD_MS: Record<string, number> = {
+  '0.5MS': 0.5,
+  '0.625MS': 0.625,
+  '1MS': 1,
+  '1.25MS': 1.25,
+  '2MS': 2,
+  '2.5MS': 2.5,
+  '3MS': 3,
+  '4MS': 4,
+  '5MS': 5,
+  '10MS': 10,
+}
+
 type MacTestProfileBase = {
   schema_version: 1
   profile_version: 1
@@ -24,7 +63,8 @@ export type NrMacTestProfileV1 = MacTestProfileBase & {
   rb_allocation: 'all'
   scheduler_algorithm: 'full_throughput'
   mcs: number
-  enable_amc: boolean
+  mimo_layers: 1 | 2 | 4
+  enable_amc: false
   tdd_pattern: string
   tdd_period: string
   harq_max_trans: number
@@ -58,7 +98,7 @@ export type NrMacProfileDraft = {
   rat: 'nr5g'
   statistical_window: MacStatisticalWindow
   mcs: number
-  enable_amc: boolean
+  enable_amc: false
   tdd_pattern: string
   tdd_period: string
   harq_max_trans: number
@@ -190,7 +230,7 @@ export function profileDraftForConfiguration(
     rat: 'nr5g',
     statistical_window: { unit: 'subframes', count },
     mcs: finiteNumber(configuration.mcs, 28),
-    enable_amc: configuration.enable_amc === true,
+    enable_amc: false,
     tdd_pattern: typeof configuration.tdd_pattern === 'string'
       ? configuration.tdd_pattern
       : 'DDDDDDDSUU',
@@ -235,9 +275,7 @@ export function updateMacProfileDraft(
     ? current
     : profileDraftForConfiguration({}, 'nr5g') as NrMacProfileDraft
   next.mcs = finiteNumber(patch.mcs, nr.mcs)
-  next.enable_amc = typeof patch.enable_amc === 'boolean'
-    ? patch.enable_amc
-    : nr.enable_amc
+  next.enable_amc = false
   next.tdd_pattern = typeof patch.tdd_pattern === 'string'
     ? patch.tdd_pattern
     : nr.tdd_pattern
@@ -249,6 +287,44 @@ export function updateMacProfileDraft(
   next.sched_algo = 'FULLBUFFER'
   next.csi_rs_ports = positiveInteger(patch.csi_rs_ports, nr.csi_rs_ports)
   return next
+}
+
+export function validateMacProfileDraftForSave(
+  configuration: Record<string, unknown>,
+): string | null {
+  const carriers = Array.isArray(configuration.component_carriers)
+    ? configuration.component_carriers
+    : []
+  const pcell = record(carriers[0])
+  if (pcell?.radio_technology === 'lte') return null
+
+  const draft = profileDraftForConfiguration(configuration, 'nr5g')
+  if (draft.kind !== 'nr_throughput') return 'NR MAC profile 类型无效'
+  const layers = positiveInteger(configuration.mimo_layers, 2)
+  if (!UXM_NR_MIMO_LAYERS_VALUES.includes(layers as 1 | 2 | 4)) {
+    return 'NR MIMO 层数必须为 1、2 或 4'
+  }
+  if (!UXM_NR_CSI_RS_PORTS_VALUES.includes(draft.csi_rs_ports as 1)) {
+    return 'NR CSI-RS 端口数不在 UXM 已审计范围内'
+  }
+  const pattern = draft.tdd_pattern.trim().toUpperCase()
+  if (!/^D*S?U*$/.test(pattern) || pattern.length === 0) {
+    return 'NR TDD 时隙模式必须为非空的 D…D、可选 S、U…U 排列'
+  }
+  const scs = finiteNumber(
+    pcell?.subcarrier_spacing_khz ?? configuration.subcarrier_spacing_khz,
+    30,
+  )
+  const slotMs = UXM_NR_SLOT_DURATION_MS[scs]
+  const periodMs = UXM_NR_TDD_PERIOD_MS[draft.tdd_period.toUpperCase()]
+  if (
+    slotMs === undefined
+    || periodMs === undefined
+    || Math.abs(pattern.length * slotMs - periodMs) > 1e-9
+  ) {
+    return 'NR TDD 时隙模式、SCS 与周期不一致'
+  }
+  return null
 }
 
 export function describeFrozenMacProfile(value: unknown): string {

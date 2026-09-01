@@ -43,6 +43,8 @@ from app.hal.scpi_evidence import (
     InstrumentEvidenceItem,
     ScpiExchangeRef,
     exchange_matches_catalog_role,
+    exchange_has_clean_error_queue_response,
+    exchange_is_error_queue_query,
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
@@ -500,6 +502,88 @@ def confirm_base_station_mac_profile(
         }
         for field in receipt.fields
     ]
+    if receipt.confirmed is True and not receipt.exchange_ids:
+        raise ValueError("confirmed MAC receipt requires field exchange evidence")
+    application_evidence = None
+    if result.application_exchanges:
+        exchanges = list(result.application_exchanges)
+        expected_execution_id = str(execution.id)
+        if any(
+            exchange.execution_id != expected_execution_id
+            or exchange.simulated
+            or exchange.result_type
+            not in {"ok", "response", "empty_response", "whitespace_response", "not_ready"}
+            for exchange in exchanges
+        ):
+            raise ValueError("MAC application evidence has an invalid execution or terminal")
+        capture_ids = {exchange.capture_id for exchange in exchanges}
+        instrument_ids = {exchange.instrument_id for exchange in exchanges}
+        active_instrument_id = getattr(lease_identity, "instrument_id", None)
+        sequences = [exchange.sequence for exchange in exchanges]
+        if (
+            len(capture_ids) != 1
+            or len(instrument_ids) != 1
+            or not isinstance(active_instrument_id, str)
+            or not active_instrument_id
+            or instrument_ids != {active_instrument_id}
+            or len(set(sequences)) != len(sequences)
+            or sequences != sorted(sequences)
+        ):
+            raise ValueError(
+                "MAC application evidence is not one ordered active-instrument capture"
+            )
+        proof_rows = []
+        for exchange in exchanges:
+            if exchange_is_error_queue_query(
+                exchange,
+                instrument=evidence.adapter,
+            ):
+                role = "error_queue"
+                clean = exchange_has_clean_error_queue_response(
+                    exchange,
+                    instrument=evidence.adapter,
+                )
+            elif exchange.operation == "command":
+                role = "command"
+                clean = None
+            else:
+                role = "observation"
+                clean = None
+            proof_rows.append(
+                {
+                    "exchange_id": exchange.exchange_id,
+                    "role": role,
+                    "sequence": exchange.sequence,
+                    "result_type": exchange.result_type,
+                    "error_queue_clean": clean,
+                }
+            )
+        proof_payload = {
+            "schema_version": 1,
+            "mode": "command_error_queue",
+            "execution_id": expected_execution_id,
+            "instrument_id": next(iter(instrument_ids)),
+            "capture_id": next(iter(capture_ids)),
+            "exchanges": proof_rows,
+        }
+        application_evidence = {
+            **proof_payload,
+            "digest": canonical_snapshot_digest(proof_payload),
+        }
+        try:
+            # Validate here so malformed live proof never reaches persistence.
+            from app.services.mimo_ota.base_station_execution_evidence import (
+                BaseStationMacApplicationEvidence,
+            )
+
+            BaseStationMacApplicationEvidence.model_validate(application_evidence)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"MAC application evidence is incomplete: {exc}") from exc
+        if [exchange.exchange_id for exchange in exchanges] != list(
+            receipt.exchange_ids
+        ):
+            raise ValueError("MAC application evidence exchange ids do not match receipt")
+
     row = BaseStationMacProfileReceiptEvidence.model_validate(
         {
             "schema_version": 1,
@@ -510,9 +594,11 @@ def confirm_base_station_mac_profile(
             "profile_digest": evidence.mac_profile_digest,
             "fields": fields,
             "confirmed": receipt.confirmed is True and receipt.simulated is False,
+            "operation_succeeded": receipt.operation_succeeded is True,
             "simulated": receipt.simulated,
             "reason": receipt.reason,
             "exchange_ids": list(receipt.exchange_ids),
+            "application_evidence": application_evidence,
         }
     )
     evidence.mac_profile_receipts.append(row)

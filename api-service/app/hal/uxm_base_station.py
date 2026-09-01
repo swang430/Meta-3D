@@ -23,7 +23,7 @@ import asyncio
 import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -72,6 +72,14 @@ from app.hal.base_station_mac_profile import (
     FrozenMacTestProfile,
     NrMacTestProfileV1,
     UXM_NR_PROFILE_SOURCE,
+    UXM_NR_CSI_RS_PORTS_VALUES as _CSIRS_NPORTS_VALUES,
+    UXM_NR_HARQ_MAX_TRANS_VALUES as _HARQ_MAXTRANS_VALUES,
+    UXM_NR_HARQ_PROCESSES_VALUES as _HARQ_PROCESSES_VALUES,
+    UXM_NR_SLOT_DURATION_MS,
+    UXM_NR_SCS_VALUES,
+    UXM_NR_TDD_PERIOD_MS,
+    UXM_NR_TDD_PERIOD_TOKENS as _TDD_PERIOD_TOKENS,
+    build_mac_throughput_command_inputs,
     require_frozen_mac_profile,
 )
 from app.hal.nr_band_baselines import get_band_baseline
@@ -120,27 +128,19 @@ class UxmLocalControlReservedError(RuntimeError):
 
 
 # ── P1-33：值形态。全部取自厂商手册原件的 Range 字段，**不是编的**。
-#    旧的无前缀写法发的是裸值（`4` / `16` / `"5MS"` / `"ALL"`），
-#    手册要的是枚举 token（`N4` / `N16` / `MS5`）或整数 PRB 数。
-_TDD_PERIOD_TOKENS = {          # Enum，默认 MS5
-    "0.5MS": "MS0P5", "0.625MS": "MS0P625", "1MS": "MS1", "1.25MS": "MS1P25",
-    "2MS": "MS2", "2.5MS": "MS2P5", "3MS": "MS3", "4MS": "MS4",
-    "5MS": "MS5", "10MS": "MS10",
-}
-_HARQ_MAXTRANS_VALUES = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28)
-_HARQ_PROCESSES_VALUES = (1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32)
-_CSIRS_NPORTS_VALUES = (1, 2, 4, 8, 12, 16, 24, 32)
+#    canonical profile 与驱动共用 base_station_mac_profile 的同一组枚举；
+#    旧的无前缀写法发的是裸值，手册要的是枚举 token 或整数 PRB 数。
 _TDD_PERIOD_MS = {
-    "MS0P5": 0.5, "MS0P625": 0.625, "MS1": 1.0, "MS1P25": 1.25, "MS2": 2.0,
-    "MS2P5": 2.5, "MS3": 3.0, "MS4": 4.0, "MS5": 5.0, "MS10": 10.0,
+    token: UXM_NR_TDD_PERIOD_MS[label]
+    for label, token in _TDD_PERIOD_TOKENS.items()
 }
-_SCS_MU_TOKENS = {15: "MU0", 30: "MU1", 60: "MU2", 120: "MU3"}
+_SCS_MU_TOKENS = dict(zip(UXM_NR_SCS_VALUES, ("MU0", "MU1", "MU2", "MU3")))
 
 
 def _slot_ms(scs_khz):
     """NR 一个 slot 多少毫秒：15→1.0 / 30→0.5 / 60→0.25 / 120→0.125。
     对不上表的 SCS 返回 None，由调用处 fail-loud（不猜）。"""
-    return {15: 1.0, 30: 0.5, 60: 0.25, 120: 0.125}.get(int(scs_khz or 0))
+    return UXM_NR_SLOT_DURATION_MS.get(int(scs_khz or 0))
 
 
 def _enum_token(prefix, value, allowed):
@@ -337,6 +337,7 @@ class RealUxmDriver(BaseStationDriver):
                 kind="nr_throughput",
                 profile_version=1,
                 rat="nr5g",
+                application_evidence="command_error_queue",
                 source_reference=UXM_NR_PROFILE_SOURCE,
             ),
         ),
@@ -2819,20 +2820,21 @@ class RealUxmDriver(BaseStationDriver):
         mac_profile = frozen.profile
         if not isinstance(mac_profile, NrMacTestProfileV1):
             raise ValueError("frozen MAC profile is not an NR throughput profile")
-        return await self._configure_mac_throughput_values(
-            mimo_layers=mac_profile.mimo_layers,
-            mcs=mac_profile.mcs,
-            rb_alloc=("ALL" if mac_profile.rb_allocation == "all" else ""),
-            enable_amc=mac_profile.enable_amc,
-            tdd_pattern=mac_profile.tdd_pattern,
-            tdd_period=mac_profile.tdd_period,
-            harq_max_trans=mac_profile.harq_max_trans,
-            harq_processes=mac_profile.harq_processes,
-            stat_count=mac_profile.statistical_window.count,
-            scs_khz=mac_profile.subcarrier_spacing_khz,
-            csi_rs_ports=mac_profile.csi_rs_ports,
-            profile_payload=mac_profile.model_dump(mode="json"),
-            profile_digest=frozen.profile_digest,
+        command_inputs = build_mac_throughput_command_inputs(frozen)
+        with capture_scpi_exchanges() as exchanges:
+            result = await self._configure_mac_throughput_values(**command_inputs)
+        receipt = result.receipt
+        if receipt is None:
+            return result
+        exchange_ids = tuple(item.exchange_id for item in exchanges)
+        fields = tuple(
+            replace(field, exchange_ids=exchange_ids)
+            for field in receipt.fields
+        )
+        return replace(
+            result,
+            receipt=replace(receipt, fields=fields),
+            application_exchanges=tuple(exchanges),
         )
 
     async def _configure_mac_throughput_values(

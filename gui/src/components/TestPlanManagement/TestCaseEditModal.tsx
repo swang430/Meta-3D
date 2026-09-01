@@ -55,6 +55,7 @@ import {
   buildLabProfileBindingPatch,
   labProfileSelectionDisabled,
 } from '../../features/TestManagement/testCaseLabProfileBinding'
+import { validateMacProfileDraftForSave } from '../../types/macTestProfile'
 
 /** 有类型化配置表单的用例类型。其余走 raw JSON。 */
 const TYPED_CONFIG_CASE_TYPE = 'MIMO_OTA'
@@ -232,6 +233,14 @@ export function TestCaseEditModal({
       setJsonError('切换 Diagnostic / Formal 必须填写操作人和原因')
       return
     }
+    if (useTypedForm) {
+      const macProfileError = validateMacProfileDraftForSave(mimoConfig)
+      if (macProfileError) {
+        setJsonError(macProfileError)
+        return
+      }
+      setJsonError(null)
+    }
     setSaving(true)
     try {
       const config = useTypedForm ? mimoConfig : JSON.parse(configText)
@@ -396,13 +405,20 @@ export function TestCaseEditModal({
           )}
 
           {useTypedForm ? (
-            <MIMOOTAConfigForm
-              value={mimoConfig}
-              onChange={setMimoConfig}
-              testCaseId={testCaseId}
-              labProfileId={selectedLabId === UNBOUND_LAB ? null : selectedLabId}
-              compatibilityContextSaved={compatibilityContextSaved}
-            />
+            <>
+              {jsonError ? (
+                <Alert color="red" variant="light" icon={<IconAlertCircle size={18} />}>
+                  {jsonError}
+                </Alert>
+              ) : null}
+              <MIMOOTAConfigForm
+                value={mimoConfig}
+                onChange={setMimoConfig}
+                testCaseId={testCaseId}
+                labProfileId={selectedLabId === UNBOUND_LAB ? null : selectedLabId}
+                compatibilityContextSaved={compatibilityContextSaved}
+              />
+            </>
           ) : (
             <>
               <Textarea

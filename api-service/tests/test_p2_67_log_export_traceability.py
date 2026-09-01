@@ -33,6 +33,7 @@ from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payl
 
 class _BaseStation:
     adapter_id = "cmw500"
+    instrument_id = "base-station-test"
 
     async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
         return BaseStationRemoteSessionResult(

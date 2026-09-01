@@ -104,6 +104,7 @@ from app.hal.base_station_mac_profile import (
     FrozenMacTestProfile,
     LteRmcMacTestProfileV1,
     NrMacTestProfileV1,
+    uxm_nr_tdd_period_for_pattern,
 )
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 
@@ -813,6 +814,17 @@ class MIMOOTAConfiguration(BaseModel):
                     "full_throughput",
                 ):
                     scheduler = "full_throughput"
+                tdd_pattern = data.get("tdd_pattern", "DDDDDDDSUU")
+                scs_khz = pcell.get(
+                    "subcarrier_spacing_khz",
+                    data.get("subcarrier_spacing_khz", 30),
+                )
+                tdd_period = data.get("tdd_period")
+                if tdd_period is None:
+                    tdd_period = uxm_nr_tdd_period_for_pattern(
+                        tdd_pattern=tdd_pattern,
+                        subcarrier_spacing_khz=scs_khz,
+                    )
                 profile = NrMacTestProfileV1.model_validate(
                     {
                         "schema_version": 1,
@@ -832,14 +844,11 @@ class MIMOOTAConfiguration(BaseModel):
                         "scheduler_algorithm": scheduler,
                         "mcs": data.get("mcs", 28),
                         "enable_amc": data.get("enable_amc", False),
-                        "tdd_pattern": data.get("tdd_pattern", "DDDDDDDSUU"),
-                        "tdd_period": data.get("tdd_period", "5MS"),
+                        "tdd_pattern": tdd_pattern,
+                        "tdd_period": tdd_period,
                         "harq_max_trans": data.get("harq_max_trans", 4),
                         "harq_processes": data.get("harq_processes", 16),
-                        "subcarrier_spacing_khz": pcell.get(
-                            "subcarrier_spacing_khz",
-                            data.get("subcarrier_spacing_khz", 30),
-                        ),
+                        "subcarrier_spacing_khz": scs_khz,
                         "csi_rs_ports": (
                             data["csi_rs_ports"]
                             if data.get("csi_rs_ports") is not None

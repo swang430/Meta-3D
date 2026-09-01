@@ -2228,7 +2228,8 @@ export interface components {
             profile_version: 1;
             /** @constant */
             test_intent: "downlink_throughput";
-            mimo_layers: number;
+            /** @enum {integer} */
+            mimo_layers: 1 | 2 | 4;
             statistical_window: components["schemas"]["MacStatisticalWindow"];
             metric_requirements: components["schemas"]["MacMetricRequirement"][];
             /** @constant */
@@ -2245,13 +2246,19 @@ export interface components {
             /** @constant */
             scheduler_algorithm: "full_throughput";
             mcs: number;
-            enable_amc: boolean;
+            /** @constant */
+            enable_amc: false;
             tdd_pattern: string;
-            tdd_period: string;
-            harq_max_trans: number;
-            harq_processes: number;
-            subcarrier_spacing_khz: number;
-            csi_rs_ports: number;
+            /** @enum {string} */
+            tdd_period: "0.5MS" | "0.625MS" | "1MS" | "1.25MS" | "2MS" | "2.5MS" | "3MS" | "4MS" | "5MS" | "10MS";
+            /** @enum {integer} */
+            harq_max_trans: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 10 | 12 | 16 | 20 | 24 | 28;
+            /** @enum {integer} */
+            harq_processes: 1 | 2 | 4 | 6 | 8 | 10 | 12 | 13 | 14 | 16 | 32;
+            /** @enum {integer} */
+            subcarrier_spacing_khz: 15 | 30 | 60 | 120;
+            /** @enum {integer} */
+            csi_rs_ports: 1 | 2 | 4 | 8 | 12 | 16 | 24 | 32;
         };
         LteRmcMacTestProfileV1: {
             /** @constant */
@@ -2834,6 +2841,8 @@ export interface components {
             profile_version: number;
             /** @enum {string} */
             rat: "lte" | "nr5g";
+            /** @enum {string} */
+            application_evidence: "authoritative_readback" | "command_error_queue";
             source_reference: string;
         };
         BaseStationConfigFieldCapability: {
