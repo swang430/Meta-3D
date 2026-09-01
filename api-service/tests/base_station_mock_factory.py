@@ -29,4 +29,3 @@ def registered_mock_base_station(
         payload,
         adapter_manifest=registration.manifest,
     )
-
