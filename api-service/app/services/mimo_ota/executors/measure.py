@@ -71,6 +71,9 @@ from app.hal.base_station import (
     ThroughputMetrics,
     resolve_base_station_execution_plan,
 )
+from app.hal.base_station_compatibility import (
+    verify_frozen_base_station_compatibility,
+)
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
@@ -831,10 +834,24 @@ class MeasureExecutor(IStepExecutor):
         # P2-50: 由当前加载的 adapter 声明推导 live 计划。attempt 路径随后
         # 与 evidence 冻结计划做 digest 对账；无 evidence 的 legacy/unbound
         # 诊断路径直接消费 live 计划（与窗口计划的 manifest=None 形态同构）。
+        live_manifest = getattr(base_station, "adapter_manifest", None)
         live_execution_plan = resolve_base_station_execution_plan(
             base_station,
-            manifest=getattr(base_station, "adapter_manifest", None),
+            manifest=live_manifest,
         )
+        # P1-75 站点 B：lease 后、首次 I/O 前，对当前 live manifest 复核
+        # 冻结时的兼容性结论；digest 漂移或 verdict 翻转都拒绝进入 I/O。
+        # 旧 frozen dict 缺 compatibility → 当时未评估，按既有行为放行。
+        compatibility_error = verify_frozen_base_station_compatibility(
+            frozen.get("compatibility"),
+            live_manifest=live_manifest,
+            simulated=getattr(base_station, "simulated", False) is True,
+        )
+        if compatibility_error is not None:
+            raise RuntimeError(
+                "BaseStation frozen compatibility re-check failed: "
+                + compatibility_error
+            )
         resolution = frozen.get("resolution")
         frozen_adapter_id = (
             resolution.get("adapter") if isinstance(resolution, dict) else None
