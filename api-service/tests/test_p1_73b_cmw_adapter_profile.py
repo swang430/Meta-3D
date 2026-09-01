@@ -16,7 +16,7 @@ from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 from app.schemas.instrument import FEConnectionUpdate, UpdateInstrumentCategoryRequest
 from app.api.instrument import update_instrument_category
 from app.services.base_station_adapter_profile import (
@@ -91,7 +91,34 @@ def _configured_execution(db, *, model_name: str, params: dict | None):
             "role": "baseStation",
         }],
     )
-    execution = TestExecution(status="pending", config={})
+    # P1-75 兼容性硬门：requested RAT 取自 TestCase configuration ——
+    # CMW500 夹具声明 lte，其余（UXM）走 schema 默认 nr5g。
+    case = TestCase(
+        name="p1-73b freeze fixture",
+        test_type="MIMO_OTA",
+        configuration=(
+            {
+                "component_carriers": [
+                    {
+                        "radio_technology": "lte",
+                        "band": "B3",
+                        "duplex": "fdd",
+                        "lte_transmission_mode": "TM3",
+                        "lte_dl_earfcn": 1575,
+                        "frequency_hz": 1_842_500_000.0,
+                        "bandwidth_mhz": 20.0,
+                        "role": "pcell",
+                    }
+                ]
+            }
+            if model_name == "CMW500"
+            else {}
+        ),
+        created_by="test",
+    )
+    db.add(case)
+    db.flush()
+    execution = TestExecution(test_case_id=case.id, status="pending", config={})
     db.add_all([connection, lab, execution])
     db.commit()
     return category, model, connection, lab, execution

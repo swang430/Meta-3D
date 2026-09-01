@@ -19,7 +19,7 @@ from app.db.database import Base
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 from app.schemas.instrument import (
     FEConnectionUpdate,
     InstrumentConnectionCreate,
@@ -201,7 +201,29 @@ def test_execution_freezes_approval_and_later_toggle_does_not_rewrite_it(db):
             "role": "baseStation",
         }],
     )
-    execution = TestExecution(status="pending", config={})
+    # P1-75 兼容性硬门：CMW500 冻结需要显式 lte 的 TestCase 需求端。
+    case = TestCase(
+        name="p1-73b capability fixture",
+        test_type="MIMO_OTA",
+        configuration={
+            "component_carriers": [
+                {
+                    "radio_technology": "lte",
+                    "band": "B3",
+                    "duplex": "fdd",
+                    "lte_transmission_mode": "TM3",
+                    "lte_dl_earfcn": 1575,
+                    "frequency_hz": 1_842_500_000.0,
+                    "bandwidth_mhz": 20.0,
+                    "role": "pcell",
+                }
+            ]
+        },
+        created_by="test",
+    )
+    db.add(case)
+    db.flush()
+    execution = TestExecution(test_case_id=case.id, status="pending", config={})
     db.add_all([lab, execution])
     db.commit()
     driver = RealCmw500Driver("cmw", {"ip_address": connection.endpoint})

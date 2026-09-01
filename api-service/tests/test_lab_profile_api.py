@@ -28,7 +28,7 @@ from app.models.instrument import (
     InstrumentModel,
 )
 from app.models.switch_topology import SwitchTopology
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services import instrument_hal_service
 from app.services.base_station_adapter_profile import freeze_base_station_adapter_profile
@@ -313,7 +313,29 @@ class TestSyncInstrumentBinding:
         assert preview.status_code == 200, preview.text
         assert preview.json()["binding_digest"] == body["resolved"]["binding_digest"]
 
-        execution = TestExecution(status="pending", config={})
+        # P1-75 兼容性硬门：CMW500 冻结需要显式 lte 的 TestCase 需求端。
+        case = TestCase(
+            name="sync-current freeze fixture",
+            test_type="MIMO_OTA",
+            configuration={
+                "component_carriers": [
+                    {
+                        "radio_technology": "lte",
+                        "band": "B3",
+                        "duplex": "fdd",
+                        "lte_transmission_mode": "TM3",
+                        "lte_dl_earfcn": 1575,
+                        "frequency_hz": 1_842_500_000.0,
+                        "bandwidth_mhz": 20.0,
+                        "role": "pcell",
+                    }
+                ]
+            },
+            created_by="test",
+        )
+        db.add(case)
+        db.flush()
+        execution = TestExecution(test_case_id=case.id, status="pending", config={})
         db.add(execution)
         db.commit()
         frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)

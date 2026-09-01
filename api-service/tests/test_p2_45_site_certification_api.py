@@ -42,6 +42,24 @@ def db():
         Base.metadata.drop_all(engine)
 
 
+def _lte_configuration():
+    """P1-75 兼容性硬门：CMW500 夹具的 TestCase 必须显式声明 lte PCell。"""
+    return {
+        "component_carriers": [
+            {
+                "radio_technology": "lte",
+                "band": "B3",
+                "duplex": "fdd",
+                "lte_transmission_mode": "TM3",
+                "lte_dl_earfcn": 1575,
+                "frequency_hz": 1_842_500_000.0,
+                "bandwidth_mhz": 20.0,
+                "role": "pcell",
+            }
+        ]
+    }
+
+
 def _cmw_profile():
     return {
         "schema_version": 1,
@@ -99,7 +117,7 @@ def _source_execution(db):
     case = TestCase(
         name="certification source",
         test_type="MIMO_OTA",
-        configuration={},
+        configuration=_lte_configuration(),
         created_by="test",
         lab_profile_id=lab.id,
     )
