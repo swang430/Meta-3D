@@ -37,7 +37,7 @@ def _qualification(classification: str) -> dict:
         "policy_mode": "diagnostic" if diagnostic else "formal",
         "policy": None,
         "binding_digest": "b" * 64,
-        "binding_status": "configured",
+        "binding_status": "not_applicable",
         "execution_mode": "real",
         "adapter_id": "uxm",
         "site_certification": None,
@@ -71,13 +71,13 @@ def _freeze(*, no_adapter: bool = False) -> dict:
         "resolution": {
             "schema_version": 1,
             "adapter": None if no_adapter else "uxm",
-            "status": "diagnostic_unbound" if no_adapter else "configured",
+            "status": "diagnostic_unbound" if no_adapter else "not_applicable",
             "execution_mode": "simulated" if no_adapter else "real",
             "profile": None,
         },
         "binding_digest": "b" * 64,
         "resolved_binding": {
-            "status": "diagnostic_unbound" if no_adapter else "configured",
+            "status": "diagnostic_unbound" if no_adapter else "not_applicable",
             "binding_digest": "b" * 64,
             "manifest": manifest,
         },
@@ -126,6 +126,74 @@ def test_completed_compatible_formal_is_valid_test_completion():
     assert outcome.reasons == ()
 
 
+def test_completed_uxm_not_applicable_binding_is_formally_valid():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    frozen["resolution"]["status"] = "not_applicable"
+    frozen["resolved_binding"]["status"] = "not_applicable"
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    qualification = deepcopy(execution.config[EXECUTION_QUALIFICATION_KEY])
+    qualification["binding_status"] = "not_applicable"
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+    execution.config = {
+        FREEZE_CONFIG_KEY: frozen,
+        EXECUTION_QUALIFICATION_KEY: qualification,
+    }
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "compatible"
+    assert outcome.completion_semantic == "valid_test_completed"
+    assert outcome.formal_eligible is True
+
+
+def test_cmw_not_applicable_binding_cannot_claim_formal_completion():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    requirements = build_measure_execution_requirements("lte")
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealCmw500Driver.adapter_manifest,
+    )
+    frozen["resolution"].update(
+        {"adapter": "cmw500", "status": "not_applicable", "profile": None}
+    )
+    frozen["resolved_binding"].update(
+        {
+            "status": "not_applicable",
+            "manifest": RealCmw500Driver.adapter_manifest.model_dump(mode="json"),
+        }
+    )
+    frozen["compatibility"] = build_frozen_compatibility_payload(
+        requirements,
+        verdict,
+    )
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    qualification = deepcopy(execution.config[EXECUTION_QUALIFICATION_KEY])
+    qualification.update(
+        {"adapter_id": "cmw500", "binding_status": "not_applicable"}
+    )
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+    execution.config = {
+        FREEZE_CONFIG_KEY: frozen,
+        EXECUTION_QUALIFICATION_KEY: qualification,
+    }
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+
+
 def test_compatible_formal_does_not_override_nonterminal_pipeline_status():
     outcome = project_execution_evidence_outcome(_execution(status="running"))
 
@@ -153,6 +221,33 @@ def test_completed_no_adapter_is_diagnostic_not_formal_success():
 
     assert outcome.compatibility_classification == "diagnostic"
     assert outcome.completion_semantic == "diagnostic_completed"
+    assert outcome.formal_eligible is False
+
+
+def test_no_adapter_resolution_with_profile_is_invalid_not_diagnostic():
+    execution = _execution(qualification="diagnostic", no_adapter=True)
+    frozen = execution.config[FREEZE_CONFIG_KEY]
+    frozen["resolution"]["profile"] = {
+        "schema_version": 1,
+        "adapter": "cmw500",
+        "lte_2x2_internal_route": {
+            "pcc_bb_board": "BB1",
+            "rx_connector": "RF1C",
+            "rx_converter": "RX1",
+            "tx1_connector": "RF1O",
+            "tx1_converter": "TX1",
+            "tx2_connector": "RF3C",
+            "tx2_converter": "TX2",
+        },
+    }
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
     assert outcome.formal_eligible is False
 
 
@@ -280,6 +375,33 @@ def test_outer_freeze_digest_tamper_fails_closed():
     assert outcome.completion_semantic == "pipeline_completed"
     assert outcome.formal_eligible is False
     assert any("digest" in reason for reason in outcome.reasons)
+
+
+def test_modern_freeze_missing_compatibility_with_stale_digest_fails_closed():
+    execution = _execution()
+    del execution.config[FREEZE_CONFIG_KEY]["compatibility"]
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert any("digest" in reason for reason in outcome.reasons)
+
+
+def test_intact_pre_compatibility_freeze_remains_legacy():
+    execution = _execution(qualification=None)
+    frozen = execution.config[FREEZE_CONFIG_KEY]
+    del frozen["compatibility"]
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "legacy"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
 
 
 def test_inner_requirements_digest_tamper_fails_closed_even_with_new_outer_digest():

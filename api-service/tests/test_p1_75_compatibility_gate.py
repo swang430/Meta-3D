@@ -502,8 +502,8 @@ def test_freeze_reuse_of_legacy_frozen_dict_keeps_it_untouched(db):
             "execution_mode": "simulated",
             "profile": None,
         },
-        "digest": "f" * 64,
     }
+    legacy["digest"] = canonical_payload_digest(legacy)
     execution.config = {FREEZE_CONFIG_KEY: dict(legacy)}
     hal = SimpleNamespace(
         drivers={

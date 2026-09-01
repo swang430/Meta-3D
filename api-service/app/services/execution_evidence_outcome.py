@@ -12,6 +12,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.hal.base_station_adapter_profile import BaseStationAdapterProfileResolution
 from app.hal.base_station_compatibility import (
     BaseStationCompatibilityVerdict,
     BaseStationExecutionRequirements,
@@ -86,6 +87,12 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
     resolution = frozen.get("resolution")
     if not isinstance(resolution, Mapping):
         return "frozen adapter resolution is missing"
+    try:
+        BaseStationAdapterProfileResolution.model_validate(resolution)
+    except (ValidationError, ValueError, TypeError):
+        if verdict.status == "no_adapter":
+            return "frozen no_adapter verdict has invalid adapter resolution"
+        return "frozen compatible verdict has invalid adapter resolution"
     if verdict.status == "no_adapter":
         if (
             resolution.get("status") != "diagnostic_unbound"
@@ -98,8 +105,6 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
             )
     elif verdict.status != "compatible":
         return "frozen compatibility verdict status is invalid"
-    elif resolution.get("status") not in {"configured", "not_applicable"}:
-        return "frozen compatible verdict does not match binding status"
     adapter = resolution.get("adapter")
     if verdict.status == "compatible" and (
         not isinstance(adapter, str) or not adapter.strip()
@@ -152,11 +157,12 @@ def validate_frozen_compatibility_snapshot(frozen: Any) -> str | None:
         return None
     if not isinstance(frozen, Mapping):
         return "frozen baseStation adapter profile is malformed"
+    digest_error = _outer_freeze_digest_error(frozen)
+    if digest_error is not None:
+        return digest_error
     if "compatibility" not in frozen:
         return None
-    return _outer_freeze_digest_error(frozen) or _compatibility_snapshot_error(
-        frozen
-    )
+    return _compatibility_snapshot_error(frozen)
 
 
 def _qualification_projection(
@@ -202,10 +208,10 @@ def _qualification_freeze_alignment_error(
     if qualification.classification == "formal" and (
         qualification.policy_mode != "formal"
         or qualification.execution_mode != "real"
-        or qualification.binding_status != "configured"
+        or qualification.binding_status not in {"configured", "not_applicable"}
         or qualification.adapter_id is None
     ):
-        return "formal qualification does not describe a real configured adapter"
+        return "formal qualification does not describe a real authoritative adapter"
     return None
 
 
@@ -224,9 +230,7 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
 
     reasons: list[str] = list(qualification_reasons)
     compatibility_digest: str | None = None
-    if frozen is None or (
-        isinstance(frozen, Mapping) and "compatibility" not in frozen
-    ):
+    if frozen is None:
         classification: CompatibilityClassification = (
             "diagnostic" if qualification == "diagnostic" else "legacy"
         )
@@ -236,6 +240,11 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
         if error is not None:
             classification = "invalid"
             reasons.append(error)
+        elif isinstance(frozen, Mapping) and "compatibility" not in frozen:
+            classification = (
+                "diagnostic" if qualification == "diagnostic" else "legacy"
+            )
+            reasons.append("execution has no frozen compatibility snapshot")
         else:
             assert isinstance(frozen, Mapping)
             compatibility = frozen["compatibility"]

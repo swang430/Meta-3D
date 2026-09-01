@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.models.test_plan import TestExecution
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
@@ -238,6 +239,9 @@ def test_pre_p1_75_formal_execution_keeps_its_frozen_qualification_gate(db):
     config = dict(execution.config)
     old_freeze = dict(config[FREEZE_CONFIG_KEY])
     old_freeze.pop("compatibility")
+    old_freeze["digest"] = canonical_payload_digest(
+        {key: value for key, value in old_freeze.items() if key != "digest"}
+    )
     config[FREEZE_CONFIG_KEY] = old_freeze
     execution.config = config
 

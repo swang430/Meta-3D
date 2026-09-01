@@ -42,6 +42,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.base_station import BaseStationDriver
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.models.calibration import CalibrationCertificate
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.instrument import InstrumentCategory
@@ -87,7 +88,7 @@ def _bind_unbound_mock_measurement(
 
     adapter_id = base_station.adapter_id
     execution_config = dict(context.test_execution.config or {})
-    execution_config["base_station_adapter_profile_freeze"] = {
+    legacy_freeze = {
         "resolution": {
             "schema_version": 1,
             "adapter": None,
@@ -96,6 +97,8 @@ def _bind_unbound_mock_measurement(
             "profile": None,
         }
     }
+    legacy_freeze["digest"] = canonical_payload_digest(legacy_freeze)
+    execution_config["base_station_adapter_profile_freeze"] = legacy_freeze
     context.test_execution.config = execution_config
     context.db.add(context.test_execution)
     context.db.commit()
