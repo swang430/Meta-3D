@@ -221,6 +221,34 @@ def test_compatibility_manifest_must_match_the_same_frozen_binding():
     assert any("manifest" in reason for reason in outcome.reasons)
 
 
+def test_frozen_compatible_verdict_must_match_authoritative_re_evaluation():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    requirements = build_measure_execution_requirements("lte")
+    frozen["compatibility"]["requirements"] = requirements.model_dump(
+        mode="json"
+    )
+    frozen["compatibility"]["verdict"].update(
+        {
+            "status": "compatible",
+            "compatible": True,
+            "reasons": [],
+            "requirements_digest": requirements.digest,
+        }
+    )
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = frozen
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert any("re-evaluation" in reason for reason in outcome.reasons)
+
+
 def test_historical_row_without_freeze_remains_legacy_pipeline_completion():
     outcome = project_execution_evidence_outcome(
         _execution(qualification=None, include_freeze=False)

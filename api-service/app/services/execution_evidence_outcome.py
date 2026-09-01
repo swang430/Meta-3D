@@ -16,6 +16,7 @@ from app.hal.base_station_compatibility import (
     BaseStationCompatibilityVerdict,
     BaseStationExecutionRequirements,
     canonical_payload_digest,
+    evaluate_base_station_compatibility,
     manifest_compatibility_digest,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
@@ -127,6 +128,15 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
         return "frozen resolved binding manifest does not match adapter resolution"
     if manifest_compatibility_digest(manifest) != verdict.manifest_digest:
         return "frozen compatibility manifest does not match resolved binding"
+    authoritative_verdict = evaluate_base_station_compatibility(
+        requirements,
+        manifest,
+    )
+    if verdict != authoritative_verdict:
+        return (
+            "frozen compatibility verdict does not match authoritative "
+            "re-evaluation"
+        )
     return None
 
 
