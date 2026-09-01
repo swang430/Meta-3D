@@ -102,6 +102,47 @@ async def test_mock_capability_projection_contains_only_manifest_truth(
         assert "max_bandwidth_mhz" not in parameters
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("manifest", "model_name", "expected_rat", "forbidden_prefix"),
+    (
+        (RealUxmDriver.adapter_manifest, UXM_MODEL_NAME, "nr5g", "lte"),
+        (RealCmw500Driver.adapter_manifest, CMW_MODEL_NAME, "lte", "nr"),
+    ),
+)
+async def test_mock_ue_diagnostics_do_not_claim_a_foreign_rat(
+    manifest,
+    model_name: str,
+    expected_rat: str,
+    forbidden_prefix: str,
+):
+    driver = _mock(model_name, manifest)
+
+    ue_info = await driver.get_ue_info()
+    capability = await driver.query_ue_capability()
+
+    assert ue_info["radio_technology"] == expected_rat
+    assert capability["radio_technology"] == expected_rat
+    assert capability["max_dl_layers"] == driver._mimo_layers
+    assert capability["source"] == "mock"
+    for value in (
+        ue_info.get("ue_category"),
+        *(capability.get("supported_bands") or ()),
+        *(capability.get("ca_combinations") or ()),
+    ):
+        assert not str(value).lower().startswith(forbidden_prefix)
+
+
+@pytest.mark.asyncio
+async def test_mock_optional_operations_fail_closed_when_manifest_omits_them():
+    driver = _mock(CMW_MODEL_NAME, RealCmw500Driver.adapter_manifest)
+
+    assert await driver.set_downlink_power(-46.0) is False
+    assert await driver.reconfigure_rrc(mimo_layers=2) is False
+    assert await driver.add_secondary_cell(1, {"frequency_mhz": 3600.0}) is False
+    assert not hasattr(driver, "_scells")
+
+
 @pytest.mark.parametrize(
     ("manifest", "model_name"),
     (

@@ -2137,6 +2137,8 @@ class MockBaseStation(BaseStationDriver):
         return True
 
     async def set_downlink_power(self, power_dbm: float) -> bool:
+        if not self.input_level_control_supported:
+            return False
         if power_dbm < -120 or power_dbm > 0:
             return False
         # 当前 Mock 仍模拟既有 UXM 方言；builder 归 UXM profile 所有，通用 HAL
@@ -2290,22 +2292,27 @@ class MockBaseStation(BaseStationDriver):
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
+        rat = self.adapter_manifest.rat_capabilities[0].rat
         return {
             "imsi": "001010000000001",
             "imei": "352099001761481",
-            "ue_category": "NR-DC",
+            "ue_category": f"{rat.upper()} diagnostic mock",
+            "radio_technology": rat,
             "connected": self._cell_running,
         }
 
     async def query_ue_capability(self) -> Dict[str, Any]:
-        """Phase 2e: mock UE that supports up to 4x4 256QAM on n78/n41."""
+        """Return only configured simulated shape, never foreign-RAT claims."""
+
+        rat = self.adapter_manifest.rat_capabilities[0].rat
         return {
-            "max_dl_layers": 4,
-            "max_ul_layers": 2,
-            "max_modulation_dl": "256QAM",
-            "max_modulation_ul": "64QAM",
-            "supported_bands": ["n78", "n41", "n77", "n79"],
-            "ca_combinations": ["n78+n41", "n77+n79"],
+            "max_dl_layers": self._mimo_layers,
+            "max_ul_layers": None,
+            "max_modulation_dl": None,
+            "max_modulation_ul": None,
+            "supported_bands": [],
+            "ca_combinations": [],
+            "radio_technology": rat,
             "source": "mock",
         }
 
@@ -2316,6 +2323,8 @@ class MockBaseStation(BaseStationDriver):
         modulation: Optional[str] = None,
     ) -> bool:
         """Mock: pretend RRC reconfig succeeded."""
+        if not self.rrc_reconfiguration_supported:
+            return False
         if mimo_layers is not None:
             self._mimo_layers = mimo_layers
             logger.info("[MockBS] RRC reconfig: mimo_layers → %d", mimo_layers)
@@ -2329,6 +2338,8 @@ class MockBaseStation(BaseStationDriver):
         cc_config: Dict[str, Any],
     ) -> bool:
         """Mock: track SCell list in memory."""
+        if not self.SCELL_ACTIVATION_READBACK_AUTHORITATIVE:
+            return False
         if not hasattr(self, "_scells"):
             self._scells = {}
         self._scells[cc_index] = dict(cc_config)

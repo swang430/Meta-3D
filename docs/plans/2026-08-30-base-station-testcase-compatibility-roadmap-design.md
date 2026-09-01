@@ -2,7 +2,7 @@
 
 **日期**：2026-08-30
 
-**状态**：用户已批准进入 roadmap 雷达；只更新 Todo，不自动启动功能开发
+**状态**：P1-75 已合并；P2-64 已于 2026-09-01 完成本地实现并待外审合并；P2-65～P2-67 未启动
 
 **对应条目**：P1-75、P2-64～P2-67
 
@@ -73,6 +73,11 @@ execution，不生成报告。兼容性 verdict 与输入 digest 一并冻结，
 
 Mock 的 RAT、operation、测量窗口与参数边界从所选注册 Manifest 派生；删除 NR/LTE 能力并集与型号
 字符串猜 adapter 的行为。Mock 仍保留 simulated provenance，且永不进入正式 KPI。
+
+**2026-09-01 实现状态**：HAL 已把 selected model 的注册 manifest 显式注入唯一 Mock；identity、RAT、
+operation、route、window、metric registry 与 UE 诊断 RAT 形状均只读该 manifest。缺失/未知/漂移
+fail-loud，未声明可选操作 fail-closed，`diagnostic_unbound` 只借 manifest 决定运行时模拟形状、不会
+回填冻结 binding 或正式证据。G27 永久门及坏变异自测已加入；P2-65 未提前实现。
 
 ### P2-65 — Preview / Readiness 共用兼容性判定
 

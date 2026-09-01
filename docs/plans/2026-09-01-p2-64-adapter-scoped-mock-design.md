@@ -51,6 +51,10 @@ manifest 回填进 unbound 冻结或正式证据。运行时的模拟命令形�
   registry，不实例化真实 UXM/CMW Driver。所有指标保持模拟来源。
 - execution plan 使用 Mock 实例携带的同一 manifest；operation 缺失即保持未计划，
   不靠 Mock 类上的跨厂商恒真属性补能力。
+- `get_ue_info()` / `query_ue_capability()` 的 RAT 形状也从 manifest 派生；band、调制等
+  manifest 没有证明的诊断能力保持空/未知，不再让 CMW Mock 发布 NR-DC/n78 等异制式信息。
+- 直接调用 manifest 未声明的输入电平、RRC 或 SCell 操作时 fail-closed，避免绕过冻结执行计划后
+  仍由 Mock 伪装成功或生成另一 adapter 的命令形状。
 - CMW route 等既有厂商形状只在 manifest 明确声明对应 operation/profile 时启用；
   UXM 不得到 CMW route 行为。
 - Mock 配置与窗口下发继续走共同 SPI 和已有 builder/plan 形状；不新增或猜测 SCPI。

@@ -100,6 +100,8 @@ git commit -m "refactor: bind mock base station to adapter manifest"
 - monkeypatch 真实 UXM/CMW Driver 构造器为抛错后，Mock registry 仍可解析，证明不实例化真实 Driver。
 - `resolve_base_station_execution_plan(mock, manifest=mock.adapter_manifest)` 的 operation
   计划与 manifest 一致；不再由 Mock 恒真属性开放 SCell/RRC。
+- UE info/capability 不发布另一 RAT 的 category/band/CA 声明；manifest 未证明的诊断能力保持未知。
+- manifest 未声明的输入电平、RRC 与 SCell 直接调用 fail-closed，不绕过 execution plan。
 - CMW route 只在 manifest 声明 `internal_route` 且冻结 profile 完整时生成 simulated/unknown
   七字段；UXM route 保持 not applicable。
 - measurement window 仍为 simulated/diagnostic，`kpi_valid` 全 false。
@@ -193,7 +195,8 @@ Expected: 新门先因当前实现/缺少不变量而失败。
 
 **Step 3: Complete minimal implementation and docs**
 
-- 更新 roadmap：P2-64 标记本地完成，Current Focus 移到 P2-65；现场项不变。
+- 更新 roadmap：P2-64 标记本地完成并保持为外审收口 WIP；合并后再把 Current Focus 移到
+  P2-65；现场项不变。
 - 同步 compatibility roadmap design 的当前状态，不改历史计划正文。
 - 全仓搜索旧的“能力并集/型号嗅探/P2-64 未启动”活文档镜像并只更新当前真值。
 
