@@ -149,6 +149,8 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
     queryFn: () => getCaseExecutionStatus(selectedRecord!.id),
     enabled: detailModalOpened && selectedRecord !== null,
   })
+  const scpiEvidenceAuditOnly =
+    selectedRecord?.execution_evidence_outcome.completion_semantic === 'not_completed'
 
   // Report generation hook (unified with PendingExecutionsList)
   const { generateExecutionReport, isGenerating } = useReportGeneration()
@@ -537,6 +539,8 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                       ? '证据无效 · 仅保留审计记录'
                       : selectedRecord.execution_evidence_outcome.completion_semantic === 'diagnostic_completed'
                       ? '仅诊断 · 不形成正式判定'
+                      : selectedRecord.execution_evidence_outcome.completion_semantic === 'not_completed'
+                        ? '流程未完成 · 不形成正式判定'
                       : selectedRecord.execution_evidence_outcome.compatibility_classification === 'legacy'
                         ? selectedRecord.validation_pass === null
                           ? '历史执行 · 未判定'
@@ -621,14 +625,22 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                 <Text size="sm" fw={600}>仪器指令闭环证据</Text>
                 {detailQuery.data?.scpi_evidence && (
                   <Badge
-                    color={detailQuery.data.scpi_evidence.formal_acceptance ? 'green' : 'orange'}
+                    color={
+                      scpiEvidenceAuditOnly
+                        ? 'gray'
+                        : detailQuery.data.scpi_evidence.formal_acceptance
+                          ? 'green'
+                          : 'orange'
+                    }
                     variant="light"
                   >
-                    {detailQuery.data.scpi_evidence.formal_acceptance
-                      ? '正式证据通过'
-                      : detailQuery.data.scpi_evidence.formal_verdict === 'rejected'
-                        ? '证据被拒绝'
-                        : '证据未闭环'}
+                    {scpiEvidenceAuditOnly
+                      ? '流程未完成 · 证据仅供审计'
+                      : detailQuery.data.scpi_evidence.formal_acceptance
+                        ? '正式证据通过'
+                        : detailQuery.data.scpi_evidence.formal_verdict === 'rejected'
+                          ? '证据被拒绝'
+                          : '证据未闭环'}
                   </Badge>
                 )}
               </Group>

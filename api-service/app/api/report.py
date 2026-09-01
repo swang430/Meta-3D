@@ -293,6 +293,14 @@ def _report_execution_outcome_state(
         .first()
     )
     if execution is None:
+        if _is_mimo_report(db, report):
+            return (
+                _invalid_report_source_shape(
+                    report,
+                    "MIMO report source execution is unavailable",
+                ),
+                False,
+            )
         if raw is None:
             return None, True
         if stored is None:

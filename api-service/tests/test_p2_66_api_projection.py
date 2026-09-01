@@ -8,12 +8,14 @@ import pytest
 import yaml
 from fastapi import HTTPException
 
+from app.api import commissioning as commissioning_api
 from app.api import report as report_api
 from app.api.report import _report_execution_outcome_state, _report_summary
 from app.api.test_execution import _to_history_item
 from app.api.test_plan import get_case_execution_status
 from app.schemas.report import ReportCreate
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from tests.p1_73c_evidence_fixtures import valid_cmw_evidence
 from tests.test_p2_66_execution_evidence_outcome import _execution
 from tests.test_p2_66_formal_consumers import _invalid_formal_execution
 
@@ -74,6 +76,108 @@ def test_case_status_returns_the_same_execution_evidence_outcome():
     assert response.status == "completed"
     assert response.execution_evidence_outcome.compatibility_classification == "invalid"
     assert response.execution_evidence_outcome.completion_semantic == "pipeline_completed"
+
+
+def test_commissioning_response_sanitizes_invalid_measurement_and_analysis():
+    execution = _invalid_formal_execution()
+    execution.measurements["phases"]["measure"] = {
+        "overall_pass": True,
+        "measurement_verified": True,
+        "azimuth_results": [
+            {
+                "azimuth_deg": 0.0,
+                "throughput_mbps": 123.0,
+                "rsrp_dbm": -80.0,
+            }
+        ],
+    }
+    test_case = SimpleNamespace(configuration={})
+
+    response = commissioning_api._execution_to_session_response(
+        execution,
+        test_case,
+    )
+
+    assert response.mimo_test == {
+        "execution_classification": "formal",
+        "overall_pass": None,
+        "base_station_metric_projection": [],
+    }
+    assert response.analysis["execution_classification"] == "formal"
+    assert response.analysis["verdict"] == "UNKNOWN"
+    assert response.analysis["avg_throughput_mbps"] is None
+    assert response.analysis["throughput_ratio"] is None
+    assert response.analysis["rsrp_variance_db"] is None
+    assert response.analysis["avg_sinr_db"] is None
+    assert "123.0" not in str(response.analysis)
+
+
+def test_commissioning_projection_sanitizes_diagnostic_without_metric_evidence():
+    execution = _execution(qualification="diagnostic")
+    measure = {
+        "overall_pass": True,
+        "azimuth_results": [{"throughput_mbps": 123.0}],
+    }
+    analysis = {"verdict": "PASS", "avg_throughput_mbps": 123.0}
+
+    projected_measure = commissioning_api._commissioning_measure_projection(
+        execution,
+        SimpleNamespace(),
+        measure,
+    )
+    projected_analysis = commissioning_api._commissioning_analysis_projection(
+        execution,
+        analysis,
+    )
+
+    assert projected_measure == {
+        "execution_classification": "diagnostic",
+        "overall_pass": None,
+        "base_station_metric_projection": [],
+    }
+    assert projected_analysis["verdict"] == "UNKNOWN"
+    assert projected_analysis["avg_throughput_mbps"] is None
+    assert "123.0" not in str(projected_analysis)
+
+
+def test_commissioning_projection_keeps_only_diagnostic_metric_rows_when_blocked():
+    execution = _invalid_formal_execution()
+    execution.config["base_station_execution_evidence"] = valid_cmw_evidence()
+    measure = {
+        "overall_pass": True,
+        "measurement_verified": True,
+        "formal_rf_kpi_verified": True,
+        "path_loss_application": {
+            "formal_eligible": True,
+            "compensation_db": 7.5,
+        },
+        "azimuth_results": [
+            {
+                "azimuth_deg": 0.0,
+                "throughput_mbps": 123.0,
+                "rsrp_dbm": -80.0,
+                "sinr_db": 20.0,
+                "rank_indicator": 2.0,
+            }
+        ],
+    }
+
+    projected = commissioning_api._commissioning_measure_projection(
+        execution,
+        SimpleNamespace(),
+        measure,
+    )
+
+    assert set(projected) == {
+        "execution_classification",
+        "overall_pass",
+        "base_station_metric_projection",
+    }
+    assert projected["overall_pass"] is None
+    assert projected["base_station_metric_projection"]
+    metrics = projected["base_station_metric_projection"][0]["metrics"]
+    assert metrics["dl_throughput_mbps"]["formal_value"] is None
+    assert metrics["dl_throughput_mbps"]["diagnostic_value"] == 96.5
 
 
 def test_report_summary_exposes_the_server_owned_execution_outcome(monkeypatch):
@@ -299,6 +403,34 @@ def test_report_projection_cannot_be_trusted_after_source_execution_disappears()
     assert matches is False
     assert outcome is not None
     assert outcome.compatibility_classification == "invalid"
+    assert any("source execution" in reason for reason in outcome.reasons)
+
+
+def test_legacy_mimo_report_without_outcome_fails_closed_when_source_disappears():
+    execution = _invalid_formal_execution()
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    content.pop("execution_evidence_outcome")
+    report = SimpleNamespace(
+        status="completed",
+        report_type="single_execution",
+        test_execution_ids=[execution.id],
+        road_test_execution_id=None,
+        content_data=content,
+    )
+
+    outcome, matches = _report_execution_outcome_state(
+        _SingleResultDb(None),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
     assert any("source execution" in reason for reason in outcome.reasons)
 
 

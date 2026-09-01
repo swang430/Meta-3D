@@ -17,6 +17,25 @@ test('history and report surfaces consume server-owned completion semantics', ()
   assert.match(history, /valid_test_completed/)
   assert.match(history, /diagnostic_completed/)
   assert.match(history, /pipeline_completed/)
+  assert.match(
+    history,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
+  assert.ok(
+    history.indexOf("compatibility_classification === 'invalid'") <
+      history.indexOf("completion_semantic === 'not_completed'"),
+    'history must preserve invalid evidence ahead of nonterminal status',
+  )
+  const scpiEvidenceBadge = history
+    .split('仪器指令闭环证据', 2)[1]
+    .split('{detailQuery.isLoading', 1)[0]
+  assert.match(scpiEvidenceBadge, /scpiEvidenceAuditOnly/)
+  assert.match(scpiEvidenceBadge, /流程未完成 · 证据仅供审计/)
+  assert.ok(
+    scpiEvidenceBadge.indexOf('scpiEvidenceAuditOnly') <
+      scpiEvidenceBadge.indexOf('formal_acceptance'),
+    'nonterminal execution must gate SCPI acceptance before the formal flag',
+  )
   const completionBadge = history
     .split('function getCompletionBadge', 2)[1]
     .split('// 来源链显示名', 1)[0]
