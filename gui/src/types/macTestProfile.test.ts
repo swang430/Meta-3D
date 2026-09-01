@@ -132,3 +132,49 @@ test('NR draft keeps AMC fixed off and validates the frozen TDD duration', () =>
     null,
   )
 })
+
+test('sparse legacy NR draft derives a TDD period that agrees with its own SCS', () => {
+  // 后端 `uxm_nr_tdd_period_for_pattern()` 按「时隙数 × 单时隙时长」推导；界面此前
+  // 对缺失周期一律填 5MS，于是非 30 kHz 的旧配置一打开就自相矛盾。
+  // 期望值 = 默认模式 DDDDDDDSUU（10 个时隙）× 该 SCS 的单时隙时长。
+  const expected: Record<number, string> = {
+    15: '10MS',    // 10 × 1 ms
+    30: '5MS',     // 10 × 0.5 ms
+    60: '2.5MS',   // 10 × 0.25 ms
+    120: '1.25MS', // 10 × 0.125 ms
+  }
+  for (const [scs, period] of Object.entries(expected)) {
+    const configuration = {
+      component_carriers: [{
+        radio_technology: 'nr5g',
+        subcarrier_spacing_khz: Number(scs),
+      }],
+      mimo_layers: 2,
+      csi_rs_ports: 4,
+    }
+    const draft = profileDraftForConfiguration(configuration, 'nr5g')
+    assert.equal(draft.kind, 'nr_throughput')
+    assert.equal(
+      draft.kind === 'nr_throughput' ? draft.tdd_period : null,
+      period,
+      `SCS ${scs} kHz 应推出 ${period}`,
+    )
+    // 可观察后果：推出来的草稿必须能直接通过保存前校验，
+    // 而不是一打开编辑器就报「模式、SCS 与周期不一致」。
+    assert.equal(
+      macProfileTruth.validateMacProfileDraftForSave(configuration),
+      null,
+      `SCS ${scs} kHz 的稀疏旧配置不应报不一致`,
+    )
+  }
+
+  // 显式写下的周期仍然原样保留，不被推导覆盖。
+  const explicit = profileDraftForConfiguration({
+    component_carriers: [{ radio_technology: 'nr5g', subcarrier_spacing_khz: 15 }],
+    tdd_period: '5MS',
+  }, 'nr5g')
+  assert.equal(
+    explicit.kind === 'nr_throughput' ? explicit.tdd_period : null,
+    '5MS',
+  )
+})

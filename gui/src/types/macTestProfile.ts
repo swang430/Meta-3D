@@ -47,6 +47,35 @@ const UXM_NR_TDD_PERIOD_MS: Record<string, number> = {
   '10MS': 10,
 }
 
+/**
+ * 手册 `Tx Periodicity (P)` 的 Default（Section「NR Scheduling > TDD UL-DL Config >
+ * Pattern 1」，Default `MS5`）。只在无法从时隙模式唯一推出周期时兜底，
+ * 且此时 validateMacProfileDraftForSave() 会把不一致显式报给用户。
+ */
+const UXM_NR_TDD_PERIOD_MANUAL_DEFAULT = '5MS'
+
+/**
+ * 与后端 `uxm_nr_tdd_period_for_pattern()` 用**同一条推导公式**：
+ * 周期 = 时隙数 × 单时隙时长，且只在唯一匹配时采纳。
+ *
+ * 此前界面对缺失周期一律填 5MS，而后端按模式与 SCS 推导，于是 15 / 60 / 120 kHz 的
+ * 稀疏旧配置一打开就报「模式、SCS 与周期不一致」，改个载波频率还会把这个错值写实、
+ * 导致存不进去。
+ *
+ * ⚠️ 公式同源，**失败分支两端策略不同**：算不出唯一匹配时后端直接 raise，这里退回
+ *    手册 Default 交给 validateMacProfileDraftForSave() 拦。方向一致（都不放行），
+ *    但别把这里当成后端行为的等价物。
+ */
+function uxmNrTddPeriodForPattern(pattern: string, scsKhz: number): string {
+  const slotMs = UXM_NR_SLOT_DURATION_MS[scsKhz]
+  if (slotMs === undefined) return UXM_NR_TDD_PERIOD_MANUAL_DEFAULT
+  const durationMs = pattern.trim().length * slotMs
+  const matches = Object.entries(UXM_NR_TDD_PERIOD_MS).filter(
+    ([, periodMs]) => Math.abs(durationMs - periodMs) <= 1e-9,
+  )
+  return matches.length === 1 ? matches[0][0] : UXM_NR_TDD_PERIOD_MANUAL_DEFAULT
+}
+
 type MacTestProfileBase = {
   schema_version: 1
   profile_version: 1
@@ -162,6 +191,20 @@ function positiveInteger(value: unknown, fallback: number): number {
   return Number.isInteger(candidate) && candidate > 0 ? candidate : fallback
 }
 
+/**
+ * 与后端 `_migrate_legacy_mac_profile()` 同一取法：优先主载波，其次顶层，缺省 30 kHz。
+ */
+function subcarrierSpacingKhz(configuration: Record<string, unknown>): number {
+  const carriers = Array.isArray(configuration.component_carriers)
+    ? configuration.component_carriers
+    : []
+  const pcell = record(carriers[0])
+  return finiteNumber(
+    pcell?.subcarrier_spacing_khz ?? configuration.subcarrier_spacing_khz,
+    30,
+  )
+}
+
 function frozenProfile(value: unknown): MacTestProfile | null {
   const outer = record(value)
   const profile = record(outer?.profile)
@@ -225,18 +268,22 @@ export function profileDraftForConfiguration(
       transmission_mode: 'TM3',
     }
   }
+  const nrTddPattern = typeof configuration.tdd_pattern === 'string'
+    ? configuration.tdd_pattern
+    : 'DDDDDDDSUU'
   return {
     kind: 'nr_throughput',
     rat: 'nr5g',
     statistical_window: { unit: 'subframes', count },
     mcs: finiteNumber(configuration.mcs, 28),
     enable_amc: false,
-    tdd_pattern: typeof configuration.tdd_pattern === 'string'
-      ? configuration.tdd_pattern
-      : 'DDDDDDDSUU',
+    tdd_pattern: nrTddPattern,
     tdd_period: typeof configuration.tdd_period === 'string'
       ? configuration.tdd_period
-      : '5MS',
+      : uxmNrTddPeriodForPattern(
+        nrTddPattern,
+        subcarrierSpacingKhz(configuration),
+      ),
     harq_max_trans: positiveInteger(configuration.harq_max_trans, 4),
     harq_processes: positiveInteger(configuration.harq_processes, 16),
     scheduler_algorithm: 'full_throughput',
@@ -311,11 +358,7 @@ export function validateMacProfileDraftForSave(
   if (!/^D*S?U*$/.test(pattern) || pattern.length === 0) {
     return 'NR TDD 时隙模式必须为非空的 D…D、可选 S、U…U 排列'
   }
-  const scs = finiteNumber(
-    pcell?.subcarrier_spacing_khz ?? configuration.subcarrier_spacing_khz,
-    30,
-  )
-  const slotMs = UXM_NR_SLOT_DURATION_MS[scs]
+  const slotMs = UXM_NR_SLOT_DURATION_MS[subcarrierSpacingKhz(configuration)]
   const periodMs = UXM_NR_TDD_PERIOD_MS[draft.tdd_period.toUpperCase()]
   if (
     slotMs === undefined

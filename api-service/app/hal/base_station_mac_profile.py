@@ -3,6 +3,9 @@
 The profile is platform-owned intent.  Adapter-specific command mapping stays
 inside each driver and must cite its own manual sources; this module contains
 no SCPI and never infers unsupported vendor semantics.
+
+值域常量下方的出处注释里出现的命令名只是**手册坐标**（用来定位那一条 Range 原文），
+不是可下发的命令模板 —— 模板仍然只住在 `uxm_command_profiles.py` / 各驱动里。
 """
 
 from __future__ import annotations
@@ -38,9 +41,26 @@ _LTE_RMC_V1_METRICS = (
     ("dl_bler_percent", "pcell"),
 )
 
-# UXM NR profile v1 value domain.  These are the same manual-audited ranges
-# consumed by RealUxmDriver; keeping them here makes the canonical TestCase
-# boundary reject an impossible profile before any instrument I/O.
+# ── UXM NR profile v1 值域 ──────────────────────────────────────────────
+# 这些是 RealUxmDriver 消费的同一批范围；放在这里，让 TestCase 边界在任何仪表 I/O
+# 之前就拒掉不可能的 profile。
+#
+# 出处坐标 = 归档内的 **Section 路径 + Setting Name + SCPI 命令**，Range 为原文摘录，
+# 逐条核对日期 2026-09-02。归档即 UXM_NR_PROFILE_SOURCE，解开后是单个
+# `5G_NR_Test_Application_SCPI_Reference.html`。
+# ⚠️ 不用页码或行号：那份 HTML 没有稳定页码，本机把它转成的任何 markdown 都是
+#    **未入库的中间产物**，行号只在转换者自己的机器上成立，别人 clone 后无从复现。
+#
+# ⚠️ 出处只写在这里，**不要改 UXM_NR_PROFILE_SOURCE 的字面值** —— 它是 profile 的
+#    Literal 字段并进 `profile_digest`，改字面值会让所有已冻结的历史 profile
+#    连 model_validate 都过不去。
+#
+# 手册：「NR Scheduling > TDD UL-DL Config > Pattern 1」
+#       Setting Name `Tx Periodicity (P)`
+#       SCPI `BSE:CONFig:NR5G:<cell>:SCHeduling:TDDPATtern:PERiod`
+#       Type `Enum`，Default `MS5`
+#       Range `MS0P5 | MS0P625 | MS1 | MS1P25 | MS2 | MS2P5 | MS3 | MS4 | MS5 | MS10`
+#       ← 本字典的键 = 该 Range 全集，逐个对应。
 UXM_NR_TDD_PERIOD_TOKENS = {
     "0.5MS": "MS0P5",
     "0.625MS": "MS0P625",
@@ -53,11 +73,54 @@ UXM_NR_TDD_PERIOD_TOKENS = {
     "5MS": "MS5",
     "10MS": "MS10",
 }
+# 手册：「NR PHY > HARQ > DL HARQ Configuration」Setting Name `Max DL HARQ Transmissions`
+#       SCPI `BSE:CONFig:NR5G:<cell>:PHY:DL:HARQ:MAXTrans`
+#       Type `Enum`，Default `N4`
+#       Range `N1 | N2 | N3 | N4 | N5 | N6 | N7 | N8 | N10 | N12 | N16 | N20 | N24 | N28`
+#       ← 本元组 = 该 Range 去掉 `N` 前缀后的全集（驱动侧再拼回 token）。
 UXM_NR_HARQ_MAX_TRANS_VALUES = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28)
+# 手册：「NR PHY > HARQ > DL HARQ Configuration」Setting Name `Number of DL HARQ Processes`
+#       SCPI `BSE:CONFig:NR5G:<cell>:PHY:DL:HARQ:PROCesses`
+#       Type `Enum`，Default `N16`
+#       Range `N1 | N2 | N4 | N6 | N8 | N10 | N12 | N13 | N14 | N16 | N32`
+#       Notes `n32 value only applied when running in release 17 mode`
+#       ← 本元组 = 该 Range 全集；32 是否真正生效由仪器的 release 模式决定，
+#         schema 放行它不等于任意固件都接受。
 UXM_NR_HARQ_PROCESSES_VALUES = (1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32)
+# 手册：「NR Scheduling > TDD UL-DL Config > Common Pattern Configuration」
+#       Setting Name `Reference SCS`
+#       SCPI `BSE:CONFig:NR5G:<cell>:SCHeduling:TDDPATtern:SUBCarrier:SPACing`
+#       Type `Enum`，Default `MU1`，Range `MU0 | MU1 | MU2 | MU3`
+#       μ→kHz 换算见「NR Cell > Config > RF Common」的 Subcarrier Spacing Common
+#       表：`0 (15 kHz)` / `1 (30 kHz)` / `2 (60 kHz)` / `3 (120 kHz)`。
+#       ← 本元组 = 该表的 kHz 列全集，与 MU0..MU3 一一对应。
 UXM_NR_SCS_VALUES = (15, 30, 60, 120)
+# 手册：「NR Beams > Config > NZP CSI-RS Resources」
+#       Setting Name `NZP CSI-RS Resource RM Number Of Ports`
+#       SCPI `BSE:CONFig:NR5G:<cell>:CSI:RESource:CONFig:NZP:<cri>:RM:NPORts`
+#       Type `Enum`，Default `P1`
+#       Range `P1 | P2 | P4 | P8 | P12 | P16 | P24 | P32`
+#       GUI Range `1 | 2 | 4 | 8 | 12 | 16 | 24 | 32`
+#       ← 本元组 = GUI Range 全集（裸整数），驱动侧拼成 `P<n>` token 下发。
 UXM_NR_CSI_RS_PORTS_VALUES = (1, 2, 4, 8, 12, 16, 24, 32)
+# 手册：「NR PHY > PDSCH > General」Setting Name `PDSCH Max MIMO Layers`
+#       SCPI `BSE:CONFig:NR5G:<cell>:PHY:PDSCh:MAX:MIMOlayers`
+#       Type `Integer`，Default `2`，**Range `0..8`**
+# ⚠️ 本元组 (1, 2, 4) 是**平台侧收窄，不是手册限制**：手册允许 0..8 的任意整数。
+#    1/2/4 是 HAL BaseStation 接口既有的层数契约（`base_station.py` 的
+#    `configure_mac_throughput_test` docstring 写「mimo_layers: int, MIMO 层数 (1/2/4)」，
+#    UXM/CMW500 两个驱动的 docstring 同口径），仓库内全部基线 TestCase profile
+#    （`uxm_test_profiles.py`）的 mimo_layers 也只用到这三个值。本模块把这条既有约定
+#    固化进 schema，既没放宽也没收紧。收窄方向是拒绝更多、不是放行更多，故 fail-closed。
+#    要放开某一层数，先补齐该层数在驱动侧的下发与回读证据，别只改这里。
+#
+#    ⚠ 别把它跟 `mimo_port_preset`（siso / 2x2 / 2x2_alt / 4x4）当成同一个轴：那是
+#      独立的配置键，走 `set_mimo_port_mapping`，跟本值域之间没有映射关系 ——
+#      基线里就有 2 layer 配 `4x4` 预设的组合（`uxm_test_profiles.py` 的 N78 profile）。
 UXM_NR_MIMO_LAYERS_VALUES = (1, 2, 4)
+# 派生表：把上面 Range 里的 token 字面量翻成毫秒数值。手册对该设置的描述是
+# “Specifies the periodicity of the TDD UL-DL pattern 1 in ms”，token 名即毫秒数
+# （`MS0P625` = 0.625 ms），本表不引入手册以外的取值。
 UXM_NR_TDD_PERIOD_MS = {
     "0.5MS": 0.5,
     "0.625MS": 0.625,
@@ -70,6 +133,8 @@ UXM_NR_TDD_PERIOD_MS = {
     "5MS": 5.0,
     "10MS": 10.0,
 }
+# 派生表：slot 时长 = 10 ms 帧长 / 每帧 slot 数。每帧 slot 数取自
+# 「NR Cell > Config > RF Common」Subcarrier Spacing Common 表的 Slots Per Frame 列：15 kHz→10、30 kHz→20、60 kHz→40、120 kHz→80。
 UXM_NR_SLOT_DURATION_MS = {15: 1.0, 30: 0.5, 60: 0.25, 120: 0.125}
 
 UxmNrTddPeriod = Literal[*tuple(UXM_NR_TDD_PERIOD_TOKENS)]
