@@ -27,7 +27,10 @@ from app.hal.base import (
     InstrumentMetrics,
 )
 from app.hal.scpi_evidence import InstrumentEvidenceItem
-from app.hal.base_station_manifest import BaseStationMetricCapability
+from app.hal.base_station_manifest import (
+    BaseStationAdapterManifest,
+    BaseStationMetricCapability,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1861,19 +1864,39 @@ class BaseStationDriver(InstrumentDriver):
 class MockBaseStation(BaseStationDriver):
     """Mock Base Station Emulator for development."""
 
-    # The mock owns its complete in-memory SCell state and can compare the
-    # requested index set exactly. Simulated measurements are still excluded
-    # from formal KPI by the existing provenance gate.
-    SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
-    rrc_reconfiguration_supported = True
-
     driver_source = "mock"
     simulated = True
 
-    def __init__(self, instrument_id: str, config: Dict[str, Any]):
+    def __init__(
+        self,
+        instrument_id: str,
+        config: Dict[str, Any],
+        *,
+        adapter_manifest: BaseStationAdapterManifest | None = None,
+    ):
+        if not isinstance(adapter_manifest, BaseStationAdapterManifest):
+            raise ValueError(
+                "MockBaseStation requires a registered adapter manifest"
+            )
+        configured_model = config.get("model")
+        if configured_model != adapter_manifest.model_name:
+            raise ValueError(
+                "MockBaseStation configured model does not match adapter manifest"
+            )
         super().__init__(instrument_id, config)
-        configured_model = str(config.get("model") or "").upper()
-        self.adapter_id = "cmw500" if "CMW" in configured_model else "uxm"
+        self.adapter_manifest = adapter_manifest
+        self.adapter_id = adapter_manifest.adapter_id
+        operations = frozenset(adapter_manifest.operations)
+        self.SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
+        self.rrc_reconfiguration_supported = "rrc_reconfiguration" in operations
+        self.mac_throughput_configuration_supported = (
+            "mac_throughput_config" in operations
+        )
+        self.input_level_control_supported = "input_level_control" in operations
+        if adapter_manifest.measurement is not None:
+            self.measurement_window_cardinality = (
+                adapter_manifest.measurement.cardinality
+            )
         self._metric_registry_profile_hint = str(
             config.get("uxm_profile") or "5g_nr"
         ).strip().casefold()
@@ -2048,25 +2071,40 @@ class MockBaseStation(BaseStationDriver):
         )
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
+        measurement = self.adapter_manifest.measurement
+        measurement_payload = (
+            None
+            if measurement is None
+            else {
+                "cardinality": measurement.cardinality,
+                "scopes": list(measurement.scopes),
+                "lifecycle": measurement.lifecycle,
+                "metrics": [metric.key for metric in measurement.metrics],
+            }
+        )
+        parameters = {
+            "adapter_id": self.adapter_id,
+            "operations": list(self.adapter_manifest.operations),
+            "config_fields": {
+                field.field: {
+                    "support": field.support,
+                    "readback": field.readback,
+                }
+                for field in self.adapter_manifest.config_fields
+            },
+            "measurement": measurement_payload,
+        }
         return [
             InstrumentCapability(
-                name="5g_nr",
-                description="5G NR support",
+                name=rat.rat,
+                description=(
+                    f"{rat.rat} diagnostic capability from registered "
+                    f"{self.adapter_manifest.model_name} manifest"
+                ),
                 supported=True,
-                parameters={
-                    "frequency_range": [450, 6000],
-                    "max_bandwidth_mhz": 100,
-                },
-            ),
-            InstrumentCapability(
-                name="lte",
-                description="LTE support",
-                supported=True,
-                parameters={
-                    "frequency_range": [450, 3800],
-                    "max_bandwidth_mhz": 20,
-                },
-            ),
+                parameters=parameters,
+            )
+            for rat in self.adapter_manifest.rat_capabilities
         ]
 
     async def get_metrics(self) -> InstrumentMetrics:
@@ -2335,7 +2373,14 @@ class MockBaseStation(BaseStationDriver):
         return True
 
     def get_supported_technologies(self) -> List[RadioTechnology]:
-        return [RadioTechnology.NR5G, RadioTechnology.LTE]
+        by_manifest_token = {
+            "lte": RadioTechnology.LTE,
+            "nr5g": RadioTechnology.NR5G,
+        }
+        return [
+            by_manifest_token[item.rat]
+            for item in self.adapter_manifest.rat_capabilities
+        ]
 
     async def load_state_file(self, filepath: str) -> bool:
         """Mock: 模拟加载配置文件"""
