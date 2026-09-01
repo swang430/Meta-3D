@@ -49,6 +49,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
+    MacThroughputConfigResult,
     CellState,
     ThroughputMetrics,
 )
@@ -67,7 +68,12 @@ from app.hal.base_station_manifest import (
     BaseStationMacProfileCapability,
     BaseStationRatCapability,
 )
-from app.hal.base_station_mac_profile import UXM_NR_PROFILE_SOURCE
+from app.hal.base_station_mac_profile import (
+    FrozenMacTestProfile,
+    NrMacTestProfileV1,
+    UXM_NR_PROFILE_SOURCE,
+    require_frozen_mac_profile,
+)
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -162,58 +168,6 @@ def _tdd_slots_from_pattern(pattern):
     if not re.fullmatch(r"D*S?U*", p):
         return None
     return p.count("D"), p.count("U")
-
-
-@dataclass(frozen=True)
-class MacThroughputConfigResult:
-    """`configure_mac_throughput_test()` 的结果 —— **不是 bool**（P1-32）。
-
-    上一版返回 `bool` 且调用方**丢弃**它，于是「一条都没配上」与「全配好了」
-    在调用点长得一模一样，测试照常在没配置过的链路上跑完。
-
-    ⚠ `applied` 只列**真发出去**的命令 —— 同本文件 `set_cell_config` 的禁令
-    「半生效配置不许报 applied」。
-    """
-
-    applied: Tuple[str, ...] = ()
-    skipped: Tuple[str, ...] = ()
-    missing_mandatory: Tuple[str, ...] = ()
-    # ⚠️ 2026-08-07 现场血泪：`missing_mandatory` 是 **mandatory ∩ skipped**，
-    #   而 `skipped` 有**两种成因**：① profile 里这条命令是 None（真缺口）；
-    #   ② 命令在，但值翻译失败/校验不过导致**整组没发**。
-    #   调用方的消息此前对两者一律说「**本 profile 未定义**」——
-    #   ②的情况下那是**假话**，而它把 2026-08-07 的现场诊断带偏了两次：
-    #   先据此把 fail-loud 门降级，再据此准备"补命令"（命令根本不缺）。
-    #   本字段只装①，让调用方能说真话。
-    undefined_on_profile: Tuple[str, ...] = ()
-    error: Optional[str] = None
-    # P1-33：发出去了但**被仪器拒**（`SYST:ERR?` 逐组回读）。
-    #   与 `skipped`（profile 没定义）是两回事：这批是"我们发了、它不认"，
-    #   正是「IRAT 认不认这些手册命令」这个未知量的**实测答案**。
-    rejected: Tuple[str, ...] = ()
-    # P1-33：**手册里根本没有对应命令**的设置（如吞吐量统计窗口）。
-    #   既不是 profile 缺项、也不是被拒 —— 单列，报告里写明不受控。
-    no_equivalent: Tuple[str, ...] = ()
-    # P2-51：逐字段 requested/applied/exchange_ids 证据回执
-    # （BaseStationApplyReceipt, operation="mac_throughput_config"）。
-    # CMW500 驱动产出；UXM 暂不产（默认 None，消费方按可选处理）。
-    receipt: Optional[BaseStationApplyReceipt] = None
-
-    @property
-    def ok(self) -> bool:
-        """全部**必要**命令都发了、**没被拒**、且没出异常。
-
-        可选命令缺席、以及手册无对应命令的设置，都不影响 `ok`。
-        ⚠ `rejected` 必须计入 —— 发出去被拒跟没发是一样的后果
-        （配置没生效），只是原因不同（P1-33）。
-        """
-        return (not self.missing_mandatory and not self.rejected
-                and self.error is None)
-
-    def __bool__(self) -> bool:
-        # 兼容旧的 `if await configure(...)` 布尔用法；但调用方**应当**看
-        # `missing_mandatory`（它能说出到底哪几条没下去）。
-        return self.ok
 
 
 # ===========================================================================
@@ -2855,6 +2809,34 @@ class RealUxmDriver(BaseStationDriver):
 
     async def configure_mac_throughput_test(
         self,
+        frozen_profile: FrozenMacTestProfile,
+    ) -> MacThroughputConfigResult:
+        frozen = require_frozen_mac_profile(
+            frozen_profile,
+            expected_kind="nr_throughput",
+            expected_rat="nr5g",
+        )
+        mac_profile = frozen.profile
+        if not isinstance(mac_profile, NrMacTestProfileV1):
+            raise ValueError("frozen MAC profile is not an NR throughput profile")
+        return await self._configure_mac_throughput_values(
+            mimo_layers=mac_profile.mimo_layers,
+            mcs=mac_profile.mcs,
+            rb_alloc=("ALL" if mac_profile.rb_allocation == "all" else ""),
+            enable_amc=mac_profile.enable_amc,
+            tdd_pattern=mac_profile.tdd_pattern,
+            tdd_period=mac_profile.tdd_period,
+            harq_max_trans=mac_profile.harq_max_trans,
+            harq_processes=mac_profile.harq_processes,
+            stat_count=mac_profile.statistical_window.count,
+            scs_khz=mac_profile.subcarrier_spacing_khz,
+            csi_rs_ports=mac_profile.csi_rs_ports,
+            profile_payload=mac_profile.model_dump(mode="json"),
+            profile_digest=frozen.profile_digest,
+        )
+
+    async def _configure_mac_throughput_values(
+        self,
         mimo_layers: int = 2,
         mcs: int = 28,
         rb_alloc: str = "ALL",
@@ -2869,6 +2851,8 @@ class RealUxmDriver(BaseStationDriver):
         tdd_ul_symbols: int = 4,
         scs_khz: Optional[int] = None,
         csi_rs_ports: Optional[int] = None,
+        profile_payload: Optional[dict[str, Any]] = None,
+        profile_digest: Optional[str] = None,
     ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
@@ -2917,6 +2901,67 @@ class RealUxmDriver(BaseStationDriver):
         applied: List[str] = []
         skipped: List[str] = []
         rejected: List[str] = []
+
+        def _result(
+            *,
+            error: Optional[str] = None,
+            missing_mandatory: tuple[str, ...] = (),
+            undefined_on_profile: tuple[str, ...] = (),
+        ) -> MacThroughputConfigResult:
+            operation_succeeded = (
+                error is None and not missing_mandatory and not rejected
+            )
+            receipt = BaseStationApplyReceipt(
+                schema_version=1,
+                operation="mac_throughput_config",
+                fields=(
+                    BaseStationFieldReceipt(
+                        field="mac_profile",
+                        requested=(
+                            profile_payload
+                            if profile_payload is not None
+                            else {
+                                "mimo_layers": mimo_layers,
+                                "mcs": mcs,
+                                "rb_alloc": rb_alloc,
+                                "enable_amc": enable_amc,
+                                "tdd_pattern": tdd_pattern,
+                                "tdd_period": tdd_period,
+                                "harq_max_trans": harq_max_trans,
+                                "harq_processes": harq_processes,
+                                "stat_count": stat_count,
+                                "scs_khz": scs_khz,
+                                "csi_rs_ports": csi_rs_ports,
+                            }
+                        ),
+                        applied=None,
+                        status="unknown",
+                        reason=(
+                            "UXM command groups were sent, but this method has no "
+                            "single authoritative full-profile readback"
+                        ),
+                    ),
+                ),
+                reason=(
+                    "UXM MAC profile operation completed with partial field evidence"
+                    if operation_succeeded
+                    else "UXM MAC profile operation was not completed"
+                ),
+                simulated=False,
+                operation_succeeded=operation_succeeded,
+                profile_digest=profile_digest,
+            )
+            return MacThroughputConfigResult(
+                applied=tuple(applied),
+                skipped=tuple(skipped),
+                missing_mandatory=missing_mandatory,
+                undefined_on_profile=undefined_on_profile,
+                error=error,
+                rejected=tuple(rejected),
+                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
+                receipt=receipt,
+                profile_digest=profile_digest,
+            )
 
         def _emit(name: str, suffix: str, **fmt) -> None:
             """发一条配置命令；方言没定义就记进 `skipped`，**不抛**。
@@ -3014,9 +3059,7 @@ class RealUxmDriver(BaseStationDriver):
             if enable_amc:
                 # 开 AMC 的唯一已知路径就是被 -113 的 slot 级 APOLicy CQI ——
                 # 不能假装开了继续测（静默测错的量 > 显式失败）。
-                return MacThroughputConfigResult(
-                    applied=tuple(applied), skipped=tuple(skipped),
-                    rejected=tuple(rejected),
+                return _result(
                     error=(
                         "enable_amc=True 在本方言没有已验证的下发路径："
                         "slot 级 DL:RRESource:APOLicy 2026-08-07 实测 -113"
@@ -3209,11 +3252,9 @@ class RealUxmDriver(BaseStationDriver):
                 n for n in missing
                 if getattr(self._cmds, n, None) is None
             )
-            result = MacThroughputConfigResult(
-                applied=tuple(applied), skipped=tuple(skipped),
-                missing_mandatory=missing, undefined_on_profile=undefined,
-                rejected=tuple(rejected),
-                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
+            result = _result(
+                missing_mandatory=missing,
+                undefined_on_profile=undefined,
             )
             if missing:
                 # ⚠ **不静默** —— 缺任一必要命令，测出来的就不是那个量。
@@ -3268,16 +3309,13 @@ class RealUxmDriver(BaseStationDriver):
             #   把人指向 P1-33，而真正的问题是**传输错误**。
             #   没轮到发的命令既不在 `applied` 也不在 `skipped`，
             #   它们的失败由 `error` 表达，不该冒充 profile 缺项。
-            return MacThroughputConfigResult(
-                applied=tuple(applied), skipped=tuple(skipped),
+            return _result(
                 missing_mandatory=tuple(
                     n for n in self.MAC_CFG_MANDATORY if n in skipped),
                 # 与正常路径同源：只有 profile 上真没这条命令才算 undefined。
                 undefined_on_profile=tuple(
                     n for n in self.MAC_CFG_MANDATORY
                     if n in skipped and getattr(self._cmds, n, None) is None),
-                rejected=tuple(rejected),
-                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
                 error=f"{type(e).__name__}: {e}",
             )
 

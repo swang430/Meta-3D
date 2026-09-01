@@ -357,7 +357,7 @@ class TestMeasurementPrerequisites:
         但前置仍必须排在它们**之前** —— 否则本片的修复在真正用的那个方言上是死的。
         """
         writes = _stub_io(drv, {"*OPC?": "1"})
-        asyncio.run(drv.configure_mac_throughput_test(mimo_layers=2))
+        asyncio.run(drv._configure_mac_throughput_values(mimo_layers=2))
         joined = " | ".join(writes)
         assert "BTHRoughput:STATe ON" in joined, (
             "configure_mac_throughput_test 没发全局吞吐量/BLER 累积 —— "

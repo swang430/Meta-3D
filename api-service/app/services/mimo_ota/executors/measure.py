@@ -75,6 +75,7 @@ from app.hal.base_station_compatibility import (
     verify_frozen_base_station_compatibility,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_evidence_outcome import (
@@ -1556,20 +1557,33 @@ class MeasureExecutor(IStepExecutor):
                         "执行计划声明 MAC 吞吐配置能力，但 adapter 缺 "
                         "configure_mac_throughput_test（计划与实现漂移）"
                     )
+                frozen_compatibility = base_station_attempt.frozen_adapter.get(
+                    "compatibility"
+                )
+                frozen_requirements = (
+                    frozen_compatibility.get("requirements")
+                    if isinstance(frozen_compatibility, dict)
+                    else None
+                )
+                raw_mac_profile = (
+                    frozen_requirements.get("mac_profile")
+                    if isinstance(frozen_requirements, dict)
+                    else None
+                )
+                if raw_mac_profile is None:
+                    raise RuntimeError(
+                        "execution-frozen BaseStation MAC profile is missing"
+                    )
+                try:
+                    frozen_mac_profile = FrozenMacTestProfile.model_validate(
+                        raw_mac_profile
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        "execution-frozen BaseStation MAC profile is invalid"
+                    ) from exc
                 mac_cfg = await base_station.configure_mac_throughput_test(
-                    mimo_layers=config.mimo_layers,
-                    mcs=config.mcs,
-                    enable_amc=config.enable_amc,
-                    tdd_pattern=config.tdd_pattern,
-                    tdd_period=config.tdd_period,
-                    harq_max_trans=config.harq_max_trans,
-                    harq_processes=config.harq_processes,
-                    stat_count=config.stat_count,
-                    # ⭐ SCS 必须传 —— TDD pattern 的含义依赖它（手册把 SCS
-                    #   列为 TDDPATtern:STATE 的 Dependencies）。不传则拒发 TDD 组。
-                    scs_khz=pcell.subcarrier_spacing_khz,
-                    # TestCase 的**显式** CSI-RS 端口数优先（可故意 > 层数）
-                    csi_rs_ports=getattr(config, 'csi_rs_ports', None),
+                    frozen_mac_profile
                 )
                 # ⚠ 判定收窄进 `_mac_config_blocker`（内审 F3）—— 内嵌时
                 #   只能靠源码文本判，`or`→`and` 那种变异在 138 个用例下全绿。

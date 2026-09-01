@@ -53,6 +53,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
+    MacThroughputConfigResult,
     LTE_TRANSMISSION_MODES,
     CellState,
     ThroughputMetrics,
@@ -67,9 +68,6 @@ from app.hal.cmw500_command_profile import (
     CmwLteFullRbRmcPlan,
     CmwNx2Route,
 )
-# P2-51：共享 SPI 结果类型（P1-32 起的既有契约）。定义仍在 uxm_base_station
-# —— vendor-neutral 归位（挪 base_station.py）已记 Discovered，本片不动定义站点。
-from app.hal.uxm_base_station import MacThroughputConfigResult
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
@@ -81,7 +79,12 @@ from app.hal.base_station_manifest import (
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
 )
-from app.hal.base_station_mac_profile import CMW500_LTE_PROFILE_SOURCE
+from app.hal.base_station_mac_profile import (
+    CMW500_LTE_PROFILE_SOURCE,
+    FrozenMacTestProfile,
+    LteRmcMacTestProfileV1,
+    require_frozen_mac_profile,
+)
 from app.hal.scpi_evidence import (
     EvidenceLevel,
     EvidenceVerdict,
@@ -1868,6 +1871,27 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def configure_mac_throughput_test(
         self,
+        frozen_profile: FrozenMacTestProfile,
+    ) -> MacThroughputConfigResult:
+        frozen = require_frozen_mac_profile(
+            frozen_profile,
+            expected_kind="lte_rmc",
+            expected_rat="lte",
+        )
+        mac_profile = frozen.profile
+        if not isinstance(mac_profile, LteRmcMacTestProfileV1):
+            raise ValueError("frozen MAC profile is not an LTE RMC profile")
+        return await self._configure_mac_throughput_values(
+            mimo_layers=mac_profile.mimo_layers,
+            enable_amc=mac_profile.enable_amc,
+            rb_alloc=(
+                "ALL" if mac_profile.resource_allocation == "full" else ""
+            ),
+            profile_digest=frozen.profile_digest,
+        )
+
+    async def _configure_mac_throughput_values(
+        self,
         mimo_layers: int = 2,
         mcs: int = 28,
         rb_alloc: str = "ALL",
@@ -1879,6 +1903,7 @@ class RealCmw500Driver(BaseStationDriver):
         stat_count: int = 5000,
         scs_khz: Optional[int] = None,
         csi_rs_ports: Optional[int] = None,
+        profile_digest: Optional[str] = None,
     ) -> MacThroughputConfigResult:
         """P2-51：LTE 正式 throughput/BLER 的 MAC/调度配置（手册逐条取证）。
 
@@ -1904,7 +1929,9 @@ class RealCmw500Driver(BaseStationDriver):
         # BaseStationFieldReceipt（exchange_ids 取整段 capture，与 apply_config
         # / apply_route 的既有证据形态一致）。
         field_rows: List[tuple] = []
-        no_equivalent = tuple(self.MAC_CFG_NO_EQUIVALENT)
+        no_equivalent = (
+            () if profile_digest is not None else tuple(self.MAC_CFG_NO_EQUIVALENT)
+        )
         sign = self._sign_channel
         profile = Cmw500LteCommandProfile
 
@@ -1945,6 +1972,7 @@ class RealCmw500Driver(BaseStationDriver):
                 operation_succeeded=(
                     error is None and not rejected and not missing
                 ),
+                profile_digest=profile_digest,
             )
             return MacThroughputConfigResult(
                 applied=tuple(applied),
@@ -1955,6 +1983,7 @@ class RealCmw500Driver(BaseStationDriver):
                 rejected=tuple(rejected),
                 no_equivalent=no_equivalent,
                 receipt=receipt,
+                profile_digest=profile_digest,
             )
 
         # ---- 无副作用前置（不碰仪器）--------------------------------------
@@ -2045,7 +2074,7 @@ class RealCmw500Driver(BaseStationDriver):
                     return _result(
                         f"活体 duplex={live_duplex!r}：LTE TDD 配比是 "
                         "CELL[:PCC]:ULDL 0..6（p.687）+ 特殊子帧，NR 形态 "
-                        f"tdd_pattern={tdd_pattern!r} 不可如实翻译，TDD 歧义 RMC "
+                        "frozen LTE profile 要求 FDD，但仪器活体为 TDD；"
                         "还需 VERSion:DL<s>（p.803）——TDD 正式 MAC 配置为平台"
                         "缺口（Discovered），本次 fail-loud。",
                         exchanges,
@@ -2269,18 +2298,23 @@ class RealCmw500Driver(BaseStationDriver):
                             "[CMW500] HARQ probe error-queue drain failed: %s",
                             drain_exc,
                         )
-                field_rows.append(
-                    (
-                        "harq_max_trans",
-                        harq_max_trans,
-                        None,
-                        "unknown",
-                        "HARQ:DL:NHT（p.784）存在；手册只在 ENABle（p.783-784）"
-                        "挂 KS510/KS512 Options，NHT 条目无 Options 行 ——"
-                        "『组整体选件门控』为 ⚠ 推断（ENABle 不开则 NHT 无意义），"
-                        f"保守不驱动；{harq_note}",
+                if profile_digest is None:
+                    # Historical value-level tests keep their exact receipt.
+                    # The new frozen LTE profile does not request HARQ NHT, so
+                    # its receipt must not invent a profile field for it.
+                    field_rows.append(
+                        (
+                            "harq_max_trans",
+                            harq_max_trans,
+                            None,
+                            "unknown",
+                            "HARQ:DL:NHT（p.784）存在；手册只在 ENABle"
+                            "（p.783-784）挂 KS510/KS512 Options，NHT 条目无"
+                            " Options 行 ——『组整体选件门控』为 ⚠ 推断"
+                            "（ENABle 不开则 NHT 无意义），"
+                            f"保守不驱动；{harq_note}",
+                        )
                     )
-                )
 
                 summary_error: Optional[str] = None
                 if rejected:

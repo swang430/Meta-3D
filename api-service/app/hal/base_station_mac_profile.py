@@ -152,3 +152,27 @@ class FrozenMacTestProfile(BaseModel):
             raise ValueError("profile_digest does not match the frozen profile")
         return self
 
+
+def require_frozen_mac_profile(
+    value: object,
+    *,
+    expected_kind: str,
+    expected_rat: Literal["lte", "nr5g"],
+) -> FrozenMacTestProfile:
+    """Revalidate a frozen profile and narrow it before any adapter I/O."""
+
+    raw = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    try:
+        frozen = FrozenMacTestProfile.model_validate(raw)
+    except Exception as exc:
+        raise ValueError(f"invalid frozen MAC profile: {exc}") from exc
+    if (
+        frozen.profile.kind != expected_kind
+        or frozen.profile.rat != expected_rat
+    ):
+        raise ValueError(
+            "frozen MAC profile is incompatible with this adapter: "
+            f"expected {expected_kind}@{expected_rat}, got "
+            f"{frozen.profile.kind}@{frozen.profile.rat}"
+        )
+    return frozen

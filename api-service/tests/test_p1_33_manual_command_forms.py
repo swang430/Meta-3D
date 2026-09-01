@@ -18,8 +18,8 @@ import re
 
 import pytest
 
+from app.hal.base_station import MacThroughputConfigResult
 from app.hal.uxm_base_station import (
-    MacThroughputConfigResult,
     RealUxmDriver,
     _CSIRS_NPORTS_VALUES,
     _HARQ_MAXTRANS_VALUES,
@@ -58,7 +58,7 @@ def _run(profile=UxmLteNrIratProfile, responses=None, **kw):
     #   只在 **15kHz** 下自洽。夹具不传就走"不校验就不发"，测不到本门要测的。
     kw.setdefault("scs_khz", 15)
     d, writes = _drv(profile, responses)
-    res = asyncio.run(d.configure_mac_throughput_test(**kw))
+    res = asyncio.run(d._configure_mac_throughput_values(**kw))
     return res, writes
 
 
@@ -250,7 +250,7 @@ class TestRejectedIsItsOwnCategory:
 
         d._do_query = _query
         res = asyncio.run(
-            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
+            d._configure_mac_throughput_values(mimo_layers=2, scs_khz=15))
         assert res.rejected, "被拒的命令没记名 —— 现场拿不到实测答案"
         assert res.skipped == (), "被拒被误记成 profile 没定义"
         assert res.ok is False, "有命令被拒却报 ok"
@@ -387,7 +387,7 @@ class TestReviewFixes:
 
         d._do_query = _q
         res = asyncio.run(
-            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
+            d._configure_mac_throughput_values(mimo_layers=2, scs_khz=15))
         assert res.rejected == (), (
             f"上一步的残留错误被记成本次被拒: {res.rejected}")
         assert res.ok is True
