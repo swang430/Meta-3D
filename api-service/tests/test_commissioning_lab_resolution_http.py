@@ -19,6 +19,8 @@ the field names + types exactly.
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import uuid
 
 import pytest
@@ -63,7 +65,7 @@ def setup_db():
     hal = get_hal_service()
     prior_base_station = hal.drivers.get("baseStation")
     prior_positioner = hal.drivers.get("positioner")
-    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
     hal.drivers["positioner"] = MockPositioner("mock-positioner", {})
     with TestingSessionLocal() as db:
         db.add_all([

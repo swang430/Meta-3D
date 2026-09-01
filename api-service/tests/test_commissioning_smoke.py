@@ -16,6 +16,8 @@ catches them in CI before we get to a chamber and find out the hard way.
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import uuid
 from typing import Any, Dict
 
@@ -186,17 +188,17 @@ def hal_with_mocks(instrument_categories):
     hal = get_hal_service()
     saved = dict(hal.drivers)
     hal.drivers["channelEmulator"] = MockChannelEmulator(
-        "mock-ce", {"model": "Mock"}
+        "mock-ce", {"model": "UXM 5G E7515B"}
     )
-    hal.drivers["baseStation"] = MockBaseStation(
-        "mock-bs", {"model": "Mock"}
+    hal.drivers["baseStation"] = registered_mock_base_station(
+        "mock-bs", {"model": "UXM 5G E7515B"}
     )
 
     # MockPositioner.move_to sleeps proportional to azimuth delta (capped 5s).
     # That's realistic for prod mock but adds 5s per azimuth in this smoke
     # test. Override to instant — the smoke validates the *contract*, not
     # positioner timing semantics.
-    pos = MockPositioner("mock-pos", {"model": "Mock"})
+    pos = MockPositioner("mock-pos", {"model": "UXM 5G E7515B"})
 
     async def _instant_move_to(azimuth, elevation, **_kwargs):
         pos._azimuth = azimuth
@@ -207,7 +209,7 @@ def hal_with_mocks(instrument_categories):
     hal.drivers["positioner"] = pos
 
     hal.drivers["signalAnalyzer"] = MockSignalAnalyzer(
-        "mock-sa", {"model": "Mock"}
+        "mock-sa", {"model": "UXM 5G E7515B"}
     )
     yield hal
     hal.drivers.clear()

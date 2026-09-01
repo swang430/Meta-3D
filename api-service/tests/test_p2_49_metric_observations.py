@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from types import SimpleNamespace
 
 import pytest
@@ -147,15 +149,15 @@ def test_cmw_registered_values_keep_percent_semantics():
 
 @pytest.mark.asyncio
 async def test_mock_window_emits_complete_simulated_registry_shape():
-    driver = MockBaseStation(
+    driver = registered_mock_base_station(
         "mock-uxm",
-        {"model": "UXM", "uxm_profile": "irat"},
+        {"model": "UXM 5G E7515B", "uxm_profile": "irat"},
     )
     await driver.start_signaling()
     request = BaseStationMeasurementWindowRequest(
         schema_version=1,
         scope="pcell",
-        lifecycle="unavailable",
+        lifecycle="clear_read_only",
         cardinality="requested",
         requested_window_count=1,
         expected_window_count=1,
@@ -165,7 +167,7 @@ async def test_mock_window_emits_complete_simulated_registry_shape():
     window = await driver.measure_base_station_window(0, request=request)
 
     assert window.metric_registry is not None
-    assert window.metric_registry.profile_id == "mock_lte_nr_irat"
+    assert window.metric_registry.profile_id == "mock_uxm"
     assert tuple(item.key for item in window.metric_observations) == tuple(
         item.key for item in window.metric_registry.metrics
     )
@@ -180,7 +182,7 @@ def test_measurement_window_rejects_registry_observation_drift():
     registry = RealCmw500Driver(
         "cmw", {"ip_address": "192.0.2.10"}
     ).resolve_metric_registry()
-    other_registry = MockBaseStation(
+    other_registry = registered_mock_base_station(
         "mock-cmw", {"model": "CMW500"}
     ).resolve_metric_registry()
     observation = BaseStationMetricObservation(

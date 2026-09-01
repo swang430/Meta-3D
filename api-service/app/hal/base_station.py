@@ -27,7 +27,10 @@ from app.hal.base import (
     InstrumentMetrics,
 )
 from app.hal.scpi_evidence import InstrumentEvidenceItem
-from app.hal.base_station_manifest import BaseStationMetricCapability
+from app.hal.base_station_manifest import (
+    BaseStationAdapterManifest,
+    BaseStationMetricCapability,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1861,22 +1864,39 @@ class BaseStationDriver(InstrumentDriver):
 class MockBaseStation(BaseStationDriver):
     """Mock Base Station Emulator for development."""
 
-    # The mock owns its complete in-memory SCell state and can compare the
-    # requested index set exactly. Simulated measurements are still excluded
-    # from formal KPI by the existing provenance gate.
-    SCELL_ACTIVATION_READBACK_AUTHORITATIVE = True
-    rrc_reconfiguration_supported = True
-
     driver_source = "mock"
     simulated = True
 
-    def __init__(self, instrument_id: str, config: Dict[str, Any]):
+    def __init__(
+        self,
+        instrument_id: str,
+        config: Dict[str, Any],
+        *,
+        adapter_manifest: BaseStationAdapterManifest | None = None,
+    ):
+        if not isinstance(adapter_manifest, BaseStationAdapterManifest):
+            raise ValueError(
+                "MockBaseStation requires a registered adapter manifest"
+            )
+        configured_model = config.get("model")
+        if configured_model != adapter_manifest.model_name:
+            raise ValueError(
+                "MockBaseStation configured model does not match adapter manifest"
+            )
         super().__init__(instrument_id, config)
-        configured_model = str(config.get("model") or "").upper()
-        self.adapter_id = "cmw500" if "CMW" in configured_model else "uxm"
-        self._metric_registry_profile_hint = str(
-            config.get("uxm_profile") or "5g_nr"
-        ).strip().casefold()
+        self.adapter_manifest = adapter_manifest
+        self.adapter_id = adapter_manifest.adapter_id
+        operations = frozenset(adapter_manifest.operations)
+        self.SCELL_ACTIVATION_READBACK_AUTHORITATIVE = False
+        self.rrc_reconfiguration_supported = "rrc_reconfiguration" in operations
+        self.mac_throughput_configuration_supported = (
+            "mac_throughput_config" in operations
+        )
+        self.input_level_control_supported = "input_level_control" in operations
+        if adapter_manifest.measurement is not None:
+            self.measurement_window_cardinality = (
+                adapter_manifest.measurement.cardinality
+            )
         self._remote_session_token: str | None = None
         self._cell_running = False
         self._cell_state = CellState.OFF
@@ -1888,25 +1908,11 @@ class MockBaseStation(BaseStationDriver):
         self._frc = ""
 
     def resolve_metric_registry(self) -> BaseStationMetricRegistry:
-        """Preserve adapter metric shape while making mock truth diagnostic."""
+        """Project registered metric shape without constructing a real driver."""
 
-        if self.adapter_id == "cmw500":
-            from app.hal.cmw500_base_station import RealCmw500Driver
-
-            source = RealCmw500Driver(
-                f"{self.instrument_id}-shape",
-                {"ip_address": "192.0.2.1"},
-            ).resolve_metric_registry()
-        else:
-            from app.hal.uxm_base_station import RealUxmDriver
-
-            source = RealUxmDriver(
-                f"{self.instrument_id}-shape",
-                {
-                    "ip_address": "192.0.2.1",
-                    "uxm_profile": self._metric_registry_profile_hint,
-                },
-            ).resolve_metric_registry()
+        measurement = self.adapter_manifest.measurement
+        if measurement is None:
+            raise ValueError("mock adapter manifest has no measurement capability")
         metrics = tuple(
             BaseStationMetricCapability(
                 key=metric.key,
@@ -1916,12 +1922,12 @@ class MockBaseStation(BaseStationDriver):
                 evidence="diagnostic_only",
                 source_reference=metric.source_reference,
             )
-            for metric in source.metrics
+            for metric in sorted(measurement.metrics, key=lambda item: item.key)
         )
         return BaseStationMetricRegistry(
             schema_version=1,
             adapter_id=self.adapter_id,
-            profile_id=f"mock_{source.profile_id}",
+            profile_id=f"mock_{self.adapter_id}",
             metrics=metrics,
         )
 
@@ -1981,13 +1987,82 @@ class MockBaseStation(BaseStationDriver):
     async def configure(self, config: Dict[str, Any]) -> bool:
         return await self.set_cell_config(config)
 
+    async def configure_mac_throughput_test(
+        self,
+        mimo_layers: int = 2,
+        mcs: int = 28,
+        rb_alloc: str = "ALL",
+        enable_amc: bool = False,
+        tdd_pattern: str = "DDDSU",
+        tdd_period: str = "5MS",
+        harq_max_trans: int = 4,
+        harq_processes: int = 16,
+        stat_count: int = 5000,
+        cell: Optional[str] = None,
+        tdd_dl_symbols: int = 6,
+        tdd_ul_symbols: int = 4,
+        scs_khz: Optional[int] = None,
+        csi_rs_ports: Optional[int] = None,
+    ):
+        """Return diagnostic-only MAC configuration evidence when declared.
+
+        The mock never claims that a value was applied or read back.  It only
+        satisfies the common adapter lifecycle for manifests that explicitly
+        declare ``mac_throughput_config``; formal KPI consumers already exclude
+        this simulated receipt.
+        """
+
+        from app.hal.uxm_base_station import MacThroughputConfigResult
+
+        requested = {
+            "mimo_layers": mimo_layers,
+            "mcs": mcs,
+            "rb_alloc": rb_alloc,
+            "enable_amc": enable_amc,
+            "tdd_pattern": tdd_pattern,
+            "tdd_period": tdd_period,
+            "harq_max_trans": harq_max_trans,
+            "harq_processes": harq_processes,
+            "stat_count": stat_count,
+            "scs_khz": scs_khz,
+            "csi_rs_ports": csi_rs_ports,
+        }
+        declared = "mac_throughput_config" in self.adapter_manifest.operations
+        receipt = BaseStationApplyReceipt(
+            schema_version=1,
+            operation="mac_throughput_config",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="simulated mock has no hardware readback",
+                )
+                for name, value in requested.items()
+            ),
+            reason=(
+                "simulated MAC configuration excluded from formal evidence"
+                if declared
+                else "mock adapter manifest does not declare MAC configuration"
+            ),
+            simulated=True,
+            operation_succeeded=declared,
+        )
+        if not declared:
+            return MacThroughputConfigResult(
+                error="mock adapter manifest does not declare mac_throughput_config",
+                receipt=receipt,
+            )
+        return MacThroughputConfigResult(receipt=receipt)
+
     async def apply_route(
         self,
         frozen_adapter: dict[str, Any],
     ) -> BaseStationApplyReceipt:
         """Mirror a bound CMW route as simulated unknown evidence."""
 
-        if self.adapter_id != "cmw500":
+        if "internal_route" not in self.adapter_manifest.operations:
             return await super().apply_route(frozen_adapter)
         resolution = frozen_adapter.get("resolution")
         profile = resolution.get("profile") if isinstance(resolution, dict) else None
@@ -2027,7 +2102,7 @@ class MockBaseStation(BaseStationDriver):
     ) -> bool:
         """Allow only the complete simulated CMW route shape for diagnostics."""
 
-        if self.adapter_id != "cmw500":
+        if "internal_route" not in self.adapter_manifest.operations:
             return super().route_allows_diagnostic_execution(receipt)
         from app.hal.base_station_adapter_profile import (
             Cmw500Lte2x2InternalRoute,
@@ -2048,25 +2123,40 @@ class MockBaseStation(BaseStationDriver):
         )
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
+        measurement = self.adapter_manifest.measurement
+        measurement_payload = (
+            None
+            if measurement is None
+            else {
+                "cardinality": measurement.cardinality,
+                "scopes": list(measurement.scopes),
+                "lifecycle": measurement.lifecycle,
+                "metrics": [metric.key for metric in measurement.metrics],
+            }
+        )
+        parameters = {
+            "adapter_id": self.adapter_id,
+            "operations": list(self.adapter_manifest.operations),
+            "config_fields": {
+                field.field: {
+                    "support": field.support,
+                    "readback": field.readback,
+                }
+                for field in self.adapter_manifest.config_fields
+            },
+            "measurement": measurement_payload,
+        }
         return [
             InstrumentCapability(
-                name="5g_nr",
-                description="5G NR support",
+                name=rat.rat,
+                description=(
+                    f"{rat.rat} diagnostic capability from registered "
+                    f"{self.adapter_manifest.model_name} manifest"
+                ),
                 supported=True,
-                parameters={
-                    "frequency_range": [450, 6000],
-                    "max_bandwidth_mhz": 100,
-                },
-            ),
-            InstrumentCapability(
-                name="lte",
-                description="LTE support",
-                supported=True,
-                parameters={
-                    "frequency_range": [450, 3800],
-                    "max_bandwidth_mhz": 20,
-                },
-            ),
+                parameters=parameters,
+            )
+            for rat in self.adapter_manifest.rat_capabilities
         ]
 
     async def get_metrics(self) -> InstrumentMetrics:
@@ -2116,6 +2206,8 @@ class MockBaseStation(BaseStationDriver):
         return True
 
     async def set_downlink_power(self, power_dbm: float) -> bool:
+        if not self.input_level_control_supported:
+            return False
         if power_dbm < -120 or power_dbm > 0:
             return False
         # 当前 Mock 仍模拟既有 UXM 方言；builder 归 UXM profile 所有，通用 HAL
@@ -2206,6 +2298,16 @@ class MockBaseStation(BaseStationDriver):
 
         if not isinstance(request, BaseStationMeasurementWindowRequest):
             raise TypeError("mock measurement requires a frozen window request")
+        measurement = self.adapter_manifest.measurement
+        if (
+            measurement is None
+            or request.lifecycle != measurement.lifecycle
+            or request.cardinality != measurement.cardinality
+            or request.scope not in measurement.scopes
+        ):
+            raise ValueError(
+                "mock measurement request does not match frozen manifest"
+            )
         started_at = datetime.now(timezone.utc)
         await asyncio.sleep(max(float(window_s), 0.0))
         metrics = await self.get_throughput_metrics(
@@ -2259,22 +2361,27 @@ class MockBaseStation(BaseStationDriver):
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
+        rat = self.adapter_manifest.rat_capabilities[0].rat
         return {
             "imsi": "001010000000001",
             "imei": "352099001761481",
-            "ue_category": "NR-DC",
+            "ue_category": f"{rat.upper()} diagnostic mock",
+            "radio_technology": rat,
             "connected": self._cell_running,
         }
 
     async def query_ue_capability(self) -> Dict[str, Any]:
-        """Phase 2e: mock UE that supports up to 4x4 256QAM on n78/n41."""
+        """Return only configured simulated shape, never foreign-RAT claims."""
+
+        rat = self.adapter_manifest.rat_capabilities[0].rat
         return {
-            "max_dl_layers": 4,
-            "max_ul_layers": 2,
-            "max_modulation_dl": "256QAM",
-            "max_modulation_ul": "64QAM",
-            "supported_bands": ["n78", "n41", "n77", "n79"],
-            "ca_combinations": ["n78+n41", "n77+n79"],
+            "max_dl_layers": self._mimo_layers,
+            "max_ul_layers": None,
+            "max_modulation_dl": None,
+            "max_modulation_ul": None,
+            "supported_bands": [],
+            "ca_combinations": [],
+            "radio_technology": rat,
             "source": "mock",
         }
 
@@ -2285,6 +2392,8 @@ class MockBaseStation(BaseStationDriver):
         modulation: Optional[str] = None,
     ) -> bool:
         """Mock: pretend RRC reconfig succeeded."""
+        if not self.rrc_reconfiguration_supported:
+            return False
         if mimo_layers is not None:
             self._mimo_layers = mimo_layers
             logger.info("[MockBS] RRC reconfig: mimo_layers → %d", mimo_layers)
@@ -2298,6 +2407,8 @@ class MockBaseStation(BaseStationDriver):
         cc_config: Dict[str, Any],
     ) -> bool:
         """Mock: track SCell list in memory."""
+        if not self.SCELL_ACTIVATION_READBACK_AUTHORITATIVE:
+            return False
         if not hasattr(self, "_scells"):
             self._scells = {}
         self._scells[cc_index] = dict(cc_config)
@@ -2335,7 +2446,14 @@ class MockBaseStation(BaseStationDriver):
         return True
 
     def get_supported_technologies(self) -> List[RadioTechnology]:
-        return [RadioTechnology.NR5G, RadioTechnology.LTE]
+        by_manifest_token = {
+            "lte": RadioTechnology.LTE,
+            "nr5g": RadioTechnology.NR5G,
+        }
+        return [
+            by_manifest_token[item.rat]
+            for item in self.adapter_manifest.rat_capabilities
+        ]
 
     async def load_state_file(self, filepath: str) -> bool:
         """Mock: 模拟加载配置文件"""

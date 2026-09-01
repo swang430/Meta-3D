@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from copy import deepcopy
 from types import SimpleNamespace
 from uuid import uuid4
@@ -153,7 +155,7 @@ def test_real_bindings_resolve_one_common_immutable_shape_without_io(
 
 def test_configured_authoritative_mock_keeps_manifest_and_profile_but_is_simulated(db):
     _, _, _, lab = _configured(db, model_name="CMW500", driver_mode="mock")
-    mock = MockBaseStation("mock", {"model": "CMW500"})
+    mock = registered_mock_base_station("mock", {"model": "CMW500"})
 
     resolved = resolve_base_station_binding(
         db,
@@ -186,7 +188,7 @@ def test_configured_mock_rejects_stale_adapter_until_hal_is_reloaded(
         model_name=selected_model,
         driver_mode="mock",
     )
-    stale_mock = MockBaseStation("mock", {"model": loaded_model})
+    stale_mock = registered_mock_base_station("mock", {"model": loaded_model})
 
     with pytest.raises(
         ValueError,
@@ -228,7 +230,7 @@ def test_only_authoritative_mock_may_resolve_diagnostic_unbound(db):
 
     resolved = resolve_base_station_binding(
         db,
-        SimpleNamespace(drivers={"baseStation": MockBaseStation("mock", {})}),
+        SimpleNamespace(drivers={"baseStation": registered_mock_base_station("mock", {"model": "UXM 5G E7515B"})}),
         lab,
     )
 
@@ -255,7 +257,7 @@ def test_only_authoritative_mock_may_resolve_diagnostic_unbound(db):
         resolve_base_station_binding(
             db,
             SimpleNamespace(
-                drivers={"baseStation": MockBaseStation("mock", {})}
+                drivers={"baseStation": registered_mock_base_station("mock", {"model": "UXM 5G E7515B"})}
             ),
             lab,
         )
@@ -388,14 +390,14 @@ def test_runtime_driver_identity_is_auditable_but_does_not_pollute_digest(db):
     first = resolve_base_station_binding(
         db,
         SimpleNamespace(
-            drivers={"baseStation": MockBaseStation("mock-one", {"model": "CMW500"})}
+            drivers={"baseStation": registered_mock_base_station("mock-one", {"model": "CMW500"})}
         ),
         lab,
     )
     second = resolve_base_station_binding(
         db,
         SimpleNamespace(
-            drivers={"baseStation": MockBaseStation("mock-two", {"model": "CMW500"})}
+            drivers={"baseStation": registered_mock_base_station("mock-two", {"model": "CMW500"})}
         ),
         lab,
     )
@@ -430,7 +432,7 @@ def test_resolver_rejects_every_stale_lab_profile_driver_mode(
     lab.instrument_bindings = bindings
     db.commit()
     driver = (
-        MockBaseStation("mock", {"model": "CMW500"})
+        registered_mock_base_station("mock", {"model": "CMW500"})
         if category_mode == "mock"
         else _real_driver("CMW500")
     )
@@ -454,7 +456,7 @@ def test_resolver_rejects_loaded_driver_that_violates_explicit_mode(
         driver_mode=category_mode,
     )
     driver = (
-        MockBaseStation("mock", {"model": "CMW500"})
+        registered_mock_base_station("mock", {"model": "CMW500"})
         if category_mode == "real"
         else _real_driver("CMW500")
     )

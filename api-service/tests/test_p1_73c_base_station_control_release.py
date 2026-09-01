@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from types import SimpleNamespace
 
 import pytest
@@ -136,7 +138,7 @@ async def test_present_base_station_without_common_release_contract_fails_loud()
 
 @pytest.mark.asyncio
 async def test_authoritative_mock_uses_the_same_control_contract_but_stays_simulated():
-    driver = MockBaseStation("mock", {"model": "CMW500"})
+    driver = registered_mock_base_station("mock", {"model": "CMW500"})
 
     acquired = await driver.acquire_remote_control()
     released = await driver.release_remote_session(

@@ -24,6 +24,8 @@ what we mean when we say "mock first-call passes."
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -192,9 +194,9 @@ def hal_with_mocks(instrument_categories):
     )
     hal = get_hal_service()
     saved = dict(hal.drivers)
-    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {"model": "Mock"})
-    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
-    pos = MockPositioner("mock-pos", {"model": "Mock"})
+    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {"model": "UXM 5G E7515B"})
+    hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
+    pos = MockPositioner("mock-pos", {"model": "UXM 5G E7515B"})
 
     async def _instant_move_to(azimuth, elevation, **_kwargs):
         pos._azimuth = azimuth
@@ -203,7 +205,7 @@ def hal_with_mocks(instrument_categories):
 
     pos.move_to = _instant_move_to  # type: ignore[assignment]
     hal.drivers["positioner"] = pos
-    hal.drivers["signalAnalyzer"] = MockSignalAnalyzer("mock-sa", {"model": "Mock"})
+    hal.drivers["signalAnalyzer"] = MockSignalAnalyzer("mock-sa", {"model": "UXM 5G E7515B"})
     yield hal
     hal.drivers.clear()
     hal.drivers.update(saved)

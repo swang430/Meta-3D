@@ -1,7 +1,7 @@
 """C 组「会红的门」— 把反复靠记忆兜底的规则下沉成结构断言 (2026-07-26 用户批准)。
 
 背景: memory 整理 C 组的原则是"少依赖记忆、多依赖会红的门" —— 凡是能机械判定的
-规则, 变成一条新增即红的测试, 然后对应 memory 条目归档。本文件四道门, 每道注明
+规则, 变成一条新增即红的测试, 然后对应 memory 条目归档。本文件每道门都注明
 它替代的规则与实跑过的变异 (CLAUDE.md ⓪-④: 门不过变异 = 门不算数):
 
 G1 单一 alembic head    ← memory feedback_find_alembic_head_with_command
@@ -31,6 +31,11 @@ G24 BaseStation 静态能力只读 manifest v2 ← P2-46 Capability Manifest v2
 G25 BaseStation Attach 只读结构化 receipt ← P2-47 Attach Receipt
    变异: production MEASURE 退回 start_signaling 布尔、manifest 阶段缺项或正式证据门
    不消费 execution-bound attach operation，任一项必须检出。
+G26 BaseStation 指标只读 execution-frozen registry/observation ← P2-49 Metric Registry
+   变异: writer/projection 恢复固定指标键或厂商分支必须检出。
+G27 BaseStation Mock 只读所选注册 manifest ← P2-64 Adapter-scoped Mock
+   变异: manifest 非 keyword-only、恢复 RAT 能力并集/型号嗅探、借真实 Driver 解析指标、
+   HAL 漏注入 registration manifest，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2647,3 +2652,167 @@ def test_g26_base_station_metric_projection_is_registry_driven():
     assert "metric_registry_contract_version" in writer
     assert "for item in parsed.metric_registry.metrics" in projection
     assert "metric_not_declared_in_registry" in projection
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G27 BaseStation Mock 只读所选注册 manifest
+# ─────────────────────────────────────────────────────────────────────
+
+def _base_station_mock_scope_gaps(
+    base_station_source: str,
+    hal_service_source: str,
+) -> list[str]:
+    """Return stable invariant names missing from the two production sources."""
+
+    base_tree = ast.parse(base_station_source)
+    hal_tree = ast.parse(hal_service_source)
+    mock_class = next(
+        (
+            node
+            for node in base_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "MockBaseStation"
+        ),
+        None,
+    )
+    if mock_class is None:
+        return ["mock_class"]
+
+    methods = {
+        node.name: node
+        for node in mock_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    gaps: list[str] = []
+
+    constructor = methods.get("__init__")
+    if constructor is None or "adapter_manifest" not in {
+        arg.arg for arg in constructor.args.kwonlyargs
+    }:
+        gaps.append("constructor_manifest")
+    constructor_source = ast.unparse(constructor) if constructor is not None else ""
+    if any(
+        token in constructor_source.lower()
+        for token in ('"cmw', "'cmw", '"uxm', "'uxm")
+    ):
+        gaps.append("rat_union_or_sniff")
+
+    rat_method = methods.get("get_supported_technologies")
+    rat_source = ast.unparse(rat_method) if rat_method is not None else ""
+    if (
+        "self.adapter_manifest.rat_capabilities" not in rat_source
+        or (
+            "RadioTechnology.NR5G" in rat_source
+            and "RadioTechnology.LTE" in rat_source
+            and "by_manifest_token" not in rat_source
+        )
+    ):
+        gaps.append("rat_union_or_sniff")
+
+    registry_method = methods.get("resolve_metric_registry")
+    registry_source = (
+        ast.unparse(registry_method) if registry_method is not None else ""
+    )
+    if (
+        "self.adapter_manifest.measurement" not in registry_source
+        or "RealUxmDriver" in registry_source
+        or "RealCmw500Driver" in registry_source
+    ):
+        gaps.append("real_driver_registry")
+
+    factory = next(
+        (
+            node
+            for node in hal_tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_instantiate_hal_driver"
+        ),
+        None,
+    )
+    injected = False
+    if factory is not None:
+        injected = any(
+            keyword.arg == "adapter_manifest"
+            and ast.unparse(keyword.value) == "registration.manifest"
+            for call in ast.walk(factory)
+            if isinstance(call, ast.Call)
+            for keyword in call.keywords
+        )
+    if not injected:
+        gaps.append("hal_manifest_injection")
+
+    return gaps
+
+
+def test_g27_base_station_mock_is_registration_scoped():
+    """P2-64：Mock 不得恢复能力并集、型号嗅探或真实驱动借壳。"""
+    base_station_source = (
+        _API_SERVICE_ROOT / "app/hal/base_station.py"
+    ).read_text(encoding="utf-8")
+    hal_service_source = (
+        _API_SERVICE_ROOT / "app/services/instrument_hal_service.py"
+    ).read_text(encoding="utf-8")
+
+    assert _base_station_mock_scope_gaps(
+        base_station_source,
+        hal_service_source,
+    ) == []
+
+
+def test_g27_checker_rejects_legacy_mock_shapes():
+    """G27 判定器自测：四类已知坏变异必须各自被抓住。"""
+    base_station_source = (
+        _API_SERVICE_ROOT / "app/hal/base_station.py"
+    ).read_text(encoding="utf-8")
+    hal_service_source = (
+        _API_SERVICE_ROOT / "app/services/instrument_hal_service.py"
+    ).read_text(encoding="utf-8")
+
+    missing_manifest = base_station_source.replace(
+        "        *,\n"
+        "        adapter_manifest: BaseStationAdapterManifest | None = None,",
+        "        adapter_manifest: BaseStationAdapterManifest | None = None,",
+        1,
+    )
+    union_rat = base_station_source.replace(
+        "return [\n            by_manifest_token[item.rat]\n"
+        "            for item in self.adapter_manifest.rat_capabilities\n"
+        "        ]",
+        "return [RadioTechnology.NR5G, RadioTechnology.LTE]",
+        1,
+    )
+    model_sniff = base_station_source.replace(
+        "self.adapter_id = adapter_manifest.adapter_id",
+        'self.adapter_id = "cmw500" if "CMW" in configured_model else "uxm"',
+        1,
+    )
+    real_driver_registry = base_station_source.replace(
+        "measurement = self.adapter_manifest.measurement",
+        "measurement = RealUxmDriver('mock', {}).adapter_manifest.measurement",
+        1,
+    )
+    missing_injection = hal_service_source.replace(
+        "adapter_manifest=registration.manifest,",
+        "",
+        1,
+    )
+
+    assert "constructor_manifest" in _base_station_mock_scope_gaps(
+        missing_manifest,
+        hal_service_source,
+    )
+    assert "rat_union_or_sniff" in _base_station_mock_scope_gaps(
+        union_rat,
+        hal_service_source,
+    )
+    assert "rat_union_or_sniff" in _base_station_mock_scope_gaps(
+        model_sniff,
+        hal_service_source,
+    )
+    assert "real_driver_registry" in _base_station_mock_scope_gaps(
+        real_driver_registry,
+        hal_service_source,
+    )
+    assert "hal_manifest_injection" in _base_station_mock_scope_gaps(
+        base_station_source,
+        missing_injection,
+    )

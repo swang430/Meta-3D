@@ -3123,10 +3123,13 @@ class MeasureExecutor(IStepExecutor):
                             "BaseStation current attempt is missing its frozen manifest"
                         )
                     else:
-                        measurement_manifest = (
-                            None
-                            if base_station_attempt.simulated_diagnostic
-                            else getattr(base_station, "adapter_manifest", None)
+                        # diagnostic_unbound 仍不在 execution freeze 里写入
+                        # adapter/manifest；但 P2-64 后唯一 Mock 是 manifest-scoped，
+                        # 诊断命令与窗口形状必须从当前已注册
+                        # Mock 的 manifest 派生。simulated provenance 仍由
+                        # frozen resolution 决定，不会因此进入正式 KPI。
+                        measurement_manifest = getattr(
+                            base_station, "adapter_manifest", None
                         )
                     base_station_samples = await self._measure_base_station_samples(
                         base_station,

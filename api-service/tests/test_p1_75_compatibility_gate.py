@@ -25,6 +25,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import inspect
 from types import SimpleNamespace
 from uuid import uuid4
@@ -35,7 +37,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
-from app.hal.base_station import MockBaseStation
+from app.hal.base_station import RadioTechnology
 from app.hal.base_station_compatibility import (
     MEASURE_REQUIRED_OPERATIONS,
     BaseStationCompatibilityVerdict,
@@ -428,7 +430,11 @@ def test_freeze_diagnostic_unbound_records_no_adapter_and_passes(db):
     db.add(execution)
     db.flush()
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock-bs", {"model": "Mock"})}
+        drivers={
+            "baseStation": registered_mock_base_station(
+                "mock-bs", {"model": UXM_MODEL_NAME}
+            )
+        }
     )
 
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
@@ -459,8 +465,7 @@ def test_freeze_ignores_test_case_name(db):
 
 
 def test_freeze_ignores_driver_self_reported_rats(db):
-    """⑧b 判据红线：MockBS 自报双 RAT 并集（get_supported_technologies
-    无条件返回 NR5G+LTE），判据源是注册 manifest —— lte × UXM 仍拒。"""
+    """⑧b 判据红线：即使实例自报双 RAT，判据仍只读注册 manifest。"""
 
     execution, lab, _case = _bound_execution(
         db,
@@ -469,7 +474,11 @@ def test_freeze_ignores_driver_self_reported_rats(db):
         connection_params=None,
         configuration=LTE_CONFIGURATION,
     )
-    mock_driver = MockBaseStation("mock-bs", {"model": UXM_MODEL_NAME})
+    mock_driver = registered_mock_base_station("mock-bs", {"model": UXM_MODEL_NAME})
+    mock_driver.get_supported_technologies = lambda: [
+        RadioTechnology.NR5G,
+        RadioTechnology.LTE,
+    ]
     technologies = mock_driver.get_supported_technologies()
     assert len(technologies) == 2  # 自报并集在场，门必须无视它
     hal = SimpleNamespace(drivers={"baseStation": mock_driver})
@@ -497,7 +506,11 @@ def test_freeze_reuse_of_legacy_frozen_dict_keeps_it_untouched(db):
     }
     execution.config = {FREEZE_CONFIG_KEY: dict(legacy)}
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock-bs", {"model": "Mock"})}
+        drivers={
+            "baseStation": registered_mock_base_station(
+                "mock-bs", {"model": UXM_MODEL_NAME}
+            )
+        }
     )
 
     reused = freeze_base_station_adapter_profile(db, hal, execution, None)
@@ -593,7 +606,33 @@ def test_verify_real_without_manifest_is_rejected():
     assert error is not None
 
 
-def test_verify_no_adapter_flip_is_rejected():
+def test_verify_no_adapter_allows_scoped_mock_without_backfilling_freeze():
+    requirements = build_measure_execution_requirements("nr5g")
+    payload = build_frozen_compatibility_payload(
+        requirements, build_no_adapter_verdict(requirements)
+    )
+
+    assert (
+        verify_frozen_base_station_compatibility(
+            payload,
+            live_manifest=RealUxmDriver.adapter_manifest,
+            simulated=True,
+        )
+        is None
+    )
+    assert payload["verdict"]["status"] == "no_adapter"
+    assert payload["verdict"]["manifest_digest"] is None
+
+    # 无 live manifest 的历史诊断形态仍放行。
+    assert (
+        verify_frozen_base_station_compatibility(
+            payload, live_manifest=None, simulated=True
+        )
+        is None
+    )
+
+
+def test_verify_no_adapter_rejects_real_driver_manifest():
     requirements = build_measure_execution_requirements("nr5g")
     payload = build_frozen_compatibility_payload(
         requirements, build_no_adapter_verdict(requirements)
@@ -602,17 +641,10 @@ def test_verify_no_adapter_flip_is_rejected():
     error = verify_frozen_base_station_compatibility(
         payload,
         live_manifest=RealUxmDriver.adapter_manifest,
-        simulated=True,
+        simulated=False,
     )
 
     assert error is not None
-    # 反向：真 unbound（live 也无 manifest）仍放行
-    assert (
-        verify_frozen_base_station_compatibility(
-            payload, live_manifest=None, simulated=True
-        )
-        is None
-    )
 
 
 def test_verify_incompatible_frozen_verdict_is_rejected():
@@ -873,7 +905,7 @@ def test_runner_rejects_incompatible_case_before_background_task(db):
 
     hal = get_hal_service()
     saved = hal.drivers.get("baseStation")
-    hal.drivers["baseStation"] = MockBaseStation(
+    hal.drivers["baseStation"] = registered_mock_base_station(
         "mock-bs", {"model": UXM_MODEL_NAME}
     )
     try:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import logging
 from datetime import datetime
 from types import SimpleNamespace
@@ -44,7 +46,7 @@ def _assert_simulated_exchange(
 @pytest.mark.asyncio
 async def test_mock_base_station_emits_selected_uxm_dialect(caplog):
     instrument_id = "baseStation-onsite"
-    driver = MockBaseStation(
+    driver = registered_mock_base_station(
         instrument_id,
         {"model": "UXM 5G E7515B", "detected_test_app": "LTE_NR_IRAT"},
     )

@@ -269,11 +269,18 @@ def verify_frozen_base_station_compatibility(
     if verdict.status == "incompatible" or verdict.compatible is not True:
         return "frozen compatibility verdict is incompatible"
     if verdict.status == "no_adapter":
-        if live_manifest is not None:
+        if live_manifest is None:
+            return None
+        if simulated is not True:
             return (
                 "frozen verdict recorded no adapter, but the loaded driver "
                 "now declares an adapter manifest"
             )
+        if not isinstance(live_manifest, BaseStationAdapterManifest):
+            return "loaded simulated adapter manifest is not registered"
+        # P2-64: diagnostic_unbound 冻结仍明确表示“无 adapter”；
+        # 运行基础设施只能加载已注册、manifest-scoped 的唯一 Mock。
+        # 该 manifest 只决定模拟命令/窗口形状，不回填冻结结论。
         return None
     # status == "compatible"：冻结时曾对某个注册 manifest 对过账
     if live_manifest is None:

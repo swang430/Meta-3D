@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
@@ -163,7 +165,7 @@ async def test_uxm_rejects_request_lifecycle_that_disagrees_with_manifest():
 
 @pytest.mark.asyncio
 async def test_mock_echoes_frozen_request_but_never_confirms_hardware_truth():
-    driver = MockBaseStation("mock", {})
+    driver = registered_mock_base_station("mock", {"model": "CMW500"})
     request = _request()
 
     window = await driver.measure_base_station_window(0.0, request=request)

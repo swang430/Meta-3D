@@ -451,7 +451,7 @@ class TestHalInitApplyFailureWarnRow:
                 id=uuid.uuid4(),
                 category_id=cat.id,
                 vendor="Keysight",
-                model="E7515B",
+                model="UXM 5G E7515B",
                 capabilities={},
             )
             db.add(model)

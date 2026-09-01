@@ -1,3 +1,5 @@
+from tests.base_station_mock_factory import registered_mock_base_station
+
 """P1-73C Task 15: CMW readiness is current LabProfile-bound truth."""
 
 from datetime import datetime, timezone
@@ -174,7 +176,7 @@ def test_readiness_mock_is_diagnostic_and_never_formal_ready(db):
     bindings[0]["driver_mode"] = "mock"
     lab.instrument_bindings = bindings
     db.commit()
-    mock = MockBaseStation("mock", {"model": "CMW500"})
+    mock = registered_mock_base_station("mock", {"model": "CMW500"})
 
     readiness = build_cmw500_lte_2x2_readiness(
         db,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import inspect
 
 import app.services.mimo_ota.executors.measure as measure_module
@@ -142,7 +144,7 @@ def test_uxm_and_mock_keep_their_existing_mac_paths():
         "uxm-default",
         {"ip_address": "192.0.2.1", "uxm_profile": "5g_nr"},
     )
-    mock = MockBaseStation("mock", {})
+    mock = registered_mock_base_station("mock", {"model": "UXM 5G E7515B"})
 
     assert _formal_mac_configuration_blocker(
         uxm,

@@ -7,6 +7,8 @@ tests run against in-memory SQLite without real instruments.
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import asyncio
 import uuid
 from typing import Any
@@ -812,7 +814,7 @@ class TestUxmScpiCompatibilitySequence:
         from app.hal import MockBaseStation
 
         _patched_hal(monkeypatch, drivers={
-            "baseStation": MockBaseStation("mock-bs", {"model": "Mock"}),
+            "baseStation": registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"}),
         })
         resp = client.post(
             "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
@@ -1334,7 +1336,7 @@ class TestPropsimF64HealthSequence:
         from app.hal import MockChannelEmulator
 
         _patched_hal(monkeypatch, drivers={
-            "channelEmulator": MockChannelEmulator("mock-ce", {"model": "Mock"}),
+            "channelEmulator": MockChannelEmulator("mock-ce", {"model": "UXM 5G E7515B"}),
         })
         resp = client.post(
             "/api/v1/diagnostic-sequences/propsim_f64_health/run",

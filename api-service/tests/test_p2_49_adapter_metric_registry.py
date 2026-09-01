@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import pytest
 
 from app.hal.base_station import MockBaseStation
@@ -135,33 +137,22 @@ def test_uxm_unknown_profile_fails_loud_instead_of_guessing_capabilities():
     [
         (
             {"model": "CMW500"},
-            "mock_cmw500_lte",
+            "mock_cmw500",
             ("dl_bler_percent", "dl_throughput_mbps"),
         ),
         (
-            {"model": "UXM", "uxm_profile": "irat"},
-            "mock_lte_nr_irat",
-            (
-                "cqi_index",
-                "dl_bler_ratio",
-                "dl_throughput_current_mbps",
-                "dl_throughput_mbps",
-                "ri_index",
-                "rsrp_raw",
-                "sinr_raw",
-                "ul_bler_ratio",
-                "ul_throughput_current_mbps",
-                "ul_throughput_mbps",
-            ),
+            {"model": "UXM 5G E7515B", "uxm_profile": "irat"},
+            "mock_uxm",
+            ("cqi_index", "ri_index"),
         ),
     ],
 )
-def test_mock_registry_preserves_shape_but_downgrades_all_metrics(
+def test_mock_registry_projects_manifest_and_downgrades_all_metrics(
     config,
     expected_profile,
     expected_keys,
 ):
-    registry = MockBaseStation("mock", config).resolve_metric_registry()
+    registry = registered_mock_base_station("mock", config).resolve_metric_registry()
 
     assert registry.profile_id == expected_profile
     assert tuple(_by_key(registry)) == expected_keys
