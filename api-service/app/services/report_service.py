@@ -468,14 +468,19 @@ def legacy_mimo_regeneration_error(
     current trusted builder can only replace a single-execution PDF; accepting
     any wider shape would stamp new provenance onto an old, untouched file.
     """
-    raw_content = getattr(report, "content_data", None)
-    content = raw_content if isinstance(raw_content, dict) else {}
-    if (
-        not report_is_mimo_ota_report(db, report)
-        or report_has_provenance_trust(content)
-    ):
+    if not report_is_mimo_ota_report(db, report):
         return None
 
+    execution_ids, execution_ids_well_formed = _parse_report_execution_ids(
+        report
+    )
+    if not execution_ids_well_formed:
+        return "The linked TestExecution identifiers are malformed."
+    if len(execution_ids) != 1:
+        return (
+            "Multi-execution MIMO OTA reports cannot be safely regenerated; "
+            "safe regeneration requires a single linked TestExecution."
+        )
     report_status = getattr(report, "status", None)
     report_status = getattr(report_status, "value", report_status)
     if report_status == ReportStatus.GENERATING.value:
@@ -493,16 +498,7 @@ def legacy_mimo_regeneration_error(
     if report_format != ReportFormat.PDF.value:
         return "Safe regeneration is currently available only for PDF reports."
 
-    execution_ids = normalized_report_execution_ids(report)
-    if len(execution_ids) != 1:
-        return (
-            "Multi-execution MIMO OTA reports cannot be safely regenerated; "
-            "safe regeneration requires a single linked TestExecution."
-        )
-    try:
-        execution_id = UUID(str(execution_ids[0]))
-    except (TypeError, ValueError):
-        return "The linked TestExecution identifier is invalid."
+    execution_id = execution_ids[0]
     execution = db.get(TestExecution, execution_id)
     if execution is None:
         return (

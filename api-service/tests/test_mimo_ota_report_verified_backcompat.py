@@ -1060,12 +1060,73 @@ def test_declared_mimo_report_cannot_regenerate_from_non_mimo_execution(report_d
     }
 
 
-def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
+def test_trusted_multi_execution_mimo_report_is_rejected_before_generation_claim(
+    report_db,
+):
+    from app.models.report import TestReport
+    from app.services.report_service import LegacyMimoRegenerationRejected
+
+    report = TestReport(
+        title="trusted multi-execution MIMO source",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="mimo_ota.executors.report",
+        status="completed",
+        test_execution_ids=[str(uuid4()), str(uuid4())],
+        file_path="legacy.pdf",
+        content_data={
+            "report_family": "mimo_ota",
+            **_trusted_unknown_report_fields(),
+        },
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    with pytest.raises(LegacyMimoRegenerationRejected, match="single linked"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.file_path == "legacy.pdf"
+
+
+def test_trusted_mimo_report_with_missing_source_is_rejected_before_claim(
+    report_db,
+):
+    from app.models.report import TestReport
+    from app.services.report_service import LegacyMimoRegenerationRejected
+
+    report = TestReport(
+        title="trusted MIMO report with deleted source",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="mimo_ota.executors.report",
+        status="completed",
+        test_execution_ids=[str(uuid4())],
+        file_path="legacy.pdf",
+        content_data={
+            "report_family": "mimo_ota",
+            **_trusted_unknown_report_fields(),
+        },
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    with pytest.raises(LegacyMimoRegenerationRejected, match="unavailable"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.file_path == "legacy.pdf"
+
+
+def test_sanitized_mimo_report_rejects_non_mimo_execution_before_claim(
     report_db,
     monkeypatch,
 ):
     from app.models.report import TestReport
     from app.models.test_plan import TestExecution
+    from app.services.report_service import LegacyMimoRegenerationRejected
 
     execution = TestExecution(
         id=uuid4(),
@@ -1094,12 +1155,12 @@ def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
         ),
     )
 
-    with pytest.raises(ValueError, match="not authoritatively MIMO OTA"):
+    with pytest.raises(LegacyMimoRegenerationRejected, match="not an authoritative"):
         ReportService().generate_report(report_db, report.id)
 
     report_db.refresh(report)
-    assert report.status == "failed"
-    assert "not authoritatively MIMO OTA" in report.error_message
+    assert report.status == "completed"
+    assert report.error_message is None
 
 
 def _vrt_archive_payload():

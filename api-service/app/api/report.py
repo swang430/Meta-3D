@@ -45,6 +45,7 @@ from app.services.report_service import (
     ReportTemplateService,
     ReportComparisonService,
     ReportScheduleService,
+    _parse_report_execution_ids,
     legacy_mimo_regeneration_error,
     normalized_report_execution_ids,
     report_has_provenance_trust,
@@ -55,6 +56,7 @@ from app.services.execution_evidence_outcome import (
     ExecutionEvidenceOutcome,
     project_execution_evidence_outcome,
 )
+from app.hal.base_station_compatibility import canonical_payload_digest
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -85,6 +87,120 @@ def _invalid_report_outcome(expected, reason: str) -> ExecutionEvidenceOutcome:
     )
 
 
+def _invalid_report_source_shape(report, reason: str) -> ExecutionEvidenceOutcome:
+    raw_status = getattr(report, "status", None)
+    pipeline_status = str(getattr(raw_status, "value", raw_status) or "unknown")
+    return ExecutionEvidenceOutcome(
+        compatibility_classification="invalid",
+        completion_semantic=(
+            "pipeline_completed"
+            if pipeline_status == "completed"
+            else "not_completed"
+        ),
+        formal_eligible=False,
+        compatibility_digest=canonical_payload_digest({
+            "report_execution_sources": "invalid",
+            "reason": reason,
+        }),
+        qualification_classification="legacy",
+        reasons=(reason,),
+        pipeline_status=pipeline_status,
+    )
+
+
+def _aggregate_report_execution_outcomes(
+    execution_ids: list[UUID],
+    executions: list[TestExecution | None],
+) -> ExecutionEvidenceOutcome:
+    """Project every linked execution into one conservative report outcome."""
+
+    projected: list[tuple[UUID, ExecutionEvidenceOutcome]] = []
+    missing_ids: list[UUID] = []
+    for execution_id, execution in zip(execution_ids, executions, strict=True):
+        if execution is None:
+            missing_ids.append(execution_id)
+        else:
+            projected.append(
+                (execution_id, project_execution_evidence_outcome(execution))
+            )
+
+    outcomes = [outcome for _, outcome in projected]
+    classifications = {outcome.compatibility_classification for outcome in outcomes}
+    if missing_ids or "invalid" in classifications:
+        classification = "invalid"
+    elif "diagnostic" in classifications:
+        classification = "diagnostic"
+    elif "legacy" in classifications:
+        classification = "legacy"
+    else:
+        classification = "compatible"
+
+    qualification_classifications = {
+        outcome.qualification_classification for outcome in outcomes
+    }
+    if "diagnostic" in qualification_classifications:
+        qualification = "diagnostic"
+    elif outcomes and qualification_classifications == {"formal"}:
+        qualification = "formal"
+    else:
+        qualification = "legacy"
+
+    statuses = [outcome.pipeline_status for outcome in outcomes]
+    all_completed = (
+        not missing_ids
+        and len(outcomes) == len(execution_ids)
+        and all(status == "completed" for status in statuses)
+    )
+    formal_eligible = (
+        all_completed
+        and classification == "compatible"
+        and all(outcome.formal_eligible for outcome in outcomes)
+    )
+    if not all_completed:
+        completion = "not_completed"
+    elif formal_eligible:
+        completion = "valid_test_completed"
+    elif classification == "diagnostic":
+        completion = "diagnostic_completed"
+    else:
+        completion = "pipeline_completed"
+
+    reasons = [
+        f"execution {execution_id}: {reason}"
+        for execution_id, outcome in projected
+        for reason in outcome.reasons
+    ]
+    reasons.extend(
+        f"execution {execution_id}: source execution is unavailable"
+        for execution_id in missing_ids
+    )
+    aggregate_payload = [
+        {
+            "execution_id": str(execution_id),
+            "outcome": outcome.model_dump(mode="json"),
+        }
+        for execution_id, outcome in projected
+    ]
+    aggregate_payload.extend(
+        {"execution_id": str(execution_id), "outcome": None}
+        for execution_id in missing_ids
+    )
+    pipeline_status = (
+        statuses[0]
+        if statuses and len(set(statuses)) == 1 and not missing_ids
+        else "mixed"
+    )
+    return ExecutionEvidenceOutcome(
+        compatibility_classification=classification,
+        completion_semantic=completion,
+        formal_eligible=formal_eligible,
+        compatibility_digest=canonical_payload_digest(aggregate_payload),
+        qualification_classification=qualification,
+        reasons=tuple(dict.fromkeys(reasons)),
+        pipeline_status=pipeline_status,
+    )
+
+
 def _report_execution_outcome_state(
     db: Session,
     report,
@@ -102,10 +218,61 @@ def _report_execution_outcome_state(
     except (ValueError, TypeError):
         stored = None
 
-    execution_ids = normalized_report_execution_ids(report)
+    execution_ids, execution_ids_well_formed = _parse_report_execution_ids(report)
     query = getattr(db, "query", None)
-    if not callable(query):
+    get = getattr(db, "get", None)
+    if not callable(query) and not callable(get):
         return stored, raw is None or stored is not None
+    if not execution_ids_well_formed:
+        return (
+            _invalid_report_source_shape(
+                report,
+                "report TestExecution identifiers are malformed",
+            ),
+            False,
+        )
+    if len(set(execution_ids)) != len(execution_ids):
+        return (
+            _invalid_report_source_shape(
+                report,
+                "report TestExecution identifiers are not unique",
+            ),
+            False,
+        )
+    if not execution_ids and _is_mimo_report(db, report):
+        return (
+            _invalid_report_source_shape(
+                report,
+                "MIMO report has no linked TestExecution",
+            ),
+            False,
+        )
+    if len(execution_ids) > 1:
+        executions = [
+            (
+                get(TestExecution, execution_id)
+                if callable(get)
+                else query(TestExecution)
+                .filter(TestExecution.id == execution_id)
+                .first()
+            )
+            for execution_id in execution_ids
+        ]
+        aggregate = _aggregate_report_execution_outcomes(
+            execution_ids,
+            executions,
+        )
+        if raw is None:
+            return aggregate, False
+        if stored == aggregate and aggregate.formal_eligible:
+            return aggregate, True
+        return (
+            _invalid_report_outcome(
+                aggregate,
+                "stored report outcome does not match all source executions",
+            ),
+            False,
+        )
     if len(execution_ids) != 1:
         if raw is None:
             return None, True
@@ -119,7 +286,9 @@ def _report_execution_outcome_state(
             False,
         )
     execution = (
-        query(TestExecution)
+        get(TestExecution, execution_ids[0])
+        if callable(get)
+        else query(TestExecution)
         .filter(TestExecution.id == execution_ids[0])
         .first()
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -13,6 +14,7 @@ from app.api.test_execution import _to_history_item
 from app.api.test_plan import get_case_execution_status
 from app.schemas.report import ReportCreate
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from tests.test_p2_66_execution_evidence_outcome import _execution
 from tests.test_p2_66_formal_consumers import _invalid_formal_execution
 
 
@@ -36,6 +38,17 @@ class _SingleResultDb:
 
     def query(self, *_args, **_kwargs):
         return _SingleResultQuery(self.value)
+
+
+class _ExecutionMapDb:
+    def __init__(self, *executions):
+        self.executions = {
+            str(execution.id): execution
+            for execution in executions
+        }
+
+    def get(self, _model, execution_id):
+        return self.executions.get(str(execution_id))
 
 
 def test_history_returns_the_shared_execution_evidence_outcome():
@@ -287,6 +300,119 @@ def test_report_projection_cannot_be_trusted_after_source_execution_disappears()
     assert outcome is not None
     assert outcome.compatibility_classification == "invalid"
     assert any("source execution" in reason for reason in outcome.reasons)
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "expected_classification"),
+    [
+        ("diagnostic", "diagnostic"),
+        ("invalid", "invalid"),
+        ("nonterminal", "compatible"),
+        ("missing", "invalid"),
+    ],
+)
+def test_multi_execution_report_aggregates_every_source_fail_closed(
+    source_kind,
+    expected_classification,
+):
+    formal = _execution()
+    formal.id = uuid4()
+    source = _execution()
+    source.id = uuid4()
+    if source_kind == "diagnostic":
+        source = _execution(qualification="diagnostic")
+        source.id = uuid4()
+    elif source_kind == "invalid":
+        source = _invalid_formal_execution()
+    elif source_kind == "nonterminal":
+        source = _execution(status="running")
+        source.id = uuid4()
+
+    missing_id = uuid4()
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[
+            formal.id,
+            missing_id if source_kind == "missing" else source.id,
+        ],
+        content_data={},
+    )
+    db = _ExecutionMapDb(formal, *(() if source_kind == "missing" else (source,)))
+
+    outcome, matches = _report_execution_outcome_state(db, report)
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == expected_classification
+    assert outcome.completion_semantic != "valid_test_completed"
+    assert outcome.formal_eligible is False
+
+
+def test_multi_execution_report_is_formal_only_when_every_source_is_formal():
+    executions = [_execution(), _execution()]
+    for execution in executions:
+        execution.id = uuid4()
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[execution.id for execution in executions],
+        content_data={},
+    )
+
+    outcome, matches = _report_execution_outcome_state(
+        _ExecutionMapDb(*executions),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "compatible"
+    assert outcome.completion_semantic == "valid_test_completed"
+    assert outcome.formal_eligible is True
+
+    report.content_data = {
+        "execution_evidence_outcome": outcome.model_dump(mode="json"),
+    }
+    frozen_outcome, frozen_matches = _report_execution_outcome_state(
+        _ExecutionMapDb(*executions),
+        report,
+    )
+
+    assert frozen_matches is True
+    assert frozen_outcome == outcome
+
+
+@pytest.mark.parametrize(
+    "execution_ids",
+    [
+        [str(uuid4()), "not-a-uuid"],
+        lambda execution_id: [execution_id, execution_id],
+    ],
+)
+def test_multi_execution_report_rejects_malformed_or_duplicate_source_ids(
+    execution_ids,
+):
+    execution = _execution()
+    execution.id = uuid4()
+    raw_ids = (
+        execution_ids(execution.id)
+        if callable(execution_ids)
+        else execution_ids
+    )
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=raw_ids,
+        content_data={},
+    )
+
+    outcome, matches = _report_execution_outcome_state(
+        _ExecutionMapDb(execution),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
 
 
 def test_live_and_checked_contracts_publish_the_shared_execution_outcome():
