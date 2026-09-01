@@ -25,7 +25,7 @@ P1-75 已在新执行首次仪器 I/O 前拒绝不兼容组合，P2-65 已让 pr
 | compatibility snapshot | freeze 内的 `compatibility.requirements + verdict` | P1-75 锁内复核、P2-65 preview/readiness、P2-66 全部读侧 |
 | freeze outer digest | freeze 除 `digest` 外 canonical JSON 的 SHA-256 | P2-66 解析；不得只验证内层、放过同行字段篡改 |
 | requirements digest | `BaseStationExecutionRequirements.digest` | verdict 归属校验、P2-54 未来版本边界 |
-| manifest digest | 冻结 verdict 的 `manifest_digest` | 只作为当时声明的不可变指纹；历史读取不得查当前 registry 反推 |
+| manifest digest | 冻结 verdict 的 `manifest_digest`，必须与同一 freeze 的 `resolved_binding.manifest` 对账 | 只作为当时声明的不可变指纹；历史读取不得查当前 registry 反推，也不得拼接另一 adapter 的 compatibility |
 | Diagnostic/Formal | `config[execution_qualification]` 的冻结 qualification + digest | analysis/report/history/compare/ReportDataCollector |
 | 执行证据终态投影 | 本片新增的纯 `project_execution_evidence_outcome()` | 证据解析、轮询、历史、报告构造/重建/详情/下载、比较、GUI |
 | 正式 KPI | 既有 qualification、SCPI、校准、逐指标 trust 白名单的 AND 门 | 本片不放宽；invalid/diagnostic 只再增加 fail-closed 条件 |
@@ -102,7 +102,8 @@ P1-75 已在新执行首次仪器 I/O 前拒绝不兼容组合，P2-65 已让 pr
    `pipeline_status`、`completion_semantic` 与 `formal_eligible` 必须以关联执行的当前终态为准，允许
    预期的 `running → completed` 跃迁；若源执行最终为 failed/cancelled 或其他状态，报告仍
    fail-closed。compatibility digest/classification、qualification 与 reasons 任一漂移同样
-   fail-closed。
+   fail-closed。详情 GUI 必须消费 API 顶层的当前 outcome，不得退回 content 内持久化的
+   `running/not_completed` 镜像。
 6. 多执行报告若含 diagnostic/invalid，只能产出明确的非正式审计汇总；不得把其数值混入统计。
 
 ## 5. 安全方向

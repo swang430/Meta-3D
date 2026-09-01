@@ -16,7 +16,9 @@ from app.hal.base_station_compatibility import (
     BaseStationCompatibilityVerdict,
     BaseStationExecutionRequirements,
     canonical_payload_digest,
+    manifest_compatibility_digest,
 )
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
@@ -93,17 +95,38 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
                 "frozen no_adapter verdict does not match simulated "
                 "diagnostic_unbound resolution"
             )
-        return None
-
-    if verdict.status != "compatible":
+    elif verdict.status != "compatible":
         return "frozen compatibility verdict status is invalid"
-    if resolution.get("status") not in {"configured", "not_applicable"}:
+    elif resolution.get("status") not in {"configured", "not_applicable"}:
         return "frozen compatible verdict does not match binding status"
     adapter = resolution.get("adapter")
-    if not isinstance(adapter, str) or not adapter.strip():
+    if verdict.status == "compatible" and (
+        not isinstance(adapter, str) or not adapter.strip()
+    ):
         return "frozen compatible verdict is missing adapter identity"
     if resolution.get("execution_mode") not in {"real", "simulated"}:
         return "frozen compatible verdict has invalid execution mode"
+
+    resolved_binding = frozen.get("resolved_binding")
+    if not isinstance(resolved_binding, Mapping):
+        return "frozen resolved binding is missing"
+    if resolved_binding.get("binding_digest") != frozen.get("binding_digest"):
+        return "frozen resolved binding digest does not match adapter freeze"
+    if resolved_binding.get("status") != resolution.get("status"):
+        return "frozen resolved binding status does not match adapter resolution"
+    raw_manifest = resolved_binding.get("manifest")
+    if verdict.status == "no_adapter":
+        if raw_manifest is not None:
+            return "frozen no_adapter verdict unexpectedly includes a manifest"
+        return None
+    try:
+        manifest = BaseStationAdapterManifest.model_validate(raw_manifest)
+    except (ValidationError, ValueError, TypeError):
+        return "frozen resolved binding manifest does not parse"
+    if manifest.adapter_id != adapter:
+        return "frozen resolved binding manifest does not match adapter resolution"
+    if manifest_compatibility_digest(manifest) != verdict.manifest_digest:
+        return "frozen compatibility manifest does not match resolved binding"
     return None
 
 

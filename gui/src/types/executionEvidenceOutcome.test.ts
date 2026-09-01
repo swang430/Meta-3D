@@ -26,6 +26,8 @@ test('history and report surfaces consume server-owned completion semantics', ()
   )
   assert.match(reportList, /证据无效/)
   assert.match(viewer, /仅审计/)
+  assert.match(viewer, /report\?\.execution_evidence_outcome/)
+  assert.match(viewer, /<ReportContent[^>]*outcome=/s)
 })
 
 test('API mirrors expose the immutable outcome instead of rebuilding it in GUI', () => {

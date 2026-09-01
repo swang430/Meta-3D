@@ -13,6 +13,7 @@ from app.hal.base_station_compatibility import (
     canonical_payload_digest,
     evaluate_base_station_compatibility,
 )
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
@@ -62,6 +63,9 @@ def _compatibility(*, no_adapter: bool = False) -> dict:
 
 
 def _freeze(*, no_adapter: bool = False) -> dict:
+    manifest = None if no_adapter else RealUxmDriver.adapter_manifest.model_dump(
+        mode="json"
+    )
     identity = {
         "schema_version": 1,
         "resolution": {
@@ -72,6 +76,11 @@ def _freeze(*, no_adapter: bool = False) -> dict:
             "profile": None,
         },
         "binding_digest": "b" * 64,
+        "resolved_binding": {
+            "status": "diagnostic_unbound" if no_adapter else "configured",
+            "binding_digest": "b" * 64,
+            "manifest": manifest,
+        },
         "compatibility": _compatibility(no_adapter=no_adapter),
     }
     return {**identity, "digest": canonical_payload_digest(identity)}
@@ -184,6 +193,31 @@ def test_qualification_binding_digest_must_match_adapter_freeze():
     assert outcome.compatibility_classification == "invalid"
     assert outcome.formal_eligible is False
     assert any("binding" in reason for reason in outcome.reasons)
+
+
+def test_compatibility_manifest_must_match_the_same_frozen_binding():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    requirements = build_measure_execution_requirements("lte")
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealCmw500Driver.adapter_manifest,
+    )
+    frozen["compatibility"] = build_frozen_compatibility_payload(
+        requirements,
+        verdict,
+    )
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = frozen
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert any("manifest" in reason for reason in outcome.reasons)
 
 
 def test_historical_row_without_freeze_remains_legacy_pipeline_completion():

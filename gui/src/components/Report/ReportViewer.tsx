@@ -44,6 +44,7 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react'
 import { fetchReport } from '../../api/reportService'
+import type { ExecutionEvidenceOutcome } from '../../types/api'
 import type { ReportContentData } from '../../types/report'
 import { ChartsTab } from './ChartsTab'
 import { TrajectoryMapTab } from './TrajectoryMapTab'
@@ -122,16 +123,25 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
     )
   }
 
-  return <ReportContent content={content} title={title || report?.title} />
+  const outcome = contentData
+    ? contentData.execution_evidence_outcome
+    : report?.execution_evidence_outcome
+  return (
+    <ReportContent
+      content={content}
+      outcome={outcome}
+      title={title || report?.title}
+    />
+  )
 }
 
 interface ReportContentProps {
   content: ReportContentData
+  outcome?: ExecutionEvidenceOutcome | null
   title?: string
 }
 
-function ReportContent({ content, title }: ReportContentProps) {
-  const outcome = content.execution_evidence_outcome
+function ReportContent({ content, outcome, title }: ReportContentProps) {
   const resultConfig = outcome?.compatibility_classification === 'invalid'
     ? { color: 'red', label: '证据无效 · 仅审计', icon: IconAlertCircle }
     : outcome?.completion_semantic === 'diagnostic_completed'
