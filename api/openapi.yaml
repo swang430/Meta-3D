@@ -647,7 +647,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CaseExecutionStatus'
+                $ref: '#/components/schemas/CaseExecutionStatusResponse'
         '404':
           description: Execution not found
   /api/v1/system-logs/tail:
@@ -1134,6 +1134,31 @@ components:
         frozen_at: {type: string, format: date-time}
         qualification_digest: {type: string}
       required: [schema_version, classification, policy_mode, policy, binding_digest, binding_status, execution_mode, adapter_id, site_certification, site_certification_digest, reasons, frozen_at, qualification_digest]
+    ExecutionEvidenceOutcome:
+      type: object
+      additionalProperties: false
+      description: >-
+        Immutable server-owned projection of one execution's frozen
+        compatibility and qualification evidence. pipeline_status is lifecycle
+        only; completion_semantic is the operator-facing completion meaning.
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        compatibility_classification:
+          type: string
+          enum: [compatible, diagnostic, legacy, invalid]
+        completion_semantic:
+          type: string
+          enum: [valid_test_completed, diagnostic_completed, pipeline_completed, not_completed]
+        formal_eligible: {type: boolean}
+        compatibility_digest: {type: string, nullable: true}
+        qualification_classification:
+          type: string
+          enum: [formal, diagnostic, legacy]
+        reasons:
+          type: array
+          items: {type: string}
+        pipeline_status: {type: string}
+      required: [schema_version, compatibility_classification, completion_semantic, formal_eligible, compatibility_digest, qualification_classification, reasons, pipeline_status]
     SessionResponse:
       type: object
       properties:
@@ -2546,6 +2571,8 @@ components:
         execution_classification:
           type: string
           enum: [formal, diagnostic, legacy]
+        execution_evidence_outcome:
+          $ref: '#/components/schemas/ExecutionEvidenceOutcome'
         failure_alert_outcome:
           type: string
           nullable: true
@@ -2569,6 +2596,7 @@ components:
         - error_message
         - validation_pass
         - execution_classification
+        - execution_evidence_outcome
         - failure_alert_outcome
     TestExecutionListResponse:
       type: object
@@ -2695,7 +2723,7 @@ components:
         - formal_verdict
         - formal_acceptance
         - reason
-    CaseExecutionStatus:
+    CaseExecutionStatusResponse:
       type: object
       properties:
         execution_id:
@@ -2723,11 +2751,39 @@ components:
         completed_at:
           type: string
           nullable: true
+        execution_evidence_outcome:
+          $ref: '#/components/schemas/ExecutionEvidenceOutcome'
         scpi_evidence:
           allOf:
             - $ref: '#/components/schemas/ExecutionScpiEvidence'
           nullable: true
-      required: [execution_id, status, phase_progress]
+      required: [execution_id, status, phase_progress, execution_evidence_outcome]
+    ReportSummary:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string}
+        report_type: {type: string}
+        format: {type: string}
+        status: {type: string}
+        progress_percent: {type: integer}
+        file_size_bytes: {type: integer, nullable: true}
+        generated_by: {type: string}
+        generated_at: {type: string, format: date-time}
+        test_execution_ids:
+          type: array
+          items: {type: string, format: uuid}
+          nullable: true
+        road_test_execution_id: {type: string, nullable: true}
+        vrt_archive_trusted: {type: boolean}
+        execution_evidence_outcome:
+          allOf:
+            - $ref: '#/components/schemas/ExecutionEvidenceOutcome'
+          nullable: true
+        requires_regeneration: {type: boolean}
+        regeneration_available: {type: boolean}
+        regeneration_reason: {type: string, nullable: true}
+      required: [id, title, report_type, format, status, progress_percent, file_size_bytes, generated_by, generated_at, vrt_archive_trusted]
     SystemLogEntry:
       type: object
       description: |

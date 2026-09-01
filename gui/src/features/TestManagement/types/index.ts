@@ -8,6 +8,8 @@
  * @date 2025-11-18
  */
 
+import type { ExecutionEvidenceOutcome } from '../../../types/api'
+
 // ==================== Core Status Types ====================
 
 /**
@@ -305,6 +307,7 @@ export interface TestExecutionRecord {
   error_message: string | null
   validation_pass: boolean | null
   execution_classification: 'formal' | 'diagnostic' | 'legacy'
+  execution_evidence_outcome: ExecutionEvidenceOutcome
   // P2-34: 告警发布结果 published | duplicate | failed; null = 未记录 (≠ 已发布)
   failure_alert_outcome: string | null
 }

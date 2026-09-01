@@ -29,6 +29,7 @@ def _invalid_formal_execution():
     execution.completed_at = datetime(2026, 9, 1)
     execution.error_message = None
     execution.execution_number = 1
+    execution.executed_by = "test_case_runner"
     execution.measurements = {
         "finite_value": 123.0,
         "phases": {

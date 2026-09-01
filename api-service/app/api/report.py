@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.db.database import get_db
+from app.models.test_plan import TestExecution
 from app.schemas.report import (
     # Report
     ReportCreate,
@@ -50,6 +51,10 @@ from app.services.report_service import (
     report_has_vrt_archive_trust,
     report_is_mimo_ota_report,
 )
+from app.services.execution_evidence_outcome import (
+    ExecutionEvidenceOutcome,
+    project_execution_evidence_outcome,
+)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -64,6 +69,73 @@ def _is_mimo_report(db: Session, report) -> bool:
     return report_is_mimo_ota_report(db, report)
 
 
+def _invalid_report_outcome(expected, reason: str) -> ExecutionEvidenceOutcome:
+    completion = (
+        "not_completed"
+        if expected.pipeline_status != "completed"
+        else "pipeline_completed"
+    )
+    return expected.model_copy(
+        update={
+            "compatibility_classification": "invalid",
+            "completion_semantic": completion,
+            "formal_eligible": False,
+            "reasons": tuple(dict.fromkeys((*expected.reasons, reason))),
+        }
+    )
+
+
+def _report_execution_outcome_state(
+    db: Session,
+    report,
+) -> tuple[ExecutionEvidenceOutcome | None, bool]:
+    """Compare a stored report projection with its immutable source execution."""
+
+    content = report.content_data if isinstance(report.content_data, dict) else {}
+    raw = content.get("execution_evidence_outcome")
+    try:
+        stored = (
+            ExecutionEvidenceOutcome.model_validate(raw)
+            if raw is not None
+            else None
+        )
+    except (ValueError, TypeError):
+        stored = None
+
+    execution_ids = normalized_report_execution_ids(report)
+    execution = None
+    query = getattr(db, "query", None)
+    if len(execution_ids) == 1 and callable(query):
+        execution = (
+            query(TestExecution)
+            .filter(TestExecution.id == execution_ids[0])
+            .first()
+        )
+    if execution is None:
+        return stored, raw is None or stored is not None
+
+    expected = project_execution_evidence_outcome(execution)
+    if raw is None:
+        if expected.compatibility_classification == "legacy":
+            return expected, True
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome is missing",
+            ),
+            False,
+        )
+    if stored != expected:
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome drifted",
+            ),
+            False,
+        )
+    return stored, True
+
+
 def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     """Legacy MIMO artifacts are inaccessible until rebuilt safely.
 
@@ -74,7 +146,8 @@ def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     content = report.content_data if isinstance(report.content_data, dict) else {}
     if not _is_mimo_report(db, report):
         return True
-    return report_has_provenance_trust(content)
+    _, outcome_matches = _report_execution_outcome_state(db, report)
+    return report_has_provenance_trust(content) and outcome_matches
 
 
 def _reject_untrusted_mimo_report(db: Session, report) -> None:
@@ -107,6 +180,7 @@ def _reject_untrusted_vrt_report(report) -> None:
 
 def _report_summary(db: Session, report) -> ReportSummary:
     """Build list metadata from the same MIMO trust truth as detail/download."""
+    evidence_outcome, _ = _report_execution_outcome_state(db, report)
     summary = ReportSummary.model_validate({
         "id": report.id,
         "title": report.title,
@@ -123,6 +197,7 @@ def _report_summary(db: Session, report) -> ReportSummary:
             report.road_test_execution_id is None
             or report_has_vrt_archive_trust(report.content_data)
         ),
+        "execution_evidence_outcome": evidence_outcome,
     })
     if _mimo_report_is_provenance_sanitized(db, report):
         return summary

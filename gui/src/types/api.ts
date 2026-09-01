@@ -137,6 +137,21 @@ export type FrozenExecutionQualification = {
   qualification_digest: string
 }
 
+export type ExecutionEvidenceOutcome = {
+  schema_version: 1
+  compatibility_classification: 'compatible' | 'diagnostic' | 'legacy' | 'invalid'
+  completion_semantic:
+    | 'valid_test_completed'
+    | 'diagnostic_completed'
+    | 'pipeline_completed'
+    | 'not_completed'
+  formal_eligible: boolean
+  compatibility_digest: string | null
+  qualification_classification: 'formal' | 'diagnostic' | 'legacy'
+  reasons: string[]
+  pipeline_status: string
+}
+
 export type Cmw500FormalCapabilityResponse = {
   connection_id: string
   enabled: boolean

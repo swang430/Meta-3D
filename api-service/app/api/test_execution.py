@@ -182,6 +182,7 @@ def _to_history_item(
         execution_classification=project_execution_evidence_outcome(
             execution
         ).compatibility_classification,
+        execution_evidence_outcome=project_execution_evidence_outcome(execution),
         # P2-34: 告警发布结果 (白名单解析); None = 未记录, 不是"已发布"
         failure_alert_outcome=resolve_recorded_outcome(cfg),
     )

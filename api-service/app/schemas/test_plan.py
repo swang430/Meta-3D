@@ -5,6 +5,7 @@ from ._datetime import UTCDateTime
 from uuid import UUID
 
 from app.services.execution_qualification import TestCaseExecutionPolicy
+from app.services.execution_evidence_outcome import ExecutionEvidenceOutcome
 
 
 # ==================== Test Plan Schemas ====================
@@ -223,6 +224,7 @@ class ExecutionHistoryItem(BaseModel):
     error_message: Optional[str] = None
     validation_pass: Optional[bool] = None
     execution_classification: str = "legacy"
+    execution_evidence_outcome: ExecutionEvidenceOutcome
     failure_alert_outcome: Optional[str] = None
 
 
