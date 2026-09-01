@@ -29,6 +29,16 @@ test('saved TestCase editor supplies context while unsaved drafts fail closed lo
   assert.match(form, /未保存/)
 })
 
+test('an unbound saved TestCase still requests the server unique-active LabProfile resolution', () => {
+  const form = read('src/components/TestCaseConfig/MIMOOTAConfigForm.tsx')
+
+  assert.match(form, /fetchReadiness\(compatibilityLabProfileId\s*\?\?\s*undefined,\s*testCaseId!\)/)
+  assert.doesNotMatch(
+    form,
+    /enabled:[\s\S]{0,180}Boolean\(compatibilityLabProfileId\)/,
+  )
+})
+
 test('dashboard renders the separate TestCase compatibility truth', () => {
   const source = read('src/features/Dashboard/ZoneReadiness.tsx')
 

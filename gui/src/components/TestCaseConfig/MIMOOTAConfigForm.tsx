@@ -221,9 +221,8 @@ export function MIMOOTAConfigForm({
       compatibilityLabProfileId ?? 'unselected',
       testCaseId ?? 'unsaved',
     ],
-    queryFn: () => fetchReadiness(compatibilityLabProfileId!, testCaseId!),
+    queryFn: () => fetchReadiness(compatibilityLabProfileId ?? undefined, testCaseId!),
     enabled: compatibilityContextSaved
-      && Boolean(compatibilityLabProfileId)
       && Boolean(testCaseId),
   })
   const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2

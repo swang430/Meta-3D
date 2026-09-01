@@ -269,6 +269,27 @@ def test_preview_without_saved_test_case_context_is_explicitly_not_evaluated(db)
     assert preview.reasons
 
 
+def test_unbound_saved_test_case_uses_the_resolved_unique_active_lab(db):
+    case, lab, hal = _saved_case_and_binding(
+        db,
+        model_name="UXM 5G E7515B",
+        requested_rat="nr5g",
+    )
+    case.lab_profile_id = None
+    db.commit()
+
+    preview = build_base_station_compatibility_preview(
+        db,
+        hal,
+        lab,
+        test_case_id=case.id,
+    )
+
+    assert preview.status == "compatible"
+    assert preview.lab_profile_id == str(lab.id)
+    assert preview.test_case_id == str(case.id)
+
+
 def test_preview_missing_test_case_is_explicitly_invalid(db):
     _, lab, hal = _saved_case_and_binding(
         db,

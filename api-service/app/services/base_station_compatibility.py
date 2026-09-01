@@ -178,7 +178,10 @@ def build_compatibility_preview_for_resolved(
             lab_profile_id=selected_lab_profile.id,
             reason="Saved TestCase is not a MIMO_OTA TestCase",
         )
-    if test_case.lab_profile_id != selected_lab_profile.id:
+    if (
+        test_case.lab_profile_id is not None
+        and test_case.lab_profile_id != selected_lab_profile.id
+    ):
         return _invalid_preview(
             test_case_id=test_case.id,
             lab_profile_id=selected_lab_profile.id,
