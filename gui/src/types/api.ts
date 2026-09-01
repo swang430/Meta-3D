@@ -330,6 +330,33 @@ export type BaseStationBindingPreviewResponse = {
   resolved_binding: Record<string, unknown> | null
   runtime_driver: Record<string, unknown> | null
   detail: string
+  testcase_compatibility: BaseStationCompatibilityPreviewResponse | null
+}
+
+export type BaseStationCompatibilityPreviewResponse = {
+  schema_version: 1
+  status: 'compatible' | 'incompatible' | 'no_adapter' | 'not_evaluated' | 'invalid'
+  compatible: boolean | null
+  test_case_id: string | null
+  lab_profile_id: string | null
+  binding_digest: string | null
+  execution_mode: 'real' | 'simulated' | null
+  requirements: {
+    schema_version: 1
+    requested_rat: 'nr5g' | 'lte'
+    required_operations: string[]
+    mac_profile: null
+  } | null
+  verdict: {
+    schema_version: 1
+    status: 'compatible' | 'incompatible' | 'no_adapter'
+    compatible: boolean
+    reasons: string[]
+    requirements_digest: string
+    manifest_digest: string | null
+  } | null
+  reasons: string[]
+  detail: string
 }
 
 export type InstrumentBindingSyncResponse = {
@@ -341,6 +368,7 @@ export type InstrumentBindingSyncResponse = {
     role?: string | null
   }
   resolved?: BaseStationBindingPreviewResponse | null
+  testcase_compatibility?: BaseStationCompatibilityPreviewResponse | null
 }
 
 export type HALReadinessResponse = {
@@ -350,6 +378,7 @@ export type HALReadinessResponse = {
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
   base_station_binding: BaseStationBindingPreviewResponse | null
+  base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
   base_station_site_certification: BaseStationSiteCertification | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string

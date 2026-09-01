@@ -15,7 +15,7 @@ def test_binding_entry_points_delegate_to_the_common_resolver_chain():
         (freeze_base_station_adapter_profile, "resolve_base_station_binding"),
         (build_base_station_binding_preview, "resolve_base_station_binding"),
         (sync_current_instrument_binding, "resolve_base_station_binding"),
-        (get_hal_readiness, "build_base_station_binding_preview"),
+        (get_hal_readiness, "build_base_station_preview_bundle"),
     )
     for entrypoint, common_call in inventory:
         source = inspect.getsource(entrypoint)

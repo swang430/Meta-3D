@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   formatBaseStationSyncTruth,
   projectBaseStationBindingTruth,
+  projectBaseStationCompatibilityTruth,
   projectReadinessVerdict,
 } from './baseStationBindingTruth.ts'
 
@@ -110,4 +111,75 @@ test('aggregate verdict preserves unavailable, blocking, and formal-ready states
     light: 'green',
     text: '✅ 可开测',
   })
+})
+
+const compatible = {
+  schema_version: 1 as const,
+  status: 'compatible' as const,
+  compatible: true,
+  test_case_id: 'case-id',
+  lab_profile_id: 'lab-id',
+  binding_digest: '0123456789abcdef',
+  execution_mode: 'real' as const,
+  requirements: {
+    schema_version: 1 as const,
+    requested_rat: 'nr5g' as const,
+    required_operations: ['identity'],
+    mac_profile: null,
+  },
+  verdict: {
+    schema_version: 1 as const,
+    status: 'compatible' as const,
+    compatible: true,
+    reasons: [],
+    requirements_digest: 'requirements-digest',
+    manifest_digest: 'manifest-digest',
+  },
+  reasons: [],
+  detail: 'compatible',
+}
+
+test('TestCase compatibility is green only for a real compatible binding', () => {
+  assert.equal(projectBaseStationCompatibilityTruth(compatible).light, 'green')
+  assert.equal(
+    projectBaseStationCompatibilityTruth({
+      ...compatible,
+      execution_mode: 'simulated',
+    }).light,
+    'yellow',
+  )
+  assert.equal(
+    projectBaseStationCompatibilityTruth({
+      ...compatible,
+      status: 'no_adapter',
+      binding_digest: null,
+      verdict: { ...compatible.verdict, status: 'no_adapter', manifest_digest: null },
+    }).light,
+    'yellow',
+  )
+})
+
+test('incompatible, invalid, not-evaluated, and absent contexts are red', () => {
+  for (const status of ['incompatible', 'invalid', 'not_evaluated'] as const) {
+    const truth = projectBaseStationCompatibilityTruth({
+      ...compatible,
+      status,
+      compatible: status === 'not_evaluated' ? null : false,
+      verdict: status === 'incompatible'
+        ? { ...compatible.verdict, status, compatible: false, reasons: ['RAT mismatch'] }
+        : null,
+      reasons: ['saved context is not ready'],
+    })
+    assert.equal(truth.light, 'red')
+  }
+  assert.equal(projectBaseStationCompatibilityTruth(null).light, 'red')
+})
+
+test('any diagnostic yellow readiness cell keeps the aggregate diagnostic', () => {
+  const verdict = projectReadinessVerdict(
+    [{ key: 'base-station-compatibility', title: '用例兼容性', light: 'yellow', valueText: '仅诊断' }],
+    true,
+  )
+  assert.equal(verdict.light, 'yellow')
+  assert.match(verdict.text, /仅可诊断/)
 })

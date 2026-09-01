@@ -48,6 +48,7 @@ import {
 } from './baseStationConfigTruth'
 import { useOperationalLab } from '../../features/OperationalLab'
 import { describeCmw500Readiness } from './cmw500ReadinessTruth'
+import { projectBaseStationCompatibilityTruth } from '../../features/Dashboard/baseStationBindingTruth'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -152,6 +153,9 @@ interface Props {
   value: MIMOOTAConfiguration
   onChange: (next: MIMOOTAConfiguration) => void
   readOnly?: boolean
+  testCaseId?: string | null
+  labProfileId?: string | null
+  compatibilityContextSaved?: boolean
 }
 
 const CDL_OPTIONS = [
@@ -196,15 +200,31 @@ const MIMO_PORT_PRESET_OPTIONS = [
   { value: '2x2_alt', label: '2×2 备用端口 (RF3+RF4)' },
 ]
 
-export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
+export function MIMOOTAConfigForm({
+  value,
+  onChange,
+  readOnly = false,
+  testCaseId,
+  labProfileId,
+  compatibilityContextSaved = false,
+}: Props) {
   const { selectedLabProfileId } = useOperationalLab()
+  const compatibilityLabProfileId = labProfileId !== undefined
+    ? labProfileId
+    : selectedLabProfileId
   const rawPCell = value.component_carriers?.[0]
   const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
   const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const cmwReadinessQuery = useQuery({
-    queryKey: ['cmw500-lte-2x2-readiness', selectedLabProfileId ?? 'unselected'],
-    queryFn: () => fetchReadiness(selectedLabProfileId!),
-    enabled: radioTechnology === 'lte' && Boolean(selectedLabProfileId),
+    queryKey: [
+      'base-station-testcase-readiness',
+      compatibilityLabProfileId ?? 'unselected',
+      testCaseId ?? 'unsaved',
+    ],
+    queryFn: () => fetchReadiness(compatibilityLabProfileId!, testCaseId!),
+    enabled: compatibilityContextSaved
+      && Boolean(compatibilityLabProfileId)
+      && Boolean(testCaseId),
   })
   const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2
   const siteCertification = cmwReadinessQuery.data?.base_station_site_certification
@@ -214,6 +234,27 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     baseStationConfigMode.mode,
     siteCertification,
   )
+  const compatibilityView = !compatibilityContextSaved
+    ? {
+        light: 'red' as const,
+        valueText: '未保存',
+        detail: 'TestCase 配置或 LabProfile 仍有未保存修改；保存后才能核对仪表兼容性',
+      }
+    : cmwReadinessQuery.isLoading
+      ? {
+          light: 'red' as const,
+          valueText: '核对中',
+          detail: '正在根据已保存 TestCase 与 LabProfile 核对 BaseStation 兼容性',
+        }
+      : cmwReadinessQuery.error
+        ? {
+            light: 'red' as const,
+            valueText: '读取失败',
+            detail: '无法确认已保存 TestCase 与 BaseStation 的兼容性',
+          }
+        : projectBaseStationCompatibilityTruth(
+            cmwReadinessQuery.data?.base_station_testcase_compatibility,
+          )
   const showCmwReadiness = radioTechnology === 'lte'
     && cmwReadiness?.status !== 'not_applicable'
   const update = <K extends keyof MIMOOTAConfiguration>(
@@ -1110,6 +1151,17 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               <Text size="xs" c="dimmed">
                 全部留空 = 现行为不变：UXM 主动下发小区参数、F64 自动定标闭环、正常衰落回放。
               </Text>
+              <Alert
+                color={compatibilityView.light === 'green'
+                  ? 'green'
+                  : compatibilityView.light === 'yellow'
+                    ? 'yellow'
+                    : 'red'}
+                variant="light"
+                title={`TestCase × BaseStation：${compatibilityView.valueText}`}
+              >
+                <Text size="sm">{compatibilityView.detail}</Text>
+              </Alert>
               {showCmwReadiness && (
                 <Alert
                   color={cmwReadinessView.color}

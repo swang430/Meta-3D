@@ -103,6 +103,11 @@ export function TestCaseEditModal({
   const selectedLabMissing =
     selectedLabId !== UNBOUND_LAB
     && !labs.some((lab) => lab.id === selectedLabId)
+  const compatibilityContextSaved = Boolean(
+    tc
+    && JSON.stringify(mimoConfig) === JSON.stringify(tc.configuration ?? {})
+    && selectedLabId === (originalLabProfileId ?? UNBOUND_LAB),
+  )
   const labOptions = [
     { value: UNBOUND_LAB, label: '不绑定（执行时自动解析）' },
     ...(selectedLabMissing
@@ -391,7 +396,13 @@ export function TestCaseEditModal({
           )}
 
           {useTypedForm ? (
-            <MIMOOTAConfigForm value={mimoConfig} onChange={setMimoConfig} />
+            <MIMOOTAConfigForm
+              value={mimoConfig}
+              onChange={setMimoConfig}
+              testCaseId={testCaseId}
+              labProfileId={selectedLabId === UNBOUND_LAB ? null : selectedLabId}
+              compatibilityContextSaved={compatibilityContextSaved}
+            />
           ) : (
             <>
               <Textarea

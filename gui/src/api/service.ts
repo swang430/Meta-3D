@@ -73,9 +73,14 @@ export const replaceProbes = async (
  * `available=false` means HAL-owned driver/subnet data is unavailable;
  * request-time LabProfile and calibration sections remain live.
  */
-export const fetchReadiness = async (labProfileId?: string): Promise<HALReadinessResponse> => {
+export const fetchReadiness = async (labProfileId?: string, testCaseId?: string): Promise<HALReadinessResponse> => {
   const response = await client.get<ContractHALReadinessResponse>('/instruments/hal/readiness', {
-    params: labProfileId ? { lab_profile_id: labProfileId } : undefined,
+    params: labProfileId || testCaseId
+      ? {
+          ...(labProfileId ? { lab_profile_id: labProfileId } : {}),
+          ...(testCaseId ? { test_case_id: testCaseId } : {}),
+        }
+      : undefined,
   })
   return response.data
 }

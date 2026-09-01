@@ -377,7 +377,10 @@ export interface paths {
          */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated. */
+                    test_case_id?: string | null;
+                };
                 header?: never;
                 path: {
                     lab_profile_id: string;
@@ -429,7 +432,10 @@ export interface paths {
         /** Preview the resolved BaseStation binding without instrument I/O */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated. */
+                    test_case_id?: string | null;
+                };
                 header?: never;
                 path: {
                     lab_profile_id: string;
@@ -928,6 +934,8 @@ export interface paths {
                 query?: {
                     /** @description Current browser-selected active LabProfile; no implicit fallback when supplied. */
                     lab_profile_id?: string;
+                    /** @description Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated. */
+                    test_case_id?: string | null;
                 };
                 header?: never;
                 path?: never;
@@ -2121,6 +2129,41 @@ export interface components {
             driver_mode: "auto" | "mock" | "real";
             role?: string | null;
         };
+        BaseStationExecutionRequirements: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            requested_rat: "nr5g" | "lte";
+            required_operations: string[];
+            /** @enum {unknown|null} */
+            mac_profile: null;
+        };
+        BaseStationCompatibilityVerdict: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            status: "compatible" | "incompatible" | "no_adapter";
+            compatible: boolean;
+            reasons: string[];
+            requirements_digest: string;
+            manifest_digest: string | null;
+        };
+        BaseStationCompatibilityPreviewResponse: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            status: "compatible" | "incompatible" | "no_adapter" | "not_evaluated" | "invalid";
+            compatible: boolean | null;
+            test_case_id: string | null;
+            lab_profile_id: string | null;
+            binding_digest: string | null;
+            /** @enum {string|null} */
+            execution_mode: "real" | "simulated" | null;
+            requirements: components["schemas"]["BaseStationExecutionRequirements"] | null;
+            verdict: components["schemas"]["BaseStationCompatibilityVerdict"] | null;
+            reasons: string[];
+            detail: string;
+        };
         BaseStationBindingPreviewResponse: {
             /** @enum {string} */
             status: "configured" | "not_applicable" | "diagnostic_unbound" | "invalid";
@@ -2140,10 +2183,12 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             detail: string;
+            testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"] | null;
         };
         InstrumentBindingSyncResponse: {
             binding: components["schemas"]["InstrumentBinding"];
             resolved?: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
+            testcase_compatibility?: components["schemas"]["BaseStationCompatibilityPreviewResponse"] | null;
         };
         ChannelCalibrationJobResponse: {
             /** Format: uuid */
@@ -2757,6 +2802,7 @@ export interface components {
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
             base_station_binding: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
+            base_station_testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"];
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;

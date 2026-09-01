@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
@@ -99,6 +98,27 @@ class BaseStationBindingPreview(BaseModel):
     detail: str
 
     @classmethod
+    def invalid(
+        cls,
+        lab_profile_id: object,
+        detail: str,
+    ) -> "BaseStationBindingPreview":
+        return cls(
+            status="invalid",
+            binding_digest=None,
+            execution_mode=None,
+            adapter_id=None,
+            model_name=None,
+            category_id=None,
+            instrument_model_id=None,
+            instrument_connection_id=None,
+            lab_profile_id=str(lab_profile_id),
+            resolved_binding=None,
+            runtime_driver=None,
+            detail=detail,
+        )
+
+    @classmethod
     def from_resolved(
         cls,
         resolved: ResolvedBaseStationBinding,
@@ -133,31 +153,11 @@ def build_base_station_binding_preview(
     try:
         resolved = resolve_base_station_binding(db, hal, selected_lab_profile)
     except ValueError as exc:
-        return BaseStationBindingPreview(
-            status="invalid",
-            binding_digest=None,
-            execution_mode=None,
-            adapter_id=None,
-            model_name=None,
-            category_id=None,
-            instrument_model_id=None,
-            instrument_connection_id=None,
-            lab_profile_id=str(selected_lab_profile.id),
-            resolved_binding=None,
-            runtime_driver=None,
-            detail=str(exc),
+        return BaseStationBindingPreview.invalid(
+            selected_lab_profile.id,
+            str(exc),
         )
     return BaseStationBindingPreview.from_resolved(resolved)
-
-
-def _canonical_digest(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _loaded_base_station(hal):
@@ -238,7 +238,7 @@ def build_saved_base_station_driver_validator(
     expected_class = registration.driver_class
     expected_adapter = registration.manifest.adapter_id
     expected_transport = _expected_transport(connection)
-    identity = _canonical_digest(
+    identity = canonical_payload_digest(
         {
             "driver_module": expected_class.__module__,
             "driver_name": expected_class.__name__,
@@ -376,7 +376,7 @@ def resolve_base_station_binding(
         return ResolvedBaseStationBinding(
             **{key: value for key, value in persistent.items() if key not in {"binding", "category_driver_mode"}},
             execution_mode="simulated",
-            binding_digest=_canonical_digest(persistent),
+            binding_digest=canonical_payload_digest(persistent),
             runtime_driver=_runtime_driver_identity(driver, True),
         )
 
@@ -511,6 +511,6 @@ def resolve_base_station_binding(
         },
         execution_mode="simulated" if simulated else "real",
         manifest=registration.manifest,
-        binding_digest=_canonical_digest(digest_payload),
+        binding_digest=canonical_payload_digest(digest_payload),
         runtime_driver=_runtime_driver_identity(driver, simulated),
     )

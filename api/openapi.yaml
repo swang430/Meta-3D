@@ -158,6 +158,11 @@ paths:
           in: path
           required: true
           schema: {type: string}
+        - name: test_case_id
+          in: query
+          required: false
+          description: Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated.
+          schema: {type: string, format: uuid, nullable: true}
       responses:
         '200':
           description: Persisted binding and vendor-neutral BaseStation resolution
@@ -174,6 +179,11 @@ paths:
           in: path
           required: true
           schema: {type: string, format: uuid}
+        - name: test_case_id
+          in: query
+          required: false
+          description: Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated.
+          schema: {type: string, format: uuid, nullable: true}
       responses:
         '200':
           description: Current immutable BaseStation binding projection
@@ -454,6 +464,14 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: test_case_id
+          in: query
+          required: false
+          description: Saved MIMO_OTA TestCase; omitted means compatibility is explicitly not evaluated.
+          schema:
+            type: string
+            format: uuid
+            nullable: true
       responses:
         '200':
           description: Readiness snapshot
@@ -1144,6 +1162,54 @@ components:
         connection_endpoint: {type: string, minLength: 1}
         driver_mode: {type: string, enum: [auto, mock, real], default: auto}
         role: {type: string, nullable: true}
+    BaseStationExecutionRequirements:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        requested_rat: {type: string, enum: [nr5g, lte]}
+        required_operations:
+          type: array
+          items: {type: string}
+        mac_profile:
+          nullable: true
+          enum: [null]
+      required: [schema_version, requested_rat, required_operations, mac_profile]
+    BaseStationCompatibilityVerdict:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        status: {type: string, enum: [compatible, incompatible, no_adapter]}
+        compatible: {type: boolean}
+        reasons:
+          type: array
+          items: {type: string}
+        requirements_digest: {type: string}
+        manifest_digest: {type: string, nullable: true}
+      required: [schema_version, status, compatible, reasons, requirements_digest, manifest_digest]
+    BaseStationCompatibilityPreviewResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        status: {type: string, enum: [compatible, incompatible, no_adapter, not_evaluated, invalid]}
+        compatible: {type: boolean, nullable: true}
+        test_case_id: {type: string, nullable: true}
+        lab_profile_id: {type: string, nullable: true}
+        binding_digest: {type: string, nullable: true}
+        execution_mode: {type: string, enum: [real, simulated], nullable: true}
+        requirements:
+          allOf: [{$ref: '#/components/schemas/BaseStationExecutionRequirements'}]
+          nullable: true
+        verdict:
+          allOf: [{$ref: '#/components/schemas/BaseStationCompatibilityVerdict'}]
+          nullable: true
+        reasons:
+          type: array
+          items: {type: string}
+        detail: {type: string}
+      required: [schema_version, status, compatible, test_case_id, lab_profile_id, binding_digest, execution_mode, requirements, verdict, reasons, detail]
     BaseStationBindingPreviewResponse:
       type: object
       additionalProperties: false
@@ -1171,7 +1237,10 @@ components:
           additionalProperties: true
           nullable: true
         detail: {type: string}
-      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail]
+        testcase_compatibility:
+          allOf: [{$ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'}]
+          nullable: true
+      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, testcase_compatibility]
     InstrumentBindingSyncResponse:
       type: object
       properties:
@@ -1180,6 +1249,9 @@ components:
         resolved:
           allOf:
             - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
+          nullable: true
+        testcase_compatibility:
+          allOf: [{$ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'}]
           nullable: true
       required: [binding]
     ChannelCalibrationJobResponse:
@@ -2279,6 +2351,8 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
           nullable: true
+        base_station_testcase_compatibility:
+          $ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'
         base_station_site_certification:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
@@ -2298,7 +2372,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, base_station_testcase_compatibility, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:

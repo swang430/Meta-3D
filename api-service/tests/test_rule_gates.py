@@ -36,6 +36,9 @@ G26 BaseStation 指标只读 execution-frozen registry/observation ← P2-49 Met
 G27 BaseStation Mock 只读所选注册 manifest ← P2-64 Adapter-scoped Mock
    变异: manifest 非 keyword-only、恢复 RAT 能力并集/型号嗅探、借真实 Driver 解析指标、
    HAL 漏注入 registration manifest，任一项必须检出。
+G28 BaseStation Preview/Readiness/Freeze 共用兼容性判定 ← P2-65
+   变异: preview/sync/readiness/freeze 任一入口复制判定、GUI 新增厂商分支或 aggregate
+   绕过黄色诊断态，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -2816,3 +2819,64 @@ def test_g27_checker_rejects_legacy_mock_shapes():
         base_station_source,
         missing_injection,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G28 BaseStation Preview/Readiness/Freeze 共用兼容性判定
+# ─────────────────────────────────────────────────────────────────────
+
+def _function_call_names(relative_path: str, function_name: str) -> set[str]:
+    tree = ast.parse((_REPO_ROOT / relative_path).read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+    return {
+        name
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+        for name in [_call_name(call)]
+        if name is not None
+    }
+
+
+def test_g28_base_station_compatibility_has_one_projection_chain():
+    """P2-65：API/冻结与 GUI 三判不得复制厂商兼容矩阵或假绿。"""
+
+    assert "build_base_station_preview_bundle" in _function_call_names(
+        "api-service/app/api/lab_profile.py",
+        "preview_base_station_binding",
+    )
+    assert "build_compatibility_preview_for_resolved" in _function_call_names(
+        "api-service/app/api/lab_profile.py",
+        "sync_current_instrument_binding",
+    )
+    assert "build_base_station_preview_bundle" in _function_call_names(
+        "api-service/app/api/instrument.py",
+        "get_hal_readiness",
+    )
+
+    freeze_calls = _function_call_names(
+        "api-service/app/services/base_station_adapter_profile.py",
+        "freeze_base_station_adapter_profile",
+    )
+    projection_calls = _function_call_names(
+        "api-service/app/services/base_station_compatibility.py",
+        "project_resolved_base_station_compatibility",
+    )
+    shared_calls = {
+        "build_measure_execution_requirements_from_configuration",
+        "build_compatibility_payload",
+    }
+    assert shared_calls <= freeze_calls
+    assert shared_calls <= projection_calls
+
+    gui_truth = _strip_ts_comments(
+        (_REPO_ROOT / "gui/src/features/Dashboard/baseStationBindingTruth.ts")
+        .read_text(encoding="utf-8")
+    )
+    assert "cells.find((cell) => cell.light === 'yellow')" in gui_truth
+    assert "CMW500" not in gui_truth
+    assert "UXM" not in gui_truth

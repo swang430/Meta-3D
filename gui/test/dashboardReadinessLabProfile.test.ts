@@ -12,7 +12,10 @@ test('readiness API 只在显式选择 LabProfile 时发送 lab_profile_id', () 
   const end = source.indexOf('/**', start + 1)
   const fn = source.slice(start, end)
 
-  assert.match(fn, /fetchReadiness\s*=\s*async\s*\(labProfileId\?:\s*string\)/)
+  assert.match(
+    fn,
+    /fetchReadiness\s*=\s*async\s*\(labProfileId\?:\s*string,\s*testCaseId\?:\s*string\)/,
+  )
   assert.match(fn, /lab_profile_id\s*:\s*labProfileId/)
   assert.match(fn, /labProfileId\s*\?[^:]+lab_profile_id/s)
 })
@@ -40,14 +43,12 @@ test('HAL unavailable 只把 HAL-owned 区域标为不可用，不否定实时 L
 
 test('HAL unavailable 必须进入总判阻塞，不能只显示提示后仍发布可开测', () => {
   const source = read('src/features/Dashboard/ZoneReadiness.tsx')
-  const verdict = source.slice(
-    source.indexOf('function buildVerdict'),
-    source.indexOf('function SubnetSection'),
-  )
+  const truth = read('src/features/Dashboard/baseStationBindingTruth.ts')
+  const verdict = truth.slice(truth.indexOf('export const projectReadinessVerdict'))
 
   assert.match(verdict, /available:\s*boolean/)
-  assert.match(verdict, /if\s*\(!available\)[\s\S]*canStart:\s*false/)
-  assert.match(source, /buildVerdict\(buildCells\(readiness\),\s*readiness\.available\)/)
+  assert.match(verdict, /if\s*\(!available\)[\s\S]*light:\s*'red'/)
+  assert.match(source, /projectReadinessVerdict\(buildCells\(readiness\),\s*readiness\.available\)/)
 })
 
 test('顶部没有显式 LabProfile 时不发隐式请求并显示阻断', () => {

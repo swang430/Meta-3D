@@ -24,10 +24,12 @@ from app.models.instrument import (
 )
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
-from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
+from app.schemas.base_station_binding import (
+    BaseStationBindingPreviewResponse,
+    BaseStationCompatibilityPreviewResponse,
+)
 from app.services.base_station_binding import (
     BaseStationBindingPreview,
-    build_base_station_binding_preview,
     resolve_base_station_binding,
 )
 
@@ -103,6 +105,7 @@ class InstrumentBinding(BaseModel):
 class InstrumentBindingSyncResponse(BaseModel):
     binding: InstrumentBinding
     resolved: Optional[BaseStationBindingPreviewResponse] = None
+    testcase_compatibility: Optional[BaseStationCompatibilityPreviewResponse] = None
 
 
 class LabProfileCreateRequest(BaseModel):
@@ -276,6 +279,10 @@ def list_lab_profiles(
 def sync_current_instrument_binding(
     lab_profile_id: UUID,
     category_key: str,
+    test_case_id: Optional[UUID] = Query(
+        None,
+        description="已保存 MIMO_OTA TestCase；省略时兼容性明确为未评估",
+    ),
     db: Session = Depends(get_db),
 ):
     """Copy one category's current catalog configuration into a LabProfile.
@@ -384,7 +391,11 @@ def sync_current_instrument_binding(
         row for row in existing if str(row.get("category_id")) != category_id
     ] + [binding]
     resolved = None
+    compatibility = None
     if category_key == "baseStation":
+        from app.services.base_station_compatibility import (
+            build_compatibility_preview_for_resolved,
+        )
         from app.services.instrument_hal_service import get_hal_service
 
         db.flush()
@@ -399,6 +410,12 @@ def sync_current_instrument_binding(
             db.rollback()
             raise HTTPException(status_code=422, detail=str(error)) from error
         resolved = BaseStationBindingPreview.from_resolved(resolved_binding)
+        compatibility = build_compatibility_preview_for_resolved(
+            db,
+            profile,
+            test_case_id=test_case_id,
+            resolved=resolved_binding,
+        )
     db.commit()
     return InstrumentBindingSyncResponse(
         binding=InstrumentBinding.model_validate(binding),
@@ -407,6 +424,13 @@ def sync_current_instrument_binding(
                 resolved.model_dump(mode="json")
             )
             if resolved is not None
+            else None
+        ),
+        testcase_compatibility=(
+            BaseStationCompatibilityPreviewResponse.model_validate(
+                compatibility.model_dump(mode="json")
+            )
+            if compatibility is not None
             else None
         ),
     )
@@ -418,6 +442,10 @@ def sync_current_instrument_binding(
 )
 def preview_base_station_binding(
     lab_profile_id: UUID,
+    test_case_id: Optional[UUID] = Query(
+        None,
+        description="已保存 MIMO_OTA TestCase；省略时兼容性明确为未评估",
+    ),
     db: Session = Depends(get_db),
 ):
     """Read current BaseStation binding truth without connecting to hardware."""
@@ -431,9 +459,21 @@ def preview_base_station_binding(
         raise HTTPException(status_code=404, detail="LabProfile not found")
     from app.services.instrument_hal_service import get_hal_service
 
-    preview = build_base_station_binding_preview(db, get_hal_service(), profile)
+    from app.services.base_station_compatibility import (
+        build_base_station_preview_bundle,
+    )
+
+    preview, compatibility = build_base_station_preview_bundle(
+        db,
+        get_hal_service(),
+        profile,
+        test_case_id=test_case_id,
+    )
     return BaseStationBindingPreviewResponse.model_validate(
-        preview.model_dump(mode="json")
+        {
+            **preview.model_dump(mode="json"),
+            "testcase_compatibility": compatibility.model_dump(mode="json"),
+        }
     )
 
 

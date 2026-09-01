@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-65（P2-64 已由 PR #433 完成；本轮不自动启动下一片）。**
+Current Focus（非现场）= P2-65（本地实现完成，正在验证/审查；P2-64 已由 PR #433 完成）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -56,7 +56,7 @@ P2-57 → P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
 的依赖同样全部满足。前移后重算依赖图零违反。条目本体本次共动三处：P1-74 与 P1-75 两条的
 「先于」表述换源到本顺序串（不再在条目内复制清单），P2-54 补记本次前移新产生的 compatibility
 digest 版本迁移义务；其余各条的依赖关系逐条复核后仍成立、未动。P2-63
-在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64 已由 PR #433 完成；P2-65 尚未启动，WIP=0。
+在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64 已由 PR #433 完成；P2-65 本地实现完成、待审查合并，WIP=1。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -81,7 +81,7 @@ P3-20/P3-21 仍不得自动启动。
    合并；P2-49～P2-53 已由 PR #415/#417/#420/#422/#424 合并；后续现场热修与配置保存完整性
    已由 PR #425/#426/#427 合并。**P1-74 的非现场半已由 PR #429 合并**（CMW500 Extended BLER
    统计基下发 + 回读 + 全域 fail-closed；其现场半待真机）。P1-75 的执行兼容性硬门已由 PR #431 合并。
-   下一批：**P2-64 已由 PR #433 完成，下一项为 P2-65（尚未启动）**；P2-65～P2-67
+   下一批：**P2-64 已由 PR #433 完成；P2-65 本地实现完成、正在验证/审查**；P2-66～P2-67
    分别收口同一次 Mock 复盘派生的 Readiness、证据终态与日志导出；再往后 P2-54～P2-56 收口 CMW500 MAC 真值，
    最后 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
@@ -692,7 +692,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=0；下一项 P2-65（尚未启动）**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）** → P2-65～P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-65 本地实现完成，正在验证/审查；下一项 P2-66**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）** → P2-65～P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** 的现场半（详见下方「Blocked on hardware」）。P1-74 现场半 = 在真实 CMW500 上用至少两个不同统计长度连续执行，证明 Extended BLER 统计基不继承上一 session（非现场半已由 PR #429 合并）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4643,9 +4643,9 @@ UXM+LTE、CMW500+NR、未知型号、manifest/registration 漂移均 fail-loud�
 SCell 操作 fail-closed；CMW manifest 声明的 MAC 配置通过共同 Mock SPI 只产生
 simulated/unknown、`applied=None` 的诊断回执，不声称硬件生效；模拟窗口与指标仍为 diagnostic-only，
 正式 KPI 保持 UNKNOWN/N/A。G27 永久门
-覆盖 manifest 注入、能力并集/型号嗅探回归与真实 Driver 借壳，且带四类坏变异自测。P2-65 尚未启动。
+覆盖 manifest 注入、能力并集/型号嗅探回归与真实 Driver 借壳，且带四类坏变异自测。P2-65 已进入验证/审查阶段。
 
-### P2-65 — Preview / Readiness / Freeze 共用兼容性判定（批准入雷达，未启动）
+### P2-65 — Preview / Readiness / Freeze 共用兼容性判定（本地实现完成，待审查合并）
 
 **可观察故障**：第一组错误组合的 PRECHECK 仍报告 `5/5 instruments ready`；当前 Readiness 证明
 仪表资源在线，却没有回答“所选 TestCase 是否可由当前 Adapter 执行”。若 GUI、同步、Readiness 与
@@ -4658,6 +4658,13 @@ readiness 与 testcase compatibility，不折叠成一个总绿灯。GUI 只消�
 不兼容 TestCase 必须显式红灯；Mock/Diagnostic 且组合兼容只显示黄色“可诊断”。
 
 **地点/依赖**：纯非现场后端/GUI/API 镜像片；依赖 P1-75/P2-64。
+
+**本地实现（2026-09-01）**：保存预览、LabProfile sync、Readiness 与执行冻结已共用 P1-75 的
+requirements projection、compatibility evaluator 与 digest；资源、binding、TestCase compatibility
+分别发布。未提供保存 TestCase 上下文、未保存 GUI 草稿、错误 LabProfile、binding/manifest 漂移或
+不兼容组合均保持红灯；真实兼容组合为绿，Mock/no-adapter 仅黄色诊断。GUI 不含 UXM/CMW 或
+RAT 兼容矩阵，live OpenAPI、checked YAML、generated TS、手写类型与 Mock 镜像已同步；G28 永久门
+锁定共同判定链和 aggregate 黄灯。当前仍需完整回归、fresh 内审与外审，现场 blocker 未改变。
 
 ### P2-66 — BaseStation 执行证据不变量与终态语义（批准入雷达，未启动）
 

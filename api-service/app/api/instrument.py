@@ -36,7 +36,10 @@ from app.schemas.instrument import (
     BaseStationSiteCertificationRevoke,
     UpdateInstrumentCategoryRequest,
 )
-from app.schemas.base_station_binding import BaseStationBindingPreviewResponse
+from app.schemas.base_station_binding import (
+    BaseStationBindingPreviewResponse,
+    BaseStationCompatibilityPreviewResponse,
+)
 from app.services.diagnostic_context import build_diagnostic_context
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
@@ -3812,6 +3815,7 @@ class HALReadinessResponse(BaseModel):
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
     base_station_binding: Optional[BaseStationBindingPreviewResponse] = None
+    base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
@@ -3827,6 +3831,10 @@ def get_hal_readiness(
         description=(
             "当前浏览器显式选择的 LabProfile；省略时保留唯一 active lab 兼容语义"
         ),
+    ),
+    test_case_id: Optional[UUID] = Query(
+        None,
+        description="已保存 MIMO_OTA TestCase；省略时兼容性明确为未评估",
     ),
     db: Session = Depends(get_db),
 ):
@@ -3849,7 +3857,10 @@ def get_hal_readiness(
         build_cmw500_lte_2x2_readiness,
         get_hal_service,
     )
-    from app.services.base_station_binding import build_base_station_binding_preview
+    from app.services.base_station_compatibility import (
+        build_base_station_preview_bundle,
+        build_not_evaluated_base_station_compatibility,
+    )
     from app.services.lab_resolution import resolve_lab_profile
     from app.services.readiness import (
         build_calibration_readiness,
@@ -3868,12 +3879,30 @@ def get_hal_readiness(
     report = hal.last_readiness_report if hal else None
     binding_preview = None
     binding_response = None
+    compatibility = build_not_evaluated_base_station_compatibility(
+        lab_profile_id=lab_section.profile_id,
+        reason=(
+            "No resolved LabProfile and saved TestCase context was available "
+            "for compatibility evaluation"
+        ),
+    )
     if lab_section.profile_id is not None:
         selected_lab = resolve_lab_profile(db, UUID(lab_section.profile_id))
-        binding_preview = build_base_station_binding_preview(db, hal, selected_lab)
-        binding_response = BaseStationBindingPreviewResponse.model_validate(
-            binding_preview.model_dump(mode="json")
+        binding_preview, compatibility = build_base_station_preview_bundle(
+            db,
+            hal,
+            selected_lab,
+            test_case_id=test_case_id,
         )
+        binding_response = BaseStationBindingPreviewResponse.model_validate(
+            {
+                **binding_preview.model_dump(mode="json"),
+                "testcase_compatibility": compatibility.model_dump(mode="json"),
+            }
+        )
+    compatibility_response = BaseStationCompatibilityPreviewResponse.model_validate(
+        compatibility.model_dump(mode="json")
+    )
     cmw_readiness = (
         build_cmw500_lte_2x2_readiness(
             db,
@@ -3928,6 +3957,7 @@ def get_hal_readiness(
                 detail="HAL not initialised yet",
             ),
             base_station_binding=binding_response,
+            base_station_testcase_compatibility=compatibility_response,
             base_station_site_certification=site_certification,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
@@ -3967,6 +3997,7 @@ def get_hal_readiness(
             detail=report.dut_attach.detail,
         ),
         base_station_binding=binding_response,
+        base_station_testcase_compatibility=compatibility_response,
         base_station_site_certification=site_certification,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,

@@ -28,6 +28,7 @@ import { fetchReadiness } from '../../api/service'
 import { useOperationalLab } from '../OperationalLab'
 import {
   projectBaseStationBindingTruth,
+  projectBaseStationCompatibilityTruth,
   projectReadinessVerdict,
 } from './baseStationBindingTruth'
 import type {
@@ -139,6 +140,9 @@ function buildCells(report: HALReadinessResponse): Cell[] {
 
   const cal = report.calibration
   const rawBaseStationBinding = projectBaseStationBindingTruth(report.base_station_binding)
+  const baseStationCompatibility = projectBaseStationCompatibilityTruth(
+    report.base_station_testcase_compatibility,
+  )
   const certification = report.base_station_site_certification
   const certificationMatches = certification?.status === 'active'
     && certification.binding_digest === report.base_station_binding?.binding_digest
@@ -212,6 +216,13 @@ function buildCells(report: HALReadinessResponse): Cell[] {
       light: baseStationBinding.light,
       valueText: baseStationBinding.valueText,
       detail: baseStationBinding.detail,
+    },
+    {
+      key: 'base-station-compatibility',
+      title: '用例兼容性',
+      light: baseStationCompatibility.light,
+      valueText: baseStationCompatibility.valueText,
+      detail: baseStationCompatibility.detail,
     },
   ]
 }

@@ -2,7 +2,7 @@
 
 **日期**：2026-08-30
 
-**状态**：P1-75 已合并；P2-64 已由 PR #433 完成；P2-65～P2-67 未启动
+**状态**：P1-75 已合并；P2-64 已由 PR #433 完成；P2-65 本地实现完成、待审查合并；P2-66～P2-67 未启动
 
 **对应条目**：P1-75、P2-64～P2-67
 
@@ -83,6 +83,11 @@ fail-loud，未声明可选操作 fail-closed，`diagnostic_unbound` 只借 mani
 
 保存预览、LabProfile 同步、Readiness 与执行冻结消费 P1-75 的同一纯判定器与同一 digest；资源在线
 与 TestCase 可执行分别显示。GUI 只能展示服务器判定，不复制能力矩阵或自建 vendor 分支。
+
+**2026-09-01 本地实现状态**：preview、sync、readiness 与 execution freeze 已共用同一 requirements
+projection、compatibility evaluator 与 digest；API 单独发布 resource/binding/TestCase compatibility，
+GUI 只消费服务端 status/reasons，并在未保存 TestCase/LabProfile 草稿时 fail-closed。OpenAPI、生成 TS、
+手写类型与 Mock 数据镜像已同步；当前等待完整回归、fresh 内审与 PR 外审，不提前宣称已合并。
 
 ### P2-66 — 执行证据与终态语义
 
