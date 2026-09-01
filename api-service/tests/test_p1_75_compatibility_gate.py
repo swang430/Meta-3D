@@ -56,7 +56,11 @@ from app.models.instrument import (
 )
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
-from app.hal.base_station_compatibility import canonical_payload_digest
+from app.hal.base_station_compatibility import (
+    MEASURE_REQUIRED_OPERATIONS,
+    build_measure_execution_requirements,
+    canonical_payload_digest,
+)
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
     freeze_base_station_adapter_profile,
@@ -683,6 +687,50 @@ def test_attempt_context_rejects_rat_capability_drift(monkeypatch):
             SimpleNamespace(test_execution=execution, db=_Db(execution)),
             driver,
         )
+
+
+def test_uppercase_rat_is_rejected_at_construction_with_a_precise_reason():
+    """外审 R3 收窄：大写 "LTE" 在构造层即拒，理由直指值非法。
+
+    刻意不做 lower() 归一化 —— 大写只可能来自从未通过 schema 校验的数据；
+    此前它会流进 evaluator 得到误导性的「rat 不被 manifest 支持」。
+    """
+
+    with pytest.raises(ValueError, match="case-sensitive"):
+        build_measure_execution_requirements("LTE")
+    with pytest.raises(ValueError, match="not a valid RAT"):
+        build_measure_execution_requirements("Lte")
+
+
+def test_requirements_digest_is_forward_compatible_with_absent_fields():
+    """外审 R3（真 high）：omit-when-None 的前向兼容行为门。
+
+    站点 B 用 model_validate(旧 payload) 重算 digest 与冻结值比对。升级场景
+    的形态 = 旧 payload 缺新增的可选字段：它与新代码默认 None 必须算出
+    **同一个** digest，否则 P2-54 加字段后所有升级前冻结的 pending 执行
+    会在站点 B 全部误拒。
+    """
+
+    with_explicit_none = BaseStationExecutionRequirements.model_validate(
+        {
+            "schema_version": 1,
+            "requested_rat": "lte",
+            "required_operations": list(MEASURE_REQUIRED_OPERATIONS),
+            "mac_profile": None,
+        }
+    )
+    without_the_key = BaseStationExecutionRequirements.model_validate(
+        {
+            "schema_version": 1,
+            "requested_rat": "lte",
+            "required_operations": list(MEASURE_REQUIRED_OPERATIONS),
+        }
+    )
+    assert with_explicit_none.digest == without_the_key.digest
+    # None 字段不得进入 digest 输入 —— 行为门，不是存在性门
+    dumped = with_explicit_none.model_dump(mode="json", exclude_none=True)
+    assert "mac_profile" not in dumped
+    assert with_explicit_none.digest == canonical_payload_digest(dumped)
 
 
 def test_attempt_context_rejects_real_driver_without_live_manifest(monkeypatch):

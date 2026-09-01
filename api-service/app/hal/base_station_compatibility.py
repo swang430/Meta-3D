@@ -64,18 +64,15 @@ class BaseStationExecutionRequirements(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1]
-    requested_rat: str
+    # 外审 R3：收窄成封闭 Literal（与 TestCase schema 的取值域同源），
+    # 非法形态（含大写 "LTE"）在**构造层**即拒、理由直指值非法 —— 而不是
+    # 流进 evaluator 得到误导性的「rat 不被 manifest 支持」。刻意**不做**
+    # lower() 归一化：大写只可能来自从未通过 schema 校验的数据，宽容化
+    # 输入域等于悄悄扩大契约（从非法形态补真，撞本仓不变量）。
+    requested_rat: Literal["nr5g", "lte"]
     required_operations: tuple[str, ...]
     # P2-54 的显式扩展槽位：本片绝不发明 MAC profile 判据（条目红线）。
     mac_profile: None = None
-
-    @field_validator("requested_rat")
-    @classmethod
-    def _non_blank_rat(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("requested_rat must be non-blank")
-        return normalized
 
     @field_validator("required_operations")
     @classmethod
@@ -89,7 +86,15 @@ class BaseStationExecutionRequirements(BaseModel):
 
     @property
     def digest(self) -> str:
-        return canonical_payload_digest(self.model_dump(mode="json"))
+        # 外审 R3（真 high）：omit-when-None（P1-74 statistical_basis 同款）。
+        # 站点 B 用 model_validate(旧 payload) 后重算 digest 与冻结值比对 ——
+        # 若 None 字段进 digest，P2-54 新增任何可选字段都会让升级前冻结的
+        # pending 执行全部误拒（新代码给旧数据填默认 None → dump 多出新键
+        # → digest 漂移）。exclude_none 下：旧 payload 缺新字段与新代码
+        # 默认 None 算出同一 digest；字段真正赋值时 digest 才变（应当变）。
+        return canonical_payload_digest(
+            self.model_dump(mode="json", exclude_none=True)
+        )
 
 
 def build_measure_execution_requirements(
@@ -97,12 +102,19 @@ def build_measure_execution_requirements(
 ) -> BaseStationExecutionRequirements:
     """measure 执行链的标准需求：requested RAT + 固定操作全集。"""
 
-    return BaseStationExecutionRequirements(
-        schema_version=1,
-        requested_rat=requested_rat,
-        required_operations=MEASURE_REQUIRED_OPERATIONS,
-        mac_profile=None,
-    )
+    try:
+        return BaseStationExecutionRequirements(
+            schema_version=1,
+            requested_rat=requested_rat,  # type: ignore[arg-type]  # Literal 域校验即为目的
+            required_operations=MEASURE_REQUIRED_OPERATIONS,
+            mac_profile=None,
+        )
+    except ValidationError as exc:
+        raise ValueError(
+            f"TestCase radio_technology {requested_rat!r} is not a valid RAT "
+            "(expected 'nr5g' or 'lte', case-sensitive; the value never passed "
+            "schema validation)"
+        ) from exc
 
 
 class BaseStationCompatibilityVerdict(BaseModel):
@@ -141,7 +153,11 @@ def manifest_compatibility_digest(manifest: BaseStationAdapterManifest) -> str:
         raise TypeError(
             "compatibility digest requires a registered adapter manifest"
         )
-    return canonical_payload_digest(manifest.model_dump(mode="json"))
+    # 同上 omit-when-None：manifest 模型未来加可选字段时，旧 frozen 的
+    # manifest_digest 不因 None 默认值漂移。
+    return canonical_payload_digest(
+        manifest.model_dump(mode="json", exclude_none=True)
+    )
 
 
 def evaluate_base_station_compatibility(
