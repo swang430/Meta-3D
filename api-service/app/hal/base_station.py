@@ -1897,9 +1897,6 @@ class MockBaseStation(BaseStationDriver):
             self.measurement_window_cardinality = (
                 adapter_manifest.measurement.cardinality
             )
-        self._metric_registry_profile_hint = str(
-            config.get("uxm_profile") or "5g_nr"
-        ).strip().casefold()
         self._remote_session_token: str | None = None
         self._cell_running = False
         self._cell_state = CellState.OFF
@@ -1911,25 +1908,11 @@ class MockBaseStation(BaseStationDriver):
         self._frc = ""
 
     def resolve_metric_registry(self) -> BaseStationMetricRegistry:
-        """Preserve adapter metric shape while making mock truth diagnostic."""
+        """Project registered metric shape without constructing a real driver."""
 
-        if self.adapter_id == "cmw500":
-            from app.hal.cmw500_base_station import RealCmw500Driver
-
-            source = RealCmw500Driver(
-                f"{self.instrument_id}-shape",
-                {"ip_address": "192.0.2.1"},
-            ).resolve_metric_registry()
-        else:
-            from app.hal.uxm_base_station import RealUxmDriver
-
-            source = RealUxmDriver(
-                f"{self.instrument_id}-shape",
-                {
-                    "ip_address": "192.0.2.1",
-                    "uxm_profile": self._metric_registry_profile_hint,
-                },
-            ).resolve_metric_registry()
+        measurement = self.adapter_manifest.measurement
+        if measurement is None:
+            raise ValueError("mock adapter manifest has no measurement capability")
         metrics = tuple(
             BaseStationMetricCapability(
                 key=metric.key,
@@ -1939,12 +1922,12 @@ class MockBaseStation(BaseStationDriver):
                 evidence="diagnostic_only",
                 source_reference=metric.source_reference,
             )
-            for metric in source.metrics
+            for metric in sorted(measurement.metrics, key=lambda item: item.key)
         )
         return BaseStationMetricRegistry(
             schema_version=1,
             adapter_id=self.adapter_id,
-            profile_id=f"mock_{source.profile_id}",
+            profile_id=f"mock_{self.adapter_id}",
             metrics=metrics,
         )
 
@@ -2010,7 +1993,7 @@ class MockBaseStation(BaseStationDriver):
     ) -> BaseStationApplyReceipt:
         """Mirror a bound CMW route as simulated unknown evidence."""
 
-        if self.adapter_id != "cmw500":
+        if "internal_route" not in self.adapter_manifest.operations:
             return await super().apply_route(frozen_adapter)
         resolution = frozen_adapter.get("resolution")
         profile = resolution.get("profile") if isinstance(resolution, dict) else None
@@ -2050,7 +2033,7 @@ class MockBaseStation(BaseStationDriver):
     ) -> bool:
         """Allow only the complete simulated CMW route shape for diagnostics."""
 
-        if self.adapter_id != "cmw500":
+        if "internal_route" not in self.adapter_manifest.operations:
             return super().route_allows_diagnostic_execution(receipt)
         from app.hal.base_station_adapter_profile import (
             Cmw500Lte2x2InternalRoute,
@@ -2244,6 +2227,16 @@ class MockBaseStation(BaseStationDriver):
 
         if not isinstance(request, BaseStationMeasurementWindowRequest):
             raise TypeError("mock measurement requires a frozen window request")
+        measurement = self.adapter_manifest.measurement
+        if (
+            measurement is None
+            or request.lifecycle != measurement.lifecycle
+            or request.cardinality != measurement.cardinality
+            or request.scope not in measurement.scopes
+        ):
+            raise ValueError(
+                "mock measurement request does not match frozen manifest"
+            )
         started_at = datetime.now(timezone.utc)
         await asyncio.sleep(max(float(window_s), 0.0))
         metrics = await self.get_throughput_metrics(

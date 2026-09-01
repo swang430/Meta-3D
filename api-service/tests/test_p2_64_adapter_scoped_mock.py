@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.hal.base_station import MockBaseStation, RadioTechnology
+from app.hal.base_station import (
+    BaseStationMeasurementWindowRequest,
+    MockBaseStation,
+    RadioTechnology,
+    ThroughputMetrics,
+    resolve_base_station_execution_plan,
+)
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
 
@@ -94,3 +100,164 @@ async def test_mock_capability_projection_contains_only_manifest_truth(
         assert "frequency_range" not in parameters
         assert "max_bandwidth_mhz" not in parameters
 
+
+@pytest.mark.parametrize(
+    ("manifest", "model_name"),
+    (
+        (RealUxmDriver.adapter_manifest, UXM_MODEL_NAME),
+        (RealCmw500Driver.adapter_manifest, CMW_MODEL_NAME),
+    ),
+)
+def test_mock_metric_registry_is_a_diagnostic_projection_of_manifest(
+    monkeypatch,
+    manifest,
+    model_name: str,
+):
+    def _must_not_instantiate(*_args, **_kwargs):
+        raise AssertionError("mock registry must not instantiate a real driver")
+
+    monkeypatch.setattr(RealUxmDriver, "__init__", _must_not_instantiate)
+    monkeypatch.setattr(RealCmw500Driver, "__init__", _must_not_instantiate)
+
+    registry = _mock(model_name, manifest).resolve_metric_registry()
+
+    assert registry.adapter_id == manifest.adapter_id
+    assert registry.profile_id == f"mock_{manifest.adapter_id}"
+    assert [metric.key for metric in registry.metrics] == sorted(
+        metric.key for metric in manifest.measurement.metrics
+    )
+    assert all(metric.evidence == "diagnostic_only" for metric in registry.metrics)
+
+
+@pytest.mark.parametrize(
+    ("manifest", "model_name", "expected"),
+    (
+        (
+            RealUxmDriver.adapter_manifest,
+            UXM_MODEL_NAME,
+            {
+                "scell": False,
+                "mac_throughput": False,
+                "rrc_reconfiguration": False,
+                "input_level_control": True,
+            },
+        ),
+        (
+            RealCmw500Driver.adapter_manifest,
+            CMW_MODEL_NAME,
+            {
+                "scell": False,
+                "mac_throughput": True,
+                "rrc_reconfiguration": False,
+                "input_level_control": False,
+            },
+        ),
+    ),
+)
+def test_mock_execution_plan_is_scoped_by_manifest_operations(
+    manifest,
+    model_name: str,
+    expected: dict[str, bool],
+):
+    driver = _mock(model_name, manifest)
+
+    plan = resolve_base_station_execution_plan(
+        driver,
+        manifest=driver.adapter_manifest,
+    )
+
+    assert {
+        name: getattr(plan, name).planned
+        for name in (
+            "scell",
+            "mac_throughput",
+            "rrc_reconfiguration",
+            "input_level_control",
+        )
+    } == expected
+
+
+@pytest.mark.asyncio
+async def test_mock_rejects_window_shape_that_drifted_from_manifest():
+    driver = _mock(CMW_MODEL_NAME, RealCmw500Driver.adapter_manifest)
+    request = BaseStationMeasurementWindowRequest(
+        schema_version=1,
+        scope="pcell",
+        lifecycle="clear_read_only",
+        cardinality="requested",
+        requested_window_count=2,
+        expected_window_count=2,
+        window_index=0,
+    )
+
+    with pytest.raises(ValueError, match="frozen manifest"):
+        await driver.measure_base_station_window(0.0, request=request)
+
+
+@pytest.mark.asyncio
+async def test_mock_window_keeps_manifest_metrics_simulated_and_untrusted():
+    manifest = RealUxmDriver.adapter_manifest
+    driver = _mock(UXM_MODEL_NAME, manifest)
+    await driver.start_signaling()
+    request = BaseStationMeasurementWindowRequest(
+        schema_version=1,
+        scope="pcell",
+        lifecycle=manifest.measurement.lifecycle,
+        cardinality=manifest.measurement.cardinality,
+        requested_window_count=1,
+        expected_window_count=1,
+        window_index=0,
+    )
+
+    window = await driver.measure_base_station_window(0.0, request=request)
+
+    assert window.trust is not None
+    assert window.trust.simulated is True
+    assert window.confirmed is False
+    assert window.metrics.throughput_scope == ThroughputMetrics.SCOPE_SIMULATED
+    assert not any(window.metrics.kpi_valid.values())
+    assert [item.key for item in window.metric_observations] == sorted(
+        metric.key for metric in manifest.measurement.metrics
+    )
+    assert all(item.simulated is True for item in window.metric_observations)
+
+
+@pytest.mark.asyncio
+async def test_mock_route_is_enabled_only_by_manifest_operation():
+    frozen_route = {
+        "resolution": {
+            "profile": {
+                "lte_2x2_internal_route": {
+                    "pcc_bb_board": "SUA1",
+                    "rx_connector": "RF1C",
+                    "rx_converter": "RX1",
+                    "tx1_connector": "RF1O",
+                    "tx1_converter": "TX1",
+                    "tx2_connector": "RF3C",
+                    "tx2_converter": "TX2",
+                }
+            }
+        }
+    }
+
+    uxm_receipt = await _mock(
+        UXM_MODEL_NAME,
+        RealUxmDriver.adapter_manifest,
+    ).apply_route(frozen_route)
+    cmw_receipt = await _mock(
+        CMW_MODEL_NAME,
+        RealCmw500Driver.adapter_manifest,
+    ).apply_route(frozen_route)
+
+    assert [field.status for field in uxm_receipt.fields] == ["not_applicable"]
+    assert {field.field for field in cmw_receipt.fields} == {
+        "pcc_bb_board",
+        "rx_connector",
+        "rx_converter",
+        "tx1_connector",
+        "tx1_converter",
+        "tx2_connector",
+        "tx2_converter",
+    }
+    assert all(field.status == "unknown" for field in cmw_receipt.fields)
+    assert cmw_receipt.simulated is True
