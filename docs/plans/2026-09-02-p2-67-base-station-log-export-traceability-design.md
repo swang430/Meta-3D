@@ -1,7 +1,8 @@
 # P2-67 — BaseStation 日志与导出可追溯性设计
 
-**日期**：2026-09-02  
-**状态**：已批准 roadmap 的实施细化  
+**日期**：2026-09-02
+
+**状态**：已批准 roadmap 的实施细化
 **Roadmap**：P2-67（依赖 P1-75、P2-65、P2-66）
 
 ## 1. 可观察故障与本片目标
@@ -111,4 +112,3 @@ digest、requested RAT、compatibility classification/digest、completion semant
 4. 客户端不能提交或覆盖元数据；current LabProfile、HAL driver 或 TestCase 后续变化不改变历史导出身份。
 5. 畸形冻结导出明确 invalid/null，不 500、不补真、不形成正式有效假象。
 6. 无 execution 过滤的普通导出与原始全量下载保持现有行为。
-

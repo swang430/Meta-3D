@@ -83,4 +83,3 @@
    继续最小修复与 P1-only 外审直到最新 HEAD 无 P1。
 7. fetch 验证 `origin/main`，主目录 ff-only 同步并保留未跟踪仪器资料，清理 worktree/本地分支后才
    开始 P2-54。
-
