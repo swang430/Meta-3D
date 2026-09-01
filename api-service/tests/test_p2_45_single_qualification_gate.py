@@ -38,17 +38,19 @@ def test_classification_decision_does_not_read_legacy_or_vendor_authorizers():
         assert forbidden not in decision
 
 
-def test_all_formal_consumers_use_the_frozen_classification_boundary():
-    required = {
-        "api-service/app/services/mimo_ota/executors/analysis.py": "execution_is_diagnostic",
-        "api-service/app/services/mimo_ota/executors/report.py": "execution_is_diagnostic",
-        "api-service/app/services/report_service.py": "execution_is_diagnostic",
-        "api-service/app/services/report_data_collector.py": "execution_is_diagnostic",
-        "api-service/app/api/test_execution.py": "execution_is_diagnostic",
-        "api-service/app/api/commissioning.py": "execution_is_diagnostic",
-    }
-    for relative, token in required.items():
-        assert token in _read(relative), relative
+def test_all_formal_consumers_use_the_frozen_evidence_outcome_boundary():
+    required = (
+        "api-service/app/services/mimo_ota/executors/analysis.py",
+        "api-service/app/services/mimo_ota/executors/report.py",
+        "api-service/app/services/report_service.py",
+        "api-service/app/services/report_data_collector.py",
+        "api-service/app/api/test_execution.py",
+        "api-service/app/api/commissioning.py",
+    )
+    for relative in required:
+        source = _read(relative)
+        assert "execution_evidence_blocks_formal_outputs" in source, relative
+        assert "execution_is_diagnostic" not in source, relative
 
 
 def test_gui_has_no_legacy_client_side_formal_or_calibration_authority():
