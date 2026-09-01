@@ -486,3 +486,9 @@ def test_execution_export_contract_is_mirrored_and_gui_query_is_single_source():
         "if (opts.executionFilter) q.execution_id = opts.executionFilter"
         in viewer
     )
+
+    generated = (
+        Path(__file__).resolve().parents[2]
+        / "gui/src/types/api.generated.ts"
+    ).read_text(encoding="utf-8")
+    assert '"/api/v1/system-logs/export/{filename}": {' in generated

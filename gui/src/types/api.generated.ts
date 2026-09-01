@@ -1383,6 +1383,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system-logs/export/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export filtered structured logs
+         * @description Exports matching JSONL groups using the same filters as the screen and
+         *     history views. With `execution_id`, the filename contains the 完整 execution UUID
+         *     and the first line is server-generated `export_metadata` containing the
+         *     filters, frozen BaseStation adapter/binding, TestCase RAT, and P2-66
+         *     execution evidence outcome. Clients cannot submit those frozen identity
+         *     fields. Without `execution_id`, the response remains pure matching log rows;
+         *     the separate raw `/download` endpoint keeps its existing byte and filename semantics.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    level?: string;
+                    keyword?: string;
+                    session_id?: string;
+                    hal_mode?: string;
+                    execution_id?: string;
+                };
+                header?: never;
+                path: {
+                    filename: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered JSONL export stream */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-ndjson": string;
+                    };
+                };
+                /** @description execution_id is not a valid UUID */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description TestExecution not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboard/alerts": {
         parameters: {
             query?: never;
