@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -389,4 +392,73 @@ def test_unfiltered_export_and_raw_download_remain_byte_compatible(
     assert downloaded.content == raw.encode("utf-8")
     assert downloaded.headers["content-disposition"].endswith(
         'filename="app.log"'
+    )
+
+
+def test_execution_export_canonicalizes_uuid_before_filtering(
+    tmp_path,
+    monkeypatch,
+):
+    import app.api.system_logs as system_logs
+
+    execution_id = "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    (tmp_path / "app.log").write_text(
+        _log_line(execution_id, "canonical execution") + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "log_dir", str(tmp_path))
+    monkeypatch.setattr(
+        system_logs,
+        "SessionLocal",
+        lambda: _DB(_execution(execution_id)),
+        raising=False,
+    )
+
+    response = TestClient(app).get(
+        f"{settings.api_v1_prefix}/system-logs/export/app.log",
+        params={"execution_id": execution_id.upper()},
+    )
+
+    assert response.status_code == 200
+    records = [json.loads(line) for line in response.text.splitlines()]
+    assert records[0]["filters"]["execution_id"] == execution_id
+    assert [record["msg"] for record in records[1:]] == [
+        "canonical execution"
+    ]
+
+
+def test_execution_export_contract_is_mirrored_and_gui_query_is_single_source():
+    live_operation = app.openapi()["paths"][
+        "/api/v1/system-logs/export/{filename}"
+    ]["get"]
+    checked_operation = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[2]
+            / "api/openapi.yaml"
+        ).read_text(encoding="utf-8")
+    )["paths"]["/api/v1/system-logs/export/{filename}"]["get"]
+
+    for operation in (live_operation, checked_operation):
+        assert "export_metadata" in operation["description"]
+        assert "完整 execution UUID" in operation["description"]
+        assert {"400", "404"} <= set(operation["responses"])
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in operation["parameters"]
+        }
+        assert "execution_id" in parameters
+        assert not {
+            "adapter_id",
+            "requested_rat",
+            "compatibility_verdict",
+        }.intersection(parameters)
+
+    viewer = (
+        Path(__file__).resolve().parents[2]
+        / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8")
+    assert len(re.findall(r"buildLogQuery\(\{", viewer)) == 3
+    assert (
+        "if (opts.executionFilter) q.execution_id = opts.executionFilter"
+        in viewer
     )

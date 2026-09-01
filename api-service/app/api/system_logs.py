@@ -759,7 +759,13 @@ def _load_execution_export_metadata(execution_id: str, db) -> dict[str, object]:
     }
 
 
-@router.get("/export/{filename}")
+@router.get(
+    "/export/{filename}",
+    responses={
+        400: {"description": "execution_id 不是合法 UUID"},
+        404: {"description": "execution_id 对应的 TestExecution 不存在"},
+    },
+)
 def export_filtered_logs(
     filename: str,
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
@@ -771,8 +777,13 @@ def export_filtered_logs(
     """
     按过滤条件导出日志。
 
-    与 /download 不同，此端点会根据筛选条件只导出匹配的行。
-    返回 JSONL 格式的文件流。
+    与 /download 不同，此端点会根据筛选条件只导出匹配的行。带
+    `execution_id` 时，文件名包含完整 execution UUID，JSONL 首行是服务器生成的
+    `export_metadata`，记录完整过滤条件、冻结 adapter/binding、TestCase RAT 与
+    P2-66 execution evidence outcome；这些身份字段不接受客户端提交，也不从当前
+    TestCase、LabProfile 或 HAL 回填。非法 UUID 返回 400，执行不存在返回 404。
+
+    不带 `execution_id` 时继续返回纯匹配日志；原始 `/download` 的字节与文件名语义不变。
     """
     filepath = _safe_filename(filename)
     execution_metadata: dict[str, object] | None = None
@@ -785,6 +796,7 @@ def export_filtered_logs(
             )
         finally:
             db.close()
+        execution_id = str(execution_metadata["execution_id"])
 
     export_metadata = None
     if execution_metadata is not None:
