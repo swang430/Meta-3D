@@ -187,6 +187,32 @@ def test_report_projection_drift_is_explicitly_invalid_not_silently_trusted():
     assert any("stored report" in reason for reason in outcome.reasons)
 
 
+def test_malformed_stored_report_projection_fails_closed_without_crashing():
+    execution = _invalid_formal_execution()
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    content["execution_evidence_outcome"] = {"pipeline_status": "completed"}
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[execution.id],
+        content_data=content,
+    )
+
+    outcome, matches = _report_execution_outcome_state(
+        _SingleResultDb(execution),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("malformed" in reason for reason in outcome.reasons)
+
+
 def test_report_projection_allows_expected_running_to_completed_transition():
     execution = _invalid_formal_execution()
     execution.status = "running"

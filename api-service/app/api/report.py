@@ -147,6 +147,14 @@ def _report_execution_outcome_state(
             ),
             False,
         )
+    if stored is None:
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome is malformed",
+            ),
+            False,
+        )
     # REPORT runs while the execution row is still ``running``; the case
     # runner publishes the terminal status only after REPORT succeeds.  The
     # compatibility and qualification evidence is already frozen at that
