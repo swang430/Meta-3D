@@ -10,6 +10,8 @@ diagnostic_run audit row. We verify:
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -107,8 +109,8 @@ def setup_db(monkeypatch):
     hal = get_hal_service()
     saved_base_station = hal.drivers.get("baseStation")
     saved_positioner = hal.drivers.get("positioner")
-    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
-    hal.drivers["positioner"] = MockPositioner("mock-pos", {"model": "Mock"})
+    hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
+    hal.drivers["positioner"] = MockPositioner("mock-pos", {"model": "UXM 5G E7515B"})
     prev = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setattr(

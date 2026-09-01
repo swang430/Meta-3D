@@ -1259,7 +1259,7 @@ async def certify_simulated_exclusion(
     from app.services.mimo_ota.executors.measure import MeasureExecutor
 
     request = MeasureExecutor._measurement_window_requests(
-        None,
+        getattr(driver, "adapter_manifest", None),
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=1,
         simulated_diagnostic=True,

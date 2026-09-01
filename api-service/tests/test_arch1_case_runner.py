@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import asyncio
 import uuid
 from datetime import datetime
@@ -63,7 +65,7 @@ def _db_schema(monkeypatch):
     hal = get_hal_service()
     saved_base_station = hal.drivers.get("baseStation")
     saved_positioner = hal.drivers.get("positioner")
-    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
     hal.drivers["positioner"] = MockPositioner("mock-positioner", {})
     prev = app.dependency_overrides.get(get_db)
 

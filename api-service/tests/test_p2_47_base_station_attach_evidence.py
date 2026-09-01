@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from copy import deepcopy
 
 import pytest
@@ -209,7 +211,7 @@ async def test_writer_accepts_simulated_unknown_attach_but_never_marks_it_formal
         "active_base_station_lease_identity",
         lambda: _lease("cmw500"),
     )
-    receipt = await MockBaseStation("mock-cmw", {"model": "CMW500"}).attach()
+    receipt = await registered_mock_base_station("mock-cmw", {"model": "CMW500"}).attach()
 
     confirm_base_station_attach(
         _Db(execution),

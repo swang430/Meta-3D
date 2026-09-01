@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import itertools
 from pathlib import Path
 
@@ -144,7 +146,7 @@ def _uxm_subject() -> AdapterCertificationSubject:
             {"BSE:STATus:NR5G": "OFF" if confirmed else "GARBAGE"}
         ),
         build_release_driver=_uxm_release_driver,
-        build_simulated_driver=lambda: MockBaseStation(
+        build_simulated_driver=lambda: registered_mock_base_station(
             "mock-uxm", {"model": "UXM 5G E7515B"}
         ),
         transport_probe=lambda driver: driver.get_cell_state(),
@@ -263,7 +265,7 @@ def _cmw_subject() -> AdapterCertificationSubject:
             }
         ),
         build_release_driver=_cmw_release_driver,
-        build_simulated_driver=lambda: MockBaseStation(
+        build_simulated_driver=lambda: registered_mock_base_station(
             "mock-cmw", {"model": "CMW500"}
         ),
         transport_probe=lambda driver: driver.get_cell_state(),

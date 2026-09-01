@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -430,7 +432,7 @@ def test_explicit_cmw_mock_can_enter_a_simulated_diagnostic_attempt(monkeypatch)
     )
     frozen = _simulated_frozen()
     execution.config = {"base_station_adapter_profile_freeze": frozen}
-    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+    driver = registered_mock_base_station("mock-cmw", {"model": "CMW500"})
     initialize_base_station_execution_evidence(
         execution,
         frozen_adapter=frozen,
@@ -462,7 +464,7 @@ def test_explicit_cmw_mock_can_enter_a_simulated_diagnostic_attempt(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window():
-    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+    driver = registered_mock_base_station("mock-cmw", {"model": "CMW500"})
     await driver.start_signaling()
 
     samples = await MeasureExecutor._measure_base_station_samples(
@@ -470,11 +472,11 @@ async def test_explicit_cmw_mock_uses_the_existing_simulated_diagnostic_window()
         window_s=0.0,
         throughput_scope=ThroughputMetrics.SCOPE_PCELL,
         requested_sample_count=2,
-        manifest=None,
+        manifest=driver.adapter_manifest,
         simulated_diagnostic=True,
         statistical_basis_subframes=5000,
     )
 
-    assert len(samples) == 2
+    assert len(samples) == 1
     assert all(sample.window is not None for sample in samples)
     assert all(sample.metrics.throughput_scope == "simulated" for sample in samples)

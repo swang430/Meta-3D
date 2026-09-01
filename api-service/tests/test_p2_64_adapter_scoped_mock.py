@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import app.services.instrument_hal_service as hal_service_module
 from app.hal.base_station import (
     BaseStationMeasurementWindowRequest,
     MockBaseStation,
@@ -261,3 +262,59 @@ async def test_mock_route_is_enabled_only_by_manifest_operation():
     }
     assert all(field.status == "unknown" for field in cmw_receipt.fields)
     assert cmw_receipt.simulated is True
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected_adapter"),
+    (
+        (UXM_MODEL_NAME, "uxm"),
+        (CMW_MODEL_NAME, "cmw500"),
+    ),
+)
+def test_hal_factory_injects_selected_models_registered_manifest(
+    model_name: str,
+    expected_adapter: str,
+):
+    driver = hal_service_module._instantiate_hal_driver(
+        MockBaseStation,
+        category_key="baseStation",
+        model_name=model_name,
+        instrument_id="baseStation-mock",
+        config={"model": model_name},
+    )
+
+    registration = hal_service_module.get_base_station_adapter_registration(
+        model_name
+    )
+    assert driver.adapter_id == expected_adapter
+    assert driver.adapter_manifest is registration.manifest
+
+
+def test_hal_factory_rejects_unregistered_mock_model():
+    with pytest.raises(KeyError, match="unknown base-station model"):
+        hal_service_module._instantiate_hal_driver(
+            MockBaseStation,
+            category_key="baseStation",
+            model_name="Unknown BaseStation",
+            instrument_id="baseStation-mock",
+            config={"model": "Unknown BaseStation"},
+        )
+
+
+def test_hal_factory_keeps_non_base_station_constructor_contract():
+    calls: list[tuple[str, dict]] = []
+
+    class _OtherDriver:
+        def __init__(self, instrument_id: str, config: dict):
+            calls.append((instrument_id, config))
+
+    driver = hal_service_module._instantiate_hal_driver(
+        _OtherDriver,
+        category_key="signalAnalyzer",
+        model_name="Example",
+        instrument_id="signalAnalyzer-example",
+        config={"model": "Example"},
+    )
+
+    assert isinstance(driver, _OtherDriver)
+    assert calls == [("signalAnalyzer-example", {"model": "Example"})]

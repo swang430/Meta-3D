@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import asyncio
 from unittest.mock import MagicMock
 
@@ -139,7 +141,7 @@ class TestRefusals:
 
     def test_mock_driver_refused(self):
         from app.hal.base_station import MockBaseStation
-        bs = MockBaseStation("bs-mock", {})
+        bs = registered_mock_base_station("bs-mock", {"model": "UXM 5G E7515B"})
         hal = MagicMock(); hal.drivers = {"baseStation": bs}
         res = asyncio.run(seq.run(MagicMock(), hal, {}, log=lambda *_: None))
         assert res.success is False

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -182,7 +184,7 @@ async def test_bound_cmw_mock_route_covers_frozen_request_but_stays_simulated(
             "profile": {"lte_2x2_internal_route": route},
         }
     }
-    driver = MockBaseStation("mock-cmw", {"model": "CMW500"})
+    driver = registered_mock_base_station("mock-cmw", {"model": "CMW500"})
 
     receipt = await driver.apply_route(frozen)
 

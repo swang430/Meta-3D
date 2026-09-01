@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 import inspect
 from copy import deepcopy
 
@@ -162,20 +164,25 @@ def test_plan_digest_is_stable_and_payload_json_safe():
 
 
 def test_mock_simulated_plan_shape_is_fixed():
-    """④ mock 声明推导：SCell/RRC planned、MAC/输入电平保持 fail-closed。"""
+    """④ mock 计划严格镜像所选 adapter manifest，不发布能力并集。"""
 
-    for model, adapter_id in (("UXM", "uxm"), ("CMW500", "cmw500")):
-        mock = MockBaseStation("mock", {"model": model})
+    expected_by_model = {
+        "UXM 5G E7515B": ("uxm", False, False, False, True),
+        "CMW500": ("cmw500", False, True, False, False),
+    }
+    for model, expected in expected_by_model.items():
+        mock = registered_mock_base_station("mock", {"model": model})
 
         plan = resolve_base_station_execution_plan(
             mock, manifest=getattr(mock, "adapter_manifest", None)
         )
 
+        adapter_id, scell, mac, rrc, input_level = expected
         assert plan.adapter_id == adapter_id
-        assert plan.scell.planned is True
-        assert plan.rrc_reconfiguration.planned is True
-        assert plan.mac_throughput.planned is False
-        assert plan.input_level_control.planned is False
+        assert plan.scell.planned is scell
+        assert plan.mac_throughput.planned is mac
+        assert plan.rrc_reconfiguration.planned is rrc
+        assert plan.input_level_control.planned is input_level
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +246,9 @@ def test_mac_site_consumes_plan_not_scattered_attribute():
 
 
 def test_mock_mac_blocker_semantics_unchanged():
-    mock = MockBaseStation("mock", {})
+    mock = registered_mock_base_station(
+        "mock", {"model": "UXM 5G E7515B"}
+    )
 
     assert _formal_mac_configuration_blocker(
         mock, plan=_item("mac_throughput", False)

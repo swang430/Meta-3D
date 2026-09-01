@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.base_station_mock_factory import registered_mock_base_station
+
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -195,7 +197,7 @@ def test_receipt_is_immutable_and_cannot_be_implicitly_used_as_bool():
 
 @pytest.mark.asyncio
 async def test_mock_attach_is_simulated_unknown_but_keeps_explicit_diagnostic_flow():
-    driver = MockBaseStation("mock-bs", {})
+    driver = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
     receipt = await driver.attach(timeout_s=0.01)
 
     assert receipt.simulated is True

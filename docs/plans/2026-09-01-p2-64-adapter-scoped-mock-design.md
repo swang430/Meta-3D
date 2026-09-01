@@ -34,9 +34,12 @@ TestCase，CMW500 Mock 也可以接受 NR TestCase；未来第三种 Adapter 还
 5. P1-75 的 compatibility evaluator 继续作为执行准入唯一真值；Mock 只提供与注册
    Adapter 相同的供给声明，不新增第二套兼容性判据。
 
-`diagnostic_unbound` 继续用“没有 BaseStation driver / manifest”表达。旧式
-`MockBaseStation("...", {})` 不再代表一个模糊的 UXM，它必须失败；需要 Mock 的测试
-必须显式选择注册 Adapter。
+`diagnostic_unbound` 继续在执行冻结中表达“没有绑定 adapter / manifest”；既有执行基础设施
+仍要求加载一个模拟 Driver，因此该 Driver 也必须显式选择注册 Adapter，但它不能把自己的
+manifest 回填进 unbound 冻结或正式证据。运行时的模拟命令形状、执行计划和窗口请求
+仍必须使用这个 scoped Mock 的 manifest；这只决定诊断操作形状，不会把 unbound 提升为已绑定或正式。
+旧式 `MockBaseStation("...", {})` 不再代表一个
+模糊的 UXM，它必须失败；需要 Mock 的测试必须显式选择注册 Adapter。
 
 ## 4. Mock 行为投影
 

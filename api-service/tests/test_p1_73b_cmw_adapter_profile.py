@@ -1,3 +1,5 @@
+from tests.base_station_mock_factory import registered_mock_base_station
+
 """P1-73B Task 7A：CMW 内部 route profile 的解析、选择与冻结真值。"""
 
 from types import SimpleNamespace
@@ -339,7 +341,7 @@ def test_authoritative_mock_keeps_configured_cmw_profile_but_marks_simulated(db)
     lab.instrument_bindings = bindings
     db.commit()
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock", {"model": "CMW500"})}
+        drivers={"baseStation": registered_mock_base_station("mock", {"model": "CMW500"})}
     )
 
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
@@ -362,11 +364,11 @@ def test_reused_simulated_freeze_rejects_mock_adapter_reload_before_remote(db):
     lab.instrument_bindings = bindings
     db.commit()
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock-cmw", {"model": "CMW500"})}
+        drivers={"baseStation": registered_mock_base_station("mock-cmw", {"model": "CMW500"})}
     )
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)
 
-    hal.drivers["baseStation"] = MockBaseStation(
+    hal.drivers["baseStation"] = registered_mock_base_station(
         "mock-uxm",
         {"model": "UXM 5G E7515B"},
     )
@@ -408,7 +410,7 @@ def test_authoritative_mock_without_selected_model_is_diagnostic_unbound(db):
     db.add_all([connection, lab, execution])
     db.commit()
     hal = SimpleNamespace(
-        drivers={"baseStation": MockBaseStation("mock", {})}
+        drivers={"baseStation": registered_mock_base_station("mock", {"model": "UXM 5G E7515B"})}
     )
 
     frozen = freeze_base_station_adapter_profile(db, hal, execution, lab)

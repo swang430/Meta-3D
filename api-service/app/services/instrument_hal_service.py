@@ -77,6 +77,26 @@ def get_base_station_adapter_registration(
     return registration
 
 
+def _instantiate_hal_driver(
+    driver_class: type,
+    *,
+    category_key: str,
+    model_name: str,
+    instrument_id: str,
+    config: Dict[str, Any],
+) -> InstrumentDriver:
+    """Construct one selected driver, binding BS mocks to registry truth."""
+
+    if category_key == "baseStation" and driver_class is MockBaseStation:
+        registration = get_base_station_adapter_registration(model_name)
+        return driver_class(
+            instrument_id=instrument_id,
+            config=config,
+            adapter_manifest=registration.manifest,
+        )
+    return driver_class(instrument_id=instrument_id, config=config)
+
+
 def _real_driver_registry() -> Dict[str, Dict[str, type]]:
     """Lazy-init + cache the (category_key, model_name) → DriverClass table.
 
@@ -811,7 +831,10 @@ class InstrumentHALService:
                         continue
 
                 # Instantiate and connect
-                driver = DriverClass(
+                driver = _instantiate_hal_driver(
+                    DriverClass,
+                    category_key=cat.category_key,
+                    model_name=model.model,
                     instrument_id=f"{cat.category_key}_{str(cat.id)[:8]}",
                     config=driver_config,
                 )
