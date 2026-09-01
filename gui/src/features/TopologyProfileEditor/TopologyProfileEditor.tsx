@@ -293,6 +293,12 @@ export function TopologyProfileEditor({
       closeOnClickOutside={false}
     >
       <Stack gap="md">
+        <Alert color="blue" title="仪表启动参数，不是测试执行 MAC profile">
+          <Text size="sm">
+            此处参数只用于仪表 Topology Profile 启动与现场维护。TestCase 的 NR / LTE
+            MAC profile、兼容性判定及执行冻结由测试用例页面和服务器共同真值管理；这里的值不会替代它。
+          </Text>
+        </Alert>
         {readOnly ? (
           <Alert color="yellow" title="系统预设不可编辑">
             <Text size="sm">

@@ -2211,14 +2211,89 @@ export interface components {
             driver_mode: "auto" | "mock" | "real";
             role?: string | null;
         };
+        MacStatisticalWindow: {
+            /** @constant */
+            unit: "subframes";
+            count: number;
+        };
+        MacMetricRequirement: {
+            key: string;
+            /** @enum {string} */
+            scope: "pcell" | "all_cells";
+        };
+        NrMacTestProfileV1: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            profile_version: 1;
+            /** @constant */
+            test_intent: "downlink_throughput";
+            mimo_layers: number;
+            statistical_window: components["schemas"]["MacStatisticalWindow"];
+            metric_requirements: components["schemas"]["MacMetricRequirement"][];
+            /** @constant */
+            source_reference: "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "nr_throughput";
+            /** @constant */
+            rat: "nr5g";
+            /** @constant */
+            rb_allocation: "all";
+            /** @constant */
+            scheduler_algorithm: "full_throughput";
+            mcs: number;
+            enable_amc: boolean;
+            tdd_pattern: string;
+            tdd_period: string;
+            harq_max_trans: number;
+            harq_processes: number;
+            subcarrier_spacing_khz: number;
+            csi_rs_ports: number;
+        };
+        LteRmcMacTestProfileV1: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            profile_version: 1;
+            /** @constant */
+            test_intent: "downlink_throughput";
+            mimo_layers: number;
+            statistical_window: components["schemas"]["MacStatisticalWindow"];
+            metric_requirements: components["schemas"]["MacMetricRequirement"][];
+            /** @constant */
+            source_reference: "Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lte_rmc";
+            /** @constant */
+            rat: "lte";
+            /** @constant */
+            scheduling_mode: "rmc";
+            /** @constant */
+            resource_allocation: "full";
+            /** @constant */
+            enable_amc: false;
+            /** @constant */
+            duplex: "fdd";
+            /** @constant */
+            transmission_mode: "TM3";
+        };
+        FrozenMacTestProfile: {
+            profile: components["schemas"]["NrMacTestProfileV1"] | components["schemas"]["LteRmcMacTestProfileV1"];
+            profile_digest: string;
+        };
         BaseStationExecutionRequirements: {
             /** @enum {integer} */
             schema_version: 1;
             /** @enum {string} */
             requested_rat: "nr5g" | "lte";
             required_operations: string[];
-            /** @enum {unknown|null} */
-            mac_profile: null;
+            mac_profile?: components["schemas"]["FrozenMacTestProfile"] | null;
         };
         BaseStationCompatibilityVerdict: {
             /** @enum {integer} */
