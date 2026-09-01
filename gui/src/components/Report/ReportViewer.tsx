@@ -144,6 +144,8 @@ interface ReportContentProps {
 function ReportContent({ content, outcome, title }: ReportContentProps) {
   const resultConfig = outcome?.compatibility_classification === 'invalid'
     ? { color: 'red', label: '证据无效 · 仅审计', icon: IconAlertCircle }
+    : outcome?.completion_semantic === 'not_completed'
+      ? { color: 'gray', label: '流程未完成 · 非正式', icon: IconClock }
     : outcome?.completion_semantic === 'diagnostic_completed'
       ? { color: 'yellow', label: '诊断完成 · 仅审计', icon: IconAlertCircle }
       : outcome?.completion_semantic === 'pipeline_completed'

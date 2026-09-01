@@ -161,6 +161,12 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
   const getStatusBadge = (report: ReportSummary) => {
     const outcome = report.execution_evidence_outcome
     if (report.status === 'completed' && outcome) {
+      if (outcome.compatibility_classification === 'invalid') {
+        return <Badge color="red">证据无效 · 仅审计</Badge>
+      }
+      if (outcome.completion_semantic === 'not_completed') {
+        return <Badge color="gray">流程未完成 · 非正式</Badge>
+      }
       if (outcome.completion_semantic === 'valid_test_completed') {
         return <Badge color="green">有效测试报告</Badge>
       }
@@ -168,13 +174,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
         return <Badge color="yellow">诊断报告 · 仅审计</Badge>
       }
       if (outcome.completion_semantic === 'pipeline_completed') {
-        return (
-          <Badge color={outcome.compatibility_classification === 'invalid' ? 'red' : 'gray'}>
-            {outcome.compatibility_classification === 'invalid'
-              ? '证据无效 · 仅审计'
-              : '历史报告 · 待核验'}
-          </Badge>
-        )
+        return <Badge color="gray">历史报告 · 待核验</Badge>
       }
     }
     const configs: Record<

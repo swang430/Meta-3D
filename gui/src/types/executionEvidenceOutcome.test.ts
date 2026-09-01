@@ -25,7 +25,25 @@ test('history and report surfaces consume server-owned completion semantics', ()
     /record\.status\s*===?\s*['"]completed['"]/,
   )
   assert.match(reportList, /证据无效/)
+  assert.match(
+    reportList,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
   assert.match(viewer, /仅审计/)
+  assert.match(
+    viewer,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
+  assert.ok(
+    reportList.indexOf("compatibility_classification === 'invalid'") <
+      reportList.indexOf("completion_semantic === 'not_completed'"),
+    'report list must preserve invalid evidence ahead of nonterminal status',
+  )
+  assert.ok(
+    viewer.indexOf("compatibility_classification === 'invalid'") <
+      viewer.indexOf("completion_semantic === 'not_completed'"),
+    'report viewer must preserve invalid evidence ahead of nonterminal status',
+  )
   assert.match(viewer, /report\?\.execution_evidence_outcome/)
   assert.match(viewer, /<ReportContent[^>]*outcome=/s)
 })

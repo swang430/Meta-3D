@@ -163,7 +163,7 @@ def _qualification_projection(
     if error is not None:
         return "diagnostic", (error,), None
     qualification = ExecutionQualification.model_validate(raw)
-    return qualification.classification, (), qualification
+    return qualification.classification, tuple(qualification.reasons), qualification
 
 
 def _qualification_freeze_alignment_error(

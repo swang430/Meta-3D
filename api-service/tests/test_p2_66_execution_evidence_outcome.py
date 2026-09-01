@@ -143,6 +143,7 @@ def test_completed_diagnostic_is_explicit_diagnostic_completion():
     assert outcome.completion_semantic == "diagnostic_completed"
     assert outcome.formal_eligible is False
     assert outcome.qualification_classification == "diagnostic"
+    assert "test_case_policy_diagnostic" in outcome.reasons
 
 
 def test_completed_no_adapter_is_diagnostic_not_formal_success():
