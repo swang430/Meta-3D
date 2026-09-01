@@ -16,9 +16,10 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, List, NamedTuple, Optional, Tuple
+from typing import BinaryIO, List, Mapping, NamedTuple, Optional, Tuple
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -26,6 +27,14 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from app.config import settings
 from app.core.logging_config import active_execution_log_ids
+from app.db.database import SessionLocal
+from app.hal.base_station_compatibility import BaseStationExecutionRequirements
+from app.models.test_plan import TestExecution
+from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+from app.services.execution_evidence_outcome import (
+    project_execution_evidence_outcome,
+    validate_frozen_compatibility_snapshot,
+)
 
 router = APIRouter(prefix="/system-logs", tags=["System Logs"])
 
@@ -683,7 +692,89 @@ def download_log_file(filename: str):
     )
 
 
-@router.get("/export/{filename}")
+def _load_execution_export_metadata(execution_id: str, db) -> dict[str, object]:
+    """Project export identity from one execution's immutable evidence only."""
+
+    try:
+        execution_uuid = UUID(execution_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="execution_id 必须是合法 UUID",
+        ) from exc
+    execution = (
+        db.query(TestExecution)
+        .filter(TestExecution.id == execution_uuid)
+        .one_or_none()
+    )
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"TestExecution {execution_id} not found",
+        )
+
+    outcome = project_execution_evidence_outcome(execution)
+    adapter_id: str | None = None
+    binding_digest: str | None = None
+    test_case_rat: str | None = None
+    config = execution.config if isinstance(execution.config, Mapping) else {}
+    frozen = config.get(FREEZE_CONFIG_KEY)
+    if (
+        isinstance(frozen, Mapping)
+        and validate_frozen_compatibility_snapshot(frozen) is None
+        and "compatibility" in frozen
+    ):
+        resolution = frozen.get("resolution")
+        candidate_adapter = (
+            resolution.get("adapter")
+            if isinstance(resolution, Mapping)
+            else None
+        )
+        if candidate_adapter is None or isinstance(candidate_adapter, str):
+            adapter_id = candidate_adapter
+        candidate_binding = frozen.get("binding_digest")
+        if isinstance(candidate_binding, str):
+            binding_digest = candidate_binding
+        compatibility = frozen.get("compatibility")
+        requirements_payload = (
+            compatibility.get("requirements")
+            if isinstance(compatibility, Mapping)
+            else None
+        )
+        try:
+            requirements = BaseStationExecutionRequirements.model_validate(
+                requirements_payload
+            )
+        except (TypeError, ValueError):
+            pass
+        else:
+            test_case_rat = requirements.requested_rat
+
+    return {
+        "execution_id": str(execution.id),
+        "base_station_adapter_id": adapter_id,
+        "base_station_binding_digest": binding_digest,
+        "test_case_rat": test_case_rat,
+        "execution_evidence_outcome": outcome.model_dump(mode="json"),
+    }
+
+
+@router.get(
+    "/export/{filename}",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "按筛选条件生成的 JSONL 文件流",
+            "content": {
+                "application/x-ndjson": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        400: {"description": "execution_id 不是合法 UUID"},
+        404: {"description": "execution_id 对应的 TestExecution 不存在"},
+    },
+)
 def export_filtered_logs(
     filename: str,
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
@@ -695,12 +786,51 @@ def export_filtered_logs(
     """
     按过滤条件导出日志。
 
-    与 /download 不同，此端点会根据筛选条件只导出匹配的行。
-    返回 JSONL 格式的文件流。
+    与 /download 不同，此端点会根据筛选条件只导出匹配的行。带
+    `execution_id` 时，文件名包含完整 execution UUID，JSONL 首行是服务器生成的
+    `export_metadata`，记录完整过滤条件、冻结 adapter/binding、TestCase RAT 与
+    P2-66 execution evidence outcome；这些身份字段不接受客户端提交，也不从当前
+    TestCase、LabProfile 或 HAL 回填。非法 UUID 返回 400，执行不存在返回 404。
+
+    不带 `execution_id` 时继续返回纯匹配日志；原始 `/download` 的字节与文件名语义不变。
     """
     filepath = _safe_filename(filename)
+    execution_metadata: dict[str, object] | None = None
+    if execution_id:
+        db = SessionLocal()
+        try:
+            execution_metadata = _load_execution_export_metadata(
+                execution_id,
+                db,
+            )
+        finally:
+            db.close()
+        execution_id = str(execution_metadata["execution_id"])
+
+    export_metadata = None
+    if execution_metadata is not None:
+        export_metadata = {
+            "record_type": "export_metadata",
+            "schema_version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "source_filename": filename,
+            "filters": {
+                "level": level,
+                "keyword": keyword,
+                "session_id": session_id,
+                "hal_mode": hal_mode,
+                "execution_id": execution_id,
+            },
+            **execution_metadata,
+        }
 
     def filtered_stream():
+        if export_metadata is not None:
+            yield json.dumps(
+                export_metadata,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             group: list[tuple[str, LogEntry]] = []
 
@@ -742,6 +872,8 @@ def export_filtered_logs(
         parts.append(hal_mode.lower())
     if keyword:
         parts.append(keyword[:20])
+    if execution_metadata is not None:
+        parts.append(str(execution_metadata["execution_id"]))
     export_name = "_".join(parts) + "_export.jsonl"
 
     return StreamingResponse(

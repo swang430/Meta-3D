@@ -42,6 +42,9 @@ G28 BaseStation Preview/Readiness/Freeze 共用兼容性判定 ← P2-65
 G29 BaseStation 执行终态只读共同 evidence outcome ← P2-66
    变异: 任一正式消费者退回旧 qualification 二态、历史/报告/GUI 把 raw completed
    直接画绿，或关键界面不消费 completion semantic，任一项必须检出。
+G30 BaseStation 租约日志/执行导出只读冻结身份 ← P2-67
+   变异: 公共租约文案恢复 UXM、导出绕过 P2-66 outcome、客户端新增身份参数、
+   raw download 复用 enriched stream，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -3014,4 +3017,178 @@ def test_g29_checker_rejects_known_terminal_regressions():
     assert f"gui_semantic:{gui_path}" in _g29_execution_outcome_gaps(
         production_sources,
         gui_bad,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G30 BaseStation 租约日志/执行导出只读冻结身份
+# ─────────────────────────────────────────────────────────────────────
+
+def _named_function(tree: ast.Module, name: str):
+    return next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == name
+    )
+
+
+def _g30_log_export_traceability_gaps(
+    lease_source: str,
+    system_log_source: str,
+    gui_source: str,
+) -> list[str]:
+    gaps: list[str] = []
+    lease_tree = ast.parse(lease_source)
+    public_messages = [
+        call.args[0].value
+        for call in ast.walk(lease_tree)
+        if isinstance(call, ast.Call)
+        and _call_name(call) == "info"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+        and "[instrument-lease]" in call.args[0].value
+    ]
+    if any("UXM" in message or "F64/UXM" in message for message in public_messages):
+        gaps.append("vendor_specific_public_log")
+
+    audit_extra = _named_function(lease_tree, "_audit_extra")
+    audit_keys = {
+        key.value
+        for node in ast.walk(audit_extra)
+        if isinstance(node, ast.Dict)
+        for key in node.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    required_audit_keys = {
+        "lease_event",
+        "base_station_adapter_id",
+        "base_station_binding_digest",
+        "execution_id",
+    }
+    if not required_audit_keys <= audit_keys:
+        gaps.append("missing_frozen_lease_identity")
+
+    system_tree = ast.parse(system_log_source)
+    loader = _named_function(system_tree, "_load_execution_export_metadata")
+    loader_calls = {
+        _call_name(call)
+        for call in ast.walk(loader)
+        if isinstance(call, ast.Call)
+    }
+    if "project_execution_evidence_outcome" not in loader_calls:
+        gaps.append("export_bypasses_shared_outcome")
+    if "validate_frozen_compatibility_snapshot" not in loader_calls:
+        gaps.append("export_bypasses_frozen_validation")
+
+    exporter = _named_function(system_tree, "export_filtered_logs")
+    exporter_args = {
+        argument.arg for argument in (*exporter.args.posonlyargs, *exporter.args.args)
+    }
+    forbidden_identity_args = {
+        "adapter_id",
+        "binding_digest",
+        "requested_rat",
+        "compatibility_verdict",
+    }
+    if exporter_args.intersection(forbidden_identity_args):
+        gaps.append("client_submits_frozen_identity")
+    exporter_calls = {
+        _call_name(call)
+        for call in ast.walk(exporter)
+        if isinstance(call, ast.Call)
+    }
+    if "_load_execution_export_metadata" not in exporter_calls:
+        gaps.append("export_skips_execution_metadata")
+
+    downloader = _named_function(system_tree, "download_log_file")
+    downloader_calls = {
+        _call_name(call)
+        for call in ast.walk(downloader)
+        if isinstance(call, ast.Call)
+    }
+    if "FileResponse" not in downloader_calls or {
+        "StreamingResponse",
+        "_load_execution_export_metadata",
+    }.intersection(downloader_calls):
+        gaps.append("raw_download_reuses_enriched_stream")
+
+    gui_source = _strip_ts_comments(gui_source)
+    if gui_source.count("buildLogQuery({") != 3:
+        gaps.append("gui_query_builder_fork")
+    return gaps
+
+
+def test_g30_log_export_traceability_uses_frozen_server_truth():
+    lease_source = (
+        _API_SERVICE_ROOT / "app/services/instrument_test_lease.py"
+    ).read_text(encoding="utf-8")
+    system_log_source = (
+        _API_SERVICE_ROOT / "app/api/system_logs.py"
+    ).read_text(encoding="utf-8")
+    gui_source = (
+        _REPO_ROOT / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert _g30_log_export_traceability_gaps(
+        lease_source,
+        system_log_source,
+        gui_source,
+    ) == []
+
+
+def test_g30_checker_rejects_known_traceability_regressions():
+    lease_source = (
+        _API_SERVICE_ROOT / "app/services/instrument_test_lease.py"
+    ).read_text(encoding="utf-8")
+    system_log_source = (
+        _API_SERVICE_ROOT / "app/api/system_logs.py"
+    ).read_text(encoding="utf-8")
+    gui_source = (
+        _REPO_ROOT / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8")
+
+    vendor_bad = lease_source.replace(
+        "仪表控制会话已释放",
+        "F64/UXM 控制会话已释放",
+        1,
+    )
+    assert "vendor_specific_public_log" in _g30_log_export_traceability_gaps(
+        vendor_bad,
+        system_log_source,
+        gui_source,
+    )
+
+    outcome_bad = system_log_source.replace(
+        "outcome = project_execution_evidence_outcome(execution)",
+        "outcome = execution.status",
+        1,
+    )
+    assert "export_bypasses_shared_outcome" in _g30_log_export_traceability_gaps(
+        lease_source,
+        outcome_bad,
+        gui_source,
+    )
+
+    identity_bad = system_log_source.replace(
+        "def export_filtered_logs(\n    filename: str,",
+        "def export_filtered_logs(\n    filename: str,\n    adapter_id: str = '',",
+        1,
+    )
+    assert "client_submits_frozen_identity" in _g30_log_export_traceability_gaps(
+        lease_source,
+        identity_bad,
+        gui_source,
+    )
+
+    download_bad = system_log_source.replace(
+        "return FileResponse(\n        path=str(filepath),",
+        "return StreamingResponse(\n        path=str(filepath),",
+        1,
+    )
+    assert "raw_download_reuses_enriched_stream" in _g30_log_export_traceability_gaps(
+        lease_source,
+        download_bad,
+        gui_source,
     )

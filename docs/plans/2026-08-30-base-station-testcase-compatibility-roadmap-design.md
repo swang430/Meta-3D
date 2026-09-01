@@ -2,7 +2,7 @@
 
 **日期**：2026-08-30
 
-**状态**：P1-75 已合并；P2-64/P2-65 已由 PR #433/#434 完成；P2-66 本地实现完成、正在验证/审查；P2-67 未启动
+**状态**：P1-75 已合并；P2-64/P2-65/P2-66 已由 PR #433/#434/#435 完成；P2-67 实现与验证完成、fresh 内审 P1/P2/P3=0，待 Ready PR
 
 **对应条目**：P1-75、P2-64～P2-67
 
@@ -94,15 +94,21 @@ GUI 只消费服务端 status/reasons，并在未保存 TestCase/LabProfile 草�
 证据初始化/解析拒绝 adapter manifest 与 requested config 自相矛盾；显式区分流程完成、诊断完成与
 有效测试完成。Diagnostic 报告可作为审计包保留，但不得形成“配置正确”或“正式成功”的假象。
 
-**2026-09-01 本地实现状态**：冻结 compatibility 的外层/内层 digest、requirements、verdict 与
+**2026-09-01 实现状态（PR #435）**：冻结 compatibility 的外层/内层 digest、requirements、verdict 与
 resolution 已在读取时重验；共同 outcome 已接入 SCPI evidence、执行阶段、报告、历史、比较、下载、
 commissioning 和 GUI。显式畸形/不兼容 fail-closed，Diagnostic 审计包保留但正式指标隐藏，历史无
-snapshot 沿旧 provenance。四份 API/TS 镜像与 G29 永久门已完成，当前等待全量验证与内外审。
+snapshot 沿旧 provenance。四份 API/TS 镜像与 G29 永久门已完成；覆盖最终 HEAD 的外审无 P1 后以
+merge commit `549608cd` 合并。
 
 ### P2-67 — 日志与导出可追溯性
 
 公共 lease/session 日志改为 adapter-neutral 或携带冻结 adapter；日志导出文件名包含 execution id 与
 时间，GUI 显示并导出冻结 adapter、TestCase RAT 与 compatibility verdict，避免跨 execution 取证混淆。
+
+**2026-09-02 本地实现状态**：公共租约日志已厂商中立并结构化携带 execution id、冻结 adapter/binding；
+execution-filtered 导出文件名含完整 UUID，首行 `export_metadata` 只从该执行冻结证据与 P2-66 outcome
+派生。GUI 三条路径继续复用同一 query builder，checked/live OpenAPI 已同步，普通导出与 raw download
+保持原语义，G30 永久门覆盖已知回归；当前等待完整验证、fresh 内审与外审。
 
 ## 5. 不变量与非目标
 

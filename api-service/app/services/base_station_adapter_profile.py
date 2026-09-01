@@ -18,6 +18,7 @@ from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
 from app.services.base_station_binding import resolve_base_station_binding
 from app.services.instrument_hal_service import is_mock_driver
+from app.services.instrument_test_lease import BaseStationLeaseAuditContext
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
@@ -110,6 +111,22 @@ def build_frozen_base_station_validator(frozen: dict[str, Any]):
         return validate_frozen_base_station_before_remote(hal, frozen)
 
     _validate.validation_identity = frozen.get("digest")
+    resolution = frozen.get("resolution")
+    adapter_id = (
+        resolution.get("adapter")
+        if isinstance(resolution, dict)
+        else None
+    )
+    binding_digest = frozen.get("binding_digest")
+    if (
+        (adapter_id is None or isinstance(adapter_id, str))
+        and isinstance(binding_digest, str)
+        and binding_digest
+    ):
+        _validate.lease_audit_context = BaseStationLeaseAuditContext(
+            adapter_id=adapter_id,
+            binding_digest=binding_digest,
+        )
     return _validate
 
 
