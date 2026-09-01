@@ -4640,7 +4640,9 @@ UXM+LTE、CMW500+NR、未知型号、manifest/registration 漂移均 fail-loud�
 **实现（PR #433，2026-09-01）**：HAL 在构造唯一 `MockBaseStation` 时注入 selected model 的已注册、
 不可变 manifest；Mock 的 identity/RAT/operation/route/window/metric registry 与 UE 诊断 RAT 形状均只读
 该 manifest，缺 manifest、未知型号及 model/registration 漂移均 fail-loud。未声明的输入电平、RRC、
-SCell 操作 fail-closed；模拟窗口与指标仍为 diagnostic-only，正式 KPI 保持 UNKNOWN/N/A。G27 永久门
+SCell 操作 fail-closed；CMW manifest 声明的 MAC 配置通过共同 Mock SPI 只产生
+simulated/unknown、`applied=None` 的诊断回执，不声称硬件生效；模拟窗口与指标仍为 diagnostic-only，
+正式 KPI 保持 UNKNOWN/N/A。G27 永久门
 覆盖 manifest 注入、能力并集/型号嗅探回归与真实 Driver 借壳，且带四类坏变异自测。P2-65 尚未启动。
 
 ### P2-65 — Preview / Readiness / Freeze 共用兼容性判定（批准入雷达，未启动）

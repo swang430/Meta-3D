@@ -81,6 +81,9 @@ manifest 回填进 unbound 冻结或正式证据。运行时的模拟命令形�
    Mock 构造前失败。
 6. 模拟窗口与指标继续被正式 KPI 门排除。
 7. 既有 UXM+NR、CMW500+LTE 诊断路径和第三 Adapter 认证测试保持可运行。
+8. manifest 声明 `mac_throughput_config` 时，Mock 提供同一共同 SPI，但只返回
+   simulated/unknown、`applied=None` 的诊断回执；未声明时 fail-closed，任何一端都不形成
+   正式配置证据。
 
 ## 7. 非目标
 

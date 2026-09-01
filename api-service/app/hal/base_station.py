@@ -1987,6 +1987,75 @@ class MockBaseStation(BaseStationDriver):
     async def configure(self, config: Dict[str, Any]) -> bool:
         return await self.set_cell_config(config)
 
+    async def configure_mac_throughput_test(
+        self,
+        mimo_layers: int = 2,
+        mcs: int = 28,
+        rb_alloc: str = "ALL",
+        enable_amc: bool = False,
+        tdd_pattern: str = "DDDSU",
+        tdd_period: str = "5MS",
+        harq_max_trans: int = 4,
+        harq_processes: int = 16,
+        stat_count: int = 5000,
+        cell: Optional[str] = None,
+        tdd_dl_symbols: int = 6,
+        tdd_ul_symbols: int = 4,
+        scs_khz: Optional[int] = None,
+        csi_rs_ports: Optional[int] = None,
+    ):
+        """Return diagnostic-only MAC configuration evidence when declared.
+
+        The mock never claims that a value was applied or read back.  It only
+        satisfies the common adapter lifecycle for manifests that explicitly
+        declare ``mac_throughput_config``; formal KPI consumers already exclude
+        this simulated receipt.
+        """
+
+        from app.hal.uxm_base_station import MacThroughputConfigResult
+
+        requested = {
+            "mimo_layers": mimo_layers,
+            "mcs": mcs,
+            "rb_alloc": rb_alloc,
+            "enable_amc": enable_amc,
+            "tdd_pattern": tdd_pattern,
+            "tdd_period": tdd_period,
+            "harq_max_trans": harq_max_trans,
+            "harq_processes": harq_processes,
+            "stat_count": stat_count,
+            "scs_khz": scs_khz,
+            "csi_rs_ports": csi_rs_ports,
+        }
+        declared = "mac_throughput_config" in self.adapter_manifest.operations
+        receipt = BaseStationApplyReceipt(
+            schema_version=1,
+            operation="mac_throughput_config",
+            fields=tuple(
+                BaseStationFieldReceipt(
+                    field=name,
+                    requested=value,
+                    applied=None,
+                    status="unknown",
+                    reason="simulated mock has no hardware readback",
+                )
+                for name, value in requested.items()
+            ),
+            reason=(
+                "simulated MAC configuration excluded from formal evidence"
+                if declared
+                else "mock adapter manifest does not declare MAC configuration"
+            ),
+            simulated=True,
+            operation_succeeded=declared,
+        )
+        if not declared:
+            return MacThroughputConfigResult(
+                error="mock adapter manifest does not declare mac_throughput_config",
+                receipt=receipt,
+            )
+        return MacThroughputConfigResult(receipt=receipt)
+
     async def apply_route(
         self,
         frozen_adapter: dict[str, Any],

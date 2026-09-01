@@ -220,6 +220,53 @@ def test_mock_execution_plan_is_scoped_by_manifest_operations(
 
 
 @pytest.mark.asyncio
+async def test_cmw_mock_implements_manifest_declared_mac_configuration():
+    from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+    driver = _mock(CMW_MODEL_NAME, RealCmw500Driver.adapter_manifest)
+
+    configure = getattr(driver, "configure_mac_throughput_test", None)
+    assert callable(configure)
+    result = await configure(
+        mimo_layers=2,
+        mcs=18,
+        enable_amc=False,
+        tdd_pattern="DDDSU",
+        tdd_period=5.0,
+        harq_max_trans=4,
+        harq_processes=8,
+        stat_count=1000,
+        scs_khz=30,
+        csi_rs_ports=2,
+    )
+
+    assert result.ok is True
+    assert MeasureExecutor._mac_config_blocker(result) is None
+    assert result.receipt is not None
+    assert result.receipt.operation == "mac_throughput_config"
+    assert result.receipt.simulated is True
+    assert result.receipt.operation_succeeded is True
+    assert result.receipt.confirmed is False
+    assert {field.field for field in result.receipt.fields} == {
+        "mimo_layers",
+        "mcs",
+        "enable_amc",
+        "tdd_pattern",
+        "tdd_period",
+        "harq_max_trans",
+        "harq_processes",
+        "stat_count",
+        "scs_khz",
+        "csi_rs_ports",
+        "rb_alloc",
+    }
+    assert all(
+        field.status == "unknown" and field.applied is None
+        for field in result.receipt.fields
+    )
+
+
+@pytest.mark.asyncio
 async def test_mock_rejects_window_shape_that_drifted_from_manifest():
     driver = _mock(CMW_MODEL_NAME, RealCmw500Driver.adapter_manifest)
     request = BaseStationMeasurementWindowRequest(

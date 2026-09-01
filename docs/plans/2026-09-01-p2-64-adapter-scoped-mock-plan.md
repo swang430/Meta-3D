@@ -115,6 +115,8 @@ Expected: 真实 Driver 构造器阻断测试失败，且 plan/registry 仍反�
 - `resolve_metric_registry()` 直接读取 `self.adapter_manifest.measurement.metrics` 并降级 evidence。
 - 不再导入或实例化 `RealUxmDriver` / `RealCmw500Driver`。
 - Mock operation flags 只从 manifest operations 派生。
+- manifest 声明 `mac_throughput_config` 时实现共同 Mock SPI，并只返回 simulated/unknown、
+  `applied=None` 的诊断回执；未声明时返回失败结果，不从请求值伪造 applied/confirmed。
 - 保留既有 simulated observation/window 结构，不改变正式消费门。
 
 **Step 4: Run tests to verify GREEN**
