@@ -71,6 +71,18 @@ class _HAL:
         return None
 
 
+@pytest.fixture
+def enabled_lease_logger():
+    logger = logging.getLogger("app.services.instrument_test_lease")
+    previous = (logger.disabled, logger.propagate)
+    logger.disabled = False
+    logger.propagate = True
+    try:
+        yield logger
+    finally:
+        logger.disabled, logger.propagate = previous
+
+
 def test_frozen_validator_projects_minimal_lease_audit_context():
     from app.services.base_station_adapter_profile import (
         build_frozen_base_station_validator,
@@ -100,6 +112,7 @@ def test_frozen_validator_projects_minimal_lease_audit_context():
 @pytest.mark.asyncio
 async def test_public_lease_logs_are_vendor_neutral_and_structurally_identified(
     caplog,
+    enabled_lease_logger,
 ):
     from app.services.instrument_test_lease import (
         BaseStationLeaseAuditContext,
@@ -163,7 +176,10 @@ async def test_public_lease_logs_are_vendor_neutral_and_structurally_identified(
 
 
 @pytest.mark.asyncio
-async def test_idle_park_log_does_not_claim_specific_vendor(caplog):
+async def test_idle_park_log_does_not_claim_specific_vendor(
+    caplog,
+    enabled_lease_logger,
+):
     from app.services.instrument_test_lease import InstrumentTestLease
 
     lease = InstrumentTestLease(_HAL)
@@ -452,6 +468,14 @@ def test_execution_export_contract_is_mirrored_and_gui_query_is_single_source():
             "requested_rat",
             "compatibility_verdict",
         }.intersection(parameters)
+
+    for operation in (live_operation, checked_operation):
+        assert set(operation["responses"]["200"]["content"]) == {
+            "application/x-ndjson"
+        }
+        assert operation["responses"]["200"]["content"][
+            "application/x-ndjson"
+        ]["schema"] == {"type": "string", "format": "binary"}
 
     viewer = (
         Path(__file__).resolve().parents[2]

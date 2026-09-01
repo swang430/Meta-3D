@@ -761,7 +761,16 @@ def _load_execution_export_metadata(execution_id: str, db) -> dict[str, object]:
 
 @router.get(
     "/export/{filename}",
+    response_class=StreamingResponse,
     responses={
+        200: {
+            "description": "按筛选条件生成的 JSONL 文件流",
+            "content": {
+                "application/x-ndjson": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
         400: {"description": "execution_id 不是合法 UUID"},
         404: {"description": "execution_id 对应的 TestExecution 不存在"},
     },
