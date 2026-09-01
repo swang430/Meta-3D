@@ -124,6 +124,15 @@ def freeze_base_station_adapter_profile(
     execution_config = execution.config if isinstance(execution.config, dict) else {}
     existing = execution_config.get(FREEZE_CONFIG_KEY)
     if isinstance(existing, dict):
+        # Local import avoids a module-load cycle: the outcome projector reads
+        # FREEZE_CONFIG_KEY, while this write/reuse boundary owns the freeze.
+        from app.services.execution_evidence_outcome import (
+            validate_frozen_compatibility_snapshot,
+        )
+
+        evidence_error = validate_frozen_compatibility_snapshot(existing)
+        if evidence_error:
+            raise ValueError(evidence_error)
         error = validate_frozen_base_station_before_remote(hal, existing)
         if error:
             raise ValueError(error)
@@ -186,6 +195,13 @@ def freeze_base_station_adapter_profile(
             mode="json"
         )
     frozen = {**identity, "digest": canonical_payload_digest(identity)}
+    from app.services.execution_evidence_outcome import (
+        validate_frozen_compatibility_snapshot,
+    )
+
+    evidence_error = validate_frozen_compatibility_snapshot(frozen)
+    if evidence_error:
+        raise ValueError(evidence_error)
     error = validate_frozen_base_station_before_remote(hal, frozen)
     if error:
         raise ValueError(error)
