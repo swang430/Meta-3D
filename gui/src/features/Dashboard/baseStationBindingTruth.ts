@@ -1,4 +1,7 @@
-import type { BaseStationBindingPreviewResponse } from '../../types/api'
+import type {
+  BaseStationBindingPreviewResponse,
+  BaseStationCompatibilityPreviewResponse,
+} from '../../types/api'
 
 export type BaseStationBindingLight = 'green' | 'yellow' | 'red'
 
@@ -66,6 +69,58 @@ export const projectBaseStationBindingTruth = (
   }
 }
 
+export const projectBaseStationCompatibilityTruth = (
+  compatibility: BaseStationCompatibilityPreviewResponse | null | undefined,
+): BaseStationBindingTruth => {
+  if (!compatibility) {
+    return {
+      light: 'red',
+      valueText: '未评估',
+      detail: '服务器未返回已保存 TestCase 与 BaseStation 的兼容性结论',
+    }
+  }
+  if (compatibility.status === 'incompatible') {
+    return {
+      light: 'red',
+      valueText: '不兼容',
+      detail: compatibility.reasons.join('；') || compatibility.detail,
+    }
+  }
+  if (compatibility.status === 'invalid' || compatibility.status === 'not_evaluated') {
+    return {
+      light: 'red',
+      valueText: compatibility.status === 'invalid' ? '上下文无效' : '未评估',
+      detail: compatibility.reasons.join('；') || compatibility.detail,
+    }
+  }
+  if (
+    compatibility.status === 'no_adapter'
+    || compatibility.execution_mode === 'simulated'
+  ) {
+    return {
+      light: 'yellow',
+      valueText: '仅诊断',
+      detail: compatibility.detail,
+    }
+  }
+  if (
+    compatibility.status === 'compatible'
+    && compatibility.compatible === true
+    && compatibility.execution_mode === 'real'
+  ) {
+    return {
+      light: 'green',
+      valueText: `${compatibility.requirements?.requested_rat.toUpperCase() ?? 'TestCase'} · 兼容`,
+      detail: `${compatibility.detail} · binding ${shortDigest(compatibility.binding_digest)}`,
+    }
+  }
+  return {
+    light: 'red',
+    valueText: '结论无效',
+    detail: compatibility.detail,
+  }
+}
+
 export const projectReadinessVerdict = (
   cells: ReadinessVerdictCell[],
   available: boolean,
@@ -80,13 +135,11 @@ export const projectReadinessVerdict = (
       .join('、')
     return { light: 'red', text: `🔴 不可开测：${reason}` }
   }
-  const diagnosticBinding = cells.find(
-    (cell) => cell.key === 'base-station-binding' && cell.light === 'yellow',
-  )
-  if (diagnosticBinding) {
+  const diagnosticCell = cells.find((cell) => cell.light === 'yellow')
+  if (diagnosticCell) {
     return {
       light: 'yellow',
-      text: `🟡 仅可诊断：${diagnosticBinding.title}（${diagnosticBinding.valueText}）`,
+      text: `🟡 仅可诊断：${diagnosticCell.title}（${diagnosticCell.valueText}）`,
     }
   }
   return { light: 'green', text: '✅ 可开测' }

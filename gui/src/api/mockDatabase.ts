@@ -25,9 +25,24 @@ import type {
   TestExecutionListResponse,
   SystemLogTailResponse,
   DashboardAlertSummary,
+  BaseStationCompatibilityPreviewResponse,
 } from '../types/api'
 
 // ── P2-8 Operational Cockpit mock fixtures ──
+
+const notEvaluatedCompatibility: BaseStationCompatibilityPreviewResponse = {
+  schema_version: 1,
+  status: 'not_evaluated',
+  compatible: null,
+  test_case_id: null,
+  lab_profile_id: 'lab-001',
+  binding_digest: null,
+  execution_mode: null,
+  requirements: null,
+  verdict: null,
+  reasons: ['Mock dashboard has no saved TestCase context'],
+  detail: 'Mock dashboard has no saved TestCase context',
+}
 
 const readinessSnapshot: HALReadinessResponse = {
   available: true,
@@ -94,7 +109,9 @@ const readinessSnapshot: HALReadinessResponse = {
     resolved_binding: null,
     runtime_driver: { simulated: true },
     detail: 'Demo fixture only; simulated binding is not formal evidence.',
+    testcase_compatibility: notEvaluatedCompatibility,
   },
+  base_station_testcase_compatibility: notEvaluatedCompatibility,
   base_station_site_certification: null,
   // The demo fixture uses UXM, so CMW readiness is explicitly not present
   // as a value while the serialized response field itself remains required.

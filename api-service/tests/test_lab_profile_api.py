@@ -286,36 +286,8 @@ class TestSyncInstrumentBinding:
         ]
         db.commit()
 
-        response = client.put(
-            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
-        )
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["binding"] == {
-            "category_id": str(category.id),
-            "instrument_model_id": str(model.id),
-            "connection_endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
-            "driver_mode": "real",
-            "role": "primary_baseStation",
-        }
-        assert body["resolved"]["status"] == "configured"
-        assert body["resolved"]["adapter_id"] == "cmw500"
-        assert body["resolved"]["binding_digest"]
-        db.refresh(lab)
-        assert len(lab.instrument_bindings) == 2
-        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-me"
-        assert lab.instrument_bindings[1] == body["binding"]
-
-        preview = client.get(
-            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/preview"
-        )
-        assert preview.status_code == 200, preview.text
-        assert preview.json()["binding_digest"] == body["resolved"]["binding_digest"]
-
-        # P1-75 兼容性硬门：CMW500 冻结需要显式 lte 的 TestCase 需求端。
         case = TestCase(
-            name="sync-current freeze fixture",
+            name="sync-current compatibility fixture",
             test_type="MIMO_OTA",
             configuration={
                 "component_carriers": [
@@ -332,9 +304,47 @@ class TestSyncInstrumentBinding:
                 ]
             },
             created_by="test",
+            lab_profile_id=lab.id,
         )
         db.add(case)
-        db.flush()
+        db.commit()
+
+        response = client.put(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current",
+            params={"test_case_id": str(case.id)},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["binding"] == {
+            "category_id": str(category.id),
+            "instrument_model_id": str(model.id),
+            "connection_endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
+            "driver_mode": "real",
+            "role": "primary_baseStation",
+        }
+        assert body["resolved"]["status"] == "configured"
+        assert body["resolved"]["adapter_id"] == "cmw500"
+        assert body["resolved"]["binding_digest"]
+        assert body["testcase_compatibility"]["status"] == "compatible"
+        assert (
+            body["testcase_compatibility"]["binding_digest"]
+            == body["resolved"]["binding_digest"]
+        )
+        db.refresh(lab)
+        assert len(lab.instrument_bindings) == 2
+        assert lab.instrument_bindings[0]["connection_endpoint"] == "keep-me"
+        assert lab.instrument_bindings[1] == body["binding"]
+
+        preview = client.get(
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/preview",
+            params={"test_case_id": str(case.id)},
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["binding_digest"] == body["resolved"]["binding_digest"]
+        assert preview.json()["testcase_compatibility"] == body["testcase_compatibility"]
+
+        # P1-75 兼容性硬门：CMW500 冻结需要显式 lte 的 TestCase 需求端。
         execution = TestExecution(test_case_id=case.id, status="pending", config={})
         db.add(execution)
         db.commit()
@@ -343,7 +353,10 @@ class TestSyncInstrumentBinding:
 
         readiness = client.get(
             "/api/v1/instruments/hal/readiness",
-            params={"lab_profile_id": str(lab.id)},
+            params={
+                "lab_profile_id": str(lab.id),
+                "test_case_id": str(case.id),
+            },
         )
         assert readiness.status_code == 200, readiness.text
         readiness_body = readiness.json()
@@ -354,6 +367,10 @@ class TestSyncInstrumentBinding:
         assert (
             readiness_body["cmw500_lte_2x2"]["binding_digest"]
             == body["resolved"]["binding_digest"]
+        )
+        assert (
+            readiness_body["base_station_testcase_compatibility"]
+            == body["testcase_compatibility"]
         )
 
     def test_rejects_cmw500_sync_without_internal_route_profile(

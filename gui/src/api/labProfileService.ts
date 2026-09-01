@@ -97,18 +97,23 @@ export async function createLabProfile(
 export async function syncCurrentInstrumentBinding(
   labProfileId: string,
   categoryKey: string,
+  testCaseId?: string,
 ): Promise<InstrumentBindingSyncResponse> {
   const res = await apiClient.put<InstrumentBindingSyncResponse>(
     `/lab-profiles/${labProfileId}/instrument-bindings/${categoryKey}/sync-current`,
+    undefined,
+    { params: testCaseId ? { test_case_id: testCaseId } : undefined },
   )
   return res.data
 }
 
 export async function fetchBaseStationBindingPreview(
   labProfileId: string,
+  testCaseId?: string,
 ): Promise<BaseStationBindingPreviewResponse> {
   const res = await apiClient.get<BaseStationBindingPreviewResponse>(
     `/lab-profiles/${labProfileId}/instrument-bindings/baseStation/preview`,
+    { params: testCaseId ? { test_case_id: testCaseId } : undefined },
   )
   return res.data
 }

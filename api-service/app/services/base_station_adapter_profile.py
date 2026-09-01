@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -12,10 +10,9 @@ from app.hal.base_station_adapter_profile import (
     BaseStationAdapterProfileResolution,
 )
 from app.hal.base_station_compatibility import (
-    build_frozen_compatibility_payload,
-    build_measure_execution_requirements,
-    build_no_adapter_verdict,
-    evaluate_base_station_compatibility,
+    build_compatibility_payload,
+    build_measure_execution_requirements_from_configuration,
+    canonical_payload_digest,
 )
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
@@ -42,16 +39,6 @@ def _driver_connection_identity(driver) -> dict[str, Any]:
         "port": getattr(driver, "_connection_port", None),
         "resource": getattr(driver, "_connection_resource", None),
     }
-
-
-def _canonical_digest(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> str | None:
@@ -95,8 +82,8 @@ def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> s
     return "frozen execution mode is invalid"
 
 
-def _requested_radio_technology(db, execution) -> str:
-    """TestCase configuration 的 PCell RAT（raw dict 读取，不做全量校验）。
+def _saved_test_case_configuration(db, execution) -> Any:
+    """Return the saved TestCase configuration consumed by compatibility.
 
     只读 ``primary_carrier``（``component_carriers[0]``）的
     ``radio_technology`` 一个字段；缺省按 schema 默认 ``"nr5g"``
@@ -113,18 +100,7 @@ def _requested_radio_technology(db, execution) -> str:
         )
         if test_case is not None:
             configuration = test_case.configuration
-    if not isinstance(configuration, dict):
-        return "nr5g"
-    carriers = configuration.get("component_carriers")
-    if not isinstance(carriers, (list, tuple)) or not carriers:
-        return "nr5g"
-    pcell = carriers[0]
-    if not isinstance(pcell, dict):
-        return "nr5g"
-    value = pcell.get("radio_technology", "nr5g")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return "nr5g"
+    return configuration
 
 
 def build_frozen_base_station_validator(frozen: dict[str, Any]):
@@ -162,21 +138,17 @@ def freeze_base_station_adapter_profile(
     # configured / not_applicable 两态都有 manifest → 必须对账并拒不兼容；
     # diagnostic_unbound 无 adapter 无 manifest → 显式 no_adapter，保持
     # 既有放行（模拟诊断语义，非本片放宽）。
-    requirements = build_measure_execution_requirements(
-        _requested_radio_technology(db, execution)
+    requirements = build_measure_execution_requirements_from_configuration(
+        _saved_test_case_configuration(db, execution)
     )
-    if resolved.manifest is not None:
-        compatibility_verdict = evaluate_base_station_compatibility(
-            requirements, resolved.manifest
+    compatibility = build_compatibility_payload(requirements, resolved.manifest)
+    compatibility_verdict = compatibility["verdict"]
+    if compatibility_verdict["compatible"] is not True:
+        raise ValueError(
+            "TestCase execution requirements are incompatible with the "
+            "resolved baseStation adapter: "
+            + "; ".join(compatibility_verdict["reasons"])
         )
-        if not compatibility_verdict.compatible:
-            raise ValueError(
-                "TestCase execution requirements are incompatible with the "
-                "resolved baseStation adapter: "
-                + "; ".join(compatibility_verdict.reasons)
-            )
-    else:
-        compatibility_verdict = build_no_adapter_verdict(requirements)
     adapter = resolved.manifest.adapter_id if resolved.manifest is not None else None
     resolution = BaseStationAdapterProfileResolution.model_validate(
         {
@@ -207,15 +179,13 @@ def freeze_base_station_adapter_profile(
         "resolved_binding": stable,
         # P1-75：verdict + requirements 进 identity 再算 digest ——
         # 篡改 compatibility 也会被既有 digest 抓到。
-        "compatibility": build_frozen_compatibility_payload(
-            requirements, compatibility_verdict
-        ),
+        "compatibility": compatibility,
     }
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(
             mode="json"
         )
-    frozen = {**identity, "digest": _canonical_digest(identity)}
+    frozen = {**identity, "digest": canonical_payload_digest(identity)}
     error = validate_frozen_base_station_before_remote(hal, frozen)
     if error:
         raise ValueError(error)

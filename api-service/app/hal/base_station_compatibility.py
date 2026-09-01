@@ -117,6 +117,29 @@ def build_measure_execution_requirements(
         ) from exc
 
 
+def build_measure_execution_requirements_from_configuration(
+    configuration: Any,
+) -> BaseStationExecutionRequirements:
+    """Project the saved TestCase PCell RAT using the freeze contract.
+
+    Only the single compatibility input is read.  Unrelated MIMO OTA schema
+    validation must not change the compatibility verdict, while legacy rows
+    without ``component_carriers[0].radio_technology`` retain the schema's
+    exact ``nr5g`` default.
+    """
+
+    requested_rat = "nr5g"
+    if isinstance(configuration, Mapping):
+        carriers = configuration.get("component_carriers")
+        if isinstance(carriers, (list, tuple)) and carriers:
+            pcell = carriers[0]
+            if isinstance(pcell, Mapping):
+                value = pcell.get("radio_technology", "nr5g")
+                if isinstance(value, str) and value.strip():
+                    requested_rat = value.strip()
+    return build_measure_execution_requirements(requested_rat)
+
+
 class BaseStationCompatibilityVerdict(BaseModel):
     """一次兼容性对账的冻结结论。
 
@@ -236,6 +259,20 @@ def build_frozen_compatibility_payload(
         "requirements": requirements.model_dump(mode="json"),
         "verdict": verdict.model_dump(mode="json"),
     }
+
+
+def build_compatibility_payload(
+    requirements: BaseStationExecutionRequirements,
+    manifest: BaseStationAdapterManifest | None,
+) -> dict[str, Any]:
+    """Build the one projection consumed by preview/readiness/freeze."""
+
+    verdict = (
+        evaluate_base_station_compatibility(requirements, manifest)
+        if manifest is not None
+        else build_no_adapter_verdict(requirements)
+    )
+    return build_frozen_compatibility_payload(requirements, verdict)
 
 
 def verify_frozen_base_station_compatibility(
