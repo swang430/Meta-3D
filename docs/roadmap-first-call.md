@@ -40,7 +40,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-67（本地实现完成，正在验证/审查；P2-66 已由 PR #435 完成）。**
+Current Focus（非现场）= P2-67（实现与验证完成，fresh 内审 P1/P2/P3=0，待 Ready PR；P2-66 已由 PR #435 完成）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -56,7 +56,7 @@ P2-57 → P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
 的依赖同样全部满足。前移后重算依赖图零违反。条目本体本次共动三处：P1-74 与 P1-75 两条的
 「先于」表述换源到本顺序串（不再在条目内复制清单），P2-54 补记本次前移新产生的 compatibility
 digest 版本迁移义务；其余各条的依赖关系逐条复核后仍成立、未动。P2-63
-在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64/P2-65/P2-66 已由 PR #433/#434/#435 完成；P2-67 本地实现完成、正在验证/审查，WIP=1。
+在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64/P2-65/P2-66 已由 PR #433/#434/#435 完成；P2-67 实现与验证完成、fresh 内审 P1/P2/P3=0，待 Ready PR，WIP=1。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -81,7 +81,7 @@ P3-20/P3-21 仍不得自动启动。
    合并；P2-49～P2-53 已由 PR #415/#417/#420/#422/#424 合并；后续现场热修与配置保存完整性
    已由 PR #425/#426/#427 合并。**P1-74 的非现场半已由 PR #429 合并**（CMW500 Extended BLER
    统计基下发 + 回读 + 全域 fail-closed；其现场半待真机）。P1-75 的执行兼容性硬门已由 PR #431 合并。
-   下一批：**P2-64/P2-65/P2-66 已由 PR #433/#434/#435 完成；P2-67 本地实现完成、正在验证/审查**；该片
+   下一批：**P2-64/P2-65/P2-66 已由 PR #433/#434/#435 完成；P2-67 实现与验证完成、fresh 内审 P1/P2/P3=0，待 Ready PR**；该片
    收口同一次 Mock 复盘派生的日志导出问题；再往后 P2-54～P2-56 收口 CMW500 MAC 真值，
    最后 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
@@ -692,7 +692,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-67 本地实现完成，正在验证/审查；下一项 P2-54**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）→ ~~P2-65~~（✅ #434）→ ~~P2-66~~（✅ #435）** → P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-67 实现与验证完成、fresh 内审 P1/P2/P3=0，待 Ready PR；下一项 P2-54**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）→ ~~P2-65~~（✅ #434）→ ~~P2-66~~（✅ #435）** → P2-67 → P2-54～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** 的现场半（详见下方「Blocked on hardware」）。P1-74 现场半 = 在真实 CMW500 上用至少两个不同统计长度连续执行，证明 Extended BLER 统计基不继承上一 session（非现场半已由 PR #429 合并）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4689,7 +4689,7 @@ fail-closed，诊断审计包可保留但不形成正式 KPI/成功假象，历�
 live OpenAPI、checked YAML、generated TS 与手写类型已同步，G29 永久门锁定后端消费者与四个 GUI
 终态入口。覆盖最终 HEAD 的外审无 P1 后以 merge commit `549608cd` 合并，现场 blocker 未改变。
 
-### P2-67 — BaseStation 日志与导出可追溯性（本地实现完成，待验证/审查）
+### P2-67 — BaseStation 日志与导出可追溯性（实现与验证完成，fresh 内审 P1/P2/P3=0，待 Ready PR）
 
 **可观察故障**：CMW500 execution `31d3e29d-3b0f-4e5c-b391-0b629824e72d` 的公共 release 日志仍写
 “F64/UXM 控制会话已释放”；两份用户附件文件名字不同但字节级相同，只含第一条 execution
@@ -4709,7 +4709,8 @@ execution id，不硬编码 F64/UXM；execution-filtered 导出文件名与首�
 从该执行的冻结证据与 P2-66 outcome 生成 `export_metadata`。屏幕、历史与导出仍只复用同一
 `buildLogQuery()`，非法/未知 execution 分别 400/404，畸形冻结证据 fail-closed；无 execution 的普通导出
 与原始 `/download` 字节/文件名语义保持不变。G30 永久门锁定冻结来源、客户端不可提交身份字段与 raw
-download 独立路径；当前进入完整验证、fresh 内审与外审。
+download 独立路径；相关链 413 passed、全后端 5765 passed/5 skipped，两个核心故障变异均被检出，
+fresh 内审 P1/P2/P3=0，待 Ready PR 与外审。
 
 ---
 
@@ -4773,7 +4774,7 @@ download 独立路径；当前进入完整验证、fresh 内审与外审。
 - `[resolved by P2-64 PR #433 on 2026-09-01；discovered 2026-08-30 during UXM/CMW500 Mock 对照执行]` **MockBaseStation 使用多厂商能力并集并靠型号字符串猜 adapter（P2）** —— 已删除能力并集与型号嗅探；HAL 注入 selected registered manifest，Mock 的身份、RAT、operation、窗口、指标及 UE 诊断 RAT 形状只从该真值派生，未知/漂移 fail-loud，模拟值仍不进入正式 KPI。**出口：→ P2-64（✅ #433）**。
 - `[resolved by P2-65 PR #434 on 2026-09-01；discovered 2026-08-30 during UXM/CMW500 Mock 对照执行]` **Readiness 在线判据曾被展示成 TestCase 可执行（P2）** —— 资源、binding 与 TestCase compatibility 现已三判分列并复用 P1-75 verdict，GUI 只消费服务器结论。**出口：→ P2-65（✅ #434）**。
 - `[resolved by P2-66 PR #435 on 2026-09-01；discovered 2026-08-30 during UXM/CMW500 Mock 对照执行]` **执行证据曾允许 manifest 与 requested config 自相矛盾且 `completed` 易形成成功假象（P2）** —— 共同 outcome 现已校验冻结 compatibility 并区分 pipeline/diagnostic/valid-test 终态，全部正式消费者 fail-closed。**出口：→ P2-66（✅ #435）**。
-- `[local implementation complete by P2-67 on 2026-09-02；discovered 2026-08-30 during 双执行日志取证]` **公共 release 日志硬编码 UXM、execution-filtered 导出文件名不含 execution id（P2）** —— 公共租约日志现已厂商中立并携带冻结身份，execution-filtered 导出拥有独立 UUID 文件名和服务器冻结元记录，普通导出与 raw download 保持原语义；正在完成验证与审查。**出口：→ P2-67**。
+- `[implementation verified by P2-67 on 2026-09-02；discovered 2026-08-30 during 双执行日志取证]` **公共 release 日志硬编码 UXM、execution-filtered 导出文件名不含 execution id（P2）** —— 公共租约日志现已厂商中立并携带冻结身份，execution-filtered 导出拥有独立 UUID 文件名和服务器冻结元记录，普通导出与 raw download 保持原语义；fresh 内审 P1/P2/P3=0，待 Ready PR。**出口：→ P2-67**。
 - `[discovered 2026-08-31 during P1-74 内审 F1]` **CMW Extended BLER 正式 KPI 没有任何现场认证闸（P2，非 P1-74 引入）** —— 多份文档写着「现场半完成前正式 KPI 保持 UNKNOWN/N/A」，但该闸**从未存在**：内审实跑探针（真 CMW 驱动 + 可控传输层，happy path）得 `kpi_valid={'dl_throughput': True, 'dl_bler': True}`，该值经 `measure.py::_trusted_throughput_value` → `samples_tput` → `az["throughput_mbps"]` 直接进正式结果与报告；全仓 `field_verified` / `bench_only` / `onsite_verified` **零命中**（我已独立复核）。此状态自 P1-73B/C 即如此。**出口：待 triage** —— 真加闸 = 新增机制且推翻 P1-73B/C 既有行为，须用户裁决范围；在此之前，凡写「现场半前 KPI 保持 N/A」的文档都应视为**描述意图而非现状**。
 - `[discovered 2026-08-31 during P1-74 内审 F4]` **测量窗口证据项的内容整体不落库（P2，既有架构缺口）** —— `execution_scpi_evidence.append_base_station_measurement_window` 只取各 `window.evidence` 项的 `exchange_ids` 做账本校验，item 自身的 `requested` / `readback` / `verdict` / `reason` **全部丢弃**（不只统计基，`cmw500.extended_bler.window` 同样被丢）。P1-74 已用换源规避（applied 值随 `trust.reason` 落库），但结构化的窗口级证据仍无持久化通道。相关联的是同一处的封闭约束：`trust.exchange_ids` 必须与各证据项顺序拼接**严格列表相等**，因此第二条证据项无法认领自己的 exchange id。**出口：待 triage**（属 P2-66 执行证据不变量的邻域，triage 时先判是否并入）。
 - `[discovered 2026-08-31 during P1-74 内审 F5]` **仪器参数域只在窗口 I/O 时刻校验，配置层与 GUI 无上下限（P2）** —— CMW `EBLer:SFRames` 手册域为 100..400E+3，但 `schemas/mimo_ota/config.py::stat_count` 无 `ge/le`，GUI 两处输入（`MIMOOTAConfigForm.tsx` / `TopologyProfileEditor.tsx`）**只有 `min={100}` 无 `max`**。真机上 `stat_count>400000` 会在**第一个窗口**才 fail-closed，此时转台已移动、UE 已 attach，且用户在配置界面拿不到任何提示。⚠️ **不宜简单地在共同配置层加 CMW 的域**：`stat_count` 是 adapter-neutral 字段，把某一厂商的域写进去会让厂商约束泄漏到共同层，且仓内已有 `stat_count: 50` / `stat_count: 1` 的合法 mock 用法（mock 路径无仪器约束）。**出口：待 triage**，正解方向应是由所选 adapter 的 manifest 声明其域、在 freeze/preview 期按 adapter 校验（P1-75 的 requirements projection 是天然载体）。
