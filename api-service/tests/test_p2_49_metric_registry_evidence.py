@@ -11,6 +11,9 @@ from app.hal.base_station import (
     BaseStationMetricObservation,
     BaseStationMeasurementWindow,
 )
+from app.hal.base_station_compatibility import (
+    build_measure_execution_requirements,
+)
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services.execution_scpi_evidence import (
     append_base_station_measurement_window,
@@ -111,13 +114,18 @@ def test_initial_writer_freezes_exact_adapter_metric_registry():
 def test_execution_entry_freezes_uxm_registry_before_measurement_io(monkeypatch):
     from app.schemas.mimo_ota.config import MIMOOTAConfiguration
     from app.services import execution_scpi_evidence as module
+    from app.services.mimo_ota.executors import _helpers
 
     calls: list[tuple[str, object]] = []
+    legacy_requirements = build_measure_execution_requirements(
+        "nr5g"
+    ).model_dump(mode="json")
     execution = SimpleNamespace(
         id="execution-uxm",
         config={
             "base_station_adapter_profile_freeze": {
-                "resolution": {"adapter": "uxm"}
+                "resolution": {"adapter": "uxm"},
+                "compatibility": {"requirements": legacy_requirements},
             }
         },
     )
@@ -131,6 +139,11 @@ def test_execution_entry_freezes_uxm_registry_before_measurement_io(monkeypatch)
         calls.append(("initialize", kwargs["driver"]))
         assert target is execution
 
+    def reject_modern_loader(_execution):
+        raise AssertionError(
+            "pre-P2-54 null profile must use the legacy TestCase"
+        )
+
     monkeypatch.setattr(
         module, "initialize_base_station_execution_evidence", initialize
     )
@@ -140,6 +153,11 @@ def test_execution_entry_freezes_uxm_registry_before_measurement_io(monkeypatch)
         lambda target_db, execution_id: (
             calls.append(("attempt", execution_id)) or "attempt-uxm"
         ),
+    )
+    monkeypatch.setattr(
+        _helpers,
+        "load_mimo_ota_config",
+        reject_modern_loader,
     )
 
     assert begin_execution_base_station_measurement(

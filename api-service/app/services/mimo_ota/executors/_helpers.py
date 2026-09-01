@@ -87,7 +87,10 @@ def load_mimo_ota_config(execution: TestExecution) -> MIMOOTAConfiguration:
                 if isinstance(compatibility, dict)
                 else None
             )
-            if isinstance(requirements, dict) and "mac_profile" in requirements:
+            if (
+                isinstance(requirements, dict)
+                and requirements.get("mac_profile") is not None
+            ):
                 raise RuntimeError("frozen MIMO OTA configuration is missing")
     # P2-45: the calibration gate belongs to this immutable execution, not to
     # the shared TestCase row.  A later policy/certification change or a

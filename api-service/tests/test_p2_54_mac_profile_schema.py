@@ -222,6 +222,16 @@ def test_legacy_nr_flat_fields_migrate_to_one_canonical_profile():
         assert legacy not in canonical
 
 
+@pytest.mark.parametrize(("layers", "expected_ports"), [(1, 2), (4, 8)])
+def test_legacy_nr_missing_csi_ports_preserves_layer_derived_default(
+    layers,
+    expected_ports,
+):
+    config = MIMOOTAConfiguration.model_validate({"mimo_layers": layers})
+
+    assert config.mac_profile.profile.csi_rs_ports == expected_ports
+
+
 def test_explicit_profile_rejects_conflicting_legacy_mac_value():
     canonical = canonicalize_mimo_ota_configuration_payload({"mcs": 28})
     canonical["mcs"] = 21

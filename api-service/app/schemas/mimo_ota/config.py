@@ -840,7 +840,11 @@ class MIMOOTAConfiguration(BaseModel):
                             "subcarrier_spacing_khz",
                             data.get("subcarrier_spacing_khz", 30),
                         ),
-                        "csi_rs_ports": data.get("csi_rs_ports") or 4,
+                        "csi_rs_ports": (
+                            data["csi_rs_ports"]
+                            if data.get("csi_rs_ports") is not None
+                            else max(2, layers * 2)
+                        ),
                         "source_reference": UXM_NR_PROFILE_SOURCE,
                     }
                 )

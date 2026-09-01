@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.hal.base_station_compatibility import canonical_payload_digest
+from app.hal.base_station_compatibility import (
+    build_frozen_compatibility_payload,
+    build_measure_execution_requirements,
+    canonical_payload_digest,
+    evaluate_base_station_compatibility,
+)
+from app.hal.uxm_base_station import RealUxmDriver
 from app.models.test_plan import TestExecution
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
@@ -276,6 +282,37 @@ def test_pre_p1_75_formal_execution_keeps_its_frozen_qualification_gate(db):
     execution.config = config
 
     assert load_mimo_ota_config(execution).precheck_strict_cal is True
+
+
+def test_pre_p2_54_null_mac_profile_freeze_remains_loadable_legacy(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    expected_kind = canonicalize_mimo_ota_configuration_payload(
+        case.configuration
+    )["mac_profile"]["profile"]["kind"]
+    execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, execution, lab)
+    freeze_execution_qualification(db, execution, case)
+
+    config = dict(execution.config)
+    old_freeze = dict(config[FREEZE_CONFIG_KEY])
+    requirements = build_measure_execution_requirements("nr5g")
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealUxmDriver.adapter_manifest,
+    )
+    old_freeze["compatibility"] = build_frozen_compatibility_payload(
+        requirements,
+        verdict,
+    )
+    old_freeze.pop("mimo_ota_configuration")
+    old_freeze["digest"] = canonical_payload_digest(
+        {key: value for key, value in old_freeze.items() if key != "digest"}
+    )
+    config[FREEZE_CONFIG_KEY] = old_freeze
+    execution.config = config
+
+    assert old_freeze["compatibility"]["requirements"]["mac_profile"] is None
+    assert load_mimo_ota_config(execution).mac_profile.profile.kind == expected_kind
 
 
 def test_factory_copies_server_policy_to_execution_snapshot(db):

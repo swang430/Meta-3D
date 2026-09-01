@@ -1202,7 +1202,10 @@ def begin_execution_base_station_measurement(
         if isinstance(compatibility, dict)
         else None
     )
-    modern_freeze = isinstance(requirements, dict) and "mac_profile" in requirements
+    modern_freeze = (
+        isinstance(requirements, dict)
+        and requirements.get("mac_profile") is not None
+    )
     if modern_freeze:
         config = load_mimo_ota_config(execution)
     else:

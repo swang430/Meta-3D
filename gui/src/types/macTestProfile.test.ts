@@ -38,6 +38,17 @@ test('saved canonical profile is projected without using adapter/model identity'
   assert.equal(draft.statistical_window.count, 6000)
 })
 
+test('legacy NR draft preserves layer-derived CSI-RS port defaults', () => {
+  assert.equal(
+    profileDraftForConfiguration({ mimo_layers: 1 }, 'nr5g').csi_rs_ports,
+    2,
+  )
+  assert.equal(
+    profileDraftForConfiguration({ mimo_layers: 4 }, 'nr5g').csi_rs_ports,
+    8,
+  )
+})
+
 test('editing NR emits only supported legacy inputs and drops stale frozen digest', () => {
   const next = updateMacProfileDraft(
     { mac_profile: frozenNr, transmission_mode: 'TM3' },

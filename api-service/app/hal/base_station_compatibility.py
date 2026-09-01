@@ -123,8 +123,8 @@ def build_measure_execution_requirements_from_configuration(
 ) -> BaseStationExecutionRequirements:
     """Project the saved TestCase PCell RAT using the freeze contract.
 
-    Only the single compatibility input is read.  Unrelated MIMO OTA schema
-    validation must not change the compatibility verdict, while legacy rows
+    P2-54 requires the complete canonical MAC profile, so the saved MIMO OTA
+    configuration is validated at this single migration boundary.  Legacy rows
     without ``component_carriers[0].radio_technology`` retain the schema's
     exact ``nr5g`` default.
     """

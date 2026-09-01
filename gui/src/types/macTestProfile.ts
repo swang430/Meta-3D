@@ -200,7 +200,10 @@ export function profileDraftForConfiguration(
     harq_max_trans: positiveInteger(configuration.harq_max_trans, 4),
     harq_processes: positiveInteger(configuration.harq_processes, 16),
     scheduler_algorithm: 'full_throughput',
-    csi_rs_ports: positiveInteger(configuration.csi_rs_ports, 4),
+    csi_rs_ports: positiveInteger(
+      configuration.csi_rs_ports,
+      Math.max(2, positiveInteger(configuration.mimo_layers, 2) * 2),
+    ),
   }
 }
 
