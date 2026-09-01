@@ -17,6 +17,13 @@ test('history and report surfaces consume server-owned completion semantics', ()
   assert.match(history, /valid_test_completed/)
   assert.match(history, /diagnostic_completed/)
   assert.match(history, /pipeline_completed/)
+  const completionBadge = history
+    .split('function getCompletionBadge', 2)[1]
+    .split('// 来源链显示名', 1)[0]
+  assert.doesNotMatch(
+    completionBadge,
+    /record\.status\s*===?\s*['"]completed['"]/,
+  )
   assert.match(reportList, /证据无效/)
   assert.match(viewer, /仅审计/)
 })
