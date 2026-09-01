@@ -87,11 +87,11 @@ def test_real_uxm_plan_derives_from_manifest_and_profile_declarations():
         plan.input_level_control.capability_source
         == "manifest.operations:input_level_control"
     )
-    # IRAT profile 派生的 MAC 能力：token 缺席、实例声明 True（合法 opt-in）
+    # P2-54 后 MAC profile 是 manifest 的正式能力声明，不再依赖实例属性。
     assert plan.mac_throughput.planned is True
     assert (
         plan.mac_throughput.capability_source
-        == "adapter_attribute:mac_throughput_configuration_supported"
+        == "manifest.operations:mac_throughput_config"
     )
     # UXM 未声明 SCell 权威回读 → 未 planned
     assert plan.scell.planned is False
@@ -167,7 +167,7 @@ def test_mock_simulated_plan_shape_is_fixed():
     """④ mock 计划严格镜像所选 adapter manifest，不发布能力并集。"""
 
     expected_by_model = {
-        "UXM 5G E7515B": ("uxm", False, False, False, True),
+        "UXM 5G E7515B": ("uxm", False, True, False, True),
         "CMW500": ("cmw500", False, True, False, False),
     }
     for model, expected in expected_by_model.items():

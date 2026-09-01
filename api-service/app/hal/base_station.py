@@ -205,8 +205,8 @@ class BaseStationApplyReceipt:
     schema_version: Literal[1]
     # P2-51: "mac_throughput_config" 是 configure_mac_throughput_test 的
     # 证据回执；它不进入 adapter_operations 持久化链（那条链的
-    # BaseStationAdapterOperationEvidence 仍只收 config/route），只随
-    # MacThroughputConfigResult.receipt 返回给调用方。
+    # BaseStationAdapterOperationEvidence 仍只收 config/route），由执行侧
+    # 单独写入 profile-scoped mac_profile_receipts。
     operation: Literal["config", "route", "mac_throughput_config"]
     fields: tuple[BaseStationFieldReceipt, ...]
     reason: str

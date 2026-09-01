@@ -27,6 +27,9 @@ from app.services.execution_qualification import (
     ExecutionQualification,
     validate_frozen_execution_qualification,
 )
+from app.services.base_station_adapter_profile import (
+    frozen_mac_profile_from_adapter_freeze,
+)
 
 
 CompatibilityClassification = Literal[
@@ -233,6 +236,60 @@ def _qualification_freeze_alignment_error(
     return None
 
 
+def validate_frozen_mac_profile_evidence(
+    config: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    *,
+    require_formal_confirmation: bool,
+) -> str | None:
+    """Validate P2-54 profile/receipt alignment from immutable evidence only."""
+
+    # Local import avoids package initialization cycling through executors,
+    # which themselves consume this outcome projector.
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+        BaseStationExecutionEvidence,
+        parse_base_station_execution_evidence,
+    )
+
+    try:
+        profile = frozen_mac_profile_from_adapter_freeze(dict(frozen))
+    except ValueError as exc:
+        return str(exc)
+    raw = config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+    if raw is None:
+        # The broader evidence trust gate owns absence.  When an envelope is
+        # present, however, P2-54 fields become mandatory and fail closed.
+        return None
+    if not isinstance(raw, dict):
+        return "baseStation execution evidence is malformed"
+    normalized = parse_base_station_execution_evidence(raw)
+    if normalized is None:
+        return "baseStation execution evidence is malformed"
+    evidence = BaseStationExecutionEvidence.model_validate(normalized)
+    if profile is None:
+        if evidence.mac_profile_contract_version is not None:
+            return "legacy compatibility carries unexpected MAC profile evidence"
+        return None
+    if (
+        evidence.mac_profile_contract_version != 1
+        or evidence.mac_profile_digest != profile.profile_digest
+        or evidence.mac_profile_receipts is None
+    ):
+        return "frozen MAC profile evidence digest mismatch"
+    if not require_formal_confirmation:
+        return None
+    attempt_id = evidence.current_measurement_attempt_id
+    matching = [
+        row
+        for row in evidence.mac_profile_receipts
+        if row.measurement_attempt_id == attempt_id
+    ]
+    if len(matching) != 1 or matching[0].confirmed is not True:
+        return "formal execution has no confirmed current-attempt MAC receipt"
+    return None
+
+
 def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutcome:
     """Project frozen evidence plus current lifecycle into shared semantics."""
 
@@ -268,6 +325,9 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
             compatibility = frozen["compatibility"]
             assert isinstance(compatibility, Mapping)
             compatibility_digest = canonical_payload_digest(compatibility)
+            requirements = BaseStationExecutionRequirements.model_validate(
+                compatibility.get("requirements")
+            )
             verdict = BaseStationCompatibilityVerdict.model_validate(
                 compatibility.get("verdict")
             )
@@ -275,9 +335,26 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
                 frozen,
                 qualification_snapshot,
             )
+            mac_evidence_error = validate_frozen_mac_profile_evidence(
+                config,
+                frozen,
+                require_formal_confirmation=(
+                    pipeline_status == "completed" and qualification == "formal"
+                ),
+            )
             if alignment_error is not None:
                 classification = "invalid"
                 reasons.append(alignment_error)
+            elif mac_evidence_error is not None:
+                classification = "invalid"
+                reasons.append(mac_evidence_error)
+            elif requirements.mac_profile is None:
+                classification = (
+                    "diagnostic" if qualification == "diagnostic" else "legacy"
+                )
+                reasons.append(
+                    "pre-P2-54 compatibility snapshot has no frozen MAC profile"
+                )
             elif verdict.status == "no_adapter" or qualification == "diagnostic":
                 classification = "diagnostic"
             else:

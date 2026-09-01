@@ -30,6 +30,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationMetricRegistry,
     BaseStationRequestedConfig,
+    MacThroughputConfigResult,
     resolve_base_station_execution_plan,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
@@ -50,6 +51,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     BaseStationControlReleaseEvidence,
     BaseStationExecutionEvidence,
     BaseStationMeasurementWindowEvidence,
+    BaseStationMacProfileReceiptEvidence,
     FrozenPayloadSnapshot,
     PositionSnapshot,
     base_station_attempt_diagnostic_lifecycle_is_complete,
@@ -57,7 +59,10 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     canonical_snapshot_digest,
     parse_base_station_execution_evidence,
 )
-from app.services.base_station_adapter_profile import CMW_FORMAL_CAPABILITY_KEY
+from app.services.base_station_adapter_profile import (
+    CMW_FORMAL_CAPABILITY_KEY,
+    frozen_mac_profile_from_adapter_freeze,
+)
 from app.services.instrument_test_lease import (
     ActiveBaseStationLeaseIdentity,
     active_base_station_lease_identity,
@@ -296,6 +301,16 @@ def _initial_base_station_execution_evidence(
         **execution_plan.as_payload(),
         "digest": execution_plan.digest,
     }
+    frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen_adapter)
+    mac_profile_payload = (
+        {}
+        if frozen_mac_profile is None
+        else {
+            "mac_profile_contract_version": 1,
+            "mac_profile_digest": frozen_mac_profile.profile_digest,
+            "mac_profile_receipts": [],
+        }
+    )
     connection_id = frozen_adapter.get("instrument_connection_id")
     if not isinstance(connection_id, str) or not connection_id:
         raise ValueError("frozen baseStation connection identity is missing")
@@ -371,6 +386,7 @@ def _initial_base_station_execution_evidence(
             "metric_registry": metric_registry_payload,
             "execution_plan_contract_version": 1,
             "execution_plan": execution_plan_payload,
+            **mac_profile_payload,
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -413,6 +429,8 @@ def initialize_base_station_execution_evidence(
             "metric_registry",
             "execution_plan_contract_version",
             "execution_plan",
+            "mac_profile_contract_version",
+            "mac_profile_digest",
         )
         if any(
             getattr(existing, field) != getattr(candidate, field)
@@ -421,6 +439,86 @@ def initialize_base_station_execution_evidence(
             raise ValueError("baseStation evidence immutable scope mismatch")
         return existing_raw
     return save_base_station_execution_evidence(execution, candidate)
+
+
+def confirm_base_station_mac_profile(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    result: MacThroughputConfigResult,
+) -> None:
+    """Persist the profile-scoped apply receipt for the active attempt."""
+
+    if not isinstance(result, MacThroughputConfigResult):
+        raise TypeError("result must be a MacThroughputConfigResult")
+    if result.receipt is None:
+        raise ValueError("MAC profile result is missing its field receipt")
+    receipt = result.receipt
+    if receipt.operation != "mac_throughput_config":
+        raise ValueError("MAC profile result carries the wrong receipt operation")
+    execution, evidence = _current_running_base_station_evidence(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+    )
+    if (
+        evidence.mac_profile_contract_version != 1
+        or evidence.mac_profile_digest is None
+        or evidence.mac_profile_receipts is None
+    ):
+        raise ValueError("execution evidence has no frozen MAC profile contract")
+    if (
+        result.profile_digest != evidence.mac_profile_digest
+        or receipt.profile_digest != evidence.mac_profile_digest
+    ):
+        raise ValueError("MAC profile result digest does not match execution freeze")
+    if active_base_station_lease_identity() != lease_identity:
+        raise ValueError("baseStation lease identity is not the active lease truth")
+    if (
+        lease_identity.measurement_attempt_id != attempt_id
+        or lease_identity.adapter_id != evidence.adapter
+        or not lease_identity.lease_id
+        or not lease_identity.session_token
+    ):
+        raise ValueError("baseStation lease identity does not match current evidence")
+    key = (attempt_id, lease_identity.lease_id)
+    if any(
+        (item.measurement_attempt_id, item.lease_id) == key
+        for item in evidence.mac_profile_receipts
+    ):
+        raise ValueError("MAC profile receipt already persisted")
+    fields = [
+        {
+            "field": field.field,
+            "requested": field.requested,
+            "applied": field.applied,
+            "status": field.status,
+            "reason": field.reason,
+            "exchange_ids": list(field.exchange_ids),
+        }
+        for field in receipt.fields
+    ]
+    row = BaseStationMacProfileReceiptEvidence.model_validate(
+        {
+            "schema_version": 1,
+            "measurement_attempt_id": attempt_id,
+            "lease_id": lease_identity.lease_id,
+            "adapter": evidence.adapter,
+            "session_token": lease_identity.session_token,
+            "profile_digest": evidence.mac_profile_digest,
+            "fields": fields,
+            "confirmed": receipt.confirmed is True and receipt.simulated is False,
+            "simulated": receipt.simulated,
+            "reason": receipt.reason,
+            "exchange_ids": list(receipt.exchange_ids),
+        }
+    )
+    evidence.mac_profile_receipts.append(row)
+    _append_unique_exchange_ids(evidence, row.exchange_ids)
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
 
 
 def _append_unique_exchange_ids(
@@ -918,6 +1016,12 @@ def save_base_station_execution_evidence(
         normalized.pop("execution_plan_contract_version", None)
     if "execution_plan" not in parsed.model_fields_set:
         normalized.pop("execution_plan", None)
+    if "mac_profile_contract_version" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_contract_version", None)
+    if "mac_profile_digest" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_digest", None)
+    if "mac_profile_receipts" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_receipts", None)
     for parsed_window, normalized_window in zip(
         parsed.measurement_windows,
         normalized["measurement_windows"],

@@ -268,6 +268,67 @@ class BaseStationAdapterOperationEvidence(BaseModel):
         return self
 
 
+class BaseStationMacProfileReceiptEvidence(BaseModel):
+    """Profile-scoped MAC apply truth bound to one execution attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    measurement_attempt_id: str
+    lease_id: str
+    adapter: Literal["uxm", "cmw500"]
+    session_token: str
+    profile_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    fields: list[BaseStationAdapterFieldEvidence]
+    confirmed: StrictBool
+    simulated: StrictBool
+    reason: str
+    exchange_ids: list[str]
+
+    @field_validator(
+        "measurement_attempt_id",
+        "lease_id",
+        "session_token",
+        "reason",
+    )
+    @classmethod
+    def _required_text(cls, value: str, info):
+        return _non_empty(value, info.field_name)
+
+    @field_validator("exchange_ids")
+    @classmethod
+    def _unique_exchange_ids(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("MAC receipt exchange ids must be unique")
+        return [_non_empty(item, "exchange_ids") for item in value]
+
+    @model_validator(mode="after")
+    def _derived_confirmation(self):
+        if not self.fields:
+            raise ValueError("MAC receipt requires field evidence")
+        applicable = [
+            field for field in self.fields if field.status != "not_applicable"
+        ]
+        field_exchange_ids = list(
+            dict.fromkeys(
+                exchange_id
+                for field in self.fields
+                for exchange_id in field.exchange_ids
+            )
+        )
+        if self.exchange_ids != field_exchange_ids:
+            raise ValueError("MAC receipt exchange ids must match field evidence")
+        expected = bool(
+            applicable
+            and all(field.status == "confirmed" for field in applicable)
+            and all(field.exchange_ids for field in applicable)
+            and self.simulated is False
+        )
+        if self.confirmed is not expected:
+            raise ValueError("MAC receipt confirmation must be derived")
+        return self
+
+
 class BaseStationAttachStageEvidence(BaseModel):
     """JSON-safe truth for one common attach milestone."""
 
@@ -850,6 +911,12 @@ class BaseStationExecutionEvidence(BaseModel):
     metric_registry: BaseStationMetricRegistryEvidence | None = None
     execution_plan_contract_version: Literal[1] | None = None
     execution_plan: BaseStationExecutionPlanEvidence | None = None
+    mac_profile_contract_version: Literal[1] | None = None
+    mac_profile_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    mac_profile_receipts: list[BaseStationMacProfileReceiptEvidence] | None = None
     measurement_windows: list[BaseStationMeasurementWindowEvidence]
     control_releases: list[BaseStationControlReleaseEvidence]
     exchange_ids: list[str]
@@ -924,6 +991,17 @@ class BaseStationExecutionEvidence(BaseModel):
             raise ValueError(
                 "historical evidence cannot carry an unfrozen execution plan"
             )
+        if self.mac_profile_contract_version == 1:
+            if self.mac_profile_digest is None or self.mac_profile_receipts is None:
+                raise ValueError("current execution requires frozen MAC profile truth")
+            if any(
+                row.adapter != self.adapter
+                or row.profile_digest != self.mac_profile_digest
+                for row in self.mac_profile_receipts
+            ):
+                raise ValueError("MAC profile receipt drifted from frozen profile")
+        elif self.mac_profile_digest is not None or self.mac_profile_receipts is not None:
+            raise ValueError("historical evidence cannot carry unfrozen MAC truth")
         if any(row.adapter != self.adapter for row in self.adapter_operations):
             raise ValueError("adapter operation mismatch")
         if self.attach_operations is not None and any(
@@ -988,6 +1066,11 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         and value.get("execution_plan_contract_version") is None
     ):
         return None
+    if (
+        "mac_profile_contract_version" in value
+        and value.get("mac_profile_contract_version") is None
+    ):
+        return None
     try:
         parsed = BaseStationExecutionEvidence.model_validate(value)
     except Exception:
@@ -1010,6 +1093,12 @@ def parse_base_station_execution_evidence(value: Any) -> dict[str, Any] | None:
         normalized.pop("execution_plan_contract_version", None)
     if "execution_plan" not in value:
         normalized.pop("execution_plan", None)
+    if "mac_profile_contract_version" not in value:
+        normalized.pop("mac_profile_contract_version", None)
+    if "mac_profile_digest" not in value:
+        normalized.pop("mac_profile_digest", None)
+    if "mac_profile_receipts" not in value:
+        normalized.pop("mac_profile_receipts", None)
     raw_windows = value.get("measurement_windows")
     normalized_windows = normalized.get("measurement_windows")
     if isinstance(raw_windows, list) and isinstance(normalized_windows, list):

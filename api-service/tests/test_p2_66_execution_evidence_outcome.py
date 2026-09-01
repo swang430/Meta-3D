@@ -9,6 +9,7 @@ import pytest
 from app.hal.base_station_compatibility import (
     build_frozen_compatibility_payload,
     build_measure_execution_requirements,
+    build_measure_execution_requirements_from_configuration,
     build_no_adapter_verdict,
     canonical_payload_digest,
     evaluate_base_station_compatibility,
@@ -88,7 +89,7 @@ def _qualification(classification: str) -> dict:
 
 
 def _compatibility(*, no_adapter: bool = False) -> dict:
-    requirements = build_measure_execution_requirements("nr5g")
+    requirements = build_measure_execution_requirements_from_configuration({})
     verdict = (
         build_no_adapter_verdict(requirements)
         if no_adapter
@@ -96,6 +97,15 @@ def _compatibility(*, no_adapter: bool = False) -> dict:
             requirements,
             RealUxmDriver.adapter_manifest,
         )
+    )
+    return build_frozen_compatibility_payload(requirements, verdict)
+
+
+def _pre_p2_54_compatibility() -> dict:
+    requirements = build_measure_execution_requirements("nr5g")
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealUxmDriver.adapter_manifest,
     )
     return build_frozen_compatibility_payload(requirements, verdict)
 
@@ -166,6 +176,42 @@ def test_completed_compatible_formal_is_valid_test_completion():
         _compatibility()
     )
     assert outcome.reasons == ()
+
+
+def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    frozen["compatibility"] = _pre_p2_54_compatibility()
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = frozen
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "legacy"
+    assert outcome.formal_eligible is False
+    assert any("pre-P2-54" in reason for reason in outcome.reasons)
+
+
+def test_pre_p2_54_snapshot_cannot_hide_qualification_binding_drift():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    frozen["compatibility"] = _pre_p2_54_compatibility()
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = frozen
+    qualification = execution.config[EXECUTION_QUALIFICATION_KEY]
+    qualification["binding_digest"] = "c" * 64
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
 
 
 def test_formal_qualification_without_site_certification_fails_closed():

@@ -10,10 +10,12 @@ from app.hal.base_station_adapter_profile import (
     BaseStationAdapterProfileResolution,
 )
 from app.hal.base_station_compatibility import (
+    BaseStationExecutionRequirements,
     build_compatibility_payload,
     build_measure_execution_requirements_from_configuration,
     canonical_payload_digest,
 )
+from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
 from app.services.base_station_binding import resolve_base_station_binding
@@ -23,6 +25,45 @@ from app.services.instrument_test_lease import BaseStationLeaseAuditContext
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
 CMW_FORMAL_CAPABILITY_KEY = "cmw500_lte_2x2_formal_capability"
+
+
+def frozen_mac_profile_from_adapter_freeze(
+    frozen: Any,
+) -> FrozenMacTestProfile | None:
+    """Read the one execution-frozen MAC profile without mutable fallback.
+
+    A compatibility snapshot created before P2-54 legitimately has no
+    ``mac_profile`` field and remains readable as legacy evidence.  Once the
+    field is present, its nested digest is revalidated before any consumer may
+    use the profile.
+    """
+
+    if not isinstance(frozen, dict):
+        raise ValueError("frozen BaseStation adapter profile is malformed")
+    if "compatibility" not in frozen:
+        return None
+    compatibility = frozen["compatibility"]
+    if not isinstance(compatibility, dict):
+        raise ValueError("frozen BaseStation compatibility is malformed")
+    raw_requirements = compatibility.get("requirements")
+    if not isinstance(raw_requirements, dict):
+        raise ValueError("frozen BaseStation requirements are malformed")
+    try:
+        requirements = BaseStationExecutionRequirements.model_validate(
+            raw_requirements
+        )
+    except Exception as exc:
+        if raw_requirements.get("mac_profile") is not None:
+            raise ValueError("frozen BaseStation MAC profile is invalid") from exc
+        raise ValueError("frozen BaseStation requirements are invalid") from exc
+    if requirements.mac_profile is None:
+        return None
+    try:
+        return FrozenMacTestProfile.model_validate(
+            requirements.mac_profile.model_dump(mode="json")
+        )
+    except Exception as exc:
+        raise ValueError("frozen BaseStation MAC profile is invalid") from exc
 
 
 def _loaded_base_station(hal):

@@ -6,6 +6,8 @@ from tests.base_station_mock_factory import registered_mock_base_station
 
 import inspect
 
+import pytest
+
 import app.services.mimo_ota.executors.measure as measure_module
 from app.hal.base_station import MockBaseStation
 from app.hal.cmw500_base_station import RealCmw500Driver
@@ -150,12 +152,8 @@ def test_uxm_and_mock_keep_their_existing_mac_paths():
         uxm,
         plan=_plan(uxm, RealUxmDriver.adapter_manifest).mac_throughput,
     ) is None
-    assert _formal_mac_configuration_blocker(
-        unsupported_profile,
-        plan=_plan(
-            unsupported_profile, RealUxmDriver.adapter_manifest
-        ).mac_throughput,
-    ) is not None
+    with pytest.raises(ValueError, match="declaration drift"):
+        _plan(unsupported_profile, RealUxmDriver.adapter_manifest)
     # mock 的 simulated 语义不变：无论计划项如何，mock 不产生 MAC blocker。
     assert _formal_mac_configuration_blocker(
         mock,
