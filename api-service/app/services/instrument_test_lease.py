@@ -19,6 +19,7 @@ from app.hal.base_station import (
     BaseStationControlReleaseResult,
     BaseStationRemoteSessionResult,
 )
+from app.core.logging_config import current_execution_id
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,14 @@ class ActiveBaseStationLeaseIdentity:
     measurement_attempt_id: str | None
     adapter_id: str
     session_token: str
+
+
+@dataclass(frozen=True)
+class BaseStationLeaseAuditContext:
+    """Frozen BaseStation identity attached to public lease audit events."""
+
+    adapter_id: str | None
+    binding_digest: str
 
 
 class InstrumentTestLease:
@@ -363,6 +372,41 @@ class InstrumentTestLease:
         """
         hal = None
         operation_error: Optional[BaseException] = None
+        audit_context = getattr(
+            validate_before_remote,
+            "lease_audit_context",
+            None,
+        )
+        if audit_context is not None and not isinstance(
+            audit_context,
+            BaseStationLeaseAuditContext,
+        ):
+            raise InstrumentTestLeaseError(
+                "baseStation lease audit context is malformed"
+            )
+        controlled_instruments = tuple(
+            name
+            for enabled, name in (
+                (control_f64, "channelEmulator"),
+                (control_uxm, "baseStation"),
+            )
+            if enabled
+        )
+
+        def _audit_extra(event: str) -> dict[str, object]:
+            return {
+                "lease_event": event,
+                "controlled_instruments": controlled_instruments,
+                "base_station_adapter_id": (
+                    audit_context.adapter_id if audit_context is not None else None
+                ),
+                "base_station_binding_digest": (
+                    audit_context.binding_digest
+                    if audit_context is not None
+                    else None
+                ),
+                "execution_id": current_execution_id.get("-"),
+            }
         # 同 task 已持租约 = 嵌套。内层不重复 acquire/release，只做控制权校验。
         nested = (
             self._lock_owner is asyncio.current_task()
@@ -460,7 +504,11 @@ class InstrumentTestLease:
                             outcome=outcome,
                         )
                     self._monitoring_enabled = enable_monitoring
-                    logger.info("[instrument-lease] 测试取得仪表控制: %s", purpose)
+                    logger.info(
+                        "[instrument-lease] 测试取得仪表控制: %s",
+                        purpose,
+                        extra=_audit_extra("control_acquired"),
+                    )
                     yield outcome
                 except BaseException as exc:
                     operation_error = exc
@@ -482,8 +530,9 @@ class InstrumentTestLease:
                             outcome=outcome,
                         )
                         logger.info(
-                            "[instrument-lease] 测试结束，F64/UXM 控制会话已释放: %s",
+                            "[instrument-lease] 测试结束，仪表控制会话已释放: %s",
                             purpose,
+                            extra=_audit_extra("control_released"),
                         )
                 except BaseException as release_error:
                     if operation_error is None:
@@ -512,7 +561,17 @@ class InstrumentTestLease:
                 control_uxm=True,
             )
             logger.info(
-                "[instrument-lease] 空闲停放完成：F64/UXM 均不保持 Remote"
+                "[instrument-lease] 空闲停放完成：已配置仪表均不保持 Remote",
+                extra={
+                    "lease_event": "idle_parked",
+                    "controlled_instruments": (
+                        "channelEmulator",
+                        "baseStation",
+                    ),
+                    "base_station_adapter_id": None,
+                    "base_station_binding_digest": None,
+                    "execution_id": current_execution_id.get("-"),
+                },
             )
             return True
 

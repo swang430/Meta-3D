@@ -1747,4 +1747,9 @@ def _freeze_instrument_lease(
         )
         if digest
     )
+    _validate.lease_audit_context = getattr(
+        validate_base_station,
+        "lease_audit_context",
+        None,
+    )
     return _validate
