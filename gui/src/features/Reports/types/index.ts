@@ -7,6 +7,8 @@
  * @date 2025-11-26
  */
 
+import type { ExecutionEvidenceOutcome } from '../../../types/api'
+
 // ==================== Report Types ====================
 
 export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed'
@@ -81,6 +83,7 @@ export interface ReportSummary {
   requires_regeneration: boolean
   regeneration_available: boolean
   regeneration_reason?: string
+  execution_evidence_outcome?: ExecutionEvidenceOutcome | null
 }
 
 export interface ReportListResponse {

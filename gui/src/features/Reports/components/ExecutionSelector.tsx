@@ -33,6 +33,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import client from '../../../api/client'
 import { FORMAL_EXECUTION_CHAINS } from '../types'
+import type { ExecutionEvidenceOutcome } from '../../../types/api'
 
 export interface ExecutionOption {
   id: string
@@ -40,6 +41,7 @@ export interface ExecutionOption {
   status: string
   validation_pass: boolean | null
   execution_classification: 'formal' | 'diagnostic' | 'legacy'
+  execution_evidence_outcome: ExecutionEvidenceOutcome
   started_at?: string
   completed_at?: string
   duration_sec?: number
@@ -136,13 +138,26 @@ export function ExecutionSelector({
   const getStatusBadge = (
     status: string,
     pass: boolean | null,
-    classification: ExecutionOption['execution_classification'],
+    outcome: ExecutionEvidenceOutcome,
   ) => {
     if (status === 'completed') {
-      if (classification === 'diagnostic') {
+      if (outcome.completion_semantic === 'diagnostic_completed') {
         return (
           <Badge size="xs" color="yellow" variant="light">
-            仅诊断
+            仅诊断 · 已完成 · 仅审计
+          </Badge>
+        )
+      }
+      if (outcome.completion_semantic === 'pipeline_completed') {
+        return (
+          <Badge
+            size="xs"
+            color={outcome.compatibility_classification === 'invalid' ? 'red' : 'gray'}
+            variant="light"
+          >
+            {outcome.compatibility_classification === 'invalid'
+              ? '证据无效 · 仅审计'
+              : '历史流程完成'}
           </Badge>
         )
       }
@@ -281,7 +296,7 @@ export function ExecutionSelector({
                       {getStatusBadge(
                         exec.status,
                         exec.validation_pass,
-                        exec.execution_classification,
+                        exec.execution_evidence_outcome,
                       )}
                     </Group>
                     <Group gap="xs">

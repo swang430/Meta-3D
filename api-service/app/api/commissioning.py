@@ -55,8 +55,10 @@ from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
     ExecutionQualification,
     TestCaseExecutionPolicy,
-    execution_qualification_classification,
-    execution_is_diagnostic,
+)
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
@@ -655,13 +657,20 @@ def _commissioning_measure_projection(
     if measure is None:
         return None
     execution_config = execution.config if isinstance(execution.config, dict) else {}
-    diagnostic = execution_is_diagnostic(execution)
-    classification = execution_qualification_classification(execution) or "legacy"
+    outcome = project_execution_evidence_outcome(execution)
+    diagnostic = execution_evidence_blocks_formal_outputs(execution)
+    classification = outcome.qualification_classification
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     evidence_required = base_station_metric_projection_required(
         execution_config
     )
     if not evidence_required:
+        if diagnostic:
+            return {
+                "execution_classification": classification,
+                "overall_pass": None,
+                "base_station_metric_projection": [],
+            }
         projected = deepcopy(measure)
         projected["execution_classification"] = classification
         return projected
@@ -679,8 +688,6 @@ def _commissioning_measure_projection(
         if expected_config is not None
         else []
     )
-    projected = deepcopy(measure)
-    projected["execution_classification"] = classification
     if diagnostic:
         rows = [
             {
@@ -711,6 +718,13 @@ def _commissioning_measure_projection(
             row["dl_bler_percent"] = row["metrics"].get(
                 "dl_bler_percent", row["dl_bler_percent"]
             )
+        projected = {
+            "execution_classification": classification,
+            "overall_pass": None,
+        }
+    else:
+        projected = deepcopy(measure)
+        projected["execution_classification"] = classification
     projected["base_station_metric_projection"] = [
         {
             "position": row["position"],
@@ -724,6 +738,38 @@ def _commissioning_measure_projection(
         for row in rows
     ]
     return projected
+
+
+def _commissioning_analysis_projection(
+    execution: TestExecution,
+    analysis: Dict[str, Any] | None,
+) -> Dict[str, Any] | None:
+    """Expose formal analysis values only for an eligible execution outcome."""
+
+    if analysis is None:
+        return None
+    if not execution_evidence_blocks_formal_outputs(execution):
+        return deepcopy(analysis)
+    outcome = project_execution_evidence_outcome(execution)
+    return {
+        "execution_classification": outcome.qualification_classification,
+        "verdict": "UNKNOWN",
+        "details": [
+            "N/A: frozen execution evidence does not permit formal KPI projection"
+        ],
+        "avg_throughput_mbps": None,
+        "throughput_ratio": None,
+        "throughput_pass": None,
+        "rsrp_variance_db": None,
+        "rsrp_pass": None,
+        "avg_sinr_db": None,
+        "sinr_pass": None,
+        "avg_rank_indicator": None,
+        "rank_pass": None,
+        "qz_pass": None,
+        "margin_db": None,
+        "base_station_metric_projection": [],
+    }
 
 
 def _execution_to_session_response(
@@ -797,7 +843,10 @@ def _execution_to_session_response(
             test_case,
             phases.get("measure"),
         ),
-        analysis=phases.get("analysis"),
+        analysis=_commissioning_analysis_projection(
+            execution,
+            phases.get("analysis"),
+        ),
         report_id=report_payload.get("report_id"),
         execution_qualification=(
             ExecutionQualification.model_validate(

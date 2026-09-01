@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from ._datetime import UTCDateTime
+from app.services.execution_evidence_outcome import ExecutionEvidenceOutcome
 
 
 # ==================== Report Schemas ====================
@@ -144,6 +145,7 @@ class ReportResponse(BaseModel):
 
     # Report content data
     content_data: Optional[Dict[str, Any]]
+    execution_evidence_outcome: Optional[ExecutionEvidenceOutcome] = None
     road_test_execution_id: Optional[str]
 
     class Config:
@@ -166,6 +168,7 @@ class ReportSummary(BaseModel):
     test_execution_ids: Optional[List[UUID]] = None
     road_test_execution_id: Optional[str] = None
     vrt_archive_trusted: bool = False
+    execution_evidence_outcome: Optional[ExecutionEvidenceOutcome] = None
 
     # Historical MIMO provenance recovery (computed by the list endpoint).
     requires_regeneration: bool = False

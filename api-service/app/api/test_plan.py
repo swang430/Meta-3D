@@ -23,6 +23,10 @@ from app.services.lab_resolution import resolve_lab_profile
 from app.models.test_plan import TestCase
 from app.services.execution_scpi_evidence import ExecutionScpiEvidence
 from app.services.execution_qualification import TestCaseExecutionPolicy
+from app.services.execution_evidence_outcome import (
+    ExecutionEvidenceOutcome,
+    project_execution_evidence_outcome,
+)
 
 router = APIRouter(prefix="/test-plans", tags=["Test Plan Management"])
 
@@ -274,6 +278,7 @@ class CaseExecutionStatusResponse(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    execution_evidence_outcome: ExecutionEvidenceOutcome
     # P1-47C：仅返回严格模型校验后的脱敏摘要；原始响应仍在 scpi.log。
     scpi_evidence: Optional[
         "ExecutionScpiEvidence"
@@ -359,5 +364,6 @@ def get_case_execution_status(
         completed_at=(
             execution.completed_at.isoformat() if execution.completed_at else None
         ),
+        execution_evidence_outcome=project_execution_evidence_outcome(execution),
         scpi_evidence=public_execution_scpi_evidence(execution),
     )

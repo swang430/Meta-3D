@@ -4,7 +4,7 @@
  * Provides API functions for test plan, test case, and queue management.
  */
 import testPlanClient from './client';
-import type { TestCaseExecutionPolicy } from '../types/api'
+import type { ExecutionEvidenceOutcome, TestCaseExecutionPolicy } from '../types/api'
 
 // ==================== Type Definitions ====================
 
@@ -272,6 +272,7 @@ export interface CaseExecutionStatus {
   error_message?: string | null
   started_at?: string | null
   completed_at?: string | null
+  execution_evidence_outcome: ExecutionEvidenceOutcome
   scpi_evidence?: ExecutionScpiEvidence | null
 }
 

@@ -1240,7 +1240,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["CaseExecutionStatus"];
+                        "application/json": components["schemas"]["CaseExecutionStatusResponse"];
                     };
                 };
                 /** @description Execution not found */
@@ -2089,6 +2089,21 @@ export interface components {
             frozen_at: string;
             qualification_digest: string;
         };
+        /** @description Immutable server-owned projection of one execution's frozen compatibility and qualification evidence. pipeline_status is lifecycle only; completion_semantic is the operator-facing completion meaning. */
+        ExecutionEvidenceOutcome: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            compatibility_classification: "compatible" | "diagnostic" | "legacy" | "invalid";
+            /** @enum {string} */
+            completion_semantic: "valid_test_completed" | "diagnostic_completed" | "pipeline_completed" | "not_completed";
+            formal_eligible: boolean;
+            compatibility_digest: string | null;
+            /** @enum {string} */
+            qualification_classification: "formal" | "diagnostic" | "legacy";
+            reasons: string[];
+            pipeline_status: string;
+        };
         SessionResponse: {
             session_id: string;
             phase: string;
@@ -2925,6 +2940,7 @@ export interface components {
             validation_pass: boolean | null;
             /** @enum {string} */
             execution_classification: "formal" | "diagnostic" | "legacy";
+            execution_evidence_outcome: components["schemas"]["ExecutionEvidenceOutcome"];
             /** @description P2-34: execution-failure alert publication outcome recorded on this row (published | duplicate | failed). null = not recorded (rows predating P2-34 / record write failed / not applicable) — null does NOT mean the alert was published. */
             failure_alert_outcome: string | null;
         };
@@ -2983,7 +2999,7 @@ export interface components {
             formal_acceptance: boolean;
             reason: string;
         };
-        CaseExecutionStatus: {
+        CaseExecutionStatusResponse: {
             /** Format: uuid */
             execution_id: string;
             status: string;
@@ -2995,7 +3011,28 @@ export interface components {
             error_message?: string | null;
             started_at?: string | null;
             completed_at?: string | null;
+            execution_evidence_outcome: components["schemas"]["ExecutionEvidenceOutcome"];
             scpi_evidence?: components["schemas"]["ExecutionScpiEvidence"] | null;
+        };
+        ReportSummary: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            report_type: string;
+            format: string;
+            status: string;
+            progress_percent: number;
+            file_size_bytes: number | null;
+            generated_by: string;
+            /** Format: date-time */
+            generated_at: string;
+            test_execution_ids?: string[] | null;
+            road_test_execution_id?: string | null;
+            vrt_archive_trusted: boolean;
+            execution_evidence_outcome?: components["schemas"]["ExecutionEvidenceOutcome"] | null;
+            requires_regeneration?: boolean;
+            regeneration_available?: boolean;
+            regeneration_reason?: string | null;
         };
         /**
          * @description P2-8: one parsed log line. `level` is RAW for non-JSON continuation

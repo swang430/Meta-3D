@@ -35,9 +35,9 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
-from app.services.execution_qualification import (
-    execution_is_diagnostic,
-    execution_qualification_classification,
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,12 @@ class AnalysisExecutor(IStepExecutor):
         ) or base_station_throughput_unverified
         rf_kpi_unverified = not rf_kpi_scope_is_verified(measure)
         quiet_zone_unverified = not quiet_zone_scope_is_formally_verified(precheck)
-        diagnostic_execution = execution_is_diagnostic(context.test_execution)
+        evidence_outcome = project_execution_evidence_outcome(
+            context.test_execution
+        )
+        diagnostic_execution = execution_evidence_blocks_formal_outputs(
+            context.test_execution
+        )
         if (
             diagnostic_execution
             or simulated_measurement
@@ -200,10 +205,7 @@ class AnalysisExecutor(IStepExecutor):
                 log_reason = "quiet-zone evidence is not formally verified"
             result: Dict[str, Any] = {
                 "execution_classification": (
-                    execution_qualification_classification(
-                        context.test_execution
-                    )
-                    or "legacy"
+                    evidence_outcome.qualification_classification
                 ),
                 "verdict": "UNKNOWN",
                 "details": [detail],

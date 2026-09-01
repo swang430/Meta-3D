@@ -71,13 +71,17 @@ def load_mimo_ota_config(execution: TestExecution) -> MIMOOTAConfiguration:
     # the shared TestCase row.  A later policy/certification change or a
     # concurrent execution must never relabel an already-frozen run.  Legacy
     # executions without a qualification envelope keep their stored config.
-    from app.services.execution_qualification import (
-        execution_qualification_classification,
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
     )
 
-    classification = execution_qualification_classification(execution)
-    if classification is not None:
-        payload["precheck_strict_cal"] = classification == "formal"
+    outcome = project_execution_evidence_outcome(execution)
+    if outcome.qualification_classification != "legacy":
+        payload["precheck_strict_cal"] = (
+            outcome.qualification_classification == "formal"
+            and outcome.compatibility_classification
+            not in {"diagnostic", "invalid"}
+        )
     return MIMOOTAConfiguration.model_validate(payload)
 
 

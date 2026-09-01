@@ -33,7 +33,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import { ReportsAPI } from '../index'
-import type { ReportStatus, ReportFormat } from '../types'
+import type { ReportStatus, ReportFormat, ReportSummary } from '../types'
 import { formatServerDateTime } from '../../../utils/datetime'
 
 interface ReportListProps {
@@ -158,7 +158,25 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
     return matchesSearch && matchesFormat
   })
 
-  const getStatusBadge = (status: ReportStatus) => {
+  const getStatusBadge = (report: ReportSummary) => {
+    const outcome = report.execution_evidence_outcome
+    if (report.status === 'completed' && outcome) {
+      if (outcome.compatibility_classification === 'invalid') {
+        return <Badge color="red">证据无效 · 仅审计</Badge>
+      }
+      if (outcome.completion_semantic === 'not_completed') {
+        return <Badge color="gray">流程未完成 · 非正式</Badge>
+      }
+      if (outcome.completion_semantic === 'valid_test_completed') {
+        return <Badge color="green">有效测试报告</Badge>
+      }
+      if (outcome.completion_semantic === 'diagnostic_completed') {
+        return <Badge color="yellow">诊断报告 · 仅审计</Badge>
+      }
+      if (outcome.completion_semantic === 'pipeline_completed') {
+        return <Badge color="gray">历史报告 · 待核验</Badge>
+      }
+    }
     const configs: Record<
       ReportStatus,
       { color: string; label: string }
@@ -168,7 +186,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
       completed: { color: 'green', label: '已完成' },
       failed: { color: 'red', label: '失败' },
     }
-    const config = configs[status]
+    const config = configs[report.status]
     return <Badge color={config.color}>{config.label}</Badge>
   }
 
@@ -292,7 +310,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      {getStatusBadge(report.status)}
+                      {getStatusBadge(report)}
                       {report.requires_regeneration && (
                         <Badge
                           color={report.regeneration_available ? 'orange' : 'red'}

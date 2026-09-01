@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+
+const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), 'utf8')
+
+test('history and report surfaces consume server-owned completion semantics', () => {
+  const history = read('../features/TestManagement/components/HistoryTab/HistoryTab.tsx')
+  const selector = read('../features/Reports/components/ExecutionSelector.tsx')
+  const reportList = read('../features/Reports/components/ReportList.tsx')
+  const viewer = read('../components/Report/ReportViewer.tsx')
+
+  for (const source of [history, selector, reportList, viewer]) {
+    assert.match(source, /execution_evidence_outcome/)
+    assert.match(source, /completion_semantic/)
+  }
+  assert.match(history, /valid_test_completed/)
+  assert.match(history, /diagnostic_completed/)
+  assert.match(history, /pipeline_completed/)
+  assert.match(
+    history,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
+  assert.ok(
+    history.indexOf("compatibility_classification === 'invalid'") <
+      history.indexOf("completion_semantic === 'not_completed'"),
+    'history must preserve invalid evidence ahead of nonterminal status',
+  )
+  const scpiEvidenceBadge = history
+    .split('仪器指令闭环证据', 2)[1]
+    .split('{detailQuery.isLoading', 1)[0]
+  assert.match(scpiEvidenceBadge, /scpiEvidenceAuditOnly/)
+  assert.match(scpiEvidenceBadge, /流程未完成 · 证据仅供审计/)
+  assert.ok(
+    scpiEvidenceBadge.indexOf('scpiEvidenceAuditOnly') <
+      scpiEvidenceBadge.indexOf('formal_acceptance'),
+    'nonterminal execution must gate SCPI acceptance before the formal flag',
+  )
+  const completionBadge = history
+    .split('function getCompletionBadge', 2)[1]
+    .split('// 来源链显示名', 1)[0]
+  assert.doesNotMatch(
+    completionBadge,
+    /record\.status\s*===?\s*['"]completed['"]/,
+  )
+  assert.match(reportList, /证据无效/)
+  assert.match(
+    reportList,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
+  assert.match(viewer, /仅审计/)
+  assert.match(
+    viewer,
+    /completion_semantic === ['"]not_completed['"][\s\S]*?流程未完成/,
+  )
+  assert.ok(
+    reportList.indexOf("compatibility_classification === 'invalid'") <
+      reportList.indexOf("completion_semantic === 'not_completed'"),
+    'report list must preserve invalid evidence ahead of nonterminal status',
+  )
+  assert.ok(
+    viewer.indexOf("compatibility_classification === 'invalid'") <
+      viewer.indexOf("completion_semantic === 'not_completed'"),
+    'report viewer must preserve invalid evidence ahead of nonterminal status',
+  )
+  assert.match(viewer, /report\?\.execution_evidence_outcome/)
+  assert.match(viewer, /<ReportContent[^>]*outcome=/s)
+})
+
+test('API mirrors expose the immutable outcome instead of rebuilding it in GUI', () => {
+  const generated = read('./api.generated.ts')
+  const handwritten = read('./api.ts')
+  const testPlan = read('../api/testPlanService.ts')
+  const testManagement = read('../features/TestManagement/types/index.ts')
+  const report = read('./report.ts')
+
+  for (const source of [generated, handwritten]) {
+    assert.match(source, /ExecutionEvidenceOutcome/)
+    assert.match(source, /completion_semantic/)
+  }
+  for (const source of [testPlan, testManagement, report]) {
+    assert.match(source, /ExecutionEvidenceOutcome/)
+    assert.match(source, /execution_evidence_outcome/)
+  }
+})

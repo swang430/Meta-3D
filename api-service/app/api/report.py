@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.db.database import get_db
+from app.models.test_plan import TestExecution
 from app.schemas.report import (
     # Report
     ReportCreate,
@@ -44,12 +45,18 @@ from app.services.report_service import (
     ReportTemplateService,
     ReportComparisonService,
     ReportScheduleService,
+    _parse_report_execution_ids,
     legacy_mimo_regeneration_error,
     normalized_report_execution_ids,
     report_has_provenance_trust,
     report_has_vrt_archive_trust,
     report_is_mimo_ota_report,
 )
+from app.services.execution_evidence_outcome import (
+    ExecutionEvidenceOutcome,
+    project_execution_evidence_outcome,
+)
+from app.hal.base_station_compatibility import canonical_payload_digest
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -64,6 +71,313 @@ def _is_mimo_report(db: Session, report) -> bool:
     return report_is_mimo_ota_report(db, report)
 
 
+def _invalid_report_outcome(expected, reason: str) -> ExecutionEvidenceOutcome:
+    completion = (
+        "not_completed"
+        if expected.pipeline_status != "completed"
+        else "pipeline_completed"
+    )
+    return expected.model_copy(
+        update={
+            "compatibility_classification": "invalid",
+            "completion_semantic": completion,
+            "formal_eligible": False,
+            "reasons": tuple(dict.fromkeys((*expected.reasons, reason))),
+        }
+    )
+
+
+def _invalid_report_source_shape(report, reason: str) -> ExecutionEvidenceOutcome:
+    raw_status = getattr(report, "status", None)
+    pipeline_status = str(getattr(raw_status, "value", raw_status) or "unknown")
+    return ExecutionEvidenceOutcome(
+        compatibility_classification="invalid",
+        completion_semantic=(
+            "pipeline_completed"
+            if pipeline_status == "completed"
+            else "not_completed"
+        ),
+        formal_eligible=False,
+        compatibility_digest=canonical_payload_digest({
+            "report_execution_sources": "invalid",
+            "reason": reason,
+        }),
+        qualification_classification="legacy",
+        reasons=(reason,),
+        pipeline_status=pipeline_status,
+    )
+
+
+def _aggregate_report_execution_outcomes(
+    execution_ids: list[UUID],
+    executions: list[TestExecution | None],
+) -> ExecutionEvidenceOutcome:
+    """Project every linked execution into one conservative report outcome."""
+
+    projected: list[tuple[UUID, ExecutionEvidenceOutcome]] = []
+    missing_ids: list[UUID] = []
+    for execution_id, execution in zip(execution_ids, executions, strict=True):
+        if execution is None:
+            missing_ids.append(execution_id)
+        else:
+            projected.append(
+                (execution_id, project_execution_evidence_outcome(execution))
+            )
+
+    outcomes = [outcome for _, outcome in projected]
+    classifications = {outcome.compatibility_classification for outcome in outcomes}
+    if missing_ids or "invalid" in classifications:
+        classification = "invalid"
+    elif "diagnostic" in classifications:
+        classification = "diagnostic"
+    elif "legacy" in classifications:
+        classification = "legacy"
+    else:
+        classification = "compatible"
+
+    qualification_classifications = {
+        outcome.qualification_classification for outcome in outcomes
+    }
+    if "diagnostic" in qualification_classifications:
+        qualification = "diagnostic"
+    elif outcomes and qualification_classifications == {"formal"}:
+        qualification = "formal"
+    else:
+        qualification = "legacy"
+
+    statuses = [outcome.pipeline_status for outcome in outcomes]
+    all_completed = (
+        not missing_ids
+        and len(outcomes) == len(execution_ids)
+        and all(status == "completed" for status in statuses)
+    )
+    formal_eligible = (
+        all_completed
+        and classification == "compatible"
+        and all(outcome.formal_eligible for outcome in outcomes)
+    )
+    if not all_completed:
+        completion = "not_completed"
+    elif formal_eligible:
+        completion = "valid_test_completed"
+    elif classification == "diagnostic":
+        completion = "diagnostic_completed"
+    else:
+        completion = "pipeline_completed"
+
+    reasons = [
+        f"execution {execution_id}: {reason}"
+        for execution_id, outcome in projected
+        for reason in outcome.reasons
+    ]
+    reasons.extend(
+        f"execution {execution_id}: source execution is unavailable"
+        for execution_id in missing_ids
+    )
+    aggregate_payload = [
+        {
+            "execution_id": str(execution_id),
+            "outcome": outcome.model_dump(mode="json"),
+        }
+        for execution_id, outcome in projected
+    ]
+    aggregate_payload.extend(
+        {"execution_id": str(execution_id), "outcome": None}
+        for execution_id in missing_ids
+    )
+    pipeline_status = (
+        statuses[0]
+        if statuses and len(set(statuses)) == 1 and not missing_ids
+        else "mixed"
+    )
+    return ExecutionEvidenceOutcome(
+        compatibility_classification=classification,
+        completion_semantic=completion,
+        formal_eligible=formal_eligible,
+        compatibility_digest=canonical_payload_digest(aggregate_payload),
+        qualification_classification=qualification,
+        reasons=tuple(dict.fromkeys(reasons)),
+        pipeline_status=pipeline_status,
+    )
+
+
+def _report_execution_outcome_state(
+    db: Session,
+    report,
+) -> tuple[ExecutionEvidenceOutcome | None, bool]:
+    """Compare stored frozen evidence with its authoritative source execution."""
+
+    content = report.content_data if isinstance(report.content_data, dict) else {}
+    raw = content.get("execution_evidence_outcome")
+    try:
+        stored = (
+            ExecutionEvidenceOutcome.model_validate(raw)
+            if raw is not None
+            else None
+        )
+    except (ValueError, TypeError):
+        stored = None
+
+    execution_ids, execution_ids_well_formed = _parse_report_execution_ids(report)
+    query = getattr(db, "query", None)
+    get = getattr(db, "get", None)
+    if not callable(query) and not callable(get):
+        return stored, raw is None or stored is not None
+    if not execution_ids_well_formed:
+        return (
+            _invalid_report_source_shape(
+                report,
+                "report TestExecution identifiers are malformed",
+            ),
+            False,
+        )
+    if len(set(execution_ids)) != len(execution_ids):
+        return (
+            _invalid_report_source_shape(
+                report,
+                "report TestExecution identifiers are not unique",
+            ),
+            False,
+        )
+    if not execution_ids and _is_mimo_report(db, report):
+        return (
+            _invalid_report_source_shape(
+                report,
+                "MIMO report has no linked TestExecution",
+            ),
+            False,
+        )
+    if len(execution_ids) > 1:
+        executions = [
+            (
+                get(TestExecution, execution_id)
+                if callable(get)
+                else query(TestExecution)
+                .filter(TestExecution.id == execution_id)
+                .first()
+            )
+            for execution_id in execution_ids
+        ]
+        aggregate = _aggregate_report_execution_outcomes(
+            execution_ids,
+            executions,
+        )
+        if raw is None:
+            return aggregate, False
+        if stored == aggregate and aggregate.formal_eligible:
+            return aggregate, True
+        return (
+            _invalid_report_outcome(
+                aggregate,
+                "stored report outcome does not match all source executions",
+            ),
+            False,
+        )
+    if len(execution_ids) != 1:
+        if raw is None:
+            return None, True
+        if stored is None:
+            return None, False
+        return (
+            _invalid_report_outcome(
+                stored,
+                "stored report outcome has no unique source execution",
+            ),
+            False,
+        )
+    execution = (
+        get(TestExecution, execution_ids[0])
+        if callable(get)
+        else query(TestExecution)
+        .filter(TestExecution.id == execution_ids[0])
+        .first()
+    )
+    if execution is None:
+        if _is_mimo_report(db, report):
+            return (
+                _invalid_report_source_shape(
+                    report,
+                    "MIMO report source execution is unavailable",
+                ),
+                False,
+            )
+        if raw is None:
+            return None, True
+        if stored is None:
+            return None, False
+        return (
+            _invalid_report_outcome(
+                stored,
+                "stored report outcome source execution is missing",
+            ),
+            False,
+        )
+
+    expected = project_execution_evidence_outcome(execution)
+    if raw is None:
+        if expected.compatibility_classification == "legacy":
+            return expected, True
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome is missing",
+            ),
+            False,
+        )
+    if stored is None:
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome is malformed",
+            ),
+            False,
+        )
+    # REPORT runs while the execution row is still ``running``; the case
+    # runner publishes the terminal status only after REPORT succeeds.  The
+    # compatibility and qualification evidence is already frozen at that
+    # point, but the three lifecycle-derived fields legitimately change once
+    # from running -> terminal.  Compare only the immutable evidence identity
+    # and always return the current source projection.  Any evidence/digest
+    # drift remains fail-closed.
+    stored_evidence = (
+        stored.compatibility_classification,
+        stored.compatibility_digest,
+        stored.qualification_classification,
+        stored.reasons,
+    )
+    expected_evidence = (
+        expected.compatibility_classification,
+        expected.compatibility_digest,
+        expected.qualification_classification,
+        expected.reasons,
+    )
+    if stored_evidence != expected_evidence:
+        return (
+            _invalid_report_outcome(
+                expected,
+                "stored report execution evidence outcome drifted",
+            ),
+            False,
+        )
+    if stored == expected:
+        return expected, True
+    expected_terminal_transition = (
+        stored.pipeline_status == "running"
+        and stored.completion_semantic == "not_completed"
+        and stored.formal_eligible is False
+        and expected.pipeline_status == "completed"
+    )
+    if expected_terminal_transition:
+        return expected, True
+    return (
+        _invalid_report_outcome(
+            expected,
+            "stored report execution lifecycle drifted unexpectedly",
+        ),
+        False,
+    )
+
+
 def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     """Legacy MIMO artifacts are inaccessible until rebuilt safely.
 
@@ -74,7 +388,8 @@ def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     content = report.content_data if isinstance(report.content_data, dict) else {}
     if not _is_mimo_report(db, report):
         return True
-    return report_has_provenance_trust(content)
+    _, outcome_matches = _report_execution_outcome_state(db, report)
+    return report_has_provenance_trust(content) and outcome_matches
 
 
 def _reject_untrusted_mimo_report(db: Session, report) -> None:
@@ -107,6 +422,7 @@ def _reject_untrusted_vrt_report(report) -> None:
 
 def _report_summary(db: Session, report) -> ReportSummary:
     """Build list metadata from the same MIMO trust truth as detail/download."""
+    evidence_outcome, _ = _report_execution_outcome_state(db, report)
     summary = ReportSummary.model_validate({
         "id": report.id,
         "title": report.title,
@@ -123,6 +439,7 @@ def _report_summary(db: Session, report) -> ReportSummary:
             report.road_test_execution_id is None
             or report_has_vrt_archive_trust(report.content_data)
         ),
+        "execution_evidence_outcome": evidence_outcome,
     })
     if _mimo_report_is_provenance_sanitized(db, report):
         return summary
@@ -144,6 +461,16 @@ def _report_summary(db: Session, report) -> ReportSummary:
     })
 
 
+def _report_with_current_execution_outcome(db: Session, report):
+    """Attach the source execution's current server-owned projection."""
+
+    outcome, _ = _report_execution_outcome_state(db, report)
+    # SQLAlchemy model instances accept non-mapped response-only attributes;
+    # they are never persisted and Pydantic reads them via from_attributes.
+    setattr(report, "execution_evidence_outcome", outcome)
+    return report
+
+
 # ==================== Report Endpoints ====================
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
@@ -152,6 +479,17 @@ def create_report(
     db: Session = Depends(get_db)
 ):
     """Create a new test report"""
+    if (
+        isinstance(report.content_data, dict)
+        and "execution_evidence_outcome" in report.content_data
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "execution_evidence_outcome is server-owned and cannot be "
+                "submitted in report content"
+            ),
+        )
     if report.road_test_execution_id is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -253,7 +591,7 @@ def generate_report(
         )
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)
-    return report
+    return _report_with_current_execution_outcome(db, report)
 
 
 # ==================== Template Endpoints ====================
@@ -554,7 +892,7 @@ def get_report(
         )
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)
-    return report
+    return _report_with_current_execution_outcome(db, report)
 
 
 @router.get("/{report_id}/download")

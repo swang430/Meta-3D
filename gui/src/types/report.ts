@@ -4,6 +4,8 @@
  * Type definitions for the unified report system
  */
 
+import type { ExecutionEvidenceOutcome } from './api'
+
 // ===== Report Content Data Types =====
 
 export interface ReportScenarioInfo {
@@ -188,6 +190,7 @@ export interface ReportContentData {
   execution_id: string
   title: string
   description?: string
+  execution_evidence_outcome?: ExecutionEvidenceOutcome
 
   // Execution info
   execution: {
@@ -259,6 +262,7 @@ export interface Report {
 
   // Content
   content_data?: ReportContentData
+  execution_evidence_outcome?: ExecutionEvidenceOutcome | null
 
   // File info
   file_path?: string
@@ -288,6 +292,7 @@ export interface ReportSummary {
   generated_at: string
   road_test_execution_id?: string
   vrt_archive_trusted: boolean
+  execution_evidence_outcome?: ExecutionEvidenceOutcome | null
 }
 
 export interface ReportListResponse {

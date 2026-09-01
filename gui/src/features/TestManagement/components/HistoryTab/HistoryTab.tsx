@@ -77,6 +77,22 @@ function getStatusLabel(status: string): string {
   return labelMap[status] || status
 }
 
+function getCompletionBadge(record: TestExecutionRecord): { color: string; label: string } {
+  const semantic = record.execution_evidence_outcome.completion_semantic
+  if (semantic === 'valid_test_completed') {
+    return { color: 'green', label: '有效测试完成' }
+  }
+  if (semantic === 'diagnostic_completed') {
+    return { color: 'yellow', label: '诊断完成' }
+  }
+  if (semantic === 'pipeline_completed') {
+    return record.execution_evidence_outcome.compatibility_classification === 'invalid'
+      ? { color: 'red', label: '证据无效 · 流程完成' }
+      : { color: 'gray', label: '历史流程完成' }
+  }
+  return { color: getStatusColor(record.status), label: getStatusLabel(record.status) }
+}
+
 // 来源链显示名 (executed_by 列)
 function getSourceLabel(executedBy: string | null): string {
   const sourceMap: Record<string, string> = {
@@ -133,6 +149,8 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
     queryFn: () => getCaseExecutionStatus(selectedRecord!.id),
     enabled: detailModalOpened && selectedRecord !== null,
   })
+  const scpiEvidenceAuditOnly =
+    selectedRecord?.execution_evidence_outcome.completion_semantic === 'not_completed'
 
   // Report generation hook (unified with PendingExecutionsList)
   const { generateExecutionReport, isGenerating } = useReportGeneration()
@@ -227,10 +245,32 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
           </div>
           <div>
             <Text size="xs" c="dimmed">
-              成功
+              有效测试完成
             </Text>
             <Text size="lg" fw={600} c="green">
-              {filteredRecords.filter((r) => r.status === 'completed').length}
+              {filteredRecords.filter(
+                (r) => r.execution_evidence_outcome.completion_semantic === 'valid_test_completed',
+              ).length}
+            </Text>
+          </div>
+          <div>
+            <Text size="xs" c="dimmed">
+              诊断完成
+            </Text>
+            <Text size="lg" fw={600} c="yellow">
+              {filteredRecords.filter(
+                (r) => r.execution_evidence_outcome.completion_semantic === 'diagnostic_completed',
+              ).length}
+            </Text>
+          </div>
+          <div>
+            <Text size="xs" c="dimmed">
+              仅流程完成
+            </Text>
+            <Text size="lg" fw={600} c="gray">
+              {filteredRecords.filter(
+                (r) => r.execution_evidence_outcome.completion_semantic === 'pipeline_completed',
+              ).length}
             </Text>
           </div>
           <div>
@@ -322,6 +362,7 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                 ) : (
                   paginatedRecords.map((record) => {
                     const completedAt = formatCompletedAt(record.completed_at)
+                    const completion = getCompletionBadge(record)
                     return (
                       <Table.Tr key={record.id}>
                         {/* Case Name */}
@@ -345,10 +386,10 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                         {/* Status */}
                         <Table.Td>
                           <Badge
-                            color={getStatusColor(record.status)}
+                            color={completion.color}
                             variant="light"
                           >
-                            {getStatusLabel(record.status)}
+                            {completion.label}
                           </Badge>
                         </Table.Td>
 
@@ -483,10 +524,10 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                     状态:
                   </Text>
                   <Badge
-                    color={getStatusColor(selectedRecord.status)}
+                    color={getCompletionBadge(selectedRecord).color}
                     variant="light"
                   >
-                    {getStatusLabel(selectedRecord.status)}
+                    {getCompletionBadge(selectedRecord).label}
                   </Badge>
                 </Group>
                 <Group justify="space-between">
@@ -494,8 +535,18 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                     正式判定:
                   </Text>
                   <Text size="sm">
-                    {selectedRecord.execution_classification === 'diagnostic'
+                    {selectedRecord.execution_evidence_outcome.compatibility_classification === 'invalid'
+                      ? '证据无效 · 仅保留审计记录'
+                      : selectedRecord.execution_evidence_outcome.completion_semantic === 'diagnostic_completed'
                       ? '仅诊断 · 不形成正式判定'
+                      : selectedRecord.execution_evidence_outcome.completion_semantic === 'not_completed'
+                        ? '流程未完成 · 不形成正式判定'
+                      : selectedRecord.execution_evidence_outcome.compatibility_classification === 'legacy'
+                        ? selectedRecord.validation_pass === null
+                          ? '历史执行 · 未判定'
+                          : selectedRecord.validation_pass
+                            ? '历史执行 · 通过（沿既有证据规则）'
+                            : '历史执行 · 未通过（沿既有证据规则）'
                       : selectedRecord.validation_pass === null
                       ? '未判定'
                       : detailQuery.isLoading
@@ -508,6 +559,11 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                             : '未通过（业务结果与指令证据未同时通过）'}
                   </Text>
                 </Group>
+                {selectedRecord.execution_evidence_outcome.reasons.length > 0 && (
+                  <Text size="xs" c="dimmed" ta="right">
+                    {selectedRecord.execution_evidence_outcome.reasons.join('；')}
+                  </Text>
+                )}
               </Stack>
             </Paper>
 
@@ -569,14 +625,22 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                 <Text size="sm" fw={600}>仪器指令闭环证据</Text>
                 {detailQuery.data?.scpi_evidence && (
                   <Badge
-                    color={detailQuery.data.scpi_evidence.formal_acceptance ? 'green' : 'orange'}
+                    color={
+                      scpiEvidenceAuditOnly
+                        ? 'gray'
+                        : detailQuery.data.scpi_evidence.formal_acceptance
+                          ? 'green'
+                          : 'orange'
+                    }
                     variant="light"
                   >
-                    {detailQuery.data.scpi_evidence.formal_acceptance
-                      ? '正式证据通过'
-                      : detailQuery.data.scpi_evidence.formal_verdict === 'rejected'
-                        ? '证据被拒绝'
-                        : '证据未闭环'}
+                    {scpiEvidenceAuditOnly
+                      ? '流程未完成 · 证据仅供审计'
+                      : detailQuery.data.scpi_evidence.formal_acceptance
+                        ? '正式证据通过'
+                        : detailQuery.data.scpi_evidence.formal_verdict === 'rejected'
+                          ? '证据被拒绝'
+                          : '证据未闭环'}
                   </Badge>
                 )}
               </Group>
