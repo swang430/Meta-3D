@@ -707,7 +707,58 @@ class MIMOOTAConfiguration(BaseModel):
                 pcell = candidate
         rat = pcell.get("radio_technology", "nr5g")
 
-        if "mac_profile" not in data:
+        if "mac_profile" in data:
+            frozen = FrozenMacTestProfile.model_validate(data["mac_profile"])
+            profile = frozen.profile
+            expected_legacy: dict[str, Any] = {
+                "enable_amc": profile.enable_amc,
+                "stat_count": profile.statistical_window.count,
+            }
+            if isinstance(profile, NrMacTestProfileV1):
+                expected_legacy.update(
+                    {
+                        "mcs": profile.mcs,
+                        "tdd_pattern": profile.tdd_pattern,
+                        "tdd_period": profile.tdd_period,
+                        "harq_max_trans": profile.harq_max_trans,
+                        "harq_processes": profile.harq_processes,
+                        "csi_rs_ports": profile.csi_rs_ports,
+                    }
+                )
+                scheduler = data.get("sched_algo")
+                if scheduler in {"FULLBUFFER", "FULL_TPUT"}:
+                    scheduler = "full_throughput"
+                if (
+                    scheduler is not None
+                    and scheduler != profile.scheduler_algorithm
+                ):
+                    raise ValueError(
+                        "mac_profile conflicts with deprecated sched_algo"
+                    )
+            else:
+                for field in (
+                    "mcs",
+                    "tdd_pattern",
+                    "tdd_period",
+                    "harq_max_trans",
+                    "harq_processes",
+                    "sched_algo",
+                    "csi_rs_ports",
+                ):
+                    if field in data and data[field] is not None:
+                        raise ValueError(
+                            f"mac_profile conflicts with deprecated {field}"
+                        )
+            for field, expected in expected_legacy.items():
+                if (
+                    field in data
+                    and data[field] is not None
+                    and data[field] != expected
+                ):
+                    raise ValueError(
+                        f"mac_profile conflicts with deprecated {field}"
+                    )
+        else:
             layers = data.get("mimo_layers", 2)
             count = data.get("stat_count", 5000)
             if rat == "lte":
@@ -1011,21 +1062,35 @@ class MIMOOTAConfiguration(BaseModel):
         return self
 
 
+_DEPRECATED_MAC_INPUT_FIELDS = (
+    "mcs",
+    "enable_amc",
+    "tdd_pattern",
+    "tdd_period",
+    "harq_max_trans",
+    "harq_processes",
+    "stat_count",
+    "sched_algo",
+    "csi_rs_ports",
+)
+
+
+def dump_canonical_mimo_ota_configuration(
+    config: MIMOOTAConfiguration,
+) -> dict:
+    """Serialize a validated configuration without deprecated MAC mirrors."""
+
+    payload = config.model_dump(mode="json")
+    for field in _DEPRECATED_MAC_INPUT_FIELDS:
+        payload.pop(field, None)
+    return payload
+
+
 def canonicalize_mimo_ota_configuration_payload(payload: dict) -> dict:
     """校验并只规范化载波真值字段，保留稀疏 JSON 与前向兼容扩展。"""
     validated = MIMOOTAConfiguration.model_validate(payload)
     canonical = deepcopy(payload)
-    for legacy_mac_field in (
-        "mcs",
-        "enable_amc",
-        "tdd_pattern",
-        "tdd_period",
-        "harq_max_trans",
-        "harq_processes",
-        "stat_count",
-        "sched_algo",
-        "csi_rs_ports",
-    ):
+    for legacy_mac_field in _DEPRECATED_MAC_INPUT_FIELDS:
         canonical.pop(legacy_mac_field, None)
     canonical["mac_profile"] = validated.mac_profile.model_dump(mode="json")
     canonical["base_station_config_mode"] = validated.base_station_config_mode

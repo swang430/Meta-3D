@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.schemas.mimo_ota.config import (
+    MIMOOTAConfiguration,
+    dump_canonical_mimo_ota_configuration,
+)
 
 
 # High-level channel labels → 3GPP CDL standard model names. Chosen so the
@@ -134,4 +137,4 @@ def legacy_to_mimo_ota_config(legacy_case: Dict[str, Any]) -> Dict[str, Any]:
         pass_criteria=pass_criteria,
         step_overrides=_build_step_overrides(legacy_cfg) or None,
     )
-    return cfg.model_dump(mode="json")
+    return dump_canonical_mimo_ota_configuration(cfg)

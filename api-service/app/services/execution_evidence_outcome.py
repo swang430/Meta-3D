@@ -267,6 +267,7 @@ def validate_frozen_mac_profile_evidence(
     from app.services.mimo_ota.base_station_execution_evidence import (
         BASE_STATION_EXECUTION_EVIDENCE_FIELD,
         BaseStationExecutionEvidence,
+        _attempt_lifecycle_envelope,
         parse_base_station_execution_evidence,
     )
 
@@ -276,8 +277,8 @@ def validate_frozen_mac_profile_evidence(
         return str(exc)
     raw = config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     if raw is None:
-        # The broader evidence trust gate owns absence.  When an envelope is
-        # present, however, P2-54 fields become mandatory and fail closed.
+        if profile is not None and require_formal_confirmation:
+            return "formal execution is missing baseStation execution evidence"
         return None
     if not isinstance(raw, dict):
         return "baseStation execution evidence is malformed"
@@ -285,6 +286,16 @@ def validate_frozen_mac_profile_evidence(
     if normalized is None:
         return "baseStation execution evidence is malformed"
     evidence = BaseStationExecutionEvidence.model_validate(normalized)
+    resolution = frozen.get("resolution")
+    frozen_adapter = (
+        resolution.get("adapter") if isinstance(resolution, Mapping) else None
+    )
+    if (
+        profile is not None
+        and frozen_adapter is not None
+        and evidence.adapter != frozen_adapter
+    ):
+        return "MAC evidence adapter does not match frozen adapter"
     if profile is None:
         if evidence.mac_profile_contract_version is not None:
             return "legacy compatibility carries unexpected MAC profile evidence"
@@ -305,6 +316,20 @@ def validate_frozen_mac_profile_evidence(
     ]
     if len(matching) != 1 or matching[0].confirmed is not True:
         return "formal execution has no confirmed current-attempt MAC receipt"
+    if evidence.current_measurement_attempt_state != "completed":
+        return "formal MAC receipt measurement attempt is not completed"
+    accepted, _, windows = _attempt_lifecycle_envelope(evidence, attempt_id)
+    if not accepted:
+        return "formal MAC receipt has no confirmed current-attempt lifecycle"
+    receipt = matching[0]
+    if not set(receipt.exchange_ids).issubset(evidence.exchange_ids):
+        return "formal MAC receipt exchanges are outside execution evidence"
+    if not any(
+        window.lease_id == receipt.lease_id
+        and window.session_token == receipt.session_token
+        for window in windows
+    ):
+        return "formal MAC receipt lease/session does not match measurement window"
     return None
 
 

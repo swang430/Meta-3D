@@ -1174,7 +1174,7 @@ async def test_diagnostic_measure_rejects_legacy_unverified_certificate(
         frequency_hz=3500e6,
     )
     test_case = db.get(TestCase, ctx.test_execution.test_case_id)
-    test_case.configuration = {
+    configuration = {
         **test_case.configuration,
         "engine_mode": "keysight_gcm",
         "switch_mode_id": "mimo_ota",
@@ -1184,6 +1184,10 @@ async def test_diagnostic_measure_rejects_legacy_unverified_certificate(
         "num_samples_per_azimuth": 1,
         "precheck_strict_dut": False,
     }
+    configuration.pop("mac_profile")
+    test_case.configuration = canonicalize_mimo_ota_configuration_payload(
+        configuration
+    )
     db.commit()
     _bind_unbound_mock_measurement(
         monkeypatch,

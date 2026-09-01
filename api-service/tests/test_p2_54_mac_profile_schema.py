@@ -222,6 +222,27 @@ def test_legacy_nr_flat_fields_migrate_to_one_canonical_profile():
         assert legacy not in canonical
 
 
+def test_explicit_profile_rejects_conflicting_legacy_mac_value():
+    canonical = canonicalize_mimo_ota_configuration_payload({"mcs": 28})
+    canonical["mcs"] = 21
+
+    with pytest.raises(ValidationError, match="mac_profile.*mcs"):
+        MIMOOTAConfiguration.model_validate(canonical)
+
+
+def test_explicit_lte_profile_rejects_nr_only_legacy_mac_value():
+    canonical = canonicalize_mimo_ota_configuration_payload(
+        {
+            "component_carriers": [_lte_pcell()],
+            "mimo_layers": 2,
+        }
+    )
+    canonical["mcs"] = 28
+
+    with pytest.raises(ValidationError, match="mac_profile.*mcs"):
+        MIMOOTAConfiguration.model_validate(canonical)
+
+
 def test_legacy_lte_migrates_without_nr_only_fields():
     raw = {
         "component_carriers": [_lte_pcell()],

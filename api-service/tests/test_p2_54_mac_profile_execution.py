@@ -34,7 +34,7 @@ from tests.test_p2_43_base_station_adapter_evidence import (
     _execution,
     _lease,
 )
-from tests.p1_73c_evidence_fixtures import POSITION
+from tests.p1_73c_evidence_fixtures import POSITION, valid_cmw_evidence
 from tests.test_p1_73c_base_station_evidence_writer import (
     _CmwDriver,
     _execution as _new_execution,
@@ -195,6 +195,25 @@ def test_mac_receipt_is_bound_to_attempt_lease_and_frozen_profile(monkeypatch):
     )
 
     stored = execution.config["base_station_execution_evidence"]
+    lifecycle = valid_cmw_evidence()
+    windows = deepcopy(lifecycle["measurement_windows"])
+    for window in windows:
+        window["adapter"] = "uxm"
+        window["route_digest"] = None
+    releases = deepcopy(lifecycle["control_releases"])
+    for release in releases:
+        release["adapter_id"] = "uxm"
+    stored.update(
+        {
+            "config_confirmed": True,
+            "current_measurement_attempt_state": "completed",
+            "measurement_windows": windows,
+            "control_releases": releases,
+        }
+    )
+    stored["exchange_ids"] = list(
+        dict.fromkeys(stored["exchange_ids"] + lifecycle["exchange_ids"])
+    )
     assert stored["mac_profile_receipts"][0]["profile_digest"] == (
         profile.profile_digest
     )
@@ -206,6 +225,18 @@ def test_mac_receipt_is_bound_to_attempt_lease_and_frozen_profile(monkeypatch):
             require_formal_confirmation=True,
         )
         is None
+    )
+
+    receipt = stored["mac_profile_receipts"][0]
+    receipt["lease_id"] = "other-lease"
+    receipt["session_token"] = "other-session"
+    assert "lease" in (
+        validate_frozen_mac_profile_evidence(
+            execution.config,
+            _freeze(),
+            require_formal_confirmation=True,
+        )
+        or ""
     )
 
     stored["mac_profile_digest"] = "f" * 64

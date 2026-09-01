@@ -30,6 +30,7 @@ from app.services.execution_qualification import (
     BaseStationSiteCertification,
     _qualification_payload_digest,
 )
+from tests.p1_73c_evidence_fixtures import valid_cmw_evidence
 
 
 LAB_PROFILE_ID = "lab-profile-1"
@@ -111,6 +112,69 @@ def _pre_p2_54_compatibility() -> dict:
     return build_frozen_compatibility_payload(requirements, verdict)
 
 
+def _modern_uxm_mac_evidence() -> dict:
+    raw = valid_cmw_evidence()
+    raw["adapter"] = "uxm"
+    raw["identity"] = {
+        "adapter": "uxm",
+        "model": "E7515B",
+        "firmware_version": "1.0",
+        "options": [],
+        "instrument_connection_id": CONNECTION_ID,
+        "adapter_profile_digest": None,
+    }
+    raw["formal_capability_approval"] = {
+        "schema_version": 1,
+        "status": "not_applicable",
+        "instrument_connection_id": None,
+        "capability": None,
+        "enabled": None,
+        "updated_at": None,
+    }
+    raw["route_confirmed"] = None
+    raw["requested_route"] = None
+    raw["applied_route"] = None
+    for window in raw["measurement_windows"]:
+        window["adapter"] = "uxm"
+        window["route_digest"] = None
+    for release in raw["control_releases"]:
+        release["adapter_id"] = "uxm"
+    frozen_profile = _compatibility()["requirements"]["mac_profile"]
+    profile_digest = frozen_profile["profile_digest"]
+    raw.update(
+        {
+            "mac_profile_contract_version": 1,
+            "mac_profile_digest": profile_digest,
+            "mac_profile_receipts": [
+                {
+                    "schema_version": 1,
+                    "measurement_attempt_id": "attempt-1",
+                    "lease_id": "lease-1",
+                    "adapter": "uxm",
+                    "session_token": "session-1",
+                    "profile_digest": profile_digest,
+                    "fields": [
+                        {
+                            "field": "scheduler_algorithm",
+                            "requested": "full_throughput",
+                            "applied": "full_throughput",
+                            "status": "confirmed",
+                            "reason": "confirmed",
+                            "exchange_ids": ["mac-1"],
+                        }
+                    ],
+                    "confirmed": True,
+                    "simulated": False,
+                    "reason": "confirmed",
+                    "exchange_ids": ["mac-1"],
+                }
+            ],
+        }
+    )
+    raw["exchange_ids"].append("mac-1")
+    return raw
+
+
 def _freeze(*, no_adapter: bool = False) -> dict:
     manifest = None if no_adapter else RealUxmDriver.adapter_manifest.model_dump(
         mode="json"
@@ -144,10 +208,15 @@ def _execution(
     qualification: str | None = "formal",
     no_adapter: bool = False,
     include_freeze: bool = True,
+    include_base_station_evidence: bool = True,
 ):
     config = {}
     if include_freeze:
         config[FREEZE_CONFIG_KEY] = _freeze(no_adapter=no_adapter)
+        if not no_adapter and include_base_station_evidence:
+            config["base_station_execution_evidence"] = (
+                _modern_uxm_mac_evidence()
+            )
     if qualification is not None:
         frozen_qualification = _qualification(qualification)
         if no_adapter:
@@ -180,8 +249,33 @@ def test_completed_compatible_formal_is_valid_test_completion():
     assert outcome.reasons == ()
 
 
-def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
+def test_completed_modern_formal_freeze_without_mac_evidence_fails_closed():
     execution = _execution()
+    execution.config.pop("base_station_execution_evidence", None)
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert any("evidence" in reason for reason in outcome.reasons)
+
+
+def test_completed_modern_formal_requires_completed_measurement_attempt():
+    execution = _execution()
+    execution.config["base_station_execution_evidence"][
+        "current_measurement_attempt_state"
+    ] = "running"
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("attempt" in reason for reason in outcome.reasons)
+
+
+def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
+    execution = _execution(include_base_station_evidence=False)
     frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
     frozen["compatibility"] = _pre_p2_54_compatibility()
     frozen.pop("mimo_ota_configuration")
@@ -292,6 +386,7 @@ def test_completed_uxm_not_applicable_binding_is_formally_valid():
     execution.config = {
         FREEZE_CONFIG_KEY: frozen,
         EXECUTION_QUALIFICATION_KEY: qualification,
+        "base_station_execution_evidence": _modern_uxm_mac_evidence(),
     }
 
     outcome = project_execution_evidence_outcome(execution)
