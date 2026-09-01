@@ -88,7 +88,19 @@ def _execution(
     if include_freeze:
         config[FREEZE_CONFIG_KEY] = _freeze(no_adapter=no_adapter)
     if qualification is not None:
-        config[EXECUTION_QUALIFICATION_KEY] = _qualification(qualification)
+        frozen_qualification = _qualification(qualification)
+        if no_adapter:
+            frozen_qualification.update(
+                {
+                    "binding_status": "diagnostic_unbound",
+                    "execution_mode": "simulated",
+                    "adapter_id": None,
+                }
+            )
+            frozen_qualification["qualification_digest"] = (
+                _qualification_payload_digest(frozen_qualification)
+            )
+        config[EXECUTION_QUALIFICATION_KEY] = frozen_qualification
     return SimpleNamespace(status=status, config=config)
 
 
@@ -132,6 +144,46 @@ def test_completed_no_adapter_is_diagnostic_not_formal_success():
     assert outcome.compatibility_classification == "diagnostic"
     assert outcome.completion_semantic == "diagnostic_completed"
     assert outcome.formal_eligible is False
+
+
+def test_compatible_simulated_binding_cannot_claim_formal_completion():
+    execution = _execution()
+    frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
+    frozen["resolution"]["execution_mode"] = "simulated"
+    frozen["digest"] = canonical_payload_digest(
+        {key: value for key, value in frozen.items() if key != "digest"}
+    )
+    qualification = deepcopy(execution.config[EXECUTION_QUALIFICATION_KEY])
+    qualification["execution_mode"] = "simulated"
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+    execution.config = {
+        FREEZE_CONFIG_KEY: frozen,
+        EXECUTION_QUALIFICATION_KEY: qualification,
+    }
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+
+
+def test_qualification_binding_digest_must_match_adapter_freeze():
+    execution = _execution()
+    qualification = deepcopy(execution.config[EXECUTION_QUALIFICATION_KEY])
+    qualification["binding_digest"] = "c" * 64
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+    execution.config[EXECUTION_QUALIFICATION_KEY] = qualification
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("binding" in reason for reason in outcome.reasons)
 
 
 def test_historical_row_without_freeze_remains_legacy_pipeline_completion():

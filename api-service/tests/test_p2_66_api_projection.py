@@ -3,12 +3,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
 import yaml
+from fastapi import HTTPException
 
 from app.api import report as report_api
 from app.api.report import _report_execution_outcome_state, _report_summary
 from app.api.test_execution import _to_history_item
 from app.api.test_plan import get_case_execution_status
+from app.schemas.report import ReportCreate
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from tests.test_p2_66_formal_consumers import _invalid_formal_execution
 
@@ -42,6 +45,7 @@ def test_history_returns_the_shared_execution_evidence_outcome():
 
     assert item.status == "completed"
     assert item.validation_pass is None
+    assert item.execution_classification == "formal"
     assert item.execution_evidence_outcome.compatibility_classification == "invalid"
     assert item.execution_evidence_outcome.completion_semantic == "pipeline_completed"
 
@@ -92,6 +96,69 @@ def test_report_summary_exposes_the_server_owned_execution_outcome(monkeypatch):
     assert summary.execution_evidence_outcome.completion_semantic == "pipeline_completed"
 
 
+def test_report_detail_reprojects_the_current_terminal_lifecycle(monkeypatch):
+    execution = _invalid_formal_execution()
+    execution.status = "running"
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    report = SimpleNamespace(
+        id=execution.id,
+        test_execution_ids=[execution.id],
+        road_test_execution_id=None,
+        content_data=content,
+    )
+    execution.status = "completed"
+    monkeypatch.setattr(
+        report_api.report_service,
+        "get_report",
+        lambda _db, _report_id: report,
+    )
+    monkeypatch.setattr(
+        report_api,
+        "_reject_untrusted_mimo_report",
+        lambda _db, _report: None,
+    )
+    monkeypatch.setattr(
+        report_api,
+        "_reject_untrusted_vrt_report",
+        lambda _report: None,
+    )
+
+    response = report_api.get_report(
+        execution.id,
+        db=_SingleResultDb(execution),
+    )
+
+    assert response.execution_evidence_outcome.pipeline_status == "completed"
+    assert (
+        response.execution_evidence_outcome.completion_semantic
+        == "pipeline_completed"
+    )
+
+
+def test_generic_report_create_cannot_submit_server_owned_outcome(monkeypatch):
+    monkeypatch.setattr(
+        report_api.report_service,
+        "create_report",
+        lambda **_kwargs: SimpleNamespace(),
+    )
+    request = ReportCreate(
+        title="client report",
+        report_type="single_execution",
+        generated_by="operator",
+        content_data={"execution_evidence_outcome": {}},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        report_api.create_report(request, db=object())
+
+    assert exc_info.value.status_code == 422
+    assert "server-owned" in str(exc_info.value.detail)
+
+
 def test_report_projection_drift_is_explicitly_invalid_not_silently_trusted():
     execution = _invalid_formal_execution()
     content = _build_mimo_ota_content_data(
@@ -118,6 +185,82 @@ def test_report_projection_drift_is_explicitly_invalid_not_silently_trusted():
     assert outcome.compatibility_classification == "invalid"
     assert outcome.completion_semantic == "pipeline_completed"
     assert any("stored report" in reason for reason in outcome.reasons)
+
+
+def test_report_projection_allows_expected_running_to_completed_transition():
+    execution = _invalid_formal_execution()
+    execution.status = "running"
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[execution.id],
+        content_data=content,
+    )
+    execution.status = "completed"
+
+    outcome, matches = _report_execution_outcome_state(
+        _SingleResultDb(execution),
+        report,
+    )
+
+    assert matches is True
+    assert outcome is not None
+    assert outcome.pipeline_status == "completed"
+    assert outcome.completion_semantic == "pipeline_completed"
+
+
+def test_report_projection_rejects_running_to_failed_terminal_transition():
+    execution = _invalid_formal_execution()
+    execution.status = "running"
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[execution.id],
+        content_data=content,
+    )
+    execution.status = "failed"
+
+    outcome, matches = _report_execution_outcome_state(
+        _SingleResultDb(execution),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "invalid"
+    assert any("lifecycle" in reason for reason in outcome.reasons)
+
+
+def test_report_projection_cannot_be_trusted_after_source_execution_disappears():
+    execution = _invalid_formal_execution()
+    content = _build_mimo_ota_content_data(
+        execution,
+        execution.completed_at,
+        "case",
+    )
+    report = SimpleNamespace(
+        status="completed",
+        test_execution_ids=[execution.id],
+        content_data=content,
+    )
+
+    outcome, matches = _report_execution_outcome_state(
+        _SingleResultDb(None),
+        report,
+    )
+
+    assert matches is False
+    assert outcome is not None
+    assert outcome.compatibility_classification == "invalid"
+    assert any("source execution" in reason for reason in outcome.reasons)
 
 
 def test_live_and_checked_contracts_publish_the_shared_execution_outcome():

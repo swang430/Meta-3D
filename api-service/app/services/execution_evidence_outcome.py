@@ -1,8 +1,9 @@
 """Execution-scoped evidence compatibility and completion semantics.
 
-The projection in this module is deliberately pure: it reads only immutable
-snapshots already stored on one execution.  It never consults the current
-adapter registry, LabProfile, connection, or site certification.
+The projection in this module is deliberately pure: it reads immutable
+evidence snapshots plus the execution row's authoritative lifecycle status.
+It never consults the current adapter registry, LabProfile, connection, or
+site certification.
 """
 
 from __future__ import annotations
@@ -127,25 +128,66 @@ def validate_frozen_compatibility_snapshot(frozen: Any) -> str | None:
 
 def _qualification_projection(
     config: Mapping[str, Any],
-) -> tuple[QualificationClassification, tuple[str, ...]]:
+) -> tuple[
+    QualificationClassification,
+    tuple[str, ...],
+    ExecutionQualification | None,
+]:
     if EXECUTION_QUALIFICATION_KEY not in config:
-        return "legacy", ()
+        return "legacy", (), None
     raw = config.get(EXECUTION_QUALIFICATION_KEY)
     error = validate_frozen_execution_qualification(raw)
     if error is not None:
-        return "diagnostic", (error,)
+        return "diagnostic", (error,), None
     qualification = ExecutionQualification.model_validate(raw)
-    return qualification.classification, ()
+    return qualification.classification, (), qualification
+
+
+def _qualification_freeze_alignment_error(
+    frozen: Mapping[str, Any],
+    qualification: ExecutionQualification | None,
+) -> str | None:
+    if qualification is None:
+        return None
+    resolution = frozen.get("resolution")
+    if not isinstance(resolution, Mapping):
+        return "frozen qualification has no adapter resolution"
+    expected = (
+        frozen.get("binding_digest"),
+        resolution.get("status"),
+        resolution.get("execution_mode"),
+        resolution.get("adapter"),
+    )
+    actual = (
+        qualification.binding_digest,
+        qualification.binding_status,
+        qualification.execution_mode,
+        qualification.adapter_id,
+    )
+    if actual != expected:
+        return "frozen qualification does not match adapter binding"
+    if qualification.classification == "formal" and (
+        qualification.policy_mode != "formal"
+        or qualification.execution_mode != "real"
+        or qualification.binding_status != "configured"
+        or qualification.adapter_id is None
+    ):
+        return "formal qualification does not describe a real configured adapter"
+    return None
 
 
 def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutcome:
-    """Project one execution's immutable evidence into display/gating semantics."""
+    """Project frozen evidence plus current lifecycle into shared semantics."""
 
     config = getattr(execution, "config", None)
     config = config if isinstance(config, Mapping) else {}
     pipeline_status = str(getattr(execution, "status", "unknown"))
     frozen = config.get(FREEZE_CONFIG_KEY)
-    qualification, qualification_reasons = _qualification_projection(config)
+    (
+        qualification,
+        qualification_reasons,
+        qualification_snapshot,
+    ) = _qualification_projection(config)
 
     reasons: list[str] = list(qualification_reasons)
     compatibility_digest: str | None = None
@@ -169,7 +211,14 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
             verdict = BaseStationCompatibilityVerdict.model_validate(
                 compatibility.get("verdict")
             )
-            if verdict.status == "no_adapter" or qualification == "diagnostic":
+            alignment_error = _qualification_freeze_alignment_error(
+                frozen,
+                qualification_snapshot,
+            )
+            if alignment_error is not None:
+                classification = "invalid"
+                reasons.append(alignment_error)
+            elif verdict.status == "no_adapter" or qualification == "diagnostic":
                 classification = "diagnostic"
             else:
                 classification = "compatible"

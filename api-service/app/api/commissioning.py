@@ -659,7 +659,7 @@ def _commissioning_measure_projection(
     execution_config = execution.config if isinstance(execution.config, dict) else {}
     outcome = project_execution_evidence_outcome(execution)
     diagnostic = execution_evidence_blocks_formal_outputs(execution)
-    classification = outcome.compatibility_classification
+    classification = outcome.qualification_classification
     evidence = execution_config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
     evidence_required = base_station_metric_projection_required(
         execution_config

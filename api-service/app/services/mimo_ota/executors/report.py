@@ -1001,7 +1001,7 @@ def _build_mimo_ota_content_data(
         "report_type": "single_execution",
         "report_family": "mimo_ota",
         "execution_classification": (
-            evidence_outcome.compatibility_classification
+            evidence_outcome.qualification_classification
         ),
         "execution_evidence_outcome": evidence_outcome.model_dump(mode="json"),
         "calibration_trust_schema_version": 1,

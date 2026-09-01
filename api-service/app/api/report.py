@@ -89,7 +89,7 @@ def _report_execution_outcome_state(
     db: Session,
     report,
 ) -> tuple[ExecutionEvidenceOutcome | None, bool]:
-    """Compare a stored report projection with its immutable source execution."""
+    """Compare stored frozen evidence with its authoritative source execution."""
 
     content = report.content_data if isinstance(report.content_data, dict) else {}
     raw = content.get("execution_evidence_outcome")
@@ -103,16 +103,38 @@ def _report_execution_outcome_state(
         stored = None
 
     execution_ids = normalized_report_execution_ids(report)
-    execution = None
     query = getattr(db, "query", None)
-    if len(execution_ids) == 1 and callable(query):
-        execution = (
-            query(TestExecution)
-            .filter(TestExecution.id == execution_ids[0])
-            .first()
-        )
-    if execution is None:
+    if not callable(query):
         return stored, raw is None or stored is not None
+    if len(execution_ids) != 1:
+        if raw is None:
+            return None, True
+        if stored is None:
+            return None, False
+        return (
+            _invalid_report_outcome(
+                stored,
+                "stored report outcome has no unique source execution",
+            ),
+            False,
+        )
+    execution = (
+        query(TestExecution)
+        .filter(TestExecution.id == execution_ids[0])
+        .first()
+    )
+    if execution is None:
+        if raw is None:
+            return None, True
+        if stored is None:
+            return None, False
+        return (
+            _invalid_report_outcome(
+                stored,
+                "stored report outcome source execution is missing",
+            ),
+            False,
+        )
 
     expected = project_execution_evidence_outcome(execution)
     if raw is None:
@@ -125,7 +147,26 @@ def _report_execution_outcome_state(
             ),
             False,
         )
-    if stored != expected:
+    # REPORT runs while the execution row is still ``running``; the case
+    # runner publishes the terminal status only after REPORT succeeds.  The
+    # compatibility and qualification evidence is already frozen at that
+    # point, but the three lifecycle-derived fields legitimately change once
+    # from running -> terminal.  Compare only the immutable evidence identity
+    # and always return the current source projection.  Any evidence/digest
+    # drift remains fail-closed.
+    stored_evidence = (
+        stored.compatibility_classification,
+        stored.compatibility_digest,
+        stored.qualification_classification,
+        stored.reasons,
+    )
+    expected_evidence = (
+        expected.compatibility_classification,
+        expected.compatibility_digest,
+        expected.qualification_classification,
+        expected.reasons,
+    )
+    if stored_evidence != expected_evidence:
         return (
             _invalid_report_outcome(
                 expected,
@@ -133,7 +174,23 @@ def _report_execution_outcome_state(
             ),
             False,
         )
-    return stored, True
+    if stored == expected:
+        return expected, True
+    expected_terminal_transition = (
+        stored.pipeline_status == "running"
+        and stored.completion_semantic == "not_completed"
+        and stored.formal_eligible is False
+        and expected.pipeline_status == "completed"
+    )
+    if expected_terminal_transition:
+        return expected, True
+    return (
+        _invalid_report_outcome(
+            expected,
+            "stored report execution lifecycle drifted unexpectedly",
+        ),
+        False,
+    )
 
 
 def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
@@ -219,6 +276,16 @@ def _report_summary(db: Session, report) -> ReportSummary:
     })
 
 
+def _report_with_current_execution_outcome(db: Session, report):
+    """Attach the source execution's current server-owned projection."""
+
+    outcome, _ = _report_execution_outcome_state(db, report)
+    # SQLAlchemy model instances accept non-mapped response-only attributes;
+    # they are never persisted and Pydantic reads them via from_attributes.
+    setattr(report, "execution_evidence_outcome", outcome)
+    return report
+
+
 # ==================== Report Endpoints ====================
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
@@ -227,6 +294,17 @@ def create_report(
     db: Session = Depends(get_db)
 ):
     """Create a new test report"""
+    if (
+        isinstance(report.content_data, dict)
+        and "execution_evidence_outcome" in report.content_data
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "execution_evidence_outcome is server-owned and cannot be "
+                "submitted in report content"
+            ),
+        )
     if report.road_test_execution_id is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -328,7 +406,7 @@ def generate_report(
         )
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)
-    return report
+    return _report_with_current_execution_outcome(db, report)
 
 
 # ==================== Template Endpoints ====================
@@ -629,7 +707,7 @@ def get_report(
         )
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)
-    return report
+    return _report_with_current_execution_outcome(db, report)
 
 
 @router.get("/{report_id}/download")

@@ -100,7 +100,7 @@ def test_report_comparison_marks_invalid_compatibility_metrics_untrusted():
         _invalid_formal_execution()
     )
 
-    assert entry["provenance"]["execution_classification"] == "invalid"
+    assert entry["provenance"]["execution_classification"] == "formal"
     assert all(
         trusted is False
         for trusted in entry["provenance"]["metric_trust"].values()
@@ -120,7 +120,7 @@ def test_report_persists_server_owned_invalid_outcome_and_no_success_title():
     outcome = content["execution_evidence_outcome"]
     assert outcome["compatibility_classification"] == "invalid"
     assert outcome["completion_semantic"] == "pipeline_completed"
-    assert content["execution_classification"] == "invalid"
+    assert content["execution_classification"] == "formal"
     assert content["overall_result"] == "undetermined"
     assert content["pass_rate"] is None
     assert content["statistics"] == {}

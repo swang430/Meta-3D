@@ -61,7 +61,9 @@ P1-75 已在新执行首次仪器 I/O 前拒绝不兼容组合，P2-65 已让 pr
 4. `compatible` 必须与冻结 adapter/binding 形状自洽；
 5. `no_adapter` 只允许 frozen `diagnostic_unbound + simulated + adapter=null`；
 6. `incompatible`、畸形、digest 漂移一律 `invalid`；
-7. qualification 缺失沿既有 legacy 规则；显式畸形继续 fail-closed 为 diagnostic。
+7. qualification 的 binding digest/status、execution mode 与 adapter 必须和同一 freeze 的 resolution
+   精确一致；formal 只允许 real + configured，模拟 binding 即使被错误标成 formal 也 fail-closed；
+8. qualification 缺失沿既有 legacy 规则；显式畸形继续 fail-closed 为 diagnostic。
 
 完成语义只是一层展示/消费投影：
 
@@ -96,7 +98,11 @@ P1-75 已在新执行首次仪器 I/O 前拒绝不兼容组合，P2-65 已让 pr
 4. `valid_test_completed` 只说明兼容性和 qualification 允许进入正式判定，不替代 SCPI、校准、路径损耗、
    测量窗口和逐指标 trust 门；这些门任何一个失败，正式判决仍不可发布。
 5. report content 持久化同一 server-owned outcome；详情/下载用关联 TestExecution 重新派生并与 stored
-   outcome 对账，客户端不能提交或覆盖它。
+   outcome 的冻结证据轴对账，客户端不能提交或覆盖它。REPORT 运行时执行仍是 `running`，所以
+   `pipeline_status`、`completion_semantic` 与 `formal_eligible` 必须以关联执行的当前终态为准，允许
+   预期的 `running → completed` 跃迁；若源执行最终为 failed/cancelled 或其他状态，报告仍
+   fail-closed。compatibility digest/classification、qualification 与 reasons 任一漂移同样
+   fail-closed。
 6. 多执行报告若含 diagnostic/invalid，只能产出明确的非正式审计汇总；不得把其数值混入统计。
 
 ## 5. 安全方向

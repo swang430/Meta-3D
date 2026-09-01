@@ -1526,7 +1526,7 @@ class ReportComparisonService:
             "metrics": metrics,
             "provenance": {
                 "execution_classification": (
-                    outcome.compatibility_classification
+                    outcome.qualification_classification
                 ),
                 "verdict": analysis.get("verdict"),
                 "measurement_verified": analysis.get("measurement_verified"),

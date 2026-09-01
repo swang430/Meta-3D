@@ -79,7 +79,8 @@ def load_mimo_ota_config(execution: TestExecution) -> MIMOOTAConfiguration:
     if outcome.qualification_classification != "legacy":
         payload["precheck_strict_cal"] = (
             outcome.qualification_classification == "formal"
-            and outcome.compatibility_classification == "compatible"
+            and outcome.compatibility_classification
+            not in {"diagnostic", "invalid"}
         )
     return MIMOOTAConfiguration.model_validate(payload)
 

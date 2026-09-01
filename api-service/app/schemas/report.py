@@ -1,5 +1,5 @@
 """Test Report Pydantic schemas"""
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -147,31 +147,6 @@ class ReportResponse(BaseModel):
     content_data: Optional[Dict[str, Any]]
     execution_evidence_outcome: Optional[ExecutionEvidenceOutcome] = None
     road_test_execution_id: Optional[str]
-
-    @model_validator(mode="after")
-    def project_stored_execution_evidence_outcome(self):
-        """Expose the server-owned projection already stored in report content.
-
-        Detail/download trust checks compare this stored value with the linked
-        execution before FastAPI serializes the response.  This validator only
-        mirrors that accepted immutable value; it never rebuilds evidence from
-        current configuration.
-        """
-
-        if self.execution_evidence_outcome is not None:
-            return self
-        content = self.content_data if isinstance(self.content_data, dict) else {}
-        raw = content.get("execution_evidence_outcome")
-        if raw is not None:
-            try:
-                self.execution_evidence_outcome = (
-                    ExecutionEvidenceOutcome.model_validate(raw)
-                )
-            except (ValueError, TypeError):
-                # The report trust boundary rejects malformed MIMO content;
-                # unrelated generic reports may carry arbitrary content_data.
-                pass
-        return self
 
     class Config:
         from_attributes = True

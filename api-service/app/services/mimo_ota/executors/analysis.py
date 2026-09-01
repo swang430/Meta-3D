@@ -205,7 +205,7 @@ class AnalysisExecutor(IStepExecutor):
                 log_reason = "quiet-zone evidence is not formally verified"
             result: Dict[str, Any] = {
                 "execution_classification": (
-                    evidence_outcome.compatibility_classification
+                    evidence_outcome.qualification_classification
                 ),
                 "verdict": "UNKNOWN",
                 "details": [detail],
