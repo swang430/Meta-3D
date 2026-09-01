@@ -77,9 +77,11 @@ from app.hal.base_station_manifest import (
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
     BaseStationMetricCapability,
+    BaseStationMacProfileCapability,
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
 )
+from app.hal.base_station_mac_profile import CMW500_LTE_PROFILE_SOURCE
 from app.hal.scpi_evidence import (
     EvidenceLevel,
     EvidenceVerdict,
@@ -302,6 +304,14 @@ class RealCmw500Driver(BaseStationDriver):
             # Mirrored by the mac_throughput_configuration_supported ClassVar
             # (validate_base_station_adapter_registrations operation mirror).
             "mac_throughput_config",
+        ),
+        mac_profiles=(
+            BaseStationMacProfileCapability(
+                kind="lte_rmc",
+                profile_version=1,
+                rat="lte",
+                source_reference=CMW500_LTE_PROFILE_SOURCE,
+            ),
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(

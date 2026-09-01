@@ -64,8 +64,10 @@ from app.hal.base_station_manifest import (
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
     BaseStationMetricCapability,
+    BaseStationMacProfileCapability,
     BaseStationRatCapability,
 )
+from app.hal.base_station_mac_profile import UXM_NR_PROFILE_SOURCE
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
@@ -374,6 +376,15 @@ class RealUxmDriver(BaseStationDriver):
             "safe_idle_release",
             "input_level_control",
             "measurement_window",
+            "mac_throughput_config",
+        ),
+        mac_profiles=(
+            BaseStationMacProfileCapability(
+                kind="nr_throughput",
+                profile_version=1,
+                rat="nr5g",
+                source_reference=UXM_NR_PROFILE_SOURCE,
+            ),
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
