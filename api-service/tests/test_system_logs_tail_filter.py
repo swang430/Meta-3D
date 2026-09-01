@@ -28,6 +28,7 @@ import app.api.system_logs as system_logs
 
 TAIL_URL = f"{settings.api_v1_prefix}/system-logs/tail"
 HISTORY_URL = f"{settings.api_v1_prefix}/system-logs/history"
+EXECUTION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 def _json_line(
@@ -88,10 +89,16 @@ class TestFilterDuringScan:
         {"keyword": "needle"},
         {"hal_mode": "real"},                                 # 仅 export 支持的维度
         {"level": "WARNING,ERROR", "keyword": "needle", "hal_mode": "mock"},
-        {"execution_id": "exec-aaaa-1111"},                    # P1-36
-        {"execution_id": "exec-aaaa-1111", "level": "ERROR"},  # P1-36 组合
+        {"execution_id": EXECUTION_A},                    # P1-36
+        {"execution_id": EXECUTION_A, "level": "ERROR"},  # P1-36 组合
     ])
-    def test_tail_and_export_return_the_same_rows(self, client, log_dir, params):
+    def test_tail_and_export_return_the_same_rows(
+        self,
+        client,
+        log_dir,
+        params,
+        monkeypatch,
+    ):
         """**行为门**：同一组条件下，`/tail` 看到什么，`/export` 就该导出什么。
 
         内审 F1：本片把 `/export` 改成复用 `_entry_matches` 之后，守它的只有
@@ -104,9 +111,9 @@ class TestFilterDuringScan:
         """
         lines = [
             _json_line("ERROR", "needle 错误", session_id="aaaa1111bbbb2222",
-                       execution_id="exec-aaaa-1111"),
+                       execution_id=EXECUTION_A),
             _json_line("WARNING", "needle 告警", session_id="aaaa1111bbbb2222",
-                       execution_id="exec-aaaa-1111"),
+                       execution_id=EXECUTION_A),
             _json_line("CRITICAL", "致命", session_id="ffff9999ffff9999"),
             _json_line("ERROR", "另一次请求的错误", session_id="ffff9999ffff9999"),
             _json_line("INFO", "needle 普通信息"),
@@ -126,10 +133,36 @@ class TestFilterDuringScan:
                 r for r in tail_rows if json.loads(r).get("hal_mode", "").lower() == hm.lower()
             ]
 
+        if params.get("execution_id"):
+            import app.api.system_logs as system_logs
+
+            class _DB:
+                def close(self):
+                    return None
+
+            monkeypatch.setattr(system_logs, "SessionLocal", _DB)
+            monkeypatch.setattr(
+                system_logs,
+                "_load_execution_export_metadata",
+                lambda execution_id, _db: {
+                    "execution_id": execution_id,
+                    "base_station_adapter_id": "uxm",
+                    "base_station_binding_digest": "b" * 64,
+                    "test_case_rat": "nr5g",
+                    "execution_evidence_outcome": {
+                        "compatibility_classification": "compatible",
+                    },
+                },
+            )
         exp = client.get(
             f"{settings.api_v1_prefix}/system-logs/export/app.log", params=params)
         assert exp.status_code == 200
-        export_rows = [l for l in exp.text.splitlines() if l.strip()]
+        export_rows = [
+            line
+            for line in exp.text.splitlines()
+            if line.strip()
+            and json.loads(line).get("record_type") != "export_metadata"
+        ]
 
         # /tail 是倒序（最新在前），/export 是文件顺序 —— 比**集合**与条数
         assert sorted(export_rows) == sorted(tail_rows), (
