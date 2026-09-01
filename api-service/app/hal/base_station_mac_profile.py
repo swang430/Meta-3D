@@ -154,8 +154,12 @@ def uxm_nr_tdd_period_for_pattern(
 
     if subcarrier_spacing_khz not in UXM_NR_SLOT_DURATION_MS:
         raise ValueError("subcarrier spacing is outside the audited UXM NR domain")
+    # 与 NrMacTestProfileV1._valid_tdd_pattern 的规范化同源（strip().upper()）：
+    # 该 validator 是 mode="before"，而本函数在 canonicalize 阶段先于它执行。
+    # 不在这里 strip，`" DDDDDDDSUU "` 会按 12 个时隙算出 6 ms 而被拒，
+    # 但同一个值配上显式 tdd_period 却能通过并被规范化成 10 个时隙 —— 自相矛盾。
     duration_ms = (
-        len(tdd_pattern) * UXM_NR_SLOT_DURATION_MS[subcarrier_spacing_khz]
+        len(tdd_pattern.strip()) * UXM_NR_SLOT_DURATION_MS[subcarrier_spacing_khz]
     )
     matches = tuple(
         token
@@ -243,15 +247,20 @@ class NrMacTestProfileV1(_MacTestProfileBase):
 
     @field_validator("tdd_pattern", mode="before")
     @classmethod
-    def _valid_tdd_pattern(cls, value: str) -> str:
-        normalized = value.strip().upper()
-        return normalized
+    def _valid_tdd_pattern(cls, value: object) -> object:
+        # 非字符串（含显式 null）原样放行，由字段类型校验给出受控的字段级错误。
+        # 直接 .strip() 会以 AttributeError 崩在校验之前，那既不是受控拒绝，
+        # 报错也指不到是哪个字段。
+        if not isinstance(value, str):
+            return value
+        return value.strip().upper()
 
     @field_validator("tdd_period", mode="before")
     @classmethod
-    def _valid_tdd_period(cls, value: str) -> str:
-        normalized = value.strip().upper()
-        return normalized
+    def _valid_tdd_period(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return value.strip().upper()
 
     @model_validator(mode="after")
     def _metric_contract_is_versioned(self) -> "NrMacTestProfileV1":

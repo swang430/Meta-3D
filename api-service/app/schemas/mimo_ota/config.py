@@ -820,7 +820,19 @@ class MIMOOTAConfiguration(BaseModel):
                     data.get("subcarrier_spacing_khz", 30),
                 )
                 tdd_period = data.get("tdd_period")
-                if tdd_period is None:
+                if (
+                    tdd_period is None
+                    and isinstance(tdd_pattern, str)
+                    # 受理域与下游 schema 同源：pydantic 的 lax 模式会把 30.0 归一成
+                    # 30，所以守卫必须一并放行 float，否则「值好到能进 Literal，却不
+                    # 够格参与派生」——那是本 PR 引入的回归，不是收紧。
+                    # bool 是 int 的子类，必须排除：True 会被静默当成 1。
+                    and isinstance(scs_khz, (int, float))
+                    and not isinstance(scs_khz, bool)
+                ):
+                    # 显式 null 不在这里补默认值：让它原样落进 payload，由
+                    # NrMacTestProfileV1 给出字段级拒绝，与 mcs / harq_* 等
+                    # 其余字段对 null 的处理保持一致（受控拒绝，不猜意图）。
                     tdd_period = uxm_nr_tdd_period_for_pattern(
                         tdd_pattern=tdd_pattern,
                         subcarrier_spacing_khz=scs_khz,
@@ -852,7 +864,12 @@ class MIMOOTAConfiguration(BaseModel):
                         "csi_rs_ports": (
                             data["csi_rs_ports"]
                             if data.get("csi_rs_ports") is not None
-                            else max(2, layers * 2)
+                            else (
+                                max(2, layers * 2)
+                                if isinstance(layers, (int, float))
+                                and not isinstance(layers, bool)
+                                else None
+                            )
                         ),
                         "source_reference": UXM_NR_PROFILE_SOURCE,
                     }

@@ -375,3 +375,191 @@ def test_explicit_profile_digest_tampering_is_rejected():
 
     with pytest.raises(ValidationError):
         MIMOOTAConfiguration.model_validate({"mac_profile": frozen})
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "mimo_layers",
+        "stat_count",
+        "tdd_pattern",
+        "tdd_period",
+        "mcs",
+        "enable_amc",
+        "harq_max_trans",
+        "harq_processes",
+    ],
+)
+def test_legacy_nr_explicit_null_is_rejected_not_crashed(field):
+    """显式 null 必须走受控的字段级拒绝，不能崩在校验之前。
+
+    `data.get(k, default)` 只对「键缺失」回退默认值；键存在但值为 null 时拿到的
+    是 None。曾经 mimo_layers / tdd_pattern 的 None 会先参与派生计算，分别以
+    TypeError 和 AttributeError 崩掉——那既不是受控拒绝，报错也指不到字段。
+
+    这里不把 null 当作「没写」去补默认值：那是从非法形态补真。这八个字段一律拒绝。
+    唯一的例外是 csi_rs_ports——它本来就有「不给就从层数派生」的语义，见下一个用例。
+
+    ⚠️ 故意**不给** csi_rs_ports：给了它就走显式分支，`max(2, layers * 2)` 这条
+    派生路径永远不执行，mimo_layers=None 便碰不到那处乘法，守卫失效也抓不出来。
+    """
+    raw = {
+        "mimo_layers": 4,
+        "mcs": 19,
+        "enable_amc": False,
+        "tdd_pattern": "DDDDDDDSUU",
+        "tdd_period": "5MS",
+        "harq_max_trans": 3,
+        "harq_processes": 8,
+        "stat_count": 6000,
+    }
+    MIMOOTAConfiguration.model_validate(deepcopy(raw))  # 对照：不含 null 时通过
+
+    raw[field] = None
+    with pytest.raises(ValidationError):
+        MIMOOTAConfiguration.model_validate(raw)
+
+
+def test_legacy_nr_pattern_whitespace_matches_model_normalization():
+    """周期推导必须与模型的 strip().upper() 规范化同源。
+
+    推导发生在 mode="before" 的 validator 之前。不 strip 的话，
+    `" DDDDDDDSUU "` 会按 12 个时隙算出 6 ms 而被拒；可同一个值配上显式
+    tdd_period 却能通过、并被规范化成 10 个时隙——同一输入两种结论。
+    """
+    spaced = {
+        "component_carriers": [
+            {
+                "radio_technology": "nr5g",
+                "subcarrier_spacing_khz": 30,
+                "frequency_hz": 3.5e9,
+                "bandwidth_mhz": 100.0,
+            }
+        ],
+        "tdd_pattern": " DDDDDDDSUU ",
+    }
+
+    derived = MIMOOTAConfiguration.model_validate(deepcopy(spaced))
+    assert derived.mac_profile.profile.tdd_pattern == "DDDDDDDSUU"
+    assert derived.mac_profile.profile.tdd_period == "5MS"
+
+    explicit = dict(spaced, tdd_period="5MS")
+    assert (
+        MIMOOTAConfiguration.model_validate(explicit).mac_profile.profile.tdd_period
+        == derived.mac_profile.profile.tdd_period
+    )
+
+
+def test_legacy_nr_null_csi_rs_ports_means_derive_from_layers():
+    """csi_rs_ports 是唯一把 null 当「未指定」的字段，这是既有设计不是漏网。
+
+    端口数可以**故意**大于层数，所以显式值优先；不给（缺失或 null）时按
+    max(2, layers * 2) 派生。与上一个用例里那八个字段的语义不同，不要合并。
+    """
+    raw = {
+        "mimo_layers": 4,
+        "mcs": 19,
+        "enable_amc": False,
+        "tdd_pattern": "DDDDDDDSUU",
+        "tdd_period": "5MS",
+        "harq_max_trans": 3,
+        "harq_processes": 8,
+        "stat_count": 6000,
+    }
+
+    omitted = MIMOOTAConfiguration.model_validate(deepcopy(raw))
+    explicit_null = MIMOOTAConfiguration.model_validate(dict(raw, csi_rs_ports=None))
+    explicit_value = MIMOOTAConfiguration.model_validate(dict(raw, csi_rs_ports=16))
+
+    assert omitted.mac_profile.profile.csi_rs_ports == 8  # max(2, 4 * 2)
+    assert explicit_null.mac_profile.profile.csi_rs_ports == 8
+    assert explicit_value.mac_profile.profile.csi_rs_ports == 16
+
+
+def _sparse_nr_legacy_row() -> dict:
+    """稀疏 legacy NR 行：**故意不带 tdd_period**。
+
+    推导分支只在 tdd_period 缺席时才执行，而真实旧行正是这个形态（推导存在的
+    理由就是 period 通常没写）。基线里放了 tdd_period 的用例走不进推导，
+    那一段守卫便无人看守。
+    """
+    return {
+        "mimo_layers": 4,
+        "mcs": 19,
+        "enable_amc": False,
+        "tdd_pattern": "DDDDDDDSUU",
+        "harq_max_trans": 3,
+        "harq_processes": 8,
+        "stat_count": 6000,
+    }
+
+
+@pytest.mark.parametrize("field", ["tdd_pattern", "subcarrier_spacing_khz"])
+def test_legacy_nr_null_derivation_input_is_rejected_not_crashed(field):
+    """周期推导的两个输入为 null 时，同样要受控拒绝而不是崩在校验之前。
+
+    这两格与上面那批的区别是它们**先被读去推导**：null 会以
+    AttributeError（`None.strip()`）或 TypeError（`None in dict`）
+    崩掉，报错既不受控也指不到字段。
+    """
+    MIMOOTAConfiguration.model_validate(_sparse_nr_legacy_row())  # 对照：推导分支可通过
+
+    raw = _sparse_nr_legacy_row()
+    raw[field] = None
+    with pytest.raises(ValidationError):
+        MIMOOTAConfiguration.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "field, value, expected",
+    [
+        ("mimo_layers", 4.0, 4),
+        ("subcarrier_spacing_khz", 30.0, 30),
+    ],
+)
+def test_legacy_nr_float_shaped_numbers_stay_accepted(field, value, expected):
+    """派生守卫的受理域必须与下游 schema 同源，不能更窄。
+
+    pydantic 的 lax 模式把 4.0 / 30.0 归一成 int，所以它们本来就能进
+    `Literal[1, 2, 4]` 与 `Literal[15, 30, 60, 120]`。守卫若只认 `int`，
+    这些值就会「好到能进 schema，却不够格参与派生」——那是回归不是收紧。
+    现场脚本 scripts/onsite-run-channel-throughput.sh 把 LAYERS 裸插值进
+    JSON，`LAYERS=4.0` 正是这个形态。
+    """
+    raw = _sparse_nr_legacy_row()
+    raw[field] = value
+
+    profile = MIMOOTAConfiguration.model_validate(raw).mac_profile.profile
+
+    assert getattr(profile, field) == expected
+    assert profile.tdd_period == "5MS"  # 推导仍然跑通
+
+
+@pytest.mark.parametrize("value", [[], {}, "30"])
+def test_legacy_nr_unhashable_scs_is_rejected_not_crashed(value):
+    """SCS 为不可哈希的值时也要受控拒绝。
+
+    推导里有 `scs_khz in UXM_NR_SLOT_DURATION_MS` 这一步，list / dict 会在那儿
+    炸 `TypeError: unhashable type`——这正是守卫要挡的那一格。None 与字符串
+    走到推导函数自己的域检查，本来就受控；不可哈希的这两种不行。
+    """
+    raw = _sparse_nr_legacy_row()
+    raw["subcarrier_spacing_khz"] = value
+
+    with pytest.raises(ValidationError):
+        MIMOOTAConfiguration.model_validate(raw)
+
+
+@pytest.mark.parametrize("field", ["mimo_layers", "subcarrier_spacing_khz"])
+def test_legacy_nr_bool_is_rejected_not_silently_coerced(field):
+    """bool 是 int 的子类，必须显式排除。
+
+    否则 `mimo_layers: true` 会被静默当成 1 层、csi_rs_ports 派生成 2，
+    而 `profile.mimo_layers != self.mimo_layers` 那道跨检也不会红——
+    两边都被归一成 1，看起来一致。静默改测试条件比报错更糟。
+    """
+    raw = _sparse_nr_legacy_row()
+    raw[field] = True
+
+    with pytest.raises(ValidationError):
+        MIMOOTAConfiguration.model_validate(raw)
