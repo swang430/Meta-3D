@@ -43,6 +43,7 @@ from app.hal.base_station_compatibility import (
     build_frozen_compatibility_payload,
     build_measure_execution_requirements,
     build_no_adapter_verdict,
+    canonical_payload_digest,
     evaluate_base_station_compatibility,
     manifest_compatibility_digest,
     verify_frozen_base_station_compatibility,
@@ -56,11 +57,6 @@ from app.models.instrument import (
 )
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
-from app.hal.base_station_compatibility import (
-    MEASURE_REQUIRED_OPERATIONS,
-    build_measure_execution_requirements,
-    canonical_payload_digest,
-)
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
     freeze_base_station_adapter_profile,
