@@ -25,23 +25,61 @@ from app.services.execution_evidence_outcome import (
 )
 from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
+    BaseStationSiteCertification,
     _qualification_payload_digest,
 )
 
 
+LAB_PROFILE_ID = "lab-profile-1"
+CONNECTION_ID = "connection-1"
+BINDING_DIGEST = "b" * 64
+
+
+def _site_certification() -> dict:
+    return {
+        "schema_version": 1,
+        "status": "active",
+        "lab_profile_id": LAB_PROFILE_ID,
+        "instrument_connection_id": CONNECTION_ID,
+        "binding_digest": BINDING_DIGEST,
+        "adapter_id": "uxm",
+        "model": "UXM 5G E7515B",
+        "firmware_version": "1.0",
+        "options": [],
+        "source_execution_id": "source-execution-1",
+        "evidence_digest": "e" * 64,
+        "required_proofs": {
+            "config_readback": True,
+            "route_readback": False,
+            "route_not_applicable": True,
+            "cleanup": True,
+            "transport_release": True,
+        },
+        "certified_by": "quality-owner",
+        "certified_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "site evidence complete",
+        "revoked_by": None,
+        "revoked_at": None,
+        "revocation_reason": None,
+    }
+
+
 def _qualification(classification: str) -> dict:
     diagnostic = classification == "diagnostic"
+    certification = _site_certification()
     payload = {
         "schema_version": 1,
         "classification": classification,
         "policy_mode": "diagnostic" if diagnostic else "formal",
         "policy": None,
-        "binding_digest": "b" * 64,
+        "binding_digest": BINDING_DIGEST,
         "binding_status": "not_applicable",
         "execution_mode": "real",
         "adapter_id": "uxm",
-        "site_certification": None,
-        "site_certification_digest": None,
+        "site_certification": certification,
+        "site_certification_digest": BaseStationSiteCertification.model_validate(
+            certification
+        ).certification_digest,
         "reasons": ["test_case_policy_diagnostic"] if diagnostic else [],
         "frozen_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -68,6 +106,8 @@ def _freeze(*, no_adapter: bool = False) -> dict:
     )
     identity = {
         "schema_version": 1,
+        "lab_profile_id": None if no_adapter else LAB_PROFILE_ID,
+        "instrument_connection_id": None if no_adapter else CONNECTION_ID,
         "resolution": {
             "schema_version": 1,
             "adapter": None if no_adapter else "uxm",
@@ -75,10 +115,10 @@ def _freeze(*, no_adapter: bool = False) -> dict:
             "execution_mode": "simulated" if no_adapter else "real",
             "profile": None,
         },
-        "binding_digest": "b" * 64,
+        "binding_digest": BINDING_DIGEST,
         "resolved_binding": {
             "status": "diagnostic_unbound" if no_adapter else "not_applicable",
-            "binding_digest": "b" * 64,
+            "binding_digest": BINDING_DIGEST,
             "manifest": manifest,
         },
         "compatibility": _compatibility(no_adapter=no_adapter),
@@ -104,6 +144,8 @@ def _execution(
                     "binding_status": "diagnostic_unbound",
                     "execution_mode": "simulated",
                     "adapter_id": None,
+                    "site_certification": None,
+                    "site_certification_digest": None,
                 }
             )
             frozen_qualification["qualification_digest"] = (
@@ -124,6 +166,64 @@ def test_completed_compatible_formal_is_valid_test_completion():
         _compatibility()
     )
     assert outcome.reasons == ()
+
+
+def test_formal_qualification_without_site_certification_fails_closed():
+    execution = _execution()
+    qualification = execution.config[EXECUTION_QUALIFICATION_KEY]
+    qualification["site_certification"] = None
+    qualification["site_certification_digest"] = None
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "revoked"),
+        ("lab_profile_id", "other-lab"),
+        ("instrument_connection_id", "other-connection"),
+        ("binding_digest", "c" * 64),
+        ("adapter_id", "cmw500"),
+    ],
+)
+def test_formal_qualification_requires_active_same_scope_certification(
+    field,
+    value,
+):
+    execution = _execution()
+    qualification = execution.config[EXECUTION_QUALIFICATION_KEY]
+    certification = qualification["site_certification"]
+    certification[field] = value
+    if field == "status":
+        certification.update(
+            {
+                "revoked_by": "quality-owner",
+                "revoked_at": datetime.now(timezone.utc).isoformat(),
+                "revocation_reason": "scope withdrawn",
+            }
+        )
+    qualification["site_certification_digest"] = (
+        BaseStationSiteCertification.model_validate(
+            certification
+        ).certification_digest
+    )
+    qualification["qualification_digest"] = _qualification_payload_digest(
+        qualification
+    )
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
 
 
 def test_completed_uxm_not_applicable_binding_is_formally_valid():

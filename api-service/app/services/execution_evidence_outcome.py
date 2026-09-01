@@ -205,13 +205,31 @@ def _qualification_freeze_alignment_error(
     )
     if actual != expected:
         return "frozen qualification does not match adapter binding"
-    if qualification.classification == "formal" and (
-        qualification.policy_mode != "formal"
-        or qualification.execution_mode != "real"
-        or qualification.binding_status not in {"configured", "not_applicable"}
-        or qualification.adapter_id is None
-    ):
-        return "formal qualification does not describe a real authoritative adapter"
+    if qualification.classification == "formal":
+        if (
+            qualification.policy_mode != "formal"
+            or qualification.execution_mode != "real"
+            or qualification.binding_status not in {"configured", "not_applicable"}
+            or qualification.adapter_id is None
+        ):
+            return "formal qualification does not describe a real authoritative adapter"
+        certification = qualification.site_certification
+        if certification is None or certification.status != "active":
+            return "formal qualification has no active site certification"
+        certification_scope = (
+            certification.lab_profile_id,
+            certification.instrument_connection_id,
+            certification.binding_digest,
+            certification.adapter_id,
+        )
+        frozen_scope = (
+            frozen.get("lab_profile_id"),
+            frozen.get("instrument_connection_id"),
+            frozen.get("binding_digest"),
+            resolution.get("adapter"),
+        )
+        if certification_scope != frozen_scope:
+            return "formal qualification site certification scope mismatch"
     return None
 
 
