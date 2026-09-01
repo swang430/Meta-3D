@@ -39,7 +39,16 @@ MEASURE_REQUIRED_OPERATIONS: tuple[str, ...] = (
 )
 
 
-def _canonical_digest(payload: Any) -> str:
+def canonical_payload_digest(payload: Any) -> str:
+    """Canonical JSON sha256 —— 与 services 侧两份既有实现算法逐字一致。
+
+    外审 R1 指出仓内已有同算法两份（``base_station_adapter_profile.py::
+    _canonical_digest`` 与 ``execution_scpi_evidence.py::
+    canonical_snapshot_digest``）。本函数公开命名，供 P2-65（Readiness 复用
+    判定器）/ P2-66（证据终态）落地时把两份 services 实现**换源到此处**收敛；
+    本片不动既有两份（⑦：不改它们，本片故障已修）。
+    """
+
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -80,7 +89,7 @@ class BaseStationExecutionRequirements(BaseModel):
 
     @property
     def digest(self) -> str:
-        return _canonical_digest(self.model_dump(mode="json"))
+        return canonical_payload_digest(self.model_dump(mode="json"))
 
 
 def build_measure_execution_requirements(
@@ -132,7 +141,7 @@ def manifest_compatibility_digest(manifest: BaseStationAdapterManifest) -> str:
         raise TypeError(
             "compatibility digest requires a registered adapter manifest"
         )
-    return _canonical_digest(manifest.model_dump(mode="json"))
+    return canonical_payload_digest(manifest.model_dump(mode="json"))
 
 
 def evaluate_base_station_compatibility(

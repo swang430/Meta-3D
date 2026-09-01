@@ -56,9 +56,9 @@ from app.models.instrument import (
 )
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
-    _canonical_digest,
     freeze_base_station_adapter_profile,
 )
 
@@ -367,7 +367,7 @@ def test_freeze_allows_nr5g_case_on_uxm_and_seals_compatibility(db):
     )
     # 封存：compatibility 进 identity 后才算 digest —— 篡改必被 digest 抓到
     identity = {key: value for key, value in frozen.items() if key != "digest"}
-    assert frozen["digest"] == _canonical_digest(identity)
+    assert frozen["digest"] == canonical_payload_digest(identity)
     assert "compatibility" in identity
 
 
