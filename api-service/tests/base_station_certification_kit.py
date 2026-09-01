@@ -287,6 +287,7 @@ CERTFAKE_MANIFEST = BaseStationAdapterManifest(
         "safe_idle_release",
         "measurement_window",
     ),
+    mac_profiles=(),
     config_fields=_certfake_config_fields(),
     attach_stages=tuple(
         BaseStationAttachStageCapability(

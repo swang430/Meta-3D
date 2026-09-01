@@ -122,6 +122,18 @@ def test_metric_requirements_are_nonempty_unique_stable_keys():
                 MacMetricRequirement(key="dl_throughput_mbps", scope="pcell"),
             ]
         )
+    with pytest.raises(ValidationError):
+        _nr_profile(
+            metric_requirements=[
+                {"key": "fabricated_metric", "scope": "pcell"}
+            ]
+        )
+    with pytest.raises(ValidationError):
+        _lte_profile(
+            metric_requirements=[
+                {"key": "dl_throughput_mbps", "scope": "pcell"}
+            ]
+        )
 
 
 def test_nr_and_lte_profiles_reject_each_others_fields():
@@ -166,6 +178,8 @@ def test_lte_v1_is_the_existing_narrow_fdd_fixed_rmc_shape():
         _lte_profile(enable_amc=True)
     with pytest.raises(ValidationError):
         _lte_profile(duplex="tdd")
+    with pytest.raises(ValidationError):
+        _lte_profile(mimo_layers=4)
 
 
 def test_legacy_nr_flat_fields_migrate_to_one_canonical_profile():

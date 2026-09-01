@@ -17,6 +17,13 @@ export type BaseStationRatCapability = {
   source_reference: string
 }
 
+export type BaseStationMacProfileCapability = {
+  kind: string
+  profile_version: number
+  rat: 'lte' | 'nr5g'
+  source_reference: string
+}
+
 export type BaseStationConfigFieldCapability = {
   field: string
   support: 'authoritative' | 'diagnostic_only' | 'not_applicable'
@@ -58,6 +65,7 @@ export type BaseStationAdapterManifest = {
   capabilities: string[]
   rat_capabilities: BaseStationRatCapability[]
   operations: string[]
+  mac_profiles: BaseStationMacProfileCapability[]
   config_fields: BaseStationConfigFieldCapability[]
   attach_stages: BaseStationAttachStageCapability[]
   measurement: BaseStationMeasurementCapability | null

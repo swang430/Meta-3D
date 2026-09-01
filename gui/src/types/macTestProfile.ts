@@ -42,6 +42,7 @@ export type LteRmcMacTestProfileV1 = MacTestProfileBase & {
   enable_amc: false
   duplex: 'fdd'
   transmission_mode: 'TM3'
+  mimo_layers: 2
   source_reference: 'Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf'
 }
 
@@ -222,7 +223,10 @@ export function updateMacProfileDraft(
     current.statistical_window.count,
   )
   next.stat_count = count
-  if (rat === 'lte') return next
+  if (rat === 'lte') {
+    next.mimo_layers = 2
+    return next
+  }
 
   const nr = current.kind === 'nr_throughput'
     ? current

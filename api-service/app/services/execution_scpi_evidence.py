@@ -1176,11 +1176,15 @@ def begin_execution_base_station_measurement(
     unbound diagnostic has no adapter-owned measurement evidence.
     """
 
-    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
     from app.services.mimo_ota.base_station_execution_evidence import (
         MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
     )
-    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        frozen_mac_profile_from_adapter_freeze,
+    )
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
     from app.services.mimo_ota.executors.measure import (
         _build_pcell_requested_config,
     )
@@ -1192,7 +1196,21 @@ def begin_execution_base_station_measurement(
         "cmw500",
     }:
         return None
-    config = MIMOOTAConfiguration.model_validate(test_case.configuration)
+    compatibility = frozen.get("compatibility")
+    requirements = (
+        compatibility.get("requirements")
+        if isinstance(compatibility, dict)
+        else None
+    )
+    modern_freeze = isinstance(requirements, dict) and "mac_profile" in requirements
+    if modern_freeze:
+        config = load_mimo_ota_config(execution)
+    else:
+        # Pre-P2-54 executions did not freeze the whole configuration. Preserve
+        # their historical behavior, but never use this fallback for a modern
+        # MAC-profile freeze.
+        config = MIMOOTAConfiguration.model_validate(test_case.configuration)
+    frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen)
     execution_config = dict(execution.config or {})
     frozen_peak = config.theoretical_peak_throughput_mbps
     if MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD in execution_config:
@@ -1207,7 +1225,10 @@ def begin_execution_base_station_measurement(
     initialize_base_station_execution_evidence(
         execution,
         frozen_adapter=frozen,
-        requested_config=_build_pcell_requested_config(config),
+        requested_config=_build_pcell_requested_config(
+            config,
+            mac_profile=frozen_mac_profile,
+        ),
         requested_positions=[
             {"azimuth_deg": float(azimuth), "elevation_deg": 0.0}
             for azimuth in config.azimuths_deg

@@ -32,6 +32,11 @@ CMW500_LTE_PROFILE_SOURCE = (
 )
 
 _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_NR_V1_METRICS = (("dl_throughput_mbps", "pcell"),)
+_LTE_RMC_V1_METRICS = (
+    ("dl_throughput_mbps", "pcell"),
+    ("dl_bler_percent", "pcell"),
+)
 
 
 def _canonical_digest(payload: object) -> str:
@@ -104,6 +109,13 @@ class NrMacTestProfileV1(_MacTestProfileBase):
     csi_rs_ports: int = Field(gt=0)
     source_reference: Literal[UXM_NR_PROFILE_SOURCE]
 
+    @model_validator(mode="after")
+    def _metric_contract_is_versioned(self) -> "NrMacTestProfileV1":
+        actual = tuple((item.key, item.scope) for item in self.metric_requirements)
+        if actual != _NR_V1_METRICS:
+            raise ValueError("nr_throughput@1 metric requirements do not match its contract")
+        return self
+
 
 class LteRmcMacTestProfileV1(_MacTestProfileBase):
     """The exact, deliberately narrow LTE shape implemented today.
@@ -119,7 +131,15 @@ class LteRmcMacTestProfileV1(_MacTestProfileBase):
     enable_amc: Literal[False]
     duplex: Literal["fdd"]
     transmission_mode: Literal["TM3"]
+    mimo_layers: Literal[2]
     source_reference: Literal[CMW500_LTE_PROFILE_SOURCE]
+
+    @model_validator(mode="after")
+    def _metric_contract_is_versioned(self) -> "LteRmcMacTestProfileV1":
+        actual = tuple((item.key, item.scope) for item in self.metric_requirements)
+        if actual != _LTE_RMC_V1_METRICS:
+            raise ValueError("lte_rmc@1 metric requirements do not match its contract")
+        return self
 
 
 MacTestProfile = Annotated[

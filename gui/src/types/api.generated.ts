@@ -2260,7 +2260,8 @@ export interface components {
             profile_version: 1;
             /** @constant */
             test_intent: "downlink_throughput";
-            mimo_layers: number;
+            /** @constant */
+            mimo_layers: 2;
             statistical_window: components["schemas"]["MacStatisticalWindow"];
             metric_requirements: components["schemas"]["MacMetricRequirement"][];
             /** @constant */
@@ -2828,6 +2829,13 @@ export interface components {
             rat: "lte" | "nr5g";
             source_reference: string;
         };
+        BaseStationMacProfileCapability: {
+            kind: string;
+            profile_version: number;
+            /** @enum {string} */
+            rat: "lte" | "nr5g";
+            source_reference: string;
+        };
         BaseStationConfigFieldCapability: {
             field: string;
             /** @enum {string} */
@@ -2875,6 +2883,7 @@ export interface components {
             capabilities: string[];
             rat_capabilities: components["schemas"]["BaseStationRatCapability"][];
             operations: string[];
+            mac_profiles: components["schemas"]["BaseStationMacProfileCapability"][];
             config_fields: components["schemas"]["BaseStationConfigFieldCapability"][];
             attach_stages: components["schemas"]["BaseStationAttachStageCapability"][];
             measurement: components["schemas"]["BaseStationMeasurementCapability"] | null;

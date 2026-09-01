@@ -64,6 +64,7 @@ test('LTE draft never submits NR-only controls', () => {
   )
   assert.equal(next.mac_profile, undefined)
   assert.equal(next.stat_count, 5000)
+  assert.equal(next.mimo_layers, 2)
   for (const key of ['mcs', 'tdd_pattern', 'harq_processes', 'csi_rs_ports']) {
     assert.equal(next[key], undefined)
   }

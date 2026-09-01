@@ -42,7 +42,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.base_station import BaseStationDriver
-from app.hal.base_station_compatibility import canonical_payload_digest
+from app.hal.base_station_compatibility import (
+    build_compatibility_payload,
+    build_measure_execution_requirements_from_configuration,
+    canonical_payload_digest,
+)
 from app.models.calibration import CalibrationCertificate
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.instrument import InstrumentCategory
@@ -68,6 +72,7 @@ from app.services.test_execution import (
     StepExecutionContext,
     StepExecutionStatus,
 )
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -88,6 +93,11 @@ def _bind_unbound_mock_measurement(
 
     adapter_id = base_station.adapter_id
     execution_config = dict(context.test_execution.config or {})
+    test_case = context.db.get(TestCase, context.test_execution.test_case_id)
+    requirements = build_measure_execution_requirements_from_configuration(
+        test_case.configuration
+    )
+    compatibility = build_compatibility_payload(requirements, None)
     legacy_freeze = {
         "resolution": {
             "schema_version": 1,
@@ -95,7 +105,11 @@ def _bind_unbound_mock_measurement(
             "status": "diagnostic_unbound",
             "execution_mode": "simulated",
             "profile": None,
-        }
+        },
+        "compatibility": compatibility,
+        "mimo_ota_configuration": canonicalize_mimo_ota_configuration_payload(
+            dict(test_case.configuration or {})
+        ),
     }
     legacy_freeze["digest"] = canonical_payload_digest(legacy_freeze)
     execution_config["base_station_adapter_profile_freeze"] = legacy_freeze
@@ -1104,8 +1118,10 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
         frequency_hz=3500e6,
     )
     test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+    legacy_configuration = dict(test_case.configuration)
+    legacy_configuration.pop("mac_profile", None)
     test_case.configuration = {
-        **test_case.configuration,
+        **legacy_configuration,
         "engine_mode": "keysight_gcm",
         "switch_mode_id": "mimo_ota",
         "azimuths_deg": [0.0],
@@ -1142,7 +1158,7 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
 
 
 @pytest.mark.asyncio
-async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
+async def test_diagnostic_measure_rejects_legacy_unverified_certificate(
     db,
     lab,
     chamber,
@@ -1180,15 +1196,15 @@ async def test_measure_reports_legacy_certificate_as_applied_but_unverified(
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     measurements = result.measurements or {}
     application = measurements["path_loss_application"]
-    assert application["status"] == "applied"
+    assert application["status"] == "not_applied"
     assert application["provenance"] == "unknown"
+    assert application["reason"] == "rejected_untrusted"
     assert application["certificate_id"] == str(certificate.id)
     assert measurements["path_loss_verified"] is False
     assert measurements["measurement_verified"] is False
     warning_text = "\n".join(result.warnings or [])
-    assert "已应用路损补偿" in warning_text
+    assert "补偿数值不展示" in warning_text
     assert "无 path-loss certificate" not in warning_text
-    assert "未补偿" not in warning_text
     assert "56.77" not in warning_text
 
 

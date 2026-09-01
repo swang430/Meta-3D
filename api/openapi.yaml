@@ -1286,7 +1286,7 @@ components:
         schema_version: {type: integer, const: 1}
         profile_version: {type: integer, const: 1}
         test_intent: {type: string, const: downlink_throughput}
-        mimo_layers: {type: integer, minimum: 1, maximum: 8}
+        mimo_layers: {type: integer, const: 2}
         statistical_window: {$ref: '#/components/schemas/MacStatisticalWindow'}
         metric_requirements:
           type: array
@@ -2273,6 +2273,15 @@ components:
         rat: {type: string, enum: [lte, nr5g]}
         source_reference: {type: string}
       required: [rat, source_reference]
+    BaseStationMacProfileCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        kind: {type: string}
+        profile_version: {type: integer}
+        rat: {type: string, enum: [lte, nr5g]}
+        source_reference: {type: string}
+      required: [kind, profile_version, rat, source_reference]
     BaseStationConfigFieldCapability:
       type: object
       additionalProperties: false
@@ -2357,6 +2366,10 @@ components:
         operations:
           type: array
           items: {type: string}
+        mac_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationMacProfileCapability'
         config_fields:
           type: array
           items:
@@ -2384,7 +2397,7 @@ components:
         formal_gate:
           type: string
           enum: [site_certification]
-      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
+      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, mac_profiles, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
     BaseStationModelPreset:
       type: object
       additionalProperties: false

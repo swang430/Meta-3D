@@ -181,4 +181,3 @@ checked-in YAML、generated TS 和手写 GUI 类型同步同一判别联合。re
   可变 TestCase、让旧 snapshot 被判 malformed、让 `no_equivalent` 继续放行，均应红。
 - 最终运行相关链、全后端、GUI 契约与 production build、compileall、单一 Alembic head、
   base-to-HEAD diff-check，并做 fresh 独立功能内审。
-

@@ -21,10 +21,12 @@ from app.models.test_plan import TestCase, TestExecution
 from app.services.base_station_binding import resolve_base_station_binding
 from app.services.instrument_hal_service import is_mock_driver
 from app.services.instrument_test_lease import BaseStationLeaseAuditContext
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
 CMW_FORMAL_CAPABILITY_KEY = "cmw500_lte_2x2_formal_capability"
+MIMO_OTA_CONFIGURATION_FREEZE_KEY = "mimo_ota_configuration"
 
 
 def frozen_mac_profile_from_adapter_freeze(
@@ -205,8 +207,12 @@ def freeze_base_station_adapter_profile(
     # configured / not_applicable 两态都有 manifest → 必须对账并拒不兼容；
     # diagnostic_unbound 无 adapter 无 manifest → 显式 no_adapter，保持
     # 既有放行（模拟诊断语义，非本片放宽）。
+    saved_configuration = _saved_test_case_configuration(db, execution)
+    frozen_configuration = canonicalize_mimo_ota_configuration_payload(
+        dict(saved_configuration or {})
+    )
     requirements = build_measure_execution_requirements_from_configuration(
-        _saved_test_case_configuration(db, execution)
+        frozen_configuration
     )
     compatibility = build_compatibility_payload(requirements, resolved.manifest)
     compatibility_verdict = compatibility["verdict"]
@@ -247,6 +253,10 @@ def freeze_base_station_adapter_profile(
         # P1-75：verdict + requirements 进 identity 再算 digest ——
         # 篡改 compatibility 也会被既有 digest 抓到。
         "compatibility": compatibility,
+        # P2-54：执行使用的完整 MIMO OTA 配置与 MAC profile 在同一原子
+        # freeze 中持久化。后续 TestCase 编辑不能改变本次小区配置、理论峰值、
+        # 统计窗口或正式证据。
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_configuration,
     }
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(

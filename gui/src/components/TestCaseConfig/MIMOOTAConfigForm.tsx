@@ -309,8 +309,8 @@ export function MIMOOTAConfigForm({
     const pcell = rat === 'lte'
       ? {
           ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
-          band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
-          lte_transmission_mode: undefined,
+          band: undefined, duplex: 'fdd' as const, lte_dl_earfcn: undefined,
+          lte_transmission_mode: 'TM3' as const,
           nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
         }
       : {
@@ -324,6 +324,7 @@ export function MIMOOTAConfigForm({
       component_carriers: [pcell],
     } as MIMOOTAConfiguration
     if (rat === 'lte') {
+      next.mimo_layers = 2
       next.subcarrier_spacing_khz = undefined
       next.theoretical_peak_throughput_mbps = undefined
     }
@@ -535,10 +536,10 @@ export function MIMOOTAConfigForm({
               <>
                 <Select
                   label="双工模式"
-                  data={[{ value: 'fdd', label: 'FDD' }, { value: 'tdd', label: 'TDD' }]}
+                  data={[{ value: 'fdd', label: 'FDD' }]}
                   value={rawPCell?.duplex ?? null}
                   onChange={(v) => patchPCell({ duplex: v ?? undefined })}
-                  disabled={readOnly}
+                  disabled
                   required
                 />
                 <NumberInput
@@ -551,10 +552,10 @@ export function MIMOOTAConfigForm({
                 />
                 <Select
                   label="LTE 传输模式"
-                  data={LTE_TRANSMISSION_MODES.map((mode) => ({ value: mode, label: mode }))}
+                  data={[{ value: 'TM3', label: 'TM3' }]}
                   value={rawPCell?.lte_transmission_mode ?? null}
                   onChange={(v) => patchPCell({ lte_transmission_mode: v ?? undefined })}
-                  disabled={readOnly}
+                  disabled
                   required
                 />
               </>
@@ -664,8 +665,8 @@ export function MIMOOTAConfigForm({
                 })
               }}
               min={1}
-              max={8}
-              disabled={readOnly}
+              max={radioTechnology === 'lte' ? 2 : 8}
+              disabled={readOnly || radioTechnology === 'lte'}
             />
             <Select
               label="调制方式"

@@ -32,6 +32,13 @@ def test_live_and_checked_openapi_publish_the_same_discriminated_profile():
             {"$ref": "#/components/schemas/NrMacTestProfileV1"},
             {"$ref": "#/components/schemas/LteRmcMacTestProfileV1"},
         ]
+        nr_layers = schemas["NrMacTestProfileV1"]["properties"]["mimo_layers"]
+        assert nr_layers["type"] == "integer"
+        assert nr_layers["minimum"] == 1
+        assert nr_layers["maximum"] == 8
+        lte_layers = schemas["LteRmcMacTestProfileV1"]["properties"]["mimo_layers"]
+        assert lte_layers["type"] == "integer"
+        assert lte_layers["const"] == 2
         requirements = schemas["BaseStationExecutionRequirements"]
         mac_profile = requirements["properties"]["mac_profile"]
         alternatives = mac_profile.get("anyOf") or mac_profile.get("oneOf")

@@ -406,7 +406,15 @@ def test_authoritative_mock_without_selected_model_is_diagnostic_unbound(db):
             "role": "baseStation",
         }],
     )
-    execution = TestExecution(status="pending", config={})
+    case = TestCase(
+        name="diagnostic unbound fixture",
+        test_type="MIMO_OTA",
+        configuration={},
+        created_by="test",
+    )
+    db.add(case)
+    db.flush()
+    execution = TestExecution(test_case_id=case.id, status="pending", config={})
     db.add_all([connection, lab, execution])
     db.commit()
     hal = SimpleNamespace(

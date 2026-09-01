@@ -19,6 +19,7 @@ from app.hal.base_station_compatibility import (
     canonical_payload_digest,
     evaluate_base_station_compatibility,
     manifest_compatibility_digest,
+    build_measure_execution_requirements_from_configuration,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
@@ -28,6 +29,7 @@ from app.services.execution_qualification import (
     validate_frozen_execution_qualification,
 )
 from app.services.base_station_adapter_profile import (
+    MIMO_OTA_CONFIGURATION_FREEZE_KEY,
     frozen_mac_profile_from_adapter_freeze,
 )
 
@@ -84,6 +86,22 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
         return "frozen compatibility payload does not parse"
     if requirements.digest != verdict.requirements_digest:
         return "frozen compatibility requirements digest drifted"
+    if MIMO_OTA_CONFIGURATION_FREEZE_KEY in frozen:
+        configuration = frozen[MIMO_OTA_CONFIGURATION_FREEZE_KEY]
+        if not isinstance(configuration, Mapping):
+            return "frozen MIMO OTA configuration is malformed"
+        try:
+            derived_requirements = (
+                build_measure_execution_requirements_from_configuration(
+                    dict(configuration)
+                )
+            )
+        except (ValidationError, ValueError, TypeError):
+            return "frozen MIMO OTA configuration does not parse"
+        if derived_requirements != requirements:
+            return "frozen MIMO OTA configuration does not match requirements"
+    elif requirements.mac_profile is not None:
+        return "frozen MIMO OTA configuration is missing"
     if verdict.status == "incompatible" or verdict.compatible is not True:
         return "frozen compatibility verdict is incompatible"
 

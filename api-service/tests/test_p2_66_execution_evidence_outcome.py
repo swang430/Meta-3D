@@ -20,6 +20,7 @@ from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
     freeze_base_station_adapter_profile,
 )
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 from app.services.execution_evidence_outcome import (
     project_execution_evidence_outcome,
     validate_frozen_compatibility_snapshot,
@@ -132,6 +133,7 @@ def _freeze(*, no_adapter: bool = False) -> dict:
             "manifest": manifest,
         },
         "compatibility": _compatibility(no_adapter=no_adapter),
+        "mimo_ota_configuration": canonicalize_mimo_ota_configuration_payload({}),
     }
     return {**identity, "digest": canonical_payload_digest(identity)}
 
@@ -182,6 +184,7 @@ def test_pre_p2_54_compatibility_snapshot_is_legacy_not_malformed():
     execution = _execution()
     frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
     frozen["compatibility"] = _pre_p2_54_compatibility()
+    frozen.pop("mimo_ota_configuration")
     frozen["digest"] = canonical_payload_digest(
         {key: value for key, value in frozen.items() if key != "digest"}
     )
@@ -198,6 +201,7 @@ def test_pre_p2_54_snapshot_cannot_hide_qualification_binding_drift():
     execution = _execution()
     frozen = deepcopy(execution.config[FREEZE_CONFIG_KEY])
     frozen["compatibility"] = _pre_p2_54_compatibility()
+    frozen.pop("mimo_ota_configuration")
     frozen["digest"] = canonical_payload_digest(
         {key: value for key, value in frozen.items() if key != "digest"}
     )
@@ -449,6 +453,7 @@ def test_compatibility_manifest_must_match_the_same_frozen_binding():
         requirements,
         verdict,
     )
+    frozen.pop("mimo_ota_configuration")
     frozen["digest"] = canonical_payload_digest(
         {key: value for key, value in frozen.items() if key != "digest"}
     )
@@ -477,6 +482,7 @@ def test_frozen_compatible_verdict_must_match_authoritative_re_evaluation():
             "requirements_digest": requirements.digest,
         }
     )
+    frozen.pop("mimo_ota_configuration")
     frozen["digest"] = canonical_payload_digest(
         {key: value for key, value in frozen.items() if key != "digest"}
     )
@@ -579,6 +585,7 @@ def test_explicit_incompatible_verdict_is_never_a_valid_completion():
         requirements,
         incompatible,
     )
+    frozen.pop("mimo_ota_configuration")
     frozen["digest"] = canonical_payload_digest(
         {key: value for key, value in frozen.items() if key != "digest"}
     )

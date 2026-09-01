@@ -19,12 +19,14 @@ from app.services.execution_qualification import (
     revoke_base_station_site_certification,
     validate_frozen_execution_qualification,
 )
+from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     evaluate_base_station_metric_trust,
 )
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 from tests.p1_73c_evidence_fixtures import POSITION, REQUESTED_CONFIG
 from tests.test_p2_45_site_certification_api import _source_execution, db  # noqa: F401
 
@@ -75,6 +77,15 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
         execution.config[EXECUTION_QUALIFICATION_KEY]
     ) is None
 
+    original = load_mimo_ota_config(execution)
+    case.configuration = canonicalize_mimo_ota_configuration_payload(
+        {"mimo_layers": 4, "mcs": 3}
+    )
+    db.flush()
+    immutable = load_mimo_ota_config(execution)
+    assert immutable.mimo_layers == original.mimo_layers
+    assert immutable.mac_profile.profile_digest == original.mac_profile.profile_digest
+
     case.execution_policy = TestCaseExecutionPolicy(
         schema_version=1,
         mode="diagnostic",
@@ -91,6 +102,25 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
     db.commit()
 
     assert freeze_execution_qualification(db, execution, case) == frozen
+
+
+def test_frozen_configuration_must_match_frozen_requirements(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    execution = _pending_execution(db, case)
+    adapter_freeze = freeze_base_station_adapter_profile(db, hal, execution, lab)
+    freeze_execution_qualification(db, execution, case)
+
+    adapter_freeze["mimo_ota_configuration"] = (
+        canonicalize_mimo_ota_configuration_payload({"mimo_layers": 4, "mcs": 3})
+    )
+    adapter_freeze["digest"] = canonical_payload_digest(
+        {key: value for key, value in adapter_freeze.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = adapter_freeze
+
+    outcome = project_execution_evidence_outcome(execution)
+    assert outcome.compatibility_classification == "invalid"
+    assert "configuration" in "\n".join(outcome.reasons)
 
 
 def test_formal_metric_uses_site_certification_instead_of_retired_cmw_approval(db):

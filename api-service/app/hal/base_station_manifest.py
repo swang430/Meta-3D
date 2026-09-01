@@ -294,7 +294,7 @@ class BaseStationAdapterManifest(BaseModel):
     capabilities: tuple[str, ...]
     rat_capabilities: tuple[BaseStationRatCapability, ...]
     operations: tuple[str, ...]
-    mac_profiles: tuple[BaseStationMacProfileCapability, ...] = ()
+    mac_profiles: tuple[BaseStationMacProfileCapability, ...]
     config_fields: tuple[BaseStationConfigFieldCapability, ...]
     attach_stages: tuple[BaseStationAttachStageCapability, ...]
     measurement: BaseStationMeasurementCapability | None

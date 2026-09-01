@@ -1025,9 +1025,12 @@ def resolve_base_station_execution_plan(
     判据与既有散点站点一致：每个维度取 adapter 实例声明（ClassVar 或
     profile 派生属性）``is True``。manifest（可为 None——simulated mock /
     无 manifest 的诊断驱动）只做交叉校验与 capability_source 溯源：
-    manifest 声明了 operation token 而实例声明为 False 属于声明漂移，
-    fail-loud；反向（token 缺席、实例声明 True）是合法的 profile 派生
-    opt-in（如 UXM 按 Test App profile 开放 RRC/MAC）。
+    manifest 声明了 operation token 而实例声明为 False 通常属于声明漂移，
+    fail-loud。MAC 是显式 profile-scoped 的例外：manifest 声明型号支持的
+    ``mac_profiles``，实例属性声明当前加载 Test App 是否具备完整命令集；
+    后者为 False 时冻结为未计划并 fail-closed，而不是把合法的运行时能力
+    收窄误报成注册漂移。反向（token 缺席、实例声明 True）仍是合法的
+    profile 派生 opt-in（如 UXM 按 Test App profile 开放 RRC）。
     """
 
     adapter_id = getattr(driver, "adapter_id", None)
@@ -1074,7 +1077,13 @@ def resolve_base_station_execution_plan(
     for dimension, token, attr in _EXECUTION_PLAN_DIMENSIONS:
         declared = getattr(driver, attr, False) is True
         token_declared = token is not None and token in manifest_operations
-        if token_declared and not declared:
+        profile_scoped_runtime_unavailable = (
+            dimension == "mac_throughput"
+            and token_declared
+            and bool(getattr(manifest, "mac_profiles", ()))
+            and not declared
+        )
+        if token_declared and not declared and not profile_scoped_runtime_unavailable:
             raise ValueError(
                 f"execution plan declaration drift for {dimension}: manifest "
                 f"declares {token!r} but adapter {attr} is not True"
@@ -1087,6 +1096,11 @@ def resolve_base_station_execution_plan(
             reason = reasons_when_planned[dimension]
         else:
             reason = reasons_when_unplanned[dimension]
+            if profile_scoped_runtime_unavailable:
+                reason = (
+                    "adapter manifest 声明该 MAC profile，但当前加载 Test App "
+                    "未暴露完整命令集；正式 MAC 配置保持未计划并 fail-closed"
+                )
             if dimension == "input_level_control":
                 unavailable_reason = getattr(
                     driver, "input_level_unavailable_reason", None

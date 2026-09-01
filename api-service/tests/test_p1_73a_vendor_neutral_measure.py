@@ -152,8 +152,12 @@ def test_uxm_and_mock_keep_their_existing_mac_paths():
         uxm,
         plan=_plan(uxm, RealUxmDriver.adapter_manifest).mac_throughput,
     ) is None
-    with pytest.raises(ValueError, match="declaration drift"):
-        _plan(unsupported_profile, RealUxmDriver.adapter_manifest)
+    unsupported_plan = _plan(
+        unsupported_profile,
+        RealUxmDriver.adapter_manifest,
+    ).mac_throughput
+    assert unsupported_plan.planned is False
+    assert "未暴露完整命令集" in unsupported_plan.reason
     # mock 的 simulated 语义不变：无论计划项如何，mock 不产生 MAC blocker。
     assert _formal_mac_configuration_blocker(
         mock,
