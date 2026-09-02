@@ -336,15 +336,14 @@ export function updateMacProfileDraft(
     // 后端会显式拒绝 —— 结果是 TDD 用例「可创建、不可编辑」。
     // GUI 今天没有编辑 TDD 帧结构的入口，所以这里的正确行为是**不动它**，
     // 让服务端沿用已冻结的那一份。
-    const frozen = (configuration as Record<string, unknown>).mac_profile
-    const frozenProfile =
-      frozen && typeof frozen === 'object'
-        ? (frozen as Record<string, unknown>).profile
-        : undefined
-    const frozenDuplex =
-      frozenProfile && typeof frozenProfile === 'object'
-        ? (frozenProfile as Record<string, unknown>).duplex
-        : undefined
+    // 走本文件既有的 `record()` 守卫，不新增裸类型断言（外审 R2 high 的建议）。
+    // ⚠️ 这里**不改变** null 形态的行为：`configuration` 为 `null` / `undefined`
+    // 时，本函数第一句 `profileDraftForConfiguration(...)` 里的
+    // `frozenProfile(configuration.mac_profile)` 就已经抛 TypeError —— 那是
+    // main 上就有的既有行为，本片不动它（⑦：不改它，本片那个可观察故障还在）。
+    // 换 `record()` 只是不让新增代码再多一处裸 `as`，行为逐格实测等价。
+    const frozen = record(configuration)?.mac_profile
+    const frozenDuplex = record(record(frozen)?.profile)?.duplex
     if (frozenDuplex === 'tdd') {
       next.mac_profile = frozen
       // ⚠️ 同时**撤掉 stat_count**（内审 F1）：后端在 `mac_profile` 存在时
