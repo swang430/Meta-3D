@@ -42,9 +42,19 @@ def _dimension(name: str) -> BaseStationMacDimensionCapability:
 def test_transmission_mode_matrix_matches_manual_evidence():
     """TM 取值域与 support 判定。
 
-    命令 Range（p.752）含 8 个 TM，但 DL RMC 表只覆盖 TM1（表 2-37）与 TM2..TM6
-    （表 2-38 标题「multiple TX antennas (TM 2 to 6)」）。TM7/TM8/TM9 能下发却无
-    RMC 依据 —— 它们必须是 diagnostic_only，不能因为"命令接受"就当正式可配。
+    命令 Range（p.752）含 8 个 TM。TM1 与 TM2..TM6 标 authoritative，
+    TM7/TM8/TM9 标 diagnostic_only —— **逐格理由见矩阵各自的 reason**，
+    此处不复述判据（那份概括数错过三次）。
+
+    TM7/TM8/TM9 的手册侧证据**齐全**（RMC 表 §2.2.19.5/.6/.7 = 表 2-40..2-45，
+    天线配置见表 2-32），仍是 diagnostic_only 的原因是**本驱动未实现**它们的
+    下发路径 —— 现行结论的完整表述只在矩阵的 reason 里，此处不复述，避免两处漂移。
+
+    ⚠️ 这句话改过三版，前两版都是关于手册的**假断言**（"没有 RMC 表"、
+    "天线配置路径手册未给"）。成因同源：用一句概括替代一张表 —— 表 2-32 是
+    「场景 × TM × 天线」三维表，压成 "TM7=1x2" 必然丢掉场景维（p.65 的
+    1x1 carrier 场景下 TM7 是 1x1）。引表格类依据前先数这个键在表里占几行，
+    多于一行就不许用"固定 / 即 / 就是"。
     """
     actual = {item.value: item.support for item in _dimension("transmission_mode").values}
 
@@ -132,17 +142,91 @@ def test_every_declared_value_cites_the_registered_manual():
 
 
 def test_authoritative_values_cite_an_rmc_table():
-    """authoritative 的判据是**两样都有**：命令 Range + DL RMC 表覆盖。
+    """authoritative 的取值必须引用一张 DL RMC 表。
 
-    只满足前者的取值必须降级。这条门锁的是那个判据本身 ——
-    若将来有人把某个无 RMC 表依据的 TM 提成 authoritative，理由里就不会有表号。
+    ⚠️ 判据的完整条数**不在这里复述** —— 它在驱动内矩阵声明上方那段注释里，
+    而且改过三次（两样 → 三样 → 三样仍不全，见 mimo_layers=4 靠"本地无真机
+    证据"这第四条降级）。这里只锁一件可机械检查的事：**声明 authoritative 就得
+    指出是哪张 RMC 表**。
+
+    表号范围覆盖 §2.2.19.3-.7 全部七张（2-37..2-45）：初版只认 2-37/2-38，
+    而 TM7 的表是 2-40 —— 那会让门用一个已知为假的理由拦住未来真正实现 TM7 的人。
     """
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
             if item.support == "authoritative":
-                assert "2-37" in item.reason or "2-38" in item.reason, (
-                    f"{name}={item.value!r} 声明为 authoritative 却未引用 RMC 表"
+                import re as _re2
+
+                assert _re2.search(r"表 2-(3[7-9]|4[0-5])", item.reason), (
+                    f"{name}={item.value!r} 声明为 authoritative 却未引用任何一张 "
+                    f"DL RMC 表（表 2-37..2-45）：{item.reason!r}"
                 )
+
+
+def test_diagnostic_only_reasons_state_what_is_missing_and_where():
+    """降级的取值必须说清**缺的是哪一样、在哪能查到**。
+
+    这道门是从连续两次同型错误里长出来的：
+    1. 初版说 TM7/8/9「无 RMC 表依据」—— 假的，手册有 §2.2.19.5/.6/.7 三节专表；
+    2. 第一次修正说「天线配置路径手册未给」—— **还是假的**，表 2-32（pp.65-67）
+       给了天线配置，§2.6.15.4（pp.761-764）是 TM7/8 的专属命令集。
+    两次成因相同：**把"我没找到"写成了"手册没有"**。
+
+    所以门锁两件事：
+
+    - **禁止"手册没有"这类关于厂商的否定断言**（白名单式：列出已知的同义写法
+      并全部禁掉）。要降级，就说清楚是**我们**缺什么 —— 那是可核验的自述，
+      而"手册没有"要穷尽全书才能证伪，写的人几乎不会真去穷尽。
+    - **整条理由里要有可定位的坐标**（页码 / 表号 / 章节 / 命令），证明作者确实
+      翻过手册。坐标**不**要求落在"缺什么"那半句里 —— 缺真机证据是完全正当的
+      降级理由（`mimo_layers=4` 即是），而真机证据没有页码可引。
+
+    两条分工：禁否定断言 + 必须自述，管的是**理由具体不具体**；坐标管的是
+    **查没查手册**。单独任何一条都不够。
+    """
+    import re as _re
+
+    # 关于「厂商没有提供」的否定断言：一律禁止（无法在一格 reason 里被证伪）
+    vendor_negations = (
+        "手册未给", "手册没有", "手册未覆盖", "无依据", "没有依据",
+        "无 RMC 依据", "无 RMC 表依据", "未取证", "证据不足",
+    )
+    # 关于「本驱动/本矩阵缺什么」的自述：这才是可核验的降级理由
+    self_scoped = ("本驱动", "本矩阵", "本地无", "未实现", "未接")
+
+    for name in ("transmission_mode", "mimo_layers"):
+        for item in _dimension(name).values:
+            if item.support != "diagnostic_only":
+                continue
+            reason = item.reason
+
+            for phrase in vendor_negations:
+                assert phrase not in reason, (
+                    f"{name}={item.value!r} 用「{phrase}」断言厂商侧没有该能力。"
+                    f"这类否定要穷尽全书才能证伪，已连错两次 —— "
+                    f"改成说明**我们**缺什么：{reason!r}"
+                )
+
+            assert any(k in reason for k in self_scoped), (
+                f"{name}={item.value!r} 降级为 diagnostic_only，"
+                f"但没说清是我们这边缺什么（期望出现 {self_scoped} 之一）：{reason!r}"
+            )
+
+            # 整条 reason 里必须有可定位的坐标，证明作者确实去手册里查过 ——
+            # 缺的具体是什么由上面两条（禁否定断言 + 必须自述）保证。
+            # ⚠️ 坐标不要求落在"缺什么"那半句里：缺**真机证据**是完全正当的降级
+            # 理由（mimo_layers=4 就是），而真机证据没有页码可引。
+            located = (
+                _re.search(r"p\.\d+", reason)
+                or _re.search(r"表 2-\d+", reason)
+                or _re.search(r"§2\.\d+(\.\d+)*", reason)
+                or _re.search(r"[A-Z][A-Za-z]*:[A-Za-z<>]", reason)
+            )
+            assert located, (
+                f"{name}={item.value!r} 降级为 diagnostic_only，"
+                f"但整条理由里没有任何可定位的坐标（页码 / 表号 / 章节 / 命令）"
+                f"—— 无从判断作者查过手册没有：{reason!r}"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -711,3 +795,32 @@ def test_pydantic_builtin_names_are_not_mistaken_for_fields(builtin_name):
     )
 
     assert any("does not have" in item for item in rejections), rejections
+
+
+def test_table_2_32_citations_acknowledge_its_scenario_dimension():
+    """引表 2-32 时必须承认它有「场景」维，不能压成单值。
+
+    这条门是从**同一句话写错三次**里长出来的，第三次就死在这里：
+    reason 曾写「表 2-32（pp.65-67）—— TM7 固定 1x2」，而 TM7 在该表里出现两次
+    （`1x1 carrier` 场景是 `1x1`，`nx2 carrier` 场景才是 `1x2`）。
+    表 2-32 是「场景 × TM × 天线」三维表，任何把某个 TM 压成单一天线值的引用
+    都必然丢掉场景维。
+
+    机械判据：提到"表 2-32"就必须同时提到"场景"，且不得出现"固定 / 即 / 就是"
+    这类把多行压成一行的绝对化措辞。
+    """
+    absolutes = ("固定", "即 ", "就是")
+
+    for name in ("transmission_mode", "mimo_layers"):
+        for item in _dimension(name).values:
+            if "表 2-32" not in item.reason:
+                continue
+            assert "场景" in item.reason, (
+                f"{name}={item.value!r} 引用了表 2-32 却未提及「场景」维 —— "
+                f"该表按场景 × TM 列出，同一个 TM 可能占多行：{item.reason!r}"
+            )
+            for word in absolutes:
+                assert word not in item.reason, (
+                    f"{name}={item.value!r} 用「{word.strip()}」把表 2-32 的多行"
+                    f"压成了单值：{item.reason!r}"
+                )

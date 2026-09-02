@@ -100,7 +100,7 @@ BaseStationMacProfileCapability(
    The value must be compatible to the active **scenario and transmission mode**, see Table 2-32.」
    `TRANsmission` 那条也写「must be compatible to the active scenario, see Table 2-32」。
    → **这两个维度不是正交的**，合法性由 Table 2-32（scenario × TM × 天线）决定。
-3. **TM9 走另一条命令**：`…:CONNection[:PCC]:TM9:NTXantennas`（`TWO|FOUR|EIGHt`，p.767），
+3. **TM9 走另一条命令**：`…:CONNection[:PCC]:TM<no>:NTXantennas`（`TWO|FOUR|EIGHt`，p.766），
    不归 `NENBantennas` 管。
 
 另外发现一条现成的回读源：`SENSe:LTE:SIGN<i>:CONNection[:PCC]:TSCHeme?`（查询传输方案），
@@ -141,9 +141,35 @@ P2-51 当初就是**用 PDF 原件逐页目视复核** pp.70-72 / pp.77-79 才�
 
 **目视取证顺带拿到的三条原文，都直接影响范围**：
 
-1. **RMC 表只覆盖 TM1..TM6**。两节标题分别是 §2.2.19.3「DL RMCs, one TX antenna **(TM 1)**」
-   （p.75）与 §2.2.19.4「DL RMCs, multiple TX antennas **(TM 2 to 6)**」（p.77）。
-   而 `TRANsmission` 的 Range 含 `TM7 | TM8 | TM9` —— **这三个值没有任何 DL RMC 表依据**。
+1. ~~**RMC 表只覆盖 TM1..TM6**……这三个值没有任何 DL RMC 表依据。~~
+   > ❌ **2026-09-02 更正（这句话是错的）**：当时只读了 §2.2.19.3（TM1）与 §2.2.19.4
+   > （TM 2 to 6）就下了结论，**没往后翻**。手册另有三节专门的 TM7/8/9 RMC 表：
+   > §2.2.19.5「DL RMCs, transmission mode 7」（表 2-40 FDD / 2-41 TDD，**p.79**）、
+   > §2.2.19.6（表 2-42 FDD **p.80** / 表 2-43 TDD **p.81**）、
+   > §2.2.19.7（表 2-44 FDD / 表 2-45 TDD，**p.82**）。
+   >
+   > ❌ **第一次修正也是错的**：当时把理由改成「天线配置路径**手册未给**」——
+   > 内审核出手册**给了**：表 2-32「Transmission scheme overview」（pp.65-67）
+   > 按「场景 × TM」列出各 TM 的天线配置（例如 TM7 在 `1x1 carrier` 场景是 `1x1`、
+   > 在 `nx2 carrier` 场景是 `1x2` —— **随场景取值，不是固定值**）；§2.6.15.4
+   > 「MIMO beamforming settings TM 7/8」（pp.761-764）是 TM7/8 的专属命令集，
+   > 含 `BEAMforming:NOLayers`（p.762，`L1|L2` = 单层/双层波束成形，*RST `L2`）。
+   > 而 `TRANsmission` 与 `NENBantennas` 的描述里都写着 **see Table 2-32** ——
+   > 手册自己的交叉引用，我两次都没顺着走。
+   >
+   > ✅ **真正的理由（第二次修正）**：手册侧证据齐全，缺的是**本驱动的实现** ——
+   > `mimo_layers` 只下发 `NENBantennas`（p.753，明写只管 TM 1 to 6）；
+   > TM7/TM8 的波束成形参数在 §2.6.15.4、TM9 的天线在 `TM<no>:NTXantennas`
+   > （p.766，Suffix `<no>`=9），这两套本驱动都未接。
+   >
+   > **两次错误成因相同：把「我没找到」写成了「手册没有」。**
+   > 结论方向（fail-closed）始终没变，但矩阵的全部价值就在于每格出处准确。
+   >
+   > 门也随之重做：原先那道只查笼统词「无依据」三连字、且坐标被开头的
+   > 「命令 Range 含 TMx（p.752）」样板前缀满足 —— 内审实测 6 条变异全绿，
+   > **包括完整撤销本片修复**。新门改为①禁止一切「手册没有」式的厂商侧否定断言
+   > （那要穷尽全书才能证伪），②必须自述**我们**缺什么，③整条理由要有可定位坐标。
+
 2. **天线数与用哪张表绑定**：`NENBantennas=ONE` ⇒ 单天线 ⇒ 表 2-37；`TWO/FOUR` ⇒ 表 2-38。
    所以**打开天线维度到 `ONE`，就必须同时有表 2-37 的行**，否则 1×1 下不知道该配什么 RMC。
 3. **`Position first RB` 列与既有命令一一对应**（§2.2.19.3 原文）：
@@ -162,7 +188,7 @@ P2-51 当初就是**用 PDF 原件逐页目视复核** pp.70-72 / pp.77-79 才�
 
 | 维度 | 建议 | 依据 |
 |---|---|---|
-| `transmission_mode` | 打开到 `TM1/TM2/TM3/TM4/TM6`（逐值标 support + 选件）；**`TM7/TM8/TM9` 声明为 `diagnostic_only`** | §3.1 属性块原文给了命令 Range，但 §3.2 第 1 条证明 RMC 表只覆盖 TM1..TM6 —— 那三个值能下发却无 RMC 依据 |
+| `transmission_mode` | 打开到 `TM1/TM2/TM3/TM4/TM6`（逐值标 support + 选件）；**`TM7/TM8/TM9` 声明为 `diagnostic_only`** | 判据以驱动内矩阵声明上方那段注释为准（§3.2 第 1 条的初版理由已证伪并划掉）。TM7/8/9 手册侧证据齐全，缺的是**本驱动未实现**其下发路径 |
 | DL 天线数（→ `mimo_layers`） | 打开到 `ONE/TWO`，逐值标选件；**`FOUR` 声明为 `diagnostic_only`** | `ONE`/`TWO` 分别有表 2-37 / 2-38 支撑；`FOUR` 需 KS521/KS540 且本地无真机证据 |
 | DL HARQ | `enable` 与 `nht` 分别声明；两者都保持 **diagnostic_only** | §3.1：`ENABle` 选件门控、`NHT` 无 Options 行 → 组整体门控是推断，保守不驱动 |
 | `enable_amc` | 保持 `Literal[False]`，理由改成**有据的**「手册无 AMC 开关，自适应须改 `STYPe`（另一维度）」 | §2.2 全文零命中 |
@@ -174,7 +200,7 @@ P2-51 当初就是**用 PDF 原件逐页目视复核** pp.70-72 / pp.77-79 才�
 |---|---|
 | **部分 RB / 非满配组合**（`resource_allocation` 维持 `Literal["full"]`） | 表 2-37/2-38 的**满配行**本片要录（打开天线维度的前提，见 §3.2 第 2 条），但**非满配行不打开**：那会同时改动 `RMC:DL<s>` 的 NumberRB 与 `RBPosition` 两个下发点，超出「打开 TM + 天线」这一个目的。留作独立后续。 |
 | **Table 2-32 的 scenario × TM × 天线 合法性表** | 同上，是表格。本片矩阵只声明**单维度取值域**，不声明跨维度组合合法性；跨维度校验保持 fail-closed（未在白名单内的组合一律拒绝）。 |
-| **`DCIFormat` / `TM9:NTXantennas` / `TSCHeme?`** | 本次取证顺带发现，不在 P2-55 条目的六个维度里。登记 Discovered，不在本片实现。 |
+| **`DCIFormat` / `TM<no>:NTXantennas` / `TSCHeme?`** | 本次取证顺带发现，不在 P2-55 条目的六个维度里。登记 Discovered，不在本片实现。 |
 | **UL 侧维度** | 条目里的 "DL/UL RMC" 指 RMC 表，属表格类，同 4.2 第一行处理。 |
 | **TDD** | P2-56。 |
 
@@ -233,7 +259,7 @@ source_reference: str | None
 
 | 问题 | 结论 |
 |---|---|
-| 1. 范围 | **打开 TM 与天线数**。据此本稿 §4.1 已细化：TM 打开 TM1..TM6、TM7/8/9 标 `diagnostic_only`；天线打开 ONE/TWO、FOUR 标 `diagnostic_only`（理由见 §3.2 第 1、2 条）。 |
+| 1. 范围 | **打开 TM 与天线数**。据此本稿 §4.1 已细化：TM 打开 TM1..TM6、TM7/8/9 标 `diagnostic_only`；天线打开 ONE/TWO、FOUR 标 `diagnostic_only`（理由以驱动内矩阵声明上方那段注释为准；§3.2 第 1 条的初版理由已证伪并划掉）。 |
 | 2. 目视取证由谁做 | **本会话直接读 PDF 页面完成**，不需要人工转录。读图能力已用 P2-51 的既有结论校准（§3.2 更正块）。 |
 | 3. 矩阵放哪 | **结构放通用层（扩展 `BaseStationMacProfileCapability`），内容跟着仪表走。** 理由见 §5.1。 |
 
