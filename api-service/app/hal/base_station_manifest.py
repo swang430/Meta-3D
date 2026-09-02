@@ -10,7 +10,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, get_args
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -62,6 +70,94 @@ class BaseStationRatCapability(BaseModel):
         return normalized
 
 
+class BaseStationMacDimensionValueCapability(BaseModel):
+    """One accepted value of one MAC profile dimension.
+
+    ``value`` carries the profile field's own JSON form (string / integer /
+    boolean) rather than a stringified copy, so a declaration cannot silently
+    match a differently-typed profile value.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    value: StrictStr | StrictInt | StrictBool
+    support: Literal["authoritative", "diagnostic_only", "not_applicable"]
+    #: 装了其中**任意一个**就满足该取值的选件要求；空 = 不需要选件。
+    #: 刻意不叫 `required_options` —— 厂商手册这一栏写的是「A **or** B」
+    #: （例：`R&S CMW-KS520 or -KS540 for TM 2, 3, 4, 6, 7, 9`）。用 AND 语义
+    #: 存「或」关系，会把只装了 KS540 的整机判成不支持 TM2。
+    satisfying_options: tuple[str, ...] = ()
+    reason: str
+    source_reference: str
+
+    @field_validator("satisfying_options")
+    @classmethod
+    def _non_blank_options(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in value)
+        if any(not item for item in normalized):
+            raise ValueError("MAC dimension option names must be non-blank")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("MAC dimension options must be unique")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_non_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("MAC dimension value reason must be non-blank")
+        return normalized
+
+    @field_validator("source_reference")
+    @classmethod
+    def _auditable_source(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("MAC dimension source_reference must be non-blank")
+        return normalized
+
+
+class BaseStationMacDimensionCapability(BaseModel):
+    """The accepted value domain of one dimension of one MAC profile kind.
+
+    The dimension name is an opaque key here on purpose: this module stays
+    vendor-neutral, so it must not know that ``transmission_mode`` is an LTE
+    concept.  Each adapter declares its own dimension names and values.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    dimension: str
+    values: tuple[BaseStationMacDimensionValueCapability, ...]
+
+    @field_validator("dimension")
+    @classmethod
+    def _valid_dimension(cls, value: str) -> str:
+        normalized = value.strip()
+        # 只收**单段** token，不收 `a.b` 这种点号路径：判定器用
+        # `hasattr(profile, dimension)` 取值，点号名恒取不到 → 这条声明会被
+        # 静默跳过。那是 fail-**open**，与本机制其余部分（未声明即拒、
+        # 非 authoritative 即拒）方向相反 —— 声明写得越细反而越容易全不判。
+        # 将来真要支持嵌套字段，得先给判定器一个解析器，不能只放宽这里。
+        if not _TOKEN_RE.fullmatch(normalized):
+            raise ValueError("MAC dimension must be a single lowercase token")
+        return normalized
+
+    @field_validator("values")
+    @classmethod
+    def _non_empty_unique_values(
+        cls, value: tuple[BaseStationMacDimensionValueCapability, ...]
+    ) -> tuple[BaseStationMacDimensionValueCapability, ...]:
+        if not value:
+            raise ValueError("MAC dimension must declare at least one value")
+        # 同一取值的两条声明会让「该值支持吗」有两个答案，取哪条都是猜。
+        # 按 (类型, 值) 判重：布尔 True 与整数 1 是不同的声明。
+        identities = [(type(item.value).__name__, item.value) for item in value]
+        if len(set(identities)) != len(identities):
+            raise ValueError("MAC dimension values must be unique")
+        return value
+
+
 class BaseStationMacProfileCapability(BaseModel):
     """One execution MAC profile shape accepted by an adapter."""
 
@@ -75,6 +171,7 @@ class BaseStationMacProfileCapability(BaseModel):
         "command_error_queue",
     ]
     source_reference: str
+    dimensions: tuple[BaseStationMacDimensionCapability, ...] = ()
 
     @field_validator("kind")
     @classmethod
@@ -98,6 +195,16 @@ class BaseStationMacProfileCapability(BaseModel):
         if not normalized:
             raise ValueError("MAC profile source_reference must be non-blank")
         return normalized
+
+    @field_validator("dimensions")
+    @classmethod
+    def _unique_dimensions(
+        cls, value: tuple[BaseStationMacDimensionCapability, ...]
+    ) -> tuple[BaseStationMacDimensionCapability, ...]:
+        names = [item.dimension for item in value]
+        if len(set(names)) != len(names):
+            raise ValueError("MAC profile dimensions must be unique")
+        return value
 
 
 class BaseStationConfigFieldCapability(BaseModel):
@@ -428,6 +535,18 @@ class BaseStationAdapterManifest(BaseModel):
             for item in self.mac_profiles
         ):
             raise ValueError("MAC profile source must be declared by manual_sources")
+        # 维度取值的出处与 profile 出处同规矩：没有登记在 manual_sources 里的
+        # 出处等于无法审计，比声明本身更危险 —— 它会让一格错误的能力声明看起来
+        # 有据可查。
+        if any(
+            value.source_reference not in self.manual_sources
+            for item in self.mac_profiles
+            for dimension in item.dimensions
+            for value in dimension.values
+        ):
+            raise ValueError(
+                "MAC dimension value source must be declared by manual_sources"
+            )
         declares_mac_config = "mac_throughput_config" in self.operations
         if declares_mac_config != bool(self.mac_profiles):
             raise ValueError(

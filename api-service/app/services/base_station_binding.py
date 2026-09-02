@@ -8,7 +8,10 @@ from pydantic import BaseModel, ConfigDict
 
 from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
-from app.hal.base_station_compatibility import canonical_payload_digest
+from app.hal.base_station_compatibility import (
+    canonical_payload_digest,
+    digest_safe_manifest_payload,
+)
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
@@ -489,7 +492,12 @@ def resolve_base_station_binding(
         "instrument_model_id": str(model.id),
         "instrument_connection_id": str(connection.id),
         "lab_profile_id": str(lab.id),
-        "manifest": registration.manifest.model_dump(mode="json"),
+        # 与 manifest_compatibility_digest 用同一投影：矩阵只是声明性内容，
+        # 改一句 reason 文案不该让已认证连接的 binding_digest 失配、
+        # 进而在 execution_qualification 里被降级成 diagnostic。
+        "manifest": digest_safe_manifest_payload(
+            registration.manifest, exclude_none=False
+        ),
         "profile": profile,
         "expected_driver_module": expected_class.__module__,
         "expected_driver_name": expected_class.__name__,
