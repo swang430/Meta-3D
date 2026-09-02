@@ -20,7 +20,10 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from app.hal.base_station_manifest import BaseStationAdapterManifest
-from app.hal.base_station_mac_profile import FrozenMacTestProfile
+from app.hal.base_station_mac_profile import (
+    FrozenMacTestProfile,
+    MacTestProfile,
+)
 
 
 # measure 执行链经共同 SPI 实际调用的操作全集（required_operations 真值源）：
@@ -245,7 +248,11 @@ def digest_safe_manifest_payload(
     )
 
 
-def _mac_dimension_rejections(*, profile, manifest) -> list[str]:
+def _mac_dimension_rejections(
+    *,
+    profile: MacTestProfile,
+    manifest: BaseStationAdapterManifest,
+) -> list[str]:
     """P2-55：逐维度对账冻结 profile 与 adapter 声明的取值域。
 
     只对**声明过的维度**发言：manifest 没声明的维度不在这里判（那属于
