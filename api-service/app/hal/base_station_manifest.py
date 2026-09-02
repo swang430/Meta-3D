@@ -155,7 +155,7 @@ class BaseStationMacDimensionCapability(BaseModel):
             raise ValueError("MAC dimension must declare at least one value")
         # 同一取值的两条声明会让「该值支持吗」有两个答案，取哪条都是猜。
         # 按 (类型, 值) 判重：布尔 True 与整数 1 是不同的声明。
-        identities = [(type(item.value).__name__, item.value) for item in value]
+        identities = [(type(item.value), item.value) for item in value]
         if len(set(identities)) != len(identities):
             raise ValueError("MAC dimension values must be unique")
         return value
@@ -541,8 +541,9 @@ class BaseStationAdapterManifest(BaseModel):
         # 维度取值的出处与 profile 出处同规矩：没有登记在 manual_sources 里的
         # 出处等于无法审计，比声明本身更危险 —— 它会让一格错误的能力声明看起来
         # 有据可查。
+        declared_sources = set(self.manual_sources)
         if any(
-            value.source_reference not in self.manual_sources
+            value.source_reference not in declared_sources
             for item in self.mac_profiles
             for dimension in item.dimensions
             for value in dimension.values

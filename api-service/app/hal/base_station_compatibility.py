@@ -289,11 +289,14 @@ def _mac_dimension_rejections(*, profile, manifest) -> list[str]:
                 )
                 continue
             requested = getattr(profile, dimension.dimension)
+            # 用类型对象本身而不是它的名字：类型对象可哈希，且 bool 与 int
+            # 是两个不同的对象 —— 这正是要区分的那一格（Python 里
+            # `True == 1` 且哈希相同，裸值做键会让布尔借用 int 的声明）。
             declared = {
-                (type(item.value).__name__, item.value): item
+                (type(item.value), item.value): item
                 for item in dimension.values
             }
-            match = declared.get((type(requested).__name__, requested))
+            match = declared.get((type(requested), requested))
             if match is None:
                 rejections.append(
                     f"adapter {manifest.adapter_id!r} does not declare "
