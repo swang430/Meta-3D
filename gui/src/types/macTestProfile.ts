@@ -109,15 +109,15 @@ export type LteRmcMacTestProfileV1 = MacTestProfileBase & {
   scheduling_mode: 'rmc'
   resource_allocation: 'full'
   enable_amc: false
-  duplex: 'fdd'
+  duplex: 'fdd' | 'tdd'
   transmission_mode: 'TM3'
   mimo_layers: 2
-  // P2-56：LTE TDD 专属维度。后端序列化不带 exclude_none，所以这三个键
-  // **恒出现在线上形态里**；今天只可能是 null（驱动无下发路径，取值域在
-  // CMW500 能力矩阵里声明）。与 api.generated.ts 的同名类型保持一致。
-  uldl_configuration: null
-  special_subframe: null
-  rmc_version: null
+  // P2-56 ②：LTE TDD 专属维度。后端序列化不带 exclude_none，所以这三个键
+  // **恒出现在线上形态里**；FDD 下恒为 null。与 api.generated.ts 保持一致。
+  // special_subframe 只到 7：值 8/9 要求 normal cyclic prefix，本驱动无该维度。
+  uldl_configuration: 0 | 1 | 2 | 3 | 4 | 5 | 6 | null
+  special_subframe: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | null
+  rmc_version: 0 | 1 | null
   source_reference: 'Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf'
 }
 
@@ -149,7 +149,16 @@ export type LteMacProfileDraft = {
   scheduling_mode: 'rmc'
   resource_allocation: 'full'
   enable_amc: false
-  duplex: 'fdd'
+  // P2-56 ②：跟随后端放开。draft 是**服务端冻结 profile 的投影**，锁死 'fdd'
+  // 会让 TDD 用例在表单里显示成 FDD —— 显示层撒谎比缺字段更糟。
+  // ⚠️ 三个 TDD 帧结构字段（uldl_configuration / special_subframe /
+  // rmc_version）**不在 draft 里**：GUI 今天没有创建/编辑 TDD profile 的入口。
+  // 保存时 `updateMacProfileDraft` 对 TDD **保留** mac_profile 原样回传
+  // （见该函数的 LTE 分支），让服务端沿用已冻结的那一份 —— 否则后端会走
+  // legacy 派生并因缺帧结构而拒绝，TDD 用例就成了「可创建、不可编辑」。
+  // ⚠️ 初版注释写「那是既有的 GUI 能力缺口，不是本片新增」是**不准确的**：
+  // 本片之前 duplex 是 Literal["fdd"]，TDD 用例根本不可能存在，缺口不可达。
+  duplex: 'fdd' | 'tdd'
   transmission_mode: 'TM3'
 }
 
@@ -321,6 +330,33 @@ export function updateMacProfileDraft(
   next.stat_count = count
   if (rat === 'lte') {
     next.mimo_layers = 2
+    // P2-56 ②（内审 F5）：TDD 用例必须**原样保留** mac_profile。
+    // 上面那句 `delete next[key]` 会把它剥掉，让后端走 legacy 派生；而
+    // legacy 的扁平字段里没有帧结构（uldl_configuration / special_subframe），
+    // 后端会显式拒绝 —— 结果是 TDD 用例「可创建、不可编辑」。
+    // GUI 今天没有编辑 TDD 帧结构的入口，所以这里的正确行为是**不动它**，
+    // 让服务端沿用已冻结的那一份。
+    const frozen = (configuration as Record<string, unknown>).mac_profile
+    const frozenProfile =
+      frozen && typeof frozen === 'object'
+        ? (frozen as Record<string, unknown>).profile
+        : undefined
+    const frozenDuplex =
+      frozenProfile && typeof frozenProfile === 'object'
+        ? (frozenProfile as Record<string, unknown>).duplex
+        : undefined
+    if (frozenDuplex === 'tdd') {
+      next.mac_profile = frozen
+      // ⚠️ 同时**撤掉 stat_count**（内审 F1）：后端在 `mac_profile` 存在时
+      // 按**值**对账 —— `stat_count` 与 `mac_profile.statistical_window.count`
+      // **不相等**才拒（"mac_profile conflicts with deprecated stat_count"，
+      // 见 config.py 的 expected_legacy 分支；相等是放行的）。
+      // 而 TDD 分支保留的是**旧的**冻结 profile，用户新改的 stat_count 必然
+      // 与它不等 —— 索性不带出去，让冻结的统计窗口当唯一真值。
+      // 表单已把 TDD 的统计窗口置灰，但本函数是纯函数、可被别处调用 ——
+      // 让它自己不产生冲突形态，比只靠 UI 挡更可靠。
+      delete next.stat_count
+    }
     return next
   }
 

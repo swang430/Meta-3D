@@ -221,11 +221,16 @@ def test_nr_profile_digest_is_untouched_by_the_lte_change():
 
 
 def test_duplex_matrix_matches_dmode_range():
-    """DMODe Range `FDD | TDD`（p.366）两格都在，且 TDD 不是正式路径。"""
+    """DMODe Range `FDD | TDD`（p.366）两格都在，P2-56 ② 起两格都是正式路径。
+
+    ① 声明半时 `tdd` 是 `diagnostic_only`，理由写的是「缺本驱动的实现」；
+    ② 把实现补上了（活体/profile duplex 比对 + ULDL / SSUBframe /〔歧义带宽〕
+    RMC:VERSion:DL 逐条下发回读），该理由不再成立，故上调。
+    """
     values = _values("duplex")
     assert set(values) == {"fdd", "tdd"}
     assert values["fdd"].support == "authoritative"
-    assert values["tdd"].support == "diagnostic_only"
+    assert values["tdd"].support == "authoritative"
     # Options 原文「R&S CMW-KS500/-KS550 for FDD/TDD」——两侧各要一个，
     # 是 OR 语义（该侧装上那一个即可），不是 AND
     assert values["fdd"].satisfying_options == ("KS500",)
@@ -409,12 +414,55 @@ def test_rmc_version_matrix_matches_its_range():
     for value, item in values.items():
         if value is None:
             continue
-        assert item.support == "diagnostic_only"
+        assert item.support == "authoritative"
         assert not item.satisfying_options
         assert not item.required_options, "p.803 该条目没有 Options 行"
         # 固件下限由 test_per_value_firmware_floors_... 按维度全集统一断言。
         # 这里**刻意不再写 `is None`** —— 原来那句把「我漏录了 Firmware 行」
         # 钉死成了「本命令没有固件下限」，而 p.803 明写 `V3.2.70`（内审 F1）。
+
+
+def test_support_grading_is_pinned_per_dimension():
+    """逐维度钉死「哪些取值是正式路径」——集合相等，上调或降级都红。
+
+    这条门是从 ② 实现时的一次真事故长出来的：给 `rmc_version` 上调时用了
+    一个**无计数的整体替换**（`support="diagnostic_only"` + `V3.2.70`），
+    而 `transmission_mode` 的 TM7/TM8 在 ① 里刚好被填上同一个固件值 ——
+    两格被连带误上调成 `authoritative`。P2-55 的门抓到了（5 条红），
+    但那是**下一次跑测试**才发现的；这条门把「定档全景」变成一处显式清单，
+    读 diff 的人一眼能看出哪几格动了。
+    """
+    graded = {
+        name: {
+            support: {item.value for item in dimension.values if item.support == support}
+            for support in ("authoritative", "diagnostic_only")
+        }
+        for name, dimension in _dimensions().items()
+    }
+    graded = {
+        name: {k: v for k, v in buckets.items() if v}
+        for name, buckets in graded.items()
+    }
+    assert graded == {
+        "transmission_mode": {
+            "authoritative": {"TM1", "TM2", "TM3", "TM4", "TM6"},
+            "diagnostic_only": {"TM7", "TM8", "TM9"},
+        },
+        "mimo_layers": {
+            "authoritative": {1, 2},
+            "diagnostic_only": {4},
+        },
+        "duplex": {"authoritative": {"fdd", "tdd"}},
+        "uldl_configuration": {
+            "authoritative": {None, 0, 1, 2, 3, 4, 5, 6},
+        },
+        "special_subframe": {
+            # 8/9 要求 normal cyclic prefix，而本驱动没有 CP 维度
+            "authoritative": {None, 0, 1, 2, 3, 4, 5, 6, 7},
+            "diagnostic_only": {8, 9},
+        },
+        "rmc_version": {"authoritative": {None, 0, 1}},
+    }
 
 
 def test_firmware_floors_parse_with_the_drivers_own_comparator():
@@ -762,11 +810,24 @@ def test_openapi_contract_matches_the_lte_profile_schema_both_ways():
     # ⚠️ 只比键集拦不住类型写错（内审 R3 F2 实测：把 special_subframe 改成
     #    `{type: string}`，键集不变 → 全绿）。契约是 TS 类型的生成源，
     #    类型写错会直接生成错的前端类型，所以本片三个字段逐字段钉死。
-    null_only = {"type": "integer", "nullable": True, "enum": [None]}
-    for field in ("uldl_configuration", "special_subframe", "rmc_version"):
-        assert declared["properties"][field] == null_only, (
-            f"{field} 的契约形态应为「只接受 null」：{null_only}"
-        )
+    # P2-56 ②：取值域已放开，逐字段钉死枚举（含 null = 该维度不适用）。
+    # `special_subframe` 只到 7 而非手册的 9 —— 值 8/9 要求 normal cyclic
+    # prefix，本驱动无 CP 维度，收窄理由写在 profile 与矩阵里。
+    expected_domains = {
+        "uldl_configuration": [None, 0, 1, 2, 3, 4, 5, 6],
+        "special_subframe": [None, 0, 1, 2, 3, 4, 5, 6, 7],
+        "rmc_version": [None, 0, 1],
+    }
+    for field, domain in expected_domains.items():
+        assert declared["properties"][field] == {
+            "type": "integer",
+            "nullable": True,
+            "enum": domain,
+        }, f"{field} 的契约取值域与活 schema 不符"
+    assert declared["properties"]["duplex"] == {
+        "type": "string",
+        "enum": ["fdd", "tdd"],
+    }
 
     # ⚠️ 契约同步的**第 4 步**（重生 TS 类型）此前没有任何机械保证
     #    （内审 R3 F4 实测：从 api.generated.ts 删掉两行 → 全绿）。

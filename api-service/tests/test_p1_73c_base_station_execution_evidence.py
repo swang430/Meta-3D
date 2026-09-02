@@ -27,7 +27,8 @@ def test_exact_cmw_snapshot_is_canonical_and_formally_acceptable():
 
 def test_formal_evidence_accepts_option_tokens_exactly_as_cmw500_reports_them():
     evidence = valid_cmw_evidence()
-    evidence["identity"]["options"] = ["KS550", "KS520"]
+    # P2-56 ②：TDD 正式执行还需 KS510（ULDL 的 Options「KS550 and KS510」）
+    evidence["identity"]["options"] = ["KS550", "KS520", "KS510"]
     evidence["requested_config"]["payload"]["duplex"] = "tdd"
     digest = canonical_snapshot_digest(evidence["requested_config"]["payload"])
     evidence["requested_config"]["digest"] = digest

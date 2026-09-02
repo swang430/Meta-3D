@@ -1156,9 +1156,21 @@ export function MIMOOTAConfigForm({
                     <TextInput label="传输模式" value="TM3" disabled />
                   </>
                 )}
+                {/* P2-56 ②（内审 F1）：LTE TDD 用例的统计窗口在这里**只读**。
+                    原因：TDD 的 configuration 必须原样保留冻结的 mac_profile
+                    （GUI 没有编辑 TDD 帧结构的入口），而后端按**值**对账：
+                    改过的 stat_count 与冻结 profile 的 statistical_window.count
+                    不等就会被拒（"mac_profile conflicts with deprecated
+                    stat_count"；相等是放行的，见 config.py 的 expected_legacy）。
+                    可编辑但改了会弹回、或改了却存不进去，都比明确置灰更糟。 */}
                 <NumberInput
                   label="统计窗口"
-                  description="单位：subframes"
+                  description={
+                    macProfileDraft.kind === 'lte_rmc' &&
+                    macProfileDraft.duplex === 'tdd'
+                      ? '单位：subframes（TDD 用例随冻结 profile，此处不可编辑）'
+                      : '单位：subframes'
+                  }
                   value={macProfileDraft.statistical_window.count}
                   onChange={(v) => {
                     if (typeof v === 'number') {
@@ -1166,7 +1178,11 @@ export function MIMOOTAConfigForm({
                     }
                   }}
                   min={100}
-                  disabled={readOnly}
+                  disabled={
+                    readOnly ||
+                    (macProfileDraft.kind === 'lte_rmc' &&
+                      macProfileDraft.duplex === 'tdd')
+                  }
                 />
               </SimpleGrid>
             </Stack>

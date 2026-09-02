@@ -315,35 +315,76 @@ class LteRmcMacTestProfileV1(_MacTestProfileBase):
     scheduling_mode: Literal["rmc"]
     resource_allocation: Literal["full"]
     enable_amc: Literal[False]
-    duplex: Literal["fdd"]
+    duplex: Literal["fdd", "tdd"]
     transmission_mode: Literal["TM3"]
     mimo_layers: Literal[2]
     source_reference: Literal[CMW500_LTE_PROFILE_SOURCE]
-    # ── P2-56：LTE TDD 专属维度。**今天只接受 None** ────────────────────
-    # 取值域已按手册在 CMW500 能力矩阵里逐值声明（ULDL `0 to 6` p.687-688 /
-    # SSUBframe `0 to 9` p.688 / RMC:VERSion:DL `0 to 1` p.803），但本驱动
-    # **没有它们的下发路径** —— configure_mac_throughput_test 在活体
-    # duplex≠FDD 时整体 fail-loud。
+    # ── P2-56 ②：LTE TDD 专属维度，取值域已放开 ─────────────────────────
+    # 字段名即能力矩阵的维度名（判定器按 `dimension in model_fields` 取值）。
+    # ⚠️ 这里原本还留着一句「但本驱动没有它们的下发路径 —— 活体 duplex≠FDD
+    #    时整体 fail-loud」：那是 ① 声明半的状态，② 落地后已经是假的
+    #    （驱动现在按 TDD 分支逐条下发并回读）。上一轮的文案清扫漏了这处，
+    #    而它就在这三个字段的正上方 —— 记在这里当提醒：**清扫要连同被改动
+    #    符号紧邻的注释一起看**，不能只 grep 关键词。
     #
-    # 字段先存在，是因为能力矩阵的**维度名必须是 profile 上真实存在的字段**：
-    # 判定器按 `dimension in type(profile).model_fields` 取值，声明一个
-    # profile 没有的维度会把**每一条** LTE profile 判成不兼容
-    # （见 base_station_compatibility._mac_dimension_rejections）。
+    # 取值域出处（① 声明半逐条本地核对，矩阵里逐格有 reason）：
+    #   `CELL[:PCC]:ULDL`      pp.687-688  Range `0 to 6`，*RST 1
+    #   `CELL[:PCC]:SSUBframe` p.688       Range `0 to 9`，*RST 7
+    #   `RMC:VERSion:DL<s>`    p.803       Range `0 to 1`，*RST 0
     #
-    # 用 `None` 而不是放开取值域，是为了让本片**不新增任何可达状态**：
-    # 放开 Literal 会立刻造出「profile 说 TDD、仪器活体是 FDD」这一格，
-    # 而驱动今天只拿活体 duplex 跟字面量 "FDD" 比、从不跟 profile 比 ——
-    # 那会把 TDD 用例静默按 FDD 配掉。放开取值域属现场半，要连带补
-    # 下发路径 + 活体 duplex 与本字段的一致性校验，两件一起做。
-    uldl_configuration: None = None
-    special_subframe: None = None
-    rmc_version: None = None
+    # ⚠️ `special_subframe` 这里**只放开 0..7**，不是手册的 0..9：值 8 与 9 的
+    #    手册原文是「can only be used with the normal cyclic prefix」，而本
+    #    profile 没有 cyclic prefix 维度 —— 放开它们等于让一个无法表达的前置
+    #    条件默默成立。8/9 在能力矩阵里仍有声明（带 `requires` token），
+    #    属「声明了但不可达」，要放开须同片补 CP 维度。
+    uldl_configuration: Literal[0, 1, 2, 3, 4, 5, 6] | None = None
+    special_subframe: Literal[0, 1, 2, 3, 4, 5, 6, 7] | None = None
+    rmc_version: Literal[0, 1] | None = None
 
     @model_validator(mode="after")
     def _metric_contract_is_versioned(self) -> "LteRmcMacTestProfileV1":
         actual = tuple((item.key, item.scope) for item in self.metric_requirements)
         if actual != _LTE_RMC_V1_METRICS:
             raise ValueError("lte_rmc@1 metric requirements do not match its contract")
+        return self
+
+    @model_validator(mode="after")
+    def _tdd_fields_match_the_duplex_mode(self) -> "LteRmcMacTestProfileV1":
+        """P2-56 ②：三个 TDD 字段与 `duplex` 的耦合，两个方向都拒。
+
+        ⚠️ 两个方向都要拒，不是只拒一个：
+          · FDD 却设了 TDD 字段 → 这些值**不会被下发**（驱动的 FDD 分支不发
+            它们），留着等于给读 profile 的人一个假承诺；
+          · TDD 却没设配比/特殊子帧 → 驱动只能用仪器的 `*RST`（ULDL=1、
+            SSUBframe=7）**补真**，而补真正是本仓反复在治的形态。
+
+        `rmc_version` 只约束到「非 TDD 不许设」：它是否**必需**取决于活体带宽
+        （表 2-39 里只有 20 MHz 那行的选中项有版本歧义），而 profile 不携带带宽
+        —— 那一层在驱动里按 `tdd_dl_version_required` 判，两个方向都 fail-loud。
+        """
+
+        tdd_fields = {
+            "uldl_configuration": self.uldl_configuration,
+            "special_subframe": self.special_subframe,
+            "rmc_version": self.rmc_version,
+        }
+        if self.duplex == "fdd":
+            set_anyway = sorted(k for k, v in tdd_fields.items() if v is not None)
+            if set_anyway:
+                raise ValueError(
+                    "LTE FDD profile must not carry TDD-only fields: "
+                    + ", ".join(set_anyway)
+                )
+            return self
+        missing = sorted(
+            name
+            for name in ("uldl_configuration", "special_subframe")
+            if tdd_fields[name] is None
+        )
+        if missing:
+            raise ValueError(
+                "LTE TDD profile must declare " + ", ".join(missing)
+            )
         return self
 
 
@@ -437,6 +478,14 @@ def build_mac_throughput_command_inputs(
             "mimo_layers": profile.mimo_layers,
             "enable_amc": profile.enable_amc,
             "rb_alloc": "ALL" if profile.resource_allocation == "full" else "",
+            # P2-56 ②：duplex 必须投影出去 —— 驱动要拿它跟**活体回读**比对，
+            # 而不是只跟字面量 "FDD" 比（那样 TDD profile 撞 FDD 仪器会被
+            # 静默按 FDD 配掉）。三个 TDD 字段同理：不投影就等于让驱动
+            # 从仪器的 *RST 补真。
+            "duplex": profile.duplex,
+            "uldl_configuration": profile.uldl_configuration,
+            "special_subframe": profile.special_subframe,
+            "rmc_version": profile.rmc_version,
             "profile_digest": frozen.profile_digest,
         }
     raise TypeError("unsupported frozen MAC profile")

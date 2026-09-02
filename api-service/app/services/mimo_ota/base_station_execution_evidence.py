@@ -9,6 +9,8 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
+from app.hal.cmw500_command_profile import cmw500_lte_formal_options
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -1482,17 +1484,18 @@ def _formal_envelope(
         }:
             return False, "cmw500_transmission_mode_not_2x2", []
         duplex = evidence.requested_config.payload.get("duplex")
-        required_duplex_option = (
-            "KS500" if duplex == "fdd" else "KS550" if duplex == "tdd" else None
-        )
         installed_options = {
             item.strip().upper().removeprefix("CMW-")
             for item in evidence.identity.options
         }
-        if (
-            required_duplex_option is None
-            or not {"KS520", required_duplex_option}.issubset(installed_options)
-        ):
+        # 选件集取自唯一真值源（内审 F3）：初版这里与驱动各写一份，
+        # 两份都漏了 TDD 的 ULDL 所需的 KS510（pp.687-688 原文是
+        # 「KS550 **and** KS510」）。非法 duplex 由 ValueError 落到拒绝分支。
+        try:
+            required_options = cmw500_lte_formal_options(duplex)
+        except ValueError:
+            return False, "formal_capability_options_not_confirmed", []
+        if not required_options.issubset(installed_options):
             return False, "formal_capability_options_not_confirmed", []
         if evidence.route_confirmed is not True:
             return False, "route_not_confirmed", []

@@ -20,6 +20,34 @@ class CmwCommandSpec:
     required_options: tuple[str, ...] = ()
 
 
+def cmw500_lte_formal_options(duplex: str) -> frozenset[str]:
+    """一次 LTE **正式**执行所需的整机选件全集（**唯一真值源**）。
+
+    在 P2-56 ② 之前，这套映射在三处各写了一份：驱动的
+    `evaluate_lte_2x2_formal_capability`、正式 KPI 准入门
+    `base_station_execution_evidence`，以及能力矩阵的
+    `satisfying_options` / `required_options`。三份里前两份**都漏了 KS510**
+    —— 而 ② 让 TDD 变成可达路径之后，那个漏项会让一台没装 KS510 的机器
+    通过准入、跑到 `CELL_ULDL` 那一组才被仪器拒（方向安全，代价是一次上机
+    时间）。这里把前两处收敛成一处；矩阵那一份是**声明**，由门与它对账。
+
+    逐项出处（印刷页）：
+      · `KS520` —— 2x2 天线配置：p.753 Options 原文「TWO (2x2): R&S CMW-KS520」
+      · `KS500` / `KS550` —— 双工：p.366 Options 原文
+        「R&S CMW-KS500/-KS550 for FDD/TDD」
+      · `KS510` —— **仅 TDD**：`CELL[:PCC]:ULDL` 的 Options 原文是
+        「R&S CMW-KS550 **and** R&S CMW-KS510」（pp.687-688），两个都要装。
+        `SSUBframe`（p.688）只要 KS550，已被上一行覆盖。
+    """
+
+    normalized = duplex.strip().lower() if isinstance(duplex, str) else ""
+    if normalized == "fdd":
+        return frozenset({"KS520", "KS500"})
+    if normalized == "tdd":
+        return frozenset({"KS520", "KS550", "KS510"})
+    raise ValueError(f"unsupported LTE duplex for formal options: {duplex!r}")
+
+
 @dataclass(frozen=True)
 class CmwNx2Route:
     pcc_bb_board: str
@@ -68,6 +96,14 @@ class CmwLteFullRbRmcPlan:
 
     downlink: CmwRmcSelection
     uplink: CmwRmcSelection
+    #: P2-56 ②：该带宽在 **TDD** 下选中同一行时，是否必须显式下发
+    #: `RMC:VERSion:DL<s>`（p.803）。
+    #:
+    #: 存的是**要不要指定**，不是**指定成几** —— 表 2-39 的 20 MHz 那行
+    #: `0: R.30` 与 `1: R.30-1` **两个都合法**，选哪个是用户意图，由 profile 的
+    #: `rmc_version` 携带。把版本值也存进这里会让同一个值有两个源
+    #: （计划表与 profile），那正是本片在治的形态。
+    tdd_dl_version_required: bool = False
 
 
 # P2-51: full-allocation RMC rows per bandwidth token, copied row-by-row from
@@ -79,9 +115,19 @@ class CmwLteFullRbRmcPlan:
 #   · UL: Table 2-33 "UL RMCs for FDD and TDD, contiguous" (§2.2.19.1,
 #     printed p.70-71) — QPSK column (UL 64/256-QAM need KS504/KS554,
 #     printed p.70); 15 RB carries the table note "6 for 3 MHz, else 5".
-# ⚠ FDD only.  The TDD rows (Table 2-39, printed p.78-79) additionally need
-#   the RMC version selector for ambiguous RMCs (printed p.803); the TDD
-#   formal path is not implemented in P2-51 and callers must fail loudly.
+# P2-56 ②: the same rows also serve TDD.  Table 2-39 "DL RMCs for TDD,
+#   multiple TX antennas" (printed pp.78-79) was read row by row from the
+#   rendered PDF pages (not from a text extraction — `pdftotext` scrambles
+#   these tables) and the same selection rule yields the identical DL row for
+#   all six bandwidths.
+# ⚠ **That identity is a coincidence, not a rule.**  The tables differ in
+#   shape: FDD 5 MHz/25 RB has two rows (QPSK/5 and 16-QAM/12) while TDD has
+#   only one (16-QAM/12).  Do not restate this as "TDD equals FDD".
+# ⚠ Only 20 MHz needs the RMC version selector: in Table 2-39 exactly two rows
+#   carry a Version value — 10 MHz/50/16-QAM/13 (`0: R.11` / `1: R.11-1`) and
+#   20 MHz/100/16-QAM/13 (`0: R.30` / `1: R.30-1`) — and of those only the
+#   20 MHz one is the row this plan selects (10 MHz selects 64-QAM/18, which
+#   carries `-`).  See `tdd_dl_version_required`.
 CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH: dict[str, CmwLteFullRbRmcPlan] = {
     "B014": CmwLteFullRbRmcPlan(
         downlink=CmwRmcSelection("N6", "QPSK", "T4"),
@@ -106,6 +152,8 @@ CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH: dict[str, CmwLteFullRbRmcPlan] = {
     "B200": CmwLteFullRbRmcPlan(
         downlink=CmwRmcSelection("N100", "Q16", "T13"),
         uplink=CmwRmcSelection("N100", "QPSK", "T2"),
+        # 表 2-39 的 20 MHz/100/16-QAM/13 行带 `0: R.30` / `1: R.30-1`
+        tdd_dl_version_required=True,
     ),
 }
 
@@ -320,6 +368,63 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         purpose="Read back the DL RB start position",
         minimum_firmware="V3.2.50",
     ),
+    # ── P2-56 ②：LTE TDD 专属命令 ─────────────────────────────────────
+    # 属性块逐条本地核对（① 声明半已核过一遍，此处复用同一份取证）。
+    # 各行 Firmware 里限定 `SCC<c>` 变体的半句不计：本驱动走 `[:PCC]`。
+    "mac_cell_uldl": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CELL:PCC:ULDL",
+        source_reference=f"{_LTE_MANUAL}, command reference, printed p.687-688",
+        purpose="Select the TDD uplink-downlink subframe configuration (0..6)",
+        # 手册 Firmware 行 `V3.0.10, V3.0.50 value 0, 2, 3, 4, 6` —— 逐值下限
+        # 在能力矩阵里逐格声明；这里取**命令级**下限（能发这条命令的最低固件）。
+        minimum_firmware="V3.0.10",
+        # Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」——两个都要
+        required_options=("KS510", "KS550"),
+    ),
+    "mac_cell_uldl_query": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CELL:PCC:ULDL?",
+        source_reference=(
+            f"{_LTE_MANUAL}, command reference, printed p.687-688; "
+            f"{_QUERY_FORM_RULE}"
+        ),
+        purpose="Read back the TDD uplink-downlink subframe configuration",
+        minimum_firmware="V3.0.10",
+        required_options=("KS510", "KS550"),
+    ),
+    "mac_cell_ssubframe": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CELL:PCC:SSUBframe",
+        source_reference=f"{_LTE_MANUAL}, command reference, printed p.688",
+        purpose="Select the TDD special subframe configuration (0..9)",
+        minimum_firmware="V2.1.20",
+        # Options 基线只有 KS550；KS512 只在「value 7 plus extended cyclic
+        # prefix / value 9 / carrier-specific」时另需，本驱动放开的是 0..7
+        # 且无 cyclic prefix 维度，故不列 KS512。
+        required_options=("KS550",),
+    ),
+    "mac_cell_ssubframe_query": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CELL:PCC:SSUBframe?",
+        source_reference=(
+            f"{_LTE_MANUAL}, command reference, printed p.688; {_QUERY_FORM_RULE}"
+        ),
+        purpose="Read back the TDD special subframe configuration",
+        minimum_firmware="V2.1.20",
+        required_options=("KS550",),
+    ),
+    "mac_rmc_version_dl": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CONNection:PCC:RMC:VERSion:DL{s}",
+        source_reference=f"{_LTE_MANUAL}, command reference, printed p.803",
+        purpose="Disambiguate TDD DL RMCs that share bandwidth/RB/modulation/TBS",
+        minimum_firmware="V3.2.70",
+        # p.803 该条目**没有** Options 行
+    ),
+    "mac_rmc_version_dl_query": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CONNection:PCC:RMC:VERSion:DL{s}?",
+        source_reference=(
+            f"{_LTE_MANUAL}, command reference, printed p.803; {_QUERY_FORM_RULE}"
+        ),
+        purpose="Read back the TDD DL RMC version selector",
+        minimum_firmware="V3.2.70",
+    ),
     "mac_rmc_rbpos_ul": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:CONNection:PCC:RMC:RBPosition:UL",
         source_reference=f"{_LTE_MANUAL}, command reference, printed p.802",
@@ -475,6 +580,9 @@ RMC_RB_POSITION_DL_TOKENS = frozenset(
     {"LOW", "HIGH", "P5", "P10", "P23", "P35", "P48"}
 )
 _RB_POSITION_UL_RE = re.compile(r"(LOW|HIGH|MID|P\d{1,2})\Z")
+# P2-56 ②：整数型回读（ULDL / SSUBframe / RMC:VERSion:DL）。允许可选正号
+# 与前后空白，不允许小数、指数、十六进制 —— 手册这三个参数都是 `integer`。
+_INTEGER_READBACK_RE = re.compile(r"^[+-]?\d+$")
 
 
 _ROUTE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*\Z")
@@ -670,6 +778,68 @@ class Cmw500LteCommandProfile:
     @classmethod
     def mac_rmc_ul_query(cls, sign_channel: int) -> str:
         return cls._format("mac_rmc_ul_query", sign_channel)
+
+    # ── P2-56 ②：LTE TDD 专属 builder / query ─────────────────────────
+    @classmethod
+    def build_mac_cell_uldl(cls, sign_channel: int, configuration: int) -> str:
+        # pp.687-688: `<UplinkDownlink>` 是 integer，Range `0 to 6`。
+        # 这里再挡一次是 fail-closed：profile 的 Literal 已挡过一层，但本
+        # builder 也可能被诊断序列直接调用（那条路径不过 profile 校验）。
+        if type(configuration) is not int or not 0 <= configuration <= 6:
+            raise ValueError("CMW TDD uplink-downlink configuration is out of range")
+        return f"{cls._format('mac_cell_uldl', sign_channel)} {configuration}"
+
+    @classmethod
+    def mac_cell_uldl_query(cls, sign_channel: int) -> str:
+        return cls._format("mac_cell_uldl_query", sign_channel)
+
+    @classmethod
+    def build_mac_cell_ssubframe(cls, sign_channel: int, configuration: int) -> str:
+        # p.688: `<SpecialSubframe>` 是 integer，Range `0 to 9`。
+        # ⚠️ 本 builder 按**手册全域** 0..9 校验，不按 profile 放开的 0..7：
+        #    值 8/9 的限制是「只能配 normal cyclic prefix」，那是**调用方**要
+        #    保证的前置条件，不是命令本身的取值域。把 profile 的收窄抄进
+        #    builder 会让两处对同一个域各存一份，而它们的收窄理由并不相同。
+        if type(configuration) is not int or not 0 <= configuration <= 9:
+            raise ValueError("CMW TDD special subframe configuration is out of range")
+        return f"{cls._format('mac_cell_ssubframe', sign_channel)} {configuration}"
+
+    @classmethod
+    def mac_cell_ssubframe_query(cls, sign_channel: int) -> str:
+        return cls._format("mac_cell_ssubframe_query", sign_channel)
+
+    @classmethod
+    def build_mac_rmc_version_dl(
+        cls, sign_channel: int, stream: int, version: int
+    ) -> str:
+        # p.803: `<Version>` 是 integer，Range `0 to 1`，*RST 0。
+        if type(version) is not int or version not in (0, 1):
+            raise ValueError("CMW TDD DL RMC version is out of range")
+        return (
+            f"{cls._format_stream('mac_rmc_version_dl', sign_channel, stream)}"
+            f" {version}"
+        )
+
+    @classmethod
+    def mac_rmc_version_dl_query(cls, sign_channel: int, stream: int) -> str:
+        return cls._format_stream("mac_rmc_version_dl_query", sign_channel, stream)
+
+    @staticmethod
+    def parse_mac_integer(response: str, *, low: int, high: int, label: str) -> int:
+        """把整数型回读解析成 int，域外/非整数一律拒。
+
+        刻意**返回 int 而不是字符串**：`_confirm` 的比对是严格相等，而仪器
+        可能回 `1`、`+1` 或带空白 —— 用字符串比会把同一个值判成不符
+        （假阴性），用 int 比才是打在真实生效端上。
+        """
+
+        token = response.strip()
+        if not _INTEGER_READBACK_RE.fullmatch(token):
+            raise ValueError(f"undocumented CMW {label} readback: {response!r}")
+        value = int(token)
+        if not low <= value <= high:
+            raise ValueError(f"CMW {label} readback out of range: {response!r}")
+        return value
 
     @classmethod
     def mac_rbposition_dl_low(cls, sign_channel: int, stream: int) -> str:

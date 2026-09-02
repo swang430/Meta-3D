@@ -1305,16 +1305,18 @@ components:
         scheduling_mode: {type: string, const: rmc}
         resource_allocation: {type: string, const: full}
         enable_amc: {type: boolean, const: false}
-        duplex: {type: string, const: fdd}
+        duplex: {type: string, enum: [fdd, tdd]}
         transmission_mode: {type: string, const: TM3}
-        # P2-56：LTE TDD 专属维度。今天**只接受 null** —— 取值域已按手册在
-        # CMW500 能力矩阵里逐值声明（ULDL 0..6 / SSUBframe 0..9 /
-        # RMC:VERSion:DL 0..1），但驱动没有它们的下发路径。字段存在是因为
-        # 能力矩阵的维度名必须是 profile 上真实存在的字段。
+        # P2-56 ②：LTE TDD 专属维度，取值域已放开。
+        # 出处：ULDL pp.687-688 `0 to 6` / SSUBframe p.688 `0 to 9` /
+        # RMC:VERSion:DL p.803 `0 to 1`。
+        # ⚠️ special_subframe 只到 7，不是手册的 9：值 8/9 要求 normal cyclic
+        # prefix，而本 profile 没有 cyclic prefix 维度。
+        # null = 该维度不适用（duplex=fdd 时恒为 null）。
         # 三个键**恒出现**（序列化不带 exclude_none），故进 required。
-        uldl_configuration: {type: integer, nullable: true, enum: [null]}
-        special_subframe: {type: integer, nullable: true, enum: [null]}
-        rmc_version: {type: integer, nullable: true, enum: [null]}
+        uldl_configuration: {type: integer, nullable: true, enum: [null, 0, 1, 2, 3, 4, 5, 6]}
+        special_subframe: {type: integer, nullable: true, enum: [null, 0, 1, 2, 3, 4, 5, 6, 7]}
+        rmc_version: {type: integer, nullable: true, enum: [null, 0, 1]}
       required: [schema_version, profile_version, test_intent, mimo_layers, statistical_window, metric_requirements, source_reference, kind, rat, scheduling_mode, resource_allocation, enable_amc, duplex, transmission_mode, uldl_configuration, special_subframe, rmc_version]
     FrozenMacTestProfile:
       type: object

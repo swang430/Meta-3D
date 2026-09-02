@@ -40,6 +40,13 @@ def test_reachable_cmw_commands_carry_manual_source_and_purpose():
         "mac_rmc_rbpos_dl_query",
         "mac_rmc_rbpos_ul",
         "mac_rmc_rbpos_ul_query",
+        # P2-56 ②：LTE TDD 正式路径（ULDL / SSUBframe / 歧义 RMC 的版本）
+        "mac_cell_uldl",
+        "mac_cell_uldl_query",
+        "mac_cell_ssubframe",
+        "mac_cell_ssubframe_query",
+        "mac_rmc_version_dl",
+        "mac_rmc_version_dl_query",
         "mac_dl_stream_coupling",
         "mac_dl_stream_coupling_query",
         "mac_dl_padding",
