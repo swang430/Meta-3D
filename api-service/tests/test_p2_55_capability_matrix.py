@@ -152,11 +152,11 @@ def test_authoritative_values_cite_an_rmc_table():
     表号范围覆盖 §2.2.19.3-.7 全部七张（2-37..2-45）：初版只认 2-37/2-38，
     而 TM7 的表是 2-40 —— 那会让门用一个已知为假的理由拦住未来真正实现 TM7 的人。
     """
+    import re as _re2
+
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
             if item.support == "authoritative":
-                import re as _re2
-
                 # 只认 **FDD** 侧的表：2-37（单天线）/ 2-38（多天线）/
                 # 2-40（TM7）/ 2-42（TM8）/ 2-44（TM9）。
                 # 2-39 / 2-41 / 2-43 / 2-45 是 TDD 专表，而本 profile 的
@@ -846,7 +846,7 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     #
     # 「即」额外排除「使 / 便 / 时 / 刻」（即使、即便、即时、即刻）；
     # 但**不排除「为」** —— 「固定为 1x2」正是要抓的写法。
-    absolute_patterns = (
+    absolute_pattern = (
         r"(?:(?:固定|就是)|(?<![立随])即(?![使便时刻]))"
         # 末尾**只认本矩阵真实用得到的取值**，不用泛化的 \d{1,2}：
         #   mimo_layers / NENBantennas = 1|2|4；CSI-RS 端口 = 1,2,4,8,12,16,24,32。
@@ -854,7 +854,7 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
         # 长值在前，否则 "1" 会先吃掉 "16"；再排除后接「页」的写法（16 既是
         # 合法端口数也可能是页码）。
         r"\s*(?:是|为)?\s*"
-        r"(?:\d+x\d+|单天线|双天线|(?:32|24|16|12|8|4|2|1)(?!\d)(?!\s*页))",
+        r"(?:\d+x\d+|单天线|双天线|(?:32|24|16|12|8|4|2|1)(?!\d)(?!\s*页))"
     )
 
     for name in ("transmission_mode", "mimo_layers"):
@@ -867,8 +867,7 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
                 f"{name}={item.value!r} 引用了表 2-32 却未提及「场景」维 —— "
                 f"该表按场景 × TM 列出，同一个 TM 可能占多行：{item.reason!r}"
             )
-            for pattern in absolute_patterns:
-                assert not _re3.search(pattern, item.reason), (
-                    f"{name}={item.value!r} 用绝对化措辞把表 2-32 的多行压成了"
-                    f"单值（命中 {pattern!r}）：{item.reason!r}"
-                )
+            assert not _re3.search(absolute_pattern, item.reason), (
+                f"{name}={item.value!r} 用绝对化措辞把表 2-32 的多行压成了"
+                f"单值：{item.reason!r}"
+            )
