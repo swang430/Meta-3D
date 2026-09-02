@@ -184,6 +184,31 @@ def _canonical_digest(payload: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _profile_payload_digest(profile: BaseModel) -> str:
+    """frozen profile 的**唯一** digest 口径：omit-when-None。
+
+    两件事各自要求它是唯一的一处：
+
+    ① **omit-when-None**（与 `BaseStationExecutionRequirements.digest`、
+       P1-74 statistical_basis 同款）：profile 以后每加一个可选字段，
+       旧 payload 缺该键、新代码填默认 `None`，若 `None` 进 digest 就会让
+       **所有升级前冻结的 profile** 重算出不同的 digest —— `FrozenMacTestProfile`
+       的 `_digest_matches_profile` 当场拒，历史 TestCase 配置整体加载不了。
+       实测对现存两条 digest 是 **no-op**：本片同时给 LTE profile 加的三个
+       字段恒为 `None`，正好被 `exclude_none` 丢掉，dump 出来与加字段之前
+       逐字相同（`6c0ebb0e…` / `2aa1dc79…`，门里钉了 hex 基线，退化会红）；
+       两个 profile 的其余字段都不可为 `None`，嵌套里也没有别的 `None` 被
+       顺带丢掉。
+
+    ② **唯一**：`freeze()` 与 `_digest_matches_profile()` 是同一口径的两个
+       站点。分开各写一次 `model_dump` 正是「改了值没追全下游」的形态 ——
+       只给其中一处加 `exclude_none`，冻出来的 digest 与校验时算的对不上，
+       每一条新冻结的 profile 都会自我拒绝。
+    """
+
+    return _canonical_digest(profile.model_dump(mode="json", exclude_none=True))
+
+
 class MacStatisticalWindow(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -294,6 +319,25 @@ class LteRmcMacTestProfileV1(_MacTestProfileBase):
     transmission_mode: Literal["TM3"]
     mimo_layers: Literal[2]
     source_reference: Literal[CMW500_LTE_PROFILE_SOURCE]
+    # ── P2-56：LTE TDD 专属维度。**今天只接受 None** ────────────────────
+    # 取值域已按手册在 CMW500 能力矩阵里逐值声明（ULDL `0 to 6` p.687-688 /
+    # SSUBframe `0 to 9` p.688 / RMC:VERSion:DL `0 to 1` p.803），但本驱动
+    # **没有它们的下发路径** —— configure_mac_throughput_test 在活体
+    # duplex≠FDD 时整体 fail-loud。
+    #
+    # 字段先存在，是因为能力矩阵的**维度名必须是 profile 上真实存在的字段**：
+    # 判定器按 `dimension in type(profile).model_fields` 取值，声明一个
+    # profile 没有的维度会把**每一条** LTE profile 判成不兼容
+    # （见 base_station_compatibility._mac_dimension_rejections）。
+    #
+    # 用 `None` 而不是放开取值域，是为了让本片**不新增任何可达状态**：
+    # 放开 Literal 会立刻造出「profile 说 TDD、仪器活体是 FDD」这一格，
+    # 而驱动今天只拿活体 duplex 跟字面量 "FDD" 比、从不跟 profile 比 ——
+    # 那会把 TDD 用例静默按 FDD 配掉。放开取值域属现场半，要连带补
+    # 下发路径 + 活体 duplex 与本字段的一致性校验，两件一起做。
+    uldl_configuration: None = None
+    special_subframe: None = None
+    rmc_version: None = None
 
     @model_validator(mode="after")
     def _metric_contract_is_versioned(self) -> "LteRmcMacTestProfileV1":
@@ -323,12 +367,13 @@ class FrozenMacTestProfile(BaseModel):
         validated = _MAC_PROFILE_ADAPTER.validate_python(
             profile.model_dump(mode="json")
         )
-        payload = validated.model_dump(mode="json")
-        return cls(profile=validated, profile_digest=_canonical_digest(payload))
+        return cls(
+            profile=validated, profile_digest=_profile_payload_digest(validated)
+        )
 
     @model_validator(mode="after")
     def _digest_matches_profile(self) -> "FrozenMacTestProfile":
-        expected = _canonical_digest(self.profile.model_dump(mode="json"))
+        expected = _profile_payload_digest(self.profile)
         if self.profile_digest != expected:
             raise ValueError("profile_digest does not match the frozen profile")
         return self

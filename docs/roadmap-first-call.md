@@ -740,7 +740,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | **P1-74（现场半）** | **CMW500 Extended BLER 统计基不继承旧 session 的真机证明** | 非现场半已由 PR #429 合并（下发 `EBLer:SFRames` + 回读 + 全域 fail-closed）。现场缺的是真机行为证明：在真实 CMW500 上用**至少两个不同统计长度**连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase 变化、**不继承上一 session**。⚠️ 手册（Base SW UM p.139）说运行中改结果相关参数会重启测量并清零统计计数器 —— 该行为本地无法证伪 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase，改 `stat_count` 跑两次即可对照（窗口证据里 `trust.reason` 带 applied 值）；诊断辅助：CMW500 已登记序列 |
-| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据见驱动内矩阵声明上方注释）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，抽样前需先按 P2-56 放开取值域，或走诊断序列直接下发 |
+| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据见驱动内矩阵声明上方注释）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，而 **P2-56 声明片（#TBD）有意不放开它**（声明 ≠ 可达，见该条目），所以抽样只能**走诊断序列直接下发**，或等取值域放开那一片 |
 | **P0-9** | **CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环** | 2026-08-27 已证明 CMW500/F64/转台链到 Attach 前；P0-9B-3 已完成 `+90°` 偏置的 execution freeze 与证据消费。本地仍缺真实 DUT/SIM Attach、`PCCBBBoard` 专用有据 query 的真机复验、真实路径损耗校准、同一 TestCase 转台方位/HOME 复验，以及同一 attempt 的真实报告/cleanup/release 证据 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase；诊断辅助：CMW500/F64/Aerotech 已登记序列。按 P0-9A/B/C 顺序关闭；任一正式前置未知时允许诊断运行但 KPI 保持 UNKNOWN/N/A |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **仅余 b 半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | ✅ **2026-08-27 P0-8a 已现场通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b：纳入 P0-9 的同一 LTE MIMO_OTA TestCase，不另造流程 |
@@ -4549,7 +4549,7 @@ CMW500 声明 `transmission_mode` 8 值与 `mimo_layers` 3 值；P1-75 判定器
 设计与取证见 [`P2-55 设计稿`](plans/2026-09-02-p2-55-cmw500-lte-fdd-capability-matrix-design.md)。
 **真机矩阵抽样复验仍未完成**，在此之前只有已获真实证据的窄组合可进正式路径。
 
-### P2-56 — CMW500 LTE TDD 与真机认证（批准入雷达，未启动）
+### P2-56 — CMW500 LTE TDD 与真机认证（🔄 声明半进行中 / 实现半与现场半未启动）
 
 **可观察故障**：TestCase 没有 LTE ULDL 配比与 special-subframe/RMC version 真值，NR slot pattern
 无法诚实翻译为 LTE 0..6 配比，因此 P2-51 在 TDD 下只能整体 fail-loud。
@@ -4558,6 +4558,25 @@ CMW500 声明 `transmission_mode` 8 值与 `mimo_layers` 3 值；P1-75 判定器
 及 RMC version；配置、回读、错误队列与窗口证据绑定同一次 execution。先做 FDD 不回归、非法组合
 I/O 前拒绝和 TDD receipt 的非现场半；再用真实 CMW500、对应选件与真实 DUT/SIM 完成 Attach、业务
 窗口、SAFE_IDLE、release 和正式证据认证。不得从 NR 字段推导 LTE 配比。
+
+**三半切分**（设计稿 review 时定，见
+[`P2-56 设计稿`](plans/2026-09-02-p2-56-cmw500-lte-tdd-design.md) §4）：
+
+| 半 | 内容 | 状态 |
+|---|---|---|
+| **① 声明半** | 能力矩阵补 LTE TDD 四个维度（`duplex` / `uldl_configuration` / `special_subframe` / `rmc_version`），逐值带 AND 选件、取值级固件下限、取值级前置约束；profile 补对应字段 | 🔄 本片 |
+| **② 实现半** | `configure_mac_throughput_test` 的 TDD 下发路径 + 表 2-39 满配行录入 + 放开 profile 取值域 + 活体 duplex 与 profile 的一致性校验 | ⏳ 未启动 |
+| **③ 现场半** | 真实 CMW500 + 选件 + DUT/SIM 的 Attach / 业务窗口 / SAFE_IDLE / release / 正式证据认证 | ⏳ 未启动，本地不可替代 |
+
+⚠️ **① 有意不引入任何可达状态**：`duplex` 仍是 `Literal["fdd"]`，三个新字段只接受 `None`。
+矩阵**声明**完整取值域（供人和 API 查询「TDD 哪些配比能正式配、为什么不能」），
+但 profile 层不放行 —— 因为放开取值域会立刻造出「profile 说 TDD、仪器活体是 FDD」这一格，
+而驱动今天只拿活体 duplex 跟字面量 `"FDD"` 比、从不跟 profile 比，那会把 TDD 用例静默按 FDD 配掉。
+放开取值域与补下发路径、补一致性校验必须**同一片**做完，即上表的 ②。
+
+⚠️ **①「加的三个字段今天没有判定消费方」**：兼容层没有「已装选件 / 固件版本」这个输入
+（`satisfying_options` 自 P2-55 起同样如此）。所以验收是「**结构能区分 AND/OR、门能机械校验**」，
+不是「装错选件的机器会被拒」—— 后者需要先有 `*OPT?` / 固件回读接进兼容层，属另一片。
 
 **地点/依赖**：混合项，依赖 P2-54/P2-55；真机认证是关闭条件，本地测试不能替代。
 
@@ -5195,7 +5214,32 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 - `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **「用自然语言判据守文档质量」的门不收敛 —— 一片改正三条字符串的 PR 走了内审 5 轮 + 外审 8 轮（P2）** —— PR #442 本身只是改正矩阵里一句写错的手册断言，核心修复（三条 `reason`）**自第四版起未再变动**；后续六轮全部消耗在**收敛门的正则边界**上：前两轮堵绕过（子串判断被无空格写法穿过、`Note:we` 被当成 SCPI 坐标），中间两轮修误伤（`\b` 遇中文失效、把「未取证」错当厂商否定、「即」误报「即便/即时」），最后两轮收窄数字域（`\d+` 误伤页码日期、白名单漏 CSI-RS 的 16/32）。
   ⚠️ **外审八轮建议的前提全部成立，但其给出的实现有三次不完整**：加 `"没有"` 进自述白名单会给「RMC 表没有覆盖 TM7」开后门；`\d{1,2}` 未解决正则滑动（`即 2026-09-02` 仍匹配）；数字白名单 `1|2|4|8` 漏了手册真实取值 16/32。**三次都是正反两向实测后才发现** —— 这类门的每一条边界都只能试出来，不能照抄建议。
   **教训**：判自然语言的门本质上不收敛（换个措辞就能绕过），它的价值在于「拦住已经犯过的那几种写法」，不在于「穷尽所有错误写法」。**下次遇到同类需求，先问这道门要拦的是不是一个封闭集合**；不是的话，要么接受它只是粗筛（旁边必须有别的判据兜底），要么改用结构化字段（如把页码/表号抽成 `manual_citations` 而不是散落在非结构化文本里）——后者是「加机制」，需单独立项。**出口：待 triage**。
-
+- `[discovered 2026-09-02 during P2-56 声明半]` **选件与固件下限至今没有判定消费方（P2）** ——
+  矩阵里的 `satisfying_options`（P2-55）/ `required_options`、`minimum_firmware`（P2-56）
+  **全是声明性的**：兼容层 `BaseStationExecutionRequirements` 里没有「整机已装选件」
+  与「固件版本」这两个输入，`_mac_dimension_rejections` 也不读这三个字段。
+  所以今天矩阵能说「ULDL 需 KS550 **and** KS510」，但一台只装 KS550 的机器
+  **不会因此被拒**。本片专门加了 `test_option_and_firmware_fields_are_declarative_today`
+  把这个现状钉住（接上消费方时它会红）。**出口：待 triage**；改法是把 `*OPT?` 与固件回读
+  接进 manifest 复核或执行需求投影 —— 注意那是**真机事实**，得先想清楚不可读时 fail 向哪边。
+- `[discovered 2026-09-02 during P2-56 声明半]` **驱动里两处 TDD 文案的「（Discovered）」指向已过时（P3）** ——
+  `cmw500_base_station.py` 的 `MAC_CFG_NO_EQUIVALENT["TDD_SLOT_PATTERN"]`（`:726` 附近）与
+  `configure_mac_throughput_test` 的 TDD fail-loud 分支（`:2240` 附近）都写着
+  「TDD 正式 MAC 配置为平台缺口（Discovered）」。声明半落地后，该缺口已有明确出口
+  （P2-56 ② 实现半），文案里的「Discovered」应改指该条。**本片刻意不改**：
+  按 ⑦ 的判据问「不改它，本片那个可观察故障（矩阵对 TDD 沉默）还在吗？」——不在，
+  所以它是**越界**，不是顺带。**出口：随 P2-56 ② 一起改**（那一片本来就要重写这两处）。
+- `[discovered 2026-09-02 during P2-56 声明半]` **`api/openapi.yaml` 的 `BaseStationMacProfileCapability` 缺 `dimensions`，且 `additionalProperties: false`（P2）** ——
+  实测：`RealCmw500Driver.adapter_manifest.model_dump()` 的 mac_profile 键为
+  `[application_evidence, dimensions, kind, profile_version, rat, source_reference]`，
+  而契约只声明了除 `dimensions` 外的五个并禁止额外属性。
+  该 manifest 经 `app/api/instrument.py:84` 的 `base_station_manifest` 字段整体出网，
+  所以**活接口返回的对象不满足自己的契约**。这是 **P2-55 引入时就存在的漂移**
+  （加 `dimensions` 时没走契约同步四步），不是本片造成 —— 但本片给每格又加了三个字段，
+  未登记的载荷更大了。G11 只查「文档 ⊆ 活 schema」，反方向查不到。
+  **出口：待 triage**；改法是补 `BaseStationMacDimensionCapability` /
+  `…ValueCapability` 两个 schema 并加进 `mac_profiles` 的 items，然后
+  `npm run openapi:generate` 重生前端类型（前端目前不消费该字段，实测零命中）。
 - ~~`[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。~~ ✅ **P2-38**（2026-08-23 账面清理）
 
 - ~~`[discovered 2026-08-21 during P2-29 全量回归]` **全量测试自 2026-08-18 起在本机挂死 + 一条遗留顺序失败（P2，两件事）** —— ① `ef33d00`（P1-56）移除 Aerotech 静默重连的握手后，P1-47A 的 `test_aerotech_reconnect_cancel_closes_half_initialized_transport` 把同步点挂在被移除的 `_tx_rx` 上 → **确定性死锁**（单跑/合跑/全量一律卡 84%，CPU 0%）——即 08-18 后没有任何人真正跑完过全量；**已在 P2-29 分支按现契约重写该测试（顺带修，`538e51b`）**。② 修活之后暴露：全量里 `test_p1_36_execution_id::test_no_execution_means_default_not_empty` 失败 —— `current_execution_id` 上下文变量被按字母序更早的文件（commissioning 端点测试，`api/commissioning.py:539` 的 `set`）泄漏，「无关日志行应为 `-`」被标上别人的 execution UUID；**main 基线复现同一条失败**（跳过死锁测试后 1 failed / 4059 passed），与 P2-29 无关。47C 的 `_execution` 帮手同样 set 后不还原（P2-29 的测试文件已自净，`af77111` 的 fixture 可直接抄）。修法待 triage：给泄漏源补 token reset，或做成全套件 autouse 隔离 fixture；顺手可加一道「测试文件不得裸 set 该变量不还原」的门。~~ ✅ **P2-35 / PR #357**（顺序失败）+ **P2-39**（日志目录隔离）（2026-08-23 账面清理）

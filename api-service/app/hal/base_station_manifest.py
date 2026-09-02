@@ -70,27 +70,60 @@ class BaseStationRatCapability(BaseModel):
         return normalized
 
 
+#: 某个取值对**另一个参数**的前置要求。封闭枚举，不是自由字符串：
+#: 判自然语言的门不收敛（P2-55 那句同一条手册事实写错四遍、外审八轮才收口），
+#: 而 `requires=("normal_cyclic_prefix",)` 能被门机械校验。
+#:
+#: 这里出现 3GPP 术语不违反本模块的 vendor-neutral 边界 —— 边界禁的是**厂商**
+#: 概念（`transmission_mode` 是 R&S 的命令名），不是各家共用的无线术语；
+#: 同款先例是本模块早就有的 `rat: Literal["lte", "nr5g"]`。
+#: 新 token 只在**有手册原文**要求时才加，不预留占位。
+MacDimensionPrerequisite = Literal["normal_cyclic_prefix"]
+
+
 class BaseStationMacDimensionValueCapability(BaseModel):
     """One accepted value of one MAC profile dimension.
 
     ``value`` carries the profile field's own JSON form (string / integer /
-    boolean) rather than a stringified copy, so a declaration cannot silently
-    match a differently-typed profile value.
+    boolean / null) rather than a stringified copy, so a declaration cannot
+    silently match a differently-typed profile value.
+
+    ``None`` 是**可声明的一格**，不是"没声明"：可选的 profile 字段（例如只在
+    TDD 下才有意义的配比）在不适用时就是 `None`，判定器按 `(类型, 值)` 取声明，
+    没有这一格就会把完好的 FDD profile 判成"未声明的取值"。让它成为一条**写出
+    理由的正式声明**，比在判定器里静默跳过 `None` 好：后者是 fail-open，
+    且读矩阵的人看不出这一格被放过了。
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    value: StrictStr | StrictInt | StrictBool
+    value: StrictStr | StrictInt | StrictBool | None
     support: Literal["authoritative", "diagnostic_only", "not_applicable"]
-    #: 装了其中**任意一个**就满足该取值的选件要求；空 = 不需要选件。
-    #: 刻意不叫 `required_options` —— 厂商手册这一栏写的是「A **or** B」
-    #: （例：`R&S CMW-KS520 or -KS540 for TM 2, 3, 4, 6, 7, 9`）。用 AND 语义
-    #: 存「或」关系，会把只装了 KS540 的整机判成不支持 TM2。
+    #: 装了其中**任意一个**就满足该取值的选件要求（**OR**）；空 = 本字段不表态。
+    #: 厂商手册这一栏有两种写法，必须分开存：
+    #:   「A **or** B」→ `satisfying_options`
+    #:     （例：`R&S CMW-KS520 or -KS540 for TM 2, 3, 4, 6, 7, 9`）
+    #:   「A **and** B」→ `required_options`
+    #:     （例：`R&S CMW-KS550 and R&S CMW-KS510`，ULDL 配比）
+    #: 用 AND 存「或」会把只装 KS540 的整机判成不支持 TM2；用 OR 存「与」
+    #: 会把只装 KS550 的整机判成支持 ULDL —— 两个方向都是假信息。
     satisfying_options: tuple[str, ...] = ()
+    #: 必须**全部**装上才满足该取值的选件要求（**AND**）；空 = 本字段不表态。
+    required_options: tuple[str, ...] = ()
+    #: 该**取值**自己的固件下限（不是整个 profile 的下限）。手册的 Firmware 行
+    #: 会逐值加码，例：ULDL 是 `V3.0.10, V3.0.50 value 0, 2, 3, 4, 6`
+    #: —— 值 1/5 只要 V3.0.10，值 0/2/3/4/6 要 V3.0.50。存成 profile 级单一
+    #: 下限会把低固件机器上本可用的取值一并判死。
+    #:
+    #: 这里只校验非空：版本字符串的**格式**是厂商方言，格式门归各驱动侧的
+    #: 测试（用该驱动自己的比较器解析），不进这个 vendor-neutral 模块。
+    minimum_firmware: str | None = None
+    #: 该取值对另一个参数的前置要求（见 MacDimensionPrerequisite）。
+    requires: tuple[MacDimensionPrerequisite, ...] = ()
     reason: str
     source_reference: str
 
-    @field_validator("satisfying_options")
+    @field_validator("satisfying_options", "required_options")
     @classmethod
     def _non_blank_options(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         normalized = tuple(item.strip() for item in value)
@@ -99,6 +132,39 @@ class BaseStationMacDimensionValueCapability(BaseModel):
         if len(set(normalized)) != len(normalized):
             raise ValueError("MAC dimension options must be unique")
         return normalized
+
+    @field_validator("requires")
+    @classmethod
+    def _unique_prerequisites(
+        cls, value: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("MAC dimension prerequisites must be unique")
+        return value
+
+    @field_validator("minimum_firmware")
+    @classmethod
+    def _non_blank_firmware(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("MAC dimension minimum_firmware must be non-blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def _options_do_not_contradict(
+        self,
+    ) -> "BaseStationMacDimensionValueCapability":
+        # 同一个选件既是「可选的备选之一」又是「必装」= 自相矛盾的声明：
+        # 它一旦必装，OR 列表里的其它备选就不再是备选了。
+        overlap = set(self.satisfying_options) & set(self.required_options)
+        if overlap:
+            raise ValueError(
+                "MAC dimension option cannot be both satisfying and required: "
+                + ", ".join(sorted(overlap))
+            )
+        return self
 
     @field_validator("reason")
     @classmethod
