@@ -195,7 +195,7 @@ class CmwScpiCommands:
     # ONE | TWO | FOUR downlink TX-antenna configuration.
     MIMO_MODE = "CONFigure:LTE:SIGN{i}:CONNection:PCC:NENBantennas"
     # Same manual, GUI reference printed p.211 and command reference printed
-    # p.754: TRANsmission is writable/queryable and accepts TM1/TM2/TM3/TM4/
+    # p.752: TRANsmission is writable/queryable and accepts TM1/TM2/TM3/TM4/
     # TM6/TM7/TM8/TM9.  TMODe is a different ON/OFF "activate UE test mode"
     # command (printed p.739) and must not be used as LTE transmission mode.
     TRANSMISSION_MODE = (
@@ -318,11 +318,20 @@ class RealCmw500Driver(BaseStationDriver):
                 rat="lte",
                 application_evidence="authoritative_readback",
                 source_reference=CMW500_LTE_PROFILE_SOURCE,
-                # P2-55：逐维度取值域。每格出处经 2026-09-02 本地 PDF 页面目视核对
-                # （命令属性块 p.752 / p.753；DL RMC 表 pp.75-78）。
-                # ⚠️ 声明 authoritative 的前提是**两样都有**：命令 Range 里有这个值，
-                #    且有 DL RMC 表覆盖它。只满足前者的取值一律 diagnostic_only ——
-                #    能下发不等于能配出可测的业务。
+                # P2-55：逐维度取值域。每格出处经本地 PDF 页面目视核对
+                # （命令属性块 p.752 / p.753 / p.762 / p.766；
+                #  DL RMC 表 §2.2.19.3-.7 = pp.75-82；天线配置表 2-32 = pp.65-67）。
+                # ⚠️ **这里不再给"判据共几条"的清单** —— 那份清单数错过三次
+                #    （两样 → 三样 → 三样仍不全），每次都是"用一句概括替代一张表"。
+                #    **逐格的理由以各自的 reason 为准。**
+                #
+                #    最后一次尝试概括时暴露的矛盾，留在这里当警示：`mimo_layers=4`
+                #    与 `TM2/TM4/TM6` 的**取证状态其实相同**（命令 Range 有、RMC 表
+                #    不按该维排除、下发路径已实现、本地都没有真机证据），结论却一个
+                #    降级一个 authoritative。区别只在 TM3 / mimo=2 这一组合被 P2-51
+                #    真机闭环过，而"沾同一条命令"不构成对其它取值的证据。
+                #    → 放开 profile 的 Literal 之前，TM2/TM4/TM6 应重新按逐格证据定档；
+                #      现在不改，是因为它们今天被 Literal["TM3"] 锁死、不可达。
                 dimensions=(
                     BaseStationMacDimensionCapability(
                         dimension="transmission_mode",
@@ -383,10 +392,13 @@ class RealCmw500Driver(BaseStationDriver):
                                 support="diagnostic_only",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
-                                    "TRANsmission Range 含 TM7（p.752），命令可下发；"
-                                    "但 DL RMC 表只覆盖 TM1（表 2-37）与 TM 2..6"
-                                    "（表 2-38 标题「multiple TX antennas (TM 2 to 6)」）"
-                                    "—— TM7 无 RMC 依据，不发明组合"
+                                    "TRANsmission Range 含 TM7（p.752）。手册侧证据齐全："
+                                    "DL RMC 表 §2.2.19.5（表 2-40 FDD / 2-41 TDD, p.79），"
+                                    "天线配置见表 2-32（pp.65-67，按场景 × TM 列出）。"
+                                    "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
+                                    "（p.753，明写「for transmission mode 1 to 6」），"
+                                    "TM7 的波束成形参数在 §2.6.15.4（pp.761-765）另有一套命令，"
+                                    "本驱动未实现 —— 放行会让层数发到管不着 TM7 的命令上"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
@@ -396,7 +408,12 @@ class RealCmw500Driver(BaseStationDriver):
                                 satisfying_options=("KS520", ),
                                 reason=(
                                     "TRANsmission Range 含 TM8（p.752，Options 单列"
-                                    "「R&S CMW-KS520 for TM 8」）；同 TM7，无 RMC 表依据"
+                                    "「R&S CMW-KS520 for TM 8」）。手册侧证据齐全：DL RMC 表"
+                                    "§2.2.19.6（表 2-42 FDD p.80 / 表 2-43 TDD p.81），"
+                                    "层数有专属命令 BEAMforming:NOLayers（p.762，Range L1|L2 = "
+                                    "单层/双层波束成形，*RST L2，需 KS520）。"
+                                    "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
+                                    "（p.753，只管 TM 1 to 6），未接 §2.6.15.4 那套命令"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
@@ -405,9 +422,12 @@ class RealCmw500Driver(BaseStationDriver):
                                 support="diagnostic_only",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
-                                    "TRANsmission Range 含 TM9（p.752）；无 RMC 表依据，"
-                                    "且天线数走另一条命令 TM9:NTXantennas（p.767），"
-                                    "不归 NENBantennas 管 —— 两处都未取证"
+                                    "TRANsmission Range 含 TM9（p.752）。手册侧证据齐全："
+                                    "DL RMC 表 §2.2.19.7（表 2-44 FDD / 表 2-45 TDD, p.82），"
+                                    "天线有专属命令 TM<no>:NTXantennas（p.766，Suffix <no>=9，"
+                                    "Range TWO|FOUR|EIGHt，*RST TWO）。"
+                                    "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
+                                    "（p.753，只管 TM 1 to 6），未接 TM9 那条命令"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
@@ -525,6 +545,11 @@ class RealCmw500Driver(BaseStationDriver):
                     "authoritative",
                     "authoritative",
                     "PCC LTE transmission mode is written and read back",
+                    # ⚠️ 这里的 p.754 经逐页核对**是错的**：p.754 是 PMATrix，
+                    #    TRANsmission 的命令块在 p.752。**本片不改**：
+                    #    config_fields 进 manifest digest，改字面值会让已认证连接的
+                    #    binding/compatibility digest 失配（P2-55 内审 F1 的同一形态）。
+                    #    修它要连带处理历史冻结数据，属独立一片。已登记 Discovered。
                     "R&S CMW500 LTE UE User Manual 1173.9628.02-41 printed p.754",
                 ),
                 (

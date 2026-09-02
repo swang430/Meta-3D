@@ -740,7 +740,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | **P1-74（现场半）** | **CMW500 Extended BLER 统计基不继承旧 session 的真机证明** | 非现场半已由 PR #429 合并（下发 `EBLer:SFRames` + 回读 + 全域 fail-closed）。现场缺的是真机行为证明：在真实 CMW500 上用**至少两个不同统计长度**连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase 变化、**不继承上一 session**。⚠️ 手册（Base SW UM p.139）说运行中改结果相关参数会重启测量并清零统计计数器 —— 该行为本地无法证伪 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase，改 `stat_count` 跑两次即可对照（窗口证据里 `trust.reason` 带 applied 值）；诊断辅助：CMW500 已登记序列 |
-| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据 = 命令 Range 有该值**且**有 DL RMC 表覆盖）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，抽样前需先按 P2-56 放开取值域，或走诊断序列直接下发 |
+| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据见驱动内矩阵声明上方注释）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，抽样前需先按 P2-56 放开取值域，或走诊断序列直接下发 |
 | **P0-9** | **CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环** | 2026-08-27 已证明 CMW500/F64/转台链到 Attach 前；P0-9B-3 已完成 `+90°` 偏置的 execution freeze 与证据消费。本地仍缺真实 DUT/SIM Attach、`PCCBBBoard` 专用有据 query 的真机复验、真实路径损耗校准、同一 TestCase 转台方位/HOME 复验，以及同一 attempt 的真实报告/cleanup/release 证据 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase；诊断辅助：CMW500/F64/Aerotech 已登记序列。按 P0-9A/B/C 顺序关闭；任一正式前置未知时允许诊断运行但 KPI 保持 UNKNOWN/N/A |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **仅余 b 半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | ✅ **2026-08-27 P0-8a 已现场通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b：纳入 P0-9 的同一 LTE MIMO_OTA TestCase，不另造流程 |
@@ -4535,9 +4535,15 @@ P2-55/P2-56 的能力矩阵与 LTE TDD/真机认证范围保持不变。**已由
 **非现场半已由 PR #440 合并**（squash `cb017357`，2026-09-02）：manifest 新增 `dimensions`
 （维度 → 逐取值 → support 三态 / 选件 / 出处，维度名为字符串键，通用层不含厂商概念）；
 CMW500 声明 `transmission_mode` 8 值与 `mimo_layers` 3 值；P1-75 判定器逐维度对账
-（未声明即拒、非 `authoritative` 即拒）。判据为**命令 Range 有该值且有 DL RMC 表覆盖**
-两者兼备 —— TM7/TM8/TM9 在命令 Range 里（p.752）但表 2-37 只覆盖 TM1、表 2-38 标题写明
-「(TM 2 to 6)」，故标 `diagnostic_only`；天线 FOUR 同理（命令层有据、无本地真机证据）。
+（未声明即拒、非 `authoritative` 即拒）。**判据的唯一真值源是
+[`cmw500_base_station.py`](../api-service/app/hal/cmw500_base_station.py) 里矩阵声明上方那段注释**，
+此处不复述条数（初版在这里抄了一份，随后判据改了三次、这份抄件一次都没跟上）。
+结论：TM7/TM8/TM9 与天线 FOUR 标 `diagnostic_only`。
+> ⚠️ 初版这里写的理由「表 2-37 只覆盖 TM1、表 2-38 标题写明「(TM 2 to 6)」，
+> 故 TM7/8/9 无 RMC 表依据」**是假的** —— 手册有 §2.2.19.5/.6/.7 三节专门的
+> TM7/8/9 RMC 表（表 2-40..2-45, pp.79-82）。真实原因是**本驱动未实现**它们的
+> 下发路径（TM7/8 的波束成形参数在 §2.6.15.4、TM9 的天线在 `TM<no>:NTXantennas`）。
+> 已由修正 PR 改正 —— 详见该 PR 与设计稿的更正块。
 部分 RB / Table 2-32 跨维度组合 / UL 侧维度 / TDD 均未打开，理由见设计稿 §4.2。
 内审两轮 11 条、外审 Gemini R1→R3；全量 5910 passed，新增 38 门。
 设计与取证见 [`P2-55 设计稿`](plans/2026-09-02-p2-55-cmw500-lte-fdd-capability-matrix-design.md)。
@@ -5163,11 +5169,29 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 
 - ~~`[discovered 2026-08-11 during P1-27 入口全集审计]` **`CalibrationOrchestrator.export_calibration_data/import_calibration_data` 仍按已删除的逐探头列读写当前聚合 `ProbePathLossCalibration`（待 triage）** —— 方法访问/构造 `probe_id`、`polarization`、`path_loss_db`，而当前模型权威字段是聚合 JSON；全仓没有这两个 orchestrator 方法的 live API 或调用方。照现状调用会在导出属性访问或导入构造时失败，但它不是 P1-27 的 live 校准生成入口，不能为“顺手传播 provenance”先修一条无人消费的坏死链。后续先裁决删除还是按当前聚合包重写，再决定是否进 roadmap/backlog。~~ → 非阻塞维护池（原 P3-20）（2026-08-23 账面清理）
 - `[discovered 2026-08-10 during P1-48 第 5 片外审]` **给「真假标注上线前归档的旧报告」挂警示 —— 整条支线撤回，重做时按下面三个洞设计（P2）** —— P1-48 第 5 片里我加了这条支线，外审连查三轮、每轮的洞都是上一轮修复引入的，最后**整条撤掉**（修法优先级「去掉 > 换源 > 收窄 > 加机制」的第一档）。⚠️ **实际影响面当时为零**：库里 214 份报告全是 `single_execution`，一份虚拟路测报告都没有 —— 这个机制从头到尾是防将来的，却消耗了三轮外审。重做前先问「现在有这类数据吗」。
+- `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **CMW500 `config_fields` 里 `lte_transmission_mode` 的手册页码写错（标 p.754，实际 p.752 —— p.754 是 `PMATrix`）（P2）** —— 逐页核对确认。**本片刻意不改**：`config_fields` 进 manifest digest，改字面值会让已认证连接的 binding/compatibility digest 失配、正式执行被降级成 diagnostic（P2-55 内审 F1 的同一形态，当时为它专门加了投影与钉基线的门）。**出口：待 triage**。
+  ⚠️ **成本先别当真，但也别照抄下面的数**：本条初版写「修它要连带处理历史冻结数据」，
+  那是**推定**。第一次"实测"又查错了载体 —— 站点认证**不在任何 `*_certificates` 表里**，
+  它是 `instrument_connections.base_station_site_certification` 这个 JSON 列
+  （`app/models/instrument.py`）。用一张根本不存在的表证明「零」，方法不成立。
+  按正确载体重查本机 `meta3d_ota`：`instrument_connections` **7 行**，其中该列非空 **0 行**。
+  ⚠️ 这只是**本机开发库**，不代表现场库；且 `test_executions` 里可能另有冻结了
+  `binding_digest` 的历史行（列名待确认）。triage 时按这两个载体各跑一次计数再定档
+  （P1-48 那条 Discovered 的教训原文：「重做前先问『现在有这类数据吗』」）。
+  ⚠️ **扫描范围别当成"全部"**：本条初版写「已扫完该驱动全部 11 处页码引用」——
+  那个 11 其实是 `grep -c "p\.752"` 的结果，即只扫了 TRANsmission 相关那一批。
+  该驱动实际有 **116 处引用、50 个不同页码值**。内审另抽查了 22 个不同页码
+  （739/743/680/656/366/636-637/371/374/953/687/940/745/211/69/957-959/950-951/
+  799-801/783-785/754）未发现第二个错，所以「只有 p.754 一个错」大概率成立，
+  但那是**抽样结论不是普查结论**。p.754 的两个站点中，普通注释那处已在本片改对
+  （不进 digest），仅剩 `config_fields` 里那处待处理。
   **踩过的三个洞（重做时逐个避开）**：
   ① **判据别按「形状」猜** —— 第一版按「有数值 pass_rate + 无 provenance + 结论 passed/failed」判新旧，而 **214 份真报告的形状恰好全部命中**，会把全部真数据标成「未经验证」（反方向的假信息，比不加更糟）。改用 `road_test_execution_id` 非空才算虚拟路测报告。
   ② **判据别取客户端能写的数据** —— 换成 `road_test_execution_id` 之后，判「新/旧」仍看 `content_data`，而 `POST /reports` 允许调用方塞任意 `content_data`：加一个 `pass_rate: null` 就能自称「已标注」绕过警示。真值源必须是服务端拥有的执行记录，不是报告创建者的自述。
   ③ **警示要挂在真正走得通的出口上** —— 试过三个出口，**一个都不通**：(a) `GET /reports/{id}` 的 JSON 字段 —— 归档报告在 GUI 里进不了 `ReportViewer`（`ReportsPage.tsx:93` 挂 `<ReportList />` 不传 `onView`，而「查看」按钮由 `{onView && ...}` 守着），照不到人；(b) `/download` 的响应头 —— 被前端 `downloadReport()` 的 `response.data` 当场丢掉；(c) 改成 409 拦下载 —— 文件是拦住了，但 axios `responseType:'blob'` 把错误体也变成 Blob，`ReportList.tsx` 只显示 `error.message`（"Request failed with status code 409"），**操作员看不到为什么**。
   **附带的独立缺陷（可单独做）**：GUI 缺「查看归档报告」入口（上面 ③a），从报告列表只能下载不能看。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
+- `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **CMW500 驱动 `:2164` 还有一句同型的厂商侧否定断言（P2）** —— 原文「4 流无 RMC 表 —— 只取证了 2 流，不猜」。表 2-38/2-39 **根本没有流数这一列**，手册对此沉默，这句是「把我没找到写成手册没有」；且它跟矩阵里 `mimo_layers=4` 那格的理由（「本地无 4 天线真机证据」）对同一事实给了两种性质不同的说法，而**它才是运行时被拒绝的用户真正看到的文本**（矩阵那句只是声明）。本片新加的门只遍历 `mac_profiles` 的 dimensions，扫不到运行时拒绝语。**出口：待 triage**；改法是换成自述（「表 2-38/2-39 不按流数分行，我们只对 2 流取过证」）。
+- `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **DL RMC 表的 3GPP 归属度未在 reason 里体现（P3）** —— §2.2.19.5/.6/.7 前言都写着「For the other bandwidths and FDD, 3GPP has not yet specified DL RMCs for TM 7/8/9, **but the listed parameter combinations are supported**」，即那些表是厂商支持、非 3GPP 规定。**但本片刻意没补这句**：§2.2.19.4（支撑 TM2/TM4/TM6 = authoritative 的那节）**有同一句 caveat**，只给 TM7/8/9 补会造出「TM2-6 是 3GPP 标准、TM7/8/9 不是」的新假暗示 —— 修一层谎又造一层谎。**出口：待 triage**；要做就得逐张核 2-37..2-45 的 3GPP 归属度并同批改 TM2/TM4/TM6 的 reason。
 
 - ~~`[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。~~ ✅ **P2-38**（2026-08-23 账面清理）
 
