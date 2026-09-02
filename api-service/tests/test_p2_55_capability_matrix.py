@@ -202,7 +202,15 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
         "无 RMC 依据", "无 RMC 表依据",
     )
     # 关于「本驱动/本矩阵缺什么」的自述：这才是可核验的降级理由
-    self_scoped = ("本驱动", "本矩阵", "本地无", "未实现", "未接")
+    # ⚠️ 刻意**不含**「没有」：加进来会让「RMC 表没有覆盖 TM7」
+    #    「3GPP 没有定义该组合」「手册里没有对应命令」全部放行 —— 那正是本片
+    #    要治的那句假话的变体，而它们都不在 vendor_negations 的字面词表里。
+    #    放宽要靠加"自述主语"（本地/本模块）和"自述动词"（未支持/未验证），
+    #    不能靠加一个厂商否定也会用的通用否定词。
+    self_scoped = (
+        "本驱动", "本矩阵", "本模块", "本地",
+        "未实现", "未接", "未支持", "未验证",
+    )
 
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
@@ -835,7 +843,9 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     # 但**不排除「为」** —— 「固定为 1x2」正是要抓的写法。
     absolute_patterns = (
         r"(?:(?:固定|就是)|(?<![立随])即(?![使便时刻]))"
-        r"\s*(?:是|为)?\s*(?:\d+x\d+|单天线|双天线|\d+)",
+        # 末尾用 \d{1,2}(?!\d) 而不是 \d+：否则「即 2026-09-02」「即 752 页」
+        # 这类日期/页码会被当成"压成单值"。天线数/层数都是个位或两位。
+        r"\s*(?:是|为)?\s*(?:\d+x\d+|单天线|双天线|\d{1,2}(?!\d))",
     )
 
     for name in ("transmission_mode", "mimo_layers"):
