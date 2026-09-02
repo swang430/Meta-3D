@@ -827,10 +827,16 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     """
     import re as _re3
 
-    # 「即」用负向后行/前瞻，不用带空格的子串：`即1x2` / `，即1x2` / `即:1x2`
-    # 都能绕过 `"即 "`，而排除「立即 / 随机 / 即使」需要的正是上下文判断。
-    absolutes = ("固定", "就是")
-    absolute_patterns = (r"(?<![立随])即(?![使便时为刻])",)
+    # 只在绝对化措辞**后面紧跟一个单值**时才算违规（「固定 1x2」「即1x2」
+    # 「就是单天线」），而不是见到「固定 / 就是 / 即」就拦 —— 否则
+    # 「这就是本驱动未实现的原因」「该场景下带宽是固定的」这类正当叙述会被误伤。
+    #
+    # 「即」额外排除「使 / 便 / 时 / 刻」（即使、即便、即时、即刻）；
+    # 但**不排除「为」** —— 「固定为 1x2」正是要抓的写法。
+    absolute_patterns = (
+        r"(?:(?:固定|就是)|(?<![立随])即(?![使便时刻]))"
+        r"\s*(?:是|为)?\s*(?:\d+x\d+|单天线|双天线|\d+)",
+    )
 
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
@@ -842,11 +848,6 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
                 f"{name}={item.value!r} 引用了表 2-32 却未提及「场景」维 —— "
                 f"该表按场景 × TM 列出，同一个 TM 可能占多行：{item.reason!r}"
             )
-            for word in absolutes:
-                assert word not in item.reason, (
-                    f"{name}={item.value!r} 用「{word.strip()}」把表 2-32 的多行"
-                    f"压成了单值：{item.reason!r}"
-                )
             for pattern in absolute_patterns:
                 assert not _re3.search(pattern, item.reason), (
                     f"{name}={item.value!r} 用绝对化措辞把表 2-32 的多行压成了"
