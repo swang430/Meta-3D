@@ -83,7 +83,7 @@ P3-20/P3-21 仍不得自动启动。
    统计基下发 + 回读 + 全域 fail-closed；其现场半待真机）。P1-75 的执行兼容性硬门已由 PR #431 合并。
    下一批：**P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并**，同一次 Mock 复盘派生的
    Mock 能力、Readiness、证据终态与日志导出四片整组收口完毕；**P2-54 已由 PR #437 合并**
-   （RAT-neutral 执行冻结 MAC profile）。**当前非现场 WIP = P2-55**，与 P2-56 续收 CMW500 MAC 真值，
+   （RAT-neutral 执行冻结 MAC profile）。**当前非现场 WIP = P2-55**，与 P2-56 共同续收 CMW500 MAC 真值，
    最后 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
