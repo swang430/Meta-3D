@@ -4510,6 +4510,11 @@ profile digest。adapter manifest 声明接受的 profile kind/version；不支�
 它们既不属于 P2-66 「没有 compatibility snapshot」的历史豁免，也不得被 P2-66 的畸形证据
 fail-closed 判掉。迁移边界随本片交付，不得留给读取方在运行时猜。
 
+**2026-09-02 非现场实现**：已建立 `nr_throughput@1` / `lte_rmc@1` 两种不可变 profile、
+共同 compatibility/digest、单参数 adapter SPI、execution/commissioning/evidence/P2-66 消费链和
+GUI/OpenAPI 镜像；pre-P2-54 snapshot 明确归类 legacy 且不具正式资格。实现未新增或猜测 SCPI，
+P2-55/P2-56 的能力矩阵与 LTE TDD/真机认证范围保持不变；当前待全量验证、fresh 内审与外审闭环。
+
 ### P2-55 — CMW500 LTE FDD MAC capability matrix（批准入雷达，未启动）
 
 **可观察故障**：P2-51 只闭环了 LTE FDD、2×2、满 RB、固定 RMC 的窄切片；系统尚不能在下发前

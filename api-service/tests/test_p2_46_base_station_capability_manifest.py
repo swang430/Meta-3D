@@ -16,6 +16,7 @@ from app.hal.base_station_manifest import (
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
+    BaseStationMacProfileCapability,
     BaseStationMetricCapability,
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
@@ -79,6 +80,7 @@ def _payload(**overrides):
             }
         ],
         "operations": ["identity", "config", "cell_attach", "measurement_window"],
+        "mac_profiles": [],
         "config_fields": [_config_field(name) for name in CONFIG_FIELD_NAMES],
         "attach_stages": [_attach_stage(name) for name in ATTACH_STAGES],
         "measurement": BaseStationMeasurementCapability(
@@ -233,7 +235,11 @@ def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
     assert "input_level_control" in manifest.operations
     assert "measurement_window" in manifest.operations
     assert "rrc_reconfiguration" not in manifest.operations
-    assert "mac_throughput_config" not in manifest.operations
+    assert "mac_throughput_config" in manifest.operations
+    assert {
+        (profile.kind, profile.profile_version, profile.rat)
+        for profile in manifest.mac_profiles
+    } == {("nr_throughput", 1, "nr5g")}
     assert manifest.measurement is not None
     assert manifest.measurement.cardinality == "requested"
     assert manifest.measurement.scopes == ("pcell", "all_cells")
@@ -412,6 +418,17 @@ def test_registration_rejects_driver_class_capability_drift(
 def test_registration_rejects_manifest_operation_without_class_support(
     operation, message
 ):
+    overrides = {}
+    if operation == "mac_throughput_config":
+        overrides["mac_profiles"] = [
+            BaseStationMacProfileCapability(
+                kind="lte_rmc",
+                profile_version=1,
+                rat="lte",
+                application_evidence="authoritative_readback",
+                source_reference="Instrument_API_Doc/vendor/manual.pdf",
+            )
+        ]
     manifest = BaseStationAdapterManifest.model_validate(
         _payload(
             adapter_id="third_adapter",
@@ -426,6 +443,7 @@ def test_registration_rejects_manifest_operation_without_class_support(
             profile_requirement="not_applicable",
             profile_schema_version=None,
             profile_fields=[],
+            **overrides,
         )
     )
     registration = _third_adapter_registration(manifest=manifest)

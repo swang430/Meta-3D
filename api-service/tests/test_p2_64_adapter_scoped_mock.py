@@ -14,6 +14,10 @@ from app.hal.base_station import (
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
+from app.hal.base_station_compatibility import (
+    build_measure_execution_requirements_from_configuration,
+)
+from app.hal.base_station_mac_profile import build_mac_throughput_command_inputs
 
 
 UXM_MODEL_NAME = "UXM 5G E7515B"
@@ -179,7 +183,7 @@ def test_mock_metric_registry_is_a_diagnostic_projection_of_manifest(
             UXM_MODEL_NAME,
             {
                 "scell": False,
-                "mac_throughput": False,
+                "mac_throughput": True,
                 "rrc_reconfiguration": False,
                 "input_level_control": True,
             },
@@ -227,18 +231,26 @@ async def test_cmw_mock_implements_manifest_declared_mac_configuration():
 
     configure = getattr(driver, "configure_mac_throughput_test", None)
     assert callable(configure)
-    result = await configure(
-        mimo_layers=2,
-        mcs=18,
-        enable_amc=False,
-        tdd_pattern="DDDSU",
-        tdd_period=5.0,
-        harq_max_trans=4,
-        harq_processes=8,
-        stat_count=1000,
-        scs_khz=30,
-        csi_rs_ports=2,
-    )
+    frozen_profile = build_measure_execution_requirements_from_configuration(
+        {
+            "component_carriers": [
+                {
+                    "radio_technology": "lte",
+                    "frequency_hz": 1_842_500_000.0,
+                    "bandwidth_mhz": 20.0,
+                    "subcarrier_spacing_khz": None,
+                    "band": "B3",
+                    "duplex": "fdd",
+                    "lte_dl_earfcn": 1575,
+                    "lte_transmission_mode": "TM3",
+                    "role": "pcell",
+                }
+            ],
+            "mimo_layers": 2,
+            "theoretical_peak_throughput_mbps": None,
+        }
+    ).mac_profile
+    result = await configure(frozen_profile)
 
     assert result.ok is True
     assert MeasureExecutor._mac_config_blocker(result) is None
@@ -247,19 +259,13 @@ async def test_cmw_mock_implements_manifest_declared_mac_configuration():
     assert result.receipt.simulated is True
     assert result.receipt.operation_succeeded is True
     assert result.receipt.confirmed is False
+    expected_command_inputs = build_mac_throughput_command_inputs(frozen_profile)
     assert {field.field for field in result.receipt.fields} == {
-        "mimo_layers",
-        "mcs",
-        "enable_amc",
-        "tdd_pattern",
-        "tdd_period",
-        "harq_max_trans",
-        "harq_processes",
-        "stat_count",
-        "scs_khz",
-        "csi_rs_ports",
-        "rb_alloc",
+        field
+        for field in expected_command_inputs
+        if field not in {"profile_payload", "profile_digest"}
     }
+    assert result.receipt.profile_digest == frozen_profile.profile_digest
     assert all(
         field.status == "unknown" and field.applied is None
         for field in result.receipt.fields

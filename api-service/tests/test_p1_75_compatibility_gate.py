@@ -358,9 +358,12 @@ def test_freeze_allows_nr5g_case_on_uxm_and_seals_compatibility(db):
     assert compatibility["schema_version"] == 1
     assert compatibility["requirements"]["requested_rat"] == "nr5g"
     assert list(compatibility["requirements"]["required_operations"]) == list(
-        MEASURE_REQUIRED_OPERATIONS
+        (*MEASURE_REQUIRED_OPERATIONS, "mac_throughput_config")
     )
-    assert compatibility["requirements"]["mac_profile"] is None
+    mac_profile = compatibility["requirements"]["mac_profile"]
+    assert mac_profile["profile"]["kind"] == "nr_throughput"
+    assert mac_profile["profile"]["rat"] == "nr5g"
+    assert mac_profile["profile_digest"]
     verdict = compatibility["verdict"]
     assert verdict["status"] == "compatible"
     assert verdict["compatible"] is True

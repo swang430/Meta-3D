@@ -17,6 +17,7 @@ MANIFEST_FIELDS = {
     "capabilities",
     "rat_capabilities",
     "operations",
+    "mac_profiles",
     "config_fields",
     "attach_stages",
     "measurement",
@@ -33,6 +34,7 @@ NESTED_SCHEMAS = {
     "BaseStationAttachStageCapability",
     "BaseStationMeasurementCapability",
     "BaseStationMetricCapability",
+    "BaseStationMacProfileCapability",
 }
 
 

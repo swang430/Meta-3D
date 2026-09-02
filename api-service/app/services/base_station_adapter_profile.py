@@ -10,19 +10,62 @@ from app.hal.base_station_adapter_profile import (
     BaseStationAdapterProfileResolution,
 )
 from app.hal.base_station_compatibility import (
+    BaseStationExecutionRequirements,
     build_compatibility_payload,
     build_measure_execution_requirements_from_configuration,
     canonical_payload_digest,
 )
+from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
 from app.services.base_station_binding import resolve_base_station_binding
 from app.services.instrument_hal_service import is_mock_driver
 from app.services.instrument_test_lease import BaseStationLeaseAuditContext
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
 CMW_FORMAL_CAPABILITY_KEY = "cmw500_lte_2x2_formal_capability"
+MIMO_OTA_CONFIGURATION_FREEZE_KEY = "mimo_ota_configuration"
+
+
+def frozen_mac_profile_from_adapter_freeze(
+    frozen: Any,
+) -> FrozenMacTestProfile | None:
+    """Read the one execution-frozen MAC profile without mutable fallback.
+
+    A compatibility snapshot created before P2-54 legitimately has no
+    ``mac_profile`` field and remains readable as legacy evidence.  Once the
+    field is present, its nested digest is revalidated before any consumer may
+    use the profile.
+    """
+
+    if not isinstance(frozen, dict):
+        raise ValueError("frozen BaseStation adapter profile is malformed")
+    if "compatibility" not in frozen:
+        return None
+    compatibility = frozen["compatibility"]
+    if not isinstance(compatibility, dict):
+        raise ValueError("frozen BaseStation compatibility is malformed")
+    raw_requirements = compatibility.get("requirements")
+    if not isinstance(raw_requirements, dict):
+        raise ValueError("frozen BaseStation requirements are malformed")
+    try:
+        requirements = BaseStationExecutionRequirements.model_validate(
+            raw_requirements
+        )
+    except Exception as exc:
+        if raw_requirements.get("mac_profile") is not None:
+            raise ValueError("frozen BaseStation MAC profile is invalid") from exc
+        raise ValueError("frozen BaseStation requirements are invalid") from exc
+    if requirements.mac_profile is None:
+        return None
+    try:
+        return FrozenMacTestProfile.model_validate(
+            requirements.mac_profile.model_dump(mode="json")
+        )
+    except Exception as exc:
+        raise ValueError("frozen BaseStation MAC profile is invalid") from exc
 
 
 def _loaded_base_station(hal):
@@ -84,13 +127,10 @@ def validate_frozen_base_station_before_remote(hal, frozen: dict[str, Any]) -> s
 
 
 def _saved_test_case_configuration(db, execution) -> Any:
-    """Return the saved TestCase configuration consumed by compatibility.
+    """Return the raw saved TestCase configuration for canonical validation.
 
-    只读 ``primary_carrier``（``component_carriers[0]``）的
-    ``radio_technology`` 一个字段；缺省按 schema 默认 ``"nr5g"``
-    （``ComponentCarrierConfig.radio_technology`` 的默认值 —— 旧记录缺失时
-    精确兼容为 nr5g）。刻意不做整份 MIMOOTAConfiguration 校验：无关校验
-    失败不得混进兼容性门的失败语义（P1-75 设计稿 §4）。
+    The caller canonicalizes the complete MIMO OTA payload and derives the
+    shared RAT/MAC execution requirements before compatibility is frozen.
     """
 
     test_case_id = getattr(execution, "test_case_id", None)
@@ -164,8 +204,12 @@ def freeze_base_station_adapter_profile(
     # configured / not_applicable 两态都有 manifest → 必须对账并拒不兼容；
     # diagnostic_unbound 无 adapter 无 manifest → 显式 no_adapter，保持
     # 既有放行（模拟诊断语义，非本片放宽）。
+    saved_configuration = _saved_test_case_configuration(db, execution)
+    frozen_configuration = canonicalize_mimo_ota_configuration_payload(
+        dict(saved_configuration or {})
+    )
     requirements = build_measure_execution_requirements_from_configuration(
-        _saved_test_case_configuration(db, execution)
+        frozen_configuration
     )
     compatibility = build_compatibility_payload(requirements, resolved.manifest)
     compatibility_verdict = compatibility["verdict"]
@@ -206,6 +250,10 @@ def freeze_base_station_adapter_profile(
         # P1-75：verdict + requirements 进 identity 再算 digest ——
         # 篡改 compatibility 也会被既有 digest 抓到。
         "compatibility": compatibility,
+        # P2-54：执行使用的完整 MIMO OTA 配置与 MAC profile 在同一原子
+        # freeze 中持久化。后续 TestCase 编辑不能改变本次小区配置、理论峰值、
+        # 统计窗口或正式证据。
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_configuration,
     }
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(

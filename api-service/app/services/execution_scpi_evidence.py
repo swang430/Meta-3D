@@ -30,6 +30,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindow,
     BaseStationMetricRegistry,
     BaseStationRequestedConfig,
+    MacThroughputConfigResult,
     resolve_base_station_execution_plan,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
@@ -42,6 +43,8 @@ from app.hal.scpi_evidence import (
     InstrumentEvidenceItem,
     ScpiExchangeRef,
     exchange_matches_catalog_role,
+    exchange_has_clean_error_queue_response,
+    exchange_is_error_queue_query,
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
@@ -50,6 +53,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     BaseStationControlReleaseEvidence,
     BaseStationExecutionEvidence,
     BaseStationMeasurementWindowEvidence,
+    BaseStationMacProfileReceiptEvidence,
     FrozenPayloadSnapshot,
     PositionSnapshot,
     base_station_attempt_diagnostic_lifecycle_is_complete,
@@ -57,7 +61,10 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     canonical_snapshot_digest,
     parse_base_station_execution_evidence,
 )
-from app.services.base_station_adapter_profile import CMW_FORMAL_CAPABILITY_KEY
+from app.services.base_station_adapter_profile import (
+    CMW_FORMAL_CAPABILITY_KEY,
+    frozen_mac_profile_from_adapter_freeze,
+)
 from app.services.instrument_test_lease import (
     ActiveBaseStationLeaseIdentity,
     active_base_station_lease_identity,
@@ -296,6 +303,16 @@ def _initial_base_station_execution_evidence(
         **execution_plan.as_payload(),
         "digest": execution_plan.digest,
     }
+    frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen_adapter)
+    mac_profile_payload = (
+        {}
+        if frozen_mac_profile is None
+        else {
+            "mac_profile_contract_version": 1,
+            "mac_profile_digest": frozen_mac_profile.profile_digest,
+            "mac_profile_receipts": [],
+        }
+    )
     connection_id = frozen_adapter.get("instrument_connection_id")
     if not isinstance(connection_id, str) or not connection_id:
         raise ValueError("frozen baseStation connection identity is missing")
@@ -371,6 +388,7 @@ def _initial_base_station_execution_evidence(
             "metric_registry": metric_registry_payload,
             "execution_plan_contract_version": 1,
             "execution_plan": execution_plan_payload,
+            **mac_profile_payload,
             "measurement_windows": [],
             "control_releases": [],
             "exchange_ids": [],
@@ -413,6 +431,8 @@ def initialize_base_station_execution_evidence(
             "metric_registry",
             "execution_plan_contract_version",
             "execution_plan",
+            "mac_profile_contract_version",
+            "mac_profile_digest",
         )
         if any(
             getattr(existing, field) != getattr(candidate, field)
@@ -421,6 +441,170 @@ def initialize_base_station_execution_evidence(
             raise ValueError("baseStation evidence immutable scope mismatch")
         return existing_raw
     return save_base_station_execution_evidence(execution, candidate)
+
+
+def confirm_base_station_mac_profile(
+    db,
+    execution_id,
+    *,
+    attempt_id: str,
+    lease_identity: ActiveBaseStationLeaseIdentity,
+    result: MacThroughputConfigResult,
+) -> None:
+    """Persist the profile-scoped apply receipt for the active attempt."""
+
+    if not isinstance(result, MacThroughputConfigResult):
+        raise TypeError("result must be a MacThroughputConfigResult")
+    if result.receipt is None:
+        raise ValueError("MAC profile result is missing its field receipt")
+    receipt = result.receipt
+    if receipt.operation != "mac_throughput_config":
+        raise ValueError("MAC profile result carries the wrong receipt operation")
+    execution, evidence = _current_running_base_station_evidence(
+        db,
+        execution_id,
+        attempt_id=attempt_id,
+    )
+    if (
+        evidence.mac_profile_contract_version != 1
+        or evidence.mac_profile_digest is None
+        or evidence.mac_profile_receipts is None
+    ):
+        raise ValueError("execution evidence has no frozen MAC profile contract")
+    if (
+        result.profile_digest != evidence.mac_profile_digest
+        or receipt.profile_digest != evidence.mac_profile_digest
+    ):
+        raise ValueError("MAC profile result digest does not match execution freeze")
+    if active_base_station_lease_identity() != lease_identity:
+        raise ValueError("baseStation lease identity is not the active lease truth")
+    if (
+        lease_identity.measurement_attempt_id != attempt_id
+        or lease_identity.adapter_id != evidence.adapter
+        or not lease_identity.lease_id
+        or not lease_identity.session_token
+    ):
+        raise ValueError("baseStation lease identity does not match current evidence")
+    key = (attempt_id, lease_identity.lease_id)
+    if any(
+        (item.measurement_attempt_id, item.lease_id) == key
+        for item in evidence.mac_profile_receipts
+    ):
+        raise ValueError("MAC profile receipt already persisted")
+    fields = [
+        {
+            "field": field.field,
+            "requested": field.requested,
+            "applied": field.applied,
+            "status": field.status,
+            "reason": field.reason,
+            "exchange_ids": list(field.exchange_ids),
+        }
+        for field in receipt.fields
+    ]
+    if receipt.confirmed is True and not receipt.exchange_ids:
+        raise ValueError("confirmed MAC receipt requires field exchange evidence")
+    application_evidence = None
+    if result.application_exchanges:
+        exchanges = list(result.application_exchanges)
+        expected_execution_id = str(execution.id)
+        if any(
+            exchange.execution_id != expected_execution_id
+            or exchange.simulated
+            or exchange.result_type
+            not in {"ok", "response", "empty_response", "whitespace_response", "not_ready"}
+            for exchange in exchanges
+        ):
+            raise ValueError("MAC application evidence has an invalid execution or terminal")
+        capture_ids = {exchange.capture_id for exchange in exchanges}
+        instrument_ids = {exchange.instrument_id for exchange in exchanges}
+        active_instrument_id = getattr(lease_identity, "instrument_id", None)
+        sequences = [exchange.sequence for exchange in exchanges]
+        if (
+            len(capture_ids) != 1
+            or len(instrument_ids) != 1
+            or not isinstance(active_instrument_id, str)
+            or not active_instrument_id
+            or instrument_ids != {active_instrument_id}
+            or len(set(sequences)) != len(sequences)
+            or sequences != sorted(sequences)
+        ):
+            raise ValueError(
+                "MAC application evidence is not one ordered active-instrument capture"
+            )
+        proof_rows = []
+        for exchange in exchanges:
+            if exchange_is_error_queue_query(
+                exchange,
+                instrument=evidence.adapter,
+            ):
+                role = "error_queue"
+                clean = exchange_has_clean_error_queue_response(
+                    exchange,
+                    instrument=evidence.adapter,
+                )
+            elif exchange.operation == "command":
+                role = "command"
+                clean = None
+            else:
+                role = "observation"
+                clean = None
+            proof_rows.append(
+                {
+                    "exchange_id": exchange.exchange_id,
+                    "role": role,
+                    "sequence": exchange.sequence,
+                    "result_type": exchange.result_type,
+                    "error_queue_clean": clean,
+                }
+            )
+        proof_payload = {
+            "schema_version": 1,
+            "mode": "command_error_queue",
+            "execution_id": expected_execution_id,
+            "instrument_id": next(iter(instrument_ids)),
+            "capture_id": next(iter(capture_ids)),
+            "exchanges": proof_rows,
+        }
+        application_evidence = {
+            **proof_payload,
+            "digest": canonical_snapshot_digest(proof_payload),
+        }
+        try:
+            # Validate here so malformed live proof never reaches persistence.
+            from app.services.mimo_ota.base_station_execution_evidence import (
+                BaseStationMacApplicationEvidence,
+            )
+
+            BaseStationMacApplicationEvidence.model_validate(application_evidence)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"MAC application evidence is incomplete: {exc}") from exc
+        if [exchange.exchange_id for exchange in exchanges] != list(
+            receipt.exchange_ids
+        ):
+            raise ValueError("MAC application evidence exchange ids do not match receipt")
+
+    row = BaseStationMacProfileReceiptEvidence.model_validate(
+        {
+            "schema_version": 1,
+            "measurement_attempt_id": attempt_id,
+            "lease_id": lease_identity.lease_id,
+            "adapter": evidence.adapter,
+            "session_token": lease_identity.session_token,
+            "profile_digest": evidence.mac_profile_digest,
+            "fields": fields,
+            "confirmed": receipt.confirmed is True and receipt.simulated is False,
+            "operation_succeeded": receipt.operation_succeeded is True,
+            "simulated": receipt.simulated,
+            "reason": receipt.reason,
+            "exchange_ids": list(receipt.exchange_ids),
+            "application_evidence": application_evidence,
+        }
+    )
+    evidence.mac_profile_receipts.append(row)
+    _append_unique_exchange_ids(evidence, row.exchange_ids)
+    save_base_station_execution_evidence(execution, evidence)
+    db.flush()
 
 
 def _append_unique_exchange_ids(
@@ -918,6 +1102,12 @@ def save_base_station_execution_evidence(
         normalized.pop("execution_plan_contract_version", None)
     if "execution_plan" not in parsed.model_fields_set:
         normalized.pop("execution_plan", None)
+    if "mac_profile_contract_version" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_contract_version", None)
+    if "mac_profile_digest" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_digest", None)
+    if "mac_profile_receipts" not in parsed.model_fields_set:
+        normalized.pop("mac_profile_receipts", None)
     for parsed_window, normalized_window in zip(
         parsed.measurement_windows,
         normalized["measurement_windows"],
@@ -1072,11 +1262,15 @@ def begin_execution_base_station_measurement(
     unbound diagnostic has no adapter-owned measurement evidence.
     """
 
-    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
     from app.services.mimo_ota.base_station_execution_evidence import (
         MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
     )
-    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        frozen_mac_profile_from_adapter_freeze,
+    )
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
     from app.services.mimo_ota.executors.measure import (
         _build_pcell_requested_config,
     )
@@ -1088,7 +1282,24 @@ def begin_execution_base_station_measurement(
         "cmw500",
     }:
         return None
-    config = MIMOOTAConfiguration.model_validate(test_case.configuration)
+    compatibility = frozen.get("compatibility")
+    requirements = (
+        compatibility.get("requirements")
+        if isinstance(compatibility, dict)
+        else None
+    )
+    modern_freeze = (
+        isinstance(requirements, dict)
+        and requirements.get("mac_profile") is not None
+    )
+    if modern_freeze:
+        config = load_mimo_ota_config(execution)
+    else:
+        # Pre-P2-54 executions did not freeze the whole configuration. Preserve
+        # their historical behavior, but never use this fallback for a modern
+        # MAC-profile freeze.
+        config = MIMOOTAConfiguration.model_validate(test_case.configuration)
+    frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen)
     execution_config = dict(execution.config or {})
     frozen_peak = config.theoretical_peak_throughput_mbps
     if MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD in execution_config:
@@ -1103,7 +1314,10 @@ def begin_execution_base_station_measurement(
     initialize_base_station_execution_evidence(
         execution,
         frozen_adapter=frozen,
-        requested_config=_build_pcell_requested_config(config),
+        requested_config=_build_pcell_requested_config(
+            config,
+            mac_profile=frozen_mac_profile,
+        ),
         requested_positions=[
             {"azimuth_deg": float(azimuth), "elevation_deg": 0.0}
             for azimuth in config.azimuths_deg

@@ -31,7 +31,7 @@ from app.hal.cmw500_command_profile import (
     CmwLteFullRbRmcPlan,
     CmwRmcSelection,
 )
-from app.hal.uxm_base_station import MacThroughputConfigResult
+from app.hal.base_station import MacThroughputConfigResult
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 
 
@@ -257,7 +257,7 @@ def test_mac_min_firmware_constant_derives_from_spec_table():
 async def test_happy_path_2x2_configures_and_confirms_every_group():
     driver = _MacDriver()
 
-    result = await driver.configure_mac_throughput_test(
+    result = await driver._configure_mac_throughput_values(
         mimo_layers=2,
         mcs=28,
         enable_amc=False,
@@ -333,7 +333,7 @@ async def test_happy_path_2x2_configures_and_confirms_every_group():
 async def test_readback_mismatch_is_fail_loud():
     driver = _MacDriver(query_overrides={PADDING_QUERY: "OFF"})
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert any(item.startswith("DL_PADDING") for item in result.rejected)
@@ -348,7 +348,7 @@ async def test_instrument_rejection_via_error_queue_is_fail_loud():
         reject_writes=("CONFigure:LTE:SIGN1:CONNection:PCC:RMC:UL",)
     )
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "RMC_UL" in result.rejected
@@ -364,7 +364,7 @@ async def test_stream2_coupling_mismatch_is_fail_loud():
         query_overrides={f"{DL2_HEADER}?": "N100,QPSK,T2"}
     )
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert any(
@@ -379,7 +379,7 @@ async def test_single_layer_rejected_without_writes():
     只取证了 2 流，=1 与 =4 一样拒绝且零写入。"""
     driver = _MacDriver()
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=1)
+    result = await driver._configure_mac_throughput_values(mimo_layers=1)
 
     assert not result.ok
     assert "只取证了 2 流" in result.error
@@ -390,7 +390,7 @@ async def test_single_layer_rejected_without_writes():
 async def test_mcluster_on_breaks_contiguous_premise():
     driver = _MacDriver(query_overrides={MCLUSTER_QUERY: "ON"})
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert any(
@@ -404,7 +404,7 @@ async def test_harq_probe_failure_is_recorded_not_fatal():
         query_overrides={HARQ_QUERY: ConnectionError("probe boom")}
     )
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert result.ok
     assert "探测异常" in _fields_by_name(result)["harq_max_trans"].reason
@@ -429,7 +429,7 @@ async def test_unevidenced_request_shapes_are_rejected_without_writes(
 ):
     driver = _MacDriver()
 
-    result = await driver.configure_mac_throughput_test(**kwargs)
+    result = await driver._configure_mac_throughput_values(**kwargs)
 
     assert not result.ok
     assert result.error is not None and match in result.error
@@ -441,7 +441,7 @@ async def test_unevidenced_request_shapes_are_rejected_without_writes(
 async def test_tdd_duplex_fails_loud_without_config_writes():
     driver = _MacDriver(duplex="TDD")
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "ULD" in (result.error or "")
@@ -452,7 +452,7 @@ async def test_tdd_duplex_fails_loud_without_config_writes():
 async def test_unknown_live_bandwidth_fails_loud():
     driver = _MacDriver(bandwidth="B040")
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "B040" in (result.error or "")
@@ -463,7 +463,7 @@ async def test_unknown_live_bandwidth_fails_loud():
 async def test_firmware_below_command_set_floor_is_rejected():
     driver = _MacDriver(firmware="V3.2.10")
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert RealCmw500Driver.MAC_CFG_MIN_FIRMWARE in (result.error or "")
@@ -475,7 +475,7 @@ async def test_firmware_below_command_set_floor_is_rejected():
 async def test_unconfirmed_safe_idle_blocks_configuration():
     driver = _MacDriver(cell_state="GARBAGE")
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "SAFE_IDLE" in (result.error or "")
@@ -517,7 +517,7 @@ async def test_stale_error_queue_is_drained_not_misattributed():
     driver = _MacDriver()
     driver.pending_errors.append('-350,"Queue overflow (stale)"')
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert result.ok, f"残留错误被误归属: {result.error or result.rejected}"
 
@@ -546,7 +546,7 @@ async def test_error_after_readback_rejects_group():
     （回读被拒），不许把错误吞掉当回读成功——删 query_gate 验错本门要红。"""
     driver = _ErrorAfterReadbackDriver()
 
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert any("回读被拒" in item for item in result.rejected), result.rejected
@@ -567,7 +567,7 @@ async def test_readback_exception_drains_queue_without_poisoning_next_group():
             return super()._do_query(command)
 
     driver = _ReadbackExplodes()
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     # 异常组如实记「回读不可用」
     assert any("回读不可用" in item for item in result.rejected), result.rejected
@@ -598,7 +598,7 @@ async def test_gate_exception_during_readback_is_per_group_not_fatal():
             return response
 
     driver = _GateExplodesAfterReadback()
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert any("回读不可用" in item for item in result.rejected), result.rejected
     # 后续组仍被处理（方法没有整体中断成「下发过程中出错」）
@@ -615,7 +615,7 @@ async def test_pre_capture_exception_returns_result_not_nameerror():
             raise RuntimeError("simulated cell-state query failure")
 
     driver = _SafeIdleExplodes()
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "下发过程中出错" in (result.error or "")
@@ -646,7 +646,7 @@ async def test_write_gate_exception_is_per_group_not_fatal():
             return super()._do_query(command)
 
     driver = _GateExplodesAfterWrite()
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert any("写入验证失败" in item for item in result.rejected), result.rejected
     assert result.error is None or "下发过程中出错" not in result.error
@@ -664,7 +664,7 @@ async def test_midflight_exception_result_carries_captured_exchanges():
             return super()._do_query(command)
 
     driver = _LiveQueryExplodes()
-    result = await driver.configure_mac_throughput_test(mimo_layers=2)
+    result = await driver._configure_mac_throughput_values(mimo_layers=2)
 
     assert not result.ok
     assert "下发过程中出错" in (result.error or "")

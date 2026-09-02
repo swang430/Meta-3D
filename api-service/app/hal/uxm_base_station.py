@@ -23,7 +23,7 @@ import asyncio
 import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -49,6 +49,7 @@ from app.hal.base_station import (
     BaseStationMeasurementWindowTrust,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
+    MacThroughputConfigResult,
     CellState,
     ThroughputMetrics,
 )
@@ -64,7 +65,22 @@ from app.hal.base_station_manifest import (
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
     BaseStationMetricCapability,
+    BaseStationMacProfileCapability,
     BaseStationRatCapability,
+)
+from app.hal.base_station_mac_profile import (
+    FrozenMacTestProfile,
+    NrMacTestProfileV1,
+    UXM_NR_PROFILE_SOURCE,
+    UXM_NR_CSI_RS_PORTS_VALUES as _CSIRS_NPORTS_VALUES,
+    UXM_NR_HARQ_MAX_TRANS_VALUES as _HARQ_MAXTRANS_VALUES,
+    UXM_NR_HARQ_PROCESSES_VALUES as _HARQ_PROCESSES_VALUES,
+    UXM_NR_SLOT_DURATION_MS,
+    UXM_NR_SCS_VALUES,
+    UXM_NR_TDD_PERIOD_MS,
+    UXM_NR_TDD_PERIOD_TOKENS as _TDD_PERIOD_TOKENS,
+    build_mac_throughput_command_inputs,
+    require_frozen_mac_profile,
 )
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
@@ -112,27 +128,19 @@ class UxmLocalControlReservedError(RuntimeError):
 
 
 # ── P1-33：值形态。全部取自厂商手册原件的 Range 字段，**不是编的**。
-#    旧的无前缀写法发的是裸值（`4` / `16` / `"5MS"` / `"ALL"`），
-#    手册要的是枚举 token（`N4` / `N16` / `MS5`）或整数 PRB 数。
-_TDD_PERIOD_TOKENS = {          # Enum，默认 MS5
-    "0.5MS": "MS0P5", "0.625MS": "MS0P625", "1MS": "MS1", "1.25MS": "MS1P25",
-    "2MS": "MS2", "2.5MS": "MS2P5", "3MS": "MS3", "4MS": "MS4",
-    "5MS": "MS5", "10MS": "MS10",
-}
-_HARQ_MAXTRANS_VALUES = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28)
-_HARQ_PROCESSES_VALUES = (1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32)
-_CSIRS_NPORTS_VALUES = (1, 2, 4, 8, 12, 16, 24, 32)
+#    canonical profile 与驱动共用 base_station_mac_profile 的同一组枚举；
+#    旧的无前缀写法发的是裸值，手册要的是枚举 token 或整数 PRB 数。
 _TDD_PERIOD_MS = {
-    "MS0P5": 0.5, "MS0P625": 0.625, "MS1": 1.0, "MS1P25": 1.25, "MS2": 2.0,
-    "MS2P5": 2.5, "MS3": 3.0, "MS4": 4.0, "MS5": 5.0, "MS10": 10.0,
+    token: UXM_NR_TDD_PERIOD_MS[label]
+    for label, token in _TDD_PERIOD_TOKENS.items()
 }
-_SCS_MU_TOKENS = {15: "MU0", 30: "MU1", 60: "MU2", 120: "MU3"}
+_SCS_MU_TOKENS = dict(zip(UXM_NR_SCS_VALUES, ("MU0", "MU1", "MU2", "MU3")))
 
 
 def _slot_ms(scs_khz):
     """NR 一个 slot 多少毫秒：15→1.0 / 30→0.5 / 60→0.25 / 120→0.125。
     对不上表的 SCS 返回 None，由调用处 fail-loud（不猜）。"""
-    return {15: 1.0, 30: 0.5, 60: 0.25, 120: 0.125}.get(int(scs_khz or 0))
+    return UXM_NR_SLOT_DURATION_MS.get(int(scs_khz or 0))
 
 
 def _enum_token(prefix, value, allowed):
@@ -160,58 +168,6 @@ def _tdd_slots_from_pattern(pattern):
     if not re.fullmatch(r"D*S?U*", p):
         return None
     return p.count("D"), p.count("U")
-
-
-@dataclass(frozen=True)
-class MacThroughputConfigResult:
-    """`configure_mac_throughput_test()` 的结果 —— **不是 bool**（P1-32）。
-
-    上一版返回 `bool` 且调用方**丢弃**它，于是「一条都没配上」与「全配好了」
-    在调用点长得一模一样，测试照常在没配置过的链路上跑完。
-
-    ⚠ `applied` 只列**真发出去**的命令 —— 同本文件 `set_cell_config` 的禁令
-    「半生效配置不许报 applied」。
-    """
-
-    applied: Tuple[str, ...] = ()
-    skipped: Tuple[str, ...] = ()
-    missing_mandatory: Tuple[str, ...] = ()
-    # ⚠️ 2026-08-07 现场血泪：`missing_mandatory` 是 **mandatory ∩ skipped**，
-    #   而 `skipped` 有**两种成因**：① profile 里这条命令是 None（真缺口）；
-    #   ② 命令在，但值翻译失败/校验不过导致**整组没发**。
-    #   调用方的消息此前对两者一律说「**本 profile 未定义**」——
-    #   ②的情况下那是**假话**，而它把 2026-08-07 的现场诊断带偏了两次：
-    #   先据此把 fail-loud 门降级，再据此准备"补命令"（命令根本不缺）。
-    #   本字段只装①，让调用方能说真话。
-    undefined_on_profile: Tuple[str, ...] = ()
-    error: Optional[str] = None
-    # P1-33：发出去了但**被仪器拒**（`SYST:ERR?` 逐组回读）。
-    #   与 `skipped`（profile 没定义）是两回事：这批是"我们发了、它不认"，
-    #   正是「IRAT 认不认这些手册命令」这个未知量的**实测答案**。
-    rejected: Tuple[str, ...] = ()
-    # P1-33：**手册里根本没有对应命令**的设置（如吞吐量统计窗口）。
-    #   既不是 profile 缺项、也不是被拒 —— 单列，报告里写明不受控。
-    no_equivalent: Tuple[str, ...] = ()
-    # P2-51：逐字段 requested/applied/exchange_ids 证据回执
-    # （BaseStationApplyReceipt, operation="mac_throughput_config"）。
-    # CMW500 驱动产出；UXM 暂不产（默认 None，消费方按可选处理）。
-    receipt: Optional[BaseStationApplyReceipt] = None
-
-    @property
-    def ok(self) -> bool:
-        """全部**必要**命令都发了、**没被拒**、且没出异常。
-
-        可选命令缺席、以及手册无对应命令的设置，都不影响 `ok`。
-        ⚠ `rejected` 必须计入 —— 发出去被拒跟没发是一样的后果
-        （配置没生效），只是原因不同（P1-33）。
-        """
-        return (not self.missing_mandatory and not self.rejected
-                and self.error is None)
-
-    def __bool__(self) -> bool:
-        # 兼容旧的 `if await configure(...)` 布尔用法；但调用方**应当**看
-        # `missing_mandatory`（它能说出到底哪几条没下去）。
-        return self.ok
 
 
 # ===========================================================================
@@ -374,6 +330,16 @@ class RealUxmDriver(BaseStationDriver):
             "safe_idle_release",
             "input_level_control",
             "measurement_window",
+            "mac_throughput_config",
+        ),
+        mac_profiles=(
+            BaseStationMacProfileCapability(
+                kind="nr_throughput",
+                profile_version=1,
+                rat="nr5g",
+                application_evidence="command_error_queue",
+                source_reference=UXM_NR_PROFILE_SOURCE,
+            ),
         ),
         config_fields=tuple(
             BaseStationConfigFieldCapability(
@@ -2844,6 +2810,35 @@ class RealUxmDriver(BaseStationDriver):
 
     async def configure_mac_throughput_test(
         self,
+        frozen_profile: FrozenMacTestProfile,
+    ) -> MacThroughputConfigResult:
+        frozen = require_frozen_mac_profile(
+            frozen_profile,
+            expected_kind="nr_throughput",
+            expected_rat="nr5g",
+        )
+        mac_profile = frozen.profile
+        if not isinstance(mac_profile, NrMacTestProfileV1):
+            raise ValueError("frozen MAC profile is not an NR throughput profile")
+        command_inputs = build_mac_throughput_command_inputs(frozen)
+        with capture_scpi_exchanges() as exchanges:
+            result = await self._configure_mac_throughput_values(**command_inputs)
+        receipt = result.receipt
+        if receipt is None:
+            return result
+        exchange_ids = tuple(item.exchange_id for item in exchanges)
+        fields = tuple(
+            replace(field, exchange_ids=exchange_ids)
+            for field in receipt.fields
+        )
+        return replace(
+            result,
+            receipt=replace(receipt, fields=fields),
+            application_exchanges=tuple(exchanges),
+        )
+
+    async def _configure_mac_throughput_values(
+        self,
         mimo_layers: int = 2,
         mcs: int = 28,
         rb_alloc: str = "ALL",
@@ -2858,6 +2853,8 @@ class RealUxmDriver(BaseStationDriver):
         tdd_ul_symbols: int = 4,
         scs_khz: Optional[int] = None,
         csi_rs_ports: Optional[int] = None,
+        profile_payload: Optional[dict[str, Any]] = None,
+        profile_digest: Optional[str] = None,
     ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
@@ -2906,6 +2903,67 @@ class RealUxmDriver(BaseStationDriver):
         applied: List[str] = []
         skipped: List[str] = []
         rejected: List[str] = []
+
+        def _result(
+            *,
+            error: Optional[str] = None,
+            missing_mandatory: tuple[str, ...] = (),
+            undefined_on_profile: tuple[str, ...] = (),
+        ) -> MacThroughputConfigResult:
+            operation_succeeded = (
+                error is None and not missing_mandatory and not rejected
+            )
+            receipt = BaseStationApplyReceipt(
+                schema_version=1,
+                operation="mac_throughput_config",
+                fields=(
+                    BaseStationFieldReceipt(
+                        field="mac_profile",
+                        requested=(
+                            profile_payload
+                            if profile_payload is not None
+                            else {
+                                "mimo_layers": mimo_layers,
+                                "mcs": mcs,
+                                "rb_alloc": rb_alloc,
+                                "enable_amc": enable_amc,
+                                "tdd_pattern": tdd_pattern,
+                                "tdd_period": tdd_period,
+                                "harq_max_trans": harq_max_trans,
+                                "harq_processes": harq_processes,
+                                "stat_count": stat_count,
+                                "scs_khz": scs_khz,
+                                "csi_rs_ports": csi_rs_ports,
+                            }
+                        ),
+                        applied=None,
+                        status="unknown",
+                        reason=(
+                            "UXM command groups were sent, but this method has no "
+                            "single authoritative full-profile readback"
+                        ),
+                    ),
+                ),
+                reason=(
+                    "UXM MAC profile operation completed with partial field evidence"
+                    if operation_succeeded
+                    else "UXM MAC profile operation was not completed"
+                ),
+                simulated=False,
+                operation_succeeded=operation_succeeded,
+                profile_digest=profile_digest,
+            )
+            return MacThroughputConfigResult(
+                applied=tuple(applied),
+                skipped=tuple(skipped),
+                missing_mandatory=missing_mandatory,
+                undefined_on_profile=undefined_on_profile,
+                error=error,
+                rejected=tuple(rejected),
+                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
+                receipt=receipt,
+                profile_digest=profile_digest,
+            )
 
         def _emit(name: str, suffix: str, **fmt) -> None:
             """发一条配置命令；方言没定义就记进 `skipped`，**不抛**。
@@ -3003,9 +3061,7 @@ class RealUxmDriver(BaseStationDriver):
             if enable_amc:
                 # 开 AMC 的唯一已知路径就是被 -113 的 slot 级 APOLicy CQI ——
                 # 不能假装开了继续测（静默测错的量 > 显式失败）。
-                return MacThroughputConfigResult(
-                    applied=tuple(applied), skipped=tuple(skipped),
-                    rejected=tuple(rejected),
+                return _result(
                     error=(
                         "enable_amc=True 在本方言没有已验证的下发路径："
                         "slot 级 DL:RRESource:APOLicy 2026-08-07 实测 -113"
@@ -3198,11 +3254,9 @@ class RealUxmDriver(BaseStationDriver):
                 n for n in missing
                 if getattr(self._cmds, n, None) is None
             )
-            result = MacThroughputConfigResult(
-                applied=tuple(applied), skipped=tuple(skipped),
-                missing_mandatory=missing, undefined_on_profile=undefined,
-                rejected=tuple(rejected),
-                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
+            result = _result(
+                missing_mandatory=missing,
+                undefined_on_profile=undefined,
             )
             if missing:
                 # ⚠ **不静默** —— 缺任一必要命令，测出来的就不是那个量。
@@ -3257,16 +3311,13 @@ class RealUxmDriver(BaseStationDriver):
             #   把人指向 P1-33，而真正的问题是**传输错误**。
             #   没轮到发的命令既不在 `applied` 也不在 `skipped`，
             #   它们的失败由 `error` 表达，不该冒充 profile 缺项。
-            return MacThroughputConfigResult(
-                applied=tuple(applied), skipped=tuple(skipped),
+            return _result(
                 missing_mandatory=tuple(
                     n for n in self.MAC_CFG_MANDATORY if n in skipped),
                 # 与正常路径同源：只有 profile 上真没这条命令才算 undefined。
                 undefined_on_profile=tuple(
                     n for n in self.MAC_CFG_MANDATORY
                     if n in skipped and getattr(self._cmds, n, None) is None),
-                rejected=tuple(rejected),
-                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
                 error=f"{type(e).__name__}: {e}",
             )
 

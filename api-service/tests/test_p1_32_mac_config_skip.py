@@ -13,10 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.hal.uxm_base_station import (
-    MacThroughputConfigResult,
-    RealUxmDriver,
-)
+from app.hal.base_station import MacThroughputConfigResult
+from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import (
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
@@ -80,7 +78,7 @@ def _run(profile, responses=None, **kw):
     #   夹具不传就走"不校验就不发"，测的就不是本门要测的东西了。
     kw.setdefault("scs_khz", 15)
     writes = _stub_io(d, resp)
-    res = asyncio.run(d.configure_mac_throughput_test(**kw))
+    res = asyncio.run(d._configure_mac_throughput_values(**kw))
     return res, writes
 
 
@@ -341,7 +339,7 @@ class TestAmcProbeContract:
 
         d._drain_errors = _probe_window_gets_113  # type: ignore[assignment]
         res = asyncio.run(
-            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
+            d._configure_mac_throughput_values(mimo_layers=2, scs_khz=15))
         assert res.ok is True, (
             "探测 -113 被当成配置失败 —— 那就回到了『每轮现场都死在 AMC』")
         assert res.rejected == () and res.error is None
@@ -375,7 +373,7 @@ class TestExceptionPathDoesNotLie:
         # 错误队列的 clean 语义是 code 0；裸 1 不是 clean，会被 P1-41 的
         # fail-closed 上限门在写入前正确拦下，反而测不到本例的中途写异常。
         d._do_query = lambda cmd, **kw: '0,"No error"'
-        res = asyncio.run(d.configure_mac_throughput_test(mimo_layers=2))
+        res = asyncio.run(d._configure_mac_throughput_values(mimo_layers=2))
 
         assert res.error is not None, "异常被吞了还不留痕 —— 记录在说假话"
         assert "OSError" in res.error

@@ -124,7 +124,7 @@ def test_mac_configuration_aborts_without_writes_when_default_limit_is_exhausted
     driver._do_query = _query  # type: ignore[method-assign]
     driver._do_write = writes.append  # type: ignore[method-assign]
 
-    result = asyncio.run(driver.configure_mac_throughput_test(scs_khz=15))
+    result = asyncio.run(driver._configure_mac_throughput_values(scs_khz=15))
 
     assert len([q for q in queries if q == driver._cmds.ERR]) == 16
     assert writes == []
@@ -149,7 +149,7 @@ def test_mac_configuration_aborts_before_business_writes_when_err_query_self_rep
     driver._do_query = _query  # type: ignore[method-assign]
     driver._do_write = writes.append  # type: ignore[method-assign]
 
-    result = asyncio.run(driver.configure_mac_throughput_test(scs_khz=15))
+    result = asyncio.run(driver._configure_mac_throughput_values(scs_khz=15))
 
     assert queries == [driver._cmds.ERR, driver._cmds.ERR]
     assert writes == []
@@ -179,7 +179,7 @@ def test_mac_configuration_aborts_at_first_group_when_err_query_turns_self_reple
     driver._do_query = _query  # type: ignore[method-assign]
     driver._do_write = writes.append  # type: ignore[method-assign]
 
-    result = asyncio.run(driver.configure_mac_throughput_test(scs_khz=15))
+    result = asyncio.run(driver._configure_mac_throughput_values(scs_khz=15))
 
     assert [q for q in queries if q == driver._cmds.ERR] == [
         driver._cmds.ERR,

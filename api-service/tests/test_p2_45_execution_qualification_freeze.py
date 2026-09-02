@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.hal.base_station_compatibility import canonical_payload_digest
+from app.hal.base_station_compatibility import (
+    build_frozen_compatibility_payload,
+    build_measure_execution_requirements,
+    canonical_payload_digest,
+    evaluate_base_station_compatibility,
+)
+from app.hal.uxm_base_station import RealUxmDriver
 from app.models.test_plan import TestExecution
 from app.services.base_station_adapter_profile import (
     FREEZE_CONFIG_KEY,
@@ -19,12 +25,14 @@ from app.services.execution_qualification import (
     revoke_base_station_site_certification,
     validate_frozen_execution_qualification,
 )
+from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
     evaluate_base_station_metric_trust,
 )
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 from tests.p1_73c_evidence_fixtures import POSITION, REQUESTED_CONFIG
 from tests.test_p2_45_site_certification_api import _source_execution, db  # noqa: F401
 
@@ -75,6 +83,15 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
         execution.config[EXECUTION_QUALIFICATION_KEY]
     ) is None
 
+    original = load_mimo_ota_config(execution)
+    case.configuration = canonicalize_mimo_ota_configuration_payload(
+        {"mimo_layers": 4, "mcs": 3}
+    )
+    db.flush()
+    immutable = load_mimo_ota_config(execution)
+    assert immutable.mimo_layers == original.mimo_layers
+    assert immutable.mac_profile.profile_digest == original.mac_profile.profile_digest
+
     case.execution_policy = TestCaseExecutionPolicy(
         schema_version=1,
         mode="diagnostic",
@@ -91,6 +108,25 @@ def test_matching_active_certification_freezes_formal_and_later_changes_do_not_r
     db.commit()
 
     assert freeze_execution_qualification(db, execution, case) == frozen
+
+
+def test_frozen_configuration_must_match_frozen_requirements(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    execution = _pending_execution(db, case)
+    adapter_freeze = freeze_base_station_adapter_profile(db, hal, execution, lab)
+    freeze_execution_qualification(db, execution, case)
+
+    adapter_freeze["mimo_ota_configuration"] = (
+        canonicalize_mimo_ota_configuration_payload({"mimo_layers": 4, "mcs": 3})
+    )
+    adapter_freeze["digest"] = canonical_payload_digest(
+        {key: value for key, value in adapter_freeze.items() if key != "digest"}
+    )
+    execution.config[FREEZE_CONFIG_KEY] = adapter_freeze
+
+    outcome = project_execution_evidence_outcome(execution)
+    assert outcome.compatibility_classification == "invalid"
+    assert "configuration" in "\n".join(outcome.reasons)
 
 
 def test_formal_metric_uses_site_certification_instead_of_retired_cmw_approval(db):
@@ -246,6 +282,37 @@ def test_pre_p1_75_formal_execution_keeps_its_frozen_qualification_gate(db):
     execution.config = config
 
     assert load_mimo_ota_config(execution).precheck_strict_cal is True
+
+
+def test_pre_p2_54_null_mac_profile_freeze_remains_loadable_legacy(db):
+    _connection, lab, case, hal, _certification = _active_site(db)
+    expected_kind = canonicalize_mimo_ota_configuration_payload(
+        case.configuration
+    )["mac_profile"]["profile"]["kind"]
+    execution = _pending_execution(db, case)
+    freeze_base_station_adapter_profile(db, hal, execution, lab)
+    freeze_execution_qualification(db, execution, case)
+
+    config = dict(execution.config)
+    old_freeze = dict(config[FREEZE_CONFIG_KEY])
+    requirements = build_measure_execution_requirements("nr5g")
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealUxmDriver.adapter_manifest,
+    )
+    old_freeze["compatibility"] = build_frozen_compatibility_payload(
+        requirements,
+        verdict,
+    )
+    old_freeze.pop("mimo_ota_configuration")
+    old_freeze["digest"] = canonical_payload_digest(
+        {key: value for key, value in old_freeze.items() if key != "digest"}
+    )
+    config[FREEZE_CONFIG_KEY] = old_freeze
+    execution.config = config
+
+    assert old_freeze["compatibility"]["requirements"]["mac_profile"] is None
+    assert load_mimo_ota_config(execution).mac_profile.profile.kind == expected_kind
 
 
 def test_factory_copies_server_policy_to_execution_snapshot(db):

@@ -168,6 +168,7 @@ def _lease(adapter: str = "cmw500") -> ActiveBaseStationLeaseIdentity:
         measurement_attempt_id="attempt-1",
         adapter_id=adapter,
         session_token="session-1",
+        instrument_id="uxm" if adapter == "uxm" else "cmw",
     )
 
 

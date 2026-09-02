@@ -19,13 +19,22 @@ from app.hal.base_station_compatibility import (
     canonical_payload_digest,
     evaluate_base_station_compatibility,
     manifest_compatibility_digest,
+    build_measure_execution_requirements_from_configuration,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_mac_profile import (
+    CMW500_LTE_PROFILE_SOURCE,
+    UXM_NR_PROFILE_SOURCE,
+)
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
     ExecutionQualification,
     validate_frozen_execution_qualification,
+)
+from app.services.base_station_adapter_profile import (
+    MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    frozen_mac_profile_from_adapter_freeze,
 )
 
 
@@ -39,6 +48,30 @@ CompletionSemantic = Literal[
     "not_completed",
 ]
 QualificationClassification = Literal["formal", "diagnostic", "legacy"]
+
+
+_PRE_P2_54_MANIFESTS = {
+    "uxm": {
+        "digest": "f0c48a1a28ddfc17995b84a20bd826e429a4f46de5dcdc7928bdaa459c6656fa",
+        "profile": {
+            "kind": "nr_throughput",
+            "profile_version": 1,
+            "rat": "nr5g",
+            "application_evidence": "command_error_queue",
+            "source_reference": UXM_NR_PROFILE_SOURCE,
+        },
+    },
+    "cmw500": {
+        "digest": "e64a9ef3959911a3a6a54d0ac47cccf22b9c6af43b19034b8c1996559d35c62f",
+        "profile": {
+            "kind": "lte_rmc",
+            "profile_version": 1,
+            "rat": "lte",
+            "application_evidence": "authoritative_readback",
+            "source_reference": CMW500_LTE_PROFILE_SOURCE,
+        },
+    },
+}
 
 
 class ExecutionEvidenceOutcome(BaseModel):
@@ -66,6 +99,56 @@ def _outer_freeze_digest_error(frozen: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _historical_manifest_compatibility_error(
+    raw_manifest: Any,
+    *,
+    requirements: BaseStationExecutionRequirements,
+    verdict: BaseStationCompatibilityVerdict,
+    adapter: str,
+) -> str | None:
+    """Validate an exact pre-P2-54 manifest without rewriting its digest."""
+
+    if not isinstance(raw_manifest, Mapping) or "mac_profiles" in raw_manifest:
+        return "frozen resolved binding manifest does not parse"
+    historical_payload = dict(raw_manifest)
+    historical_contract = _PRE_P2_54_MANIFESTS.get(adapter)
+    historical_digest = canonical_payload_digest(historical_payload)
+    if (
+        historical_contract is None
+        or historical_digest != historical_contract["digest"]
+    ):
+        return "frozen manifest is not an exact supported historical manifest"
+    validation_payload = {
+        **historical_payload,
+        "mac_profiles": (historical_contract["profile"],),
+    }
+    if "mac_throughput_config" not in validation_payload.get("operations", ()):
+        operations = (
+            *validation_payload.get("operations", ()),
+            "mac_throughput_config",
+        )
+        validation_payload["operations"] = operations
+        validation_payload["capabilities"] = operations
+    try:
+        manifest = BaseStationAdapterManifest.model_validate(validation_payload)
+    except (ValidationError, ValueError, TypeError):
+        return "frozen resolved binding manifest does not parse"
+    if manifest.adapter_id != adapter:
+        return "frozen resolved binding manifest does not match adapter resolution"
+    if historical_digest != verdict.manifest_digest:
+        return "frozen compatibility manifest does not match resolved binding"
+    authoritative_verdict = evaluate_base_station_compatibility(
+        requirements,
+        manifest,
+    ).model_copy(update={"manifest_digest": verdict.manifest_digest})
+    if verdict != authoritative_verdict:
+        return (
+            "frozen compatibility verdict does not match authoritative "
+            "re-evaluation"
+        )
+    return None
+
+
 def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
     compatibility = frozen.get("compatibility")
     if not isinstance(compatibility, Mapping):
@@ -81,6 +164,22 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
         return "frozen compatibility payload does not parse"
     if requirements.digest != verdict.requirements_digest:
         return "frozen compatibility requirements digest drifted"
+    if MIMO_OTA_CONFIGURATION_FREEZE_KEY in frozen:
+        configuration = frozen[MIMO_OTA_CONFIGURATION_FREEZE_KEY]
+        if not isinstance(configuration, Mapping):
+            return "frozen MIMO OTA configuration is malformed"
+        try:
+            derived_requirements = (
+                build_measure_execution_requirements_from_configuration(
+                    dict(configuration)
+                )
+            )
+        except (ValidationError, ValueError, TypeError):
+            return "frozen MIMO OTA configuration does not parse"
+        if derived_requirements != requirements:
+            return "frozen MIMO OTA configuration does not match requirements"
+    elif requirements.mac_profile is not None:
+        return "frozen MIMO OTA configuration is missing"
     if verdict.status == "incompatible" or verdict.compatible is not True:
         return "frozen compatibility verdict is incompatible"
 
@@ -125,6 +224,14 @@ def _compatibility_snapshot_error(frozen: Mapping[str, Any]) -> str | None:
         if raw_manifest is not None:
             return "frozen no_adapter verdict unexpectedly includes a manifest"
         return None
+    if requirements.mac_profile is None and isinstance(raw_manifest, Mapping):
+        if "mac_profiles" not in raw_manifest:
+            return _historical_manifest_compatibility_error(
+                raw_manifest,
+                requirements=requirements,
+                verdict=verdict,
+                adapter=adapter,
+            )
     try:
         manifest = BaseStationAdapterManifest.model_validate(raw_manifest)
     except (ValidationError, ValueError, TypeError):
@@ -233,6 +340,133 @@ def _qualification_freeze_alignment_error(
     return None
 
 
+def validate_frozen_mac_profile_evidence(
+    config: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    *,
+    require_formal_confirmation: bool,
+) -> str | None:
+    """Validate P2-54 profile/receipt alignment from immutable evidence only."""
+
+    # Local import avoids package initialization cycling through executors,
+    # which themselves consume this outcome projector.
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD,
+        BaseStationExecutionEvidence,
+        _attempt_lifecycle_envelope,
+        parse_base_station_execution_evidence,
+    )
+
+    try:
+        profile = frozen_mac_profile_from_adapter_freeze(dict(frozen))
+    except ValueError as exc:
+        return str(exc)
+    raw = config.get(BASE_STATION_EXECUTION_EVIDENCE_FIELD)
+    if raw is None:
+        if profile is not None and require_formal_confirmation:
+            return "formal execution is missing baseStation execution evidence"
+        return None
+    if not isinstance(raw, dict):
+        return "baseStation execution evidence is malformed"
+    normalized = parse_base_station_execution_evidence(raw)
+    if normalized is None:
+        return "baseStation execution evidence is malformed"
+    evidence = BaseStationExecutionEvidence.model_validate(normalized)
+    resolution = frozen.get("resolution")
+    frozen_adapter = (
+        resolution.get("adapter") if isinstance(resolution, Mapping) else None
+    )
+    if (
+        profile is not None
+        and frozen_adapter is not None
+        and evidence.adapter != frozen_adapter
+    ):
+        return "MAC evidence adapter does not match frozen adapter"
+    if profile is None:
+        if evidence.mac_profile_contract_version is not None:
+            return "legacy compatibility carries unexpected MAC profile evidence"
+        return None
+    if (
+        evidence.mac_profile_contract_version != 1
+        or evidence.mac_profile_digest != profile.profile_digest
+        or evidence.mac_profile_receipts is None
+    ):
+        return "frozen MAC profile evidence digest mismatch"
+    if not require_formal_confirmation:
+        return None
+    resolved_binding = frozen.get("resolved_binding")
+    raw_manifest = (
+        resolved_binding.get("manifest")
+        if isinstance(resolved_binding, Mapping)
+        else None
+    )
+    try:
+        manifest = BaseStationAdapterManifest.model_validate(raw_manifest)
+    except (ValidationError, ValueError, TypeError):
+        return "formal MAC evidence has no frozen adapter manifest"
+    profile_identity = (
+        profile.profile.kind,
+        profile.profile.profile_version,
+        profile.profile.rat,
+        profile.profile.source_reference,
+    )
+    matching_capabilities = [
+        item
+        for item in manifest.mac_profiles
+        if (
+            item.kind,
+            item.profile_version,
+            item.rat,
+            item.source_reference,
+        )
+        == profile_identity
+    ]
+    if len(matching_capabilities) != 1:
+        return "formal MAC evidence does not match frozen adapter capability"
+    attempt_id = evidence.current_measurement_attempt_id
+    matching = [
+        row
+        for row in evidence.mac_profile_receipts
+        if row.measurement_attempt_id == attempt_id
+    ]
+    if len(matching) != 1:
+        return "formal execution has no current-attempt MAC receipt"
+    receipt = matching[0]
+    evidence_mode = matching_capabilities[0].application_evidence
+    if evidence_mode == "authoritative_readback":
+        if receipt.confirmed is not True:
+            return "formal execution has no confirmed current-attempt MAC receipt"
+    elif (
+        receipt.operation_succeeded is not True
+        or receipt.simulated is not False
+        or receipt.application_evidence is None
+        or receipt.application_evidence.execution_id != evidence.execution_id
+        or receipt.application_evidence.mode != evidence_mode
+        or any(
+            field.status == "not_applicable" or not field.exchange_ids
+            for field in receipt.fields
+        )
+    ):
+        return (
+            "formal execution has no complete current-attempt MAC "
+            "command/error-queue evidence"
+        )
+    if evidence.current_measurement_attempt_state != "completed":
+        return "formal MAC receipt measurement attempt is not completed"
+    accepted, _, windows = _attempt_lifecycle_envelope(evidence, attempt_id)
+    if not accepted:
+        return "formal MAC receipt has no confirmed current-attempt lifecycle"
+    if not set(receipt.exchange_ids).issubset(evidence.exchange_ids):
+        return "formal MAC receipt exchanges are outside execution evidence"
+    if not any(
+        window.lease_id == receipt.lease_id
+        and window.session_token == receipt.session_token
+        for window in windows
+    ):
+        return "formal MAC receipt lease/session does not match measurement window"
+    return None
+
+
 def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutcome:
     """Project frozen evidence plus current lifecycle into shared semantics."""
 
@@ -268,6 +502,9 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
             compatibility = frozen["compatibility"]
             assert isinstance(compatibility, Mapping)
             compatibility_digest = canonical_payload_digest(compatibility)
+            requirements = BaseStationExecutionRequirements.model_validate(
+                compatibility.get("requirements")
+            )
             verdict = BaseStationCompatibilityVerdict.model_validate(
                 compatibility.get("verdict")
             )
@@ -275,9 +512,39 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
                 frozen,
                 qualification_snapshot,
             )
+            mac_evidence_error = validate_frozen_mac_profile_evidence(
+                config,
+                frozen,
+                require_formal_confirmation=(
+                    qualification == "formal"
+                    and (
+                        pipeline_status == "completed"
+                        or (
+                            isinstance(
+                                config.get("base_station_execution_evidence"),
+                                Mapping,
+                            )
+                            and config["base_station_execution_evidence"].get(
+                                "current_measurement_attempt_state"
+                            )
+                            == "completed"
+                        )
+                    )
+                ),
+            )
             if alignment_error is not None:
                 classification = "invalid"
                 reasons.append(alignment_error)
+            elif mac_evidence_error is not None:
+                classification = "invalid"
+                reasons.append(mac_evidence_error)
+            elif requirements.mac_profile is None:
+                classification = (
+                    "diagnostic" if qualification == "diagnostic" else "legacy"
+                )
+                reasons.append(
+                    "pre-P2-54 compatibility snapshot has no frozen MAC profile"
+                )
             elif verdict.status == "no_adapter" or qualification == "diagnostic":
                 classification = "diagnostic"
             else:

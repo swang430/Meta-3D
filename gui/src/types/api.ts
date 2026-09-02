@@ -2,6 +2,14 @@ export type MetricTrend = '↑' | '↓' | '→' | string
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }
+import type { FrozenMacTestProfile } from './macTestProfile'
+export type {
+  FrozenMacTestProfile,
+  LteRmcMacTestProfileV1,
+  MacMetricRequirement,
+  MacStatisticalWindow,
+  NrMacTestProfileV1,
+} from './macTestProfile'
 
 export type MetricItem = {
   label: string
@@ -360,7 +368,7 @@ export type BaseStationCompatibilityPreviewResponse = {
     schema_version: 1
     requested_rat: 'nr5g' | 'lte'
     required_operations: string[]
-    mac_profile: null
+    mac_profile?: FrozenMacTestProfile | null
   } | null
   verdict: {
     schema_version: 1

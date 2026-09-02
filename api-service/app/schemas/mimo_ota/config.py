@@ -98,6 +98,14 @@ from app.hal.lte_earfcn import (
     validate_lte_downlink_operating_point,
 )
 from app.hal.base_station import LteTransmissionMode
+from app.hal.base_station_mac_profile import (
+    CMW500_LTE_PROFILE_SOURCE,
+    UXM_NR_PROFILE_SOURCE,
+    FrozenMacTestProfile,
+    LteRmcMacTestProfileV1,
+    NrMacTestProfileV1,
+    uxm_nr_tdd_period_for_pattern,
+)
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 
 
@@ -393,6 +401,10 @@ class MIMOOTAConfiguration(BaseModel):
     mimo_port_preset: Optional[str] = None  # siso / 2x2 / 4x4 / 2x2_alt
     sched_algo: Optional[str] = None  # PDSCH 调度算法 (e.g. FULLBUFFER)
     csi_rs_ports: Optional[int] = None  # CSI-RS 端口数
+    # P2-54: execution-owned, RAT-discriminated MAC truth.  The flat fields
+    # above remain input-compatible during migration, but canonical writers
+    # persist only this frozen profile.
+    mac_profile: FrozenMacTestProfile
 
     # === Channel generation engine ===
     # 2026-08-07 现场（用户当场指定「硬编码 GCM 以及指定的文件」）：
@@ -680,6 +692,193 @@ class MIMOOTAConfiguration(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def _canonicalize_mac_profile(cls, raw: Any) -> Any:
+        """Translate legacy flat controls into one RAT-specific frozen truth."""
+        if not isinstance(raw, dict):
+            return raw
+
+        data = deepcopy(raw)
+        carriers = data.get("component_carriers")
+        pcell: dict[str, Any] = {}
+        if isinstance(carriers, (list, tuple)) and carriers:
+            candidate = carriers[0]
+            if isinstance(candidate, ComponentCarrierConfig):
+                pcell = candidate.model_dump(mode="python")
+            elif isinstance(candidate, dict):
+                pcell = candidate
+        rat = pcell.get("radio_technology", "nr5g")
+
+        if "mac_profile" in data:
+            frozen = FrozenMacTestProfile.model_validate(data["mac_profile"])
+            profile = frozen.profile
+            expected_legacy: dict[str, Any] = {
+                "enable_amc": profile.enable_amc,
+                "stat_count": profile.statistical_window.count,
+            }
+            if isinstance(profile, NrMacTestProfileV1):
+                expected_legacy.update(
+                    {
+                        "mcs": profile.mcs,
+                        "tdd_pattern": profile.tdd_pattern,
+                        "tdd_period": profile.tdd_period,
+                        "harq_max_trans": profile.harq_max_trans,
+                        "harq_processes": profile.harq_processes,
+                        "csi_rs_ports": profile.csi_rs_ports,
+                    }
+                )
+                scheduler = data.get("sched_algo")
+                if scheduler in {"FULLBUFFER", "FULL_TPUT"}:
+                    scheduler = "full_throughput"
+                if (
+                    scheduler is not None
+                    and scheduler != profile.scheduler_algorithm
+                ):
+                    raise ValueError(
+                        "mac_profile conflicts with deprecated sched_algo"
+                    )
+            else:
+                for field in (
+                    "mcs",
+                    "tdd_pattern",
+                    "tdd_period",
+                    "harq_max_trans",
+                    "harq_processes",
+                    "sched_algo",
+                    "csi_rs_ports",
+                ):
+                    if field in data and data[field] is not None:
+                        raise ValueError(
+                            f"mac_profile conflicts with deprecated {field}"
+                        )
+            for field, expected in expected_legacy.items():
+                if (
+                    field in data
+                    and data[field] is not None
+                    and data[field] != expected
+                ):
+                    raise ValueError(
+                        f"mac_profile conflicts with deprecated {field}"
+                    )
+        else:
+            layers = data.get("mimo_layers", 2)
+            count = data.get("stat_count", 5000)
+            if rat == "lte":
+                # Preserve the established PCell validation source and its
+                # actionable field name for incomplete legacy LTE rows.
+                transmission_mode = pcell.get("lte_transmission_mode")
+                if (
+                    not pcell.get("duplex")
+                    or transmission_mode
+                    not in {
+                        "TM1",
+                        "TM2",
+                        "TM3",
+                        "TM4",
+                        "TM6",
+                        "TM7",
+                        "TM8",
+                        "TM9",
+                    }
+                ):
+                    return data
+                profile = LteRmcMacTestProfileV1.model_validate(
+                    {
+                        "schema_version": 1,
+                        "kind": "lte_rmc",
+                        "profile_version": 1,
+                        "rat": "lte",
+                        "test_intent": "downlink_throughput",
+                        "mimo_layers": layers,
+                        "statistical_window": {
+                            "unit": "subframes",
+                            "count": count,
+                        },
+                        "metric_requirements": [
+                            {"key": "dl_throughput_mbps", "scope": "pcell"},
+                            {"key": "dl_bler_percent", "scope": "pcell"},
+                        ],
+                        "scheduling_mode": "rmc",
+                        "resource_allocation": "full",
+                        "enable_amc": data.get("enable_amc", False),
+                        "duplex": pcell.get("duplex"),
+                        "transmission_mode": transmission_mode,
+                        "source_reference": CMW500_LTE_PROFILE_SOURCE,
+                    }
+                )
+            else:
+                scheduler = data.get("sched_algo")
+                if scheduler in (
+                    None,
+                    "FULLBUFFER",
+                    "FULL_TPUT",
+                    "full_throughput",
+                ):
+                    scheduler = "full_throughput"
+                tdd_pattern = data.get("tdd_pattern", "DDDDDDDSUU")
+                scs_khz = pcell.get(
+                    "subcarrier_spacing_khz",
+                    data.get("subcarrier_spacing_khz", 30),
+                )
+                tdd_period = data.get("tdd_period")
+                if (
+                    tdd_period is None
+                    and isinstance(tdd_pattern, str)
+                    # 受理域与下游 schema 同源：pydantic 的 lax 模式会把 30.0 归一成
+                    # 30，所以守卫必须一并放行 float，否则「值好到能进 Literal，却不
+                    # 够格参与派生」——那是本 PR 引入的回归，不是收紧。
+                    # bool 是 int 的子类，必须排除：True 会被静默当成 1。
+                    and isinstance(scs_khz, (int, float))
+                    and not isinstance(scs_khz, bool)
+                ):
+                    # 显式 null 不在这里补默认值：让它原样落进 payload，由
+                    # NrMacTestProfileV1 给出字段级拒绝，与 mcs / harq_* 等
+                    # 其余字段对 null 的处理保持一致（受控拒绝，不猜意图）。
+                    tdd_period = uxm_nr_tdd_period_for_pattern(
+                        tdd_pattern=tdd_pattern,
+                        subcarrier_spacing_khz=scs_khz,
+                    )
+                profile = NrMacTestProfileV1.model_validate(
+                    {
+                        "schema_version": 1,
+                        "kind": "nr_throughput",
+                        "profile_version": 1,
+                        "rat": "nr5g",
+                        "test_intent": "downlink_throughput",
+                        "mimo_layers": layers,
+                        "statistical_window": {
+                            "unit": "subframes",
+                            "count": count,
+                        },
+                        "metric_requirements": [
+                            {"key": "dl_throughput_mbps", "scope": "pcell"}
+                        ],
+                        "rb_allocation": "all",
+                        "scheduler_algorithm": scheduler,
+                        "mcs": data.get("mcs", 28),
+                        "enable_amc": data.get("enable_amc", False),
+                        "tdd_pattern": tdd_pattern,
+                        "tdd_period": tdd_period,
+                        "harq_max_trans": data.get("harq_max_trans", 4),
+                        "harq_processes": data.get("harq_processes", 16),
+                        "subcarrier_spacing_khz": scs_khz,
+                        "csi_rs_ports": (
+                            data["csi_rs_ports"]
+                            if data.get("csi_rs_ports") is not None
+                            else (
+                                max(2, layers * 2)
+                                if isinstance(layers, (int, float))
+                                and not isinstance(layers, bool)
+                                else None
+                            )
+                        ),
+                        "source_reference": UXM_NR_PROFILE_SOURCE,
+                    }
+                )
+            data["mac_profile"] = FrozenMacTestProfile.freeze(profile)
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
     def _canonicalize_base_station_config_mode(cls, raw: Any) -> Any:
         """在唯一 schema 边界翻译旧键，并拒绝显式双写分叉。"""
         if not isinstance(raw, dict):
@@ -850,6 +1049,26 @@ class MIMOOTAConfiguration(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _validate_mac_profile_alignment(self) -> "MIMOOTAConfiguration":
+        primary = self.primary_carrier
+        profile = self.mac_profile.profile
+        if profile.rat != primary.radio_technology:
+            raise ValueError("MAC profile RAT must match the PCell RAT")
+        if profile.mimo_layers != self.mimo_layers:
+            raise ValueError("MAC profile mimo_layers must match MIMO intent")
+        if isinstance(profile, NrMacTestProfileV1):
+            if profile.subcarrier_spacing_khz != primary.subcarrier_spacing_khz:
+                raise ValueError("NR MAC profile SCS must match the PCell SCS")
+        elif isinstance(profile, LteRmcMacTestProfileV1):
+            if profile.duplex != primary.duplex:
+                raise ValueError("LTE MAC profile duplex must match the PCell")
+            if profile.transmission_mode != primary.lte_transmission_mode:
+                raise ValueError(
+                    "LTE MAC profile transmission mode must match the PCell"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _validate_external_asc_path(self) -> "MIMOOTAConfiguration":
         """external_asc 模式必须给路径; 其他模式忽略 (留空也允许)。
 
@@ -873,10 +1092,37 @@ class MIMOOTAConfiguration(BaseModel):
         return self
 
 
+_DEPRECATED_MAC_INPUT_FIELDS = (
+    "mcs",
+    "enable_amc",
+    "tdd_pattern",
+    "tdd_period",
+    "harq_max_trans",
+    "harq_processes",
+    "stat_count",
+    "sched_algo",
+    "csi_rs_ports",
+)
+
+
+def dump_canonical_mimo_ota_configuration(
+    config: MIMOOTAConfiguration,
+) -> dict:
+    """Serialize a validated configuration without deprecated MAC mirrors."""
+
+    payload = config.model_dump(mode="json")
+    for field in _DEPRECATED_MAC_INPUT_FIELDS:
+        payload.pop(field, None)
+    return payload
+
+
 def canonicalize_mimo_ota_configuration_payload(payload: dict) -> dict:
     """校验并只规范化载波真值字段，保留稀疏 JSON 与前向兼容扩展。"""
     validated = MIMOOTAConfiguration.model_validate(payload)
     canonical = deepcopy(payload)
+    for legacy_mac_field in _DEPRECATED_MAC_INPUT_FIELDS:
+        canonical.pop(legacy_mac_field, None)
+    canonical["mac_profile"] = validated.mac_profile.model_dump(mode="json")
     canonical["base_station_config_mode"] = validated.base_station_config_mode
     primary = validated.primary_carrier
     for field in _PCELL_MIRROR_FIELDS:

@@ -67,6 +67,31 @@ def load_mimo_ota_config(execution: TestExecution) -> MIMOOTAConfiguration:
             f"TestCase {execution.test_case_id} missing or has empty configuration"
         )
     payload = dict(tc.configuration)
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+
+    frozen = execution_config.get(FREEZE_CONFIG_KEY)
+    if isinstance(frozen, dict):
+        if MIMO_OTA_CONFIGURATION_FREEZE_KEY in frozen:
+            snapshot = frozen[MIMO_OTA_CONFIGURATION_FREEZE_KEY]
+            if not isinstance(snapshot, dict):
+                raise RuntimeError("frozen MIMO OTA configuration is malformed")
+            payload = dict(snapshot)
+        else:
+            compatibility = frozen.get("compatibility")
+            requirements = (
+                compatibility.get("requirements")
+                if isinstance(compatibility, dict)
+                else None
+            )
+            if (
+                isinstance(requirements, dict)
+                and requirements.get("mac_profile") is not None
+            ):
+                raise RuntimeError("frozen MIMO OTA configuration is missing")
     # P2-45: the calibration gate belongs to this immutable execution, not to
     # the shared TestCase row.  A later policy/certification change or a
     # concurrent execution must never relabel an already-frozen run.  Legacy

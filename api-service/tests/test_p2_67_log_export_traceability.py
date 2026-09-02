@@ -21,17 +21,19 @@ from app.hal.base_station import (
 )
 from app.hal.base_station_compatibility import (
     build_frozen_compatibility_payload,
-    build_measure_execution_requirements,
+    build_measure_execution_requirements_from_configuration,
     canonical_payload_digest,
     evaluate_base_station_compatibility,
 )
 from app.hal.uxm_base_station import RealUxmDriver
 from app.main import app
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
 
 
 class _BaseStation:
     adapter_id = "cmw500"
+    instrument_id = "base-station-test"
 
     async def acquire_remote_control(self) -> BaseStationRemoteSessionResult:
         return BaseStationRemoteSessionResult(
@@ -196,7 +198,7 @@ async def test_idle_park_log_does_not_claim_specific_vendor(
 
 
 def _execution(execution_id: str):
-    requirements = build_measure_execution_requirements("nr5g")
+    requirements = build_measure_execution_requirements_from_configuration({})
     verdict = evaluate_base_station_compatibility(
         requirements,
         RealUxmDriver.adapter_manifest,
@@ -220,6 +222,7 @@ def _execution(execution_id: str):
             "manifest": RealUxmDriver.adapter_manifest.model_dump(mode="json"),
         },
         "compatibility": compatibility,
+        "mimo_ota_configuration": canonicalize_mimo_ota_configuration_payload({}),
     }
     frozen = {**identity, "digest": canonical_payload_digest(identity)}
     return SimpleNamespace(

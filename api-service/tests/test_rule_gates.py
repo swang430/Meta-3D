@@ -45,6 +45,9 @@ G29 BaseStation 执行终态只读共同 evidence outcome ← P2-66
 G30 BaseStation 租约日志/执行导出只读冻结身份 ← P2-67
    变异: 公共租约文案恢复 UXM、导出绕过 P2-66 outcome、客户端新增身份参数、
    raw download 复用 enriched stream，任一项必须检出。
+G31 BaseStation MAC 只读 RAT 判别冻结 profile ← P2-54
+   变异: MEASURE 恢复旧多参数调用、CMW profile receipt 恢复 no_equivalent、Mock
+   把模拟应用写成真值、P2-66 丢失 pre-P2-54 legacy 分类，任一项必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -3192,3 +3195,166 @@ def test_g30_checker_rejects_known_traceability_regressions():
         download_bad,
         gui_source,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G31 BaseStation MAC 只读 RAT 判别冻结 profile
+# ─────────────────────────────────────────────────────────────────────
+
+_G31_SOURCES = {
+    "base": "api-service/app/hal/base_station.py",
+    "uxm": "api-service/app/hal/uxm_base_station.py",
+    "cmw": "api-service/app/hal/cmw500_base_station.py",
+    "measure": "api-service/app/services/mimo_ota/executors/measure.py",
+    "outcome": "api-service/app/services/execution_evidence_outcome.py",
+}
+
+
+def _method_node(tree: ast.Module, name: str) -> ast.AsyncFunctionDef:
+    return next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+    )
+
+
+def _g31_mac_profile_gaps(sources: dict[str, str]) -> list[str]:
+    gaps: list[str] = []
+    for key in ("base", "uxm", "cmw"):
+        tree = ast.parse(sources[key])
+        method = _method_node(tree, "configure_mac_throughput_test")
+        arguments = [arg.arg for arg in method.args.args]
+        if arguments != ["self", "frozen_profile"]:
+            gaps.append(f"multi_parameter_spi:{key}")
+        calls = {
+            _call_name(call)
+            for call in ast.walk(method)
+            if isinstance(call, ast.Call)
+        }
+        if "require_frozen_mac_profile" not in calls:
+            gaps.append(f"unvalidated_profile:{key}")
+
+    measure_tree = ast.parse(sources["measure"])
+    production_calls = [
+        call
+        for call in ast.walk(measure_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "configure_mac_throughput_test"
+    ]
+    if len(production_calls) != 1:
+        gaps.append("measure_call_count")
+    elif (
+        len(production_calls[0].args) != 1
+        or not isinstance(production_calls[0].args[0], ast.Name)
+        or production_calls[0].args[0].id != "frozen_mac_profile"
+        or production_calls[0].keywords
+    ):
+        gaps.append("measure_bypasses_frozen_profile")
+
+    cmw_tree = ast.parse(sources["cmw"])
+    cmw_values = _method_node(cmw_tree, "_configure_mac_throughput_values")
+    profile_path_clears_no_equivalent = any(
+        isinstance(node, ast.IfExp)
+        and isinstance(node.body, ast.Tuple)
+        and not node.body.elts
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "profile_digest"
+        for node in ast.walk(cmw_values)
+    )
+    if not profile_path_clears_no_equivalent:
+        gaps.append("cmw_profile_keeps_no_equivalent")
+
+    mock_tree = ast.parse(sources["base"])
+    mock_method = _method_node(mock_tree, "configure_mac_throughput_test")
+    keywords = {
+        keyword.arg: keyword.value
+        for call in ast.walk(mock_method)
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
+        if keyword.arg is not None
+    }
+    if not (
+        isinstance(keywords.get("simulated"), ast.Constant)
+        and keywords["simulated"].value is True
+        and isinstance(keywords.get("applied"), ast.Constant)
+        and keywords["applied"].value is None
+    ):
+        gaps.append("mock_claims_profile_application")
+
+    outcome_tree = ast.parse(sources["outcome"])
+    outcome = next(
+        node
+        for node in ast.walk(outcome_tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "project_execution_evidence_outcome"
+    )
+    messages = {
+        node.value
+        for node in ast.walk(outcome)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    if "pre-P2-54 compatibility snapshot has no frozen MAC profile" not in messages:
+        gaps.append("pre_p2_54_not_explicit_legacy")
+    return gaps
+
+
+def _g31_sources() -> dict[str, str]:
+    return {
+        key: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for key, path in _G31_SOURCES.items()
+    }
+
+
+def test_g31_base_station_mac_uses_one_frozen_profile_contract():
+    sources = _g31_sources()
+    assert _g31_mac_profile_gaps(sources) == []
+
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.uxm_base_station import RealUxmDriver
+
+    for driver in (RealCmw500Driver, RealUxmDriver):
+        declarations = driver.adapter_manifest.mac_profiles
+        assert len(declarations) == 1
+        assert declarations[0].profile_version == 1
+
+
+def test_g31_checker_rejects_known_mac_profile_regressions():
+    sources = _g31_sources()
+
+    multi_parameter = dict(sources)
+    multi_parameter["measure"] = multi_parameter["measure"].replace(
+        "configure_mac_throughput_test(\n                    frozen_mac_profile\n                )",
+        "configure_mac_throughput_test(\n                    frozen_mac_profile, config.mcs\n                )",
+        1,
+    )
+    assert "measure_bypasses_frozen_profile" in _g31_mac_profile_gaps(
+        multi_parameter
+    )
+
+    cmw_no_equivalent = dict(sources)
+    cmw_no_equivalent["cmw"] = cmw_no_equivalent["cmw"].replace(
+        "() if profile_digest is not None else tuple(self.MAC_CFG_NO_EQUIVALENT)",
+        "tuple(self.MAC_CFG_NO_EQUIVALENT)",
+        1,
+    )
+    assert "cmw_profile_keeps_no_equivalent" in _g31_mac_profile_gaps(
+        cmw_no_equivalent
+    )
+
+    mock_formal = dict(sources)
+    mock_formal["base"] = mock_formal["base"].replace(
+        "simulated=True,",
+        "simulated=False,",
+        1,
+    )
+    assert "mock_claims_profile_application" in _g31_mac_profile_gaps(mock_formal)
+
+    legacy_lost = dict(sources)
+    legacy_lost["outcome"] = legacy_lost["outcome"].replace(
+        "pre-P2-54 compatibility snapshot has no frozen MAC profile",
+        "compatibility snapshot is invalid",
+        1,
+    )
+    assert "pre_p2_54_not_explicit_legacy" in _g31_mac_profile_gaps(legacy_lost)

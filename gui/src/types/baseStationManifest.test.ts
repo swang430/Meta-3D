@@ -21,6 +21,7 @@ const thirdAdapter: BaseStationAdapterManifest = {
     { rat: 'lte', source_reference: 'Vendor C Manual §1' },
   ],
   operations: ['config'],
+  mac_profiles: [],
   config_fields: [],
   attach_stages: [],
   measurement: null,

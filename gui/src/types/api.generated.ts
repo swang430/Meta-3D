@@ -2211,14 +2211,97 @@ export interface components {
             driver_mode: "auto" | "mock" | "real";
             role?: string | null;
         };
+        MacStatisticalWindow: {
+            /** @constant */
+            unit: "subframes";
+            count: number;
+        };
+        MacMetricRequirement: {
+            key: string;
+            /** @enum {string} */
+            scope: "pcell" | "all_cells";
+        };
+        NrMacTestProfileV1: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            profile_version: 1;
+            /** @constant */
+            test_intent: "downlink_throughput";
+            /** @enum {integer} */
+            mimo_layers: 1 | 2 | 4;
+            statistical_window: components["schemas"]["MacStatisticalWindow"];
+            metric_requirements: components["schemas"]["MacMetricRequirement"][];
+            /** @constant */
+            source_reference: "Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "nr_throughput";
+            /** @constant */
+            rat: "nr5g";
+            /** @constant */
+            rb_allocation: "all";
+            /** @constant */
+            scheduler_algorithm: "full_throughput";
+            mcs: number;
+            /** @constant */
+            enable_amc: false;
+            tdd_pattern: string;
+            /** @enum {string} */
+            tdd_period: "0.5MS" | "0.625MS" | "1MS" | "1.25MS" | "2MS" | "2.5MS" | "3MS" | "4MS" | "5MS" | "10MS";
+            /** @enum {integer} */
+            harq_max_trans: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 10 | 12 | 16 | 20 | 24 | 28;
+            /** @enum {integer} */
+            harq_processes: 1 | 2 | 4 | 6 | 8 | 10 | 12 | 13 | 14 | 16 | 32;
+            /** @enum {integer} */
+            subcarrier_spacing_khz: 15 | 30 | 60 | 120;
+            /** @enum {integer} */
+            csi_rs_ports: 1 | 2 | 4 | 8 | 12 | 16 | 24 | 32;
+        };
+        LteRmcMacTestProfileV1: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            profile_version: 1;
+            /** @constant */
+            test_intent: "downlink_throughput";
+            /** @constant */
+            mimo_layers: 2;
+            statistical_window: components["schemas"]["MacStatisticalWindow"];
+            metric_requirements: components["schemas"]["MacMetricRequirement"][];
+            /** @constant */
+            source_reference: "Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lte_rmc";
+            /** @constant */
+            rat: "lte";
+            /** @constant */
+            scheduling_mode: "rmc";
+            /** @constant */
+            resource_allocation: "full";
+            /** @constant */
+            enable_amc: false;
+            /** @constant */
+            duplex: "fdd";
+            /** @constant */
+            transmission_mode: "TM3";
+        };
+        FrozenMacTestProfile: {
+            profile: components["schemas"]["NrMacTestProfileV1"] | components["schemas"]["LteRmcMacTestProfileV1"];
+            profile_digest: string;
+        };
         BaseStationExecutionRequirements: {
             /** @enum {integer} */
             schema_version: 1;
             /** @enum {string} */
             requested_rat: "nr5g" | "lte";
             required_operations: string[];
-            /** @enum {unknown|null} */
-            mac_profile: null;
+            mac_profile?: components["schemas"]["FrozenMacTestProfile"] | null;
         };
         BaseStationCompatibilityVerdict: {
             /** @enum {integer} */
@@ -2753,6 +2836,15 @@ export interface components {
             rat: "lte" | "nr5g";
             source_reference: string;
         };
+        BaseStationMacProfileCapability: {
+            kind: string;
+            profile_version: number;
+            /** @enum {string} */
+            rat: "lte" | "nr5g";
+            /** @enum {string} */
+            application_evidence: "authoritative_readback" | "command_error_queue";
+            source_reference: string;
+        };
         BaseStationConfigFieldCapability: {
             field: string;
             /** @enum {string} */
@@ -2800,6 +2892,7 @@ export interface components {
             capabilities: string[];
             rat_capabilities: components["schemas"]["BaseStationRatCapability"][];
             operations: string[];
+            mac_profiles: components["schemas"]["BaseStationMacProfileCapability"][];
             config_fields: components["schemas"]["BaseStationConfigFieldCapability"][];
             attach_stages: components["schemas"]["BaseStationAttachStageCapability"][];
             measurement: components["schemas"]["BaseStationMeasurementCapability"] | null;

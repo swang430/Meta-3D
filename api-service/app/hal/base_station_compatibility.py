@@ -20,6 +20,7 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_mac_profile import FrozenMacTestProfile
 
 
 # measure 执行链经共同 SPI 实际调用的操作全集（required_operations 真值源）：
@@ -72,7 +73,7 @@ class BaseStationExecutionRequirements(BaseModel):
     requested_rat: Literal["nr5g", "lte"]
     required_operations: tuple[str, ...]
     # P2-54 的显式扩展槽位：本片绝不发明 MAC profile 判据（条目红线）。
-    mac_profile: None = None
+    mac_profile: FrozenMacTestProfile | None = None
 
     @field_validator("required_operations")
     @classmethod
@@ -122,22 +123,47 @@ def build_measure_execution_requirements_from_configuration(
 ) -> BaseStationExecutionRequirements:
     """Project the saved TestCase PCell RAT using the freeze contract.
 
-    Only the single compatibility input is read.  Unrelated MIMO OTA schema
-    validation must not change the compatibility verdict, while legacy rows
+    P2-54 requires the complete canonical MAC profile, so the saved MIMO OTA
+    configuration is validated at this single migration boundary.  Legacy rows
     without ``component_carriers[0].radio_technology`` retain the schema's
     exact ``nr5g`` default.
     """
 
-    requested_rat = "nr5g"
-    if isinstance(configuration, Mapping):
-        carriers = configuration.get("component_carriers")
-        if isinstance(carriers, (list, tuple)) and carriers:
-            pcell = carriers[0]
-            if isinstance(pcell, Mapping):
-                value = pcell.get("radio_technology", "nr5g")
-                if isinstance(value, str) and value.strip():
-                    requested_rat = value.strip()
-    return build_measure_execution_requirements(requested_rat)
+    if not isinstance(configuration, Mapping):
+        raise ValueError("saved TestCase configuration must be a mapping")
+
+    carriers = configuration.get("component_carriers")
+    if isinstance(carriers, (list, tuple)) and carriers:
+        pcell = carriers[0]
+        if isinstance(pcell, Mapping):
+            requested_rat = pcell.get("radio_technology", "nr5g")
+            if requested_rat not in ("nr5g", "lte"):
+                raise ValueError(
+                    f"TestCase radio_technology {requested_rat!r} is not a "
+                    "valid RAT (expected 'nr5g' or 'lte', case-sensitive; "
+                    "the value never passed schema validation)"
+                )
+
+    # Local import avoids making the schema import this compatibility module.
+    # It is the single canonical legacy-input migration boundary for both save
+    # and freeze projections.
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    try:
+        validated = MIMOOTAConfiguration.model_validate(configuration)
+    except ValidationError as exc:
+        raise ValueError(
+            "saved TestCase configuration is not a valid MIMO_OTA configuration"
+        ) from exc
+    return BaseStationExecutionRequirements(
+        schema_version=1,
+        requested_rat=validated.primary_carrier.radio_technology,
+        required_operations=(
+            *MEASURE_REQUIRED_OPERATIONS,
+            "mac_throughput_config",
+        ),
+        mac_profile=validated.mac_profile,
+    )
 
 
 class BaseStationCompatibilityVerdict(BaseModel):
@@ -220,6 +246,33 @@ def evaluate_base_station_compatibility(
             f"adapter {manifest.adapter_id!r} manifest does not declare "
             f"required operations: {', '.join(missing_operations)}"
         )
+    frozen_profile = requirements.mac_profile
+    if frozen_profile is not None:
+        profile = frozen_profile.profile
+        if profile.rat != requirements.requested_rat:
+            reasons.append(
+                "frozen MAC profile RAT does not match requested RAT"
+            )
+        accepted_profiles = {
+            (
+                item.kind,
+                item.profile_version,
+                item.rat,
+                item.source_reference,
+            )
+            for item in manifest.mac_profiles
+        }
+        requested_profile = (
+            profile.kind,
+            profile.profile_version,
+            profile.rat,
+            profile.source_reference,
+        )
+        if requested_profile not in accepted_profiles:
+            reasons.append(
+                f"adapter {manifest.adapter_id!r} does not declare the frozen "
+                "MAC profile kind/version/RAT/source"
+            )
 
     return BaseStationCompatibilityVerdict(
         schema_version=1,

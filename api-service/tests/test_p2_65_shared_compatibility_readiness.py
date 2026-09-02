@@ -36,6 +36,29 @@ from app.services.base_station_compatibility import (
 from tests.base_station_mock_factory import registered_mock_base_station
 
 
+LTE_CONFIGURATION = {
+    "component_carriers": [
+        {
+            "radio_technology": "lte",
+            "frequency_hz": 1_842_500_000.0,
+            "bandwidth_mhz": 20.0,
+            "subcarrier_spacing_khz": None,
+            "band": "B3",
+            "duplex": "fdd",
+            "lte_dl_earfcn": 1575,
+            "lte_transmission_mode": "TM3",
+            "role": "pcell",
+        }
+    ],
+    "mimo_layers": 2,
+    "theoretical_peak_throughput_mbps": None,
+}
+
+
+def _configuration_for_rat(requested_rat: str) -> dict:
+    return LTE_CONFIGURATION if requested_rat == "lte" else {}
+
+
 def _cmw_profile() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -118,9 +141,7 @@ def _saved_case_and_binding(
     case = TestCase(
         name=f"case-{uuid4()}",
         test_type="MIMO_OTA",
-        configuration={
-            "component_carriers": [{"radio_technology": requested_rat}]
-        },
+        configuration=_configuration_for_rat(requested_rat),
         created_by="test",
         lab_profile_id=lab.id,
     )
@@ -142,11 +163,7 @@ def _saved_case_and_binding(
     [
         ({}, "nr5g"),
         ({"component_carriers": []}, "nr5g"),
-        ({"component_carriers": [{}]}, "nr5g"),
-        (
-            {"component_carriers": [{"radio_technology": "lte"}]},
-            "lte",
-        ),
+        (LTE_CONFIGURATION, "lte"),
     ],
 )
 def test_saved_configuration_projection_matches_freeze_defaults(
@@ -172,12 +189,12 @@ def test_saved_configuration_projection_rejects_invalid_rat_without_normalizing(
     [
         ({}, RealUxmDriver.adapter_manifest, "compatible"),
         (
-            {"component_carriers": [{"radio_technology": "lte"}]},
+            LTE_CONFIGURATION,
             RealUxmDriver.adapter_manifest,
             "incompatible",
         ),
         (
-            {"component_carriers": [{"radio_technology": "lte"}]},
+            LTE_CONFIGURATION,
             RealCmw500Driver.adapter_manifest,
             "compatible",
         ),
@@ -357,7 +374,7 @@ def test_authoritative_unbound_mock_is_explicitly_no_adapter(db):
     case = TestCase(
         name=f"case-{uuid4()}",
         test_type="MIMO_OTA",
-        configuration={"component_carriers": [{"radio_technology": "nr5g"}]},
+        configuration={},
         created_by="test",
         lab_profile_id=lab.id,
     )

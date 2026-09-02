@@ -113,7 +113,10 @@ def test_commissioning_response_sanitizes_invalid_measurement_and_analysis():
 
 
 def test_commissioning_projection_sanitizes_diagnostic_without_metric_evidence():
-    execution = _execution(qualification="diagnostic")
+    execution = _execution(
+        qualification="diagnostic",
+        include_base_station_evidence=False,
+    )
     measure = {
         "overall_pass": True,
         "azimuth_results": [{"throughput_mbps": 123.0}],

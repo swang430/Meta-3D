@@ -1237,6 +1237,92 @@ components:
         connection_endpoint: {type: string, minLength: 1}
         driver_mode: {type: string, enum: [auto, mock, real], default: auto}
         role: {type: string, nullable: true}
+    MacStatisticalWindow:
+      type: object
+      additionalProperties: false
+      properties:
+        unit: {type: string, const: subframes}
+        count: {type: integer, exclusiveMinimum: 0}
+      required: [unit, count]
+    MacMetricRequirement:
+      type: object
+      additionalProperties: false
+      properties:
+        key: {type: string}
+        scope: {type: string, enum: [pcell, all_cells]}
+      required: [key, scope]
+    NrMacTestProfileV1:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, const: 1}
+        profile_version: {type: integer, const: 1}
+        test_intent: {type: string, const: downlink_throughput}
+        mimo_layers: {type: integer, enum: [1, 2, 4]}
+        statistical_window: {$ref: '#/components/schemas/MacStatisticalWindow'}
+        metric_requirements:
+          type: array
+          items: {$ref: '#/components/schemas/MacMetricRequirement'}
+        source_reference:
+          type: string
+          const: Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip
+        kind: {type: string, const: nr_throughput}
+        rat: {type: string, const: nr5g}
+        rb_allocation: {type: string, const: all}
+        scheduler_algorithm: {type: string, const: full_throughput}
+        mcs: {type: integer, minimum: 0, maximum: 28}
+        enable_amc: {type: boolean, const: false}
+        tdd_pattern: {type: string, minLength: 1, pattern: '^D*S?U*$'}
+        tdd_period:
+          type: string
+          enum: [0.5MS, 0.625MS, 1MS, 1.25MS, 2MS, 2.5MS, 3MS, 4MS, 5MS, 10MS]
+        harq_max_trans:
+          type: integer
+          enum: [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28]
+        harq_processes:
+          type: integer
+          enum: [1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32]
+        subcarrier_spacing_khz: {type: integer, enum: [15, 30, 60, 120]}
+        csi_rs_ports: {type: integer, enum: [1, 2, 4, 8, 12, 16, 24, 32]}
+      required: [schema_version, profile_version, test_intent, mimo_layers, statistical_window, metric_requirements, source_reference, kind, rat, rb_allocation, scheduler_algorithm, mcs, enable_amc, tdd_pattern, tdd_period, harq_max_trans, harq_processes, subcarrier_spacing_khz, csi_rs_ports]
+    LteRmcMacTestProfileV1:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, const: 1}
+        profile_version: {type: integer, const: 1}
+        test_intent: {type: string, const: downlink_throughput}
+        mimo_layers: {type: integer, const: 2}
+        statistical_window: {$ref: '#/components/schemas/MacStatisticalWindow'}
+        metric_requirements:
+          type: array
+          items: {$ref: '#/components/schemas/MacMetricRequirement'}
+        source_reference:
+          type: string
+          const: Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf
+        kind: {type: string, const: lte_rmc}
+        rat: {type: string, const: lte}
+        scheduling_mode: {type: string, const: rmc}
+        resource_allocation: {type: string, const: full}
+        enable_amc: {type: boolean, const: false}
+        duplex: {type: string, const: fdd}
+        transmission_mode: {type: string, const: TM3}
+      required: [schema_version, profile_version, test_intent, mimo_layers, statistical_window, metric_requirements, source_reference, kind, rat, scheduling_mode, resource_allocation, enable_amc, duplex, transmission_mode]
+    FrozenMacTestProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        profile:
+          oneOf:
+            - {$ref: '#/components/schemas/NrMacTestProfileV1'}
+            - {$ref: '#/components/schemas/LteRmcMacTestProfileV1'}
+          discriminator:
+            propertyName: kind
+            mapping:
+              nr_throughput: '#/components/schemas/NrMacTestProfileV1'
+              lte_rmc: '#/components/schemas/LteRmcMacTestProfileV1'
+        profile_digest: {type: string, pattern: '^[0-9a-f]{64}$'}
+      required: [profile, profile_digest]
     BaseStationExecutionRequirements:
       type: object
       additionalProperties: false
@@ -1247,9 +1333,10 @@ components:
           type: array
           items: {type: string}
         mac_profile:
-          nullable: true
-          enum: [null]
-      required: [schema_version, requested_rat, required_operations, mac_profile]
+          anyOf:
+            - {$ref: '#/components/schemas/FrozenMacTestProfile'}
+            - {type: 'null'}
+      required: [schema_version, requested_rat, required_operations]
     BaseStationCompatibilityVerdict:
       type: object
       additionalProperties: false
@@ -2192,6 +2279,18 @@ components:
         rat: {type: string, enum: [lte, nr5g]}
         source_reference: {type: string}
       required: [rat, source_reference]
+    BaseStationMacProfileCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        kind: {type: string}
+        profile_version: {type: integer}
+        rat: {type: string, enum: [lte, nr5g]}
+        application_evidence:
+          type: string
+          enum: [authoritative_readback, command_error_queue]
+        source_reference: {type: string}
+      required: [kind, profile_version, rat, application_evidence, source_reference]
     BaseStationConfigFieldCapability:
       type: object
       additionalProperties: false
@@ -2276,6 +2375,10 @@ components:
         operations:
           type: array
           items: {type: string}
+        mac_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationMacProfileCapability'
         config_fields:
           type: array
           items:
@@ -2303,7 +2406,7 @@ components:
         formal_gate:
           type: string
           enum: [site_certification]
-      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
+      required: [schema_version, adapter_id, model_name, vendor, rats, capabilities, rat_capabilities, operations, mac_profiles, config_fields, attach_stages, measurement, profile_requirement, profile_schema_version, profile_fields, manual_sources, diagnostic_supported, formal_gate]
     BaseStationModelPreset:
       type: object
       additionalProperties: false

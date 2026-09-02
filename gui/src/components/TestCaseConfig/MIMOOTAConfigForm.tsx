@@ -1,14 +1,14 @@
 /**
  * Typed editor for MIMO_OTA TestCase / TestStep configuration.
  *
- * Reads the raw 27-field flat JSON written by `mimo_ota.factory` /
- * `legacy_to_mimo_ota_config` and renders it as a structured Mantine form
+ * Reads the canonical MIMO OTA configuration (including the server-frozen,
+ * RAT-discriminated MAC profile) and renders it as a structured Mantine form
  * with Chinese labels, sensible groupings, unit-aware inputs, and a sane
  * default split between "shown by default" (channel / MIMO / sweep / power /
  * pass criteria) and "advanced" (base-station MAC, reference antenna,
  * channel-generation engine, raw step_overrides) behind an Accordion.
  *
- * Controlled component: `value` is the canonical raw shape; every change
+ * Controlled component: `value` is the canonical API shape; every change
  * fires `onChange(nextValue)` with a freshly merged copy. Keeps no internal
  * state so callers (StepEditor) can drive save/reset.
  */
@@ -49,6 +49,18 @@ import {
 import { useOperationalLab } from '../../features/OperationalLab'
 import { describeCmw500Readiness } from './cmw500ReadinessTruth'
 import { projectBaseStationCompatibilityTruth } from '../../features/Dashboard/baseStationBindingTruth'
+import {
+  describeFrozenMacProfile,
+  profileDraftForConfiguration,
+  updateMacProfileDraft,
+  validateMacProfileDraftForSave,
+  UXM_NR_CSI_RS_PORTS_VALUES,
+  UXM_NR_HARQ_MAX_TRANS_VALUES,
+  UXM_NR_HARQ_PROCESSES_VALUES,
+  UXM_NR_MIMO_LAYERS_VALUES,
+  UXM_NR_TDD_PERIOD_VALUES,
+  type FrozenMacTestProfile,
+} from '../../types/macTestProfile'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -112,6 +124,8 @@ export interface MIMOOTAConfiguration {
   harq_max_trans?: number
   harq_processes?: number
   stat_count?: number
+  /** 服务器生成的不可变执行真值；任一编辑都会丢弃旧 digest 并由后端重新冻结。 */
+  mac_profile?: FrozenMacTestProfile
   // DUTProfile 阶段 2/3: 引用一个 DUT 自声明能力档案。precheck section 2.3 拿请求 (mimo_layers/
   // modulation) 跟声明比, 请求 > 声明提前 fail (规划期, attach 前)。留空=不做声明校验。
   dut_profile_id?: string
@@ -214,6 +228,8 @@ export function MIMOOTAConfigForm({
     : selectedLabProfileId
   const rawPCell = value.component_carriers?.[0]
   const radioTechnology = rawPCell?.radio_technology === 'lte' ? 'lte' : 'nr5g'
+  const macProfileDraft = profileDraftForConfiguration(value, radioTechnology)
+  const macProfileDraftError = validateMacProfileDraftForSave(value)
   const baseStationConfigMode = resolveBaseStationConfigMode(value)
   const cmwReadinessQuery = useQuery({
     queryKey: [
@@ -263,6 +279,10 @@ export function MIMOOTAConfigForm({
     onChange({ ...value, [key]: next })
   }
 
+  const updateMacDraft = (patch: Parameters<typeof updateMacProfileDraft>[2]): void => {
+    onChange(updateMacProfileDraft(value, radioTechnology, patch) as MIMOOTAConfiguration)
+  }
+
   /**
    * P1-55：PCell 是唯一运行真值。界面从 PCell 显示，编辑时同步旧顶层镜像；
    * SCell 与 band 均保持不变。后端会拒绝任何显式分叉，避免错频静默落库。
@@ -272,12 +292,19 @@ export function MIMOOTAConfigForm({
     next: number | undefined,
   ): void => {
     if (typeof next !== 'number' || !Number.isFinite(next)) return
-
-    onChange(updatePrimaryCarrierValue(value, key, next))
+    const editable = key === 'subcarrier_spacing_khz'
+      ? updateMacProfileDraft(value, radioTechnology, {}) as MIMOOTAConfiguration
+      : value
+    onChange(updatePrimaryCarrierValue(editable, key, next))
   }
 
   const patchPCell = (patch: Record<string, unknown>): void => {
-    onChange(patchPrimaryCarrierFields(value, patch))
+    const editable = updateMacProfileDraft(
+      value,
+      radioTechnology,
+      {},
+    ) as MIMOOTAConfiguration
+    onChange(patchPrimaryCarrierFields(editable, patch))
   }
 
   const switchRadioTechnology = (rat: 'nr5g' | 'lte'): void => {
@@ -289,8 +316,8 @@ export function MIMOOTAConfigForm({
     const pcell = rat === 'lte'
       ? {
           ...current, radio_technology: 'lte' as const, channel_kind: 'lte_dl_earfcn' as const,
-          band: undefined, duplex: undefined, lte_dl_earfcn: undefined,
-          lte_transmission_mode: undefined,
+          band: undefined, duplex: 'fdd' as const, lte_dl_earfcn: undefined,
+          lte_transmission_mode: 'TM3' as const,
           nr_arfcn: undefined, subcarrier_spacing_khz: undefined, role: 'pcell' as const,
         }
       : {
@@ -299,11 +326,16 @@ export function MIMOOTAConfigForm({
           duplex: undefined, lte_dl_earfcn: undefined, role: 'pcell' as const,
           lte_transmission_mode: undefined,
         }
-    const next: MIMOOTAConfiguration = { ...value, component_carriers: [pcell] }
+    let next = {
+      ...value,
+      component_carriers: [pcell],
+    } as MIMOOTAConfiguration
     if (rat === 'lte') {
+      next.mimo_layers = 2
       next.subcarrier_spacing_khz = undefined
       next.theoretical_peak_throughput_mbps = undefined
     }
+    next = updateMacProfileDraft(next, rat, {}) as MIMOOTAConfiguration
     onChange(next)
   }
 
@@ -511,10 +543,10 @@ export function MIMOOTAConfigForm({
               <>
                 <Select
                   label="双工模式"
-                  data={[{ value: 'fdd', label: 'FDD' }, { value: 'tdd', label: 'TDD' }]}
+                  data={[{ value: 'fdd', label: 'FDD' }]}
                   value={rawPCell?.duplex ?? null}
                   onChange={(v) => patchPCell({ duplex: v ?? undefined })}
-                  disabled={readOnly}
+                  disabled
                   required
                 />
                 <NumberInput
@@ -527,10 +559,10 @@ export function MIMOOTAConfigForm({
                 />
                 <Select
                   label="LTE 传输模式"
-                  data={LTE_TRANSMISSION_MODES.map((mode) => ({ value: mode, label: mode }))}
+                  data={[{ value: 'TM3', label: 'TM3' }]}
                   value={rawPCell?.lte_transmission_mode ?? null}
                   onChange={(v) => patchPCell({ lte_transmission_mode: v ?? undefined })}
-                  disabled={readOnly}
+                  disabled
                   required
                 />
               </>
@@ -624,14 +656,26 @@ export function MIMOOTAConfigForm({
             MIMO 配置
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-            <NumberInput
+            <Select
               label="MIMO 层数"
               description="layer 数, 不是天线数"
-              value={value.mimo_layers}
-              onChange={(v) => update('mimo_layers', typeof v === 'number' ? v : undefined)}
-              min={1}
-              max={8}
-              disabled={readOnly}
+              value={String(value.mimo_layers ?? 2)}
+              data={(radioTechnology === 'lte' ? [2] : UXM_NR_MIMO_LAYERS_VALUES).map(
+                (layers) => ({ value: String(layers), label: String(layers) }),
+              )}
+              onChange={(v) => {
+                if (!v) return
+                const editable = updateMacProfileDraft(
+                  value,
+                  radioTechnology,
+                  {},
+                ) as MIMOOTAConfiguration
+                onChange({
+                  ...editable,
+                  mimo_layers: Number(v),
+                })
+              }}
+              disabled={readOnly || radioTechnology === 'lte'}
             />
             <Select
               label="调制方式"
@@ -651,15 +695,21 @@ export function MIMOOTAConfigForm({
               clearable
               placeholder="(用 profile 默认)"
             />
-            <NumberInput
-              label="CSI-RS 端口数"
-              description="留空=按 MIMO 层数自动推断"
-              value={value.csi_rs_ports ?? undefined}
-              onChange={(v) => update('csi_rs_ports', typeof v === 'number' ? v : null)}
-              min={1}
-              max={32}
-              disabled={readOnly}
-            />
+            {radioTechnology === 'nr5g' && macProfileDraft.kind === 'nr_throughput' ? (
+              <Select
+                label="CSI-RS 端口数"
+                description="NR 吞吐量 profile；LTE RMC 不提交此字段"
+                value={String(macProfileDraft.csi_rs_ports)}
+                data={UXM_NR_CSI_RS_PORTS_VALUES.map((ports) => ({
+                  value: String(ports),
+                  label: String(ports),
+                }))}
+                onChange={(v) => {
+                  if (v) updateMacDraft({ csi_rs_ports: Number(v) })
+                }}
+                disabled={readOnly}
+              />
+            ) : null}
           </SimpleGrid>
         </Stack>
       </Paper>
@@ -1019,74 +1069,107 @@ export function MIMOOTAConfigForm({
             </Text>
           </Accordion.Control>
           <Accordion.Panel>
-            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-              <NumberInput
-                label="MCS 索引"
-                description="3GPP MCS 0-31"
-                value={value.mcs}
-                onChange={(v) => update('mcs', typeof v === 'number' ? v : undefined)}
-                min={0}
-                max={31}
-                disabled={readOnly}
-              />
-              <Switch
-                label="启用 AMC"
-                description="关闭=固定 MCS, 结果可重复"
-                checked={value.enable_amc ?? false}
-                onChange={(e) => update('enable_amc', e.currentTarget.checked)}
-                disabled={readOnly}
-              />
-              <TextInput
-                label="TDD 时隙模式"
-                placeholder="DDDSU"
-                value={value.tdd_pattern ?? ''}
-                onChange={(e) => update('tdd_pattern', e.target.value)}
-                disabled={readOnly}
-              />
-              <TextInput
-                label="TDD 周期"
-                placeholder="5MS"
-                value={value.tdd_period ?? ''}
-                onChange={(e) => update('tdd_period', e.target.value)}
-                disabled={readOnly}
-              />
-              <TextInput
-                label="PDSCH 调度算法"
-                description="留空=用 profile 默认"
-                placeholder="FULLBUFFER"
-                value={value.sched_algo ?? ''}
-                onChange={(e) => update('sched_algo', e.target.value || undefined)}
-                disabled={readOnly}
-              />
-              <NumberInput
-                label="HARQ 最大重传次数"
-                value={value.harq_max_trans}
-                onChange={(v) =>
-                  update('harq_max_trans', typeof v === 'number' ? v : undefined)
-                }
-                min={1}
-                max={16}
-                disabled={readOnly}
-              />
-              <NumberInput
-                label="HARQ 进程数"
-                value={value.harq_processes}
-                onChange={(v) =>
-                  update('harq_processes', typeof v === 'number' ? v : undefined)
-                }
-                min={1}
-                max={32}
-                disabled={readOnly}
-              />
-              <NumberInput
-                label="统计窗口"
-                description="≥5000 大致 5s"
-                value={value.stat_count}
-                onChange={(v) => update('stat_count', typeof v === 'number' ? v : undefined)}
-                min={100}
-                disabled={readOnly}
-              />
-            </SimpleGrid>
+            <Stack gap="md">
+              <Alert color="blue" variant="light" title="RAT 判别 MAC profile">
+                {radioTechnology === 'nr5g'
+                  ? 'NR 使用 nr_throughput@1；以下编辑由服务器重新校验并冻结。'
+                  : 'LTE 使用固定 lte_rmc@1（FDD / TM3 / 全资源 / AMC 关闭），不会提交 NR 专属字段。'}
+              </Alert>
+              {macProfileDraftError ? (
+                <Alert color="red" variant="light" title="MAC 配置尚不可保存">
+                  {macProfileDraftError}
+                </Alert>
+              ) : null}
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+                {macProfileDraft.kind === 'nr_throughput' ? (
+                  <>
+                    <NumberInput
+                      label="MCS 索引"
+                      description="NR profile MCS 0-28"
+                      value={macProfileDraft.mcs}
+                      onChange={(v) => {
+                        if (typeof v === 'number') updateMacDraft({ mcs: v })
+                      }}
+                      min={0}
+                      max={28}
+                      disabled={readOnly}
+                    />
+                    <Switch
+                      label="启用 AMC"
+                      description="nr_throughput@1 仅支持已验证的固定 MCS 路径"
+                      checked={false}
+                      disabled
+                    />
+                    <TextInput
+                      label="TDD 时隙模式"
+                      value={macProfileDraft.tdd_pattern}
+                      onChange={(e) => updateMacDraft({ tdd_pattern: e.target.value })}
+                      disabled={readOnly}
+                    />
+                    <Select
+                      label="TDD 周期"
+                      value={macProfileDraft.tdd_period}
+                      data={UXM_NR_TDD_PERIOD_VALUES.map((period) => ({
+                        value: period,
+                        label: period,
+                      }))}
+                      onChange={(period) => {
+                        if (period) updateMacDraft({ tdd_period: period })
+                      }}
+                      disabled={readOnly}
+                    />
+                    <TextInput
+                      label="PDSCH 调度算法"
+                      description="当前 profile 版本固定为全吞吐调度"
+                      value="full_throughput"
+                      disabled
+                    />
+                    <Select
+                      label="HARQ 最大重传次数"
+                      value={String(macProfileDraft.harq_max_trans)}
+                      data={UXM_NR_HARQ_MAX_TRANS_VALUES.map((count) => ({
+                        value: String(count),
+                        label: String(count),
+                      }))}
+                      onChange={(count) => {
+                        if (count) updateMacDraft({ harq_max_trans: Number(count) })
+                      }}
+                      disabled={readOnly}
+                    />
+                    <Select
+                      label="HARQ 进程数"
+                      value={String(macProfileDraft.harq_processes)}
+                      data={UXM_NR_HARQ_PROCESSES_VALUES.map((count) => ({
+                        value: String(count),
+                        label: String(count),
+                      }))}
+                      onChange={(count) => {
+                        if (count) updateMacDraft({ harq_processes: Number(count) })
+                      }}
+                      disabled={readOnly}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <TextInput label="调度模式" value="RMC" disabled />
+                    <TextInput label="资源分配" value="全资源" disabled />
+                    <TextInput label="传输模式" value="TM3" disabled />
+                  </>
+                )}
+                <NumberInput
+                  label="统计窗口"
+                  description="单位：subframes"
+                  value={macProfileDraft.statistical_window.count}
+                  onChange={(v) => {
+                    if (typeof v === 'number') {
+                      updateMacDraft({ statistical_window_count: v })
+                    }
+                  }}
+                  min={100}
+                  disabled={readOnly}
+                />
+              </SimpleGrid>
+            </Stack>
           </Accordion.Panel>
         </Accordion.Item>
 
@@ -1159,7 +1242,15 @@ export function MIMOOTAConfigForm({
                 variant="light"
                 title={`TestCase × BaseStation：${compatibilityView.valueText}`}
               >
-                <Text size="sm">{compatibilityView.detail}</Text>
+                <Stack gap={4}>
+                  <Text size="sm">{compatibilityView.detail}</Text>
+                  <Text size="xs">
+                    服务器冻结 MAC：{describeFrozenMacProfile(
+                      cmwReadinessQuery.data?.base_station_testcase_compatibility
+                        ?.requirements?.mac_profile,
+                    )}
+                  </Text>
+                </Stack>
               </Alert>
               {showCmwReadiness && (
                 <Alert

@@ -27,6 +27,7 @@ from app.schemas.mimo_ota.config import (
     MIMO_OTA_TEST_TYPE,
     MIMOOTAConfiguration,
     canonicalize_mimo_ota_configuration_payload,
+    dump_canonical_mimo_ota_configuration,
 )
 from app.services.lab_resolution import resolve_lab_profile
 from app.services.test_execution import StepDescriptor
@@ -100,7 +101,7 @@ def build_mimo_ota_test_case(
         name=name,
         description=description,
         test_type=TestCaseType.MIMO_OTA.value,
-        configuration=config.model_dump(mode="json"),
+        configuration=dump_canonical_mimo_ota_configuration(config),
         pass_criteria=config.pass_criteria.model_dump(mode="json"),
         channel_model=config.cdl_model_name,
         frequency_mhz=primary_carrier.frequency_hz / 1e6,

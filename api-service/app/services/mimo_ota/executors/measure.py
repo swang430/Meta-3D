@@ -23,9 +23,9 @@ switch orchestrate(switch_mode_id)/ 路损 cert(operating_mode 过滤)/ SA /
 positioner 全 TestCase 派生, 下发后多方频率一致性 + GCM .smu + switch mode 三道
 fail-loud 门挡静默错配 (Phase 1/2/3)。路径 A (bring-up 默认: P0-8 F64 .smu /
 P1-17 UXM profile) 主要在 HAL-init 用 —— F64 .smu 这里由 emulation_file 覆盖,
-UXM port routing / TDD / scheduler (mimo_port_preset/tdd_pattern/sched_algo/
-csi_rs_ports) **P2-11 #1974 已补**: path B 经 _build_pcell_cell_config 从 TestCase
-显式驱动 set_cell_config, 不再残留 HAL-init 默认 profile (原 Codex on PR #112 缺口)。
+UXM port routing 仍由 PCell config 处理；scheduler / CSI-RS 只从本次 execution
+冻结的 NR MAC profile 读取，TDD 则只由 MAC profile adapter 下发。path B 不再读取
+TestCase 平面字段重建第二份 MAC 真值，也不残留 HAL-init 默认 profile。
 边界总览见 docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
 """
 import asyncio
@@ -75,6 +75,7 @@ from app.hal.base_station_compatibility import (
     verify_frozen_base_station_compatibility,
 )
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_evidence_outcome import (
@@ -95,6 +96,26 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查（adapter-native 统计窗口自身负责确认窗口边界与链路状态）；
 # azimuth 间隔检查能在转台移动期间发现掉线。
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+def _frozen_mac_measurement_basis(profile: FrozenMacTestProfile) -> int:
+    """Return the one profile-owned statistics basis for wait/request/audit."""
+
+    if not isinstance(profile, FrozenMacTestProfile):
+        raise TypeError("profile must be a FrozenMacTestProfile")
+    return profile.profile.statistical_window.count
+
+
+def _frozen_mcs_consistency_request(
+    profile: FrozenMacTestProfile,
+) -> tuple[int, bool] | None:
+    """Return NR-only consistency intent; LTE RMC has no NR MCS semantics."""
+
+    if not isinstance(profile, FrozenMacTestProfile):
+        raise TypeError("profile must be a FrozenMacTestProfile")
+    if profile.profile.kind != "nr_throughput":
+        return None
+    return profile.profile.mcs, profile.profile.enable_amc
 
 
 async def _reconfigure_rrc_if_supported(
@@ -156,6 +177,9 @@ class _BaseStationAttemptContext:
     # P2-50: execution-frozen vendor-neutral 能力计划；attempt 路径上已与
     # evidence 里冻结的计划做过 digest 对账（漂移 fail-loud）。
     execution_plan: BaseStationExecutionPlan
+    # P2-54: parsed exactly once from the execution freeze.  No downstream
+    # consumer may rebuild this intent from the mutable TestCase.
+    mac_profile: FrozenMacTestProfile | None
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -421,6 +445,7 @@ def _extract_b2_cluster_inputs(config) -> Dict[str, Any]:
 def _build_pcell_cell_config(
     config,
     *,
+    mac_profile: FrozenMacTestProfile | None,
     frequency_mhz: float,
     arfcn: int,
     bandwidth_mhz: float,
@@ -429,16 +454,10 @@ def _build_pcell_cell_config(
 ) -> Dict[str, Any]:
     """构造 measure path B 的 PCell set_cell_config dict (P2-11 #1974)。
 
-    path B 显式驱动端口路由/调度 (mimo_port_preset/sched_algo/csi_rs_ports), 避免残留
-    HAL-init 默认 topology profile 的值 (如 2x2 TestCase 跑在残留 4x4 端口路由上)。
-
-    ⚠️ 三个可选字段 **None 时不放进 dict** (Codex P1 #127): None = "TestCase 未指定",
-    不传则 set_cell_config 不改该项 → 保持 HAL profile (旧 saved case 没这些字段, 反序列
-    化得 None, 不被强加值覆盖; 否则旧 4x4 case 被默认 "2x2" 强制成 2x2 路由)。显式给才
-    驱动。csi_rs_ports 额外语义: 不传时 set_cell_config 按 mimo_layers 自动推断。
-
-    tdd_pattern/tdd_period **不在这里** —— 已由 configure_mac_throughput_test 驱动 (见
-    execute), 这里再传是冗余 + 引入默认覆盖风险。频率/arfcn 由 caller 算好传入。
+    path B 的端口路由仍由 PCell config 处理；scheduler / CSI-RS 只从本次 execution
+    冻结的 NR MAC profile 读取。TDD pattern / period 不在这里，它们只由
+    configure_mac_throughput_test 消费同一冻结 profile。频率 / ARFCN 由 caller
+    算好传入。
     """
     cell_cfg: Dict[str, Any] = {
         "frequency_mhz": frequency_mhz,
@@ -458,15 +477,21 @@ def _build_pcell_cell_config(
     # 可选字段: 仅 TestCase 显式给 (非 None) 才驱动, 否则保持 HAL profile (backward-compat)
     if config.mimo_port_preset is not None:
         cell_cfg["mimo_port_preset"] = config.mimo_port_preset
-    if config.sched_algo is not None:
-        cell_cfg["sched_algo"] = config.sched_algo
-    if config.csi_rs_ports is not None:
-        cell_cfg["csi_rs_ports"] = config.csi_rs_ports
+    if mac_profile is not None and mac_profile.profile.kind == "nr_throughput":
+        cell_cfg["sched_algo"] = mac_profile.profile.scheduler_algorithm
+        cell_cfg["csi_rs_ports"] = mac_profile.profile.csi_rs_ports
     return cell_cfg
 
 
-def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
+def _build_pcell_requested_config(
+    config,
+    *,
+    mac_profile: FrozenMacTestProfile | None = None,
+) -> BaseStationRequestedConfig:
     """Build the single RAT-aware request handed to every base-station adapter."""
+
+    if mac_profile is None:
+        mac_profile = getattr(config, "mac_profile", None)
 
     pcell = config.primary_carrier
     if pcell.radio_technology == "lte":
@@ -506,8 +531,18 @@ def _build_pcell_requested_config(config) -> BaseStationRequestedConfig:
             else None
         ),
         port_preset=config.mimo_port_preset,
-        scheduler_algorithm=config.sched_algo,
-        csi_rs_ports=config.csi_rs_ports,
+        scheduler_algorithm=(
+            mac_profile.profile.scheduler_algorithm
+            if mac_profile is not None
+            and mac_profile.profile.kind == "nr_throughput"
+            else None
+        ),
+        csi_rs_ports=(
+            mac_profile.profile.csi_rs_ports
+            if mac_profile is not None
+            and mac_profile.profile.kind == "nr_throughput"
+            else None
+        ),
     )
 
 
@@ -815,6 +850,9 @@ class MeasureExecutor(IStepExecutor):
         """Resolve server-owned frozen/attempt/lease truth for every adapter."""
 
         from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+        from app.services.base_station_adapter_profile import (
+            frozen_mac_profile_from_adapter_freeze,
+        )
         from app.services.execution_scpi_evidence import (
             load_base_station_execution_evidence,
         )
@@ -841,6 +879,10 @@ class MeasureExecutor(IStepExecutor):
             base_station,
             manifest=live_manifest,
         )
+        try:
+            frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
         # P1-75 站点 B：lease 后、首次 I/O 前，对当前 live manifest 复核
         # 冻结时的兼容性结论；digest 漂移或 verdict 翻转都拒绝进入 I/O。
         # 旧 frozen dict 缺 compatibility → 当时未评估，按既有行为放行。
@@ -891,6 +933,7 @@ class MeasureExecutor(IStepExecutor):
                 lease_identity=lease_identity,
                 simulated_diagnostic=True,
                 execution_plan=live_execution_plan,
+                mac_profile=frozen_mac_profile,
             )
         if (
             not isinstance(frozen_adapter_id, str)
@@ -934,6 +977,7 @@ class MeasureExecutor(IStepExecutor):
                 lease_identity=lease_identity,
                 simulated_diagnostic=simulated_diagnostic,
                 execution_plan=live_execution_plan,
+                mac_profile=frozen_mac_profile,
             )
         evidence = BaseStationExecutionEvidence.model_validate(raw_evidence)
         if evidence.adapter != frozen_adapter_id:
@@ -969,6 +1013,7 @@ class MeasureExecutor(IStepExecutor):
             lease_identity=lease_identity,
             simulated_diagnostic=simulated_diagnostic,
             execution_plan=live_execution_plan,
+            mac_profile=frozen_mac_profile,
         )
 
     @staticmethod
@@ -1418,7 +1463,10 @@ class MeasureExecutor(IStepExecutor):
             # 继承)。MAC 吞吐配置 / attach / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
             base_station_inherit = config.base_station_config_mode == "inherit"
-            pcell_requested_config = _build_pcell_requested_config(config)
+            pcell_requested_config = _build_pcell_requested_config(
+                config,
+                mac_profile=base_station_attempt.mac_profile,
+            )
             pcell_channel_number = (
                 pcell_requested_config.nr_arfcn
                 if pcell_requested_config.radio_technology == "nr5g"
@@ -1556,21 +1604,27 @@ class MeasureExecutor(IStepExecutor):
                         "执行计划声明 MAC 吞吐配置能力，但 adapter 缺 "
                         "configure_mac_throughput_test（计划与实现漂移）"
                     )
+                frozen_mac_profile = base_station_attempt.mac_profile
+                if frozen_mac_profile is None:
+                    raise RuntimeError(
+                        "execution-frozen BaseStation MAC profile is missing"
+                    )
                 mac_cfg = await base_station.configure_mac_throughput_test(
-                    mimo_layers=config.mimo_layers,
-                    mcs=config.mcs,
-                    enable_amc=config.enable_amc,
-                    tdd_pattern=config.tdd_pattern,
-                    tdd_period=config.tdd_period,
-                    harq_max_trans=config.harq_max_trans,
-                    harq_processes=config.harq_processes,
-                    stat_count=config.stat_count,
-                    # ⭐ SCS 必须传 —— TDD pattern 的含义依赖它（手册把 SCS
-                    #   列为 TDDPATtern:STATE 的 Dependencies）。不传则拒发 TDD 组。
-                    scs_khz=pcell.subcarrier_spacing_khz,
-                    # TestCase 的**显式** CSI-RS 端口数优先（可故意 > 层数）
-                    csi_rs_ports=getattr(config, 'csi_rs_ports', None),
+                    frozen_mac_profile
                 )
+                if base_station_attempt.attempt_id is not None:
+                    from app.services.execution_scpi_evidence import (
+                        confirm_base_station_mac_profile,
+                    )
+
+                    confirm_base_station_mac_profile(
+                        context.db,
+                        context.test_execution.id,
+                        attempt_id=base_station_attempt.attempt_id,
+                        lease_identity=base_station_attempt.lease_identity,
+                        result=mac_cfg,
+                    )
+                    context.db.commit()
                 # ⚠ 判定收窄进 `_mac_config_blocker`（内审 F3）—— 内嵌时
                 #   只能靠源码文本判，`or`→`and` 那种变异在 138 个用例下全绿。
                 _blocker = self._mac_config_blocker(mac_cfg)
@@ -2918,7 +2972,18 @@ class MeasureExecutor(IStepExecutor):
             # One sample per stat window (≈ stat_count subframes × 1ms);
             # cap aggressively in dev so smoke tests don't wait minutes.
             num_windows = min(config.num_samples_per_azimuth, _DEV_SAMPLE_WINDOWS)
-            window_s = max(config.stat_count / 1000.0, _MOCK_WINDOW_FLOOR_S)
+            frozen_mac_profile = base_station_attempt.mac_profile
+            if frozen_mac_profile is None:
+                raise RuntimeError(
+                    "execution-frozen BaseStation MAC profile is missing"
+                )
+            frozen_stat_count = _frozen_mac_measurement_basis(
+                frozen_mac_profile
+            )
+            window_s = max(
+                frozen_stat_count / 1000.0,
+                _MOCK_WINDOW_FLOOR_S,
+            )
 
             loop = asyncio.get_event_loop()
             t_start = loop.time()
@@ -3147,7 +3212,7 @@ class MeasureExecutor(IStepExecutor):
                         # P1-74：TestCase 的统计基随 execution 冻结进窗口请求。
                         # window_s 仍只是「等多久」，它不是统计基，也证明不了
                         # 仪器统计了多少子帧。
-                        statistical_basis_subframes=config.stat_count,
+                        statistical_basis_subframes=frozen_stat_count,
                     )
                 except _BaseStationWindowBlocked as exc:
                     # A rejected native window has no authoritative connected
@@ -3196,8 +3261,11 @@ class MeasureExecutor(IStepExecutor):
                     # P1 (Codex #126): ThroughputMetrics.mcs_dl 默认 0 —— 真 UXM 不报
                     # DL_MCS 时保持 0, 不能当有效样本 (否则众数 0 < 请求 → 误判 clamp 把
                     # 整组有效测量 abort)。只收真实报告的 (>0); 0/None 都视作"未报" skip。
-                    _mcs = getattr(metrics, "mcs_dl", None)
-                    mcs_samples.append(_mcs if (_mcs and _mcs > 0) else None)
+                    if frozen_mac_profile.profile.kind == "nr_throughput":
+                        _mcs = getattr(metrics, "mcs_dl", None)
+                        mcs_samples.append(
+                            _mcs if (_mcs and _mcs > 0) else None
+                        )
 
                 if (
                     latest_throughput_exchanges
@@ -3364,9 +3432,17 @@ class MeasureExecutor(IStepExecutor):
                 check_mcs_consistency,
             )
             from app.services.instrument_hal_service import is_mock_driver
+            mcs_request = _frozen_mcs_consistency_request(frozen_mac_profile)
+            if mcs_request is not None:
+                requested_mcs, enable_amc = mcs_request
+            else:
+                # LTE RMC has no NR MCS truth.  Deliberately select the existing
+                # AMC-skip branch without reading the legacy NR fields.
+                requested_mcs = 0
+                enable_amc = True
             mcs_result = check_mcs_consistency(
-                requested_mcs=config.mcs,
-                enable_amc=config.enable_amc,
+                requested_mcs=requested_mcs,
+                enable_amc=enable_amc,
                 measured_mcs_samples=mcs_samples,
                 bs_is_real=(
                     base_station is not None and not is_mock_driver(base_station)
@@ -3434,7 +3510,8 @@ class MeasureExecutor(IStepExecutor):
                 "sampling": {
                     "num_windows_per_azimuth": num_windows,
                     "window_duration_s": window_s,
-                    "stat_count_subframes": config.stat_count,
+                    "stat_count_subframes": frozen_stat_count,
+                    "mac_profile_digest": frozen_mac_profile.profile_digest,
                 },
                 "carrier_aggregation": {
                     "num_component_carriers": len(ccs),

@@ -26,10 +26,15 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
-from app.hal.scpi_evidence import InstrumentEvidenceItem
+from app.hal.scpi_evidence import InstrumentEvidenceItem, ScpiExchangeRef
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
     BaseStationMetricCapability,
+)
+from app.hal.base_station_mac_profile import (
+    FrozenMacTestProfile,
+    build_mac_throughput_command_inputs,
+    require_frozen_mac_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,13 +206,14 @@ class BaseStationApplyReceipt:
     schema_version: Literal[1]
     # P2-51: "mac_throughput_config" 是 configure_mac_throughput_test 的
     # 证据回执；它不进入 adapter_operations 持久化链（那条链的
-    # BaseStationAdapterOperationEvidence 仍只收 config/route），只随
-    # MacThroughputConfigResult.receipt 返回给调用方。
+    # BaseStationAdapterOperationEvidence 仍只收 config/route），由执行侧
+    # 单独写入 profile-scoped mac_profile_receipts。
     operation: Literal["config", "route", "mac_throughput_config"]
     fields: tuple[BaseStationFieldReceipt, ...]
     reason: str
     simulated: bool
     operation_succeeded: bool | None = None
+    profile_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -230,6 +236,10 @@ class BaseStationApplyReceipt:
             and type(self.operation_succeeded) is not bool
         ):
             raise TypeError("apply receipt operation_succeeded must be bool or None")
+        if self.profile_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.profile_digest
+        ):
+            raise ValueError("apply receipt profile_digest must be a SHA-256 digest")
 
     @property
     def confirmed(self) -> bool:
@@ -258,6 +268,49 @@ class BaseStationApplyReceipt:
                 if exchange_id not in unique:
                     unique.append(exchange_id)
         return tuple(unique)
+
+
+@dataclass(frozen=True)
+class MacThroughputConfigResult:
+    """Vendor-neutral outcome of applying one frozen MAC test profile."""
+
+    applied: tuple[str, ...] = ()
+    skipped: tuple[str, ...] = ()
+    missing_mandatory: tuple[str, ...] = ()
+    undefined_on_profile: tuple[str, ...] = ()
+    error: Optional[str] = None
+    rejected: tuple[str, ...] = ()
+    no_equivalent: tuple[str, ...] = ()
+    receipt: Optional[BaseStationApplyReceipt] = None
+    profile_digest: str | None = None
+    application_exchanges: tuple[ScpiExchangeRef, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.profile_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.profile_digest
+        ):
+            raise ValueError("MAC result profile_digest must be a SHA-256 digest")
+        if (
+            self.receipt is not None
+            and self.receipt.profile_digest != self.profile_digest
+        ):
+            raise ValueError("MAC result and receipt profile digests must match")
+        if any(
+            not isinstance(exchange, ScpiExchangeRef)
+            for exchange in self.application_exchanges
+        ):
+            raise TypeError("MAC application exchanges must be ScpiExchangeRef values")
+
+    @property
+    def ok(self) -> bool:
+        return (
+            not self.missing_mandatory
+            and not self.rejected
+            and self.error is None
+        )
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 
 BASE_STATION_ATTACH_STAGES = (
@@ -979,9 +1032,12 @@ def resolve_base_station_execution_plan(
     判据与既有散点站点一致：每个维度取 adapter 实例声明（ClassVar 或
     profile 派生属性）``is True``。manifest（可为 None——simulated mock /
     无 manifest 的诊断驱动）只做交叉校验与 capability_source 溯源：
-    manifest 声明了 operation token 而实例声明为 False 属于声明漂移，
-    fail-loud；反向（token 缺席、实例声明 True）是合法的 profile 派生
-    opt-in（如 UXM 按 Test App profile 开放 RRC/MAC）。
+    manifest 声明了 operation token 而实例声明为 False 通常属于声明漂移，
+    fail-loud。MAC 是显式 profile-scoped 的例外：manifest 声明型号支持的
+    ``mac_profiles``，实例属性声明当前加载 Test App 是否具备完整命令集；
+    后者为 False 时冻结为未计划并 fail-closed，而不是把合法的运行时能力
+    收窄误报成注册漂移。反向（token 缺席、实例声明 True）仍是合法的
+    profile 派生 opt-in（如 UXM 按 Test App profile 开放 RRC）。
     """
 
     adapter_id = getattr(driver, "adapter_id", None)
@@ -1028,7 +1084,13 @@ def resolve_base_station_execution_plan(
     for dimension, token, attr in _EXECUTION_PLAN_DIMENSIONS:
         declared = getattr(driver, attr, False) is True
         token_declared = token is not None and token in manifest_operations
-        if token_declared and not declared:
+        profile_scoped_runtime_unavailable = (
+            dimension == "mac_throughput"
+            and token_declared
+            and bool(getattr(manifest, "mac_profiles", ()))
+            and not declared
+        )
+        if token_declared and not declared and not profile_scoped_runtime_unavailable:
             raise ValueError(
                 f"execution plan declaration drift for {dimension}: manifest "
                 f"declares {token!r} but adapter {attr} is not True"
@@ -1041,6 +1103,11 @@ def resolve_base_station_execution_plan(
             reason = reasons_when_planned[dimension]
         else:
             reason = reasons_when_unplanned[dimension]
+            if profile_scoped_runtime_unavailable:
+                reason = (
+                    "adapter manifest 声明该 MAC profile，但当前加载 Test App "
+                    "未暴露完整命令集；正式 MAC 配置保持未计划并 fail-closed"
+                )
             if dimension == "input_level_control":
                 unavailable_reason = getattr(
                     driver, "input_level_unavailable_reason", None
@@ -1989,20 +2056,7 @@ class MockBaseStation(BaseStationDriver):
 
     async def configure_mac_throughput_test(
         self,
-        mimo_layers: int = 2,
-        mcs: int = 28,
-        rb_alloc: str = "ALL",
-        enable_amc: bool = False,
-        tdd_pattern: str = "DDDSU",
-        tdd_period: str = "5MS",
-        harq_max_trans: int = 4,
-        harq_processes: int = 16,
-        stat_count: int = 5000,
-        cell: Optional[str] = None,
-        tdd_dl_symbols: int = 6,
-        tdd_ul_symbols: int = 4,
-        scs_khz: Optional[int] = None,
-        csi_rs_ports: Optional[int] = None,
+        frozen_profile: FrozenMacTestProfile,
     ):
         """Return diagnostic-only MAC configuration evidence when declared.
 
@@ -2012,20 +2066,22 @@ class MockBaseStation(BaseStationDriver):
         this simulated receipt.
         """
 
-        from app.hal.uxm_base_station import MacThroughputConfigResult
-
+        declarations = self.adapter_manifest.mac_profiles
+        if len(declarations) != 1:
+            raise ValueError(
+                "mock adapter manifest must declare exactly one MAC profile"
+            )
+        declaration = declarations[0]
+        frozen = require_frozen_mac_profile(
+            frozen_profile,
+            expected_kind=declaration.kind,
+            expected_rat=declaration.rat,
+        )
+        command_inputs = build_mac_throughput_command_inputs(frozen)
         requested = {
-            "mimo_layers": mimo_layers,
-            "mcs": mcs,
-            "rb_alloc": rb_alloc,
-            "enable_amc": enable_amc,
-            "tdd_pattern": tdd_pattern,
-            "tdd_period": tdd_period,
-            "harq_max_trans": harq_max_trans,
-            "harq_processes": harq_processes,
-            "stat_count": stat_count,
-            "scs_khz": scs_khz,
-            "csi_rs_ports": csi_rs_ports,
+            key: value
+            for key, value in command_inputs.items()
+            if key not in {"profile_payload", "profile_digest"}
         }
         declared = "mac_throughput_config" in self.adapter_manifest.operations
         receipt = BaseStationApplyReceipt(
@@ -2048,13 +2104,18 @@ class MockBaseStation(BaseStationDriver):
             ),
             simulated=True,
             operation_succeeded=declared,
+            profile_digest=frozen.profile_digest,
         )
         if not declared:
             return MacThroughputConfigResult(
                 error="mock adapter manifest does not declare mac_throughput_config",
                 receipt=receipt,
+                profile_digest=frozen.profile_digest,
             )
-        return MacThroughputConfigResult(receipt=receipt)
+        return MacThroughputConfigResult(
+            receipt=receipt,
+            profile_digest=frozen.profile_digest,
+        )
 
     async def apply_route(
         self,

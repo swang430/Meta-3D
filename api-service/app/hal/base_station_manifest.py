@@ -62,6 +62,44 @@ class BaseStationRatCapability(BaseModel):
         return normalized
 
 
+class BaseStationMacProfileCapability(BaseModel):
+    """One execution MAC profile shape accepted by an adapter."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str
+    profile_version: int
+    rat: Literal["lte", "nr5g"]
+    application_evidence: Literal[
+        "authoritative_readback",
+        "command_error_queue",
+    ]
+    source_reference: str
+
+    @field_validator("kind")
+    @classmethod
+    def _valid_kind(cls, value: str) -> str:
+        normalized = value.strip()
+        if not _TOKEN_RE.fullmatch(normalized):
+            raise ValueError("MAC profile kind must be a lowercase identifier")
+        return normalized
+
+    @field_validator("profile_version")
+    @classmethod
+    def _positive_version(cls, value: int) -> int:
+        if type(value) is not int or value < 1:
+            raise ValueError("MAC profile version must be a positive integer")
+        return value
+
+    @field_validator("source_reference")
+    @classmethod
+    def _auditable_source(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("MAC profile source_reference must be non-blank")
+        return normalized
+
+
 class BaseStationConfigFieldCapability(BaseModel):
     """Static support/readback boundary for one common config field."""
 
@@ -260,6 +298,7 @@ class BaseStationAdapterManifest(BaseModel):
     capabilities: tuple[str, ...]
     rat_capabilities: tuple[BaseStationRatCapability, ...]
     operations: tuple[str, ...]
+    mac_profiles: tuple[BaseStationMacProfileCapability, ...]
     config_fields: tuple[BaseStationConfigFieldCapability, ...]
     attach_stages: tuple[BaseStationAttachStageCapability, ...]
     measurement: BaseStationMeasurementCapability | None
@@ -375,6 +414,26 @@ class BaseStationAdapterManifest(BaseModel):
             raise ValueError("rat_capabilities must be non-empty")
         if not self.operations:
             raise ValueError("operations must be non-empty")
+        profile_identities = [
+            (item.kind, item.profile_version, item.rat)
+            for item in self.mac_profiles
+        ]
+        if len(set(profile_identities)) != len(profile_identities):
+            raise ValueError("MAC profile declarations must be unique")
+        declared_rat_set = set(derived_rats)
+        if any(item.rat not in declared_rat_set for item in self.mac_profiles):
+            raise ValueError("MAC profile RAT must be declared by rat_capabilities")
+        if any(
+            item.source_reference not in self.manual_sources
+            for item in self.mac_profiles
+        ):
+            raise ValueError("MAC profile source must be declared by manual_sources")
+        declares_mac_config = "mac_throughput_config" in self.operations
+        if declares_mac_config != bool(self.mac_profiles):
+            raise ValueError(
+                "mac_throughput_config operation and MAC profile declarations "
+                "must be present together"
+            )
         declares_measurement = "measurement_window" in self.operations
         if declares_measurement != (self.measurement is not None):
             raise ValueError(
@@ -470,7 +529,11 @@ def validate_base_station_adapter_registrations(
             ),
         )
         for class_var, operation in operation_mirrors:
-            class_value = getattr(driver_class, class_var, False) is True
+            declared_value = getattr(driver_class, class_var, False)
+            class_value = declared_value is True or (
+                class_var == "mac_throughput_configuration_supported"
+                and isinstance(declared_value, property)
+            )
             manifest_value = operation in manifest.operations
             if class_value != manifest_value:
                 raise ValueError(

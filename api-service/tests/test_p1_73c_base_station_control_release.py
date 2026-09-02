@@ -29,6 +29,7 @@ class _F64:
 
 class _BaseStation:
     adapter_id = "cmw500"
+    instrument_id = "base-station-test"
 
     def __init__(self, *, release_confirmed=True):
         self.release_confirmed = release_confirmed
@@ -84,6 +85,7 @@ async def test_lease_outcome_binds_attempt_lease_and_driver_session_token():
             measurement_attempt_id="attempt-1",
             adapter_id="cmw500",
             session_token="session-1",
+            instrument_id="base-station-test",
         )
         assert outcome.measurement_attempt_id == "attempt-1"
         assert outcome.base_station_release is None

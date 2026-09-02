@@ -19,7 +19,7 @@ from tests.test_p2_66_execution_evidence_outcome import _execution
 
 
 def _invalid_formal_execution():
-    execution = _execution()
+    execution = _execution(include_base_station_evidence=False)
     execution.id = uuid4()
     execution.test_case_id = uuid4()
     execution.validation_pass = True
