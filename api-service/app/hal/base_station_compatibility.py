@@ -275,7 +275,10 @@ def _mac_dimension_rejections(*, profile, manifest) -> list[str]:
         ):
             continue
         for dimension in accepted.dimensions:
-            if not hasattr(profile, dimension.dimension):
+            # 用 model_fields 而不是 hasattr：`model_dump` / `copy` / `json` /
+            # `dict` 这些 pydantic 内建成员对 hasattr 恒为真，取名撞上时会拿到
+            # bound method 去跟声明比对 —— 方向虽仍是拒绝，但理由指错了地方。
+            if dimension.dimension not in type(profile).model_fields:
                 # 声明了一个 profile 上不存在的维度：这是**声明与 schema 脱节**，
                 # 不是"该维度无所谓"。静默跳过会让一条 fail-closed 的声明变成
                 # 放行，所以显式拒绝并指出是哪一个。

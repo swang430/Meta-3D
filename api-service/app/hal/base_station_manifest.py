@@ -134,11 +134,14 @@ class BaseStationMacDimensionCapability(BaseModel):
     @classmethod
     def _valid_dimension(cls, value: str) -> str:
         normalized = value.strip()
-        # 只收**单段** token，不收 `a.b` 这种点号路径：判定器用
-        # `hasattr(profile, dimension)` 取值，点号名恒取不到 → 这条声明会被
-        # 静默跳过。那是 fail-**open**，与本机制其余部分（未声明即拒、
-        # 非 authoritative 即拒）方向相反 —— 声明写得越细反而越容易全不判。
-        # 将来真要支持嵌套字段，得先给判定器一个解析器，不能只放宽这里。
+        # 只收**单段** token，不收 `a.b` 这种点号路径：判定器按
+        # `dimension in type(profile).model_fields` 取字段，点号名恒不命中，
+        # 于是落进「声明了 profile 上没有的维度」那一格被**显式拒绝**
+        # （见 base_station_compatibility._mac_dimension_rejections）。
+        # 方向是 fail-closed，不是放行 —— 在构造层就红，是为了让写错的人
+        # 当场看到，而不是等到执行前才收到一条指不到点子上的拒绝理由。
+        # 将来真要支持嵌套字段，得先给判定器一个字段路径解析器，
+        # 不能只放宽这里。
         if not _TOKEN_RE.fullmatch(normalized):
             raise ValueError("MAC dimension must be a single lowercase token")
         return normalized

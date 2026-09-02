@@ -193,10 +193,10 @@ def test_dimension_rejects_empty_value_domain():
 def test_dimension_rejects_names_the_matcher_cannot_resolve(bad_name):
     """维度名必须是单段 token。
 
-    点号路径尤其要挡：判定器用 `hasattr(profile, dimension)` 取值，
-    `"a.b"` 恒取不到 —— 声明会被跳过或落进"脱节"分支，无论哪种都不是
-    声明者的本意。NR profile 恰好有嵌套的 statistical_window，
-    这是最自然的下一步扩展，所以这一格必须在构造层就红。
+    点号路径尤其要挡：判定器按 `dimension in type(profile).model_fields`
+    取字段，`"a.b"` 恒不命中 —— 声明会落进"脱节"分支被拒。方向虽是
+    fail-closed，但拒绝理由指不到点子上，所以这一格要在构造层就红。
+    NR profile 恰好有嵌套的 statistical_window，是最自然的下一步扩展。
     """
     with pytest.raises(ValidationError):
         BaseStationMacDimensionCapability(
@@ -636,9 +636,15 @@ def test_binding_digest_payload_goes_through_the_shared_projection():
     import ast
     import pathlib as _pathlib
 
-    source = _pathlib.Path(
-        "app/services/base_station_binding.py"
-    ).read_text(encoding="utf-8")
+    # 用 __file__ 定位，不依赖 pytest 的当前工作目录：从仓库根跑时
+    # 相对路径会 FileNotFoundError，让这道门变成"换个目录就失效"。
+    binding_file = (
+        _pathlib.Path(__file__).resolve().parent.parent
+        / "app"
+        / "services"
+        / "base_station_binding.py"
+    )
+    source = binding_file.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     manifest_values = [
@@ -666,3 +672,42 @@ def test_binding_digest_payload_goes_through_the_shared_projection():
         assert any(
             kw.arg == "exclude_none" for kw in call.keywords
         ), "digest_safe_manifest_payload 必须显式传 exclude_none"
+
+
+@pytest.mark.parametrize(
+    "builtin_name",
+    # 取 pydantic v2/v3 都保留的 model_* 成员：`copy` / `json` / `dict` 是 v1
+    # 兼容方法，v3 移除后这门的前提断言会无谓变红。实测这类"hasattr 命中但
+    # 不是字段"的成员共 27 个，这里取代表性的几个。
+    ["model_dump", "model_config", "model_fields_set", "model_copy"],
+)
+def test_pydantic_builtin_names_are_not_mistaken_for_fields(builtin_name):
+    """维度取名撞上 pydantic 内建成员时，要走「脱节」分支而不是拿 bound method 比对。
+
+    `hasattr(profile, "model_dump")` 恒为真，用它判断字段是否存在，会让判定器
+    拿一个方法对象去跟声明的取值比对 —— 方向仍是拒绝，但理由会指错地方
+    （报成「该取值未声明」而不是「这个维度 profile 上根本没有」）。
+    """
+    from app.hal.base_station_compatibility import _mac_dimension_rejections
+
+    manifest = RealCmw500Driver.adapter_manifest
+    profile = _lte_requirements().mac_profile.profile
+    assert hasattr(profile, builtin_name)               # 前提：确实是实例成员
+    assert builtin_name not in type(profile).model_fields  # 但不是字段
+
+    bogus = manifest.mac_profiles[0].model_copy(
+        update={
+            "dimensions": (
+                BaseStationMacDimensionCapability(
+                    dimension=builtin_name,
+                    values=(BaseStationMacDimensionValueCapability(**_value()),),
+                ),
+            )
+        }
+    )
+    rejections = _mac_dimension_rejections(
+        profile=profile,
+        manifest=manifest.model_copy(update={"mac_profiles": (bogus,)}),
+    )
+
+    assert any("does not have" in item for item in rejections), rejections
