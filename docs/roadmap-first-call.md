@@ -4565,7 +4565,7 @@ I/O 前拒绝和 TDD receipt 的非现场半；再用真实 CMW500、对应选�
 | 半 | 内容 | 状态 |
 |---|---|---|
 | **① 声明半** | 能力矩阵补 LTE TDD 四个维度（`duplex` / `uldl_configuration` / `special_subframe` / `rmc_version`），逐值带 AND 选件、取值级固件下限、取值级前置约束；profile 补对应字段 | ✅ **PR #444**（squash `e25d2b17`） |
-| **② 实现半** | `configure_mac_throughput_test` 的 TDD 下发路径 + 表 2-39 满配行录入 + 放开 profile 的 **TDD** 取值域（`duplex` 与三个 TDD 字段；**不含** FDD 侧的 `transmission_mode` / `mimo_layers`）+ 活体 duplex 与 profile 的一致性校验 | 🔄 **下一片**（这四件必须同片做完，理由见 ① 的 ⚠️） |
+| **② 实现半** | `configure_mac_throughput_test` 的 TDD 下发路径 + 表 2-39 满配行录入 + 放开 profile 的 **TDD** 取值域（`duplex` 与三个 TDD 字段；**不含** FDD 侧的 `transmission_mode` / `mimo_layers`）+ 活体 duplex 与 profile 的一致性校验 | 🔄 **本片**（四件同片做完） |
 | **③ 现场半** | 真实 CMW500 + 选件 + DUT/SIM 的 Attach / 业务窗口 / SAFE_IDLE / release / 正式证据认证 | ⏳ 未启动，本地不可替代 |
 
 ⚠️ **① 有意不引入任何可达状态**：`duplex` 仍是 `Literal["fdd"]`，三个新字段只接受 `None`。
@@ -4579,6 +4579,20 @@ I/O 前拒绝和 TDD receipt 的非现场半；再用真实 CMW500、对应选�
 不是「装错选件的机器会被拒」—— 后者需要先有 `*OPT?` / 固件回读接进兼容层，属另一片。
 
 **地点/依赖**：混合项，依赖 P2-54/P2-55；真机认证是关闭条件，本地测试不能替代。
+
+**② 的交付（用户 2026-09-02 拍板四条）**：TDD 上调 `authoritative`（决定 1）；
+表 2-39 逐行读**页面图像**核对，六个带宽的 DL 选行与 FDD 逐格相同 ——
+**这是巧合不是规律**（FDD 的 5 MHz/25RB 两行、TDD 一行），故不建第二份字典，
+只给 `CmwLteFullRbRmcPlan` 加 `tdd_dl_version_required: bool`（决定 2，实现时
+收窄成 bool：版本**值**是用户意图，由 profile 的 `rmc_version` 携带，存进计划表
+会让同一个值有两个源）；`special_subframe` 只放开 0..7（决定 3，8/9 要求
+normal cyclic prefix 而本驱动无 CP 维度，矩阵里仍有声明属「声明了但不可达」）；
+`mimo_layers=4` 的降档理由换源成**能力限制**（决定 4）—— 仪表侧需 KS521/KS540
+与一条 4 TX 通路的场景（表 2-32 按**场景** × TM 列），本驱动侧内部路由只实现了
+nx2（`SCENario:TRO:FLEXible`，pp.630-631），所以它与 TM2/4/6 并非同样处境。
+
+下发顺序**取自手册自己的示例**（§2.5.20「Configuring RMCs」，p.342）：
+`RMC:VERSion:DL` 排在 RMC/RBPosition 之后，不是我们排的。
 
 **① 的实际交付（PR #444，squash `e25d2b17`）**：矩阵 4 维 24 格 + 补齐 P2-55 两维
 漏录的 11 格逐值固件下限；`BaseStationMacDimensionValueCapability` 加

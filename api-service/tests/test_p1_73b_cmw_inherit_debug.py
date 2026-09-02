@@ -31,8 +31,11 @@ def _identified_driver(options):
 
 
 def test_formal_admission_requires_frozen_approval_and_duplex_specific_options():
+    # P2-56 ②：TDD 侧多一个 KS510 —— 一次正式 TDD 执行必然要发
+    # `CELL[:PCC]:ULDL`，其 Options 原文是「KS550 **and** KS510」（pp.687-688）。
+    # 选件集现由 `cmw500_lte_formal_options` 唯一提供（内审 F3）。
     fdd = _identified_driver(["CMW-KS500", "CMW-KS520"])
-    tdd = _identified_driver(["CMW-KS550", "CMW-KS520"])
+    tdd = _identified_driver(["CMW-KS550", "CMW-KS520", "CMW-KS510"])
 
     assert fdd.evaluate_lte_2x2_formal_capability(_frozen(False), duplex="fdd").ready is False
     assert fdd.evaluate_lte_2x2_formal_capability(_frozen(True), duplex="fdd").ready is True
@@ -42,7 +45,8 @@ def test_formal_admission_requires_frozen_approval_and_duplex_specific_options()
 
 
 def test_formal_admission_accepts_option_tokens_exactly_as_cmw500_reports_them():
-    driver = _identified_driver(["KS550", "KS520"])
+    # 本条测的是**裸 token（不带 CMW- 前缀）也要认**，duplex 只是载体。
+    driver = _identified_driver(["KS550", "KS520", "KS510"])
 
     decision = driver.evaluate_lte_2x2_formal_capability(
         _frozen(True), duplex="tdd"

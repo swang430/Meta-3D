@@ -178,3 +178,64 @@ test('sparse legacy NR draft derives a TDD period that agrees with its own SCS',
     '5MS',
   )
 })
+
+// P2-56 ②（内审 F2）：LTE TDD 用例的 mac_profile 必须原样保留。
+// 这段逻辑此前零测试保护 —— 整段删掉，GUI 测试全绿。
+test('LTE TDD 用例保存时保留 mac_profile 且不与 stat_count 冲突', () => {
+  const frozenTdd = {
+    profile: {
+      schema_version: 1 as const,
+      profile_version: 1 as const,
+      kind: 'lte_rmc' as const,
+      rat: 'lte' as const,
+      test_intent: 'downlink_throughput' as const,
+      mimo_layers: 2 as const,
+      statistical_window: { unit: 'subframes' as const, count: 5000 },
+      metric_requirements: [
+        { key: 'dl_throughput_mbps', scope: 'pcell' as const },
+        { key: 'dl_bler_percent', scope: 'pcell' as const },
+      ],
+      scheduling_mode: 'rmc' as const,
+      resource_allocation: 'full' as const,
+      enable_amc: false as const,
+      duplex: 'tdd' as const,
+      transmission_mode: 'TM3' as const,
+      uldl_configuration: 2 as const,
+      special_subframe: 4 as const,
+      rmc_version: null,
+      source_reference:
+        'Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf' as const,
+    },
+    profile_digest: 'f'.repeat(64),
+  }
+  const tddConfig = { mac_profile: frozenTdd, mimo_layers: 2 }
+
+  const saved = updateMacProfileDraft(tddConfig, 'lte', {})
+  // ① 帧结构随冻结 profile 一起回传 —— 剥掉它后端会走 legacy 派生并拒绝
+  assert.deepEqual(saved.mac_profile, frozenTdd)
+  // ② 不带 stat_count：后端按值对账，改过的值必与冻结窗口不等而被拒
+  assert.equal('stat_count' in saved, false)
+
+  // ③ FDD 行为与改前逐字相同：mac_profile 被剥掉，stat_count 照常带出
+  const fddConfig = {
+    mac_profile: {
+      ...frozenTdd,
+      profile: { ...frozenTdd.profile, duplex: 'fdd' as const,
+                 uldl_configuration: null, special_subframe: null },
+    },
+    mimo_layers: 2,
+  }
+  const fdd = updateMacProfileDraft(fddConfig, 'lte', {})
+  assert.equal(fdd.mac_profile, undefined)
+  assert.equal(fdd.stat_count, 5000)
+
+  // ④ 形态空间：mac_profile 缺失 / null / 非对象 / profile 非对象 —— 一律按 FDD 处理
+  for (const bad of [undefined, null, 'x', 42, [], { profile: 7 }]) {
+    const out = updateMacProfileDraft(
+      bad === undefined ? { mimo_layers: 2 } : { mac_profile: bad, mimo_layers: 2 },
+      'lte',
+      {},
+    )
+    assert.equal(out.mac_profile, undefined)
+  }
+})

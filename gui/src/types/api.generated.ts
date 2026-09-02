@@ -2286,16 +2286,16 @@ export interface components {
             resource_allocation: "full";
             /** @constant */
             enable_amc: false;
-            /** @constant */
-            duplex: "fdd";
+            /** @enum {string} */
+            duplex: "fdd" | "tdd";
             /** @constant */
             transmission_mode: "TM3";
             /** @enum {integer|null} */
-            uldl_configuration: null;
+            uldl_configuration: null | 0 | 1 | 2 | 3 | 4 | 5 | 6;
             /** @enum {integer|null} */
-            special_subframe: null;
+            special_subframe: null | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
             /** @enum {integer|null} */
-            rmc_version: null;
+            rmc_version: null | 0 | 1;
         };
         FrozenMacTestProfile: {
             profile: components["schemas"]["NrMacTestProfileV1"] | components["schemas"]["LteRmcMacTestProfileV1"];

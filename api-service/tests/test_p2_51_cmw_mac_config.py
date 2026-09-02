@@ -99,15 +99,28 @@ class _MacDriver(RealCmw500Driver):
             header = command[:-1]
             if header in self.state:
                 return self.state[header]
-            if header == DL2_HEADER:
-                # 模拟 DLEQual 耦合：流 2 回显流 1 的配置
-                if DL1_HEADER in self.state:
-                    return self.state[DL1_HEADER]
+            if header.endswith("DL2"):
+                # 模拟 DLEQual 耦合：流 2 回显流 1 的配置。
+                # 手册 §2.5.20（p.342）：DLEQual ON 时可以「skip the DL2
+                # commands」—— 被跳过的那批含 `RMC:DL2` / `RBPosition:DL2` /
+                # `RMC:VERSion:DL2`，所以这条规则按**后缀**泛化，
+                # 不逐条硬编码（P2-56 ② 加版本时就撞上了单对硬编码的边界）。
+                #
+                # ⚠️ 传播**以 DLEQual 的真实状态为条件**（内审 F9）：初版无条件
+                # 回显流 1，于是所有「流 2 耦合」的门在本地恒绿 —— fake 替真机
+                # 把结论先给了。现在 DLEQual 没开就不传播，回读比对会 fail-loud。
+                if self.state.get(DLEQUAL_HEADER, "").upper() in ("ON", "1"):
+                    stream1 = header[:-1] + "1"
+                    if stream1 in self.state:
+                        return self.state[stream1]
             if command == MCLUSTER_QUERY:
                 return "OFF"
             if command == HARQ_QUERY:
                 return "OFF"
         raise AssertionError(f"unexpected query: {command}")
+
+
+DLEQUAL_HEADER = "CONFigure:LTE:SIGN1:CONNection:PCC:DLEQual"
 
 
 def _fields_by_name(result: MacThroughputConfigResult) -> dict:
@@ -198,7 +211,14 @@ def test_mac_readback_parsers_are_strict_whitelists():
 
 def test_full_rb_rmc_table_matches_manual_rows():
     """表 2-38（DL, FDD 多天线, p.78）满配行最高无选件调制 + 表 2-33
-    （UL QPSK 列, pp.70-71）。单边改表即红。"""
+    （UL QPSK 列, pp.70-71）。单边改表即红。
+
+    P2-56 ②：同一份行也服务 TDD（表 2-39, pp.78-79，逐行读页面图像核对）。
+    ⚠️ 六个带宽的 DL 选行与 FDD **逐格相同是巧合，不是规律** —— 两张表形状
+    不同（FDD 的 5 MHz/25RB 有两行，TDD 只有一行）。`tdd_dl_version_required`
+    只在 20 MHz 为真：表 2-39 里带 Version 取值的两行中，只有它是本计划选中的
+    （10 MHz 选的是 64-QAM/18，那一格是 `-`）。
+    """
 
     assert CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH == {
         "B014": CmwLteFullRbRmcPlan(
@@ -224,8 +244,15 @@ def test_full_rb_rmc_table_matches_manual_rows():
         "B200": CmwLteFullRbRmcPlan(
             downlink=CmwRmcSelection("N100", "Q16", "T13"),
             uplink=CmwRmcSelection("N100", "QPSK", "T2"),
+            tdd_dl_version_required=True,
         ),
     }
+    # 版本歧义标记：集合相等，多标或漏标都红
+    assert {
+        token
+        for token, plan in CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH.items()
+        if plan.tdd_dl_version_required
+    } == {"B200"}
     # 带宽键集必须与驱动声明的支持带宽一一对应（防单边扩带宽）
     assert set(CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH) == set(
         RealCmw500Driver.bandwidth_token_by_mhz.values()
@@ -438,13 +465,35 @@ async def test_unevidenced_request_shapes_are_rejected_without_writes(
 
 
 @pytest.mark.asyncio
-async def test_tdd_duplex_fails_loud_without_config_writes():
+async def test_live_duplex_mismatching_the_profile_fails_loud_without_writes():
+    """活体 duplex 与冻结 profile 不符 → 一个字都不写。
+
+    P2-56 ② 之前这条门叫「TDD 整体 fail-loud」，因为那时 TDD 根本没有正式路径。
+    ② 打开 TDD 之后，真正要守的不再是「见到 TDD 就拒」，而是
+    **「活体与 profile 说的不是同一件事就拒」** —— 这一格正是放开 `duplex`
+    新造出来的：只跟字面量 "FDD" 比时，`duplex=tdd` 的 profile 撞上 FDD 仪器
+    会一路走完 FDD 分支，用例说 TDD、配出来 FDD，且全程无告警。
+
+    两个方向都测，因为它们由不同的分支产生。
+    """
+
+    # profile 默认 fdd（kwarg 缺省），活体 TDD
     driver = _MacDriver(duplex="TDD")
-
     result = await driver._configure_mac_throughput_values(mimo_layers=2)
-
     assert not result.ok
-    assert "ULD" in (result.error or "")
+    assert "不符" in (result.error or "")
+    assert driver.writes == []
+
+    # 反向：profile 说 tdd，活体 FDD
+    driver = _MacDriver(duplex="FDD")
+    result = await driver._configure_mac_throughput_values(
+        mimo_layers=2,
+        duplex="tdd",
+        uldl_configuration=1,
+        special_subframe=7,
+    )
+    assert not result.ok
+    assert "不符" in (result.error or "")
     assert driver.writes == []
 
 

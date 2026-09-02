@@ -781,6 +781,19 @@ class MIMOOTAConfiguration(BaseModel):
                     }
                 ):
                     return data
+                # P2-56 ②：legacy 派生只能造 FDD profile。LTE TDD 还需要
+                # 配比与特殊子帧（`CELL[:PCC]:ULDL` pp.687-688 /
+                # `SSUBframe` p.688），而 legacy 的扁平字段里没有它们 ——
+                # 从 `*RST`（ULDL=1 / SSUBframe=7）补真是本仓明令禁止的形态。
+                # 所以这里**显式拒绝并给出可操作的理由**，而不是造一个注定
+                # 过不了校验的半成品 profile —— 后者会让报错指向 profile 的
+                # 字段校验，读的人看不出「该给 mac_profile」这个真正的动作。
+                if str(pcell.get("duplex")).strip().lower() == "tdd":
+                    raise ValueError(
+                        "duplex=tdd 的 LTE 配置必须显式提供 mac_profile"
+                        "（含 uldl_configuration 与 special_subframe）："
+                        "legacy 扁平字段里没有帧结构，不从仪器 *RST 补真"
+                    )
                 profile = LteRmcMacTestProfileV1.model_validate(
                     {
                         "schema_version": 1,
