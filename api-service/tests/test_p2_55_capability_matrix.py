@@ -161,7 +161,10 @@ def test_authoritative_values_cite_an_rmc_table():
                 # 2-40（TM7）/ 2-42（TM8）/ 2-44（TM9）。
                 # 2-39 / 2-41 / 2-43 / 2-45 是 TDD 专表，而本 profile 的
                 # duplex 锁死 fdd —— 拿 TDD 表当 FDD 取值的依据是净放宽。
-                assert _re2.search(r"表\s*2-(37|38|40|42|44)\b", item.reason), (
+                # 用 (?!\d) 而不是 \b：Python 3 的 \b 是 Unicode 感知的，中文属 \w，
+                # 「表 2-37中的满配行」这种紧跟中文的写法 \b 匹配不到，会误判成
+                # "没引表号"。(?!\d) 同样挡得住 表 2-371。
+                assert _re2.search(r"表\s*2-(37|38|40|42|44)(?!\d)", item.reason), (
                     f"{name}={item.value!r} 声明为 authoritative 却未引用任何一张 "
                     f"**FDD** DL RMC 表（2-37/2-38/2-40/2-42/2-44）：{item.reason!r}"
                 )
@@ -191,9 +194,12 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
     import re as _re
 
     # 关于「厂商没有提供」的否定断言：一律禁止（无法在一格 reason 里被证伪）
+    # ⚠️ 只列**关于厂商/手册**的否定断言。「未取证」「证据不足」描述的是
+    #    **我们自己**缺验证（`mimo_layers=4` 的正当理由就是"本地无真机证据"），
+    #    放进来会误伤合法的自述式降级理由 —— 那是把这道门用反了方向。
     vendor_negations = (
         "手册未给", "手册没有", "手册未覆盖", "无依据", "没有依据",
-        "无 RMC 依据", "无 RMC 表依据", "未取证", "证据不足",
+        "无 RMC 依据", "无 RMC 表依据",
     )
     # 关于「本驱动/本矩阵缺什么」的自述：这才是可核验的降级理由
     self_scoped = ("本驱动", "本矩阵", "本地无", "未实现", "未接")
@@ -824,7 +830,7 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     # 「即」用负向后行/前瞻，不用带空格的子串：`即1x2` / `，即1x2` / `即:1x2`
     # 都能绕过 `"即 "`，而排除「立即 / 随机 / 即使」需要的正是上下文判断。
     absolutes = ("固定", "就是")
-    absolute_patterns = (r"(?<![立随])即(?!使)",)
+    absolute_patterns = (r"(?<![立随])即(?![使便时为刻])",)
 
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
