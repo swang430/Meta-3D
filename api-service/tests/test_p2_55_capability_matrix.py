@@ -242,8 +242,13 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
                 # `TM<no>:NTXantennas`。冒号两侧都要求 ≥2 个连续大写字母
                 # （SCPI 的助记符约定），否则 `Note:we` / `Missing:mimo_layers`
                 # 这类普通英文会被当成坐标，把整条门静默绕过。
+                # 左边界用 (?<![a-zA-Z0-9_]) 而不是 \b：Python 3 的 \b 是
+                # Unicode 感知的，中文属 \w，「未接TM<no>:NTXantennas这条」
+                # 这种中文紧贴命令名的写法 \b 匹配不到（与表号那处同一个坑）。
                 or _re.search(
-                    r"\b[A-Z]{2,}[A-Za-z0-9<>_]*:[A-Z]{2,}[A-Za-z0-9<>_]*", reason
+                    r"(?<![a-zA-Z0-9_])[A-Z]{2,}[A-Za-z0-9<>_]*"
+                    r":[A-Z]{2,}[A-Za-z0-9<>_]*",
+                    reason,
                 )
             )
             assert located, (
