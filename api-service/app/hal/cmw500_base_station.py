@@ -397,7 +397,7 @@ class RealCmw500Driver(BaseStationDriver):
                                     "天线配置见表 2-32（pp.65-67，按场景 × TM 列出）。"
                                     "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
                                     "（p.753，明写「for transmission mode 1 to 6」），"
-                                    "TM7 的波束成形参数在 §2.6.15.4（pp.761-764）另有一套命令，"
+                                    "TM7 的波束成形参数在 §2.6.15.4（pp.761-765）另有一套命令，"
                                     "本驱动未实现 —— 放行会让层数发到管不着 TM7 的命令上"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,

@@ -157,9 +157,13 @@ def test_authoritative_values_cite_an_rmc_table():
             if item.support == "authoritative":
                 import re as _re2
 
-                assert _re2.search(r"表 2-(3[7-9]|4[0-5])", item.reason), (
+                # 只认 **FDD** 侧的表：2-37（单天线）/ 2-38（多天线）/
+                # 2-40（TM7）/ 2-42（TM8）/ 2-44（TM9）。
+                # 2-39 / 2-41 / 2-43 / 2-45 是 TDD 专表，而本 profile 的
+                # duplex 锁死 fdd —— 拿 TDD 表当 FDD 取值的依据是净放宽。
+                assert _re2.search(r"表 2-(37|38|40|42|44)\b", item.reason), (
                     f"{name}={item.value!r} 声明为 authoritative 却未引用任何一张 "
-                    f"DL RMC 表（表 2-37..2-45）：{item.reason!r}"
+                    f"**FDD** DL RMC 表（2-37/2-38/2-40/2-42/2-44）：{item.reason!r}"
                 )
 
 

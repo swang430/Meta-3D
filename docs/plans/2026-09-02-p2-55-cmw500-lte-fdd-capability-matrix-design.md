@@ -152,7 +152,7 @@ P2-51 当初就是**用 PDF 原件逐页目视复核** pp.70-72 / pp.77-79 才�
    > 内审核出手册**给了**：表 2-32「Transmission scheme overview」（pp.65-67）
    > 按「场景 × TM」列出各 TM 的天线配置（例如 TM7 在 `1x1 carrier` 场景是 `1x1`、
    > 在 `nx2 carrier` 场景是 `1x2` —— **随场景取值，不是固定值**）；§2.6.15.4
-   > 「MIMO beamforming settings TM 7/8」（pp.761-764）是 TM7/8 的专属命令集，
+   > 「MIMO beamforming settings TM 7/8」（pp.761-765）是 TM7/8 的专属命令集，
    > 含 `BEAMforming:NOLayers`（p.762，`L1|L2` = 单层/双层波束成形，*RST `L2`）。
    > 而 `TRANsmission` 与 `NENBantennas` 的描述里都写着 **see Table 2-32** ——
    > 手册自己的交叉引用，我两次都没顺着走。

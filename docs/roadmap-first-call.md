@@ -5178,13 +5178,20 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
   ⚠️ 这只是**本机开发库**，不代表现场库；且 `test_executions` 里可能另有冻结了
   `binding_digest` 的历史行（列名待确认）。triage 时按这两个载体各跑一次计数再定档
   （P1-48 那条 Discovered 的教训原文：「重做前先问『现在有这类数据吗』」）。
-  同批已扫完该驱动全部 11 处手册页码引用：**只有 p.754 这一个错**，两个站点中
-  普通注释那处已在本片改对（不进 digest），仅剩 `config_fields` 里那处待处理。
+  ⚠️ **扫描范围别当成"全部"**：本条初版写「已扫完该驱动全部 11 处页码引用」——
+  那个 11 其实是 `grep -c "p\.752"` 的结果，即只扫了 TRANsmission 相关那一批。
+  该驱动实际有 **116 处引用、50 个不同页码值**。内审另抽查了 22 个不同页码
+  （739/743/680/656/366/636-637/371/374/953/687/940/745/211/69/957-959/950-951/
+  799-801/783-785/754）未发现第二个错，所以「只有 p.754 一个错」大概率成立，
+  但那是**抽样结论不是普查结论**。p.754 的两个站点中，普通注释那处已在本片改对
+  （不进 digest），仅剩 `config_fields` 里那处待处理。
   **踩过的三个洞（重做时逐个避开）**：
   ① **判据别按「形状」猜** —— 第一版按「有数值 pass_rate + 无 provenance + 结论 passed/failed」判新旧，而 **214 份真报告的形状恰好全部命中**，会把全部真数据标成「未经验证」（反方向的假信息，比不加更糟）。改用 `road_test_execution_id` 非空才算虚拟路测报告。
   ② **判据别取客户端能写的数据** —— 换成 `road_test_execution_id` 之后，判「新/旧」仍看 `content_data`，而 `POST /reports` 允许调用方塞任意 `content_data`：加一个 `pass_rate: null` 就能自称「已标注」绕过警示。真值源必须是服务端拥有的执行记录，不是报告创建者的自述。
   ③ **警示要挂在真正走得通的出口上** —— 试过三个出口，**一个都不通**：(a) `GET /reports/{id}` 的 JSON 字段 —— 归档报告在 GUI 里进不了 `ReportViewer`（`ReportsPage.tsx:93` 挂 `<ReportList />` 不传 `onView`，而「查看」按钮由 `{onView && ...}` 守着），照不到人；(b) `/download` 的响应头 —— 被前端 `downloadReport()` 的 `response.data` 当场丢掉；(c) 改成 409 拦下载 —— 文件是拦住了，但 axios `responseType:'blob'` 把错误体也变成 Blob，`ReportList.tsx` 只显示 `error.message`（"Request failed with status code 409"），**操作员看不到为什么**。
   **附带的独立缺陷（可单独做）**：GUI 缺「查看归档报告」入口（上面 ③a），从报告列表只能下载不能看。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
+- `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **CMW500 驱动 `:2164` 还有一句同型的厂商侧否定断言（P2）** —— 原文「4 流无 RMC 表 —— 只取证了 2 流，不猜」。表 2-38/2-39 **根本没有流数这一列**，手册对此沉默，这句是「把我没找到写成手册没有」；且它跟矩阵里 `mimo_layers=4` 那格的理由（「本地无 4 天线真机证据」）对同一事实给了两种性质不同的说法，而**它才是运行时被拒绝的用户真正看到的文本**（矩阵那句只是声明）。本片新加的门只遍历 `mac_profiles` 的 dimensions，扫不到运行时拒绝语。**出口：待 triage**；改法是换成自述（「表 2-38/2-39 不按流数分行，我们只对 2 流取过证」）。
+- `[discovered 2026-09-02 during P2-55 TM7/8/9 取证更正]` **DL RMC 表的 3GPP 归属度未在 reason 里体现（P3）** —— §2.2.19.5/.6/.7 前言都写着「For the other bandwidths and FDD, 3GPP has not yet specified DL RMCs for TM 7/8/9, **but the listed parameter combinations are supported**」，即那些表是厂商支持、非 3GPP 规定。**但本片刻意没补这句**：§2.2.19.4（支撑 TM2/TM4/TM6 = authoritative 的那节）**有同一句 caveat**，只给 TM7/8/9 补会造出「TM2-6 是 3GPP 标准、TM7/8/9 不是」的新假暗示 —— 修一层谎又造一层谎。**出口：待 triage**；要做就得逐张核 2-37..2-45 的 3GPP 归属度并同批改 TM2/TM4/TM6 的 reason。
 
 - ~~`[discovered 2026-08-19 during P1-57 内审]` **Dashboard readiness 的 lab_profile 灯位仍走后端 unique-active 隐式解析，与 header 显式选择各说各话（P3）** —— `api-service/app/services/readiness.py`（≥2 活动 lab → `status="ambiguous"`）与 `gui/src/features/Dashboard/ZoneReadiness.tsx` 不认浏览器的全局 LabProfile 选择。P1-57 把「多活动 lab + header 显式选一个」变成常态后，该灯位会常驻 ambiguous。P1-57 的全集判据是 grep GUI 的 `fetchLabProfiles` 调用方，抓不到这类「后端隐式解析」消费面 —— 同族值得一并扫。修法方向：readiness 收显式 lab_profile_id（换源）。~~ ✅ **P2-38**（2026-08-23 账面清理）
 
