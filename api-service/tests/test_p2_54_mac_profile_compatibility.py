@@ -79,12 +79,20 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
             ),
         }
     ]
-    # CMW500 侧必须有矩阵，且维度名恰好是本片取证过的两个
+    # CMW500 侧必须有矩阵，且维度名恰好是已取证的那些
+    # （P2-55 取证 FDD 侧两个；P2-56 追加 LTE TDD 侧四个）
     assert [
         dimension.dimension
         for item in RealCmw500Driver.adapter_manifest.mac_profiles
         for dimension in item.dimensions
-    ] == ["transmission_mode", "mimo_layers"]
+    ] == [
+        "transmission_mode",
+        "mimo_layers",
+        "duplex",
+        "uldl_configuration",
+        "special_subframe",
+        "rmc_version",
+    ]
 
 
 def test_saved_configuration_freezes_profile_into_requirements_digest():

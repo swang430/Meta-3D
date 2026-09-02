@@ -25,6 +25,12 @@ CMW_MANUAL = (
     "Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf"
 )
 
+#: 本文件的内容门逐格盯住的维度。**导出给 P2-56 的覆盖不变量用** ——
+#: 那条不变量断言「声明的维度集合 == 有门盯着的维度集合」，它的这一端
+#: 必须是「P2-55 实际盯了哪些」而不是「别人记得 P2-55 盯了哪些」。
+#: 原来两边各写一份字面量，靠手抄同步，没有任何门维持一致（内审 F6）。
+GATED_DIMENSIONS = ("transmission_mode", "mimo_layers")
+
 
 def _dimension(name: str) -> BaseStationMacDimensionCapability:
     for profile in RealCmw500Driver.adapter_manifest.mac_profiles:
@@ -135,7 +141,7 @@ def test_every_declared_value_cites_the_registered_manual():
     出处不在 manual_sources 里等于无法审计 —— 它会让一格错误的能力声明
     看起来有据可查。manifest 层已有该校验，这里断言实际数据满足它。
     """
-    for name in ("transmission_mode", "mimo_layers"):
+    for name in GATED_DIMENSIONS:
         for item in _dimension(name).values:
             assert item.source_reference == CMW_MANUAL
             assert item.reason.strip()
@@ -154,7 +160,7 @@ def test_authoritative_values_cite_an_rmc_table():
     """
     import re as _re2
 
-    for name in ("transmission_mode", "mimo_layers"):
+    for name in GATED_DIMENSIONS:
         for item in _dimension(name).values:
             if item.support == "authoritative":
                 # 只认 **FDD** 侧的表：2-37（单天线）/ 2-38（多天线）/
@@ -212,7 +218,7 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
         "未实现", "未接", "未支持", "未验证",
     )
 
-    for name in ("transmission_mode", "mimo_layers"):
+    for name in GATED_DIMENSIONS:
         for item in _dimension(name).values:
             if item.support != "diagnostic_only":
                 continue
@@ -480,14 +486,16 @@ def test_dimensions_absent_from_the_manifest_are_not_judged():
     """
     from app.hal.base_station_compatibility import _mac_dimension_rejections
 
-    # duplex / resource_allocation 本片未声明进矩阵
+    # resource_allocation / enable_amc 至今未声明进矩阵
+    # （原样本用的是 duplex —— P2-56 把它声明进去了，样本随之更新；
+    #  这条门测的是**机制**「未声明的维度不判」，不是某个具体维度）
     declared = {
         dimension.dimension
         for profile in RealCmw500Driver.adapter_manifest.mac_profiles
         for dimension in profile.dimensions
     }
-    assert "duplex" not in declared
     assert "resource_allocation" not in declared
+    assert "enable_amc" not in declared
 
     requirements = _lte_requirements()
     assert (
@@ -857,7 +865,7 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
         r"(?:\d+x\d+|单天线|双天线|(?:32|24|16|12|8|4|2|1)(?!\d)(?!\s*页))"
     )
 
-    for name in ("transmission_mode", "mimo_layers"):
+    for name in GATED_DIMENSIONS:
         for item in _dimension(name).values:
             # 用正则而不是子串：写成「表2-32」时子串判断会让这条门**静默跳过**，
             # 门失效却不报错 —— 那比没有门更糟。

@@ -2290,6 +2290,12 @@ export interface components {
             duplex: "fdd";
             /** @constant */
             transmission_mode: "TM3";
+            /** @enum {integer|null} */
+            uldl_configuration: null;
+            /** @enum {integer|null} */
+            special_subframe: null;
+            /** @enum {integer|null} */
+            rmc_version: null;
         };
         FrozenMacTestProfile: {
             profile: components["schemas"]["NrMacTestProfileV1"] | components["schemas"]["LteRmcMacTestProfileV1"];

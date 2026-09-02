@@ -321,6 +321,9 @@ class RealCmw500Driver(BaseStationDriver):
                 # P2-55：逐维度取值域。每格出处经本地 PDF 页面目视核对
                 # （命令属性块 p.752 / p.753 / p.762 / p.766；
                 #  DL RMC 表 §2.2.19.3-.7 = pp.75-82；天线配置表 2-32 = pp.65-67）。
+                # P2-56 追加 LTE TDD 侧（同样逐页目视核对）：
+                #  DMODe p.366 / ULDL pp.687-688 / SSUBframe p.688 /
+                #  RMC:VERSion:DL p.803；TDD 满配 DL RMC 表 2-39 = pp.78-79。
                 # ⚠️ **这里不再给"判据共几条"的清单** —— 那份清单数错过三次
                 #    （两样 → 三样 → 三样仍不全），每次都是"用一句概括替代一张表"。
                 #    **逐格的理由以各自的 reason 为准。**
@@ -339,57 +342,68 @@ class RealCmw500Driver(BaseStationDriver):
                             BaseStationMacDimensionValueCapability(
                                 value="TM1",
                                 support="authoritative",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=(),
                                 reason=(
                                     "TRANsmission Range 含 TM1（p.752，*RST=TM1，无选件）；"
                                     "单天线 RMC 表 2-37「DL RMCs, one TX antenna (TM 1)」"
                                     "（§2.2.19.3, pp.75-77）覆盖它"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM2",
                                 support="authoritative",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM2（p.752）；Options 原文"
                                     "「R&S CMW-KS520 or -KS540 for TM 2, 3, 4, 6, 7, 9」；"
                                     "多天线 RMC 表 2-38（§2.2.19.4「TM 2 to 6」, p.78）覆盖它"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM3",
                                 support="authoritative",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM3（p.752）；选件同 TM2；"
                                     "表 2-38（TM 2 to 6）覆盖。P2-51 已闭环的正式路径"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM4",
                                 support="authoritative",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM4（p.752）；选件同 TM2；表 2-38 覆盖"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM6",
                                 support="authoritative",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM6（p.752，Range 跳过 TM5）；"
                                     "选件同 TM2；表 2-38（TM 2 to 6）覆盖"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM7",
                                 support="diagnostic_only",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM7（p.752）。手册侧证据齐全："
@@ -399,12 +413,14 @@ class RealCmw500Driver(BaseStationDriver):
                                     "（p.753，明写「for transmission mode 1 to 6」），"
                                     "TM7 的波束成形参数在 §2.6.15.4（pp.761-765）另有一套命令，"
                                     "本驱动未实现 —— 放行会让层数发到管不着 TM7 的命令上"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM8",
                                 support="diagnostic_only",
+                                minimum_firmware="V3.2.70",
                                 satisfying_options=("KS520", ),
                                 reason=(
                                     "TRANsmission Range 含 TM8（p.752，Options 单列"
@@ -414,12 +430,14 @@ class RealCmw500Driver(BaseStationDriver):
                                     "单层/双层波束成形，*RST L2，需 KS520）。"
                                     "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
                                     "（p.753，只管 TM 1 to 6），未接 §2.6.15.4 那套命令"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ 本值下限 V3.2.70"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value="TM9",
                                 support="diagnostic_only",
+                                minimum_firmware="V3.5.10",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "TRANsmission Range 含 TM9（p.752）。手册侧证据齐全："
@@ -428,6 +446,7 @@ class RealCmw500Driver(BaseStationDriver):
                                     "Range TWO|FOUR|EIGHt，*RST TWO）。"
                                     "**缺的是本驱动的实现**：mimo_layers 只下发 NENBantennas"
                                     "（p.753，只管 TM 1 to 6），未接 TM9 那条命令"
+                                    "；Firmware 行「V3.2.70, V3.5.10: TM9 added」→ TM9 是后加的，本值下限 V3.5.10"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
@@ -439,34 +458,438 @@ class RealCmw500Driver(BaseStationDriver):
                             BaseStationMacDimensionValueCapability(
                                 value=1,
                                 support="authoritative",
+                                minimum_firmware="V3.0.50",
                                 satisfying_options=(),
                                 reason=(
                                     "NENBantennas Range 含 ONE（p.753，*RST=ONE，该值无 Options 行）；"
                                     "单天线 RMC 表 2-37 覆盖"
+                                    "；Firmware 行「V3.0.50, SCC command V3.2.50」→ 本值 PCC 形态下限 V3.0.50（V3.2.50 那句限定 SCC 变体）"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value=2,
                                 support="authoritative",
+                                minimum_firmware="V3.0.50",
                                 satisfying_options=("KS520", "KS540"),
                                 reason=(
                                     "NENBantennas Range 含 TWO（p.753）；Options 原文两行"
                                     "「TWO (2x2): R&S CMW-KS520」与"
                                     "「TWO (2x4): R&S CMW-KS540」—— 装任一即可；"
                                     "表 2-38 覆盖。P2-51 已闭环的正式路径"
+                                    "；Firmware 行「V3.0.50, SCC command V3.2.50」→ 本值 PCC 形态下限 V3.0.50（V3.2.50 那句限定 SCC 变体）"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),
                             BaseStationMacDimensionValueCapability(
                                 value=4,
                                 support="diagnostic_only",
+                                minimum_firmware="V3.0.50",
                                 satisfying_options=("KS521", "KS540"),
                                 reason=(
                                     "NENBantennas Range 含 FOUR（p.753，Options 原文"
                                     "「FOUR (4x2): R&S CMW-KS521」与「FOUR (4x4): R&S CMW-KS540」"
                                     "—— 装任一即可）；"
                                     "命令层有据，但本地无 4 天线真机证据，保守不放行正式路径"
+                                    "；Firmware 行「V3.0.50, SCC command V3.2.50」→ 本值 PCC 形态下限 V3.0.50（V3.2.50 那句限定 SCC 变体）"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                    # ── P2-56：LTE TDD 侧的取值域声明 ────────────────────
+                    # 四个维度今天**全部不可达**：profile 的 duplex 是
+                    # Literal["fdd"]，另三个字段只接受 None。声明它们是为了让矩阵
+                    # 能回答「TDD 的哪些配比能正式配、为什么不能」—— 在此之前
+                    # 矩阵对 TDD 整体沉默。与 TM7/8/9、mimo_layers=4 同一形态：
+                    # **手册侧证据齐全，缺的是本驱动的下发实现**，故一律 diagnostic_only。
+                    BaseStationMacDimensionCapability(
+                        dimension="duplex",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value="fdd",
+                                support="authoritative",
+                                satisfying_options=("KS500",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "DMODe Range `FDD | TDD`（p.366）含 FDD；Options 原文"
+                                    "「R&S CMW-KS500/-KS550 for FDD/TDD」→ FDD 侧需 KS500；"
+                                    "Firmware 行「V2.1.20, SCC command V3.5.10」→ 本命令 PCC "
+                                    "形态下限 V2.1.20（V3.5.10 那句限定 SCC 变体，本 profile 走 PCC）。"
+                                    "P2-51 已闭环的正式路径"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="tdd",
+                                support="diagnostic_only",
+                                satisfying_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "DMODe Range 含 TDD（p.366，Options 同行 → TDD 侧需 KS550；"
+                                    "Firmware 行「V2.1.20, SCC command V3.5.10」→ PCC 形态下限 "
+                                    "V2.1.20）。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "读活体 duplex，非 FDD 即整体 fail-loud；TDD 所需的 "
+                                    "ULDL（pp.687-688）/ SSUBframe（p.688）/ "
+                                    "RMC:VERSion:DL（p.803）三条命令都没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                    BaseStationMacDimensionCapability(
+                        dimension="uldl_configuration",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value=None,
+                                support="authoritative",
+                                reason=(
+                                    "未设 = 本维度不适用。本 profile 的 duplex 锁死 fdd"
+                                    "（DMODe，p.366），而上下行子帧配比是 TDD 专属（ULDL, pp.687-688）"
+                                    "—— FDD 下没有这个维度可配，「未设」正是唯一正确的形态。"
+                                    "所以这一格是**正式声明**而不是漏声明：判定器按 "
+                                    "(类型, 值) 取声明，缺这一格会把每一条完好的 FDD profile "
+                                    "判成「未声明的取值」"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=0,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.50",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.50。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=1,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.10",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.10。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=2,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.50",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.50。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=3,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.50",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.50。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=4,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.50",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.50。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=5,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.10",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.10。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=6,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS510"),
+                                minimum_firmware="V3.0.50",
+                                reason=(
+                                    "ULDL Range `0 to 6`（pp.687-688，*RST 1）含本值；"
+                                    "Options 原文「R&S CMW-KS550 **and** R&S CMW-KS510」"
+                                    "—— 两个都要装，不是二选一；同栏第二行「R&S CMW-KS512 for "
+                                    "carrier-specific configuration」只在按载波分别配比时另需，"
+                                    "本 profile 走 [:PCC] 单载波形态，故不计；Firmware 行"
+                                    "「V3.0.10, V3.0.50 value 0, 2, 3, 4, 6, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.0.50。"
+                                    "**缺的是本驱动的实现**：configure_mac_throughput_test "
+                                    "在活体 duplex 非 FDD 时整体 fail-loud，本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                    BaseStationMacDimensionCapability(
+                        dimension="special_subframe",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value=None,
+                                support="authoritative",
+                                reason=(
+                                    "未设 = 本维度不适用。本 profile 的 duplex 锁死 fdd"
+                                    "（DMODe，p.366），而特殊子帧配置是 TDD 专属（SSUBframe, p.688）"
+                                    "—— FDD 下没有这个维度可配，「未设」正是唯一正确的形态。"
+                                    "所以这一格是**正式声明**而不是漏声明：判定器按 "
+                                    "(类型, 值) 取声明，缺这一格会把每一条完好的 FDD profile "
+                                    "判成「未声明的取值」"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=0,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=1,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=2,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=3,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=4,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=5,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=6,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=7,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "Options 里 KS512 只在「value 7 plus extended cyclic prefix」时另需，本 profile 没有 cyclic prefix 维度，故此处只记 KS550；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=8,
+                                support="diagnostic_only",
+                                required_options=("KS550",),
+                                minimum_firmware="V2.1.20",
+                                requires=("normal_cyclic_prefix",),
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "手册原文「Value 8 and 9 can only be used with the normal cyclic prefix.」→ 本值带 normal_cyclic_prefix 前置；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V2.1.20。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=9,
+                                support="diagnostic_only",
+                                required_options=("KS550", "KS512"),
+                                minimum_firmware="V3.5.10",
+                                requires=("normal_cyclic_prefix",),
+                                reason=(
+                                    "SSUBframe Range `0 to 9`（p.688，*RST 7）含本值；"
+                                    "手册原文「Value 8 and 9 can only be used with the normal cyclic prefix.」→ 本值带 normal_cyclic_prefix 前置；"
+                                    "Options 另有「R&S CMW-KS512 for value 9」→ 本值 KS550 与 KS512 皆必装；"
+                                    "Firmware 行「V2.1.20, V3.5.10 value 9, V3.5.20 SCC command」→ 本值 PCC 形态下限 V3.5.10。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                    BaseStationMacDimensionCapability(
+                        dimension="rmc_version",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value=None,
+                                support="authoritative",
+                                reason=(
+                                    "未设 = 本维度不适用。本 profile 的 duplex 锁死 fdd"
+                                    "（DMODe，p.366），而DL RMC 版本是 TDD 专属（RMC:VERSion:DL, p.803）"
+                                    "—— FDD 下没有这个维度可配，「未设」正是唯一正确的形态。"
+                                    "所以这一格是**正式声明**而不是漏声明：判定器按 "
+                                    "(类型, 值) 取声明，缺这一格会把每一条完好的 FDD profile "
+                                    "判成「未声明的取值」"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=0,
+                                support="diagnostic_only",
+                                minimum_firmware="V3.2.70",
+                                reason=(
+                                    "RMC:VERSion:DL<s> Range `0 to 1`（p.803，*RST 0，"
+                                    "该条目无 Options 行，Firmware 行 `V3.2.70`）含本值；"
+                                    "描述原文限定「only relevant "
+                                    "for certain downlink RMCs for TDD multiple antenna "
+                                    "configurations」。TDD 满配表 2-39（pp.78-79）比 FDD 的表 2-38 "
+                                    "多一个 Version 列，目视核对到带取值的两行是 "
+                                    "10 MHz/50RB/16-QAM/TBS13 与 20 MHz/100RB/16-QAM/TBS13"
+                                    "（本值 → `0: R.11` / `0: R.30`），其余行为 `-`。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=1,
+                                support="diagnostic_only",
+                                minimum_firmware="V3.2.70",
+                                reason=(
+                                    "RMC:VERSion:DL<s> Range `0 to 1`（p.803，*RST 0，"
+                                    "该条目无 Options 行，Firmware 行 `V3.2.70`）含本值；"
+                                    "描述原文限定「only relevant "
+                                    "for certain downlink RMCs for TDD multiple antenna "
+                                    "configurations」。TDD 满配表 2-39（pp.78-79）比 FDD 的表 2-38 "
+                                    "多一个 Version 列，目视核对到带取值的两行是 "
+                                    "10 MHz/50RB/16-QAM/TBS13 与 20 MHz/100RB/16-QAM/TBS13"
+                                    "（本值 → `1: R.11-1` / `1: R.30-1`），其余行为 `-`。"
+                                    "**缺的是本驱动的实现**：TDD 下 "
+                                    "configure_mac_throughput_test 整体 fail-loud，"
+                                    "本命令没有下发点"
                                 ),
                                 source_reference=CMW500_LTE_PROFILE_SOURCE,
                             ),

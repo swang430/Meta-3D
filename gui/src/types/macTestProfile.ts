@@ -112,6 +112,12 @@ export type LteRmcMacTestProfileV1 = MacTestProfileBase & {
   duplex: 'fdd'
   transmission_mode: 'TM3'
   mimo_layers: 2
+  // P2-56：LTE TDD 专属维度。后端序列化不带 exclude_none，所以这三个键
+  // **恒出现在线上形态里**；今天只可能是 null（驱动无下发路径，取值域在
+  // CMW500 能力矩阵里声明）。与 api.generated.ts 的同名类型保持一致。
+  uldl_configuration: null
+  special_subframe: null
+  rmc_version: null
   source_reference: 'Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf'
 }
 

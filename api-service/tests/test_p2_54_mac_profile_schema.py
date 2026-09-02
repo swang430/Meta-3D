@@ -215,6 +215,11 @@ def test_lte_v1_is_the_existing_narrow_fdd_fixed_rmc_shape():
         "enable_amc": False,
         "duplex": "fdd",
         "transmission_mode": "TM3",
+        # P2-56：TDD 专属维度存在于 schema（能力矩阵的维度名必须是真实字段），
+        # 但只接受 None —— 取值域声明在 CMW500 矩阵里，下发路径未实现。
+        "uldl_configuration": None,
+        "special_subframe": None,
+        "rmc_version": None,
         "source_reference": (
             "Instrument_API_Doc/R&S CMW500/"
             "CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf"
