@@ -20,7 +20,10 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from app.hal.base_station_manifest import BaseStationAdapterManifest
-from app.hal.base_station_mac_profile import FrozenMacTestProfile
+from app.hal.base_station_mac_profile import (
+    FrozenMacTestProfile,
+    MacTestProfile,
+)
 
 
 # measure 执行链经共同 SPI 实际调用的操作全集（required_operations 真值源）：
@@ -204,9 +207,116 @@ def manifest_compatibility_digest(manifest: BaseStationAdapterManifest) -> str:
         )
     # 同上 omit-when-None：manifest 模型未来加可选字段时，旧 frozen 的
     # manifest_digest 不因 None 默认值漂移。
+    #
+    # ⚠️ P2-55：MAC profile 的 `dimensions` 矩阵**不进 digest**。它默认值是 `()`
+    #    而不是 `None`，`exclude_none` 拦不住它 —— 不排除的话，仅仅给某个取值改一句
+    #    reason 文案（判定毫无变化）就会让所有历史 frozen 的 manifest_digest 失配，
+    #    把完好的执行判成「manifest drifted」、把完好的历史证据标成 invalid。
+    #    连一个维度都没声明的 adapter 也会因为多出一个 `"dimensions": []` 而漂。
+    #
+    #    安全性不靠 digest 兜：`verify_frozen_base_station_compatibility` 会用当前
+    #    manifest **重算整个 verdict 并逐字段比对**，矩阵的任何**判定性**变化
+    #    （某个取值降级、取值消失）都会在那里被抓住。digest 只负责钉住身份类字段。
     return canonical_payload_digest(
-        manifest.model_dump(mode="json", exclude_none=True)
+        digest_safe_manifest_payload(manifest, exclude_none=True)
     )
+
+
+def digest_safe_manifest_payload(
+    manifest: object, *, exclude_none: bool
+) -> dict:
+    """manifest 的 digest 投影：剔除不该影响任何 digest 的纯声明性内容。
+
+    目前只剔 MAC profile 的 `dimensions` 矩阵。**凡是拿 manifest 算 digest 的
+    地方都要用这一个投影** —— 否则两处会各按一套规则算，同一次「只改一句
+    reason 文案」在一处无事、在另一处却把已认证的连接踢出正式路径。
+
+    `exclude_none` **必须由调用方按它自己的历史语义传**，不能在这里定死：
+    compatibility digest 一直是 `exclude_none=True`，而 binding digest 一直
+    保留 None 字段。在这里统一成任何一个，都会让另一边相对历史值整体漂移 ——
+    那正是本函数要防的事情本身。
+    """
+
+    if not isinstance(manifest, BaseStationAdapterManifest):
+        raise TypeError(
+            "manifest digest projection requires a registered adapter manifest"
+        )
+    return manifest.model_dump(
+        mode="json",
+        exclude_none=exclude_none,
+        exclude={"mac_profiles": {"__all__": {"dimensions"}}},
+    )
+
+
+def _mac_dimension_rejections(
+    *,
+    profile: MacTestProfile,
+    manifest: BaseStationAdapterManifest,
+) -> list[str]:
+    """P2-55：逐维度对账冻结 profile 与 adapter 声明的取值域。
+
+    只对**声明过的维度**发言：manifest 没声明的维度不在这里判（那属于
+    profile schema 自己的取值域），否则会把"尚未取证"误判成"不兼容"。
+
+    判据是 fail-closed 的两层：
+      1. 维度声明里根本没有这个取值 → 拒；
+      2. 有，但不是 ``authoritative`` → 拒，并带上声明里的理由。
+    「能下发」不等于「可正式配置」—— diagnostic_only 的取值走诊断路径，
+    不能进正式执行。
+
+    ⚠️ **这里只判单个维度，判不了跨维度组合。** 厂商手册的
+    `NENBantennas` 明写「must be compatible to the active scenario and
+    transmission mode, see Table 2-32」，而 Table 2-32 属表格类依据、本片
+    未取证 —— 所以 `TM1 + 2 层` 这类组合会因两个维度**各自** authoritative
+    而在这里放行，尽管它在手册里并不存在。今天不可达（profile 的
+    Literal 锁死单一组合），profile 放开取值域之前必须先补组合层判据，
+    否则这道门会从「不发明组合」退化成「逐维度都合法就算数」。
+    """
+
+    rejections: list[str] = []
+    for accepted in manifest.mac_profiles:
+        if (
+            accepted.kind != profile.kind
+            or accepted.profile_version != profile.profile_version
+            or accepted.rat != profile.rat
+        ):
+            continue
+        for dimension in accepted.dimensions:
+            # 用 model_fields 而不是 hasattr：`model_dump` / `copy` / `json` /
+            # `dict` 这些 pydantic 内建成员对 hasattr 恒为真，取名撞上时会拿到
+            # bound method 去跟声明比对 —— 方向虽仍是拒绝，但理由指错了地方。
+            if dimension.dimension not in type(profile).model_fields:
+                # 声明了一个 profile 上不存在的维度：这是**声明与 schema 脱节**，
+                # 不是"该维度无所谓"。静默跳过会让一条 fail-closed 的声明变成
+                # 放行，所以显式拒绝并指出是哪一个。
+                rejections.append(
+                    f"adapter {manifest.adapter_id!r} declares MAC dimension "
+                    f"{dimension.dimension!r} that profile "
+                    f"{accepted.kind}@{accepted.profile_version} does not have"
+                )
+                continue
+            requested = getattr(profile, dimension.dimension)
+            # 用类型对象本身而不是它的名字：类型对象可哈希，且 bool 与 int
+            # 是两个不同的对象 —— 这正是要区分的那一格（Python 里
+            # `True == 1` 且哈希相同，裸值做键会让布尔借用 int 的声明）。
+            declared = {
+                (type(item.value), item.value): item
+                for item in dimension.values
+            }
+            match = declared.get((type(requested), requested))
+            if match is None:
+                rejections.append(
+                    f"adapter {manifest.adapter_id!r} does not declare "
+                    f"{dimension.dimension}={requested!r} for MAC profile "
+                    f"{accepted.kind}@{accepted.profile_version}"
+                )
+            elif match.support != "authoritative":
+                rejections.append(
+                    f"adapter {manifest.adapter_id!r} declares "
+                    f"{dimension.dimension}={requested!r} as {match.support}, "
+                    f"not authoritative: {match.reason}"
+                )
+    return rejections
 
 
 def evaluate_base_station_compatibility(
@@ -272,6 +382,10 @@ def evaluate_base_station_compatibility(
             reasons.append(
                 f"adapter {manifest.adapter_id!r} does not declare the frozen "
                 "MAC profile kind/version/RAT/source"
+            )
+        else:
+            reasons.extend(
+                _mac_dimension_rejections(profile=profile, manifest=manifest)
             )
 
     return BaseStationCompatibilityVerdict(

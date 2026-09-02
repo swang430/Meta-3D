@@ -36,8 +36,15 @@ def _lte_configuration() -> dict:
 
 
 def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
+    """守 profile **身份**（kind/version/rat/evidence/source）。
+
+    P2-55 起 profile 还带 ``dimensions`` 取值域矩阵，那部分内容长且会随取证增长，
+    由 ``test_p2_55_capability_matrix.py`` 逐值单独守 —— 但**这里仍然断言两个
+    adapter 各自有没有维度**，否则「矩阵整个消失」或「挂到错误的 adapter 上」
+    会从这道门底下漏过去。
+    """
     assert [
-        item.model_dump(mode="json")
+        item.model_dump(mode="json", exclude={"dimensions"})
         for item in RealUxmDriver.adapter_manifest.mac_profiles
     ] == [
         {
@@ -51,8 +58,14 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
             ),
         }
     ]
+    # UXM 侧本片不声明维度矩阵（P2-55 只做 CMW500 LTE FDD）
+    assert all(
+        item.dimensions == ()
+        for item in RealUxmDriver.adapter_manifest.mac_profiles
+    )
+
     assert [
-        item.model_dump(mode="json")
+        item.model_dump(mode="json", exclude={"dimensions"})
         for item in RealCmw500Driver.adapter_manifest.mac_profiles
     ] == [
         {
@@ -66,6 +79,12 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
             ),
         }
     ]
+    # CMW500 侧必须有矩阵，且维度名恰好是本片取证过的两个
+    assert [
+        dimension.dimension
+        for item in RealCmw500Driver.adapter_manifest.mac_profiles
+        for dimension in item.dimensions
+    ] == ["transmission_mode", "mimo_layers"]
 
 
 def test_saved_configuration_freezes_profile_into_requirements_digest():

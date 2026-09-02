@@ -75,6 +75,8 @@ from app.hal.base_station_manifest import (
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
     BaseStationMetricCapability,
+    BaseStationMacDimensionCapability,
+    BaseStationMacDimensionValueCapability,
     BaseStationMacProfileCapability,
     BaseStationProfileFieldManifest,
     BaseStationRatCapability,
@@ -316,6 +318,141 @@ class RealCmw500Driver(BaseStationDriver):
                 rat="lte",
                 application_evidence="authoritative_readback",
                 source_reference=CMW500_LTE_PROFILE_SOURCE,
+                # P2-55：逐维度取值域。每格出处经 2026-09-02 本地 PDF 页面目视核对
+                # （命令属性块 p.752 / p.753；DL RMC 表 pp.75-78）。
+                # ⚠️ 声明 authoritative 的前提是**两样都有**：命令 Range 里有这个值，
+                #    且有 DL RMC 表覆盖它。只满足前者的取值一律 diagnostic_only ——
+                #    能下发不等于能配出可测的业务。
+                dimensions=(
+                    BaseStationMacDimensionCapability(
+                        dimension="transmission_mode",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value="TM1",
+                                support="authoritative",
+                                satisfying_options=(),
+                                reason=(
+                                    "TRANsmission Range 含 TM1（p.752，*RST=TM1，无选件）；"
+                                    "单天线 RMC 表 2-37「DL RMCs, one TX antenna (TM 1)」"
+                                    "（§2.2.19.3, pp.75-77）覆盖它"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM2",
+                                support="authoritative",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM2（p.752）；Options 原文"
+                                    "「R&S CMW-KS520 or -KS540 for TM 2, 3, 4, 6, 7, 9」；"
+                                    "多天线 RMC 表 2-38（§2.2.19.4「TM 2 to 6」, p.78）覆盖它"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM3",
+                                support="authoritative",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM3（p.752）；选件同 TM2；"
+                                    "表 2-38（TM 2 to 6）覆盖。P2-51 已闭环的正式路径"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM4",
+                                support="authoritative",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM4（p.752）；选件同 TM2；表 2-38 覆盖"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM6",
+                                support="authoritative",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM6（p.752，Range 跳过 TM5）；"
+                                    "选件同 TM2；表 2-38（TM 2 to 6）覆盖"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM7",
+                                support="diagnostic_only",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM7（p.752），命令可下发；"
+                                    "但 DL RMC 表只覆盖 TM1（表 2-37）与 TM 2..6"
+                                    "（表 2-38 标题「multiple TX antennas (TM 2 to 6)」）"
+                                    "—— TM7 无 RMC 依据，不发明组合"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM8",
+                                support="diagnostic_only",
+                                satisfying_options=("KS520", ),
+                                reason=(
+                                    "TRANsmission Range 含 TM8（p.752，Options 单列"
+                                    "「R&S CMW-KS520 for TM 8」）；同 TM7，无 RMC 表依据"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value="TM9",
+                                support="diagnostic_only",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "TRANsmission Range 含 TM9（p.752）；无 RMC 表依据，"
+                                    "且天线数走另一条命令 TM9:NTXantennas（p.767），"
+                                    "不归 NENBantennas 管 —— 两处都未取证"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                    BaseStationMacDimensionCapability(
+                        dimension="mimo_layers",
+                        values=(
+                            BaseStationMacDimensionValueCapability(
+                                value=1,
+                                support="authoritative",
+                                satisfying_options=(),
+                                reason=(
+                                    "NENBantennas Range 含 ONE（p.753，*RST=ONE，该值无 Options 行）；"
+                                    "单天线 RMC 表 2-37 覆盖"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=2,
+                                support="authoritative",
+                                satisfying_options=("KS520", "KS540"),
+                                reason=(
+                                    "NENBantennas Range 含 TWO（p.753）；Options 原文两行"
+                                    "「TWO (2x2): R&S CMW-KS520」与"
+                                    "「TWO (2x4): R&S CMW-KS540」—— 装任一即可；"
+                                    "表 2-38 覆盖。P2-51 已闭环的正式路径"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                            BaseStationMacDimensionValueCapability(
+                                value=4,
+                                support="diagnostic_only",
+                                satisfying_options=("KS521", "KS540"),
+                                reason=(
+                                    "NENBantennas Range 含 FOUR（p.753，Options 原文"
+                                    "「FOUR (4x2): R&S CMW-KS521」与「FOUR (4x4): R&S CMW-KS540」"
+                                    "—— 装任一即可）；"
+                                    "命令层有据，但本地无 4 天线真机证据，保守不放行正式路径"
+                                ),
+                                source_reference=CMW500_LTE_PROFILE_SOURCE,
+                            ),
+                        ),
+                    ),
+                ),
             ),
         ),
         config_fields=tuple(
