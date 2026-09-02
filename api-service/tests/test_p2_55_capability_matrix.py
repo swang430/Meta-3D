@@ -161,7 +161,7 @@ def test_authoritative_values_cite_an_rmc_table():
                 # 2-40（TM7）/ 2-42（TM8）/ 2-44（TM9）。
                 # 2-39 / 2-41 / 2-43 / 2-45 是 TDD 专表，而本 profile 的
                 # duplex 锁死 fdd —— 拿 TDD 表当 FDD 取值的依据是净放宽。
-                assert _re2.search(r"表 2-(37|38|40|42|44)\b", item.reason), (
+                assert _re2.search(r"表\s*2-(37|38|40|42|44)\b", item.reason), (
                     f"{name}={item.value!r} 声明为 authoritative 却未引用任何一张 "
                     f"**FDD** DL RMC 表（2-37/2-38/2-40/2-42/2-44）：{item.reason!r}"
                 )
@@ -222,9 +222,11 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
             # 理由（mimo_layers=4 就是），而真机证据没有页码可引。
             located = (
                 _re.search(r"p\.\d+", reason)
-                or _re.search(r"表 2-\d+", reason)
+                or _re.search(r"表\s*2-\d+", reason)
                 or _re.search(r"§2\.\d+(\.\d+)*", reason)
-                or _re.search(r"[A-Z][A-Za-z]*:[A-Za-z<>]", reason)
+                # 命令名含数字或占位符也要认：本片 reason 里就有
+                # `TM<no>:NTXantennas`（旧正则匹配不到它）
+                or _re.search(r"[A-Z][A-Za-z0-9<>_]*:[A-Za-z0-9<>_]+", reason)
             )
             assert located, (
                 f"{name}={item.value!r} 降级为 diagnostic_only，"
@@ -813,11 +815,15 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     机械判据：提到"表 2-32"就必须同时提到"场景"，且不得出现"固定 / 即 / 就是"
     这类把多行压成一行的绝对化措辞。
     """
+    import re as _re3
+
     absolutes = ("固定", "即 ", "就是")
 
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
-            if "表 2-32" not in item.reason:
+            # 用正则而不是子串：写成「表2-32」时子串判断会让这条门**静默跳过**，
+            # 门失效却不报错 —— 那比没有门更糟。
+            if not _re3.search(r"表\s*2-32", item.reason):
                 continue
             assert "场景" in item.reason, (
                 f"{name}={item.value!r} 引用了表 2-32 却未提及「场景」维 —— "
