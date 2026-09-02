@@ -225,8 +225,12 @@ def test_diagnostic_only_reasons_state_what_is_missing_and_where():
                 or _re.search(r"表\s*2-\d+", reason)
                 or _re.search(r"§2\.\d+(\.\d+)*", reason)
                 # 命令名含数字或占位符也要认：本片 reason 里就有
-                # `TM<no>:NTXantennas`（旧正则匹配不到它）
-                or _re.search(r"[A-Z][A-Za-z0-9<>_]*:[A-Za-z0-9<>_]+", reason)
+                # `TM<no>:NTXantennas`。冒号两侧都要求 ≥2 个连续大写字母
+                # （SCPI 的助记符约定），否则 `Note:we` / `Missing:mimo_layers`
+                # 这类普通英文会被当成坐标，把整条门静默绕过。
+                or _re.search(
+                    r"\b[A-Z]{2,}[A-Za-z0-9<>_]*:[A-Z]{2,}[A-Za-z0-9<>_]*", reason
+                )
             )
             assert located, (
                 f"{name}={item.value!r} 降级为 diagnostic_only，"
@@ -817,7 +821,10 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
     """
     import re as _re3
 
-    absolutes = ("固定", "即 ", "就是")
+    # 「即」用负向后行/前瞻，不用带空格的子串：`即1x2` / `，即1x2` / `即:1x2`
+    # 都能绕过 `"即 "`，而排除「立即 / 随机 / 即使」需要的正是上下文判断。
+    absolutes = ("固定", "就是")
+    absolute_patterns = (r"(?<![立随])即(?!使)",)
 
     for name in ("transmission_mode", "mimo_layers"):
         for item in _dimension(name).values:
@@ -833,4 +840,9 @@ def test_table_2_32_citations_acknowledge_its_scenario_dimension():
                 assert word not in item.reason, (
                     f"{name}={item.value!r} 用「{word.strip()}」把表 2-32 的多行"
                     f"压成了单值：{item.reason!r}"
+                )
+            for pattern in absolute_patterns:
+                assert not _re3.search(pattern, item.reason), (
+                    f"{name}={item.value!r} 用绝对化措辞把表 2-32 的多行压成了"
+                    f"单值（命中 {pattern!r}）：{item.reason!r}"
                 )
