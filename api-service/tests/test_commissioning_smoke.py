@@ -100,6 +100,9 @@ def lab(db, chamber, instrument_categories):
     positioner = next(
         row for row in instrument_categories if row.category_key == "positioner"
     )
+    channel_emulator = next(
+        row for row in instrument_categories if row.category_key == "channelEmulator"
+    )
     db.add(InstrumentConnection(
         category_id=base_station.id,
         endpoint=None,
@@ -123,6 +126,16 @@ def lab(db, chamber, instrument_categories):
                 "connection_endpoint": None,
                 "driver_mode": "mock",
                 "role": "positioner",
+            },
+            # P2-58 ①: execution freeze 也冻 channelEmulator binding（fail-closed），
+            # 这里补一条 unbound 的 CE binding（instrument_model_id=None ↔ 品类 selected_model_id=None），
+            # 形状照 test_p2_58_channel_emulator_freeze.py::runner_lab。
+            {
+                "category_id": str(channel_emulator.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "primary_channel_emulator",
             },
         ],
         is_active=True,
@@ -340,6 +353,9 @@ class TestFivePhaseCommissioningSmoke:
         from app.services.positioner_coordinate_profile import (
             freeze_execution_positioner_coordinate_profile,
         )
+        from app.services.channel_emulator_binding import (
+            freeze_execution_channel_emulator_binding,
+        )
         from app.services.instrument_hal_service import get_hal_service
 
         config_overrides = {
@@ -398,6 +414,12 @@ class TestFivePhaseCommissioningSmoke:
             db, get_hal_service(), execution, test_case
         )
         freeze_execution_positioner_coordinate_profile(
+            db, get_hal_service(), execution, test_case
+        )
+        # P2-58 ①: 与上面 BS / positioner 同形预冻 CE binding。本 helper 绕开了
+        # POST /sessions，而 test_analysis_stays_unknown_* 会先写 measurements 伪造
+        # 相位进度再打 analysis —— 有进度的执行行不能回填缺失的 CE 冻结件（fail-closed）。
+        freeze_execution_channel_emulator_binding(
             db, get_hal_service(), execution, test_case
         )
         db.commit()

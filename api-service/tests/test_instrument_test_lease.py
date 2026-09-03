@@ -120,6 +120,43 @@ async def test_lease_acquires_remote_only_during_test_and_releases_after_success
 
 
 @pytest.mark.asyncio
+async def test_f64_lease_only_recognises_camel_case_channel_emulator_key():
+    """品类键只认驼峰 `channelEmulator`（P2-58 决定 ②，2026-09-03）。
+
+    活路径 `instrument_hal_service._real_driver_registry` 注册 F64/FS16 用的键就是
+    驼峰；此前 `_f64_driver` 还 `or drivers.get("channel_emulator")` 兼容下划线
+    拼写 —— 消费方替真值源打补丁，注册键漂了这里会静默接管、把漂移掩盖掉。
+    现在下划线键视同 CE 未加载：`hold()` / `park_idle_instruments()` 照常成立，
+    但 F64 既不 acquire 也不 release（零往返）。
+
+    变异 ①：把 `or drivers.get("channel_emulator")` 加回 `_f64_driver` → 下划线半
+    红（多出 f64-remote / f64-local）。
+    变异 ②：把 `drivers.get("channelEmulator")` 整个换成 `drivers.get("channel_emulator")`
+    → 红（下划线半先红；驼峰半也会红）。
+    变异 ③：把键拼成别的（如 `"ChannelEmulator"`）→ 只有驼峰半红（防改过头 / 改错键）。
+    """
+    from app.services.instrument_test_lease import InstrumentTestLease
+
+    # ① 下划线键：取不到 → 走「CE 未加载」分支，F64 零往返
+    snake_events: list[str] = []
+    snake_hal = SimpleNamespace(drivers={"channel_emulator": _FakeF64(snake_events)})
+    snake_lease = InstrumentTestLease(lambda: snake_hal)
+    async with snake_lease.hold("formal-case"):
+        snake_events.append("test")
+    assert snake_events == ["test"]
+    assert await snake_lease.park_idle_instruments() is True
+    assert snake_events == ["test"]
+
+    # ② 驼峰键：取得到 → 照常 remote / local（防改过头）
+    camel_events: list[str] = []
+    camel_hal = SimpleNamespace(drivers={"channelEmulator": _FakeF64(camel_events)})
+    camel_lease = InstrumentTestLease(lambda: camel_hal)
+    async with camel_lease.hold("formal-case"):
+        camel_events.append("test")
+    assert camel_events == ["f64-remote", "test", "f64-local"]
+
+
+@pytest.mark.asyncio
 async def test_standalone_operation_blocks_reload_without_opening_f64_or_polling():
     from app.services.instrument_test_lease import InstrumentTestLease
 

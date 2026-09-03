@@ -31,7 +31,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
-from app.hal import MockBaseStation, MockPositioner
+from app.hal import MockBaseStation, MockChannelEmulator, MockPositioner
 from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
 from app.services.instrument_hal_service import get_hal_service
@@ -65,8 +65,12 @@ def setup_db():
     hal = get_hal_service()
     prior_base_station = hal.drivers.get("baseStation")
     prior_positioner = hal.drivers.get("positioner")
+    prior_channel_emulator = hal.drivers.get("channelEmulator")
     hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
     hal.drivers["positioner"] = MockPositioner("mock-positioner", {})
+    # P2-58 ①: 建会话时 execution freeze 也冻 channelEmulator binding（fail-closed），
+    # HAL 得装着自带 adapter_manifest 的 CE mock 驱动。
+    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {})
     with TestingSessionLocal() as db:
         db.add_all([
             InstrumentCategory(
@@ -77,6 +81,11 @@ def setup_db():
             InstrumentCategory(
                 category_key="positioner",
                 category_name="Positioner",
+                driver_mode="mock",
+            ),
+            InstrumentCategory(
+                category_key="channelEmulator",
+                category_name="Channel Emulator",
                 driver_mode="mock",
             ),
         ])
@@ -92,6 +101,10 @@ def setup_db():
             hal.drivers.pop("positioner", None)
         else:
             hal.drivers["positioner"] = prior_positioner
+        if prior_channel_emulator is None:
+            hal.drivers.pop("channelEmulator", None)
+        else:
+            hal.drivers["channelEmulator"] = prior_channel_emulator
         if prior is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -115,6 +128,9 @@ def _add_lab(db, *, name: str, active: bool = True) -> LabProfile:
     positioner_category = db.query(InstrumentCategory).filter_by(
         category_key="positioner"
     ).one()
+    channel_emulator_category = db.query(InstrumentCategory).filter_by(
+        category_key="channelEmulator"
+    ).one()
     lab = LabProfile(
         id=uuid.uuid4(),
         name=name,
@@ -133,6 +149,16 @@ def _add_lab(db, *, name: str, active: bool = True) -> LabProfile:
                 "connection_endpoint": None,
                 "driver_mode": "mock",
                 "role": "positioner",
+            },
+            # P2-58 ①: execution freeze 也冻 channelEmulator binding（fail-closed），
+            # 这里补一条 unbound 的 CE binding（instrument_model_id=None ↔ 品类 selected_model_id=None），
+            # 形状照 test_p2_58_channel_emulator_freeze.py::runner_lab。
+            {
+                "category_id": str(channel_emulator_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "primary_channel_emulator",
             },
         ],
     )

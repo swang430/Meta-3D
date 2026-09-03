@@ -470,6 +470,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/channelEmulator/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 只读预览已解析的 channelEmulator binding（零仪器 I/O） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 已保存的 MIMO_OTA TestCase；给出时其 channel_asset_id 以 selected_asset_id 附带（不进 binding_digest），省略时 selected_asset_id 为 null */
+                    test_case_id?: string | null;
+                };
+                header?: never;
+                path: {
+                    lab_profile_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 当前 channelEmulator binding 的不可变投影 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelEmulatorBindingPreviewResponse"];
+                    };
+                };
+                /** @description LabProfile 不存在 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/{categoryKey}/channel-models": {
         parameters: {
             query?: never;
@@ -2356,6 +2404,30 @@ export interface components {
             detail: string;
             testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"] | null;
         };
+        ChannelEmulatorBindingPreviewResponse: {
+            /**
+             * @description configured | not_applicable | diagnostic_unbound | invalid
+             * @enum {string}
+             */
+            status: "configured" | "not_applicable" | "diagnostic_unbound" | "invalid";
+            binding_digest: string | null;
+            /** @enum {string|null} */
+            execution_mode: "real" | "simulated" | null;
+            adapter_id: string | null;
+            model_name: string | null;
+            category_id: string | null;
+            instrument_model_id: string | null;
+            instrument_connection_id: string | null;
+            lab_profile_id: string;
+            resolved_binding: {
+                [key: string]: unknown;
+            } | null;
+            runtime_driver: {
+                [key: string]: unknown;
+            } | null;
+            detail: string;
+            selected_asset_id: string | null;
+        };
         InstrumentBindingSyncResponse: {
             binding: components["schemas"]["InstrumentBinding"];
             resolved?: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
@@ -2983,6 +3055,8 @@ export interface components {
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
             base_station_binding: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
+            /** @description 当前 LabProfile 的 channelEmulator binding 预览；HAL 未就绪或无活动 LabProfile 时为 null */
+            channel_emulator_binding: components["schemas"]["ChannelEmulatorBindingPreviewResponse"] | null;
             base_station_testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"];
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;

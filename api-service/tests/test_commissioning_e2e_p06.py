@@ -163,6 +163,7 @@ def instrument_categories(db):
     db.commit()
     base_station = next(r for r in rows if r.category_key == "baseStation")
     positioner = next(r for r in rows if r.category_key == "positioner")
+    channel_emulator = next(r for r in rows if r.category_key == "channelEmulator")
     for profile in db.query(LabProfile).all():
         profile.instrument_bindings = [
             {
@@ -178,6 +179,16 @@ def instrument_categories(db):
                 "connection_endpoint": None,
                 "driver_mode": "mock",
                 "role": "positioner",
+            },
+            # P2-58 ①: execution freeze 也冻 channelEmulator binding（fail-closed），
+            # 这里补一条 unbound 的 CE binding（instrument_model_id=None ↔ 品类 selected_model_id=None），
+            # 形状照 test_p2_58_channel_emulator_freeze.py::runner_lab。
+            {
+                "category_id": str(channel_emulator.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "primary_channel_emulator",
             },
         ]
     db.commit()

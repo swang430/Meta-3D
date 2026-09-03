@@ -103,14 +103,18 @@ def _patch_execution_session_around_lease(monkeypatch, lease):
 @pytest.fixture(autouse=True)
 def setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
-    from app.hal import MockBaseStation, MockPositioner
+    from app.hal import MockBaseStation, MockChannelEmulator, MockPositioner
     from app.services.instrument_hal_service import get_hal_service
 
     hal = get_hal_service()
     saved_base_station = hal.drivers.get("baseStation")
     saved_positioner = hal.drivers.get("positioner")
+    saved_channel_emulator = hal.drivers.get("channelEmulator")
     hal.drivers["baseStation"] = registered_mock_base_station("mock-bs", {"model": "UXM 5G E7515B"})
     hal.drivers["positioner"] = MockPositioner("mock-pos", {"model": "UXM 5G E7515B"})
+    # P2-58 ①: execution freeze 也冻 channelEmulator binding（fail-closed），
+    # HAL 得装着自带 adapter_manifest 的 CE mock 驱动。
+    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {})
     prev = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setattr(
@@ -128,6 +132,10 @@ def setup_db(monkeypatch):
             hal.drivers.pop("positioner", None)
         else:
             hal.drivers["positioner"] = saved_positioner
+        if saved_channel_emulator is None:
+            hal.drivers.pop("channelEmulator", None)
+        else:
+            hal.drivers["channelEmulator"] = saved_channel_emulator
         if prev is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -161,7 +169,13 @@ def lab(db, chamber):
         driver_mode="mock",
         is_active=True,
     )
-    db.add(category)
+    channel_emulator_category = InstrumentCategory(
+        category_key="channelEmulator",
+        category_name="信道仿真器",
+        driver_mode="mock",
+        is_active=True,
+    )
+    db.add_all([category, channel_emulator_category])
     db.flush()
     db.add(InstrumentConnection(
         category_id=category.id,
@@ -172,13 +186,25 @@ def lab(db, chamber):
     lp = LabProfile(
         name="P3-Phase3-Lab",
         chamber_config_id=chamber.id,
-        instrument_bindings=[{
-            "category_id": str(category.id),
-            "instrument_model_id": None,
-            "connection_endpoint": None,
-            "driver_mode": "mock",
-            "role": "baseStation",
-        }],
+        instrument_bindings=[
+            {
+                "category_id": str(category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "baseStation",
+            },
+            # P2-58 ①: execution freeze 也冻 channelEmulator binding（fail-closed），
+            # 这里补一条 unbound 的 CE binding（instrument_model_id=None ↔ 品类 selected_model_id=None），
+            # 形状照 test_p2_58_channel_emulator_freeze.py::runner_lab。
+            {
+                "category_id": str(channel_emulator_category.id),
+                "instrument_model_id": None,
+                "connection_endpoint": None,
+                "driver_mode": "mock",
+                "role": "primary_channel_emulator",
+            },
+        ],
         is_active=True,
     )
     db.add(lp)
