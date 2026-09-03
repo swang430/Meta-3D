@@ -50,16 +50,16 @@
 **前端（4，全部是 ①/G/B/C 登记的镜像站点）**
 8. `gui/src/api/labProfileService.ts:115` 旁 —— `fetchChannelEmulatorBindingPreview`（契约第 3 步）
 9. `gui/src/api/mockServer.ts` + `mockDatabase.ts:99` —— 两个新端点的 mock（第 4 步）
-10. `gui/src/types/api.ts:403` —— 手写 readiness 类型补 `channel_emulator_binding`（非 `?:`，① 已定 required）；`gui/src/features/Equipment/channelEmulatorModelPresetDraft.ts`（新，镜像 BS 那份）；`App.tsx` 的 `handleModelChange` CE 分支 + 确认弹窗
+10. `gui/src/types/api.ts` —— 在 :403 `base_station_binding` 旁**新增** `channel_emulator_binding`（该字段今天在此文件**尚不存在**，全文件 grep 为零；非 `?:`，① 已定 required）；`gui/src/features/Equipment/channelEmulatorModelPresetDraft.ts`（新，镜像 BS 那份）；`App.tsx` 的 `handleModelChange` CE 分支 + 确认弹窗
 11. `gui/src/features/Dashboard/ZoneReadiness.tsx:142` —— readiness 灯消费 `channel_emulator_binding.status`
 
-**① 留下的两格判定**（B 的歧义 #1，归 ②）：preview 端点对「TestCase 存在但 `test_type != "MIMO_OTA"`」或「其 `lab_profile_id` 与所选 LabProfile 不一致」—— 建议 **404 + 中文 detail**（CE 无 compatibility 槽位，返回 null 会伪装成「没选资产」；与 B 对「TestCase 不存在 → 404」同口径）。
+**① 留下的两格判定**（B 的歧义 #1，归 ②）：preview 端点对「TestCase 存在但 `test_type != "MIMO_OTA"`」或「其 `lab_profile_id` 与所选 LabProfile 不一致」—— **422 + 中文 detail**（外审 #451 R3 纠正：资源存在但不可用该 422 不该 404；仓内口径 `lab_profile.py` 404×5 全给「不存在」、422×11 给「存在但不可用」。CE 无 compatibility 槽位，返回 null 会伪装成「没选资产」；「TestCase 不存在」仍 404，与 B 同口径）。
 
 ## 4. 门的设想（每条配让它变红的变异）
 
 1. **不覆盖其他型号**：先存 F64 preset，再切到 FS16 保存 → F64 的 map 项**逐字节不变**；变异：保存时整张 map 重写 → 红
 2. **切型号前旧活动被快照**：从未存过 F64、活动连接是 F64、切到 FS16 保存 → map 里出现 F64 快照；变异：删快照分支 → 红
-3. **运行期观测键不进 preset**：`connection_params` 带运行期键保存 → preset 里没有它；变异：不剔除 → 红
+3. **`available_channel_models` 完整进 preset，剔除集合为空**（③⁺：本条初稿写「运行期观测键不进 preset」，与 §2 被 R2 纠正后的分类相反，R3 期间自查抓出）：保存 F64 preset 后，preset 里的 `available_channel_models` 与活动连接**逐字节相等**；`CHANNEL_EMULATOR_RUNTIME_CONNECTION_PARAM_KEYS == set()`。变异：把 `available_channel_models` 加进剔除集合 → 红。另一条判定器自测：往剔除集合加任意键 → 门要求该键在全仓有 HAL `connect()` 路径的写入点，否则红（防再次错分类）
 4. **迁移双向 + 幂等**：`column_exists` 守门，二次 upgrade 不炸（照 f2a4c6e8b0d1 的既有测试形状）
 5. **契约四步对齐**：G11（yaml ⊆ live）+ P2-27（required == properties）+ `npm run build` + **浏览器实测**切型号确认弹窗（memory：GUI 两道门缺一不可）
 6. **确认弹窗**：有未保存草稿时切型号 → 弹确认；取消 → 草稿不变、型号不变；确认 → 草稿替换；变异：跳过确认 → 红
