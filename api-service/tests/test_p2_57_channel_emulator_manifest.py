@@ -108,8 +108,28 @@ def _all_channel_emulator_drivers() -> dict:
     #      那是**恒红**——比恒绿更容易招来「加个白名单绕过」，门就名存实亡了。
     out = {}
     for cls in _walk(ChannelEmulatorDriver):
-        src = inspect.getsourcefile(cls)
-        assert src, cls
+        # 取不到源码的类跳过 —— 它不可能是 `app/` 下的生产驱动。
+        # ⚠️ **守的是 `TypeError`/`OSError`，不是 `None`**（实测，Python 3.13）：
+        #    · `exec("class K(Base): pass", …)` → `__module__` 变 `'builtins'`，
+        #      `getsourcefile` **抛 `TypeError: … is a built-in class`**；
+        #    · `type("X", (F64,), {})` → `__module__` 变 `'abc'`（ABCMeta.__new__
+        #      的调用帧），返回**真路径** `.../abc.py`，被下面的 `is_relative_to`
+        #      挡掉，跟本 guard 无关。
+        #    外审 #448 C1 提的是「返回 None 就跳过」，而上面两种机制**一种返回
+        #    真路径、一种抛异常，都不返回 None** —— 按它写等于没守（内审实测：
+        #    把 guard 改回裸 `assert` 仍 31 passed 全绿）。这里按实测的形态守。
+        #    真驱动万一取不到源码也不会被放过：`expected` 纯 AST 派生、与
+        #    `getsourcefile` 无关，下面那条双向相等断言会以「只在 AST 里：[...]」
+        #    把它点名（内审变异实证）。
+        try:
+            src = inspect.getsourcefile(cls)
+        except (TypeError, OSError):
+            continue
+        if not src:
+            # 返回 None 的两种实测形态：`.so` 扩展类，以及 `__file__` 指向一个
+            # 不存在的 .py 且模块无 loader。都不可能由生产 CE 驱动触发 ——
+            # 这半个 guard 今天是纯防御，无用例覆盖（内审 M1 实证），如实记。
+            continue
         path = pathlib.Path(src)
         if not path.is_relative_to(_APP):
             continue                         # 测试里临时定义的子类不参与对账
@@ -559,6 +579,27 @@ def test_no_capability_probing_via_hasattr_anywhere_in_app():
 # --------------------------------------------------------------------------
 
 
+def test_driver_collection_survives_classes_with_no_source_file():
+    """取不到源码的 CE 子类不许让整个门文件在收集期崩掉。
+
+    ⚠️ 内审实证：本 guard 此前**零测试保护**（把它改回裸 `assert src, cls`，
+    31 passed 全绿），而且守错了形态 —— 外审说的是「返回 None」，实测
+    `exec` 造的类是**抛 `TypeError`**。这条门用真的 `exec` 类钉住实测形态。
+    """
+    import gc
+
+    ns = {"Base": ChannelEmulatorDriver}
+    exec("class _ExecMadeDriver(Base): pass", ns)          # noqa: S102
+    try:
+        with pytest.raises(TypeError):                      # 前提本身也钉住
+            inspect.getsourcefile(ns["_ExecMadeDriver"])
+        drivers = _all_channel_emulator_drivers()           # 不许抛
+        assert "_ExecMadeDriver" not in {n for _, n in drivers}
+    finally:
+        ns.clear()
+        gc.collect()        # 让它从 __subclasses__() 里消失，别污染别的用例
+
+
 def test_every_channel_emulator_driver_declares_a_manifest():
     """每个 `ChannelEmulatorDriver` 子类都必须有**类级** `adapter_manifest`。
 
@@ -648,6 +689,45 @@ def test_mock_auto_attributes_are_not_mistaken_for_a_manifest():
         assert channel_emulator_manifest_of(mock) is None
         assert channel_emulator_implements(mock, "stop_emulation") is False
         assert "没有声明" in channel_emulator_rejection(mock, "stop_emulation")
+
+
+def test_naming_never_raises_even_for_a_hostile_metaclass():
+    """取名字失败必须退化成一个名字，**不能抛**（内审 F3）。
+
+    ⚠️ 这是 R1→R2 那个母题的重演：`channel_emulator_rejection` 的下游是
+    `cleanup_chamber_instruments`（明文 `Never raises`），而它在 `measure.py` 的
+    `finally:` 里 —— 抛出会顶替掉触发收尾的原始异常。实测：元类把 `__name__`
+    定义成会抛的 property 时，新写法 `emulator.__name__` 抛 `RuntimeError`，
+    而**旧写法不抛**。收 C2 的时候顺手把抛面放宽了，方向反了。
+    """
+    class _HostileMeta(type):
+        @property
+        def __name__(cls):                       # noqa: A003
+            raise RuntimeError("取名字都能炸")
+
+    class _Hostile(metaclass=_HostileMeta):
+        pass
+
+    reason = channel_emulator_rejection(_Hostile, "stop_emulation")
+    assert "stop_emulation" in reason and "fail-closed" in reason
+
+
+def test_rejection_reason_names_the_real_class_even_for_a_class_object():
+    """拒绝理由必须点出**真实类名**，传类对象时不能变成字面量 "type"。
+
+    ⚠️ 外审 #448 C2：`channel_emulator_manifest_of` 对类对象是正常工作的
+    （`getattr(cls, "adapter_manifest")` 走得通），所以注册表自检 / 测试脚手架
+    传类进来是合理用法。而 `type(emulator).__name__` 那时返回 "type" ——
+    一条说了等于没说的理由，恰好抵消了本片「用可读拒绝理由取代不受控
+    AttributeError」的全部意义。
+    """
+    class _NoManifestDriverLike:
+        pass
+
+    for target in (_NoManifestDriverLike, _NoManifestDriverLike()):
+        reason = channel_emulator_rejection(target, "stop_emulation")
+        assert "_NoManifestDriverLike" in reason, reason
+        assert not reason.startswith("type "), reason
 
 
 def test_operation_typos_raise_instead_of_reading_as_unsupported():

@@ -276,8 +276,24 @@ def channel_emulator_rejection(emulator: object, operation: str) -> str:
         raise ValueError(f"unknown channel emulator operation: {operation!r}")
     manifest = channel_emulator_manifest_of(emulator)
     if manifest is None:
+        # 传进来的可能是**类对象** —— `channel_emulator_manifest_of` 对类是正常
+        # 工作的，所以那是个合法入参形态（外审 #448 C2 指出）。那时
+        # `type(emulator).__name__` 是字面量 "type"，一条说了等于没说的理由，
+        # 恰好抵消了本模块「用可读拒绝理由取代不受控 AttributeError」的意义。
+        # ⚠️ 措辞收窄（内审 F2）：初版这里写「注册表自检 / 测试脚手架都会这么用」
+        #    —— 全仓 12 个调用点**全部传实例**，那句话没有实例支撑，是我编的。
+        # ⚠️ 取名必须**不抛**（内审 F3）：下游 `cleanup_chamber_instruments` 明文
+        #    `Never raises`，而它在 `measure.py` 的 `finally:` 里。实测元类可以把
+        #    `__name__` 定义成会抛的 property —— 那正是 R1→R2 已经踩过一次的坑。
+        try:
+            name = (
+                emulator.__name__ if isinstance(emulator, type)
+                else type(emulator).__name__
+            )
+        except Exception:  # noqa: BLE001
+            name = "<取名失败的对象>"
         return (
-            f"{type(emulator).__name__} 没有声明 channel emulator manifest，"
+            f"{name} 没有声明 channel emulator manifest，"
             f"因此不认为它实现了 {operation}（fail-closed）"
         )
     return manifest.rejection_reason(operation) or ""
