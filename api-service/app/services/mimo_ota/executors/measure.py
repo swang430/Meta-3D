@@ -81,6 +81,10 @@ from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_evidence_outcome import (
     execution_evidence_blocks_formal_outputs,
 )
+from app.hal.channel_emulator_manifest import (
+    channel_emulator_implements,
+    channel_emulator_rejection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2229,7 +2233,9 @@ class MeasureExecutor(IStepExecutor):
             # 但 4 层塌秩只适合单层) — 设直通、不 GO。注意直通稳态下 F64
             # 输出功率显示冻结 (07-03 实证), 判据以 DUT 侧吞吐为准。
             if config.f64_bypass_mode is not None:
-                if not hasattr(emulator, "set_passthrough_mode"):
+                if not channel_emulator_implements(
+                    emulator, "set_passthrough_mode"
+                ):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
@@ -2237,17 +2243,31 @@ class MeasureExecutor(IStepExecutor):
                             "(set_passthrough_mode) — 不静默降级为衰落测量。"
                         ),
                     )
-                if hasattr(emulator, "stop_emulation"):
-                    # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
-                    # 时继续写 STATIC 会把真因掩盖成"直通建立失败"
-                    if not await emulator.stop_emulation():
-                        return StepExecutionResult(
-                            status=StepExecutionStatus.FAILED,
-                            error_message=(
-                                "F64 停止播放被拒 (stop_emulation=False) — "
-                                "直通态测量前置失败, 明细见驱动日志。"
-                            ),
-                        )
+                # ⚠️ 与紧邻上一格 (set_passthrough_mode) **同口径 fail-loud**
+                #    (内审 R4 F3)。此前这里没有 else: manifest 少报 stop_emulation
+                #    就**不停播放直接进直通**且零留痕 —— 恰好造成下面注释说的那件事
+                #    (真因被掩盖成"直通建立失败")。cleanup 那处同形分支本片已补留痕,
+                #    这处是它的镜像站点, 不能只修一处。
+                if not channel_emulator_implements(emulator, "stop_emulation"):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "f64_bypass_mode 已配置, 但 CE 驱动未声明实现 "
+                            "stop_emulation — 无法确保直通前已停止播放, "
+                            "不静默跳过。"
+                            + channel_emulator_rejection(emulator, "stop_emulation")
+                        ),
+                    )
+                # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
+                # 时继续写 STATIC 会把真因掩盖成"直通建立失败"
+                if not await emulator.stop_emulation():
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "F64 停止播放被拒 (stop_emulation=False) — "
+                            "直通态测量前置失败, 明细见驱动日志。"
+                        ),
+                    )
                 register_required_scpi_evidence(
                     context.test_execution,
                     requirement_id="f64.output_state",
@@ -3766,7 +3786,9 @@ class MeasureExecutor(IStepExecutor):
             "readback": [],
             "failure_reason": None,
         }
-        if not hasattr(emulator, "set_baseband_power") or (
+        if not channel_emulator_implements(
+            emulator, "set_baseband_power"
+        ) or (
             crest is not None and not hasattr(emulator, "set_crest_factor")
         ):
             payload["skipped"] = True

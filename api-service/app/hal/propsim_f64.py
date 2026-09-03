@@ -41,7 +41,7 @@ from app.hal.scpi_lock import ReentrantAsyncLock
 import ftplib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, Iterable, List, Optional, Tuple, TYPE_CHECKING
+from typing import ClassVar, Dict, Any, Iterable, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime
 
 from app.hal.base import (
@@ -58,6 +58,11 @@ from app.hal.channel_emulator import (
     ChannelLoadMode,
     F64_GO_COMMAND,
     F64_STATE_QUERY,
+)
+from app.hal.channel_emulator_manifest import (
+    ChannelEmulatorLoadModeCapability,
+    ChannelEmulatorManifest,
+    ChannelEmulatorOperationCapability,
 )
 
 if TYPE_CHECKING:
@@ -370,6 +375,89 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
       - EXTERNAL_WAVEFORM:  ASC Runtime 管线 (FTP → CALC:FILT:FILE → CH:MOD:CONT:ENV)
     """
 
+    #: P2-57：能力 manifest —— 「这个驱动支不支持某操作」的**唯一真值源**。
+    #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
+    #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
+    adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
+        schema_version=1,
+        adapter_id='propsim_f64',
+        model_name='PROPSIM F64',
+        vendor='Keysight',
+        load_modes=(
+            ChannelEmulatorLoadModeCapability(
+                mode='native_model', support='implemented',
+                reason='GCM 原生管线（CALC:FILT:FILE → DIAG:SIMU:GO）',
+            ),
+            ChannelEmulatorLoadModeCapability(
+                mode='external_waveform', support='implemented',
+                reason='ASC Runtime 管线（.asc 上传播放）',
+            ),
+            ChannelEmulatorLoadModeCapability(
+                mode='parametric_tdl', support='implemented',
+                reason='参数化 TDL',
+            ),
+        ),
+        operations=(
+            ChannelEmulatorOperationCapability(
+                operation='set_mimo_config', support='implemented',
+                reason='F64 GCM 引擎的 MIMO 相关性/衰落配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_path_loss', support='implemented',
+                reason='F64 逐路径衰减配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_doppler', support='implemented',
+                reason='F64 多普勒配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='start_emulation', support='implemented',
+                reason='DIAG:SIMU:GO 启动仿真',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='stop_emulation', support='implemented',
+                reason='停止仿真并回到已知态',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_channel_state', support='implemented',
+                reason='读回当前信道状态',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='upload_asc_files', support='implemented',
+                reason='外部引擎生成的 .asc 上传播放',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_external_attenuators', support='implemented',
+                reason='F64 侧签名是 Dict[int, float]（按端口号），与基类声明的 list[float] 不同 —— 该分歧为既有形态、服务层零调用，P2-57 只如实登记不裁决',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_baseband_power', support='implemented',
+                reason='基带功率，支持逐输入口',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_calibration_tone_capabilities', support='implemented',
+                reason='校准音能力自述',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_calibration_tone', support='implemented',
+                reason='内部 CW 校准音',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='stop_calibration_tone', support='implemented',
+                reason='停校准音',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_passthrough_mode', support='implemented',
+                reason='直通模式（P2-17 状态机）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='clear_passthrough_mode', support='implemented',
+                reason='退出直通',
+            ),
+        ),
+    )
+
+
     # P2-3: F64 family CAN expose these tokens — whether a given unit
     # actually does depends on optional K01 license + on whether operator
     # has loaded a user alignment. Live ``self.capabilities`` is the
@@ -609,23 +697,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # ===================================================================
     # 0. 管线能力声明与统一入口 (重写母类)
     # ===================================================================
-
-    def get_supported_load_modes(self) -> List[ChannelLoadMode]:
-        """
-        F64 支持的信道加载模式。
-
-        Returns:
-            [NATIVE_MODEL, EXTERNAL_WAVEFORM, PARAMETRIC_TDL]
-
-        PARAMETRIC_TDL (P2-14 B-2): .tap/.rtc 参数化模型, 加载机制同 ASC Runtime
-        (FTP + CALC:FILT:FILE), F64 按文件内容判参数化实时衰落 vs 烘焙。具体 .tap
-        schema / gaussian 谱可用性现场标定 (V1.0 §9)。
-        """
-        return [
-            ChannelLoadMode.NATIVE_MODEL,
-            ChannelLoadMode.EXTERNAL_WAVEFORM,
-            ChannelLoadMode.PARAMETRIC_TDL,
-        ]
 
     async def load_channel(
         self,

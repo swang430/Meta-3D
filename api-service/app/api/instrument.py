@@ -51,6 +51,7 @@ from app.services.execution_qualification import (
     revoke_base_station_site_certification,
 )
 from app.services.base_station_model_preset import BaseStationModelPreset
+from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -4412,10 +4413,20 @@ async def emulation_control(category_key: str, request: EmulationControlRequest)
         if driver is None:
             raise HTTPException(404, f"{category_key} HAL driver 未加载 (需 Real 模式 + 已连接)")
         action = request.action.strip().lower()
+        # P2-57：能力问 manifest，不问 getattr —— 基类现在对每个操作都有
+        # NotImplementedError 桩，`getattr(..., None)` 恒非 None、彻底失效。
         if action == "start":
-            method = getattr(driver, "start_emulation", None)
+            method = (
+                driver.start_emulation
+                if channel_emulator_implements(driver, "start_emulation")
+                else None
+            )
         elif action == "stop":
-            method = getattr(driver, "stop_emulation", None)
+            method = (
+                driver.stop_emulation
+                if channel_emulator_implements(driver, "stop_emulation")
+                else None
+            )
         else:
             raise HTTPException(400, f"未知 action '{action}' (start|stop)")
         if method is None:
@@ -4514,7 +4525,13 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
         driver = _get_loaded_hal_driver(category_key)
         if driver is None:
             raise HTTPException(404, f"{category_key} HAL driver 未加载")
-        method = getattr(driver, "set_baseband_power", None)
+        # P2-57：同上换源。原来靠「FS16 整条 MRO 无此方法」返回 400 ——
+        # 那是 14 个抽象方法掉在类体之外的副作用，不是有意的契约。
+        method = (
+            driver.set_baseband_power
+            if channel_emulator_implements(driver, "set_baseband_power")
+            else None
+        )
         if method is None:
             raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
         # 没给 ports 时先让驱动补齐拓扑 —— 与 /crest-factor 同口径。

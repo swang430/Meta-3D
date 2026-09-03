@@ -66,7 +66,7 @@ import asyncio
 from app.hal.scpi_lock import ReentrantAsyncLock
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import ClassVar, Any, Dict, List, Optional
 
 from app.hal.base import (
     InstrumentCapability,
@@ -79,6 +79,11 @@ from app.hal.channel_emulator import (
     CalibrationToneCapability,
     ChannelEmulatorDriver,
     ChannelLoadMode,
+)
+from app.hal.channel_emulator_manifest import (
+    ChannelEmulatorLoadModeCapability,
+    ChannelEmulatorManifest,
+    ChannelEmulatorOperationCapability,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,89 @@ _INFO_PRODUCT_TAG = "PROPSIM FS16"
 
 class RealPropsimFs16Driver(ChannelEmulatorDriver):
     """PROPSIM FS16 (Keysight F8820A) channel emulator driver — MVP."""
+
+    #: P2-57：能力 manifest —— 「这个驱动支不支持某操作」的**唯一真值源**。
+    #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
+    #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
+    adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
+        schema_version=1,
+        adapter_id='propsim_fs16',
+        model_name='PROPSIM FS16',
+        vendor='Keysight',
+        load_modes=(
+            ChannelEmulatorLoadModeCapability(
+                mode='native_model', support='not_implemented',
+                reason='FS16 无 F64 那样的 GCM 引擎',
+            ),
+            ChannelEmulatorLoadModeCapability(
+                mode='external_waveform', support='not_implemented',
+                reason='⚠️ P2-57 修正：此前 get_supported_load_modes() 返回 [EXTERNAL_WAVEFORM]，而 upload_asc_files / start_emulation **从未实现** —— 那是假声明，调用会抛不受控的 AttributeError。真实实现前一律不宣称',
+            ),
+            ChannelEmulatorLoadModeCapability(
+                mode='parametric_tdl', support='not_implemented',
+                reason='未实现',
+            ),
+        ),
+        operations=(
+            ChannelEmulatorOperationCapability(
+                operation='get_calibration_tone_capabilities', support='implemented',
+                reason='已实现，但返回空列表：本机尚无经验证的内部 CW 源，也没接直通链路',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_mimo_config', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_path_loss', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_doppler', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='start_emulation', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='stop_emulation', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_channel_state', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='upload_asc_files', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_external_attenuators', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_baseband_power', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_calibration_tone', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='stop_calibration_tone', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_passthrough_mode', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='clear_passthrough_mode', support='not_implemented',
+                reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+        ),
+    )
+
 
     # P2-3: FS16 fundamentally lacks K01 internal interference gen (no
     # license SKU for that family) and user-alignment is not in MVP. Empty
@@ -139,10 +227,6 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     # ------------------------------------------------------------------
     # 1. Load-mode capability declaration
     # ------------------------------------------------------------------
-
-    def get_supported_load_modes(self) -> List[ChannelLoadMode]:
-        """FS16 only does file-based playback (no F64-style GCM engine)."""
-        return [ChannelLoadMode.EXTERNAL_WAVEFORM]
 
     def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
         """No empirically verified internal CW gen on FS16 yet, no

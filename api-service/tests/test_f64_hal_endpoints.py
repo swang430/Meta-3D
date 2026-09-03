@@ -16,12 +16,20 @@ from contextlib import asynccontextmanager
 import pytest
 
 import app.api.instrument as instrument_api
+from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
 BASE = "/api/v1/instruments/channelEmulator"
 
 
 class _FakeF64Driver:
     """假 F64: 覆盖 6 端点消费的全部驱动方法, 行为可配置。"""
+
+    # P2-57：能力改由 manifest 回答（不再靠 getattr 探测），替身必须自述
+    adapter_manifest = channel_emulator_manifest_for(
+        adapter_id="fake_f64", model_name="Fake F64", vendor="test",
+        implemented=('set_mimo_config', 'set_path_loss', 'set_doppler', 'start_emulation', 'stop_emulation', 'get_channel_state', 'upload_asc_files', 'set_external_attenuators', 'set_baseband_power', 'get_calibration_tone_capabilities', 'set_calibration_tone', 'stop_calibration_tone', 'set_passthrough_mode', 'clear_passthrough_mode'),
+        load_modes=("native_model", "external_waveform"),
+    )
 
     def __init__(
         self,
@@ -234,8 +242,40 @@ def test_emulation_control_driver_without_method_400(client, monkeypatch):
         pass
 
     monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda key: _Bare())
-    resp = client.post(BASE + "/emulation-control", json={"action": "start"})
+    for action in ("start", "stop"):
+        resp = client.post(BASE + "/emulation-control", json={"action": action})
+        assert resp.status_code == 400, action
+
+
+def test_emulation_control_stop_capability_gate_is_enforced(client, monkeypatch):
+    """`stop` 方向的能力门也要真守着 —— 声明未实现就 400，不是放过去。
+
+    ⚠️ 内审 R2 F7 / 变异 MU2 实证：把 `instrument.py` 里 **stop** 那格的能力门
+    改成恒真，本文件 **41 passed 全绿** —— 既有用例只覆盖了 `start` 与
+    `set_baseband_power`，`stop` 这一格零覆盖。两个方向各自守，不假定对称。
+    """
+
+    class _StartOnly:
+        adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="start_only", model_name="Start Only", vendor="test",
+            implemented=("start_emulation",),
+        )
+
+        async def start_emulation(self):
+            return True
+
+        async def stop_emulation(self):   # 有这个方法，但 manifest 说未实现
+            raise AssertionError("能力门放过了 manifest 声明未实现的 stop_emulation")
+
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda key: _StartOnly()
+    )
+    resp = client.post(BASE + "/emulation-control", json={"action": "stop"})
     assert resp.status_code == 400
+    assert "不支持" in resp.json()["detail"]
+    assert client.post(
+        BASE + "/emulation-control", json={"action": "start"}
+    ).status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +516,16 @@ def test_crest_factor_empty_ports_422(client, fake_driver):
 
 
 class _FS16LikeDriver:
-    """模拟 FS16 / 别的 channel_emulator 品类: 方法存在(继承基类)但 raise
-    NotImplementedError。getattr 命中 → 若不捕会裸 500。"""
+    """模拟「manifest 说实现了、调用却 raise NotImplementedError」这一格。
+
+    P2-57 之前它模拟的是「getattr 命中但方法 raise」；现在能力由 manifest 回答，
+    所以这里**故意声明 implemented** —— 测的正是「声明与实现不符时端点不裸 500」。
+    （声明与实现的对账由 registry 门在构建期守，运行期仍要能兜住。）"""
+
+    adapter_manifest = channel_emulator_manifest_for(
+        adapter_id="fs16_like", model_name="FS16-like", vendor="test",
+        implemented=("start_emulation", "set_baseband_power"),
+    )
 
     async def start_emulation(self):
         raise NotImplementedError("FS16 不支持 start_emulation")
@@ -504,28 +552,41 @@ def test_input_reference_notimplemented_maps_400(client, monkeypatch):
 
 
 def test_fs16_real_driver_no_baseband_power_returns_400(client, monkeypatch):
-    """Codex #221 R6 P2 (误报) 实证 + 未来回归守门。
+    """真实 FS16 不支持 set_baseband_power → 端点 400，不是 500。
 
-    Codex 假设 channelEmulator 绑 RealPropsimFs16Driver 时会继承到"基类单参
-    set_baseband_power", 端点传 input_ports → TypeError → 500。运行时实测证伪:
-    RealPropsimFs16Driver 整条 MRO (FS16 → ChannelEmulatorDriver → InstrumentDriver
-    → ABC → object) **无** set_baseband_power —— Codex 所指的 channel_emulator.py:352
-    是模块函数内的闭包死代码, 非类方法; ChannelEmulatorDriver 本身也无此方法。
-    真实 FS16 绑 input-reference → getattr→None→HTTPException(400), 无 TypeError/500。
+    ⚠️ **P2-57 改写了本用例的判据来源**，历史值得留档：
 
-    (上一个用例的 _FS16LikeDriver 测的是"有方法但 raise NotImplementedError"路径;
-    本用例测"整条 MRO 无该方法"路径 —— 真实 FS16 走的是后者。)
+    这条门原本写的是「铁证: 真实 FS16 **整条 MRO 无** set_baseband_power」，
+    并据此判定 Codex #221 R6 那条意见是误报。当时的观察没错 —— `hasattr` 确实
+    为 False —— 但**原因**是 `channel_emulator.py` 里 14 个抽象方法整段掉在类体
+    之外（嵌在模块级函数 `normalize_channel_model_entries` 内，自 2026-05-13），
+    那份 docstring 自己都写明了「是模块函数内的闭包死代码, 非类方法」。
 
-    守门: 若将来给基类补单参 set_baseband_power, FS16 会继承到它 → 第一条断言变红,
-    暴露"端点双参调用该单参方法 → TypeError→500"的回归风险。
+    也就是说：**当时已经看见了这个结构缺陷，却把它当成契约锁进了断言**，
+    而不是修它。docstring 末尾那句「若将来给基类补单参 set_baseband_power，
+    FS16 会继承到它 → 第一条断言变红」正是 P2-57 撞上的那一幕。
+
+    现在判据换源：能力由 **manifest** 回答，不由「类上有没有这个名字」回答。
+    真实 FS16 的 manifest 把 `set_baseband_power` 声明为 `not_implemented`，
+    端点据此返回 400。签名漂移（基类单参 vs F64 双参）也已一并对齐。
     """
+    from app.hal.channel_emulator_manifest import channel_emulator_implements
     from app.hal.propsim_fs16 import RealPropsimFs16Driver
 
-    # 铁证: 真实 FS16 MRO 无 set_baseband_power (Codex 前提为假)
-    assert getattr(RealPropsimFs16Driver, "set_baseband_power", None) is None
+    # 新判据：类上**有**桩（基类补齐后必然有），但 manifest 说未实现
+    assert hasattr(RealPropsimFs16Driver, "set_baseband_power")
+    assert not channel_emulator_implements(
+        object.__new__(RealPropsimFs16Driver), "set_baseband_power"
+    )
 
-    class _NoBasebandDriver:  # 镜像真实 FS16: 无 set_baseband_power
+    class _NoBasebandDriver:  # 镜像真实 FS16: manifest 声明未实现
         _last_error = None
+        # P2-57：原来靠「整条 MRO 无此方法」返回 400 —— 那是 14 个抽象方法
+        # 掉在类体之外的副作用。现在由 manifest 如实声明未实现。
+        adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="fs16_nobb", model_name="FS16 (no baseband)",
+            vendor="test", implemented=(),
+        )
 
     monkeypatch.setattr(
         instrument_api, "_get_loaded_hal_driver", lambda key: _NoBasebandDriver()

@@ -24,6 +24,7 @@ from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.diagnostic_run import DiagnosticRun
 from app.models.lab_profile import LabProfile
 from app.services import test_case_runner as tcr
+from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
 
 engine = create_engine(
@@ -230,6 +231,12 @@ async def test_unsafe_sequence_does_not_interleave_with_f64_standalone_operation
     events = []
 
     class _F64:
+        # P2-57：能力由 manifest 回答，替身必须自述
+        adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="excl_f64", model_name="Exclusion F64", vendor="test",
+            implemented=("start_emulation", "stop_emulation"),
+        )
+
         async def acquire_remote_control(self):
             events.append("f64-acquire")
             return True

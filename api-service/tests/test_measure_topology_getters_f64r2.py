@@ -23,14 +23,29 @@ from app.services.mimo_ota.executors.measure import (
     _read_port_count,
     _read_port_list,
 )
+from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
 
 class _Bare:
     """没有任何拓扑 getter 的驱动 (mock CE / 非 F64)。"""
 
+    # P2-57：不声明任何能力 —— fail-closed 下等价于「都不支持」
+    adapter_manifest = channel_emulator_manifest_for(
+        adapter_id="bare", model_name="Bare", vendor="test", implemented=(),
+    )
+
 
 def _emu(**getters):
     emu = MagicMock()
+    # P2-57：`MagicMock()` 上的能力查询是 fail-closed 的，**无需额外置空**。
+    # ⚠️ 原因不是「类上没有 adapter_manifest」（内审 R2 F8 指出那句话是错的，
+    #    这版注释按实况重写）：Mock 会**自动生成**任意属性，
+    #    `getattr(mock, "adapter_manifest")` 返回的是一个真值 Mock。
+    #    真正兜住它的是 `channel_emulator_manifest_of` 判的
+    #    `isinstance(..., ChannelEmulatorManifest)` —— 不是 manifest 一律当没有。
+    # ⚠️ 复用本替身去测「需要 CE 能力」的路径时，必须显式给
+    #    `adapter_manifest = channel_emulator_manifest_for(...)`，否则那条路径会被
+    #    判成「不支持」而静默跳过（不报错），断言会打在一个根本没执行的分支上。
     for name, val in getters.items():
         setattr(emu, name, val)
     return emu
@@ -172,6 +187,13 @@ class TestOrchestrationTopologyBranches:
         旧代码用 `_tx_antennas`(实例默认 2, 永不为 0) 一定会发几条; 换成回读后才可能
         "一条都没发", 此时若仍 success=True 就是本项目一直在抓的零下发假成功。"""
         emu = MagicMock()
+        # P2-57：能力由 manifest 回答 —— 本替身要走到「crest 下发拒绝」那一格，
+        # 必须先声明它**实现了** set_baseband_power（否则在能力门就被挡掉，
+        # 测不到本用例真正要守的零下发假成功）。
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="crest_emu", model_name="Crest Emu", vendor="test",
+            implemented=("set_baseband_power",),
+        )
         emu.set_baseband_power = AsyncMock(return_value=True)
         emu.set_crest_factor = AsyncMock(return_value=True)
         emu.get_active_input_ports = lambda: None          # 口号未知
