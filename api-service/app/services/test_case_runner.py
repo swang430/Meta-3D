@@ -70,6 +70,9 @@ from app.services.base_station_adapter_profile import (
 from app.services.positioner_coordinate_profile import (
     freeze_execution_positioner_coordinate_profile,
 )
+from app.services.channel_emulator_binding import (
+    freeze_execution_channel_emulator_binding,
+)
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 logger = logging.getLogger(__name__)
@@ -278,6 +281,20 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         db.rollback()
         raise CaseNotExecutable(
             f"基站 adapter profile 无法冻结: {e}"
+        ) from e
+    try:
+        # P2-58 ①：信道仿真器 binding 与 BaseStation 同刻冻结，复用 resolver
+        # 算好的同一 binding_digest（不重算）。判不出就拒绝执行，不静默降级。
+        freeze_execution_channel_emulator_binding(
+            db,
+            get_hal_service(),
+            execution,
+            snapshot,
+        )
+    except Exception as e:  # noqa: BLE001 — 配置/绑定冲突必须在排入后台前拒绝
+        db.rollback()
+        raise CaseNotExecutable(
+            f"信道仿真器 binding 无法冻结: {e}"
         ) from e
     try:
         freeze_execution_positioner_coordinate_profile(

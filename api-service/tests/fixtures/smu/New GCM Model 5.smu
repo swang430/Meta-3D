@@ -1,0 +1,323 @@
+; PROPSim Simulation File, version 3.0
+
+[Simulation]
+Description = 
+Creator = EditingWizard
+RealTimeSampleClock = 200000000 Hz
+ClosedRoute = true
+RFLOAutoSet = false
+FadingMargin = 10 dB
+SplitTime = 2
+CombinedBands = 1
+AllocationType = NORMAL
+SimulationUsageType = NORMAL
+DBBClockMode = ASYNC_CLOCK
+FixedInsertionDelay = 0
+InterpolationMode = Coeff Interpolation
+EmulatorType = Platform2
+EmulationWrappingMode = 0
+
+[Multi Group 0]
+Channel groups = 0, 1
+CombinedBands = 1
+SplitTime = 2
+
+[Channel Group 0]
+SubGroups = 10000
+Channels = 0, 1, 2, 3
+CenterFrequency = 2600000000 Hz
+Immutable = false
+Direction = UPLINK
+Group type = MIMO
+Group name = Downlink
+PathLossBalanceModelGains = false
+
+[Channel Group 1]
+SubGroups = 20000
+Channels = 4, 5, 6, 7
+CenterFrequency = 2600000000 Hz
+Immutable = false
+Direction = DOWNLINK
+Group type = MIMO
+Group name = Uplink
+PathLossBalanceModelGains = false
+
+[SubGroup 10000]
+LinkLevel = -49.5197 dBm
+ShadowingEnabled = true
+BypassState = false
+OutputFrequency = 2600000000 Hz
+InputFrequency = 2600000000 Hz
+SpeedFactor = 1
+InputConnectorDuplexMode = DUPLEX
+OutputConnectorDuplexMode = DUPLEX
+
+[SubGroup 20000]
+LinkLevel = -49.6097 dBm
+ShadowingEnabled = true
+BypassState = false
+OutputFrequency = 2600000000 Hz
+InputFrequency = 2600000000 Hz
+SpeedFactor = 1
+InputConnectorDuplexMode = DUPLEX
+OutputConnectorDuplexMode = DUPLEX
+
+[Channel 0]
+Input = 0
+Output = 0
+CirUpdateRate = 289.017341 Hz
+SubGroup = 10000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_1.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_1_0_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_1_1.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_1_1_6bf08989_0_F.scs
+
+[Channel 1]
+Input = 0
+Output = 1
+CirUpdateRate = 289.017341 Hz
+SubGroup = 10000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_1.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_1_1_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_2_1.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_2_1_66eba6bc_1_F.scs
+
+[Channel 2]
+Input = 1
+Output = 0
+CirUpdateRate = 289.017341 Hz
+SubGroup = 10000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_2.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_2_2_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_1_2.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_1_2_6bf08989_2_F.scs
+
+[Channel 3]
+Input = 1
+Output = 1
+CirUpdateRate = 289.017341 Hz
+SubGroup = 10000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_2.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_2_3_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_2_2.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_DL_2_2_66eba6bc_3_F.scs
+
+[Channel 4]
+Input = 2
+Output = 2
+CirUpdateRate = 289.017341 Hz
+SubGroup = 20000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_1.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_1_0_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_1_1.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_1_1_5e5abd2a_4_F.scs
+
+[Channel 5]
+Input = 2
+Output = 3
+CirUpdateRate = 289.017341 Hz
+SubGroup = 20000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_2.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_1_2_2_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_2_1.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_2_1_06064a63_5_F.scs
+
+[Channel 6]
+Input = 3
+Output = 2
+CirUpdateRate = 289.017341 Hz
+SubGroup = 20000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_1.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_1_1_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_1_2.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_1_2_5e5abd2a_6_F.scs
+
+[Channel 7]
+Input = 3
+Output = 3
+CirUpdateRate = 289.017341 Hz
+SubGroup = 20000
+CirSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_2.cir
+CirControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_2_2_3_F.sim
+PathLossSourceFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_2_2.shd
+PathLossControlFile = New GCM Model 5_Link_BS1_1_MS1_2x2_UL_2_2_06064a63_7_F.scs
+
+[Input 0]
+InputName = BS1_Cell_1_Tx1
+AvgInputLevel = 20 dBm
+CrestFactor = 12 dB
+InLoss = 0 dB
+SpectralInversion = 0
+InputType = rf
+MeasurementMode = Burst
+MeasurementOffset = 0 dB
+BurstTrigLevelRelative = -48 dB
+BurstMeasurementLength = 200000
+Emulator = 0
+Unit = 0
+Connector = COMMON 1
+InternalConnector = COMMON 1
+CombiningMode = 1
+SubGroups = 10000
+
+[Input 1]
+InputName = BS1_Cell_1_Tx2
+AvgInputLevel = 20 dBm
+CrestFactor = 12 dB
+InLoss = 0 dB
+SpectralInversion = 0
+InputType = rf
+MeasurementMode = Burst
+MeasurementOffset = 0 dB
+BurstTrigLevelRelative = -48 dB
+BurstMeasurementLength = 200000
+Emulator = 0
+Unit = 0
+Connector = COMMON 2
+InternalConnector = COMMON 2
+CombiningMode = 1
+SubGroups = 10000
+
+[Input 2]
+InputName = MS1_Tx1
+AvgInputLevel = 20 dBm
+CrestFactor = 12 dB
+InLoss = 0 dB
+SpectralInversion = 0
+InputType = rf
+MeasurementMode = Burst
+MeasurementOffset = 0 dB
+BurstTrigLevelRelative = -48 dB
+BurstMeasurementLength = 200000
+Emulator = 0
+Unit = 0
+Connector = COMMON 3
+InternalConnector = COMMON 3
+CombiningMode = 1
+SubGroups = 20000
+
+[Input 3]
+InputName = MS1_Tx2
+AvgInputLevel = 20 dBm
+CrestFactor = 12 dB
+InLoss = 0 dB
+SpectralInversion = 0
+InputType = rf
+MeasurementMode = Burst
+MeasurementOffset = 0 dB
+BurstTrigLevelRelative = -48 dB
+BurstMeasurementLength = 200000
+Emulator = 0
+Unit = 0
+Connector = COMMON 4
+InternalConnector = COMMON 4
+CombiningMode = 1
+SubGroups = 20000
+
+[Output 0]
+OutputName = MS1_Rx1
+Gain = -20.53 dB
+ExternalGain = 0 dB
+ShadowingControlFile = Output_6bf08989_o0.scs
+OutputType = rf
+SpectralInversion = 0
+Emulator = 0
+Unit = 0
+Connector = COMMON 3
+InternalConnector = COMMON 3
+CombiningMode = 1
+SubGroups = 10000
+
+[Output 1]
+OutputName = MS1_Rx2
+Gain = -20.53 dB
+ExternalGain = 0 dB
+ShadowingControlFile = Output_66eba6bc_o1.scs
+OutputType = rf
+SpectralInversion = 0
+Emulator = 0
+Unit = 0
+Connector = COMMON 4
+InternalConnector = COMMON 4
+CombiningMode = 1
+SubGroups = 10000
+
+[Output 2]
+OutputName = BS1_Cell_1_Rx1
+Gain = -20.62 dB
+ExternalGain = 0 dB
+ShadowingControlFile = Output_5e5abd2a_o2.scs
+OutputType = rf
+SpectralInversion = 0
+Emulator = 0
+Unit = 0
+Connector = COMMON 1
+InternalConnector = COMMON 1
+CombiningMode = 1
+SubGroups = 20000
+
+[Output 3]
+OutputName = BS1_Cell_1_Rx2
+Gain = -20.62 dB
+ExternalGain = 0 dB
+ShadowingControlFile = Output_06064a63_o3.scs
+OutputType = rf
+SpectralInversion = 0
+Emulator = 0
+Unit = 0
+Connector = COMMON 2
+InternalConnector = COMMON 2
+CombiningMode = 1
+SubGroups = 20000
+
+[Wizard]
+DataVersion = 1.0
+
+[Device 0]
+Type = Base station
+Name = BS1_Cell 1
+TXAntennas = 2
+RXAntennas = 2
+IntSummed = true
+ConnectorGroupCount = 1
+BandwidthList = 0:4e+07 Hz
+FrequencyOffsetList = 0:0 Hz
+CellIdList = 0:0
+
+[Device 1]
+Type = Mobile station
+Name = MS1
+TXAntennas = 2
+RXAntennas = 2
+IntSummed = true
+ConnectorGroupCount = 1
+
+[LinkPair 0]
+Links = 0, 1
+BalancePathloss = false
+
+[Link 0]
+PairLink = 1
+TXDevice = 0
+RXDevice = 1
+ChannelGroup = 0
+SubGroup = 10000
+CreationStyle = Custom
+Technology = WLAN
+Type = Downlink
+Name = Downlink
+ConnectorGroupTX = 0
+ConnectorGroupRX = 0
+
+[Link 1]
+PairLink = 0
+TXDevice = 1
+RXDevice = 0
+ChannelGroup = 1
+SubGroup = 20000
+CreationStyle = Custom
+Technology = WLAN
+Type = Uplink
+Name = Uplink
+ConnectorGroupTX = 0
+ConnectorGroupRX = 0

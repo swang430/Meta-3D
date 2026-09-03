@@ -40,6 +40,7 @@ from app.schemas.base_station_binding import (
     BaseStationBindingPreviewResponse,
     BaseStationCompatibilityPreviewResponse,
 )
+from app.schemas.channel_emulator_binding import ChannelEmulatorBindingPreviewResponse
 from app.services.diagnostic_context import build_diagnostic_context
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
@@ -3816,6 +3817,9 @@ class HALReadinessResponse(BaseModel):
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
     base_station_binding: Optional[BaseStationBindingPreviewResponse] = None
+    # P2-58 ①：当前 LabProfile 的 channelEmulator binding 预览。无活动 LabProfile 时 None；
+    # 解析失败时 status="invalid"（只读面，不因 CE 真值不一致而 4xx/5xx）。
+    channel_emulator_binding: Optional[ChannelEmulatorBindingPreviewResponse] = None
     base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
@@ -3862,6 +3866,9 @@ def get_hal_readiness(
         build_base_station_preview_bundle,
         build_not_evaluated_base_station_compatibility,
     )
+    from app.services.channel_emulator_binding import (
+        build_channel_emulator_binding_preview,
+    )
     from app.services.lab_resolution import resolve_lab_profile
     from app.services.readiness import (
         build_calibration_readiness,
@@ -3880,6 +3887,7 @@ def get_hal_readiness(
     report = hal.last_readiness_report if hal else None
     binding_preview = None
     binding_response = None
+    ce_response = None
     compatibility = build_not_evaluated_base_station_compatibility(
         lab_profile_id=lab_section.profile_id,
         reason=(
@@ -3900,6 +3908,12 @@ def get_hal_readiness(
                 **binding_preview.model_dump(mode="json"),
                 "testcase_compatibility": compatibility.model_dump(mode="json"),
             }
+        )
+        # P2-58 ①：readiness 无 TestCase 上下文 → selected_asset_id 恒 None；
+        # digest 直接取 preview 的，不在此处重算。
+        ce_preview = build_channel_emulator_binding_preview(db, hal, selected_lab)
+        ce_response = ChannelEmulatorBindingPreviewResponse.model_validate(
+            {**ce_preview.model_dump(mode="json"), "selected_asset_id": None}
         )
     compatibility_response = BaseStationCompatibilityPreviewResponse.model_validate(
         compatibility.model_dump(mode="json")
@@ -3958,6 +3972,7 @@ def get_hal_readiness(
                 detail="HAL not initialised yet",
             ),
             base_station_binding=binding_response,
+            channel_emulator_binding=ce_response,
             base_station_testcase_compatibility=compatibility_response,
             base_station_site_certification=site_certification,
             cmw500_lte_2x2=cmw_response,
@@ -3998,6 +4013,7 @@ def get_hal_readiness(
             detail=report.dut_attach.detail,
         ),
         base_station_binding=binding_response,
+        channel_emulator_binding=ce_response,
         base_station_testcase_compatibility=compatibility_response,
         base_station_site_certification=site_certification,
         cmw500_lte_2x2=cmw_response,

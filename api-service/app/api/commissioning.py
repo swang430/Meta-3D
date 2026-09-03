@@ -70,6 +70,9 @@ from app.services.base_station_adapter_profile import (
     build_frozen_base_station_validator,
     freeze_execution_base_station_adapter_profile,
 )
+from app.services.channel_emulator_binding import (
+    freeze_execution_channel_emulator_binding,
+)
 from app.services.positioner_coordinate_profile import (
     build_frozen_positioner_validator,
     freeze_execution_positioner_coordinate_profile,
@@ -1713,6 +1716,10 @@ def _freeze_instrument_lease(
         test_case,
         force_diagnostic=execution.executed_by == "commissioning_adhoc",
     )
+    # P2-58 ①：信道仿真器 binding 与 BaseStation 同刻冻结（复用同一 digest）。
+    # ValueError 由本函数 5 个调用点既有的 `except ValueError` 统一转 422 / 409，
+    # 与 BaseStation freeze 走同一条异常路径。
+    freeze_execution_channel_emulator_binding(db, hal, execution, test_case)
     validate_base_station = build_frozen_base_station_validator(
         frozen_base_station
     )

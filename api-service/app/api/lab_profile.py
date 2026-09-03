@@ -23,14 +23,23 @@ from app.models.instrument import (
     InstrumentModel,
 )
 from app.models.lab_profile import LabProfile
+from app.models.test_plan import TestCase
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
 from app.schemas.base_station_binding import (
     BaseStationBindingPreviewResponse,
     BaseStationCompatibilityPreviewResponse,
 )
+from app.schemas.channel_emulator_binding import (
+    ChannelEmulatorBindingPreviewResponse,
+)
 from app.services.base_station_binding import (
     BaseStationBindingPreview,
     resolve_base_station_binding,
+)
+from app.services.channel_emulator_binding import (
+    CHANNEL_EMULATOR_CATEGORY_KEY,
+    build_channel_emulator_binding_preview,
+    resolve_channel_emulator_binding,
 )
 
 router = APIRouter(prefix="/lab-profiles", tags=["Lab Profiles"])
@@ -416,6 +425,25 @@ def sync_current_instrument_binding(
             test_case_id=test_case_id,
             resolved=resolved_binding,
         )
+    elif category_key == CHANNEL_EMULATOR_CATEGORY_KEY:
+        # P2-58 ①：保存后立刻按服务端真值解析一次；解析不通就 422 + 回滚，
+        # 不让一条解不开的 binding 落库（fail-closed，镜像 BaseStation 分支）。
+        # 有意收窄：`resolved` 是 BaseStation 形态的响应字段，这里不扩成 union、
+        # 也不加 CE 字段（那是 Pydantic 响应契约变更，要走契约四步）；CE 的预览
+        # 走 GET .../instrument-bindings/channelEmulator/preview。
+        from app.services.instrument_hal_service import get_hal_service
+
+        db.flush()
+        try:
+            resolve_channel_emulator_binding(
+                db,
+                get_hal_service(),
+                profile,
+                lock=False,
+            )
+        except ValueError as error:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(error)) from error
     db.commit()
     return InstrumentBindingSyncResponse(
         binding=InstrumentBinding.model_validate(binding),
@@ -473,6 +501,66 @@ def preview_base_station_binding(
         {
             **preview.model_dump(mode="json"),
             "testcase_compatibility": compatibility.model_dump(mode="json"),
+        }
+    )
+
+
+@router.get(
+    "/{lab_profile_id}/instrument-bindings/channelEmulator/preview",
+    response_model=ChannelEmulatorBindingPreviewResponse,
+)
+def preview_channel_emulator_binding(
+    lab_profile_id: UUID,
+    test_case_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "已保存的 MIMO_OTA TestCase；给出时其 channel_asset_id 以 selected_asset_id "
+            "附带（不进 binding_digest），省略时 selected_asset_id 为 null"
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """只读预览当前 channelEmulator binding 真值，零仪器 I/O（P2-58 ①）。
+
+    `selected_asset_id` 是 per-TestCase 的信道资产（`MIMOOTAConfiguration.channel_asset_id`），
+    不是 LabProfile 真值的一部分，所以只附带、不进 `binding_digest`。
+    """
+
+    profile = (
+        db.query(LabProfile)
+        .filter(LabProfile.id == lab_profile_id)
+        .one_or_none()
+    )
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LabProfile not found")
+
+    selected_asset_id: Optional[str] = None
+    if test_case_id is not None:
+        test_case = (
+            db.query(TestCase)
+            .filter(TestCase.id == test_case_id)
+            .one_or_none()
+        )
+        if test_case is None:
+            # 响应里没有能表达「TestCase 无效」的槽位（BaseStation 用
+            # testcase_compatibility.status="invalid" 表达；这里只有一个可空字符串），
+            # 回 selected_asset_id=null 会把「不存在」吞成「没选资产」，所以 404。
+            raise HTTPException(status_code=404, detail="TestCase not found")
+        configuration = test_case.configuration
+        asset_id = (
+            configuration.get("channel_asset_id")
+            if isinstance(configuration, dict)
+            else None
+        )
+        selected_asset_id = None if asset_id is None else str(asset_id)
+
+    from app.services.instrument_hal_service import get_hal_service
+
+    preview = build_channel_emulator_binding_preview(db, get_hal_service(), profile)
+    return ChannelEmulatorBindingPreviewResponse.model_validate(
+        {
+            **preview.model_dump(mode="json"),
+            "selected_asset_id": selected_asset_id,
         }
     )
 

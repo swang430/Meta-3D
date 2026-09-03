@@ -157,7 +157,11 @@ class InstrumentTestLease:
     @staticmethod
     def _f64_driver(hal):
         drivers = getattr(hal, "drivers", {}) or {}
-        candidate = drivers.get("channelEmulator") or drivers.get("channel_emulator")
+        # 品类键只认驼峰 "channelEmulator"（P2-58 决定 ②，2026-09-03）：活路径
+        # `instrument_hal_service._real_driver_registry` 注册的就是它。此前这里还
+        # `or drivers.get("channel_emulator")` 兼容下划线拼写 —— 那是消费方替真值源
+        # 打补丁，会把注册键的漂移掩盖掉。下划线键 → 视同 CE 未加载（返回 None）。
+        candidate = drivers.get("channelEmulator")
         if candidate is None:
             return None
         if not inspect.iscoroutinefunction(

@@ -191,6 +191,26 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/BaseStationBindingPreviewResponse'}
         '404': {description: LabProfile not found}
+  /api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/channelEmulator/preview:
+    get:
+      summary: 只读预览已解析的 channelEmulator binding（零仪器 I/O）
+      parameters:
+        - name: lab_profile_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: test_case_id
+          in: query
+          required: false
+          description: 已保存的 MIMO_OTA TestCase；给出时其 channel_asset_id 以 selected_asset_id 附带（不进 binding_digest），省略时 selected_asset_id 为 null
+          schema: {type: string, format: uuid, nullable: true}
+      responses:
+        '200':
+          description: 当前 channelEmulator binding 的不可变投影
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelEmulatorBindingPreviewResponse'}
+        '404': {description: LabProfile 不存在}
   /api/v1/instruments/{categoryKey}/channel-models:
     get:
       summary: List typed channel-model entries
@@ -1413,6 +1433,36 @@ components:
           allOf: [{$ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'}]
           nullable: true
       required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, testcase_compatibility]
+    ChannelEmulatorBindingPreviewResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [configured, not_applicable, diagnostic_unbound, invalid]
+          description: configured | not_applicable | diagnostic_unbound | invalid
+        binding_digest: {type: string, nullable: true}
+        execution_mode:
+          type: string
+          enum: [real, simulated]
+          nullable: true
+        adapter_id: {type: string, nullable: true}
+        model_name: {type: string, nullable: true}
+        category_id: {type: string, nullable: true}
+        instrument_model_id: {type: string, nullable: true}
+        instrument_connection_id: {type: string, nullable: true}
+        lab_profile_id: {type: string}
+        resolved_binding:
+          type: object
+          additionalProperties: true
+          nullable: true
+        runtime_driver:
+          type: object
+          additionalProperties: true
+          nullable: true
+        detail: {type: string}
+        selected_asset_id: {type: string, nullable: true}
+      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, selected_asset_id]
     InstrumentBindingSyncResponse:
       type: object
       properties:
@@ -2539,6 +2589,11 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationBindingPreviewResponse'
           nullable: true
+        channel_emulator_binding:
+          allOf:
+            - $ref: '#/components/schemas/ChannelEmulatorBindingPreviewResponse'
+          nullable: true
+          description: 当前 LabProfile 的 channelEmulator binding 预览；HAL 未就绪或无活动 LabProfile 时为 null
         base_station_testcase_compatibility:
           $ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'
         base_station_site_certification:
@@ -2560,7 +2615,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, base_station_testcase_compatibility, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, channel_emulator_binding, base_station_testcase_compatibility, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:
