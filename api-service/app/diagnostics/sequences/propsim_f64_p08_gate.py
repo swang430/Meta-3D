@@ -64,6 +64,7 @@ from app.diagnostics.sequences.propsim_f64_health import _maybe_await, _parse_er
 from app.diagnostics.sequences.propsim_f64_state_machine import classify_state
 from app.hal.propsim_f64 import F64BypassMode
 from app.services.diagnostic_context import DiagnosticContext
+from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 
 metadata = SequenceMetadata(
@@ -109,11 +110,19 @@ _GAIN_DELTA_MAX_DB = 3.0
 # 原值 —— 两种情况写路径门都在空转。0.1 = 容差与分辨率之上留一档余量。
 _GAIN_DELTA_MIN_DB = 0.1
 
-# 剧本要求的生产原子 —— 缺任何一个说明 ce 不是 PROPSIM 驱动 (或版本不符), 拒跑。
+# 剧本要求的 **F64 私有**原子 —— 缺任何一个说明 ce 不是 PROPSIM 驱动 (或版本不符), 拒跑。
+#
+# ⚠️ P2-57（内审 F1）：`start_emulation` / `stop_emulation` **已从本元组移出**。
+#    它们是 `ChannelEmulatorDriver` 的**共同**操作，P2-57 给基类补齐 14 个
+#    NotImplementedError 桩之后，`hasattr` 对任何 CE 驱动恒为真 —— 留在这里
+#    等于一条永远通过的空门。共同操作的能力改由 manifest 回答（见下方 `_MANIFEST_OPS`）。
 _REQUIRED_METHODS = (
-    "load_local_scenario", "autoset_inputs", "start_emulation", "stop_emulation",
+    "load_local_scenario", "autoset_inputs",
     "set_bypass_mode", "set_output_gain", "measure_input",
 )
+
+#: 本剧本还要用到的**共同**操作 —— 走 manifest，不走 hasattr。
+_MANIFEST_OPS = ("start_emulation", "stop_emulation")
 
 
 class _Abort(RuntimeError):
@@ -296,6 +305,10 @@ async def run(
         return _reject(refusal)
 
     missing = [m for m in _REQUIRED_METHODS if not hasattr(ce, m)]
+    # 共同操作按 manifest 判（P2-57 内审 F1）
+    missing += [
+        m for m in _MANIFEST_OPS if not channel_emulator_implements(ce, m)
+    ]
     if missing or not hasattr(ce, "_query"):
         return _reject(
             f"CE 驱动 {type(ce).__name__} 缺本剧本要求的生产原子: "

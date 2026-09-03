@@ -1596,12 +1596,22 @@ class TestRealPropsimFs16Driver:
         config = {"ip": "192.168.0.100", "port": 5025, **overrides}
         return RealPropsimFs16Driver("fs16-test", config)
 
-    def test_load_modes_external_waveform_only(self):
-        """FS16 has no GCM-native equivalent — only external waveform."""
-        from app.hal.channel_emulator import ChannelLoadMode
+    def test_load_modes_are_empty_until_playback_is_really_implemented(self):
+        """FS16 **不宣称任何加载模式** —— P2-57 把一个假声明换成了真拒绝。
+
+        ⚠️ 本用例原名 `test_load_modes_external_waveform_only`，断言
+        `modes == [EXTERNAL_WAVEFORM]`，理由写的是「FS16 只做文件播放」。
+        实况是：`upload_asc_files` / `start_emulation` **从未实现**，调用会抛
+        不受控的 `AttributeError`（那 14 个抽象方法当时整段掉在类体之外）。
+        也就是说这条断言守住的是一个**假承诺**。
+
+        P2-57 起 load modes 由 manifest 派生，FS16 的三种模式全部
+        `not_implemented` → 空。真实实现落地时，改 manifest 即可，本门随之变红
+        提醒同步。
+        """
         d = self._make_driver()
-        modes = d.get_supported_load_modes()
-        assert modes == [ChannelLoadMode.EXTERNAL_WAVEFORM]
+        assert d.get_supported_load_modes() == []
+        assert d.adapter_manifest.supported_load_modes() == ()
 
     def test_calibration_tone_capabilities_empty_in_mvp(self):
         d = self._make_driver()

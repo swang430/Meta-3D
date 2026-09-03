@@ -21,6 +21,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
 
 class TestManualInputReference:
@@ -38,6 +39,11 @@ class TestManualInputReference:
             f64_input_ref_dbm=-15.0, f64_crest_db=12.0
         )
         emu = AsyncMock()
+        # P2-57：能力由 manifest 回答，替身必须自述
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
+            vendor="test", implemented=("set_baseband_power",),
+        )
         emu._tx_antennas = 4
         # F64R-2: 逐输入口下发用驱动回读的**端口号列表** (同步 getter)。必须显式给
         # MagicMock —— AsyncMock 自动生成的同名属性返回 coroutine, 会被 _read_port_list
@@ -60,6 +66,11 @@ class TestManualInputReference:
     async def test_manual_ref_rejected_fails_loud(self):
         ex, cfg = self._executor_and_config(f64_input_ref_dbm=-15.0)
         emu = AsyncMock()
+        # P2-57：能力由 manifest 回答，替身必须自述
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
+            vendor="test", implemented=("set_baseband_power",),
+        )
         emu._tx_antennas = 4
         emu.set_baseband_power = AsyncMock(return_value=False)  # 下发被拒
         payload = await ex._apply_manual_input_reference(
@@ -87,6 +98,11 @@ class TestManualInputReference:
             f64_input_ref_dbm=-15.0, f64_crest_db=12.0
         )
         emu = AsyncMock()
+        # P2-57：能力由 manifest 回答，替身必须自述
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
+            vendor="test", implemented=("set_baseband_power",),
+        )
         emu._tx_antennas = 4
         # F64R-2: 逐输入口下发用驱动回读的**端口号列表** (同步 getter)。必须显式给
         # MagicMock —— AsyncMock 自动生成的同名属性返回 coroutine, 会被 _read_port_list
