@@ -30,7 +30,7 @@
 | 迁移 | `f2a4c6e8b0d1`：add-column + `column_exists` 守门，所有方言跑 | 同形状新迁移（**不要**套约束手术的 PG-only 模板）|
 | 单个 preset | `BaseStationModelPreset(schema_version, model_id, endpoint, controller, notes, connection_params, base_station_adapter_profile)` frozen | `ChannelEmulatorModelPreset(schema_version, model_id, endpoint, controller, notes, connection_params)` —— **无 adapter_profile 槽**（CE 无 profile 层，与 ① 契约一致）；`alignment_name` 继续住在 `connection_params` 里 |
 | 原子保存 | `save_base_station_model_preset`：快照旧活动型号（若未存过）→ 校验目标 → 写整张 map → `flag_modified` → 目标投影成活动连接字段 | `save_channel_emulator_model_preset` 同形；**不覆盖其他型号**靠「只改 map 里 target 键」这一条 |
-| 运行期参数剔除 | `BASE_STATION_RUNTIME_CONNECTION_PARAM_KEYS = {"detected_test_app"}` | CE 的运行期观测键要**枚举**（候选：F64 的 `available_channel_models` / `smu_project_scan` 结果 —— 动手前 grep `connection_params[` 的写方，别猜）|
+| 运行期参数剔除 | `BASE_STATION_RUNTIME_CONNECTION_PARAM_KEYS = {"detected_test_app"}` | **实测枚举**（grep `connection_params[...]` 写方，2026-09-04）：`available_channel_models`（**服务层**运行期回填的仪器模型清单，GUI 下拉框消费 → **运行期观测，剔除**。真实赋值点 4 处：`api/instrument.py:1981/2056`、`services/standard_channel_service.py:363`、`services/smu_project_inventory.py:746`；驱动本体只在 docstring 里提及、不写。一次粗 grep 会把 5 处「提及」误数成写 —— ② 动手时用门钉住这 4 处）；`topology_profile_id`（2 写 2 读，指向已保存的拓扑 profile → **操作员配置，保留**）；`default_emulation_file`（1 写 → **操作员配置，保留**）。`smu_project_scan` 见下方脚注。故 `CHANNEL_EMULATOR_RUNTIME_CONNECTION_PARAM_KEYS = {"available_channel_models"}`，动手时以门钉住这个集合 |
 | 前端切型号 | `handleModelChange` 的 `baseStation` 分支 → `draftForBaseStationModel(category, modelId)`，**无确认**，静默换草稿 | 加 `channelEmulator` 分支 → `draftForChannelEmulatorModel`；**切换前弹确认**（用户决定 ③：丢未保存草稿）。⚠️ BS 今天没有这个确认 —— 要不要补给 BS 是越界，进 Discovered |
 | 保存路径 | `sync-current` 里 BS 分支 | ① 已加 CE 分支的 fail-closed 校验；② 在它之前接 `save_channel_emulator_model_preset` |
 
@@ -40,11 +40,11 @@
 1. `app/models/instrument.py` —— 加列 `channel_emulator_model_presets`
 2. `alembic/versions/<new>_add_channel_emulator_model_presets.py` —— 镜像 `f2a4c6e8b0d1`
 3. `app/services/channel_emulator_model_preset.py`（新）—— `ChannelEmulatorModelPreset` / `parse_*` / `save_*`
-4. `app/api/instrument.py` —— 连接更新端点在 CE 品类下调 `save_*`；`InstrumentConnectionResponse` 加 `channel_emulator_model_presets`（Pydantic 响应字段 → 契约四步）
+4. `app/api/instrument.py` —— 连接更新端点在 CE 品类下调 `save_*`；`FEInstrumentConnection`（:89，嵌在 `FEInstrumentCategory` 里返回）加 `channel_emulator_model_presets`（Pydantic 响应字段 → 契约四步）
 5. `tests/test_p2_58_2_channel_emulator_model_presets.py`（新）
 
 **契约（2）**
-6. `api/openapi.yaml` —— `InstrumentConnectionResponse.channel_emulator_model_presets` + 复核 ① 那两个 schema
+6. `api/openapi.yaml` —— `InstrumentConnection.channel_emulator_model_presets`（schema 在 :2495）+ 复核 ① 那两个 schema
 7. `gui/src/types/api.generated.ts` —— 重生
 
 **前端（4，全部是 ①/G/B/C 登记的镜像站点）**
@@ -70,7 +70,10 @@
 - **Discovered-4**：BS 的 `handleModelChange` 切型号**无确认**，静默换草稿 —— ② 给 CE 加了确认，BS 与之不一致。补给 BS 是越界，另评。
 - **Discovered-5**：`_freeze_instrument_lease` 的 `validation_identity` 纳入 CE digest（= ① 的 Discovered-3 后半）—— 与 preset 无关，不进 ②。
 
-## 6. 需要你拍板的（② 开工前）
+## 6. 需要你拍板的（② 开工前）—— 只剩一个
 
-1. **F64 ↔ FS16 切换时，`alignment_name` 算型号 preset 的一部分吗？** 我倾向算（它住在 `connection_params`，随 preset 走）。
-2. **readiness 灯的 `invalid` 显示为红还是黄？** BS 那盏怎么显示我先照抄；若 BS 也没区分，提议 CE 用红（① 把「判不出」定为吵的一侧）。
+1. **F64 ↔ FS16 切换时，`alignment_name` 算型号 preset 的一部分吗？** 我倾向算（它住在 `connection_params`，随 preset 走；切回 F64 不必重填）。
+
+~~2. readiness 灯的 `invalid` 显示为红还是黄？~~ **不需拍板，照抄 BS**：`gui/src/features/Dashboard/baseStationBindingTruth.ts:46-66` 已定 —— `invalid` → **红**（:51-53）、`simulated` / `diagnostic_unbound` → 黄（:58-60）、`configured` 真驱动 → 绿（:66）。CE 的 `channelEmulatorBindingTruth.ts` 镜像同一映射；与 ① 「判不出 = 吵的一侧」一致。
+
+**脚注 `smu_project_scan`**：只被 `app/services/smu_project_inventory.py:301` **读**（`params.get("smu_project_scan")`，操作员配置的只读挂载 `local_mount_root` / `instrument_root`，:118-136 校验必须是绝对路径），驱动从不写 → **操作员配置，保留在 preset 里**。
