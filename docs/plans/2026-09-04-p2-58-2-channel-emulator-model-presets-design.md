@@ -53,7 +53,7 @@
 10. `gui/src/types/api.ts` —— 在 :403 `base_station_binding` 旁**新增** `channel_emulator_binding`（该字段今天在此文件**尚不存在**，全文件 grep 为零；非 `?:`，① 已定 required）；`gui/src/features/Equipment/channelEmulatorModelPresetDraft.ts`（新，镜像 BS 那份）；`App.tsx` 的 `handleModelChange` CE 分支 + 确认弹窗
 11. `gui/src/features/Dashboard/ZoneReadiness.tsx:142` —— readiness 灯消费 `channel_emulator_binding.status`
 
-**① 留下的两格判定**（B 的歧义 #1，归 ②）：preview 端点对「TestCase 存在但 `test_type != "MIMO_OTA"`」或「其 `lab_profile_id` 与所选 LabProfile 不一致」—— **422 + 中文 detail**（外审 #451 R3 纠正：资源存在但不可用该 422 不该 404；仓内口径 `lab_profile.py` 404×5 全给「不存在」、422×11 给「存在但不可用」。CE 无 compatibility 槽位，返回 null 会伪装成「没选资产」；「TestCase 不存在」仍 404，与 B 同口径）。
+**① 留下的两格判定**（B 的歧义 #1，归 ②）：preview 端点对「TestCase 存在但 `test_type != "MIMO_OTA"`」或「其 `lab_profile_id` 与所选 LabProfile 不一致」—— **422 + 中文 detail**（外审 #451 R3 纠正：资源存在但不可用该 422 不该 404；仓内口径 `lab_profile.py` 404×5 全给「不存在」、422×11 给「存在但不可用」。CE 无 compatibility 槽位，返回 null 会伪装成「没选资产」；「TestCase 不存在」仍 404，与 B 同口径）。**lab 不一致的判定仅在 `test_case.lab_profile_id` 非空时触发**（外审 #451 R4 纠正；镜像 BS compat `base_station_compatibility.py:181-184` 的 `is not None and !=`）：preview 是只读面，`null` lab 视为「不约束 LabProfile」不拦。⚠️ **执行侧口径相反、勿混**：CE freeze（`channel_emulator_binding.py:662-663`）、BS freeze（`base_station_adapter_profile.py:320-321`）与认证（`execution_qualification.py:454`）对 `lab_profile_id is None` 一律拒 —— 没有 lab 就没有 binding 可解析。preview 放行 ≠ 能执行，② 的门要两面各钉一条。
 
 ## 4. 门的设想（每条配让它变红的变异）
 
