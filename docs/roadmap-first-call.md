@@ -40,14 +40,14 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-57（Channel Emulator Capability Manifest。P2-56 的 ① ② 两半已由 PR #444 / #446 合并，仅剩 ③ 现场半待真机（已进 ON-SITE-BLOCKED）；P2-55 的非现场半已由 PR #440 合并，P2-54 已由 PR #437 合并，P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并）。**
+Current Focus（非现场）= P2-58（ResolvedChannelEmulatorBinding + 分型号 saved presets。P2-57 已由 PR #448 合并。P2-56 的 ① ② 两半已由 PR #444 / #446 合并，仅剩 ③ 现场半待真机（已进 ON-SITE-BLOCKED）；P2-55 的非现场半已由 PR #440 合并，P2-54 已由 PR #437 合并，P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
 adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
 并在 Mock UXM 接受 LTE TestCase 的复盘后批准插入执行兼容性硬门；顺序为
 **~~P1-74~~（✅ 非现场半 #429，现场半待真机） → ~~P1-75~~（✅ #431） → ~~P2-64~~（✅ #433） → ~~P2-65~~（✅ #434） → ~~P2-66~~（✅ #435） → ~~P2-67~~（✅ #436） → ~~P2-54~~（✅ #437） → ~~P2-55~~（✅ 非现场半 #440，真机抽样待现场） → ~~P2-56~~（✅ ① #444 / ✅ ② #446，③ 现场半待真机） →
-P2-57 → P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
+~~P2-57~~（✅ #448）→ P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
 2026-08-31 用户批准把 P2-64～P2-67 整组前移到 P1-75 之后。理由有二：这四片是同一次 Mock 复盘的
 直接派生，旧顺序下它们前面压着 P2-54～P2-56、P2-57～P2-62 与 P2-63 共十片，轮到时本次复盘的
 上下文早已冷却；其中 P2-67 要解决的取证混淆（两份附件字节级相同、公共 release 日志硬编码
@@ -56,7 +56,7 @@ P2-57 → P2-58 → P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
 的依赖同样全部满足。前移后重算依赖图零违反。条目本体本次共动三处：P1-74 与 P1-75 两条的
 「先于」表述换源到本顺序串（不再在条目内复制清单），P2-54 补记本次前移新产生的 compatibility
 digest 版本迁移义务；其余各条的依赖关系逐条复核后仍成立、未动。P2-63
-在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），当前 WIP=1 落在 P2-57。
+在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），P2-57 已由 PR #448 合并；当前 WIP=1 落在 P2-58。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -84,8 +84,8 @@ P3-20/P3-21 仍不得自动启动。
    下一批：**P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并**，同一次 Mock 复盘派生的
    Mock 能力、Readiness、证据终态与日志导出四片整组收口完毕；**P2-54 已由 PR #437 合并**
    （RAT-neutral 执行冻结 MAC profile）；**P2-55 的非现场半已由 PR #440 合并**（CMW500 LTE FDD
-   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。**当前非现场 WIP = P2-57**（Channel Emulator Capability Manifest），P2-56 仅剩 ③ 现场半待真机。
-   最后 P2-57～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
+   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。**当前非现场 WIP = P2-58**（ResolvedChannelEmulatorBinding + 分型号 saved presets；P2-57 已由 PR #448 合并），P2-56 仅剩 ③ 现场半待真机。
+   最后 P2-57（✅ #448）～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
    与逐方位双坐标证据的本地半，两者当前
@@ -694,7 +694,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-57（Channel Emulator Capability Manifest）**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）→ ~~P2-65~~（✅ #434）→ ~~P2-66~~（✅ #435）→ ~~P2-67~~（✅ #436）→ ~~P2-54~~（✅ #437）→ ~~P2-55~~（✅ 非现场半 #440）→ ~~P2-56~~（✅ ①#444 / ✅ ②#446）** → P2-57～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-58（ResolvedChannelEmulatorBinding + 分型号 saved presets）**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）→ ~~P2-65~~（✅ #434）→ ~~P2-66~~（✅ #435）→ ~~P2-67~~（✅ #436）→ ~~P2-54~~（✅ #437）→ ~~P2-55~~（✅ 非现场半 #440）→ ~~P2-56~~（✅ ①#444 / ✅ ②#446）→ ~~P2-57~~（✅ #448）** → P2-58～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-55** / **P2-56** 的现场半（详见下方「Blocked on hardware」）。P1-74 现场半 = 在真实 CMW500 上用至少两个不同统计长度连续执行，证明 Extended BLER 统计基不继承上一 session（非现场半已由 PR #429 合并）。P2-55 现场半 = 在真实 CMW500 上抽样验证已声明 `authoritative` 的 TM / 天线组合确实可配置并回读一致（非现场半已由 PR #440 合并）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4620,7 +4620,7 @@ nx2（`SCENario:TRO:FLEXible`，pp.630-631），所以它与 TM2/4/6 并非同�
 内审**四轮，最终 CLEAN**（R1 一条 P1 = 四条命令的 Firmware 行只录了 2/4，而 Range 与 Options 都做了 4/4；R2 两条 P2 = 门注释写着「按维度全集」但作用域只有本片四维、以及三个新字段破了 openapi 契约；R3 零 P1）；外审 Gemini R1 无意见、R2 无 P1（一条 PEP 8 风格建议：把测试文件里的函数内 import
 提到顶部。按 CLAUDE.md 第 6 条报告一次、不修、不阻塞、不自动进 Discovered）。
 
-### P2-57 — Channel Emulator Capability Manifest（批准入雷达，未启动）
+### P2-57 — Channel Emulator Capability Manifest ✅ 结构缺陷 + operation×support 半（#448）/ ⏳ 声明面其余项未交付
 
 **可观察故障**：共同 `ChannelEmulatorDriver` 目前默认宣称所有信道仿真器支持
 `EXTERNAL_WAVEFORM`，但 FS16 的 upload/start/path loss/doppler/MIMO 能力仍未实现；F64 的
@@ -4632,6 +4632,52 @@ SAFE_IDLE/release 与 diagnostic/formal 证据强度。registry 拒绝 manifest�
 FS16 在真实实现前不得宣称 waveform upload/playback。零新 SCPI，现有 F64 行为不变。
 
 **地点/依赖**：纯非现场平台片；Channel Emulator 队列第一片。
+
+**实际结果（#448）**：立项时只知道「FS16 继承了假的共同能力」；动手后发现**根因是结构缺陷** ——
+`ChannelEmulatorDriver` 的 14 个抽象方法自 2026-05-13 起整段掉在**类体之外**（嵌在模块级函数
+`normalize_channel_model_entries` 内），所以未实现的驱动抛的是不受控的 `AttributeError` 而不是
+`NotImplementedError`。藏了三个多月，因为 F64 与 Mock 各自实现了全部 14 个、行为门恒绿。
+⚠️ 该缺陷在 Codex #221 R6 就被看见过，但当时被**当成契约锁进了断言**而不是被修。
+
+把方法搬回类里会让 8 处 `hasattr` 能力探测恒为真、把「没有就跳过」翻成「调用然后崩」，
+所以结构修复与 manifest **必须同片**。落地：独立的 `operation × support` manifest
+（用户 2026-09-02 拍板：不复用基站的 `BaseStationAdapterManifest`）、8 处换源、
+`get_supported_load_modes()` 改从 manifest 派生（原基类默认 `[EXTERNAL_WAVEFORM]` 是 fail-open，
+FS16 靠它宣称了从未实现的 .asc 上传播放，该假承诺有 4 个消费方）、FS16 收窄到零加载模式。
+
+33 条门全部**从代码结构派生**（行为门对这个结构缺陷恒绿了三个多月），配 28 条变异逐条实跑变红。
+
+⚠️ **声明面只交付了一部分，其余未做**（内审 F1 抓出；上一版把标题标成 `✅ Done` 而**三处
+都没写这件事**）。实际的 `ChannelEmulatorManifest` 只有六个字段：`schema_version` /
+`adapter_id` / `model_name` / `vendor` / `load_modes` / `operations`。上面「范围/验收」段
+列的这些**均未交付**：资产类型、**通道/端口基数**、频率 / level / path-loss / doppler 回读、
+错误队列、SAFE_IDLE/release、diagnostic/formal 证据强度；漂移对账落在 **pytest 的 AST 门
+（测试期）**，不是验收说的 **registry（运行期）**。
+
+其中「通道/端口基数」尤其要记：它写在用户 2026-09-02 的拍板原文里 ——
+「本片的 manifest 以 operation × support 为主轴，附 load mode **与通道/端口基数**」
+（[设计稿](plans/2026-09-02-p2-57-channel-emulator-manifest-design.md) §7-3）。
+我在收口时**只引了前半句**，把「与通道/端口基数」漏掉了 —— 正是本片反复在治的
+「把一处的措辞当成另一处的」。**P2-58～P2-62 不得假定 manifest 已有这些字段。**
+内审 8 轮 44 条 finding 无 P1（逐轮 8/8/7/6/6/4 = 39 条在开 PR 前，外审 R1 修复又过 2 轮 3+2 = 5 条；
+PR body ⑦ 记的「6 轮 39 条」是开 PR 时的数，两者不冲突），其中 **R2 推翻了 R1 的一处修法**（`TypeError` 打破
+`cleanup_chamber_instruments` 的 `Never raises` 契约，而它在 `measure.py` 的 `finally:` 里）；
+外审 Gemini R1 两条 medium 已收口（**C1 的前提经实测不成立** —— 动态造的类 `getsourcefile`
+一种返回真路径、一种抛 `TypeError`，都不返回 `None`；改按实测形态守并留下变异实证），R2 明文无意见。
+
+⚠️ **如实声明**：`measure.py` 直通前置那处 fail-loud 只有**结构档粗筛门**，没有行为门
+（分支内联在 `MeasureExecutor` 大函数里，行为门需整套 step 脚手架）。该路径在本片之前
+行为覆盖就是 0，本片未改善这一点。
+
+**报告一次、未修的 5 条**（P2/P3，按第 6 条不自动进 Discovered，全文在 PR #448 body ⑥）：
+① `measure.py` 的 `_apply_manual_input_reference` 里，能力判不出时置 `skipped=True`，
+会短路 `precheck_strict_input_level` 严格门（⚠️ PR #448 body ⑥ 把它写成「`measure.py:3769`」，
+**行号是错的** —— 3769 是段 docstring，真正的判定在 3789、置位在 3794。已在 #448 留言更正）；
+② **直通态从来没人撤** —— `clear_passthrough_mode` 全仓只有 `path_loss_calibration_service.py:1245`
+一个调用方，`stop_emulation` 只发 `DIAG:SIMU:GOS` 不清 `STATIC`；
+③ `SUPPORTS_STATIC_PASSTHROUGH` 是与 manifest 并行的第二条能力真值源；
+④ 能力探测的第 6 种形态（下标 / 别名基类）；⑤ 新 FAILED 早退会丢掉同源的 cleanup warning。
+后续独立 triage 若能写出用户价值与载体，再决定是否进 roadmap / backlog。
 
 ### P2-58 — ResolvedChannelEmulatorBinding + 分型号 saved presets（批准入雷达，未启动）
 
