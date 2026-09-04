@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.core.logging_config import current_execution_id
 from app.hal.channel_emulator import ChannelEmulatorDriver
 from app.hal.channel_emulator_execution_plan import (
     resolve_channel_emulator_execution_plan,
@@ -21,14 +22,22 @@ from app.models.instrument import (
     InstrumentModel,
 )
 from app.models.lab_profile import LabProfile
+from app.models.test_plan import TestExecution
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
 from app.services.channel_emulator_model_preset import (
     require_saved_active_channel_emulator_preset,
     save_channel_emulator_model_preset,
 )
+from app.services.channel_emulator_operation_receipt import (
+    CE_OPERATION_RECEIPTS_CONFIG_KEY,
+    ChannelEmulatorOperationRecorderOwner,
+    channel_emulator_operation_recorder_scope,
+    record_channel_emulator_operation,
+)
 from tests.channel_emulator_certification_kit import (
     CERTFAKE_CE_MANIFEST,
     CERTFAKE_CE_PROFILE,
+    CertFakeChannelTransport,
     CertFakeChannelEmulatorDriver,
     CertFakeChannelEmulatorProfile,
     temporary_certfake_channel_emulator_registration,
@@ -188,3 +197,171 @@ def test_certfake_ce_binding_and_saved_preset_fail_closed_on_drift(db):
                 SimpleNamespace(drivers={"channelEmulator": driver}),
                 lab,
             )
+
+
+class _LockedExecutionQuery:
+    def __init__(self, row):
+        self.row = row
+
+    def filter(self, *_args):
+        return self
+
+    def with_for_update(self):
+        return self
+
+    def one_or_none(self):
+        return self.row
+
+
+class _ReceiptDb:
+    def __init__(self, row):
+        self.row = row
+        self.commits = 0
+
+    def query(self, _model):
+        return _LockedExecutionQuery(self.row)
+
+    def commit(self):
+        self.commits += 1
+
+
+def _certfake_recorder(row, driver):
+    plan = resolve_channel_emulator_execution_plan(
+        manifest=CERTFAKE_CE_MANIFEST,
+        driver_source="hal",
+        requested_load_mode="native_model",
+        binding_digest="b" * 64,
+    )
+    return ChannelEmulatorOperationRecorderOwner(
+        db=_ReceiptDb(row),
+        execution_pk=row.id,
+        execution_id=str(row.id),
+        session_id="session-certfake",
+        operation_scope=f"certification:{row.id}",
+        measurement_attempt_id="attempt-certfake",
+        binding_digest="b" * 64,
+        binding_freeze_digest="f" * 64,
+        plan_digest=plan.digest,
+        asset_digest="a" * 64,
+        lease_id="lease-certfake",
+        instrument_id=driver.instrument_id,
+        adapter_id="certfake_ce",
+        execution_mode="real",
+        plan=plan,
+        driver=driver,
+    )
+
+
+async def _record_certfake_operation(row, driver, *, operation, requested, invoke):
+    owner = _certfake_recorder(row, driver)
+    token = current_execution_id.set(str(row.id))
+    try:
+        with channel_emulator_operation_recorder_scope(owner):
+            result = await record_channel_emulator_operation(
+                phase="configure",
+                operation=operation,
+                requested=requested,
+                invoke=invoke,
+            )
+    finally:
+        current_execution_id.reset(token)
+    return result, row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][-1]
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_receipt_separates_complete_and_partial_readback():
+    complete = CertFakeChannelEmulatorDriver("ce-certfake", {})
+    row = TestExecution(id=uuid4(), config={})
+    result, receipt = await _record_certfake_operation(
+        row,
+        complete,
+        operation="set_path_loss",
+        requested={"path_loss_db": 42.0, "distance_m": 3.0},
+        invoke=lambda: complete.set_path_loss(42.0, 3.0),
+    )
+
+    assert result is True
+    assert receipt["terminal_state"] == "completed"
+    assert {field["status"] for field in receipt["fields"]} == {"confirmed"}
+    assert len(receipt["error_queue_exchange_ids"]) == 1
+
+    partial_transport = CertFakeChannelTransport(partial_fields={"distance_m"})
+    partial = CertFakeChannelEmulatorDriver(
+        "ce-certfake", {"transport": partial_transport}
+    )
+    row = TestExecution(id=uuid4(), config={})
+    result, receipt = await _record_certfake_operation(
+        row,
+        partial,
+        operation="set_path_loss",
+        requested={"path_loss_db": 42.0, "distance_m": 3.0},
+        invoke=lambda: partial.set_path_loss(42.0, 3.0),
+    )
+
+    fields = {field["field"]: field for field in receipt["fields"]}
+    assert result is True
+    assert fields["path_loss_db"]["status"] == "confirmed"
+    assert fields["distance_m"]["status"] == "unknown"
+    assert fields["distance_m"]["applied_present"] is False
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_error_queue_rejection_is_not_a_success_receipt():
+    transport = CertFakeChannelTransport(rejected_operations={"set_output_gain"})
+    driver = CertFakeChannelEmulatorDriver("ce-certfake", {"transport": transport})
+    row = TestExecution(id=uuid4(), config={})
+    result, receipt = await _record_certfake_operation(
+        row,
+        driver,
+        operation="set_output_gain",
+        requested={"output_num": 1, "gain_db": -3.0},
+        invoke=lambda: driver.set_output_gain(1, -3.0),
+    )
+
+    assert result is False
+    assert receipt["terminal_state"] == "rejected"
+    assert receipt["operation_succeeded"] is False
+    assert {field["status"] for field in receipt["fields"]} == {"unknown"}
+    assert len(receipt["error_queue_exchange_ids"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "requested", "invoke_name", "invoke_args"),
+    [
+        (
+            "load_channel",
+            {"model_name": "fixture-native-model"},
+            "load_channel",
+            ("native_model", "fixture-native-model", "UMa", {}),
+        ),
+        ("start_emulation", {"state": "running"}, "start_emulation", ()),
+        (
+            "set_output_level_dbm",
+            {"level_dbm": -20.0, "output_ports": [1, 2]},
+            "set_output_level_dbm",
+            (-20.0, [1, 2]),
+        ),
+        ("stop_emulation", {"state": "idle"}, "stop_emulation", ()),
+    ],
+)
+async def test_certfake_ce_asset_run_adjust_stop_use_the_common_receipt_pipeline(
+    operation, requested, invoke_name, invoke_args
+):
+    driver = CertFakeChannelEmulatorDriver("ce-certfake", {})
+    row = TestExecution(id=uuid4(), config={})
+    invoke = getattr(driver, invoke_name)
+
+    result, receipt = await _record_certfake_operation(
+        row,
+        driver,
+        operation=operation,
+        requested=requested,
+        invoke=lambda: invoke(*invoke_args),
+    )
+
+    assert result is True
+    assert receipt["adapter_id"] == "certfake_ce"
+    assert receipt["execution_id"] == str(row.id)
+    assert receipt["terminal_state"] == "completed"
+    assert receipt["simulated"] is False
