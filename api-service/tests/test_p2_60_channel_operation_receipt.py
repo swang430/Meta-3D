@@ -1200,9 +1200,9 @@ def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
         ),
         (
             "load_channel",
-            "native_model",
-            "load_mode",
-            False,
+            "D:\\Models\\case.smu",
+            "emulation_file",
+            True,
         ),
     ],
 )

@@ -134,6 +134,7 @@ def _channel_emulator_v2_receipt_chain_error(
     simulated: bool,
 ) -> str | None:
     required_confirmed_fields = {
+        "load_channel": frozenset({"emulation_file"}),
         "set_output_gain": frozenset({"gain_db"}),
         "set_output_level_dbm": frozenset({"level_dbm"}),
         "set_baseband_power": frozenset({"reference_dbm"}),
@@ -329,7 +330,6 @@ def _channel_emulator_v2_receipt_chain_error(
             ):
                 return "real channelEmulator v2 receipt has unconfirmed formal fields"
             if not required and receipt.get("operation") not in {
-                "load_channel",
                 "autoset_inputs",
                 "set_input_measurement_mode",
                 "set_burst_trigger_level",
