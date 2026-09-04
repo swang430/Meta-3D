@@ -51,4 +51,3 @@
 - fresh 独立功能内审到 P1=0；
 - Ready PR，Codex R1→R2；覆盖最新 HEAD 的 R2 无 P1且可合并才 merge；
 - fetch、主目录 ff-only、清理 worktree/分支；P2-63 不自动启动。
-
