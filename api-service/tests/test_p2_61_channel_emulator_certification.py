@@ -702,6 +702,8 @@ def test_active_exact_scope_certification_freezes_formal_qualification_once():
     )
 
     assert isinstance(frozen, ChannelEmulatorExecutionQualification)
+    assert frozen.schema_version == 2
+    assert frozen.frequency_evidence_schema_version == 1
     assert frozen.classification == "formal"
     assert frozen.policy_mode == "formal"
     assert frozen.diagnostic_actor is None

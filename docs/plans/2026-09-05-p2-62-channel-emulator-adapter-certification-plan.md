@@ -32,7 +32,9 @@
 
 - 用 certfake 完整执行证据写 RED，证明现有 F64-only certification frequency 门拒绝第三 adapter；
 - MEASURE 生成冻结的 `channel_emulator_evidence` 通用投影；
-- certification 换源到通用投影，保留旧 F64 镜像兼容；
+- certification 换源到通用投影；qualification schema v2 摘要绑定证据版本，仅对摘要有效的
+  schema v1 历史 qualification 保留旧 F64 镜像兼容；
+- 用第三 adapter 实跑 `MeasureExecutor`，保护通用证据的生产产生路径；
 - 加错 adapter、缺回读、unknown 带宽、篡改、模拟等反例；
 - 复核 commissioning、P2-66、报告/下载/历史均只消费共同 outcome。
 

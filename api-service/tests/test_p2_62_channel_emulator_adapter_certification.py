@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.core.logging_config import current_execution_id
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import ChannelEmulatorDriver
 from app.hal.channel_emulator_execution_plan import (
     resolve_channel_emulator_execution_plan,
@@ -646,6 +647,31 @@ def test_site_certification_does_not_treat_explicit_null_evidence_as_legacy():
         "frequency_consistency"
     ]
     frequency["channel_emulator_evidence"] = None
+
+    with pytest.raises(ValueError, match="frequency"):
+        _derive_with_current_frozen_binding(execution)
+
+
+def test_current_qualification_does_not_fallback_when_frequency_evidence_is_missing():
+    from tests.test_p2_61_channel_emulator_certification import (
+        _certification_execution_fixture,
+    )
+
+    execution = _certification_execution_fixture()
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency.pop("channel_emulator_evidence", None)
+    qualification = execution.config["channel_emulator_execution_qualification"]
+    qualification["schema_version"] = 2
+    qualification["frequency_evidence_schema_version"] = 1
+    qualification["qualification_digest"] = canonical_payload_digest(
+        {
+            key: value
+            for key, value in qualification.items()
+            if key != "qualification_digest"
+        }
+    )
 
     with pytest.raises(ValueError, match="frequency"):
         _derive_with_current_frozen_binding(execution)

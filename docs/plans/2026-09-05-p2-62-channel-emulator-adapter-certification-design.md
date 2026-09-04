@@ -85,7 +85,9 @@ MEASURE 在现有 `frequency_consistency` 下新增服务器权威子对象
 
 它只从本次冻结 plan、live CE 中心频率回读和冻结 ChannelAsset/SCD 带宽生成；不查询可变
 current state。现有 `F64`/`f64_*` 字段只在 F64 路径继续保留为兼容镜像；新认证逻辑仅为
-pre-P2-62 历史执行读取旧镜像。
+摘要仍匹配原始冻结载荷的 qualification schema v1 历史执行读取旧镜像。P2-62 起冻结
+qualification schema v2，并把 `frequency_evidence_schema_version=1` 纳入 qualification digest；
+因此新控制面配旧执行器而缺少通用证据时会 fail-closed，不能仅凭字段缺失冒充历史执行。
 
 正式认证要求：通用证据结构完整、adapter 与冻结 plan/terminal/identity 一致、中心频率有真实回读、
 带宽来自冻结资产/SCD、共同 frequency consistency 为 fully verified。缺失、模拟、错 adapter、

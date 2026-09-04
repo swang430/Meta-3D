@@ -33,6 +33,7 @@ from tests.base_station_mock_factory import registered_mock_base_station
 
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import AsyncMock
 
@@ -59,6 +60,7 @@ from app.models.probe_calibration import (
 )
 from app.models.test_plan import TestCase, TestExecution
 from app.services.channel_engine_client import ChannelEngineClient
+from app.services.channel_asset_service import create_channel_asset
 from app.services import instrument_test_lease
 from app.services.instrument_test_lease import ActiveBaseStationLeaseIdentity
 from app.services.mimo_ota import build_mimo_ota_test_case
@@ -74,6 +76,10 @@ from app.services.test_execution import (
     StepExecutionStatus,
 )
 from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
+from tests.channel_emulator_certification_kit import (
+    CertFakeChannelEmulatorDriver,
+    temporary_certfake_channel_emulator_registration,
+)
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -99,6 +105,13 @@ def _bind_unbound_mock_measurement(
         test_case.configuration
     )
     compatibility = build_compatibility_payload(requirements, None)
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        freeze_channel_asset_resolution,
+    )
+
+    configuration = MIMOOTAConfiguration.model_validate(test_case.configuration)
     legacy_freeze = {
         "resolution": {
             "schema_version": 1,
@@ -112,6 +125,9 @@ def _bind_unbound_mock_measurement(
             dict(test_case.configuration or {})
         ),
     }
+    frozen_asset = freeze_channel_asset_resolution(context.db, configuration)
+    if frozen_asset is not None:
+        legacy_freeze[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = frozen_asset
     legacy_freeze["digest"] = canonical_payload_digest(legacy_freeze)
     execution_config["base_station_adapter_profile_freeze"] = legacy_freeze
     context.test_execution.config = execution_config
@@ -342,7 +358,11 @@ def _refreeze_ce_plan(db, ctx):
     db.commit()
 
 
-async def _execute_direct_measure_in_receipt_scope(ctx):
+async def _execute_direct_measure_in_receipt_scope(
+    ctx,
+    *,
+    execution_mode: str = "simulated",
+):
     """Run a direct MEASURE fixture inside the execution-owned CE scope.
 
     Production reaches MEASURE through the joint BaseStation/CE session.  The
@@ -386,7 +406,7 @@ async def _execute_direct_measure_in_receipt_scope(ctx):
             getattr(emulator, "instrument_id", "direct-measure-channel-emulator")
         ),
         adapter_id=plan.adapter_id,
-        execution_mode="simulated",
+        execution_mode=execution_mode,
         plan=plan,
         driver=emulator,
     )
@@ -1336,6 +1356,92 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     assert captured, "measure 从未走到 BaseStation 窗口采样"
     assert captured["statistical_basis_subframes"] == 3000
+
+
+@pytest.mark.asyncio
+async def test_third_channel_adapter_measure_emits_vendor_neutral_frequency_evidence(
+    db,
+    lab,
+    chamber,
+    hal_with_full_mock_chain,
+    monkeypatch,
+    tmp_path,
+):
+    """第三 adapter 必须由真实 MEASURE 路径产生中立、实例绑定的频率证据。"""
+
+    _seed_complete_legacy_path_loss_cal(db, chamber)
+    asset = create_channel_asset(
+        db,
+        name=f"certfake-frequency-{uuid.uuid4().hex[:8]}",
+        source_type="standard_3gpp",
+        payload={"cdl_model_name": "UMa CDL-C NLOS"},
+        center_frequency_hz=3_500_010_000,
+        bandwidth_mhz=100,
+    )
+    asc_payload = tmp_path / "certfake-frequency.zip"
+    asc_payload.write_bytes(b"certfake fixture payload")
+
+    async def synthesize_fixture_payload(_self, **_kwargs):
+        return SimpleNamespace(
+            success=True,
+            message="fixture",
+            asc_files_path=str(asc_payload),
+        )
+
+    monkeypatch.setattr(
+        ChannelEngineClient,
+        "synthesize_hardware_pipeline",
+        synthesize_fixture_payload,
+    )
+    emulator = CertFakeChannelEmulatorDriver(
+        "ce-certfake-measure",
+        {"center_frequency_mhz": 3500.01},
+    )
+    hal_with_full_mock_chain.drivers["channelEmulator"] = emulator
+
+    with temporary_certfake_channel_emulator_registration():
+        ctx = _build_context(
+            db,
+            lab,
+            cal_cert=None,
+            strict_mode=False,
+            frequency_hz=3_500_010_000,
+            channel_asset_id=str(asset.id),
+        )
+        test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+        test_case.configuration = canonicalize_mimo_ota_configuration_payload(
+            {
+                **dict(test_case.configuration or {}),
+                "azimuths_deg": [0.0],
+                "settling_time_s": 0.0,
+                "num_samples_per_azimuth": 1,
+            }
+        )
+        db.commit()
+        _bind_unbound_mock_measurement(
+            monkeypatch,
+            ctx,
+            hal_with_full_mock_chain.drivers["baseStation"],
+        )
+        _refreeze_ce_plan(db, ctx)
+
+        result = await _execute_direct_measure_in_receipt_scope(
+            ctx,
+            execution_mode="real",
+        )
+
+    assert result.status == StepExecutionStatus.SUCCESS, result.error_message
+    frequency = result.measurements["frequency_consistency"]
+    assert frequency["channel_emulator_evidence"] == {
+        "schema_version": 1,
+        "adapter_id": "certfake_ce",
+        "instrument_id": "ce-certfake-measure",
+        "center_readback_mhz": 3500.01,
+        "bandwidth_source": "channel_asset_or_scd_declared",
+        "fully_verified": True,
+    }
+    assert "f64_center_readback_mhz" not in frequency
+    assert "f64_bandwidth_source" not in frequency
 
 
 @pytest.mark.asyncio
