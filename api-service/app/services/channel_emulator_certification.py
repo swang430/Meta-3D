@@ -938,6 +938,8 @@ def derive_channel_emulator_site_certification_from_execution(
         validate_channel_emulator_operation_receipt,
     )
     from app.services.execution_evidence_outcome import (
+        _channel_emulator_qualification_alignment_error,
+        _channel_emulator_qualification_projection,
         _channel_emulator_terminal_projection,
     )
     from app.services.mimo_ota.path_loss_application import (
@@ -973,6 +975,26 @@ def derive_channel_emulator_site_certification_from_execution(
     )
     if not expected_scope:
         raise ValueError("channelEmulator certification source scope does not match current binding")
+
+    (
+        qualification_classification,
+        qualification_reasons,
+        qualification,
+    ) = _channel_emulator_qualification_projection(config)
+    qualification_alignment_error = (
+        _channel_emulator_qualification_alignment_error(config, qualification)
+    )
+    if (
+        qualification_classification not in {"formal", "diagnostic"}
+        or qualification_alignment_error is not None
+    ):
+        qualification_detail = qualification_alignment_error or "; ".join(
+            qualification_reasons
+        )
+        raise ValueError(
+            "channelEmulator certification execution qualification is invalid"
+            + (f": {qualification_detail}" if qualification_detail else "")
+        )
 
     classification, terminal_reason = _channel_emulator_terminal_projection(
         config,

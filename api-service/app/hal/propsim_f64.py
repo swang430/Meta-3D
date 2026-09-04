@@ -274,9 +274,9 @@ class F64SysInfo:
         - test_f64_license_probe.py fixture strings (multiple
           firmware variants)
 
-    Pure data — no methods, no I/O. The legacy keyword scan in
-    ``_probe_installed_options()`` continues to handle license-token
-    discovery; this dataclass is for hardware metadata only.
+    Pure data — no methods, no I/O. Runtime capability discovery still maps
+    known keywords separately, while ``extra_tokens`` preserves the complete
+    reported license tail for certification identity binding.
     """
     raw: str  # original SYST:INFO? response as received
     product_family: Optional[str] = None  # e.g. "PROPSIM F64"
@@ -639,6 +639,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._visa_resource = None
         self._rm = None
         self._certification_options_observed: bool = False
+        # Complete normalized license tail from the last structurally valid
+        # SYST:INFO? reply. Runtime capability mapping remains in
+        # ``_installed_options``; certification identity binds every reported
+        # license token, including currently unknown ones.
+        self._certification_options: List[str] = []
         # True 表示操作员已显式要求把控制权交还 F64 前面板。F64 只要收到任意
         # ATE 命令就会再次进入 Remote，因此该标志必须同时禁止监控轮询和静默重连，
         # 不能仅仅 close 当前 socket。
@@ -2310,7 +2315,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             model=environment.model,
             firmware_version=environment.firmware_version,
             serial_number=environment.serial_number,
-            options=tuple(self._installed_options),
+            options=tuple(self._certification_options),
             options_observed=(
                 self._certification_options_observed
                 and environment.captured_from_live_connection
@@ -5911,6 +5916,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         discovered: List[str] = []
         seen: set = set()
         self._certification_options_observed = False
+        self._certification_options = []
 
         # SYST:INFO? keyword scan. SYST:INFO? is the confirmed-working
         # introspection query (returns the channel-count line we already
@@ -5928,6 +5934,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 and parsed_info.signal_type is not None
             )
             if self._certification_options_observed:
+                self._certification_options = sorted(
+                    {
+                        token.strip()
+                        for token in parsed_info.extra_tokens
+                        if token.strip()
+                    }
+                )
                 info_lower = info_raw.lower()
                 for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
                     if keyword in info_lower and token not in seen:

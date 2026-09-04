@@ -431,6 +431,41 @@ def _certification_execution_fixture():
             }
         }
     }
+    from tests.test_p2_66_execution_evidence_outcome import _qualification
+
+    from app.services.execution_qualification import EXECUTION_QUALIFICATION_KEY
+
+    base_station_qualification = _qualification("diagnostic")
+    execution.config[EXECUTION_QUALIFICATION_KEY] = base_station_qualification
+    qualification_payload = {
+        "schema_version": 1,
+        "classification": "diagnostic",
+        "policy_mode": "diagnostic",
+        "diagnostic_actor": None,
+        "diagnostic_reasons": list(base_station_qualification["reasons"]),
+        "base_station_qualification_digest": base_station_qualification[
+            "qualification_digest"
+        ],
+        "lab_profile_id": binding["lab_profile_id"],
+        "instrument_connection_id": binding["instrument_connection_id"],
+        "instrument_model_id": binding["instrument_model_id"],
+        "binding_digest": binding["binding_digest"],
+        "plan_digest": plan["digest"],
+        "asset_digest": execution.config[
+            "channel_emulator_load_request_freeze"
+        ]["digest"],
+        "adapter_id": plan["adapter_id"],
+        "load_mode": plan["requested_load_mode"],
+        "site_certification": None,
+        "site_certification_digest": None,
+        "identity_digest": None,
+        "reasons": ["site_certification_not_active"],
+        "frozen_at": "2026-09-05T00:00:00Z",
+    }
+    qualification_payload["qualification_digest"] = canonical_payload_digest(
+        qualification_payload
+    )
+    execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY] = qualification_payload
     return execution
 
 
@@ -452,6 +487,28 @@ def test_activation_derivation_requires_one_complete_real_v3_evidence_scope():
     assert certification.model == "PROPSIM F64"
     assert certification.required_proofs == _proofs()
     assert certification.load_mode == "native_model"
+
+
+@pytest.mark.parametrize("mutation", ["missing", "tampered"])
+def test_activation_derivation_requires_valid_aligned_execution_qualification(
+    mutation,
+):
+    execution = _certification_execution_fixture()
+    if mutation == "missing":
+        del execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY]
+    else:
+        qualification = execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY]
+        qualification["plan_digest"] = "0" * 64
+        qualification["qualification_digest"] = canonical_payload_digest(
+            {
+                key: value
+                for key, value in qualification.items()
+                if key != "qualification_digest"
+            }
+        )
+
+    with pytest.raises(ValueError, match="qualification"):
+        _derive_certification(execution)
 
 
 def _qualification_fixture(*, certification_status="active"):
@@ -764,6 +821,7 @@ def test_p2_66_outcome_rejects_terminal_v3_without_ce_qualification():
     )
 
     source = _certification_execution_fixture()
+    del source.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY]
 
     outcome = project_execution_evidence_outcome(source)
 
@@ -1146,6 +1204,8 @@ def test_activation_does_not_accept_an_unreferenced_cross_session_receipt():
 
 
 def test_activate_service_uses_execution_then_locked_resolver_and_commits_once(monkeypatch):
+    from copy import deepcopy
+
     from app.models.instrument import InstrumentConnection
     from app.models.lab_profile import LabProfile
     from app.models.test_plan import TestCase, TestExecution
@@ -1194,6 +1254,7 @@ def test_activate_service_uses_execution_then_locked_resolver_and_commits_once(m
         }[model]
     )
 
+    frozen_execution_config = deepcopy(execution.config)
     certification = activate_channel_emulator_site_certification(
         db,
         object(),
@@ -1205,7 +1266,7 @@ def test_activate_service_uses_execution_then_locked_resolver_and_commits_once(m
 
     assert certification.status == "active"
     assert certification.source_execution_id == execution.id
-    assert "channel_emulator_execution_qualification" not in execution.config
+    assert execution.config == frozen_execution_config
     assert connection.channel_emulator_site_certification == certification.model_dump(mode="json")
     binding_module.resolve_channel_emulator_binding.assert_called_once_with(
         db, ANY, lab, lock=True
@@ -1395,6 +1456,7 @@ def test_readiness_scope_reuses_execution_plan_asset_and_live_identity_truth():
     driver._status = InstrumentStatus.READY
     driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
     driver._installed_options = ["F64-OPT"]
+    driver._certification_options = ["F64-OPT"]
     driver._certification_options_observed = True
     driver.product_family = "PROPSIM F64"
     test_case = SimpleNamespace(
@@ -1593,7 +1655,8 @@ def test_f64_certification_identity_is_a_pure_projection_of_live_cached_truth():
     )
     driver.product_family = "PROPSIM F64"
     driver.firmware_version = "v1.0"
-    driver._installed_options = [" B ", "A", "A"]
+    driver._installed_options = ["INT-GEN"]
+    driver._certification_options = [" B ", "A", "A"]
     driver._certification_options_observed = True
 
     identity = driver.capture_channel_emulator_certification_identity()
@@ -1611,6 +1674,45 @@ def test_f64_certification_identity_is_a_pure_projection_of_live_cached_truth():
     assert identity.simulated is False
     assert identity.captured_from_live_connection is True
     assert identity.certification_eligible is True
+
+
+@pytest.mark.asyncio
+async def test_f64_certification_identity_binds_every_reported_license_token():
+    driver = RealPropsimF64Driver("ce-f64", {"ip_address": "192.0.2.61"})
+    driver._visa_resource = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
+    driver.product_family = "PROPSIM F64"
+
+    replies = iter(
+        (
+            "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,"
+            "Main license,AWGN interferences:32,Shadowing",
+            "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,"
+            "Main license,AWGN interferences:32,Fading",
+        )
+    )
+
+    async def query(_command):
+        return next(replies)
+
+    driver._query = query
+    await driver._probe_installed_options()
+    first = driver.capture_channel_emulator_certification_identity()
+    await driver._probe_installed_options()
+    second = driver.capture_channel_emulator_certification_identity()
+
+    assert first.options == (
+        "AWGN interferences:32",
+        "Main license",
+        "Shadowing",
+    )
+    assert second.options == (
+        "AWGN interferences:32",
+        "Fading",
+        "Main license",
+    )
+    assert first.digest != second.digest
 
 
 def test_confirmed_zero_options_are_distinct_from_unobserved_options():
