@@ -280,7 +280,7 @@ async def test_hal_lookup_failure_does_not_leak_exclusive_lock():
 
 
 @pytest.mark.asyncio
-async def test_default_test_lease_controls_f64_and_uxm_and_releases_reverse_order():
+async def test_default_test_lease_acquires_channel_emulator_last_and_releases_all():
     from app.services.instrument_test_lease import InstrumentTestLease
 
     events: list[str] = []
@@ -291,8 +291,8 @@ async def test_default_test_lease_controls_f64_and_uxm_and_releases_reverse_orde
         events.append("test")
 
     assert events == [
-        "f64-remote",
         "uxm-remote",
+        "f64-remote",
         "test",
         "uxm-local",
         "f64-local",
@@ -376,7 +376,6 @@ async def test_partial_acquire_failure_still_releases_both_instruments():
             pytest.fail("UXM 取得失败后不得进入测试体")
 
     assert events == [
-        "f64-remote",
         "uxm-remote",
         "uxm-local",
         "f64-local",
@@ -399,8 +398,8 @@ async def test_uxm_release_failure_does_not_skip_f64_release():
             events.append("test")
 
     assert events == [
-        "f64-remote",
         "uxm-remote",
+        "f64-remote",
         "test",
         "uxm-local",
         "f64-local",
@@ -436,8 +435,8 @@ async def test_exit_cache_failure_still_attempts_and_reports_all_local_releases(
     assert "UXM" in message
     assert "F64" in message
     assert events == [
-        "f64-remote",
         "uxm-remote",
+        "f64-remote",
         "test",
         "uxm-local",
         "f64-local",

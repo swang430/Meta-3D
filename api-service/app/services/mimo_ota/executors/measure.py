@@ -79,7 +79,7 @@ from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_evidence_outcome import (
-    execution_evidence_blocks_formal_outputs,
+    project_execution_evidence_outcome,
 )
 
 logger = logging.getLogger(__name__)
@@ -1337,6 +1337,9 @@ class MeasureExecutor(IStepExecutor):
             if selected_path_loss_cert is not None
             else None
         )
+        execution_evidence_outcome = project_execution_evidence_outcome(
+            context.test_execution
+        )
         if selected_path_loss_cert is None:
             path_loss_cert_usable = False
             provenance_blocker = (
@@ -1351,11 +1354,24 @@ class MeasureExecutor(IStepExecutor):
                     selected_path_loss_use_mock,
                     channel_emulator_is_real=channel_emulator_is_real,
                     strict=config.precheck_strict_cal,
-                    diagnostic=execution_evidence_blocks_formal_outputs(
-                        context.test_execution
+                    # 只有冻结的 diagnostic policy 能关闭严格路损门。其它冻结证据
+                    # invalid 仍会阻断正式输出，但不能把真实 CE + 不可信路损证书的
+                    # 纯前置安全门短路掉；该门必须先返回既有 path_loss_application，
+                    # 且仍发生在 P2-59 CE 对账及任何硬件 I/O 之前。
+                    diagnostic=(
+                        execution_evidence_outcome.qualification_classification
+                        == "diagnostic"
                     ),
                 )
             )
+            if execution_evidence_outcome.compatibility_classification in {
+                "diagnostic",
+                "invalid",
+            }:
+                # diagnostic / invalid 执行都不能实际应用补偿；上面的 blocker 是否
+                # 生效则只由不可变 qualification policy 决定，避免“另一处证据损坏”
+                # 意外把严格路损门变成 bypass。
+                path_loss_cert_usable = False
         path_loss_cert = (
             selected_path_loss_cert if path_loss_cert_usable else None
         )

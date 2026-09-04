@@ -71,7 +71,7 @@ Expected: PASS。
 
 **Step 1: Write the failing test**
 
-覆盖四类入口的公共插入点、首 I/O 前对账、真实 HAL 缺失拒绝、模拟 HAL 缺失临时安装/恢复 Mock、成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。成功/异常/取消分别断言 `stop_emulation` 恰好一次；scope 内的旧 cleanup 不得重复停止，scope 外调用仍保留安全收尾。
+覆盖四类入口的公共插入点、首 I/O 前对账、真实 HAL 缺失拒绝、模拟 HAL 缺失仅在 execution task-local HAL view 暴露 Mock、并发全局 HAL 读者不可见、BaseStation 先于 CE acquire，以及成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。成功/异常/取消分别断言 `stop_emulation` 恰好一次；scope 内的旧 cleanup 不得重复停止，scope 外调用仍保留安全收尾。
 
 **Step 2: Run test to verify it fails**
 
@@ -80,7 +80,7 @@ Expected: FAIL，原因是 scope 尚不存在且 MEASURE 仍自造 Mock。
 
 **Step 3: Write minimal implementation**
 
-实现 async scope：解析冻结 binding/plan、组合锁内 validator、按模拟边界准备 driver、进入现有租约、yield 后只调用既有 `stop_emulation`、退出后恢复临时 Mock。用 task-local 所有权让 `cleanup_chamber_instruments` 在 scope 内跳过 CE 停机、但不影响 BS/转台或旧调用。`run_base_station_execution_session` 只替换一处 context manager；删掉 MeasureExecutor 的本地 Mock 构造并要求 scope 已准备 HAL。
+实现 async scope：解析冻结 binding/plan、组合锁内 validator、按模拟边界准备 task-local HAL view、先取得 BaseStation 再最后取得 CE、yield 后只调用既有 `stop_emulation`。进程级 `hal.drivers` 从不安装临时 Mock；用 task-local 所有权让 `cleanup_chamber_instruments` 在 scope 内跳过 CE 停机、但不影响 BS/转台或旧调用。`run_base_station_execution_session` 只替换一处 context manager；删掉 MeasureExecutor 的本地 Mock 构造并要求 scope 已准备 HAL。
 
 **Step 4: Run test to verify it passes**
 

@@ -104,8 +104,9 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 `run_base_station_execution_session`，所以该函数改为进入统一的
 `channel_emulator_execution_scope(plan, binding, hal, execution)`。scope 内部继续复用
 `instrument_test_lease` 的同一把 HAL 协调锁与 Remote/Local 交接，不另造第二把锁，也不改手工 CE
-端点和诊断序列。阶段固定为：冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 → Remote acquire
-→ 业务 yield → `stop_emulation` safe idle → Local release → terminal evidence。safe idle 位于租约 yield 的
+端点和诊断序列。阶段固定为：冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 →
+BaseStation Remote acquire → CE Remote acquire（最后取得）→ 业务 yield → `stop_emulation` safe idle →
+Local release → terminal evidence。safe idle 位于租约 yield 的
 `finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
 结果，不是预期值。MEASURE 既有 `cleanup_chamber_instruments` 在 scope 持有 CE safe-idle 所有权时只收尾
 BaseStation 与转台，不再第二次调用 `stop_emulation`；离开统一 scope 的旧调用仍保留原有 CE 尽力停机。
@@ -123,8 +124,9 @@ P2-58 的 binding 冻结件补入 `execution_mode`；它进入冻结件外层 di
 binding digest、计划 digest，以及 live driver 的 manifest 派生计划。任一不一致均零 CE I/O 拒绝。
 
 模拟模式只认 `instrument_hal_service.is_mock_driver()` 的权威白名单和 Mock CE 的 manifest，不靠类名前缀。
-HAL 仍有 mock 时直接对账；HAL 缺 CE 时，只有冻结 `execution_mode == simulated` 才由 scope 临时安装
-`MockChannelEmulator`，租约退出后恢复原 HAL 字典。真机冻结遇到 HAL 缺 CE 必须 fail-loud；执行器
+HAL 仍有 mock 时直接对账；HAL 缺 CE 时，只有冻结 `execution_mode == simulated` 才由 scope 在当前
+execution task 的 HAL view 中临时覆盖 `MockChannelEmulator`，进程级 `hal.drivers` 始终不变，并发
+readiness / preview / freeze 请求仍看到真实的“CE 未加载”。真机冻结遇到 HAL 缺 CE 必须 fail-loud；执行器
 `measure.py` 不再就地构造 Mock。模拟 acquire/release 明确记 `not_applicable`，绝不伪造 true，且整个
 execution 的正式 outcome 被降为 diagnostic，数值不得进入正式 KPI。
 

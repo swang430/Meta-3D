@@ -274,8 +274,10 @@ async def test_lease_outcome_does_not_claim_release_when_channel_emulator_reject
 
 def _install_real_lease(monkeypatch, module, hal):
     from app.services.instrument_test_lease import InstrumentTestLease
+    from app.services import instrument_hal_service
 
-    lease = InstrumentTestLease(lambda: hal)
+    monkeypatch.setattr(instrument_hal_service, "_hal_service", hal)
+    lease = InstrumentTestLease(instrument_hal_service.get_hal_service)
     monkeypatch.setattr(module, "instrument_test_lease", lease.hold)
     return lease
 
@@ -337,10 +339,20 @@ async def test_scope_rejects_live_plan_or_binding_drift_before_any_ce_io(monkeyp
 @pytest.mark.asyncio
 async def test_scope_installs_mock_only_for_explicit_simulated_freeze(monkeypatch):
     from app.services import channel_emulator_execution_session as module
+    from app.services.instrument_hal_service import get_hal_service
 
     frozen_mock = MockChannelEmulator("frozen-mock", {})
     hal = SimpleNamespace(drivers={}, clear_metrics_cache=None)
     _install_real_lease(monkeypatch, module, hal)
+    inspect_now = asyncio.Event()
+
+    async def unrelated_hal_reader():
+        await inspect_now.wait()
+        return get_hal_service().drivers.get("channelEmulator")
+
+    # 在 scope 之前创建，模拟并发状态 / preview / freeze 请求；它不得继承当前
+    # execution task 后续安装的 scoped overlay。
+    unrelated = asyncio.create_task(unrelated_hal_reader())
 
     async with module.channel_emulator_execution_scope(
         None,
@@ -351,9 +363,128 @@ async def test_scope_installs_mock_only_for_explicit_simulated_freeze(monkeypatc
         hal=hal,
         validate_before_remote=lambda _hal: None,
     ):
-        assert isinstance(hal.drivers["channelEmulator"], MockChannelEmulator)
+        assert "channelEmulator" not in hal.drivers
+        assert isinstance(
+            get_hal_service().drivers["channelEmulator"], MockChannelEmulator
+        )
+        inspect_now.set()
+        assert await unrelated is None
 
     assert "channelEmulator" not in hal.drivers
+
+
+@pytest.mark.asyncio
+async def test_simulated_scope_does_not_shadow_concurrent_real_hal_reload(monkeypatch):
+    """在租约锁前赢下的真实 HAL reload 必须对 scope 可见并触发身份拒绝。"""
+    from app.services import channel_emulator_execution_session as module
+    from app.services import instrument_hal_service
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    frozen_mock = MockChannelEmulator("frozen-mock", {})
+    initial_hal = SimpleNamespace(drivers={}, clear_metrics_cache=None)
+    lease = _install_real_lease(monkeypatch, module, initial_hal)
+    real = _RealCe()
+    reloaded_hal = SimpleNamespace(
+        drivers={"channelEmulator": real}, clear_metrics_cache=None
+    )
+
+    async def run_scope():
+        async with module.channel_emulator_execution_scope(
+            None,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="diagnostic:execution-1",
+            binding=_frozen_binding_for_driver(
+                frozen_mock, execution_mode="simulated"
+            ),
+            plan=_frozen_plan(frozen_mock),
+            hal=initial_hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            raise AssertionError("real reload must invalidate simulated freeze")
+
+    async with lease.hal_mutation_guard():
+        task = asyncio.create_task(run_scope())
+        await asyncio.sleep(0)
+        instrument_hal_service._hal_service = reloaded_hal
+
+    with pytest.raises(InstrumentTestLeaseError, match="mock to real"):
+        await task
+    assert real.events == []
+    assert initial_hal.drivers == {}
+
+
+@pytest.mark.asyncio
+async def test_scope_acquires_channel_emulator_last_so_later_acquire_failure_cannot_skip_safe_idle(
+    monkeypatch,
+):
+    """CE 一旦取得就必须进入 scope body，退出时才能唯一执行 SAFE_IDLE。
+
+    BaseStation acquire 在 CE 之后失败会让 async context 尚未 yield，旧实现只做
+    CE release、从未 stop_emulation。租约应先取得 BaseStation，最后才取得 CE。
+    """
+    from app.hal.base_station import (
+        BaseStationControlReleaseResult,
+        BaseStationRemoteSessionResult,
+    )
+    from app.services import channel_emulator_execution_session as module
+
+    events: list[str] = []
+    ce = _RealCe()
+    ce.events = events
+
+    class RejectingBaseStation:
+        adapter_id = "uxm"
+        instrument_id = "bs-runtime"
+
+        async def acquire_remote_control(self):
+            events.append("bs-acquire")
+            return BaseStationRemoteSessionResult(
+                adapter_id=self.adapter_id,
+                session_token="rejected",
+                acquired_confirmed=False,
+                warnings=(),
+            )
+
+        async def release_remote_session(
+            self,
+            expected_session_token,
+            *,
+            measurement_attempt_id=None,
+            lease_id="",
+        ):
+            events.append("bs-release")
+            return BaseStationControlReleaseResult(
+                measurement_attempt_id=measurement_attempt_id,
+                lease_id=lease_id,
+                adapter_id=self.adapter_id,
+                session_token=expected_session_token,
+                remote_session_acquired_confirmed=False,
+                transport_session_released_confirmed=True,
+                front_panel_local_confirmed=None,
+                warnings=(),
+            )
+
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": ce, "baseStation": RejectingBaseStation()},
+        clear_metrics_cache=None,
+    )
+    _install_real_lease(monkeypatch, module, hal)
+
+    with pytest.raises(Exception, match="Remote|控制会话"):
+        async with module.channel_emulator_execution_scope(
+            None,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(ce, execution_mode="real"),
+            plan=_frozen_plan(ce),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            raise AssertionError("rejected BaseStation acquire must not yield")
+
+    assert events[0] == "bs-acquire"
+    assert "acquire" not in events
+    assert "safe-idle" not in events
 
 
 @pytest.mark.asyncio

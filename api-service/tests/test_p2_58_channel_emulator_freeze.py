@@ -13,7 +13,8 @@
   门 4  解析失败 → ValueError 穿出，config **无** CE 键 —— 变异：吞异常写空 dict → 红
   门 5  runner 接线：CE freeze 抛 → rollback + CaseNotExecutable；happy path 落冻结件
         —— 变异：删 runner 里的 CE freeze 调用 → 红
-  门 6  identity 键集合逐字 = 设计稿 §8.4；resolved_binding 无 execution_mode / runtime_driver；
+  门 6  identity 键集合逐字 = 设计稿 §8.4；顶层冻结 execution_mode，
+          resolved_binding 仍无 execution_mode / runtime_driver；
         BS 专属块没抄进来 —— 变异：改一个键名 → 红
   门 7  commissioning `_freeze_instrument_lease` 接线 —— 变异：删调用 → 红
   门 8  回填守门：有进度且无 CE 冻结件 → ValueError；`phase_progress: []` 不算进度
@@ -355,6 +356,7 @@ def test_frozen_identity_keys_match_design_section_8_4_verbatim(db):
         "instrument_model_id",
         "instrument_connection_id",
         "lab_profile_id",
+        "execution_mode",
         "expected_driver_module",
         "expected_driver_name",
         "expected_driver_connection",

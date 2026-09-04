@@ -11,8 +11,10 @@ Phase 3+: Real drivers for production
 import asyncio
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
+from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING, Iterator
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -1493,6 +1495,38 @@ class InstrumentHALService:
 
 # Global singleton instance
 _hal_service: Optional[InstrumentHALService] = None
+_scoped_hal_driver_overrides: ContextVar[Dict[str, Any] | None] = ContextVar(
+    "scoped_hal_driver_overrides", default=None
+)
+
+
+class _ScopedHALServiceView:
+    """Task-local driver overlay that delegates every other HAL capability."""
+
+    def __init__(self, base: Any, drivers: Dict[str, Any]) -> None:
+        self._base = base
+        self.drivers = drivers
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+
+@contextmanager
+def scoped_hal_service_view(
+    driver_overrides: Dict[str, Any],
+) -> Iterator[None]:
+    """Expose driver overrides only to the current execution task context.
+
+    Existing concurrent request tasks retain the process-global HAL singleton,
+    so a diagnostic execution cannot make its temporary driver appear live to
+    readiness, preview, freeze, or operator-status consumers.
+    """
+
+    token = _scoped_hal_driver_overrides.set(dict(driver_overrides))
+    try:
+        yield
+    finally:
+        _scoped_hal_driver_overrides.reset(token)
 
 # P2-5: serialise HAL lifecycle operations (initialise / shutdown / mode
 # switch / reload) so two concurrent operator clicks on "HAL Reload" or
@@ -1526,10 +1560,23 @@ def _get_lifecycle_lock() -> asyncio.Lock:
 
 
 def get_hal_service() -> InstrumentHALService:
-    """Get the global HAL service instance"""
+    """Get the task-local execution view, otherwise the global HAL instance."""
     global _hal_service
     if _hal_service is None:
         _hal_service = InstrumentHALService(mode=DriverMode.MOCK)
+    overrides = _scoped_hal_driver_overrides.get()
+    if overrides:
+        # Resolve the base singleton at read time, not when the scope was
+        # created.  If a reload won the lifecycle lock just before the test
+        # lease, validation sees that new live registry rather than a stale
+        # copied service.  An override only fills an absent category; a newly
+        # loaded real driver remains visible and the frozen simulated identity
+        # validator rejects the drift instead of shadowing it with a mock.
+        drivers = dict(_hal_service.drivers)
+        for category_key, driver in overrides.items():
+            if drivers.get(category_key) is None:
+                drivers[category_key] = driver
+        return _ScopedHALServiceView(_hal_service, drivers)
     return _hal_service
 
 

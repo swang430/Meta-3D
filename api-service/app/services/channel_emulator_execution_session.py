@@ -8,7 +8,6 @@ import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import uuid4
 
@@ -224,7 +223,6 @@ async def channel_emulator_execution_scope(
     execution_pk = execution.id
     execution_id = str(execution_pk)
     binding_fields = binding if isinstance(binding, Mapping) else {}
-    installed_mock = False
     prepared_mock: MockChannelEmulator | None = None
     safe_idle_confirmed = False
     scope_error: BaseException | None = None
@@ -236,24 +234,13 @@ async def channel_emulator_execution_scope(
         raise ChannelEmulatorExecutionSessionError(
             "HAL channelEmulator registry is unavailable"
         )
-    def prepare_locked_hal(locked_hal: object) -> tuple[object, str | None]:
-        nonlocal prepared_mock
-        locked_drivers = getattr(locked_hal, "drivers", None)
-        if not isinstance(locked_drivers, dict):
-            return locked_hal, "HAL channelEmulator registry is unavailable"
-        if locked_drivers.get(CHANNEL_EMULATOR_CATEGORY_KEY) is not None:
-            return locked_hal, None
-        mode = binding_fields.get("execution_mode")
-        if mode != "simulated":
-            return locked_hal, "loaded channelEmulator driver is missing"
+    if binding_fields.get("execution_mode") == "simulated":
         prepared_mock = MockChannelEmulator(
             "execution-scoped-channel-emulator", {"model": "Mock Channel Emulator"}
         )
-        # Validation needs the exact driver view, but global HAL mutation waits
-        # until the lease has acquired and still owns this same coordination lock.
-        return SimpleNamespace(
-            drivers={**locked_drivers, CHANNEL_EMULATOR_CATEGORY_KEY: prepared_mock}
-        ), None
+
+    def prepare_locked_hal(locked_hal: object) -> tuple[object, str | None]:
+        return locked_hal, None
 
     validator = _combined_validator(
         binding=binding,
@@ -262,35 +249,41 @@ async def channel_emulator_execution_scope(
         prepare_locked_hal=prepare_locked_hal,
     )
     operation_error: BaseException | None = None
+    from app.services.instrument_hal_service import (
+        get_hal_service,
+        scoped_hal_service_view,
+    )
+
     try:
         try:
-            async with instrument_test_lease(
-                purpose,
-                control_f64=True,
-                control_uxm=True,
-                enable_monitoring=False,
-                validate_before_remote=validator,
-            ) as outcome:
-                lease_outcome = outcome
-                if prepared_mock is not None:
-                    if drivers.get(CHANNEL_EMULATOR_CATEGORY_KEY) is not None:
-                        raise ChannelEmulatorExecutionSessionError(
-                            "HAL channelEmulator registry changed while acquiring the lease"
-                        )
-                    drivers[CHANNEL_EMULATOR_CATEGORY_KEY] = prepared_mock
-                    installed_mock = True
-                scoped_outcome = ChannelEmulatorExecutionScopeOutcome(outcome)
-                ownership_token = _channel_emulator_safe_idle_owner.set(True)
-                try:
-                    yield scoped_outcome
-                except BaseException as exc:
-                    operation_error = exc
-                    raise
-                finally:
-                    _channel_emulator_safe_idle_owner.reset(ownership_token)
+            overrides = (
+                {CHANNEL_EMULATOR_CATEGORY_KEY: prepared_mock}
+                if prepared_mock is not None
+                else {}
+            )
+            # 只给当前 execution task（及它主动派生的子任务）暴露临时模拟驱动；
+            # 进程级 hal.drivers 从不突变，并发 readiness/preview/freeze 请求仍看
+            # 到真实的“未加载”状态。
+            with scoped_hal_service_view(driver_overrides=overrides):
+                async with instrument_test_lease(
+                    purpose,
+                    control_f64=True,
+                    control_uxm=True,
+                    enable_monitoring=False,
+                    validate_before_remote=validator,
+                ) as outcome:
+                    lease_outcome = outcome
+                    scoped_outcome = ChannelEmulatorExecutionScopeOutcome(outcome)
+                    ownership_token = _channel_emulator_safe_idle_owner.set(True)
                     try:
-                        driver = _driver_from_hal(hal)
+                        yield scoped_outcome
+                    except BaseException as exc:
+                        operation_error = exc
+                        raise
+                    finally:
+                        _channel_emulator_safe_idle_owner.reset(ownership_token)
                         try:
+                            driver = _driver_from_hal(get_hal_service())
                             parsed_plan = plan_from_frozen_payload(plan)
                             if not parsed_plan.planned("stop_emulation"):
                                 raise ChannelEmulatorExecutionSessionError(
@@ -319,16 +312,10 @@ async def channel_emulator_execution_scope(
                             logger.exception(
                                 "channelEmulator safe idle failed while preserving operation error"
                             )
-                    finally:
-                        if installed_mock:
-                            drivers.pop(CHANNEL_EMULATOR_CATEGORY_KEY, None)
-                            installed_mock = False
         except BaseException as exc:
             scope_error = exc
             raise
     finally:
-        if installed_mock:
-            drivers.pop(CHANNEL_EMULATOR_CATEGORY_KEY, None)
         if db is not None:
             terminal_state = (
                 "cancelled"

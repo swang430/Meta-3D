@@ -516,18 +516,22 @@ class InstrumentTestLease:
             try:
                 try:
                     await self._clear_metrics_cache(hal)
-                    if control_f64:
-                        await self._acquire_remote(
-                            hal,
-                            purpose,
-                            instrument="F64",
-                            outcome=outcome,
-                        )
                     if control_uxm:
                         await self._acquire_remote(
                             hal,
                             purpose,
                             instrument="baseStation",
+                            outcome=outcome,
+                        )
+                    # P2-59③：CE 必须最后取得。若后续另一个仪表 acquire 失败，
+                    # channel_emulator_execution_scope 尚未 yield，无法执行唯一
+                    # SAFE_IDLE owner；把 CE 放在最后，保证“一旦 CE acquire 成功，
+                    # 控制流就必定进入 scope body/finally”，release 不能冒充 stop。
+                    if control_f64:
+                        await self._acquire_remote(
+                            hal,
+                            purpose,
+                            instrument="F64",
                             outcome=outcome,
                         )
                     self._monitoring_enabled = enable_monitoring
