@@ -636,6 +636,21 @@ def test_site_certification_rejects_frequency_evidence_from_another_adapter():
         _derive_with_current_frozen_binding(execution)
 
 
+def test_site_certification_does_not_treat_explicit_null_evidence_as_legacy():
+    from tests.test_p2_61_channel_emulator_certification import (
+        _certification_execution_fixture,
+    )
+
+    execution = _certification_execution_fixture()
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency["channel_emulator_evidence"] = None
+
+    with pytest.raises(ValueError, match="frequency"):
+        _derive_with_current_frozen_binding(execution)
+
+
 def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
     frequency = {
         "fully_verified": True,

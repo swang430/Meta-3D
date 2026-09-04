@@ -202,8 +202,8 @@ def _has_certifiable_channel_emulator_frequency_evidence(
 ) -> bool:
     if not isinstance(frequency, dict) or frequency.get("fully_verified") is not True:
         return False
-    raw = frequency.get("channel_emulator_evidence")
-    if raw is not None:
+    if "channel_emulator_evidence" in frequency:
+        raw = frequency["channel_emulator_evidence"]
         try:
             evidence = ChannelEmulatorFrequencyEvidence.model_validate(raw)
         except ValidationError:
