@@ -311,25 +311,26 @@ def _describe_f64_frequency_verification_gap(
     f64_center_mhz: Optional[float],
     f64_bandwidth_source: str,
     declared_bandwidth_mhz: Optional[float],
+    instrument_label: str = "F64",
 ) -> str:
-    """Explain the exact missing half of the F64 frequency identity."""
+    """Explain the exact missing half of the channel-emulator frequency identity."""
     bandwidth_declared = (
         f64_bandwidth_source == "channel_asset_or_scd_declared"
         and declared_bandwidth_mhz is not None
     )
     if f64_center_mhz is None and bandwidth_declared:
         return (
-            "F64 中心频率未回读；资产/SCD 已声明带宽 "
+            f"{instrument_label} 中心频率未回读；资产/SCD 已声明带宽 "
             f"{declared_bandwidth_mhz:g} MHz，但缺少 live center，"
             "P0-5 不得据此判完整闭环。"
         )
     if f64_center_mhz is not None and not bandwidth_declared:
         return (
-            "F64 中心频率已回读，但当前场景带宽没有可信资产声明；"
+            f"{instrument_label} 中心频率已回读，但当前场景带宽没有可信资产声明；"
             "频率中心一致，带宽保持 unknown，P0-5 不得据此判完整闭环。"
         )
     return (
-        "F64 中心频率未回读，当前场景带宽也没有可信资产声明；"
+        f"{instrument_label} 中心频率未回读，当前场景带宽也没有可信资产声明；"
         "频率身份保持 unknown，P0-5 不得据此判完整闭环。"
     )
 
@@ -2260,6 +2261,7 @@ class MeasureExecutor(IStepExecutor):
                         f64_center_mhz=f64_center_mhz,
                         f64_bandwidth_source=f64_bandwidth_source,
                         declared_bandwidth_mhz=declared_f64_bandwidth_mhz,
+                        instrument_label=ce_frequency_label,
                     ),
                 )
 

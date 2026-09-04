@@ -664,3 +664,19 @@ def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
         current_adapter_id="propsim_f64",
         instrument_id="ce-certfake",
     )
+
+
+def test_non_f64_frequency_gap_diagnostic_uses_vendor_neutral_label():
+    from app.services.mimo_ota.executors.measure import (
+        _describe_f64_frequency_verification_gap,
+    )
+
+    message = _describe_f64_frequency_verification_gap(
+        f64_center_mhz=None,
+        f64_bandwidth_source="channel_asset_or_scd_declared",
+        declared_bandwidth_mhz=100.0,
+        instrument_label="ChannelEmulator",
+    )
+
+    assert "ChannelEmulator 中心频率未回读" in message
+    assert "F64" not in message
