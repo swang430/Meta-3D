@@ -182,6 +182,28 @@ export const revokeBaseStationSiteCertification = async (
   return response.data
 }
 
+export const certifyChannelEmulatorSite = async (
+  connectionId: string,
+  payload: { source_execution_id: string; certified_by: string; reason: string },
+): Promise<import('../types/api').ChannelEmulatorSiteCertification> => {
+  const response = await client.put(
+    `/instruments/connections/${connectionId}/channel-emulator-site-certification`,
+    payload,
+  )
+  return response.data
+}
+
+export const revokeChannelEmulatorSiteCertification = async (
+  connectionId: string,
+  payload: { revoked_by: string; reason: string },
+): Promise<import('../types/api').ChannelEmulatorSiteCertification> => {
+  const response = await client.put(
+    `/instruments/connections/${connectionId}/channel-emulator-site-certification/revoke`,
+    payload,
+  )
+  return response.data
+}
+
 export interface ChannelModelEntry {
   filename: string
   label: string

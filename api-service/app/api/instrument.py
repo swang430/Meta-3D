@@ -34,6 +34,8 @@ from app.models.instrument import (
 from app.schemas.instrument import (
     BaseStationSiteCertificationCreate,
     BaseStationSiteCertificationRevoke,
+    ChannelEmulatorSiteCertificationCreate,
+    ChannelEmulatorSiteCertificationRevoke,
     UpdateInstrumentCategoryRequest,
 )
 from app.schemas.base_station_binding import (
@@ -54,7 +56,11 @@ from app.services.execution_qualification import (
 from app.services.base_station_model_preset import BaseStationModelPreset
 from app.services.channel_emulator_model_preset import ChannelEmulatorModelPreset
 from app.services.channel_emulator_certification import (
+    ChannelEmulatorCertificationPreview,
     ChannelEmulatorSiteCertification,
+    activate_channel_emulator_site_certification,
+    build_channel_emulator_certification_preview,
+    revoke_channel_emulator_site_certification,
 )
 from app.hal.channel_emulator_manifest import channel_emulator_implements
 
@@ -275,6 +281,9 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
             conn_db.cmw500_lte_2x2_formal_updated_at
         ),
         base_station_site_certification=conn_db.base_station_site_certification,
+        channel_emulator_site_certification=(
+            conn_db.channel_emulator_site_certification
+        ),
     )
 
 
@@ -332,6 +341,58 @@ def revoke_base_station_connection_certification(
 
     try:
         return revoke_base_station_site_certification(
+            db,
+            connection_id=connection_id,
+            revoked_by=request.revoked_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/channel-emulator-site-certification",
+    response_model=ChannelEmulatorSiteCertification,
+)
+def certify_channel_emulator_connection(
+    connection_id: UUID,
+    request: ChannelEmulatorSiteCertificationCreate,
+    db: Session = Depends(get_db),
+):
+    """Certify CE scope solely from an existing server-owned execution."""
+
+    from app.services.instrument_hal_service import get_hal_service
+
+    try:
+        return activate_channel_emulator_site_certification(
+            db,
+            get_hal_service(),
+            connection_id=connection_id,
+            source_execution_id=request.source_execution_id,
+            certified_by=request.certified_by,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/instruments/connections/{connection_id}/channel-emulator-site-certification/revoke",
+    response_model=ChannelEmulatorSiteCertification,
+)
+def revoke_channel_emulator_connection_certification(
+    connection_id: UUID,
+    request: ChannelEmulatorSiteCertificationRevoke,
+    db: Session = Depends(get_db),
+):
+    """Revoke the current server-owned CE certification with audit evidence."""
+
+    try:
+        return revoke_channel_emulator_site_certification(
             db,
             connection_id=connection_id,
             revoked_by=request.revoked_by,
@@ -3980,6 +4041,9 @@ class HALReadinessResponse(BaseModel):
     channel_emulator_binding: Optional[ChannelEmulatorBindingPreviewResponse] = None
     base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
+    channel_emulator_site_certification_preview: Optional[
+        ChannelEmulatorCertificationPreview
+    ] = None
     cmw500_lte_2x2: Optional[Cmw500Lte2x2ReadinessResponse] = None
     generated_at_iso: str
     # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
@@ -4045,6 +4109,7 @@ def get_hal_readiness(
     report = hal.last_readiness_report if hal else None
     binding_preview = None
     binding_response = None
+    ce_preview = None
     ce_response = None
     compatibility = build_not_evaluated_base_station_compatibility(
         lab_profile_id=lab_section.profile_id,
@@ -4092,6 +4157,10 @@ def get_hal_readiness(
         else None
     )
     site_certification = None
+    ce_certification_preview = build_channel_emulator_certification_preview(
+        ce_preview if lab_section.profile_id is not None else None,
+        None,
+    )
     if binding_preview is not None and binding_preview.instrument_connection_id:
         connection = db.query(InstrumentConnectionDB).filter(
             InstrumentConnectionDB.id == UUID(binding_preview.instrument_connection_id)
@@ -4103,6 +4172,18 @@ def get_hal_readiness(
                 )
             except ValidationError:
                 site_certification = None
+    if ce_preview is not None and ce_preview.instrument_connection_id:
+        ce_connection = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.id == UUID(ce_preview.instrument_connection_id)
+        ).one_or_none()
+        ce_certification_preview = build_channel_emulator_certification_preview(
+            ce_preview,
+            (
+                ce_connection.channel_emulator_site_certification
+                if ce_connection is not None
+                else None
+            ),
+        )
 
     if report is None:
         # HAL not initialised — return a shaped placeholder so the GUI
@@ -4133,6 +4214,7 @@ def get_hal_readiness(
             channel_emulator_binding=ce_response,
             base_station_testcase_compatibility=compatibility_response,
             base_station_site_certification=site_certification,
+            channel_emulator_site_certification_preview=ce_certification_preview,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
             subnets=[],
@@ -4174,6 +4256,7 @@ def get_hal_readiness(
         channel_emulator_binding=ce_response,
         base_station_testcase_compatibility=compatibility_response,
         base_station_site_certification=site_certification,
+        channel_emulator_site_certification_preview=ce_certification_preview,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,
         subnets=[

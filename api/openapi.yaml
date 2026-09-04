@@ -65,6 +65,48 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/BaseStationSiteCertification'}
         '422': {description: Validation error}
+  /api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification:
+    put:
+      summary: Certify ChannelEmulator site from one completed execution
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelEmulatorSiteCertificationCreate'}
+      responses:
+        '200':
+          description: Server-derived channel-emulator site certification
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelEmulatorSiteCertification'}
+        '404': {description: Connection or source execution not found}
+        '422': {description: Validation error}
+  /api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification/revoke:
+    put:
+      summary: Revoke current ChannelEmulator site certification
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelEmulatorSiteCertificationRevoke'}
+      responses:
+        '200':
+          description: Revoked channel-emulator site certification audit row
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelEmulatorSiteCertification'}
+        '404': {description: Connection not found}
+        '422': {description: Validation error}
   /api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2:
     put:
       summary: Explicitly enable or disable CMW500 LTE 2x2 formal admission
@@ -1182,6 +1224,82 @@ components:
         revoked_by: {type: string}
         reason: {type: string}
       required: [revoked_by, reason]
+    ChannelEmulatorCertificationProofs:
+      type: object
+      additionalProperties: false
+      properties:
+        binding_plan_asset: {type: boolean}
+        hardware_identity_options: {type: boolean}
+        operation_receipts: {type: boolean}
+        frequency: {type: boolean}
+        level: {type: boolean}
+        path_loss: {type: boolean}
+        safe_idle: {type: boolean}
+        transport_release: {type: boolean}
+      required: [binding_plan_asset, hardware_identity_options, operation_receipts, frequency, level, path_loss, safe_idle, transport_release]
+    ChannelEmulatorSiteCertification:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        status: {type: string, enum: [active, revoked]}
+        lab_profile_id: {type: string}
+        instrument_connection_id: {type: string}
+        instrument_model_id: {type: string}
+        binding_digest: {type: string}
+        adapter_id: {type: string}
+        plan_digest: {type: string}
+        asset_digest: {type: string}
+        load_mode: {type: string, enum: [native_model, external_waveform, parametric_tdl]}
+        model: {type: string}
+        firmware_version: {type: string}
+        serial_number: {type: string}
+        options: {type: array, items: {type: string}}
+        identity_digest: {type: string}
+        source_execution_id: {type: string}
+        terminal_evidence_digest: {type: string}
+        operation_receipts_digest: {type: string}
+        measurement_evidence_digest: {type: string}
+        required_proofs: {$ref: '#/components/schemas/ChannelEmulatorCertificationProofs'}
+        certified_by: {type: string}
+        certified_at: {type: string, format: date-time}
+        reason: {type: string}
+        revoked_by: {type: string, nullable: true}
+        revoked_at: {type: string, format: date-time, nullable: true}
+        revocation_reason: {type: string, nullable: true}
+      required: [schema_version, status, lab_profile_id, instrument_connection_id, instrument_model_id, binding_digest, adapter_id, plan_digest, asset_digest, load_mode, model, firmware_version, serial_number, options, identity_digest, source_execution_id, terminal_evidence_digest, operation_receipts_digest, measurement_evidence_digest, required_proofs, certified_by, certified_at, reason]
+    ChannelEmulatorSiteCertificationCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        source_execution_id: {type: string, format: uuid}
+        certified_by: {type: string}
+        reason: {type: string}
+      required: [source_execution_id, certified_by, reason]
+    ChannelEmulatorSiteCertificationRevoke:
+      type: object
+      additionalProperties: false
+      properties:
+        revoked_by: {type: string}
+        reason: {type: string}
+      required: [revoked_by, reason]
+    ChannelEmulatorCertificationPreview:
+      type: object
+      additionalProperties: false
+      properties:
+        status: {type: string, enum: [formal_ready, diagnostic, invalid, not_applicable]}
+        binding_digest: {type: string, nullable: true}
+        adapter_id: {type: string, nullable: true}
+        instrument_model_id: {type: string, nullable: true}
+        instrument_connection_id: {type: string, nullable: true}
+        lab_profile_id: {type: string, nullable: true}
+        site_certification:
+          allOf: [{$ref: '#/components/schemas/ChannelEmulatorSiteCertification'}]
+          nullable: true
+        site_certification_digest: {type: string, nullable: true}
+        reasons: {type: array, items: {type: string}}
+        detail: {type: string}
+      required: [status, binding_digest, adapter_id, instrument_model_id, instrument_connection_id, lab_profile_id, site_certification, site_certification_digest, reasons, detail]
     ExecutionQualification:
       type: object
       additionalProperties: false
@@ -2623,7 +2741,11 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
           nullable: true
-      required: [id, endpoint, controller, notes, connection_params, base_station_model_presets, channel_emulator_model_presets, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
+        channel_emulator_site_certification:
+          allOf:
+            - $ref: '#/components/schemas/ChannelEmulatorSiteCertification'
+          nullable: true
+      required: [id, endpoint, controller, notes, connection_params, base_station_model_presets, channel_emulator_model_presets, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification, channel_emulator_site_certification]
       additionalProperties: false
     Cmw500FormalCapabilityUpdate:
       type: object
@@ -2697,6 +2819,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
           nullable: true
+        channel_emulator_site_certification_preview:
+          allOf:
+            - $ref: '#/components/schemas/ChannelEmulatorCertificationPreview'
+          nullable: true
         cmw500_lte_2x2:
           allOf:
             - $ref: '#/components/schemas/Cmw500Lte2x2Readiness'
@@ -2712,7 +2838,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, channel_emulator_binding, base_station_testcase_compatibility, base_station_site_certification, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, channel_emulator_binding, base_station_testcase_compatibility, base_station_site_certification, channel_emulator_site_certification_preview, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:

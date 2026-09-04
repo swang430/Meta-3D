@@ -90,6 +90,7 @@ export type InstrumentConnection = {
   cmw500_lte_2x2_formal_enabled: boolean
   cmw500_lte_2x2_formal_updated_at: string | null
   base_station_site_certification: BaseStationSiteCertification | null
+  channel_emulator_site_certification: ChannelEmulatorSiteCertification | null
 }
 
 export type BaseStationModelPreset = {
@@ -146,6 +147,57 @@ export type BaseStationSiteCertification = {
   revoked_by?: string | null
   revoked_at?: string | null
   revocation_reason?: string | null
+}
+
+export type ChannelEmulatorSiteCertification = {
+  schema_version: 1
+  status: 'active' | 'revoked'
+  lab_profile_id: string
+  instrument_connection_id: string
+  instrument_model_id: string
+  binding_digest: string
+  adapter_id: string
+  plan_digest: string
+  asset_digest: string
+  load_mode: 'native_model' | 'external_waveform' | 'parametric_tdl'
+  model: string
+  firmware_version: string
+  serial_number: string
+  options: string[]
+  identity_digest: string
+  source_execution_id: string
+  terminal_evidence_digest: string
+  operation_receipts_digest: string
+  measurement_evidence_digest: string
+  required_proofs: {
+    binding_plan_asset: boolean
+    hardware_identity_options: boolean
+    operation_receipts: boolean
+    frequency: boolean
+    level: boolean
+    path_loss: boolean
+    safe_idle: boolean
+    transport_release: boolean
+  }
+  certified_by: string
+  certified_at: string
+  reason: string
+  revoked_by?: string | null
+  revoked_at?: string | null
+  revocation_reason?: string | null
+}
+
+export type ChannelEmulatorCertificationPreview = {
+  status: 'formal_ready' | 'diagnostic' | 'invalid' | 'not_applicable'
+  binding_digest: string | null
+  adapter_id: string | null
+  instrument_model_id: string | null
+  instrument_connection_id: string | null
+  lab_profile_id: string | null
+  site_certification: ChannelEmulatorSiteCertification | null
+  site_certification_digest: string | null
+  reasons: string[]
+  detail: string
 }
 
 export type FrozenExecutionQualification = {
@@ -480,6 +532,7 @@ export type HALReadinessResponse = {
   channel_emulator_binding: ChannelEmulatorBindingPreviewResponse | null
   base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
   base_station_site_certification: BaseStationSiteCertification | null
+  channel_emulator_site_certification_preview: ChannelEmulatorCertificationPreview | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string
   subnets: SubnetReachability[]

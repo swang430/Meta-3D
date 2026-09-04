@@ -122,6 +122,21 @@ class BaseStationSiteCertificationRevoke(BaseModel):
     reason: str
 
 
+class ChannelEmulatorSiteCertificationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_execution_id: UUID
+    certified_by: str
+    reason: str
+
+
+class ChannelEmulatorSiteCertificationRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revoked_by: str
+    reason: str
+
+
 # ==================== Category Schemas ====================
 
 class InstrumentCategoryBase(BaseModel):

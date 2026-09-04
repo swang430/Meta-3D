@@ -364,6 +364,132 @@ class ChannelEmulatorExecutionQualification(BaseModel):
         return self
 
 
+class ChannelEmulatorCertificationPreview(BaseModel):
+    """Server-owned readiness projection for the current CE binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["formal_ready", "diagnostic", "invalid", "not_applicable"]
+    binding_digest: str | None
+    adapter_id: str | None
+    instrument_model_id: str | None
+    instrument_connection_id: str | None
+    lab_profile_id: str | None
+    site_certification: ChannelEmulatorSiteCertification | None
+    site_certification_digest: str | None
+    reasons: tuple[str, ...]
+    detail: str
+
+
+def build_channel_emulator_certification_preview(
+    binding_preview: Any | None,
+    raw_certification: Any,
+) -> ChannelEmulatorCertificationPreview:
+    """Project current server truth without consulting a transport or client state."""
+
+    if binding_preview is None:
+        return ChannelEmulatorCertificationPreview(
+            status="not_applicable",
+            binding_digest=None,
+            adapter_id=None,
+            instrument_model_id=None,
+            instrument_connection_id=None,
+            lab_profile_id=None,
+            site_certification=None,
+            site_certification_digest=None,
+            reasons=("lab_profile_not_resolved",),
+            detail="未解析 LabProfile，信道仿真器现场认证不适用",
+        )
+    binding_status = getattr(binding_preview, "status", None)
+    common = {
+        "binding_digest": getattr(binding_preview, "binding_digest", None),
+        "adapter_id": getattr(binding_preview, "adapter_id", None),
+        "instrument_model_id": getattr(
+            binding_preview, "instrument_model_id", None
+        ),
+        "instrument_connection_id": getattr(
+            binding_preview, "instrument_connection_id", None
+        ),
+        "lab_profile_id": getattr(binding_preview, "lab_profile_id", None),
+    }
+    if binding_status == "invalid":
+        return ChannelEmulatorCertificationPreview(
+            status="invalid",
+            **common,
+            site_certification=None,
+            site_certification_digest=None,
+            reasons=("channel_emulator_binding_invalid",),
+            detail="信道仿真器 binding 无效，正式 KPI 保持 UNKNOWN/N/A",
+        )
+    if (
+        binding_status != "configured"
+        or getattr(binding_preview, "execution_mode", None) != "real"
+    ):
+        return ChannelEmulatorCertificationPreview(
+            status="diagnostic",
+            **common,
+            site_certification=None,
+            site_certification_digest=None,
+            reasons=("channel_emulator_execution_not_real",),
+            detail="当前仅允许诊断执行，正式 KPI 保持 UNKNOWN/N/A",
+        )
+    try:
+        certification = parse_channel_emulator_site_certification(raw_certification)
+    except ValueError:
+        return ChannelEmulatorCertificationPreview(
+            status="invalid",
+            **common,
+            site_certification=None,
+            site_certification_digest=None,
+            reasons=("site_certification_invalid",),
+            detail="服务器保存的信道仿真器现场认证无效",
+        )
+    if certification is None or certification.status != "active":
+        return ChannelEmulatorCertificationPreview(
+            status="diagnostic",
+            **common,
+            site_certification=certification,
+            site_certification_digest=(
+                certification.certification_digest
+                if certification is not None
+                else None
+            ),
+            reasons=("site_certification_not_active",),
+            detail="信道仿真器未持有活动现场认证，正式 KPI 保持 UNKNOWN/N/A",
+        )
+    expected_scope = (
+        common["lab_profile_id"],
+        common["instrument_connection_id"],
+        common["instrument_model_id"],
+        common["binding_digest"],
+        common["adapter_id"],
+    )
+    certification_scope = (
+        certification.lab_profile_id,
+        certification.instrument_connection_id,
+        certification.instrument_model_id,
+        certification.binding_digest,
+        certification.adapter_id,
+    )
+    if certification_scope != expected_scope:
+        return ChannelEmulatorCertificationPreview(
+            status="diagnostic",
+            **common,
+            site_certification=certification,
+            site_certification_digest=certification.certification_digest,
+            reasons=("site_certification_scope_mismatch",),
+            detail="现场认证与当前 binding 不一致，正式 KPI 保持 UNKNOWN/N/A",
+        )
+    return ChannelEmulatorCertificationPreview(
+        status="formal_ready",
+        **common,
+        site_certification=certification,
+        site_certification_digest=certification.certification_digest,
+        reasons=(),
+        detail="当前信道仿真器 binding 已匹配服务器现场认证",
+    )
+
+
 def parse_channel_emulator_site_certification(
     raw: Any,
 ) -> ChannelEmulatorSiteCertification | None:

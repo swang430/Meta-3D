@@ -95,6 +95,8 @@ import {
   updateInstrumentCategory,
   certifyBaseStationSite,
   revokeBaseStationSiteCertification,
+  certifyChannelEmulatorSite,
+  revokeChannelEmulatorSiteCertification,
   replaceProbes,
   updateProbe,
 } from './api/service'
@@ -1899,6 +1901,39 @@ function EquipmentManager() {
     },
   })
 
+  const channelEmulatorCertificationMutation = useMutation({
+    mutationFn: async ({ connectionId, revoke }: { connectionId: string; revoke: boolean }) => (
+      revoke
+        ? revokeChannelEmulatorSiteCertification(connectionId, {
+            revoked_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+        : certifyChannelEmulatorSite(connectionId, {
+            source_execution_id: certificationExecutionId.trim(),
+            certified_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+    ),
+    onSuccess: (certification) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      showFeedback(
+        'channelEmulator',
+        'success',
+        certification.status === 'active'
+          ? '信道仿真器现场认证已从服务端执行证据激活，仅影响后续执行。'
+          : '信道仿真器现场认证已撤销，仅影响后续执行。',
+      )
+    },
+    onError: (error: unknown) => {
+      showFeedback(
+        'channelEmulator',
+        'error',
+        `信道仿真器现场认证更新失败: ${diagnosticErrorMessage(error)}`,
+      )
+    },
+  })
+
   const syncLabBindingMutation = useMutation({
     mutationFn: (categoryKey: string) => {
       if (!selectedLabProfileId) {
@@ -2442,6 +2477,50 @@ function EquipmentManager() {
                       {category.connection?.id && (
                         <StandardChannelDefinitionCard connectionId={category.connection.id} />
                       )}
+                      <Card withBorder padding="md" radius="md">
+                        <Stack gap="xs">
+                          <Text fw={600} size="sm">信道仿真器现场认证</Text>
+                          <Alert
+                            color={category.connection.channel_emulator_site_certification?.status === 'active' ? 'green' : 'yellow'}
+                            variant="light"
+                          >
+                            当前状态：{category.connection.channel_emulator_site_certification?.status === 'active'
+                              ? `已认证 · ${category.connection.channel_emulator_site_certification.certified_at}`
+                              : '未认证或已撤销，仅可诊断（UNKNOWN/N/A）'}。身份、计划、资产与证据均由服务器从来源执行核验。
+                          </Alert>
+                          <TextInput
+                            label="来源执行 ID"
+                            description="仅提交执行 ID；客户端不提交 identity、proof 或 digest。"
+                            value={certificationExecutionId}
+                            onChange={(event) => setCertificationExecutionId(event.currentTarget.value)}
+                          />
+                          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                            <TextInput label="操作人" value={certificationOperator} onChange={(event) => setCertificationOperator(event.currentTarget.value)} />
+                            <TextInput label="认证/撤销原因" value={certificationReason} onChange={(event) => setCertificationReason(event.currentTarget.value)} />
+                          </SimpleGrid>
+                          <Group>
+                            <Button
+                              size="xs"
+                              color="yellow"
+                              loading={channelEmulatorCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationExecutionId.trim() || !certificationOperator.trim() || !certificationReason.trim()}
+                              onClick={() => category.connection.id && channelEmulatorCertificationMutation.mutate({ connectionId: category.connection.id, revoke: false })}
+                            >
+                              从执行证据认证现场
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="outline"
+                              loading={channelEmulatorCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationOperator.trim() || !certificationReason.trim() || category.connection.channel_emulator_site_certification?.status !== 'active'}
+                              onClick={() => category.connection.id && channelEmulatorCertificationMutation.mutate({ connectionId: category.connection.id, revoke: true })}
+                            >
+                              撤销现场认证
+                            </Button>
+                          </Group>
+                        </Stack>
+                      </Card>
                     </>
                   )
                 })()}

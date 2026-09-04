@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock
 
 import pytest
+import yaml
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from pydantic import ValidationError
@@ -18,6 +19,8 @@ from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.propsim_f64 import F64SysInfo, RealPropsimF64Driver
 from app.hal.propsim_fs16 import RealPropsimFs16Driver
 from app.schemas.instrument import (
+    ChannelEmulatorSiteCertificationCreate,
+    ChannelEmulatorSiteCertificationRevoke,
     FEConnectionUpdate,
     InstrumentConnectionResponse,
     InstrumentConnectionUpdate,
@@ -27,10 +30,12 @@ from app.services.channel_emulator_certification import (
     ChannelEmulatorCertificationIdentity,
     ChannelEmulatorCertificationProofs,
     ChannelEmulatorExecutionQualification,
+    ChannelEmulatorCertificationPreview,
     ChannelEmulatorSiteCertification,
     activate_channel_emulator_site_certification,
     derive_channel_emulator_site_certification_from_execution,
     freeze_channel_emulator_execution_qualification,
+    build_channel_emulator_certification_preview,
     revoke_channel_emulator_site_certification,
     validate_frozen_channel_emulator_execution_qualification,
 )
@@ -39,6 +44,7 @@ from app.services.channel_emulator_operation_receipt import (
     CE_OPERATION_RECEIPTS_CONFIG_KEY,
     channel_emulator_operation_receipt_chain_digest,
 )
+from app.main import app
 
 
 API_SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +69,41 @@ def _proofs(**updates: bool) -> ChannelEmulatorCertificationProofs:
     }
     payload.update(updates)
     return ChannelEmulatorCertificationProofs.model_validate(payload)
+
+
+def test_live_and_checked_contract_publish_channel_emulator_certification():
+    checked_doc = yaml.safe_load(
+        (API_SERVICE_ROOT.parent / "api" / "openapi.yaml").read_text()
+    )
+    live = app.openapi()
+    for document in (live, checked_doc):
+        schemas = document["components"]["schemas"]
+        paths = document["paths"]
+        assert "ChannelEmulatorSiteCertification" in schemas
+        assert "ChannelEmulatorCertificationPreview" in schemas
+        assert (
+            "/api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification"
+            in paths
+        )
+        assert (
+            "/api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification/revoke"
+            in paths
+        )
+
+    live_schemas = live["components"]["schemas"]
+    checked_schemas = checked_doc["components"]["schemas"]
+    assert "channel_emulator_site_certification" in live_schemas[
+        "FEInstrumentConnection"
+    ]["properties"]
+    assert "channel_emulator_site_certification_preview" in live_schemas[
+        "HALReadinessResponse"
+    ]["properties"]
+    assert "channel_emulator_site_certification" in checked_schemas[
+        "InstrumentConnection"
+    ]["properties"]
+    assert "channel_emulator_site_certification_preview" in checked_schemas[
+        "HALReadinessResponse"
+    ]["properties"]
 
 
 def _certification_payload(**updates):
@@ -1142,6 +1183,162 @@ def test_connection_models_expose_read_only_server_certification():
     assert "channel_emulator_site_certification" in InstrumentConnectionResponse.model_fields
     assert "channel_emulator_site_certification" not in InstrumentConnectionUpdate.model_fields
     assert "channel_emulator_site_certification" not in FEConnectionUpdate.model_fields
+
+
+def _binding_preview_for_certification(**updates):
+    payload = {
+        "status": "configured",
+        "binding_digest": "a" * 64,
+        "execution_mode": "real",
+        "adapter_id": "propsim_f64",
+        "instrument_model_id": "33333333-3333-3333-3333-333333333333",
+        "instrument_connection_id": "22222222-2222-2222-2222-222222222222",
+        "lab_profile_id": "11111111-1111-1111-1111-111111111111",
+    }
+    payload.update(updates)
+    return SimpleNamespace(**payload)
+
+
+def test_server_certification_preview_never_promotes_mock_or_scope_drift():
+    certification = ChannelEmulatorSiteCertification.model_validate(
+        _certification_payload()
+    )
+    formal = build_channel_emulator_certification_preview(
+        _binding_preview_for_certification(),
+        certification.model_dump(mode="json"),
+    )
+    assert isinstance(formal, ChannelEmulatorCertificationPreview)
+    assert formal.status == "formal_ready"
+    assert formal.reasons == ()
+
+    missing = build_channel_emulator_certification_preview(
+        _binding_preview_for_certification(),
+        None,
+    )
+    assert missing.status == "diagnostic"
+    assert "site_certification_not_active" in missing.reasons
+
+    mock = build_channel_emulator_certification_preview(
+        _binding_preview_for_certification(
+            status="diagnostic_unbound",
+            execution_mode="simulated",
+            adapter_id=None,
+            instrument_model_id=None,
+            instrument_connection_id=None,
+        ),
+        certification.model_dump(mode="json"),
+    )
+    assert mock.status == "diagnostic"
+    assert "UNKNOWN/N/A" in mock.detail
+
+    drifted = ChannelEmulatorSiteCertification.model_validate(
+        certification.model_copy(update={"binding_digest": "9" * 64})
+    )
+    mismatch = build_channel_emulator_certification_preview(
+        _binding_preview_for_certification(),
+        drifted.model_dump(mode="json"),
+    )
+    assert mismatch.status == "diagnostic"
+    assert "site_certification_scope_mismatch" in mismatch.reasons
+
+
+def test_channel_emulator_certification_api_is_dedicated_and_maps_errors(
+    monkeypatch,
+):
+    from uuid import UUID
+
+    from fastapi import HTTPException
+    from app.api import instrument as instrument_api
+    from app.services import instrument_hal_service
+
+    certification = ChannelEmulatorSiteCertification.model_validate(
+        _certification_payload()
+    )
+    activate = MagicMock(return_value=certification)
+    revoke = MagicMock(return_value=certification)
+    monkeypatch.setattr(
+        instrument_api,
+        "activate_channel_emulator_site_certification",
+        activate,
+    )
+    monkeypatch.setattr(
+        instrument_api,
+        "revoke_channel_emulator_site_certification",
+        revoke,
+    )
+    db = MagicMock()
+    hal = object()
+    monkeypatch.setattr(instrument_hal_service, "get_hal_service", lambda: hal)
+    connection_id = UUID("22222222-2222-2222-2222-222222222222")
+    source_execution_id = UUID("44444444-4444-4444-4444-444444444444")
+
+    result = instrument_api.certify_channel_emulator_connection(
+        connection_id,
+        ChannelEmulatorSiteCertificationCreate(
+            source_execution_id=source_execution_id,
+            certified_by="quality-owner",
+            reason="完整真实执行证据复核通过",
+        ),
+        db,
+    )
+    assert result == certification
+    activate.assert_called_once_with(
+        db,
+        hal,
+        connection_id=connection_id,
+        source_execution_id=source_execution_id,
+        certified_by="quality-owner",
+        reason="完整真实执行证据复核通过",
+    )
+
+    instrument_api.revoke_channel_emulator_connection_certification(
+        connection_id,
+        ChannelEmulatorSiteCertificationRevoke(
+            revoked_by="quality-owner",
+            reason="仪器维护",
+        ),
+        db,
+    )
+    revoke.assert_called_once_with(
+        db,
+        connection_id=connection_id,
+        revoked_by="quality-owner",
+        reason="仪器维护",
+    )
+
+    activate.side_effect = LookupError("source execution 不存在")
+    with pytest.raises(HTTPException) as missing:
+        instrument_api.certify_channel_emulator_connection(
+            connection_id,
+            ChannelEmulatorSiteCertificationCreate(
+                source_execution_id=source_execution_id,
+                certified_by="quality-owner",
+                reason="完整真实执行证据复核通过",
+            ),
+            db,
+        )
+    assert missing.value.status_code == 404
+
+    revoke.side_effect = ValueError("active certification 不存在")
+    with pytest.raises(HTTPException) as invalid:
+        instrument_api.revoke_channel_emulator_connection_certification(
+            connection_id,
+            ChannelEmulatorSiteCertificationRevoke(
+                revoked_by="quality-owner",
+                reason="仪器维护",
+            ),
+            db,
+        )
+    assert invalid.value.status_code == 422
+
+
+def test_hal_readiness_exposes_only_server_channel_emulator_certification_preview():
+    from app.api.instrument import HALReadinessResponse
+
+    assert (
+        "channel_emulator_site_certification_preview"
+        in HALReadinessResponse.model_fields
+    )
 
 
 def _migration_module():
