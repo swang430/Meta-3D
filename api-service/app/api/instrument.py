@@ -53,6 +53,9 @@ from app.services.execution_qualification import (
 )
 from app.services.base_station_model_preset import BaseStationModelPreset
 from app.services.channel_emulator_model_preset import ChannelEmulatorModelPreset
+from app.services.channel_emulator_certification import (
+    ChannelEmulatorSiteCertification,
+)
 from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 router = APIRouter()
@@ -105,6 +108,9 @@ class FEInstrumentConnection(BaseModel):
     cmw500_lte_2x2_formal_enabled: bool = False
     cmw500_lte_2x2_formal_updated_at: Optional[datetime] = None
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
+    channel_emulator_site_certification: Optional[
+        ChannelEmulatorSiteCertification
+    ] = None
 
 
 class FEInstrumentCategory(BaseModel):

@@ -217,6 +217,14 @@ class InstrumentConnection(Base):
             "Never written through connection_params."
         ),
     )
+    channel_emulator_site_certification = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "Server-owned Channel Emulator site certification; dedicated API only. "
+            "Never written through connection_params."
+        ),
+    )
 
     # 元数据
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
