@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Iterator, Literal
+from unittest.mock import patch
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -536,3 +538,22 @@ class CertFakeChannelEmulatorDriver(ChannelEmulatorDriver):
     def get_active_input_ports(self) -> list[int]:
         return [1, 2, 3, 4]
 
+
+@contextmanager
+def temporary_certfake_channel_emulator_registration() -> Iterator[None]:
+    """只在一个测试作用域内把第三 adapter 注入 binding resolver。"""
+
+    from app.services import channel_emulator_binding
+
+    original = channel_emulator_binding.get_real_driver_class
+
+    def lookup(category_key: str, model_name: str) -> type | None:
+        if (
+            category_key == "channelEmulator"
+            and model_name == "Certification Fixture CE"
+        ):
+            return CertFakeChannelEmulatorDriver
+        return original(category_key, model_name)
+
+    with patch.object(channel_emulator_binding, "get_real_driver_class", lookup):
+        yield
