@@ -186,6 +186,7 @@ def _channel_emulator_v2_receipt_chain_error(
         "session_id": session_id,
         "operation_scope": terminal.get("operation_scope"),
         "execution_id": terminal.get("execution_id"),
+        "measurement_attempt_id": terminal.get("measurement_attempt_id"),
         "binding_digest": terminal.get("binding_digest"),
         "binding_freeze_digest": terminal.get("binding_freeze_digest"),
         "plan_digest": terminal.get("plan_digest"),
@@ -204,9 +205,16 @@ def _channel_emulator_v2_receipt_chain_error(
         asset_freeze.get("digest") if isinstance(asset_freeze, Mapping) else None
     )
     if any(
+        receipt.get("measurement_attempt_id")
+        != expected_identity["measurement_attempt_id"]
+        for receipt in selected
+    ):
+        return "channelEmulator v2 receipt measurement attempt identity drift"
+    if any(
         receipt.get(key) != value
         for receipt in selected
         for key, value in expected_identity.items()
+        if key != "measurement_attempt_id"
     ):
         return "channelEmulator v2 receipt identity drift"
 
@@ -434,6 +442,25 @@ def _channel_emulator_terminal_projection(
         else:
             effective_evidence.append(item)
     effective_evidence.extend(latest_by_scope.values())
+
+    attempt_evidence = config.get("base_station_execution_evidence")
+    current_attempt_id = (
+        attempt_evidence.get("current_measurement_attempt_id")
+        if isinstance(attempt_evidence, Mapping)
+        and attempt_evidence.get("current_measurement_attempt_state") == "completed"
+        else None
+    )
+    v2_terminals = [
+        item for item in effective_evidence if item.get("schema_version") == 2
+    ]
+    if current_attempt_id is not None and v2_terminals and not any(
+        item.get("measurement_attempt_id") == current_attempt_id
+        for item in v2_terminals
+    ):
+        return (
+            "invalid",
+            "channelEmulator v2 terminal does not match the current measurement attempt",
+        )
 
     for item in effective_evidence:
         if (

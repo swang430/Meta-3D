@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import asyncio
+from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,7 +70,6 @@ def _recorder_owner(
         ChannelEmulatorOperationRecorderOwner,
     )
 
-
     return ChannelEmulatorOperationRecorderOwner(
         db=db,
         execution_pk=row.id,
@@ -88,6 +88,97 @@ def _recorder_owner(
         plan=plan or _Plan(),
         driver=driver or _ProjectingDriver(simulated=execution_mode == "simulated"),
     )
+
+
+@pytest.mark.asyncio
+async def test_measure_session_binds_attempt_to_channel_receipt_owner_before_operation(
+    monkeypatch,
+):
+    """MEASURE creates its attempt after CE acquire, so both owners must be rebound."""
+
+    from app.services import base_station_execution_session as module
+
+    recorder = SimpleNamespace(measurement_attempt_id=None)
+    lease_outcome = SimpleNamespace(
+        measurement_attempt_id=None,
+        base_station_release=None,
+    )
+    marked: list[bool] = []
+
+    class _ScopeOutcome:
+        def __init__(self):
+            self.lease_outcome = lease_outcome
+
+        def bind_measurement_attempt_id(self, attempt_id: str) -> None:
+            lease_outcome.measurement_attempt_id = attempt_id
+            recorder.measurement_attempt_id = attempt_id
+
+        def mark_operation_result(self, succeeded: bool) -> None:
+            marked.append(succeeded)
+
+    @asynccontextmanager
+    async def _scope(*_args, **_kwargs):
+        yield _ScopeOutcome()
+        lease_outcome.base_station_release = object()
+
+    monkeypatch.setattr(module, "channel_emulator_execution_scope", _scope)
+    monkeypatch.setattr(
+        module,
+        "begin_execution_base_station_measurement",
+        lambda *_args, **_kwargs: "attempt-1",
+    )
+    monkeypatch.setattr(
+        module,
+        "persist_execution_base_station_release",
+        lambda *_args, **_kwargs: "completed",
+    )
+    monkeypatch.setattr(module, "_get_hal_service", lambda: SimpleNamespace())
+    monkeypatch.setattr(module, "_get_base_station_driver", lambda: object())
+
+    execution = SimpleNamespace(
+        id="execution-1",
+        config={
+            "channel_emulator_binding_freeze": {},
+            "channel_emulator_execution_plan_freeze": {},
+        },
+    )
+
+    async def _operation():
+        assert lease_outcome.measurement_attempt_id == "attempt-1"
+        assert recorder.measurement_attempt_id == "attempt-1"
+        return module.BaseStationSessionOperationResult(value="ok", succeeded=True)
+
+    assert await module.run_base_station_execution_session(
+        SimpleNamespace(),
+        execution,
+        SimpleNamespace(),
+        purpose="formal-case:execution-1",
+        step_type="MIMO_OTA_MEASURE",
+        validate_before_remote=lambda _hal: None,
+        operation=_operation,
+    ) == "ok"
+    assert marked == [True]
+
+
+def test_scope_outcome_binds_attempt_to_both_lease_and_receipt_owner():
+    from app.services.channel_emulator_execution_session import (
+        ChannelEmulatorExecutionScopeOutcome,
+        ChannelEmulatorExecutionSessionError,
+    )
+
+    lease = SimpleNamespace(measurement_attempt_id=None)
+    recorder = SimpleNamespace(measurement_attempt_id=None)
+    outcome = ChannelEmulatorExecutionScopeOutcome(
+        lease,
+        recorder_owner=recorder,
+    )
+
+    outcome.bind_measurement_attempt_id("attempt-1")
+
+    assert lease.measurement_attempt_id == "attempt-1"
+    assert recorder.measurement_attempt_id == "attempt-1"
+    with pytest.raises(ChannelEmulatorExecutionSessionError, match="rebound"):
+        outcome.bind_measurement_attempt_id("attempt-2")
 
 
 def _field(
@@ -870,6 +961,7 @@ def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
         "session_id": session_id,
         "operation_scope": "formal-case:execution-1",
         "execution_id": "execution-1",
+        "measurement_attempt_id": "attempt-v2",
         "binding_digest": binding["binding_digest"],
         "binding_freeze_digest": binding["digest"],
         "plan_digest": plan["digest"],
@@ -925,6 +1017,43 @@ def test_p2_66_accepts_only_a_complete_real_v2_receipt_chain():
         execution_id=execution.id,
         pipeline_status=execution.status,
     ) == (None, None)
+
+
+@pytest.mark.parametrize("mutation", ["receipt_attempt", "current_attempt"])
+def test_p2_66_rejects_v2_receipts_outside_current_measurement_attempt(mutation):
+    from app.services.channel_emulator_operation_receipt import (
+        channel_emulator_operation_receipt_chain_digest,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, terminal, receipts = _v2_terminal_projection_fixture()
+    execution.config["base_station_execution_evidence"] = {
+        "current_measurement_attempt_id": "attempt-v2",
+        "current_measurement_attempt_state": "completed",
+    }
+    if mutation == "receipt_attempt":
+        for receipt in receipts:
+            receipt["measurement_attempt_id"] = "attempt-foreign"
+            _redigest(receipt)
+        terminal["operation_receipts_digest"] = (
+            channel_emulator_operation_receipt_chain_digest(receipts)
+        )
+        _redigest(terminal)
+    else:
+        execution.config["base_station_execution_evidence"][
+            "current_measurement_attempt_id"
+        ] = "attempt-foreign"
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+
+    assert classification == "invalid"
+    assert reason and "attempt" in reason
 
 
 @pytest.mark.parametrize(

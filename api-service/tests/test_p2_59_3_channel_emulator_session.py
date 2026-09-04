@@ -448,6 +448,7 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
         hal=hal,
         validate_before_remote=lambda _hal: None,
     ) as outcome:
+        outcome.bind_measurement_attempt_id("attempt-v2")
         outcome.mark_operation_result(True)
 
     receipts = execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY]
@@ -457,6 +458,9 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
         "transport_release",
     ]
     assert [item["sequence"] for item in receipts] == [0, 1]
+    assert {
+        item["measurement_attempt_id"] for item in receipts
+    } == {"attempt-v2"}
     assert receipts[1]["fields"][0] == {
         "field": "control_mode",
         "requested": "local",
@@ -468,6 +472,7 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
         "source_reference": "instrument_test_lease.release_to_local_control",
     }
     assert terminal["schema_version"] == 2
+    assert terminal["measurement_attempt_id"] == "attempt-v2"
     assert terminal["operation_receipt_count"] == 2
     assert terminal["operation_receipts_digest"] == (
         channel_emulator_operation_receipt_chain_digest(receipts)

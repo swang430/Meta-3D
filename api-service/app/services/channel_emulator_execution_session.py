@@ -96,6 +96,7 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     session_id: NonEmptyString
     operation_scope: NonEmptyString | None = None
     execution_id: NonEmptyString
+    measurement_attempt_id: NonEmptyString | None = None
     binding_digest: NonEmptyString
     binding_freeze_digest: NonEmptyString
     plan_digest: NonEmptyString
@@ -132,6 +133,7 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "FrozenChannelEmulatorTerminalEvidence":
         receipt_values = (
+            self.measurement_attempt_id,
             self.operation_receipt_count,
             self.operation_receipts_digest,
             self.operation_receipt_ids,
@@ -385,7 +387,30 @@ class ChannelEmulatorExecutionScopeOutcome:
     """Lease truth plus an explicit business-result handshake."""
 
     lease_outcome: InstrumentTestLeaseOutcome
+    recorder_owner: ChannelEmulatorOperationRecorderOwner | None = None
     operation_succeeded: bool | None = None
+
+    def bind_measurement_attempt_id(self, attempt_id: str) -> None:
+        """Bind the post-acquire MEASURE attempt to lease and CE receipts."""
+
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            raise TypeError("channelEmulator measurement attempt id must be non-empty")
+        existing = self.lease_outcome.measurement_attempt_id
+        if existing is not None and existing != attempt_id:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator measurement attempt identity cannot be rebound"
+            )
+        if self.recorder_owner is None:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator measurement attempt has no receipt owner"
+            )
+        receipt_attempt = self.recorder_owner.measurement_attempt_id
+        if receipt_attempt is not None and receipt_attempt != attempt_id:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator receipt measurement attempt identity cannot be rebound"
+            )
+        self.lease_outcome.measurement_attempt_id = attempt_id
+        self.recorder_owner.measurement_attempt_id = attempt_id
 
     def mark_operation_result(self, succeeded: bool) -> None:
         if type(succeeded) is not bool:
@@ -620,7 +645,6 @@ async def channel_emulator_execution_scope(
                     validate_before_remote=validator,
                 ) as outcome:
                     lease_outcome = outcome
-                    scoped_outcome = ChannelEmulatorExecutionScopeOutcome(outcome)
                     acquired_driver = (
                         outcome.channel_emulator_driver or prepared_mock
                     )
@@ -685,6 +709,10 @@ async def channel_emulator_execution_scope(
                             automatic_lifecycle_receipts=(
                                 receipt_persistence_enabled
                             ),
+                        )
+                        scoped_outcome = ChannelEmulatorExecutionScopeOutcome(
+                            outcome,
+                            recorder_owner=recorder_owner,
                         )
 
                         async def record_transport_release(
@@ -836,6 +864,11 @@ async def channel_emulator_execution_scope(
                 "session_id": session_id,
                 "operation_scope": purpose,
                 "execution_id": execution_id,
+                "measurement_attempt_id": (
+                    recorder_owner.measurement_attempt_id
+                    if recorder_owner is not None
+                    else None
+                ),
                 "binding_digest": binding_fields.get("binding_digest"),
                 "binding_freeze_digest": binding_fields.get("digest"),
                 "plan_digest": plan.get("digest") if isinstance(plan, Mapping) else None,
