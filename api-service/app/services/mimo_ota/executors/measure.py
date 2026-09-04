@@ -2142,10 +2142,12 @@ class MeasureExecutor(IStepExecutor):
                     if hasattr(base_station, "get_frequency_identity") else None
                 )
 
-            # F64 的 ATE 运行时能回读中心频率，但手册没有当前 .smu 仿真带宽
-            # 的查询。绝不再把 SYST:INFO? 的系统能力 100 MHz 当场景带宽。
-            # 有 ChannelAsset/SCD 时，用其已登记带宽与 live 中心频组合；没有时
-            # 只核对中心频率，并在 payload 留 BW unknown，不能假装完整闭环。
+            # CE 运行时中心频率只通过当前 adapter 已声明的共同能力读取；场景
+            # 带宽仍只取 ChannelAsset/SCD 声明。F64 保留旧镜像与原出处文案，
+            # 其他 adapter 使用中立标签，不能被伪装成 F64 证据。
+            ce_frequency_label = (
+                "F64" if ce_plan.adapter_id == "propsim_f64" else "ChannelEmulator"
+            )
             f64_center_mhz = (
                 emulator.get_center_frequency_mhz()
                 if ce_plan.planned("get_center_frequency_mhz")
@@ -2167,6 +2169,9 @@ class MeasureExecutor(IStepExecutor):
                         source=(
                             "F64 CALC:FILT:CENT:CH?; differs from typed "
                             "ChannelAsset/SCD identity"
+                            if ce_plan.adapter_id == "propsim_f64"
+                            else "channelEmulator adapter live center readback; "
+                            "differs from typed ChannelAsset/SCD identity"
                         ),
                     )
                 )
@@ -2174,7 +2179,12 @@ class MeasureExecutor(IStepExecutor):
             elif f64_center_mhz is not None:
                 f64_identity = CenterFrequencyObservation.from_center_freq_mhz(
                     f64_center_mhz,
-                    source="F64 CALC:FILT:CENT:CH?; no verified asset bandwidth",
+                    source=(
+                        "F64 CALC:FILT:CENT:CH?; no verified asset bandwidth"
+                        if ce_plan.adapter_id == "propsim_f64"
+                        else "channelEmulator adapter live center readback; "
+                        "no verified asset bandwidth"
+                    ),
                 )
                 f64_bandwidth_source = "unknown"
             else:
@@ -2186,7 +2196,7 @@ class MeasureExecutor(IStepExecutor):
                 )
             instrument_frequency_identities = {
                 "BaseStation": base_station_identity,
-                "F64": f64_identity,
+                ce_frequency_label: f64_identity,
             }
             # SCD is optional.  Once selected it participates in the gate, but
             # an absent SCD is not a listed instrument with a missing readback.
@@ -2199,8 +2209,13 @@ class MeasureExecutor(IStepExecutor):
                 instrument_frequency_identities,
             )
             frequency_consistency_payload = freq_result.to_payload()
-            frequency_consistency_payload["f64_center_readback_mhz"] = f64_center_mhz
-            frequency_consistency_payload["f64_bandwidth_source"] = f64_bandwidth_source
+            if ce_plan.adapter_id == "propsim_f64":
+                frequency_consistency_payload["f64_center_readback_mhz"] = (
+                    f64_center_mhz
+                )
+                frequency_consistency_payload["f64_bandwidth_source"] = (
+                    f64_bandwidth_source
+                )
             f64_frequency_fully_verified = (
                 f64_center_mhz is not None
                 and f64_bandwidth_source == "channel_asset_or_scd_declared"
@@ -2210,9 +2225,17 @@ class MeasureExecutor(IStepExecutor):
                 _unverified = list(
                     frequency_consistency_payload.get("unverified") or []
                 )
-                if "F64" not in _unverified:
-                    _unverified.append("F64")
+                if ce_frequency_label not in _unverified:
+                    _unverified.append(ce_frequency_label)
                 frequency_consistency_payload["unverified"] = _unverified
+            frequency_consistency_payload["channel_emulator_evidence"] = {
+                "schema_version": 1,
+                "adapter_id": ce_plan.adapter_id,
+                "instrument_id": str(emulator.instrument_id),
+                "center_readback_mhz": f64_center_mhz,
+                "bandwidth_source": f64_bandwidth_source,
+                "fully_verified": f64_frequency_fully_verified,
+            }
             if not freq_result.consistent:
                 if config.precheck_strict_frequency:
                     return StepExecutionResult(

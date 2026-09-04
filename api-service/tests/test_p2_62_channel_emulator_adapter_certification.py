@@ -26,6 +26,10 @@ from app.models.instrument import (
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestExecution
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
+from app.services.channel_emulator_certification import (
+    _has_certifiable_channel_emulator_frequency_evidence,
+    derive_channel_emulator_site_certification_from_execution,
+)
 from app.services.channel_emulator_model_preset import (
     require_saved_active_channel_emulator_preset,
     save_channel_emulator_model_preset,
@@ -481,3 +485,182 @@ async def test_certfake_ce_session_always_safe_idles_before_transport_release(
     assert driver._running is False
     assert outcome.channel_emulator_remote_acquired_confirmed is True
     assert outcome.channel_emulator_transport_released_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_safe_idle_rejection_fails_loud_and_still_releases(
+    monkeypatch,
+):
+    from app.services import channel_emulator_execution_session as session_module
+    from tests.test_p2_59_3_channel_emulator_session import (
+        _frozen_binding_for_driver,
+        _frozen_plan,
+        _install_real_lease,
+        _scope_execution,
+    )
+
+    driver = CertFakeChannelEmulatorDriver(
+        "ce-certfake", {"ip_address": "192.0.2.59", "port": 3334}
+    )
+
+    async def reject_safe_idle():
+        driver.events.append("safe-idle")
+        return False
+
+    driver.stop_emulation = reject_safe_idle
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, session_module, hal)
+    plan = _frozen_plan(driver)
+
+    with pytest.raises(
+        session_module.ChannelEmulatorExecutionSessionError, match="safe idle"
+    ):
+        async with session_module.channel_emulator_execution_scope(
+            None,
+            _scope_execution(plan),
+            purpose="p2-62-safe-idle-rejection",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=plan,
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            driver.events.append("operation")
+
+    assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_release_rejection_is_never_reported_as_success(monkeypatch):
+    from app.services import channel_emulator_execution_session as session_module
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
+    from tests.test_p2_59_3_channel_emulator_session import (
+        _frozen_binding_for_driver,
+        _frozen_plan,
+        _install_real_lease,
+        _scope_execution,
+    )
+
+    driver = CertFakeChannelEmulatorDriver(
+        "ce-certfake", {"ip_address": "192.0.2.59", "port": 3334}
+    )
+
+    async def reject_release():
+        driver.events.append("release")
+        return False
+
+    driver.release_to_local_control = reject_release
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, session_module, hal)
+    plan = _frozen_plan(driver)
+    outcome = None
+
+    with pytest.raises(InstrumentTestLeaseReleaseError):
+        async with session_module.channel_emulator_execution_scope(
+            None,
+            _scope_execution(plan),
+            purpose="p2-62-release-rejection",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=plan,
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            driver.events.append("operation")
+
+    assert outcome is not None
+    assert outcome.channel_emulator_transport_released_confirmed is False
+    assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+
+
+def _derive_with_current_frozen_binding(execution):
+    binding = execution.config["channel_emulator_binding_freeze"]
+    plan = execution.config["channel_emulator_execution_plan_freeze"]
+    return derive_channel_emulator_site_certification_from_execution(
+        execution,
+        connection_id=binding["instrument_connection_id"],
+        current_binding_digest=binding["binding_digest"],
+        current_adapter_id=plan["adapter_id"],
+        certified_by="p2-62-certifier",
+        reason="第三 adapter 共同认证证据通过",
+    )
+
+
+def test_site_certification_consumes_vendor_neutral_frequency_evidence():
+    from tests.test_p2_61_channel_emulator_certification import (
+        _certification_execution_fixture,
+    )
+
+    execution = _certification_execution_fixture()
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency.pop("f64_center_readback_mhz")
+    frequency.pop("f64_bandwidth_source")
+    frequency["per_instrument"].pop("F64")
+    frequency["channel_emulator_evidence"] = {
+        "schema_version": 1,
+        "adapter_id": "propsim_f64",
+        "instrument_id": "ce-runtime",
+        "center_readback_mhz": 3500.01,
+        "bandwidth_source": "channel_asset_or_scd_declared",
+        "fully_verified": True,
+    }
+
+    certification = _derive_with_current_frozen_binding(execution)
+
+    assert certification.required_proofs.frequency is True
+
+
+def test_site_certification_rejects_frequency_evidence_from_another_adapter():
+    from tests.test_p2_61_channel_emulator_certification import (
+        _certification_execution_fixture,
+    )
+
+    execution = _certification_execution_fixture()
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency["channel_emulator_evidence"] = {
+        "schema_version": 1,
+        "adapter_id": "certfake_ce",
+        "instrument_id": "ce-runtime",
+        "center_readback_mhz": 3500.01,
+        "bandwidth_source": "channel_asset_or_scd_declared",
+        "fully_verified": True,
+    }
+
+    with pytest.raises(ValueError, match="frequency"):
+        _derive_with_current_frozen_binding(execution)
+
+
+def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
+    frequency = {
+        "fully_verified": True,
+        "channel_emulator_evidence": {
+            "schema_version": 1,
+            "adapter_id": "certfake_ce",
+            "instrument_id": "ce-certfake",
+            "center_readback_mhz": 3500.0,
+            "bandwidth_source": "channel_asset_or_scd_declared",
+            "fully_verified": True,
+        },
+    }
+
+    assert _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id="certfake_ce",
+        instrument_id="ce-certfake",
+    )
+    assert not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id="certfake_ce",
+        instrument_id="another-instrument",
+    )
+    assert not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id="propsim_f64",
+        instrument_id="ce-certfake",
+    )

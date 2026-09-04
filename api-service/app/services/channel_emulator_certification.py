@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -163,6 +164,71 @@ class ChannelEmulatorCertificationProofs(BaseModel):
                 "channelEmulator site certification requires every proof class"
             )
         return self
+
+
+class ChannelEmulatorFrequencyEvidence(BaseModel):
+    """Vendor-neutral frozen CE frequency proof from one execution."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    adapter_id: str
+    instrument_id: str
+    center_readback_mhz: float
+    bandwidth_source: Literal["channel_asset_or_scd_declared"]
+    fully_verified: bool
+
+    @field_validator("adapter_id", "instrument_id")
+    @classmethod
+    def _non_blank_identity(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("channelEmulator frequency evidence identity is blank")
+        return normalized
+
+    @field_validator("center_readback_mhz")
+    @classmethod
+    def _finite_positive_center(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("channelEmulator frequency center is invalid")
+        return value
+
+
+def _has_certifiable_channel_emulator_frequency_evidence(
+    frequency: Any,
+    *,
+    current_adapter_id: str,
+    instrument_id: str,
+) -> bool:
+    if not isinstance(frequency, dict) or frequency.get("fully_verified") is not True:
+        return False
+    raw = frequency.get("channel_emulator_evidence")
+    if raw is not None:
+        try:
+            evidence = ChannelEmulatorFrequencyEvidence.model_validate(raw)
+        except ValidationError:
+            return False
+        return (
+            evidence.fully_verified is True
+            and evidence.adapter_id == current_adapter_id
+            and evidence.instrument_id == instrument_id
+        )
+
+    # Pre-P2-62 executions only carried the F64-specific mirrors. Preserve that
+    # exact historical proof without extending it to another adapter.
+    per_instrument = frequency.get("per_instrument")
+    return (
+        current_adapter_id == "propsim_f64"
+        and isinstance(per_instrument, dict)
+        and isinstance(per_instrument.get("F64"), str)
+        and per_instrument.get("F64") != "未报告(跳过)"
+        and isinstance(frequency.get("f64_center_readback_mhz"), (int, float))
+        and not isinstance(frequency.get("f64_center_readback_mhz"), bool)
+        and math.isfinite(float(frequency["f64_center_readback_mhz"]))
+        and frequency.get("f64_bandwidth_source")
+        == "channel_asset_or_scd_declared"
+        and "F64" not in (frequency.get("unverified") or ())
+    )
 
 
 class ChannelEmulatorSiteCertification(BaseModel):
@@ -1112,23 +1178,10 @@ def derive_channel_emulator_site_certification_from_execution(
     if not isinstance(measure, dict):
         raise ValueError("channelEmulator certification measurement proof is missing")
     frequency = measure.get("frequency_consistency")
-    per_instrument = (
-        frequency.get("per_instrument") if isinstance(frequency, dict) else None
-    )
-    f64_frequency_proven = (
-        current_adapter_id == "propsim_f64"
-        and isinstance(per_instrument, dict)
-        and isinstance(per_instrument.get("F64"), str)
-        and per_instrument.get("F64") != "未报告(跳过)"
-        and isinstance(frequency.get("f64_center_readback_mhz"), (int, float))
-        and frequency.get("f64_bandwidth_source")
-        == "channel_asset_or_scd_declared"
-        and "F64" not in (frequency.get("unverified") or ())
-    )
-    if (
-        not isinstance(frequency, dict)
-        or frequency.get("fully_verified") is not True
-        or not f64_frequency_proven
+    if not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id=current_adapter_id,
+        instrument_id=identity.instrument_id,
     ):
         raise ValueError("channelEmulator certification frequency proof is incomplete")
     if (
