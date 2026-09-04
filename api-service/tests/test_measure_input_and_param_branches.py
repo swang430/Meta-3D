@@ -23,6 +23,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
+# P2-59 ①：手动定标的能力判据改为冻结计划；测试里按替身的 manifest 派生计划（行为等价），
+# 没有 manifest 的替身 → 什么都没计划（与此前「无 manifest → 不支持」同义）。
+from app.hal.channel_emulator_execution_plan import (  # noqa: E402
+    resolve_channel_emulator_execution_plan as _resolve_ce_plan,
+)
+from app.hal.channel_emulator_manifest import (  # noqa: E402
+    channel_emulator_manifest_of as _ce_manifest_of,
+)
+
+
+def _plan_for(emulator):
+    manifest = _ce_manifest_of(emulator) or channel_emulator_manifest_for(
+        adapter_id="bare_emu", model_name="Bare Emu", vendor="test", implemented=(),
+    )
+    return _resolve_ce_plan(
+        manifest=manifest, driver_source="hal",
+        requested_load_mode="external_waveform", binding_digest="t" * 64,
+    )
+
 
 class TestManualInputReference:
     """开关 3 块 2: f64_input_ref_dbm 手动定标路径 (跳过 AUTOSET 闭环)。"""
@@ -54,7 +73,7 @@ class TestManualInputReference:
         emu.set_crest_factor = AsyncMock(return_value=True)
         emu.measure_input = AsyncMock(return_value=(-15.2, 11.8))
         payload = await ex._apply_manual_input_reference(
-            emulator=emu, config=cfg, execution_id="t",
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t",
         )
         assert payload["success"] is True and payload["mode"] == "manual"
         emu.set_baseband_power.assert_awaited_once_with(-15.0)
@@ -74,21 +93,23 @@ class TestManualInputReference:
         emu._tx_antennas = 4
         emu.set_baseband_power = AsyncMock(return_value=False)  # 下发被拒
         payload = await ex._apply_manual_input_reference(
-            emulator=emu, config=cfg, execution_id="t",
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t",
         )
         assert payload["success"] is False and not payload["skipped"]
         assert "被拒" in payload["failure_reason"]
 
     @pytest.mark.asyncio
     async def test_manual_ref_skipped_on_mock_ce(self):
-        """CE 缺能力 (mock/非 F64) → skipped (与闭环 capability-skip 一致)。"""
+        """冻结计划未包含 set_baseband_power（无 manifest 的替身什么都没计划）→ skipped
+        (与闭环 capability-skip 一致；P2-59 ① 起判据是计划不是驱动探测)。"""
         ex, cfg = self._executor_and_config(f64_input_ref_dbm=-15.0)
 
         class _Bare:  # 无 set_baseband_power
             pass
 
+        bare = _Bare()
         payload = await ex._apply_manual_input_reference(
-            emulator=_Bare(), config=cfg, execution_id="t",
+            emulator=bare, plan=_plan_for(bare), config=cfg, execution_id="t",
         )
         assert payload["skipped"] is True and payload["success"] is False
 
@@ -112,7 +133,7 @@ class TestManualInputReference:
         emu.set_baseband_power = AsyncMock(return_value=True)
         emu.set_crest_factor = AsyncMock(side_effect=[True, False])  # input2 被拒
         payload = await ex._apply_manual_input_reference(
-            emulator=emu, config=cfg, execution_id="t",
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t",
         )
         assert payload["success"] is False
         assert "crest" in payload["failure_reason"]

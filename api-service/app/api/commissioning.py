@@ -70,6 +70,9 @@ from app.services.base_station_adapter_profile import (
     build_frozen_base_station_validator,
     freeze_execution_base_station_adapter_profile,
 )
+from app.services.channel_emulator_execution_plan import (
+    freeze_execution_channel_emulator_plan,
+)
 from app.services.channel_emulator_binding import (
     freeze_execution_channel_emulator_binding,
 )
@@ -1720,6 +1723,8 @@ def _freeze_instrument_lease(
     # ValueError 由本函数 5 个调用点既有的 `except ValueError` 统一转 422 / 409，
     # 与 BaseStation freeze 走同一条异常路径。
     freeze_execution_channel_emulator_binding(db, hal, execution, test_case)
+    # P2-59 ①：执行计划紧跟 binding 冻结，同一条 ValueError 路径转 422 / 409。
+    freeze_execution_channel_emulator_plan(db, hal, execution)
     validate_base_station = build_frozen_base_station_validator(
         frozen_base_station
     )

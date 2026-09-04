@@ -81,10 +81,6 @@ from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.execution_evidence_outcome import (
     execution_evidence_blocks_formal_outputs,
 )
-from app.hal.channel_emulator_manifest import (
-    channel_emulator_implements,
-    channel_emulator_rejection,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -845,6 +841,47 @@ class MeasureExecutor(IStepExecutor):
                 )
             )
         return samples
+
+    @staticmethod
+    def _channel_emulator_plan_context(context, hal, config):
+        """P2-59 ①：在任何 CE I/O 之前，把启动期冻结的 CE 执行计划与当下装载驱动重算的
+        live 计划对账（镜像 `_base_station_attempt_context` 对 BS 计划的 digest 对账）。
+
+        缺席 / 漂移 / 冻结件损坏都是缺陷：RuntimeError，不回退成「按当下驱动能力办」。
+        这也是 P2-58 ① 冻进 execution.config 的 CE binding 的第一个执行期读方。
+        """
+        from app.services.channel_emulator_execution_plan import (
+            CE_PLAN_FREEZE_CONFIG_KEY,
+            frozen_channel_emulator_binding_digest,
+            resolve_live_channel_emulator_execution_plan,
+            verify_frozen_channel_emulator_execution_plan,
+        )
+
+        execution_config = (
+            context.test_execution.config
+            if isinstance(context.test_execution.config, dict)
+            else {}
+        )
+        frozen_plan = execution_config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+        if not isinstance(frozen_plan, dict):
+            raise RuntimeError(
+                "channelEmulator execution plan is not frozen for this execution"
+            )
+        try:
+            live_plan = resolve_live_channel_emulator_execution_plan(
+                hal,
+                engine_mode=config.engine_mode,
+                binding_digest=frozen_channel_emulator_binding_digest(execution_config),
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        error = verify_frozen_channel_emulator_execution_plan(frozen_plan, live_plan)
+        if error is not None:
+            raise RuntimeError(
+                "channelEmulator frozen execution plan does not match the loaded driver: "
+                + error
+            )
+        return live_plan
 
     @staticmethod
     def _base_station_attempt_context(
@@ -1643,6 +1680,10 @@ class MeasureExecutor(IStepExecutor):
             # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
             # 允许第一次 attach，任何失败都直接返回。
             ce_client = ChannelEngineClient(context.db)
+            # P2-59 ①：首次 CE I/O（下方的加载）之前，把启动期冻结的执行计划与当下装载
+            # 驱动重算的 live 计划对账 —— 兜底 mock 也按同一规则算进计划，所以放在造它之前。
+            # 缺席 / 漂移都是缺陷，fail-loud，不回退成「按当下驱动能力办」。
+            ce_plan = self._channel_emulator_plan_context(context, hal, config)
             if emulator is None:
                 from app.hal.channel_emulator import MockChannelEmulator
 
@@ -2204,6 +2245,7 @@ class MeasureExecutor(IStepExecutor):
             if config.f64_input_ref_dbm is not None:
                 input_level_payload = await self._apply_manual_input_reference(
                     emulator=emulator,
+                    plan=ce_plan,
                     config=config,
                     execution_id=context.test_execution.id,
                 )
@@ -2233,9 +2275,7 @@ class MeasureExecutor(IStepExecutor):
             # 但 4 层塌秩只适合单层) — 设直通、不 GO。注意直通稳态下 F64
             # 输出功率显示冻结 (07-03 实证), 判据以 DUT 侧吞吐为准。
             if config.f64_bypass_mode is not None:
-                if not channel_emulator_implements(
-                    emulator, "set_passthrough_mode"
-                ):
+                if not ce_plan.planned("set_passthrough_mode"):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
@@ -2248,14 +2288,14 @@ class MeasureExecutor(IStepExecutor):
                 #    就**不停播放直接进直通**且零留痕 —— 恰好造成下面注释说的那件事
                 #    (真因被掩盖成"直通建立失败")。cleanup 那处同形分支本片已补留痕,
                 #    这处是它的镜像站点, 不能只修一处。
-                if not channel_emulator_implements(emulator, "stop_emulation"):
+                if not ce_plan.planned("stop_emulation"):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
                             "f64_bypass_mode 已配置, 但 CE 驱动未声明实现 "
                             "stop_emulation — 无法确保直通前已停止播放, "
                             "不静默跳过。"
-                            + channel_emulator_rejection(emulator, "stop_emulation")
+                            + ce_plan.rejection("stop_emulation")
                         ),
                     )
                 # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
@@ -3761,14 +3801,15 @@ class MeasureExecutor(IStepExecutor):
         self,
         *,
         emulator: Any,
+        plan: Any,
         config: Any,
         execution_id: Any,
     ) -> Dict[str, Any]:
         """f64_input_ref_dbm 显式给定时的手动定标路径。
 
         直接 set 输入参考 (INP:LEV:AMP × 全输入) + 可选 crest, 然后读回
-        (measure_input) 进 payload 作调试反馈; 不跑 AUTOSET 闭环。CE 缺
-        能力 (mock / 非 F64) → skipped=True (与闭环的 capability-skip 语义
+        (measure_input) 进 payload 作调试反馈; 不跑 AUTOSET 闭环。冻结计划未包含
+        set_baseband_power (P2-59 ①: 判据是计划, 不是驱动探测) → skipped=True (与闭环的 capability-skip 语义
         一致, mock dry-run 不受影响; 真 F64 驱动必有这些方法)。下发被拒 →
         success=False, 由上层 strict 门 fail-loud。
         """
@@ -3786,9 +3827,7 @@ class MeasureExecutor(IStepExecutor):
             "readback": [],
             "failure_reason": None,
         }
-        if not channel_emulator_implements(
-            emulator, "set_baseband_power"
-        ) or (
+        if not plan.planned("set_baseband_power") or (
             crest is not None and not hasattr(emulator, "set_crest_factor")
         ):
             payload["skipped"] = True

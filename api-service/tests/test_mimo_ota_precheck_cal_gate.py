@@ -203,7 +203,17 @@ class _RealLikeChannelEmulator:
     (a mock CE = simulated measurement → cal moot → auto-skip). These tests are
     about the cal gate's logic, so CE must read as real. precheck only
     hasattr-guard-calls get_user_alignment_status / list_external_units, so a
-    bare instance is enough (they're skipped)."""
+    bare instance is enough (they're skipped).
+
+    P2-59 ①：MEASURE 在首次 CE I/O 前按驱动 manifest 冻结 / 对账执行计划，没有 manifest
+    的驱动不宣称任何加载模式（P2-57 fail-closed）→ 会在启动期被拒。这个替身要读成
+    「真实但什么都能装」，所以借 mock 的 manifest 声明、换个 adapter_id。"""
+
+    from app.hal.channel_emulator import MockChannelEmulator as _M
+
+    adapter_manifest = _M.adapter_manifest.model_copy(
+        update={"adapter_id": "real_like_channel_emulator", "model_name": "Real-like CE"}
+    )
 
 
 @pytest.fixture
@@ -308,6 +318,26 @@ def _make_cal_cert(overall_pass: bool) -> CalibrationCertificate:
     )
 
 
+def _refreeze_ce_plan(db, ctx):
+    """用例在 _build_context 之后改了 TestCase 配置：按真实写方形态重冻 CE 执行计划。
+    不重冻的话对账会把用例自己造的 engine_mode 变化判成漂移 —— 那正是它该判的（P2-59 ①）。"""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.channel_emulator_execution_plan import (
+        CE_PLAN_FREEZE_CONFIG_KEY,
+        freeze_channel_emulator_execution_plan,
+    )
+    from app.services.instrument_hal_service import get_hal_service
+
+    execution = ctx.test_execution
+    execution.config = {
+        key: value for key, value in execution.config.items() if key != CE_PLAN_FREEZE_CONFIG_KEY
+    }
+    flag_modified(execution, "config")
+    freeze_channel_emulator_execution_plan(db, get_hal_service(), execution)
+    db.commit()
+
+
 def _build_context(
     db,
     lab,
@@ -363,6 +393,27 @@ def _build_context(
         executed_by="pytest-cal-gate",
     )
     db.add(execution)
+    db.commit()
+    db.refresh(execution)
+    # P2-59 ①：MEASURE 在首次 CE I/O 前对账启动期冻结的执行计划（它引用 binding 冻结件的
+    # binding_digest）。真实写方（runner / commissioning）在 binding 之后用同一个服务函数冻，
+    # 端到端夹具照同一形态冻，走不到 CE 加载的用例不受影响。
+    from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY as _CE_BINDING_KEY
+    from app.services.channel_emulator_execution_plan import (
+        freeze_channel_emulator_execution_plan as _freeze_ce_plan,
+    )
+    from app.services.instrument_hal_service import get_hal_service as _hal_service
+
+    execution.config = {
+        **execution.config,
+        _CE_BINDING_KEY: {"binding_digest": "cal-gate-fixture-" + "0" * 47},
+    }
+    try:
+        _freeze_ce_plan(db, _hal_service(), execution)
+    except ValueError:
+        # 用例故意给了冻不出计划的配置（如退役资产）：真实路径会在启动期拒绝（P2-59 门守），
+        # 这里不冻，让用例观察 MEASURE 自己那道更早的门。
+        pass
     db.commit()
     db.refresh(execution)
 
@@ -1131,6 +1182,7 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
         "precheck_strict_dut": False,
     }
     db.commit()
+    _refreeze_ce_plan(db, ctx)
     _bind_unbound_mock_measurement(
         monkeypatch,
         ctx,
@@ -1189,6 +1241,7 @@ async def test_diagnostic_measure_rejects_legacy_unverified_certificate(
         configuration
     )
     db.commit()
+    _refreeze_ce_plan(db, ctx)
     _bind_unbound_mock_measurement(
         monkeypatch,
         ctx,

@@ -70,6 +70,9 @@ from app.services.base_station_adapter_profile import (
 from app.services.positioner_coordinate_profile import (
     freeze_execution_positioner_coordinate_profile,
 )
+from app.services.channel_emulator_execution_plan import (
+    freeze_execution_channel_emulator_plan,
+)
 from app.services.channel_emulator_binding import (
     freeze_execution_channel_emulator_binding,
 )
@@ -295,6 +298,19 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         db.rollback()
         raise CaseNotExecutable(
             f"信道仿真器 binding 无法冻结: {e}"
+        ) from e
+    try:
+        # P2-59 ①：执行计划紧跟 binding 冻结（它引用 binding_digest）；加载模式不被
+        # 将要用的驱动支持在这里就拒绝，不等到 MEASURE 期。
+        freeze_execution_channel_emulator_plan(
+            db,
+            get_hal_service(),
+            execution,
+        )
+    except Exception as e:  # noqa: BLE001 — 计划冻不住 = 用例与驱动不匹配，同样在排入后台前拒绝
+        db.rollback()
+        raise CaseNotExecutable(
+            f"信道仿真器执行计划无法冻结: {e}"
         ) from e
     try:
         freeze_execution_positioner_coordinate_profile(
