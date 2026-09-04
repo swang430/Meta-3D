@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
@@ -412,6 +413,79 @@ def test_frozen_channel_asset_rejects_executable_content_drift_before_remote(
     asset.payload = {"snapshots": [{"clusters": [{"delay_s": 0.25}]}]}
     with pytest.raises(ValueError, match="executable content"):
         module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
+
+
+def test_vendor_file_freeze_rejects_in_place_project_byte_replacement(
+    tmp_path, monkeypatch
+):
+    """A stable DB row/path cannot hide different bytes at the F64-visible path."""
+    from app.services import channel_emulator_execution_plan as plan_service
+    from app.services import smu_project_inventory as inventory_service
+    from app.services.mimo_ota import channel_asset_resolver
+
+    project = tmp_path / "scenario.smu"
+    original = b"[Channel Group 0]\nCenterFrequency=3549990000\n"
+    replacement = b"[Channel Group 0]\nCenterFrequency=3600000000\n"
+    project.write_bytes(original)
+    instrument_path = r"D:\SMU\scenario.smu"
+    connection_id = uuid4()
+    asset_id = uuid4()
+    asset = SimpleNamespace(
+        id=asset_id,
+        name="scenario",
+        source_type="vendor_file",
+        instrument_connection_id=connection_id,
+        associated_file_path=instrument_path,
+        center_frequency_hz=3_549_990_000.0,
+        payload={
+            "scd_config": {
+                "radio_technology": "nr5g",
+                "channel_kind": "nr_arfcn",
+                "band": "N78",
+                "arfcn": 636666,
+                "bandwidth_mhz": 100.0,
+                "model": "CDLC",
+                "scenario": "UMa",
+                "mimo": "4x4",
+                "polarization": "DP",
+                "version": 1,
+            },
+            "smu_project_truth": {
+                "schema_version": 1,
+                "instrument_path": instrument_path,
+                "sha256": hashlib.sha256(original).hexdigest(),
+                "size_bytes": len(original),
+                "primary_group": 0,
+                "center_frequencies_hz": {"0": 3_549_990_000},
+            },
+        },
+    )
+
+    def current_scan(_db):
+        return (
+            SimpleNamespace(id=connection_id),
+            inventory_service.scan_smu_projects(tmp_path, r"D:\SMU"),
+        )
+
+    monkeypatch.setattr(inventory_service, "_resolve_scan_context", current_scan)
+    resolved = SimpleNamespace(engine_mode="keysight_gcm", asset=asset)
+    monkeypatch.setattr(
+        channel_asset_resolver,
+        "resolve_channel_asset",
+        lambda *_args, **_kwargs: resolved,
+    )
+    frozen = plan_service.freeze_channel_asset_resolution(
+        object(), SimpleNamespace(channel_asset_id=asset_id)
+    )
+    plan_service.validate_resolved_channel_asset_against_freeze(
+        resolved, frozen, db=object()
+    )
+
+    project.write_bytes(replacement)
+    with pytest.raises(ValueError, match="actual bytes digest"):
+        plan_service.validate_resolved_channel_asset_against_freeze(
+            resolved, frozen, db=object()
+        )
 
 
 def test_freeze_load_request_digest_binds_exact_sparse_base_station_freeze(db):

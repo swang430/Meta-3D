@@ -315,6 +315,60 @@ def _resolve_scan_context(db: Session) -> tuple[InstrumentConnection, SMUProject
     return connection, scan_smu_projects(local_root, instrument_root)
 
 
+def verify_channel_asset_smu_project_bytes(db: Session, asset: ChannelAsset) -> str:
+    """Verify a vendor asset against the current bounded SMB byte scan.
+
+    The server-owned ``smu_project_truth`` is the frozen expected value, while
+    this function re-reads the read-only share that mirrors the exact F64 path.
+    A stable database row/path therefore cannot hide an in-place replacement.
+    """
+
+    from app.services.channel_asset_service import _has_verified_smu_project_truth
+
+    if getattr(asset, "source_type", None) != "vendor_file":
+        raise SMUProjectInventoryError("SMU project byte verification requires vendor_file")
+    if not _has_verified_smu_project_truth(
+        getattr(asset, "payload", None),
+        getattr(asset, "associated_file_path", None),
+        getattr(asset, "center_frequency_hz", None),
+    ):
+        raise SMUProjectInventoryError(
+            "vendor_file has no verified server-owned smu_project_truth"
+        )
+    connection_id = getattr(asset, "instrument_connection_id", None)
+    if connection_id is None:
+        raise SMUProjectInventoryError(
+            "vendor_file has no channelEmulator instrument connection"
+        )
+    connection, inventory = _resolve_scan_context(db)
+    if str(connection.id) != str(connection_id):
+        raise SMUProjectInventoryError(
+            "vendor_file instrument connection does not match the active scan binding"
+        )
+    asset_path = _normalise_windows_path(asset.associated_file_path)
+    matches = [
+        item
+        for item in inventory.items
+        if _normalise_windows_path(item.instrument_path) == asset_path
+    ]
+    if len(matches) != 1:
+        raise SMUProjectInventoryError(
+            "vendor_file path is missing or ambiguous in the current bounded SMB scan"
+        )
+    current = matches[0]
+    truth = asset.payload["smu_project_truth"]
+    expected_sha256 = str(truth["sha256"]).lower()
+    if current.sha256.lower() != expected_sha256:
+        raise SMUProjectInventoryError(
+            "vendor_file actual bytes digest does not match frozen smu_project_truth"
+        )
+    if current.size_bytes != truth["size_bytes"]:
+        raise SMUProjectInventoryError(
+            "vendor_file actual byte size does not match frozen smu_project_truth"
+        )
+    return current.sha256.lower()
+
+
 def _exact_nr_arfcn(center_frequency_hz: int) -> int | None:
     try:
         arfcn = freq_mhz_to_nr_arfcn(center_frequency_hz / 1e6)
