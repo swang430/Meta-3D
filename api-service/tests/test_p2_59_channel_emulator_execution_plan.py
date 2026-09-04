@@ -447,8 +447,9 @@ def test_measure_no_longer_queries_driver_capability_directly_and_reconciles_bef
     # 但不早于路损 / 证书等与 CE 无关的前置门（它们的拒绝不该被计划缺席顶掉）
     assert source.index("evaluate_path_loss_preflight(") < reconcile
     assert reconcile < source.index("plan=ce_plan,")
-    assert source.count("ce_plan.planned(") == 2
-    assert source.count("plan.planned(") == 3  # 两处直通前置 + 手动定标的 plan 参数
+    # 直通进入、前置停止、终态退出三项都必须由冻结计划声明。
+    assert source.count("ce_plan.planned(") == 3
+    assert source.count("plan.planned(") == 4  # 三处直通生命周期 + 手动定标参数
 
 
 def test_both_freeze_writers_freeze_the_plan_right_after_the_binding():

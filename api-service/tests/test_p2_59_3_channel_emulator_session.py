@@ -384,6 +384,11 @@ async def test_scope_safe_idle_and_release_use_the_exact_acquired_driver_after_f
         acquired.events.append("operation")
         outcome.mark_operation_result(True)
         instrument_hal_service._hal_service = reloaded_hal
+        # Production executors call get_hal_service() again inside the body.
+        # A forced reload must not redirect configuration/playback to the new
+        # instance while stop/release still target the acquired instance.
+        body_hal = instrument_hal_service.get_hal_service()
+        assert body_hal.drivers["channelEmulator"] is acquired
 
     assert acquired.events == ["acquire", "operation", "safe-idle", "release"]
     assert replacement.events == []
@@ -394,19 +399,35 @@ async def test_scope_safe_idle_and_release_use_the_exact_acquired_driver_after_f
     "raised",
     [None, RuntimeError("operation failed"), asyncio.CancelledError()],
 )
-async def test_bypass_pre_safe_idle_is_the_scope_owned_single_stop(
+async def test_bypass_terminal_clear_occurs_after_passthrough_on_every_exit(
     monkeypatch, raised
 ):
-    """Measure's bypass pre-stop is reused as the session terminal SAFE_IDLE."""
+    """Pre-bypass GOS cannot stand in for terminal SAFE_IDLE after STATIC."""
     from app.services import channel_emulator_execution_session as module
 
-    driver = _RealCe()
+    class PassthroughCe(_RealCe):
+        async def set_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-on")
+            return True
+
+        async def clear_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-clear")
+            return True
+
+    driver = PassthroughCe()
     hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
     _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
 
     async def run():
         async with module.channel_emulator_execution_scope(
-            None,
+            db,
             SimpleNamespace(id="execution-1", config={}),
             purpose="bypass:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
@@ -416,6 +437,8 @@ async def test_bypass_pre_safe_idle_is_the_scope_owned_single_stop(
         ) as outcome:
             driver.events.append("bypass-pre-stop")
             assert await module.ensure_channel_emulator_safe_idle() is True
+            module.require_channel_emulator_passthrough_clear()
+            assert await driver.set_passthrough_mode() is True
             if raised is not None:
                 raise raised
             outcome.mark_operation_result(True)
@@ -430,8 +453,12 @@ async def test_bypass_pre_safe_idle_is_the_scope_owned_single_stop(
         "acquire",
         "bypass-pre-stop",
         "safe-idle",
+        "passthrough-on",
+        "passthrough-clear",
         "release",
     ]
+    assert terminal[0]["safe_idle_action"] == "clear_passthrough_mode"
+    assert terminal[0]["safe_idle_confirmed"] is True
 
 
 @pytest.mark.asyncio
@@ -900,6 +927,57 @@ async def test_scope_safe_idle_rejection_fails_loud_but_still_releases(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_driver_cancelled_error_is_safe_idle_failure_not_caller_cancellation(
+    monkeypatch,
+):
+    """A driver may raise CancelledError internally without cancelling this task."""
+
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+
+    async def internally_cancelled_stop() -> bool:
+        driver.events.append("safe-idle")
+        raise asyncio.CancelledError("driver operation cancelled internally")
+
+    driver.stop_emulation = internally_cancelled_stop
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
+
+    with pytest.raises(
+        module.ChannelEmulatorExecutionSessionError,
+        match="cancelled internally",
+    ):
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            driver.events.append("operation")
+            outcome.mark_operation_result(True)
+
+    assert asyncio.current_task() is not None
+    assert asyncio.current_task().cancelling() == 0
+    assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+    assert terminal[0]["terminal_state"] == "failed"
+    assert terminal[0]["safe_idle_confirmed"] is False
+    assert terminal[0]["safe_idle_error_type"] == (
+        "ChannelEmulatorExecutionSessionError"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation_error",
     [RuntimeError("operation failed"), asyncio.CancelledError()],
@@ -1080,6 +1158,7 @@ def _terminal_evidence(
         "lease_id": "lease-1",
         "instrument_id": "ce-runtime",
         "remote_acquired_confirmed": True if execution_mode == "real" else None,
+        "safe_idle_action": "stop_emulation",
         "safe_idle_confirmed": terminal_state == "completed",
         "transport_released_confirmed": True if execution_mode == "real" else None,
         "operation_succeeded": terminal_state == "completed",
@@ -1171,6 +1250,34 @@ def test_p2_66_rejects_semantically_malformed_completed_ce_terminal_even_with_fr
     assert outcome.compatibility_classification == "invalid"
     assert outcome.formal_eligible is False
     assert any("terminal evidence" in reason for reason in outcome.reasons)
+
+
+def test_p2_66_rejects_plan_derived_from_a_different_manifest():
+    """Matching binding_digest is not proof that the plan came from that binding."""
+
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    binding_driver = _RealCe()
+
+    class DifferentAdapter(_RealCe):
+        adapter_manifest = _RealCe.adapter_manifest.model_copy(
+            update={"adapter_id": "different_adapter"}
+        )
+
+    binding = _frozen_binding_for_driver(binding_driver, execution_mode="real")
+    foreign_plan = _frozen_plan(DifferentAdapter())
+    terminal = _terminal_evidence(binding, foreign_plan, execution_mode="real")
+
+    outcome = project_execution_evidence_outcome(
+        _execution_with_ce_evidence(binding, foreign_plan, terminal)
+    )
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any(
+        "plan" in reason and "binding manifest" in reason
+        for reason in outcome.reasons
+    )
 
 
 def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():

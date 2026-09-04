@@ -47,6 +47,7 @@ class _ChannelEmulatorSafeIdleState:
     """Task-local ownership of the one SAFE_IDLE attempt for this session."""
 
     driver: Any
+    action: Literal["stop_emulation", "clear_passthrough_mode"] = "stop_emulation"
     attempted: bool = False
     confirmed: bool = False
     error: BaseException | None = None
@@ -88,6 +89,7 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     lease_id: NonEmptyString | None
     instrument_id: NonEmptyString | None
     remote_acquired_confirmed: bool | None
+    safe_idle_action: Literal["stop_emulation", "clear_passthrough_mode"]
     safe_idle_confirmed: bool
     transport_released_confirmed: bool | None
     operation_succeeded: bool | None
@@ -162,36 +164,73 @@ async def ensure_channel_emulator_safe_idle() -> bool:
             raise state.error
         return state.confirmed
     state.attempted = True
-    # Driver capability was already resolved from the frozen manifest before
+    # Driver capabilities were already resolved from the frozen manifest before
     # Remote acquire; direct interface access avoids inventing a second
     # ``hasattr/getattr`` capability truth here.
-    stop = state.driver.stop_emulation
-    if not inspect.iscoroutinefunction(stop):
+    if state.action == "stop_emulation":
+        safe_idle = state.driver.stop_emulation
+    else:
+        safe_idle = state.driver.clear_passthrough_mode
+    if not inspect.iscoroutinefunction(safe_idle):
         state.error = ChannelEmulatorExecutionSessionError(
-            "channelEmulator safe idle contract requires async stop_emulation"
+            "channelEmulator safe idle contract requires async " f"{state.action}"
         )
         raise state.error
-    stop_outcome = await await_completion_despite_cancellation(stop())
+    stop_outcome = await await_completion_despite_cancellation(safe_idle())
     error = stop_outcome.error
+    caller_cancellation = stop_outcome.delayed_cancellation
+    current_task = asyncio.current_task()
+    if (
+        caller_cancellation is None
+        and current_task is not None
+        and current_task.cancelling()
+    ):
+        caller_cancellation = asyncio.CancelledError(
+            "channelEmulator execution task was cancelled during SAFE_IDLE"
+        )
+    if isinstance(error, asyncio.CancelledError):
+        inner_cancel = error
+        error = ChannelEmulatorExecutionSessionError(
+            "channelEmulator safe idle driver operation cancelled internally"
+        )
+        error.__cause__ = inner_cancel
     if error is None and stop_outcome.value is not True:
         error = ChannelEmulatorExecutionSessionError(
             "channelEmulator safe idle was not confirmed"
         )
     if error is not None:
         state.error = error
-        if stop_outcome.delayed_cancellation is not None:
+        if caller_cancellation is not None:
             _attach_secondary_failure(
-                stop_outcome.delayed_cancellation,
+                caller_cancellation,
                 attribute="channel_emulator_safe_idle_error",
                 stage="SAFE_IDLE",
                 secondary=error,
             )
-            raise stop_outcome.delayed_cancellation
+            raise caller_cancellation
         raise error
     state.confirmed = True
-    if stop_outcome.delayed_cancellation is not None:
-        raise stop_outcome.delayed_cancellation
+    if caller_cancellation is not None:
+        raise caller_cancellation
     return True
+
+
+def require_channel_emulator_passthrough_clear() -> None:
+    """Arm the post-STATIC terminal action after the pre-bypass stop succeeded."""
+
+    state = _channel_emulator_safe_idle_owner.get()
+    if state is None:
+        raise ChannelEmulatorExecutionSessionError(
+            "channelEmulator passthrough has no execution-session owner"
+        )
+    if state.action != "stop_emulation" or state.confirmed is not True:
+        raise ChannelEmulatorExecutionSessionError(
+            "channelEmulator passthrough requires confirmed pre-stop"
+        )
+    state.action = "clear_passthrough_mode"
+    state.attempted = False
+    state.confirmed = False
+    state.error = None
 
 
 def _attach_secondary_failure(
@@ -394,7 +433,11 @@ async def channel_emulator_execution_scope(
         prepare_locked_hal=prepare_locked_hal,
     )
     operation_error: BaseException | None = None
-    from app.services.instrument_hal_service import scoped_hal_service_view
+    from app.services.instrument_hal_service import (
+        get_hal_service,
+        pinned_hal_service_view,
+        scoped_hal_service_view,
+    )
 
     try:
         try:
@@ -423,48 +466,59 @@ async def channel_emulator_execution_scope(
                         raise ChannelEmulatorExecutionSessionError(
                             "channelEmulator lease did not retain its acquired driver"
                         )
-                    safe_idle_state = _ChannelEmulatorSafeIdleState(acquired_driver)
-                    ownership_token = _channel_emulator_safe_idle_owner.set(
-                        safe_idle_state
-                    )
-                    try:
-                        yield scoped_outcome
-                    except BaseException as exc:
-                        operation_error = exc
-                        raise
-                    finally:
+                    # The outer provisional view intentionally follows reloads
+                    # until the lease wins the lock.  From this point onward,
+                    # pin the exact successfully acquired HAL/driver set so body
+                    # code cannot splice a replacement into this execution.
+                    leased_hal = get_hal_service()
+                    with pinned_hal_service_view(
+                        base_hal=leased_hal,
+                        driver_overrides={
+                            CHANNEL_EMULATOR_CATEGORY_KEY: acquired_driver
+                        },
+                    ):
+                        safe_idle_state = _ChannelEmulatorSafeIdleState(acquired_driver)
+                        ownership_token = _channel_emulator_safe_idle_owner.set(
+                            safe_idle_state
+                        )
                         try:
-                            parsed_plan = plan_from_frozen_payload(plan)
-                            if not parsed_plan.planned("stop_emulation"):
-                                raise ChannelEmulatorExecutionSessionError(
-                                    parsed_plan.rejection("stop_emulation")
-                                )
-                            if safe_idle_state.attempted:
-                                if safe_idle_state.error is not None:
-                                    safe_idle_error_type = type(
-                                        safe_idle_state.error
-                                    ).__name__
-                                    if operation_error is None:
-                                        raise safe_idle_state.error
-                            else:
-                                await ensure_channel_emulator_safe_idle()
-                        except asyncio.CancelledError:
+                            yield scoped_outcome
+                        except BaseException as exc:
+                            operation_error = exc
                             raise
-                        except BaseException as safe_idle_error:
-                            safe_idle_error_type = type(safe_idle_error).__name__
-                            if operation_error is None:
-                                raise
-                            _attach_secondary_failure(
-                                operation_error,
-                                attribute="channel_emulator_safe_idle_error",
-                                stage="SAFE_IDLE",
-                                secondary=safe_idle_error,
-                            )
-                            logger.exception(
-                                "channelEmulator safe idle failed while preserving operation error"
-                            )
                         finally:
-                            _channel_emulator_safe_idle_owner.reset(ownership_token)
+                            try:
+                                parsed_plan = plan_from_frozen_payload(plan)
+                                if not parsed_plan.planned(safe_idle_state.action):
+                                    raise ChannelEmulatorExecutionSessionError(
+                                        parsed_plan.rejection(safe_idle_state.action)
+                                    )
+                                if safe_idle_state.attempted:
+                                    if safe_idle_state.error is not None:
+                                        safe_idle_error_type = type(
+                                            safe_idle_state.error
+                                        ).__name__
+                                        if operation_error is None:
+                                            raise safe_idle_state.error
+                                else:
+                                    await ensure_channel_emulator_safe_idle()
+                            except asyncio.CancelledError:
+                                raise
+                            except BaseException as safe_idle_error:
+                                safe_idle_error_type = type(safe_idle_error).__name__
+                                if operation_error is None:
+                                    raise
+                                _attach_secondary_failure(
+                                    operation_error,
+                                    attribute="channel_emulator_safe_idle_error",
+                                    stage="SAFE_IDLE",
+                                    secondary=safe_idle_error,
+                                )
+                                logger.exception(
+                                    "channelEmulator safe idle failed while preserving operation error"
+                                )
+                            finally:
+                                _channel_emulator_safe_idle_owner.reset(ownership_token)
         except BaseException as exc:
             scope_error = exc
             raise
@@ -520,6 +574,7 @@ async def channel_emulator_execution_scope(
                         else None
                     )
                 ),
+                "safe_idle_action": safe_idle_state.action,
                 "safe_idle_confirmed": safe_idle_state.confirmed,
                 "transport_released_confirmed": (
                     None

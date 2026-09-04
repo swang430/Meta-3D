@@ -26,6 +26,10 @@ from app.hal.base_station_mac_profile import (
     CMW500_LTE_PROFILE_SOURCE,
     UXM_NR_PROFILE_SOURCE,
 )
+from app.hal.channel_emulator_execution_plan import (
+    resolve_channel_emulator_execution_plan,
+)
+from app.hal.channel_emulator_manifest import ChannelEmulatorManifest
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
@@ -43,6 +47,7 @@ from app.services.channel_emulator_binding import (
 from app.services.channel_emulator_execution_plan import (
     CE_PLAN_FREEZE_CONFIG_KEY,
     validate_frozen_channel_emulator_execution_plan,
+    verify_frozen_channel_emulator_execution_plan,
 )
 from app.services.channel_emulator_execution_session import (
     CE_TERMINAL_EVIDENCE_CONFIG_KEY,
@@ -123,6 +128,28 @@ def _channel_emulator_terminal_projection(
         return "invalid", str(exc)
     if validated_plan.get("binding_digest") != validated_binding.get("binding_digest"):
         return "invalid", "channelEmulator plan and binding digest do not match"
+    try:
+        resolved_binding = validated_binding["resolved_binding"]
+        manifest = ChannelEmulatorManifest.model_validate(
+            resolved_binding["manifest"]
+        )
+        authoritative_plan = resolve_channel_emulator_execution_plan(
+            manifest=manifest,
+            driver_source=validated_plan["driver_source"],
+            requested_load_mode=validated_plan["requested_load_mode"],
+            binding_digest=validated_binding["binding_digest"],
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as exc:
+        return "invalid", f"channelEmulator binding manifest cannot derive plan: {exc}"
+    plan_error = verify_frozen_channel_emulator_execution_plan(
+        validated_plan,
+        authoritative_plan,
+    )
+    if plan_error is not None:
+        return (
+            "invalid",
+            "channelEmulator plan does not match binding manifest: " + plan_error,
+        )
     if evidence is None and pipeline_status != "completed":
         return None, None
     if not isinstance(evidence, list) or not evidence:

@@ -84,6 +84,7 @@ from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.channel_emulator_execution_session import (
     ensure_channel_emulator_safe_idle,
+    require_channel_emulator_passthrough_clear,
 )
 
 logger = logging.getLogger(__name__)
@@ -2243,6 +2244,16 @@ class MeasureExecutor(IStepExecutor):
                             + ce_plan.rejection("stop_emulation")
                         ),
                     )
+                if not ce_plan.planned("clear_passthrough_mode"):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "f64_bypass_mode 已配置, 但 CE 驱动未声明实现 "
+                            "clear_passthrough_mode — 无法确保直通测量结束后"
+                            "退出 STATIC，不静默跳过。"
+                            + ce_plan.rejection("clear_passthrough_mode")
+                        ),
+                    )
                 # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
                 # 时继续写 STATIC 会把真因掩盖成"直通建立失败"
                 if not await ensure_channel_emulator_safe_idle():
@@ -2261,6 +2272,10 @@ class MeasureExecutor(IStepExecutor):
                     required_evidence_level=EvidenceLevel.APPLIED,
                 )
                 context.db.commit()
+                # GOS 只是进入 STATIC 前置条件；从下一条可能改变输出的写操作
+                # 开始，session 终态所有权必须改为 clear_passthrough_mode。
+                # 先 arm 再写，确保设备拒绝/异常/取消也会尝试撤销可能已部分生效的 STATIC。
+                require_channel_emulator_passthrough_clear()
                 with capture_scpi_exchanges() as f64_state_exchanges:
                     _bp_ok = await emulator.set_passthrough_mode(
                         mode=config.f64_bypass_mode

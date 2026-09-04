@@ -105,7 +105,7 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 `channel_emulator_execution_scope(plan, binding, hal, execution)`。scope 内部继续复用
 `instrument_test_lease` 的同一把 HAL 协调锁与 Remote/Local 交接，不另造第二把锁，也不改手工 CE
 端点和诊断序列。阶段固定为：锁内严格路损资格纯检查 → 冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 →
-BaseStation Remote acquire → CE Remote acquire（最后取得）→ 业务 yield → `stop_emulation` safe idle →
+BaseStation Remote acquire → CE Remote acquire（最后取得）→ 业务 yield → terminal safe idle →
 Local release → terminal evidence。safe idle 位于租约 yield 的
 `finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
 结果，不是预期值。MEASURE 既有 `cleanup_chamber_instruments` 在 scope 持有 CE safe-idle 所有权时只收尾
@@ -115,7 +115,9 @@ BaseStation 与转台，不再第二次调用 `stop_emulation`；离开统一 sc
 scope 组合现有 BaseStation `validate_before_remote` 与 CE 校验器，并原样转发前者的
 `validation_identity` / `lease_audit_context`，避免破坏嵌套租约和 P2-67 公共审计。CE 校验器在
 `instrument_test_lease` 已持协调锁、但尚未 clear cache / acquire Remote 的位置执行；因此任何 binding、
-plan、驱动或连接漂移均在首个 CE I/O 前 fail-loud。
+plan、驱动或连接漂移均在首个 CE I/O 前 fail-loud。租约赢锁并完成 acquire 后，scope 把该刻的
+完整 HAL 视图与实际 CE driver 固定到当前 execution task；业务体后续再次读取 `get_hal_service()`
+也不会随 force reload 切到 replacement，模拟 driver 同样不会被新加载的真实 CE 覆盖。
 
 严格路损门复用 MEASURE 的同一纯 evaluator，并在同一协调锁内、任何 BaseStation/CE/转台 I/O
 之前执行；MEASURE 内保留防御性复核及既有 `path_loss_application` 失败载荷。顺序恒为“路损门 →
@@ -141,11 +143,13 @@ digest 的记录；同一 `session_id` 幂等复用，冲突内容拒绝覆盖�
 safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些冻结/终态记录，不查 current HAL、目录、
 LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extra=forbid` 的不可变模型完整
 解析，再核 canonical digest；非法 execution mode、空成功态 session/lease/instrument 身份、成功位与
-错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。
+错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。P2-66 还必须从 binding 的
+冻结 `resolved_binding.manifest` 与 plan 冻结的 source/load-mode/binding-digest 纯重建权威计划，再用
+共同 verifier 对账；相同 binding digest 不能让另一 adapter 的合法 plan 混入。
 
 | 业务方向 | safe idle | release | terminal state | 正式性 |
 |---|---|---|---|---|
-| 成功 | 必须 `stop_emulation is True` | 真机必须确认；模拟为 `not_applicable` | `completed` | 仅真机完整证据可正式 |
+| 成功 | 普通链必须 `stop_emulation is True`；直通链必须在最后一次 STATIC 写之后 `clear_passthrough_mode is True` | 真机必须确认；模拟为 `not_applicable` | `completed` | 仅真机完整证据可正式 |
 | 设备拒绝/业务失败 | 仍执行 | 仍执行 | `failed` | 不正式 |
 | 异常 | 仍执行；失败与原异常并列留痕 | 仍执行 | `failed` | 不正式 |
 | 取消 | 仍执行；不得因取消跳过 | 仍执行 | `cancelled` | 不正式 |
@@ -154,8 +158,10 @@ LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extr
 只延迟传播 `CancelledError`，不得用 `shield` 后立即进入下一阶段。SAFE_IDLE 与 release 始终使用租约
 进入时实际 acquire 的同一 driver 引用，HAL force reload 不能把新旧实例拼成一条完整生命周期。
 
-safe idle 只调用计划声明的既有 `stop_emulation`；计划未声明、方法缺失、返回 False 或抛异常都不能写成
-confirmed。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
+safe idle 只调用计划声明的既有动作：普通链为 `stop_emulation`；直通链前置 stop 后进入 STATIC，
+终态改用既有 `clear_passthrough_mode`，并把 action 写入 terminal，前置 stop 不能冒充终态确认。计划未声明、
+方法缺失、返回 False 或抛异常都不能写成 confirmed。驱动协程自身抛 `CancelledError` 但调用 task 未被
+取消时按 safe-idle failed 记录，不能伪装成操作员取消。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
 evidence 落库失败，成功链必须失败；异常/取消链先回滚业务事务，再用同一会话的新事务追加 terminal，
 避免 terminal 的 commit 顺带提交半成品测量。落库自身再失败时仍保留原异常/取消，但把落库失败作为明确
 并列失败附在原异常上，不能只写日志后静默丢失。
