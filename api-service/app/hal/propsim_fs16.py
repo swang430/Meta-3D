@@ -277,6 +277,36 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
         return None
 
+    def project_channel_operation_evidence(
+        self,
+        *,
+        operation: str,
+        requested: Dict[str, Any],
+        operation_succeeded: bool | None,
+        exchanges: tuple[Any, ...],
+        execution_mode: str,
+    ) -> Dict[str, Any]:
+        """FS16 has no implemented execution operation evidence in this slice."""
+
+        del operation, operation_succeeded, exchanges, execution_mode
+        return {
+            "fields": [
+                {
+                    "field": str(name),
+                    "requested": value,
+                    "applied": None,
+                    "applied_present": False,
+                    "status": "unavailable",
+                    "provenance": "unavailable",
+                    "exchange_ids": [],
+                    "source_reference": None,
+                }
+                for name, value in requested.items()
+            ],
+            "exchange_ids": [],
+            "error_queue_exchange_ids": [],
+        }
+
     def get_loaded_emulation_file(self) -> Optional[str]:
         return None
 

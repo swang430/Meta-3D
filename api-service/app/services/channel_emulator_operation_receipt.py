@@ -7,7 +7,14 @@ existing authoritative readback or runtime-state source may confirm a field.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Mapping
+import asyncio
+import inspect
+import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Awaitable, Callable, Iterator, Literal, Mapping
+from uuid import uuid4
 
 from pydantic import (
     BaseModel,
@@ -21,6 +28,10 @@ from pydantic import (
 
 from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator_manifest import CHANNEL_EMULATOR_OPERATIONS
+from app.hal.scpi_evidence import ScpiExchangeRef, capture_scpi_exchanges
+
+
+logger = logging.getLogger(__name__)
 
 
 CE_OPERATION_RECEIPTS_CONFIG_KEY = "channel_emulator_operation_receipts"
@@ -69,6 +80,83 @@ _CONFIRMING_PROVENANCE = frozenset(
 
 class ChannelEmulatorOperationReceiptError(RuntimeError):
     """A receipt cannot be trusted or appended to its execution."""
+
+
+@dataclass
+class ChannelEmulatorOperationRecorderOwner:
+    """Task-local immutable execution identity plus append serialization."""
+
+    db: Any
+    execution_pk: Any
+    execution_id: str
+    session_id: str
+    operation_scope: str
+    measurement_attempt_id: str | None
+    binding_digest: str
+    binding_freeze_digest: str
+    plan_digest: str
+    asset_digest: str | None
+    lease_id: str
+    instrument_id: str
+    adapter_id: str
+    execution_mode: Literal["real", "simulated"]
+    plan: Any
+    driver: Any
+    next_sequence: int = 0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        for name in (
+            "execution_id",
+            "session_id",
+            "operation_scope",
+            "binding_digest",
+            "binding_freeze_digest",
+            "plan_digest",
+            "lease_id",
+            "instrument_id",
+            "adapter_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ChannelEmulatorOperationReceiptError(
+                    f"channelEmulator recorder {name} must be non-empty"
+                )
+        if self.execution_mode not in {"real", "simulated"}:
+            raise ChannelEmulatorOperationReceiptError(
+                "channelEmulator recorder execution mode is invalid"
+            )
+
+
+_channel_emulator_operation_recorder_owner: ContextVar[
+    ChannelEmulatorOperationRecorderOwner | None
+] = ContextVar("channel_emulator_operation_recorder_owner", default=None)
+
+
+def current_channel_emulator_operation_recorder_owner(
+) -> ChannelEmulatorOperationRecorderOwner | None:
+    """Return the immutable owner only while the execution scope is active."""
+
+    return _channel_emulator_operation_recorder_owner.get()
+
+
+@contextmanager
+def channel_emulator_operation_recorder_scope(
+    owner: ChannelEmulatorOperationRecorderOwner,
+) -> Iterator[ChannelEmulatorOperationRecorderOwner]:
+    """Expose one execution-owned recorder only to this task and its children."""
+
+    if not isinstance(owner, ChannelEmulatorOperationRecorderOwner):
+        raise TypeError("channelEmulator recorder owner has invalid type")
+    if _channel_emulator_operation_recorder_owner.get() is not None:
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator recorder scope cannot be nested"
+        )
+    token = _channel_emulator_operation_recorder_owner.set(owner)
+    try:
+        yield owner
+    finally:
+        _channel_emulator_operation_recorder_owner.reset(token)
 
 
 class FrozenChannelOperationField(BaseModel):
@@ -321,3 +409,365 @@ def persist_channel_emulator_operation_receipt(
     }
     flag_modified(locked, "config")
     db.commit()
+
+
+def _requested_fields(
+    requested: Mapping[str, Any],
+    *,
+    status: ChannelOperationFieldStatus,
+    provenance: ChannelOperationProvenance,
+) -> list[dict[str, Any]]:
+    if not requested:
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator operation requested fields must be non-empty"
+        )
+    return [
+        {
+            "field": str(name),
+            "requested": value,
+            "applied": None,
+            "applied_present": False,
+            "status": status,
+            "provenance": provenance,
+            "exchange_ids": [],
+            "source_reference": None,
+        }
+        for name, value in requested.items()
+    ]
+
+
+def _operation_is_planned(owner: ChannelEmulatorOperationRecorderOwner, operation: str) -> bool:
+    if operation == "load_channel":
+        planned = getattr(owner.plan, "load_mode_planned", None)
+    elif operation == "transport_release":
+        planned = True
+    else:
+        planned_method = getattr(owner.plan, "planned", None)
+        if not callable(planned_method):
+            raise ChannelEmulatorOperationReceiptError(
+                "channelEmulator recorder plan has no planned-operation contract"
+            )
+        planned = planned_method(operation)
+    if type(planned) is not bool:
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator recorder plan returned a non-boolean decision"
+        )
+    return planned
+
+
+def _operation_rejection(owner: ChannelEmulatorOperationRecorderOwner, operation: str) -> str:
+    if operation == "load_channel":
+        reason = getattr(owner.plan, "load_mode_reason", None)
+        if isinstance(reason, str) and reason.strip():
+            return reason
+        return "requested channel load mode is unavailable"
+    rejection = getattr(owner.plan, "rejection", None)
+    if callable(rejection):
+        reason = rejection(operation)
+        if isinstance(reason, str) and reason.strip():
+            return reason
+    return f"channelEmulator operation {operation} is unavailable"
+
+
+def _validate_exchange_identity(
+    owner: ChannelEmulatorOperationRecorderOwner,
+    exchanges: list[ScpiExchangeRef],
+) -> None:
+    if not exchanges:
+        return
+    capture_ids = {item.capture_id for item in exchanges}
+    execution_ids = {item.execution_id for item in exchanges}
+    instrument_ids = {item.instrument_id for item in exchanges}
+    if (
+        len(capture_ids) != 1
+        or execution_ids != {owner.execution_id}
+        or instrument_ids != {owner.instrument_id}
+    ):
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator operation exchange identity does not match the frozen execution"
+        )
+
+
+def _project_operation_evidence(
+    owner: ChannelEmulatorOperationRecorderOwner,
+    *,
+    operation: str,
+    requested: Mapping[str, Any],
+    operation_succeeded: bool | None,
+    exchanges: list[ScpiExchangeRef],
+) -> dict[str, Any]:
+    projector = getattr(owner.driver, "project_channel_operation_evidence", None)
+    if not callable(projector) or inspect.iscoroutinefunction(projector):
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator driver has no synchronous evidence projection contract"
+        )
+    projected = projector(
+        operation=operation,
+        requested=dict(requested),
+        operation_succeeded=operation_succeeded,
+        exchanges=tuple(exchanges),
+        execution_mode=owner.execution_mode,
+    )
+    if not isinstance(projected, Mapping):
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator driver evidence projection is malformed"
+        )
+    fields = projected.get("fields")
+    exchange_ids = projected.get("exchange_ids", [])
+    error_queue_exchange_ids = projected.get("error_queue_exchange_ids", [])
+    if not isinstance(fields, (list, tuple)) or not fields:
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator driver evidence projection has no fields"
+        )
+    if not isinstance(exchange_ids, (list, tuple)) or not isinstance(
+        error_queue_exchange_ids, (list, tuple)
+    ):
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator driver evidence projection exchange indexes are malformed"
+        )
+    captured_ids = {item.exchange_id for item in exchanges}
+    if not set(exchange_ids).issubset(captured_ids) or not set(
+        error_queue_exchange_ids
+    ).issubset(captured_ids):
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator driver evidence projection references a foreign exchange"
+        )
+    return {
+        "fields": [dict(item) for item in fields],
+        "exchange_ids": list(exchange_ids),
+        "error_queue_exchange_ids": list(error_queue_exchange_ids),
+    }
+
+
+def _receipt_payload(
+    owner: ChannelEmulatorOperationRecorderOwner,
+    *,
+    sequence: int,
+    phase: ChannelOperationPhase,
+    operation: str,
+    invocation_id: str,
+    terminal_state: ChannelOperationTerminalState,
+    operation_succeeded: bool | None,
+    evidence: Mapping[str, Any],
+    error_type: str | None,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": 1,
+        "receipt_id": uuid4().hex,
+        "session_id": owner.session_id,
+        "operation_scope": owner.operation_scope,
+        "execution_id": owner.execution_id,
+        "measurement_attempt_id": owner.measurement_attempt_id,
+        "binding_digest": owner.binding_digest,
+        "binding_freeze_digest": owner.binding_freeze_digest,
+        "plan_digest": owner.plan_digest,
+        "asset_digest": owner.asset_digest,
+        "lease_id": owner.lease_id,
+        "instrument_id": owner.instrument_id,
+        "adapter_id": owner.adapter_id,
+        "execution_mode": owner.execution_mode,
+        "sequence": sequence,
+        "phase": phase,
+        "operation": operation,
+        "invocation_id": invocation_id,
+        "terminal_state": terminal_state,
+        "operation_succeeded": operation_succeeded,
+        "simulated": owner.execution_mode == "simulated",
+        "fields": list(evidence["fields"]),
+        "exchange_ids": list(evidence.get("exchange_ids", [])),
+        "error_queue_exchange_ids": list(
+            evidence.get("error_queue_exchange_ids", [])
+        ),
+        "error_type": error_type,
+    }
+    return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def _persist_recorded_receipt(
+    owner: ChannelEmulatorOperationRecorderOwner,
+    receipt: dict[str, Any],
+    *,
+    primary_error: BaseException | None,
+) -> None:
+    if primary_error is not None:
+        rollback = getattr(owner.db, "rollback", None)
+        if callable(rollback):
+            rollback()
+    try:
+        persist_channel_emulator_operation_receipt(
+            owner.db, owner.execution_pk, receipt
+        )
+    except BaseException as persistence_error:
+        if primary_error is None:
+            raise
+        setattr(
+            primary_error,
+            "channel_emulator_receipt_persistence_error",
+            persistence_error,
+        )
+        primary_error.add_note(
+            "channelEmulator operation receipt persistence also failed: "
+            f"{type(persistence_error).__name__}: {persistence_error}"
+        )
+        logger.exception(
+            "channelEmulator operation receipt persistence failed while preserving operation error"
+        )
+
+
+async def record_channel_emulator_operation(
+    *,
+    phase: ChannelOperationPhase,
+    operation: str,
+    requested: Mapping[str, Any],
+    invoke: Callable[[], Awaitable[bool]],
+) -> bool:
+    """Invoke one planned CE operation and append its immutable evidence receipt."""
+
+    owner = _channel_emulator_operation_recorder_owner.get()
+    if owner is None:
+        raise ChannelEmulatorOperationReceiptError(
+            "channelEmulator operation has no execution-session owner"
+        )
+    if operation not in _RECEIPT_OPERATIONS:
+        raise ChannelEmulatorOperationReceiptError(
+            f"unknown channelEmulator receipt operation: {operation}"
+        )
+    if not isinstance(requested, Mapping):
+        raise TypeError("channelEmulator operation requested values must be a mapping")
+    if not callable(invoke):
+        raise TypeError("channelEmulator operation invoke must be callable")
+
+    async with owner.lock:
+        sequence = owner.next_sequence
+        invocation_id = uuid4().hex
+        if not _operation_is_planned(owner, operation):
+            reason = _operation_rejection(owner, operation)
+            evidence = {
+                "fields": _requested_fields(
+                    requested, status="unavailable", provenance="unavailable"
+                ),
+                "exchange_ids": [],
+                "error_queue_exchange_ids": [],
+            }
+            receipt = _receipt_payload(
+                owner,
+                sequence=sequence,
+                phase=phase,
+                operation=operation,
+                invocation_id=invocation_id,
+                terminal_state="rejected",
+                operation_succeeded=False,
+                evidence=evidence,
+                error_type=None,
+            )
+            _persist_recorded_receipt(owner, receipt, primary_error=None)
+            owner.next_sequence += 1
+            raise ChannelEmulatorOperationReceiptError(reason)
+
+        operation_error: BaseException | None = None
+        result: bool | None = None
+        with capture_scpi_exchanges() as exchanges:
+            try:
+                result = await invoke()
+                if type(result) is not bool:
+                    raise TypeError(
+                        "channelEmulator operation must return a boolean result"
+                    )
+            except BaseException as exc:
+                operation_error = exc
+
+        identity_error: ChannelEmulatorOperationReceiptError | None = None
+        try:
+            _validate_exchange_identity(owner, exchanges)
+        except ChannelEmulatorOperationReceiptError as exc:
+            identity_error = exc
+            if operation_error is None:
+                operation_error = exc
+
+        evidence_error: ChannelEmulatorOperationReceiptError | None = None
+        if identity_error is not None:
+            evidence = {
+                "fields": _requested_fields(
+                    requested,
+                    status="unknown",
+                    provenance=(
+                        "simulated"
+                        if owner.execution_mode == "simulated"
+                        else "command_error_queue"
+                    ),
+                ),
+                "exchange_ids": [],
+                "error_queue_exchange_ids": [],
+            }
+        else:
+            try:
+                evidence = _project_operation_evidence(
+                    owner,
+                    operation=operation,
+                    requested=requested,
+                    operation_succeeded=(
+                        result if operation_error is None else None
+                    ),
+                    exchanges=exchanges,
+                )
+            except ChannelEmulatorOperationReceiptError as exc:
+                evidence_error = exc
+                if operation_error is None:
+                    operation_error = exc
+                evidence = {
+                    "fields": _requested_fields(
+                        requested,
+                        status="unknown",
+                        provenance=(
+                            "simulated"
+                            if owner.execution_mode == "simulated"
+                            else "command_error_queue"
+                        ),
+                    ),
+                    "exchange_ids": [],
+                    "error_queue_exchange_ids": [],
+                }
+
+        if isinstance(operation_error, asyncio.CancelledError):
+            terminal_state: ChannelOperationTerminalState = "cancelled"
+            operation_succeeded = None
+            error_type = "CancelledError"
+        elif operation_error is not None:
+            terminal_state = "failed"
+            operation_succeeded = None
+            error_type = (
+                "ExchangeIdentityMismatch"
+                if identity_error is not None
+                else (
+                    "EvidenceProjectionError"
+                    if evidence_error is not None
+                    else type(operation_error).__name__
+                )
+            )
+        elif result is True:
+            terminal_state = "completed"
+            operation_succeeded = True
+            error_type = None
+        else:
+            terminal_state = "rejected"
+            operation_succeeded = False
+            error_type = None
+
+        receipt = _receipt_payload(
+            owner,
+            sequence=sequence,
+            phase=phase,
+            operation=operation,
+            invocation_id=invocation_id,
+            terminal_state=terminal_state,
+            operation_succeeded=operation_succeeded,
+            evidence=evidence,
+            error_type=error_type,
+        )
+        _persist_recorded_receipt(
+            owner, receipt, primary_error=operation_error
+        )
+        owner.next_sequence += 1
+        if operation_error is not None:
+            raise operation_error
+        return bool(result)

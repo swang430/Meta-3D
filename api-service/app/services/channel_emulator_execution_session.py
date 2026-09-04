@@ -26,9 +26,14 @@ from app.services.channel_emulator_binding import (
     validate_frozen_channel_emulator_before_remote,
 )
 from app.services.channel_emulator_execution_plan import (
+    CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
     validate_frozen_channel_emulator_load_context,
     validate_frozen_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
+)
+from app.services.channel_emulator_operation_receipt import (
+    ChannelEmulatorOperationRecorderOwner,
+    channel_emulator_operation_recorder_scope,
 )
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
@@ -532,47 +537,93 @@ async def channel_emulator_execution_scope(
                         },
                     ):
                         safe_idle_state = _ChannelEmulatorSafeIdleState(acquired_driver)
-                        ownership_token = _channel_emulator_safe_idle_owner.set(
-                            safe_idle_state
+                        parsed_plan = plan_from_frozen_payload(plan)
+                        execution_config = (
+                            execution.config
+                            if isinstance(execution.config, Mapping)
+                            else {}
                         )
-                        try:
-                            yield scoped_outcome
-                        except BaseException as exc:
-                            operation_error = exc
-                            raise
-                        finally:
+                        base_station_freeze = execution_config.get(
+                            "base_station_adapter_profile_freeze"
+                        )
+                        asset_freeze = (
+                            base_station_freeze.get(
+                                CHANNEL_ASSET_RESOLUTION_FREEZE_KEY
+                            )
+                            if isinstance(base_station_freeze, Mapping)
+                            else None
+                        )
+                        instrument_id = (
+                            outcome.channel_emulator_instrument_id
+                            or getattr(acquired_driver, "instrument_id", None)
+                        )
+                        recorder_owner = ChannelEmulatorOperationRecorderOwner(
+                            db=db,
+                            execution_pk=execution_pk,
+                            execution_id=execution_id,
+                            session_id=session_id,
+                            operation_scope=purpose,
+                            measurement_attempt_id=outcome.measurement_attempt_id,
+                            binding_digest=binding_fields.get("binding_digest"),
+                            binding_freeze_digest=binding_fields.get("digest"),
+                            plan_digest=parsed_plan.digest,
+                            asset_digest=(
+                                str(asset_freeze.get("digest"))
+                                if isinstance(asset_freeze, Mapping)
+                                and asset_freeze.get("digest")
+                                else None
+                            ),
+                            lease_id=outcome.lease_id,
+                            instrument_id=instrument_id,
+                            adapter_id=parsed_plan.adapter_id,
+                            execution_mode=binding_fields.get("execution_mode"),
+                            plan=parsed_plan,
+                            driver=acquired_driver,
+                        )
+                        with channel_emulator_operation_recorder_scope(
+                            recorder_owner
+                        ):
+                            ownership_token = _channel_emulator_safe_idle_owner.set(
+                                safe_idle_state
+                            )
                             try:
-                                parsed_plan = plan_from_frozen_payload(plan)
-                                if not parsed_plan.planned(safe_idle_state.action):
-                                    raise ChannelEmulatorExecutionSessionError(
-                                        parsed_plan.rejection(safe_idle_state.action)
-                                    )
-                                if safe_idle_state.attempted:
-                                    if safe_idle_state.error is not None:
-                                        safe_idle_error_type = type(
-                                            safe_idle_state.error
-                                        ).__name__
-                                        if operation_error is None:
-                                            raise safe_idle_state.error
-                                else:
-                                    await ensure_channel_emulator_safe_idle()
-                            except asyncio.CancelledError:
+                                yield scoped_outcome
+                            except BaseException as exc:
+                                operation_error = exc
                                 raise
-                            except BaseException as safe_idle_error:
-                                safe_idle_error_type = type(safe_idle_error).__name__
-                                if operation_error is None:
-                                    raise
-                                _attach_secondary_failure(
-                                    operation_error,
-                                    attribute="channel_emulator_safe_idle_error",
-                                    stage="SAFE_IDLE",
-                                    secondary=safe_idle_error,
-                                )
-                                logger.exception(
-                                    "channelEmulator safe idle failed while preserving operation error"
-                                )
                             finally:
-                                _channel_emulator_safe_idle_owner.reset(ownership_token)
+                                try:
+                                    parsed_plan = plan_from_frozen_payload(plan)
+                                    if not parsed_plan.planned(safe_idle_state.action):
+                                        raise ChannelEmulatorExecutionSessionError(
+                                            parsed_plan.rejection(safe_idle_state.action)
+                                        )
+                                    if safe_idle_state.attempted:
+                                        if safe_idle_state.error is not None:
+                                            safe_idle_error_type = type(
+                                                safe_idle_state.error
+                                            ).__name__
+                                            if operation_error is None:
+                                                raise safe_idle_state.error
+                                    else:
+                                        await ensure_channel_emulator_safe_idle()
+                                except asyncio.CancelledError:
+                                    raise
+                                except BaseException as safe_idle_error:
+                                    safe_idle_error_type = type(safe_idle_error).__name__
+                                    if operation_error is None:
+                                        raise
+                                    _attach_secondary_failure(
+                                        operation_error,
+                                        attribute="channel_emulator_safe_idle_error",
+                                        stage="SAFE_IDLE",
+                                        secondary=safe_idle_error,
+                                    )
+                                    logger.exception(
+                                        "channelEmulator safe idle failed while preserving operation error"
+                                    )
+                                finally:
+                                    _channel_emulator_safe_idle_owner.reset(ownership_token)
         except BaseException as exc:
             scope_error = exc
             raise

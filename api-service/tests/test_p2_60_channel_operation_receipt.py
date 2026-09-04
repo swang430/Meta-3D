@@ -3,11 +3,83 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import asyncio
 from uuid import uuid4
 
 import pytest
 
 from app.hal.base_station_compatibility import canonical_payload_digest
+
+
+class _Plan:
+    def __init__(self, *, planned: bool = True) -> None:
+        self.load_mode_planned = planned
+        self._planned = planned
+
+    def planned(self, _operation: str) -> bool:
+        return self._planned
+
+    def rejection(self, operation: str) -> str:
+        return f"operation {operation} is unavailable"
+
+
+class _ProjectingDriver:
+    def __init__(self, *, simulated: bool = False) -> None:
+        self.simulated = simulated
+        self.calls = 0
+
+    def project_channel_operation_evidence(self, **kwargs):
+        requested = kwargs["requested"]
+        exchanges = kwargs["exchanges"]
+        return {
+            "fields": [
+                {
+                    "field": key,
+                    "requested": value,
+                    "applied": None,
+                    "applied_present": False,
+                    "status": "unknown",
+                    "provenance": "simulated" if self.simulated else "command_error_queue",
+                    "exchange_ids": [],
+                    "source_reference": None,
+                }
+                for key, value in requested.items()
+            ],
+            "exchange_ids": [item.exchange_id for item in exchanges],
+            "error_queue_exchange_ids": [],
+        }
+
+
+def _recorder_owner(
+    row,
+    db,
+    *,
+    driver=None,
+    plan=None,
+    execution_mode: str = "real",
+):
+    from app.services.channel_emulator_operation_receipt import (
+        ChannelEmulatorOperationRecorderOwner,
+    )
+
+    return ChannelEmulatorOperationRecorderOwner(
+        db=db,
+        execution_pk=row.id,
+        execution_id=str(row.id),
+        session_id="session-runtime",
+        operation_scope=f"formal-case:{row.id}",
+        measurement_attempt_id="attempt-runtime",
+        binding_digest="b" * 64,
+        binding_freeze_digest="f" * 64,
+        plan_digest="p" * 64,
+        asset_digest="a" * 64,
+        lease_id="lease-runtime",
+        instrument_id="ce-runtime",
+        adapter_id="propsim_f64" if execution_mode == "real" else "mock_channel_emulator",
+        execution_mode=execution_mode,
+        plan=plan or _Plan(),
+        driver=driver or _ProjectingDriver(simulated=execution_mode == "simulated"),
+    )
 
 
 def _field(
@@ -265,3 +337,242 @@ def test_persist_receipt_rejects_wrong_execution_and_malformed_existing_chain():
             row.id,
             _receipt(execution_id=str(row.id)),
         )
+
+
+@pytest.mark.asyncio
+async def test_recorder_rejects_calls_outside_the_execution_owned_scope():
+    from app.services.channel_emulator_operation_receipt import (
+        ChannelEmulatorOperationReceiptError,
+        record_channel_emulator_operation,
+    )
+
+    invoked = False
+
+    async def invoke():
+        nonlocal invoked
+        invoked = True
+        return True
+
+    with pytest.raises(ChannelEmulatorOperationReceiptError, match="no execution-session owner"):
+        await record_channel_emulator_operation(
+            phase="configure",
+            operation="set_path_loss",
+            requested={"path_loss_db": 12.0},
+            invoke=invoke,
+        )
+    assert invoked is False
+
+
+@pytest.mark.asyncio
+async def test_unplanned_operation_persists_unavailable_without_io():
+    from app.models.test_plan import TestExecution
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        ChannelEmulatorOperationReceiptError,
+        channel_emulator_operation_recorder_scope,
+        record_channel_emulator_operation,
+    )
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    driver = _ProjectingDriver()
+    owner = _recorder_owner(row, db, driver=driver, plan=_Plan(planned=False))
+
+    async def invoke():
+        driver.calls += 1
+        return True
+
+    with channel_emulator_operation_recorder_scope(owner):
+        with pytest.raises(ChannelEmulatorOperationReceiptError, match="unavailable"):
+            await record_channel_emulator_operation(
+                phase="configure",
+                operation="set_path_loss",
+                requested={"path_loss_db": 12.0},
+                invoke=invoke,
+            )
+
+    assert driver.calls == 0
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][0]
+    assert receipt["terminal_state"] == "rejected"
+    assert receipt["operation_succeeded"] is False
+    assert receipt["fields"][0]["status"] == "unavailable"
+    assert receipt["exchange_ids"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result", "error", "terminal_state", "operation_succeeded", "error_type"),
+    [
+        (True, None, "completed", True, None),
+        (False, None, "rejected", False, None),
+        (None, TimeoutError("late"), "failed", None, "TimeoutError"),
+        (None, RuntimeError("broken"), "failed", None, "RuntimeError"),
+        (None, asyncio.CancelledError(), "cancelled", None, "CancelledError"),
+    ],
+)
+async def test_recorder_classifies_boolean_error_timeout_and_cancellation(
+    result,
+    error,
+    terminal_state,
+    operation_succeeded,
+    error_type,
+):
+    from app.models.test_plan import TestExecution
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_recorder_scope,
+        record_channel_emulator_operation,
+    )
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    owner = _recorder_owner(row, db)
+
+    async def invoke():
+        if error is not None:
+            raise error
+        return result
+
+    with channel_emulator_operation_recorder_scope(owner):
+        if error is None:
+            assert await record_channel_emulator_operation(
+                phase="configure",
+                operation="set_path_loss",
+                requested={"path_loss_db": 12.0},
+                invoke=invoke,
+            ) is result
+        else:
+            with pytest.raises(type(error)):
+                await record_channel_emulator_operation(
+                    phase="configure",
+                    operation="set_path_loss",
+                    requested={"path_loss_db": 12.0},
+                    invoke=invoke,
+                )
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][0]
+    assert receipt["terminal_state"] == terminal_state
+    assert receipt["operation_succeeded"] is operation_succeeded
+    assert receipt["error_type"] == error_type
+    assert receipt["session_id"] == owner.session_id
+    assert receipt["execution_id"] == owner.execution_id
+    assert receipt["measurement_attempt_id"] == owner.measurement_attempt_id
+    assert receipt["lease_id"] == owner.lease_id
+    assert receipt["instrument_id"] == owner.instrument_id
+    assert receipt["binding_digest"] == owner.binding_digest
+    assert receipt["plan_digest"] == owner.plan_digest
+
+
+@pytest.mark.asyncio
+async def test_recorder_rejects_foreign_capture_execution_or_instrument():
+    from app.core.logging_config import current_execution_id
+    from app.hal.scpi_evidence import record_exchange_intent, record_exchange_terminal
+    from app.models.test_plan import TestExecution
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        ChannelEmulatorOperationReceiptError,
+        channel_emulator_operation_recorder_scope,
+        record_channel_emulator_operation,
+    )
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    owner = _recorder_owner(row, db)
+    token = current_execution_id.set("foreign-execution")
+
+    async def invoke():
+        record_exchange_intent(
+            exchange_id="exchange-foreign",
+            instrument_id="another-instrument",
+            operation="write",
+            command="REDACTED",
+        )
+        record_exchange_terminal(
+            exchange_id="exchange-foreign",
+            result_type="ok",
+        )
+        return True
+
+    try:
+        with channel_emulator_operation_recorder_scope(owner):
+            with pytest.raises(ChannelEmulatorOperationReceiptError, match="identity"):
+                await record_channel_emulator_operation(
+                    phase="configure",
+                    operation="set_path_loss",
+                    requested={"path_loss_db": 12.0},
+                    invoke=invoke,
+                )
+    finally:
+        current_execution_id.reset(token)
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][0]
+    assert receipt["terminal_state"] == "failed"
+    assert receipt["operation_succeeded"] is None
+    assert receipt["error_type"] == "ExchangeIdentityMismatch"
+    assert receipt["exchange_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_mock_receipt_is_simulated_unknown_and_never_confirmed():
+    from app.hal.channel_emulator import MockChannelEmulator
+    from app.models.test_plan import TestExecution
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_recorder_scope,
+        record_channel_emulator_operation,
+    )
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    driver = MockChannelEmulator("ce-runtime", {"model": "Mock Channel Emulator"})
+    owner = _recorder_owner(
+        row,
+        db,
+        driver=driver,
+        execution_mode="simulated",
+    )
+
+    async def invoke():
+        return True
+
+    with channel_emulator_operation_recorder_scope(owner):
+        assert await record_channel_emulator_operation(
+            phase="configure",
+            operation="set_path_loss",
+            requested={"path_loss_db": 12.0},
+            invoke=invoke,
+        ) is True
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][0]
+    assert receipt["simulated"] is True
+    assert {field["status"] for field in receipt["fields"]} == {"unknown"}
+    assert {field["provenance"] for field in receipt["fields"]} == {"simulated"}
+
+
+@pytest.mark.asyncio
+async def test_success_cannot_swallow_receipt_persistence_failure():
+    from app.models.test_plan import TestExecution
+    from app.services import channel_emulator_operation_receipt as module
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    owner = _recorder_owner(row, db)
+
+    async def invoke():
+        return True
+
+    original = module.persist_channel_emulator_operation_receipt
+    module.persist_channel_emulator_operation_receipt = lambda *_args: (_ for _ in ()).throw(
+        OSError("database unavailable")
+    )
+    try:
+        with module.channel_emulator_operation_recorder_scope(owner):
+            with pytest.raises(OSError, match="database unavailable"):
+                await module.record_channel_emulator_operation(
+                    phase="configure",
+                    operation="set_path_loss",
+                    requested={"path_loss_db": 12.0},
+                    invoke=invoke,
+                )
+    finally:
+        module.persist_channel_emulator_operation_receipt = original

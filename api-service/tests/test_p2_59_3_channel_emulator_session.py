@@ -333,6 +333,9 @@ def _install_real_lease(monkeypatch, module, hal):
 @pytest.mark.asyncio
 async def test_scope_validates_then_orders_operation_safe_idle_and_release(monkeypatch):
     from app.services import channel_emulator_execution_session as module
+    from app.services.channel_emulator_operation_receipt import (
+        current_channel_emulator_operation_recorder_owner,
+    )
     from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 
     driver = _RealCe()
@@ -349,6 +352,15 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
         hal=hal,
         validate_before_remote=lambda _hal: None,
     ) as outcome:
+        receipt_owner = current_channel_emulator_operation_recorder_owner()
+        assert receipt_owner is not None
+        assert receipt_owner.execution_id == "execution-1"
+        assert receipt_owner.operation_scope == "formal-case:execution-1"
+        assert receipt_owner.binding_digest == BINDING_DIGEST
+        assert receipt_owner.plan_digest == _frozen_plan(driver)["digest"]
+        assert receipt_owner.lease_id == outcome.lease_id
+        assert receipt_owner.instrument_id == driver.instrument_id
+        assert receipt_owner.driver is driver
         driver.events.append("operation")
         await cleanup_chamber_instruments(hal, "execution-1")
         assert outcome.channel_emulator_remote_acquired_confirmed is True

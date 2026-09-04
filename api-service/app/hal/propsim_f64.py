@@ -2315,6 +2315,31 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             scope=scope,
         )
 
+    def project_channel_operation_evidence(
+        self,
+        *,
+        operation: str,
+        requested: Dict[str, Any],
+        operation_succeeded: bool | None,
+        exchanges: tuple[Any, ...],
+        execution_mode: str,
+    ) -> Dict[str, Any]:
+        """Keep receipt fields unknown until same-invocation evidence is mapped.
+
+        P2-60 Task 2 only establishes the pure adapter boundary.  Task 3 maps
+        the existing F64 catalog/readbacks to individual operations; this
+        conservative implementation cannot turn a successful return into an
+        applied-value claim.
+        """
+
+        return super().project_channel_operation_evidence(
+            operation=operation,
+            requested=requested,
+            operation_succeeded=operation_succeeded,
+            exchanges=exchanges,
+            execution_mode=execution_mode,
+        )
+
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness
         report. Pre-P3-5 these were stored on the driver instance (P3-4)
