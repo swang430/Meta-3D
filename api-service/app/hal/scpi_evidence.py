@@ -792,6 +792,14 @@ def _command_operand(exchange: Optional[ScpiExchangeRef]) -> Any:
     return _parse_first_scalar(parts[1].rsplit(",", 1)[-1])
 
 
+def f64_command_operand_from_exchange(
+    exchange: Optional[ScpiExchangeRef],
+) -> Any:
+    """Return the actual operand from an already catalog-matched F64 command."""
+
+    return _command_operand(exchange)
+
+
 def _parse_first_scalar(response: Optional[str]) -> Any:
     if response is None:
         return None

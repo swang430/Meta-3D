@@ -856,6 +856,17 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
     [
         (
             "load_channel",
+            {
+                "load_mode": "external_waveform",
+                "model_name": "external-asc-bundle",
+                "waveform_dir": "/tmp/asc-source",
+            },
+            "CALCulate:FILTer:FILE D:\\User Emulations\\runtime_emulation.smu",
+            "DIAGnostic:SIMUlation:MODel:STATE?",
+            "READY",
+        ),
+        (
+            "load_channel",
             {"load_mode": "native_model", "emulation_file": "D:\\Models\\case.smu"},
             "CALCulate:FILTer:FILE D:\\Models\\case.smu",
             "DIAGnostic:SIMUlation:MODel:STATE?",
@@ -964,6 +975,14 @@ def test_f64_receipt_projects_existing_authoritative_parameter_readback(
 
     confirmed = [field for field in projected["fields"] if field["status"] == "confirmed"]
     assert confirmed
+    assert confirmed[0]["field"] == {
+        "load_channel": "emulation_file",
+        "set_output_gain": "gain_db",
+        "set_baseband_power": "reference_dbm",
+        "set_crest_factor": "crest_db",
+    }[operation]
+    if operation == "load_channel":
+        assert confirmed[0]["applied"] == command.split(maxsplit=1)[1]
     assert confirmed[0]["provenance"] == "authoritative_readback"
     assert confirmed[0]["exchange_ids"] == (
         ["preclear", "write", "opc", "error", "readback", "state"]

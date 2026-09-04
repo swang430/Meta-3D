@@ -2339,6 +2339,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             EvidenceVerdict,
             build_f64_evidence,
             exchange_is_error_queue_query,
+            f64_command_operand_from_exchange,
             scope_for_evidence,
             select_f64_command_capture,
         )
@@ -2362,15 +2363,22 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             recipe is None
             or operation_succeeded is not True
             or execution_mode != "real"
-            or recipe[1] not in requested
         ):
             return projected
 
         evidence_key, field_name = recipe
         selected = select_f64_command_capture(exchanges, evidence_key)
+        actual_command_value = f64_command_operand_from_exchange(
+            selected["command_exchange"]
+        )
+        requested_value = requested.get(field_name)
+        if operation == "load_channel" and requested_value is None:
+            requested_value = actual_command_value
+        if requested_value is None:
+            return projected
         item = build_f64_evidence(
             evidence_key=evidence_key,
-            requested=requested[field_name],
+            requested=requested_value,
             scope=scope_for_evidence(
                 evidence_key, self.capture_evidence_environment()
             ),
@@ -2385,23 +2393,33 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         ):
             return projected
 
+        applied_value = (
+            actual_command_value
+            if operation == "load_channel"
+            else requested_value
+        )
+        confirmed_field = {
+            "field": field_name,
+            "requested": requested_value,
+            "applied": applied_value,
+            "applied_present": True,
+            "status": "confirmed",
+            "provenance": "authoritative_readback",
+            "exchange_ids": list(item.exchange_ids),
+            "source_reference": item.source_reference,
+        }
         projected["fields"] = [
             (
-                {
-                    "field": field_name,
-                    "requested": requested[field_name],
-                    "applied": requested[field_name],
-                    "applied_present": True,
-                    "status": "confirmed",
-                    "provenance": "authoritative_readback",
-                    "exchange_ids": list(item.exchange_ids),
-                    "source_reference": item.source_reference,
-                }
+                confirmed_field
                 if field["field"] == field_name
                 else field
             )
             for field in projected["fields"]
         ]
+        if not any(
+            field["field"] == field_name for field in projected["fields"]
+        ):
+            projected["fields"].append(confirmed_field)
         return projected
 
     def readiness_metadata(self) -> Dict[str, Any]:
