@@ -11,12 +11,17 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect, text
 
 from app.models.instrument import InstrumentConnection
+from app.hal.base import InstrumentStatus
+from app.hal.channel_emulator import MockChannelEmulator
+from app.hal.propsim_f64 import F64SysInfo, RealPropsimF64Driver
+from app.hal.propsim_fs16 import RealPropsimFs16Driver
 from app.schemas.instrument import (
     FEConnectionUpdate,
     InstrumentConnectionResponse,
     InstrumentConnectionUpdate,
 )
 from app.services.channel_emulator_certification import (
+    ChannelEmulatorCertificationIdentity,
     ChannelEmulatorCertificationProofs,
     ChannelEmulatorSiteCertification,
 )
@@ -205,3 +210,90 @@ def test_migration_adds_nullable_server_column_without_promoting_history():
     columns = {item["name"] for item in inspect(engine).get_columns("instrument_connections")}
     assert "channel_emulator_site_certification" not in columns
     engine.dispose()
+
+
+def test_f64_certification_identity_is_a_pure_projection_of_live_cached_truth():
+    driver = RealPropsimF64Driver("ce-f64", {"ip_address": "192.0.2.61"})
+    driver._visa_resource = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
+    driver.sys_info = F64SysInfo(
+        raw="PROPSIM F64,64,RF,v1.0,16",
+        product_family="PROPSIM F64",
+        channel_count=64,
+        signal_type="RF",
+        firmware_version="v1.0",
+        secondary_count=16,
+    )
+    driver.product_family = "PROPSIM F64"
+    driver.firmware_version = "v1.0"
+    driver._installed_options = [" B ", "A", "A"]
+    driver._certification_options_observed = True
+
+    identity = driver.capture_channel_emulator_certification_identity()
+
+    assert identity == ChannelEmulatorCertificationIdentity.model_validate(
+        identity.model_dump(mode="json")
+    )
+    assert identity.instrument_id == "ce-f64"
+    assert identity.adapter_id == "propsim_f64"
+    assert identity.model == "PROPSIM F64"
+    assert identity.firmware_version == "9.8.7"
+    assert identity.serial_number == "SN-F64"
+    assert identity.options == ("A", "B")
+    assert identity.options_observed is True
+    assert identity.simulated is False
+    assert identity.captured_from_live_connection is True
+    assert identity.certification_eligible is True
+
+
+def test_confirmed_zero_options_are_distinct_from_unobserved_options():
+    driver = RealPropsimF64Driver("ce-f64", {"ip_address": "192.0.2.61"})
+    driver._visa_resource = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
+    driver.product_family = "PROPSIM F64"
+    driver._installed_options = []
+    driver._certification_options_observed = True
+
+    confirmed_empty = driver.capture_channel_emulator_certification_identity()
+    assert confirmed_empty.options == ()
+    assert confirmed_empty.options_observed is True
+    assert confirmed_empty.certification_eligible is True
+
+    driver._certification_options_observed = False
+    unobserved = driver.capture_channel_emulator_certification_identity()
+    assert unobserved.options == ()
+    assert unobserved.options_observed is False
+    assert unobserved.certification_eligible is False
+    assert unobserved.digest != confirmed_empty.digest
+
+
+def test_fs16_and_mock_identity_never_invent_missing_certification_truth():
+    fs16 = RealPropsimFs16Driver("ce-fs16", {"ip_address": "192.0.2.62"})
+    fs16._visa_resource = object()
+    fs16._status = InstrumentStatus.READY
+    fs16._identity_response = "Keysight Technologies,F8820A,SN-FS16,10.2"
+    fs16._product_family = "PROPSIM FS16"
+    fs16._installed_options = []
+    fs16._certification_options_observed = False
+    fs16_identity = fs16.capture_channel_emulator_certification_identity()
+    assert fs16_identity.model == "PROPSIM FS16"
+    assert fs16_identity.serial_number == "SN-FS16"
+    assert fs16_identity.options_observed is False
+    assert fs16_identity.certification_eligible is False
+
+    mock = MockChannelEmulator("ce-mock", {"model": "Mock Channel Emulator"})
+    mock_identity = mock.capture_channel_emulator_certification_identity()
+    assert mock_identity.simulated is True
+    assert mock_identity.captured_from_live_connection is False
+    assert mock_identity.certification_eligible is False
+
+
+def test_certification_identity_rejects_digest_or_scope_tampering():
+    mock = MockChannelEmulator("ce-mock", {"model": "Mock Channel Emulator"})
+    payload = mock.capture_channel_emulator_certification_identity().model_dump(mode="json")
+    with pytest.raises(ValidationError, match="digest"):
+        ChannelEmulatorCertificationIdentity.model_validate(
+            {**payload, "instrument_id": "different"}
+        )

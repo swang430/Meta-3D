@@ -405,6 +405,11 @@ class ChannelEmulatorDriver(InstrumentDriver):
     def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
         raise NotImplementedError
 
+    def capture_channel_emulator_certification_identity(self) -> Any:
+        """Project cached live identity/options without performing instrument I/O."""
+
+        raise NotImplementedError
+
     def project_channel_operation_evidence(
         self,
         *,
@@ -816,6 +821,23 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     # builder/dispatcher；这些只读协议明确返回 None，保持 simulated/unknown。
     def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
         return None
+
+    def capture_channel_emulator_certification_identity(self) -> Any:
+        from app.services.channel_emulator_certification import (
+            build_channel_emulator_certification_identity,
+        )
+
+        return build_channel_emulator_certification_identity(
+            instrument_id=self.instrument_id,
+            adapter_id=self.adapter_manifest.adapter_id,
+            model=None,
+            firmware_version=None,
+            serial_number=None,
+            options=(),
+            options_observed=False,
+            simulated=True,
+            captured_from_live_connection=False,
+        )
 
     def project_channel_operation_evidence(
         self,

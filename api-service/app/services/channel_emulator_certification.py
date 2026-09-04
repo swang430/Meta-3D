@@ -34,6 +34,112 @@ def _canonical_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+class ChannelEmulatorCertificationIdentity(BaseModel):
+    """Pure snapshot of identity/options already observed on one live driver."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        strict=True,
+        revalidate_instances="always",
+    )
+
+    schema_version: Literal[1]
+    instrument_id: str
+    adapter_id: str
+    model: str | None
+    firmware_version: str | None
+    serial_number: str | None
+    options: tuple[str, ...]
+    options_observed: bool
+    simulated: bool
+    captured_from_live_connection: bool
+    digest: str
+
+    @field_validator("instrument_id", "adapter_id")
+    @classmethod
+    def _required_identity(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("channelEmulator certification identity must be non-blank")
+        return normalized
+
+    @field_validator("model", "firmware_version", "serial_number")
+    @classmethod
+    def _optional_identity(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def _canonical_identity_options(cls, values: Any) -> tuple[str, ...]:
+        if not isinstance(values, (list, tuple)):
+            raise ValueError("channelEmulator certification options must be an array")
+        return tuple(sorted({str(value).strip() for value in values if str(value).strip()}))
+
+    @field_validator("digest")
+    @classmethod
+    def _identity_digest_format(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _DIGEST_RE.fullmatch(normalized):
+            raise ValueError("channelEmulator certification identity digest is invalid")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_identity_state_and_digest(self) -> "ChannelEmulatorCertificationIdentity":
+        if self.simulated and (
+            self.captured_from_live_connection or self.options_observed
+        ):
+            raise ValueError("simulated channelEmulator cannot claim live identity/options")
+        payload = self.model_dump(mode="json", exclude={"digest"})
+        if self.digest != _canonical_digest(payload):
+            raise ValueError("channelEmulator certification identity digest mismatch")
+        return self
+
+    @property
+    def certification_eligible(self) -> bool:
+        return (
+            self.simulated is False
+            and self.captured_from_live_connection is True
+            and self.options_observed is True
+            and all(
+                value is not None
+                for value in (self.model, self.firmware_version, self.serial_number)
+            )
+        )
+
+
+def build_channel_emulator_certification_identity(
+    *,
+    instrument_id: str,
+    adapter_id: str,
+    model: str | None,
+    firmware_version: str | None,
+    serial_number: str | None,
+    options: tuple[str, ...] | list[str],
+    options_observed: bool,
+    simulated: bool,
+    captured_from_live_connection: bool,
+) -> ChannelEmulatorCertificationIdentity:
+    payload = {
+        "schema_version": 1,
+        "instrument_id": instrument_id,
+        "adapter_id": adapter_id,
+        "model": model,
+        "firmware_version": firmware_version,
+        "serial_number": serial_number,
+        "options": tuple(sorted({value.strip() for value in options if value.strip()})),
+        "options_observed": options_observed,
+        "simulated": simulated,
+        "captured_from_live_connection": captured_from_live_connection,
+    }
+    return ChannelEmulatorCertificationIdentity.model_validate(
+        {**payload, "digest": _canonical_digest(payload)}
+    )
+
+
 class ChannelEmulatorCertificationProofs(BaseModel):
     """Proof classes that must all be derived from one source execution."""
 

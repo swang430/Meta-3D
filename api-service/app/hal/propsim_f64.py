@@ -638,6 +638,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # PyVISA 资源句柄
         self._visa_resource = None
         self._rm = None
+        self._certification_options_observed: bool = False
         # True 表示操作员已显式要求把控制权交还 F64 前面板。F64 只要收到任意
         # ATE 命令就会再次进入 Remote，因此该标志必须同时禁止监控轮询和静默重连，
         # 不能仅仅 close 当前 socket。
@@ -2293,6 +2294,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             hardware_firmware_version=self.firmware_version if live else None,
             serial_number=identity["serial_number"] if live else None,
             captured_from_live_connection=live,
+        )
+
+    def capture_channel_emulator_certification_identity(self):
+        """Project only identity/options already captured by this live ATE session."""
+
+        from app.services.channel_emulator_certification import (
+            build_channel_emulator_certification_identity,
+        )
+
+        environment = self.capture_evidence_environment()
+        return build_channel_emulator_certification_identity(
+            instrument_id=self.instrument_id,
+            adapter_id=self.adapter_manifest.adapter_id,
+            model=environment.model,
+            firmware_version=environment.firmware_version,
+            serial_number=environment.serial_number,
+            options=tuple(self._installed_options),
+            options_observed=(
+                self._certification_options_observed
+                and environment.captured_from_live_connection
+            ),
+            simulated=False,
+            captured_from_live_connection=environment.captured_from_live_connection,
         )
 
     def build_p0_5_command_evidence(
@@ -5884,18 +5908,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         discovered: List[str] = []
         seen: set = set()
+        self._certification_options_observed = False
 
         # SYST:INFO? keyword scan. SYST:INFO? is the confirmed-working
         # introspection query (returns the channel-count line we already
         # parse in connect() — see parse_f64_sys_info).
         try:
             info_raw = await self._query("SYST:INFO?")
+            self._certification_options_observed = True
             info_lower = (info_raw or "").lower()
             for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
                 if keyword in info_lower and token not in seen:
                     discovered.append(token)
                     seen.add(token)
         except Exception as e:
+            self._certification_options_observed = False
             logger.warning(
                 f"[F64] SYST:INFO? license scan failed: {e}",
                 extra={"instrument_id": self.instrument_id},

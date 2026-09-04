@@ -457,7 +457,7 @@ def _channel_emulator_terminal_projection(
             return "invalid", "channelEmulator terminal evidence identity drift"
         if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
             return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
-        if item.get("schema_version") == 2:
+        if item.get("schema_version") in {2, 3}:
             receipt_error = _channel_emulator_v2_receipt_chain_error(
                 config,
                 item,
@@ -489,16 +489,16 @@ def _channel_emulator_terminal_projection(
         and attempt_evidence.get("current_measurement_attempt_state") == "completed"
         else None
     )
-    v2_terminals = [
-        item for item in effective_evidence if item.get("schema_version") == 2
+    receipt_terminals = [
+        item for item in effective_evidence if item.get("schema_version") in {2, 3}
     ]
-    if current_attempt_id is not None and v2_terminals and not any(
+    if current_attempt_id is not None and receipt_terminals and not any(
         item.get("measurement_attempt_id") == current_attempt_id
-        for item in v2_terminals
+        for item in receipt_terminals
     ):
         return (
             "invalid",
-            "channelEmulator v2 terminal does not match the current measurement attempt",
+            "channelEmulator receipt terminal does not match the current measurement attempt",
         )
 
     for item in effective_evidence:
