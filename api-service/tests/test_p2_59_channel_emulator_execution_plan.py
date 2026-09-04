@@ -238,7 +238,28 @@ def test_new_plan_is_v2_and_legacy_v1_keeps_its_original_digest_and_shape():
 
 
 def test_pending_execution_with_v1_plan_is_rejected_with_rebuild_instruction(db):
-    execution = _execution(db, **{CE_PLAN_FREEZE_CONFIG_KEY: _legacy_v1_frozen()})
+    frozen = _legacy_v1_frozen()
+    request_payload = {
+        "schema_version": 1,
+        "source": "mimo_configuration",
+        "mimo_configuration_digest": canonical_payload_digest(_configuration()),
+        "channel_asset_id": None,
+        "channel_asset_source_type": None,
+        "effective_engine_mode": "keysight_gcm",
+        "requested_load_mode": "native_model",
+        "plan_digest": frozen["digest"],
+    }
+    request = {
+        **request_payload,
+        "digest": canonical_payload_digest(request_payload),
+    }
+    execution = _execution(
+        db,
+        **{
+            CE_PLAN_FREEZE_CONFIG_KEY: frozen,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: request,
+        },
+    )
     with pytest.raises(ValueError, match="v1.*重建"):
         freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
 

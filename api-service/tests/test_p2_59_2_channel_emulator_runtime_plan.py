@@ -89,14 +89,22 @@ def test_manifest_v1_keeps_original_vocabulary_and_binding_digest() -> None:
             "manifest": legacy_manifest,
             "expected_driver_module": "app.hal.propsim_f64",
             "expected_driver_name": "RealPropsimF64Driver",
-            "expected_transport": {"host": "192.0.2.10", "port": 1234},
+            "expected_transport": {
+                "host": "192.0.2.10",
+                "port": 1234,
+                "resource": None,
+            },
             "binding_digest": "b" * 64,
             "runtime_driver": {
                 "driver_module": "app.hal.propsim_f64",
                 "driver_name": "RealPropsimF64Driver",
                 "adapter_id": "propsim_f64",
                 "simulated": False,
-                "transport": {"host": "192.0.2.10", "port": 1234},
+                "transport": {
+                    "host": "192.0.2.10",
+                    "port": 1234,
+                    "resource": None,
+                },
             },
         }
     )
@@ -105,8 +113,16 @@ def test_manifest_v1_keeps_original_vocabulary_and_binding_digest() -> None:
 
     identity = {
         "schema_version": 1,
-        "binding_digest": "b" * 64,
-        "resolved_binding": {"manifest": legacy_manifest},
+        "category_id": resolved.category_id,
+        "instrument_model_id": resolved.instrument_model_id,
+        "instrument_connection_id": resolved.instrument_connection_id,
+        "lab_profile_id": resolved.lab_profile_id,
+        "execution_mode": resolved.execution_mode,
+        "expected_driver_module": resolved.expected_driver_module,
+        "expected_driver_name": resolved.expected_driver_name,
+        "expected_driver_connection": resolved.expected_transport,
+        "binding_digest": resolved.binding_digest,
+        "resolved_binding": resolved.stable_projection(),
     }
     frozen = {**identity, "digest": canonical_payload_digest(identity)}
     assert _validate_existing_channel_emulator_freeze(frozen) is frozen
