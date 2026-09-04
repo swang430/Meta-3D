@@ -4734,7 +4734,7 @@ GUI：`channelEmulatorModelPresetDraft` / `handleModelChange` CE 分支（切型
 `propsim_f64.py:556-561`，FS16 只有只读回读），用户拍板「其他按你的建议来」；抽屉字段保持始终渲染（型号 DTO 无 CE 判据，按名字隐藏是脆判据；记于设计稿 §8.E，未进 Discovered 池）。
 外审 #451 R2 纠正：`available_channel_models` 是操作员/同步维护的型号配置资产（4 个写入点全在 API/服务层），**不是**运行期回读，保留在 preset。
 
-**⚠️ 操作员 / 环境可见**：J 对本机 dev PG 跑了 `alembic upgrade head`（`f2a4c6e8b0d1` → `a3c5e7f9b1d3`，有 downgrade）；
+**⚠️ 操作员 / 环境可见**：J 对本机 dev PG 跑了 `alembic upgrade head`（`f2a4c6e8b0d1` → `a3c5e7f9b1d3`；该迁移自带 `downgrade()`，要回退用 `alembic downgrade f2a4c6e8b0d1`；alembic 仍是单 head，G1 门守着）；
 sync-current 保存 CE binding 现在要求活动连接与已保存 preset 一致，否则 422「请重新保存后再同步」。
 
 **过程**：H 后端地基 / I API+契约 / J 前端 / K W4-W5+require_saved，4 个 subagent（并行 ≤ 3，用户定）+ 主 agent 定契约、逐份自跑复核、
