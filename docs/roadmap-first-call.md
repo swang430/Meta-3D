@@ -40,14 +40,14 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-59（ChannelEmulatorExecutionPlan + 单一会话。**P2-58 ① #450 / ② #452 均已合并**。P2-57 已由 PR #448 合并。P2-56 的 ① ② 两半已由 PR #444 / #446 合并，仅剩 ③ 现场半待真机（已进 ON-SITE-BLOCKED）；P2-55 的非现场半已由 PR #440 合并，P2-54 已由 PR #437 合并，P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并）。**
+Current Focus（非现场）= P2-62（第三种 Channel Emulator Adapter 接入认证套件。P2-57～P2-61 已分别由 PR #448/#450+#452/#454+#456/#457/#458 合并；P2-56 的 ③ 现场半仍待真机，已进 ON-SITE-BLOCKED）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
 adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
 并在 Mock UXM 接受 LTE TestCase 的复盘后批准插入执行兼容性硬门；顺序为
 **~~P1-74~~（✅ 非现场半 #429，现场半待真机） → ~~P1-75~~（✅ #431） → ~~P2-64~~（✅ #433） → ~~P2-65~~（✅ #434） → ~~P2-66~~（✅ #435） → ~~P2-67~~（✅ #436） → ~~P2-54~~（✅ #437） → ~~P2-55~~（✅ 非现场半 #440，真机抽样待现场） → ~~P2-56~~（✅ ① #444 / ✅ ② #446，③ 现场半待真机） →
-~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ ~~P2-59~~（✅ ① #454 / ✅ ② #456）→ ~~P2-60~~（✅ #457）→ P2-61（🔄 当前 WIP）→ P2-62 → P2-63（HOLD）**。
+~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ ~~P2-59~~（✅ ① #454 / ✅ ② #456）→ ~~P2-60~~（✅ #457）→ ~~P2-61~~（✅ #458）→ P2-62（🔄 当前 WIP）→ P2-63（HOLD）**。
 2026-08-31 用户批准把 P2-64～P2-67 整组前移到 P1-75 之后。理由有二：这四片是同一次 Mock 复盘的
 直接派生，旧顺序下它们前面压着 P2-54～P2-56、P2-57～P2-62 与 P2-63 共十片，轮到时本次复盘的
 上下文早已冷却；其中 P2-67 要解决的取证混淆（两份附件字节级相同、公共 release 日志硬编码
@@ -56,7 +56,7 @@ adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道�
 的依赖同样全部满足。前移后重算依赖图零违反。条目本体本次共动三处：P1-74 与 P1-75 两条的
 「先于」表述换源到本顺序串（不再在条目内复制清单），P2-54 补记本次前移新产生的 compatibility
 digest 版本迁移义务；其余各条的依赖关系逐条复核后仍成立、未动。P2-63
-在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），P2-57 已由 PR #448 合并；P2-58 ① #450 / ② #452 已合并，当前 WIP=1 落在 P2-59。
+在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），P2-57 已由 PR #448 合并；P2-58 ① #450 / ② #452、P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458 已合并，当前 WIP=1 落在 P2-62。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -84,7 +84,7 @@ P3-20/P3-21 仍不得自动启动。
    下一批：**P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并**，同一次 Mock 复盘派生的
    Mock 能力、Readiness、证据终态与日志导出四片整组收口完毕；**P2-54 已由 PR #437 合并**
    （RAT-neutral 执行冻结 MAC profile）；**P2-55 的非现场半已由 PR #440 合并**（CMW500 LTE FDD
-   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。**当前非现场 WIP = P2-59**（ChannelEmulatorExecutionPlan + 单一会话；P2-58 ① #450 / ② #452 已合并；P2-57 已由 PR #448 合并），P2-56 仅剩 ③ 现场半待真机。
+   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458 已合并。**当前非现场 WIP = P2-62**（第三种 Channel Emulator Adapter 接入认证套件），P2-56 仅剩 ③ 现场半待真机。
    最后 P2-57（✅ #448）～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
@@ -694,7 +694,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-59（ChannelEmulatorExecutionPlan + 单一会话；P2-58 ①#450 / ②#452 已合并）**；NEW-1/P2-42～P2-53 已分别由 PR #407/#408/#409/#410/#411/#412/#413/#414/#415/#417/#420/#422/#424 合并，后续现场热修/分型号配置保存由 PR #425/#426/#427 合并。已批准的雷达顺序为 ~~P1-74~~（✅ 非现场半 #429）→ ~~P1-75~~（✅ #431）→ **~~P2-64~~（✅ #433）→ ~~P2-65~~（✅ #434）→ ~~P2-66~~（✅ #435）→ ~~P2-67~~（✅ #436）→ ~~P2-54~~（✅ #437）→ ~~P2-55~~（✅ 非现场半 #440）→ ~~P2-56~~（✅ ①#444 / ✅ ②#446）→ ~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ①#450 / ✅ ②#452）** → P2-59～P2-62 → P2-63（HOLD，队列末尾）。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-62（第三种 Channel Emulator Adapter 接入认证套件）**；NEW-1/P2-42～P2-61 已按批准顺序完成，其中 P2-57～P2-61 对应 PR #448/#450+#452/#454+#456/#457/#458。P2-63 继续 HOLD 且位于队列末尾。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-55** / **P2-56** 的现场半（详见下方「Blocked on hardware」）。P1-74 现场半 = 在真实 CMW500 上用至少两个不同统计长度连续执行，证明 Extended BLER 统计基不继承上一 session（非现场半已由 PR #429 合并）。P2-55 现场半 = 在真实 CMW500 上抽样验证已声明 `authoritative` 的 TM / 天线组合确实可配置并回读一致（非现场半已由 PR #440 合并）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4745,7 +4745,7 @@ F3 P3 W2/W3/W4 取 connection 不加锁 → Discovered；精简档复审 1 条 P
 外审 Gemini R1（07:06:32Z，审 7141d154）明文 clean「No review comments were provided」、零 inline，按 R1 明文 clean 直接合。
 设计稿：[`docs/plans/2026-09-04-p2-58-2-channel-emulator-model-presets-design.md`](plans/2026-09-04-p2-58-2-channel-emulator-model-presets-design.md)（§8 补遗 A–F）。
 
-### P2-59 — ChannelEmulatorExecutionPlan + 单一会话（🔄 ① ExecutionPlan 半开工 / ③ 单一会话、② 去 F64 未启动）
+### P2-59 — ChannelEmulatorExecutionPlan + 单一会话（✅ ① #454 / ② #456）
 
 **可观察故障**：MEASURE 仍通过 F64 专属字段、`hasattr` 与私有缓存选择 load/run/调参路径；formal、
 commissioning、adhoc 与 run-all 没有 execution-frozen 的共同 CE 计划和单一生命周期所有者。
@@ -4758,7 +4758,7 @@ fail-loud；共同执行器不得出现 F64/FS16/未来厂商分支。
 
 **地点/依赖**：纯非现场平台片；依赖 P2-57/P2-58。
 
-### P2-60 — Vendor-neutral Channel Operation Receipt（批准入雷达，未启动）
+### P2-60 — Vendor-neutral Channel Operation Receipt（✅ PR #457）
 
 **可观察故障**：F64 的文件加载、运行态、output gain/loss、输入电平/crest、频率与模式证据形态
 各自不同，FS16 又有 no-op/未实现路径；写成功、设备接受、状态生效和业务窗口之间缺少共同逐字段真值。
@@ -4770,7 +4770,7 @@ plan digest 与 provenance。每个写操作的拒绝、超时、取消和安全
 
 **地点/依赖**：纯非现场平台片；依赖 P2-59。
 
-### P2-61 — Channel Emulator Diagnostic/Formal certification（🔄 当前 WIP）
+### P2-61 — Channel Emulator Diagnostic/Formal certification（✅ PR #458）
 
 **可观察故障**：当前 F64 的本地测试、诊断序列、现场成功与正式报告资格之间没有 Channel Emulator
 专用的统一晋级记录；未来型号可能“驱动能跑”即被误当成“本站点可发布正式 KPI”。
@@ -4782,13 +4782,13 @@ binding/plan/asset、identity/options、逐操作 receipt、频率/level/path-lo
 
 **地点/依赖**：非现场产品化 + 各型号现场认证；依赖 P2-60。
 
-**当前进展（2026-09-05）**：非现场平台实现已完成并进入完整验证。服务器从同一真实 completed
+**实现（PR #458，2026-09-05）**：服务器从同一真实 completed
 execution 的冻结 binding/plan/asset、硬件身份/选件、逐操作 receipt、频率/level/path-loss、SAFE_IDLE
 与 release 证据派生可撤销 certification；后续执行冻结独立 CE qualification，并由 P2-66 共同 outcome
 统一阻断 diagnostic/simulated/unknown。设备抽屉、Dashboard、TestCase readiness 与 OpenAPI/TS 镜像只读
 服务器投影；未执行现场认证，F64/FS16 仍须按真实现场证据取得 active certification 后才可能 Formal。
 
-### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（批准入雷达，未启动）
+### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（🔄 当前 WIP）
 
 **可观察故障**：没有参数化套件能证明新信道仿真器只需 adapter/manifest/profile/manual evidence 即可
 接入；缺口会在真实第三型号 PR 中再次扩散到 MEASURE、commissioning、报告和 GUI。
@@ -4799,6 +4799,12 @@ execution 的冻结 binding/plan/asset、硬件身份/选件、逐操作 receipt
 adapter/manifest/profile 缺口，不要求修改共同消费者。不新增或猜测任何厂商命令。
 
 **地点/依赖**：纯非现场平台片；依赖 P2-57～P2-61。
+
+**当前实现（2026-09-05）**：测试域 `certfake_ce` 已覆盖注册五件套、saved preset/binding/plan、
+完整与部分回读、错误队列、超时/取消、资产 load、run/adjust/stop、SAFE_IDLE、release 与模拟排除；
+生产目录零测试 adapter 泄漏。MEASURE 新增 adapter/instrument 绑定的通用冻结频率证据，certification
+优先消费该共同投影，旧 F64 字段仅作 pre-P2-62 历史兼容；第三 adapter 不再被写成 F64。未新增或
+猜测任何厂商命令，P2-63 仍保持 HOLD。完整回归、fresh 内审与外审尚待收口。
 
 ### P2-63 — 下一真实 Channel Emulator Adapter（HOLD，型号/手册待定）
 
