@@ -23,12 +23,16 @@ from app.schemas.instrument import (
     InstrumentConnectionUpdate,
 )
 from app.services.channel_emulator_certification import (
+    CE_EXECUTION_QUALIFICATION_CONFIG_KEY,
     ChannelEmulatorCertificationIdentity,
     ChannelEmulatorCertificationProofs,
+    ChannelEmulatorExecutionQualification,
     ChannelEmulatorSiteCertification,
     activate_channel_emulator_site_certification,
     derive_channel_emulator_site_certification_from_execution,
+    freeze_channel_emulator_execution_qualification,
     revoke_channel_emulator_site_certification,
+    validate_frozen_channel_emulator_execution_qualification,
 )
 from app.hal.base_station_compatibility import canonical_payload_digest
 from app.services.channel_emulator_operation_receipt import (
@@ -404,6 +408,399 @@ def test_activation_derivation_requires_one_complete_real_v3_evidence_scope():
     assert certification.model == "PROPSIM F64"
     assert certification.required_proofs == _proofs()
     assert certification.load_mode == "native_model"
+
+
+def _qualification_fixture(*, certification_status="active"):
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from app.models.test_plan import TestExecution
+
+    source = _certification_execution_fixture()
+    from tests.test_p2_66_execution_evidence_outcome import _qualification
+
+    binding = source.config["channel_emulator_binding_freeze"]
+    certification = _derive_certification(source)
+    if certification_status == "revoked":
+        certification = ChannelEmulatorSiteCertification.model_validate(
+            certification.model_copy(
+                update={
+                    "status": "revoked",
+                    "revoked_by": "quality-owner",
+                    "revoked_at": datetime.now(timezone.utc),
+                    "revocation_reason": "maintenance",
+                }
+            )
+        )
+    execution = TestExecution(
+        id=uuid4(),
+        test_case_id=uuid4(),
+        status="pending",
+        config={
+            key: deepcopy(value)
+            for key, value in source.config.items()
+            if key
+            in {
+                "base_station_adapter_profile_freeze",
+                "channel_emulator_binding_freeze",
+                "channel_emulator_load_request_freeze",
+                "channel_emulator_execution_plan_freeze",
+            }
+        },
+    )
+    execution.config["execution_qualification"] = _qualification("formal")
+    case = SimpleNamespace(
+        id=execution.test_case_id,
+        lab_profile_id=binding["lab_profile_id"],
+    )
+    connection = SimpleNamespace(
+        id=binding["instrument_connection_id"],
+        channel_emulator_site_certification=certification.model_dump(mode="json"),
+    )
+    db = MagicMock()
+    db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value = (
+        connection
+    )
+    return db, execution, case, certification
+
+
+def test_active_exact_scope_certification_freezes_formal_qualification_once():
+    db, execution, case, certification = _qualification_fixture()
+
+    frozen = freeze_channel_emulator_execution_qualification(
+        db, execution, case
+    )
+
+    assert isinstance(frozen, ChannelEmulatorExecutionQualification)
+    assert frozen.classification == "formal"
+    assert frozen.policy_mode == "formal"
+    assert frozen.diagnostic_actor is None
+    assert frozen.diagnostic_reasons == ()
+    assert frozen.base_station_qualification_digest == execution.config[
+        "execution_qualification"
+    ]["qualification_digest"]
+    assert frozen.identity_digest == certification.identity_digest
+    assert frozen.site_certification_digest == certification.certification_digest
+    assert validate_frozen_channel_emulator_execution_qualification(
+        execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY]
+    ) is None
+    db.flush.assert_called_once_with()
+
+    execution.config["channel_emulator_binding_freeze"]["binding_digest"] = "0" * 64
+    assert (
+        freeze_channel_emulator_execution_qualification(db, execution, case)
+        == frozen
+    )
+    db.flush.assert_called_once_with()
+
+
+@pytest.mark.parametrize("certification_status", [None, "revoked"])
+def test_missing_or_revoked_certification_freezes_diagnostic(
+    certification_status,
+):
+    db, execution, case, _certification = _qualification_fixture(
+        certification_status=certification_status or "active"
+    )
+    if certification_status is None:
+        db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value.channel_emulator_site_certification = None
+
+    frozen = freeze_channel_emulator_execution_qualification(
+        db, execution, case
+    )
+
+    assert frozen.classification == "diagnostic"
+    assert "site_certification_not_active" in frozen.reasons
+
+
+def test_ce_qualification_rejects_partial_tampered_or_late_backfill():
+    db, execution, case, _certification = _qualification_fixture()
+    execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY] = {
+        "schema_version": 1
+    }
+    with pytest.raises(ValueError, match="qualification"):
+        freeze_channel_emulator_execution_qualification(db, execution, case)
+    db.flush.assert_not_called()
+
+    execution.config.pop(CE_EXECUTION_QUALIFICATION_CONFIG_KEY)
+    execution.measurements = {"phases": {"precheck": {"status": "passed"}}}
+    with pytest.raises(ValueError, match="progress"):
+        freeze_channel_emulator_execution_qualification(db, execution, case)
+    db.flush.assert_not_called()
+
+
+def test_ce_qualification_is_immutable_after_current_certification_changes():
+    db, execution, case, certification = _qualification_fixture()
+    frozen = freeze_channel_emulator_execution_qualification(
+        db, execution, case
+    )
+    connection = db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value
+    connection.channel_emulator_site_certification = (
+        ChannelEmulatorSiteCertification.model_validate(
+            certification.model_copy(
+                update={
+                    "status": "revoked",
+                    "revoked_by": "quality-owner",
+                    "revoked_at": datetime.now(timezone.utc),
+                    "revocation_reason": "later maintenance",
+                }
+            )
+        ).model_dump(mode="json")
+    )
+
+    assert (
+        freeze_channel_emulator_execution_qualification(db, execution, case)
+        == frozen
+    )
+    assert frozen.classification == "formal"
+    db.flush.assert_called_once_with()
+
+
+def test_bs_diagnostic_freeze_forces_ce_qualification_diagnostic():
+    from tests.test_p2_66_execution_evidence_outcome import _qualification
+
+    db, execution, case, _certification = _qualification_fixture()
+    execution.config["execution_qualification"] = _qualification("diagnostic")
+
+    frozen = freeze_channel_emulator_execution_qualification(
+        db, execution, case
+    )
+
+    assert frozen.classification == "diagnostic"
+    assert "execution_policy_diagnostic" in frozen.reasons
+    assert frozen.policy_mode == "diagnostic"
+    assert frozen.diagnostic_reasons == ("test_case_policy_diagnostic",)
+
+
+@pytest.mark.parametrize("raw_qualification", [None, {"malformed": True}])
+def test_ce_qualification_rejects_missing_or_malformed_bs_qualification(
+    raw_qualification,
+):
+    db, execution, case, _certification = _qualification_fixture()
+    if raw_qualification is None:
+        execution.config.pop("execution_qualification")
+    else:
+        execution.config["execution_qualification"] = raw_qualification
+
+    with pytest.raises(ValueError, match="baseStation.*qualification"):
+        freeze_channel_emulator_execution_qualification(db, execution, case)
+
+    db.flush.assert_not_called()
+
+
+def test_p2_66_outcome_blocks_diagnostic_channel_emulator_qualification():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    db, execution, case, _certification = _qualification_fixture()
+    connection = db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value
+    connection.channel_emulator_site_certification = None
+    freeze_channel_emulator_execution_qualification(db, execution, case)
+    source = _certification_execution_fixture()
+    execution.id = source.id
+    execution.status = "completed"
+    execution.config.update(
+        {
+            key: value
+            for key, value in source.config.items()
+            if key
+            in {
+                "channel_emulator_terminal_evidence",
+                "channel_emulator_operation_receipts",
+                "base_station_execution_evidence",
+            }
+        }
+    )
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "diagnostic"
+    assert outcome.formal_eligible is False
+    assert "site_certification_not_active" in outcome.reasons
+
+
+def test_p2_66_outcome_rejects_terminal_v3_without_ce_qualification():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    source = _certification_execution_fixture()
+
+    outcome = project_execution_evidence_outcome(source)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert "qualification" in "\n".join(outcome.reasons)
+
+
+def test_p2_66_outcome_rejects_terminal_identity_drift_from_frozen_certification():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    db, execution, case, _certification = _qualification_fixture()
+    freeze_channel_emulator_execution_qualification(db, execution, case)
+    source = _certification_execution_fixture()
+    execution.id = source.id
+    execution.status = "completed"
+    execution.config.update(
+        {
+            key: value
+            for key, value in source.config.items()
+            if key
+            in {
+                "channel_emulator_terminal_evidence",
+                "channel_emulator_operation_receipts",
+                "base_station_execution_evidence",
+            }
+        }
+    )
+    _replace_terminal_identity(execution, firmware_version="changed")
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert "identity" in "\n".join(outcome.reasons)
+
+
+def _formal_ce_outcome_fixture():
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from tests.test_p2_66_execution_evidence_outcome import _execution
+    from app.hal.base_station_compatibility import (
+        build_frozen_compatibility_payload,
+        build_measure_execution_requirements_from_configuration,
+        evaluate_base_station_compatibility,
+    )
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.models.test_plan import TestExecution
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.mimo_ota.base_station_execution_evidence import (
+        canonical_snapshot_digest,
+    )
+
+    source = _certification_execution_fixture()
+    base_station_execution = _execution()
+    execution = TestExecution(
+        id=source.id,
+        test_case_id=uuid4(),
+        status=base_station_execution.status,
+        config=deepcopy(base_station_execution.config),
+    )
+    frozen_base_station = execution.config[FREEZE_CONFIG_KEY]
+    frozen_base_station["mimo_ota_configuration"] = deepcopy(
+        source.config[FREEZE_CONFIG_KEY]["mimo_ota_configuration"]
+    )
+    requirements = build_measure_execution_requirements_from_configuration(
+        frozen_base_station["mimo_ota_configuration"]
+    )
+    verdict = evaluate_base_station_compatibility(
+        requirements,
+        RealUxmDriver.adapter_manifest,
+    )
+    frozen_base_station["compatibility"] = build_frozen_compatibility_payload(
+        requirements,
+        verdict,
+    )
+    frozen_base_station["digest"] = canonical_payload_digest(
+        {
+            key: value
+            for key, value in frozen_base_station.items()
+            if key != "digest"
+        }
+    )
+    execution.config.update(
+        {
+            key: deepcopy(value)
+            for key, value in source.config.items()
+            if key
+            in {
+                "channel_emulator_binding_freeze",
+                "channel_emulator_load_request_freeze",
+                "channel_emulator_execution_plan_freeze",
+                "channel_emulator_terminal_evidence",
+                "channel_emulator_operation_receipts",
+            }
+        }
+    )
+    terminal = execution.config["channel_emulator_terminal_evidence"][0]
+    attempt_id = terminal["measurement_attempt_id"]
+    base_station_evidence = execution.config["base_station_execution_evidence"]
+    base_station_evidence["execution_id"] = str(execution.id)
+    base_station_evidence["current_measurement_attempt_id"] = attempt_id
+    for window in base_station_evidence["measurement_windows"]:
+        window["measurement_attempt_id"] = attempt_id
+        for metric in window["metrics"].values():
+            metric["measurement_attempt_id"] = attempt_id
+    for release in base_station_evidence["control_releases"]:
+        release["measurement_attempt_id"] = attempt_id
+    for receipt in base_station_evidence["mac_profile_receipts"]:
+        receipt["measurement_attempt_id"] = attempt_id
+        application = receipt["application_evidence"]
+        application["execution_id"] = str(execution.id)
+        application["digest"] = canonical_snapshot_digest(
+            {
+                key: value
+                for key, value in application.items()
+                if key != "digest"
+            }
+        )
+    binding = execution.config["channel_emulator_binding_freeze"]
+    case = SimpleNamespace(
+        id=execution.test_case_id,
+        lab_profile_id=binding["lab_profile_id"],
+    )
+    certification = _derive_certification(source)
+    connection = SimpleNamespace(
+        id=binding["instrument_connection_id"],
+        channel_emulator_site_certification=certification.model_dump(mode="json"),
+    )
+    db = MagicMock()
+    db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value = (
+        connection
+    )
+    freeze_channel_emulator_execution_qualification(db, execution, case)
+    return execution
+
+
+def test_p2_66_outcome_accepts_only_formal_ce_qualification_linked_to_bs_freeze():
+    from copy import deepcopy
+
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+    from app.services.execution_qualification import (
+        EXECUTION_QUALIFICATION_KEY,
+        _qualification_payload_digest,
+    )
+
+    execution = _formal_ce_outcome_fixture()
+    outcome = project_execution_evidence_outcome(execution)
+    assert outcome.completion_semantic == "valid_test_completed", (
+        outcome,
+        execution.config["base_station_execution_evidence"][
+            "current_measurement_attempt_id"
+        ],
+        execution.config["channel_emulator_terminal_evidence"][0][
+            "measurement_attempt_id"
+        ],
+        [
+            item["measurement_attempt_id"]
+            for item in execution.config["channel_emulator_operation_receipts"]
+        ],
+    )
+    assert outcome.formal_eligible is True
+
+    replacement = deepcopy(execution.config[EXECUTION_QUALIFICATION_KEY])
+    replacement["frozen_at"] = "2026-09-05T06:00:00Z"
+    replacement["qualification_digest"] = _qualification_payload_digest(replacement)
+    execution.config[EXECUTION_QUALIFICATION_KEY] = replacement
+
+    outcome = project_execution_evidence_outcome(execution)
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert "qualification" in "\n".join(outcome.reasons)
 
 
 def _derive_certification(execution):

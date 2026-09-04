@@ -16,12 +16,14 @@ from typing import Any, Literal
 from pydantic import (
     BaseModel,
     ConfigDict,
+    ValidationError,
     field_validator,
     model_validator,
 )
 
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+CE_EXECUTION_QUALIFICATION_CONFIG_KEY = "channel_emulator_execution_qualification"
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -265,6 +267,103 @@ class ChannelEmulatorSiteCertification(BaseModel):
         return _canonical_digest(self.model_dump(mode="json"))
 
 
+class ChannelEmulatorExecutionQualification(BaseModel):
+    """Immutable classification for one execution's frozen CE scope."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+    )
+
+    schema_version: Literal[1]
+    classification: Literal["formal", "diagnostic"]
+    policy_mode: Literal["formal", "diagnostic"]
+    diagnostic_actor: str | None
+    diagnostic_reasons: tuple[str, ...]
+    base_station_qualification_digest: str
+    lab_profile_id: str
+    instrument_connection_id: str | None
+    instrument_model_id: str | None
+    binding_digest: str
+    plan_digest: str
+    asset_digest: str
+    adapter_id: str
+    load_mode: Literal["native_model", "external_waveform", "parametric_tdl"]
+    site_certification: ChannelEmulatorSiteCertification | None
+    site_certification_digest: str | None
+    identity_digest: str | None
+    reasons: tuple[str, ...]
+    frozen_at: datetime
+    qualification_digest: str
+
+    @field_validator(
+        "lab_profile_id",
+        "binding_digest",
+        "plan_digest",
+        "asset_digest",
+        "adapter_id",
+    )
+    @classmethod
+    def _qualification_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("channelEmulator execution qualification fields must be non-blank")
+        return normalized
+
+    @field_validator(
+        "base_station_qualification_digest",
+        "binding_digest",
+        "plan_digest",
+        "asset_digest",
+        "site_certification_digest",
+        "identity_digest",
+        "qualification_digest",
+    )
+    @classmethod
+    def _qualification_digest_format(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not _DIGEST_RE.fullmatch(normalized):
+            raise ValueError("channelEmulator execution qualification digest is invalid")
+        return normalized
+
+    @field_validator("diagnostic_reasons", "reasons", mode="before")
+    @classmethod
+    def _qualification_reasons_array(cls, values: Any) -> tuple[str, ...]:
+        if not isinstance(values, (list, tuple)):
+            raise ValueError("channelEmulator execution qualification reasons must be an array")
+        return tuple(str(value).strip() for value in values if str(value).strip())
+
+    @model_validator(mode="after")
+    def _qualification_is_consistent_and_digest_bound(
+        self,
+    ) -> "ChannelEmulatorExecutionQualification":
+        if self.classification == "formal" and self.reasons:
+            raise ValueError("formal channelEmulator qualification cannot contain reasons")
+        if self.classification == "diagnostic" and not self.reasons:
+            raise ValueError("diagnostic channelEmulator qualification requires reasons")
+        expected_cert_digest = (
+            self.site_certification.certification_digest
+            if self.site_certification is not None
+            else None
+        )
+        if self.site_certification_digest != expected_cert_digest:
+            raise ValueError("channelEmulator qualification certification digest mismatch")
+        expected_identity_digest = (
+            self.site_certification.identity_digest
+            if self.site_certification is not None
+            else None
+        )
+        if self.identity_digest != expected_identity_digest:
+            raise ValueError("channelEmulator qualification identity digest mismatch")
+        payload = self.model_dump(mode="json", exclude={"qualification_digest"})
+        if self.qualification_digest != _canonical_digest(payload):
+            raise ValueError("channelEmulator execution qualification digest mismatch")
+        return self
+
+
 def parse_channel_emulator_site_certification(
     raw: Any,
 ) -> ChannelEmulatorSiteCertification | None:
@@ -278,6 +377,202 @@ def parse_channel_emulator_site_certification(
         raise ValueError(
             "stored Channel Emulator site certification is invalid"
         ) from exc
+
+
+def validate_frozen_channel_emulator_execution_qualification(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return "frozen channelEmulator execution qualification is missing or malformed"
+    try:
+        ChannelEmulatorExecutionQualification.model_validate(raw)
+    except (TypeError, ValueError, ValidationError):
+        return "frozen channelEmulator execution qualification is invalid"
+    return None
+
+
+def freeze_channel_emulator_execution_qualification(
+    db,
+    execution,
+    test_case,
+) -> ChannelEmulatorExecutionQualification:
+    """Freeze current CE certification against the already-frozen scope once."""
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.instrument import InstrumentConnection
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.channel_emulator_binding import (
+        CE_FREEZE_CONFIG_KEY,
+        validate_frozen_channel_emulator_binding,
+    )
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+        validate_frozen_channel_emulator_execution_plan,
+        validate_frozen_channel_emulator_load_context,
+    )
+    from app.services.execution_qualification import (
+        EXECUTION_QUALIFICATION_KEY,
+        ExecutionQualification,
+        validate_frozen_execution_qualification,
+    )
+
+    config = execution.config if isinstance(execution.config, dict) else {}
+    if CE_EXECUTION_QUALIFICATION_CONFIG_KEY in config:
+        existing = config.get(CE_EXECUTION_QUALIFICATION_CONFIG_KEY)
+        error = validate_frozen_channel_emulator_execution_qualification(existing)
+        if error is not None:
+            raise ValueError(error)
+        return ChannelEmulatorExecutionQualification.model_validate(existing)
+    has_progress = any(
+        value not in (None, {}, [])
+        for value in (
+            getattr(execution, "measurements", None),
+            getattr(execution, "test_results", None),
+            getattr(execution, "phase_results", None),
+            config.get("phase_progress"),
+        )
+    )
+    if has_progress:
+        raise ValueError(
+            "execution already has hardware/phase progress; channelEmulator "
+            "qualification cannot be backfilled"
+        )
+    raw_base_station_qualification = config.get(EXECUTION_QUALIFICATION_KEY)
+    if (
+        validate_frozen_execution_qualification(raw_base_station_qualification)
+        is not None
+    ):
+        raise ValueError(
+            "baseStation execution qualification must be frozen and valid before "
+            "channelEmulator qualification"
+        )
+    base_station_qualification = ExecutionQualification.model_validate(
+        raw_base_station_qualification
+    )
+    try:
+        binding = validate_frozen_channel_emulator_binding(
+            config[CE_FREEZE_CONFIG_KEY]
+        )
+        plan = validate_frozen_channel_emulator_execution_plan(
+            config[CE_PLAN_FREEZE_CONFIG_KEY]
+        )
+        load_request, _configuration = validate_frozen_channel_emulator_load_context(
+            config,
+            plan,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "channelEmulator binding/plan/asset must be frozen before qualification"
+        ) from exc
+    if getattr(test_case, "id", None) != getattr(execution, "test_case_id", None):
+        raise ValueError("channelEmulator qualification TestCase identity mismatch")
+    if (
+        getattr(test_case, "lab_profile_id", None) is None
+        or str(test_case.lab_profile_id) != binding.get("lab_profile_id")
+    ):
+        raise ValueError("channelEmulator qualification LabProfile identity mismatch")
+    resolved = binding["resolved_binding"]
+    connection_id = binding.get("instrument_connection_id")
+    certification = None
+    if connection_id is not None:
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.id == connection_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if connection is None:
+            raise ValueError("frozen channelEmulator connection no longer exists")
+        certification = parse_channel_emulator_site_certification(
+            connection.channel_emulator_site_certification
+        )
+    base_freeze = config.get(FREEZE_CONFIG_KEY)
+    asset = (
+        base_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+        if isinstance(base_freeze, dict)
+        else None
+    )
+    asset_digest = (
+        asset.get("digest")
+        if isinstance(asset, dict) and isinstance(asset.get("digest"), str)
+        else load_request["digest"]
+    )
+    reasons: list[str] = []
+    if base_station_qualification.classification == "diagnostic":
+        reasons.append("execution_policy_diagnostic")
+    if binding.get("execution_mode") != "real" or resolved.get("status") != "configured":
+        reasons.append("channel_emulator_execution_not_real")
+    if certification is None or certification.status != "active":
+        reasons.append("site_certification_not_active")
+    else:
+        expected = {
+            "lab_profile_id": str(test_case.lab_profile_id),
+            "instrument_connection_id": str(connection_id),
+            "instrument_model_id": str(binding.get("instrument_model_id")),
+            "binding_digest": binding["binding_digest"],
+            "adapter_id": plan["adapter_id"],
+            "plan_digest": plan["digest"],
+            "asset_digest": asset_digest,
+            "load_mode": plan["requested_load_mode"],
+        }
+        if any(getattr(certification, key) != value for key, value in expected.items()):
+            reasons.append("site_certification_scope_mismatch")
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "classification": "diagnostic" if reasons else "formal",
+        "policy_mode": base_station_qualification.policy_mode,
+        "diagnostic_actor": (
+            base_station_qualification.policy.updated_by
+            if base_station_qualification.policy is not None
+            and base_station_qualification.policy_mode == "diagnostic"
+            else None
+        ),
+        "diagnostic_reasons": list(base_station_qualification.reasons),
+        "base_station_qualification_digest": (
+            base_station_qualification.qualification_digest
+        ),
+        "lab_profile_id": str(test_case.lab_profile_id),
+        "instrument_connection_id": (
+            str(connection_id) if connection_id is not None else None
+        ),
+        "instrument_model_id": (
+            str(binding.get("instrument_model_id"))
+            if binding.get("instrument_model_id") is not None
+            else None
+        ),
+        "binding_digest": binding["binding_digest"],
+        "plan_digest": plan["digest"],
+        "asset_digest": asset_digest,
+        "adapter_id": plan["adapter_id"],
+        "load_mode": plan["requested_load_mode"],
+        "site_certification": (
+            certification.model_dump(mode="json")
+            if certification is not None
+            else None
+        ),
+        "site_certification_digest": (
+            certification.certification_digest
+            if certification is not None
+            else None
+        ),
+        "identity_digest": (
+            certification.identity_digest
+            if certification is not None
+            else None
+        ),
+        "reasons": reasons,
+        "frozen_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    payload["qualification_digest"] = _canonical_digest(payload)
+    frozen = ChannelEmulatorExecutionQualification.model_validate(payload)
+    execution.config = {
+        **config,
+        CE_EXECUTION_QUALIFICATION_CONFIG_KEY: frozen.model_dump(mode="json"),
+    }
+    flag_modified(execution, "config")
+    db.flush()
+    return frozen
 
 
 def _audit_text(value: str, field: str) -> str:
