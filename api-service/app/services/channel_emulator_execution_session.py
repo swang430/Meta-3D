@@ -233,6 +233,26 @@ def require_channel_emulator_passthrough_clear() -> None:
     state.error = None
 
 
+def require_channel_emulator_stop_after_output_change() -> None:
+    """Arm GOS before an operation that may resume channel output.
+
+    This transition is intentionally made before the driver call: a rejected,
+    interrupted, or partially applied start can still leave the instrument in
+    GO, so the session must conservatively attempt ``stop_emulation`` on exit.
+    """
+
+    state = _channel_emulator_safe_idle_owner.get()
+    if state is None:
+        raise ChannelEmulatorExecutionSessionError(
+            "channelEmulator output change has no execution-session owner"
+        )
+    if state.error is not None:
+        raise state.error
+    state.action = "stop_emulation"
+    state.attempted = False
+    state.confirmed = False
+
+
 def _attach_secondary_failure(
     primary: BaseException,
     *,

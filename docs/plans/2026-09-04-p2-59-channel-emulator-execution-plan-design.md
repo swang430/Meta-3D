@@ -144,8 +144,10 @@ safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些�
 LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extra=forbid` 的不可变模型完整
 解析，再核 canonical digest；非法 execution mode、空成功态 session/lease/instrument 身份、成功位与
 错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。P2-66 还必须从 binding 的
-冻结 `resolved_binding.manifest` 与 plan 冻结的 source/load-mode/binding-digest 纯重建权威计划，再用
-共同 verifier 对账；相同 binding digest 不能让另一 adapter 的合法 plan 混入。
+冻结身份与 MIMO 配置纯重建权威计划，再用共同 verifier 对账：configured real 消费 binding manifest，
+simulated/diagnostic-unbound 消费固定权威 Mock manifest；现代 binding 的 source 固定为启动冻结时已加载的
+`hal`，load mode 从冻结 `mimo_ota_configuration.engine_mode` 映射，不能借待验证 plan 自己的 source/load-mode
+自证。相同 binding digest 不能让另一 adapter、fallback source 或另一加载模式的合法 plan 混入。
 
 | 业务方向 | safe idle | release | terminal state | 正式性 |
 |---|---|---|---|---|
@@ -161,7 +163,9 @@ LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extr
 safe idle 只调用计划声明的既有动作：普通链为 `stop_emulation`；直通链前置 stop 后进入 STATIC，
 终态改用既有 `clear_passthrough_mode`，并把 action 写入 terminal，前置 stop 不能冒充终态确认。计划未声明、
 方法缺失、返回 False 或抛异常都不能写成 confirmed。驱动协程自身抛 `CancelledError` 但调用 task 未被
-取消时按 safe-idle failed 记录，不能伪装成操作员取消。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
+取消时按 safe-idle failed 记录，不能伪装成操作员取消。若直通 attach 后继续启动衰落，必须在
+`start_emulation` 前把终态 action 保守切回 `stop_emulation`；启动返回 False、抛异常、被取消或部分生效
+都在 release 前执行 GOS，不能用较早的 clear-passthrough 证明最终安全。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
 evidence 落库失败，成功链必须失败；异常/取消链先回滚业务事务，再用同一会话的新事务追加 terminal，
 避免 terminal 的 commit 顺带提交半成品测量。落库自身再失败时仍保留原异常/取消，但把落库失败作为明确
 并列失败附在原异常上，不能只写日志后静默丢失。

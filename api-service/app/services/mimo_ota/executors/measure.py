@@ -85,6 +85,7 @@ from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.services.channel_emulator_execution_session import (
     ensure_channel_emulator_safe_idle,
     require_channel_emulator_passthrough_clear,
+    require_channel_emulator_stop_after_output_change,
 )
 
 logger = logging.getLogger(__name__)
@@ -2617,6 +2618,10 @@ class MeasureExecutor(IStepExecutor):
                     required_evidence_level=EvidenceLevel.APPLIED,
                 )
                 context.db.commit()
+                # start_emulation 会先退出 STATIC 再进入 GO，且失败/异常/取消
+                # 可能发生在状态已部分生效之后。必须在调用前把 session 终态
+                # 所有权切回 GOS，不能沿用 attach 阶段的 clear-passthrough。
+                require_channel_emulator_stop_after_output_change()
                 with capture_scpi_exchanges() as f64_fade_exchanges:
                     faded = await emulator.start_emulation()
                 if hasattr(emulator, "build_p0_5_command_evidence"):

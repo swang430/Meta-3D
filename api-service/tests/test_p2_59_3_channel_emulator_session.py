@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -459,6 +460,161 @@ async def test_bypass_terminal_clear_occurs_after_passthrough_on_every_exit(
     ]
     assert terminal[0]["safe_idle_action"] == "clear_passthrough_mode"
     assert terminal[0]["safe_idle_confirmed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_result", [True, False, RuntimeError("start failed")])
+async def test_bypass_fade_rearms_terminal_stop_before_start_can_change_output(
+    monkeypatch, start_result
+):
+    """A fade start after STATIC must leave the terminal action at GOS."""
+    from app.services import channel_emulator_execution_session as module
+
+    class FadingCe(_RealCe):
+        async def set_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-on")
+            return True
+
+        async def clear_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-clear")
+            return True
+
+        async def start_emulation(self) -> bool:
+            self.events.append("fade-start-maybe-active")
+            if isinstance(start_result, BaseException):
+                raise start_result
+            return start_result
+
+    driver = FadingCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
+
+    async def run():
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="bypass-fade:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            assert await module.ensure_channel_emulator_safe_idle() is True
+            module.require_channel_emulator_passthrough_clear()
+            assert await driver.set_passthrough_mode() is True
+            module.require_channel_emulator_stop_after_output_change()
+            started = await driver.start_emulation()
+            outcome.mark_operation_result(started)
+
+    if isinstance(start_result, BaseException):
+        with pytest.raises(type(start_result), match="start failed"):
+            await run()
+    else:
+        await run()
+
+    assert driver.events == [
+        "acquire",
+        "safe-idle",
+        "passthrough-on",
+        "fade-start-maybe-active",
+        "safe-idle",
+        "release",
+    ]
+    assert "passthrough-clear" not in driver.events
+    assert terminal[0]["safe_idle_action"] == "stop_emulation"
+    assert terminal[0]["safe_idle_confirmed"] is True
+    assert terminal[0]["terminal_state"] == (
+        "completed" if start_result is True else "failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bypass_fade_caller_cancel_waits_for_terminal_stop_before_release(
+    monkeypatch,
+):
+    """Real task cancellation during start cannot strand GO or skip release."""
+    from app.services import channel_emulator_execution_session as module
+
+    start_entered = asyncio.Event()
+    never_finishes = asyncio.Event()
+
+    class BlockingFadeCe(_RealCe):
+        async def set_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-on")
+            return True
+
+        async def clear_passthrough_mode(self) -> bool:
+            self.events.append("passthrough-clear")
+            return True
+
+        async def start_emulation(self) -> bool:
+            self.events.append("fade-start-maybe-active")
+            start_entered.set()
+            await never_finishes.wait()
+            return True
+
+    driver = BlockingFadeCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
+
+    async def run():
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="bypass-fade-cancel:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            assert await module.ensure_channel_emulator_safe_idle() is True
+            module.require_channel_emulator_passthrough_clear()
+            assert await driver.set_passthrough_mode() is True
+            module.require_channel_emulator_stop_after_output_change()
+            await driver.start_emulation()
+
+    task = asyncio.create_task(run())
+    await start_entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert driver.events == [
+        "acquire",
+        "safe-idle",
+        "passthrough-on",
+        "fade-start-maybe-active",
+        "safe-idle",
+        "release",
+    ]
+    assert terminal[0]["safe_idle_action"] == "stop_emulation"
+    assert terminal[0]["safe_idle_confirmed"] is True
+    assert terminal[0]["terminal_state"] == "cancelled"
+
+
+def test_measure_rearms_terminal_stop_before_bypass_fade_start():
+    """Protect the production call site, not only the session state helper."""
+    from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+    source = inspect.getsource(MeasureExecutor.execute)
+    fade_branch = source[source.index("if config.f64_bypass_mode is not None and config.f64_fade_after_attach:") :]
+    arm = fade_branch.index("require_channel_emulator_stop_after_output_change()")
+    start = fade_branch.index("faded = await emulator.start_emulation()")
+    assert arm < start
 
 
 @pytest.mark.asyncio
@@ -1170,16 +1326,30 @@ def _terminal_evidence(
 
 
 def _execution_with_ce_evidence(binding: dict, plan: dict, terminal: dict):
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
     from app.services.channel_emulator_execution_session import (
         CE_TERMINAL_EVIDENCE_CONFIG_KEY,
     )
     from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
     from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
 
+    frozen_mimo = MIMOOTAConfiguration.model_validate(
+        {"engine_mode": "keysight_gcm", "emulation_file": "scenario.smu"}
+    ).model_dump(mode="json")
+    base_station_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+    base_station_freeze = {
+        **base_station_payload,
+        "digest": canonical_payload_digest(base_station_payload),
+    }
     return SimpleNamespace(
         id="execution-1",
         status="completed",
         config={
+            FREEZE_CONFIG_KEY: base_station_freeze,
             CE_FREEZE_CONFIG_KEY: binding,
             CE_PLAN_FREEZE_CONFIG_KEY: plan,
             CE_TERMINAL_EVIDENCE_CONFIG_KEY: [terminal],
@@ -1280,12 +1450,125 @@ def test_p2_66_rejects_plan_derived_from_a_different_manifest():
     )
 
 
-def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
-    from app.services.channel_emulator_execution_session import (
-        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+@pytest.mark.parametrize(
+    ("driver_source", "requested_load_mode"),
+    [
+        ("fallback_mock", "native_model"),
+        ("hal", "external_waveform"),
+    ],
+)
+def test_p2_66_rejects_plan_source_or_load_mode_that_disagrees_with_frozen_truth(
+    driver_source,
+    requested_load_mode,
+):
+    """Plan fields cannot choose their own inputs and then verify themselves."""
+    from app.hal.channel_emulator_execution_plan import (
+        resolve_channel_emulator_execution_plan,
     )
-    from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
-    from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    foreign = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source=driver_source,
+        requested_load_mode=requested_load_mode,
+        binding_digest=binding["binding_digest"],
+    )
+    plan = {**foreign.as_payload(), "digest": foreign.digest}
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+
+    outcome = project_execution_evidence_outcome(
+        _execution_with_ce_evidence(binding, plan, terminal)
+    )
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("plan" in reason for reason in outcome.reasons)
+
+
+def test_p2_66_rejects_clear_terminal_when_frozen_bypass_then_fades_to_go():
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    terminal["safe_idle_action"] = "clear_passthrough_mode"
+    terminal["digest"] = canonical_payload_digest(
+        {key: value for key, value in terminal.items() if key != "digest"}
+    )
+    execution = _execution_with_ce_evidence(binding, plan, terminal)
+    mimo = MIMOOTAConfiguration.model_validate(
+        {
+            "engine_mode": "keysight_gcm",
+            "emulation_file": "scenario.smu",
+            "f64_bypass_mode": 2,
+            "f64_fade_after_attach": True,
+        }
+    ).model_dump(mode="json")
+    payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: mimo}
+    execution.config[FREEZE_CONFIG_KEY] = {
+        **payload,
+        "digest": canonical_payload_digest(payload),
+    }
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("safe idle action" in reason for reason in outcome.reasons)
+
+
+def test_p2_66_keeps_complete_diagnostic_unbound_mock_session_diagnostic():
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    mock = MockChannelEmulator("frozen-mock", {})
+    resolved = {
+        "schema_version": 1,
+        "status": "diagnostic_unbound",
+        "category_id": "ce-category",
+        "instrument_model_id": None,
+        "instrument_connection_id": None,
+        "lab_profile_id": "lab-1",
+        "manifest": None,
+        "expected_driver_module": None,
+        "expected_driver_name": None,
+        "expected_transport": None,
+        "binding_digest": BINDING_DIGEST,
+    }
+    identity = {
+        "schema_version": 1,
+        "category_id": "ce-category",
+        "instrument_model_id": None,
+        "instrument_connection_id": None,
+        "lab_profile_id": "lab-1",
+        "execution_mode": "simulated",
+        "expected_driver_module": None,
+        "expected_driver_name": None,
+        "expected_driver_connection": None,
+        "binding_digest": BINDING_DIGEST,
+        "resolved_binding": resolved,
+    }
+    binding = {**identity, "digest": canonical_payload_digest(identity)}
+    plan = _frozen_plan(mock)
+    terminal = _terminal_evidence(binding, plan, execution_mode="simulated")
+
+    outcome = project_execution_evidence_outcome(
+        _execution_with_ce_evidence(binding, plan, terminal)
+    )
+
+    assert outcome.compatibility_classification == "diagnostic"
+    assert outcome.completion_semantic == "diagnostic_completed"
+    assert outcome.formal_eligible is False
+
+
+def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
     from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 
     driver = _RealCe()
@@ -1294,15 +1577,7 @@ def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
     failed = _terminal_evidence(
         binding, plan, execution_mode="real", terminal_state="failed"
     )
-    execution = SimpleNamespace(
-        id="execution-1",
-        status="completed",
-        config={
-            CE_FREEZE_CONFIG_KEY: binding,
-            CE_PLAN_FREEZE_CONFIG_KEY: plan,
-            CE_TERMINAL_EVIDENCE_CONFIG_KEY: [failed],
-        },
-    )
+    execution = _execution_with_ce_evidence(binding, plan, failed)
     outcome = project_execution_evidence_outcome(execution)
     assert outcome.compatibility_classification == "invalid"
     assert outcome.formal_eligible is False
@@ -1314,26 +1589,15 @@ def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
 
 
 def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic():
-    from app.services.channel_emulator_execution_session import (
-        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
-    )
-    from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
-    from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
     from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 
     driver = MockChannelEmulator("frozen-mock", {})
     binding = _frozen_binding_for_driver(driver, execution_mode="simulated")
     plan = _frozen_plan(driver)
-    execution = SimpleNamespace(
-        id="execution-1",
-        status="completed",
-        config={
-            CE_FREEZE_CONFIG_KEY: binding,
-            CE_PLAN_FREEZE_CONFIG_KEY: plan,
-            CE_TERMINAL_EVIDENCE_CONFIG_KEY: [
-                _terminal_evidence(binding, plan, execution_mode="simulated")
-            ],
-        },
+    execution = _execution_with_ce_evidence(
+        binding,
+        plan,
+        _terminal_evidence(binding, plan, execution_mode="simulated"),
     )
     outcome = project_execution_evidence_outcome(execution)
     assert outcome.compatibility_classification == "diagnostic"

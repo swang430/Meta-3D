@@ -27,6 +27,7 @@ from app.hal.base_station_mac_profile import (
     UXM_NR_PROFILE_SOURCE,
 )
 from app.hal.channel_emulator_execution_plan import (
+    requested_channel_emulator_load_mode,
     resolve_channel_emulator_execution_plan,
 )
 from app.hal.channel_emulator_manifest import ChannelEmulatorManifest
@@ -130,13 +131,50 @@ def _channel_emulator_terminal_projection(
         return "invalid", "channelEmulator plan and binding digest do not match"
     try:
         resolved_binding = validated_binding["resolved_binding"]
-        manifest = ChannelEmulatorManifest.model_validate(
-            resolved_binding["manifest"]
+        binding_status = resolved_binding["status"]
+        execution_mode = validated_binding["execution_mode"]
+        if binding_status == "diagnostic_unbound":
+            if execution_mode != "simulated":
+                return "invalid", "channelEmulator diagnostic binding is not simulated"
+            from app.hal.channel_emulator import MockChannelEmulator
+
+            manifest = MockChannelEmulator.adapter_manifest
+        elif binding_status == "configured":
+            if execution_mode == "simulated":
+                # A configured mock run still executes the one authoritative CE
+                # mock implementation; the binding manifest describes the
+                # selected real model and must not be mistaken for live mock
+                # execution capability.
+                from app.hal.channel_emulator import MockChannelEmulator
+
+                manifest = MockChannelEmulator.adapter_manifest
+            else:
+                manifest = ChannelEmulatorManifest.model_validate(
+                    resolved_binding["manifest"]
+                )
+        else:
+            return "invalid", "channelEmulator binding status cannot derive a plan"
+
+        base_station_freeze = config.get(FREEZE_CONFIG_KEY)
+        if not isinstance(base_station_freeze, Mapping):
+            return "invalid", "channelEmulator plan has no frozen MIMO configuration"
+        frozen_mimo = base_station_freeze.get(MIMO_OTA_CONFIGURATION_FREEZE_KEY)
+        if not isinstance(frozen_mimo, Mapping):
+            return "invalid", "channelEmulator plan has no frozen MIMO configuration"
+        from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+        mimo_configuration = MIMOOTAConfiguration.model_validate(dict(frozen_mimo))
+        authoritative_load_mode = requested_channel_emulator_load_mode(
+            mimo_configuration.engine_mode
         )
         authoritative_plan = resolve_channel_emulator_execution_plan(
             manifest=manifest,
-            driver_source=validated_plan["driver_source"],
-            requested_load_mode=validated_plan["requested_load_mode"],
+            # A frozen binding can only be produced after the resolver observed
+            # an authoritative loaded driver.  Runtime absence is tolerated by
+            # the execution scope, but it cannot rewrite the launch-time source
+            # into the old Measure-local fallback.
+            driver_source="hal",
+            requested_load_mode=authoritative_load_mode,
             binding_digest=validated_binding["binding_digest"],
         )
     except (KeyError, TypeError, ValueError, ValidationError) as exc:
@@ -176,6 +214,14 @@ def _channel_emulator_terminal_projection(
         }
         if any(item.get(key) != value for key, value in expected.items()):
             return "invalid", "channelEmulator terminal evidence identity drift"
+        expected_safe_idle_action = (
+            "clear_passthrough_mode"
+            if mimo_configuration.f64_bypass_mode is not None
+            and mimo_configuration.f64_fade_after_attach is not True
+            else "stop_emulation"
+        )
+        if item.get("safe_idle_action") != expected_safe_idle_action:
+            return "invalid", "channelEmulator terminal safe idle action contradicts frozen MIMO configuration"
         if (
             item.get("terminal_state") != "completed"
             or item.get("operation_succeeded") is not True
