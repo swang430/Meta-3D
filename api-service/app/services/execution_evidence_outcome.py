@@ -193,6 +193,7 @@ def _channel_emulator_terminal_projection(
         return "invalid", "completed execution has no channelEmulator terminal evidence"
 
     simulated = validated_binding.get("execution_mode") == "simulated"
+    validated_evidence: list[Mapping[str, Any]] = []
     for item in evidence:
         if not isinstance(item, Mapping):
             return "invalid", "channelEmulator terminal evidence is malformed"
@@ -215,6 +216,24 @@ def _channel_emulator_terminal_projection(
             return "invalid", "channelEmulator terminal evidence identity drift"
         if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
             return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
+        validated_evidence.append(item)
+
+    # Commissioning single-phase runs are deliberately retryable.  Persistence
+    # is append-only, so the last terminal record for the same immutable
+    # operation scope is the accepted attempt; an earlier failed attempt from
+    # that scope must not poison a later successful retry.  Pre-P2-59 records
+    # have no scope and therefore remain independently fail-closed.
+    effective_evidence: list[Mapping[str, Any]] = []
+    latest_by_scope: dict[str, Mapping[str, Any]] = {}
+    for item in validated_evidence:
+        operation_scope = item.get("operation_scope")
+        if isinstance(operation_scope, str):
+            latest_by_scope[operation_scope] = item
+        else:
+            effective_evidence.append(item)
+    effective_evidence.extend(latest_by_scope.values())
+
+    for item in effective_evidence:
         if (
             item.get("terminal_state") != "completed"
             or item.get("operation_succeeded") is not True

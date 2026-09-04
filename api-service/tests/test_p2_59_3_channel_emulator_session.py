@@ -1454,6 +1454,7 @@ async def test_scope_persists_terminal_truth_only_after_safe_idle_and_release(mo
     assert captured[0]["remote_acquired_confirmed"] is True
     assert captured[0]["transport_released_confirmed"] is True
     assert captured[0]["instrument_id"] == "ce-runtime"
+    assert captured[0]["operation_scope"] == "formal-case:execution-1"
     payload = {key: value for key, value in captured[0].items() if key != "digest"}
     assert captured[0]["digest"] == canonical_payload_digest(payload)
 
@@ -1492,10 +1493,12 @@ def _terminal_evidence(
     *,
     execution_mode: str,
     terminal_state: str = "completed",
+    session_id: str = "session-1",
+    operation_scope: str | None = None,
 ) -> dict:
     payload = {
         "schema_version": 1,
-        "session_id": "session-1",
+        "session_id": session_id,
         "execution_id": "execution-1",
         "binding_digest": binding["binding_digest"],
         "binding_freeze_digest": binding["digest"],
@@ -1517,6 +1520,8 @@ def _terminal_evidence(
         "error_type": None if terminal_state == "completed" else "RuntimeError",
         "safe_idle_error_type": None,
     }
+    if operation_scope is not None:
+        payload["operation_scope"] = operation_scope
     return {**payload, "digest": canonical_payload_digest(payload)}
 
 
@@ -2033,6 +2038,42 @@ def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
     outcome = project_execution_evidence_outcome(execution)
     assert outcome.compatibility_classification == "invalid"
     assert any("digest" in reason for reason in outcome.reasons)
+
+
+def test_p2_66_successful_retry_supersedes_failed_same_operation_scope():
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    failed = _terminal_evidence(
+        binding,
+        plan,
+        execution_mode="real",
+        terminal_state="failed",
+        session_id="failed-session",
+        operation_scope="commissioning-phase:execution-1:measure",
+    )
+    completed = _terminal_evidence(
+        binding,
+        plan,
+        execution_mode="real",
+        session_id="successful-retry",
+        operation_scope="commissioning-phase:execution-1:measure",
+    )
+    execution = _execution_with_ce_evidence(binding, plan, completed)
+    execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY] = [failed, completed]
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
 
 
 def test_p2_66_rejects_orphan_channel_emulator_load_request_freeze():

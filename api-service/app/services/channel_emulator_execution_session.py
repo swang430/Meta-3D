@@ -78,6 +78,7 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
 
     schema_version: Literal[1]
     session_id: NonEmptyString
+    operation_scope: NonEmptyString | None = None
     execution_id: NonEmptyString
     binding_digest: NonEmptyString
     binding_freeze_digest: NonEmptyString
@@ -602,6 +603,7 @@ async def channel_emulator_execution_scope(
             payload = {
                 "schema_version": 1,
                 "session_id": session_id,
+                "operation_scope": purpose,
                 "execution_id": execution_id,
                 "binding_digest": binding_fields.get("binding_digest"),
                 "binding_freeze_digest": binding_fields.get("digest"),
