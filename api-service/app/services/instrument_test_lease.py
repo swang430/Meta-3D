@@ -11,8 +11,8 @@ import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import AsyncIterator, Callable, Optional
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from uuid import uuid4
 
 from app.hal.base_station import (
@@ -32,6 +32,53 @@ class InstrumentTestLeaseReleaseError(InstrumentTestLeaseError):
     """业务操作结束后，仪表未能被确认交还 Local。"""
 
 
+@dataclass(frozen=True)
+class UninterruptibleAwaitOutcome:
+    """An awaitable's real terminal result plus any delayed caller cancellation."""
+
+    value: Any = None
+    error: BaseException | None = None
+    delayed_cancellation: asyncio.CancelledError | None = None
+
+
+async def await_completion_despite_cancellation(
+    awaitable: Awaitable[Any],
+) -> UninterruptibleAwaitOutcome:
+    """Finish one safety operation before propagating caller cancellation.
+
+    ``asyncio.shield`` alone is insufficient: it lets the inner task continue but
+    immediately releases the caller into the next cleanup stage.  This helper
+    repeatedly waits for the independent task, records first and additional
+    cancellations, and returns only after the operation has truly completed or
+    failed.  A cancellation raised by the *inner* task remains an operation
+    failure rather than being mislabelled as caller cancellation.
+    """
+
+    task = asyncio.ensure_future(awaitable)
+    delayed_cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            value = await asyncio.shield(task)
+            return UninterruptibleAwaitOutcome(
+                value=value,
+                delayed_cancellation=delayed_cancellation,
+            )
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                return UninterruptibleAwaitOutcome(
+                    error=exc,
+                    delayed_cancellation=delayed_cancellation,
+                )
+            if delayed_cancellation is None:
+                delayed_cancellation = exc
+            continue
+        except BaseException as exc:
+            return UninterruptibleAwaitOutcome(
+                error=exc,
+                delayed_cancellation=delayed_cancellation,
+            )
+
+
 @dataclass
 class InstrumentTestLeaseOutcome:
     """Server-owned identity and post-exit base-station release truth."""
@@ -44,6 +91,9 @@ class InstrumentTestLeaseOutcome:
     channel_emulator_remote_acquired_confirmed: bool | None = None
     channel_emulator_transport_released_confirmed: bool | None = None
     channel_emulator_instrument_id: str | None = None
+    # 租约进入时实际 acquire 的对象引用。它不持久化，只用于保证 SAFE_IDLE 与
+    # release 始终作用于同一实例；force reload 不能把新实例拼进旧生命周期。
+    channel_emulator_driver: Any = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -261,6 +311,7 @@ class InstrumentTestLease:
             if isinstance(instrument_id, str) and instrument_id
             else None
         )
+        outcome.channel_emulator_driver = driver
 
     async def _release_local(
         self,
@@ -271,7 +322,12 @@ class InstrumentTestLease:
         outcome: InstrumentTestLeaseOutcome | None,
     ) -> None:
         if instrument == "F64":
-            driver = self._f64_driver(hal)
+            driver = (
+                outcome.channel_emulator_driver
+                if outcome is not None
+                and outcome.channel_emulator_driver is not None
+                else self._f64_driver(hal)
+            )
         elif instrument == "baseStation":
             driver = self._base_station_driver(hal)
         else:  # pragma: no cover - 仅内部固定枚举调用
@@ -551,21 +607,49 @@ class InstrumentTestLease:
                 self._held_uxm = False
                 self._held_validation_identity = None
                 self._monitoring_enabled = False
+                delayed_cancellation: asyncio.CancelledError | None = None
                 try:
                     if hal is not None:
-                        await self._settle_local_controls(
-                            hal,
-                            purpose,
-                            control_f64=control_f64,
-                            control_uxm=control_uxm,
-                            outcome=outcome,
+                        cleanup = await await_completion_despite_cancellation(
+                            self._settle_local_controls(
+                                hal,
+                                purpose,
+                                control_f64=control_f64,
+                                control_uxm=control_uxm,
+                                outcome=outcome,
+                            )
                         )
+                        delayed_cancellation = cleanup.delayed_cancellation
+                        if cleanup.error is not None:
+                            raise cleanup.error
                         logger.info(
                             "[instrument-lease] 测试结束，仪表控制会话已释放: %s",
                             purpose,
                             extra=_audit_extra("control_released"),
                         )
                 except BaseException as release_error:
+                    if delayed_cancellation is not None:
+                        setattr(
+                            delayed_cancellation,
+                            "instrument_release_error",
+                            release_error,
+                        )
+                        delayed_cancellation.add_note(
+                            "instrument Local release also failed: "
+                            f"{type(release_error).__name__}: {release_error}"
+                        )
+                        raise delayed_cancellation
+                    if isinstance(operation_error, asyncio.CancelledError):
+                        setattr(
+                            operation_error,
+                            "instrument_release_error",
+                            release_error,
+                        )
+                        operation_error.add_note(
+                            "instrument Local release also failed: "
+                            f"{type(release_error).__name__}: {release_error}"
+                        )
+                        raise operation_error
                     if operation_error is None:
                         raise
                     logger.exception(
@@ -578,6 +662,18 @@ class InstrumentTestLease:
                     ) from operation_error
                 finally:
                     self._active_outcome = None
+                if delayed_cancellation is not None:
+                    if operation_error is not None:
+                        setattr(
+                            delayed_cancellation,
+                            "instrument_operation_error",
+                            operation_error,
+                        )
+                        delayed_cancellation.add_note(
+                            "instrument operation also failed before cancellation: "
+                            f"{type(operation_error).__name__}: {operation_error}"
+                        )
+                    raise delayed_cancellation
 
     async def park_idle_instruments(self) -> bool:
         """HAL 初始化/重载完成后，关闭 F64 与 UXM 的控制会话。"""
@@ -585,12 +681,25 @@ class InstrumentTestLease:
             if self.is_active:
                 return False
             hal = self._hal()
-            await self._settle_local_controls(
-                hal,
-                "idle-park",
-                control_f64=True,
-                control_uxm=True,
+            cleanup = await await_completion_despite_cancellation(
+                self._settle_local_controls(
+                    hal,
+                    "idle-park",
+                    control_f64=True,
+                    control_uxm=True,
+                )
             )
+            if cleanup.error is not None:
+                if cleanup.delayed_cancellation is not None:
+                    setattr(
+                        cleanup.delayed_cancellation,
+                        "instrument_release_error",
+                        cleanup.error,
+                    )
+                    raise cleanup.delayed_cancellation
+                raise cleanup.error
+            if cleanup.delayed_cancellation is not None:
+                raise cleanup.delayed_cancellation
             logger.info(
                 "[instrument-lease] 空闲停放完成：已配置仪表均不保持 Remote",
                 extra={

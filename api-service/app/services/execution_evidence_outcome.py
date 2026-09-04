@@ -46,6 +46,7 @@ from app.services.channel_emulator_execution_plan import (
 )
 from app.services.channel_emulator_execution_session import (
     CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    validate_channel_emulator_terminal_evidence,
 )
 
 
@@ -131,9 +132,10 @@ def _channel_emulator_terminal_projection(
     for item in evidence:
         if not isinstance(item, Mapping):
             return "invalid", "channelEmulator terminal evidence is malformed"
-        payload = {key: value for key, value in item.items() if key != "digest"}
-        if item.get("digest") != canonical_payload_digest(payload):
-            return "invalid", "channelEmulator terminal evidence digest mismatch"
+        try:
+            item = validate_channel_emulator_terminal_evidence(dict(item))
+        except ValueError as exc:
+            return "invalid", str(exc)
         expected = {
             "execution_id": str(execution_id),
             "binding_digest": validated_binding.get("binding_digest"),

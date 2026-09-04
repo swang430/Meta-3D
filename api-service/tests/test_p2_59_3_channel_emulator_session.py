@@ -78,7 +78,7 @@ def test_binding_freeze_persists_execution_mode_under_its_outer_digest(monkeypat
     try:
         module._validate_existing_channel_emulator_freeze(tampered)
     except ValueError as exc:
-        assert "digest" in str(exc)
+        assert "digest" in str(exc) or "malformed" in str(exc)
     else:  # pragma: no cover - regression message
         raise AssertionError("execution_mode tampering must invalidate the freeze")
 
@@ -124,7 +124,23 @@ def _frozen_binding_for_driver(driver, *, execution_mode: str) -> dict:
             else {"host": "192.0.2.59", "port": 3334, "resource": None}
         ),
         "binding_digest": BINDING_DIGEST,
-        "resolved_binding": {"binding_digest": BINDING_DIGEST},
+        "resolved_binding": {
+            "schema_version": 1,
+            "status": "configured",
+            "category_id": "ce-category",
+            "instrument_model_id": "ce-model",
+            "instrument_connection_id": "ce-connection",
+            "lab_profile_id": "lab-1",
+            "manifest": driver.adapter_manifest.model_dump(mode="json"),
+            "expected_driver_module": type(driver).__module__,
+            "expected_driver_name": type(driver).__name__,
+            "expected_transport": {
+                "host": "192.0.2.59",
+                "port": 3334,
+                "resource": None,
+            },
+            "binding_digest": BINDING_DIGEST,
+        },
     }
     return {**identity, "digest": canonical_payload_digest(identity)}
 
@@ -310,6 +326,115 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("execution_mode", ["real", "simulated"])
+async def test_scope_safe_idle_and_release_use_the_exact_acquired_driver_after_force_reload(
+    monkeypatch, execution_mode
+):
+    """force reload must not splice a replacement into an active lifecycle."""
+    from app.services import channel_emulator_execution_session as module
+    from app.services import instrument_hal_service
+
+    acquired = (
+        _RealCe()
+        if execution_mode == "real"
+        else MockChannelEmulator("frozen-mock", {})
+    )
+    acquired.events = []
+
+    async def acquire_remote_control():
+        acquired.events.append("acquire")
+        return True
+
+    async def stop_emulation():
+        acquired.events.append("safe-idle")
+        return True
+
+    async def release_to_local_control():
+        acquired.events.append("release")
+        return True
+
+    acquired.acquire_remote_control = acquire_remote_control
+    acquired.stop_emulation = stop_emulation
+    acquired.release_to_local_control = release_to_local_control
+    initial_drivers = (
+        {"channelEmulator": acquired} if execution_mode == "real" else {}
+    )
+    initial_hal = SimpleNamespace(drivers=initial_drivers, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, initial_hal)
+    if execution_mode == "simulated":
+        monkeypatch.setattr(module, "MockChannelEmulator", lambda *_args: acquired)
+
+    replacement = _RealCe()
+    replacement.events = []
+    reloaded_hal = SimpleNamespace(
+        drivers={"channelEmulator": replacement}, clear_metrics_cache=None
+    )
+    binding = _frozen_binding_for_driver(acquired, execution_mode=execution_mode)
+    plan = _frozen_plan(acquired)
+
+    async with module.channel_emulator_execution_scope(
+        None,
+        SimpleNamespace(id="execution-1", config={}),
+        purpose="force-reload:execution-1",
+        binding=binding,
+        plan=plan,
+        hal=initial_hal,
+        validate_before_remote=lambda _hal: None,
+    ) as outcome:
+        acquired.events.append("operation")
+        outcome.mark_operation_result(True)
+        instrument_hal_service._hal_service = reloaded_hal
+
+    assert acquired.events == ["acquire", "operation", "safe-idle", "release"]
+    assert replacement.events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raised",
+    [None, RuntimeError("operation failed"), asyncio.CancelledError()],
+)
+async def test_bypass_pre_safe_idle_is_the_scope_owned_single_stop(
+    monkeypatch, raised
+):
+    """Measure's bypass pre-stop is reused as the session terminal SAFE_IDLE."""
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+
+    async def run():
+        async with module.channel_emulator_execution_scope(
+            None,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="bypass:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            driver.events.append("bypass-pre-stop")
+            assert await module.ensure_channel_emulator_safe_idle() is True
+            if raised is not None:
+                raise raised
+            outcome.mark_operation_result(True)
+
+    if raised is None:
+        await run()
+    else:
+        with pytest.raises(type(raised)):
+            await run()
+    assert driver.events.count("safe-idle") == 1
+    assert driver.events == [
+        "acquire",
+        "bypass-pre-stop",
+        "safe-idle",
+        "release",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_rejects_live_plan_or_binding_drift_before_any_ce_io(monkeypatch):
     from app.services import channel_emulator_execution_session as module
     from app.services.instrument_test_lease import InstrumentTestLeaseError
@@ -334,6 +459,119 @@ async def test_scope_rejects_live_plan_or_binding_drift_before_any_ce_io(monkeyp
             raise AssertionError("identity drift must reject before yield")
 
     assert driver.events == []
+
+
+@pytest.mark.asyncio
+async def test_complete_run_rejects_path_loss_before_any_instrument_io(monkeypatch):
+    """The run-level path-loss gate precedes CE/BS acquire and the operation."""
+    from app.hal.base_station import (
+        BaseStationControlReleaseResult,
+        BaseStationRemoteSessionResult,
+    )
+    from app.services import base_station_execution_session as base_session
+    from app.services import channel_emulator_execution_session as ce_session
+    from app.services.instrument_test_lease import InstrumentTestLease, InstrumentTestLeaseError
+    from app.services.mimo_ota import path_loss_preflight as preflight_module
+    from app.services.mimo_ota.executors import _helpers
+
+    events: list[str] = []
+    ce = _RealCe()
+    ce.events = events
+
+    class BaseStation:
+        adapter_id = "uxm"
+        instrument_id = "bs-runtime"
+
+        async def acquire_remote_control(self):
+            events.append("bs-acquire")
+            return BaseStationRemoteSessionResult(
+                adapter_id=self.adapter_id,
+                session_token="session",
+                acquired_confirmed=True,
+                warnings=(),
+            )
+
+        async def release_remote_session(self, *_args, **_kwargs):
+            events.append("bs-release")
+            return BaseStationControlReleaseResult(
+                measurement_attempt_id=None,
+                lease_id="lease",
+                adapter_id=self.adapter_id,
+                session_token="session",
+                remote_session_acquired_confirmed=True,
+                transport_session_released_confirmed=True,
+                front_panel_local_confirmed=None,
+                warnings=(),
+            )
+
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": ce, "baseStation": BaseStation()},
+        clear_metrics_cache=None,
+    )
+    monkeypatch.setattr(base_session, "_get_hal_service", lambda: hal)
+    monkeypatch.setattr(
+        ce_session,
+        "instrument_test_lease",
+        InstrumentTestLease(lambda: hal).hold,
+    )
+    monkeypatch.setattr(
+        _helpers,
+        "load_mimo_ota_config",
+        lambda _execution: SimpleNamespace(
+            primary_carrier=SimpleNamespace(frequency_hz=3.5e9),
+            switch_mode_id="mimo_ota",
+            precheck_strict_cal=True,
+        ),
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "evaluate_path_loss_preflight",
+        lambda *_args, **_kwargs: SimpleNamespace(blocker="untrusted calibration"),
+    )
+    monkeypatch.setattr(
+        ce_session,
+        "persist_channel_emulator_terminal_evidence",
+        lambda *_args, **_kwargs: None,
+    )
+
+    class Db:
+        def get(self, _model, _pk):
+            return SimpleNamespace(chamber_config=SimpleNamespace(id="chamber"))
+
+        def rollback(self):
+            pass
+
+    execution = SimpleNamespace(
+        id="execution-1",
+        config={
+            "channel_emulator_binding_freeze": {
+                "lab_profile_id": "11111111-1111-1111-1111-111111111111"
+            },
+            "channel_emulator_execution_plan_freeze": {},
+        },
+    )
+    operation_called = False
+
+    async def operation():
+        nonlocal operation_called
+        operation_called = True
+        raise AssertionError("path-loss gate must precede the operation")
+
+    with pytest.raises(InstrumentTestLeaseError, match="untrusted calibration"):
+        await base_session.run_base_station_execution_session(
+            Db(),
+            execution,
+            SimpleNamespace(
+                lab_profile_id="11111111-1111-1111-1111-111111111111"
+            ),
+            purpose="formal-case:execution-1",
+            step_type="MIMO_OTA_MEASURE",
+            validate_before_remote=lambda _hal: None,
+            operation=operation,
+        )
+
+    assert operation_called is False
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -485,6 +723,63 @@ async def test_scope_acquires_channel_emulator_last_so_later_acquire_failure_can
     assert events[0] == "bs-acquire"
     assert "acquire" not in events
     assert "safe-idle" not in events
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_safe_idle_waits_for_stop_before_release_and_propagates(
+    monkeypatch,
+):
+    from app.services import channel_emulator_execution_session as module
+
+    stop_entered = asyncio.Event()
+    allow_stop_to_finish = asyncio.Event()
+
+    class BlockingSafeIdleCe(_RealCe):
+        async def stop_emulation(self) -> bool:
+            self.events.append("safe-idle-enter")
+            stop_entered.set()
+            await allow_stop_to_finish.wait()
+            self.events.append("safe-idle-complete")
+            return True
+
+    driver = BlockingSafeIdleCe()
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, module, hal)
+
+    async def run_scope():
+        async with module.channel_emulator_execution_scope(
+            None,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            driver.events.append("operation")
+            outcome.mark_operation_result(True)
+
+    task = asyncio.create_task(run_scope())
+    await stop_entered.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()  # 追加 cancel 也不得越过仍在执行的 SAFE_IDLE。
+    await asyncio.sleep(0)
+    assert "release" not in driver.events
+
+    allow_stop_to_finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert driver.events == [
+        "acquire",
+        "operation",
+        "safe-idle-enter",
+        "safe-idle-complete",
+        "release",
+    ]
 
 
 @pytest.mark.asyncio
@@ -783,7 +1078,7 @@ def _terminal_evidence(
         "driver_name": binding["expected_driver_name"],
         "driver_connection": binding["expected_driver_connection"],
         "lease_id": "lease-1",
-        "instrument_id": "ce-runtime" if execution_mode == "real" else None,
+        "instrument_id": "ce-runtime",
         "remote_acquired_confirmed": True if execution_mode == "real" else None,
         "safe_idle_confirmed": terminal_state == "completed",
         "transport_released_confirmed": True if execution_mode == "real" else None,
@@ -793,6 +1088,89 @@ def _terminal_evidence(
         "safe_idle_error_type": None,
     }
     return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def _execution_with_ce_evidence(binding: dict, plan: dict, terminal: dict):
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
+    from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
+
+    return SimpleNamespace(
+        id="execution-1",
+        status="completed",
+        config={
+            CE_FREEZE_CONFIG_KEY: binding,
+            CE_PLAN_FREEZE_CONFIG_KEY: plan,
+            CE_TERMINAL_EVIDENCE_CONFIG_KEY: [terminal],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason_fragment"),
+    [
+        (lambda frozen: frozen.update(schema_version=999), "binding"),
+        (lambda frozen: frozen.update(execution_mode="unsafe"), "binding"),
+        (lambda frozen: frozen.update(unexpected="accepted-by-digest"), "binding"),
+    ],
+)
+def test_p2_66_rejects_semantically_malformed_ce_binding_even_with_fresh_digest(
+    mutate,
+    reason_fragment,
+):
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    mutate(binding)
+    binding["digest"] = canonical_payload_digest(
+        {key: value for key, value in binding.items() if key != "digest"}
+    )
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    outcome = project_execution_evidence_outcome(
+        _execution_with_ce_evidence(binding, plan, terminal)
+    )
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any(reason_fragment in reason for reason in outcome.reasons)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda terminal: terminal.update(schema_version=999),
+        lambda terminal: terminal.update(session_id=""),
+        lambda terminal: terminal.update(lease_id=""),
+        lambda terminal: terminal.update(instrument_id=""),
+        lambda terminal: terminal.update(execution_mode="unsafe"),
+        lambda terminal: terminal.update(error_type="RuntimeError"),
+        lambda terminal: terminal.update(unexpected="accepted-by-digest"),
+    ],
+)
+def test_p2_66_rejects_semantically_malformed_completed_ce_terminal_even_with_fresh_digest(
+    mutate,
+):
+    from app.services.execution_evidence_outcome import project_execution_evidence_outcome
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    mutate(terminal)
+    terminal["digest"] = canonical_payload_digest(
+        {key: value for key, value in terminal.items() if key != "digest"}
+    )
+    outcome = project_execution_evidence_outcome(
+        _execution_with_ce_evidence(binding, plan, terminal)
+    )
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert any("terminal evidence" in reason for reason in outcome.reasons)
 
 
 def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():

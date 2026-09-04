@@ -20,9 +20,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
 
 from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_compatibility import canonical_payload_digest
@@ -39,6 +39,7 @@ from app.services.instrument_hal_service import get_real_driver_class, is_mock_d
 CHANNEL_EMULATOR_CATEGORY_KEY = "channelEmulator"
 
 _DRIVER_MODES = frozenset({"auto", "mock", "real"})
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class ChannelEmulatorRuntimeDriverIdentity(BaseModel):
@@ -85,6 +86,96 @@ class ResolvedChannelEmulatorBinding(BaseModel):
             mode="json",
             exclude={"execution_mode", "runtime_driver"},
         )
+
+
+class FrozenChannelEmulatorTransport(BaseModel):
+    """Exact immutable transport identity embedded in a frozen CE binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    host: NonEmptyString
+    port: int | None
+    resource: str | None
+
+
+class FrozenResolvedChannelEmulatorBinding(BaseModel):
+    """Stable resolver projection embedded inside the outer freeze."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    status: Literal["configured", "not_applicable", "diagnostic_unbound"]
+    category_id: NonEmptyString
+    instrument_model_id: NonEmptyString | None
+    instrument_connection_id: NonEmptyString | None
+    lab_profile_id: NonEmptyString
+    manifest: ChannelEmulatorManifest | None
+    expected_driver_module: NonEmptyString | None
+    expected_driver_name: NonEmptyString | None
+    expected_transport: FrozenChannelEmulatorTransport | None
+    binding_digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_status_identity(self) -> "FrozenResolvedChannelEmulatorBinding":
+        identity = (
+            self.instrument_model_id,
+            self.instrument_connection_id,
+            self.manifest,
+            self.expected_driver_module,
+            self.expected_driver_name,
+            self.expected_transport,
+        )
+        if self.status == "configured" and any(value is None for value in identity):
+            raise ValueError("configured frozen channelEmulator binding identity is incomplete")
+        if self.status == "diagnostic_unbound" and any(
+            value is not None for value in identity
+        ):
+            raise ValueError(
+                "diagnostic_unbound frozen channelEmulator binding carries configured identity"
+            )
+        return self
+
+
+class FrozenChannelEmulatorBinding(BaseModel):
+    """Strict immutable outer execution freeze; digest is necessary, not sufficient."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    category_id: NonEmptyString
+    instrument_model_id: NonEmptyString | None
+    instrument_connection_id: NonEmptyString | None
+    lab_profile_id: NonEmptyString
+    execution_mode: Literal["real", "simulated"]
+    expected_driver_module: NonEmptyString | None
+    expected_driver_name: NonEmptyString | None
+    expected_driver_connection: FrozenChannelEmulatorTransport | None
+    binding_digest: NonEmptyString
+    resolved_binding: FrozenResolvedChannelEmulatorBinding
+    digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_mirrored_identity(self) -> "FrozenChannelEmulatorBinding":
+        resolved = self.resolved_binding
+        mirrors = (
+            (self.category_id, resolved.category_id),
+            (self.instrument_model_id, resolved.instrument_model_id),
+            (self.instrument_connection_id, resolved.instrument_connection_id),
+            (self.lab_profile_id, resolved.lab_profile_id),
+            (self.expected_driver_module, resolved.expected_driver_module),
+            (self.expected_driver_name, resolved.expected_driver_name),
+            (self.binding_digest, resolved.binding_digest),
+        )
+        if any(outer != inner for outer, inner in mirrors):
+            raise ValueError("frozen channelEmulator binding identity mirrors drift")
+        if self.execution_mode == "real":
+            if resolved.status != "configured":
+                raise ValueError("real frozen channelEmulator binding is not configured")
+            if self.expected_driver_connection != resolved.expected_transport:
+                raise ValueError("real frozen channelEmulator transport mirror drift")
+        elif self.expected_driver_connection is not None:
+            raise ValueError("simulated frozen channelEmulator carries real transport identity")
+        return self
 
 
 class ChannelEmulatorBindingPreview(BaseModel):
@@ -542,7 +633,7 @@ CE_FREEZE_IDENTITY_KEYS = frozenset(
 
 
 def _validate_existing_channel_emulator_freeze(existing: Any) -> dict[str, Any]:
-    """已存在冻结件的最小结构校验：是 dict、digest 自洽、binding_digest 非空。
+    """已存在冻结件的严格结构与摘要校验。
 
     通过 → 原样返回**不重算**；不通过 → ValueError（冻结件损坏或被篡改）。
     """
@@ -562,6 +653,12 @@ def _validate_existing_channel_emulator_freeze(existing: Any) -> dict[str, Any]:
         raise ValueError(
             "已冻结的 channelEmulator binding 与其 digest 不一致（冻结件被篡改）"
         )
+    try:
+        FrozenChannelEmulatorBinding.model_validate(existing)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"channelEmulator binding freeze is malformed: {exc}"
+        ) from exc
     return existing
 
 

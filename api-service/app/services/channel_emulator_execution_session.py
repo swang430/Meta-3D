@@ -8,8 +8,10 @@ import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import Annotated, Any, AsyncIterator, Callable, Literal, Mapping
 from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
 
 from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
@@ -20,6 +22,7 @@ from app.hal.channel_emulator_execution_plan import (
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_of
 from app.services.channel_emulator_binding import (
     CHANNEL_EMULATOR_CATEGORY_KEY,
+    FrozenChannelEmulatorTransport,
     validate_frozen_channel_emulator_before_remote,
 )
 from app.services.channel_emulator_execution_plan import (
@@ -29,25 +32,166 @@ from app.services.channel_emulator_execution_plan import (
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     InstrumentTestLeaseOutcome,
+    await_completion_despite_cancellation,
     instrument_test_lease,
 )
 
 logger = logging.getLogger(__name__)
 
 CE_TERMINAL_EVIDENCE_CONFIG_KEY = "channel_emulator_terminal_evidence"
-_channel_emulator_safe_idle_owner: ContextVar[bool] = ContextVar(
-    "channel_emulator_safe_idle_owner", default=False
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+@dataclass
+class _ChannelEmulatorSafeIdleState:
+    """Task-local ownership of the one SAFE_IDLE attempt for this session."""
+
+    driver: Any
+    attempted: bool = False
+    confirmed: bool = False
+    error: BaseException | None = None
+
+
+_channel_emulator_safe_idle_owner: ContextVar[
+    _ChannelEmulatorSafeIdleState | None
+] = ContextVar(
+    "channel_emulator_safe_idle_owner", default=None
 )
 
 
 def channel_emulator_safe_idle_is_scope_owned() -> bool:
     """Whether the current task is inside the single CE execution scope."""
 
-    return _channel_emulator_safe_idle_owner.get()
+    return _channel_emulator_safe_idle_owner.get() is not None
 
 
 class ChannelEmulatorExecutionSessionError(InstrumentTestLeaseError):
     """The frozen CE session could not reach a confirmed safe terminal state."""
+
+
+class FrozenChannelEmulatorTerminalEvidence(BaseModel):
+    """Strict immutable terminal evidence; a matching digest alone is insufficient."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    session_id: NonEmptyString
+    execution_id: NonEmptyString
+    binding_digest: NonEmptyString
+    binding_freeze_digest: NonEmptyString
+    plan_digest: NonEmptyString
+    execution_mode: Literal["real", "simulated"]
+    adapter_id: NonEmptyString
+    driver_module: NonEmptyString | None
+    driver_name: NonEmptyString | None
+    driver_connection: FrozenChannelEmulatorTransport | None
+    lease_id: NonEmptyString | None
+    instrument_id: NonEmptyString | None
+    remote_acquired_confirmed: bool | None
+    safe_idle_confirmed: bool
+    transport_released_confirmed: bool | None
+    operation_succeeded: bool | None
+    terminal_state: Literal["completed", "failed", "cancelled"]
+    error_type: NonEmptyString | None
+    safe_idle_error_type: NonEmptyString | None
+    digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_terminal_state(self) -> "FrozenChannelEmulatorTerminalEvidence":
+        if self.terminal_state == "completed":
+            if (
+                self.lease_id is None
+                or self.instrument_id is None
+                or self.operation_succeeded is not True
+                or self.safe_idle_confirmed is not True
+                or self.error_type is not None
+                or self.safe_idle_error_type is not None
+            ):
+                raise ValueError("completed channelEmulator terminal is contradictory")
+            if self.execution_mode == "real":
+                if (
+                    self.driver_module is None
+                    or self.driver_name is None
+                    or self.driver_connection is None
+                    or self.remote_acquired_confirmed is not True
+                    or self.transport_released_confirmed is not True
+                ):
+                    raise ValueError("completed real channelEmulator lifecycle is incomplete")
+            elif (
+                self.driver_connection is not None
+                or self.remote_acquired_confirmed is not None
+                or self.transport_released_confirmed is not None
+            ):
+                raise ValueError("completed simulated terminal claimed real transport evidence")
+        elif self.error_type is None and self.safe_idle_error_type is None:
+            raise ValueError("non-completed channelEmulator terminal has no failure identity")
+        if self.terminal_state == "cancelled" and self.error_type != "CancelledError":
+            raise ValueError("cancelled channelEmulator terminal has invalid error identity")
+        return self
+
+
+def validate_channel_emulator_terminal_evidence(
+    evidence: Any,
+) -> dict[str, Any]:
+    """Parse the complete terminal schema, then verify its original canonical digest."""
+
+    if not isinstance(evidence, dict):
+        raise ValueError("channelEmulator terminal evidence is malformed")
+    try:
+        FrozenChannelEmulatorTerminalEvidence.model_validate(evidence)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"channelEmulator terminal evidence is malformed: {exc}"
+        ) from exc
+    payload = {key: value for key, value in evidence.items() if key != "digest"}
+    if evidence.get("digest") != canonical_payload_digest(payload):
+        raise ValueError("channelEmulator terminal evidence digest mismatch")
+    return evidence
+
+
+async def ensure_channel_emulator_safe_idle() -> bool:
+    """Execute this scope's SAFE_IDLE exactly once and to a real terminal result."""
+
+    state = _channel_emulator_safe_idle_owner.get()
+    if state is None:
+        raise ChannelEmulatorExecutionSessionError(
+            "channelEmulator SAFE_IDLE has no execution-session owner"
+        )
+    if state.attempted:
+        if state.error is not None:
+            raise state.error
+        return state.confirmed
+    state.attempted = True
+    # Driver capability was already resolved from the frozen manifest before
+    # Remote acquire; direct interface access avoids inventing a second
+    # ``hasattr/getattr`` capability truth here.
+    stop = state.driver.stop_emulation
+    if not inspect.iscoroutinefunction(stop):
+        state.error = ChannelEmulatorExecutionSessionError(
+            "channelEmulator safe idle contract requires async stop_emulation"
+        )
+        raise state.error
+    stop_outcome = await await_completion_despite_cancellation(stop())
+    error = stop_outcome.error
+    if error is None and stop_outcome.value is not True:
+        error = ChannelEmulatorExecutionSessionError(
+            "channelEmulator safe idle was not confirmed"
+        )
+    if error is not None:
+        state.error = error
+        if stop_outcome.delayed_cancellation is not None:
+            _attach_secondary_failure(
+                stop_outcome.delayed_cancellation,
+                attribute="channel_emulator_safe_idle_error",
+                stage="SAFE_IDLE",
+                secondary=error,
+            )
+            raise stop_outcome.delayed_cancellation
+        raise error
+    state.confirmed = True
+    if stop_outcome.delayed_cancellation is not None:
+        raise stop_outcome.delayed_cancellation
+    return True
 
 
 def _attach_secondary_failure(
@@ -93,11 +237,10 @@ def persist_channel_emulator_terminal_evidence(
 
     from app.models.test_plan import TestExecution
 
-    payload = {key: value for key, value in evidence.items() if key != "digest"}
-    if evidence.get("digest") != canonical_payload_digest(payload):
-        raise ChannelEmulatorExecutionSessionError(
-            "channelEmulator terminal evidence digest mismatch"
-        )
+    try:
+        validate_channel_emulator_terminal_evidence(evidence)
+    except ValueError as exc:
+        raise ChannelEmulatorExecutionSessionError(str(exc)) from exc
     locked = (
         db.query(TestExecution)
         .filter(TestExecution.id == execution_id)
@@ -114,15 +257,10 @@ def persist_channel_emulator_terminal_evidence(
         )
     session_id = evidence.get("session_id")
     for item in existing:
-        if not isinstance(item, Mapping):
-            raise ChannelEmulatorExecutionSessionError(
-                "channelEmulator terminal evidence chain is malformed"
-            )
-        item_payload = {key: value for key, value in item.items() if key != "digest"}
-        if item.get("digest") != canonical_payload_digest(item_payload):
-            raise ChannelEmulatorExecutionSessionError(
-                "channelEmulator terminal evidence chain digest mismatch"
-            )
+        try:
+            validate_channel_emulator_terminal_evidence(item)
+        except ValueError as exc:
+            raise ChannelEmulatorExecutionSessionError(str(exc)) from exc
         if item.get("session_id") == session_id:
             if dict(item) == evidence:
                 return
@@ -183,6 +321,7 @@ def _combined_validator(
     *,
     binding: Any,
     plan: Any,
+    preflight_before_remote: Callable[[object], str | None] | None,
     validate_before_remote: Callable[[object], str | None] | None,
     prepare_locked_hal: Callable[[object], tuple[object, str | None]],
 ) -> Callable[[object], str | None]:
@@ -190,6 +329,10 @@ def _combined_validator(
         validation_hal, prepare_error = prepare_locked_hal(hal)
         if prepare_error is not None:
             return prepare_error
+        if preflight_before_remote is not None:
+            preflight_error = preflight_before_remote(hal)
+            if preflight_error is not None:
+                return preflight_error
         error = _validate_frozen_pair_and_live_driver(validation_hal, binding, plan)
         if error is not None:
             return error
@@ -212,6 +355,7 @@ async def channel_emulator_execution_scope(
     plan: Any,
     hal: Any,
     validate_before_remote: Callable[[object], str | None] | None,
+    preflight_before_remote: Callable[[object], str | None] | None = None,
 ) -> AsyncIterator[ChannelEmulatorExecutionScopeOutcome]:
     """Validate, acquire, run, safe-idle and release one frozen CE session.
 
@@ -224,10 +368,10 @@ async def channel_emulator_execution_scope(
     execution_id = str(execution_pk)
     binding_fields = binding if isinstance(binding, Mapping) else {}
     prepared_mock: MockChannelEmulator | None = None
-    safe_idle_confirmed = False
     scope_error: BaseException | None = None
     lease_outcome: InstrumentTestLeaseOutcome | None = None
     scoped_outcome: ChannelEmulatorExecutionScopeOutcome | None = None
+    safe_idle_state = _ChannelEmulatorSafeIdleState(driver=None)
     safe_idle_error_type: str | None = None
     drivers = getattr(hal, "drivers", None)
     if not isinstance(drivers, dict):
@@ -245,14 +389,12 @@ async def channel_emulator_execution_scope(
     validator = _combined_validator(
         binding=binding,
         plan=plan,
+        preflight_before_remote=preflight_before_remote,
         validate_before_remote=validate_before_remote,
         prepare_locked_hal=prepare_locked_hal,
     )
     operation_error: BaseException | None = None
-    from app.services.instrument_hal_service import (
-        get_hal_service,
-        scoped_hal_service_view,
-    )
+    from app.services.instrument_hal_service import scoped_hal_service_view
 
     try:
         try:
@@ -274,31 +416,40 @@ async def channel_emulator_execution_scope(
                 ) as outcome:
                     lease_outcome = outcome
                     scoped_outcome = ChannelEmulatorExecutionScopeOutcome(outcome)
-                    ownership_token = _channel_emulator_safe_idle_owner.set(True)
+                    acquired_driver = (
+                        outcome.channel_emulator_driver or prepared_mock
+                    )
+                    if acquired_driver is None:
+                        raise ChannelEmulatorExecutionSessionError(
+                            "channelEmulator lease did not retain its acquired driver"
+                        )
+                    safe_idle_state = _ChannelEmulatorSafeIdleState(acquired_driver)
+                    ownership_token = _channel_emulator_safe_idle_owner.set(
+                        safe_idle_state
+                    )
                     try:
                         yield scoped_outcome
                     except BaseException as exc:
                         operation_error = exc
                         raise
                     finally:
-                        _channel_emulator_safe_idle_owner.reset(ownership_token)
                         try:
-                            driver = _driver_from_hal(get_hal_service())
                             parsed_plan = plan_from_frozen_payload(plan)
                             if not parsed_plan.planned("stop_emulation"):
                                 raise ChannelEmulatorExecutionSessionError(
                                     parsed_plan.rejection("stop_emulation")
                                 )
-                            stop = driver.stop_emulation
-                            if not inspect.iscoroutinefunction(stop):
-                                raise ChannelEmulatorExecutionSessionError(
-                                    "channelEmulator safe idle contract requires async stop_emulation"
-                                )
-                            if await stop() is not True:
-                                raise ChannelEmulatorExecutionSessionError(
-                                    "channelEmulator safe idle was not confirmed"
-                                )
-                            safe_idle_confirmed = True
+                            if safe_idle_state.attempted:
+                                if safe_idle_state.error is not None:
+                                    safe_idle_error_type = type(
+                                        safe_idle_state.error
+                                    ).__name__
+                                    if operation_error is None:
+                                        raise safe_idle_state.error
+                            else:
+                                await ensure_channel_emulator_safe_idle()
+                        except asyncio.CancelledError:
+                            raise
                         except BaseException as safe_idle_error:
                             safe_idle_error_type = type(safe_idle_error).__name__
                             if operation_error is None:
@@ -312,6 +463,8 @@ async def channel_emulator_execution_scope(
                             logger.exception(
                                 "channelEmulator safe idle failed while preserving operation error"
                             )
+                        finally:
+                            _channel_emulator_safe_idle_owner.reset(ownership_token)
         except BaseException as exc:
             scope_error = exc
             raise
@@ -325,7 +478,7 @@ async def channel_emulator_execution_scope(
                     if scope_error is None
                     and scoped_outcome is not None
                     and scoped_outcome.operation_succeeded is True
-                    and safe_idle_confirmed
+                    and safe_idle_state.confirmed
                     and (
                         binding_fields.get("execution_mode") == "simulated"
                         or (
@@ -355,18 +508,27 @@ async def channel_emulator_execution_scope(
                 "instrument_id": (
                     lease_outcome.channel_emulator_instrument_id
                     if lease_outcome is not None
-                    else None
+                    and lease_outcome.channel_emulator_instrument_id is not None
+                    else getattr(safe_idle_state.driver, "instrument_id", None)
                 ),
                 "remote_acquired_confirmed": (
-                    lease_outcome.channel_emulator_remote_acquired_confirmed
-                    if lease_outcome is not None
-                    else None
+                    None
+                    if binding_fields.get("execution_mode") == "simulated"
+                    else (
+                        lease_outcome.channel_emulator_remote_acquired_confirmed
+                        if lease_outcome is not None
+                        else None
+                    )
                 ),
-                "safe_idle_confirmed": safe_idle_confirmed,
+                "safe_idle_confirmed": safe_idle_state.confirmed,
                 "transport_released_confirmed": (
-                    lease_outcome.channel_emulator_transport_released_confirmed
-                    if lease_outcome is not None
-                    else None
+                    None
+                    if binding_fields.get("execution_mode") == "simulated"
+                    else (
+                        lease_outcome.channel_emulator_transport_released_confirmed
+                        if lease_outcome is not None
+                        else None
+                    )
                 ),
                 "operation_succeeded": (
                     scoped_outcome.operation_succeeded
@@ -374,8 +536,28 @@ async def channel_emulator_execution_scope(
                     else None
                 ),
                 "terminal_state": terminal_state,
-                "error_type": type(scope_error).__name__ if scope_error is not None else None,
-                "safe_idle_error_type": safe_idle_error_type,
+                "error_type": (
+                    type(scope_error).__name__
+                    if scope_error is not None
+                    else (
+                        None
+                        if terminal_state == "completed"
+                        else (
+                            "OperationResultMissing"
+                            if scoped_outcome is None
+                            or scoped_outcome.operation_succeeded is None
+                            else "OperationFailed"
+                        )
+                    )
+                ),
+                "safe_idle_error_type": (
+                    safe_idle_error_type
+                    or (
+                        type(safe_idle_state.error).__name__
+                        if safe_idle_state.error is not None
+                        else None
+                    )
+                ),
             }
             evidence = {**payload, "digest": canonical_payload_digest(payload)}
             try:

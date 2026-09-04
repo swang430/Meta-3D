@@ -45,9 +45,13 @@ from app.services.mimo_ota.executors._helpers import (
     write_phase_result,
 )
 from app.services.mimo_ota.path_loss_application import (
-    build_path_loss_application,
     path_loss_application_message,
 )
+from app.services.mimo_ota.path_loss_preflight import (
+    _evaluate_path_loss_provenance_for_measure,
+    evaluate_path_loss_preflight,
+)
+from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from app.services.mimo_ota.rf_kpi_trust import (
     build_rf_kpi_trust,
     rf_kpi_trust_is_formally_verified,
@@ -78,8 +82,8 @@ from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
-from app.services.execution_evidence_outcome import (
-    project_execution_evidence_outcome,
+from app.services.channel_emulator_execution_session import (
+    ensure_channel_emulator_safe_idle,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,35 +276,6 @@ def _describe_f64_frequency_verification_gap(
         "F64 中心频率未回读，当前场景带宽也没有可信资产声明；"
         "频率身份保持 unknown，P0-5 不得据此判完整闭环。"
     )
-
-
-def _evaluate_path_loss_provenance_for_measure(
-    use_mock: Optional[bool],
-    *,
-    channel_emulator_is_real: bool,
-    strict: bool,
-    diagnostic: bool = False,
-) -> tuple[bool, Optional[str]]:
-    """判定一张路损证书能否参与本次测量补偿。
-
-    真实测量只接受显式 ``use_mock=False``。严格模式额外阻断执行；显式
-    opt-out 只允许继续做未补偿的调试测量，不能把模拟/未知值洗进正式 KPI。
-    mock 仪表链本身不产出正式 KPI，可继续复用 mock 证书做流程演练。
-    """
-    if diagnostic:
-        return False, None
-    if not channel_emulator_is_real or use_mock is False:
-        return True, None
-
-    provenance = "simulated" if use_mock is True else "unknown"
-    blocker = None
-    if strict:
-        blocker = (
-            f"path-loss calibration has {provenance} provenance "
-            f"(use_mock={use_mock!r}); real measurement requires explicit "
-            "use_mock=False"
-        )
-    return False, blocker
 
 
 def _managed_attach_failure(
@@ -1276,9 +1251,6 @@ class MeasureExecutor(IStepExecutor):
             record_base_station_throughput_capture,
             register_required_scpi_evidence,
         )
-        from app.services.path_loss_calibration_service import (
-            ProbePathLossCalibrationService,
-        )
         from app.services.positioner_coordinate_profile import (
             FREEZE_CONFIG_KEY as POSITIONER_COORDINATE_FREEZE_CONFIG_KEY,
             validate_frozen_positioner_before_motion,
@@ -1313,81 +1285,45 @@ class MeasureExecutor(IStepExecutor):
                 config.emulation_file = resolved_asset.emulation_file
 
         emulator = hal.drivers.get("channelEmulator")
-        channel_emulator_is_real = (
-            emulator is not None and not is_mock_driver(emulator)
+        execution_config = (
+            context.test_execution.config
+            if isinstance(context.test_execution.config, dict)
+            else {}
         )
-        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-        path_loss_selection = pl_service.resolve_latest_calibration(
-            chamber.id,
-            pcell.frequency_hz / 1e6,
+        frozen_ce_binding = execution_config.get("channel_emulator_binding_freeze")
+        frozen_ce_mode = (
+            frozen_ce_binding.get("execution_mode")
+            if isinstance(frozen_ce_binding, dict)
+            else None
+        )
+        ce_execution_mode = (
+            frozen_ce_mode
+            if frozen_ce_mode in {"real", "simulated"}
+            else "simulated" if is_mock_driver(emulator) else "real"
+        )
+        channel_emulator_is_real = ce_execution_mode == "real"
+        path_loss_preflight = evaluate_path_loss_preflight(
+            context.db,
+            context.test_execution,
+            chamber_id=chamber.id,
+            frequency_mhz=pcell.frequency_hz / 1e6,
             operating_mode=config.switch_mode_id,
-            require_real=channel_emulator_is_real,
+            precheck_strict_cal=config.precheck_strict_cal,
+            channel_emulator_execution_mode=ce_execution_mode,
+            execution_evidence_outcome=project_execution_evidence_outcome(
+                context.test_execution
+            ),
         )
-        if path_loss_selection.certificate is None and channel_emulator_is_real:
-            # 保留任意来源候选的身份，让 strict/bypass 能准确叙述“被拒绝”，
-            # 但只有下方 provenance 门裁决后的 path_loss_cert 才能进入计算。
-            path_loss_selection = pl_service.resolve_latest_calibration(
-                chamber.id,
-                pcell.frequency_hz / 1e6,
-                operating_mode=config.switch_mode_id,
-            )
-        selected_path_loss_cert = path_loss_selection.certificate
+        path_loss_selection = path_loss_preflight.selection
+        selected_path_loss_cert = path_loss_preflight.selected_certificate
         selected_path_loss_use_mock = (
             selected_path_loss_cert.use_mock
             if selected_path_loss_cert is not None
             else None
         )
-        execution_evidence_outcome = project_execution_evidence_outcome(
-            context.test_execution
-        )
-        if selected_path_loss_cert is None:
-            path_loss_cert_usable = False
-            provenance_blocker = (
-                "path-loss calibration is missing or expired; real measurement "
-                "strict mode requires a currently valid explicit-real certificate"
-                if channel_emulator_is_real and config.precheck_strict_cal
-                else None
-            )
-        else:
-            path_loss_cert_usable, provenance_blocker = (
-                _evaluate_path_loss_provenance_for_measure(
-                    selected_path_loss_use_mock,
-                    channel_emulator_is_real=channel_emulator_is_real,
-                    strict=config.precheck_strict_cal,
-                    # 只有冻结的 diagnostic policy 能关闭严格路损门。其它冻结证据
-                    # invalid 仍会阻断正式输出，但不能把真实 CE + 不可信路损证书的
-                    # 纯前置安全门短路掉；该门必须先返回既有 path_loss_application，
-                    # 且仍发生在 P2-59 CE 对账及任何硬件 I/O 之前。
-                    diagnostic=(
-                        execution_evidence_outcome.qualification_classification
-                        == "diagnostic"
-                    ),
-                )
-            )
-            if execution_evidence_outcome.compatibility_classification in {
-                "diagnostic",
-                "invalid",
-            }:
-                # diagnostic / invalid 执行都不能实际应用补偿；上面的 blocker 是否
-                # 生效则只由不可变 qualification policy 决定，避免“另一处证据损坏”
-                # 意外把严格路损门变成 bypass。
-                path_loss_cert_usable = False
-        path_loss_cert = (
-            selected_path_loss_cert if path_loss_cert_usable else None
-        )
-        path_loss_gate_mode = (
-            "mock_not_applicable"
-            if not channel_emulator_is_real
-            else "strict"
-            if config.precheck_strict_cal
-            else "operator_bypass"
-        )
-        path_loss_application = build_path_loss_application(
-            selected_certificate=selected_path_loss_cert,
-            applied_certificate=path_loss_cert,
-            selection_reason=path_loss_selection.reason,
-            gate_mode=path_loss_gate_mode,
-        )
+        path_loss_cert = path_loss_preflight.applied_certificate
+        path_loss_application = path_loss_preflight.application
+        provenance_blocker = path_loss_preflight.blocker
         if provenance_blocker is not None:
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
@@ -2309,7 +2245,7 @@ class MeasureExecutor(IStepExecutor):
                     )
                 # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
                 # 时继续写 STATIC 会把真因掩盖成"直通建立失败"
-                if not await emulator.stop_emulation():
+                if not await ensure_channel_emulator_safe_idle():
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(

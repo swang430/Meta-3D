@@ -445,7 +445,7 @@ def test_measure_no_longer_queries_driver_capability_directly_and_reconciles_bef
     assert "falling back to MockChannelEmulator" not in source
     assert "MockChannelEmulator(" not in source
     # 但不早于路损 / 证书等与 CE 无关的前置门（它们的拒绝不该被计划缺席顶掉）
-    assert source.index("pl_service.resolve_latest_calibration(") < reconcile
+    assert source.index("evaluate_path_loss_preflight(") < reconcile
     assert reconcile < source.index("plan=ce_plan,")
     assert source.count("ce_plan.planned(") == 2
     assert source.count("plan.planned(") == 3  # 两处直通前置 + 手动定标的 plan 参数

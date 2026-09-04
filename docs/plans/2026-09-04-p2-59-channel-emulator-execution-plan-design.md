@@ -104,7 +104,7 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 `run_base_station_execution_session`，所以该函数改为进入统一的
 `channel_emulator_execution_scope(plan, binding, hal, execution)`。scope 内部继续复用
 `instrument_test_lease` 的同一把 HAL 协调锁与 Remote/Local 交接，不另造第二把锁，也不改手工 CE
-端点和诊断序列。阶段固定为：冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 →
+端点和诊断序列。阶段固定为：锁内严格路损资格纯检查 → 冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 →
 BaseStation Remote acquire → CE Remote acquire（最后取得）→ 业务 yield → `stop_emulation` safe idle →
 Local release → terminal evidence。safe idle 位于租约 yield 的
 `finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
@@ -116,6 +116,10 @@ scope 组合现有 BaseStation `validate_before_remote` 与 CE 校验器，并�
 `validation_identity` / `lease_audit_context`，避免破坏嵌套租约和 P2-67 公共审计。CE 校验器在
 `instrument_test_lease` 已持协调锁、但尚未 clear cache / acquire Remote 的位置执行；因此任何 binding、
 plan、驱动或连接漂移均在首个 CE I/O 前 fail-loud。
+
+严格路损门复用 MEASURE 的同一纯 evaluator，并在同一协调锁内、任何 BaseStation/CE/转台 I/O
+之前执行；MEASURE 内保留防御性复核及既有 `path_loss_application` 失败载荷。顺序恒为“路损门 →
+CE 对账 → 首个仪器 I/O”，避免 PRECHECK/REFERENCE 先触碰硬件后才在 MEASURE 拒绝证书。
 
 ### 8.I ③ 的冻结身份与受控模拟边界
 P2-58 的 binding 冻结件补入 `execution_mode`；它进入冻结件外层 digest，已存在但缺该字段的旧冻结件
@@ -135,7 +139,9 @@ execution 的正式 outcome 被降为 diagnostic，数值不得进入正式 KPI�
 digest 的记录；同一 `session_id` 幂等复用，冲突内容拒绝覆盖。记录绑定 execution id、scope session id、
 租约 id（若已取得）、binding/plan digest、execution mode、adapter/runtime identity、Remote acquire、
 safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些冻结/终态记录，不查 current HAL、目录、
-LabProfile 或连接。
+LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extra=forbid` 的不可变模型完整
+解析，再核 canonical digest；非法 execution mode、空成功态 session/lease/instrument 身份、成功位与
+错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。
 
 | 业务方向 | safe idle | release | terminal state | 正式性 |
 |---|---|---|---|---|
@@ -143,6 +149,10 @@ LabProfile 或连接。
 | 设备拒绝/业务失败 | 仍执行 | 仍执行 | `failed` | 不正式 |
 | 异常 | 仍执行；失败与原异常并列留痕 | 仍执行 | `failed` | 不正式 |
 | 取消 | 仍执行；不得因取消跳过 | 仍执行 | `cancelled` | 不正式 |
+
+取消命中 safe idle 或任一 Local release 时，安全动作在独立 task 中继续到真实完成/失败；调用 task
+只延迟传播 `CancelledError`，不得用 `shield` 后立即进入下一阶段。SAFE_IDLE 与 release 始终使用租约
+进入时实际 acquire 的同一 driver 引用，HAL force reload 不能把新旧实例拼成一条完整生命周期。
 
 safe idle 只调用计划声明的既有 `stop_emulation`；计划未声明、方法缺失、返回 False 或抛异常都不能写成
 confirmed。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal

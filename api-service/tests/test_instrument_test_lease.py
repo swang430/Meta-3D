@@ -489,6 +489,107 @@ async def test_exit_cleanup_cancellation_still_attempts_all_local_releases():
     assert events[-2:] == ["uxm-local", "f64-local"]
 
 
+@pytest.mark.parametrize("cancelled_release", ["baseStation", "channelEmulator"])
+@pytest.mark.asyncio
+async def test_real_task_cancellation_cannot_truncate_local_release_sequence(
+    cancelled_release,
+):
+    from app.services.instrument_test_lease import InstrumentTestLease
+
+    events: list[str] = []
+    release_entered = asyncio.Event()
+    finish_release = asyncio.Event()
+
+    class BlockingF64(_FakeF64):
+        async def release_to_local_control(self) -> bool:
+            events.append("f64-local-enter")
+            release_entered.set()
+            await finish_release.wait()
+            events.append("f64-local-done")
+            return True
+
+    class BlockingUxm(_FakeUxm):
+        async def release_remote_session(
+            self,
+            expected_session_token: str,
+            *,
+            measurement_attempt_id: str | None = None,
+            lease_id: str = "",
+        ) -> BaseStationControlReleaseResult:
+            events.append("uxm-local-enter")
+            release_entered.set()
+            await finish_release.wait()
+            events.append("uxm-local-done")
+            return BaseStationControlReleaseResult(
+                measurement_attempt_id=measurement_attempt_id,
+                lease_id=lease_id,
+                adapter_id="uxm",
+                session_token=expected_session_token,
+                remote_session_acquired_confirmed=True,
+                transport_session_released_confirmed=True,
+                front_panel_local_confirmed=None,
+                warnings=(),
+            )
+
+    f64 = BlockingF64(events) if cancelled_release == "channelEmulator" else _FakeF64(events)
+    uxm = BlockingUxm(events) if cancelled_release == "baseStation" else _FakeUxm(events)
+    hal = _FakeHAL(f64, uxm)
+    lease = InstrumentTestLease(lambda: hal)
+
+    async def run_lease():
+        async with lease.hold("formal-case"):
+            events.append("test")
+
+    task = asyncio.create_task(run_lease())
+    await release_entered.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()  # 追加取消也只能延迟，不能跳过尚未完成的交接。
+    await asyncio.sleep(0)
+    assert task.done() is False
+
+    finish_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    if cancelled_release == "baseStation":
+        assert events[-3:] == [
+            "uxm-local-enter",
+            "uxm-local-done",
+            "f64-local",
+        ]
+    else:
+        assert events[-3:] == [
+            "uxm-local",
+            "f64-local-enter",
+            "f64-local-done",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_operation_preserves_cancellation_when_local_release_fails():
+    from app.services.instrument_test_lease import InstrumentTestLease
+
+    events: list[str] = []
+    operation_entered = asyncio.Event()
+    hal = _FakeHAL(_FakeF64(events, release_ok=False))
+    lease = InstrumentTestLease(lambda: hal)
+
+    async def run_lease():
+        async with lease.hold("formal-case", control_uxm=False):
+            operation_entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(run_lease())
+    await operation_entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+
+    assert events == ["f64-remote", "f64-local"]
+    assert "Local" in str(caught.value.instrument_release_error)
+
+
 @pytest.mark.asyncio
 async def test_lease_is_visible_while_remote_acquire_is_still_in_progress():
     from app.services.instrument_test_lease import InstrumentTestLease

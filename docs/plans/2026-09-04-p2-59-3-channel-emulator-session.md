@@ -71,7 +71,7 @@ Expected: PASS。
 
 **Step 1: Write the failing test**
 
-覆盖四类入口的公共插入点、首 I/O 前对账、真实 HAL 缺失拒绝、模拟 HAL 缺失仅在 execution task-local HAL view 暴露 Mock、并发全局 HAL 读者不可见、BaseStation 先于 CE acquire，以及成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。成功/异常/取消分别断言 `stop_emulation` 恰好一次；scope 内的旧 cleanup 不得重复停止，scope 外调用仍保留安全收尾。
+覆盖四类入口的公共插入点、严格路损门在任何仪器 I/O 前先行、首 I/O 前 CE 对账、真实 HAL 缺失拒绝、模拟 HAL 缺失仅在 execution task-local HAL view 暴露 Mock、并发全局 HAL 读者不可见、BaseStation 先于 CE acquire，以及成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。成功/异常/取消分别断言 `stop_emulation` 恰好一次；真实 task cancellation 不能截断 stop 或任一 release；scope 内的旧 cleanup 不得重复停止，scope 外调用仍保留安全收尾。
 
 **Step 2: Run test to verify it fails**
 
@@ -106,7 +106,7 @@ Expected: FAIL，原因是 terminal evidence 与 P2-66 消费尚不存在。
 
 **Step 3: Write minimal implementation**
 
-定义 frozen terminal payload 与 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；异常/取消先回滚业务事务，再独立提交 terminal，业务异常与 safe-idle/terminal 持久化失败并列保留。P2-66 只读冻结件和 terminal 记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
+定义 `extra=forbid`、固定 schema version 和状态组合约束的 frozen binding/terminal payload，再校验 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；异常/取消先回滚业务事务，再独立提交 terminal，业务异常与 safe-idle/terminal 持久化失败并列保留。P2-66 先完整 parse 再投影，只读冻结件和 terminal 记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
 
 **Step 4: Run test to verify it passes**
 
