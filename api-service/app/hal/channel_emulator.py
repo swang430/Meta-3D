@@ -405,6 +405,41 @@ class ChannelEmulatorDriver(InstrumentDriver):
     def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
         raise NotImplementedError
 
+    def project_channel_operation_evidence(
+        self,
+        *,
+        operation: str,
+        requested: Dict[str, Any],
+        operation_succeeded: bool | None,
+        exchanges: tuple[Any, ...],
+        execution_mode: str,
+    ) -> Dict[str, Any]:
+        """Pure projection of already captured operation evidence.
+
+        The common fallback deliberately keeps every requested field unknown.
+        Concrete adapters may strengthen a field only from their existing,
+        source-backed readback/runtime evidence; this protocol performs no I/O.
+        """
+
+        del operation, operation_succeeded, execution_mode
+        return {
+            "fields": [
+                {
+                    "field": str(name),
+                    "requested": value,
+                    "applied": None,
+                    "applied_present": False,
+                    "status": "unknown",
+                    "provenance": "command_error_queue",
+                    "exchange_ids": [],
+                    "source_reference": None,
+                }
+                for name, value in requested.items()
+            ],
+            "exchange_ids": [item.exchange_id for item in exchanges],
+            "error_queue_exchange_ids": [],
+        }
+
     def get_loaded_emulation_file(self) -> Optional[str]:
         raise NotImplementedError
 
@@ -781,6 +816,36 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     # builder/dispatcher；这些只读协议明确返回 None，保持 simulated/unknown。
     def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
         return None
+
+    def project_channel_operation_evidence(
+        self,
+        *,
+        operation: str,
+        requested: Dict[str, Any],
+        operation_succeeded: bool | None,
+        exchanges: tuple[Any, ...],
+        execution_mode: str,
+    ) -> Dict[str, Any]:
+        """Mock preserves command shape while all receipt values stay simulated."""
+
+        del operation, operation_succeeded, execution_mode
+        return {
+            "fields": [
+                {
+                    "field": str(name),
+                    "requested": value,
+                    "applied": None,
+                    "applied_present": False,
+                    "status": "unknown",
+                    "provenance": "simulated",
+                    "exchange_ids": [],
+                    "source_reference": None,
+                }
+                for name, value in requested.items()
+            ],
+            "exchange_ids": [item.exchange_id for item in exchanges],
+            "error_queue_exchange_ids": [],
+        }
 
     def get_loaded_emulation_file(self) -> Optional[str]:
         return None

@@ -1228,7 +1228,79 @@ components:
           type: array
           items: {type: string}
         pipeline_status: {type: string}
-      required: [schema_version, compatibility_classification, completion_semantic, formal_eligible, compatibility_digest, qualification_classification, reasons, pipeline_status]
+        channel_emulator_operation_evidence:
+          $ref: '#/components/schemas/ChannelEmulatorOperationEvidenceProjection'
+      required: [schema_version, compatibility_classification, completion_semantic, formal_eligible, compatibility_digest, qualification_classification, reasons, pipeline_status, channel_emulator_operation_evidence]
+    ChannelEmulatorOperationEvidenceProjection:
+      type: object
+      additionalProperties: false
+      description: >-
+        Server-owned redacted projection of the execution-frozen channel
+        emulator operation evidence. It never exposes raw instrument responses.
+      properties:
+        schema_version: {type: integer, enum: [1], default: 1}
+        status:
+          type: string
+          enum: [not_available, pending, legacy, verified, diagnostic, invalid]
+        reasons:
+          type: array
+          items: {type: string}
+          default: []
+        sessions:
+          type: array
+          items: {$ref: '#/components/schemas/ChannelOperationSessionEvidenceProjection'}
+          default: []
+      required: [schema_version, status, reasons, sessions]
+    ChannelOperationSessionEvidenceProjection:
+      type: object
+      additionalProperties: false
+      properties:
+        session_id: {type: string, minLength: 1}
+        operation_scope: {type: string, minLength: 1, nullable: true}
+        status: {type: string, enum: [legacy, verified, diagnostic]}
+        receipt_count: {type: integer, minimum: 0, nullable: true}
+        receipt_chain_digest: {type: string, minLength: 1, nullable: true}
+        receipts:
+          type: array
+          items: {$ref: '#/components/schemas/ChannelOperationReceiptEvidenceProjection'}
+          default: []
+      required: [session_id, operation_scope, status, receipt_count, receipt_chain_digest]
+    ChannelOperationReceiptEvidenceProjection:
+      type: object
+      additionalProperties: false
+      properties:
+        sequence: {type: integer, minimum: 0}
+        phase: {type: string, enum: [load, configure, start, adjust, stop, cleanup, release]}
+        operation: {type: string, minLength: 1}
+        terminal_state: {type: string, enum: [completed, rejected, failed, cancelled]}
+        operation_succeeded: {type: boolean, nullable: true}
+        simulated: {type: boolean}
+        status: {type: string, enum: [verified, diagnostic, rejected, failed, cancelled]}
+        fields:
+          type: array
+          items: {$ref: '#/components/schemas/ChannelOperationFieldEvidenceProjection'}
+        exchange_ids:
+          type: array
+          items: {type: string, minLength: 1}
+          default: []
+        error_queue_exchange_ids:
+          type: array
+          items: {type: string, minLength: 1}
+          default: []
+      required: [sequence, phase, operation, terminal_state, operation_succeeded, simulated, status, fields]
+    ChannelOperationFieldEvidenceProjection:
+      type: object
+      additionalProperties: false
+      properties:
+        field: {type: string, minLength: 1}
+        status: {type: string, enum: [requested, applied, confirmed, unknown, not_applicable, unavailable]}
+        provenance: {type: string, enum: [authoritative_readback, command_error_queue, runtime_state, transport_release, simulated, unavailable]}
+        exchange_ids:
+          type: array
+          items: {type: string, minLength: 1}
+          default: []
+        source_reference: {type: string, minLength: 1, nullable: true}
+      required: [field, status, provenance]
     SessionResponse:
       type: object
       properties:

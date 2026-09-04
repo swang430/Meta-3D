@@ -34,6 +34,7 @@ TCP 端口说明 (User Reference §1.1.2.1: "Fixed TCP/IP port for PROPSIM is 33
 
 import logging
 import asyncio
+import math
 import os
 import re
 import time
@@ -1533,8 +1534,20 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         端口 getter (`get_active_output_ports` 等) 是同步的、只读内存缓存, 冷缓存时会
         返回 None。调用方若直接读它就 fail-loud, 会在"后端重启但 F64 仍在播"这个真实
         场景下误拒 (F64R-2 复审: /crest-factor 就这么退化成 400, 反而不如改动前)。
-        先 await 本方法即可让驱动按需向仪器补读一次。"""
-        return await self._ensure_topology()
+        先 await 本方法会重新读取一次当前仿真的状态、维度与逐组端口。显式编排调用不能
+        复用调用前的内存缓存来冒充本次执行的观察证据；驱动内部高频/写前路径仍使用
+        `_ensure_topology()` 的按需缓存语义。"""
+        if not self._visa_resource:
+            return False
+        async with self._scpi_lock:
+            state = await self._query_simulation_state()
+            if state is None or state == "CLOSED":
+                logger.warning(
+                    f"[F64] 显式拓扑刷新时 STATE?={state} — 不读取未加载模型的拓扑"
+                )
+                return False
+            await self._readback_topology()
+        return bool(self._active_output_ports and self._active_input_ports)
 
     # ——公开能力查询 (给编排层用, 免得上层再读私有字段自己推 F64R-2)——
 
@@ -2314,6 +2327,383 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             state_exchange=state_exchange,
             scope=scope,
         )
+
+    def project_channel_operation_evidence(
+        self,
+        *,
+        operation: str,
+        requested: Dict[str, Any],
+        operation_succeeded: bool | None,
+        exchanges: tuple[Any, ...],
+        execution_mode: str,
+    ) -> Dict[str, Any]:
+        """Strengthen only values proven by this invocation's F64 readback."""
+
+        projected = super().project_channel_operation_evidence(
+            operation=operation,
+            requested=requested,
+            operation_succeeded=operation_succeeded,
+            exchanges=exchanges,
+            execution_mode=execution_mode,
+        )
+        from app.hal.scpi_evidence import (
+            EvidenceLevel,
+            EvidenceVerdict,
+            build_f64_evidence,
+            exchange_matches_catalog_role,
+            exchange_is_error_queue_query,
+            f64_command_operand_from_exchange,
+            scope_for_evidence,
+            select_f64_command_capture,
+        )
+
+        projected["error_queue_exchange_ids"] = [
+            exchange.exchange_id
+            for exchange in exchanges
+            if exchange_is_error_queue_query(exchange, instrument="f64")
+        ]
+        recipe = {
+            "load_channel": ("f64.model_load", "emulation_file"),
+            "start_emulation": ("f64.simulation_state", "state"),
+            "stop_emulation": ("f64.simulation_state", "state"),
+            "set_passthrough_mode": ("f64.bypass_mode", "mode"),
+            "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
+            "set_output_gain": ("f64.output_gain", "gain_db"),
+            "set_baseband_power": ("f64.input_reference", "reference_dbm"),
+            "set_crest_factor": ("f64.crest_factor", "crest_db"),
+        }.get(operation)
+        if operation_succeeded is not True or execution_mode != "real":
+            return projected
+
+        environment = self.capture_evidence_environment()
+
+        def select_query(
+            evidence_key: str, expected_command: str
+        ) -> tuple[Any, Any] | None:
+            scope = scope_for_evidence(evidence_key, environment)
+            if not scope.eligible:
+                return None
+            matches = [
+                exchange
+                for exchange in exchanges
+                if exchange_matches_catalog_role(
+                    exchange, evidence_key, "query"
+                )
+                and exchange.command.strip().casefold()
+                == expected_command.strip().casefold()
+            ]
+            if len(matches) != 1:
+                return None
+            exchange = matches[0]
+            if (
+                exchange.simulated
+                or exchange.result_type != "response"
+                or exchange.response is None
+            ):
+                return None
+            return exchange, scope
+
+        def replace_confirmed_field(
+            *,
+            field_name: str,
+            applied: Any,
+            selected_exchanges: list[Any],
+            source_references: list[str],
+        ) -> Dict[str, Any]:
+            confirmed_field = {
+                "field": field_name,
+                "requested": requested[field_name],
+                "applied": applied,
+                "applied_present": True,
+                "status": "confirmed",
+                "provenance": "authoritative_readback",
+                "exchange_ids": [item.exchange_id for item in selected_exchanges],
+                "source_reference": "; ".join(dict.fromkeys(source_references)),
+            }
+            projected["fields"] = [
+                confirmed_field if field["field"] == field_name else field
+                for field in projected["fields"]
+            ]
+            if not any(
+                field["field"] == field_name for field in projected["fields"]
+            ):
+                projected["fields"].append(confirmed_field)
+            return projected
+
+        def finite_floats(raw: str, count: int) -> list[float] | None:
+            try:
+                values = [float(item.strip()) for item in raw.split(",")]
+            except ValueError:
+                return None
+            if len(values) < count or not all(
+                math.isfinite(value) for value in values[:count]
+            ):
+                return None
+            return values[:count]
+
+        if operation == "measure_input":
+            selector = requested.get("measurement")
+            if not isinstance(selector, dict):
+                return projected
+            input_port = selector.get("input_port")
+            measurement_time_s = selector.get("measurement_time_s")
+            if type(input_port) is not int or not isinstance(
+                measurement_time_s, (int, float)
+            ) or isinstance(measurement_time_s, bool):
+                return projected
+            selected = select_query(
+                "f64.input_measurement",
+                f"INP:LEV:MEAS? {input_port},{measurement_time_s}",
+            )
+            if selected is None:
+                return projected
+            exchange, scope = selected
+            values = finite_floats(exchange.response, 2)
+            if values is None:
+                return projected
+            return replace_confirmed_field(
+                field_name="measurement",
+                applied={
+                    "input_port": input_port,
+                    "measurement_time_s": float(measurement_time_s),
+                    "avg_dbm": values[0],
+                    "crest_db": values[1],
+                },
+                selected_exchanges=[exchange],
+                source_references=[scope.source_reference],
+            )
+
+        if operation == "get_input_level_limits":
+            selector = requested.get("limits")
+            if not isinstance(selector, dict):
+                return projected
+            input_port = selector.get("input_port")
+            if type(input_port) is not int:
+                return projected
+            selected = select_query(
+                "f64.input_level_limits", f"INP:LEV:AMP:LIM? {input_port}"
+            )
+            if selected is None:
+                return projected
+            exchange, scope = selected
+            values = finite_floats(exchange.response, 2)
+            if values is None:
+                return projected
+            return replace_confirmed_field(
+                field_name="limits",
+                applied={
+                    "input_port": input_port,
+                    "lower_dbm": values[0],
+                    "upper_dbm": values[1],
+                },
+                selected_exchanges=[exchange],
+                source_references=[scope.source_reference],
+            )
+
+        if operation == "get_group_clipping":
+            selector = requested.get("clipping")
+            if not isinstance(selector, dict):
+                return projected
+            group_num = selector.get("group_num")
+            reset = selector.get("reset")
+            if type(group_num) is not int or type(reset) is not bool:
+                return projected
+            selected = select_query(
+                "f64.group_clipping",
+                f"GROup:CLIpping:GET? {group_num},{1 if reset else 0}",
+            )
+            if selected is None:
+                return projected
+            exchange, scope = selected
+            values = finite_floats(exchange.response, 1)
+            if values is None:
+                return projected
+            return replace_confirmed_field(
+                field_name="clipping",
+                applied={
+                    "group_num": group_num,
+                    "reset": reset,
+                    "per_mille": values[0],
+                },
+                selected_exchanges=[exchange],
+                source_references=[scope.source_reference],
+            )
+
+        if operation == "get_system_status":
+            if requested.get("system_status") != "channel_emulator":
+                return projected
+            selected = select_query("f64.system_status", "SYST:STAT?")
+            if selected is None:
+                return projected
+            exchange, scope = selected
+            parts = [part.strip() for part in exchange.response.split(",")]
+            if not parts or parts[0] not in {"0", "1"}:
+                return projected
+            applied = {
+                "healthy": parts[0] == "1",
+                "warnings": [part for part in parts[1:] if part],
+            }
+            return replace_confirmed_field(
+                field_name="system_status",
+                applied=applied,
+                selected_exchanges=[exchange],
+                source_references=[scope.source_reference],
+            )
+
+        if operation == "ensure_topology":
+            if requested.get("topology") != "active_ports":
+                return projected
+            selected: list[Any] = []
+            references: list[str] = []
+
+            def topology_query(key: str, command: str) -> Any | None:
+                match = select_query(key, command)
+                if match is None:
+                    return None
+                exchange, scope = match
+                selected.append(exchange)
+                references.append(scope.source_reference)
+                return exchange
+
+            state = topology_query("f64.simulation_state", "DIAG:SIMU:STATE?")
+            model = topology_query(
+                "f64.topology_model_info", "DIAG:SIMU:MODEL:INFO?"
+            )
+            group_count_exchange = topology_query(
+                "f64.topology_group_count", "GROUP:GET?"
+            )
+            if state is None or model is None or group_count_exchange is None:
+                return projected
+            if state.response.strip().upper() == "CLOSED":
+                return projected
+            try:
+                dimensions = self._parse_csv_ints(model.response)
+                group_counts = self._parse_csv_ints(group_count_exchange.response)
+            except Exception:  # noqa: BLE001 — malformed readback stays unknown
+                return projected
+            if (
+                len(dimensions) != 3
+                or any(value <= 0 or value > _TOPOLOGY_SANITY_MAX for value in dimensions)
+                or len(group_counts) != 1
+                or group_counts[0] <= 0
+                or group_counts[0] > min(dimensions[1], _GROUP_COUNT_HARD_MAX)
+            ):
+                return projected
+            input_ports: set[int] = set()
+            output_ports: set[int] = set()
+            channels: set[int] = set()
+            for group_num in range(1, group_counts[0] + 1):
+                channel_exchange = topology_query(
+                    "f64.topology_group_channels",
+                    f"GROUP:CHANNELS:GET? {group_num}",
+                )
+                input_exchange = topology_query(
+                    "f64.topology_group_inputs",
+                    f"GROUP:INPUTS:GET? {group_num}",
+                )
+                output_exchange = topology_query(
+                    "f64.topology_group_outputs",
+                    f"GROUP:OUTPUTS:GET? {group_num}",
+                )
+                if (
+                    channel_exchange is None
+                    or input_exchange is None
+                    or output_exchange is None
+                ):
+                    return projected
+                try:
+                    group_channels = self._parse_csv_ints(channel_exchange.response)
+                    group_inputs = self._parse_csv_ints(input_exchange.response)
+                    group_outputs = self._parse_csv_ints(output_exchange.response)
+                except Exception:  # noqa: BLE001 — malformed readback stays unknown
+                    return projected
+                if (
+                    not group_channels
+                    or not group_inputs
+                    or not group_outputs
+                    or any(value <= 0 for value in group_channels)
+                    or any(value <= 0 for value in group_inputs)
+                    or any(value <= 0 for value in group_outputs)
+                ):
+                    return projected
+                channels.update(group_channels)
+                input_ports.update(group_inputs)
+                output_ports.update(group_outputs)
+            if (
+                len(input_ports) != dimensions[0]
+                or len(channels) != dimensions[1]
+                or len(output_ports) != dimensions[2]
+            ):
+                return projected
+            return replace_confirmed_field(
+                field_name="topology",
+                applied={
+                    "inputs": sorted(input_ports),
+                    "outputs": sorted(output_ports),
+                    "channels": sorted(channels),
+                },
+                selected_exchanges=selected,
+                source_references=references,
+            )
+
+        if recipe is None:
+            return projected
+
+        evidence_key, field_name = recipe
+        selected = select_f64_command_capture(exchanges, evidence_key)
+        actual_command_value = f64_command_operand_from_exchange(
+            selected["command_exchange"]
+        )
+        requested_value = requested.get(field_name)
+        if operation == "load_channel" and requested_value is None:
+            requested_value = actual_command_value
+        if requested_value is None:
+            return projected
+        item = build_f64_evidence(
+            evidence_key=evidence_key,
+            requested=requested_value,
+            scope=scope_for_evidence(
+                evidence_key, self.capture_evidence_environment()
+            ),
+            **selected,
+        )
+        if not (
+            item.verdict is EvidenceVerdict.PASSED
+            and item.evidence_level in {
+                EvidenceLevel.ACCEPTED,
+                EvidenceLevel.APPLIED,
+            }
+        ):
+            return projected
+
+        applied_value = (
+            actual_command_value
+            if operation == "load_channel"
+            else requested_value
+        )
+        confirmed_field = {
+            "field": field_name,
+            "requested": requested_value,
+            "applied": applied_value,
+            "applied_present": True,
+            "status": "confirmed",
+            "provenance": "authoritative_readback",
+            "exchange_ids": list(item.exchange_ids),
+            "source_reference": item.source_reference,
+        }
+        projected["fields"] = [
+            (
+                confirmed_field
+                if field["field"] == field_name
+                else field
+            )
+            for field in projected["fields"]
+        ]
+        if not any(
+            field["field"] == field_name for field in projected["fields"]
+        ):
+            projected["fields"].append(confirmed_field)
+        return projected
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness
@@ -3232,11 +3622,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     logger.error(f"[F64] {self._last_error}")
                     return False
+                wire_power_dbm = float(f"{power_dbm:.1f}")
                 if not await self._gated_write_transaction(
                     "set_baseband_power",
-                    [f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}" for inp in ports],
+                    [f"INP:LEV:AMP:CH {inp},{wire_power_dbm:.1f}" for inp in ports],
                 ):
                     return False
+                for inp in ports:
+                    raw = await self._query(f"INP:LEV:AMP:CH? {inp}")
+                    try:
+                        applied = float(raw.strip())
+                    except (AttributeError, TypeError, ValueError):
+                        applied = None
+                    if applied is None or not math.isclose(
+                        applied, wire_power_dbm, rel_tol=1e-9, abs_tol=1e-6
+                    ):
+                        self._last_error = (
+                            "set_baseband_power 未获权威回读确认: "
+                            f"input={inp}, requested={power_dbm}, "
+                            f"wire={wire_power_dbm}, readback={raw!r}"
+                        )
+                        logger.error("[F64] %s", self._last_error)
+                        return False
             logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm (ports={ports})")
             return True
         except Exception as e:
@@ -3361,11 +3768,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            if not await self._gated_write_transaction(
-                f"set_output_gain(out={output_num})",
-                [f"OUTP:GAIN:CH {output_num},{gain_db:.2f}"],
-            ):
-                return False
+            wire_gain_db = float(f"{gain_db:.2f}")
+            async with self._scpi_lock:
+                if not await self._gated_write_transaction(
+                    f"set_output_gain(out={output_num})",
+                    [f"OUTP:GAIN:CH {output_num},{wire_gain_db:.2f}"],
+                ):
+                    return False
+                raw = await self._query(f"OUTP:GAIN:CH? {output_num}")
+                try:
+                    applied = float(raw.strip())
+                except (AttributeError, TypeError, ValueError):
+                    applied = None
+                if applied is None or not math.isclose(
+                    applied, wire_gain_db, rel_tol=1e-9, abs_tol=1e-6
+                ):
+                    self._last_error = (
+                        "set_output_gain 未获权威回读确认: "
+                        f"output={output_num}, requested={gain_db}, "
+                        f"wire={wire_gain_db}, readback={raw!r}"
+                    )
+                    logger.error("[F64] %s", self._last_error)
+                    return False
             logger.info(f"[F64] Output {output_num} gain set: {gain_db:.2f} dB")
             return True
         except Exception as e:  # noqa: BLE001
@@ -4347,10 +4771,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            return await self._gated_write_transaction(
-                f"set_crest_factor(in={input_num})",
-                [f"INP:CRE:SET {input_num},{crest_db:.2f}"],
-            )
+            wire_crest_db = float(f"{crest_db:.2f}")
+            async with self._scpi_lock:
+                if not await self._gated_write_transaction(
+                    f"set_crest_factor(in={input_num})",
+                    [f"INP:CRE:SET {input_num},{wire_crest_db:.2f}"],
+                ):
+                    return False
+                raw = await self._query(f"INP:CRE:GET? {input_num}")
+                try:
+                    applied = float(raw.strip())
+                except (AttributeError, TypeError, ValueError):
+                    applied = None
+                if applied is None or not math.isclose(
+                    applied, wire_crest_db, rel_tol=1e-9, abs_tol=1e-6
+                ):
+                    self._last_error = (
+                        "set_crest_factor 未获权威回读确认: "
+                        f"input={input_num}, requested={crest_db}, "
+                        f"wire={wire_crest_db}, readback={raw!r}"
+                    )
+                    logger.error("[F64] %s", self._last_error)
+                    return False
+                return True
         except Exception as e:
             logger.error(f"[F64] set_crest_factor({input_num}) failed: {e}")
             self._last_error = str(e)

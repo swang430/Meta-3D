@@ -56,6 +56,9 @@ from app.services.execution_evidence_outcome import (
     ExecutionEvidenceOutcome,
     project_execution_evidence_outcome,
 )
+from app.services.channel_emulator_operation_receipt import (
+    ChannelEmulatorOperationEvidenceProjection,
+)
 from app.hal.base_station_compatibility import canonical_payload_digest
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -177,7 +180,13 @@ def _aggregate_report_execution_outcomes(
     aggregate_payload = [
         {
             "execution_id": str(execution_id),
-            "outcome": outcome.model_dump(mode="json"),
+            # P2-60 adds a public audit projection, not a new compatibility
+            # identity.  Keep the pre-P2-60 aggregate digest stable so intact
+            # multi-execution reports are not retroactively invalidated.
+            "outcome": outcome.model_dump(
+                mode="json",
+                exclude={"channel_emulator_operation_evidence"},
+            ),
         }
         for execution_id, outcome in projected
     ]
@@ -190,6 +199,40 @@ def _aggregate_report_execution_outcomes(
         if statuses and len(set(statuses)) == 1 and not missing_ids
         else "mixed"
     )
+    channel_projections = [
+        outcome.channel_emulator_operation_evidence for outcome in outcomes
+    ]
+    channel_statuses = {projection.status for projection in channel_projections}
+    if missing_ids or "invalid" in channel_statuses:
+        channel_status = "invalid"
+    elif "diagnostic" in channel_statuses:
+        channel_status = "diagnostic"
+    elif "legacy" in channel_statuses:
+        channel_status = "legacy"
+    elif "pending" in channel_statuses:
+        channel_status = "pending"
+    elif "verified" in channel_statuses:
+        channel_status = "verified"
+    else:
+        channel_status = "not_available"
+    channel_reasons = [
+        f"execution {execution_id}: {reason}"
+        for execution_id, outcome in projected
+        for reason in outcome.channel_emulator_operation_evidence.reasons
+    ]
+    channel_reasons.extend(
+        f"execution {execution_id}: source execution is unavailable"
+        for execution_id in missing_ids
+    )
+    channel_evidence = ChannelEmulatorOperationEvidenceProjection(
+        status=channel_status,
+        reasons=tuple(dict.fromkeys(channel_reasons)),
+        sessions=tuple(
+            session
+            for projection in channel_projections
+            for session in projection.sessions
+        ),
+    )
     return ExecutionEvidenceOutcome(
         compatibility_classification=classification,
         completion_semantic=completion,
@@ -198,6 +241,7 @@ def _aggregate_report_execution_outcomes(
         qualification_classification=qualification,
         reasons=tuple(dict.fromkeys(reasons)),
         pipeline_status=pipeline_status,
+        channel_emulator_operation_evidence=channel_evidence,
     )
 
 
@@ -262,6 +306,18 @@ def _report_execution_outcome_state(
             execution_ids,
             executions,
         )
+        if (
+            stored is not None
+            and isinstance(raw, dict)
+            and "channel_emulator_operation_evidence" not in raw
+        ):
+            stored = stored.model_copy(
+                update={
+                    "channel_emulator_operation_evidence": (
+                        aggregate.channel_emulator_operation_evidence
+                    )
+                }
+            )
         if raw is None:
             return aggregate, False
         if stored == aggregate and aggregate.formal_eligible:
@@ -314,6 +370,22 @@ def _report_execution_outcome_state(
         )
 
     expected = project_execution_evidence_outcome(execution)
+    if (
+        stored is not None
+        and isinstance(raw, dict)
+        and "channel_emulator_operation_evidence" not in raw
+    ):
+        # Pre-P2-60 reports cannot contain the later public CE projection.
+        # Continue validating every field they did freeze, and source the new
+        # read-only view from the same linked execution instead of retroactively
+        # invalidating an otherwise intact historical artifact.
+        stored = stored.model_copy(
+            update={
+                "channel_emulator_operation_evidence": (
+                    expected.channel_emulator_operation_evidence
+                )
+            }
+        )
     if raw is None:
         if expected.compatibility_classification == "legacy":
             return expected, True

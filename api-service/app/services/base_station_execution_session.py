@@ -178,7 +178,19 @@ async def run_base_station_execution_session(
                     test_case,
                     driver=_get_base_station_driver(),
                 )
-                lease_outcome.measurement_attempt_id = attempt_id
+                if attempt_id is not None:
+                    bind_attempt = getattr(
+                        outcome,
+                        "bind_measurement_attempt_id",
+                        None,
+                    )
+                    if callable(bind_attempt):
+                        bind_attempt(attempt_id)
+                    else:
+                        # Compatibility for isolated lifecycle test doubles.  The
+                        # production CE scope always exposes the binding method so
+                        # its recorder receives the same post-acquire attempt id.
+                        lease_outcome.measurement_attempt_id = attempt_id
             operation_result = await operation()
             mark_operation_result = getattr(outcome, "mark_operation_result", None)
             if callable(mark_operation_result):

@@ -45,6 +45,7 @@ from app.services.channel_emulator_binding import (
     validate_frozen_channel_emulator_binding,
 )
 from app.services.channel_emulator_execution_plan import (
+    CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
     CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
     CE_PLAN_FREEZE_CONFIG_KEY,
     validate_frozen_channel_emulator_load_context,
@@ -54,6 +55,17 @@ from app.services.channel_emulator_execution_plan import (
 from app.services.channel_emulator_execution_session import (
     CE_TERMINAL_EVIDENCE_CONFIG_KEY,
     validate_channel_emulator_terminal_evidence,
+)
+from app.services.channel_emulator_operation_receipt import (
+    CE_OPERATION_RECEIPTS_CONFIG_KEY,
+    ChannelEmulatorOperationEvidenceProjection,
+    ChannelOperationFieldEvidenceProjection,
+    ChannelOperationReceiptEvidenceProjection,
+    ChannelOperationSessionEvidenceProjection,
+    channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_evidence,
+    validate_channel_emulator_operation_receipt,
 )
 
 
@@ -96,7 +108,11 @@ _PRE_P2_54_MANIFESTS = {
 class ExecutionEvidenceOutcome(BaseModel):
     """Single server-owned projection for history, reports, and formal gates."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_serialization_defaults_required=True,
+    )
 
     schema_version: Literal[1] = 1
     compatibility_classification: CompatibilityClassification
@@ -106,6 +122,224 @@ class ExecutionEvidenceOutcome(BaseModel):
     qualification_classification: QualificationClassification
     reasons: tuple[str, ...]
     pipeline_status: str
+    channel_emulator_operation_evidence: (
+        ChannelEmulatorOperationEvidenceProjection
+    ) = empty_channel_emulator_operation_evidence()
+
+
+def _channel_emulator_v2_receipt_chain_error(
+    config: Mapping[str, Any],
+    terminal: Mapping[str, Any],
+    *,
+    simulated: bool,
+) -> str | None:
+    required_confirmed_fields = {
+        "load_channel": frozenset({"emulation_file"}),
+        "set_output_gain": frozenset({"gain_db"}),
+        "set_output_level_dbm": frozenset({"level_dbm"}),
+        "set_baseband_power": frozenset({"reference_dbm"}),
+        "set_crest_factor": frozenset({"crest_db"}),
+        "autoset_inputs": frozenset({"input_ports"}),
+        "set_input_measurement_mode": frozenset({"mode"}),
+        "set_burst_trigger_level": frozenset({"trigger_dbm"}),
+        "ensure_topology": frozenset({"topology"}),
+        "measure_input": frozenset({"measurement"}),
+        "get_input_level_limits": frozenset({"limits"}),
+        "get_group_clipping": frozenset({"clipping"}),
+        "get_system_status": frozenset({"system_status"}),
+        "start_emulation": frozenset({"state"}),
+        "stop_emulation": frozenset({"state"}),
+        "set_passthrough_mode": frozenset({"mode"}),
+        "clear_passthrough_mode": frozenset({"mode"}),
+        "transport_release": frozenset({"control_mode"}),
+    }
+    raw_receipts = config.get(CE_OPERATION_RECEIPTS_CONFIG_KEY)
+    if not isinstance(raw_receipts, list):
+        return "channelEmulator v2 operation receipt chain is missing"
+
+    validated_receipts: list[Mapping[str, Any]] = []
+    receipt_by_id: dict[str, Mapping[str, Any]] = {}
+    for raw_receipt in raw_receipts:
+        if not isinstance(raw_receipt, Mapping):
+            return "channelEmulator operation receipt is malformed"
+        try:
+            receipt = validate_channel_emulator_operation_receipt(
+                dict(raw_receipt)
+            )
+        except ValueError as exc:
+            return str(exc)
+        receipt_id = receipt["receipt_id"]
+        if receipt_id in receipt_by_id:
+            return "channelEmulator operation receipt id is duplicated"
+        receipt_by_id[receipt_id] = receipt
+        validated_receipts.append(receipt)
+
+    receipt_ids = terminal.get("operation_receipt_ids")
+    if not isinstance(receipt_ids, (list, tuple)):
+        return "channelEmulator v2 terminal receipt ids are malformed"
+    selected: list[Mapping[str, Any]] = []
+    for receipt_id in receipt_ids:
+        receipt = receipt_by_id.get(receipt_id)
+        if receipt is None:
+            return "channelEmulator v2 terminal references a missing receipt"
+        selected.append(receipt)
+    if terminal.get("operation_receipt_count") != len(selected):
+        return "channelEmulator v2 terminal receipt count does not match chain"
+    if selected:
+        try:
+            selected_digest = channel_emulator_operation_receipt_chain_digest(
+                selected
+            )
+        except ValueError as exc:
+            return str(exc)
+    elif terminal.get("terminal_state") == "completed":
+        return "completed channelEmulator v2 receipt chain is incomplete"
+    else:
+        selected_digest = empty_channel_emulator_operation_receipt_chain_digest()
+    if terminal.get("operation_receipts_digest") != selected_digest:
+        return "channelEmulator v2 terminal receipt chain digest mismatch"
+
+    session_id = terminal.get("session_id")
+    complete_session_ids = [
+        receipt["receipt_id"]
+        for receipt in validated_receipts
+        if receipt.get("session_id") == session_id
+    ]
+    if list(receipt_ids) != complete_session_ids:
+        return "channelEmulator v2 terminal omits or reorders a session receipt"
+
+    expected_identity = {
+        "session_id": session_id,
+        "operation_scope": terminal.get("operation_scope"),
+        "execution_id": terminal.get("execution_id"),
+        "measurement_attempt_id": terminal.get("measurement_attempt_id"),
+        "binding_digest": terminal.get("binding_digest"),
+        "binding_freeze_digest": terminal.get("binding_freeze_digest"),
+        "plan_digest": terminal.get("plan_digest"),
+        "lease_id": terminal.get("lease_id"),
+        "instrument_id": terminal.get("instrument_id"),
+        "adapter_id": terminal.get("adapter_id"),
+        "execution_mode": terminal.get("execution_mode"),
+    }
+    base_station_freeze = config.get(FREEZE_CONFIG_KEY)
+    asset_freeze = (
+        base_station_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+        if isinstance(base_station_freeze, Mapping)
+        else None
+    )
+    expected_identity["asset_digest"] = (
+        asset_freeze.get("digest") if isinstance(asset_freeze, Mapping) else None
+    )
+    if any(
+        receipt.get("measurement_attempt_id")
+        != expected_identity["measurement_attempt_id"]
+        for receipt in selected
+    ):
+        return "channelEmulator v2 receipt measurement attempt identity drift"
+    if any(
+        receipt.get(key) != value
+        for receipt in selected
+        for key, value in expected_identity.items()
+        if key != "measurement_attempt_id"
+    ):
+        return "channelEmulator v2 receipt identity drift"
+
+    if terminal.get("terminal_state") != "completed":
+        return None
+    safe_receipt_id = terminal.get("safe_idle_receipt_id")
+    release_receipt_id = terminal.get("transport_release_receipt_id")
+    if len(selected) < 2:
+        return "completed channelEmulator v2 receipt chain is incomplete"
+    safe_receipt = receipt_by_id.get(safe_receipt_id)
+    release_receipt = receipt_by_id.get(release_receipt_id)
+    if (
+        safe_receipt is not selected[-2]
+        or safe_receipt.get("operation")
+        != terminal.get("required_safe_idle_action")
+    ):
+        return "channelEmulator v2 terminal safe-idle receipt is not final"
+    if (
+        release_receipt is not selected[-1]
+        or release_receipt.get("operation") != "transport_release"
+    ):
+        return "channelEmulator v2 terminal release receipt is not final"
+    safe_fields = safe_receipt.get("fields")
+    expected_safe_field = (
+        ("state", "STOPPED")
+        if safe_receipt.get("operation") == "stop_emulation"
+        else ("mode", 0)
+    )
+    if (
+        not isinstance(safe_fields, (list, tuple))
+        or len(safe_fields) != 1
+        or not isinstance(safe_fields[0], Mapping)
+        or safe_fields[0].get("field") != expected_safe_field[0]
+        or safe_fields[0].get("requested") != expected_safe_field[1]
+        or (
+            not simulated
+            and safe_fields[0].get("applied") != expected_safe_field[1]
+        )
+        or safe_fields[0].get("provenance") == "transport_release"
+    ):
+        return "channelEmulator v2 terminal safe-idle receipt fields are invalid"
+    release_fields = release_receipt.get("fields")
+    if (
+        not isinstance(release_fields, (list, tuple))
+        or len(release_fields) != 1
+        or not isinstance(release_fields[0], Mapping)
+        or release_fields[0].get("field") != "control_mode"
+        or release_fields[0].get("requested") != "local"
+        or (
+            not simulated
+            and (
+                release_fields[0].get("applied") != "local"
+                or release_fields[0].get("provenance") != "transport_release"
+            )
+        )
+    ):
+        return "channelEmulator v2 terminal release receipt fields are invalid"
+    if any(
+        field.get("provenance") == "transport_release"
+        for receipt in selected[:-1]
+        for field in receipt.get("fields", ())
+        if isinstance(field, Mapping)
+    ):
+        return "channelEmulator transport release provenance is on another operation"
+    for receipt in selected:
+        if (
+            receipt.get("terminal_state") != "completed"
+            or receipt.get("operation_succeeded") is not True
+        ):
+            return "channelEmulator v2 operation receipt lifecycle is incomplete"
+        fields = receipt.get("fields")
+        if not isinstance(fields, (list, tuple)) or not fields:
+            return "channelEmulator v2 operation receipt fields are missing"
+        if simulated:
+            if receipt.get("simulated") is not True or any(
+                field.get("status") in {"applied", "confirmed"}
+                for field in fields
+                if isinstance(field, Mapping)
+            ):
+                return "simulated channelEmulator v2 receipt claimed formal evidence"
+        elif receipt.get("simulated") is not False:
+            return "real channelEmulator v2 receipt claimed simulated evidence"
+        else:
+            fields_by_name = {
+                field.get("field"): field
+                for field in fields
+                if isinstance(field, Mapping)
+            }
+            required = required_confirmed_fields.get(
+                receipt.get("operation"), frozenset()
+            )
+            if any(
+                fields_by_name.get(name, {}).get("status") != "confirmed"
+                for name in required
+            ):
+                return "real channelEmulator v2 receipt has unconfirmed formal fields"
+            if not required:
+                return "real channelEmulator v2 receipt operation has no formal evidence policy"
+    return None
 
 
 def _channel_emulator_terminal_projection(
@@ -188,7 +422,13 @@ def _channel_emulator_terminal_projection(
             "invalid",
             "channelEmulator plan does not match binding manifest: " + plan_error,
         )
-    if evidence is None and pipeline_status != "completed":
+    attempt_evidence = config.get("base_station_execution_evidence")
+    terminal_required = pipeline_status == "completed" or (
+        isinstance(attempt_evidence, Mapping)
+        and attempt_evidence.get("current_measurement_attempt_state")
+        == "completed"
+    )
+    if evidence is None and not terminal_required:
         return None, None
     if not isinstance(evidence, list) or not evidence:
         return "invalid", "completed execution has no channelEmulator terminal evidence"
@@ -217,6 +457,14 @@ def _channel_emulator_terminal_projection(
             return "invalid", "channelEmulator terminal evidence identity drift"
         if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
             return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
+        if item.get("schema_version") == 2:
+            receipt_error = _channel_emulator_v2_receipt_chain_error(
+                config,
+                item,
+                simulated=simulated,
+            )
+            if receipt_error is not None:
+                return "invalid", receipt_error
         validated_evidence.append(item)
 
     # Commissioning single-phase runs are deliberately retryable.  Persistence
@@ -233,6 +481,25 @@ def _channel_emulator_terminal_projection(
         else:
             effective_evidence.append(item)
     effective_evidence.extend(latest_by_scope.values())
+
+    attempt_evidence = config.get("base_station_execution_evidence")
+    current_attempt_id = (
+        attempt_evidence.get("current_measurement_attempt_id")
+        if isinstance(attempt_evidence, Mapping)
+        and attempt_evidence.get("current_measurement_attempt_state") == "completed"
+        else None
+    )
+    v2_terminals = [
+        item for item in effective_evidence if item.get("schema_version") == 2
+    ]
+    if current_attempt_id is not None and v2_terminals and not any(
+        item.get("measurement_attempt_id") == current_attempt_id
+        for item in v2_terminals
+    ):
+        return (
+            "invalid",
+            "channelEmulator v2 terminal does not match the current measurement attempt",
+        )
 
     for item in effective_evidence:
         if (
@@ -257,6 +524,164 @@ def _channel_emulator_terminal_projection(
     if simulated:
         return "diagnostic", "simulated channelEmulator is excluded from formal KPI"
     return None, None
+
+
+def _public_channel_emulator_operation_evidence(
+    config: Mapping[str, Any],
+    *,
+    pipeline_status: str,
+    classification: Literal["diagnostic", "invalid"] | None,
+    reason: str | None,
+) -> ChannelEmulatorOperationEvidenceProjection:
+    """Redact the already-validated CE receipt chain for every API consumer."""
+
+    reasons = (reason,) if reason is not None else ()
+    if classification == "invalid":
+        return empty_channel_emulator_operation_evidence(
+            status="invalid",
+            reasons=reasons,
+        )
+
+    raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if raw_terminals is None:
+        has_frozen_ce = any(
+            config.get(key) is not None
+            for key in (
+                CE_FREEZE_CONFIG_KEY,
+                CE_PLAN_FREEZE_CONFIG_KEY,
+                CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+            )
+        )
+        return empty_channel_emulator_operation_evidence(
+            status=(
+                "pending"
+                if has_frozen_ce and pipeline_status != "completed"
+                else "not_available"
+            ),
+            reasons=reasons,
+        )
+    if not isinstance(raw_terminals, list):
+        return empty_channel_emulator_operation_evidence(
+            status="invalid",
+            reasons=("channelEmulator terminal evidence is malformed",),
+        )
+
+    validated_terminals: list[Mapping[str, Any]] = []
+    for raw_terminal in raw_terminals:
+        try:
+            validated_terminals.append(
+                validate_channel_emulator_terminal_evidence(dict(raw_terminal))
+            )
+        except (TypeError, ValueError):
+            return empty_channel_emulator_operation_evidence(
+                status="invalid",
+                reasons=("channelEmulator terminal evidence is malformed",),
+            )
+
+    effective: list[Mapping[str, Any]] = []
+    latest_by_scope: dict[str, Mapping[str, Any]] = {}
+    for terminal in validated_terminals:
+        operation_scope = terminal.get("operation_scope")
+        if isinstance(operation_scope, str):
+            latest_by_scope[operation_scope] = terminal
+        else:
+            effective.append(terminal)
+    effective.extend(latest_by_scope.values())
+
+    raw_receipts = config.get(CE_OPERATION_RECEIPTS_CONFIG_KEY)
+    receipts_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(raw_receipts, list):
+        try:
+            receipts_by_id = {
+                receipt["receipt_id"]: receipt
+                for receipt in (
+                    validate_channel_emulator_operation_receipt(dict(item))
+                    for item in raw_receipts
+                )
+            }
+        except (KeyError, TypeError, ValueError):
+            return empty_channel_emulator_operation_evidence(
+                status="invalid",
+                reasons=("channelEmulator operation receipt is malformed",),
+            )
+
+    sessions: list[ChannelOperationSessionEvidenceProjection] = []
+    has_legacy = False
+    for terminal in effective:
+        if terminal.get("schema_version") == 1:
+            has_legacy = True
+            sessions.append(
+                ChannelOperationSessionEvidenceProjection(
+                    session_id=terminal["session_id"],
+                    operation_scope=terminal.get("operation_scope"),
+                    status="legacy",
+                    receipt_count=None,
+                    receipt_chain_digest=None,
+                )
+            )
+            continue
+        selected = [
+            receipts_by_id[receipt_id]
+            for receipt_id in terminal.get("operation_receipt_ids", ())
+        ]
+        receipt_projections: list[ChannelOperationReceiptEvidenceProjection] = []
+        for receipt in selected:
+            terminal_state = receipt["terminal_state"]
+            public_status = (
+                "diagnostic"
+                if receipt["simulated"]
+                else "verified" if terminal_state == "completed" else terminal_state
+            )
+            receipt_projections.append(
+                ChannelOperationReceiptEvidenceProjection(
+                    sequence=receipt["sequence"],
+                    phase=receipt["phase"],
+                    operation=receipt["operation"],
+                    terminal_state=terminal_state,
+                    operation_succeeded=receipt["operation_succeeded"],
+                    simulated=receipt["simulated"],
+                    status=public_status,
+                    fields=tuple(
+                        ChannelOperationFieldEvidenceProjection(
+                            field=field["field"],
+                            status=field["status"],
+                            provenance=field["provenance"],
+                            exchange_ids=tuple(field.get("exchange_ids", ())),
+                            source_reference=field.get("source_reference"),
+                        )
+                        for field in receipt["fields"]
+                    ),
+                    exchange_ids=tuple(receipt.get("exchange_ids", ())),
+                    error_queue_exchange_ids=tuple(
+                        receipt.get("error_queue_exchange_ids", ())
+                    ),
+                )
+            )
+        sessions.append(
+            ChannelOperationSessionEvidenceProjection(
+                session_id=terminal["session_id"],
+                operation_scope=terminal.get("operation_scope"),
+                status=(
+                    "diagnostic"
+                    if classification == "diagnostic"
+                    else "verified"
+                ),
+                receipt_count=terminal["operation_receipt_count"],
+                receipt_chain_digest=terminal["operation_receipts_digest"],
+                receipts=tuple(receipt_projections),
+            )
+        )
+
+    status = (
+        "diagnostic"
+        if classification == "diagnostic"
+        else "legacy" if has_legacy else "verified"
+    )
+    return ChannelEmulatorOperationEvidenceProjection(
+        status=status,
+        reasons=reasons,
+        sessions=tuple(sessions),
+    )
 
 
 def _outer_freeze_digest_error(frozen: Mapping[str, Any]) -> str | None:
@@ -759,6 +1184,15 @@ def project_execution_evidence_outcome(
     else:
         completion = "pipeline_completed"
 
+    channel_emulator_operation_evidence = (
+        _public_channel_emulator_operation_evidence(
+            config,
+            pipeline_status=pipeline_status,
+            classification=ce_classification,
+            reason=ce_reason,
+        )
+    )
+
     return ExecutionEvidenceOutcome(
         compatibility_classification=classification,
         completion_semantic=completion,
@@ -767,6 +1201,9 @@ def project_execution_evidence_outcome(
         qualification_classification=qualification,
         reasons=tuple(dict.fromkeys(reasons)),
         pipeline_status=pipeline_status,
+        channel_emulator_operation_evidence=(
+            channel_emulator_operation_evidence
+        ),
     )
 
 

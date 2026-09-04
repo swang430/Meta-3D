@@ -94,6 +94,9 @@ class InstrumentTestLeaseOutcome:
     # 租约进入时实际 acquire 的对象引用。它不持久化，只用于保证 SAFE_IDLE 与
     # release 始终作用于同一实例；force reload 不能把新实例拼进旧生命周期。
     channel_emulator_driver: Any = field(default=None, repr=False)
+    channel_emulator_release_recorder: Callable[
+        [Callable[[], Awaitable[bool]]], Awaitable[bool]
+    ] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -372,7 +375,14 @@ class InstrumentTestLease:
             return
         if outcome is not None:
             outcome.channel_emulator_transport_released_confirmed = False
-        if await driver.release_to_local_control() is not True:
+        release = driver.release_to_local_control
+        released = (
+            await outcome.channel_emulator_release_recorder(release)
+            if outcome is not None
+            and outcome.channel_emulator_release_recorder is not None
+            else await release()
+        )
+        if released is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()
             raise InstrumentTestLeaseReleaseError(
                 f"测试 {purpose!r} 结束后未能确认 {instrument} 控制会话释放"

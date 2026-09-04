@@ -87,6 +87,9 @@ from app.services.channel_emulator_execution_session import (
     require_channel_emulator_passthrough_clear,
     require_channel_emulator_stop_after_output_change,
 )
+from app.services.channel_emulator_operation_receipt import (
+    record_channel_emulator_operation,
+)
 from app.services.execution_evidence_outcome import (
     execution_evidence_blocks_formal_outputs,
 )
@@ -105,6 +108,54 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查（adapter-native 统计窗口自身负责确认窗口边界与链路状态）；
 # azimuth 间隔检查能在转台移动期间发现掉线。
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+async def _invoke_channel_emulator_operation(
+    recorder: Any | None,
+    *,
+    phase: str,
+    operation: str,
+    requested: Dict[str, Any],
+    invoke: Any,
+) -> bool:
+    """Invoke directly outside execution, otherwise use its strict recorder."""
+
+    if recorder is None:
+        return await invoke()
+    return await recorder(
+        phase=phase,
+        operation=operation,
+        requested=requested,
+        invoke=invoke,
+    )
+
+
+async def _observe_channel_emulator_operation(
+    recorder: Any | None,
+    *,
+    phase: str,
+    operation: str,
+    requested: Dict[str, Any],
+    invoke: Any,
+) -> Any:
+    """Return an observation while binding it to the execution receipt chain."""
+
+    if recorder is None:
+        return await invoke()
+    observed: Any = None
+
+    async def capture_observation() -> bool:
+        nonlocal observed
+        observed = await invoke()
+        return observed is not None
+
+    recorded = await recorder(
+        phase=phase,
+        operation=operation,
+        requested=requested,
+        invoke=capture_observation,
+    )
+    return observed if recorded else None
 
 
 def _frozen_mac_measurement_basis(profile: FrozenMacTestProfile) -> int:
@@ -1826,6 +1877,7 @@ class MeasureExecutor(IStepExecutor):
                     chamber,
                     calibration_entries,
                     execution_plan=ce_plan,
+                    operation_recorder=record_channel_emulator_operation,
                 )
                 # P2-12 slice 4: 只在 GCM 分支 resolve scd_id → SCD (associated .smu + 声明
                 # ARFCN 喂下方频率门)。ASC config 残留的 scd_id 在此不触发 (Codex on #122)。
@@ -1885,6 +1937,7 @@ class MeasureExecutor(IStepExecutor):
                     chamber,
                     calibration_entries,
                     asc_source_path=config.asc_source_path,
+                    operation_recorder=record_channel_emulator_operation,
                 )
             elif engine_mode == EngineMode.B2_PARAMETRIC_TDL:
                 # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落 (F6 路由 + 能力门;
@@ -1898,7 +1951,11 @@ class MeasureExecutor(IStepExecutor):
                 )
             else:
                 generator = ExternalWaveformStrategy(
-                    emulator, ce_client, chamber, calibration_entries
+                    emulator,
+                    ce_client,
+                    chamber,
+                    calibration_entries,
+                    operation_recorder=record_channel_emulator_operation,
                 )
 
             sim_rules = {
@@ -2203,6 +2260,7 @@ class MeasureExecutor(IStepExecutor):
                     plan=ce_plan,
                     gain_db=config.f64_output_gain_db,
                     execution_id=str(context.test_execution.id),
+                    operation_recorder=record_channel_emulator_operation,
                 )
                 if _gain_err is not None:
                     return StepExecutionResult(
@@ -2231,8 +2289,13 @@ class MeasureExecutor(IStepExecutor):
                         "set_output_level_dbm 能力 (mock/非 F64) — 跳过, 真机不受此限",
                         context.test_execution.id, config.f64_output_level_dbm,
                     )
-                elif not await emulator.set_output_level_dbm(
-                    float(config.f64_output_level_dbm)
+                elif not await record_channel_emulator_operation(
+                    phase="configure",
+                    operation="set_output_level_dbm",
+                    requested={"level_dbm": float(config.f64_output_level_dbm)},
+                    invoke=lambda: emulator.set_output_level_dbm(
+                        float(config.f64_output_level_dbm)
+                    ),
                 ):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -2254,6 +2317,7 @@ class MeasureExecutor(IStepExecutor):
                     plan=ce_plan,
                     config=config,
                     execution_id=context.test_execution.id,
+                    operation_recorder=record_channel_emulator_operation,
                 )
                 if (
                     not input_level_payload.get("skipped")
@@ -2337,8 +2401,13 @@ class MeasureExecutor(IStepExecutor):
                 # 先 arm 再写，确保设备拒绝/异常/取消也会尝试撤销可能已部分生效的 STATIC。
                 require_channel_emulator_passthrough_clear()
                 with capture_scpi_exchanges() as f64_state_exchanges:
-                    _bp_ok = await emulator.set_passthrough_mode(
-                        mode=config.f64_bypass_mode
+                    _bp_ok = await record_channel_emulator_operation(
+                        phase="configure",
+                        operation="set_passthrough_mode",
+                        requested={"mode": config.f64_bypass_mode},
+                        invoke=lambda: emulator.set_passthrough_mode(
+                            mode=config.f64_bypass_mode
+                        ),
                     )
                 try:
                     record_f64_command_capture(
@@ -2381,7 +2450,12 @@ class MeasureExecutor(IStepExecutor):
                 )
                 context.db.commit()
                 with capture_scpi_exchanges() as f64_state_exchanges:
-                    started = await emulator.start_emulation()
+                    started = await record_channel_emulator_operation(
+                        phase="start",
+                        operation="start_emulation",
+                        requested={"state": "RUNNING"},
+                        invoke=emulator.start_emulation,
+                    )
                 try:
                     record_f64_command_capture(
                         context.test_execution,
@@ -2680,7 +2754,12 @@ class MeasureExecutor(IStepExecutor):
                 # 所有权切回 GOS，不能沿用 attach 阶段的 clear-passthrough。
                 require_channel_emulator_stop_after_output_change()
                 with capture_scpi_exchanges() as f64_fade_exchanges:
-                    faded = await emulator.start_emulation()
+                    faded = await record_channel_emulator_operation(
+                        phase="start",
+                        operation="start_emulation",
+                        requested={"state": "RUNNING"},
+                        invoke=emulator.start_emulation,
+                    )
                 try:
                     record_f64_command_capture(
                         context.test_execution,
@@ -3024,6 +3103,7 @@ class MeasureExecutor(IStepExecutor):
                     execution_id=context.test_execution.id,
                     plan=base_station_attempt.execution_plan.input_level_control,
                     channel_emulator_plan=ce_plan,
+                    operation_recorder=record_channel_emulator_operation,
                 )
             assert input_level_payload is not None
             if (
@@ -3781,6 +3861,7 @@ class MeasureExecutor(IStepExecutor):
         plan: ChannelEmulatorExecutionPlan,
         gain_db: float,
         execution_id: str,
+        operation_recorder: Any | None = None,
     ) -> Optional[str]:
         """把 `f64_output_gain_db` 下发到**当前仿真真实占用的每个物理输出口**。
 
@@ -3802,7 +3883,13 @@ class MeasureExecutor(IStepExecutor):
             return plan.rejection("set_output_gain")
         if plan.planned("ensure_topology"):
             try:
-                await emulator.ensure_topology()
+                await _invoke_channel_emulator_operation(
+                    operation_recorder,
+                    phase="configure",
+                    operation="ensure_topology",
+                    requested={"topology": "active_ports"},
+                    invoke=emulator.ensure_topology,
+                )
             except Exception:  # noqa: BLE001 — 补读失败等同"读不到", 下面 fail-loud
                 pass
         ports = _read_port_list(emulator, "get_active_output_ports")
@@ -3814,7 +3901,13 @@ class MeasureExecutor(IStepExecutor):
                 f"{plan.item('ensure_topology').reason}"
             )
         for port in ports:
-            if not await emulator.set_output_gain(port, gain_db):
+            if not await _invoke_channel_emulator_operation(
+                operation_recorder,
+                phase="configure",
+                operation="set_output_gain",
+                requested={"output_port": port, "gain_db": gain_db},
+                invoke=lambda port=port: emulator.set_output_gain(port, gain_db),
+            ):
                 return (
                     f"F64 输出增益下发失败 (f64_output_gain_db={gain_db}, "
                     f"output={port}) — 明细见驱动日志。"
@@ -3832,6 +3925,7 @@ class MeasureExecutor(IStepExecutor):
         plan: ChannelEmulatorExecutionPlan,
         config: Any,
         execution_id: Any,
+        operation_recorder: Any | None = None,
     ) -> Dict[str, Any]:
         """f64_input_ref_dbm 显式给定时的手动定标路径。
 
@@ -3867,7 +3961,13 @@ class MeasureExecutor(IStepExecutor):
                 execution_id,
             )
             return payload
-        if not await emulator.set_baseband_power(ref):
+        if not await _invoke_channel_emulator_operation(
+            operation_recorder,
+            phase="configure",
+            operation="set_baseband_power",
+            requested={"reference_dbm": ref},
+            invoke=lambda: emulator.set_baseband_power(ref),
+        ):
             payload["failure_reason"] = f"输入参考下发被拒 ({ref} dBm)"
             logger.error("[%s] 手动定标: %s", execution_id, payload["failure_reason"])
             return payload
@@ -3888,7 +3988,13 @@ class MeasureExecutor(IStepExecutor):
             return payload
         if crest is not None:
             for i in in_ports:
-                if not await emulator.set_crest_factor(i, crest):
+                if not await _invoke_channel_emulator_operation(
+                    operation_recorder,
+                    phase="configure",
+                    operation="set_crest_factor",
+                    requested={"input_port": i, "crest_db": crest},
+                    invoke=lambda i=i: emulator.set_crest_factor(i, crest),
+                ):
                     payload["failure_reason"] = f"crest 下发被拒 (input {i}, {crest} dB)"
                     logger.error(
                         "[%s] 手动定标: %s", execution_id, payload["failure_reason"]
@@ -3897,7 +4003,18 @@ class MeasureExecutor(IStepExecutor):
         # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
         if plan.planned("measure_input"):
             for i in in_ports:
-                m = await emulator.measure_input(i, 1.0)
+                m = await _observe_channel_emulator_operation(
+                    operation_recorder,
+                    phase="adjust",
+                    operation="measure_input",
+                    requested={
+                        "measurement": {
+                            "input_port": i,
+                            "measurement_time_s": 1.0,
+                        }
+                    },
+                    invoke=lambda i=i: emulator.measure_input(i, 1.0),
+                )
                 payload["readback"].append({
                     "input_num": i,
                     "avg_dbm": m[0] if m else None,
@@ -3923,6 +4040,7 @@ class MeasureExecutor(IStepExecutor):
         execution_id: Any,
         plan: BaseStationExecutionPlanItem,
         channel_emulator_plan: ChannelEmulatorExecutionPlan,
+        operation_recorder: Any | None = None,
     ) -> Dict[str, Any]:
         """跑 InputLevelController + 落遥测。返回 input_level_calibration payload。
 
@@ -4006,7 +4124,13 @@ class MeasureExecutor(IStepExecutor):
         # 而闭环报 success=True。判定与下发必须同源, 否则门形同虚设。
         if channel_emulator_plan.planned("ensure_topology"):
             try:
-                await emulator.ensure_topology()
+                await _invoke_channel_emulator_operation(
+                    operation_recorder,
+                    phase="configure",
+                    operation="ensure_topology",
+                    requested={"topology": "active_ports"},
+                    invoke=emulator.ensure_topology,
+                )
             except Exception:  # noqa: BLE001 — 补读失败等同读不到, 走下面的降级
                 pass
         ce_inputs = _read_port_count(emulator, "get_active_input_count")
@@ -4116,6 +4240,7 @@ class MeasureExecutor(IStepExecutor):
             ce_driver=emulator,
             bs_driver=base_station,
             active_inputs=active_inputs,
+            channel_operation_recorder=operation_recorder,
             **_ctrl_kwargs,
         )
         logger.info(

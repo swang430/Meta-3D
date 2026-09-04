@@ -647,6 +647,88 @@ _F64_SIMULATION_STATES = frozenset(
 )
 
 
+def select_f64_command_capture(
+    exchanges: list[ScpiExchangeRef] | tuple[ScpiExchangeRef, ...],
+    evidence_key: str,
+) -> dict[str, Any]:
+    """Select one existing F64 catalog recipe from a single invocation capture."""
+
+    if evidence_key not in _F64_RECIPES:
+        raise ValueError(f"unsupported F64 evidence key: {evidence_key}")
+    captured = list(exchanges)
+    matching_commands = [
+        exchange
+        for exchange in captured
+        if exchange_matches_catalog_role(exchange, evidence_key, "command")
+    ]
+    command_exchange = (
+        matching_commands[-1]
+        if evidence_key == "f64.bypass_mode" and matching_commands
+        else (matching_commands[0] if matching_commands else None)
+    )
+    command_index = (
+        captured.index(command_exchange)
+        if command_exchange in captured
+        else len(captured)
+    )
+    preclear_reversed: list[ScpiExchangeRef] = []
+    for exchange in reversed(captured[:command_index]):
+        if not exchange_matches_catalog_role(
+            exchange, "f64.error_queue", "query"
+        ):
+            break
+        preclear_reversed.append(exchange)
+    preclear_exchanges = list(reversed(preclear_reversed))
+    after = (
+        captured[command_index + 1 :]
+        if command_exchange in captured
+        else []
+    )
+
+    def _find(
+        values: list[ScpiExchangeRef],
+        key: str,
+        role: str,
+        *,
+        reverse: bool = False,
+    ) -> ScpiExchangeRef | None:
+        selected = reversed(values) if reverse else values
+        return next(
+            (
+                exchange
+                for exchange in selected
+                if exchange_matches_catalog_role(exchange, key, role)
+            ),
+            None,
+        )
+
+    opc_exchange = _find(after, "f64.operation_complete", "query")
+    opc_index = after.index(opc_exchange) if opc_exchange in after else -1
+    after_opc = after[opc_index + 1 :] if opc_index >= 0 else after
+    error_exchange = _find(after_opc, "f64.error_queue", "query")
+    error_index = (
+        after_opc.index(error_exchange)
+        if error_exchange in after_opc
+        else -1
+    )
+    after_error = (
+        after_opc[error_index + 1 :]
+        if error_index >= 0
+        else after_opc
+    )
+    readback_key = _F64_RECIPES[evidence_key][1]
+    return {
+        "preclear_exchanges": preclear_exchanges,
+        "command_exchange": command_exchange,
+        "opc_exchange": opc_exchange,
+        "error_exchange": error_exchange,
+        "readback_exchange": _find(after_error, readback_key, "query"),
+        "state_exchange": _find(
+            after_error, "f64.simulation_state", "query", reverse=True
+        ),
+    }
+
+
 def _f64_roles_match(
     evidence_key: str,
     command_exchange: Optional[ScpiExchangeRef],
@@ -708,6 +790,14 @@ def _command_operand(exchange: Optional[ScpiExchangeRef]) -> Any:
     if len(parts) != 2:
         return None
     return _parse_first_scalar(parts[1].rsplit(",", 1)[-1])
+
+
+def f64_command_operand_from_exchange(
+    exchange: Optional[ScpiExchangeRef],
+) -> Any:
+    """Return the actual operand from an already catalog-matched F64 command."""
+
+    return _command_operand(exchange)
 
 
 def _parse_first_scalar(response: Optional[str]) -> Any:
@@ -828,6 +918,18 @@ def build_f64_evidence(
     error_response = _value_response(error_exchange)
     simulation_state = _value_response(state_exchange)
     readback_response = _value_response(readback_exchange)
+    catalog_entry = load_default_p0_5_catalog().entries[evidence_key]
+    opc_confirmed = bool(
+        (
+            catalog_entry.max_evidence_level is EvidenceLevel.ACCEPTED
+            and opc_exchange is None
+        )
+        or (
+            _is_opc_query(opc_exchange)
+            and opc_response is not None
+            and opc_response.strip() == "1"
+        )
+    )
     expected_readback = _requested_scalar(requested)
     command_operand = _command_operand(command_exchange)
     command_matches_requested = (
@@ -887,9 +989,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -905,9 +1005,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -946,9 +1044,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -1003,6 +1099,9 @@ def build_f64_evidence(
         verdict,
         reason,
         origin_exchanges,
+        allow_interleaved=(
+            catalog_entry.max_evidence_level is EvidenceLevel.ACCEPTED
+        ),
     )
     level, verdict, reason = _apply_scope(scope, level, verdict, reason)
     return InstrumentEvidenceItem(

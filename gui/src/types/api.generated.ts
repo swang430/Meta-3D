@@ -2218,6 +2218,58 @@ export interface components {
             qualification_classification: "formal" | "diagnostic" | "legacy";
             reasons: string[];
             pipeline_status: string;
+            channel_emulator_operation_evidence: components["schemas"]["ChannelEmulatorOperationEvidenceProjection"];
+        };
+        /** @description Server-owned redacted projection of the execution-frozen channel emulator operation evidence. It never exposes raw instrument responses. */
+        ChannelEmulatorOperationEvidenceProjection: {
+            /**
+             * @default 1
+             * @enum {integer}
+             */
+            schema_version: 1;
+            /** @enum {string} */
+            status: "not_available" | "pending" | "legacy" | "verified" | "diagnostic" | "invalid";
+            /** @default [] */
+            reasons: string[];
+            /** @default [] */
+            sessions: components["schemas"]["ChannelOperationSessionEvidenceProjection"][];
+        };
+        ChannelOperationSessionEvidenceProjection: {
+            session_id: string;
+            operation_scope: string | null;
+            /** @enum {string} */
+            status: "legacy" | "verified" | "diagnostic";
+            receipt_count: number | null;
+            receipt_chain_digest: string | null;
+            /** @default [] */
+            receipts: components["schemas"]["ChannelOperationReceiptEvidenceProjection"][];
+        };
+        ChannelOperationReceiptEvidenceProjection: {
+            sequence: number;
+            /** @enum {string} */
+            phase: "load" | "configure" | "start" | "adjust" | "stop" | "cleanup" | "release";
+            operation: string;
+            /** @enum {string} */
+            terminal_state: "completed" | "rejected" | "failed" | "cancelled";
+            operation_succeeded: boolean | null;
+            simulated: boolean;
+            /** @enum {string} */
+            status: "verified" | "diagnostic" | "rejected" | "failed" | "cancelled";
+            fields: components["schemas"]["ChannelOperationFieldEvidenceProjection"][];
+            /** @default [] */
+            exchange_ids: string[];
+            /** @default [] */
+            error_queue_exchange_ids: string[];
+        };
+        ChannelOperationFieldEvidenceProjection: {
+            field: string;
+            /** @enum {string} */
+            status: "requested" | "applied" | "confirmed" | "unknown" | "not_applicable" | "unavailable";
+            /** @enum {string} */
+            provenance: "authoritative_readback" | "command_error_queue" | "runtime_state" | "transport_release" | "simulated" | "unavailable";
+            /** @default [] */
+            exchange_ids: string[];
+            source_reference?: string | null;
         };
         SessionResponse: {
             session_id: string;

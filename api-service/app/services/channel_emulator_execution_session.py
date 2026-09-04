@@ -11,7 +11,15 @@ from dataclasses import dataclass
 from typing import Annotated, Any, AsyncIterator, Callable, Literal, Mapping
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    NonNegativeInt,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
@@ -26,9 +34,18 @@ from app.services.channel_emulator_binding import (
     validate_frozen_channel_emulator_before_remote,
 )
 from app.services.channel_emulator_execution_plan import (
+    CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
     validate_frozen_channel_emulator_load_context,
     validate_frozen_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
+)
+from app.services.channel_emulator_operation_receipt import (
+    ChannelEmulatorOperationRecorderOwner,
+    channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_receipt_chain_digest,
+    channel_emulator_operation_recorder_scope,
+    current_channel_emulator_operation_recorder_owner,
+    record_channel_emulator_operation,
 )
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
@@ -76,10 +93,11 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     session_id: NonEmptyString
     operation_scope: NonEmptyString | None = None
     execution_id: NonEmptyString
+    measurement_attempt_id: NonEmptyString | None = None
     binding_digest: NonEmptyString
     binding_freeze_digest: NonEmptyString
     plan_digest: NonEmptyString
@@ -99,10 +117,53 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     terminal_state: Literal["completed", "failed", "cancelled"]
     error_type: NonEmptyString | None
     safe_idle_error_type: NonEmptyString | None
+    operation_receipt_count: NonNegativeInt | None = None
+    operation_receipts_digest: NonEmptyString | None = None
+    operation_receipt_ids: tuple[NonEmptyString, ...] | None = None
+    safe_idle_receipt_id: NonEmptyString | None = None
+    transport_release_receipt_id: NonEmptyString | None = None
     digest: NonEmptyString
+
+    @field_validator("operation_receipt_ids", mode="before")
+    @classmethod
+    def accept_persisted_receipt_id_array(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return tuple(value)
+        return value
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "FrozenChannelEmulatorTerminalEvidence":
+        receipt_values = (
+            self.measurement_attempt_id,
+            self.operation_receipt_count,
+            self.operation_receipts_digest,
+            self.operation_receipt_ids,
+            self.safe_idle_receipt_id,
+            self.transport_release_receipt_id,
+        )
+        if self.schema_version == 1:
+            if any(value is not None for value in receipt_values):
+                raise ValueError("v1 channelEmulator terminal cannot claim receipts")
+        else:
+            if (
+                self.operation_receipt_count is None
+                or self.operation_receipts_digest is None
+                or self.operation_receipt_ids is None
+                or self.operation_receipt_count != len(self.operation_receipt_ids)
+                or len(set(self.operation_receipt_ids))
+                != len(self.operation_receipt_ids)
+            ):
+                raise ValueError(
+                    "v2 channelEmulator terminal receipt chain is incomplete"
+                )
+            if self.terminal_state == "completed" and (
+                self.safe_idle_receipt_id not in self.operation_receipt_ids
+                or self.transport_release_receipt_id
+                not in self.operation_receipt_ids
+            ):
+                raise ValueError(
+                    "completed v2 terminal misses safe-idle/release receipts"
+                )
         if self.safe_idle_action != self.required_safe_idle_action:
             raise ValueError(
                 "channelEmulator terminal safe idle action misses scope requirement"
@@ -183,9 +244,60 @@ async def ensure_channel_emulator_safe_idle() -> bool:
             "channelEmulator safe idle contract requires async " f"{state.action}"
         )
         raise state.error
-    stop_outcome = await await_completion_despite_cancellation(safe_idle())
-    error = stop_outcome.error
-    caller_cancellation = stop_outcome.delayed_cancellation
+    stop_outcome = None
+
+    async def invoke_safe_idle() -> bool:
+        nonlocal stop_outcome
+        stop_outcome = await await_completion_despite_cancellation(safe_idle())
+        operation_error = stop_outcome.error
+        if isinstance(operation_error, asyncio.CancelledError):
+            inner_cancel = operation_error
+            operation_error = ChannelEmulatorExecutionSessionError(
+                "channelEmulator safe idle driver operation cancelled internally"
+            )
+            operation_error.__cause__ = inner_cancel
+        if operation_error is not None:
+            raise operation_error
+        return stop_outcome.value is True
+
+    try:
+        recorder_owner = current_channel_emulator_operation_recorder_owner()
+        if (
+            recorder_owner is None
+            or recorder_owner.automatic_lifecycle_receipts is not True
+        ):
+            confirmed = await invoke_safe_idle()
+        else:
+            confirmed = await record_channel_emulator_operation(
+                phase="stop",
+                operation=state.action,
+                requested=(
+                    {"state": "STOPPED"}
+                    if state.action == "stop_emulation"
+                    else {"mode": 0}
+                ),
+                invoke=invoke_safe_idle,
+            )
+    except BaseException as error:
+        caller_cancellation = (
+            stop_outcome.delayed_cancellation
+            if stop_outcome is not None
+            else None
+        )
+        state.error = error
+        if caller_cancellation is not None:
+            _attach_secondary_failure(
+                caller_cancellation,
+                attribute="channel_emulator_safe_idle_error",
+                stage="SAFE_IDLE",
+                secondary=error,
+            )
+            raise caller_cancellation
+        raise
+
+    caller_cancellation = (
+        stop_outcome.delayed_cancellation if stop_outcome is not None else None
+    )
     current_task = asyncio.current_task()
     if (
         caller_cancellation is None
@@ -195,13 +307,8 @@ async def ensure_channel_emulator_safe_idle() -> bool:
         caller_cancellation = asyncio.CancelledError(
             "channelEmulator execution task was cancelled during SAFE_IDLE"
         )
-    if isinstance(error, asyncio.CancelledError):
-        inner_cancel = error
-        error = ChannelEmulatorExecutionSessionError(
-            "channelEmulator safe idle driver operation cancelled internally"
-        )
-        error.__cause__ = inner_cancel
-    if error is None and stop_outcome.value is not True:
+    error: BaseException | None = None
+    if confirmed is not True:
         error = ChannelEmulatorExecutionSessionError(
             "channelEmulator safe idle was not confirmed"
         )
@@ -281,7 +388,30 @@ class ChannelEmulatorExecutionScopeOutcome:
     """Lease truth plus an explicit business-result handshake."""
 
     lease_outcome: InstrumentTestLeaseOutcome
+    recorder_owner: ChannelEmulatorOperationRecorderOwner | None = None
     operation_succeeded: bool | None = None
+
+    def bind_measurement_attempt_id(self, attempt_id: str) -> None:
+        """Bind the post-acquire MEASURE attempt to lease and CE receipts."""
+
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            raise TypeError("channelEmulator measurement attempt id must be non-empty")
+        existing = self.lease_outcome.measurement_attempt_id
+        if existing is not None and existing != attempt_id:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator measurement attempt identity cannot be rebound"
+            )
+        if self.recorder_owner is None:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator measurement attempt has no receipt owner"
+            )
+        receipt_attempt = self.recorder_owner.measurement_attempt_id
+        if receipt_attempt is not None and receipt_attempt != attempt_id:
+            raise ChannelEmulatorExecutionSessionError(
+                "channelEmulator receipt measurement attempt identity cannot be rebound"
+            )
+        self.lease_outcome.measurement_attempt_id = attempt_id
+        self.recorder_owner.measurement_attempt_id = attempt_id
 
     def mark_operation_result(self, succeeded: bool) -> None:
         if type(succeeded) is not bool:
@@ -450,6 +580,10 @@ async def channel_emulator_execution_scope(
     scope_error: BaseException | None = None
     lease_outcome: InstrumentTestLeaseOutcome | None = None
     scoped_outcome: ChannelEmulatorExecutionScopeOutcome | None = None
+    recorder_owner: ChannelEmulatorOperationRecorderOwner | None = None
+    receipt_persistence_enabled = db is not None and callable(
+        getattr(db, "query", None)
+    )
     safe_idle_state = _ChannelEmulatorSafeIdleState(driver=None)
     safe_idle_error_type: str | None = None
     drivers = getattr(hal, "drivers", None)
@@ -512,7 +646,6 @@ async def channel_emulator_execution_scope(
                     validate_before_remote=validator,
                 ) as outcome:
                     lease_outcome = outcome
-                    scoped_outcome = ChannelEmulatorExecutionScopeOutcome(outcome)
                     acquired_driver = (
                         outcome.channel_emulator_driver or prepared_mock
                     )
@@ -532,52 +665,177 @@ async def channel_emulator_execution_scope(
                         },
                     ):
                         safe_idle_state = _ChannelEmulatorSafeIdleState(acquired_driver)
-                        ownership_token = _channel_emulator_safe_idle_owner.set(
-                            safe_idle_state
+                        parsed_plan = plan_from_frozen_payload(plan)
+                        execution_config = (
+                            execution.config
+                            if isinstance(execution.config, Mapping)
+                            else {}
                         )
-                        try:
-                            yield scoped_outcome
-                        except BaseException as exc:
-                            operation_error = exc
-                            raise
-                        finally:
+                        base_station_freeze = execution_config.get(
+                            "base_station_adapter_profile_freeze"
+                        )
+                        asset_freeze = (
+                            base_station_freeze.get(
+                                CHANNEL_ASSET_RESOLUTION_FREEZE_KEY
+                            )
+                            if isinstance(base_station_freeze, Mapping)
+                            else None
+                        )
+                        instrument_id = (
+                            outcome.channel_emulator_instrument_id
+                            or getattr(acquired_driver, "instrument_id", None)
+                        )
+                        recorder_owner = ChannelEmulatorOperationRecorderOwner(
+                            db=db,
+                            execution_pk=execution_pk,
+                            execution_id=execution_id,
+                            session_id=session_id,
+                            operation_scope=purpose,
+                            measurement_attempt_id=outcome.measurement_attempt_id,
+                            binding_digest=binding_fields.get("binding_digest"),
+                            binding_freeze_digest=binding_fields.get("digest"),
+                            plan_digest=parsed_plan.digest,
+                            asset_digest=(
+                                str(asset_freeze.get("digest"))
+                                if isinstance(asset_freeze, Mapping)
+                                and asset_freeze.get("digest")
+                                else None
+                            ),
+                            lease_id=outcome.lease_id,
+                            instrument_id=instrument_id,
+                            adapter_id=parsed_plan.adapter_id,
+                            execution_mode=binding_fields.get("execution_mode"),
+                            plan=parsed_plan,
+                            driver=acquired_driver,
+                            automatic_lifecycle_receipts=(
+                                receipt_persistence_enabled
+                            ),
+                        )
+                        scoped_outcome = ChannelEmulatorExecutionScopeOutcome(
+                            outcome,
+                            recorder_owner=recorder_owner,
+                        )
+
+                        async def record_transport_release(
+                            invoke: Callable[[], Any],
+                        ) -> bool:
+                            if recorder_owner is None:  # pragma: no cover
+                                raise ChannelEmulatorExecutionSessionError(
+                                    "channelEmulator release recorder owner is missing"
+                                )
+                            with channel_emulator_operation_recorder_scope(
+                                recorder_owner
+                            ):
+                                return await record_channel_emulator_operation(
+                                    phase="release",
+                                    operation="transport_release",
+                                    requested={"control_mode": "local"},
+                                    invoke=invoke,
+                                )
+
+                        if receipt_persistence_enabled:
+                            outcome.channel_emulator_release_recorder = (
+                                record_transport_release
+                            )
+                        with channel_emulator_operation_recorder_scope(
+                            recorder_owner
+                        ):
+                            ownership_token = _channel_emulator_safe_idle_owner.set(
+                                safe_idle_state
+                            )
                             try:
-                                parsed_plan = plan_from_frozen_payload(plan)
-                                if not parsed_plan.planned(safe_idle_state.action):
-                                    raise ChannelEmulatorExecutionSessionError(
-                                        parsed_plan.rejection(safe_idle_state.action)
-                                    )
-                                if safe_idle_state.attempted:
-                                    if safe_idle_state.error is not None:
-                                        safe_idle_error_type = type(
-                                            safe_idle_state.error
-                                        ).__name__
-                                        if operation_error is None:
-                                            raise safe_idle_state.error
-                                else:
-                                    await ensure_channel_emulator_safe_idle()
-                            except asyncio.CancelledError:
+                                yield scoped_outcome
+                            except BaseException as exc:
+                                operation_error = exc
                                 raise
-                            except BaseException as safe_idle_error:
-                                safe_idle_error_type = type(safe_idle_error).__name__
-                                if operation_error is None:
-                                    raise
-                                _attach_secondary_failure(
-                                    operation_error,
-                                    attribute="channel_emulator_safe_idle_error",
-                                    stage="SAFE_IDLE",
-                                    secondary=safe_idle_error,
-                                )
-                                logger.exception(
-                                    "channelEmulator safe idle failed while preserving operation error"
-                                )
                             finally:
-                                _channel_emulator_safe_idle_owner.reset(ownership_token)
+                                try:
+                                    parsed_plan = plan_from_frozen_payload(plan)
+                                    if not parsed_plan.planned(safe_idle_state.action):
+                                        raise ChannelEmulatorExecutionSessionError(
+                                            parsed_plan.rejection(safe_idle_state.action)
+                                        )
+                                    if safe_idle_state.attempted:
+                                        if safe_idle_state.error is not None:
+                                            safe_idle_error_type = type(
+                                                safe_idle_state.error
+                                            ).__name__
+                                            if operation_error is None:
+                                                raise safe_idle_state.error
+                                    else:
+                                        await ensure_channel_emulator_safe_idle()
+                                except asyncio.CancelledError:
+                                    raise
+                                except BaseException as safe_idle_error:
+                                    safe_idle_error_type = type(safe_idle_error).__name__
+                                    if operation_error is None:
+                                        raise
+                                    _attach_secondary_failure(
+                                        operation_error,
+                                        attribute="channel_emulator_safe_idle_error",
+                                        stage="SAFE_IDLE",
+                                        secondary=safe_idle_error,
+                                    )
+                                    logger.exception(
+                                        "channelEmulator safe idle failed while preserving operation error"
+                                    )
+                                finally:
+                                    _channel_emulator_safe_idle_owner.reset(ownership_token)
+                if (
+                    recorder_owner is not None
+                    and receipt_persistence_enabled
+                    and binding_fields.get("execution_mode") == "simulated"
+                    and not any(
+                        item.get("operation") == "transport_release"
+                        for item in recorder_owner.recorded_receipts
+                    )
+                ):
+                    async def simulated_release_not_applicable() -> bool:
+                        return True
+
+                    with channel_emulator_operation_recorder_scope(recorder_owner):
+                        await record_channel_emulator_operation(
+                            phase="release",
+                            operation="transport_release",
+                            requested={"control_mode": "local"},
+                            invoke=simulated_release_not_applicable,
+                        )
         except BaseException as exc:
             scope_error = exc
             raise
     finally:
         if db is not None:
+            operation_receipts = (
+                list(recorder_owner.recorded_receipts)
+                if recorder_owner is not None
+                else []
+            )
+            operation_receipt_ids = tuple(
+                item["receipt_id"] for item in operation_receipts
+            )
+            operation_receipts_digest = (
+                channel_emulator_operation_receipt_chain_digest(
+                    operation_receipts
+                )
+                if operation_receipts
+                else empty_channel_emulator_operation_receipt_chain_digest()
+            )
+            safe_idle_receipt_id = next(
+                (
+                    item["receipt_id"]
+                    for item in reversed(operation_receipts)
+                    if item.get("operation") == safe_idle_state.action
+                ),
+                None,
+            )
+            transport_release_receipt_id = next(
+                (
+                    item["receipt_id"]
+                    for item in reversed(operation_receipts)
+                    if item.get("operation") == "transport_release"
+                ),
+                None,
+            )
             terminal_state = (
                 "cancelled"
                 if isinstance(scope_error, asyncio.CancelledError)
@@ -601,10 +859,15 @@ async def channel_emulator_execution_scope(
                 )
             )
             payload = {
-                "schema_version": 1,
+                "schema_version": 2 if receipt_persistence_enabled else 1,
                 "session_id": session_id,
                 "operation_scope": purpose,
                 "execution_id": execution_id,
+                "measurement_attempt_id": (
+                    recorder_owner.measurement_attempt_id
+                    if recorder_owner is not None
+                    else None
+                ),
                 "binding_digest": binding_fields.get("binding_digest"),
                 "binding_freeze_digest": binding_fields.get("digest"),
                 "plan_digest": plan.get("digest") if isinstance(plan, Mapping) else None,
@@ -668,6 +931,19 @@ async def channel_emulator_execution_scope(
                         if safe_idle_state.error is not None
                         else None
                     )
+                ),
+                **(
+                    {
+                        "operation_receipt_count": len(operation_receipts),
+                        "operation_receipts_digest": operation_receipts_digest,
+                        "operation_receipt_ids": operation_receipt_ids,
+                        "safe_idle_receipt_id": safe_idle_receipt_id,
+                        "transport_release_receipt_id": (
+                            transport_release_receipt_id
+                        ),
+                    }
+                    if receipt_persistence_enabled
+                    else {}
                 ),
             }
             evidence = {**payload, "digest": canonical_payload_digest(payload)}

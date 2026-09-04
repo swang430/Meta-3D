@@ -71,6 +71,60 @@
       "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "旁路/衰落状态需精确回读。"
     },
     {
+      "id": "f64.topology_model_info", "instrument": "f64", "mandatory": true,
+      "command": "DIAGnostic:SIMUlation:MODel:INFO?", "query": "DIAGnostic:SIMUlation:MODel:INFO?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3.6"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "返回当前已加载仿真的输入、逻辑通道与输出数量；必须与逐组端口回读交叉核对。"
+    },
+    {
+      "id": "f64.topology_group_count", "instrument": "f64", "mandatory": true,
+      "command": "GROup:GET?", "query": "GROup:GET?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.7.1"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "返回当前仿真的通道组数量。"
+    },
+    {
+      "id": "f64.topology_group_channels", "instrument": "f64", "mandatory": true,
+      "command": "GROup:CHANnels:GET? <group>", "query": "GROup:CHANnels:GET? <group>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.7.4"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "逐组返回逻辑通道号；必须覆盖全部组并与 MODEL:INFO? 数量一致。"
+    },
+    {
+      "id": "f64.topology_group_inputs", "instrument": "f64", "mandatory": true,
+      "command": "GROup:INPuts:GET? <group>", "query": "GROup:INPuts:GET? <group>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.7.2"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "逐组返回物理输入端口号。"
+    },
+    {
+      "id": "f64.topology_group_outputs", "instrument": "f64", "mandatory": true,
+      "command": "GROup:OUTPuts:GET? <group>", "query": "GROup:OUTPuts:GET? <group>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.7.3"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "逐组返回物理输出端口号。"
+    },
+    {
+      "id": "f64.input_measurement", "instrument": "f64", "mandatory": true,
+      "command": "INPut:LEVel:MEASure? <input>,<seconds>", "query": "INPut:LEVel:MEASure? <input>,<seconds>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.4.6"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "同次查询返回平均输入电平与 crest factor；参数必须与冻结 selector 一致。"
+    },
+    {
+      "id": "f64.input_level_limits", "instrument": "f64", "mandatory": true,
+      "command": "INP:LEV:AMP:LIM? <input>", "query": "INP:LEV:AMP:LIM? <input>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.4.5"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "同次查询返回指定输入端口的平均电平允许窗口。"
+    },
+    {
+      "id": "f64.group_clipping", "instrument": "f64", "mandatory": true,
+      "command": "GROup:CLIpping:GET? <group>,<reset>", "query": "GROup:CLIpping:GET? <group>,<reset>", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.7.6"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "同次查询返回指定组的 digital clipping 千分比；reset operand 必须与冻结 selector 一致。"
+    },
+    {
+      "id": "f64.system_status", "instrument": "f64", "mandatory": true,
+      "command": "SYSTem:STATus?", "query": "SYSTem:STATus?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.2.5"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "返回系统干净状态或当前 warning/alarm 来源。"
+    },
+    {
       "id": "uxm.config_readback", "instrument": "uxm", "mandatory": true,
       "command": "CONFigure:NR5G:<cell>:<parameter> <value>", "query": "CONFigure:NR5G:<cell>:<parameter>?", "status": "confirmed", "max_evidence_level": "E2",
       "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR Cell Configuration / Application Mode NSA|SA"},

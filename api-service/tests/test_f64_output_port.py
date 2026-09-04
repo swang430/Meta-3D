@@ -20,12 +20,25 @@ from app.hal.propsim_f64 import RealPropsimF64Driver
 def _make_driver():
     drv = RealPropsimF64Driver("propsim-test", {})
     visa_mock = MagicMock()
-    visa_mock.query.return_value = '0,"No error"'
+    output_gains: dict[int, float] = {}
+
+    def _query_router(cmd):
+        if cmd.startswith("OUTP:GAIN:CH? "):
+            port = int(cmd.split("?", 1)[1].strip())
+            return str(output_gains.get(port, 0.0))
+        if cmd == "*OPC?":
+            return "1"
+        return '0,"No error"'
+
+    visa_mock.query.side_effect = _query_router
     visa_mock.write.return_value = None
     drv._visa_resource = visa_mock
 
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
+        if cmd.startswith("OUTP:GAIN:CH "):
+            port_raw, value_raw = cmd.split(" ", 1)[1].split(",", 1)
+            output_gains[int(port_raw)] = float(value_raw)
 
     async def _async_query(cmd, timeout=None, **_kw):
         return visa_mock.query(cmd)
@@ -37,6 +50,10 @@ def _make_driver():
 
 def _writes(visa_mock):
     return [call.args[0] for call in visa_mock.write.call_args_list]
+
+
+def _queries(visa_mock):
+    return [call.args[0] for call in visa_mock.query.call_args_list]
 
 
 class TestSetOutputPathLoss:
@@ -79,6 +96,13 @@ class TestSetOutputGain:
         ok = await drv.set_output_gain(2, 5.25)
         assert ok is True
         assert any("OUTP:GAIN:CH 2,5.25" in s for s in _writes(visa))
+        assert "OUTP:GAIN:CH? 2" in _queries(visa)
+
+    @pytest.mark.asyncio
+    async def test_authoritative_readback_matches_formatted_wire_value(self):
+        drv, visa = _make_driver()
+        assert await drv.set_output_gain(2, 5.251) is True
+        assert "OUTP:GAIN:CH 2,5.25" in _writes(visa)
 
     @pytest.mark.asyncio
     async def test_negative_gain_attenuation(self):

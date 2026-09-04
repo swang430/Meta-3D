@@ -569,6 +569,61 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
 
             <Paper p="md" withBorder>
               <Text size="sm" fw={600} mb="md">
+                信道操作证据
+              </Text>
+              {(() => {
+                const evidence =
+                  selectedRecord.execution_evidence_outcome
+                    .channel_emulator_operation_evidence
+                const statusLabel = {
+                  verified: '已核验',
+                  diagnostic: '仅诊断',
+                  invalid: '证据无效',
+                  pending: '尚未形成终态',
+                  legacy: '历史证据',
+                  not_available: '不适用',
+                }[evidence.status]
+                const statusColor =
+                  evidence.status === 'verified'
+                    ? 'green'
+                    : evidence.status === 'invalid'
+                      ? 'red'
+                      : 'yellow'
+                const receiptDigests = evidence.sessions
+                  .map((session) => session.receipt_chain_digest)
+                  .filter((digest): digest is string => Boolean(digest))
+                return (
+                  <Stack gap="xs">
+                    <Group justify="space-between">
+                      <Text size="sm" c="dimmed">
+                        状态:
+                      </Text>
+                      <Badge color={statusColor} variant="light">
+                        {statusLabel}
+                      </Badge>
+                    </Group>
+                    <Group justify="space-between" align="flex-start">
+                      <Text size="sm" c="dimmed">
+                        Receipt 摘要:
+                      </Text>
+                      <Text size="xs" ta="right" maw="70%" ff="monospace">
+                        {receiptDigests.length > 0
+                          ? receiptDigests.join('；')
+                          : '—'}
+                      </Text>
+                    </Group>
+                    {evidence.reasons.length > 0 && (
+                      <Text size="xs" c="dimmed" ta="right">
+                        {evidence.reasons.join('；')}
+                      </Text>
+                    )}
+                  </Stack>
+                )
+              })()}
+            </Paper>
+
+            <Paper p="md" withBorder>
+              <Text size="sm" fw={600} mb="md">
                 执行统计
               </Text>
               <Stack gap="xs">

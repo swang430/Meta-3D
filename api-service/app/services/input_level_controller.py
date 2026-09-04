@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from app.hal.propsim_f64 import F64InputMeasMode
 
@@ -104,6 +104,7 @@ class InputLevelController:
         active_inputs: Tuple[int, ...] = (1, 2, 3, 4),
         group_num: int = 1,
         mode: str = MODE_DL_STATIC,
+        channel_operation_recorder: Any | None = None,
     ):
         if mode != self.MODE_DL_STATIC:
             raise NotImplementedError(
@@ -122,6 +123,49 @@ class InputLevelController:
         self._imbalance_excessive = imbalance_excessive_db
         self._inputs = tuple(active_inputs)
         self._group = group_num
+        self._channel_operation_recorder = channel_operation_recorder
+
+    async def _invoke_channel_operation(
+        self,
+        *,
+        operation: str,
+        requested: dict[str, Any],
+        invoke: Any,
+    ) -> bool:
+        if self._channel_operation_recorder is None:
+            return await invoke()
+        return await self._channel_operation_recorder(
+            phase="configure",
+            operation=operation,
+            requested=requested,
+            invoke=invoke,
+        )
+
+    async def _observe_channel_operation(
+        self,
+        *,
+        operation: str,
+        requested: dict[str, Any],
+        invoke: Any,
+    ) -> Any:
+        """Bind a non-boolean observation to the same execution receipt chain."""
+
+        if self._channel_operation_recorder is None:
+            return await invoke()
+        observed: Any = None
+
+        async def capture_observation() -> bool:
+            nonlocal observed
+            observed = await invoke()
+            return observed is not None
+
+        recorded = await self._channel_operation_recorder(
+            phase="adjust",
+            operation=operation,
+            requested=requested,
+            invoke=capture_observation,
+        )
+        return observed if recorded else None
 
     async def establish(self) -> InputLevelResult:
         """跑下行静态闭环, 返回收敛结果或失败原因。"""
@@ -152,7 +196,16 @@ class InputLevelController:
 
             # D: AUTOSET 仅 active_inputs (子集 — 避免 INP:LEV:AUTOSET 0 对未连接输入
             #    触发 no-signal 错误, Codex on PR #96)。fail-loud: device error → False。
-            if not await self._ce.autoset_inputs(self._inputs, self._autoset_t):
+            if not await self._invoke_channel_operation(
+                operation="autoset_inputs",
+                requested={
+                    "input_ports": list(self._inputs),
+                    "measurement_time_s": self._autoset_t,
+                },
+                invoke=lambda: self._ce.autoset_inputs(
+                    self._inputs, self._autoset_t
+                ),
+            ):
                 # autoset 失败 (无信号/过强) → 调基站功率重试。
                 # heuristic: 第一轮多半是信号弱/未到 → 升; 后续可能是过强 → 降。
                 if iteration == 1:
@@ -175,8 +228,20 @@ class InputLevelController:
                 )
 
             # F: clipping + 系统警告 (cut-off)
-            clipping = await self._ce.get_group_clipping(self._group, reset=True)
-            status = await self._ce.get_system_status()
+            clipping = await self._observe_channel_operation(
+                operation="get_group_clipping",
+                requested={
+                    "clipping": {"group_num": self._group, "reset": True}
+                },
+                invoke=lambda: self._ce.get_group_clipping(
+                    self._group, reset=True
+                ),
+            )
+            status = await self._observe_channel_operation(
+                operation="get_system_status",
+                requested={"system_status": "channel_emulator"},
+                invoke=self._ce.get_system_status,
+            )
             warnings: List[str] = list(status[1]) if status else []
             cut_off = any(
                 "cut-off" in w.lower() or "cut_off" in w.lower() or "cutoff" in w.lower()
@@ -254,9 +319,27 @@ class InputLevelController:
     async def _configure_burst_mode(self) -> Optional[str]:
         """对每个 active input 设 BURST 模式 + burst 触发电平; 失败返回原因字符串。"""
         for in_num in self._inputs:
-            if not await self._ce.set_input_measurement_mode(in_num, F64InputMeasMode.BURST):
+            if not await self._invoke_channel_operation(
+                operation="set_input_measurement_mode",
+                requested={
+                    "input_port": in_num,
+                    "mode": F64InputMeasMode.BURST.value,
+                },
+                invoke=lambda in_num=in_num: self._ce.set_input_measurement_mode(
+                    in_num, F64InputMeasMode.BURST
+                ),
+            ):
                 return f"set BURST mode failed on input {in_num}"
-            if not await self._ce.set_burst_trigger_level(in_num, self._burst_trigger):
+            if not await self._invoke_channel_operation(
+                operation="set_burst_trigger_level",
+                requested={
+                    "input_port": in_num,
+                    "trigger_dbm": self._burst_trigger,
+                },
+                invoke=lambda in_num=in_num: self._ce.set_burst_trigger_level(
+                    in_num, self._burst_trigger
+                ),
+            ):
                 return f"set burst trigger failed on input {in_num}"
         return None
 
@@ -274,12 +357,25 @@ class InputLevelController:
         out_lo = False
         out_hi = False
         for in_num in self._inputs:
-            meas = await self._ce.measure_input(in_num, 1.0)
+            meas = await self._observe_channel_operation(
+                operation="measure_input",
+                requested={
+                    "measurement": {
+                        "input_port": in_num,
+                        "measurement_time_s": 1.0,
+                    }
+                },
+                invoke=lambda in_num=in_num: self._ce.measure_input(in_num, 1.0),
+            )
             if meas is None:
                 return op_point, out_lo, out_hi, f"measure_input({in_num}) 失败 (无信号)"
             avg, crest = meas
             op_point.append(InputOperatingPoint(in_num, avg, crest))
-            limits = await self._ce.get_input_level_limits(in_num)
+            limits = await self._observe_channel_operation(
+                operation="get_input_level_limits",
+                requested={"limits": {"input_port": in_num}},
+                invoke=lambda in_num=in_num: self._ce.get_input_level_limits(in_num),
+            )
             if limits is None:
                 # 无窗口 → 无法证明 avg 在限内, 不能默认通过 (Codex on PR #96)。
                 return op_point, out_lo, out_hi, (
