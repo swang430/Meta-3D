@@ -1,5 +1,7 @@
 """P2-62：第三种 Channel Emulator adapter 的参数化接入认证。"""
 
+import asyncio
+
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -225,7 +227,7 @@ class _ReceiptDb:
         self.commits += 1
 
 
-def _certfake_recorder(row, driver):
+def _certfake_recorder(row, driver, *, execution_mode="real"):
     plan = resolve_channel_emulator_execution_plan(
         manifest=CERTFAKE_CE_MANIFEST,
         driver_source="hal",
@@ -246,7 +248,7 @@ def _certfake_recorder(row, driver):
         lease_id="lease-certfake",
         instrument_id=driver.instrument_id,
         adapter_id="certfake_ce",
-        execution_mode="real",
+        execution_mode=execution_mode,
         plan=plan,
         driver=driver,
     )
@@ -365,3 +367,117 @@ async def test_certfake_ce_asset_run_adjust_stop_use_the_common_receipt_pipeline
     assert receipt["execution_id"] == str(row.id)
     assert receipt["terminal_state"] == "completed"
     assert receipt["simulated"] is False
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_timeout_persists_cancelled_receipt():
+    transport = CertFakeChannelTransport(delay_s=1.0)
+    driver = CertFakeChannelEmulatorDriver("ce-certfake", {"transport": transport})
+    row = TestExecution(id=uuid4(), config={})
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            _record_certfake_operation(
+                row,
+                driver,
+                operation="start_emulation",
+                requested={"state": "running"},
+                invoke=driver.start_emulation,
+            ),
+            timeout=0.01,
+        )
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][-1]
+    assert receipt["terminal_state"] == "cancelled"
+    assert receipt["operation_succeeded"] is None
+    assert receipt["error_type"] == "CancelledError"
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_explicit_cancellation_persists_cancelled_receipt():
+    transport = CertFakeChannelTransport(delay_s=1.0)
+    driver = CertFakeChannelEmulatorDriver("ce-certfake", {"transport": transport})
+    row = TestExecution(id=uuid4(), config={})
+    task = asyncio.create_task(
+        _record_certfake_operation(
+            row,
+            driver,
+            operation="start_emulation",
+            requested={"state": "running"},
+            invoke=driver.start_emulation,
+        )
+    )
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][-1]
+    assert receipt["terminal_state"] == "cancelled"
+    assert receipt["operation_succeeded"] is None
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_simulated_transport_never_confirms_fields():
+    transport = CertFakeChannelTransport(simulated=True)
+    driver = CertFakeChannelEmulatorDriver("ce-certfake", {"transport": transport})
+    row = TestExecution(id=uuid4(), config={})
+    owner = _certfake_recorder(row, driver, execution_mode="simulated")
+    token = current_execution_id.set(str(row.id))
+    try:
+        with channel_emulator_operation_recorder_scope(owner):
+            assert await record_channel_emulator_operation(
+                phase="configure",
+                operation="set_path_loss",
+                requested={"path_loss_db": 42.0},
+                invoke=lambda: driver.set_path_loss(42.0),
+            ) is True
+    finally:
+        current_execution_id.reset(token)
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][-1]
+    assert receipt["simulated"] is True
+    assert {field["status"] for field in receipt["fields"]} == {"unknown"}
+    assert {field["provenance"] for field in receipt["fields"]} == {"simulated"}
+
+
+@pytest.mark.asyncio
+async def test_certfake_ce_session_always_safe_idles_before_transport_release(
+    monkeypatch,
+):
+    from app.services import channel_emulator_execution_session as session_module
+    from tests.test_p2_59_3_channel_emulator_session import (
+        _frozen_binding_for_driver,
+        _frozen_plan,
+        _install_real_lease,
+        _scope_execution,
+    )
+
+    driver = CertFakeChannelEmulatorDriver(
+        "ce-certfake",
+        {"ip_address": "192.0.2.59", "port": 3334},
+    )
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, session_module, hal)
+    plan = _frozen_plan(driver)
+    execution = _scope_execution(plan)
+
+    async with session_module.channel_emulator_execution_scope(
+        None,
+        execution,
+        purpose="p2-62-certification",
+        binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+        plan=plan,
+        hal=hal,
+        validate_before_remote=lambda _hal: None,
+    ) as outcome:
+        driver.events.append("operation")
+        driver._running = True
+
+    assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+    assert driver._running is False
+    assert outcome.channel_emulator_remote_acquired_confirmed is True
+    assert outcome.channel_emulator_transport_released_confirmed is True

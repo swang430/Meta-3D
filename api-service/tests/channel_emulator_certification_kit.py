@@ -190,6 +190,10 @@ class CertFakeChannelEmulatorDriver(ChannelEmulatorDriver):
     def __init__(self, instrument_id: str, config: dict[str, Any]):
         super().__init__(instrument_id, config)
         self.transport = config.get("transport") or CertFakeChannelTransport()
+        self.events: list[str] = []
+        self._connection_host = str(config.get("ip_address") or "192.0.2.62")
+        self._connection_port = config.get("port")
+        self._connection_resource = config.get("resource")
         self._running = False
         self._model = ""
         self._center_mhz = float(config.get("center_frequency_mhz", 3500.0))
@@ -203,6 +207,14 @@ class CertFakeChannelEmulatorDriver(ChannelEmulatorDriver):
 
     async def connect(self) -> bool:
         self._status = InstrumentStatus.CONNECTED
+        return True
+
+    async def acquire_remote_control(self) -> bool:
+        self.events.append("acquire")
+        return True
+
+    async def release_to_local_control(self) -> bool:
+        self.events.append("release")
         return True
 
     async def disconnect(self) -> bool:
@@ -276,12 +288,14 @@ class CertFakeChannelEmulatorDriver(ChannelEmulatorDriver):
         )
 
     async def start_emulation(self) -> bool:
+        self.events.append("start")
         ok = await self._apply("start_emulation", {"state": "running"})
         if ok:
             self._running = True
         return ok
 
     async def stop_emulation(self) -> bool:
+        self.events.append("safe-idle")
         ok = await self._apply("stop_emulation", {"state": "idle"})
         if ok:
             self._running = False
