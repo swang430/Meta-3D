@@ -1,6 +1,6 @@
 # P2-58 设计稿 — ResolvedChannelEmulatorBinding + 分型号 saved presets
 
-> 状态：**待 review，未动代码**（⓪⁺② 先 review plan 后写代码）
+> 状态：**已实现并合并（① PR #450，收口 #451；② 见 2026-09-04 设计稿与 PR #452）**（⓪⁺② 先 review plan 后写代码）
 > Roadmap：P2-58，依赖 P2-57（✅ #448 / 收口 #449）
 
 ## ⓪ 动手前四行
