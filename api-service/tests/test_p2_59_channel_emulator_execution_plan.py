@@ -376,6 +376,44 @@ def test_freeze_binds_effective_channel_asset_load_truth_and_never_reloads_curre
     ]
 
 
+def test_frozen_channel_asset_rejects_executable_content_drift_before_remote(
+    monkeypatch,
+):
+    """A stable asset id/source cannot hide a changed executable payload."""
+    from app.services import channel_emulator_execution_plan as module
+    from app.services.mimo_ota import channel_asset_resolver
+
+    asset_id = uuid4()
+    asset = SimpleNamespace(
+        id=asset_id,
+        name="frozen-custom-channel",
+        source_type="custom_static",
+        payload={"snapshots": [{"clusters": [{"delay_s": 0.0}]}]},
+        associated_file_path=None,
+        center_frequency_hz=3_500_000_000.0,
+        bandwidth_mhz=100.0,
+        ue_velocity_mps=None,
+        instrument_connection_id=None,
+        is_active=True,
+    )
+    resolved = SimpleNamespace(engine_mode="mimo_first_asc", asset=asset)
+    monkeypatch.setattr(
+        channel_asset_resolver,
+        "resolve_channel_asset",
+        lambda *_args, **_kwargs: resolved,
+    )
+
+    frozen = module.freeze_channel_asset_resolution(
+        object(),
+        SimpleNamespace(channel_asset_id=asset_id),
+    )
+    module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
+
+    asset.payload = {"snapshots": [{"clusters": [{"delay_s": 0.25}]}]}
+    with pytest.raises(ValueError, match="executable content"):
+        module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
+
+
 def test_freeze_load_request_digest_binds_exact_sparse_base_station_freeze(db):
     sparse_configuration = {"engine_mode": "keysight_gcm"}
     execution = _execution(

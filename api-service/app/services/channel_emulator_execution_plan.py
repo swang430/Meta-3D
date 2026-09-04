@@ -44,7 +44,7 @@ NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_len
 
 
 class FrozenChannelAssetResolution(BaseModel):
-    """Asset identity frozen independently under the BaseStation outer digest."""
+    """Asset identity and executable content frozen under the BaseStation digest."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -53,7 +53,28 @@ class FrozenChannelAssetResolution(BaseModel):
     source_type: Literal[
         "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic"
     ]
+    executable_content_digest: NonEmptyString
     digest: NonEmptyString
+
+
+def _channel_asset_executable_content(asset: Any) -> dict[str, Any]:
+    """Project every mutable ChannelAsset field consumed by the resolver."""
+
+    instrument_connection_id = getattr(asset, "instrument_connection_id", None)
+    return {
+        "source_type": getattr(asset, "source_type", None),
+        "payload": getattr(asset, "payload", None),
+        "associated_file_path": getattr(asset, "associated_file_path", None),
+        "center_frequency_hz": getattr(asset, "center_frequency_hz", None),
+        "bandwidth_mhz": getattr(asset, "bandwidth_mhz", None),
+        "ue_velocity_mps": getattr(asset, "ue_velocity_mps", None),
+        "instrument_connection_id": (
+            str(instrument_connection_id)
+            if instrument_connection_id is not None
+            else None
+        ),
+        "is_active": getattr(asset, "is_active", None),
+    }
 
 
 def validate_frozen_channel_asset_resolution(frozen: Any) -> dict[str, Any]:
@@ -93,9 +114,35 @@ def freeze_channel_asset_resolution(db: Any, configuration: Any) -> dict[str, An
         "schema_version": 1,
         "channel_asset_id": str(resolved.asset.id),
         "source_type": resolved.asset.source_type,
+        "executable_content_digest": canonical_payload_digest(
+            _channel_asset_executable_content(resolved.asset)
+        ),
     }
     frozen = {**payload, "digest": canonical_payload_digest(payload)}
     return validate_frozen_channel_asset_resolution(frozen)
+
+
+def validate_resolved_channel_asset_against_freeze(
+    resolved: Any,
+    frozen: Any,
+) -> dict[str, Any]:
+    """Reject mutable asset drift before any instrument remote-control action."""
+
+    identity = validate_frozen_channel_asset_resolution(frozen)
+    asset = getattr(resolved, "asset", None)
+    if asset is None:
+        raise ValueError("frozen channel asset has no resolved executable content")
+    if (
+        str(getattr(asset, "id", "")) != identity["channel_asset_id"]
+        or getattr(asset, "source_type", None) != identity["source_type"]
+    ):
+        raise ValueError("frozen channel asset identity drifted")
+    current_digest = canonical_payload_digest(
+        _channel_asset_executable_content(asset)
+    )
+    if current_digest != identity["executable_content_digest"]:
+        raise ValueError("frozen channel asset executable content drifted")
+    return identity
 
 
 class FrozenChannelEmulatorLoadRequest(BaseModel):

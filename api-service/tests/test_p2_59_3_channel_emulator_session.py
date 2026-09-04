@@ -784,6 +784,7 @@ async def test_scope_rejects_rehashed_asset_load_chain_before_any_instrument_io(
         "schema_version": 1,
         "channel_asset_id": asset_id,
         "source_type": "standard_3gpp",
+        "executable_content_digest": "e" * 64,
     }
     asset_identity = {
         **asset_payload,
@@ -1507,6 +1508,7 @@ def _terminal_evidence(
         "lease_id": "lease-1",
         "instrument_id": "ce-runtime",
         "remote_acquired_confirmed": True if execution_mode == "real" else None,
+        "required_safe_idle_action": "stop_emulation",
         "safe_idle_action": "stop_emulation",
         "safe_idle_confirmed": terminal_state == "completed",
         "transport_released_confirmed": True if execution_mode == "real" else None,
@@ -1516,6 +1518,76 @@ def _terminal_evidence(
         "safe_idle_error_type": None,
     }
     return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def test_p2_66_validates_safe_idle_action_per_execution_scope():
+    """Earlier PRECHECK scopes must not inherit MEASURE's bypass cleanup."""
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    frozen_mimo = MIMOOTAConfiguration.model_validate(
+        {
+            "engine_mode": "keysight_gcm",
+            "emulation_file": "scenario.smu",
+            "f64_bypass_mode": 2,
+            "f64_fade_after_attach": False,
+        }
+    ).model_dump(mode="json")
+    precheck = _terminal_evidence(binding, plan, execution_mode="real")
+    measure = _terminal_evidence(binding, plan, execution_mode="real")
+    measure.update(
+        session_id="session-2",
+        required_safe_idle_action="clear_passthrough_mode",
+        safe_idle_action="clear_passthrough_mode",
+    )
+    measure["digest"] = canonical_payload_digest(
+        {key: value for key, value in measure.items() if key != "digest"}
+    )
+    execution = _execution_with_ce_evidence(
+        binding,
+        plan,
+        precheck,
+        frozen_mimo=frozen_mimo,
+    )
+    execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY] = [precheck, measure]
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
+
+
+def test_p2_66_rejects_terminal_action_that_misses_scope_requirement():
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    terminal["safe_idle_action"] = "clear_passthrough_mode"
+    terminal["digest"] = canonical_payload_digest(
+        {key: value for key, value in terminal.items() if key != "digest"}
+    )
+    execution = _execution_with_ce_evidence(binding, plan, terminal)
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    assert classification == "invalid"
+    assert "scope requirement" in reason
 
 
 def _load_request_for_evidence(
@@ -1578,6 +1650,7 @@ def _execution_with_ce_evidence(
             "schema_version": 1,
             "channel_asset_id": load_request["channel_asset_id"],
             "source_type": load_request["channel_asset_source_type"],
+            "executable_content_digest": "e" * 64,
         }
         base_station_payload[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = {
             **asset_payload,

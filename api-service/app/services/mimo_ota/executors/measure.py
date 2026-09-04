@@ -1274,6 +1274,34 @@ class MeasureExecutor(IStepExecutor):
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED, error_message=str(e)
             )
+        execution_config = (
+            context.test_execution.config
+            if isinstance(context.test_execution.config, dict)
+            else {}
+        )
+        if resolved_asset is not None:
+            from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+            from app.services.channel_emulator_execution_plan import (
+                CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+                validate_resolved_channel_asset_against_freeze,
+            )
+
+            base_station_freeze = execution_config.get(FREEZE_CONFIG_KEY)
+            frozen_asset = (
+                base_station_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+                if isinstance(base_station_freeze, dict)
+                else None
+            )
+            try:
+                validate_resolved_channel_asset_against_freeze(
+                    resolved_asset,
+                    frozen_asset,
+                )
+            except ValueError as exc:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=str(exc),
+                )
         if resolved_asset is not None:
             config.engine_mode = resolved_asset.engine_mode
             # ChannelAsset 是唯一信道源：清掉保存用例中的 legacy 残留引用。
@@ -1287,11 +1315,6 @@ class MeasureExecutor(IStepExecutor):
                 config.emulation_file = resolved_asset.emulation_file
 
         emulator = hal.drivers.get("channelEmulator")
-        execution_config = (
-            context.test_execution.config
-            if isinstance(context.test_execution.config, dict)
-            else {}
-        )
         frozen_ce_binding = execution_config.get("channel_emulator_binding_freeze")
         frozen_ce_mode = (
             frozen_ce_binding.get("execution_mode")

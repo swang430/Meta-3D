@@ -127,7 +127,7 @@ def _channel_emulator_terminal_projection(
     try:
         validated_binding = validate_frozen_channel_emulator_binding(binding)
         validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
-        validated_load_request, mimo_configuration = (
+        validated_load_request, _mimo_configuration = (
             validate_frozen_channel_emulator_load_context(config, plan)
         )
     except ValueError as exc:
@@ -213,14 +213,8 @@ def _channel_emulator_terminal_projection(
         }
         if any(item.get(key) != value for key, value in expected.items()):
             return "invalid", "channelEmulator terminal evidence identity drift"
-        expected_safe_idle_action = (
-            "clear_passthrough_mode"
-            if mimo_configuration.f64_bypass_mode is not None
-            and mimo_configuration.f64_fade_after_attach is not True
-            else "stop_emulation"
-        )
-        if item.get("safe_idle_action") != expected_safe_idle_action:
-            return "invalid", "channelEmulator terminal safe idle action contradicts frozen MIMO configuration"
+        if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
+            return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
         if (
             item.get("terminal_state") != "completed"
             or item.get("operation_succeeded") is not True

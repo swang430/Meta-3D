@@ -90,6 +90,7 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     lease_id: NonEmptyString | None
     instrument_id: NonEmptyString | None
     remote_acquired_confirmed: bool | None
+    required_safe_idle_action: Literal["stop_emulation", "clear_passthrough_mode"]
     safe_idle_action: Literal["stop_emulation", "clear_passthrough_mode"]
     safe_idle_confirmed: bool
     transport_released_confirmed: bool | None
@@ -101,6 +102,10 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "FrozenChannelEmulatorTerminalEvidence":
+        if self.safe_idle_action != self.required_safe_idle_action:
+            raise ValueError(
+                "channelEmulator terminal safe idle action misses scope requirement"
+            )
         if self.terminal_state == "completed":
             if (
                 self.lease_id is None
@@ -622,6 +627,7 @@ async def channel_emulator_execution_scope(
                         else None
                     )
                 ),
+                "required_safe_idle_action": safe_idle_state.action,
                 "safe_idle_action": safe_idle_state.action,
                 "safe_idle_confirmed": safe_idle_state.confirmed,
                 "transport_released_confirmed": (
