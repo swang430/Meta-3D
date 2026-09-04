@@ -25,6 +25,25 @@ from app.services.mimo_ota.executors.measure import (
 )
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
+# P2-59 ①：手动定标的能力判据改为冻结计划；测试里按替身的 manifest 派生计划（行为等价），
+# 没有 manifest 的替身 → 什么都没计划（与此前「无 manifest → 不支持」同义）。
+from app.hal.channel_emulator_execution_plan import (  # noqa: E402
+    resolve_channel_emulator_execution_plan as _resolve_ce_plan,
+)
+from app.hal.channel_emulator_manifest import (  # noqa: E402
+    channel_emulator_manifest_of as _ce_manifest_of,
+)
+
+
+def _plan_for(emulator):
+    manifest = _ce_manifest_of(emulator) or channel_emulator_manifest_for(
+        adapter_id="bare_emu", model_name="Bare Emu", vendor="test", implemented=(),
+    )
+    return _resolve_ce_plan(
+        manifest=manifest, driver_source="hal",
+        requested_load_mode="external_waveform", binding_digest="t" * 64,
+    )
+
 
 class _Bare:
     """没有任何拓扑 getter 的驱动 (mock CE / 非 F64)。"""
@@ -199,7 +218,7 @@ class TestOrchestrationTopologyBranches:
         emu.get_active_input_ports = lambda: None          # 口号未知
         cfg = MagicMock(f64_input_ref_dbm=-15.0, f64_crest_db=12.0)
         payload = await self._executor()._apply_manual_input_reference(
-            emulator=emu, config=cfg, execution_id="t")
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t")
         assert payload["success"] is False
         assert "crest 下发拒绝" in (payload["failure_reason"] or "")
         emu.set_crest_factor.assert_not_awaited()

@@ -391,7 +391,8 @@ def test_capability_checks_in_measure_have_no_silent_negative_path():
     这条路径在本片之前**行为覆盖就是 0**，本片没有改善这一点。
 
     钉住的事实：`f64_bypass_mode` 块里对 `set_passthrough_mode` 与
-    `stop_emulation` 的判定都写成 `if not channel_emulator_implements(...)` 且
+    `stop_emulation` 的判定都写成 `if not ce_plan.planned(...)`（P2-59 ① 起读冻结
+    计划；此前是 `channel_emulator_implements(...)`）且
     分支体里有 `return`。此前 `stop_emulation` 那格是 `if …:` 无 else ——
     manifest 少报就**不停播放直接进直通**且零留痕，恰好造成它自己注释里说的
     「真因被掩盖成直通建立失败」。
@@ -412,10 +413,16 @@ def test_capability_checks_in_measure_have_no_silent_negative_path():
         if not isinstance(node.test.op, ast.Not):
             continue
         call = node.test.operand
-        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-                and call.func.id == "channel_emulator_implements"):
+        if not isinstance(call, ast.Call) or not call.args:
             continue
-        op = call.args[1].value if isinstance(call.args[1], ast.Constant) else None
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "planned":
+            op_node = call.args[0]  # P2-59 ①：`ce_plan.planned("<op>")`
+        elif (isinstance(call.func, ast.Name)
+              and call.func.id == "channel_emulator_implements"):
+            op_node = call.args[1] if len(call.args) > 1 else None
+        else:
+            continue
+        op = op_node.value if isinstance(op_node, ast.Constant) else None
         if op not in ("set_passthrough_mode", "stop_emulation"):
             continue
         # ⚠️ 判**最后一条语句**，不 `ast.walk` 整棵子树（内审 R5 F1 实测）：
