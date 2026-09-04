@@ -1203,7 +1203,19 @@ def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
             "set_input_measurement_mode",
             "BURST",
             "mode",
-            False,
+            True,
+        ),
+        (
+            "set_burst_trigger_level",
+            -35.0,
+            "trigger_dbm",
+            True,
+        ),
+        (
+            "autoset_inputs",
+            [1, 2],
+            "input_ports",
+            True,
         ),
         (
             "set_output_gain",
@@ -1225,7 +1237,7 @@ def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
         ),
     ],
 )
-def test_p2_66_only_requires_confirmation_for_formal_effect_fields(
+def test_p2_66_requires_confirmation_for_every_formal_effect_field(
     operation, requested, field, formal_error
 ):
     from app.services.channel_emulator_operation_receipt import (

@@ -139,6 +139,9 @@ def _channel_emulator_v2_receipt_chain_error(
         "set_output_level_dbm": frozenset({"level_dbm"}),
         "set_baseband_power": frozenset({"reference_dbm"}),
         "set_crest_factor": frozenset({"crest_db"}),
+        "autoset_inputs": frozenset({"input_ports"}),
+        "set_input_measurement_mode": frozenset({"mode"}),
+        "set_burst_trigger_level": frozenset({"trigger_dbm"}),
         "start_emulation": frozenset({"state"}),
         "stop_emulation": frozenset({"state"}),
         "set_passthrough_mode": frozenset({"mode"}),
@@ -329,14 +332,8 @@ def _channel_emulator_v2_receipt_chain_error(
                 for name in required
             ):
                 return "real channelEmulator v2 receipt has unconfirmed formal fields"
-            if not required and receipt.get("operation") not in {
-                "autoset_inputs",
-                "set_input_measurement_mode",
-                "set_burst_trigger_level",
-            }:
+            if not required:
                 return "real channelEmulator v2 receipt operation has no formal evidence policy"
-            if not required and not receipt.get("error_queue_exchange_ids"):
-                return "real channelEmulator v2 receipt has no clean error-queue evidence"
     return None
 
 
