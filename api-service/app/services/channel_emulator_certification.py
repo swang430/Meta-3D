@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import (
@@ -278,3 +278,418 @@ def parse_channel_emulator_site_certification(
         raise ValueError(
             "stored Channel Emulator site certification is invalid"
         ) from exc
+
+
+def _audit_text(value: str, field: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must be non-blank")
+    return normalized
+
+
+def derive_channel_emulator_site_certification_from_execution(
+    execution,
+    *,
+    connection_id: str,
+    current_binding_digest: str,
+    current_adapter_id: str,
+    certified_by: str,
+    reason: str,
+    certified_at: datetime | None = None,
+) -> ChannelEmulatorSiteCertification:
+    """Derive one certification solely from an immutable completed execution.
+
+    Current mutable state is supplied only as the exact scope expected by the
+    already-locked caller.  No value is read from a driver or reconstructed
+    from a report.
+    """
+
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.channel_emulator_binding import (
+        CE_FREEZE_CONFIG_KEY,
+        validate_frozen_channel_emulator_binding,
+    )
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+        validate_frozen_channel_emulator_execution_plan,
+        validate_frozen_channel_emulator_load_context,
+    )
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+        validate_channel_emulator_terminal_evidence,
+    )
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        validate_channel_emulator_operation_receipt,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+    from app.services.mimo_ota.path_loss_application import (
+        path_loss_application_is_formally_verified,
+    )
+
+    actor = _audit_text(certified_by, "certified_by")
+    audit_reason = _audit_text(reason, "reason")
+    if getattr(execution, "status", None) != "completed":
+        raise ValueError("channelEmulator certification requires completed execution")
+    config = execution.config if isinstance(execution.config, dict) else {}
+    try:
+        binding = validate_frozen_channel_emulator_binding(
+            config[CE_FREEZE_CONFIG_KEY]
+        )
+        plan = validate_frozen_channel_emulator_execution_plan(
+            config[CE_PLAN_FREEZE_CONFIG_KEY]
+        )
+        load_request, _configuration = validate_frozen_channel_emulator_load_context(
+            config,
+            plan,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("channelEmulator certification binding/plan/asset proof is invalid") from exc
+    resolved = binding["resolved_binding"]
+    expected_scope = (
+        binding.get("execution_mode") == "real"
+        and resolved.get("status") == "configured"
+        and binding.get("instrument_connection_id") == str(connection_id)
+        and binding.get("binding_digest") == current_binding_digest
+        and plan.get("binding_digest") == current_binding_digest
+        and plan.get("adapter_id") == current_adapter_id
+    )
+    if not expected_scope:
+        raise ValueError("channelEmulator certification source scope does not match current binding")
+
+    classification, terminal_reason = _channel_emulator_terminal_projection(
+        config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    if classification is not None:
+        raise ValueError(
+            "channelEmulator certification terminal/receipt proof is invalid: "
+            + (terminal_reason or classification)
+        )
+    raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if not isinstance(raw_terminals, list) or not raw_terminals:
+        raise ValueError("channelEmulator certification requires terminal v3 proof")
+    terminals = [
+        validate_channel_emulator_terminal_evidence(dict(item))
+        for item in raw_terminals
+    ]
+    effective_terminals: list[dict[str, Any]] = []
+    latest_by_scope: dict[str, dict[str, Any]] = {}
+    for item in terminals:
+        operation_scope = item.get("operation_scope")
+        if isinstance(operation_scope, str):
+            latest_by_scope[operation_scope] = item
+        else:
+            effective_terminals.append(item)
+    effective_terminals.extend(latest_by_scope.values())
+    if any(item.get("schema_version") != 3 for item in effective_terminals):
+        raise ValueError("channelEmulator certification requires terminal v3 proof")
+    identities = [
+        ChannelEmulatorCertificationIdentity.model_validate(item.get("hardware_identity"))
+        for item in effective_terminals
+    ]
+    identity = identities[0]
+    if (
+        not identity.certification_eligible
+        or any(item != identity for item in identities[1:])
+        or any(identity.instrument_id != item.get("instrument_id") for item in effective_terminals)
+        or identity.adapter_id != current_adapter_id
+    ):
+        raise ValueError("channelEmulator certification hardware identity/options proof is invalid")
+
+    raw_receipts = config.get(CE_OPERATION_RECEIPTS_CONFIG_KEY)
+    if not isinstance(raw_receipts, list) or not raw_receipts:
+        raise ValueError("channelEmulator certification operation receipt proof is missing")
+    receipts = [
+        validate_channel_emulator_operation_receipt(dict(item))
+        for item in raw_receipts
+    ]
+    attempt_evidence = config.get("base_station_execution_evidence")
+    current_attempt_id = (
+        attempt_evidence.get("current_measurement_attempt_id")
+        if isinstance(attempt_evidence, dict)
+        and attempt_evidence.get("current_measurement_attempt_state") == "completed"
+        else None
+    )
+    if not isinstance(current_attempt_id, str) or not current_attempt_id:
+        raise ValueError("channelEmulator certification current measurement attempt is missing")
+    attempt_terminals = [
+        item
+        for item in effective_terminals
+        if item.get("measurement_attempt_id") == current_attempt_id
+    ]
+    if not attempt_terminals:
+        raise ValueError("channelEmulator certification terminal does not bind current attempt")
+    referenced_receipt_ids = {
+        receipt_id
+        for item in attempt_terminals
+        for receipt_id in item.get("operation_receipt_ids", ())
+    }
+    attempt_receipts = [
+        item
+        for item in receipts
+        if item.get("receipt_id") in referenced_receipt_ids
+        and item.get("measurement_attempt_id") == current_attempt_id
+        and item.get("instrument_id") == identity.instrument_id
+        and item.get("execution_id") == str(execution.id)
+        and item.get("simulated") is False
+    ]
+
+    def _has_confirmed(operation: str, field: str) -> bool:
+        return any(
+            receipt.get("operation") == operation
+            and receipt.get("terminal_state") == "completed"
+            and receipt.get("operation_succeeded") is True
+            and any(
+                item.get("field") == field and item.get("status") == "confirmed"
+                for item in receipt.get("fields", ())
+            )
+            for receipt in attempt_receipts
+        )
+
+    if not _has_confirmed("set_output_level_dbm", "level_dbm"):
+        raise ValueError("channelEmulator certification level proof is missing")
+    if not _has_confirmed("set_output_gain", "gain_db"):
+        raise ValueError("channelEmulator certification path-loss receipt proof is missing")
+
+    measurements = execution.measurements if isinstance(execution.measurements, dict) else {}
+    phases = measurements.get("phases")
+    measure = phases.get("measure") if isinstance(phases, dict) else None
+    if not isinstance(measure, dict):
+        raise ValueError("channelEmulator certification measurement proof is missing")
+    frequency = measure.get("frequency_consistency")
+    per_instrument = (
+        frequency.get("per_instrument") if isinstance(frequency, dict) else None
+    )
+    f64_frequency_proven = (
+        current_adapter_id == "propsim_f64"
+        and isinstance(per_instrument, dict)
+        and isinstance(per_instrument.get("F64"), str)
+        and per_instrument.get("F64") != "未报告(跳过)"
+        and isinstance(frequency.get("f64_center_readback_mhz"), (int, float))
+        and frequency.get("f64_bandwidth_source")
+        == "channel_asset_or_scd_declared"
+        and "F64" not in (frequency.get("unverified") or ())
+    )
+    if (
+        not isinstance(frequency, dict)
+        or frequency.get("fully_verified") is not True
+        or not f64_frequency_proven
+    ):
+        raise ValueError("channelEmulator certification frequency proof is incomplete")
+    if (
+        measure.get("path_loss_verified") is not True
+        or not path_loss_application_is_formally_verified(
+            measure.get("path_loss_application")
+        )
+    ):
+        raise ValueError("channelEmulator certification path-loss proof is not formally verified")
+
+    base_freeze = config.get(FREEZE_CONFIG_KEY)
+    asset = (
+        base_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+        if isinstance(base_freeze, dict)
+        else None
+    )
+    asset_digest = (
+        asset.get("digest")
+        if isinstance(asset, dict) and isinstance(asset.get("digest"), str)
+        else load_request.get("digest")
+    )
+    if not isinstance(asset_digest, str):
+        raise ValueError("channelEmulator certification asset digest is missing")
+    terminal_evidence_digest = _canonical_digest(
+        {
+            "schema_version": 1,
+            "terminal_digests": [item["digest"] for item in effective_terminals],
+        }
+    )
+    operation_receipts_digest = _canonical_digest(
+        {
+            "schema_version": 1,
+            "receipt_chain_digests": [
+                item["operation_receipts_digest"] for item in effective_terminals
+            ],
+        }
+    )
+    measurement_evidence_digest = _canonical_digest(measure)
+    return ChannelEmulatorSiteCertification(
+        schema_version=1,
+        status="active",
+        lab_profile_id=binding["lab_profile_id"],
+        instrument_connection_id=binding["instrument_connection_id"],
+        instrument_model_id=binding["instrument_model_id"],
+        binding_digest=binding["binding_digest"],
+        adapter_id=plan["adapter_id"],
+        plan_digest=plan["digest"],
+        asset_digest=asset_digest,
+        load_mode=plan["requested_load_mode"],
+        model=identity.model,
+        firmware_version=identity.firmware_version,
+        serial_number=identity.serial_number,
+        options=identity.options,
+        identity_digest=identity.digest,
+        source_execution_id=str(execution.id),
+        terminal_evidence_digest=terminal_evidence_digest,
+        operation_receipts_digest=operation_receipts_digest,
+        measurement_evidence_digest=measurement_evidence_digest,
+        required_proofs=ChannelEmulatorCertificationProofs(
+            binding_plan_asset=True,
+            hardware_identity_options=True,
+            operation_receipts=True,
+            frequency=True,
+            level=True,
+            path_loss=True,
+            safe_idle=True,
+            transport_release=True,
+        ),
+        certified_by=actor,
+        certified_at=certified_at or datetime.now(timezone.utc),
+        reason=audit_reason,
+    )
+
+
+def revoke_channel_emulator_site_certification(
+    db,
+    *,
+    connection_id,
+    revoked_by: str,
+    reason: str,
+) -> ChannelEmulatorSiteCertification:
+    """Revoke the current certification while preserving its source evidence."""
+
+    from app.models.instrument import InstrumentConnection
+
+    try:
+        actor = _audit_text(revoked_by, "revoked_by")
+        audit_reason = _audit_text(reason, "reason")
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.id == connection_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if connection is None:
+            raise LookupError("instrument connection not found")
+        current = parse_channel_emulator_site_certification(
+            connection.channel_emulator_site_certification
+        )
+        if current is None or current.status != "active":
+            raise ValueError("active Channel Emulator site certification is missing")
+        revoked = ChannelEmulatorSiteCertification.model_validate(
+            current.model_copy(
+                update={
+                    "status": "revoked",
+                    "revoked_by": actor,
+                    "revoked_at": datetime.now(timezone.utc),
+                    "revocation_reason": audit_reason,
+                }
+            )
+        )
+        connection.channel_emulator_site_certification = revoked.model_dump(
+            mode="json"
+        )
+        db.commit()
+        db.refresh(connection)
+        return revoked
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def activate_channel_emulator_site_certification(
+    db,
+    hal,
+    *,
+    connection_id,
+    source_execution_id,
+    certified_by: str,
+    reason: str,
+) -> ChannelEmulatorSiteCertification:
+    """Activate from one completed execution under the repository lock order."""
+
+    from app.models.instrument import InstrumentConnection
+    from app.models.lab_profile import LabProfile
+    from app.models.test_plan import TestCase, TestExecution
+    from app.services.channel_emulator_binding import (
+        resolve_channel_emulator_binding,
+    )
+
+    try:
+        # Read-only existence preflight avoids taking the connection lock before
+        # the source execution.  The resolver later owns category→lab→connection.
+        requested_connection_id = (
+            db.query(InstrumentConnection.id)
+            .filter(InstrumentConnection.id == connection_id)
+            .scalar()
+        )
+        if requested_connection_id is None:
+            raise LookupError("instrument connection not found")
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == source_execution_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if execution is None:
+            raise LookupError("source execution not found")
+        if execution.status != "completed" or execution.test_case_id is None:
+            raise ValueError(
+                "channelEmulator certification requires a completed TestCase execution"
+            )
+        test_case = (
+            db.query(TestCase)
+            .filter(TestCase.id == execution.test_case_id)
+            .one_or_none()
+        )
+        if test_case is None or test_case.lab_profile_id is None:
+            raise ValueError("source execution has no bound LabProfile")
+        lab = (
+            db.query(LabProfile)
+            .filter(LabProfile.id == test_case.lab_profile_id)
+            .one_or_none()
+        )
+        if lab is None:
+            raise ValueError("source execution LabProfile is missing")
+        resolved = resolve_channel_emulator_binding(db, hal, lab, lock=True)
+        if (
+            resolved.execution_mode != "real"
+            or resolved.manifest is None
+            or resolved.instrument_connection_id != str(requested_connection_id)
+            or resolved.instrument_model_id is None
+        ):
+            raise ValueError(
+                "channelEmulator certification requires current real binding"
+            )
+        # The resolver already locked the exact row after category and lab.
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.id == requested_connection_id)
+            .one()
+        )
+        certification = derive_channel_emulator_site_certification_from_execution(
+            execution,
+            connection_id=str(connection.id),
+            current_binding_digest=resolved.binding_digest,
+            current_adapter_id=resolved.manifest.adapter_id,
+            certified_by=certified_by,
+            reason=reason,
+        )
+        if certification.instrument_model_id != str(resolved.instrument_model_id):
+            raise ValueError(
+                "channelEmulator certification source model does not match current binding"
+            )
+        connection.channel_emulator_site_certification = certification.model_dump(
+            mode="json"
+        )
+        db.commit()
+        db.refresh(connection)
+        return certification
+    except BaseException:
+        db.rollback()
+        raise
