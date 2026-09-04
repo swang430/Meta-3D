@@ -219,7 +219,7 @@ class TestColdStartRfInitializationOrdering:
         required_before_attach = {
             "本次 F64 模型加载": "gen_ok = await generator.generate_and_load",
             "多方频率一致性": "freq_result = check_frequency_consistency",
-            "F64 绝对输出电平": "await emulator.set_output_level_dbm",
+            "F64 绝对输出电平": "invoke=lambda: emulator.set_output_level_dbm",
             "F64 显式输入参考": "await self._apply_manual_input_reference",
         }
         for label, token in required_before_attach.items():
@@ -236,7 +236,7 @@ class TestColdStartRfInitializationOrdering:
         )
         between = src[load:signaling]
 
-        assert "await emulator.set_passthrough_mode(" in between, (
+        assert "invoke=lambda: emulator.set_passthrough_mode(" in between, (
             "本次模型加载后、attach 前没有建立 F64 旁路；冷启动仍不能 attach"
         )
         assert "await _assist_ce.set_passthrough_mode(" not in src[:load], (

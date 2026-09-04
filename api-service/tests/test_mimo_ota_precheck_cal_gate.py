@@ -342,6 +342,62 @@ def _refreeze_ce_plan(db, ctx):
     db.commit()
 
 
+async def _execute_direct_measure_in_receipt_scope(ctx):
+    """Run a direct MEASURE fixture inside the execution-owned CE scope.
+
+    Production reaches MEASURE through the joint BaseStation/CE session.  The
+    two tests below intentionally call the executor directly, so they must
+    provide the same task-local receipt owner instead of weakening the
+    production fail-closed owner check.
+    """
+
+    from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
+    from app.core.logging_config import current_execution_id
+    from app.services.channel_emulator_execution_plan import (
+        CE_PLAN_FREEZE_CONFIG_KEY,
+        plan_from_frozen_payload,
+    )
+    from app.services.channel_emulator_operation_receipt import (
+        ChannelEmulatorOperationRecorderOwner,
+        channel_emulator_operation_recorder_scope,
+    )
+    from app.services.instrument_hal_service import get_hal_service
+
+    execution = ctx.test_execution
+    config = execution.config
+    binding = config[CE_FREEZE_CONFIG_KEY]
+    plan = plan_from_frozen_payload(config[CE_PLAN_FREEZE_CONFIG_KEY])
+    emulator = get_hal_service().drivers["channelEmulator"]
+    owner = ChannelEmulatorOperationRecorderOwner(
+        db=ctx.db,
+        execution_pk=execution.id,
+        execution_id=str(execution.id),
+        session_id="direct-measure-receipt-session",
+        operation_scope="direct-measure-fixture",
+        measurement_attempt_id=None,
+        binding_digest=str(binding["binding_digest"]),
+        binding_freeze_digest=str(
+            binding.get("digest") or canonical_payload_digest(binding)
+        ),
+        plan_digest=plan.digest,
+        asset_digest=None,
+        lease_id="direct-measure-receipt-lease",
+        instrument_id=str(
+            getattr(emulator, "instrument_id", "direct-measure-channel-emulator")
+        ),
+        adapter_id=plan.adapter_id,
+        execution_mode="simulated",
+        plan=plan,
+        driver=emulator,
+    )
+    execution_token = current_execution_id.set(str(execution.id))
+    try:
+        with channel_emulator_operation_recorder_scope(owner):
+            return await MeasureExecutor().execute(ctx)
+    finally:
+        current_execution_id.reset(execution_token)
+
+
 def _build_context(
     db,
     lab,
@@ -1275,7 +1331,7 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
         staticmethod(_spy),
     )
 
-    result = await MeasureExecutor().execute(ctx)
+    result = await _execute_direct_measure_in_receipt_scope(ctx)
 
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     assert captured, "measure 从未走到 BaseStation 窗口采样"
@@ -1321,7 +1377,7 @@ async def test_diagnostic_measure_rejects_legacy_unverified_certificate(
         hal_with_full_mock_chain.drivers["baseStation"],
     )
 
-    result = await MeasureExecutor().execute(ctx)
+    result = await _execute_direct_measure_in_receipt_scope(ctx)
 
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     measurements = result.measurements or {}
