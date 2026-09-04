@@ -184,6 +184,14 @@ class InstrumentConnection(Base):
             "active connection fields remain execution truth"
         ),
     )
+    channel_emulator_model_presets = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "服务端持有的信道仿真器分型号 saved preset，键 = InstrumentModel.id；"
+            "活动连接字段仍是执行真值"
+        ),
+    )
 
     # 备注
     notes = Column(Text, comment="备注")

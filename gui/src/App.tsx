@@ -108,6 +108,10 @@ import {
   draftForBaseStationModel,
   explicitBaseStationConnectionDraft,
 } from './features/Equipment/baseStationModelPresetDraft'
+import {
+  explicitChannelEmulatorConnectionDraft,
+  switchChannelEmulatorModel,
+} from './features/Equipment/channelEmulatorModelPresetDraft'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1933,6 +1937,27 @@ function EquipmentManager() {
         }))
         return
       }
+      if (categoryKey === 'channelEmulator' && category) {
+        // P2-58 ②：切型号只改草稿（有未保存草稿先确认），model 只在保存时随 connection 一起发。
+        // 这个分支不发请求 —— 后端 CE 块对只带 modelId 的 PUT 返回 422。
+        switchChannelEmulatorModel(category, drafts[categoryKey], modelId, {
+          applyDraft: (next) => setDrafts((prev) => ({ ...prev, [categoryKey]: next })),
+          confirmDiscard: (apply) => modals.openConfirmModal({
+            title: '切换型号会丢弃未保存的配置',
+            centered: true,
+            children: (
+              <Text size="sm">
+                当前信道仿真器的连接配置（端点 / 控制方式 / 备注 / alignment 等）有未保存的改动。
+                切换型号会用目标型号已保存的 preset 替换这些改动；取消则保留当前草稿与型号。
+              </Text>
+            ),
+            labels: { confirm: '丢弃并切换', cancel: '取消' },
+            confirmProps: { color: 'red' },
+            onConfirm: apply,
+          }),
+        })
+        return
+      }
       setDrafts((prev) => {
         const current =
           prev[categoryKey] ?? ({ modelId: '', endpoint: '', controller: '', notes: '' } as EquipmentDraft)
@@ -1967,7 +1992,7 @@ function EquipmentManager() {
         },
       })
     },
-    [categories, instrumentMutation],
+    [categories, drafts, instrumentMutation],
   )
 
   const handleFieldChange = useCallback(
@@ -1992,7 +2017,7 @@ function EquipmentManager() {
       if (!draft) return
       
       let parsedParams: Record<string, unknown> | undefined =
-        categoryKey === 'baseStation' ? {} : undefined
+        categoryKey === 'baseStation' || categoryKey === 'channelEmulator' ? {} : undefined
       if (draft.connection_params) {
         try {
           parsedParams = JSON.parse(draft.connection_params)
@@ -2031,19 +2056,24 @@ function EquipmentManager() {
       instrumentMutation.mutate({
         categoryKey,
         payload: {
-          ...(categoryKey === 'baseStation' ? { modelId: draft.modelId } : {}),
+          // BS / CE：model 与 connection 一起发（后端两个品类块都要求成对）；其它品类照旧只发 connection。
+          ...(categoryKey === 'baseStation' || categoryKey === 'channelEmulator'
+            ? { modelId: draft.modelId }
+            : {}),
           connection: categoryKey === 'baseStation'
             ? explicitBaseStationConnectionDraft(
                 draft,
                 parsedParams ?? {},
                 baseStationProfile ?? null,
               )
-            : {
-                endpoint: draft.endpoint || undefined,
-                controller: draft.controller || undefined,
-                notes: draft.notes || undefined,
-                ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-              },
+            : categoryKey === 'channelEmulator'
+              ? explicitChannelEmulatorConnectionDraft(draft, parsedParams ?? {})
+              : {
+                  endpoint: draft.endpoint || undefined,
+                  controller: draft.controller || undefined,
+                  notes: draft.notes || undefined,
+                  ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+                },
         },
       })
     },

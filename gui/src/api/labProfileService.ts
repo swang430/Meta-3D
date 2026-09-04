@@ -9,6 +9,7 @@
 import apiClient from './client'
 import type {
   BaseStationBindingPreviewResponse,
+  ChannelEmulatorBindingPreviewResponse,
   InstrumentBindingSyncResponse,
 } from '../types/api'
 
@@ -113,6 +114,18 @@ export async function fetchBaseStationBindingPreview(
 ): Promise<BaseStationBindingPreviewResponse> {
   const res = await apiClient.get<BaseStationBindingPreviewResponse>(
     `/lab-profiles/${labProfileId}/instrument-bindings/baseStation/preview`,
+    { params: testCaseId ? { test_case_id: testCaseId } : undefined },
+  )
+  return res.data
+}
+
+/** P2-58 ①：channelEmulator binding 只读预览（零仪器 I/O），与 BaseStation 版同形；契约第 3 步。 */
+export async function fetchChannelEmulatorBindingPreview(
+  labProfileId: string,
+  testCaseId?: string,
+): Promise<ChannelEmulatorBindingPreviewResponse> {
+  const res = await apiClient.get<ChannelEmulatorBindingPreviewResponse>(
+    `/lab-profiles/${labProfileId}/instrument-bindings/channelEmulator/preview`,
     { params: testCaseId ? { test_case_id: testCaseId } : undefined },
   )
   return res.data

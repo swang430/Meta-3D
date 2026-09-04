@@ -15,6 +15,9 @@ from app.hal.lte_earfcn import lte_dl_earfcn_to_frequency_mhz, normalize_lte_ban
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
+from app.services.channel_emulator_model_preset import (
+    synchronize_saved_active_channel_emulator_preset_params,
+)
 from app.services.mimo_ota.channel_naming import (
     StandardChannelName,
     check_channel_filename_freq,
@@ -363,6 +366,15 @@ def _sync_projection_for_binding(db: Session, instrument_connection_id: UUID) ->
     params["available_channel_models"] = preserved + derived
     # 整体重新赋值 dict 触发 SQLAlchemy JSON 变更检测 (in-place mutate 不会被 track)
     conn.connection_params = params
+    # P2-58 ②（W4）：这里是活动 connection_params 在 PUT 之外的写点之一 —— 同步进当前型号的
+    # saved preset，否则切型号再切回时 preset 会把这次 SCD 关联投影还原掉；没有 preset 则 no-op
+    # （镜像 api/instrument.py channel-models 增删端点的接法）。SCD 只能挂 channelEmulator 连接
+    # （create_scd 的 _resolve_channel_emulator_binding 已校验），这里不再判品类。
+    category = conn.category or db.get(InstrumentCategory, conn.category_id)
+    synchronize_saved_active_channel_emulator_preset_params(
+        selected_model_id=category.selected_model_id if category is not None else None,
+        connection=conn,
+    )
 
 
 def associate_file(

@@ -286,6 +286,11 @@ export function setupMockServer() {
   // ===== P2-8 Operational Cockpit =====
   mock.onGet('/instruments/hal/readiness').reply(200, mockDatabase.getReadiness())
 
+  // P2-58 ①/②：channelEmulator binding 只读预览 —— 与 readiness 里的 channel_emulator_binding 同一夹具。
+  mock
+    .onGet(/\/lab-profiles\/[^/]+\/instrument-bindings\/channelEmulator\/preview$/)
+    .reply(200, mockDatabase.getChannelEmulatorBindingPreview())
+
   mock.onGet('/test-executions').reply((config) => {
     const limit = config.params?.limit ? Number(config.params.limit) : undefined
     const status = config.params?.status ? String(config.params.status) : undefined

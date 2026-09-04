@@ -371,6 +371,27 @@ def sync_current_instrument_binding(
         except (TypeError, ValueError) as error:
             db.rollback()
             raise HTTPException(status_code=422, detail=str(error)) from error
+    elif category_key == CHANNEL_EMULATOR_CATEGORY_KEY:
+        # P2-58 ②：镜像上方 BaseStation —— 活动连接必须等于当前型号的 saved preset，
+        # 否则 422 + 回滚。放在下面 ① 的 resolve_channel_emulator_binding 之前：
+        # 先钉「活动 == preset」，再解析 binding。
+        from app.services.channel_emulator_model_preset import (
+            require_saved_active_channel_emulator_preset,
+        )
+
+        if connection is None:
+            raise HTTPException(
+                status_code=422,
+                detail="channelEmulator 当前型号没有已保存配置；请先保存配置",
+            )
+        try:
+            require_saved_active_channel_emulator_preset(
+                model=model,
+                connection=connection,
+            )
+        except (TypeError, ValueError) as error:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     driver_mode = category.driver_mode or "auto"
     if driver_mode not in {"auto", "mock", "real"}:

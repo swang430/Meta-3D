@@ -24,6 +24,9 @@ from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, nr_arfcn_to_freq_mhz
 from app.hal.smu_project import parse_smu_project_center_freqs_hz
 from app.models.channel_asset import ChannelAsset
 from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.services.channel_emulator_model_preset import (
+    synchronize_saved_active_channel_emulator_preset_params,
+)
 from app.services.mimo_ota.frequency_consistency import ChannelFrequencyIdentity
 
 
@@ -745,6 +748,15 @@ def sync_smu_project_truth(db: Session) -> SMUProjectSyncResult:
             _upsert_projection(raw_models, plan)
         params["available_channel_models"] = raw_models
         connection.connection_params = params
+        # P2-58 ②（W5）：smu-sync 是活动 connection_params 在 PUT 之外的写点 —— 同步进当前型号的
+        # saved preset，否则切型号再切回时 preset 会把这次扫描结果还原掉；没有 preset 则 no-op。
+        # 放在 try 里：preset 与活动清单要么一起提交、要么整体回滚。连接由 _resolve_scan_context
+        # 按 category_key == "channelEmulator" 选出，这里不再判品类。
+        category = connection.category or db.get(InstrumentCategory, connection.category_id)
+        synchronize_saved_active_channel_emulator_preset_params(
+            selected_model_id=category.selected_model_id if category is not None else None,
+            connection=connection,
+        )
         db.commit()
     except Exception as exc:
         db.rollback()

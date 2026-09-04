@@ -52,6 +52,7 @@ from app.services.execution_qualification import (
     revoke_base_station_site_certification,
 )
 from app.services.base_station_model_preset import BaseStationModelPreset
+from app.services.channel_emulator_model_preset import ChannelEmulatorModelPreset
 from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 router = APIRouter()
@@ -96,6 +97,9 @@ class FEInstrumentConnection(BaseModel):
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None
     base_station_model_presets: Dict[str, BaseStationModelPreset] = Field(
+        default_factory=dict
+    )
+    channel_emulator_model_presets: Dict[str, ChannelEmulatorModelPreset] = Field(
         default_factory=dict
     )
     cmw500_lte_2x2_formal_enabled: bool = False
@@ -234,9 +238,15 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
     from app.services.base_station_model_preset import (
         parse_base_station_model_presets,
     )
+    from app.services.channel_emulator_model_preset import (
+        parse_channel_emulator_model_presets,
+    )
 
     presets = parse_base_station_model_presets(
         conn_db.base_station_model_presets
+    )
+    channel_emulator_presets = parse_channel_emulator_model_presets(
+        conn_db.channel_emulator_model_presets
     )
     return FEInstrumentConnection(
         id=str(conn_db.id),
@@ -247,6 +257,10 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         base_station_model_presets={
             key: preset.model_dump(mode="json")
             for key, preset in presets.items()
+        },
+        channel_emulator_model_presets={
+            key: preset.model_dump(mode="json")
+            for key, preset in channel_emulator_presets.items()
         },
         cmw500_lte_2x2_formal_enabled=(
             conn_db.cmw500_lte_2x2_formal_enabled is True
@@ -1986,6 +2000,15 @@ def add_channel_model_entry(
     # suspenders form that works across PG/SQLite without behaviour drift.
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(conn, "connection_params")
+    # P2-58 ②：活动 connection_params 在 PUT 之外的写点 —— 同步进当前型号的 saved preset，
+    # 否则切型号再切回时 preset 会把这次增删还原掉；没有 preset 则 no-op（首次切型号的快照分支会带上）。
+    from app.services.channel_emulator_model_preset import (
+        synchronize_saved_active_channel_emulator_preset_params,
+    )
+    synchronize_saved_active_channel_emulator_preset_params(
+        selected_model_id=cat.selected_model_id,
+        connection=conn,
+    )
     db.commit()
 
     normalised_all = normalize_channel_model_entries(existing)
@@ -2057,6 +2080,14 @@ def remove_channel_model_entry(
     conn.connection_params = params
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(conn, "connection_params")
+    # P2-58 ②：同增端点 —— 活动 connection_params 的删改也要镜像进当前型号的 saved preset。
+    from app.services.channel_emulator_model_preset import (
+        synchronize_saved_active_channel_emulator_preset_params,
+    )
+    synchronize_saved_active_channel_emulator_preset_params(
+        selected_model_id=cat.selected_model_id,
+        connection=conn,
+    )
     db.commit()
 
     items = [ChannelModelEntry(**entry) for entry in normalize_channel_model_entries(kept_raw)]
@@ -2202,6 +2233,127 @@ def update_instrument_category(
                 notes=notes,
                 connection_params=raw_params,
                 base_station_adapter_profile=adapter_profile,
+                parsed_controller_ip=parsed_ip,
+                parsed_port=parsed_port,
+            )
+        except (ValidationError, ValueError, TypeError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        db.commit()
+        db.refresh(category)
+        models = db.query(InstrumentModelDB).filter(
+            InstrumentModelDB.category_id == category.id
+        ).order_by(InstrumentModelDB.display_order).all()
+        return _convert_category(category, models, connection)
+
+    if category_key == "channelEmulator" and (
+        resolved_model_id is not None or request.connection is not None
+    ):
+        # P2-58 ②：信道仿真器分型号 preset 的原子保存，逐项镜像上方 baseStation 块，
+        # 去掉 adapter_profile 那一条（CE 无 profile 层；alignment_name /
+        # available_channel_models 等只是 connection_params 里的普通键，随 raw_params 原样走）。
+        # 块尾的 return 就是「不落下面的通用路径、不双写连接字段」的全部保证。
+        if request.connection is None:
+            raise HTTPException(
+                status_code=422,
+                detail="channelEmulator model selection must be saved with its connection",
+            )
+        target_model = selected_request_model
+        if target_model is None and category.selected_model_id is not None:
+            target_model = db.query(InstrumentModelDB).filter(
+                InstrumentModelDB.id == category.selected_model_id,
+                InstrumentModelDB.category_id == category.id,
+            ).one_or_none()
+        if target_model is None:
+            raise HTTPException(
+                status_code=422,
+                detail="channelEmulator save requires a selected model",
+            )
+        current_model = None
+        if category.selected_model_id is not None:
+            current_model = db.query(InstrumentModelDB).filter(
+                InstrumentModelDB.id == category.selected_model_id,
+                InstrumentModelDB.category_id == category.id,
+            ).one_or_none()
+        connection = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == category.id
+        ).with_for_update().one_or_none()
+        if connection is None:
+            connection = InstrumentConnectionDB(
+                category_id=category.id,
+                created_by="system",
+                cmw500_lte_2x2_formal_enabled=False,
+            )
+            db.add(connection)
+        conn_data = request.connection.model_dump(exclude_unset=True)
+        if "base_station_adapter_profile" in conn_data:
+            # 通用路径今天对非 baseStation 品类就是 422；CE 块不能把它变成静默吞掉。
+            raise HTTPException(
+                status_code=422,
+                detail="channelEmulator connection does not accept base_station_adapter_profile",
+            )
+        from app.services.channel_emulator_model_preset import (
+            parse_channel_emulator_model_presets,
+            save_channel_emulator_model_preset,
+        )
+
+        presets = parse_channel_emulator_model_presets(
+            connection.channel_emulator_model_presets
+        )
+        target_preset = presets.get(str(target_model.id))
+        target_is_active = (
+            current_model is not None and current_model.id == target_model.id
+        )
+        active_params = dict(connection.connection_params or {})
+
+        if "connection_params" in conn_data:
+            raw_params = conn_data["connection_params"] or {}
+        elif target_preset is not None:
+            raw_params = dict(target_preset.connection_params)
+        elif target_is_active:
+            raw_params = active_params
+        else:
+            raw_params = {}
+
+        if "endpoint" in conn_data:
+            endpoint = str(conn_data["endpoint"] or "").strip()
+        elif target_preset is not None:
+            endpoint = target_preset.endpoint
+        elif target_is_active:
+            endpoint = str(connection.endpoint or "").strip()
+        else:
+            endpoint = ""
+
+        if "controller" in conn_data:
+            controller = str(conn_data["controller"] or "")
+        elif target_preset is not None:
+            controller = target_preset.controller
+        elif target_is_active:
+            controller = str(connection.protocol or "")
+        else:
+            controller = ""
+
+        if "notes" in conn_data:
+            notes = str(conn_data["notes"] or "")
+        elif target_preset is not None:
+            notes = target_preset.notes
+        elif target_is_active:
+            notes = str(connection.notes or "")
+        else:
+            notes = ""
+
+        parsed_ip, parsed_port = _parse_endpoint_to_ip_port(endpoint)
+
+        try:
+            save_channel_emulator_model_preset(
+                category=category,
+                current_model=current_model,
+                target_model=target_model,
+                connection=connection,
+                endpoint=endpoint,
+                controller=controller,
+                notes=notes,
+                connection_params=raw_params,
                 parsed_controller_ip=parsed_ip,
                 parsed_port=parsed_port,
             )
