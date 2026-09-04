@@ -437,6 +437,9 @@ async def run(
         if not await g.run_atom(f"OUTP:GAIN:CH {output_num},{target:.2f} (运行中改参)",
                                 lambda: ce.set_output_gain(output_num, target),
                                 f"已写 {target:.2f} dB"):
+            last_error = str(getattr(ce, "_last_error", "") or "")
+            if "未获权威回读确认" in last_error:
+                raise _Abort(f"{last_error} — 写路径没真生效或被钳位")
             raise _Abort("运行中增益写入失败")
         back = await g.read_float(f"OUTP:GAIN:CH? {output_num} (改参后回读)",
                                   f"OUTP:GAIN:CH? {output_num}")

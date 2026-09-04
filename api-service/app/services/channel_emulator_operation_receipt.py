@@ -442,6 +442,14 @@ def channel_emulator_operation_receipt_chain_digest(
     )
 
 
+def empty_channel_emulator_operation_receipt_chain_digest() -> str:
+    """Return the writer's canonical digest for a session with no invocation."""
+
+    return canonical_payload_digest(
+        {"schema_version": 1, "receipt_digests": []}
+    )
+
+
 def persist_channel_emulator_operation_receipt(
     db: Any,
     execution_id: Any,

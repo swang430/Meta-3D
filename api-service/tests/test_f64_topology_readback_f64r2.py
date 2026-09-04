@@ -130,6 +130,12 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
             return sim_state[0]
         if cmd.startswith("CALC:FILT:CENT:CH?"):
             return "3550.0"
+        if cmd.startswith("INP:LEV:AMP:CH?"):
+            port = cmd.split("?", 1)[1].strip()
+            prefix = f"INP:LEV:AMP:CH {port},"
+            for write in reversed(writes):
+                if write.startswith(prefix):
+                    return write.split(",", 1)[1]
         return "1"  # *OPC? 等
 
     drv._write = _write  # type: ignore[assignment]
@@ -283,6 +289,12 @@ class TestPortCountCorrectness:
         assert await drv.set_baseband_power(-15.0) is True
         inputs = [w for w in writes if w.startswith("INP:LEV:AMP:CH")]
         assert len(inputs) == 4                        # 4 个输入口, 不是 stale 的 2
+
+    async def test_baseband_readback_matches_formatted_wire_value(self):
+        drv, writes = _driver(info="1,4,4")
+        await drv._readback_topology()
+        assert await drv.set_baseband_power(-15.04) is True
+        assert "INP:LEV:AMP:CH 1,-15.0" in writes
 
     async def test_explicit_input_ports_still_win(self):
         """上层参数决议层显式给口 → 仍优先于回读值 (回读只是缺省兜底)。"""

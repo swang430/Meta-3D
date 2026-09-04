@@ -158,8 +158,18 @@ class TestCrest:
         assert await drv.get_crest_factor(1) == 4.0
 
     async def test_set_crest_issues_command(self):
-        drv, visa = _make_driver()
+        drv, visa = _make_driver({"INP:CRE:GET? 1": "12.0"})
         assert await drv.set_crest_factor(1, 12.0) is True
+        assert "INP:CRE:SET 1,12.00" in _writes(visa)
+        assert "INP:CRE:GET? 1" in _queries(visa)
+
+    async def test_set_crest_fails_when_authoritative_readback_mismatches(self):
+        drv, _ = _make_driver({"INP:CRE:GET? 1": "11.0"})
+        assert await drv.set_crest_factor(1, 12.0) is False
+
+    async def test_set_crest_readback_matches_formatted_wire_value(self):
+        drv, visa = _make_driver({"INP:CRE:GET? 1": "12.0"})
+        assert await drv.set_crest_factor(1, 12.004) is True
         assert "INP:CRE:SET 1,12.00" in _writes(visa)
 
 

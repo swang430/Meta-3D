@@ -42,6 +42,7 @@ from app.services.channel_emulator_execution_plan import (
 from app.services.channel_emulator_operation_receipt import (
     ChannelEmulatorOperationRecorderOwner,
     channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_receipt_chain_digest,
     channel_emulator_operation_recorder_scope,
     current_channel_emulator_operation_recorder_owner,
     record_channel_emulator_operation,
@@ -817,9 +818,7 @@ async def channel_emulator_execution_scope(
                     operation_receipts
                 )
                 if operation_receipts
-                else canonical_payload_digest(
-                    {"schema_version": 1, "receipt_digests": []}
-                )
+                else empty_channel_emulator_operation_receipt_chain_digest()
             )
             safe_idle_receipt_id = next(
                 (

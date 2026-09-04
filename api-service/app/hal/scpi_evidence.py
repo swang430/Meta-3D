@@ -716,15 +716,7 @@ def select_f64_command_capture(
         if error_index >= 0
         else after_opc
     )
-    readback_key = (
-        "f64.simulation_state"
-        if evidence_key == "f64.simulation_state"
-        else (
-            "f64.bypass_mode"
-            if evidence_key == "f64.bypass_mode"
-            else "f64.model_state"
-        )
-    )
+    readback_key = _F64_RECIPES[evidence_key][1]
     return {
         "preclear_exchanges": preclear_exchanges,
         "command_exchange": command_exchange,
@@ -918,6 +910,18 @@ def build_f64_evidence(
     error_response = _value_response(error_exchange)
     simulation_state = _value_response(state_exchange)
     readback_response = _value_response(readback_exchange)
+    catalog_entry = load_default_p0_5_catalog().entries[evidence_key]
+    opc_confirmed = bool(
+        (
+            catalog_entry.max_evidence_level is EvidenceLevel.ACCEPTED
+            and opc_exchange is None
+        )
+        or (
+            _is_opc_query(opc_exchange)
+            and opc_response is not None
+            and opc_response.strip() == "1"
+        )
+    )
     expected_readback = _requested_scalar(requested)
     command_operand = _command_operand(command_exchange)
     command_matches_requested = (
@@ -977,9 +981,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -995,9 +997,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -1036,9 +1036,7 @@ def build_f64_evidence(
     elif (
         _transport_succeeded(command_exchange)
         and command_exchange.operation == "command"
-        and _is_opc_query(opc_exchange)
-        and opc_response is not None
-        and opc_response.strip() == "1"
+        and opc_confirmed
         and _is_error_query(error_exchange)
         and _clean_device_error(error_response)
         and _f64_roles_match(
@@ -1093,6 +1091,9 @@ def build_f64_evidence(
         verdict,
         reason,
         origin_exchanges,
+        allow_interleaved=(
+            catalog_entry.max_evidence_level is EvidenceLevel.ACCEPTED
+        ),
     )
     level, verdict, reason = _apply_scope(scope, level, verdict, reason)
     return InstrumentEvidenceItem(

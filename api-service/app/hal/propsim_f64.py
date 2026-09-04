@@ -34,6 +34,7 @@ TCP 端口说明 (User Reference §1.1.2.1: "Fixed TCP/IP port for PROPSIM is 33
 
 import logging
 import asyncio
+import math
 import os
 import re
 import time
@@ -2333,20 +2334,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             exchanges=exchanges,
             execution_mode=execution_mode,
         )
-        recipe = {
-            "start_emulation": ("f64.simulation_state", "state"),
-            "stop_emulation": ("f64.simulation_state", "state"),
-            "set_passthrough_mode": ("f64.bypass_mode", "mode"),
-            "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
-        }.get(operation)
-        if (
-            recipe is None
-            or operation_succeeded is not True
-            or execution_mode != "real"
-            or recipe[1] not in requested
-        ):
-            return projected
-
         from app.hal.scpi_evidence import (
             EvidenceLevel,
             EvidenceVerdict,
@@ -2355,6 +2342,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             scope_for_evidence,
             select_f64_command_capture,
         )
+
+        projected["error_queue_exchange_ids"] = [
+            exchange.exchange_id
+            for exchange in exchanges
+            if exchange_is_error_queue_query(exchange, instrument="f64")
+        ]
+        recipe = {
+            "load_channel": ("f64.model_load", "emulation_file"),
+            "start_emulation": ("f64.simulation_state", "state"),
+            "stop_emulation": ("f64.simulation_state", "state"),
+            "set_passthrough_mode": ("f64.bypass_mode", "mode"),
+            "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
+            "set_output_gain": ("f64.output_gain", "gain_db"),
+            "set_baseband_power": ("f64.input_reference", "reference_dbm"),
+            "set_crest_factor": ("f64.crest_factor", "crest_db"),
+        }.get(operation)
+        if (
+            recipe is None
+            or operation_succeeded is not True
+            or execution_mode != "real"
+            or recipe[1] not in requested
+        ):
+            return projected
 
         evidence_key, field_name = recipe
         selected = select_f64_command_capture(exchanges, evidence_key)
@@ -2368,7 +2378,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         )
         if not (
             item.verdict is EvidenceVerdict.PASSED
-            and item.evidence_level is EvidenceLevel.APPLIED
+            and item.evidence_level in {
+                EvidenceLevel.ACCEPTED,
+                EvidenceLevel.APPLIED,
+            }
         ):
             return projected
 
@@ -2388,11 +2401,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 else field
             )
             for field in projected["fields"]
-        ]
-        projected["error_queue_exchange_ids"] = [
-            exchange.exchange_id
-            for exchange in exchanges
-            if exchange_is_error_queue_query(exchange, instrument="f64")
         ]
         return projected
 
@@ -3313,11 +3321,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     logger.error(f"[F64] {self._last_error}")
                     return False
+                wire_power_dbm = float(f"{power_dbm:.1f}")
                 if not await self._gated_write_transaction(
                     "set_baseband_power",
-                    [f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}" for inp in ports],
+                    [f"INP:LEV:AMP:CH {inp},{wire_power_dbm:.1f}" for inp in ports],
                 ):
                     return False
+                for inp in ports:
+                    raw = await self._query(f"INP:LEV:AMP:CH? {inp}")
+                    try:
+                        applied = float(raw.strip())
+                    except (AttributeError, TypeError, ValueError):
+                        applied = None
+                    if applied is None or not math.isclose(
+                        applied, wire_power_dbm, rel_tol=1e-9, abs_tol=1e-6
+                    ):
+                        self._last_error = (
+                            "set_baseband_power 未获权威回读确认: "
+                            f"input={inp}, requested={power_dbm}, "
+                            f"wire={wire_power_dbm}, readback={raw!r}"
+                        )
+                        logger.error("[F64] %s", self._last_error)
+                        return False
             logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm (ports={ports})")
             return True
         except Exception as e:
@@ -3442,11 +3467,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            if not await self._gated_write_transaction(
-                f"set_output_gain(out={output_num})",
-                [f"OUTP:GAIN:CH {output_num},{gain_db:.2f}"],
-            ):
-                return False
+            wire_gain_db = float(f"{gain_db:.2f}")
+            async with self._scpi_lock:
+                if not await self._gated_write_transaction(
+                    f"set_output_gain(out={output_num})",
+                    [f"OUTP:GAIN:CH {output_num},{wire_gain_db:.2f}"],
+                ):
+                    return False
+                raw = await self._query(f"OUTP:GAIN:CH? {output_num}")
+                try:
+                    applied = float(raw.strip())
+                except (AttributeError, TypeError, ValueError):
+                    applied = None
+                if applied is None or not math.isclose(
+                    applied, wire_gain_db, rel_tol=1e-9, abs_tol=1e-6
+                ):
+                    self._last_error = (
+                        "set_output_gain 未获权威回读确认: "
+                        f"output={output_num}, requested={gain_db}, "
+                        f"wire={wire_gain_db}, readback={raw!r}"
+                    )
+                    logger.error("[F64] %s", self._last_error)
+                    return False
             logger.info(f"[F64] Output {output_num} gain set: {gain_db:.2f} dB")
             return True
         except Exception as e:  # noqa: BLE001
@@ -4428,10 +4470,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            return await self._gated_write_transaction(
-                f"set_crest_factor(in={input_num})",
-                [f"INP:CRE:SET {input_num},{crest_db:.2f}"],
-            )
+            wire_crest_db = float(f"{crest_db:.2f}")
+            async with self._scpi_lock:
+                if not await self._gated_write_transaction(
+                    f"set_crest_factor(in={input_num})",
+                    [f"INP:CRE:SET {input_num},{wire_crest_db:.2f}"],
+                ):
+                    return False
+                raw = await self._query(f"INP:CRE:GET? {input_num}")
+                try:
+                    applied = float(raw.strip())
+                except (AttributeError, TypeError, ValueError):
+                    applied = None
+                if applied is None or not math.isclose(
+                    applied, wire_crest_db, rel_tol=1e-9, abs_tol=1e-6
+                ):
+                    self._last_error = (
+                        "set_crest_factor 未获权威回读确认: "
+                        f"input={input_num}, requested={crest_db}, "
+                        f"wire={wire_crest_db}, readback={raw!r}"
+                    )
+                    logger.error("[F64] %s", self._last_error)
+                    return False
+                return True
         except Exception as e:
             logger.error(f"[F64] set_crest_factor({input_num}) failed: {e}")
             self._last_error = str(e)

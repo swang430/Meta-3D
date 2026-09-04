@@ -63,6 +63,7 @@ from app.services.channel_emulator_operation_receipt import (
     ChannelOperationReceiptEvidenceProjection,
     ChannelOperationSessionEvidenceProjection,
     channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_receipt_chain_digest,
     empty_channel_emulator_operation_evidence,
     validate_channel_emulator_operation_receipt,
 )
@@ -132,6 +133,17 @@ def _channel_emulator_v2_receipt_chain_error(
     *,
     simulated: bool,
 ) -> str | None:
+    required_confirmed_fields = {
+        "set_output_gain": frozenset({"gain_db"}),
+        "set_output_level_dbm": frozenset({"level_dbm"}),
+        "set_baseband_power": frozenset({"reference_dbm"}),
+        "set_crest_factor": frozenset({"crest_db"}),
+        "start_emulation": frozenset({"state"}),
+        "stop_emulation": frozenset({"state"}),
+        "set_passthrough_mode": frozenset({"mode"}),
+        "clear_passthrough_mode": frozenset({"mode"}),
+        "transport_release": frozenset({"control_mode"}),
+    }
     raw_receipts = config.get(CE_OPERATION_RECEIPTS_CONFIG_KEY)
     if not isinstance(raw_receipts, list):
         return "channelEmulator v2 operation receipt chain is missing"
@@ -164,12 +176,17 @@ def _channel_emulator_v2_receipt_chain_error(
         selected.append(receipt)
     if terminal.get("operation_receipt_count") != len(selected):
         return "channelEmulator v2 terminal receipt count does not match chain"
-    try:
-        selected_digest = channel_emulator_operation_receipt_chain_digest(
-            selected
-        )
-    except ValueError as exc:
-        return str(exc)
+    if selected:
+        try:
+            selected_digest = channel_emulator_operation_receipt_chain_digest(
+                selected
+            )
+        except ValueError as exc:
+            return str(exc)
+    elif terminal.get("terminal_state") == "completed":
+        return "completed channelEmulator v2 receipt chain is incomplete"
+    else:
+        selected_digest = empty_channel_emulator_operation_receipt_chain_digest()
     if terminal.get("operation_receipts_digest") != selected_digest:
         return "channelEmulator v2 terminal receipt chain digest mismatch"
 
@@ -295,11 +312,31 @@ def _channel_emulator_v2_receipt_chain_error(
                 if isinstance(field, Mapping)
             ):
                 return "simulated channelEmulator v2 receipt claimed formal evidence"
-        elif receipt.get("simulated") is not False or any(
-            not isinstance(field, Mapping) or field.get("status") != "confirmed"
-            for field in fields
-        ):
-            return "real channelEmulator v2 receipt has unconfirmed fields"
+        elif receipt.get("simulated") is not False:
+            return "real channelEmulator v2 receipt claimed simulated evidence"
+        else:
+            fields_by_name = {
+                field.get("field"): field
+                for field in fields
+                if isinstance(field, Mapping)
+            }
+            required = required_confirmed_fields.get(
+                receipt.get("operation"), frozenset()
+            )
+            if any(
+                fields_by_name.get(name, {}).get("status") != "confirmed"
+                for name in required
+            ):
+                return "real channelEmulator v2 receipt has unconfirmed formal fields"
+            if not required and receipt.get("operation") not in {
+                "load_channel",
+                "autoset_inputs",
+                "set_input_measurement_mode",
+                "set_burst_trigger_level",
+            }:
+                return "real channelEmulator v2 receipt operation has no formal evidence policy"
+            if not required and not receipt.get("error_queue_exchange_ids"):
+                return "real channelEmulator v2 receipt has no clean error-queue evidence"
     return None
 
 

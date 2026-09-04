@@ -741,6 +741,7 @@ def test_execution_bound_effectful_calls_use_the_common_recorder():
             "await emulator.set_crest_factor(",
         ),
         "app/services/input_level_controller.py": (
+            "await self._ce.autoset_inputs(",
             "await self._ce.set_input_measurement_mode(",
             "await self._ce.set_burst_trigger_level(",
         ),
@@ -848,6 +849,128 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
 
     assert missing_readback["fields"][0]["status"] == "unknown"
     assert missing_readback["fields"][0]["applied"] is None
+
+
+@pytest.mark.parametrize(
+    ("operation", "requested", "command", "readback_query", "readback"),
+    [
+        (
+            "load_channel",
+            {"load_mode": "native_model", "emulation_file": "D:\\Models\\case.smu"},
+            "CALCulate:FILTer:FILE D:\\Models\\case.smu",
+            "DIAGnostic:SIMUlation:MODel:STATE?",
+            "READY",
+        ),
+        (
+            "set_output_gain",
+            {"output_port": 1, "gain_db": -3.0},
+            "OUTPut:GAIN:CHannel 1,-3.0",
+            "OUTPut:GAIN:CHannel? 1",
+            "-3.0",
+        ),
+        (
+            "set_baseband_power",
+            {"reference_dbm": -12.0},
+            "INPut:LEVel:AMPLitude:CHannel 1,-12.0",
+            "INPut:LEVel:AMPLitude:CHannel? 1",
+            "-12.0",
+        ),
+        (
+            "set_crest_factor",
+            {"input_port": 1, "crest_db": 8.0},
+            "INPut:CRESt:SET 1,8.0",
+            "INPut:CRESt:GET? 1",
+            "8.0",
+        ),
+    ],
+)
+def test_f64_receipt_projects_existing_authoritative_parameter_readback(
+    operation, requested, command, readback_query, readback
+):
+    from app.core.logging_config import current_execution_id
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="v1.0",
+        captured_from_live_connection=True,
+    )
+
+    def exchange(exchange_id, sequence, text, *, kind, result_type, response=None):
+        return ScpiExchangeRef(
+            exchange_id=exchange_id,
+            instrument_id="ce-live",
+            operation=kind,
+            command=text,
+            execution_id="execution-1",
+            capture_id="capture-1",
+            sequence=sequence,
+            result_type=result_type,
+            response=response,
+        )
+
+    exchanges = (
+        exchange(
+            "preclear", 0, "SYST:ERR?", kind="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange("write", 1, command, kind="command", result_type="ok"),
+        *(
+            (
+                exchange(
+                    "opc", 2, "*OPC?", kind="query",
+                    result_type="response", response="1",
+                ),
+            )
+            if operation == "load_channel"
+            else ()
+        ),
+        exchange(
+            "error", 3 if operation == "load_channel" else 2,
+            "SYST:ERR?", kind="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange(
+            "readback", 4 if operation == "load_channel" else 3,
+            readback_query, kind="query",
+            result_type="response", response=readback,
+        ),
+        *(
+            (
+                exchange(
+                    "state", 5, "DIAGnostic:SIMUlation:STATE?", kind="query",
+                    result_type="response", response="STOPPED",
+                ),
+            )
+            if operation == "load_channel"
+            else ()
+        ),
+    )
+    token = current_execution_id.set("execution-1")
+    try:
+        projected = driver.project_channel_operation_evidence(
+            operation=operation,
+            requested=requested,
+            operation_succeeded=True,
+            exchanges=exchanges,
+            execution_mode="real",
+        )
+    finally:
+        current_execution_id.reset(token)
+
+    confirmed = [field for field in projected["fields"] if field["status"] == "confirmed"]
+    assert confirmed
+    assert confirmed[0]["provenance"] == "authoritative_readback"
+    assert confirmed[0]["exchange_ids"] == (
+        ["preclear", "write", "opc", "error", "readback", "state"]
+        if operation == "load_channel"
+        else ["preclear", "write", "error", "readback"]
+    )
+    assert projected["error_queue_exchange_ids"] == ["preclear", "error"]
 
 
 def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
@@ -1017,6 +1140,132 @@ def test_p2_66_accepts_only_a_complete_real_v2_receipt_chain():
         execution_id=execution.id,
         pipeline_status=execution.status,
     ) == (None, None)
+
+
+def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, terminal, _receipts = _v2_terminal_projection_fixture()
+    failed = deepcopy(terminal)
+    failed.update(
+        session_id="session-failed-before-acquire",
+        operation_succeeded=False,
+        terminal_state="failed",
+        error_type="InstrumentTestLeaseError",
+        safe_idle_confirmed=False,
+        transport_released_confirmed=False,
+        operation_receipt_count=0,
+        operation_receipts_digest=canonical_payload_digest(
+            {"schema_version": 1, "receipt_digests": []}
+        ),
+        operation_receipt_ids=(),
+        safe_idle_receipt_id=None,
+        transport_release_receipt_id=None,
+    )
+    _redigest(failed)
+    execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY] = [failed, terminal]
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("operation", "requested", "field", "formal_error"),
+    [
+        (
+            "set_input_measurement_mode",
+            "BURST",
+            "mode",
+            False,
+        ),
+        (
+            "set_output_gain",
+            -3.0,
+            "gain_db",
+            True,
+        ),
+        (
+            "set_output_level_dbm",
+            -52.0,
+            "level_dbm",
+            True,
+        ),
+        (
+            "load_channel",
+            "native_model",
+            "load_mode",
+            False,
+        ),
+    ],
+)
+def test_p2_66_only_requires_confirmation_for_formal_effect_fields(
+    operation, requested, field, formal_error
+):
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_receipt_chain_digest,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, terminal, receipts = _v2_terminal_projection_fixture()
+    configure = deepcopy(receipts[0])
+    configure.update(
+        receipt_id="receipt-configure",
+        sequence=0,
+        phase="configure",
+        operation=operation,
+        invocation_id="invocation-configure",
+        fields=[
+            {
+                "field": field,
+                "requested": requested,
+                "applied": None,
+                "applied_present": False,
+                "status": "unknown",
+                "provenance": "command_error_queue",
+                "exchange_ids": [],
+                "source_reference": None,
+            }
+        ],
+        exchange_ids=["exchange-configure-error"],
+        error_queue_exchange_ids=["exchange-configure-error"],
+    )
+    _redigest(configure)
+    receipts[0]["sequence"] = 1
+    _redigest(receipts[0])
+    receipts[1]["sequence"] = 2
+    _redigest(receipts[1])
+    receipts[:] = [configure, *receipts]
+    terminal["operation_receipt_count"] = len(receipts)
+    terminal["operation_receipt_ids"] = tuple(
+        receipt["receipt_id"] for receipt in receipts
+    )
+    terminal["operation_receipts_digest"] = (
+        channel_emulator_operation_receipt_chain_digest(receipts)
+    )
+    _redigest(terminal)
+    execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY] = receipts
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    if formal_error:
+        assert classification == "invalid"
+        assert reason and "unconfirmed" in reason
+    else:
+        assert (classification, reason) == (None, None)
 
 
 @pytest.mark.parametrize("mutation", ["receipt_attempt", "current_attempt"])

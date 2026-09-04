@@ -170,7 +170,16 @@ class InputLevelController:
 
             # D: AUTOSET 仅 active_inputs (子集 — 避免 INP:LEV:AUTOSET 0 对未连接输入
             #    触发 no-signal 错误, Codex on PR #96)。fail-loud: device error → False。
-            if not await self._ce.autoset_inputs(self._inputs, self._autoset_t):
+            if not await self._invoke_channel_operation(
+                operation="autoset_inputs",
+                requested={
+                    "input_ports": list(self._inputs),
+                    "measurement_time_s": self._autoset_t,
+                },
+                invoke=lambda: self._ce.autoset_inputs(
+                    self._inputs, self._autoset_t
+                ),
+            ):
                 # autoset 失败 (无信号/过强) → 调基站功率重试。
                 # heuristic: 第一轮多半是信号弱/未到 → 升; 后续可能是过强 → 降。
                 if iteration == 1:

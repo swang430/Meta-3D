@@ -42,10 +42,17 @@ def _make_driver(*, err_after_writes=None):
     drv._active_channel_numbers = [1, 2, 3, 4]
     visa = MagicMock()
     queue: list = []
+    readbacks: dict[str, str] = {}
 
     def _q(cmd, **_kw):
         if "SYST:ERR" in cmd:
             return queue.pop(0) if queue else '0,"No error"'
+        if cmd.startswith("INP:LEV:AMP:CH? "):
+            return readbacks.get(f"baseband:{cmd.split('?', 1)[1].strip()}", "0")
+        if cmd.startswith("OUTP:GAIN:CH? "):
+            return readbacks.get(f"gain:{cmd.split('?', 1)[1].strip()}", "0")
+        if cmd.startswith("INP:CRE:GET? "):
+            return readbacks.get(f"crest:{cmd.split('?', 1)[1].strip()}", "0")
         return "1"  # *OPC? 等
 
     visa.query.side_effect = _q
@@ -54,6 +61,15 @@ def _make_driver(*, err_after_writes=None):
 
     async def _w(cmd, timeout=None):
         visa.write(cmd)
+        if cmd.startswith("INP:LEV:AMP:CH "):
+            port, value = cmd.split(" ", 1)[1].split(",", 1)
+            readbacks[f"baseband:{port}"] = value
+        elif cmd.startswith("OUTP:GAIN:CH "):
+            port, value = cmd.split(" ", 1)[1].split(",", 1)
+            readbacks[f"gain:{port}"] = value
+        elif cmd.startswith("INP:CRE:SET "):
+            port, value = cmd.split(" ", 1)[1].split(",", 1)
+            readbacks[f"crest:{port}"] = value
         if err_after_writes and "SYST:ERR" not in cmd:
             queue.append(err_after_writes)
 
@@ -277,6 +293,8 @@ class TestGatedWriteTransactionAtomicity:
             def query(self, cmd):
                 calls.append(cmd)
                 time.sleep(0.002)
+                if cmd == "OUTP:GAIN:CH? 1":
+                    return "3.0"
                 return "1" if cmd == "*OPC?" else '0,"No error"'
 
         drv._visa_resource = _V()
