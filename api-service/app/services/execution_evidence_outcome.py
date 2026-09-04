@@ -617,12 +617,25 @@ def validate_frozen_mac_profile_evidence(
     return None
 
 
-def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutcome:
-    """Project frozen evidence plus current lifecycle into shared semantics."""
+def project_execution_evidence_outcome(
+    execution: Any,
+    *,
+    lifecycle_status: str | None = None,
+) -> ExecutionEvidenceOutcome:
+    """Project frozen evidence plus one authoritative lifecycle into semantics.
+
+    ``lifecycle_status`` is reserved for the REPORT executor's immutable final
+    lifecycle projection.  Every other caller continues to consume the stored
+    execution status.
+    """
 
     config = getattr(execution, "config", None)
     config = config if isinstance(config, Mapping) else {}
-    pipeline_status = str(getattr(execution, "status", "unknown"))
+    pipeline_status = str(
+        lifecycle_status
+        if lifecycle_status is not None
+        else getattr(execution, "status", "unknown")
+    )
     frozen = config.get(FREEZE_CONFIG_KEY)
     (
         qualification,
@@ -737,7 +750,11 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
     )
 
 
-def execution_evidence_blocks_formal_outputs(execution: Any) -> bool:
+def execution_evidence_blocks_formal_outputs(
+    execution: Any,
+    *,
+    lifecycle_status: str | None = None,
+) -> bool:
     """Return whether this execution must be excluded from every formal output.
 
     Legacy rows intentionally retain the pre-P1-75 provenance rules.  Explicit
@@ -745,5 +762,6 @@ def execution_evidence_blocks_formal_outputs(execution: Any) -> bool:
     """
 
     return project_execution_evidence_outcome(
-        execution
+        execution,
+        lifecycle_status=lifecycle_status,
     ).compatibility_classification in {"diagnostic", "invalid"}

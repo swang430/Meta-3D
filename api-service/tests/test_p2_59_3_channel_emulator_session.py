@@ -2070,6 +2070,58 @@ def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic(driver_source):
     assert outcome.formal_eligible is False
 
 
+def test_report_completed_projection_requires_channel_emulator_terminal_evidence():
+    """REPORT must evaluate CE evidence against the lifecycle it will publish."""
+
+    from datetime import datetime, timezone
+
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.mimo_ota.executors.report import (
+        ReportLifecycleProjection,
+        _build_mimo_ota_content_data,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    execution = _execution_with_ce_evidence(
+        binding,
+        plan,
+        _terminal_evidence(binding, plan, execution_mode="real"),
+    )
+    del execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY]
+    execution.status = "running"
+    execution.measurements = {
+        "phases": {"measure": {}, "analysis": {"verdict": "PASS"}}
+    }
+    execution.validation_pass = True
+    execution.started_at = datetime(2026, 9, 2, 0, 0, 0)
+    execution.completed_at = None
+    execution.duration_sec = None
+    completed_at = datetime(2026, 9, 2, 0, 1, 0)
+
+    content = _build_mimo_ota_content_data(
+        execution,
+        datetime(2026, 9, 2, 0, 1, 1, tzinfo=timezone.utc),
+        "missing-ce-terminal",
+        lifecycle_projection=ReportLifecycleProjection(
+            status="completed",
+            completed_at=completed_at,
+            duration_sec=60.0,
+        ),
+    )
+
+    outcome = content["execution_evidence_outcome"]
+    assert execution.status == "running"
+    assert outcome["pipeline_status"] == "completed"
+    assert outcome["compatibility_classification"] == "invalid"
+    assert outcome["formal_eligible"] is False
+    assert any("terminal evidence" in reason for reason in outcome["reasons"])
+    assert content["overall_result"] == "undetermined"
+
+
 @pytest.mark.asyncio
 async def test_measure_cleanup_does_not_repeat_scope_owned_safe_idle():
     from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
