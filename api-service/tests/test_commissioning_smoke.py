@@ -359,6 +359,9 @@ class TestFivePhaseCommissioningSmoke:
         from app.services.channel_emulator_execution_plan import (
             freeze_execution_channel_emulator_plan,
         )
+        from app.services.channel_emulator_certification import (
+            freeze_channel_emulator_execution_qualification,
+        )
         from app.services.instrument_hal_service import get_hal_service
 
         config_overrides = {
@@ -428,6 +431,12 @@ class TestFivePhaseCommissioningSmoke:
         # P2-59 ①：真实端点 POST /sessions 经 _freeze_instrument_lease 在 binding 之后同刻冻执行计划；
         # 本 helper 绕过端点自己复刻冻结，须同步。
         freeze_execution_channel_emulator_plan(db, get_hal_service(), execution)
+        freeze_channel_emulator_execution_qualification(
+            db,
+            get_hal_service(),
+            execution,
+            test_case,
+        )
         db.commit()
         db.refresh(execution)
         return str(execution.id)

@@ -60,6 +60,7 @@ from app.services.channel_emulator_certification import (
     ChannelEmulatorSiteCertification,
     activate_channel_emulator_site_certification,
     build_channel_emulator_certification_preview,
+    resolve_channel_emulator_certification_preview_scope,
     revoke_channel_emulator_site_certification,
 )
 from app.hal.channel_emulator_manifest import channel_emulator_implements
@@ -4176,6 +4177,28 @@ def get_hal_readiness(
         ce_connection = db.query(InstrumentConnectionDB).filter(
             InstrumentConnectionDB.id == UUID(ce_preview.instrument_connection_id)
         ).one_or_none()
+        ce_current_scope = None
+        if test_case_id is not None:
+            from app.models.test_plan import TestCase
+
+            ce_test_case = (
+                db.query(TestCase).filter(TestCase.id == test_case_id).one_or_none()
+            )
+            if ce_test_case is not None:
+                try:
+                    ce_current_scope = (
+                        resolve_channel_emulator_certification_preview_scope(
+                            db,
+                            hal,
+                            ce_test_case,
+                            ce_preview,
+                        )
+                    )
+                except (TypeError, ValueError, ValidationError):
+                    # Readiness is a projection, not an execution entrance.
+                    # Missing/invalid current scope remains diagnostic below;
+                    # it must never reuse the old certification as green.
+                    ce_current_scope = None
         ce_certification_preview = build_channel_emulator_certification_preview(
             ce_preview,
             (
@@ -4183,6 +4206,7 @@ def get_hal_readiness(
                 if ce_connection is not None
                 else None
             ),
+            current_scope=ce_current_scope,
         )
 
     if report is None:

@@ -304,6 +304,21 @@ def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
         if isinstance(base_station_freeze, Mapping)
         else None
     )
+    return build_channel_emulator_load_request(
+        configuration,
+        configuration_payload=configuration_payload,
+        frozen_asset=frozen_asset,
+    )
+
+
+def build_channel_emulator_load_request(
+    configuration: Any,
+    *,
+    configuration_payload: Mapping[str, Any],
+    frozen_asset: Any,
+) -> dict[str, Any]:
+    """Pure shared projection used by execution freeze and readiness preview."""
+
     if configuration.channel_asset_id is None:
         if frozen_asset is not None:
             raise ValueError(

@@ -381,9 +381,31 @@ class ChannelEmulatorCertificationPreview(BaseModel):
     detail: str
 
 
+class ChannelEmulatorCertificationPreviewScope(BaseModel):
+    """Current server-resolved plan/asset/identity scope used by readiness."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    plan_digest: str
+    asset_digest: str
+    load_mode: Literal["native_model", "external_waveform", "parametric_tdl"]
+    identity_digest: str
+
+    @field_validator("plan_digest", "asset_digest", "identity_digest")
+    @classmethod
+    def _valid_scope_digest(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _DIGEST_RE.fullmatch(normalized):
+            raise ValueError("channelEmulator certification preview digest is invalid")
+        return normalized
+
+
 def build_channel_emulator_certification_preview(
     binding_preview: Any | None,
     raw_certification: Any,
+    *,
+    current_scope: ChannelEmulatorCertificationPreviewScope | None = None,
 ) -> ChannelEmulatorCertificationPreview:
     """Project current server truth without consulting a transport or client state."""
 
@@ -480,6 +502,36 @@ def build_channel_emulator_certification_preview(
             reasons=("site_certification_scope_mismatch",),
             detail="现场认证与当前 binding 不一致，正式 KPI 保持 UNKNOWN/N/A",
         )
+    if current_scope is None:
+        return ChannelEmulatorCertificationPreview(
+            status="diagnostic",
+            **common,
+            site_certification=certification,
+            site_certification_digest=certification.certification_digest,
+            reasons=("certification_scope_not_evaluated",),
+            detail="尚未解析当前 TestCase 的计划、资产与硬件身份，正式 KPI 保持 UNKNOWN/N/A",
+        )
+    expected_execution_scope = (
+        certification.plan_digest,
+        certification.asset_digest,
+        certification.load_mode,
+        certification.identity_digest,
+    )
+    current_execution_scope = (
+        current_scope.plan_digest,
+        current_scope.asset_digest,
+        current_scope.load_mode,
+        current_scope.identity_digest,
+    )
+    if current_execution_scope != expected_execution_scope:
+        return ChannelEmulatorCertificationPreview(
+            status="diagnostic",
+            **common,
+            site_certification=certification,
+            site_certification_digest=certification.certification_digest,
+            reasons=("site_certification_scope_mismatch",),
+            detail="现场认证与当前计划、资产或硬件身份不一致，正式 KPI 保持 UNKNOWN/N/A",
+        )
     return ChannelEmulatorCertificationPreview(
         status="formal_ready",
         **common,
@@ -487,6 +539,100 @@ def build_channel_emulator_certification_preview(
         site_certification_digest=certification.certification_digest,
         reasons=(),
         detail="当前信道仿真器 binding 已匹配服务器现场认证",
+    )
+
+
+def resolve_channel_emulator_certification_preview_scope(
+    db,
+    hal,
+    test_case,
+    binding_preview: Any,
+) -> ChannelEmulatorCertificationPreviewScope:
+    """Resolve the saved TestCase's exact current plan/asset/live-identity scope.
+
+    This is a read-only preview of the same inputs frozen at execution launch.
+    It never consults client claims and the driver identity projector performs
+    no transport I/O.
+    """
+
+    from app.hal.base_station_compatibility import canonical_payload_digest
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import (
+        canonicalize_mimo_ota_configuration_payload,
+    )
+    from app.services.channel_emulator_execution_plan import (
+        build_channel_emulator_load_request,
+        channel_emulator_for_execution_plan,
+        freeze_channel_asset_resolution,
+        resolve_live_channel_emulator_execution_plan,
+        validate_frozen_channel_emulator_load_request,
+    )
+
+    if getattr(binding_preview, "status", None) != "configured":
+        raise ValueError("channelEmulator binding is not configured")
+    if getattr(binding_preview, "execution_mode", None) != "real":
+        raise ValueError("channelEmulator binding is not real")
+    if getattr(test_case, "test_type", None) != "MIMO_OTA":
+        raise ValueError("channelEmulator certification preview requires MIMO_OTA TestCase")
+    if str(getattr(test_case, "lab_profile_id", "")) != str(
+        getattr(binding_preview, "lab_profile_id", "")
+    ):
+        raise ValueError("TestCase LabProfile does not match channelEmulator binding")
+    raw_configuration = getattr(test_case, "configuration", None)
+    if not isinstance(raw_configuration, dict):
+        raise ValueError("TestCase MIMO configuration is missing")
+    frozen_configuration = canonicalize_mimo_ota_configuration_payload(
+        dict(raw_configuration)
+    )
+    configuration = MIMOOTAConfiguration.model_validate(frozen_configuration)
+    frozen_asset = freeze_channel_asset_resolution(db, configuration)
+    load_request = build_channel_emulator_load_request(
+        configuration,
+        configuration_payload=frozen_configuration,
+        frozen_asset=frozen_asset,
+    )
+    binding_digest = getattr(binding_preview, "binding_digest", None)
+    if not isinstance(binding_digest, str) or not binding_digest:
+        raise ValueError("channelEmulator binding digest is missing")
+    plan = resolve_live_channel_emulator_execution_plan(
+        hal,
+        engine_mode=load_request["effective_engine_mode"],
+        binding_digest=binding_digest,
+    )
+    if not plan.load_mode_planned:
+        raise ValueError("channelEmulator current load mode is not planned")
+    request_payload = {
+        "schema_version": 1,
+        **load_request,
+        "plan_digest": plan.digest,
+    }
+    frozen_request = validate_frozen_channel_emulator_load_request(
+        {
+            **request_payload,
+            "digest": canonical_payload_digest(request_payload),
+        }
+    )
+    driver, _source = channel_emulator_for_execution_plan(hal)
+    projector = getattr(driver, "capture_channel_emulator_certification_identity", None)
+    if not callable(projector):
+        raise ValueError("channelEmulator live identity projector is unavailable")
+    identity = projector()
+    if not isinstance(identity, ChannelEmulatorCertificationIdentity):
+        identity = ChannelEmulatorCertificationIdentity.model_validate(identity)
+    if not identity.certification_eligible:
+        raise ValueError("channelEmulator live identity/options are incomplete")
+    if identity.adapter_id != getattr(binding_preview, "adapter_id", None):
+        raise ValueError("channelEmulator live identity adapter does not match binding")
+    return ChannelEmulatorCertificationPreviewScope(
+        schema_version=1,
+        plan_digest=plan.digest,
+        asset_digest=(
+            frozen_asset["digest"]
+            if frozen_asset is not None
+            else frozen_request["digest"]
+        ),
+        load_mode=plan.requested_load_mode,
+        identity_digest=identity.digest,
     )
 
 
@@ -517,6 +663,7 @@ def validate_frozen_channel_emulator_execution_qualification(raw: Any) -> str | 
 
 def freeze_channel_emulator_execution_qualification(
     db,
+    hal,
     execution,
     test_case,
 ) -> ChannelEmulatorExecutionQualification:
@@ -534,6 +681,7 @@ def freeze_channel_emulator_execution_qualification(
         CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
         CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
         CE_PLAN_FREEZE_CONFIG_KEY,
+        channel_emulator_for_execution_plan,
         validate_frozen_channel_emulator_execution_plan,
         validate_frozen_channel_emulator_load_context,
     )
@@ -644,6 +792,36 @@ def freeze_channel_emulator_execution_qualification(
         }
         if any(getattr(certification, key) != value for key, value in expected.items()):
             reasons.append("site_certification_scope_mismatch")
+        elif (
+            binding.get("execution_mode") == "real"
+            and resolved.get("status") == "configured"
+        ):
+            driver, _source = channel_emulator_for_execution_plan(hal)
+            projector = getattr(
+                driver,
+                "capture_channel_emulator_certification_identity",
+                None,
+            )
+            try:
+                current_identity = projector() if callable(projector) else None
+                if current_identity is not None and not isinstance(
+                    current_identity,
+                    ChannelEmulatorCertificationIdentity,
+                ):
+                    current_identity = (
+                        ChannelEmulatorCertificationIdentity.model_validate(
+                            current_identity
+                        )
+                    )
+            except (TypeError, ValueError, ValidationError):
+                current_identity = None
+            if (
+                current_identity is None
+                or not current_identity.certification_eligible
+                or current_identity.adapter_id != plan["adapter_id"]
+                or current_identity.digest != certification.identity_digest
+            ):
+                reasons.append("site_certification_identity_mismatch")
     payload: dict[str, Any] = {
         "schema_version": 1,
         "classification": "diagnostic" if reasons else "formal",

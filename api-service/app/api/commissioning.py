@@ -1728,7 +1728,7 @@ def _freeze_instrument_lease(
     freeze_execution_channel_emulator_binding(db, hal, execution, test_case)
     # P2-59 ①：执行计划紧跟 binding 冻结，同一条 ValueError 路径转 422 / 409。
     freeze_execution_channel_emulator_plan(db, hal, execution)
-    freeze_channel_emulator_execution_qualification(db, execution, test_case)
+    freeze_channel_emulator_execution_qualification(db, hal, execution, test_case)
     validate_base_station = build_frozen_base_station_validator(
         frozen_base_station
     )

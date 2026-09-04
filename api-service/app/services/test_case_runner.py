@@ -318,6 +318,7 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     try:
         freeze_channel_emulator_execution_qualification(
             db,
+            get_hal_service(),
             execution,
             snapshot,
         )

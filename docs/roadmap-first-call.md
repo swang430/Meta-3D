@@ -47,7 +47,7 @@ Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR 
 adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
 并在 Mock UXM 接受 LTE TestCase 的复盘后批准插入执行兼容性硬门；顺序为
 **~~P1-74~~（✅ 非现场半 #429，现场半待真机） → ~~P1-75~~（✅ #431） → ~~P2-64~~（✅ #433） → ~~P2-65~~（✅ #434） → ~~P2-66~~（✅ #435） → ~~P2-67~~（✅ #436） → ~~P2-54~~（✅ #437） → ~~P2-55~~（✅ 非现场半 #440，真机抽样待现场） → ~~P2-56~~（✅ ① #444 / ✅ ② #446，③ 现场半待真机） →
-~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ P2-59 → P2-60 → P2-61 → P2-62 → P2-63（HOLD）**。
+~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ ~~P2-59~~（✅ ① #454 / ✅ ② #456）→ ~~P2-60~~（✅ #457）→ P2-61（🔄 当前 WIP）→ P2-62 → P2-63（HOLD）**。
 2026-08-31 用户批准把 P2-64～P2-67 整组前移到 P1-75 之后。理由有二：这四片是同一次 Mock 复盘的
 直接派生，旧顺序下它们前面压着 P2-54～P2-56、P2-57～P2-62 与 P2-63 共十片，轮到时本次复盘的
 上下文早已冷却；其中 P2-67 要解决的取证混淆（两份附件字节级相同、公共 release 日志硬编码
@@ -4770,7 +4770,7 @@ plan digest 与 provenance。每个写操作的拒绝、超时、取消和安全
 
 **地点/依赖**：纯非现场平台片；依赖 P2-59。
 
-### P2-61 — Channel Emulator Diagnostic/Formal certification（批准入雷达，未启动）
+### P2-61 — Channel Emulator Diagnostic/Formal certification（🔄 当前 WIP）
 
 **可观察故障**：当前 F64 的本地测试、诊断序列、现场成功与正式报告资格之间没有 Channel Emulator
 专用的统一晋级记录；未来型号可能“驱动能跑”即被误当成“本站点可发布正式 KPI”。
@@ -4781,6 +4781,12 @@ binding/plan/asset、identity/options、逐操作 receipt、频率/level/path-lo
 证据派生，可撤销且变化只影响后续执行。不得让客户端、env、旧布尔或 Mock 授权。
 
 **地点/依赖**：非现场产品化 + 各型号现场认证；依赖 P2-60。
+
+**当前进展（2026-09-05）**：非现场平台实现已完成并进入完整验证。服务器从同一真实 completed
+execution 的冻结 binding/plan/asset、硬件身份/选件、逐操作 receipt、频率/level/path-loss、SAFE_IDLE
+与 release 证据派生可撤销 certification；后续执行冻结独立 CE qualification，并由 P2-66 共同 outcome
+统一阻断 diagnostic/simulated/unknown。设备抽屉、Dashboard、TestCase readiness 与 OpenAPI/TS 镜像只读
+服务器投影；未执行现场认证，F64/FS16 仍须按真实现场证据取得 active certification 后才可能 Formal。
 
 ### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（批准入雷达，未启动）
 

@@ -31,11 +31,14 @@ from app.services.channel_emulator_certification import (
     ChannelEmulatorCertificationProofs,
     ChannelEmulatorExecutionQualification,
     ChannelEmulatorCertificationPreview,
+    ChannelEmulatorCertificationPreviewScope,
     ChannelEmulatorSiteCertification,
     activate_channel_emulator_site_certification,
+    build_channel_emulator_certification_identity,
     derive_channel_emulator_site_certification_from_execution,
     freeze_channel_emulator_execution_qualification,
     build_channel_emulator_certification_preview,
+    resolve_channel_emulator_certification_preview_scope,
     revoke_channel_emulator_site_certification,
     validate_frozen_channel_emulator_execution_qualification,
 )
@@ -505,11 +508,45 @@ def _qualification_fixture(*, certification_status="active"):
     return db, execution, case, certification
 
 
+def _qualification_hal(*, firmware_version="9.8.7"):
+    identity = build_channel_emulator_certification_identity(
+        instrument_id="ce-runtime",
+        adapter_id="propsim_f64",
+        model="PROPSIM F64",
+        firmware_version=firmware_version,
+        serial_number="SN-F64",
+        options=("F64-OPT",),
+        options_observed=True,
+        simulated=False,
+        captured_from_live_connection=True,
+    )
+    driver = SimpleNamespace(
+        capture_channel_emulator_certification_identity=MagicMock(
+            return_value=identity
+        )
+    )
+    return SimpleNamespace(drivers={"channelEmulator": driver})
+
+
+def test_hardware_identity_drift_is_diagnostic_before_first_io():
+    db, execution, case, _certification = _qualification_fixture()
+
+    frozen = freeze_channel_emulator_execution_qualification(
+        db,
+        _qualification_hal(firmware_version="changed-after-certification"),
+        execution,
+        case,
+    )
+
+    assert frozen.classification == "diagnostic"
+    assert frozen.reasons == ("site_certification_identity_mismatch",)
+
+
 def test_active_exact_scope_certification_freezes_formal_qualification_once():
     db, execution, case, certification = _qualification_fixture()
 
     frozen = freeze_channel_emulator_execution_qualification(
-        db, execution, case
+        db, _qualification_hal(), execution, case
     )
 
     assert isinstance(frozen, ChannelEmulatorExecutionQualification)
@@ -529,7 +566,9 @@ def test_active_exact_scope_certification_freezes_formal_qualification_once():
 
     execution.config["channel_emulator_binding_freeze"]["binding_digest"] = "0" * 64
     assert (
-        freeze_channel_emulator_execution_qualification(db, execution, case)
+        freeze_channel_emulator_execution_qualification(
+            db, _qualification_hal(), execution, case
+        )
         == frozen
     )
     db.flush.assert_called_once_with()
@@ -546,7 +585,7 @@ def test_missing_or_revoked_certification_freezes_diagnostic(
         db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value.channel_emulator_site_certification = None
 
     frozen = freeze_channel_emulator_execution_qualification(
-        db, execution, case
+        db, _qualification_hal(), execution, case
     )
 
     assert frozen.classification == "diagnostic"
@@ -559,20 +598,24 @@ def test_ce_qualification_rejects_partial_tampered_or_late_backfill():
         "schema_version": 1
     }
     with pytest.raises(ValueError, match="qualification"):
-        freeze_channel_emulator_execution_qualification(db, execution, case)
+        freeze_channel_emulator_execution_qualification(
+            db, _qualification_hal(), execution, case
+        )
     db.flush.assert_not_called()
 
     execution.config.pop(CE_EXECUTION_QUALIFICATION_CONFIG_KEY)
     execution.measurements = {"phases": {"precheck": {"status": "passed"}}}
     with pytest.raises(ValueError, match="progress"):
-        freeze_channel_emulator_execution_qualification(db, execution, case)
+        freeze_channel_emulator_execution_qualification(
+            db, _qualification_hal(), execution, case
+        )
     db.flush.assert_not_called()
 
 
 def test_ce_qualification_is_immutable_after_current_certification_changes():
     db, execution, case, certification = _qualification_fixture()
     frozen = freeze_channel_emulator_execution_qualification(
-        db, execution, case
+        db, _qualification_hal(), execution, case
     )
     connection = db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value
     connection.channel_emulator_site_certification = (
@@ -589,7 +632,9 @@ def test_ce_qualification_is_immutable_after_current_certification_changes():
     )
 
     assert (
-        freeze_channel_emulator_execution_qualification(db, execution, case)
+        freeze_channel_emulator_execution_qualification(
+            db, _qualification_hal(), execution, case
+        )
         == frozen
     )
     assert frozen.classification == "formal"
@@ -603,7 +648,7 @@ def test_bs_diagnostic_freeze_forces_ce_qualification_diagnostic():
     execution.config["execution_qualification"] = _qualification("diagnostic")
 
     frozen = freeze_channel_emulator_execution_qualification(
-        db, execution, case
+        db, _qualification_hal(), execution, case
     )
 
     assert frozen.classification == "diagnostic"
@@ -623,7 +668,9 @@ def test_ce_qualification_rejects_missing_or_malformed_bs_qualification(
         execution.config["execution_qualification"] = raw_qualification
 
     with pytest.raises(ValueError, match="baseStation.*qualification"):
-        freeze_channel_emulator_execution_qualification(db, execution, case)
+        freeze_channel_emulator_execution_qualification(
+            db, _qualification_hal(), execution, case
+        )
 
     db.flush.assert_not_called()
 
@@ -636,7 +683,9 @@ def test_p2_66_outcome_blocks_diagnostic_channel_emulator_qualification():
     db, execution, case, _certification = _qualification_fixture()
     connection = db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value
     connection.channel_emulator_site_certification = None
-    freeze_channel_emulator_execution_qualification(db, execution, case)
+    freeze_channel_emulator_execution_qualification(
+        db, _qualification_hal(), execution, case
+    )
     source = _certification_execution_fixture()
     execution.id = source.id
     execution.status = "completed"
@@ -679,7 +728,9 @@ def test_p2_66_outcome_rejects_terminal_identity_drift_from_frozen_certification
     )
 
     db, execution, case, _certification = _qualification_fixture()
-    freeze_channel_emulator_execution_qualification(db, execution, case)
+    freeze_channel_emulator_execution_qualification(
+        db, _qualification_hal(), execution, case
+    )
     source = _certification_execution_fixture()
     execution.id = source.id
     execution.status = "completed"
@@ -801,7 +852,9 @@ def _formal_ce_outcome_fixture():
     db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value = (
         connection
     )
-    freeze_channel_emulator_execution_qualification(db, execution, case)
+    freeze_channel_emulator_execution_qualification(
+        db, _qualification_hal(), execution, case
+    )
     return execution
 
 
@@ -1199,6 +1252,18 @@ def _binding_preview_for_certification(**updates):
     return SimpleNamespace(**payload)
 
 
+def _certification_preview_scope(**updates):
+    payload = {
+        "schema_version": 1,
+        "plan_digest": "b" * 64,
+        "asset_digest": "c" * 64,
+        "load_mode": "native_model",
+        "identity_digest": "d" * 64,
+    }
+    payload.update(updates)
+    return ChannelEmulatorCertificationPreviewScope.model_validate(payload)
+
+
 def test_server_certification_preview_never_promotes_mock_or_scope_drift():
     certification = ChannelEmulatorSiteCertification.model_validate(
         _certification_payload()
@@ -1206,10 +1271,32 @@ def test_server_certification_preview_never_promotes_mock_or_scope_drift():
     formal = build_channel_emulator_certification_preview(
         _binding_preview_for_certification(),
         certification.model_dump(mode="json"),
+        current_scope=_certification_preview_scope(),
     )
     assert isinstance(formal, ChannelEmulatorCertificationPreview)
     assert formal.status == "formal_ready"
     assert formal.reasons == ()
+
+    unevaluated = build_channel_emulator_certification_preview(
+        _binding_preview_for_certification(),
+        certification.model_dump(mode="json"),
+    )
+    assert unevaluated.status == "diagnostic"
+    assert unevaluated.reasons == ("certification_scope_not_evaluated",)
+
+    for field, value in (
+        ("plan_digest", "8" * 64),
+        ("asset_digest", "7" * 64),
+        ("load_mode", "external_waveform"),
+        ("identity_digest", "6" * 64),
+    ):
+        drift = build_channel_emulator_certification_preview(
+            _binding_preview_for_certification(),
+            certification.model_dump(mode="json"),
+            current_scope=_certification_preview_scope(**{field: value}),
+        )
+        assert drift.status == "diagnostic"
+        assert drift.reasons == ("site_certification_scope_mismatch",)
 
     missing = build_channel_emulator_certification_preview(
         _binding_preview_for_certification(),
@@ -1240,6 +1327,61 @@ def test_server_certification_preview_never_promotes_mock_or_scope_drift():
     )
     assert mismatch.status == "diagnostic"
     assert "site_certification_scope_mismatch" in mismatch.reasons
+
+
+def test_readiness_scope_reuses_execution_plan_asset_and_live_identity_truth():
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+
+    execution = _certification_execution_fixture()
+    certification = _derive_certification(execution)
+    frozen_binding = execution.config["channel_emulator_binding_freeze"]
+    driver = RealPropsimF64Driver(
+        "ce-runtime", {"ip_address": "192.0.2.59", "port": 3334}
+    )
+    driver._visa_resource = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
+    driver._installed_options = ["F64-OPT"]
+    driver._certification_options_observed = True
+    driver.product_family = "PROPSIM F64"
+    test_case = SimpleNamespace(
+        test_type="MIMO_OTA",
+        lab_profile_id=frozen_binding["lab_profile_id"],
+        configuration=execution.config[FREEZE_CONFIG_KEY][
+            MIMO_OTA_CONFIGURATION_FREEZE_KEY
+        ],
+    )
+    binding_preview = _binding_preview_for_certification(
+        binding_digest=frozen_binding["binding_digest"],
+        adapter_id=certification.adapter_id,
+        instrument_model_id=certification.instrument_model_id,
+        instrument_connection_id=certification.instrument_connection_id,
+        lab_profile_id=certification.lab_profile_id,
+    )
+
+    scope = resolve_channel_emulator_certification_preview_scope(
+        MagicMock(),
+        SimpleNamespace(drivers={"channelEmulator": driver}),
+        test_case,
+        binding_preview,
+    )
+
+    assert scope.plan_digest == certification.plan_digest
+    assert scope.load_mode == certification.load_mode
+    assert scope.identity_digest == certification.identity_digest
+    assert len(scope.asset_digest) == 64
+    current_certification = ChannelEmulatorSiteCertification.model_validate(
+        certification.model_copy(update={"asset_digest": scope.asset_digest})
+    )
+    preview = build_channel_emulator_certification_preview(
+        binding_preview,
+        current_certification.model_dump(mode="json"),
+        current_scope=scope,
+    )
+    assert preview.status == "formal_ready"
 
 
 def test_channel_emulator_certification_api_is_dedicated_and_maps_errors(
