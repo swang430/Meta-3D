@@ -984,8 +984,18 @@ def derive_channel_emulator_site_certification_from_execution(
     qualification_alignment_error = (
         _channel_emulator_qualification_alignment_error(config, qualification)
     )
+    commissioning_bootstrap = (
+        qualification_classification == "diagnostic"
+        and qualification is not None
+        and qualification.policy_mode == "formal"
+        and not qualification.diagnostic_reasons
+        and qualification.reasons == ("site_certification_not_active",)
+    )
     if (
-        qualification_classification not in {"formal", "diagnostic"}
+        (
+            qualification_classification != "formal"
+            and not commissioning_bootstrap
+        )
         or qualification_alignment_error is not None
     ):
         qualification_detail = qualification_alignment_error or "; ".join(

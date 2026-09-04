@@ -435,14 +435,14 @@ def _certification_execution_fixture():
 
     from app.services.execution_qualification import EXECUTION_QUALIFICATION_KEY
 
-    base_station_qualification = _qualification("diagnostic")
+    base_station_qualification = _qualification("formal")
     execution.config[EXECUTION_QUALIFICATION_KEY] = base_station_qualification
     qualification_payload = {
         "schema_version": 1,
         "classification": "diagnostic",
-        "policy_mode": "diagnostic",
+        "policy_mode": "formal",
         "diagnostic_actor": None,
-        "diagnostic_reasons": list(base_station_qualification["reasons"]),
+        "diagnostic_reasons": [],
         "base_station_qualification_digest": base_station_qualification[
             "qualification_digest"
         ],
@@ -506,6 +506,41 @@ def test_activation_derivation_requires_valid_aligned_execution_qualification(
                 if key != "qualification_digest"
             }
         )
+
+    with pytest.raises(ValueError, match="qualification"):
+        _derive_certification(execution)
+
+
+def test_activation_derivation_rejects_explicit_diagnostic_execution_policy():
+    from tests.test_p2_66_execution_evidence_outcome import _qualification
+
+    from app.services.execution_qualification import EXECUTION_QUALIFICATION_KEY
+
+    execution = _certification_execution_fixture()
+    base_station_qualification = _qualification("diagnostic")
+    execution.config[EXECUTION_QUALIFICATION_KEY] = base_station_qualification
+    qualification = execution.config[CE_EXECUTION_QUALIFICATION_CONFIG_KEY]
+    qualification.update(
+        {
+            "policy_mode": "diagnostic",
+            "diagnostic_actor": None,
+            "diagnostic_reasons": list(base_station_qualification["reasons"]),
+            "base_station_qualification_digest": base_station_qualification[
+                "qualification_digest"
+            ],
+            "reasons": [
+                "execution_policy_diagnostic",
+                "site_certification_not_active",
+            ],
+        }
+    )
+    qualification["qualification_digest"] = canonical_payload_digest(
+        {
+            key: value
+            for key, value in qualification.items()
+            if key != "qualification_digest"
+        }
+    )
 
     with pytest.raises(ValueError, match="qualification"):
         _derive_certification(execution)
