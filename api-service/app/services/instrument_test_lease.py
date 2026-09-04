@@ -41,6 +41,9 @@ class InstrumentTestLeaseOutcome:
     base_station_remote: BaseStationRemoteSessionResult | None = None
     base_station_release: BaseStationControlReleaseResult | None = None
     base_station_instrument_id: str | None = None
+    channel_emulator_remote_acquired_confirmed: bool | None = None
+    channel_emulator_transport_released_confirmed: bool | None = None
+    channel_emulator_instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -245,12 +248,19 @@ class InstrumentTestLease:
                 )
             outcome.base_station_instrument_id = instrument_id
             return
+        outcome.channel_emulator_remote_acquired_confirmed = acquired is True
         if acquired is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()
             raise InstrumentTestLeaseError(
                 f"测试 {purpose!r} 无法取得 {instrument} Remote 控制"
                 + (f": {detail}" if detail else "")
             )
+        instrument_id = getattr(driver, "instrument_id", None)
+        outcome.channel_emulator_instrument_id = (
+            instrument_id
+            if isinstance(instrument_id, str) and instrument_id
+            else None
+        )
 
     async def _release_local(
         self,
@@ -304,12 +314,16 @@ class InstrumentTestLease:
                     f"测试 {purpose!r} 结束后未能确认 UXM 控制会话释放（transport）"
                 )
             return
+        if outcome is not None:
+            outcome.channel_emulator_transport_released_confirmed = False
         if await driver.release_to_local_control() is not True:
             detail = getattr(driver, "get_last_error", lambda: None)()
             raise InstrumentTestLeaseReleaseError(
                 f"测试 {purpose!r} 结束后未能确认 {instrument} 控制会话释放"
                 + (f": {detail}" if detail else "")
             )
+        if outcome is not None:
+            outcome.channel_emulator_transport_released_confirmed = True
 
     async def _settle_local_controls(
         self,

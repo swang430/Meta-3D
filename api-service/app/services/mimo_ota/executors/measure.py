@@ -1686,17 +1686,9 @@ class MeasureExecutor(IStepExecutor):
             # 允许第一次 attach，任何失败都直接返回。
             ce_client = ChannelEngineClient(context.db)
             if emulator is None:
-                from app.hal.channel_emulator import MockChannelEmulator
-
-                logger.warning(
-                    "[%s] No channelEmulator in HAL — falling back to MockChannelEmulator",
-                    context.test_execution.id,
+                raise RuntimeError(
+                    "channelEmulator execution scope did not provide the frozen driver"
                 )
-                emulator = MockChannelEmulator(
-                    instrument_id="mock_ce_mimo_ota",
-                    config={"model": "Mock"},
-                )
-                await emulator.connect()
 
             # --- Phase 2c: resolve TestCase-driven switch mode for this chamber ---
             # P2-11 Phase 3: mode_id 由 TestCase.switch_mode_id 驱动 (chamber active

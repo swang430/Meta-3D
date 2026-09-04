@@ -36,6 +36,17 @@ from app.services.base_station_adapter_profile import (
     MIMO_OTA_CONFIGURATION_FREEZE_KEY,
     frozen_mac_profile_from_adapter_freeze,
 )
+from app.services.channel_emulator_binding import (
+    CE_FREEZE_CONFIG_KEY,
+    validate_frozen_channel_emulator_binding,
+)
+from app.services.channel_emulator_execution_plan import (
+    CE_PLAN_FREEZE_CONFIG_KEY,
+    validate_frozen_channel_emulator_execution_plan,
+)
+from app.services.channel_emulator_execution_session import (
+    CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+)
 
 
 CompatibilityClassification = Literal[
@@ -87,6 +98,77 @@ class ExecutionEvidenceOutcome(BaseModel):
     qualification_classification: QualificationClassification
     reasons: tuple[str, ...]
     pipeline_status: str
+
+
+def _channel_emulator_terminal_projection(
+    config: Mapping[str, Any],
+    *,
+    execution_id: object,
+    pipeline_status: str,
+) -> tuple[Literal["diagnostic", "invalid"] | None, str | None]:
+    """Validate the immutable CE binding/plan/session chain without current state."""
+
+    binding = config.get(CE_FREEZE_CONFIG_KEY)
+    plan = config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+    evidence = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if binding is None and plan is None and evidence is None:
+        return None, None
+    if binding is None or plan is None:
+        return "invalid", "channelEmulator binding / execution plan freeze is incomplete"
+    try:
+        validated_binding = validate_frozen_channel_emulator_binding(binding)
+        validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
+    except ValueError as exc:
+        return "invalid", str(exc)
+    if validated_plan.get("binding_digest") != validated_binding.get("binding_digest"):
+        return "invalid", "channelEmulator plan and binding digest do not match"
+    if evidence is None and pipeline_status != "completed":
+        return None, None
+    if not isinstance(evidence, list) or not evidence:
+        return "invalid", "completed execution has no channelEmulator terminal evidence"
+
+    simulated = validated_binding.get("execution_mode") == "simulated"
+    for item in evidence:
+        if not isinstance(item, Mapping):
+            return "invalid", "channelEmulator terminal evidence is malformed"
+        payload = {key: value for key, value in item.items() if key != "digest"}
+        if item.get("digest") != canonical_payload_digest(payload):
+            return "invalid", "channelEmulator terminal evidence digest mismatch"
+        expected = {
+            "execution_id": str(execution_id),
+            "binding_digest": validated_binding.get("binding_digest"),
+            "binding_freeze_digest": validated_binding.get("digest"),
+            "plan_digest": validated_plan.get("digest"),
+            "execution_mode": validated_binding.get("execution_mode"),
+            "adapter_id": validated_plan.get("adapter_id"),
+            "driver_module": validated_binding.get("expected_driver_module"),
+            "driver_name": validated_binding.get("expected_driver_name"),
+            "driver_connection": validated_binding.get("expected_driver_connection"),
+        }
+        if any(item.get(key) != value for key, value in expected.items()):
+            return "invalid", "channelEmulator terminal evidence identity drift"
+        if (
+            item.get("terminal_state") != "completed"
+            or item.get("operation_succeeded") is not True
+            or item.get("safe_idle_confirmed") is not True
+        ):
+            return "invalid", "channelEmulator execution lifecycle is incomplete"
+        if simulated:
+            if (
+                item.get("remote_acquired_confirmed") is not None
+                or item.get("transport_released_confirmed") is not None
+            ):
+                return "invalid", "simulated channelEmulator claimed real transport evidence"
+        elif (
+            item.get("remote_acquired_confirmed") is not True
+            or item.get("transport_released_confirmed") is not True
+            or not isinstance(item.get("instrument_id"), str)
+            or not item.get("instrument_id")
+        ):
+            return "invalid", "real channelEmulator control lifecycle is incomplete"
+    if simulated:
+        return "diagnostic", "simulated channelEmulator is excluded from formal KPI"
+    return None, None
 
 
 def _outer_freeze_digest_error(frozen: Mapping[str, Any]) -> str | None:
@@ -549,6 +631,18 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
                 classification = "diagnostic"
             else:
                 classification = "compatible"
+
+    ce_classification, ce_reason = _channel_emulator_terminal_projection(
+        config,
+        execution_id=getattr(execution, "id", ""),
+        pipeline_status=pipeline_status,
+    )
+    if ce_reason is not None:
+        reasons.append(ce_reason)
+    if ce_classification == "invalid":
+        classification = "invalid"
+    elif ce_classification == "diagnostic" and classification != "invalid":
+        classification = "diagnostic"
 
     formal_eligible = (
         pipeline_status == "completed"

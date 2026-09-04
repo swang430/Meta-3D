@@ -13,10 +13,14 @@ from app.services.execution_scpi_evidence import (
     persist_execution_base_station_release,
     record_execution_base_station_attempt_failure,
 )
+from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
+from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
+from app.services.channel_emulator_execution_session import (
+    channel_emulator_execution_scope,
+)
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     InstrumentTestLeaseReleaseError,
-    instrument_test_lease,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,10 +48,14 @@ class BaseStationSessionOperationResult(Generic[T]):
     succeeded: bool
 
 
-def _get_base_station_driver():
+def _get_hal_service():
     from app.services.instrument_hal_service import get_hal_service
 
-    drivers = get_hal_service().drivers or {}
+    return get_hal_service()
+
+
+def _get_base_station_driver():
+    drivers = _get_hal_service().drivers or {}
     return drivers.get("baseStation") or drivers.get("base_station")
 
 
@@ -100,13 +108,25 @@ async def run_base_station_execution_session(
     attempt_id: str | None = None
     outcome = None
     operation_result: BaseStationSessionOperationResult[T] | None = None
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    binding = execution_config.get(CE_FREEZE_CONFIG_KEY)
+    plan = execution_config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+    if binding is None or plan is None:
+        raise BaseStationExecutionSessionError(
+            "channelEmulator binding / execution plan is not frozen"
+        )
+    hal = _get_hal_service()
     try:
-        async with instrument_test_lease(
-            purpose,
-            measurement_attempt_id=None,
-            enable_monitoring=False,
+        async with channel_emulator_execution_scope(
+            db,
+            execution,
+            purpose=purpose,
+            binding=binding,
+            plan=plan,
+            hal=hal,
             validate_before_remote=validate_before_remote,
         ) as outcome:
+            lease_outcome = getattr(outcome, "lease_outcome", outcome)
             if _is_measure_step(step_type):
                 attempt_id = begin_execution_base_station_measurement(
                     db,
@@ -114,8 +134,12 @@ async def run_base_station_execution_session(
                     test_case,
                     driver=_get_base_station_driver(),
                 )
-                outcome.measurement_attempt_id = attempt_id
+                lease_outcome.measurement_attempt_id = attempt_id
             operation_result = await operation()
+            mark_operation_result = getattr(outcome, "mark_operation_result", None)
+            if callable(mark_operation_result):
+                mark_operation_result(operation_result.succeeded)
+            outcome = lease_outcome
     except asyncio.CancelledError:
         _record_exception_terminal_state(
             db,

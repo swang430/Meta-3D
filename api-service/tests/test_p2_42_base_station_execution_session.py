@@ -23,11 +23,14 @@ def _install_lifecycle(
     )
 
     @asynccontextmanager
-    async def lease(purpose, **kwargs):
+    async def lease(db, execution, *, purpose, binding, plan, hal, **kwargs):
         events.append("acquire")
+        assert db is _DB
+        assert execution.id == "execution-1"
         assert purpose == "formal-case:execution-1"
-        assert kwargs["measurement_attempt_id"] is None
-        assert kwargs["enable_monitoring"] is False
+        assert binding is _CE_BINDING
+        assert plan is _CE_PLAN
+        assert hal is _HAL
         assert kwargs["validate_before_remote"] is _VALIDATOR
         try:
             yield outcome
@@ -58,20 +61,30 @@ def _install_lifecycle(
         assert attempt_id == "attempt-1"
         assert outcome.measurement_attempt_id == "attempt-1"
 
-    monkeypatch.setattr(module, "instrument_test_lease", lease)
+    monkeypatch.setattr(module, "channel_emulator_execution_scope", lease)
     monkeypatch.setattr(module, "begin_execution_base_station_measurement", begin)
     monkeypatch.setattr(module, "persist_execution_base_station_release", persist)
     monkeypatch.setattr(
         module, "record_execution_base_station_attempt_failure", fail
     )
     monkeypatch.setattr(module, "_get_base_station_driver", lambda: _DRIVER)
+    monkeypatch.setattr(module, "_get_hal_service", lambda: _HAL)
     return outcome
 
 
 _VALIDATOR = object()
 _DRIVER = object()
 _DB = object()
-_EXECUTION = SimpleNamespace(id="execution-1")
+_CE_BINDING = {"binding": "frozen"}
+_CE_PLAN = {"plan": "frozen"}
+_HAL = object()
+_EXECUTION = SimpleNamespace(
+    id="execution-1",
+    config={
+        "channel_emulator_binding_freeze": _CE_BINDING,
+        "channel_emulator_execution_plan_freeze": _CE_PLAN,
+    },
+)
 _TEST_CASE = object()
 
 
@@ -133,7 +146,9 @@ async def test_externally_cancelled_row_keeps_cancelled_attempt_truth(monkeypatc
 
     events: list[str] = []
     _install_lifecycle(monkeypatch, module, events)
-    execution = SimpleNamespace(id="execution-1", status="cancelled")
+    execution = SimpleNamespace(
+        id="execution-1", status="cancelled", config=_EXECUTION.config
+    )
 
     async def operation():
         events.append("operation")
@@ -197,12 +212,11 @@ async def test_acquire_failure_never_creates_or_fabricates_an_attempt(monkeypatc
 
     @asynccontextmanager
     async def lease(*_args, **kwargs):
-        assert kwargs["enable_monitoring"] is False
         events.append("acquire")
         raise RuntimeError("acquire failed")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(module, "instrument_test_lease", lease)
+    monkeypatch.setattr(module, "channel_emulator_execution_scope", lease)
     monkeypatch.setattr(
         module,
         "begin_execution_base_station_measurement",
@@ -213,6 +227,7 @@ async def test_acquire_failure_never_creates_or_fabricates_an_attempt(monkeypatc
         "record_execution_base_station_attempt_failure",
         lambda *_args, **_kwargs: events.append("fail"),
     )
+    monkeypatch.setattr(module, "_get_hal_service", lambda: _HAL)
 
     with pytest.raises(RuntimeError, match="acquire failed"):
         await module.run_base_station_execution_session(

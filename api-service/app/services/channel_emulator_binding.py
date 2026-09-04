@@ -531,6 +531,7 @@ CE_FREEZE_IDENTITY_KEYS = frozenset(
         "instrument_model_id",
         "instrument_connection_id",
         "lab_profile_id",
+        "execution_mode",
         "expected_driver_module",
         "expected_driver_name",
         "expected_driver_connection",
@@ -562,6 +563,51 @@ def _validate_existing_channel_emulator_freeze(existing: Any) -> dict[str, Any]:
             "已冻结的 channelEmulator binding 与其 digest 不一致（冻结件被篡改）"
         )
     return existing
+
+
+def validate_frozen_channel_emulator_binding(frozen: Any) -> dict[str, Any]:
+    """Public pure validator for downstream execution-evidence consumers."""
+
+    return _validate_existing_channel_emulator_freeze(frozen)
+
+
+def validate_frozen_channel_emulator_before_remote(hal, frozen: Any) -> str | None:
+    """把 execution-frozen CE 身份与活动 HAL 对账；纯读取、零仪器 I/O。
+
+    该函数只消费冻结件与驱动构造期身份。真机要求注册类和 transport 精确一致；
+    模拟只接受仪器 HAL 权威白名单里的 ``MockChannelEmulator``，不靠名字猜。
+    """
+
+    from app.hal.channel_emulator import MockChannelEmulator
+
+    try:
+        validated = _validate_existing_channel_emulator_freeze(frozen)
+    except ValueError as exc:
+        return str(exc)
+    mode = validated.get("execution_mode")
+    driver = _loaded_channel_emulator(hal)
+    if driver is None:
+        return "loaded channelEmulator driver is missing"
+    if mode == "real":
+        if is_mock_driver(driver):
+            return "loaded channelEmulator driver changed from real to mock"
+        if (
+            type(driver).__module__ != validated.get("expected_driver_module")
+            or type(driver).__name__ != validated.get("expected_driver_name")
+        ):
+            return "loaded channelEmulator driver does not match frozen registry class"
+        if _driver_transport(driver) != validated.get("expected_driver_connection"):
+            return "loaded channelEmulator connection identity does not match frozen connection"
+        return None
+    if mode == "simulated":
+        if not is_mock_driver(driver):
+            return "loaded channelEmulator driver changed from mock to real"
+        if not isinstance(driver, MockChannelEmulator):
+            return "loaded mock driver is not a channelEmulator mock"
+        if validated.get("expected_driver_connection") is not None:
+            return "simulated channelEmulator freeze unexpectedly carries a connection"
+        return None
+    return "frozen channelEmulator execution mode is invalid"
 
 
 def freeze_channel_emulator_binding(
@@ -598,6 +644,7 @@ def freeze_channel_emulator_binding(
         "instrument_model_id": resolved.instrument_model_id,
         "instrument_connection_id": resolved.instrument_connection_id,
         "lab_profile_id": resolved.lab_profile_id,
+        "execution_mode": resolved.execution_mode,
         "expected_driver_module": resolved.expected_driver_module,
         "expected_driver_name": resolved.expected_driver_name,
         # 契约解释 #4：`expected_transport` 本身就是 {host, port, resource} dict，
