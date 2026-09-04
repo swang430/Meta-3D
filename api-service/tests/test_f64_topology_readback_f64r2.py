@@ -837,6 +837,25 @@ class TestPublicEnsureTopology:
             assert await drv.ensure_topology() is False       # 默认 throttle=False
         assert probes["n"] == 5, f"人点一次就该真问一次仪器, 实际只探测了 {probes['n']} 次"
 
+    async def test_explicit_ensure_topology_refreshes_even_with_warm_cache(self):
+        """执行证据入口不能拿调用前缓存冒充本次仪器观察。"""
+        drv, _ = _driver(info="2,4,2")
+        queries: list[str] = []
+        original_query = drv._query
+
+        async def _query(cmd, timeout=None, **kwargs):
+            queries.append(cmd)
+            return await original_query(cmd, timeout, **kwargs)
+
+        drv._query = _query  # type: ignore[assignment]
+
+        assert await drv.ensure_topology() is True
+        first_model_reads = queries.count("DIAG:SIMU:MODEL:INFO?")
+        assert first_model_reads == 1
+
+        assert await drv.ensure_topology() is True
+        assert queries.count("DIAG:SIMU:MODEL:INFO?") == first_model_reads + 1
+
     # ★ 三个写方法**逐个**钉住 (Codex #224 P2: 参数化 throttle 时 set_doppler /
     # set_baseband_power 两处被误传 throttle=True, 而已有测试没先置冷却抓不到 ——
     # 无冷却时 throttle=True 也能补读, 只有"冷却激活"才暴露差别)。

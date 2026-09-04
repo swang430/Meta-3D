@@ -998,6 +998,165 @@ def test_f64_receipt_projects_existing_authoritative_parameter_readback(
     assert projected["error_queue_exchange_ids"] == ["preclear", "error"]
 
 
+@pytest.mark.parametrize(
+    ("operation", "requested", "query", "response", "expected_applied"),
+    [
+        (
+            "measure_input",
+            {"measurement": {"input_port": 2, "measurement_time_s": 1.0}},
+            "INP:LEV:MEAS? 2,1.0",
+            "-21.4,7.5",
+            {
+                "input_port": 2,
+                "measurement_time_s": 1.0,
+                "avg_dbm": -21.4,
+                "crest_db": 7.5,
+            },
+        ),
+        (
+            "get_input_level_limits",
+            {"limits": {"input_port": 2}},
+            "INP:LEV:AMP:LIM? 2",
+            "-23,0",
+            {"input_port": 2, "lower_dbm": -23.0, "upper_dbm": 0.0},
+        ),
+        (
+            "get_group_clipping",
+            {"clipping": {"group_num": 1, "reset": True}},
+            "GROup:CLIpping:GET? 1,1",
+            "0",
+            {"group_num": 1, "reset": True, "per_mille": 0.0},
+        ),
+        (
+            "get_system_status",
+            {"system_status": "channel_emulator"},
+            "SYST:STAT?",
+            "0,Input cut-off",
+            {"healthy": False, "warnings": ["Input cut-off"]},
+        ),
+    ],
+)
+def test_f64_receipt_projects_same_invocation_authoritative_observation(
+    operation, requested, query, response, expected_applied
+):
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="v1.0",
+        captured_from_live_connection=True,
+    )
+    exchange = ScpiExchangeRef(
+        exchange_id="observation",
+        instrument_id="ce-live",
+        operation="query",
+        command=query,
+        execution_id="execution-1",
+        capture_id="capture-1",
+        sequence=0,
+        result_type="response",
+        response=response,
+    )
+
+    projected = driver.project_channel_operation_evidence(
+        operation=operation,
+        requested=requested,
+        operation_succeeded=True,
+        exchanges=(exchange,),
+        execution_mode="real",
+    )
+
+    assert projected["fields"] == [
+        {
+            "field": next(iter(requested)),
+            "requested": next(iter(requested.values())),
+            "applied": expected_applied,
+            "applied_present": True,
+            "status": "confirmed",
+            "provenance": "authoritative_readback",
+            "exchange_ids": ["observation"],
+            "source_reference": projected["fields"][0]["source_reference"],
+        }
+    ]
+    assert "Propsim User Reference" in projected["fields"][0]["source_reference"]
+
+    wrong_query = exchange.model_copy(update={"command": query + " 99"})
+    rejected = driver.project_channel_operation_evidence(
+        operation=operation,
+        requested=requested,
+        operation_succeeded=True,
+        exchanges=(wrong_query,),
+        execution_mode="real",
+    )
+    assert rejected["fields"][0]["status"] == "unknown"
+
+
+def test_f64_receipt_confirms_only_complete_cross_checked_topology_readback():
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="v1.0",
+        captured_from_live_connection=True,
+    )
+
+    def exchange(sequence, query, response):
+        return ScpiExchangeRef(
+            exchange_id=f"topology-{sequence}",
+            instrument_id="ce-live",
+            operation="query",
+            command=query,
+            execution_id="execution-1",
+            capture_id="capture-1",
+            sequence=sequence,
+            result_type="response",
+            response=response,
+        )
+
+    exchanges = (
+        exchange(0, "DIAG:SIMU:STATE?", "STOPPED"),
+        exchange(1, "DIAG:SIMU:MODEL:INFO?", "2,4,2"),
+        exchange(2, "GROUP:GET?", "1"),
+        exchange(3, "GROUP:CHANNELS:GET? 1", "1,2,3,4"),
+        exchange(4, "GROUP:INPUTS:GET? 1", "1,2"),
+        exchange(5, "GROUP:OUTPUTS:GET? 1", "1,2"),
+    )
+
+    confirmed = driver.project_channel_operation_evidence(
+        operation="ensure_topology",
+        requested={"topology": "active_ports"},
+        operation_succeeded=True,
+        exchanges=exchanges,
+        execution_mode="real",
+    )
+    assert confirmed["fields"][0]["status"] == "confirmed"
+    assert confirmed["fields"][0]["applied"] == {
+        "inputs": [1, 2],
+        "outputs": [1, 2],
+        "channels": [1, 2, 3, 4],
+    }
+    assert confirmed["fields"][0]["exchange_ids"] == [
+        f"topology-{index}" for index in range(6)
+    ]
+
+    incomplete = driver.project_channel_operation_evidence(
+        operation="ensure_topology",
+        requested={"topology": "active_ports"},
+        operation_succeeded=True,
+        exchanges=exchanges[:-1],
+        execution_mode="real",
+    )
+    assert incomplete["fields"][0]["status"] == "unknown"
+
+
 def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
     from app.services.channel_emulator_execution_session import (
         CE_TERMINAL_EVIDENCE_CONFIG_KEY,
