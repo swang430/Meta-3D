@@ -81,11 +81,14 @@ from app.hal.base_station_compatibility import (
 from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
-from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
+from app.hal.channel_emulator_execution_plan import ChannelEmulatorExecutionPlan
 from app.services.channel_emulator_execution_session import (
     ensure_channel_emulator_safe_idle,
     require_channel_emulator_passthrough_clear,
     require_channel_emulator_stop_after_output_change,
+)
+from app.services.execution_evidence_outcome import (
+    execution_evidence_blocks_formal_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -340,16 +343,25 @@ def _call_topology_getter(emulator, getter_name: str):
     这些 getter (`get_active_output_ports` / `get_active_input_count` …) 是**同步**的
     —— 只读加载时回读进内存的拓扑, 不发 SCPI。这里不直接调用而绕一层, 是为了区分
     三种"拿不到"并给出不同诊断:
-      · 驱动没这个方法 (非 F64 / mock) → None, 安静降级;
+      · 生产驱动违反基类协议 / getter 抛异常 → None，由消费方按冻结能力处理;
       · 调用抛异常 → None, 不冒泡打断编排;
       · **返回 coroutine** (有人把 getter 改成了 `async def`, 或测试替身用了 AsyncMock)
         → None, 但记 **error 日志点名是代码问题**。不单独识别的话, 这个纯代码重构会
         被下游报成"仿真未加载 / MODEL:INFO? 回读失败", 把改代码诬告成仪器故障。
         同时 close() 掉那个 coroutine, 免得留下 never-awaited 警告。
     """
-    getter = getattr(emulator, getter_name, None)
-    if not callable(getter):
-        return None
+    # 不用 getattr 猜对象形状。生产 CE 驱动由基类协议 + 构建门保证这些方法存在；
+    # 明确分派还让拼错 getter 名当场炸，而不是静默变成「仪器回读失败」。
+    if getter_name == "get_active_output_count":
+        getter = emulator.get_active_output_count
+    elif getter_name == "get_active_input_count":
+        getter = emulator.get_active_input_count
+    elif getter_name == "get_active_output_ports":
+        getter = emulator.get_active_output_ports
+    elif getter_name == "get_active_input_ports":
+        getter = emulator.get_active_input_ports
+    else:
+        raise ValueError(f"unknown channel emulator topology getter: {getter_name!r}")
     try:
         val = getter()
     except Exception:  # noqa: BLE001 — 读能力失败等同"未知", 不冒泡打断编排
@@ -623,11 +635,22 @@ def _formal_mac_configuration_blocker(
 def resolve_model_load_requested(emulator, gen_ok: bool, intent):
     """f64.model_loaded 归档用的 requested 真值（P2-29，内审 F1）。
 
-    加载成功 → 驱动真值 `_loaded_emulation_file`（= 发进 CALC:FILT:FILE 的串，
+    加载成功 → 驱动公开协议 `get_loaded_emulation_file()`（F64 返回实际发进
+    CALC:FILT:FILE 的串，
     ASC/B2 是驱动构造的远端路径，config 意图值与之必然不等，直传会把成功的
     加载谎报成 rejected）。加载失败/读不到 → 保持意图值，fail-closed。
     """
-    loaded = getattr(emulator, "_loaded_emulation_file", None) if gen_ok else None
+    loaded = None
+    if gen_ok:
+        # 协议方法缺席 / 沿用基类 NotImplementedError 是代码与计划漂移，必须
+        # fail-loud；只有具体 getter 自己读不到状态时才保留原意图值。
+        loaded_getter = emulator.get_loaded_emulation_file
+        try:
+            loaded = loaded_getter()
+        except NotImplementedError:
+            raise
+        except Exception:  # noqa: BLE001 — 缺/坏观察只可保持原意图，不能补猜
+            loaded = None
     return loaded if loaded else intent
 
 
@@ -1241,7 +1264,6 @@ class MeasureExecutor(IStepExecutor):
             select_active_probe_id,
             select_active_rf_chain_probe_id,
         )
-        from app.hal.channel_emulator import ChannelLoadMode
         from app.hal.positioner import (
             current_positioner_operation_stop_generation,
         )
@@ -1790,17 +1812,21 @@ class MeasureExecutor(IStepExecutor):
 
             engine_mode = EngineMode(config.engine_mode)
             if engine_mode == EngineMode.GCM_NATIVE:
-                supported = emulator.get_supported_load_modes()
-                if ChannelLoadMode.NATIVE_MODEL not in supported:
+                if not ce_plan.load_mode_planned:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
                             f"channelEmulator ({type(emulator).__name__}) does not support "
                             f"native model loading; engine_mode=GCM_NATIVE rejected. "
-                            f"Supported modes: {[m.value for m in supported]}"
+                            f"Frozen plan reason: {ce_plan.load_mode_reason}"
                         ),
                     )
-                generator = NativeModelStrategy(emulator, chamber, calibration_entries)
+                generator = NativeModelStrategy(
+                    emulator,
+                    chamber,
+                    calibration_entries,
+                    execution_plan=ce_plan,
+                )
                 # P2-12 slice 4: 只在 GCM 分支 resolve scd_id → SCD (associated .smu + 声明
                 # ARFCN 喂下方频率门)。ASC config 残留的 scd_id 在此不触发 (Codex on #122)。
                 from app.services.standard_channel_service import (
@@ -1864,7 +1890,11 @@ class MeasureExecutor(IStepExecutor):
                 # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落 (F6 路由 + 能力门;
                 # .tap/.rtc 生成 + F64 加载在 F7 + 现场落地, V1.0 §9)。
                 generator = B2ParametricTdlStrategy(
-                    emulator, ce_client, chamber, calibration_entries
+                    emulator,
+                    ce_client,
+                    chamber,
+                    calibration_entries,
+                    execution_plan=ce_plan,
                 )
             else:
                 generator = ExternalWaveformStrategy(
@@ -1953,46 +1983,45 @@ class MeasureExecutor(IStepExecutor):
             context.db.commit()
             with capture_scpi_exchanges() as channel_load_exchanges:
                 gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
-            # P2-29: 归档条件按驱动能力判（有 build 能力 = F64 语义驱动），
-            # 不按管线枚举 —— 用 engine_mode 当判据曾把 ASC/B2 锁在 unknown。
-            if hasattr(emulator, "build_p0_5_command_evidence"):
-                try:
-                    # requested 换判据来源（内审 F1）：ASC/B2 下 config.emulation_file
-                    # 常为 None/被忽略，而 wire operand 是驱动内部构造的远端路径
-                    # （FTP 目录 + 反斜杠），两端必然不等 → builder 会把成功的加载
-                    # 谎报成 rejected（requested_command_mismatch）。加载成功后取
-                    # **驱动真值** `_loaded_emulation_file`（它就是发进 CALC:FILT:FILE
-                    # 的那个串），register 幂等更新后再归档 —— GCM 两端本就同源，
-                    # 行为不变；「选 A 实际加载 B」的防错配仍由 builder 对比
-                    # requested vs wire 保住（真值若与 wire 脱钩照样抓）。
-                    # 加载失败/读不到真值 → 保持意图值，fail-closed 不变。
-                    _model_load_requested = resolve_model_load_requested(
-                        emulator, gen_ok, resolved_emulation_file
-                    )
-                    # 真值与意图不同（ASC/B2 的常态）才需要幂等更新 requirement；
-                    # GCM 两端同源、register 里已是同值，跳过等价。
-                    if gen_ok and _model_load_requested != resolved_emulation_file:
-                        register_required_scpi_evidence(
-                            context.test_execution,
-                            requirement_id="f64.model_loaded",
-                            evidence_key="f64.model_load",
-                            requested=_model_load_requested,
-                            required_evidence_level=EvidenceLevel.APPLIED,
-                        )
-                    record_f64_command_capture(
+            # P2-59②：所有 CE 驱动都有可空 evidence builder 协议；不适用的型号
+            # 明确返回 None，不能再用对象形状推断「这是 F64」。
+            try:
+                # requested 换判据来源（内审 F1）：ASC/B2 下 config.emulation_file
+                # 常为 None/被忽略，而 wire operand 是驱动内部构造的远端路径
+                # （FTP 目录 + 反斜杠），两端必然不等 → builder 会把成功的加载
+                # 谎报成 rejected（requested_command_mismatch）。加载成功后取
+                # **驱动公开真值** `get_loaded_emulation_file()`（F64 返回发进 CALC:FILT:FILE
+                # 的那个串），register 幂等更新后再归档 —— GCM 两端本就同源，
+                # 行为不变；「选 A 实际加载 B」的防错配仍由 builder 对比
+                # requested vs wire 保住（真值若与 wire 脱钩照样抓）。
+                # 加载失败/读不到真值 → 保持意图值，fail-closed 不变。
+                _model_load_requested = resolve_model_load_requested(
+                    emulator, gen_ok, resolved_emulation_file
+                )
+                # 真值与意图不同（ASC/B2 的常态）才需要幂等更新 requirement；
+                # GCM 两端同源、register 里已是同值，跳过等价。
+                if gen_ok and _model_load_requested != resolved_emulation_file:
+                    register_required_scpi_evidence(
                         context.test_execution,
                         requirement_id="f64.model_loaded",
                         evidence_key="f64.model_load",
                         requested=_model_load_requested,
-                        driver=emulator,
-                        exchanges=channel_load_exchanges,
+                        required_evidence_level=EvidenceLevel.APPLIED,
                     )
-                    context.db.commit()
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "[%s] F64 model-load P1-47C 证据归档失败；正式判定将保持 unknown",
-                        context.test_execution.id,
-                    )
+                record_f64_command_capture(
+                    context.test_execution,
+                    requirement_id="f64.model_loaded",
+                    evidence_key="f64.model_load",
+                    requested=_model_load_requested,
+                    driver=emulator,
+                    exchanges=channel_load_exchanges,
+                )
+                context.db.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "[%s] F64 model-load P1-47C 证据归档失败；正式判定将保持 unknown",
+                    context.test_execution.id,
+                )
             if not gen_ok:
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
@@ -2062,7 +2091,8 @@ class MeasureExecutor(IStepExecutor):
             # 只核对中心频率，并在 payload 留 BW unknown，不能假装完整闭环。
             f64_center_mhz = (
                 emulator.get_center_frequency_mhz()
-                if hasattr(emulator, "get_center_frequency_mhz") else None
+                if ce_plan.planned("get_center_frequency_mhz")
+                else None
             )
             declared_f64_bandwidth_mhz = (
                 float(scd_freq_identity.bandwidth_mhz)
@@ -2154,18 +2184,23 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             # --- 仪表参数 (开关 3 块 2): F64 输出增益, 显式给才写 ---
-            if (config.f64_output_gain_db is not None
-                    and not hasattr(emulator, "set_output_gain")):
+            if (
+                config.f64_output_gain_db is not None
+                and not ce_plan.planned("set_output_gain")
+            ):
                 # 门审 #217 F1: 显式配了参数, CE 无能力不得静默无痕跳过
                 logger.warning(
                     "[%s] f64_output_gain_db=%s 已配置但 CE 驱动无 "
                     "set_output_gain 能力 (mock/非 F64) — 跳过, 真机不受此限",
                     context.test_execution.id, config.f64_output_gain_db,
                 )
-            if (config.f64_output_gain_db is not None
-                    and hasattr(emulator, "set_output_gain")):
+            if (
+                config.f64_output_gain_db is not None
+                and ce_plan.planned("set_output_gain")
+            ):
                 _gain_err = await self._apply_output_gain(
                     emulator=emulator,
+                    plan=ce_plan,
                     gain_db=config.f64_output_gain_db,
                     execution_id=str(context.test_execution.id),
                 )
@@ -2189,7 +2224,7 @@ class MeasureExecutor(IStepExecutor):
                     ),
                 )
             if config.f64_output_level_dbm is not None:
-                if not hasattr(emulator, "set_output_level_dbm"):
+                if not ce_plan.planned("set_output_level_dbm"):
                     # 显式配了参数, CE 无能力不得静默无痕跳过 (门审 #217 F1 同款)
                     logger.warning(
                         "[%s] f64_output_level_dbm=%s 已配置但 CE 驱动无 "
@@ -2305,22 +2340,21 @@ class MeasureExecutor(IStepExecutor):
                     _bp_ok = await emulator.set_passthrough_mode(
                         mode=config.f64_bypass_mode
                     )
-                if hasattr(emulator, "build_p0_5_command_evidence"):
-                    try:
-                        record_f64_command_capture(
-                            context.test_execution,
-                            requirement_id="f64.output_state",
-                            evidence_key="f64.bypass_mode",
-                            requested=config.f64_bypass_mode,
-                            driver=emulator,
-                            exchanges=f64_state_exchanges,
-                        )
-                        context.db.commit()
-                    except Exception:  # noqa: BLE001
-                        logger.exception(
-                            "[%s] F64 bypass P1-47C 证据归档失败；正式判定将保持 unknown",
-                            context.test_execution.id,
-                        )
+                try:
+                    record_f64_command_capture(
+                        context.test_execution,
+                        requirement_id="f64.output_state",
+                        evidence_key="f64.bypass_mode",
+                        requested=config.f64_bypass_mode,
+                        driver=emulator,
+                        exchanges=f64_state_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[%s] F64 bypass P1-47C 证据归档失败；正式判定将保持 unknown",
+                        context.test_execution.id,
+                    )
                 if not _bp_ok:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -2348,22 +2382,21 @@ class MeasureExecutor(IStepExecutor):
                 context.db.commit()
                 with capture_scpi_exchanges() as f64_state_exchanges:
                     started = await emulator.start_emulation()
-                if hasattr(emulator, "build_p0_5_command_evidence"):
-                    try:
-                        record_f64_command_capture(
-                            context.test_execution,
-                            requirement_id="f64.output_state",
-                            evidence_key="f64.simulation_state",
-                            requested="RUNNING",
-                            driver=emulator,
-                            exchanges=f64_state_exchanges,
-                        )
-                        context.db.commit()
-                    except Exception:  # noqa: BLE001
-                        logger.exception(
-                            "[%s] F64 run-state P1-47C 证据归档失败；正式判定将保持 unknown",
-                            context.test_execution.id,
-                        )
+                try:
+                    record_f64_command_capture(
+                        context.test_execution,
+                        requirement_id="f64.output_state",
+                        evidence_key="f64.simulation_state",
+                        requested="RUNNING",
+                        driver=emulator,
+                        exchanges=f64_state_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[%s] F64 run-state P1-47C 证据归档失败；正式判定将保持 unknown",
+                        context.test_execution.id,
+                    )
                 if not started:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -2648,22 +2681,21 @@ class MeasureExecutor(IStepExecutor):
                 require_channel_emulator_stop_after_output_change()
                 with capture_scpi_exchanges() as f64_fade_exchanges:
                     faded = await emulator.start_emulation()
-                if hasattr(emulator, "build_p0_5_command_evidence"):
-                    try:
-                        record_f64_command_capture(
-                            context.test_execution,
-                            requirement_id="f64.output_state",
-                            evidence_key="f64.simulation_state",
-                            requested="RUNNING",
-                            driver=emulator,
-                            exchanges=f64_fade_exchanges,
-                        )
-                        context.db.commit()
-                    except Exception:  # noqa: BLE001
-                        logger.exception(
-                            "[%s] F64 fading-start P1-47C 证据归档失败；正式判定保持 unknown",
-                            context.test_execution.id,
-                        )
+                try:
+                    record_f64_command_capture(
+                        context.test_execution,
+                        requirement_id="f64.output_state",
+                        evidence_key="f64.simulation_state",
+                        requested="RUNNING",
+                        driver=emulator,
+                        exchanges=f64_fade_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[%s] F64 fading-start P1-47C 证据归档失败；正式判定保持 unknown",
+                        context.test_execution.id,
+                    )
                 if not faded:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -2991,6 +3023,7 @@ class MeasureExecutor(IStepExecutor):
                     config=config,
                     execution_id=context.test_execution.id,
                     plan=base_station_attempt.execution_plan.input_level_control,
+                    channel_emulator_plan=ce_plan,
                 )
             assert input_level_payload is not None
             if (
@@ -3742,7 +3775,12 @@ class MeasureExecutor(IStepExecutor):
     # 开关 3 块 2: 手动定标 — 显式输入参考 (+crest), 跳过 AUTOSET 闭环
     # ---------------------------------------------------------------------
     async def _apply_output_gain(
-        self, *, emulator, gain_db: float, execution_id: str,
+        self,
+        *,
+        emulator,
+        plan: ChannelEmulatorExecutionPlan,
+        gain_db: float,
+        execution_id: str,
     ) -> Optional[str]:
         """把 `f64_output_gain_db` 下发到**当前仿真真实占用的每个物理输出口**。
 
@@ -3760,10 +3798,11 @@ class MeasureExecutor(IStepExecutor):
         """
         # 先让驱动按需补回读 (正常步骤里 load 刚跑过是热的; 但操作员单点这一步、或后端
         # 重启后接着跑时缓存是空的 —— 那时硬拒等于逼人重 load, 而 load 会打断跑着的仿真)
-        _ensure = getattr(emulator, "ensure_topology", None)
-        if callable(_ensure):
+        if not plan.planned("set_output_gain"):
+            return plan.rejection("set_output_gain")
+        if plan.planned("ensure_topology"):
             try:
-                await _ensure()
+                await emulator.ensure_topology()
             except Exception:  # noqa: BLE001 — 补读失败等同"读不到", 下面 fail-loud
                 pass
         ports = _read_port_list(emulator, "get_active_output_ports")
@@ -3772,7 +3811,7 @@ class MeasureExecutor(IStepExecutor):
                 f"F64 输出增益下发拒绝 (f64_output_gain_db={gain_db}): 物理输出口未知 "
                 f"— 仿真未加载 / 拓扑回读失败 / 驱动无拓扑回读能力。不按猜测的端口号下发增益。"
                 f"(本参数**没有** per-step 端口选项 → override 是唯一解) "
-                f"{_TOPOLOGY_ESCAPE_HINT}"
+                f"{plan.item('ensure_topology').reason}"
             )
         for port in ports:
             if not await emulator.set_output_gain(port, gain_db):
@@ -3790,7 +3829,7 @@ class MeasureExecutor(IStepExecutor):
         self,
         *,
         emulator: Any,
-        plan: Any,
+        plan: ChannelEmulatorExecutionPlan,
         config: Any,
         execution_id: Any,
     ) -> Dict[str, Any]:
@@ -3817,7 +3856,7 @@ class MeasureExecutor(IStepExecutor):
             "failure_reason": None,
         }
         if not plan.planned("set_baseband_power") or (
-            crest is not None and not hasattr(emulator, "set_crest_factor")
+            crest is not None and not plan.planned("set_crest_factor")
         ):
             payload["skipped"] = True
             payload["failure_reason"] = (
@@ -3856,7 +3895,7 @@ class MeasureExecutor(IStepExecutor):
                     )
                     return payload
         # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
-        if hasattr(emulator, "measure_input"):
+        if plan.planned("measure_input"):
             for i in in_ports:
                 m = await emulator.measure_input(i, 1.0)
                 payload["readback"].append({
@@ -3883,10 +3922,11 @@ class MeasureExecutor(IStepExecutor):
         config: Any,
         execution_id: Any,
         plan: BaseStationExecutionPlanItem,
+        channel_emulator_plan: ChannelEmulatorExecutionPlan,
     ) -> Dict[str, Any]:
         """跑 InputLevelController + 落遥测。返回 input_level_calibration payload。
 
-        CE 按原子接口检测；BS 侧判据只来自 execution-frozen 计划项（P2-50）：
+        CE 与 BS 侧判据都只来自 execution-frozen 计划项：
         计划未 planned → 跳过闭环（沿用既有 Warning/UNKNOWN 语义）；计划
         planned 但 adapter 缺 ``set_downlink_power`` → 计划/实现漂移，
         fail-loud。跑过 controller 后无论成败都返回结构化 payload, 上层据
@@ -3910,7 +3950,10 @@ class MeasureExecutor(IStepExecutor):
             "get_group_clipping",
             "get_system_status",
         )
-        ce_caps = {m: hasattr(emulator, m) for m in required_ce_methods}
+        ce_caps = {
+            operation: channel_emulator_plan.planned(operation)
+            for operation in required_ce_methods
+        }
         ce_supports = all(ce_caps.values())
         bs_supports = plan.planned is True
         bs_power_method = getattr(base_station, "set_downlink_power", None)
@@ -3961,10 +4004,9 @@ class MeasureExecutor(IStepExecutor):
         # 门读冷值 None → 直接跳过; 紧接着补读回 2 个口 → 下面的 `[:n_layers]` 把
         # mimo_layers=4 静默截成 2 个口 → BS 发 4 层只定标 2 路、另 2 路留工程默认,
         # 而闭环报 success=True。判定与下发必须同源, 否则门形同虚设。
-        _ensure = getattr(emulator, "ensure_topology", None)
-        if callable(_ensure):
+        if channel_emulator_plan.planned("ensure_topology"):
             try:
-                await _ensure()
+                await emulator.ensure_topology()
             except Exception:  # noqa: BLE001 — 补读失败等同读不到, 走下面的降级
                 pass
         ce_inputs = _read_port_count(emulator, "get_active_input_count")
@@ -4026,7 +4068,7 @@ class MeasureExecutor(IStepExecutor):
                     "strict": bool(config.precheck_strict_input_level),
                 }
             active_inputs = tuple(_real_in[:n_layers])
-        elif callable(getattr(emulator, "get_active_input_ports", None)):
+        elif channel_emulator_plan.planned("ensure_topology"):
             # Codex #224 P1: 驱动**有**拓扑能力 (真 F64) 但补读后口号仍未知 (正是
             # GROUP:*/MODEL:INFO? 真机不支持的形态) → **fail-loud, 不许退回猜 1..n**。
             # 这里推出的口号会被 controller 当**显式端口**传给 autoset_inputs /

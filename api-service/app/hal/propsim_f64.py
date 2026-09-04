@@ -379,7 +379,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
     #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id='propsim_f64',
         model_name='PROPSIM F64',
         vendor='Keysight',
@@ -453,6 +453,66 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             ChannelEmulatorOperationCapability(
                 operation='clear_passthrough_mode', support='implemented',
                 reason='退出直通',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='ensure_topology', support='implemented',
+                reason='冷缓存时按需恢复当前加载仿真的输入/输出拓扑；无法确认则返回 False',
+                source_reference='app/hal/propsim_f64.py::ensure_topology（既有驱动源码；F64R-2 现场问题收口）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_center_frequency_mhz', support='implemented',
+                reason='读取当前仿真的中心频率；无法确认时返回 None',
+                source_reference='app/hal/propsim_f64.py::get_center_frequency_mhz（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_gain', support='implemented',
+                reason='逐物理输出口设置增益，拓扑未知时拒绝',
+                source_reference='app/hal/propsim_f64.py::set_output_gain（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_level_dbm', support='implemented',
+                reason='按已确认物理输出口设置输出电平，拓扑未知时拒绝',
+                source_reference='app/hal/propsim_f64.py::set_output_level_dbm（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_crest_factor', support='implemented',
+                reason='逐输入口设置 crest factor',
+                source_reference='app/hal/propsim_f64.py::set_crest_factor（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='measure_input', support='implemented',
+                reason='逐输入口测量平均电平与 crest factor',
+                source_reference='app/hal/propsim_f64.py::measure_input（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='autoset_inputs', support='implemented',
+                reason='对已确认输入口子集逐口自动设定参考电平',
+                source_reference='app/hal/propsim_f64.py::autoset_inputs（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_input_level_limits', support='implemented',
+                reason='读取输入平均电平允许窗口',
+                source_reference='app/hal/propsim_f64.py::get_input_level_limits（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_input_measurement_mode', support='implemented',
+                reason='设置输入测量模式',
+                source_reference='app/hal/propsim_f64.py::set_input_measurement_mode（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_burst_trigger_level', support='implemented',
+                reason='设置 burst 测量触发电平',
+                source_reference='app/hal/propsim_f64.py::set_burst_trigger_level（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_group_clipping', support='implemented',
+                reason='读取通道组 digital clipping',
+                source_reference='app/hal/propsim_f64.py::get_group_clipping（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_system_status', support='implemented',
+                reason='读取系统 warning/alarm 状态',
+                source_reference='app/hal/propsim_f64.py::get_system_status（既有驱动源码）',
             ),
         ),
     )
@@ -1502,6 +1562,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """当前加载仿真占用的**物理输入口号列表** (基站天线口), 同上由 `GROUP:INPUTS:GET?`
         逐组取并集回读。None = 未加载 / 回读失败。"""
         return list(self._active_input_ports) if self._active_input_ports else None
+
+    def get_loaded_emulation_file(self) -> Optional[str]:
+        """返回本驱动实际送入加载流程并在成功后记录的文件身份。
+
+        这是 `_loaded_emulation_file` 的只读协议面；不向上层暴露可写缓存，也不把
+        冷缓存的 None 猜成仪器已加载。
+        """
+        return self._loaded_emulation_file
 
     async def _load_smu_with_preflight(self, file_path: str) -> bool:
         """按 PROPSIM 手册教科书序列加载 .smu (P0-3, F64 review 母题④, 治现场

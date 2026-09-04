@@ -111,7 +111,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
     #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id='propsim_fs16',
         model_name='PROPSIM FS16',
         vendor='Keysight',
@@ -186,6 +186,54 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
                 operation='clear_passthrough_mode', support='not_implemented',
                 reason='FS16 驱动尚未实现该操作 —— 本驱动只做过只读普查（propsim_fs16_health）',
             ),
+            ChannelEmulatorOperationCapability(
+                operation='ensure_topology', support='not_implemented',
+                reason='FS16 驱动尚未实现执行期拓扑恢复 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_center_frequency_mhz', support='not_implemented',
+                reason='FS16 驱动尚未实现执行期中心频率读取 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_gain', support='not_implemented',
+                reason='FS16 驱动尚未实现逐输出口增益配置 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_level_dbm', support='not_implemented',
+                reason='FS16 驱动尚未实现输出电平配置 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_crest_factor', support='not_implemented',
+                reason='FS16 驱动尚未实现输入 crest factor 配置 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='measure_input', support='not_implemented',
+                reason='FS16 驱动尚未实现输入电平测量 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='autoset_inputs', support='not_implemented',
+                reason='FS16 驱动尚未实现输入电平自动设定 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_input_level_limits', support='not_implemented',
+                reason='FS16 驱动尚未实现输入电平窗口读取 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_input_measurement_mode', support='not_implemented',
+                reason='FS16 驱动尚未实现输入测量模式配置 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_burst_trigger_level', support='not_implemented',
+                reason='FS16 驱动尚未实现 burst 触发电平配置 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_group_clipping', support='not_implemented',
+                reason='FS16 驱动尚未实现通道组 clipping 读取 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_system_status', support='not_implemented',
+                reason='FS16 驱动尚未实现执行期系统状态读取 —— 本驱动只做过只读普查（propsim_fs16_health）',
+            ),
         ),
     )
 
@@ -223,6 +271,26 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
         self._bandwidth_mhz: float = 100.0
         self._band_label: str = ""
         self._license_label: str = ""
+
+    # P2-59②：所有 CE 驱动都显式实现观察/证据协议。FS16 尚无经现场验证的
+    # 对应实现，所以返回 None；绝不把 F64 方言推广到这个型号。
+    def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
+        return None
+
+    def get_loaded_emulation_file(self) -> Optional[str]:
+        return None
+
+    def get_active_output_count(self) -> Optional[int]:
+        return None
+
+    def get_active_input_count(self) -> Optional[int]:
+        return None
+
+    def get_active_output_ports(self) -> Optional[List[int]]:
+        return None
+
+    def get_active_input_ports(self) -> Optional[List[int]]:
+        return None
 
     # ------------------------------------------------------------------
     # 1. Load-mode capability declaration

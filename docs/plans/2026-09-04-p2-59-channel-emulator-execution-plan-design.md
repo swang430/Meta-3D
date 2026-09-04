@@ -228,3 +228,23 @@ plan 自证换档，都在 BaseStation / CE / 转台首次 I/O 前拒绝；P2-66
 - 基类协议方法：`build_p0_5_command_evidence`、`get_loaded_emulation_file`、`get_active_output_count`、`get_active_input_count`、`get_active_output_ports`、`get_active_input_ports`。F64 暴露既有真值；FS16/Mock 明确返回 `None`，所以不会凭空产生回读或正式证据。
 - `ensure_topology` 既是会触发仪器 I/O 的 manifest 操作，也是判断「该型号承诺可取得拓扑」的唯一能力来源；getter 本身不再拿对象形状当能力宣言。
 - Mock 不声明上述仪器操作可用；下发侧不另写命令语义，已有真实 builder 的调用关系保持不变；回读与证据仍为 simulated/unknown。
+
+### 8.I ② 集成补遗：计划词汇必须版本化（2026-09-04）
+
+① 已发布的 `schema_version=1` 冻结件固定覆盖原始 14 个操作。② 把 manifest 操作扩为 26 个后，若让
+v1 的校验器读取当前全局元组，旧执行会在部署后无任何数据变化的情况下变成「结构损坏」，并可能让
+P2-66 的历史终态/报告随软件版本漂移。这是功能 P1，不是迁移便利性问题。
+
+- `CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS` 与
+  `CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS` 都永久固定为原 14 项；manifest/plan 的 v2
+  词汇固定为本片 26 项。旧 `resolved_binding.manifest` 必须按自身 schema 解析，不能借当前全集重解释。
+- 新冻结件写 `schema_version=2`，按 26 项生成。parser 按冻结件自己的版本选词汇，并对**原始 payload**
+  （排除 `digest` 字段）复算摘要；不得把 v1 补齐成 v2 再重算，也不得重写旧冻结件。
+- 历史/terminal/P2-66 投影不直接解释新 12 项；它们只审计当时冻结的 v1 语义，因此合法 v1 仍合法。
+- 新 MEASURE 路径会消费新操作。未开始/待执行却携带 v1 的执行必须 fail-closed，并明确提示重建执行，
+  不能拿 live v2 覆盖；已经完成的 v1 只读历史不受影响。
+
+机械消费方：直接 parser/validator 只有 `services/channel_emulator_execution_plan.py` 的 validate/freeze/verify
+与 `MeasureExecutor._channel_emulator_plan_context`；`test_case_runner` 和四类 commissioning 入口只写冻结件。
+P2-66 `execution_evidence_outcome.py`、报告 terminal/history API 不直接解析此键，只通过既有冻结执行事实
+投影，所以本片不得把新词汇反向注入它们。

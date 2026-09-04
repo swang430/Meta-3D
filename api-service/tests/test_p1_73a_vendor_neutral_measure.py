@@ -19,6 +19,7 @@ from app.services.mimo_ota.executors.measure import (
     _build_pcell_requested_config,
     _formal_mac_configuration_blocker,
 )
+from tests.channel_emulator_plan_helpers import runtime_measure_plan
 
 
 def _plan(driver, manifest=None):
@@ -213,6 +214,7 @@ async def test_uxm_input_loop_keeps_behavior_with_common_result_and_legacy_mirro
         config=_Config(),
         execution_id="execution-uxm",
         plan=_plan(uxm).input_level_control,
+        channel_emulator_plan=runtime_measure_plan(),
     )
 
     assert payload["success"] is True
@@ -229,6 +231,7 @@ async def test_cmw_input_loop_is_warning_only_and_never_uses_uxm_power_path():
         config=_Config(),
         execution_id="execution-cmw",
         plan=_plan(cmw).input_level_control,
+        channel_emulator_plan=runtime_measure_plan(),
     )
 
     assert payload["skipped"] is True

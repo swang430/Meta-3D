@@ -127,3 +127,22 @@ Run the targeted test. Expected: PASS。
 **Step 4: Commit, but do not push**
 
 提交到 `codex/p2-59-2-runtime-plan`，向主代理提供 SHA、RED→GREEN、验证结果与和③可能冲突的精确行。
+
+### Task 2.5: execution plan v1/v2 兼容门（集成审计 P1）
+
+**Files:**
+- Modify: `api-service/app/hal/channel_emulator_manifest.py`
+- Modify: `api-service/app/hal/channel_emulator_execution_plan.py`
+- Modify: `api-service/app/services/channel_emulator_execution_plan.py`
+- Modify: `api-service/tests/test_p2_57_channel_emulator_manifest.py`
+- Modify: `api-service/tests/test_p2_58_channel_emulator_binding.py`
+- Modify: `api-service/tests/test_p2_59_channel_emulator_execution_plan.py`
+
+**RED:** 固定构造一份原 14 项、摘要匹配的 v1 manifest / binding / plan 冻结件；证明当前实现因全局
+26 项词汇拒绝它。另证明新 resolver 仍写 v1、待执行 v1 会得到不明确的普通漂移错误，以及 v1 binding
+可与 v2 plan 静默混搭。
+
+**GREEN:** 分别固定 manifest/plan 的 v1=14、v2=26 词汇；新 resolver 写 v2/26 项；parser/validator
+按版本并对原始 payload 验摘要；freeze/MEASURE 对待执行 v1 或 v1 binding×v2 plan 明确拒绝并提示重建，
+纯历史 validate 保持成功。不改 P2-66 outcome、terminal 或 history 投影，因为机械搜索确认它们没有解析
+该冻结键。

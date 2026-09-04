@@ -28,6 +28,7 @@ from app.services.input_level_controller import (
 )
 from app.hal.base_station import resolve_base_station_execution_plan
 from app.services.mimo_ota.executors.measure import MeasureExecutor
+from tests.channel_emulator_plan_helpers import runtime_measure_plan
 
 
 def _input_plan(base_station):
@@ -173,6 +174,7 @@ class TestCapabilityDetection:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(implemented=()),
         )
         assert payload["skipped"] is True
         assert "CE 缺接口" in payload["reason"]
@@ -185,6 +187,7 @@ class TestCapabilityDetection:
         bs = _FakeMockBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["skipped"] is True
         assert "BS 未显式开放 input_level_control capability" in payload["reason"]
@@ -197,6 +200,7 @@ class TestCapabilityDetection:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         # controller 跑了 → 不是 skipped
         assert payload.get("skipped") is not True
@@ -218,6 +222,7 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["active_inputs"] == [1, 2]
 
@@ -241,6 +246,11 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(implemented=(
+                "autoset_inputs", "measure_input", "get_input_level_limits",
+                "set_input_measurement_mode", "set_burst_trigger_level",
+                "get_group_clipping", "get_system_status",
+            )),
         )
         # 无 sanity bound, 直接 config.mimo_layers=2
         assert payload["active_inputs"] == [1, 2]
@@ -260,6 +270,7 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["active_inputs"] == [3, 5], "按 1..n 推了, 没用回读口号"
 
@@ -283,6 +294,7 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs),
+            channel_emulator_plan=runtime_measure_plan(),
             config=_MiniConfig(mimo_layers=4),      # 4 层 > 实际 2 个输入口
             execution_id="t1",
         )
@@ -299,6 +311,7 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=4), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
@@ -313,6 +326,7 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
@@ -335,6 +349,11 @@ class TestActiveInputsDerivation:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(mimo_layers=2), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(implemented=(
+                "autoset_inputs", "measure_input", "get_input_level_limits",
+                "set_input_measurement_mode", "set_burst_trigger_level",
+                "get_group_clipping", "get_system_status",
+            )),
         )
         assert payload["active_inputs"] == [1, 2]
         assert payload.get("success") is True
@@ -351,6 +370,7 @@ class TestTopologyMismatch:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs),
+            channel_emulator_plan=runtime_measure_plan(),
             config=_MiniConfig(mimo_layers=8),  # BS 想发 8 layer > 4 端口
             execution_id="t1",
         )
@@ -370,6 +390,7 @@ class TestTopologyMismatch:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs),
+            channel_emulator_plan=runtime_measure_plan(),
             config=_MiniConfig(mimo_layers=4),
             execution_id="t1",
         )
@@ -387,6 +408,7 @@ class TestPayloadShape:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["success"] is True
         assert payload["failure_reason"] is None
@@ -410,6 +432,7 @@ class TestPayloadShape:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs), config=_MiniConfig(), execution_id="t1",
+            channel_emulator_plan=runtime_measure_plan(),
         )
         assert payload["success"] is False
         # InputLevelController 跑满 max_iter (default=5) 还是不收敛 → 5 轮未收敛
@@ -428,6 +451,7 @@ class TestStrictFlagInPayload:
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, plan=_input_plan(bs),
+            channel_emulator_plan=runtime_measure_plan(),
             config=_MiniConfig(precheck_strict_input_level=False),
             execution_id="t1",
         )

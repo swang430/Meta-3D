@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
+from tests.channel_emulator_plan_helpers import runtime_measure_plan
 
 # P2-59 ①：手动定标的能力判据改为冻结计划；测试里按替身的 manifest 派生计划（行为等价），
 # 没有 manifest 的替身 → 什么都没计划（与此前「无 manifest → 不支持」同义）。
@@ -61,7 +62,9 @@ class TestManualInputReference:
         # P2-57：能力由 manifest 回答，替身必须自述
         type(emu).adapter_manifest = channel_emulator_manifest_for(
             adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
-            vendor="test", implemented=("set_baseband_power",),
+            vendor="test", implemented=(
+                "set_baseband_power", "set_crest_factor", "measure_input",
+            ),
         )
         emu._tx_antennas = 4
         # F64R-2: 逐输入口下发用驱动回读的**端口号列表** (同步 getter)。必须显式给
@@ -88,7 +91,7 @@ class TestManualInputReference:
         # P2-57：能力由 manifest 回答，替身必须自述
         type(emu).adapter_manifest = channel_emulator_manifest_for(
             adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
-            vendor="test", implemented=("set_baseband_power",),
+            vendor="test", implemented=("set_baseband_power", "set_crest_factor"),
         )
         emu._tx_antennas = 4
         emu.set_baseband_power = AsyncMock(return_value=False)  # 下发被拒
@@ -175,6 +178,7 @@ class TestInstrumentParamBranches:
 
         err = await MeasureExecutor()._apply_output_gain(
             emulator=emu, gain_db=-3.0, execution_id="t",
+            plan=runtime_measure_plan(),
         )
         assert err is None
         assert [c[0] for c in calls] == [2, 4, 6, 8, 10]   # 真实口号, 非 1..N 也非 1..16
@@ -192,6 +196,7 @@ class TestInstrumentParamBranches:
 
         err = await MeasureExecutor()._apply_output_gain(
             emulator=emu, gain_db=-3.0, execution_id="t",
+            plan=runtime_measure_plan(),
         )
         assert err is not None and "物理输出口未知" in err
         emu.set_output_gain.assert_not_awaited()
@@ -207,6 +212,7 @@ class TestInstrumentParamBranches:
 
         err = await MeasureExecutor()._apply_output_gain(
             emulator=emu, gain_db=-3.0, execution_id="t",
+            plan=runtime_measure_plan(),
         )
         assert err is not None and "output=2" in err
         assert emu.set_output_gain.await_count == 2   # 撞墙即停, 不继续发第 3 个
@@ -262,10 +268,10 @@ class TestInstrumentParamBranches:
 
             payload = await ex._run_input_level_closed_loop(
                 emulator=emu, base_station=bs, config=cfg, execution_id="t",
+                channel_emulator_plan=runtime_measure_plan(),
                 plan=resolve_base_station_execution_plan(
                     bs, manifest=None
                 ).input_level_control,
             )
         assert captured.get("initial_base_station_dl_power_dbm") == -46.0
         assert payload.get("success") is True
-

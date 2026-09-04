@@ -29,12 +29,9 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-#: `ChannelEmulatorDriver` 上**必须存在**的抽象操作全集。
-#:
-#: ⚠️ 这个元组同时是三件事的真值源：① manifest 必须逐个声明（不许沉默省略）；
-#:    ② 类体完整性门按它检查基类；③ 换源后的能力查询按它取值。
-#:    加操作要同时更新这三处 —— 门会强制。
-CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
+#: v1 是 P2-57 已经进入 binding digest 的历史词汇。它不得随代码升级
+#: 扩容，否则同一份已冻结 manifest 会在部署后突然结构失效。
+CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS: tuple[str, ...] = (
     "set_mimo_config",
     "set_path_loss",
     "set_doppler",
@@ -51,6 +48,43 @@ CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
     "clear_passthrough_mode",
 )
 
+#: `ChannelEmulatorDriver` 上**必须存在**的当前抽象操作全集（v2）。
+#:
+#: ⚠️ 这个元组同时是三件事的真值源：① manifest 必须逐个声明（不许沉默省略）；
+#:    ② 类体完整性门按它检查基类；③ 换源后的能力查询按它取值。
+#:    加操作要同时更新这三处 —— 门会强制。
+CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
+    *CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
+    "ensure_topology",
+    "get_center_frequency_mhz",
+    "set_output_gain",
+    "set_output_level_dbm",
+    "set_crest_factor",
+    "measure_input",
+    "autoset_inputs",
+    "get_input_level_limits",
+    "set_input_measurement_mode",
+    "set_burst_trigger_level",
+    "get_group_clipping",
+    "get_system_status",
+)
+
+CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
+
+
+def channel_emulator_manifest_operations_for_schema(
+    schema_version: int,
+) -> tuple[str, ...]:
+    """按 manifest 自身版本返回固定词汇；历史 v1 绝不借当前全集重解释。"""
+
+    if schema_version == 1:
+        return CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
+    if schema_version == 2:
+        return CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+    raise ValueError(
+        f"unsupported channel emulator manifest schema_version: {schema_version!r}"
+    )
+
 ChannelEmulatorOperation = Literal[
     "set_mimo_config",
     "set_path_loss",
@@ -66,6 +100,18 @@ ChannelEmulatorOperation = Literal[
     "stop_calibration_tone",
     "set_passthrough_mode",
     "clear_passthrough_mode",
+    "ensure_topology",
+    "get_center_frequency_mhz",
+    "set_output_gain",
+    "set_output_level_dbm",
+    "set_crest_factor",
+    "measure_input",
+    "autoset_inputs",
+    "get_input_level_limits",
+    "set_input_measurement_mode",
+    "set_burst_trigger_level",
+    "get_group_clipping",
+    "get_system_status",
 ]
 
 #: 与 `ChannelLoadMode` 枚举同源；这里独立写一份是为了让 manifest 模块
@@ -122,7 +168,7 @@ class ChannelEmulatorManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     adapter_id: str
     model_name: str
     vendor: str
@@ -149,10 +195,13 @@ class ChannelEmulatorManifest(BaseModel):
         declared = [item.operation for item in self.operations]
         if len(set(declared)) != len(declared):
             raise ValueError("channel emulator operations must be unique")
-        missing = sorted(set(CHANNEL_EMULATOR_OPERATIONS) - set(declared))
-        if missing:
+        expected = channel_emulator_manifest_operations_for_schema(self.schema_version)
+        missing = sorted(set(expected) - set(declared))
+        foreign = sorted(set(declared) - set(expected))
+        if missing or foreign:
             raise ValueError(
-                "channel emulator manifest does not declare: " + ", ".join(missing)
+                "channel emulator manifest operation vocabulary mismatch: "
+                f"missing={missing}, foreign={foreign}"
             )
         return self
 
@@ -177,6 +226,10 @@ class ChannelEmulatorManifest(BaseModel):
 
         if operation not in CHANNEL_EMULATOR_OPERATIONS:
             raise ValueError(f"unknown channel emulator operation: {operation!r}")
+        if operation not in channel_emulator_manifest_operations_for_schema(
+            self.schema_version
+        ):
+            return False
         for item in self.operations:
             if item.operation == operation:
                 return item.support == "implemented"
@@ -194,7 +247,10 @@ class ChannelEmulatorManifest(BaseModel):
                     f"{self.model_name} 不支持 {operation}"
                     f"（{item.support}）：{item.reason}"
                 )
-        return None
+        return (
+            f"{self.model_name} 的 manifest v{self.schema_version} 尚未声明"
+            f" {operation}，需要重建配置 / 执行冻结件"
+        )
 
     def supported_load_modes(self) -> tuple[str, ...]:
         return tuple(
@@ -311,8 +367,8 @@ def channel_emulator_manifest_for(
     """按「实现了哪些操作」快速构造 manifest，其余自动标 `not_implemented`。
 
     ⚠️ **只给测试替身与诊断脚手架用，生产驱动一律逐格字面声明。**
-    理由：`ChannelEmulatorManifest` 的 fail-closed 核心是「必须逐个声明全部
-    14 个操作」——本工厂会替你把没点名的补成 `not_implemented`，那对替身是
+    理由：`ChannelEmulatorManifest` 的 fail-closed 核心是「必须逐个声明当前
+    schema 的全部操作」——本工厂会替你把没点名的补成 `not_implemented`，那对替身是
     便利，对生产驱动就是把「忘了声明」和「确实不支持」混成同一件事。
     生产侧那三个 manifest（F64 / FS16 / Mock）都是手写全量的。
     """
@@ -321,7 +377,7 @@ def channel_emulator_manifest_for(
     if unknown:
         raise ValueError(f"unknown channel emulator operations: {unknown}")
     return ChannelEmulatorManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id=adapter_id,
         model_name=model_name,
         vendor=vendor,

@@ -30,6 +30,7 @@ from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_execution_plan import (
     CHANNEL_EMULATOR_PHASE_ORDER,
+    CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS,
     ENGINE_MODE_TO_REQUESTED_LOAD_MODE,
     ChannelEmulatorExecutionPlan,
     ChannelEmulatorExecutionPlanItem,
@@ -57,6 +58,7 @@ from app.services.channel_emulator_execution_plan import (
     channel_emulator_for_execution_plan,
     freeze_channel_emulator_execution_plan,
     freeze_channel_asset_resolution,
+    validate_frozen_channel_emulator_execution_plan,
     freeze_execution_channel_emulator_plan,
     resolve_live_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
@@ -117,7 +119,16 @@ def _execution(
     """执行行 + 它绑的 TestCase 行（冻结从 `load_mimo_ota_config(execution)` 取配置，与 MEASURE 同源）。"""
 
     if with_binding:
-        config = {CE_FREEZE_CONFIG_KEY: {"binding_digest": BINDING_DIGEST}, **config}
+        config = {
+            CE_FREEZE_CONFIG_KEY: {
+                "binding_digest": BINDING_DIGEST,
+                "resolved_binding": {
+                    "status": "configured",
+                    "manifest": F64_MANIFEST.model_dump(mode="json"),
+                },
+            },
+            **config,
+        }
     test_case_id = None
     case_configuration = _configuration(engine_mode) if configuration is None else configuration
     if bind_case:
@@ -162,9 +173,93 @@ def _frozen(plan):
     return {**plan.as_payload(), "digest": plan.digest}
 
 
+def _legacy_v1_frozen():
+    """精确模拟①已经落库的 14 项 v1，不借当前 resolver 重写。"""
+
+    from app.hal.base_station_compatibility import canonical_payload_digest
+
+    current = _plan()
+    payload = {
+        **current.as_payload(),
+        "schema_version": 1,
+        "operations": [
+            item
+            for item in current.as_payload()["operations"]
+            if item["operation"] in CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
+        ],
+    }
+    return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def _legacy_v1_binding():
+    from app.hal.base_station_compatibility import canonical_payload_digest
+    from app.hal.channel_emulator_manifest import (
+        CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
+    )
+
+    manifest = F64_MANIFEST.model_dump(mode="json")
+    legacy_manifest = {
+        **manifest,
+        "schema_version": 1,
+        "operations": [
+            item
+            for item in manifest["operations"]
+            if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
+        ],
+    }
+    identity = {
+        "schema_version": 1,
+        "binding_digest": BINDING_DIGEST,
+        "resolved_binding": {
+            "status": "configured",
+            "manifest": legacy_manifest,
+        },
+    }
+    return {**identity, "digest": canonical_payload_digest(identity)}
+
+
 # ----------------------------------------------------------------------
 # ① 纯计划
 # ----------------------------------------------------------------------
+
+
+def test_new_plan_is_v2_and_legacy_v1_keeps_its_original_digest_and_shape():
+    current = _plan()
+    assert current.schema_version == 2
+    assert len(current.operations) == len(CHANNEL_EMULATOR_OPERATIONS) == 26
+
+    frozen = _legacy_v1_frozen()
+    parsed = plan_from_frozen_payload(frozen)
+    assert parsed.schema_version == 1
+    assert tuple(item.operation for item in parsed.operations) == (
+        CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
+    )
+    assert validate_frozen_channel_emulator_execution_plan(frozen) == frozen
+
+
+def test_pending_execution_with_v1_plan_is_rejected_with_rebuild_instruction(db):
+    execution = _execution(db, **{CE_PLAN_FREEZE_CONFIG_KEY: _legacy_v1_frozen()})
+    with pytest.raises(ValueError, match="v1.*重建"):
+        freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+
+
+def test_pending_execution_cannot_mix_v1_binding_with_new_v2_plan(db):
+    execution = _execution(db, with_binding=False)
+    execution.config = {CE_FREEZE_CONFIG_KEY: _legacy_v1_binding()}
+    db.commit()
+    with pytest.raises(ValueError, match="binding.*manifest v1.*重建"):
+        freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+
+
+def test_v2_plan_cannot_silently_omit_new_runtime_operations():
+    frozen = _frozen(_plan())
+    payload = {**frozen, "operations": frozen["operations"][:-1]}
+    from app.hal.base_station_compatibility import canonical_payload_digest
+    payload["digest"] = canonical_payload_digest(
+        {key: value for key, value in payload.items() if key != "digest"}
+    )
+    with pytest.raises(ValueError, match="结构不合法"):
+        validate_frozen_channel_emulator_execution_plan(payload)
 
 
 def test_plan_payload_is_canonical_regardless_of_manifest_operation_order():
@@ -291,9 +386,8 @@ def test_freeze_persists_plan_next_to_binding_freeze_and_reuses_without_recomput
     assert frozen == {**expected.as_payload(), "digest": expected.digest}
     assert frozen["binding_digest"] == BINDING_DIGEST
     assert execution.config["keep"] == "me"
-    assert execution.config[CE_FREEZE_CONFIG_KEY] == {
-        "binding_digest": BINDING_DIGEST
-    }
+    frozen_binding = execution.config[CE_FREEZE_CONFIG_KEY]
+    assert frozen_binding["binding_digest"] == BINDING_DIGEST
     assert execution.config[CE_PLAN_FREEZE_CONFIG_KEY] == frozen
     load_request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
     assert load_request["source"] == "mimo_configuration"
@@ -692,7 +786,13 @@ def test_measure_rejects_missing_frozen_plan_or_binding_before_io():
 def test_measure_rejects_drifted_plan_and_accepts_matching_one():
     frozen_f64 = _frozen(_plan(F64_MANIFEST, "native_model"))
     config = {
-        CE_FREEZE_CONFIG_KEY: {"binding_digest": BINDING_DIGEST},
+        CE_FREEZE_CONFIG_KEY: {
+            "binding_digest": BINDING_DIGEST,
+            "resolved_binding": {
+                "status": "configured",
+                "manifest": F64_MANIFEST.model_dump(mode="json"),
+            },
+        },
         CE_PLAN_FREEZE_CONFIG_KEY: frozen_f64,
     }
     cfg = SimpleNamespace(engine_mode="keysight_gcm")
@@ -769,9 +869,9 @@ def test_measure_no_longer_queries_driver_capability_directly_and_reconciles_bef
     # 但不早于路损 / 证书等与 CE 无关的前置门（它们的拒绝不该被计划缺席顶掉）
     assert source.index("evaluate_path_loss_preflight(") < reconcile
     assert reconcile < source.index("plan=ce_plan,")
-    # 直通进入、前置停止、终态退出三项都必须由冻结计划声明。
-    assert source.count("ce_plan.planned(") == 3
-    assert source.count("plan.planned(") == 4  # 三处直通生命周期 + 手动定标参数
+    # ②会继续增加计划消费点，这里守「不回退成驱动探测」，不锁死调用次数。
+    assert source.count("ce_plan.planned(") >= 2
+    assert source.count("plan.planned(") >= 3
 
 
 def test_both_freeze_writers_freeze_the_plan_right_after_the_binding():

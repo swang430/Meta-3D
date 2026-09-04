@@ -114,7 +114,8 @@ async def test_native_model_derives_uma_from_model_name_without_umi_default():
 
     emulator = Emulator()
     ok = await NativeModelStrategy(
-        emulator, SimpleNamespace(), [], generate_oop=False
+        emulator, SimpleNamespace(), [], generate_oop=False,
+        execution_plan=SimpleNamespace(load_mode_planned=True, load_mode_reason="planned"),
     ).generate_and_load(
         {"emulation_file": r"D:\Scenario\UMa.smu"},
         {"model_name": "UMa CDL-C NLOS", "session_id": "p1-60"},
@@ -134,7 +135,8 @@ async def test_native_model_rejects_declared_scenario_conflict_in_any_token_orde
             raise AssertionError("scenario conflict must fail before hardware I/O")
 
     ok = await NativeModelStrategy(
-        Emulator(), SimpleNamespace(), [], generate_oop=False
+        Emulator(), SimpleNamespace(), [], generate_oop=False,
+        execution_plan=SimpleNamespace(load_mode_planned=True, load_mode_reason="planned"),
     ).generate_and_load(
         {"emulation_file": r"D:\Scenario\UMa.smu"},
         {
@@ -159,7 +161,8 @@ async def test_explicit_vendor_file_preserves_non_3gpp_scenario_label():
 
     emulator = Emulator()
     ok = await NativeModelStrategy(
-        emulator, SimpleNamespace(), [], generate_oop=False
+        emulator, SimpleNamespace(), [], generate_oop=False,
+        execution_plan=SimpleNamespace(load_mode_planned=True, load_mode_reason="planned"),
     ).generate_and_load(
         {"emulation_file": r"D:\\Scenario\\Highway.smu"},
         {
@@ -185,7 +188,8 @@ async def test_explicit_vendor_file_accepts_driver_supported_non_cdl_model():
 
     emulator = Emulator()
     ok = await NativeModelStrategy(
-        emulator, SimpleNamespace(), [], generate_oop=False
+        emulator, SimpleNamespace(), [], generate_oop=False,
+        execution_plan=SimpleNamespace(load_mode_planned=True, load_mode_reason="planned"),
     ).generate_and_load(
         {"emulation_file": r"D:\\Scenario\\TDL-A_Indoor.smu"},
         {
@@ -210,7 +214,8 @@ async def test_explicit_vendor_file_rejects_non_alnum_scenario_before_io():
             raise AssertionError("invalid vendor scenario must fail before hardware I/O")
 
     ok = await NativeModelStrategy(
-        Emulator(), SimpleNamespace(), [], generate_oop=False
+        Emulator(), SimpleNamespace(), [], generate_oop=False,
+        execution_plan=SimpleNamespace(load_mode_planned=True, load_mode_reason="planned"),
     ).generate_and_load(
         {"emulation_file": r"D:\\Scenario\\Highway.smu"},
         {

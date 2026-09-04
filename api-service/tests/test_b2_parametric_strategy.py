@@ -1,5 +1,6 @@
 """F6/PR-5 单测 — B-2 参数化 TDL 路由 + 能力门 + CE 聚类接线 (P2-14)。"""
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock
 
 from app.hal.channel_emulator import ChannelLoadMode
@@ -12,14 +13,21 @@ _RAYS = [{"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 30.0, "aod_deg": 10.0}
 
 def _strategy(supports=True, ce_result=None):
     emu = MagicMock()
-    emu.get_supported_load_modes.return_value = (
-        [ChannelLoadMode.PARAMETRIC_TDL] if supports else [ChannelLoadMode.EXTERNAL_WAVEFORM])
     ce_client = MagicMock()
     ce_client.cluster_b2_native = AsyncMock(
         return_value=ce_result if ce_result is not None else B2ClusterResult(
             success=True, target_path="B2_parametric", clustering_algo="geometric_native_fit",
             tap_params=[{"tap_index": 0}], note="待现场 Channel Studio"))
-    return B2ParametricTdlStrategy(emu, ce_client, chamber_config=None, calibration_entries=[])
+    return B2ParametricTdlStrategy(
+        emu,
+        ce_client,
+        chamber_config=None,
+        calibration_entries=[],
+        execution_plan=SimpleNamespace(
+            load_mode_planned=supports,
+            load_mode_reason=("planned" if supports else "not declared"),
+        ),
+    )
 
 
 # ───────────── 枚举 (F6) ─────────────
