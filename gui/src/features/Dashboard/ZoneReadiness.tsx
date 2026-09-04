@@ -3,7 +3,8 @@
  *
  * Surfaces the commissioning precheck fail-loud gate信息 (P1-8 校准 /
  * P1-9 DUT-attach) to the first screen: a four-cell traffic light
- * (驱动链 / 活动 Lab / 校准证书 / DUT attach / BaseStation binding) plus a one-line总判
+ * (驱动链 / 活动 Lab / 校准证书 / DUT attach / BaseStation binding / 信道仿真器 binding /
+ * 用例兼容性) plus a one-line总判
  * (能不能开测 + 阻塞原因), styled to match the commissioning precheck
  * FAIL voice.
  *
@@ -31,6 +32,7 @@ import {
   projectBaseStationCompatibilityTruth,
   projectReadinessVerdict,
 } from './baseStationBindingTruth'
+import { projectChannelEmulatorBindingTruth } from './channelEmulatorBindingTruth'
 import type {
   HALReadinessResponse,
   ReadinessDriverRow,
@@ -143,6 +145,9 @@ function buildCells(report: HALReadinessResponse): Cell[] {
   const baseStationCompatibility = projectBaseStationCompatibilityTruth(
     report.base_station_testcase_compatibility,
   )
+  // P2-58 ②：消费 ① 的 CE binding 真值；映射与基站绑定同形（invalid 红 / 仅诊断 黄 / 已解析 绿），
+  // CE 没有现场认证层，不做二次降级。
+  const channelEmulatorBinding = projectChannelEmulatorBindingTruth(report.channel_emulator_binding)
   const certification = report.base_station_site_certification
   const certificationMatches = certification?.status === 'active'
     && certification.binding_digest === report.base_station_binding?.binding_digest
@@ -216,6 +221,13 @@ function buildCells(report: HALReadinessResponse): Cell[] {
       light: baseStationBinding.light,
       valueText: baseStationBinding.valueText,
       detail: baseStationBinding.detail,
+    },
+    {
+      key: 'channel-emulator-binding',
+      title: '信道仿真器绑定',
+      light: channelEmulatorBinding.light,
+      valueText: channelEmulatorBinding.valueText,
+      detail: channelEmulatorBinding.detail,
     },
     {
       key: 'base-station-compatibility',

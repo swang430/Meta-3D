@@ -2492,6 +2492,27 @@ components:
           nullable: true
           additionalProperties: true
       required: [schema_version, model_id, endpoint, controller, notes, connection_params, base_station_adapter_profile]
+    ChannelEmulatorModelPreset:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        model_id:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+          minLength: 1
+        controller:
+          type: string
+        notes:
+          type: string
+        connection_params:
+          type: object
+          additionalProperties: true
+      required: [schema_version, model_id, endpoint, controller, notes, connection_params]
     InstrumentConnection:
       type: object
       properties:
@@ -2515,6 +2536,10 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/BaseStationModelPreset'
+        channel_emulator_model_presets:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ChannelEmulatorModelPreset'
         cmw500_lte_2x2_formal_enabled:
           type: boolean
           description: Read-only durable rollout approval; generic connection update cannot write it.
@@ -2526,7 +2551,7 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
           nullable: true
-      required: [id, endpoint, controller, notes, connection_params, base_station_model_presets, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
+      required: [id, endpoint, controller, notes, connection_params, base_station_model_presets, channel_emulator_model_presets, cmw500_lte_2x2_formal_enabled, cmw500_lte_2x2_formal_updated_at, base_station_site_certification]
       additionalProperties: false
     Cmw500FormalCapabilityUpdate:
       type: object

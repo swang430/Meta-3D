@@ -86,6 +86,7 @@ export type InstrumentConnection = {
   notes?: string | null
   connection_params?: Record<string, any> | null
   base_station_model_presets?: Record<string, BaseStationModelPreset>
+  channel_emulator_model_presets?: Record<string, ChannelEmulatorModelPreset>
   cmw500_lte_2x2_formal_enabled: boolean
   cmw500_lte_2x2_formal_updated_at: string | null
   base_station_site_certification: BaseStationSiteCertification | null
@@ -99,6 +100,17 @@ export type BaseStationModelPreset = {
   notes: string
   connection_params: Record<string, unknown>
   base_station_adapter_profile: Record<string, unknown> | null
+}
+
+/** P2-58 ②：信道仿真器分型号 saved preset —— 与 BaseStationModelPreset 同形，**无** adapter_profile 槽
+ *  （CE 无 profile 层；alignment_name / available_channel_models 都住在 connection_params 里，原样带着）。 */
+export type ChannelEmulatorModelPreset = {
+  schema_version: 1
+  model_id: string
+  endpoint: string
+  controller: string
+  notes: string
+  connection_params: Record<string, unknown>
 }
 
 export type TestCaseExecutionPolicy = {
@@ -356,6 +368,25 @@ export type BaseStationBindingPreviewResponse = {
   testcase_compatibility: BaseStationCompatibilityPreviewResponse | null
 }
 
+/** P2-58 ①：channelEmulator binding 只读预览（GET …/instrument-bindings/channelEmulator/preview，
+ *  readiness 的 channel_emulator_binding 同形）。CE 没有 compatibility 槽，取而代之是 selected_asset_id。 */
+export type ChannelEmulatorBindingPreviewResponse = {
+  status: 'configured' | 'not_applicable' | 'diagnostic_unbound' | 'invalid'
+  binding_digest: string | null
+  execution_mode: 'real' | 'simulated' | null
+  adapter_id: string | null
+  model_name: string | null
+  category_id: string | null
+  instrument_model_id: string | null
+  instrument_connection_id: string | null
+  lab_profile_id: string
+  resolved_binding: Record<string, unknown> | null
+  runtime_driver: Record<string, unknown> | null
+  detail: string
+  /** 预览带 test_case_id 时附带的信道资产 id；不进 binding_digest。 */
+  selected_asset_id: string | null
+}
+
 export type BaseStationCompatibilityPreviewResponse = {
   schema_version: 1
   status: 'compatible' | 'incompatible' | 'no_adapter' | 'not_evaluated' | 'invalid'
@@ -401,6 +432,8 @@ export type HALReadinessResponse = {
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
   base_station_binding: BaseStationBindingPreviewResponse | null
+  /** P2-58 ①：当前 LabProfile 的 channelEmulator binding 预览；HAL 未就绪或无活动 LabProfile 时为 null（required，非 ?:）。 */
+  channel_emulator_binding: ChannelEmulatorBindingPreviewResponse | null
   base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
   base_station_site_certification: BaseStationSiteCertification | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null

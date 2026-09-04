@@ -26,6 +26,7 @@ import type {
   SystemLogTailResponse,
   DashboardAlertSummary,
   BaseStationCompatibilityPreviewResponse,
+  ChannelEmulatorBindingPreviewResponse,
 } from '../types/api'
 
 // ── P2-8 Operational Cockpit mock fixtures ──
@@ -42,6 +43,24 @@ const notEvaluatedCompatibility: BaseStationCompatibilityPreviewResponse = {
   verdict: null,
   reasons: ['Mock dashboard has no saved TestCase context'],
   detail: 'Mock dashboard has no saved TestCase context',
+}
+
+// P2-58 ②：与 base_station_binding 同口径的演示夹具 —— diagnostic_unbound 时 resolver 不带 manifest，
+// 所以 adapter / model 为 null；simulated 只算诊断，不是正式证据。
+const channelEmulatorBindingPreview: ChannelEmulatorBindingPreviewResponse = {
+  status: 'diagnostic_unbound',
+  binding_digest: null,
+  execution_mode: 'simulated',
+  adapter_id: null,
+  model_name: null,
+  category_id: null,
+  instrument_model_id: null,
+  instrument_connection_id: null,
+  lab_profile_id: 'lab-001',
+  resolved_binding: null,
+  runtime_driver: { simulated: true },
+  detail: 'Demo fixture only; simulated channelEmulator binding is not formal evidence.',
+  selected_asset_id: null,
 }
 
 const readinessSnapshot: HALReadinessResponse = {
@@ -111,6 +130,7 @@ const readinessSnapshot: HALReadinessResponse = {
     detail: 'Demo fixture only; simulated binding is not formal evidence.',
     testcase_compatibility: notEvaluatedCompatibility,
   },
+  channel_emulator_binding: channelEmulatorBindingPreview,
   base_station_testcase_compatibility: notEvaluatedCompatibility,
   base_station_site_certification: null,
   // The demo fixture uses UXM, so CMW readiness is explicitly not present
@@ -991,7 +1011,34 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '驱动MPAC阵列并合成目标波场，支持WFS/PWG模式。',
     tags: ['64TRX', 'WFS', 'PWG'],
     selectedModelId: 'propsim-f64',
-    connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#', cmw500_lte_2x2_formal_enabled: false, cmw500_lte_2x2_formal_updated_at: null, base_station_site_certification: null },
+    connection: {
+      endpoint: '192.168.100.21',
+      controller: 'LAN',
+      notes: '暗室机柜1#',
+      connection_params: { alignment_name: 'CAICT_5G_3500MHz' },
+      // P2-58 ②：分型号 saved preset —— 活动型号那一项与活动连接一致，另一型号各存各的。
+      channel_emulator_model_presets: {
+        'propsim-f64': {
+          schema_version: 1,
+          model_id: 'propsim-f64',
+          endpoint: '192.168.100.21',
+          controller: 'LAN',
+          notes: '暗室机柜1#',
+          connection_params: { alignment_name: 'CAICT_5G_3500MHz' },
+        },
+        'ksw-wns02b': {
+          schema_version: 1,
+          model_id: 'ksw-wns02b',
+          endpoint: '192.168.100.23',
+          controller: 'LAN',
+          notes: 'KSW 备用机',
+          connection_params: {},
+        },
+      },
+      cmw500_lte_2x2_formal_enabled: false,
+      cmw500_lte_2x2_formal_updated_at: null,
+      base_station_site_certification: null,
+    },
     usagePhase: [],
     driverMode: 'auto',
     models: [
@@ -1327,6 +1374,9 @@ export const mockDatabase = {
   getInstrumentCatalog(): InstrumentsResponse {
     return { categories: clone(instrumentCatalog) }
   },
+  getChannelEmulatorBindingPreview(): ChannelEmulatorBindingPreviewResponse {
+    return clone(channelEmulatorBindingPreview)
+  },
   updateInstrumentCategory(categoryKey: string, payload: UpdateInstrumentPayload): InstrumentCategory | null {
     const index = instrumentCatalog.findIndex((item) => item.key === categoryKey)
     if (index === -1) return null
@@ -1341,6 +1391,25 @@ export const mockDatabase = {
     }
     if (payload.modelId && next.models.some((model) => model.id === payload.modelId)) {
       next.selectedModelId = payload.modelId
+    }
+    // P2-58 ②：带 modelId + connection 的保存 = 该型号 preset 的原子保存（镜像后端 CE 块）：
+    // 只写目标型号那一项，其它型号的 preset 原样保留。
+    const presets = current.connection.channel_emulator_model_presets
+    if (presets && payload.connection && payload.modelId && next.selectedModelId === payload.modelId) {
+      next.connection = {
+        ...next.connection,
+        channel_emulator_model_presets: {
+          ...presets,
+          [payload.modelId]: {
+            schema_version: 1,
+            model_id: payload.modelId,
+            endpoint: next.connection.endpoint ?? '',
+            controller: next.connection.controller ?? '',
+            notes: next.connection.notes ?? '',
+            connection_params: next.connection.connection_params ?? {},
+          },
+        },
+      }
     }
     instrumentCatalog[index] = next
     return clone(next)

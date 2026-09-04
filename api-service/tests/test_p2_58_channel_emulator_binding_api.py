@@ -195,6 +195,18 @@ def _sync_url(lab_id) -> str:
     return f"/api/v1/lab-profiles/{lab_id}/instrument-bindings/channelEmulator/sync-current"
 
 
+def _save_active_channel_emulator_preset() -> None:
+    """P2-58 ②：sync-current 的 CE 分支现在要求活动连接有当前型号的 saved preset（无则 422），
+    所以两条 sync-current 用例先经正门 ``PUT /instruments/channelEmulator`` 保存一次。
+    空 ``connection`` = 把活动连接原样存成当前型号的 preset（四级回退第三级，② API 门 3 钉住）。
+    这个 PUT 自己也是一次请求会话，清掉它留下的 teardown 快照，让用例里的断言仍只看
+    sync-current 那一个请求 —— 只改 setup，不改断言语义。"""
+
+    saved = client.put("/api/v1/instruments/channelEmulator", json={"connection": {}})
+    assert saved.status_code == 200, saved.text
+    _REQUEST_SESSION_OPEN_TX_AT_TEARDOWN.clear()
+
+
 # ----------------------------------------------------------------------
 # 门 1：GET 预览合法配置 → 200 configured，selected_asset_id 为 null，零仪器 I/O
 # ----------------------------------------------------------------------
@@ -329,6 +341,7 @@ def test_sync_current_rejects_unresolvable_channel_emulator_binding_and_rolls_ba
     # 品类显式 real，HAL 里装的却是 mock → resolver 拒绝（真值不一致）
     _patch_hal(monkeypatch, _mock())
 
+    _save_active_channel_emulator_preset()
     response = client.put(_sync_url(lab.id))
 
     assert response.status_code == 422, response.text
@@ -355,6 +368,7 @@ def test_sync_current_persists_channel_emulator_binding_and_keeps_resolved_null(
     db.commit()
     _patch_hal(monkeypatch, _f64())
 
+    _save_active_channel_emulator_preset()
     response = client.put(_sync_url(lab.id))
 
     assert response.status_code == 200, response.text

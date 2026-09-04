@@ -2998,6 +2998,18 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        ChannelEmulatorModelPreset: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** Format: uuid */
+            model_id: string;
+            endpoint: string;
+            controller: string;
+            notes: string;
+            connection_params: {
+                [key: string]: unknown;
+            };
+        };
         InstrumentConnection: {
             id: string | null;
             endpoint: string | null;
@@ -3008,6 +3020,9 @@ export interface components {
             } | null;
             base_station_model_presets: {
                 [key: string]: components["schemas"]["BaseStationModelPreset"];
+            };
+            channel_emulator_model_presets: {
+                [key: string]: components["schemas"]["ChannelEmulatorModelPreset"];
             };
             /** @description Read-only durable rollout approval; generic connection update cannot write it. */
             cmw500_lte_2x2_formal_enabled: boolean;
