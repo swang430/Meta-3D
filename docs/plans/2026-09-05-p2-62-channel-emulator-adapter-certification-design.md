@@ -49,8 +49,9 @@ MEASURE 冻结的通用 Channel Emulator 频率证据，同时保留旧 F64 镜�
 - `CertFakeChannelEmulatorDriver`：实现 manifest v2 声明的操作；
 - `CertFakeChannelTransport`：脚本化 fake transport，记录 command/query/error-queue 事件，
   可注入部分回读、拒绝、延迟、取消；事件是测试协议 token，不是 SCPI；
-- `ChannelAdapterCertificationSubject`：把 F64、FS16 与 certfake 的差异封装成 subject；
-- `certify_*` 模板：逐项执行共同合同。
+- `temporary_certfake_channel_emulator_registration()`：只在测试上下文临时注入
+  profile/manifest/driver resolver，退出后恢复生产注册表；
+- 参数化操作模板：对 asset load、start、动态调参、stop 逐项执行同一共同合同。
 
 certfake 的 `source_reference` 明确写为测试夹具合同，不能冒充厂商手册。生产目录永久门禁止
 出现 `certfake_ce` token。

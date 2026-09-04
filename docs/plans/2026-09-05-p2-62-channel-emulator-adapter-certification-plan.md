@@ -6,7 +6,7 @@
 
 - 新增 `tests/channel_emulator_certification_kit.py` 与定点测试；
 - 先写 manifest/实现/profile/manual evidence/临时注册 RED；
-- 实现 certfake profile、fake transport、driver 与 subject；
+- 实现 certfake profile、fake transport、driver 与临时注册上下文；
 - 加生产目录零泄漏门。
 
 ## Task 2：binding、preset 与执行计划
