@@ -21,7 +21,10 @@ from app.models.test_plan import TestCase, TestExecution
 from app.services.base_station_binding import resolve_base_station_binding
 from app.services.instrument_hal_service import is_mock_driver
 from app.services.instrument_test_lease import BaseStationLeaseAuditContext
-from app.schemas.mimo_ota.config import canonicalize_mimo_ota_configuration_payload
+from app.schemas.mimo_ota.config import (
+    MIMOOTAConfiguration,
+    canonicalize_mimo_ota_configuration_payload,
+)
 
 
 FREEZE_CONFIG_KEY = "base_station_adapter_profile_freeze"
@@ -208,6 +211,15 @@ def freeze_base_station_adapter_profile(
     frozen_configuration = canonicalize_mimo_ota_configuration_payload(
         dict(saved_configuration or {})
     )
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        freeze_channel_asset_resolution,
+    )
+
+    configuration_model = MIMOOTAConfiguration.model_validate(frozen_configuration)
+    frozen_asset_resolution = freeze_channel_asset_resolution(
+        db, configuration_model
+    )
     requirements = build_measure_execution_requirements_from_configuration(
         frozen_configuration
     )
@@ -255,6 +267,8 @@ def freeze_base_station_adapter_profile(
         # 统计窗口或正式证据。
         MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_configuration,
     }
+    if frozen_asset_resolution is not None:
+        identity[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = frozen_asset_resolution
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(
             mode="json"

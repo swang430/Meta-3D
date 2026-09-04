@@ -39,7 +39,63 @@ from app.services.channel_emulator_binding import (
 #: 冻结件在 `TestExecution.config` 里的键（与 `CE_FREEZE_CONFIG_KEY` 同一家族）。
 CE_PLAN_FREEZE_CONFIG_KEY = "channel_emulator_execution_plan_freeze"
 CE_LOAD_REQUEST_FREEZE_CONFIG_KEY = "channel_emulator_load_request_freeze"
+CHANNEL_ASSET_RESOLUTION_FREEZE_KEY = "channel_asset_resolution"
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class FrozenChannelAssetResolution(BaseModel):
+    """Asset identity frozen independently under the BaseStation outer digest."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    channel_asset_id: NonEmptyString
+    source_type: Literal[
+        "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic"
+    ]
+    digest: NonEmptyString
+
+
+def validate_frozen_channel_asset_resolution(frozen: Any) -> dict[str, Any]:
+    if not isinstance(frozen, Mapping):
+        raise ValueError("已冻结的 channel asset resolution 不是对象（冻结件损坏）")
+    try:
+        FrozenChannelAssetResolution.model_validate(dict(frozen))
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"已冻结的 channel asset resolution 结构不合法（冻结件损坏）: {exc}"
+        ) from exc
+    payload = {key: value for key, value in frozen.items() if key != "digest"}
+    if frozen.get("digest") != canonical_payload_digest(payload):
+        raise ValueError(
+            "已冻结的 channel asset resolution 与其 digest 不一致（冻结件被篡改）"
+        )
+    return dict(frozen)
+
+
+def freeze_channel_asset_resolution(db: Any, configuration: Any) -> dict[str, Any] | None:
+    """Resolve an explicit asset once, before the CE request/plan are created."""
+
+    from app.services.mimo_ota.channel_asset_resolver import (
+        ChannelAssetResolveError,
+        resolve_channel_asset,
+    )
+
+    if getattr(configuration, "channel_asset_id", None) is None:
+        return None
+    try:
+        resolved = resolve_channel_asset(db, configuration)
+    except ChannelAssetResolveError as exc:
+        raise ValueError(str(exc)) from exc
+    if resolved is None:
+        raise ValueError("channel_asset_id 已指定但 resolver 未返回资产")
+    payload = {
+        "schema_version": 1,
+        "channel_asset_id": str(resolved.asset.id),
+        "source_type": resolved.asset.source_type,
+    }
+    frozen = {**payload, "digest": canonical_payload_digest(payload)}
+    return validate_frozen_channel_asset_resolution(frozen)
 
 
 class FrozenChannelEmulatorLoadRequest(BaseModel):
@@ -157,10 +213,6 @@ def resolve_live_channel_emulator_execution_plan(
 def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
     """Resolve the effective engine once and freeze where that answer came from."""
 
-    from app.services.mimo_ota.channel_asset_resolver import (
-        ChannelAssetResolveError,
-        resolve_channel_asset,
-    )
     from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
 
     try:
@@ -169,11 +221,6 @@ def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
         raise ValueError(
             f"无法读取执行的 MIMO OTA 配置，不能派生 channelEmulator 执行计划: {exc}"
         ) from exc
-    try:
-        resolved_asset = resolve_channel_asset(db, configuration)
-    except ChannelAssetResolveError as exc:
-        raise ValueError(str(exc)) from exc
-
     # `canonicalize_mimo_ota_configuration_payload` deliberately preserves a
     # sparse JSON shape.  Bind the resolver answer to that exact immutable
     # payload when the base-station freeze already exists; model-dumping here
@@ -195,16 +242,36 @@ def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
         if isinstance(frozen_configuration, Mapping)
         else configuration.model_dump(mode="json")
     )
-    if resolved_asset is None:
+    frozen_asset = (
+        base_station_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+        if isinstance(base_station_freeze, Mapping)
+        else None
+    )
+    if configuration.channel_asset_id is None:
+        if frozen_asset is not None:
+            raise ValueError(
+                "channel asset resolution 与冻结 MIMO 配置的空资产身份矛盾"
+            )
         source = "mimo_configuration"
         asset_id = None
         asset_source_type = None
         effective_engine_mode = configuration.engine_mode
     else:
+        asset_identity = validate_frozen_channel_asset_resolution(frozen_asset)
+        if asset_identity["channel_asset_id"] != str(configuration.channel_asset_id):
+            raise ValueError(
+                "channel asset resolution 与冻结 MIMO 配置的资产身份不一致"
+            )
+        from app.services.mimo_ota.channel_asset_resolver import (
+            engine_mode_for_channel_asset_source_type,
+        )
+
         source = "channel_asset"
-        asset_id = str(resolved_asset.asset.id)
-        asset_source_type = resolved_asset.asset.source_type
-        effective_engine_mode = resolved_asset.engine_mode
+        asset_id = asset_identity["channel_asset_id"]
+        asset_source_type = asset_identity["source_type"]
+        effective_engine_mode = engine_mode_for_channel_asset_source_type(
+            asset_source_type
+        )
     return {
         "source": source,
         "mimo_configuration_digest": canonical_payload_digest(configuration_payload),
@@ -215,6 +282,97 @@ def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
             effective_engine_mode
         ),
     }
+
+
+def validate_frozen_channel_emulator_load_context(
+    execution_config: Any,
+    frozen_plan: Any,
+) -> tuple[dict[str, Any], Any]:
+    """Validate the independently frozen MIMO/asset/request/plan chain."""
+
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+
+    if not isinstance(execution_config, Mapping):
+        raise ValueError("channelEmulator execution config 不是对象")
+    has_plan = CE_PLAN_FREEZE_CONFIG_KEY in execution_config
+    has_request = CE_LOAD_REQUEST_FREEZE_CONFIG_KEY in execution_config
+    if has_plan != has_request:
+        raise ValueError("channelEmulator load request / execution plan freeze 不完整")
+    if not has_plan:
+        raise ValueError("channelEmulator load request / execution plan 尚未冻结")
+    validated_plan = validate_frozen_channel_emulator_execution_plan(frozen_plan)
+    if execution_config[CE_PLAN_FREEZE_CONFIG_KEY] != frozen_plan:
+        raise ValueError("channelEmulator scope plan 与 execution 冻结计划不一致")
+    request = validate_frozen_channel_emulator_load_request(
+        execution_config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    )
+    if request["plan_digest"] != validated_plan["digest"]:
+        raise ValueError("channelEmulator load request 与执行计划 digest 不一致")
+
+    base_freeze = execution_config.get(FREEZE_CONFIG_KEY)
+    if not isinstance(base_freeze, Mapping):
+        raise ValueError("channelEmulator plan 缺少冻结 MIMO 配置")
+    outer_payload = {
+        key: value for key, value in base_freeze.items() if key != "digest"
+    }
+    if base_freeze.get("digest") != canonical_payload_digest(outer_payload):
+        raise ValueError("冻结 BaseStation adapter profile digest 不一致")
+    frozen_mimo = base_freeze.get(MIMO_OTA_CONFIGURATION_FREEZE_KEY)
+    if not isinstance(frozen_mimo, Mapping):
+        raise ValueError("channelEmulator plan 缺少冻结 MIMO 配置")
+    try:
+        configuration = MIMOOTAConfiguration.model_validate(dict(frozen_mimo))
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(f"冻结 MIMO 配置不合法: {exc}") from exc
+    if request["mimo_configuration_digest"] != canonical_payload_digest(
+        dict(frozen_mimo)
+    ):
+        raise ValueError("channelEmulator load request 与冻结 MIMO 配置不一致")
+
+    frozen_asset = base_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+    asset_id = (
+        str(configuration.channel_asset_id)
+        if configuration.channel_asset_id is not None
+        else None
+    )
+    if asset_id is None:
+        if frozen_asset is not None:
+            raise ValueError("冻结 MIMO 配置没有资产但存在 asset resolution")
+        if (
+            request["source"] != "mimo_configuration"
+            or request["channel_asset_id"] is not None
+            or request["channel_asset_source_type"] is not None
+            or request["effective_engine_mode"] != configuration.engine_mode
+        ):
+            raise ValueError("channelEmulator load request 与冻结 MIMO 来源矛盾")
+    else:
+        identity = validate_frozen_channel_asset_resolution(frozen_asset)
+        if identity["channel_asset_id"] != asset_id:
+            raise ValueError("冻结 channel asset resolution 身份漂移")
+        if (
+            request["source"] != "channel_asset"
+            or request["channel_asset_id"] != asset_id
+            or request["channel_asset_source_type"] != identity["source_type"]
+        ):
+            raise ValueError(
+                "channelEmulator load request 与独立冻结资产来源不一致"
+            )
+        from app.services.mimo_ota.channel_asset_resolver import (
+            engine_mode_for_channel_asset_source_type,
+        )
+
+        authoritative_engine = engine_mode_for_channel_asset_source_type(
+            identity["source_type"]
+        )
+        if request["effective_engine_mode"] != authoritative_engine:
+            raise ValueError(
+                "channelEmulator load request 与独立冻结资产 engine 不一致"
+            )
+    return request, configuration
 
 
 def frozen_channel_emulator_binding_digest(execution_config: Mapping[str, Any]) -> str:
@@ -255,7 +413,11 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
     from sqlalchemy.orm.attributes import flag_modified
 
     execution_config = execution.config if isinstance(execution.config, dict) else {}
-    if CE_PLAN_FREEZE_CONFIG_KEY in execution_config:
+    has_plan = CE_PLAN_FREEZE_CONFIG_KEY in execution_config
+    has_request = CE_LOAD_REQUEST_FREEZE_CONFIG_KEY in execution_config
+    if has_plan != has_request:
+        raise ValueError("channelEmulator load request / execution plan freeze 不完整")
+    if has_plan:
         frozen_plan = validate_frozen_channel_emulator_execution_plan(
             execution_config[CE_PLAN_FREEZE_CONFIG_KEY]
         )
@@ -263,15 +425,9 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
         # structurally readable.  They cannot acquire today's asset truth or
         # become formal evidence later; P2-66 classifies the missing projection
         # fail-closed instead of backfilling from mutable current state.
-        frozen_request = execution_config.get(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
-        if frozen_request is not None:
-            validated_request = validate_frozen_channel_emulator_load_request(
-                frozen_request
-            )
-            if validated_request["plan_digest"] != frozen_plan["digest"]:
-                raise ValueError(
-                    "channelEmulator load request 与执行计划 digest 不一致"
-                )
+        validate_frozen_channel_emulator_load_context(
+            execution_config, frozen_plan
+        )
         return frozen_plan
     load_request = _resolve_channel_emulator_load_request(db, execution)
     plan = resolve_live_channel_emulator_execution_plan(
@@ -320,7 +476,15 @@ def freeze_execution_channel_emulator_plan(db, hal, execution) -> dict[str, Any]
     if locked_execution is None:
         raise ValueError("TestExecution 已不存在")
     config = locked_execution.config if isinstance(locked_execution.config, dict) else {}
-    if CE_PLAN_FREEZE_CONFIG_KEY not in config:
+    has_plan = CE_PLAN_FREEZE_CONFIG_KEY in config
+    has_request = CE_LOAD_REQUEST_FREEZE_CONFIG_KEY in config
+    if has_plan != has_request:
+        raise ValueError("channelEmulator load request / execution plan freeze 不完整")
+    if not has_plan:
+        if locked_execution.status in {"completed", "failed", "cancelled", "skipped"}:
+            raise ValueError(
+                "执行行已结束，不能用当前 channelEmulator 配置回填执行计划"
+            )
         has_progress = any(
             value not in (None, {}, [])
             for value in (

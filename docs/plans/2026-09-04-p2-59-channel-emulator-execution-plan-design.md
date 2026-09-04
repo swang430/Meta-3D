@@ -178,3 +178,20 @@ evidence 落库失败，成功链必须失败；异常/取消链先回滚业务�
 ③ 不清理剩余 13 个 `hasattr/getattr` 能力探测（② 负责），不改 `f64_*` / `f64.*` 键，不触碰手工 CE
 端点或诊断序列，不新增状态查询或任何 SCPI，也不改变现有 provenance 白名单。`stop_emulation` 的既有
 厂商语义、错误队列与回读仍完全由驱动实现负责；共同 scope 只消费其布尔确认。
+
+### 8.L load request / plan 的原子冻结与独立资产身份
+`channel_emulator_load_request_freeze` 与 `channel_emulator_execution_plan_freeze` 是同一个启动决定的两个
+不可拆分投影：二者都不存在时才允许一次性解析并创建；二者都存在时只校验和复用；任一单边存在都视为
+现代冻结链损坏，启动期 fail-closed，不能查询 current ChannelAsset 把孤儿冻结件“修好”。已有执行进度或
+已完成历史同样不回填，只能按既有历史策略审计降级。
+
+显式 `channel_asset_id` 的来源不能由 load request 自证。BaseStation 冻结时由 resolver 同刻产生独立的
+`channel_asset_resolution`（asset id + source type + 自身 digest），并把它纳入 BaseStation 外层 canonical
+digest；随后 load request 只从这份独立身份派生有效 engine/load，plan 再引用 load request 的确定性结果。
+因此把 `standard_3gpp` 成组改成 `vendor_file`，即使同步重算 request/plan/terminal 的所有内部摘要，也会与
+独立冻结身份冲突。无显式 asset 时则禁止出现该身份，effective engine 必须与冻结 MIMO 配置一致。
+
+统一 scope 的锁内、零 I/O validator 必须先完整验证 BaseStation 外层摘要、独立 asset 身份、原始稀疏 MIMO
+摘要、load request 摘要、request→plan digest 及 scope 参数中的 plan 完全一致，再从 request 的权威
+`requested_load_mode` 与 binding 的权威 source 规则重建 live plan。任何缺件、孤儿、坏摘要、资产来源漂移或
+plan 自证换档，都在 BaseStation / CE / 转台首次 I/O 前拒绝；P2-66 复用同一纯校验器，不查询 current asset。

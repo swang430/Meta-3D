@@ -156,6 +156,37 @@ def _frozen_plan(driver, *, source: str = "hal") -> dict:
     return {**plan.as_payload(), "digest": plan.digest}
 
 
+def _scope_execution(plan: dict, *, frozen_mimo: dict | None = None):
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+    )
+
+    frozen_mimo = frozen_mimo or MIMOOTAConfiguration.model_validate(
+        {"engine_mode": "keysight_gcm", "emulation_file": "scenario.smu"}
+    ).model_dump(mode="json")
+    base_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+    return SimpleNamespace(
+        id="execution-1",
+        config={
+            FREEZE_CONFIG_KEY: {
+                **base_payload,
+                "digest": canonical_payload_digest(base_payload),
+            },
+            CE_PLAN_FREEZE_CONFIG_KEY: plan,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: _load_request_for_evidence(
+                frozen_mimo, plan
+            ),
+        },
+    )
+
+
 def test_real_binding_validator_matches_exact_live_class_and_connection():
     from app.services import channel_emulator_binding as module
 
@@ -307,7 +338,7 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
     driver = _RealCe()
     hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
     _install_real_lease(monkeypatch, module, hal)
-    execution = SimpleNamespace(id="execution-1", config={})
+    execution = _scope_execution(_frozen_plan(driver))
 
     async with module.channel_emulator_execution_scope(
         None,
@@ -371,11 +402,14 @@ async def test_scope_safe_idle_and_release_use_the_exact_acquired_driver_after_f
         drivers={"channelEmulator": replacement}, clear_metrics_cache=None
     )
     binding = _frozen_binding_for_driver(acquired, execution_mode=execution_mode)
-    plan = _frozen_plan(acquired)
+    plan = _frozen_plan(
+        acquired,
+        source="hal" if execution_mode == "real" else "fallback_mock",
+    )
 
     async with module.channel_emulator_execution_scope(
         None,
-        SimpleNamespace(id="execution-1", config={}),
+        _scope_execution(plan),
         purpose="force-reload:execution-1",
         binding=binding,
         plan=plan,
@@ -429,7 +463,7 @@ async def test_bypass_terminal_clear_occurs_after_passthrough_on_every_exit(
     async def run():
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="bypass:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -499,7 +533,7 @@ async def test_bypass_fade_rearms_terminal_stop_before_start_can_change_output(
     async def run():
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="bypass-fade:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -574,7 +608,7 @@ async def test_bypass_fade_caller_cancel_waits_for_terminal_stop_before_release(
     async def run():
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="bypass-fade-cancel:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -632,7 +666,7 @@ async def test_scope_rejects_live_plan_or_binding_drift_before_any_ce_io(monkeyp
     with pytest.raises(InstrumentTestLeaseError, match="connection"):
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(frozen_plan),
             purpose="formal-case:execution-1",
             binding=frozen_binding,
             plan=frozen_plan,
@@ -642,6 +676,163 @@ async def test_scope_rejects_live_plan_or_binding_drift_before_any_ce_io(monkeyp
             raise AssertionError("identity drift must reject before yield")
 
     assert driver.events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["missing", "bad_digest", "plan_self_proof"])
+async def test_scope_rejects_invalid_load_request_before_any_instrument_io(
+    monkeypatch, fault
+):
+    from app.hal.channel_emulator_execution_plan import (
+        resolve_channel_emulator_execution_plan,
+    )
+    from app.services import channel_emulator_execution_session as module
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+    )
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    events: list[str] = []
+    driver = _RealCe()
+    driver.events = events
+
+    class BaseStation:
+        async def acquire_remote_control(self):
+            events.append("bs-acquire")
+            raise AssertionError("load request gate must precede BaseStation I/O")
+
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver, "baseStation": BaseStation()},
+        clear_metrics_cache=None,
+    )
+    _install_real_lease(monkeypatch, module, hal)
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    native_plan = _frozen_plan(driver)
+    execution = _scope_execution(native_plan)
+    plan = native_plan
+    if fault == "missing":
+        execution.config.pop(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
+    elif fault == "bad_digest":
+        execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]["digest"] = "bad"
+    else:
+        alternate = resolve_channel_emulator_execution_plan(
+            manifest=driver.adapter_manifest,
+            driver_source="hal",
+            requested_load_mode="external_waveform",
+            binding_digest=BINDING_DIGEST,
+        )
+        plan = {**alternate.as_payload(), "digest": alternate.digest}
+        execution.config[CE_PLAN_FREEZE_CONFIG_KEY] = plan
+        request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+        request["plan_digest"] = plan["digest"]
+        request["digest"] = canonical_payload_digest(
+            {key: value for key, value in request.items() if key != "digest"}
+        )
+
+    with pytest.raises(InstrumentTestLeaseError):
+        async with module.channel_emulator_execution_scope(
+            None,
+            execution,
+            purpose="r5-load-gate:execution-1",
+            binding=binding,
+            plan=plan,
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            events.append("positioner-io")
+
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_scope_rejects_rehashed_asset_load_chain_before_any_instrument_io(
+    monkeypatch,
+):
+    """Request/plan rehash cannot replace the independently frozen asset source."""
+    from app.hal.channel_emulator_execution_plan import (
+        resolve_channel_emulator_execution_plan,
+    )
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services import channel_emulator_execution_session as module
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+    )
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    events: list[str] = []
+    driver = _RealCe()
+    driver.events = events
+
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver},
+        clear_metrics_cache=None,
+    )
+    _install_real_lease(monkeypatch, module, hal)
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    asset_id = "f2b3465e-c86e-45a8-b1e8-9d1aaf03d37a"
+    frozen_mimo = MIMOOTAConfiguration.model_validate(
+        {"engine_mode": "keysight_gcm", "channel_asset_id": asset_id}
+    ).model_dump(mode="json")
+    asset_payload = {
+        "schema_version": 1,
+        "channel_asset_id": asset_id,
+        "source_type": "standard_3gpp",
+    }
+    asset_identity = {
+        **asset_payload,
+        "digest": canonical_payload_digest(asset_payload),
+    }
+    base_payload = {
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo,
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY: asset_identity,
+    }
+    forged = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="native_model",
+        binding_digest=BINDING_DIGEST,
+    )
+    forged_plan = {**forged.as_payload(), "digest": forged.digest}
+    forged_request = _load_request_for_evidence(
+        frozen_mimo,
+        forged_plan,
+        source="channel_asset",
+        channel_asset_id=asset_id,
+        channel_asset_source_type="vendor_file",
+        effective_engine_mode="keysight_gcm",
+    )
+    execution = SimpleNamespace(
+        id="execution-1",
+        config={
+            FREEZE_CONFIG_KEY: {
+                **base_payload,
+                "digest": canonical_payload_digest(base_payload),
+            },
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: forged_request,
+            CE_PLAN_FREEZE_CONFIG_KEY: forged_plan,
+        },
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="独立冻结资产来源"):
+        async with module.channel_emulator_execution_scope(
+            None,
+            execution,
+            purpose="r5-asset-truth-gate:execution-1",
+            binding=binding,
+            plan=forged_plan,
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            events.append("positioner-io")
+
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -775,12 +966,13 @@ async def test_scope_installs_mock_only_for_explicit_simulated_freeze(monkeypatc
     # execution task 后续安装的 scoped overlay。
     unrelated = asyncio.create_task(unrelated_hal_reader())
 
+    plan = _frozen_plan(frozen_mock, source="fallback_mock")
     async with module.channel_emulator_execution_scope(
         None,
-        SimpleNamespace(id="execution-1", config={}),
+        _scope_execution(plan),
         purpose="diagnostic:execution-1",
         binding=_frozen_binding_for_driver(frozen_mock, execution_mode="simulated"),
-        plan=_frozen_plan(frozen_mock),
+        plan=plan,
         hal=hal,
         validate_before_remote=lambda _hal: None,
     ):
@@ -810,14 +1002,15 @@ async def test_simulated_scope_does_not_shadow_concurrent_real_hal_reload(monkey
     )
 
     async def run_scope():
+        plan = _frozen_plan(frozen_mock, source="fallback_mock")
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(plan),
             purpose="diagnostic:execution-1",
             binding=_frozen_binding_for_driver(
                 frozen_mock, execution_mode="simulated"
             ),
-            plan=_frozen_plan(frozen_mock),
+            plan=plan,
             hal=initial_hal,
             validate_before_remote=lambda _hal: None,
         ):
@@ -894,7 +1087,7 @@ async def test_scope_acquires_channel_emulator_last_so_later_acquire_failure_can
     with pytest.raises(Exception, match="Remote|控制会话"):
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(ce)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(ce, execution_mode="real"),
             plan=_frozen_plan(ce),
@@ -934,7 +1127,7 @@ async def test_cancellation_during_safe_idle_waits_for_stop_before_release_and_p
     async def run_scope():
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -977,7 +1170,7 @@ async def test_scope_never_falls_back_to_mock_for_real_freeze(monkeypatch):
     with pytest.raises(InstrumentTestLeaseError, match="missing"):
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(expected)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(expected, execution_mode="real"),
             plan=_frozen_plan(expected),
@@ -1008,7 +1201,7 @@ async def test_scope_malformed_binding_keeps_the_validation_error(monkeypatch):
     with pytest.raises(InstrumentTestLeaseError, match="binding"):
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=[],
             plan=_frozen_plan(driver),
@@ -1039,7 +1232,7 @@ async def test_scope_safe_idles_and_releases_after_exception_or_cancel(
     with pytest.raises(type(raised)):
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -1070,7 +1263,7 @@ async def test_scope_safe_idle_rejection_fails_loud_but_still_releases(monkeypat
     with pytest.raises(module.ChannelEmulatorExecutionSessionError, match="safe idle"):
         async with module.channel_emulator_execution_scope(
             None,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -1113,7 +1306,7 @@ async def test_driver_cancelled_error_is_safe_idle_failure_not_caller_cancellati
     ):
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -1163,7 +1356,7 @@ async def test_scope_preserves_operation_and_safe_idle_failures_then_releases(
     with pytest.raises(type(operation_error)) as caught:
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -1215,7 +1408,7 @@ async def test_failed_scope_rolls_back_business_state_before_terminal_commit(mon
     with pytest.raises(RuntimeError, match="business failed"):
         async with module.channel_emulator_execution_scope(
             db,
-            SimpleNamespace(id="execution-1", config={}),
+            _scope_execution(_frozen_plan(driver)),
             purpose="formal-case:execution-1",
             binding=_frozen_binding_for_driver(driver, execution_mode="real"),
             plan=_frozen_plan(driver),
@@ -1245,7 +1438,7 @@ async def test_scope_persists_terminal_truth_only_after_safe_idle_and_release(mo
     monkeypatch.setattr(module, "persist_channel_emulator_terminal_evidence", persist)
     async with module.channel_emulator_execution_scope(
         object(),
-        SimpleNamespace(id="execution-1", config={}),
+        _scope_execution(_frozen_plan(driver)),
         purpose="formal-case:execution-1",
         binding=_frozen_binding_for_driver(driver, execution_mode="real"),
         plan=_frozen_plan(driver),
@@ -1280,7 +1473,7 @@ async def test_scope_does_not_turn_unmarked_normal_exit_into_success(monkeypatch
 
     async with module.channel_emulator_execution_scope(
         object(),
-        SimpleNamespace(id="execution-1", config={}),
+        _scope_execution(_frozen_plan(driver)),
         purpose="formal-case:execution-1",
         binding=_frozen_binding_for_driver(driver, execution_mode="real"),
         plan=_frozen_plan(driver),
@@ -1370,6 +1563,7 @@ def _execution_with_ce_evidence(
     )
     from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
     from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
         CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
         CE_PLAN_FREEZE_CONFIG_KEY,
     )
@@ -1379,6 +1573,16 @@ def _execution_with_ce_evidence(
     ).model_dump(mode="json")
     load_request = load_request or _load_request_for_evidence(frozen_mimo, plan)
     base_station_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+    if load_request.get("source") == "channel_asset":
+        asset_payload = {
+            "schema_version": 1,
+            "channel_asset_id": load_request["channel_asset_id"],
+            "source_type": load_request["channel_asset_source_type"],
+        }
+        base_station_payload[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = {
+            **asset_payload,
+            "digest": canonical_payload_digest(asset_payload),
+        }
     base_station_freeze = {
         **base_station_payload,
         "digest": canonical_payload_digest(base_station_payload),
@@ -1444,6 +1648,81 @@ def test_p2_66_uses_frozen_channel_asset_load_truth_instead_of_stale_mimo_engine
         execution_id=execution.id,
         pipeline_status=execution.status,
     ) == (None, None)
+
+
+def test_p2_66_rejects_rehashed_asset_source_that_disagrees_with_independent_freeze():
+    from app.hal.channel_emulator_execution_plan import (
+        resolve_channel_emulator_execution_plan,
+    )
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+    )
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    asset_id = "f2b3465e-c86e-45a8-b1e8-9d1aaf03d37a"
+    frozen_mimo = MIMOOTAConfiguration.model_validate(
+        {"engine_mode": "keysight_gcm", "channel_asset_id": asset_id}
+    ).model_dump(mode="json")
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    external = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="external_waveform",
+        binding_digest=BINDING_DIGEST,
+    )
+    original_plan = {**external.as_payload(), "digest": external.digest}
+    original_request = _load_request_for_evidence(
+        frozen_mimo,
+        original_plan,
+        source="channel_asset",
+        channel_asset_id=asset_id,
+        channel_asset_source_type="standard_3gpp",
+        effective_engine_mode="mimo_first_asc",
+    )
+    execution = _execution_with_ce_evidence(
+        binding,
+        original_plan,
+        _terminal_evidence(binding, original_plan, execution_mode="real"),
+        frozen_mimo=frozen_mimo,
+        load_request=original_request,
+    )
+
+    native = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="native_model",
+        binding_digest=BINDING_DIGEST,
+    )
+    forged_plan = {**native.as_payload(), "digest": native.digest}
+    forged_request = _load_request_for_evidence(
+        frozen_mimo,
+        forged_plan,
+        source="channel_asset",
+        channel_asset_id=asset_id,
+        channel_asset_source_type="vendor_file",
+        effective_engine_mode="keysight_gcm",
+    )
+    execution.config[CE_PLAN_FREEZE_CONFIG_KEY] = forged_plan
+    execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] = forged_request
+    execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY] = [
+        _terminal_evidence(binding, forged_plan, execution_mode="real")
+    ]
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    assert classification == "invalid"
+    assert "独立冻结资产来源" in reason
 
 
 @pytest.mark.parametrize(

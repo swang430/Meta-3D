@@ -47,7 +47,7 @@ from app.services.channel_emulator_binding import (
 from app.services.channel_emulator_execution_plan import (
     CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
     CE_PLAN_FREEZE_CONFIG_KEY,
-    validate_frozen_channel_emulator_load_request,
+    validate_frozen_channel_emulator_load_context,
     validate_frozen_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
 )
@@ -127,8 +127,8 @@ def _channel_emulator_terminal_projection(
     try:
         validated_binding = validate_frozen_channel_emulator_binding(binding)
         validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
-        validated_load_request = validate_frozen_channel_emulator_load_request(
-            load_request
+        validated_load_request, mimo_configuration = (
+            validate_frozen_channel_emulator_load_context(config, plan)
         )
     except ValueError as exc:
         return "invalid", str(exc)
@@ -160,39 +160,6 @@ def _channel_emulator_terminal_projection(
         else:
             return "invalid", "channelEmulator binding status cannot derive a plan"
 
-        base_station_freeze = config.get(FREEZE_CONFIG_KEY)
-        if not isinstance(base_station_freeze, Mapping):
-            return "invalid", "channelEmulator plan has no frozen MIMO configuration"
-        frozen_mimo = base_station_freeze.get(MIMO_OTA_CONFIGURATION_FREEZE_KEY)
-        if not isinstance(frozen_mimo, Mapping):
-            return "invalid", "channelEmulator plan has no frozen MIMO configuration"
-        from app.schemas.mimo_ota.config import MIMOOTAConfiguration
-
-        mimo_configuration = MIMOOTAConfiguration.model_validate(dict(frozen_mimo))
-        if validated_load_request["plan_digest"] != validated_plan["digest"]:
-            return "invalid", "channelEmulator load request and plan digest do not match"
-        if validated_load_request["mimo_configuration_digest"] != canonical_payload_digest(
-            dict(frozen_mimo)
-        ):
-            return "invalid", "channelEmulator load request has different frozen MIMO truth"
-        frozen_asset_id = (
-            str(mimo_configuration.channel_asset_id)
-            if mimo_configuration.channel_asset_id is not None
-            else None
-        )
-        if frozen_asset_id is None:
-            if (
-                validated_load_request["source"] != "mimo_configuration"
-                or validated_load_request["channel_asset_id"] is not None
-                or validated_load_request["effective_engine_mode"]
-                != mimo_configuration.engine_mode
-            ):
-                return "invalid", "channelEmulator load request contradicts frozen MIMO source"
-        elif (
-            validated_load_request["source"] != "channel_asset"
-            or validated_load_request["channel_asset_id"] != frozen_asset_id
-        ):
-            return "invalid", "channelEmulator load request contradicts frozen channel asset"
         authoritative_load_mode = validated_load_request["requested_load_mode"]
         authoritative_plan = resolve_channel_emulator_execution_plan(
             manifest=manifest,

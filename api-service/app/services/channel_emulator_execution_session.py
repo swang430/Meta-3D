@@ -26,6 +26,7 @@ from app.services.channel_emulator_binding import (
     validate_frozen_channel_emulator_before_remote,
 )
 from app.services.channel_emulator_execution_plan import (
+    validate_frozen_channel_emulator_load_context,
     validate_frozen_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
 )
@@ -347,6 +348,8 @@ def _validate_frozen_pair_and_live_driver(
     hal: Any,
     binding: Any,
     plan: Any,
+    execution_config: Any,
+    authoritative_driver_source: str,
 ) -> str | None:
     binding_error = validate_frozen_channel_emulator_before_remote(hal, binding)
     if binding_error is not None:
@@ -354,6 +357,9 @@ def _validate_frozen_pair_and_live_driver(
     try:
         validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
         parsed_plan = plan_from_frozen_payload(validated_plan)
+        load_request, _configuration = validate_frozen_channel_emulator_load_context(
+            execution_config, validated_plan
+        )
     except ValueError as exc:
         return str(exc)
     if not isinstance(binding, Mapping):
@@ -367,8 +373,8 @@ def _validate_frozen_pair_and_live_driver(
     try:
         live = resolve_channel_emulator_execution_plan(
             manifest=manifest,
-            driver_source=parsed_plan.driver_source,
-            requested_load_mode=parsed_plan.requested_load_mode,
+            driver_source=authoritative_driver_source,
+            requested_load_mode=load_request["requested_load_mode"],
             binding_digest=parsed_plan.binding_digest,
         )
     except ValueError as exc:
@@ -380,6 +386,8 @@ def _combined_validator(
     *,
     binding: Any,
     plan: Any,
+    execution_config: Any,
+    authoritative_driver_source: str,
     preflight_before_remote: Callable[[object], str | None] | None,
     validate_before_remote: Callable[[object], str | None] | None,
     prepare_locked_hal: Callable[[object], tuple[object, str | None]],
@@ -392,7 +400,13 @@ def _combined_validator(
             preflight_error = preflight_before_remote(hal)
             if preflight_error is not None:
                 return preflight_error
-        error = _validate_frozen_pair_and_live_driver(validation_hal, binding, plan)
+        error = _validate_frozen_pair_and_live_driver(
+            validation_hal,
+            binding,
+            plan,
+            execution_config,
+            authoritative_driver_source,
+        )
         if error is not None:
             return error
         return validate_before_remote(hal) if validate_before_remote is not None else None
@@ -437,6 +451,16 @@ async def channel_emulator_execution_scope(
         raise ChannelEmulatorExecutionSessionError(
             "HAL channelEmulator registry is unavailable"
         )
+    # The plan writer uses the process HAL that exists before any scoped mock
+    # overlay: an already loaded CE is ``hal``; an absent CE is
+    # ``fallback_mock``.  Derive that source from the same immutable scope
+    # input, never from the plan's own claim or from binding status (a
+    # diagnostic-unbound execution may still have a real Mock driver loaded).
+    authoritative_driver_source = (
+        "hal"
+        if drivers.get(CHANNEL_EMULATOR_CATEGORY_KEY) is not None
+        else "fallback_mock"
+    )
     if binding_fields.get("execution_mode") == "simulated":
         prepared_mock = MockChannelEmulator(
             "execution-scoped-channel-emulator", {"model": "Mock Channel Emulator"}
@@ -448,6 +472,10 @@ async def channel_emulator_execution_scope(
     validator = _combined_validator(
         binding=binding,
         plan=plan,
+        execution_config=(
+            execution.config if isinstance(execution.config, Mapping) else {}
+        ),
+        authoritative_driver_source=authoritative_driver_source,
         preflight_before_remote=preflight_before_remote,
         validate_before_remote=validate_before_remote,
         prepare_locked_hal=prepare_locked_hal,
