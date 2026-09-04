@@ -950,6 +950,10 @@ def derive_channel_emulator_site_certification_from_execution(
     audit_reason = _audit_text(reason, "reason")
     if getattr(execution, "status", None) != "completed":
         raise ValueError("channelEmulator certification requires completed execution")
+    if getattr(execution, "executed_by", None) != "commissioning_api":
+        raise ValueError(
+            "channelEmulator certification requires a commissioning_api execution"
+        )
     config = execution.config if isinstance(execution.config, dict) else {}
     try:
         binding = validate_frozen_channel_emulator_binding(

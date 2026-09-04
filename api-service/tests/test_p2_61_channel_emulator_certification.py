@@ -396,6 +396,7 @@ def _certification_execution_fixture():
         "digest": canonical_payload_digest(terminal_payload),
     }
     execution = _execution_with_ce_evidence(binding, plan, terminal)
+    execution.executed_by = "commissioning_api"
     execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY] = receipts
     execution.config["channel_emulator_terminal_evidence"] = [terminal]
     execution.config["base_station_execution_evidence"] = {
@@ -543,6 +544,15 @@ def test_activation_derivation_rejects_explicit_diagnostic_execution_policy():
     )
 
     with pytest.raises(ValueError, match="qualification"):
+        _derive_certification(execution)
+
+
+@pytest.mark.parametrize("executed_by", ["test_case_runner", "commissioning_adhoc", None])
+def test_activation_derivation_rejects_non_commissioning_source(executed_by):
+    execution = _certification_execution_fixture()
+    execution.executed_by = executed_by
+
+    with pytest.raises(ValueError, match="commissioning"):
         _derive_certification(execution)
 
 
