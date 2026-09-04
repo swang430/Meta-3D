@@ -375,7 +375,7 @@ def test_measure_rejects_drifted_plan_and_accepts_matching_one():
     }
     cfg = SimpleNamespace(engine_mode="keysight_gcm")
 
-    # 冻结时 HAL 装的是 F64，测量时 HAL 里没有 CE（会兜底成 mock）→ 漂移
+    # 冻结时 HAL 装的是 F64，测量时 HAL 里没有 CE → 漂移（③ 后不再兜底 mock）
     with pytest.raises(RuntimeError, match="does not match the loaded driver"):
         MeasureExecutor._channel_emulator_plan_context(_measure_context(config), _hal(None), cfg)
     # 驱动没变、engine_mode 变了 → 也是漂移
@@ -441,8 +441,9 @@ def test_measure_no_longer_queries_driver_capability_directly_and_reconciles_bef
     # 对账在第一处消费之前、在取到 emulator 之后
     assert source.index('emulator = hal.drivers.get("channelEmulator")') < reconcile
     assert reconcile < source.index('ce_plan.planned("set_passthrough_mode")')
-    # 首次 CE I/O 之前：兜底 mock 的创建（其后紧接加载）必须在对账之后
-    assert reconcile < source.index("falling back to MockChannelEmulator")
+    # ③ 后 MeasureExecutor 不再自造 mock；执行作用域已在更外层完成冻结身份对账。
+    assert "falling back to MockChannelEmulator" not in source
+    assert "MockChannelEmulator(" not in source
     # 但不早于路损 / 证书等与 CE 无关的前置门（它们的拒绝不该被计划缺席顶掉）
     assert source.index("pl_service.resolve_latest_calibration(") < reconcile
     assert reconcile < source.index("plan=ce_plan,")

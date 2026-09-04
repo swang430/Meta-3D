@@ -107,7 +107,9 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 端点和诊断序列。阶段固定为：冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 → Remote acquire
 → 业务 yield → `stop_emulation` safe idle → Local release → terminal evidence。safe idle 位于租约 yield 的
 `finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
-结果，不是预期值。
+结果，不是预期值。MEASURE 既有 `cleanup_chamber_instruments` 在 scope 持有 CE safe-idle 所有权时只收尾
+BaseStation 与转台，不再第二次调用 `stop_emulation`；离开统一 scope 的旧调用仍保留原有 CE 尽力停机。
+成功、异常、取消三条 session 路径都只允许一次 GOS，不能假设厂商驱动对重复停止幂等。
 
 scope 组合现有 BaseStation `validate_before_remote` 与 CE 校验器，并原样转发前者的
 `validation_identity` / `lease_audit_context`，避免破坏嵌套租约和 P2-67 公共审计。CE 校验器在
@@ -142,7 +144,9 @@ LabProfile 或连接。
 
 safe idle 只调用计划声明的既有 `stop_emulation`；计划未声明、方法缺失、返回 False 或抛异常都不能写成
 confirmed。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
-evidence 落库失败，成功链必须失败；异常链按 BaseStation 既有规则保留原异常并记录落库失败日志。
+evidence 落库失败，成功链必须失败；异常/取消链先回滚业务事务，再用同一会话的新事务追加 terminal，
+避免 terminal 的 commit 顺带提交半成品测量。落库自身再失败时仍保留原异常/取消，但把落库失败作为明确
+并列失败附在原异常上，不能只写日志后静默丢失。
 
 ### 8.K ③ 的明确边界
 ③ 不清理剩余 13 个 `hasattr/getattr` 能力探测（② 负责），不改 `f64_*` / `f64.*` 键，不触碰手工 CE

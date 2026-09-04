@@ -64,13 +64,14 @@ Expected: PASS。
 **Files:**
 - Create: `api-service/app/services/channel_emulator_execution_session.py`
 - Modify: `api-service/app/services/base_station_execution_session.py`
+- Modify: `api-service/app/services/mimo_ota/cleanup.py`
 - Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Test: `api-service/tests/test_p2_59_3_channel_emulator_session.py`
 - Test: `api-service/tests/test_p2_42_base_station_execution_session.py`
 
 **Step 1: Write the failing test**
 
-覆盖四类入口的公共插入点、首 I/O 前对账、真实 HAL 缺失拒绝、模拟 HAL 缺失临时安装/恢复 Mock、成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。
+覆盖四类入口的公共插入点、首 I/O 前对账、真实 HAL 缺失拒绝、模拟 HAL 缺失临时安装/恢复 Mock、成功/设备拒绝/异常/取消都按 `operation → safe_idle → release` 排序；safe idle False/异常必须 fail-loud 且 release 仍发生。成功/异常/取消分别断言 `stop_emulation` 恰好一次；scope 内的旧 cleanup 不得重复停止，scope 外调用仍保留安全收尾。
 
 **Step 2: Run test to verify it fails**
 
@@ -79,7 +80,7 @@ Expected: FAIL，原因是 scope 尚不存在且 MEASURE 仍自造 Mock。
 
 **Step 3: Write minimal implementation**
 
-实现 async scope：解析冻结 binding/plan、组合锁内 validator、按模拟边界准备 driver、进入现有租约、yield 后只调用既有 `stop_emulation`、退出后恢复临时 Mock。`run_base_station_execution_session` 只替换一处 context manager；删掉 MeasureExecutor 的本地 Mock 构造并要求 scope 已准备 HAL。
+实现 async scope：解析冻结 binding/plan、组合锁内 validator、按模拟边界准备 driver、进入现有租约、yield 后只调用既有 `stop_emulation`、退出后恢复临时 Mock。用 task-local 所有权让 `cleanup_chamber_instruments` 在 scope 内跳过 CE 停机、但不影响 BS/转台或旧调用。`run_base_station_execution_session` 只替换一处 context manager；删掉 MeasureExecutor 的本地 Mock 构造并要求 scope 已准备 HAL。
 
 **Step 4: Run test to verify it passes**
 
@@ -105,7 +106,7 @@ Expected: FAIL，原因是 terminal evidence 与 P2-66 消费尚不存在。
 
 **Step 3: Write minimal implementation**
 
-定义 frozen Pydantic terminal 模型与 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；P2-66 只读冻结件和 terminal 记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
+定义 frozen terminal payload 与 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；异常/取消先回滚业务事务，再独立提交 terminal，业务异常与 safe-idle/terminal 持久化失败并列保留。P2-66 只读冻结件和 terminal 记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
 
 **Step 4: Run test to verify it passes**
 

@@ -283,6 +283,7 @@ def _install_real_lease(monkeypatch, module, hal):
 @pytest.mark.asyncio
 async def test_scope_validates_then_orders_operation_safe_idle_and_release(monkeypatch):
     from app.services import channel_emulator_execution_session as module
+    from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 
     driver = _RealCe()
     hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
@@ -299,6 +300,7 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
         validate_before_remote=lambda _hal: None,
     ) as outcome:
         driver.events.append("operation")
+        await cleanup_chamber_instruments(hal, "execution-1")
         assert outcome.channel_emulator_remote_acquired_confirmed is True
 
     assert driver.events == ["acquire", "operation", "safe-idle", "release"]
@@ -379,6 +381,38 @@ async def test_scope_never_falls_back_to_mock_for_real_freeze(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scope_malformed_binding_keeps_the_validation_error(monkeypatch):
+    from app.services import channel_emulator_execution_session as module
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    driver = _RealCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="binding"):
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=[],
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            raise AssertionError("malformed freeze must not yield")
+
+    assert driver.events == []
+    assert terminal[0]["terminal_state"] == "failed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "raised",
     [RuntimeError("operation failed"), asyncio.CancelledError()],
@@ -387,6 +421,7 @@ async def test_scope_safe_idles_and_releases_after_exception_or_cancel(
     monkeypatch, raised
 ):
     from app.services import channel_emulator_execution_session as module
+    from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
 
     driver = _RealCe()
     hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
@@ -403,6 +438,7 @@ async def test_scope_safe_idles_and_releases_after_exception_or_cancel(
             validate_before_remote=lambda _hal: None,
         ):
             driver.events.append("operation")
+            await cleanup_chamber_instruments(hal, "execution-1")
             raise raised
 
     assert driver.events == ["acquire", "operation", "safe-idle", "release"]
@@ -435,6 +471,101 @@ async def test_scope_safe_idle_rejection_fails_loud_but_still_releases(monkeypat
             driver.events.append("operation")
 
     assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation_error",
+    [RuntimeError("operation failed"), asyncio.CancelledError()],
+)
+async def test_scope_preserves_operation_and_safe_idle_failures_then_releases(
+    monkeypatch, operation_error
+):
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+
+    async def failed_stop() -> bool:
+        driver.events.append("safe-idle")
+        raise OSError("GOS transport failed")
+
+    driver.stop_emulation = failed_stop
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    terminal: list[dict] = []
+    db = SimpleNamespace(rollback=lambda: None)
+    monkeypatch.setattr(
+        module,
+        "persist_channel_emulator_terminal_evidence",
+        lambda _db, _execution_id, evidence: terminal.append(evidence),
+    )
+
+    with pytest.raises(type(operation_error)) as caught:
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            driver.events.append("operation")
+            raise operation_error
+
+    assert driver.events == ["acquire", "operation", "safe-idle", "release"]
+    assert isinstance(
+        getattr(caught.value, "channel_emulator_safe_idle_error", None), OSError
+    )
+    assert any("SAFE_IDLE" in note for note in getattr(caught.value, "__notes__", ()))
+    assert terminal[0]["safe_idle_confirmed"] is False
+    assert terminal[0]["safe_idle_error_type"] == "OSError"
+    assert terminal[0]["terminal_state"] == (
+        "cancelled" if isinstance(operation_error, asyncio.CancelledError) else "failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_scope_rolls_back_business_state_before_terminal_commit(monkeypatch):
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    events: list[str] = []
+
+    class Db:
+        business_dirty = True
+
+        def rollback(self) -> None:
+            events.append("rollback")
+            self.business_dirty = False
+
+    db = Db()
+
+    def persist(persist_db, execution_id, evidence):
+        assert persist_db is db
+        assert execution_id == "execution-1"
+        assert db.business_dirty is False
+        assert evidence["terminal_state"] == "failed"
+        events.append("terminal-commit")
+
+    monkeypatch.setattr(module, "persist_channel_emulator_terminal_evidence", persist)
+
+    with pytest.raises(RuntimeError, match="business failed"):
+        async with module.channel_emulator_execution_scope(
+            db,
+            SimpleNamespace(id="execution-1", config={}),
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            events.append("business-write")
+            raise RuntimeError("business failed")
+
+    assert events == ["business-write", "rollback", "terminal-commit"]
 
 
 @pytest.mark.asyncio
@@ -528,6 +659,7 @@ def _terminal_evidence(
         "operation_succeeded": terminal_state == "completed",
         "terminal_state": terminal_state,
         "error_type": None if terminal_state == "completed" else "RuntimeError",
+        "safe_idle_error_type": None,
     }
     return {**payload, "digest": canonical_payload_digest(payload)}
 
@@ -590,3 +722,18 @@ def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic():
     outcome = project_execution_evidence_outcome(execution)
     assert outcome.compatibility_classification == "diagnostic"
     assert outcome.formal_eligible is False
+
+
+@pytest.mark.asyncio
+async def test_measure_cleanup_does_not_repeat_scope_owned_safe_idle():
+    from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
+
+    driver = _RealCe()
+    result = await cleanup_chamber_instruments(
+        SimpleNamespace(drivers={"channelEmulator": driver}),
+        "execution-1",
+        channel_emulator_safe_idle_owned=True,
+    )
+
+    assert driver.events == []
+    assert result.warnings == []
