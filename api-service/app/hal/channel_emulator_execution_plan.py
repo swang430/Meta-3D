@@ -242,11 +242,9 @@ def resolve_channel_emulator_execution_plan(
         raise ValueError(
             "channel emulator execution plan requires a channel emulator manifest (fail-closed)"
         )
-    if manifest.schema_version != 2:
-        raise ValueError(
-            "channel emulator execution plan v2 requires manifest v2; "
-            "旧 manifest 必须通过重建未开始执行升级"
-        )
+    operation_vocabulary = channel_emulator_execution_plan_operations_for_schema(
+        manifest.schema_version
+    )
     load_capability = next(
         (item for item in manifest.load_modes if item.mode == requested_load_mode), None
     )
@@ -266,10 +264,10 @@ def resolve_channel_emulator_execution_plan(
             capability_source=f"manifest.operations:{operation}",
             reason=declared[operation].reason,
         )
-        for operation in CHANNEL_EMULATOR_OPERATIONS
+        for operation in operation_vocabulary
     )
     return ChannelEmulatorExecutionPlan(
-        schema_version=2,
+        schema_version=manifest.schema_version,
         adapter_id=manifest.adapter_id,
         driver_source=driver_source,
         requested_load_mode=requested_load_mode,

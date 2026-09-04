@@ -181,6 +181,7 @@ def _channel_emulator_terminal_projection(
     plan_error = verify_frozen_channel_emulator_execution_plan(
         validated_plan,
         authoritative_plan,
+        allow_legacy=True,
     )
     if plan_error is not None:
         return (

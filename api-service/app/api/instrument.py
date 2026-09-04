@@ -4625,7 +4625,11 @@ async def set_output_gain_endpoint(category_key: str, request: OutputGainRequest
         driver = _get_loaded_hal_driver(category_key)
         if driver is None:
             raise HTTPException(404, f"{category_key} HAL driver 未加载")
-        method = getattr(driver, "set_output_gain", None)
+        method = (
+            driver.set_output_gain
+            if channel_emulator_implements(driver, "set_output_gain")
+            else None
+        )
         if method is None:
             raise HTTPException(400, f"{category_key} 驱动不支持 set_output_gain")
         results: Dict[int, bool] = {}
@@ -4704,15 +4708,14 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
             raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
         # 没给 ports 时先让驱动补齐拓扑 —— 与 /crest-factor 同口径。
         if not request.input_ports:
-            _ensure = getattr(driver, "ensure_topology", None)
-            if callable(_ensure):
-                await _ensure()
+            if not channel_emulator_implements(driver, "ensure_topology"):
+                raise HTTPException(400, f"{category_key} 驱动不支持 ensure_topology")
+            await driver.ensure_topology()
         ok = await _call_f64_method(method, request.power_dbm, request.input_ports)
         # 回显实际下发的口号，不能用请求里的 None 冒充未知。
         _eff_ports = request.input_ports
         if not _eff_ports:
-            _getter = getattr(driver, "get_active_input_ports", None)
-            _eff_ports = _getter() if callable(_getter) else None
+            _eff_ports = driver.get_active_input_ports()
         return {"ok": bool(ok), "power_dbm": request.power_dbm,
                 "input_ports": _eff_ports,
                 "last_error": None if ok else getattr(driver, "_last_error", None)}
@@ -4748,17 +4751,20 @@ async def set_crest_factor_endpoint(category_key: str, request: CrestFactorReque
         driver = _get_loaded_hal_driver(category_key)
         if driver is None:
             raise HTTPException(404, f"{category_key} HAL driver 未加载")
-        method = getattr(driver, "set_crest_factor", None)
+        method = (
+            driver.set_crest_factor
+            if channel_emulator_implements(driver, "set_crest_factor")
+            else None
+        )
         if method is None:
             raise HTTPException(400, f"{category_key} 驱动不支持 set_crest_factor")
         ports = request.input_ports
         if not ports:
             # 后端重启后缓存空但仪表仍有场景，先按需补回读。
-            _ensure = getattr(driver, "ensure_topology", None)
-            if callable(_ensure):
-                await _ensure()
-            _getter = getattr(driver, "get_active_input_ports", None)
-            ports = (_getter() if callable(_getter) else None) or []
+            if not channel_emulator_implements(driver, "ensure_topology"):
+                raise HTTPException(400, f"{category_key} 驱动不支持 ensure_topology")
+            await driver.ensure_topology()
+            ports = driver.get_active_input_ports() or []
         if not ports:
             raise HTTPException(
                 400,

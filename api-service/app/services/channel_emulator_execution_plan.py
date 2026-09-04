@@ -584,14 +584,20 @@ def freeze_execution_channel_emulator_plan(db, hal, execution) -> dict[str, Any]
 def verify_frozen_channel_emulator_execution_plan(
     frozen: Any,
     live: ChannelEmulatorExecutionPlan,
+    *,
+    allow_legacy: bool = False,
 ) -> str | None:
-    """MEASURE 期对账：冻结件合法且 digest == 当下重算的 live 计划 → None；否则一句可操作的原因。"""
+    """冻结计划对账。
+
+    新执行与 MEASURE 保持 v2-only；只有历史终态投影可显式允许按同一份
+    schema-v1 manifest 重建并核验旧计划，不能用当前 v2 能力回填历史。
+    """
 
     try:
         validated = validate_frozen_channel_emulator_execution_plan(frozen)
     except ValueError as exc:
         return str(exc)
-    if validated.get("schema_version") == 1:
+    if validated.get("schema_version") == 1 and not allow_legacy:
         return (
             "channelEmulator 执行计划 v1 不包含 P2-59② MEASURE 所需操作；"
             "请重建未开始执行的冻结件"
