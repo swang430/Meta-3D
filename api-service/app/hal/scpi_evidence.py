@@ -647,6 +647,96 @@ _F64_SIMULATION_STATES = frozenset(
 )
 
 
+def select_f64_command_capture(
+    exchanges: list[ScpiExchangeRef] | tuple[ScpiExchangeRef, ...],
+    evidence_key: str,
+) -> dict[str, Any]:
+    """Select one existing F64 catalog recipe from a single invocation capture."""
+
+    if evidence_key not in _F64_RECIPES:
+        raise ValueError(f"unsupported F64 evidence key: {evidence_key}")
+    captured = list(exchanges)
+    matching_commands = [
+        exchange
+        for exchange in captured
+        if exchange_matches_catalog_role(exchange, evidence_key, "command")
+    ]
+    command_exchange = (
+        matching_commands[-1]
+        if evidence_key == "f64.bypass_mode" and matching_commands
+        else (matching_commands[0] if matching_commands else None)
+    )
+    command_index = (
+        captured.index(command_exchange)
+        if command_exchange in captured
+        else len(captured)
+    )
+    preclear_reversed: list[ScpiExchangeRef] = []
+    for exchange in reversed(captured[:command_index]):
+        if not exchange_matches_catalog_role(
+            exchange, "f64.error_queue", "query"
+        ):
+            break
+        preclear_reversed.append(exchange)
+    preclear_exchanges = list(reversed(preclear_reversed))
+    after = (
+        captured[command_index + 1 :]
+        if command_exchange in captured
+        else []
+    )
+
+    def _find(
+        values: list[ScpiExchangeRef],
+        key: str,
+        role: str,
+        *,
+        reverse: bool = False,
+    ) -> ScpiExchangeRef | None:
+        selected = reversed(values) if reverse else values
+        return next(
+            (
+                exchange
+                for exchange in selected
+                if exchange_matches_catalog_role(exchange, key, role)
+            ),
+            None,
+        )
+
+    opc_exchange = _find(after, "f64.operation_complete", "query")
+    opc_index = after.index(opc_exchange) if opc_exchange in after else -1
+    after_opc = after[opc_index + 1 :] if opc_index >= 0 else after
+    error_exchange = _find(after_opc, "f64.error_queue", "query")
+    error_index = (
+        after_opc.index(error_exchange)
+        if error_exchange in after_opc
+        else -1
+    )
+    after_error = (
+        after_opc[error_index + 1 :]
+        if error_index >= 0
+        else after_opc
+    )
+    readback_key = (
+        "f64.simulation_state"
+        if evidence_key == "f64.simulation_state"
+        else (
+            "f64.bypass_mode"
+            if evidence_key == "f64.bypass_mode"
+            else "f64.model_state"
+        )
+    )
+    return {
+        "preclear_exchanges": preclear_exchanges,
+        "command_exchange": command_exchange,
+        "opc_exchange": opc_exchange,
+        "error_exchange": error_exchange,
+        "readback_exchange": _find(after_error, readback_key, "query"),
+        "state_exchange": _find(
+            after_error, "f64.simulation_state", "query", reverse=True
+        ),
+    }
+
+
 def _f64_roles_match(
     evidence_key: str,
     command_exchange: Optional[ScpiExchangeRef],

@@ -41,9 +41,17 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
         ce_client: "ChannelEngineClient",
         chamber_config: Any,
         calibration_entries: List[Dict],
+        *,
+        operation_recorder: Any | None = None,
     ):
         super().__init__(emulator, chamber_config, calibration_entries)
         self.ce_client = ce_client
+        self._operation_recorder = operation_recorder
+
+    async def _invoke_channel_operation(self, **kwargs: Any) -> Any:
+        if self._operation_recorder is None:
+            return await kwargs["invoke"]()
+        return await self._operation_recorder(**kwargs)
 
     async def generate_and_load(
         self,
@@ -163,12 +171,23 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
 
             # 通过 HAL 统一接口加载, 不关心底层是 F64 还是 R&S
             model_name = cdl_model_data.get("model_name", "CDL-C")
-            success = await self.emulator.load_channel(
-                mode=ChannelLoadMode.EXTERNAL_WAVEFORM,
-                model_name=model_name,
-                scenario=cdl_model_data.get("scenario", "UMi"),
-                parameters=simulation_rules,
-                waveform_dir=asc_zip_path,
+            scenario = cdl_model_data.get("scenario", "UMi")
+            success = await self._invoke_channel_operation(
+                phase="load",
+                operation="load_channel",
+                requested={
+                    "load_mode": ChannelLoadMode.EXTERNAL_WAVEFORM.value,
+                    "model_name": model_name,
+                    "scenario": scenario,
+                    "waveform_dir": asc_zip_path,
+                },
+                invoke=lambda: self.emulator.load_channel(
+                    mode=ChannelLoadMode.EXTERNAL_WAVEFORM,
+                    model_name=model_name,
+                    scenario=scenario,
+                    parameters=simulation_rules,
+                    waveform_dir=asc_zip_path,
+                ),
             )
 
             if success:

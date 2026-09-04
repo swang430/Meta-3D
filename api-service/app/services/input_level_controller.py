@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from app.hal.propsim_f64 import F64InputMeasMode
 
@@ -104,6 +104,7 @@ class InputLevelController:
         active_inputs: Tuple[int, ...] = (1, 2, 3, 4),
         group_num: int = 1,
         mode: str = MODE_DL_STATIC,
+        channel_operation_recorder: Any | None = None,
     ):
         if mode != self.MODE_DL_STATIC:
             raise NotImplementedError(
@@ -122,6 +123,23 @@ class InputLevelController:
         self._imbalance_excessive = imbalance_excessive_db
         self._inputs = tuple(active_inputs)
         self._group = group_num
+        self._channel_operation_recorder = channel_operation_recorder
+
+    async def _invoke_channel_operation(
+        self,
+        *,
+        operation: str,
+        requested: dict[str, Any],
+        invoke: Any,
+    ) -> bool:
+        if self._channel_operation_recorder is None:
+            return await invoke()
+        return await self._channel_operation_recorder(
+            phase="configure",
+            operation=operation,
+            requested=requested,
+            invoke=invoke,
+        )
 
     async def establish(self) -> InputLevelResult:
         """跑下行静态闭环, 返回收敛结果或失败原因。"""
@@ -254,9 +272,27 @@ class InputLevelController:
     async def _configure_burst_mode(self) -> Optional[str]:
         """对每个 active input 设 BURST 模式 + burst 触发电平; 失败返回原因字符串。"""
         for in_num in self._inputs:
-            if not await self._ce.set_input_measurement_mode(in_num, F64InputMeasMode.BURST):
+            if not await self._invoke_channel_operation(
+                operation="set_input_measurement_mode",
+                requested={
+                    "input_port": in_num,
+                    "mode": F64InputMeasMode.BURST.value,
+                },
+                invoke=lambda in_num=in_num: self._ce.set_input_measurement_mode(
+                    in_num, F64InputMeasMode.BURST
+                ),
+            ):
                 return f"set BURST mode failed on input {in_num}"
-            if not await self._ce.set_burst_trigger_level(in_num, self._burst_trigger):
+            if not await self._invoke_channel_operation(
+                operation="set_burst_trigger_level",
+                requested={
+                    "input_port": in_num,
+                    "trigger_dbm": self._burst_trigger,
+                },
+                invoke=lambda in_num=in_num: self._ce.set_burst_trigger_level(
+                    in_num, self._burst_trigger
+                ),
+            ):
                 return f"set burst trigger failed on input {in_num}"
         return None
 

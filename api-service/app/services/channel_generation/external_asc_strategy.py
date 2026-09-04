@@ -35,9 +35,17 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
         chamber_config: Any,
         calibration_entries: List[Dict],
         asc_source_path: str,
+        *,
+        operation_recorder: Any | None = None,
     ):
         super().__init__(emulator, chamber_config, calibration_entries)
         self.asc_source_path = asc_source_path
+        self._operation_recorder = operation_recorder
+
+    async def _invoke_channel_operation(self, **kwargs: Any) -> Any:
+        if self._operation_recorder is None:
+            return await kwargs["invoke"]()
+        return await self._operation_recorder(**kwargs)
 
     async def generate_and_load(
         self,
@@ -76,12 +84,23 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
         # HAL load — 跟 ExternalWaveformStrategy 走同一接口, 只是 waveform_dir
         # 来源不同。F64 driver 内部用 FTP 上传到 D:\User Emulations\<session>\
         model_name = cdl_model_data.get("model_name", "external-asc-bundle")
-        success = await self.emulator.load_channel(
-            mode=ChannelLoadMode.EXTERNAL_WAVEFORM,
-            model_name=model_name,
-            scenario=cdl_model_data.get("scenario", "operator-supplied"),
-            parameters=simulation_rules,
-            waveform_dir=self.asc_source_path,
+        scenario = cdl_model_data.get("scenario", "operator-supplied")
+        success = await self._invoke_channel_operation(
+            phase="load",
+            operation="load_channel",
+            requested={
+                "load_mode": ChannelLoadMode.EXTERNAL_WAVEFORM.value,
+                "model_name": model_name,
+                "scenario": scenario,
+                "waveform_dir": self.asc_source_path,
+            },
+            invoke=lambda: self.emulator.load_channel(
+                mode=ChannelLoadMode.EXTERNAL_WAVEFORM,
+                model_name=model_name,
+                scenario=scenario,
+                parameters=simulation_rules,
+                waveform_dir=self.asc_source_path,
+            ),
         )
 
         if success:

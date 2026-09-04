@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 import asyncio
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from app.hal.base_station_compatibility import canonical_payload_digest
+
+
+API_SERVICE = Path(__file__).resolve().parents[1]
 
 
 class _Plan:
@@ -61,6 +65,7 @@ def _recorder_owner(
     from app.services.channel_emulator_operation_receipt import (
         ChannelEmulatorOperationRecorderOwner,
     )
+
 
     return ChannelEmulatorOperationRecorderOwner(
         db=db,
@@ -576,3 +581,132 @@ async def test_success_cannot_swallow_receipt_persistence_failure():
                 )
     finally:
         module.persist_channel_emulator_operation_receipt = original
+
+
+def test_execution_bound_effectful_calls_use_the_common_recorder():
+    sources = {
+        "app/services/channel_generation/asc_strategy.py": (
+            "await self.emulator.load_channel(",
+        ),
+        "app/services/channel_generation/external_asc_strategy.py": (
+            "await self.emulator.load_channel(",
+        ),
+        "app/services/channel_generation/gcm_strategy.py": (
+            "await self.emulator.load_channel(",
+        ),
+        "app/services/mimo_ota/executors/measure.py": (
+            "await emulator.set_output_level_dbm(",
+            "await emulator.set_passthrough_mode(",
+            "await emulator.start_emulation(",
+            "await emulator.set_output_gain(",
+            "await emulator.set_baseband_power(",
+            "await emulator.set_crest_factor(",
+        ),
+        "app/services/input_level_controller.py": (
+            "await self._ce.set_input_measurement_mode(",
+            "await self._ce.set_burst_trigger_level(",
+        ),
+    }
+    for relative_path, forbidden_calls in sources.items():
+        source = (API_SERVICE / relative_path).read_text()
+        recorder_token = (
+            "record_channel_emulator_operation"
+            if relative_path.endswith("measure.py")
+            else "_invoke_channel_operation"
+        )
+        assert recorder_token in source, relative_path
+        for forbidden in forbidden_calls:
+            assert forbidden not in source, f"{relative_path}: {forbidden}"
+
+    measure_source = (
+        API_SERVICE / "app/services/mimo_ota/executors/measure.py"
+    ).read_text()
+    assert measure_source.count(
+        "operation_recorder=record_channel_emulator_operation"
+    ) >= 3
+
+
+def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
+    from app.core.logging_config import current_execution_id
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="v1.0",
+        captured_from_live_connection=True,
+    )
+
+    def exchange(
+        exchange_id: str,
+        sequence: int,
+        command: str,
+        *,
+        operation: str,
+        result_type: str,
+        response: str | None = None,
+    ) -> ScpiExchangeRef:
+        return ScpiExchangeRef(
+            exchange_id=exchange_id,
+            instrument_id="ce-live",
+            operation=operation,
+            command=command,
+            execution_id="execution-1",
+            capture_id="capture-1",
+            sequence=sequence,
+            result_type=result_type,
+            response=response,
+        )
+
+    exchanges = (
+        exchange(
+            "preclear", 0, "SYST:ERR?", operation="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange(
+            "go", 1, "DIAG:SIMU:GO", operation="command", result_type="ok",
+        ),
+        exchange(
+            "opc", 2, "*OPC?", operation="query",
+            result_type="response", response="1",
+        ),
+        exchange(
+            "error", 3, "SYST:ERR?", operation="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange(
+            "state", 4, "DIAG:SIMU:STATE?", operation="query",
+            result_type="response", response="RUNNING",
+        ),
+    )
+    token = current_execution_id.set("execution-1")
+    try:
+        confirmed = driver.project_channel_operation_evidence(
+            operation="start_emulation",
+            requested={"state": "RUNNING"},
+            operation_succeeded=True,
+            exchanges=exchanges,
+            execution_mode="real",
+        )
+        missing_readback = driver.project_channel_operation_evidence(
+            operation="start_emulation",
+            requested={"state": "RUNNING"},
+            operation_succeeded=True,
+            exchanges=exchanges[:-1],
+            execution_mode="real",
+        )
+    finally:
+        current_execution_id.reset(token)
+    assert confirmed["fields"][0]["status"] == "confirmed"
+    assert confirmed["fields"][0]["provenance"] == "authoritative_readback"
+    assert confirmed["fields"][0]["applied"] == "RUNNING"
+    assert confirmed["fields"][0]["exchange_ids"] == [
+        "preclear", "go", "opc", "error", "state"
+    ]
+    assert confirmed["error_queue_exchange_ids"] == ["preclear", "error"]
+
+    assert missing_readback["fields"][0]["status"] == "unknown"
+    assert missing_readback["fields"][0]["applied"] is None

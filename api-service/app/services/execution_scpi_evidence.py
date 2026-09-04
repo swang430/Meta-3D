@@ -45,6 +45,7 @@ from app.hal.scpi_evidence import (
     exchange_matches_catalog_role,
     exchange_has_clean_error_queue_response,
     exchange_is_error_queue_query,
+    select_f64_command_capture,
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
@@ -1969,51 +1970,11 @@ def record_f64_command_capture(
     exchanges: list[ScpiExchangeRef],
 ) -> None:
     """记录 F64 写入的 OPC/错误门/回读；缺任何一段由 B 层判 unknown。"""
-    command = _find_exchange(
-        exchanges,
-        evidence_key,
-        "command",
-        reverse=evidence_key == "f64.bypass_mode",
-    )
-    command_index = exchanges.index(command) if command in exchanges else len(exchanges)
-    # 只取紧邻目标写入之前的清队列段；更早的错误查询若隔着其它命令，不能
-    # 冒充本事务的 preclear，也不该让合法的后一个 preclear 因“跨段”假失败。
-    preclear_reversed: list[ScpiExchangeRef] = []
-    for exchange in reversed(exchanges[:command_index]):
-        if not exchange_matches_catalog_role(exchange, "f64.error_queue", "query"):
-            break
-        preclear_reversed.append(exchange)
-    preclear = list(reversed(preclear_reversed))
-    after = exchanges[command_index + 1 :] if command in exchanges else []
-    opc_exchange = _find_exchange(after, "f64.operation_complete", "query")
-    opc_index = after.index(opc_exchange) if opc_exchange in after else -1
-    after_opc = after[opc_index + 1 :] if opc_index >= 0 else after
-    error_exchange = _find_exchange(after_opc, "f64.error_queue", "query")
-    error_index = (
-        after_opc.index(error_exchange) if error_exchange in after_opc else -1
-    )
-    after_error = after_opc[error_index + 1 :] if error_index >= 0 else after_opc
-    if evidence_key == "f64.simulation_state":
-        readback_key = "f64.simulation_state"
-    elif evidence_key == "f64.bypass_mode":
-        readback_key = "f64.bypass_mode"
-    else:
-        readback_key = "f64.model_state"
+    selected = select_f64_command_capture(exchanges, evidence_key)
     item = driver.build_p0_5_command_evidence(
         evidence_key=evidence_key,
         requested=requested,
-        preclear_exchanges=preclear,
-        command_exchange=command,
-        opc_exchange=opc_exchange,
-        error_exchange=error_exchange,
-        readback_exchange=_find_exchange(
-            after_error,
-            readback_key,
-            "query",
-        ),
-        state_exchange=_find_exchange(
-            after_error, "f64.simulation_state", "query", reverse=True
-        ),
+        **selected,
     )
     if item is None:
         return

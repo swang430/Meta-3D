@@ -2324,21 +2324,75 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         exchanges: tuple[Any, ...],
         execution_mode: str,
     ) -> Dict[str, Any]:
-        """Keep receipt fields unknown until same-invocation evidence is mapped.
+        """Strengthen only values proven by this invocation's F64 readback."""
 
-        P2-60 Task 2 only establishes the pure adapter boundary.  Task 3 maps
-        the existing F64 catalog/readbacks to individual operations; this
-        conservative implementation cannot turn a successful return into an
-        applied-value claim.
-        """
-
-        return super().project_channel_operation_evidence(
+        projected = super().project_channel_operation_evidence(
             operation=operation,
             requested=requested,
             operation_succeeded=operation_succeeded,
             exchanges=exchanges,
             execution_mode=execution_mode,
         )
+        recipe = {
+            "start_emulation": ("f64.simulation_state", "state"),
+            "set_passthrough_mode": ("f64.bypass_mode", "mode"),
+        }.get(operation)
+        if (
+            recipe is None
+            or operation_succeeded is not True
+            or execution_mode != "real"
+            or recipe[1] not in requested
+        ):
+            return projected
+
+        from app.hal.scpi_evidence import (
+            EvidenceLevel,
+            EvidenceVerdict,
+            build_f64_evidence,
+            exchange_is_error_queue_query,
+            scope_for_evidence,
+            select_f64_command_capture,
+        )
+
+        evidence_key, field_name = recipe
+        selected = select_f64_command_capture(exchanges, evidence_key)
+        item = build_f64_evidence(
+            evidence_key=evidence_key,
+            requested=requested[field_name],
+            scope=scope_for_evidence(
+                evidence_key, self.capture_evidence_environment()
+            ),
+            **selected,
+        )
+        if not (
+            item.verdict is EvidenceVerdict.PASSED
+            and item.evidence_level is EvidenceLevel.APPLIED
+        ):
+            return projected
+
+        projected["fields"] = [
+            (
+                {
+                    "field": field_name,
+                    "requested": requested[field_name],
+                    "applied": requested[field_name],
+                    "applied_present": True,
+                    "status": "confirmed",
+                    "provenance": "authoritative_readback",
+                    "exchange_ids": list(item.exchange_ids),
+                    "source_reference": item.source_reference,
+                }
+                if field["field"] == field_name
+                else field
+            )
+            for field in projected["fields"]
+        ]
+        projected["error_queue_exchange_ids"] = [
+            exchange.exchange_id
+            for exchange in exchanges
+            if exchange_is_error_queue_query(exchange, instrument="f64")
+        ]
+        return projected
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness

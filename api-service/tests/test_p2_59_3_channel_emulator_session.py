@@ -659,7 +659,7 @@ def test_measure_rearms_terminal_stop_before_bypass_fade_start():
     source = inspect.getsource(MeasureExecutor.execute)
     fade_branch = source[source.index("if config.f64_bypass_mode is not None and config.f64_fade_after_attach:") :]
     arm = fade_branch.index("require_channel_emulator_stop_after_output_change()")
-    start = fade_branch.index("faded = await emulator.start_emulation()")
+    start = fade_branch.index('operation="start_emulation"')
     assert arm < start
 
 

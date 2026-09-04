@@ -135,6 +135,7 @@ class NativeModelStrategy(BaseChannelGenerator):
         azimuth_step_deg: float = 15.0,
         *,
         execution_plan: ChannelEmulatorExecutionPlan,
+        operation_recorder: Any | None = None,
     ):
         """
         Args:
@@ -149,6 +150,12 @@ class NativeModelStrategy(BaseChannelGenerator):
         self.azimuth_step_deg = azimuth_step_deg
         self._last_oop_profile: Optional[OOPProfile] = None
         self.execution_plan = execution_plan
+        self._operation_recorder = operation_recorder
+
+    async def _invoke_channel_operation(self, **kwargs: Any) -> Any:
+        if self._operation_recorder is None:
+            return await kwargs["invoke"]()
+        return await self._operation_recorder(**kwargs)
 
     async def generate_and_load(
         self,
@@ -234,11 +241,23 @@ class NativeModelStrategy(BaseChannelGenerator):
             f"scenario={scenario}"
         )
 
-        success = await self.emulator.load_channel(
-            mode=ChannelLoadMode.NATIVE_MODEL,
-            model_name=model_name,
-            scenario=scenario,
-            parameters=simulation_rules_with_file,
+        success = await self._invoke_channel_operation(
+            phase="load",
+            operation="load_channel",
+            requested={
+                "load_mode": ChannelLoadMode.NATIVE_MODEL.value,
+                "model_name": model_name,
+                "scenario": scenario,
+                "emulation_file": simulation_rules_with_file.get(
+                    "emulation_file"
+                ),
+            },
+            invoke=lambda: self.emulator.load_channel(
+                mode=ChannelLoadMode.NATIVE_MODEL,
+                model_name=model_name,
+                scenario=scenario,
+                parameters=simulation_rules_with_file,
+            ),
         )
 
         if not success:
