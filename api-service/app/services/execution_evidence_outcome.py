@@ -26,6 +26,10 @@ from app.hal.base_station_mac_profile import (
     CMW500_LTE_PROFILE_SOURCE,
     UXM_NR_PROFILE_SOURCE,
 )
+from app.hal.channel_emulator_execution_plan import (
+    resolve_channel_emulator_execution_plan,
+)
+from app.hal.channel_emulator_manifest import ChannelEmulatorManifest
 from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
 from app.services.execution_qualification import (
     EXECUTION_QUALIFICATION_KEY,
@@ -35,6 +39,21 @@ from app.services.execution_qualification import (
 from app.services.base_station_adapter_profile import (
     MIMO_OTA_CONFIGURATION_FREEZE_KEY,
     frozen_mac_profile_from_adapter_freeze,
+)
+from app.services.channel_emulator_binding import (
+    CE_FREEZE_CONFIG_KEY,
+    validate_frozen_channel_emulator_binding,
+)
+from app.services.channel_emulator_execution_plan import (
+    CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+    CE_PLAN_FREEZE_CONFIG_KEY,
+    validate_frozen_channel_emulator_load_context,
+    validate_frozen_channel_emulator_execution_plan,
+    verify_frozen_channel_emulator_execution_plan,
+)
+from app.services.channel_emulator_execution_session import (
+    CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    validate_channel_emulator_terminal_evidence,
 )
 
 
@@ -87,6 +106,156 @@ class ExecutionEvidenceOutcome(BaseModel):
     qualification_classification: QualificationClassification
     reasons: tuple[str, ...]
     pipeline_status: str
+
+
+def _channel_emulator_terminal_projection(
+    config: Mapping[str, Any],
+    *,
+    execution_id: object,
+    pipeline_status: str,
+) -> tuple[Literal["diagnostic", "invalid"] | None, str | None]:
+    """Validate the immutable CE binding/plan/session chain without current state."""
+
+    binding = config.get(CE_FREEZE_CONFIG_KEY)
+    plan = config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+    load_request = config.get(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
+    evidence = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if binding is None and plan is None and load_request is None and evidence is None:
+        return None, None
+    if binding is None or plan is None or load_request is None:
+        return "invalid", "channelEmulator binding / execution plan freeze is incomplete"
+    try:
+        validated_binding = validate_frozen_channel_emulator_binding(binding)
+        validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
+        validated_load_request, _mimo_configuration = (
+            validate_frozen_channel_emulator_load_context(config, plan)
+        )
+    except ValueError as exc:
+        return "invalid", str(exc)
+    if validated_plan.get("binding_digest") != validated_binding.get("binding_digest"):
+        return "invalid", "channelEmulator plan and binding digest do not match"
+    try:
+        resolved_binding = validated_binding["resolved_binding"]
+        binding_status = resolved_binding["status"]
+        execution_mode = validated_binding["execution_mode"]
+        if binding_status == "diagnostic_unbound":
+            if execution_mode != "simulated":
+                return "invalid", "channelEmulator diagnostic binding is not simulated"
+            from app.hal.channel_emulator import MockChannelEmulator
+
+            manifest = MockChannelEmulator.adapter_manifest
+        elif binding_status == "configured":
+            if execution_mode == "simulated":
+                # A configured mock run still executes the one authoritative CE
+                # mock implementation; the binding manifest describes the
+                # selected real model and must not be mistaken for live mock
+                # execution capability.
+                from app.hal.channel_emulator import MockChannelEmulator
+
+                manifest = MockChannelEmulator.adapter_manifest
+            else:
+                manifest = ChannelEmulatorManifest.model_validate(
+                    resolved_binding["manifest"]
+                )
+        else:
+            return "invalid", "channelEmulator binding status cannot derive a plan"
+
+        authoritative_load_mode = validated_load_request["requested_load_mode"]
+        authoritative_plan = resolve_channel_emulator_execution_plan(
+            manifest=manifest,
+            # Real execution can only use the loaded HAL.  Simulated execution
+            # is always diagnostic/non-formal and may have frozen either a
+            # loaded Mock (``hal``) or the execution-scoped fallback after the
+            # binding was frozen.  Preserve that diagnostic provenance while
+            # still deriving the adapter and load mode from independent truth.
+            driver_source=(
+                validated_plan["driver_source"]
+                if execution_mode == "simulated"
+                else "hal"
+            ),
+            requested_load_mode=authoritative_load_mode,
+            binding_digest=validated_binding["binding_digest"],
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as exc:
+        return "invalid", f"channelEmulator binding manifest cannot derive plan: {exc}"
+    plan_error = verify_frozen_channel_emulator_execution_plan(
+        validated_plan,
+        authoritative_plan,
+    )
+    if plan_error is not None:
+        return (
+            "invalid",
+            "channelEmulator plan does not match binding manifest: " + plan_error,
+        )
+    if evidence is None and pipeline_status != "completed":
+        return None, None
+    if not isinstance(evidence, list) or not evidence:
+        return "invalid", "completed execution has no channelEmulator terminal evidence"
+
+    simulated = validated_binding.get("execution_mode") == "simulated"
+    validated_evidence: list[Mapping[str, Any]] = []
+    for item in evidence:
+        if not isinstance(item, Mapping):
+            return "invalid", "channelEmulator terminal evidence is malformed"
+        try:
+            item = validate_channel_emulator_terminal_evidence(dict(item))
+        except ValueError as exc:
+            return "invalid", str(exc)
+        expected = {
+            "execution_id": str(execution_id),
+            "binding_digest": validated_binding.get("binding_digest"),
+            "binding_freeze_digest": validated_binding.get("digest"),
+            "plan_digest": validated_plan.get("digest"),
+            "execution_mode": validated_binding.get("execution_mode"),
+            "adapter_id": validated_plan.get("adapter_id"),
+            "driver_module": validated_binding.get("expected_driver_module"),
+            "driver_name": validated_binding.get("expected_driver_name"),
+            "driver_connection": validated_binding.get("expected_driver_connection"),
+        }
+        if any(item.get(key) != value for key, value in expected.items()):
+            return "invalid", "channelEmulator terminal evidence identity drift"
+        if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
+            return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
+        validated_evidence.append(item)
+
+    # Commissioning single-phase runs are deliberately retryable.  Persistence
+    # is append-only, so the last terminal record for the same immutable
+    # operation scope is the accepted attempt; an earlier failed attempt from
+    # that scope must not poison a later successful retry.  Pre-P2-59 records
+    # have no scope and therefore remain independently fail-closed.
+    effective_evidence: list[Mapping[str, Any]] = []
+    latest_by_scope: dict[str, Mapping[str, Any]] = {}
+    for item in validated_evidence:
+        operation_scope = item.get("operation_scope")
+        if isinstance(operation_scope, str):
+            latest_by_scope[operation_scope] = item
+        else:
+            effective_evidence.append(item)
+    effective_evidence.extend(latest_by_scope.values())
+
+    for item in effective_evidence:
+        if (
+            item.get("terminal_state") != "completed"
+            or item.get("operation_succeeded") is not True
+            or item.get("safe_idle_confirmed") is not True
+        ):
+            return "invalid", "channelEmulator execution lifecycle is incomplete"
+        if simulated:
+            if (
+                item.get("remote_acquired_confirmed") is not None
+                or item.get("transport_released_confirmed") is not None
+            ):
+                return "invalid", "simulated channelEmulator claimed real transport evidence"
+        elif (
+            item.get("remote_acquired_confirmed") is not True
+            or item.get("transport_released_confirmed") is not True
+            or not isinstance(item.get("instrument_id"), str)
+            or not item.get("instrument_id")
+        ):
+            return "invalid", "real channelEmulator control lifecycle is incomplete"
+    if simulated:
+        return "diagnostic", "simulated channelEmulator is excluded from formal KPI"
+    return None, None
 
 
 def _outer_freeze_digest_error(frozen: Mapping[str, Any]) -> str | None:
@@ -467,12 +636,25 @@ def validate_frozen_mac_profile_evidence(
     return None
 
 
-def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutcome:
-    """Project frozen evidence plus current lifecycle into shared semantics."""
+def project_execution_evidence_outcome(
+    execution: Any,
+    *,
+    lifecycle_status: str | None = None,
+) -> ExecutionEvidenceOutcome:
+    """Project frozen evidence plus one authoritative lifecycle into semantics.
+
+    ``lifecycle_status`` is reserved for the REPORT executor's immutable final
+    lifecycle projection.  Every other caller continues to consume the stored
+    execution status.
+    """
 
     config = getattr(execution, "config", None)
     config = config if isinstance(config, Mapping) else {}
-    pipeline_status = str(getattr(execution, "status", "unknown"))
+    pipeline_status = str(
+        lifecycle_status
+        if lifecycle_status is not None
+        else getattr(execution, "status", "unknown")
+    )
     frozen = config.get(FREEZE_CONFIG_KEY)
     (
         qualification,
@@ -550,6 +732,18 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
             else:
                 classification = "compatible"
 
+    ce_classification, ce_reason = _channel_emulator_terminal_projection(
+        config,
+        execution_id=getattr(execution, "id", ""),
+        pipeline_status=pipeline_status,
+    )
+    if ce_reason is not None:
+        reasons.append(ce_reason)
+    if ce_classification == "invalid":
+        classification = "invalid"
+    elif ce_classification == "diagnostic" and classification != "invalid":
+        classification = "diagnostic"
+
     formal_eligible = (
         pipeline_status == "completed"
         and classification == "compatible"
@@ -575,7 +769,11 @@ def project_execution_evidence_outcome(execution: Any) -> ExecutionEvidenceOutco
     )
 
 
-def execution_evidence_blocks_formal_outputs(execution: Any) -> bool:
+def execution_evidence_blocks_formal_outputs(
+    execution: Any,
+    *,
+    lifecycle_status: str | None = None,
+) -> bool:
     """Return whether this execution must be excluded from every formal output.
 
     Legacy rows intentionally retain the pre-P1-75 provenance rules.  Explicit
@@ -583,5 +781,6 @@ def execution_evidence_blocks_formal_outputs(execution: Any) -> bool:
     """
 
     return project_execution_evidence_outcome(
-        execution
+        execution,
+        lifecycle_status=lifecycle_status,
     ).compatibility_classification in {"diagnostic", "invalid"}

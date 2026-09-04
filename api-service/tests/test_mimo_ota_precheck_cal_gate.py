@@ -325,6 +325,7 @@ def _refreeze_ce_plan(db, ctx):
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
         CE_PLAN_FREEZE_CONFIG_KEY,
         freeze_channel_emulator_execution_plan,
     )
@@ -332,7 +333,9 @@ def _refreeze_ce_plan(db, ctx):
 
     execution = ctx.test_execution
     execution.config = {
-        key: value for key, value in execution.config.items() if key != CE_PLAN_FREEZE_CONFIG_KEY
+        key: value
+        for key, value in execution.config.items()
+        if key not in {CE_LOAD_REQUEST_FREEZE_CONFIG_KEY, CE_PLAN_FREEZE_CONFIG_KEY}
     }
     flag_modified(execution, "config")
     freeze_channel_emulator_execution_plan(db, get_hal_service(), execution)

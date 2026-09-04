@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_execution_plan import (
     CHANNEL_EMULATOR_PHASE_ORDER,
@@ -43,11 +45,18 @@ from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.propsim_fs16 import RealPropsimFs16Driver
 from app.models.test_plan import TestCase, TestExecution
 from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.services.base_station_adapter_profile import (
+    FREEZE_CONFIG_KEY,
+    MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+)
 from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
 from app.services.channel_emulator_execution_plan import (
+    CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+    CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
     CE_PLAN_FREEZE_CONFIG_KEY,
     channel_emulator_for_execution_plan,
     freeze_channel_emulator_execution_plan,
+    freeze_channel_asset_resolution,
     freeze_execution_channel_emulator_plan,
     resolve_live_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
@@ -110,16 +119,30 @@ def _execution(
     if with_binding:
         config = {CE_FREEZE_CONFIG_KEY: {"binding_digest": BINDING_DIGEST}, **config}
     test_case_id = None
+    case_configuration = _configuration(engine_mode) if configuration is None else configuration
     if bind_case:
         case = TestCase(
             name=f"p2-59-{uuid4().hex[:8]}",
             test_type="MIMO_OTA",
-            configuration=_configuration(engine_mode) if configuration is None else configuration,
+            configuration=case_configuration,
             created_by="pytest",
         )
         db.add(case)
         db.commit()
         test_case_id = case.id
+        if FREEZE_CONFIG_KEY not in config:
+            try:
+                frozen_mimo = MIMOOTAConfiguration.model_validate(
+                    case_configuration
+                ).model_dump(mode="json")
+            except Exception:
+                frozen_mimo = None
+            if frozen_mimo is not None:
+                base_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+                config[FREEZE_CONFIG_KEY] = {
+                    **base_payload,
+                    "digest": canonical_payload_digest(base_payload),
+                }
     execution = TestExecution(status="pending", config=dict(config), test_case_id=test_case_id)
     db.add(execution)
     db.commit()
@@ -267,11 +290,16 @@ def test_freeze_persists_plan_next_to_binding_freeze_and_reuses_without_recomput
     expected = _plan(F64_MANIFEST, "native_model")
     assert frozen == {**expected.as_payload(), "digest": expected.digest}
     assert frozen["binding_digest"] == BINDING_DIGEST
-    assert execution.config == {
-        "keep": "me",
-        CE_FREEZE_CONFIG_KEY: {"binding_digest": BINDING_DIGEST},
-        CE_PLAN_FREEZE_CONFIG_KEY: frozen,
+    assert execution.config["keep"] == "me"
+    assert execution.config[CE_FREEZE_CONFIG_KEY] == {
+        "binding_digest": BINDING_DIGEST
     }
+    assert execution.config[CE_PLAN_FREEZE_CONFIG_KEY] == frozen
+    load_request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    assert load_request["source"] == "mimo_configuration"
+    assert load_request["effective_engine_mode"] == "keysight_gcm"
+    assert load_request["requested_load_mode"] == "native_model"
+    assert load_request["plan_digest"] == frozen["digest"]
     db.commit()
     db.expire_all()
     reloaded = db.get(TestExecution, execution.id)
@@ -284,6 +312,202 @@ def test_freeze_persists_plan_next_to_binding_freeze_and_reuses_without_recomput
     again = freeze_channel_emulator_execution_plan(db, _hal(MockChannelEmulator("ce", {})), reloaded)
     assert again == frozen
     assert again["adapter_id"] == "propsim_f64"
+    assert reloaded.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] == load_request
+
+
+def test_freeze_binds_effective_channel_asset_load_truth_and_never_reloads_current_asset(
+    db, monkeypatch
+):
+    from app.services.mimo_ota import channel_asset_resolver
+
+    asset_id = uuid4()
+    configuration = _configuration("keysight_gcm")
+    configuration["channel_asset_id"] = str(asset_id)
+    execution = _execution(db, configuration=configuration)
+    current = {
+        "source_type": "standard_3gpp",
+        "engine_mode": "mimo_first_asc",
+    }
+    calls = []
+
+    def resolve(_db, _config):
+        calls.append(current.copy())
+        return SimpleNamespace(
+            engine_mode=current["engine_mode"],
+            asset=SimpleNamespace(
+                id=asset_id,
+                source_type=current["source_type"],
+            ),
+        )
+
+    monkeypatch.setattr(channel_asset_resolver, "resolve_channel_asset", resolve)
+
+    base_freeze = execution.config[FREEZE_CONFIG_KEY]
+    identity = freeze_channel_asset_resolution(
+        db, MIMOOTAConfiguration.model_validate(configuration)
+    )
+    base_payload = {
+        key: value for key, value in base_freeze.items() if key != "digest"
+    }
+    base_payload[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = identity
+    execution.config = {
+        **execution.config,
+        FREEZE_CONFIG_KEY: {
+            **base_payload,
+            "digest": canonical_payload_digest(base_payload),
+        },
+    }
+
+    frozen = freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+    request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+
+    assert frozen["requested_load_mode"] == "external_waveform"
+    assert request["source"] == "channel_asset"
+    assert request["channel_asset_id"] == str(asset_id)
+    assert request["channel_asset_source_type"] == "standard_3gpp"
+    assert request["effective_engine_mode"] == "mimo_first_asc"
+    assert request["requested_load_mode"] == "external_waveform"
+
+    # 冻结后的 current asset 即使换来源，也只能复用旧投影，不能查询或重算。
+    current.update(source_type="vendor_file", engine_mode="keysight_gcm")
+    assert freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution) == frozen
+    assert execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] == request
+    assert calls == [
+        {"source_type": "standard_3gpp", "engine_mode": "mimo_first_asc"}
+    ]
+
+
+def test_frozen_channel_asset_rejects_executable_content_drift_before_remote(
+    monkeypatch,
+):
+    """A stable asset id/source cannot hide a changed executable payload."""
+    from app.services import channel_emulator_execution_plan as module
+    from app.services.mimo_ota import channel_asset_resolver
+
+    asset_id = uuid4()
+    asset = SimpleNamespace(
+        id=asset_id,
+        name="frozen-custom-channel",
+        source_type="custom_static",
+        payload={"snapshots": [{"clusters": [{"delay_s": 0.0}]}]},
+        associated_file_path=None,
+        center_frequency_hz=3_500_000_000.0,
+        bandwidth_mhz=100.0,
+        ue_velocity_mps=None,
+        instrument_connection_id=None,
+        is_active=True,
+    )
+    resolved = SimpleNamespace(engine_mode="mimo_first_asc", asset=asset)
+    monkeypatch.setattr(
+        channel_asset_resolver,
+        "resolve_channel_asset",
+        lambda *_args, **_kwargs: resolved,
+    )
+
+    frozen = module.freeze_channel_asset_resolution(
+        object(),
+        SimpleNamespace(channel_asset_id=asset_id),
+    )
+    module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
+
+    asset.payload = {"snapshots": [{"clusters": [{"delay_s": 0.25}]}]}
+    with pytest.raises(ValueError, match="executable content"):
+        module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
+
+
+def test_vendor_file_freeze_rejects_in_place_project_byte_replacement(
+    tmp_path, monkeypatch
+):
+    """A stable DB row/path cannot hide different bytes at the F64-visible path."""
+    from app.services import channel_emulator_execution_plan as plan_service
+    from app.services import smu_project_inventory as inventory_service
+    from app.services.mimo_ota import channel_asset_resolver
+
+    project = tmp_path / "scenario.smu"
+    original = b"[Channel Group 0]\nCenterFrequency=3549990000\n"
+    replacement = b"[Channel Group 0]\nCenterFrequency=3600000000\n"
+    project.write_bytes(original)
+    instrument_path = r"D:\SMU\scenario.smu"
+    connection_id = uuid4()
+    asset_id = uuid4()
+    asset = SimpleNamespace(
+        id=asset_id,
+        name="scenario",
+        source_type="vendor_file",
+        instrument_connection_id=connection_id,
+        associated_file_path=instrument_path,
+        center_frequency_hz=3_549_990_000.0,
+        payload={
+            "scd_config": {
+                "radio_technology": "nr5g",
+                "channel_kind": "nr_arfcn",
+                "band": "N78",
+                "arfcn": 636666,
+                "bandwidth_mhz": 100.0,
+                "model": "CDLC",
+                "scenario": "UMa",
+                "mimo": "4x4",
+                "polarization": "DP",
+                "version": 1,
+            },
+            "smu_project_truth": {
+                "schema_version": 1,
+                "instrument_path": instrument_path,
+                "sha256": hashlib.sha256(original).hexdigest(),
+                "size_bytes": len(original),
+                "primary_group": 0,
+                "center_frequencies_hz": {"0": 3_549_990_000},
+            },
+        },
+    )
+
+    def current_scan(_db):
+        return (
+            SimpleNamespace(id=connection_id),
+            inventory_service.scan_smu_projects(tmp_path, r"D:\SMU"),
+        )
+
+    monkeypatch.setattr(inventory_service, "_resolve_scan_context", current_scan)
+    resolved = SimpleNamespace(engine_mode="keysight_gcm", asset=asset)
+    monkeypatch.setattr(
+        channel_asset_resolver,
+        "resolve_channel_asset",
+        lambda *_args, **_kwargs: resolved,
+    )
+    frozen = plan_service.freeze_channel_asset_resolution(
+        object(), SimpleNamespace(channel_asset_id=asset_id)
+    )
+    plan_service.validate_resolved_channel_asset_against_freeze(
+        resolved, frozen, db=object()
+    )
+
+    project.write_bytes(replacement)
+    with pytest.raises(ValueError, match="actual bytes digest"):
+        plan_service.validate_resolved_channel_asset_against_freeze(
+            resolved, frozen, db=object()
+        )
+
+
+def test_freeze_load_request_digest_binds_exact_sparse_base_station_freeze(db):
+    sparse_configuration = {"engine_mode": "keysight_gcm"}
+    execution = _execution(
+        db,
+        **{
+            FREEZE_CONFIG_KEY: {
+                MIMO_OTA_CONFIGURATION_FREEZE_KEY: sparse_configuration,
+            }
+        },
+    )
+
+    freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+
+    request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    assert request["mimo_configuration_digest"] == canonical_payload_digest(
+        sparse_configuration
+    )
+    assert request["mimo_configuration_digest"] != canonical_payload_digest(
+        MIMOOTAConfiguration.model_validate(sparse_configuration).model_dump(mode="json")
+    )
 
 
 def test_freeze_requires_binding_freeze_first_and_rejects_bad_configuration(db):
@@ -310,16 +534,85 @@ def test_freeze_fails_loud_at_launch_when_requested_load_mode_is_not_implemented
 
 def test_tampered_or_malformed_frozen_plan_is_rejected_not_refrozen(db):
     frozen = _frozen(_plan())
+    frozen_mimo = _configuration()
+    request_payload = {
+        "schema_version": 1,
+        "source": "mimo_configuration",
+        "mimo_configuration_digest": canonical_payload_digest(frozen_mimo),
+        "channel_asset_id": None,
+        "channel_asset_source_type": None,
+        "effective_engine_mode": "keysight_gcm",
+        "requested_load_mode": "native_model",
+        "plan_digest": frozen["digest"],
+    }
+    request = {
+        **request_payload,
+        "digest": canonical_payload_digest(request_payload),
+    }
     tampered = {**frozen, "load_mode_planned": False}
-    execution = _execution(db, **{CE_PLAN_FREEZE_CONFIG_KEY: tampered})
+    execution = _execution(
+        db,
+        **{
+            CE_PLAN_FREEZE_CONFIG_KEY: tampered,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: request,
+        },
+    )
     with pytest.raises(ValueError, match="冻结件被篡改"):
         freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
 
     malformed = {key: value for key, value in frozen.items() if key != "operations"}
-    execution = _execution(db, **{CE_PLAN_FREEZE_CONFIG_KEY: malformed})
+    execution = _execution(
+        db,
+        **{
+            CE_PLAN_FREEZE_CONFIG_KEY: malformed,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: request,
+        },
+    )
     with pytest.raises(ValueError, match="结构不合法"):
         freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
     assert execution.config[CE_PLAN_FREEZE_CONFIG_KEY] == malformed
+
+
+def test_plan_and_load_request_freezes_are_created_or_reused_only_as_a_pair(
+    db, monkeypatch
+):
+    from app.services.mimo_ota import channel_asset_resolver
+
+    def current_asset_must_not_repair_an_orphan(*_args, **_kwargs):
+        raise AssertionError("orphan freeze must fail before resolving current asset")
+
+    monkeypatch.setattr(
+        channel_asset_resolver,
+        "resolve_channel_asset",
+        current_asset_must_not_repair_an_orphan,
+    )
+    frozen = _frozen(_plan())
+    orphan_plan = _execution(db, **{CE_PLAN_FREEZE_CONFIG_KEY: frozen})
+    with pytest.raises(ValueError, match="freeze 不完整"):
+        freeze_channel_emulator_execution_plan(db, _hal(_f64()), orphan_plan)
+
+    request_payload = {
+        "schema_version": 1,
+        "source": "mimo_configuration",
+        "mimo_configuration_digest": canonical_payload_digest(_configuration()),
+        "channel_asset_id": None,
+        "channel_asset_source_type": None,
+        "effective_engine_mode": "keysight_gcm",
+        "requested_load_mode": "native_model",
+        "plan_digest": frozen["digest"],
+    }
+    orphan_request = _execution(
+        db,
+        **{
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: {
+                **request_payload,
+                "digest": canonical_payload_digest(request_payload),
+            }
+        },
+    )
+    with pytest.raises(ValueError, match="freeze 不完整"):
+        freeze_channel_emulator_execution_plan(db, _hal(_f64()), orphan_request)
+    assert CE_PLAN_FREEZE_CONFIG_KEY not in orphan_request.config
 
 
 def test_execution_freeze_refuses_backfill_when_progress_exists_but_reuses_existing(db):
@@ -328,9 +621,38 @@ def test_execution_freeze_refuses_backfill_when_progress_exists_but_reuses_exist
         freeze_execution_channel_emulator_plan(db, _hal(_f64()), progressed)
     assert CE_PLAN_FREEZE_CONFIG_KEY not in progressed.config
 
+    completed_history = _execution(db)
+    completed_history.status = "completed"
+    db.commit()
+    with pytest.raises(ValueError, match="已结束"):
+        freeze_execution_channel_emulator_plan(
+            db, _hal(_f64()), completed_history
+        )
+    assert CE_PLAN_FREEZE_CONFIG_KEY not in completed_history.config
+    assert CE_LOAD_REQUEST_FREEZE_CONFIG_KEY not in completed_history.config
+
     frozen = _frozen(_plan())
+    request_payload = {
+        "schema_version": 1,
+        "source": "mimo_configuration",
+        "mimo_configuration_digest": canonical_payload_digest(_configuration()),
+        "channel_asset_id": None,
+        "channel_asset_source_type": None,
+        "effective_engine_mode": "keysight_gcm",
+        "requested_load_mode": "native_model",
+        "plan_digest": frozen["digest"],
+    }
+    request = {
+        **request_payload,
+        "digest": canonical_payload_digest(request_payload),
+    }
     already = _execution(
-        db, phase_progress=[{"phase": "PRECHECK"}], **{CE_PLAN_FREEZE_CONFIG_KEY: frozen}
+        db,
+        phase_progress=[{"phase": "PRECHECK"}],
+        **{
+            CE_PLAN_FREEZE_CONFIG_KEY: frozen,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: request,
+        },
     )
     assert freeze_execution_channel_emulator_plan(db, _hal(_f64()), already) == frozen
 
@@ -375,7 +697,7 @@ def test_measure_rejects_drifted_plan_and_accepts_matching_one():
     }
     cfg = SimpleNamespace(engine_mode="keysight_gcm")
 
-    # 冻结时 HAL 装的是 F64，测量时 HAL 里没有 CE（会兜底成 mock）→ 漂移
+    # 冻结时 HAL 装的是 F64，测量时 HAL 里没有 CE → 漂移（③ 后不再兜底 mock）
     with pytest.raises(RuntimeError, match="does not match the loaded driver"):
         MeasureExecutor._channel_emulator_plan_context(_measure_context(config), _hal(None), cfg)
     # 驱动没变、engine_mode 变了 → 也是漂移
@@ -441,13 +763,15 @@ def test_measure_no_longer_queries_driver_capability_directly_and_reconciles_bef
     # 对账在第一处消费之前、在取到 emulator 之后
     assert source.index('emulator = hal.drivers.get("channelEmulator")') < reconcile
     assert reconcile < source.index('ce_plan.planned("set_passthrough_mode")')
-    # 首次 CE I/O 之前：兜底 mock 的创建（其后紧接加载）必须在对账之后
-    assert reconcile < source.index("falling back to MockChannelEmulator")
+    # ③ 后 MeasureExecutor 不再自造 mock；执行作用域已在更外层完成冻结身份对账。
+    assert "falling back to MockChannelEmulator" not in source
+    assert "MockChannelEmulator(" not in source
     # 但不早于路损 / 证书等与 CE 无关的前置门（它们的拒绝不该被计划缺席顶掉）
-    assert source.index("pl_service.resolve_latest_calibration(") < reconcile
+    assert source.index("evaluate_path_loss_preflight(") < reconcile
     assert reconcile < source.index("plan=ce_plan,")
-    assert source.count("ce_plan.planned(") == 2
-    assert source.count("plan.planned(") == 3  # 两处直通前置 + 手动定标的 plan 参数
+    # 直通进入、前置停止、终态退出三项都必须由冻结计划声明。
+    assert source.count("ce_plan.planned(") == 3
+    assert source.count("plan.planned(") == 4  # 三处直通生命周期 + 手动定标参数
 
 
 def test_both_freeze_writers_freeze_the_plan_right_after_the_binding():

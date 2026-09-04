@@ -20,9 +20,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
 
 from app.hal.base import resolve_configured_tcpip_connection
 from app.hal.base_station_compatibility import canonical_payload_digest
@@ -39,6 +39,7 @@ from app.services.instrument_hal_service import get_real_driver_class, is_mock_d
 CHANNEL_EMULATOR_CATEGORY_KEY = "channelEmulator"
 
 _DRIVER_MODES = frozenset({"auto", "mock", "real"})
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class ChannelEmulatorRuntimeDriverIdentity(BaseModel):
@@ -85,6 +86,96 @@ class ResolvedChannelEmulatorBinding(BaseModel):
             mode="json",
             exclude={"execution_mode", "runtime_driver"},
         )
+
+
+class FrozenChannelEmulatorTransport(BaseModel):
+    """Exact immutable transport identity embedded in a frozen CE binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    host: NonEmptyString
+    port: int | None
+    resource: str | None
+
+
+class FrozenResolvedChannelEmulatorBinding(BaseModel):
+    """Stable resolver projection embedded inside the outer freeze."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    status: Literal["configured", "not_applicable", "diagnostic_unbound"]
+    category_id: NonEmptyString
+    instrument_model_id: NonEmptyString | None
+    instrument_connection_id: NonEmptyString | None
+    lab_profile_id: NonEmptyString
+    manifest: ChannelEmulatorManifest | None
+    expected_driver_module: NonEmptyString | None
+    expected_driver_name: NonEmptyString | None
+    expected_transport: FrozenChannelEmulatorTransport | None
+    binding_digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_status_identity(self) -> "FrozenResolvedChannelEmulatorBinding":
+        identity = (
+            self.instrument_model_id,
+            self.instrument_connection_id,
+            self.manifest,
+            self.expected_driver_module,
+            self.expected_driver_name,
+            self.expected_transport,
+        )
+        if self.status == "configured" and any(value is None for value in identity):
+            raise ValueError("configured frozen channelEmulator binding identity is incomplete")
+        if self.status == "diagnostic_unbound" and any(
+            value is not None for value in identity
+        ):
+            raise ValueError(
+                "diagnostic_unbound frozen channelEmulator binding carries configured identity"
+            )
+        return self
+
+
+class FrozenChannelEmulatorBinding(BaseModel):
+    """Strict immutable outer execution freeze; digest is necessary, not sufficient."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    category_id: NonEmptyString
+    instrument_model_id: NonEmptyString | None
+    instrument_connection_id: NonEmptyString | None
+    lab_profile_id: NonEmptyString
+    execution_mode: Literal["real", "simulated"]
+    expected_driver_module: NonEmptyString | None
+    expected_driver_name: NonEmptyString | None
+    expected_driver_connection: FrozenChannelEmulatorTransport | None
+    binding_digest: NonEmptyString
+    resolved_binding: FrozenResolvedChannelEmulatorBinding
+    digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_mirrored_identity(self) -> "FrozenChannelEmulatorBinding":
+        resolved = self.resolved_binding
+        mirrors = (
+            (self.category_id, resolved.category_id),
+            (self.instrument_model_id, resolved.instrument_model_id),
+            (self.instrument_connection_id, resolved.instrument_connection_id),
+            (self.lab_profile_id, resolved.lab_profile_id),
+            (self.expected_driver_module, resolved.expected_driver_module),
+            (self.expected_driver_name, resolved.expected_driver_name),
+            (self.binding_digest, resolved.binding_digest),
+        )
+        if any(outer != inner for outer, inner in mirrors):
+            raise ValueError("frozen channelEmulator binding identity mirrors drift")
+        if self.execution_mode == "real":
+            if resolved.status != "configured":
+                raise ValueError("real frozen channelEmulator binding is not configured")
+            if self.expected_driver_connection != resolved.expected_transport:
+                raise ValueError("real frozen channelEmulator transport mirror drift")
+        elif self.expected_driver_connection is not None:
+            raise ValueError("simulated frozen channelEmulator carries real transport identity")
+        return self
 
 
 class ChannelEmulatorBindingPreview(BaseModel):
@@ -531,6 +622,7 @@ CE_FREEZE_IDENTITY_KEYS = frozenset(
         "instrument_model_id",
         "instrument_connection_id",
         "lab_profile_id",
+        "execution_mode",
         "expected_driver_module",
         "expected_driver_name",
         "expected_driver_connection",
@@ -541,7 +633,7 @@ CE_FREEZE_IDENTITY_KEYS = frozenset(
 
 
 def _validate_existing_channel_emulator_freeze(existing: Any) -> dict[str, Any]:
-    """已存在冻结件的最小结构校验：是 dict、digest 自洽、binding_digest 非空。
+    """已存在冻结件的严格结构与摘要校验。
 
     通过 → 原样返回**不重算**；不通过 → ValueError（冻结件损坏或被篡改）。
     """
@@ -561,7 +653,58 @@ def _validate_existing_channel_emulator_freeze(existing: Any) -> dict[str, Any]:
         raise ValueError(
             "已冻结的 channelEmulator binding 与其 digest 不一致（冻结件被篡改）"
         )
+    try:
+        FrozenChannelEmulatorBinding.model_validate(existing)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"channelEmulator binding freeze is malformed: {exc}"
+        ) from exc
     return existing
+
+
+def validate_frozen_channel_emulator_binding(frozen: Any) -> dict[str, Any]:
+    """Public pure validator for downstream execution-evidence consumers."""
+
+    return _validate_existing_channel_emulator_freeze(frozen)
+
+
+def validate_frozen_channel_emulator_before_remote(hal, frozen: Any) -> str | None:
+    """把 execution-frozen CE 身份与活动 HAL 对账；纯读取、零仪器 I/O。
+
+    该函数只消费冻结件与驱动构造期身份。真机要求注册类和 transport 精确一致；
+    模拟只接受仪器 HAL 权威白名单里的 ``MockChannelEmulator``，不靠名字猜。
+    """
+
+    from app.hal.channel_emulator import MockChannelEmulator
+
+    try:
+        validated = _validate_existing_channel_emulator_freeze(frozen)
+    except ValueError as exc:
+        return str(exc)
+    mode = validated.get("execution_mode")
+    driver = _loaded_channel_emulator(hal)
+    if driver is None:
+        return "loaded channelEmulator driver is missing"
+    if mode == "real":
+        if is_mock_driver(driver):
+            return "loaded channelEmulator driver changed from real to mock"
+        if (
+            type(driver).__module__ != validated.get("expected_driver_module")
+            or type(driver).__name__ != validated.get("expected_driver_name")
+        ):
+            return "loaded channelEmulator driver does not match frozen registry class"
+        if _driver_transport(driver) != validated.get("expected_driver_connection"):
+            return "loaded channelEmulator connection identity does not match frozen connection"
+        return None
+    if mode == "simulated":
+        if not is_mock_driver(driver):
+            return "loaded channelEmulator driver changed from mock to real"
+        if not isinstance(driver, MockChannelEmulator):
+            return "loaded mock driver is not a channelEmulator mock"
+        if validated.get("expected_driver_connection") is not None:
+            return "simulated channelEmulator freeze unexpectedly carries a connection"
+        return None
+    return "frozen channelEmulator execution mode is invalid"
 
 
 def freeze_channel_emulator_binding(
@@ -598,6 +741,7 @@ def freeze_channel_emulator_binding(
         "instrument_model_id": resolved.instrument_model_id,
         "instrument_connection_id": resolved.instrument_connection_id,
         "lab_profile_id": resolved.lab_profile_id,
+        "execution_mode": resolved.execution_mode,
         "expected_driver_module": resolved.expected_driver_module,
         "expected_driver_name": resolved.expected_driver_name,
         # 契约解释 #4：`expected_transport` 本身就是 {host, port, resource} dict，

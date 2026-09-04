@@ -4,19 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
+from uuid import UUID
 
 from app.services.execution_scpi_evidence import (
     begin_execution_base_station_measurement,
     persist_execution_base_station_release,
     record_execution_base_station_attempt_failure,
 )
+from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
+from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
+from app.services.channel_emulator_execution_session import (
+    channel_emulator_execution_scope,
+)
 from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     InstrumentTestLeaseReleaseError,
-    instrument_test_lease,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,10 +50,14 @@ class BaseStationSessionOperationResult(Generic[T]):
     succeeded: bool
 
 
-def _get_base_station_driver():
+def _get_hal_service():
     from app.services.instrument_hal_service import get_hal_service
 
-    drivers = get_hal_service().drivers or {}
+    return get_hal_service()
+
+
+def _get_base_station_driver():
+    drivers = _get_hal_service().drivers or {}
     return drivers.get("baseStation") or drivers.get("base_station")
 
 
@@ -100,13 +110,67 @@ async def run_base_station_execution_session(
     attempt_id: str | None = None
     outcome = None
     operation_result: BaseStationSessionOperationResult[T] | None = None
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    binding = execution_config.get(CE_FREEZE_CONFIG_KEY)
+    plan = execution_config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+    if binding is None or plan is None:
+        raise BaseStationExecutionSessionError(
+            "channelEmulator binding / execution plan is not frozen"
+        )
+    hal = _get_hal_service()
+
+    # P2-59①/③：严格路损资格是整个 run 的第一道纯门，而不是 MEASURE 内
+    # 已经 acquire 两台仪器后的迟到检查。它在租约协调锁内执行，但只读冻结配置
+    # 与数据库证书，绝不访问传入 HAL；随后才轮到 CE binding/plan 与 BS 对账。
+    def _path_loss_preflight(_locked_hal) -> str | None:
+        from app.models.lab_profile import LabProfile
+        from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+        from app.services.mimo_ota.path_loss_preflight import (
+            evaluate_path_loss_preflight,
+        )
+
+        if not isinstance(binding, Mapping):
+            return None  # CE strict parser owns this malformed-freeze error.
+        config = load_mimo_ota_config(execution)
+        lab_profile_id = binding.get("lab_profile_id") or test_case.lab_profile_id
+        try:
+            lab_profile_pk = (
+                UUID(str(lab_profile_id)) if lab_profile_id is not None else None
+            )
+        except (TypeError, ValueError, AttributeError):
+            return "path-loss preflight has an invalid frozen LabProfile identity"
+        lab = db.get(LabProfile, lab_profile_pk) if lab_profile_pk is not None else None
+        chamber = lab.chamber_config if lab is not None else None
+        if chamber is None:
+            return "path-loss preflight requires a frozen LabProfile chamber"
+        verdict = evaluate_path_loss_preflight(
+            db,
+            execution,
+            chamber_id=chamber.id,
+            frequency_mhz=config.primary_carrier.frequency_hz / 1e6,
+            operating_mode=config.switch_mode_id,
+            precheck_strict_cal=config.precheck_strict_cal,
+            channel_emulator_execution_mode=str(binding.get("execution_mode")),
+        )
+        if verdict.blocker is None:
+            return None
+        return (
+            "P1-27 calibration provenance gate failed before hardware connect: "
+            f"{verdict.blocker}"
+        )
+
     try:
-        async with instrument_test_lease(
-            purpose,
-            measurement_attempt_id=None,
-            enable_monitoring=False,
+        async with channel_emulator_execution_scope(
+            db,
+            execution,
+            purpose=purpose,
+            binding=binding,
+            plan=plan,
+            hal=hal,
             validate_before_remote=validate_before_remote,
+            preflight_before_remote=_path_loss_preflight,
         ) as outcome:
+            lease_outcome = getattr(outcome, "lease_outcome", outcome)
             if _is_measure_step(step_type):
                 attempt_id = begin_execution_base_station_measurement(
                     db,
@@ -114,8 +178,12 @@ async def run_base_station_execution_session(
                     test_case,
                     driver=_get_base_station_driver(),
                 )
-                outcome.measurement_attempt_id = attempt_id
+                lease_outcome.measurement_attempt_id = attempt_id
             operation_result = await operation()
+            mark_operation_result = getattr(outcome, "mark_operation_result", None)
+            if callable(mark_operation_result):
+                mark_operation_result(operation_result.succeeded)
+            outcome = lease_outcome
     except asyncio.CancelledError:
         _record_exception_terminal_state(
             db,

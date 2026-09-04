@@ -73,8 +73,10 @@ binding.manifest 是所选真型号的声明而 MEASURE 跑的是 mock —— �
 
 ### 8.B engine_mode 与 MEASURE 同源
 冻结时的 engine_mode 取自 `load_mimo_ota_config(execution)`（基站冻结件里的 MIMO OTA 配置快照优先，否则 TestCase 行）+ `resolve_channel_asset`
-覆盖 —— 与 MEASURE 逐行同源（`measure.py` 的 `config.engine_mode = resolved_asset.engine_mode`）。初版从 `test_case.configuration` 直接解析，
-端到端夹具立刻实证了「两边读不同源就自漂」（用例在建上下文后改了配置，对账把它判成漂移）。写方顺序因此固定为 BS 冻结 → CE binding → CE plan。
+覆盖 —— 与 MEASURE 逐行同源（`measure.py` 的 `config.engine_mode = resolved_asset.engine_mode`）。resolver 的最终答案与来源另存为
+`channel_emulator_load_request_freeze`，并绑定基站冻结件里**原始稀疏** MIMO payload 的摘要和 CE plan digest；后续证据投影不得查询
+current asset，也不得用显式 asset 覆盖前的 stale `mimo_ota_configuration.engine_mode` 重算。初版从 `test_case.configuration` 直接解析，
+端到端夹具立刻实证了「两边读不同源就自漂」（用例在建上下文后改了配置，对账把它判成漂移）。写方顺序因此固定为 BS 冻结 → CE binding → CE load request + plan。
 
 ### 8.C 对账位置 = 首次 CE I/O 之前，不是取到驱动之后
 初版放在 `emulator = hal.drivers.get(...)` 之后、路损门之前，`test_mimo_ota_precheck_cal_gate.py` 7 个与 CE 无关的前置门被「计划缺席」顶掉。
@@ -90,7 +92,7 @@ binding.manifest 是所选真型号的声明而 MEASURE 跑的是 mock —— �
 adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_session` 绕过端点自己复刻三个冻结，须同步加第四个（① 时同样在这里加过 binding）。
 
 ### 8.F 夹具影响（端到端）
-执行行要带两个键（binding 冻结件至少含 `binding_digest`；计划用同一服务函数冻）；无 manifest 的裸 CE 替身冻不出加载模式（P2-57 fail-closed）→ 借 mock 的 manifest 换 adapter_id；
+执行行要带三个同刻键（binding 冻结件至少含 `binding_digest`；resolver-owned load request 投影冻结有效 engine/load 来源并引用 plan digest；计划用同一服务函数冻）；无 manifest 的裸 CE 替身冻不出加载模式（P2-57 fail-closed）→ 借 mock 的 manifest 换 adapter_id；
 用例在建上下文后改配置要重冻（`_refreeze_ce_plan`）；夹具冻不出计划时不冻（如故意给退役资产，让 MEASURE 走它自己更早的门）。
 
 ### 8.G 行为变化清单（三处，全部 fail-closed 方向）
@@ -98,3 +100,98 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 2. 无 manifest 的 CE 驱动：此前一路按「不支持」跑到加载；现在启动期拒。生产驱动都有 manifest（P2-57 构建期门），只影响测试替身。
 3. 冻结与测量之间换驱动 / 换 engine_mode：此前零检测；现在 I/O 前 RuntimeError。
 其余：同一驱动上 3 个已 manifest 化站点的答案逐字不变；其余 13 行 `hasattr` 探测本片不动（②）。
+
+### 8.H ③ 的单点插入与阶段所有权（2026-09-04）
+③ 不在 formal、run-phase、adhoc、run-all 四处各复制一份生命周期；四条活路径已经共同经过
+`run_base_station_execution_session`，所以该函数改为进入统一的
+`channel_emulator_execution_scope(plan, binding, hal, execution)`。scope 内部继续复用
+`instrument_test_lease` 的同一把 HAL 协调锁与 Remote/Local 交接，不另造第二把锁，也不改手工 CE
+端点和诊断序列。阶段固定为：锁内严格路损资格纯检查 → 冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 →
+BaseStation Remote acquire → CE Remote acquire（最后取得）→ 业务 yield → terminal safe idle →
+Local release → terminal evidence。safe idle 位于租约 yield 的
+`finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
+结果，不是预期值。MEASURE 既有 `cleanup_chamber_instruments` 在 scope 持有 CE safe-idle 所有权时只收尾
+BaseStation 与转台，不再第二次调用 `stop_emulation`；离开统一 scope 的旧调用仍保留原有 CE 尽力停机。
+成功、异常、取消三条 session 路径都只允许一次 GOS，不能假设厂商驱动对重复停止幂等。
+
+scope 组合现有 BaseStation `validate_before_remote` 与 CE 校验器，并原样转发前者的
+`validation_identity` / `lease_audit_context`，避免破坏嵌套租约和 P2-67 公共审计。CE 校验器在
+`instrument_test_lease` 已持协调锁、但尚未 clear cache / acquire Remote 的位置执行；因此任何 binding、
+plan、驱动或连接漂移均在首个 CE I/O 前 fail-loud。租约赢锁并完成 acquire 后，scope 把该刻的
+完整 HAL 视图与实际 CE driver 固定到当前 execution task；业务体后续再次读取 `get_hal_service()`
+也不会随 force reload 切到 replacement，模拟 driver 同样不会被新加载的真实 CE 覆盖。
+
+严格路损门复用 MEASURE 的同一纯 evaluator，并在同一协调锁内、任何 BaseStation/CE/转台 I/O
+之前执行；MEASURE 内保留防御性复核及既有 `path_loss_application` 失败载荷。顺序恒为“路损门 →
+CE 对账 → 首个仪器 I/O”，避免 PRECHECK/REFERENCE 先触碰硬件后才在 MEASURE 拒绝证书。
+
+### 8.I ③ 的冻结身份与受控模拟边界
+P2-58 的 binding 冻结件补入 `execution_mode`；它进入冻结件外层 digest，已存在但缺该字段的旧冻结件
+不从当前数据库回填，进入③会被判为不完整/legacy，不能继续正式硬件执行。真机模式逐字段核对：
+`expected_driver_module`、`expected_driver_name`、`expected_driver_connection`、冻结 binding digest、计划引用的
+binding digest、计划 digest，以及 live driver 的 manifest 派生计划。任一不一致均零 CE I/O 拒绝。
+
+模拟模式只认 `instrument_hal_service.is_mock_driver()` 的权威白名单和 Mock CE 的 manifest，不靠类名前缀。
+HAL 仍有 mock 时直接对账；HAL 缺 CE 时，只有冻结 `execution_mode == simulated` 才由 scope 在当前
+execution task 的 HAL view 中临时覆盖 `MockChannelEmulator`，进程级 `hal.drivers` 始终不变，并发
+readiness / preview / freeze 请求仍看到真实的“CE 未加载”。真机冻结遇到 HAL 缺 CE 必须 fail-loud；执行器
+`measure.py` 不再就地构造 Mock。模拟 acquire/release 明确记 `not_applicable`，绝不伪造 true，且整个
+execution 的正式 outcome 被降为 diagnostic，数值不得进入正式 KPI。
+
+### 8.J ③ 的终态证据与四向状态表
+终态写入 `TestExecution.config.channel_emulator_terminal_evidence`，每次 scope 追加一条不可变、带 canonical
+digest 的记录；同一 `session_id` 幂等复用，冲突内容拒绝覆盖。记录绑定 execution id、scope session id、
+租约 id（若已取得）、binding/plan digest、execution mode、adapter/runtime identity、Remote acquire、
+safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些冻结/终态记录，不查 current HAL、目录、
+LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extra=forbid` 的不可变模型完整
+解析，再核 canonical digest；非法 execution mode、空成功态 session/lease/instrument 身份、成功位与
+错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。P2-66 还必须从 binding 的
+冻结身份与 resolver-owned load request 投影纯重建权威计划，再用共同 verifier 对账：configured real 消费
+binding manifest，simulated/diagnostic-unbound 消费固定权威 Mock manifest；现代 binding 的 source 固定为启动
+冻结时已加载的 `hal`。load request 同时冻结原始 MIMO 配置摘要、是否由 ChannelAsset 覆盖、asset id/source_type、
+最终 engine/load 与 plan digest；显式 asset 时按冻结 source_type 重算 engine/load，无 asset 时才要求 engine 与冻结
+MIMO 字段一致。P2-66 不查 current asset，也不能借待验证 plan 自己的 source/load-mode 自证。相同 binding digest
+不能让另一 adapter、fallback source 或另一加载模式的合法 plan 混入。
+
+| 业务方向 | safe idle | release | terminal state | 正式性 |
+|---|---|---|---|---|
+| 成功 | 普通链必须 `stop_emulation is True`；直通链必须在最后一次 STATIC 写之后 `clear_passthrough_mode is True` | 真机必须确认；模拟为 `not_applicable` | `completed` | 仅真机完整证据可正式 |
+| 设备拒绝/业务失败 | 仍执行 | 仍执行 | `failed` | 不正式 |
+| 异常 | 仍执行；失败与原异常并列留痕 | 仍执行 | `failed` | 不正式 |
+| 取消 | 仍执行；不得因取消跳过 | 仍执行 | `cancelled` | 不正式 |
+
+取消命中 safe idle 或任一 Local release 时，安全动作在独立 task 中继续到真实完成/失败；调用 task
+只延迟传播 `CancelledError`，不得用 `shield` 后立即进入下一阶段。SAFE_IDLE 与 release 始终使用租约
+进入时实际 acquire 的同一 driver 引用，HAL force reload 不能把新旧实例拼成一条完整生命周期。
+
+safe idle 只调用计划声明的既有动作：普通链为 `stop_emulation`；直通链前置 stop 后进入 STATIC，
+终态改用既有 `clear_passthrough_mode`，并把 action 写入 terminal，前置 stop 不能冒充终态确认。计划未声明、
+方法缺失、返回 False 或抛异常都不能写成 confirmed。驱动协程自身抛 `CancelledError` 但调用 task 未被
+取消时按 safe-idle failed 记录，不能伪装成操作员取消。若直通 attach 后继续启动衰落，必须在
+`start_emulation` 前把终态 action 保守切回 `stop_emulation`；启动返回 False、抛异常、被取消或部分生效
+都在 release 前执行 GOS，不能用较早的 clear-passthrough 证明最终安全。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
+evidence 落库失败，成功链必须失败；异常/取消链先回滚业务事务，再用同一会话的新事务追加 terminal，
+避免 terminal 的 commit 顺带提交半成品测量。落库自身再失败时仍保留原异常/取消，但把落库失败作为明确
+并列失败附在原异常上，不能只写日志后静默丢失。
+
+### 8.K ③ 的明确边界
+③ 不清理剩余 13 个 `hasattr/getattr` 能力探测（② 负责），不改 `f64_*` / `f64.*` 键，不触碰手工 CE
+端点或诊断序列，不新增状态查询或任何 SCPI，也不改变现有 provenance 白名单。`stop_emulation` 的既有
+厂商语义、错误队列与回读仍完全由驱动实现负责；共同 scope 只消费其布尔确认。
+
+### 8.L load request / plan 的原子冻结与独立资产身份
+`channel_emulator_load_request_freeze` 与 `channel_emulator_execution_plan_freeze` 是同一个启动决定的两个
+不可拆分投影：二者都不存在时才允许一次性解析并创建；二者都存在时只校验和复用；任一单边存在都视为
+现代冻结链损坏，启动期 fail-closed，不能查询 current ChannelAsset 把孤儿冻结件“修好”。已有执行进度或
+已完成历史同样不回填，只能按既有历史策略审计降级。
+
+显式 `channel_asset_id` 的来源不能由 load request 自证。BaseStation 冻结时由 resolver 同刻产生独立的
+`channel_asset_resolution`（asset id + source type + 自身 digest），并把它纳入 BaseStation 外层 canonical
+digest；随后 load request 只从这份独立身份派生有效 engine/load，plan 再引用 load request 的确定性结果。
+因此把 `standard_3gpp` 成组改成 `vendor_file`，即使同步重算 request/plan/terminal 的所有内部摘要，也会与
+独立冻结身份冲突。无显式 asset 时则禁止出现该身份，effective engine 必须与冻结 MIMO 配置一致。
+
+统一 scope 的锁内、零 I/O validator 必须先完整验证 BaseStation 外层摘要、独立 asset 身份、原始稀疏 MIMO
+摘要、load request 摘要、request→plan digest 及 scope 参数中的 plan 完全一致，再从 request 的权威
+`requested_load_mode` 与 binding 的权威 source 规则重建 live plan。任何缺件、孤儿、坏摘要、资产来源漂移或
+plan 自证换档，都在 BaseStation / CE / 转台首次 I/O 前拒绝；P2-66 复用同一纯校验器，不查询 current asset。

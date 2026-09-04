@@ -45,6 +45,7 @@ async def cleanup_chamber_instruments(
     execution_id: Any,
     *,
     expected_operator_stop_generation: int | None = None,
+    channel_emulator_safe_idle_owned: bool | None = None,
 ) -> ChamberCleanupResult:
     """Stop signaling, confirm SAFE_IDLE, home positioner and stop emulation.
 
@@ -165,7 +166,19 @@ async def cleanup_chamber_instruments(
                 warnings.append(msg)
                 logger.warning("[%s] %s", execution_id, msg)
 
-    emulator = hal.drivers.get("channelEmulator")
+    if channel_emulator_safe_idle_owned is None:
+        from app.services.channel_emulator_execution_session import (
+            channel_emulator_safe_idle_is_scope_owned,
+        )
+
+        channel_emulator_safe_idle_owned = (
+            channel_emulator_safe_idle_is_scope_owned()
+        )
+    emulator = (
+        None
+        if channel_emulator_safe_idle_owned
+        else hal.drivers.get("channelEmulator")
+    )
     # P2-57：换源到 manifest（hasattr 在基类补桩后恒为真）
     if emulator is not None and channel_emulator_implements(
         emulator, "stop_emulation"

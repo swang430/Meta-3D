@@ -409,14 +409,20 @@ def _build_mimo_ota_content_data(
     reference = phases.get("reference", {}) or {}
     measure = phases.get("measure", {}) or {}
     analysis = phases.get("analysis", {}) or {}
-    evidence_outcome = project_execution_evidence_outcome(execution)
-    diagnostic_execution = execution_evidence_blocks_formal_outputs(execution)
+    lifecycle = _effective_lifecycle(execution, lifecycle_projection)
+    evidence_outcome = project_execution_evidence_outcome(
+        execution,
+        lifecycle_status=lifecycle.status,
+    )
+    diagnostic_execution = execution_evidence_blocks_formal_outputs(
+        execution,
+        lifecycle_status=lifecycle.status,
+    )
 
     # ARCH-1 S2: MIMO_OTA 执行是 TestCase 制不挂 TestPlan, 报告首段的
     # "名字"就是快照用例名 (caller 经 _lookup_case_name 查好传入;
     # 旧二参调用 / 查不到时兜底"未命名用例", 不再是 "Unknown Plan")
     display_name = case_name or "未命名用例"
-    lifecycle = _effective_lifecycle(execution, lifecycle_projection)
     plan_info = {
         "name": display_name,
         "description": "—",

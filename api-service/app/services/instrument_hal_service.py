@@ -11,8 +11,10 @@ Phase 3+: Real drivers for production
 import asyncio
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
+from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING, Iterator
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -1493,6 +1495,63 @@ class InstrumentHALService:
 
 # Global singleton instance
 _hal_service: Optional[InstrumentHALService] = None
+_scoped_hal_driver_overrides: ContextVar[Dict[str, Any] | None] = ContextVar(
+    "scoped_hal_driver_overrides", default=None
+)
+
+
+class _ScopedHALServiceView:
+    """Task-local driver overlay that delegates every other HAL capability."""
+
+    def __init__(self, base: Any, drivers: Dict[str, Any]) -> None:
+        self._base = base
+        self.drivers = drivers
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+
+_scoped_hal_service_view: ContextVar[_ScopedHALServiceView | None] = ContextVar(
+    "scoped_hal_service_view", default=None
+)
+
+
+@contextmanager
+def scoped_hal_service_view(
+    driver_overrides: Dict[str, Any],
+) -> Iterator[None]:
+    """Expose provisional driver overrides only to the current task context.
+
+    This pre-acquire view remains live: a reload that wins the coordination
+    lock must be seen by identity validation rather than shadowed by a mock.
+    """
+
+    token = _scoped_hal_driver_overrides.set(dict(driver_overrides))
+    try:
+        yield
+    finally:
+        _scoped_hal_driver_overrides.reset(token)
+
+
+@contextmanager
+def pinned_hal_service_view(
+    *,
+    base_hal: Any,
+    driver_overrides: Dict[str, Any],
+) -> Iterator[None]:
+    """Pin the successfully acquired HAL/driver snapshot for the body task."""
+
+    base_drivers = getattr(base_hal, "drivers", None)
+    if not isinstance(base_drivers, dict):
+        raise RuntimeError("pinned HAL view requires a driver registry")
+    drivers = dict(base_drivers)
+    drivers.update(driver_overrides)
+    view = _ScopedHALServiceView(base_hal, drivers)
+    token = _scoped_hal_service_view.set(view)
+    try:
+        yield
+    finally:
+        _scoped_hal_service_view.reset(token)
 
 # P2-5: serialise HAL lifecycle operations (initialise / shutdown / mode
 # switch / reload) so two concurrent operator clicks on "HAL Reload" or
@@ -1526,10 +1585,20 @@ def _get_lifecycle_lock() -> asyncio.Lock:
 
 
 def get_hal_service() -> InstrumentHALService:
-    """Get the global HAL service instance"""
+    """Get the task-local execution view, otherwise the global HAL instance."""
     global _hal_service
+    scoped = _scoped_hal_service_view.get()
+    if scoped is not None:
+        return scoped  # type: ignore[return-value]
     if _hal_service is None:
         _hal_service = InstrumentHALService(mode=DriverMode.MOCK)
+    overrides = _scoped_hal_driver_overrides.get()
+    if overrides:
+        drivers = dict(_hal_service.drivers)
+        for category_key, driver in overrides.items():
+            if drivers.get(category_key) is None:
+                drivers[category_key] = driver
+        return _ScopedHALServiceView(_hal_service, drivers)  # type: ignore[return-value]
     return _hal_service
 
 
