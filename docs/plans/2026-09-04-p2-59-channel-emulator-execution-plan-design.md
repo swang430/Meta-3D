@@ -195,3 +195,36 @@ digest；随后 load request 只从这份独立身份派生有效 engine/load，
 摘要、load request 摘要、request→plan digest 及 scope 参数中的 plan 完全一致，再从 request 的权威
 `requested_load_mode` 与 binding 的权威 source 规则重建 live plan。任何缺件、孤儿、坏摘要、资产来源漂移或
 plan 自证换档，都在 BaseStation / CE / 转台首次 I/O 前拒绝；P2-66 复用同一纯校验器，不查询 current asset。
+
+### 8.M ② 补遗：MEASURE 去 F64 运行时探测（2026-09-04，Q2 已批准）
+
+#### ⓪ 动手前四行
+- **搜索命中**：`measure.py` 的 CE 对象上仍有 16 个运行时探测站点：动态拓扑 getter 1 处、`ensure_topology` 2 处、`build_p0_5_command_evidence` 4 处、中心频率 1 处、输出增益 2 处、输出电平 1 处、crest factor 1 处、input measurement 1 处、7 个闭环方法聚合探测 1 处、active input ports 1 处；另有 `_loaded_emulation_file` 私有缓存 1 处、`_TOPOLOGY_ESCAPE_HINT` 私有常量 import/消费 2 处、load mode 运行时查询 1 处。`get_supported_load_modes()` 的生产方只有 `ChannelEmulatorDriver`；消费方为 `ChannelEmulatorDriver.load_channel` 的 HAL 防御门、`NativeModelStrategy`、`B2ParametricTdlStrategy` 与 `MeasureExecutor`。
+- **必要性**：同一执行已经冻结 `ChannelEmulatorExecutionPlan`，MEASURE 仍可用 Python 对象形状、F64 私有实现和可变 live manifest 改选路径；换驱动或漏方法时可能静默降级，也可能在硬件 I/O 后才以 `AttributeError` 失败。
+- **范围**：仪器操作进入 manifest 并逐型号显式声明；证据构造、拓扑 getter 与已加载模型 getter成为 `ChannelEmulatorDriver` 明确协议。MEASURE 和两种生成策略只消费冻结 plan；HAL 的 `load_channel` 仍保留由同一 manifest 派生的本地防御门，不成为执行路径的第二判据。
+- **爆炸半径**：F64 在既有源码已实现的操作上答案不变；FS16 与 Mock 对未实现操作显式 `not_implemented`，负路径保留既有 diagnostic 或更早 fail-loud。不得改六个 `f64_*` 字段、`f64.*` 证据键、手工端点、诊断序列、provenance 白名单，也不得在 `MeasureExecutor` 的 `emulator is None` 自造 Mock 段及 session/safe-idle/release 证据上施工。
+
+#### 机械全集与归属
+
+| 现有站点 | 真值归属 | ② 的替换形态 |
+|---|---|---|
+| `getattr(emulator, getter_name)`，消费 `get_active_output_count/get_active_input_count/get_active_output_ports` | 基类协议 | 直接调用必实现 getter；异常/协程保持既有 unknown 处理 |
+| `getattr(emulator, "_loaded_emulation_file")` | 基类协议 | `get_loaded_emulation_file()`；Measure 不再读私有缓存 |
+| `getattr(..., "ensure_topology")` ×2 | manifest 操作 | `plan.planned("ensure_topology")` 后直接调用；不支持时保留原 diagnostic |
+| `hasattr(..., "build_p0_5_command_evidence")` ×4 | 基类协议 | 无条件调用；不适用驱动明确返回 `None`，回读仍 unknown/simulated |
+| `hasattr(..., "get_center_frequency_mhz")` | manifest 操作 | plan 决定是否读取，直接调用协议方法 |
+| `hasattr(..., "set_output_gain")` ×2 | manifest 操作 | plan 决定走 gain 或既有 diagnostic |
+| `hasattr(..., "set_output_level_dbm")` | manifest 操作 | 不支持时 fail-loud，不再靠对象形状 |
+| `hasattr(..., "set_crest_factor")` | manifest 操作 | 不支持时保留既有 skip warning |
+| `hasattr(..., "measure_input")` | manifest 操作 | 不支持时保留既有 skip warning |
+| `hasattr` 探 `autoset_inputs/measure_input/get_input_level_limits/set_input_measurement_mode/set_burst_trigger_level/get_group_clipping/get_system_status` | manifest 操作 | 七项全部读取 frozen plan；缺任一项沿用 diagnostic skip |
+| `getattr(..., "get_active_input_ports")` | 基类协议 + `ensure_topology` 计划 | getter 直接调用；只有计划声明拓扑读取却无数据才 fail-loud，未声明驱动保留既有确定性 fallback |
+| `_TOPOLOGY_ESCAPE_HINT` import + 2 个消费点 | manifest reason | 使用冻结 `ensure_topology` / 对应操作 item 的 reason，不跨层 import F64 私有常量 |
+| `MeasureExecutor` / Native GCM / B2 的 `get_supported_load_modes()` | frozen plan | `load_mode_planned`；不支持在 I/O 前拒绝 |
+| `ChannelEmulatorDriver.load_channel()` 的同名消费 | HAL 本地防御 | 保留：它只从类 manifest 派生，且执行前已有 digest 对账；非执行调用仍须自守 |
+
+#### manifest 与协议边界
+- 新增操作词汇：`ensure_topology`、`get_center_frequency_mhz`、`set_output_gain`、`set_output_level_dbm`、`set_crest_factor`、`measure_input`、`autoset_inputs`、`get_input_level_limits`、`set_input_measurement_mode`、`set_burst_trigger_level`、`get_group_clipping`、`get_system_status`。F64 只能引用现有 `propsim_f64.py::<method>` 与既有现场问题记录，绝不补写或猜测 SCPI；FS16/Mock 逐项声明 `not_implemented`。
+- 基类协议方法：`build_p0_5_command_evidence`、`get_loaded_emulation_file`、`get_active_output_count`、`get_active_input_count`、`get_active_output_ports`、`get_active_input_ports`。F64 暴露既有真值；FS16/Mock 明确返回 `None`，所以不会凭空产生回读或正式证据。
+- `ensure_topology` 既是会触发仪器 I/O 的 manifest 操作，也是判断「该型号承诺可取得拓扑」的唯一能力来源；getter 本身不再拿对象形状当能力宣言。
+- Mock 不声明上述仪器操作可用；下发侧不另写命令语义，已有真实 builder 的调用关系保持不变；回读与证据仍为 simulated/unknown。
