@@ -27,7 +27,6 @@ from app.hal.base_station_mac_profile import (
     UXM_NR_PROFILE_SOURCE,
 )
 from app.hal.channel_emulator_execution_plan import (
-    requested_channel_emulator_load_mode,
     resolve_channel_emulator_execution_plan,
 )
 from app.hal.channel_emulator_manifest import ChannelEmulatorManifest
@@ -46,7 +45,9 @@ from app.services.channel_emulator_binding import (
     validate_frozen_channel_emulator_binding,
 )
 from app.services.channel_emulator_execution_plan import (
+    CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
     CE_PLAN_FREEZE_CONFIG_KEY,
+    validate_frozen_channel_emulator_load_request,
     validate_frozen_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
 )
@@ -117,14 +118,18 @@ def _channel_emulator_terminal_projection(
 
     binding = config.get(CE_FREEZE_CONFIG_KEY)
     plan = config.get(CE_PLAN_FREEZE_CONFIG_KEY)
+    load_request = config.get(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
     evidence = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
-    if binding is None and plan is None and evidence is None:
+    if binding is None and plan is None and load_request is None and evidence is None:
         return None, None
-    if binding is None or plan is None:
+    if binding is None or plan is None or load_request is None:
         return "invalid", "channelEmulator binding / execution plan freeze is incomplete"
     try:
         validated_binding = validate_frozen_channel_emulator_binding(binding)
         validated_plan = validate_frozen_channel_emulator_execution_plan(plan)
+        validated_load_request = validate_frozen_channel_emulator_load_request(
+            load_request
+        )
     except ValueError as exc:
         return "invalid", str(exc)
     if validated_plan.get("binding_digest") != validated_binding.get("binding_digest"):
@@ -164,9 +169,31 @@ def _channel_emulator_terminal_projection(
         from app.schemas.mimo_ota.config import MIMOOTAConfiguration
 
         mimo_configuration = MIMOOTAConfiguration.model_validate(dict(frozen_mimo))
-        authoritative_load_mode = requested_channel_emulator_load_mode(
-            mimo_configuration.engine_mode
+        if validated_load_request["plan_digest"] != validated_plan["digest"]:
+            return "invalid", "channelEmulator load request and plan digest do not match"
+        if validated_load_request["mimo_configuration_digest"] != canonical_payload_digest(
+            dict(frozen_mimo)
+        ):
+            return "invalid", "channelEmulator load request has different frozen MIMO truth"
+        frozen_asset_id = (
+            str(mimo_configuration.channel_asset_id)
+            if mimo_configuration.channel_asset_id is not None
+            else None
         )
+        if frozen_asset_id is None:
+            if (
+                validated_load_request["source"] != "mimo_configuration"
+                or validated_load_request["channel_asset_id"] is not None
+                or validated_load_request["effective_engine_mode"]
+                != mimo_configuration.engine_mode
+            ):
+                return "invalid", "channelEmulator load request contradicts frozen MIMO source"
+        elif (
+            validated_load_request["source"] != "channel_asset"
+            or validated_load_request["channel_asset_id"] != frozen_asset_id
+        ):
+            return "invalid", "channelEmulator load request contradicts frozen channel asset"
+        authoritative_load_mode = validated_load_request["requested_load_mode"]
         authoritative_plan = resolve_channel_emulator_execution_plan(
             manifest=manifest,
             # A frozen binding can only be produced after the resolver observed

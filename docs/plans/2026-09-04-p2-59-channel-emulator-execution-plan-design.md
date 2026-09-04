@@ -73,8 +73,10 @@ binding.manifest 是所选真型号的声明而 MEASURE 跑的是 mock —— �
 
 ### 8.B engine_mode 与 MEASURE 同源
 冻结时的 engine_mode 取自 `load_mimo_ota_config(execution)`（基站冻结件里的 MIMO OTA 配置快照优先，否则 TestCase 行）+ `resolve_channel_asset`
-覆盖 —— 与 MEASURE 逐行同源（`measure.py` 的 `config.engine_mode = resolved_asset.engine_mode`）。初版从 `test_case.configuration` 直接解析，
-端到端夹具立刻实证了「两边读不同源就自漂」（用例在建上下文后改了配置，对账把它判成漂移）。写方顺序因此固定为 BS 冻结 → CE binding → CE plan。
+覆盖 —— 与 MEASURE 逐行同源（`measure.py` 的 `config.engine_mode = resolved_asset.engine_mode`）。resolver 的最终答案与来源另存为
+`channel_emulator_load_request_freeze`，并绑定基站冻结件里**原始稀疏** MIMO payload 的摘要和 CE plan digest；后续证据投影不得查询
+current asset，也不得用显式 asset 覆盖前的 stale `mimo_ota_configuration.engine_mode` 重算。初版从 `test_case.configuration` 直接解析，
+端到端夹具立刻实证了「两边读不同源就自漂」（用例在建上下文后改了配置，对账把它判成漂移）。写方顺序因此固定为 BS 冻结 → CE binding → CE load request + plan。
 
 ### 8.C 对账位置 = 首次 CE I/O 之前，不是取到驱动之后
 初版放在 `emulator = hal.drivers.get(...)` 之后、路损门之前，`test_mimo_ota_precheck_cal_gate.py` 7 个与 CE 无关的前置门被「计划缺席」顶掉。
@@ -90,7 +92,7 @@ binding.manifest 是所选真型号的声明而 MEASURE 跑的是 mock —— �
 adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_session` 绕过端点自己复刻三个冻结，须同步加第四个（① 时同样在这里加过 binding）。
 
 ### 8.F 夹具影响（端到端）
-执行行要带两个键（binding 冻结件至少含 `binding_digest`；计划用同一服务函数冻）；无 manifest 的裸 CE 替身冻不出加载模式（P2-57 fail-closed）→ 借 mock 的 manifest 换 adapter_id；
+执行行要带三个同刻键（binding 冻结件至少含 `binding_digest`；resolver-owned load request 投影冻结有效 engine/load 来源并引用 plan digest；计划用同一服务函数冻）；无 manifest 的裸 CE 替身冻不出加载模式（P2-57 fail-closed）→ 借 mock 的 manifest 换 adapter_id；
 用例在建上下文后改配置要重冻（`_refreeze_ce_plan`）；夹具冻不出计划时不冻（如故意给退役资产，让 MEASURE 走它自己更早的门）。
 
 ### 8.G 行为变化清单（三处，全部 fail-closed 方向）
@@ -144,10 +146,12 @@ safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些�
 LabProfile 或连接。binding 与 terminal 都先按 `schema_version=1`、`extra=forbid` 的不可变模型完整
 解析，再核 canonical digest；非法 execution mode、空成功态 session/lease/instrument 身份、成功位与
 错误字段矛盾均 fail-closed，重新计算摘要不能把畸形字段洗成正式证据。P2-66 还必须从 binding 的
-冻结身份与 MIMO 配置纯重建权威计划，再用共同 verifier 对账：configured real 消费 binding manifest，
-simulated/diagnostic-unbound 消费固定权威 Mock manifest；现代 binding 的 source 固定为启动冻结时已加载的
-`hal`，load mode 从冻结 `mimo_ota_configuration.engine_mode` 映射，不能借待验证 plan 自己的 source/load-mode
-自证。相同 binding digest 不能让另一 adapter、fallback source 或另一加载模式的合法 plan 混入。
+冻结身份与 resolver-owned load request 投影纯重建权威计划，再用共同 verifier 对账：configured real 消费
+binding manifest，simulated/diagnostic-unbound 消费固定权威 Mock manifest；现代 binding 的 source 固定为启动
+冻结时已加载的 `hal`。load request 同时冻结原始 MIMO 配置摘要、是否由 ChannelAsset 覆盖、asset id/source_type、
+最终 engine/load 与 plan digest；显式 asset 时按冻结 source_type 重算 engine/load，无 asset 时才要求 engine 与冻结
+MIMO 字段一致。P2-66 不查 current asset，也不能借待验证 plan 自己的 source/load-mode 自证。相同 binding digest
+不能让另一 adapter、fallback source 或另一加载模式的合法 plan 混入。
 
 | 业务方向 | safe idle | release | terminal state | 正式性 |
 |---|---|---|---|---|

@@ -11,12 +11,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_execution_plan import (
+    ChannelEmulatorRequestedLoadMode,
     ChannelEmulatorExecutionPlan,
     plan_from_frozen_payload,
     requested_channel_emulator_load_mode,
@@ -30,6 +38,79 @@ from app.services.channel_emulator_binding import (
 
 #: 冻结件在 `TestExecution.config` 里的键（与 `CE_FREEZE_CONFIG_KEY` 同一家族）。
 CE_PLAN_FREEZE_CONFIG_KEY = "channel_emulator_execution_plan_freeze"
+CE_LOAD_REQUEST_FREEZE_CONFIG_KEY = "channel_emulator_load_request_freeze"
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class FrozenChannelEmulatorLoadRequest(BaseModel):
+    """Resolver-owned effective load truth, independent of plan claim fields."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    source: Literal["mimo_configuration", "channel_asset"]
+    mimo_configuration_digest: NonEmptyString
+    channel_asset_id: NonEmptyString | None
+    channel_asset_source_type: Literal[
+        "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic"
+    ] | None
+    effective_engine_mode: Literal[
+        "keysight_gcm", "mimo_first_asc", "external_asc", "b2_parametric_tdl"
+    ]
+    requested_load_mode: ChannelEmulatorRequestedLoadMode
+    plan_digest: NonEmptyString
+    digest: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_source_projection(self) -> "FrozenChannelEmulatorLoadRequest":
+        from app.services.mimo_ota.channel_asset_resolver import (
+            engine_mode_for_channel_asset_source_type,
+        )
+
+        expected_load = requested_channel_emulator_load_mode(
+            self.effective_engine_mode
+        )
+        if self.requested_load_mode != expected_load:
+            raise ValueError(
+                "channelEmulator frozen load mode does not match effective engine mode"
+            )
+        if self.source == "mimo_configuration":
+            if self.channel_asset_id is not None or self.channel_asset_source_type is not None:
+                raise ValueError(
+                    "MIMO configuration load request carries channel asset identity"
+                )
+        else:
+            if self.channel_asset_id is None or self.channel_asset_source_type is None:
+                raise ValueError(
+                    "channel asset load request has incomplete frozen identity"
+                )
+            expected_engine = engine_mode_for_channel_asset_source_type(
+                self.channel_asset_source_type
+            )
+            if self.effective_engine_mode != expected_engine:
+                raise ValueError(
+                    "channel asset load request engine does not match frozen source type"
+                )
+        return self
+
+
+def validate_frozen_channel_emulator_load_request(frozen: Any) -> dict[str, Any]:
+    """Parse the complete resolver projection, then verify its original digest."""
+
+    if not isinstance(frozen, Mapping):
+        raise ValueError("已冻结的 channelEmulator load request 不是对象（冻结件损坏）")
+    try:
+        FrozenChannelEmulatorLoadRequest.model_validate(dict(frozen))
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"已冻结的 channelEmulator load request 结构不合法（冻结件损坏）: {exc}"
+        ) from exc
+    payload = {key: value for key, value in frozen.items() if key != "digest"}
+    if frozen.get("digest") != canonical_payload_digest(payload):
+        raise ValueError(
+            "已冻结的 channelEmulator load request 与其 digest 不一致（冻结件被篡改）"
+        )
+    return dict(frozen)
 
 
 def channel_emulator_for_execution_plan(hal: Any) -> tuple[Any, str]:
@@ -73,11 +154,8 @@ def resolve_live_channel_emulator_execution_plan(
     )
 
 
-def requested_engine_mode_for_execution(db, execution) -> str:
-    """启动期取 MEASURE 将要看到的 engine_mode —— 与 MEASURE **同一个源**：
-    `load_mimo_ota_config(execution)`（基站冻结件里的 MIMO OTA 配置快照优先，否则 TestCase 行），
-    再让显式 ChannelAsset 覆盖（与 `measure.py` 的 `resolve_channel_asset` →
-    `config.engine_mode = resolved_asset.engine_mode` 同源）。两边读不同的源，对账就会自己漂。"""
+def _resolve_channel_emulator_load_request(db, execution) -> dict[str, Any]:
+    """Resolve the effective engine once and freeze where that answer came from."""
 
     from app.services.mimo_ota.channel_asset_resolver import (
         ChannelAssetResolveError,
@@ -86,16 +164,57 @@ def requested_engine_mode_for_execution(db, execution) -> str:
     from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
 
     try:
-        config = load_mimo_ota_config(execution)
+        configuration = load_mimo_ota_config(execution)
     except (RuntimeError, ValidationError) as exc:
         raise ValueError(
             f"无法读取执行的 MIMO OTA 配置，不能派生 channelEmulator 执行计划: {exc}"
         ) from exc
     try:
-        resolved_asset = resolve_channel_asset(db, config)
+        resolved_asset = resolve_channel_asset(db, configuration)
     except ChannelAssetResolveError as exc:
         raise ValueError(str(exc)) from exc
-    return resolved_asset.engine_mode if resolved_asset is not None else config.engine_mode
+
+    # `canonicalize_mimo_ota_configuration_payload` deliberately preserves a
+    # sparse JSON shape.  Bind the resolver answer to that exact immutable
+    # payload when the base-station freeze already exists; model-dumping here
+    # would insert defaults and make P2-66 compare two different truths.
+    from app.services.base_station_adapter_profile import (
+        FREEZE_CONFIG_KEY,
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+    )
+
+    execution_config = execution.config if isinstance(execution.config, Mapping) else {}
+    base_station_freeze = execution_config.get(FREEZE_CONFIG_KEY)
+    frozen_configuration = (
+        base_station_freeze.get(MIMO_OTA_CONFIGURATION_FREEZE_KEY)
+        if isinstance(base_station_freeze, Mapping)
+        else None
+    )
+    configuration_payload = (
+        dict(frozen_configuration)
+        if isinstance(frozen_configuration, Mapping)
+        else configuration.model_dump(mode="json")
+    )
+    if resolved_asset is None:
+        source = "mimo_configuration"
+        asset_id = None
+        asset_source_type = None
+        effective_engine_mode = configuration.engine_mode
+    else:
+        source = "channel_asset"
+        asset_id = str(resolved_asset.asset.id)
+        asset_source_type = resolved_asset.asset.source_type
+        effective_engine_mode = resolved_asset.engine_mode
+    return {
+        "source": source,
+        "mimo_configuration_digest": canonical_payload_digest(configuration_payload),
+        "channel_asset_id": asset_id,
+        "channel_asset_source_type": asset_source_type,
+        "effective_engine_mode": effective_engine_mode,
+        "requested_load_mode": requested_channel_emulator_load_mode(
+            effective_engine_mode
+        ),
+    }
 
 
 def frozen_channel_emulator_binding_digest(execution_config: Mapping[str, Any]) -> str:
@@ -137,12 +256,27 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
 
     execution_config = execution.config if isinstance(execution.config, dict) else {}
     if CE_PLAN_FREEZE_CONFIG_KEY in execution_config:
-        return validate_frozen_channel_emulator_execution_plan(
+        frozen_plan = validate_frozen_channel_emulator_execution_plan(
             execution_config[CE_PLAN_FREEZE_CONFIG_KEY]
         )
+        # P2-59① rows created before the resolver projection existed remain
+        # structurally readable.  They cannot acquire today's asset truth or
+        # become formal evidence later; P2-66 classifies the missing projection
+        # fail-closed instead of backfilling from mutable current state.
+        frozen_request = execution_config.get(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
+        if frozen_request is not None:
+            validated_request = validate_frozen_channel_emulator_load_request(
+                frozen_request
+            )
+            if validated_request["plan_digest"] != frozen_plan["digest"]:
+                raise ValueError(
+                    "channelEmulator load request 与执行计划 digest 不一致"
+                )
+        return frozen_plan
+    load_request = _resolve_channel_emulator_load_request(db, execution)
     plan = resolve_live_channel_emulator_execution_plan(
         hal,
-        engine_mode=requested_engine_mode_for_execution(db, execution),
+        engine_mode=load_request["effective_engine_mode"],
         binding_digest=frozen_channel_emulator_binding_digest(execution_config),
     )
     if not plan.load_mode_planned:
@@ -151,7 +285,21 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
             f"{plan.requested_load_mode}（{plan.load_mode_reason}），拒绝启动"
         )
     frozen = {**plan.as_payload(), "digest": plan.digest}
-    execution.config = {**execution_config, CE_PLAN_FREEZE_CONFIG_KEY: frozen}
+    request_payload = {
+        "schema_version": 1,
+        **load_request,
+        "plan_digest": plan.digest,
+    }
+    frozen_request = {
+        **request_payload,
+        "digest": canonical_payload_digest(request_payload),
+    }
+    validate_frozen_channel_emulator_load_request(frozen_request)
+    execution.config = {
+        **execution_config,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: frozen_request,
+        CE_PLAN_FREEZE_CONFIG_KEY: frozen,
+    }
     flag_modified(execution, "config")
     db.flush()
     return frozen

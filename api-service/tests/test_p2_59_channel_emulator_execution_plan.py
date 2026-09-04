@@ -25,6 +25,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_execution_plan import (
     CHANNEL_EMULATOR_PHASE_ORDER,
@@ -43,8 +44,13 @@ from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.propsim_fs16 import RealPropsimFs16Driver
 from app.models.test_plan import TestCase, TestExecution
 from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.services.base_station_adapter_profile import (
+    FREEZE_CONFIG_KEY,
+    MIMO_OTA_CONFIGURATION_FREEZE_KEY,
+)
 from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
 from app.services.channel_emulator_execution_plan import (
+    CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
     CE_PLAN_FREEZE_CONFIG_KEY,
     channel_emulator_for_execution_plan,
     freeze_channel_emulator_execution_plan,
@@ -270,8 +276,16 @@ def test_freeze_persists_plan_next_to_binding_freeze_and_reuses_without_recomput
     assert execution.config == {
         "keep": "me",
         CE_FREEZE_CONFIG_KEY: {"binding_digest": BINDING_DIGEST},
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: execution.config[
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY
+        ],
         CE_PLAN_FREEZE_CONFIG_KEY: frozen,
     }
+    load_request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    assert load_request["source"] == "mimo_configuration"
+    assert load_request["effective_engine_mode"] == "keysight_gcm"
+    assert load_request["requested_load_mode"] == "native_model"
+    assert load_request["plan_digest"] == frozen["digest"]
     db.commit()
     db.expire_all()
     reloaded = db.get(TestExecution, execution.id)
@@ -284,6 +298,75 @@ def test_freeze_persists_plan_next_to_binding_freeze_and_reuses_without_recomput
     again = freeze_channel_emulator_execution_plan(db, _hal(MockChannelEmulator("ce", {})), reloaded)
     assert again == frozen
     assert again["adapter_id"] == "propsim_f64"
+    assert reloaded.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] == load_request
+
+
+def test_freeze_binds_effective_channel_asset_load_truth_and_never_reloads_current_asset(
+    db, monkeypatch
+):
+    from app.services.mimo_ota import channel_asset_resolver
+
+    asset_id = uuid4()
+    configuration = _configuration("keysight_gcm")
+    configuration["channel_asset_id"] = str(asset_id)
+    execution = _execution(db, configuration=configuration)
+    current = {
+        "source_type": "standard_3gpp",
+        "engine_mode": "mimo_first_asc",
+    }
+    calls = []
+
+    def resolve(_db, _config):
+        calls.append(current.copy())
+        return SimpleNamespace(
+            engine_mode=current["engine_mode"],
+            asset=SimpleNamespace(
+                id=asset_id,
+                source_type=current["source_type"],
+            ),
+        )
+
+    monkeypatch.setattr(channel_asset_resolver, "resolve_channel_asset", resolve)
+
+    frozen = freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+    request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+
+    assert frozen["requested_load_mode"] == "external_waveform"
+    assert request["source"] == "channel_asset"
+    assert request["channel_asset_id"] == str(asset_id)
+    assert request["channel_asset_source_type"] == "standard_3gpp"
+    assert request["effective_engine_mode"] == "mimo_first_asc"
+    assert request["requested_load_mode"] == "external_waveform"
+
+    # 冻结后的 current asset 即使换来源，也只能复用旧投影，不能查询或重算。
+    current.update(source_type="vendor_file", engine_mode="keysight_gcm")
+    assert freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution) == frozen
+    assert execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] == request
+    assert calls == [
+        {"source_type": "standard_3gpp", "engine_mode": "mimo_first_asc"}
+    ]
+
+
+def test_freeze_load_request_digest_binds_exact_sparse_base_station_freeze(db):
+    sparse_configuration = {"engine_mode": "keysight_gcm"}
+    execution = _execution(
+        db,
+        **{
+            FREEZE_CONFIG_KEY: {
+                MIMO_OTA_CONFIGURATION_FREEZE_KEY: sparse_configuration,
+            }
+        },
+    )
+
+    freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+
+    request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    assert request["mimo_configuration_digest"] == canonical_payload_digest(
+        sparse_configuration
+    )
+    assert request["mimo_configuration_digest"] != canonical_payload_digest(
+        MIMOOTAConfiguration.model_validate(sparse_configuration).model_dump(mode="json")
+    )
 
 
 def test_freeze_requires_binding_freeze_first_and_rejects_bad_configuration(db):

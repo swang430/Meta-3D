@@ -35,18 +35,24 @@ _SOURCE_TO_ENGINE = {
 }
 
 
+def engine_mode_for_channel_asset_source_type(source_type: str) -> str:
+    """Return the executable engine selected by one frozen asset source type."""
+
+    try:
+        return _SOURCE_TO_ENGINE[source_type]
+    except KeyError as exc:
+        raise ChannelAssetResolveError(
+            f"未知 source_type: {source_type!r}"
+        ) from exc
+
+
 def engine_mode_for_channel_asset(asset: Any) -> str:
     """Return the currently executable engine selected by an asset source.
 
     Commissioning uses the same lookup before persisting a session so the
     operator's requested engine cannot be silently replaced later in measure.
     """
-    try:
-        return _SOURCE_TO_ENGINE[asset.source_type]
-    except KeyError as exc:
-        raise ChannelAssetResolveError(
-            f"未知 source_type: {asset.source_type!r}"
-        ) from exc
+    return engine_mode_for_channel_asset_source_type(asset.source_type)
 
 
 @dataclass(frozen=True)

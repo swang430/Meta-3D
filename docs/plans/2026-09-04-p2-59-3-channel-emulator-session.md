@@ -106,7 +106,7 @@ Expected: FAIL，原因是 terminal evidence 与 P2-66 消费尚不存在。
 
 **Step 3: Write minimal implementation**
 
-定义 `extra=forbid`、固定 schema version 和状态组合约束的 frozen binding/terminal payload，再校验 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；异常/取消先回滚业务事务，再独立提交 terminal，业务异常与 safe-idle/terminal 持久化失败并列保留。P2-66 先完整 parse，再从 frozen binding、冻结 MIMO engine mode 与固定 source 规则纯重建权威 plan，并用共同 verifier 对账；diagnostic-unbound 使用固定权威 Mock manifest，不把合法模拟终态误判 invalid。最后按冻结 bypass/fade 配置核验终态 action 并投影 terminal；只读冻结件和终态记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
+定义 `extra=forbid`、固定 schema version 和状态组合约束的 frozen binding/terminal payload，再校验 canonical digest，按 execution 行锁追加/幂等校验。scope 在 lease 实际退出后持久化；异常/取消先回滚业务事务，再独立提交 terminal，业务异常与 safe-idle/terminal 持久化失败并列保留。计划冻结时另存 resolver-owned load request：绑定冻结 MIMO 摘要、ChannelAsset id/source_type（如有）、最终 engine/load 与 plan digest；P2-66 从 frozen binding、该 load request 与固定 source 规则纯重建权威 plan，不查询 current asset，也不把 stale MIMO engine 当作显式 asset 的执行真值。diagnostic-unbound 使用固定权威 Mock manifest，不把合法模拟终态误判 invalid。最后按冻结 bypass/fade 配置核验终态 action并投影 terminal；只读冻结件和终态记录，将 simulated/unknown/incomplete/malformed 置 diagnostic 或 invalid、`formal_eligible=False`。
 
 **Step 4: Run test to verify it passes**
 

@@ -1325,7 +1325,41 @@ def _terminal_evidence(
     return {**payload, "digest": canonical_payload_digest(payload)}
 
 
-def _execution_with_ce_evidence(binding: dict, plan: dict, terminal: dict):
+def _load_request_for_evidence(
+    frozen_mimo: dict,
+    plan: dict,
+    *,
+    source: str = "mimo_configuration",
+    channel_asset_id: str | None = None,
+    channel_asset_source_type: str | None = None,
+    effective_engine_mode: str | None = None,
+) -> dict:
+    from app.hal.channel_emulator_execution_plan import (
+        requested_channel_emulator_load_mode,
+    )
+
+    engine_mode = effective_engine_mode or frozen_mimo["engine_mode"]
+    payload = {
+        "schema_version": 1,
+        "source": source,
+        "mimo_configuration_digest": canonical_payload_digest(frozen_mimo),
+        "channel_asset_id": channel_asset_id,
+        "channel_asset_source_type": channel_asset_source_type,
+        "effective_engine_mode": engine_mode,
+        "requested_load_mode": requested_channel_emulator_load_mode(engine_mode),
+        "plan_digest": plan["digest"],
+    }
+    return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def _execution_with_ce_evidence(
+    binding: dict,
+    plan: dict,
+    terminal: dict,
+    *,
+    frozen_mimo: dict | None = None,
+    load_request: dict | None = None,
+):
     from app.schemas.mimo_ota.config import MIMOOTAConfiguration
     from app.services.base_station_adapter_profile import (
         FREEZE_CONFIG_KEY,
@@ -1335,11 +1369,15 @@ def _execution_with_ce_evidence(binding: dict, plan: dict, terminal: dict):
         CE_TERMINAL_EVIDENCE_CONFIG_KEY,
     )
     from app.services.channel_emulator_binding import CE_FREEZE_CONFIG_KEY
-    from app.services.channel_emulator_execution_plan import CE_PLAN_FREEZE_CONFIG_KEY
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+        CE_PLAN_FREEZE_CONFIG_KEY,
+    )
 
-    frozen_mimo = MIMOOTAConfiguration.model_validate(
+    frozen_mimo = frozen_mimo or MIMOOTAConfiguration.model_validate(
         {"engine_mode": "keysight_gcm", "emulation_file": "scenario.smu"}
     ).model_dump(mode="json")
+    load_request = load_request or _load_request_for_evidence(frozen_mimo, plan)
     base_station_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
     base_station_freeze = {
         **base_station_payload,
@@ -1351,10 +1389,61 @@ def _execution_with_ce_evidence(binding: dict, plan: dict, terminal: dict):
         config={
             FREEZE_CONFIG_KEY: base_station_freeze,
             CE_FREEZE_CONFIG_KEY: binding,
+            CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: load_request,
             CE_PLAN_FREEZE_CONFIG_KEY: plan,
             CE_TERMINAL_EVIDENCE_CONFIG_KEY: [terminal],
         },
     )
+
+
+def test_p2_66_uses_frozen_channel_asset_load_truth_instead_of_stale_mimo_engine():
+    from app.hal.channel_emulator_execution_plan import (
+        resolve_channel_emulator_execution_plan,
+    )
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    asset_id = "f2b3465e-c86e-45a8-b1e8-9d1aaf03d37a"
+    frozen_mimo = MIMOOTAConfiguration.model_validate(
+        {
+            "engine_mode": "keysight_gcm",
+            "emulation_file": "stale.smu",
+            "channel_asset_id": asset_id,
+        }
+    ).model_dump(mode="json")
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    resolved_plan = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="external_waveform",
+        binding_digest=binding["binding_digest"],
+    )
+    plan = {**resolved_plan.as_payload(), "digest": resolved_plan.digest}
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    request = _load_request_for_evidence(
+        frozen_mimo,
+        plan,
+        source="channel_asset",
+        channel_asset_id=asset_id,
+        channel_asset_source_type="standard_3gpp",
+        effective_engine_mode="mimo_first_asc",
+    )
+    execution = _execution_with_ce_evidence(
+        binding,
+        plan,
+        terminal,
+        frozen_mimo=frozen_mimo,
+        load_request=request,
+    )
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -1493,6 +1582,9 @@ def test_p2_66_rejects_clear_terminal_when_frozen_bypass_then_fades_to_go():
         FREEZE_CONFIG_KEY,
         MIMO_OTA_CONFIGURATION_FREEZE_KEY,
     )
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+    )
     from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 
     driver = _RealCe()
@@ -1517,6 +1609,9 @@ def test_p2_66_rejects_clear_terminal_when_frozen_bypass_then_fades_to_go():
         **payload,
         "digest": canonical_payload_digest(payload),
     }
+    execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] = (
+        _load_request_for_evidence(mimo, plan)
+    )
 
     outcome = project_execution_evidence_outcome(execution)
 
@@ -1586,6 +1681,24 @@ def test_p2_66_terminal_projection_blocks_failed_or_tampered_ce_session():
     outcome = project_execution_evidence_outcome(execution)
     assert outcome.compatibility_classification == "invalid"
     assert any("digest" in reason for reason in outcome.reasons)
+
+
+def test_p2_66_rejects_orphan_channel_emulator_load_request_freeze():
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    assert _channel_emulator_terminal_projection(
+        {CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: {}},
+        execution_id="orphan-load-request",
+        pipeline_status="completed",
+    ) == (
+        "invalid",
+        "channelEmulator binding / execution plan freeze is incomplete",
+    )
 
 
 def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic():
