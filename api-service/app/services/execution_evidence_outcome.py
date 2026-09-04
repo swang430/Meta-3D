@@ -163,11 +163,16 @@ def _channel_emulator_terminal_projection(
         authoritative_load_mode = validated_load_request["requested_load_mode"]
         authoritative_plan = resolve_channel_emulator_execution_plan(
             manifest=manifest,
-            # A frozen binding can only be produced after the resolver observed
-            # an authoritative loaded driver.  Runtime absence is tolerated by
-            # the execution scope, but it cannot rewrite the launch-time source
-            # into the old Measure-local fallback.
-            driver_source="hal",
+            # Real execution can only use the loaded HAL.  Simulated execution
+            # is always diagnostic/non-formal and may have frozen either a
+            # loaded Mock (``hal``) or the execution-scoped fallback after the
+            # binding was frozen.  Preserve that diagnostic provenance while
+            # still deriving the adapter and load mode from independent truth.
+            driver_source=(
+                validated_plan["driver_source"]
+                if execution_mode == "simulated"
+                else "hal"
+            ),
             requested_load_mode=authoritative_load_mode,
             binding_digest=validated_binding["binding_digest"],
         )

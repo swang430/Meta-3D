@@ -1930,7 +1930,7 @@ def test_p2_66_keeps_complete_diagnostic_unbound_mock_session_diagnostic():
         "resolved_binding": resolved,
     }
     binding = {**identity, "digest": canonical_payload_digest(identity)}
-    plan = _frozen_plan(mock)
+    plan = _frozen_plan(mock, source="fallback_mock")
     terminal = _terminal_evidence(binding, plan, execution_mode="simulated")
 
     outcome = project_execution_evidence_outcome(
@@ -1980,12 +1980,13 @@ def test_p2_66_rejects_orphan_channel_emulator_load_request_freeze():
     )
 
 
-def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic():
+@pytest.mark.parametrize("driver_source", ["hal", "fallback_mock"])
+def test_p2_66_terminal_projection_keeps_simulated_ce_diagnostic(driver_source):
     from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 
     driver = MockChannelEmulator("frozen-mock", {})
     binding = _frozen_binding_for_driver(driver, execution_mode="simulated")
-    plan = _frozen_plan(driver)
+    plan = _frozen_plan(driver, source=driver_source)
     execution = _execution_with_ce_evidence(
         binding,
         plan,
