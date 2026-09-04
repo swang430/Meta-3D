@@ -1095,6 +1095,44 @@ def test_f64_receipt_projects_same_invocation_authoritative_observation(
     assert rejected["fields"][0]["status"] == "unknown"
 
 
+def test_f64_measurement_without_crest_readback_stays_unknown():
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="v1.0",
+        captured_from_live_connection=True,
+    )
+    exchange = ScpiExchangeRef(
+        exchange_id="observation",
+        instrument_id="ce-live",
+        operation="query",
+        command="INP:LEV:MEAS? 2,1.0",
+        execution_id="execution-1",
+        capture_id="capture-1",
+        sequence=0,
+        result_type="response",
+        response="-21.4",
+    )
+
+    projected = driver.project_channel_operation_evidence(
+        operation="measure_input",
+        requested={
+            "measurement": {"input_port": 2, "measurement_time_s": 1.0}
+        },
+        operation_succeeded=True,
+        exchanges=(exchange,),
+        execution_mode="real",
+    )
+
+    assert projected["fields"][0]["field"] == "measurement"
+    assert projected["fields"][0]["status"] == "unknown"
+    assert projected["fields"][0]["applied_present"] is False
+
 def test_f64_receipt_confirms_only_complete_cross_checked_topology_readback():
     from app.hal.propsim_f64 import RealPropsimF64Driver
     from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef

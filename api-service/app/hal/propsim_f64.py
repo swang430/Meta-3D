@@ -2458,23 +2458,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             if selected is None:
                 return projected
             exchange, scope = selected
-            values = finite_floats(exchange.response, 1)
+            values = finite_floats(exchange.response, 2)
             if values is None:
                 return projected
-            response_parts = exchange.response.split(",")
-            crest_db = 0.0
-            if len(response_parts) > 1:
-                crest_values = finite_floats(response_parts[1], 1)
-                if crest_values is None:
-                    return projected
-                crest_db = crest_values[0]
             return replace_confirmed_field(
                 field_name="measurement",
                 applied={
                     "input_port": input_port,
                     "measurement_time_s": float(measurement_time_s),
                     "avg_dbm": values[0],
-                    "crest_db": crest_db,
+                    "crest_db": values[1],
                 },
                 selected_exchanges=[exchange],
                 source_references=[scope.source_reference],
