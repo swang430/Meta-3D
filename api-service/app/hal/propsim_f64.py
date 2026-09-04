@@ -2335,7 +2335,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         )
         recipe = {
             "start_emulation": ("f64.simulation_state", "state"),
+            "stop_emulation": ("f64.simulation_state", "state"),
             "set_passthrough_mode": ("f64.bypass_mode", "mode"),
+            "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
         }.get(operation)
         if (
             recipe is None

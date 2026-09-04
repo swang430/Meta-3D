@@ -102,7 +102,9 @@ class ChannelEmulatorOperationRecorderOwner:
     execution_mode: Literal["real", "simulated"]
     plan: Any
     driver: Any
+    automatic_lifecycle_receipts: bool = True
     next_sequence: int = 0
+    recorded_receipts: list[dict[str, Any]] = field(default_factory=list, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def __post_init__(self) -> None:
@@ -185,7 +187,10 @@ class FrozenChannelOperationField(BaseModel):
         if self.status == "confirmed":
             if self.provenance not in _CONFIRMING_PROVENANCE:
                 raise ValueError("confirmed field has no authoritative provenance")
-            if not self.exchange_ids or self.source_reference is None:
+            if (
+                self.provenance != "transport_release"
+                and not self.exchange_ids
+            ) or self.source_reference is None:
                 raise ValueError("confirmed field has no authoritative exchange/source")
         if self.status == "applied" and self.provenance not in _CONFIRMING_PROVENANCE:
             raise ValueError("applied field has no authoritative provenance")
@@ -496,6 +501,45 @@ def _project_operation_evidence(
     operation_succeeded: bool | None,
     exchanges: list[ScpiExchangeRef],
 ) -> dict[str, Any]:
+    if operation == "transport_release":
+        if owner.execution_mode == "simulated":
+            return {
+                "fields": [
+                    {
+                        "field": "control_mode",
+                        "requested": requested.get("control_mode"),
+                        "applied": None,
+                        "applied_present": False,
+                        "status": "not_applicable",
+                        "provenance": "simulated",
+                        "exchange_ids": [],
+                        "source_reference": None,
+                    }
+                ],
+                "exchange_ids": [],
+                "error_queue_exchange_ids": [],
+            }
+        released = operation_succeeded is True
+        return {
+            "fields": [
+                {
+                    "field": "control_mode",
+                    "requested": requested.get("control_mode"),
+                    "applied": "local" if released else None,
+                    "applied_present": released,
+                    "status": "confirmed" if released else "unknown",
+                    "provenance": "transport_release",
+                    "exchange_ids": [],
+                    "source_reference": (
+                        "instrument_test_lease.release_to_local_control"
+                        if released
+                        else None
+                    ),
+                }
+            ],
+            "exchange_ids": [],
+            "error_queue_exchange_ids": [],
+        }
     projector = getattr(owner.driver, "project_channel_operation_evidence", None)
     if not callable(projector) or inspect.iscoroutinefunction(projector):
         raise ChannelEmulatorOperationReceiptError(
@@ -612,6 +656,8 @@ def _persist_recorded_receipt(
         logger.exception(
             "channelEmulator operation receipt persistence failed while preserving operation error"
         )
+        return
+    owner.recorded_receipts.append(receipt)
 
 
 async def record_channel_emulator_operation(

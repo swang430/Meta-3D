@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -107,6 +108,25 @@ class _RealCe:
     async def release_to_local_control(self) -> bool:
         self.events.append("release")
         return True
+
+    def project_channel_operation_evidence(self, **kwargs):
+        return {
+            "fields": [
+                {
+                    "field": key,
+                    "requested": value,
+                    "applied": None,
+                    "applied_present": False,
+                    "status": "unknown",
+                    "provenance": "command_error_queue",
+                    "exchange_ids": [],
+                    "source_reference": None,
+                }
+                for key, value in kwargs["requested"].items()
+            ],
+            "exchange_ids": [],
+            "error_queue_exchange_ids": [],
+        }
 
 
 def _frozen_binding_for_driver(driver, *, execution_mode: str) -> dict:
@@ -367,6 +387,173 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
 
     assert driver.events == ["acquire", "operation", "safe-idle", "release"]
     assert outcome.channel_emulator_transport_released_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
+    monkeypatch,
+):
+    from app.models.test_plan import TestExecution
+    from app.services import channel_emulator_execution_session as module
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_receipt_chain_digest,
+    )
+
+    class Query:
+        def __init__(self, row):
+            self.row = row
+
+        def filter(self, *_args):
+            return self
+
+        def with_for_update(self):
+            return self
+
+        def one_or_none(self):
+            return self.row
+
+    class Db:
+        def __init__(self, row):
+            self.row = row
+            self.commits = 0
+            self.rollbacks = 0
+
+        def query(self, _model):
+            return Query(self.row)
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+    driver = _RealCe()
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, module, hal)
+    plan = _frozen_plan(driver)
+    seed = _scope_execution(plan)
+    execution = TestExecution(id=uuid4(), config=seed.config)
+    db = Db(execution)
+
+    async with module.channel_emulator_execution_scope(
+        db,
+        execution,
+        purpose=f"formal-case:{execution.id}",
+        binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+        plan=plan,
+        hal=hal,
+        validate_before_remote=lambda _hal: None,
+    ) as outcome:
+        outcome.mark_operation_result(True)
+
+    receipts = execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY]
+    terminal = execution.config[module.CE_TERMINAL_EVIDENCE_CONFIG_KEY][0]
+    assert [item["operation"] for item in receipts] == [
+        "stop_emulation",
+        "transport_release",
+    ]
+    assert [item["sequence"] for item in receipts] == [0, 1]
+    assert receipts[1]["fields"][0] == {
+        "field": "control_mode",
+        "requested": "local",
+        "applied": "local",
+        "applied_present": True,
+        "status": "confirmed",
+        "provenance": "transport_release",
+        "exchange_ids": [],
+        "source_reference": "instrument_test_lease.release_to_local_control",
+    }
+    assert terminal["schema_version"] == 2
+    assert terminal["operation_receipt_count"] == 2
+    assert terminal["operation_receipts_digest"] == (
+        channel_emulator_operation_receipt_chain_digest(receipts)
+    )
+    assert terminal["operation_receipt_ids"] == tuple(
+        item["receipt_id"] for item in receipts
+    )
+    assert terminal["safe_idle_receipt_id"] == receipts[0]["receipt_id"]
+    assert terminal["transport_release_receipt_id"] == receipts[1]["receipt_id"]
+    assert driver.events == ["acquire", "safe-idle", "release"]
+
+
+@pytest.mark.asyncio
+async def test_scope_v2_terminal_records_rejected_actual_release(monkeypatch):
+    from app.models.test_plan import TestExecution
+    from app.services import channel_emulator_execution_session as module
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+    )
+    from app.services.instrument_test_lease import InstrumentTestLeaseReleaseError
+
+    class Query:
+        def __init__(self, row):
+            self.row = row
+
+        def filter(self, *_args):
+            return self
+
+        def with_for_update(self):
+            return self
+
+        def one_or_none(self):
+            return self.row
+
+    class Db:
+        def __init__(self, row):
+            self.row = row
+
+        def query(self, _model):
+            return Query(self.row)
+
+        def commit(self):
+            return None
+
+        def rollback(self):
+            return None
+
+    class RejectingReleaseCe(_RealCe):
+        async def release_to_local_control(self) -> bool:
+            self.events.append("release")
+            return False
+
+    driver = RejectingReleaseCe()
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": driver}, clear_metrics_cache=None
+    )
+    _install_real_lease(monkeypatch, module, hal)
+    plan = _frozen_plan(driver)
+    seed = _scope_execution(plan)
+    execution = TestExecution(id=uuid4(), config=seed.config)
+    db = Db(execution)
+
+    with pytest.raises(InstrumentTestLeaseReleaseError):
+        async with module.channel_emulator_execution_scope(
+            db,
+            execution,
+            purpose=f"formal-case:{execution.id}",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=plan,
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ) as outcome:
+            outcome.mark_operation_result(True)
+
+    receipts = execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY]
+    terminal = execution.config[module.CE_TERMINAL_EVIDENCE_CONFIG_KEY][0]
+    assert [item["operation"] for item in receipts] == [
+        "stop_emulation",
+        "transport_release",
+    ]
+    assert receipts[1]["terminal_state"] == "rejected"
+    assert receipts[1]["operation_succeeded"] is False
+    assert terminal["schema_version"] == 2
+    assert terminal["terminal_state"] == "failed"
+    assert terminal["transport_released_confirmed"] is False
+    assert terminal["transport_release_receipt_id"] == receipts[1]["receipt_id"]
+    assert driver.events == ["acquire", "safe-idle", "release"]
 
 
 @pytest.mark.asyncio
@@ -1535,6 +1722,37 @@ def _terminal_evidence(
     if operation_scope is not None:
         payload["operation_scope"] = operation_scope
     return {**payload, "digest": canonical_payload_digest(payload)}
+
+
+def test_terminal_v1_validates_its_original_payload_without_v2_defaults():
+    from app.services.channel_emulator_execution_session import (
+        validate_channel_emulator_terminal_evidence,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    plan = _frozen_plan(driver)
+    legacy = _terminal_evidence(binding, plan, execution_mode="real")
+
+    assert validate_channel_emulator_terminal_evidence(legacy) == legacy
+    assert "operation_receipt_count" not in legacy
+    assert legacy["digest"] == canonical_payload_digest(
+        {key: value for key, value in legacy.items() if key != "digest"}
+    )
+
+    backfilled = {
+        **legacy,
+        "operation_receipt_count": 0,
+        "operation_receipts_digest": "d" * 64,
+        "operation_receipt_ids": (),
+        "safe_idle_receipt_id": None,
+        "transport_release_receipt_id": None,
+    }
+    backfilled["digest"] = canonical_payload_digest(
+        {key: value for key, value in backfilled.items() if key != "digest"}
+    )
+    with pytest.raises(ValueError, match="v1.*cannot claim receipts"):
+        validate_channel_emulator_terminal_evidence(backfilled)
 
 
 def test_p2_66_validates_safe_idle_action_per_execution_scope():

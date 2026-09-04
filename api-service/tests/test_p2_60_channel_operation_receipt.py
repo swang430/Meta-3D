@@ -555,6 +555,50 @@ async def test_mock_receipt_is_simulated_unknown_and_never_confirmed():
 
 
 @pytest.mark.asyncio
+async def test_transport_release_receipt_uses_actual_release_result_without_exchange():
+    from app.models.test_plan import TestExecution
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_recorder_scope,
+        record_channel_emulator_operation,
+    )
+
+    row = TestExecution(id=uuid4(), config={})
+    db = _Db(row)
+    owner = _recorder_owner(row, db)
+    release_calls = 0
+
+    async def release_to_local_control():
+        nonlocal release_calls
+        release_calls += 1
+        return True
+
+    with channel_emulator_operation_recorder_scope(owner):
+        assert await record_channel_emulator_operation(
+            phase="release",
+            operation="transport_release",
+            requested={"control_mode": "local"},
+            invoke=release_to_local_control,
+        ) is True
+
+    receipt = row.config[CE_OPERATION_RECEIPTS_CONFIG_KEY][0]
+    assert release_calls == 1
+    assert receipt["exchange_ids"] == []
+    assert receipt["fields"] == [
+        {
+            "field": "control_mode",
+            "requested": "local",
+            "applied": "local",
+            "applied_present": True,
+            "status": "confirmed",
+            "provenance": "transport_release",
+            "exchange_ids": [],
+            "source_reference": "instrument_test_lease.release_to_local_control",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_success_cannot_swallow_receipt_persistence_failure():
     from app.models.test_plan import TestExecution
     from app.services import channel_emulator_operation_receipt as module
