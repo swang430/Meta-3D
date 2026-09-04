@@ -3362,3 +3362,108 @@ def test_g31_checker_rejects_known_mac_profile_regressions():
         1,
     )
     assert "pre_p2_54_not_explicit_legacy" in _g31_mac_profile_gaps(legacy_lost)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G32 ChannelEmulator certification 只读服务器冻结证据
+# ─────────────────────────────────────────────────────────────────────
+
+_G32_SOURCES = {
+    "runner": "api-service/app/services/test_case_runner.py",
+    "commissioning": "api-service/app/api/commissioning.py",
+    "outcome": "api-service/app/services/execution_evidence_outcome.py",
+    "schema": "api-service/app/schemas/instrument.py",
+    "gui_service": "gui/src/api/service.ts",
+    "f64": "api-service/app/hal/propsim_f64.py",
+    "fs16": "api-service/app/hal/propsim_fs16.py",
+    "mock": "api-service/app/hal/channel_emulator.py",
+}
+
+
+def _g32_channel_emulator_certification_gaps(sources: dict[str, str]) -> list[str]:
+    gaps: list[str] = []
+    runner_tree = ast.parse(sources["runner"])
+    runner_calls = [
+        node
+        for node in ast.walk(runner_tree)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "freeze_channel_emulator_execution_qualification"
+    ]
+    if len(runner_calls) != 1:
+        gaps.append("runner_missing_ce_qualification_freeze")
+
+    commissioning_tree = ast.parse(sources["commissioning"])
+    wrapper = next(
+        node
+        for node in ast.walk(commissioning_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_freeze_instrument_lease"
+    )
+    wrapper_calls = {
+        _call_name(node)
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+    }
+    if "freeze_channel_emulator_execution_qualification" not in wrapper_calls:
+        gaps.append("commissioning_wrapper_missing_ce_qualification_freeze")
+    wrapper_consumers = [
+        node
+        for node in ast.walk(commissioning_tree)
+        if isinstance(node, ast.Call) and _call_name(node) == "_freeze_instrument_lease"
+    ]
+    if len(wrapper_consumers) < 4:
+        gaps.append("commissioning_entry_bypasses_freeze_wrapper")
+
+    if "validate_frozen_channel_emulator_execution_qualification" not in sources[
+        "outcome"
+    ]:
+        gaps.append("formal_outcome_bypasses_ce_qualification")
+    if "channel_emulator_site_certification" in sources["schema"].split(
+        "class InstrumentConnectionUpdate", 1
+    )[1].split("class InstrumentConnectionResponse", 1)[0]:
+        gaps.append("ordinary_connection_update_accepts_certification")
+    if sources["gui_service"].count("channel-emulator-site-certification") != 2:
+        gaps.append("client_has_non_dedicated_certification_write")
+
+    for key in ("f64", "fs16", "mock"):
+        tree = ast.parse(sources[key])
+        methods = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "capture_channel_emulator_certification_identity"
+        ]
+        concrete = [node for node in methods if any(isinstance(n, ast.Return) for n in node.body)]
+        if not concrete or any(isinstance(n, ast.Await) for n in ast.walk(concrete[-1])):
+            gaps.append(f"identity_projector_performs_io:{key}")
+    return gaps
+
+
+def _g32_sources() -> dict[str, str]:
+    return {
+        key: (_REPO_ROOT / path).read_text(encoding="utf-8")
+        for key, path in _G32_SOURCES.items()
+    }
+
+
+def test_g32_channel_emulator_certification_uses_server_frozen_truth():
+    assert _g32_channel_emulator_certification_gaps(_g32_sources()) == []
+
+
+def test_g32_checker_rejects_known_certification_regressions():
+    sources = _g32_sources()
+
+    missing_runner = dict(sources)
+    missing_runner["runner"] = missing_runner["runner"].replace(
+        "freeze_channel_emulator_execution_qualification(",
+        "skip_channel_emulator_execution_qualification(",
+        1,
+    )
+    assert "runner_missing_ce_qualification_freeze" in (
+        _g32_channel_emulator_certification_gaps(missing_runner)
+    )
+
+    client_bypass = dict(sources)
+    client_bypass["gui_service"] += "\nconst unsafe = '/channel-emulator-site-certification/raw'\n"
+    assert "client_has_non_dedicated_certification_write" in (
+        _g32_channel_emulator_certification_gaps(client_bypass)
+    )

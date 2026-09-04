@@ -93,6 +93,7 @@ class _RealCe:
 
     def __init__(self) -> None:
         self.instrument_id = "ce-runtime"
+        self.identity_serial = "SN-REAL-CE"
         self.events: list[str] = []
         self._connection_host = "192.0.2.59"
         self._connection_port = 3334
@@ -109,6 +110,23 @@ class _RealCe:
     async def release_to_local_control(self) -> bool:
         self.events.append("release")
         return True
+
+    def capture_channel_emulator_certification_identity(self):
+        from app.services.channel_emulator_certification import (
+            build_channel_emulator_certification_identity,
+        )
+
+        return build_channel_emulator_certification_identity(
+            instrument_id=self.instrument_id,
+            adapter_id=self.adapter_manifest.adapter_id,
+            model="REAL CE",
+            firmware_version="1.2.3",
+            serial_number=self.identity_serial,
+            options=("OPT-A",),
+            options_observed=True,
+            simulated=False,
+            captured_from_live_connection=True,
+        )
 
     def project_channel_operation_evidence(self, **kwargs):
         return {
@@ -193,6 +211,30 @@ def _scope_execution(plan: dict, *, frozen_mimo: dict | None = None):
         {"engine_mode": "keysight_gcm", "emulation_file": "scenario.smu"}
     ).model_dump(mode="json")
     base_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+    qualification_payload = {
+        "schema_version": 1,
+        "classification": "diagnostic",
+        "policy_mode": "diagnostic",
+        "diagnostic_actor": "test",
+        "diagnostic_reasons": ["test_scope"],
+        "base_station_qualification_digest": "a" * 64,
+        "lab_profile_id": "lab-1",
+        "instrument_connection_id": "ce-connection",
+        "instrument_model_id": "ce-model",
+        "binding_digest": BINDING_DIGEST,
+        "plan_digest": plan["digest"],
+        "asset_digest": "c" * 64,
+        "adapter_id": plan["adapter_id"],
+        "load_mode": plan["requested_load_mode"],
+        "site_certification": None,
+        "site_certification_digest": None,
+        "identity_digest": None,
+        "reasons": ["test_scope"],
+        "frozen_at": "2026-09-05T00:00:00Z",
+    }
+    qualification_payload["qualification_digest"] = canonical_payload_digest(
+        qualification_payload
+    )
     return SimpleNamespace(
         id="execution-1",
         config={
@@ -204,6 +246,7 @@ def _scope_execution(plan: dict, *, frozen_mimo: dict | None = None):
             CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: _load_request_for_evidence(
                 frozen_mimo, plan
             ),
+            "channel_emulator_execution_qualification": qualification_payload,
         },
     )
 
@@ -391,7 +434,41 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
 
 
 @pytest.mark.asyncio
-async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
+async def test_scope_rejects_acquired_identity_before_execution_body(monkeypatch):
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    execution = _scope_execution(_frozen_plan(driver))
+    monkeypatch.setattr(
+        module,
+        "validate_acquired_channel_emulator_certification_identity",
+        lambda _config, _identity: (
+            "acquired channelEmulator identity does not match frozen site certification"
+        ),
+    )
+
+    with pytest.raises(
+        module.ChannelEmulatorExecutionSessionError,
+        match="does not match frozen site certification",
+    ):
+        async with module.channel_emulator_execution_scope(
+            None,
+            execution,
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            raise AssertionError("execution body must not run")
+
+    assert driver.events == ["acquire", "safe-idle", "release"]
+
+
+@pytest.mark.asyncio
+async def test_scope_v3_terminal_binds_identity_safe_idle_and_release_receipts(
     monkeypatch,
 ):
     from app.models.test_plan import TestExecution
@@ -450,6 +527,7 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
     ) as outcome:
         outcome.bind_measurement_attempt_id("attempt-v2")
         outcome.mark_operation_result(True)
+        driver.identity_serial = "SN-REPLACED-AFTER-ACQUIRE"
 
     receipts = execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY]
     terminal = execution.config[module.CE_TERMINAL_EVIDENCE_CONFIG_KEY][0]
@@ -471,7 +549,12 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
         "exchange_ids": [],
         "source_reference": "instrument_test_lease.release_to_local_control",
     }
-    assert terminal["schema_version"] == 2
+    assert terminal["schema_version"] == 3
+    assert terminal["hardware_identity"]["instrument_id"] == "ce-runtime"
+    assert terminal["hardware_identity"]["adapter_id"] == "real_ce"
+    assert terminal["hardware_identity"]["serial_number"] == "SN-REAL-CE"
+    assert terminal["hardware_identity"]["options"] == ["OPT-A"]
+    assert terminal["hardware_identity"]["options_observed"] is True
     assert terminal["measurement_attempt_id"] == "attempt-v2"
     assert terminal["operation_receipt_count"] == 2
     assert terminal["operation_receipts_digest"] == (
@@ -484,9 +567,45 @@ async def test_scope_v2_terminal_binds_safe_idle_and_actual_release_receipts(
     assert terminal["transport_release_receipt_id"] == receipts[1]["receipt_id"]
     assert driver.events == ["acquire", "safe-idle", "release"]
 
+    without_identity_payload = {
+        key: value
+        for key, value in terminal.items()
+        if key not in {"hardware_identity", "digest"}
+    }
+    without_identity = {
+        **without_identity_payload,
+        "digest": canonical_payload_digest(without_identity_payload),
+    }
+    with pytest.raises(ValueError, match="hardware identity"):
+        module.validate_channel_emulator_terminal_evidence(without_identity)
+
+    wrong_identity_payload = {
+        **terminal["hardware_identity"],
+        "instrument_id": "different-instrument",
+    }
+    wrong_identity_payload["digest"] = canonical_payload_digest(
+        {
+            key: value
+            for key, value in wrong_identity_payload.items()
+            if key != "digest"
+        }
+    )
+    wrong_terminal_payload = {
+        **{
+            key: value for key, value in terminal.items() if key != "digest"
+        },
+        "hardware_identity": wrong_identity_payload,
+    }
+    wrong_terminal = {
+        **wrong_terminal_payload,
+        "digest": canonical_payload_digest(wrong_terminal_payload),
+    }
+    with pytest.raises(ValueError, match="instrument identity drift"):
+        module.validate_channel_emulator_terminal_evidence(wrong_terminal)
+
 
 @pytest.mark.asyncio
-async def test_scope_v2_terminal_records_rejected_actual_release(monkeypatch):
+async def test_scope_v3_terminal_records_rejected_actual_release(monkeypatch):
     from app.models.test_plan import TestExecution
     from app.services import channel_emulator_execution_session as module
     from app.services.channel_emulator_operation_receipt import (
@@ -555,7 +674,7 @@ async def test_scope_v2_terminal_records_rejected_actual_release(monkeypatch):
     ]
     assert receipts[1]["terminal_state"] == "rejected"
     assert receipts[1]["operation_succeeded"] is False
-    assert terminal["schema_version"] == 2
+    assert terminal["schema_version"] == 3
     assert terminal["terminal_state"] == "failed"
     assert terminal["transport_released_confirmed"] is False
     assert terminal["transport_release_receipt_id"] == receipts[1]["receipt_id"]

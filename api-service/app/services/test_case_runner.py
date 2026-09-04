@@ -76,6 +76,9 @@ from app.services.channel_emulator_execution_plan import (
 from app.services.channel_emulator_binding import (
     freeze_execution_channel_emulator_binding,
 )
+from app.services.channel_emulator_certification import (
+    freeze_channel_emulator_execution_qualification,
+)
 from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 logger = logging.getLogger(__name__)
@@ -311,6 +314,18 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         db.rollback()
         raise CaseNotExecutable(
             f"信道仿真器执行计划无法冻结: {e}"
+        ) from e
+    try:
+        freeze_channel_emulator_execution_qualification(
+            db,
+            get_hal_service(),
+            execution,
+            snapshot,
+        )
+    except Exception as e:  # noqa: BLE001 — 部分/篡改认证冻结件不得排入硬件执行
+        db.rollback()
+        raise CaseNotExecutable(
+            f"信道仿真器执行资格无法冻结: {e}"
         ) from e
     try:
         freeze_execution_positioner_coordinate_profile(

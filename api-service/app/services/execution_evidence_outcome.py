@@ -44,6 +44,11 @@ from app.services.channel_emulator_binding import (
     CE_FREEZE_CONFIG_KEY,
     validate_frozen_channel_emulator_binding,
 )
+from app.services.channel_emulator_certification import (
+    CE_EXECUTION_QUALIFICATION_CONFIG_KEY,
+    ChannelEmulatorExecutionQualification,
+    validate_frozen_channel_emulator_execution_qualification,
+)
 from app.services.channel_emulator_execution_plan import (
     CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
     CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
@@ -457,7 +462,7 @@ def _channel_emulator_terminal_projection(
             return "invalid", "channelEmulator terminal evidence identity drift"
         if item.get("safe_idle_action") != item.get("required_safe_idle_action"):
             return "invalid", "channelEmulator terminal safe idle action misses scope requirement"
-        if item.get("schema_version") == 2:
+        if item.get("schema_version") in {2, 3}:
             receipt_error = _channel_emulator_v2_receipt_chain_error(
                 config,
                 item,
@@ -489,16 +494,16 @@ def _channel_emulator_terminal_projection(
         and attempt_evidence.get("current_measurement_attempt_state") == "completed"
         else None
     )
-    v2_terminals = [
-        item for item in effective_evidence if item.get("schema_version") == 2
+    receipt_terminals = [
+        item for item in effective_evidence if item.get("schema_version") in {2, 3}
     ]
-    if current_attempt_id is not None and v2_terminals and not any(
+    if current_attempt_id is not None and receipt_terminals and not any(
         item.get("measurement_attempt_id") == current_attempt_id
-        for item in v2_terminals
+        for item in receipt_terminals
     ):
         return (
             "invalid",
-            "channelEmulator v2 terminal does not match the current measurement attempt",
+            "channelEmulator receipt terminal does not match the current measurement attempt",
         )
 
     for item in effective_evidence:
@@ -935,6 +940,165 @@ def _qualification_freeze_alignment_error(
     return None
 
 
+def _channel_emulator_qualification_projection(
+    config: Mapping[str, Any],
+) -> tuple[
+    Literal["formal", "diagnostic", "legacy", "invalid"],
+    tuple[str, ...],
+    ChannelEmulatorExecutionQualification | None,
+]:
+    if CE_EXECUTION_QUALIFICATION_CONFIG_KEY not in config:
+        raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+        if isinstance(raw_terminals, list) and any(
+            isinstance(item, Mapping) and item.get("schema_version") == 3
+            for item in raw_terminals
+        ):
+            return (
+                "invalid",
+                ("channelEmulator terminal v3 has no frozen execution qualification",),
+                None,
+            )
+        return "legacy", (), None
+    raw = config.get(CE_EXECUTION_QUALIFICATION_CONFIG_KEY)
+    error = validate_frozen_channel_emulator_execution_qualification(raw)
+    if error is not None:
+        return "invalid", (error,), None
+    qualification = ChannelEmulatorExecutionQualification.model_validate(raw)
+    return qualification.classification, tuple(qualification.reasons), qualification
+
+
+def _channel_emulator_qualification_alignment_error(
+    config: Mapping[str, Any],
+    qualification: ChannelEmulatorExecutionQualification | None,
+) -> str | None:
+    if qualification is None:
+        return None
+    raw_base_station_qualification = config.get(EXECUTION_QUALIFICATION_KEY)
+    if (
+        validate_frozen_execution_qualification(raw_base_station_qualification)
+        is not None
+    ):
+        return "frozen channelEmulator qualification has no valid baseStation qualification"
+    base_station_qualification = ExecutionQualification.model_validate(
+        raw_base_station_qualification
+    )
+    expected_diagnostic_actor = (
+        base_station_qualification.policy.updated_by
+        if base_station_qualification.policy is not None
+        and base_station_qualification.policy_mode == "diagnostic"
+        else None
+    )
+    if (
+        qualification.base_station_qualification_digest
+        != base_station_qualification.qualification_digest
+        or qualification.policy_mode != base_station_qualification.policy_mode
+        or qualification.diagnostic_actor != expected_diagnostic_actor
+        or qualification.diagnostic_reasons
+        != tuple(base_station_qualification.reasons)
+    ):
+        return "frozen channelEmulator qualification does not match baseStation qualification"
+    try:
+        binding = validate_frozen_channel_emulator_binding(
+            config[CE_FREEZE_CONFIG_KEY]
+        )
+        plan = validate_frozen_channel_emulator_execution_plan(
+            config[CE_PLAN_FREEZE_CONFIG_KEY]
+        )
+        load_request, _configuration = validate_frozen_channel_emulator_load_context(
+            config,
+            plan,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        return f"frozen channelEmulator qualification scope is invalid: {exc}"
+    base_freeze = config.get(FREEZE_CONFIG_KEY)
+    asset = (
+        base_freeze.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY)
+        if isinstance(base_freeze, Mapping)
+        else None
+    )
+    asset_digest = (
+        asset.get("digest")
+        if isinstance(asset, Mapping) and isinstance(asset.get("digest"), str)
+        else load_request.get("digest")
+    )
+    expected = (
+        binding.get("lab_profile_id"),
+        binding.get("instrument_connection_id"),
+        binding.get("instrument_model_id"),
+        binding.get("binding_digest"),
+        plan.get("digest"),
+        asset_digest,
+        plan.get("adapter_id"),
+        plan.get("requested_load_mode"),
+    )
+    actual = (
+        qualification.lab_profile_id,
+        qualification.instrument_connection_id,
+        qualification.instrument_model_id,
+        qualification.binding_digest,
+        qualification.plan_digest,
+        qualification.asset_digest,
+        qualification.adapter_id,
+        qualification.load_mode,
+    )
+    if actual != expected:
+        return "frozen channelEmulator qualification does not match binding/plan/asset"
+    if qualification.classification != "formal":
+        return None
+    certification = qualification.site_certification
+    if certification is None or certification.status != "active":
+        return "formal channelEmulator qualification has no active site certification"
+    certification_scope = (
+        certification.lab_profile_id,
+        certification.instrument_connection_id,
+        certification.instrument_model_id,
+        certification.binding_digest,
+        certification.plan_digest,
+        certification.asset_digest,
+        certification.adapter_id,
+        certification.load_mode,
+    )
+    if certification_scope != expected:
+        return "formal channelEmulator certification scope mismatch"
+    raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if not isinstance(raw_terminals, list):
+        return None
+    latest_by_scope: dict[str, Mapping[str, Any]] = {}
+    unscoped: list[Mapping[str, Any]] = []
+    for raw in raw_terminals:
+        if not isinstance(raw, Mapping):
+            continue
+        scope = raw.get("operation_scope")
+        if isinstance(scope, str):
+            latest_by_scope[scope] = raw
+        else:
+            unscoped.append(raw)
+    effective = [*unscoped, *latest_by_scope.values()]
+    for raw in effective:
+        if raw.get("schema_version") != 3:
+            return "formal channelEmulator qualification requires terminal v3"
+        identity = raw.get("hardware_identity")
+        if not isinstance(identity, Mapping):
+            return "formal channelEmulator terminal hardware identity is missing"
+        frozen_identity = (
+            identity.get("model"),
+            identity.get("firmware_version"),
+            identity.get("serial_number"),
+            tuple(identity.get("options") or ()),
+            identity.get("digest"),
+        )
+        certified_identity = (
+            certification.model,
+            certification.firmware_version,
+            certification.serial_number,
+            certification.options,
+            certification.identity_digest,
+        )
+        if frozen_identity != certified_identity:
+            return "formal channelEmulator terminal identity/options mismatch certification"
+    return None
+
+
 def validate_frozen_mac_profile_evidence(
     config: Mapping[str, Any],
     frozen: Mapping[str, Any],
@@ -1163,17 +1327,37 @@ def project_execution_evidence_outcome(
         execution_id=getattr(execution, "id", ""),
         pipeline_status=pipeline_status,
     )
+    (
+        ce_qualification,
+        ce_qualification_reasons,
+        ce_qualification_snapshot,
+    ) = _channel_emulator_qualification_projection(config)
+    reasons.extend(ce_qualification_reasons)
+    ce_qualification_error = _channel_emulator_qualification_alignment_error(
+        config,
+        ce_qualification_snapshot,
+    )
+    if ce_qualification_error is not None:
+        reasons.append(ce_qualification_error)
     if ce_reason is not None:
         reasons.append(ce_reason)
-    if ce_classification == "invalid":
+    if (
+        ce_classification == "invalid"
+        or ce_qualification == "invalid"
+        or ce_qualification_error is not None
+    ):
         classification = "invalid"
-    elif ce_classification == "diagnostic" and classification != "invalid":
+    elif (
+        ce_classification == "diagnostic"
+        or ce_qualification == "diagnostic"
+    ) and classification != "invalid":
         classification = "diagnostic"
 
     formal_eligible = (
         pipeline_status == "completed"
         and classification == "compatible"
         and qualification == "formal"
+        and ce_qualification in {"formal", "legacy"}
     )
     if pipeline_status != "completed":
         completion: CompletionSemantic = "not_completed"

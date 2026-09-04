@@ -266,11 +266,13 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
 
         # Identification + capability cache (filled by connect())
         self._product_family: Optional[str] = None
+        self._identity_response: Optional[str] = None
         self._sys_info_raw: Optional[str] = None
         self._channel_count: int = 4
         self._bandwidth_mhz: float = 100.0
         self._band_label: str = ""
         self._license_label: str = ""
+        self._certification_options_observed: bool = False
 
     # P2-59②：所有 CE 驱动都显式实现观察/证据协议。FS16 尚无经现场验证的
     # 对应实现，所以返回 None；绝不把 F64 方言推广到这个型号。
@@ -357,6 +359,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             )
 
             idn = (await self._query("*IDN?")).strip()
+            self._identity_response = idn
             logger.info(f"[FS16] Connected: {idn}")
 
             if not any(tag in idn.upper() for tag in (t.upper() for t in _IDN_MODEL_TAGS)):
@@ -379,6 +382,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             # base-class _probe_installed_options() path. Options for FS16
             # come from config or empirical SCPI exploration, not *OPT?.
             self._installed_options = []
+            self._certification_options_observed = False
 
             # Read simulation state once for the connect-time snapshot;
             # the diagnostic sequence will re-read it for the live view.
@@ -415,8 +419,36 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
         # 自己的 resource 上面已经关了, 下面只丢引用。
         self._visa_resource = None
         self._rm = None
+        self._identity_response = None
+        self._certification_options_observed = False
         self._status = InstrumentStatus.DISCONNECTED
         return True
+
+    def capture_channel_emulator_certification_identity(self):
+        """Project cached FS16 identity; unsupported option discovery stays unknown."""
+
+        from app.hal.scpi_evidence import parse_ieee488_identity
+        from app.services.channel_emulator_certification import (
+            build_channel_emulator_certification_identity,
+        )
+
+        parsed = parse_ieee488_identity(self._identity_response)
+        live = (
+            self._visa_resource is not None
+            and bool(self._identity_response)
+            and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+        )
+        return build_channel_emulator_certification_identity(
+            instrument_id=self.instrument_id,
+            adapter_id=self.adapter_manifest.adapter_id,
+            model=(self._product_family or parsed["model"]) if live else None,
+            firmware_version=parsed["firmware_version"] if live else None,
+            serial_number=parsed["serial_number"] if live else None,
+            options=tuple(self._installed_options),
+            options_observed=self._certification_options_observed and live,
+            simulated=False,
+            captured_from_live_connection=live,
+        )
 
     async def configure(self, config: Dict[str, Any]) -> bool:
         """No-op for the MVP — emulation config goes through load_channel()
@@ -588,6 +620,8 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
         """
         if self._rm is None or not getattr(self, "ip_address", None):
             return False
+        self._identity_response = None
+        self._certification_options_observed = False
         try:
             if self._visa_resource is not None:
                 await asyncio.to_thread(self._visa_resource.close)

@@ -83,6 +83,7 @@ import {
   fetchActiveChamber,
   fetchTestCaseDetail,
   fetchInstrumentCatalog,
+  fetchReadiness,
   fetchChannelModels,
   addChannelModel,
   removeChannelModel,
@@ -95,6 +96,8 @@ import {
   updateInstrumentCategory,
   certifyBaseStationSite,
   revokeBaseStationSiteCertification,
+  certifyChannelEmulatorSite,
+  revokeChannelEmulatorSiteCertification,
   replaceProbes,
   updateProbe,
 } from './api/service'
@@ -1716,6 +1719,13 @@ function EquipmentManager() {
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
   })
+  const channelEmulatorReadinessQuery = useQuery({
+    queryKey: ['cockpit', 'readiness', selectedLabProfileId ?? 'unselected'],
+    queryFn: () => fetchReadiness(selectedLabProfileId!),
+    enabled: Boolean(selectedLabProfileId),
+  })
+  const channelEmulatorCertificationPreview =
+    channelEmulatorReadinessQuery.data?.channel_emulator_site_certification_preview
 
   const categories = useMemo(() => data?.categories ?? [], [data])
 
@@ -1895,6 +1905,39 @@ function EquipmentManager() {
         'baseStation',
         'error',
         `BaseStation 现场认证更新失败: ${diagnosticErrorMessage(error)}`,
+      )
+    },
+  })
+
+  const channelEmulatorCertificationMutation = useMutation({
+    mutationFn: async ({ connectionId, revoke }: { connectionId: string; revoke: boolean }) => (
+      revoke
+        ? revokeChannelEmulatorSiteCertification(connectionId, {
+            revoked_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+        : certifyChannelEmulatorSite(connectionId, {
+            source_execution_id: certificationExecutionId.trim(),
+            certified_by: certificationOperator.trim(),
+            reason: certificationReason.trim(),
+          })
+    ),
+    onSuccess: (certification) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      showFeedback(
+        'channelEmulator',
+        'success',
+        certification.status === 'active'
+          ? '信道仿真器现场认证已从服务端执行证据激活，仅影响后续执行。'
+          : '信道仿真器现场认证已撤销，仅影响后续执行。',
+      )
+    },
+    onError: (error: unknown) => {
+      showFeedback(
+        'channelEmulator',
+        'error',
+        `信道仿真器现场认证更新失败: ${diagnosticErrorMessage(error)}`,
       )
     },
   })
@@ -2442,6 +2485,55 @@ function EquipmentManager() {
                       {category.connection?.id && (
                         <StandardChannelDefinitionCard connectionId={category.connection.id} />
                       )}
+                      <Card withBorder padding="md" radius="md">
+                        <Stack gap="xs">
+                          <Text fw={600} size="sm">信道仿真器现场认证</Text>
+                          <Alert
+                            color={channelEmulatorCertificationPreview?.status === 'formal_ready'
+                              ? 'green'
+                              : channelEmulatorCertificationPreview?.status === 'invalid'
+                                ? 'red'
+                                : 'yellow'}
+                            variant="light"
+                          >
+                            当前状态：{channelEmulatorCertificationPreview?.status === 'formal_ready'
+                              ? `当前范围已认证 · ${channelEmulatorCertificationPreview.site_certification?.certified_at}`
+                              : channelEmulatorCertificationPreview?.detail
+                                ?? '当前范围尚未由服务器核验，仅可诊断（UNKNOWN/N/A）'}。身份、计划、资产与证据均由服务器投影。
+                          </Alert>
+                          <TextInput
+                            label="来源执行 ID"
+                            description="仅提交执行 ID；客户端不提交 identity、proof 或 digest。"
+                            value={certificationExecutionId}
+                            onChange={(event) => setCertificationExecutionId(event.currentTarget.value)}
+                          />
+                          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                            <TextInput label="操作人" value={certificationOperator} onChange={(event) => setCertificationOperator(event.currentTarget.value)} />
+                            <TextInput label="认证/撤销原因" value={certificationReason} onChange={(event) => setCertificationReason(event.currentTarget.value)} />
+                          </SimpleGrid>
+                          <Group>
+                            <Button
+                              size="xs"
+                              color="yellow"
+                              loading={channelEmulatorCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationExecutionId.trim() || !certificationOperator.trim() || !certificationReason.trim()}
+                              onClick={() => category.connection.id && channelEmulatorCertificationMutation.mutate({ connectionId: category.connection.id, revoke: false })}
+                            >
+                              从执行证据认证现场
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="outline"
+                              loading={channelEmulatorCertificationMutation.isPending}
+                              disabled={!category.connection.id || !certificationOperator.trim() || !certificationReason.trim() || category.connection.channel_emulator_site_certification?.status !== 'active'}
+                              onClick={() => category.connection.id && channelEmulatorCertificationMutation.mutate({ connectionId: category.connection.id, revoke: true })}
+                            >
+                              撤销现场认证
+                            </Button>
+                          </Group>
+                        </Stack>
+                      </Card>
                     </>
                   )
                 })()}

@@ -243,6 +243,8 @@ export function MIMOOTAConfigForm({
   })
   const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2
   const siteCertification = cmwReadinessQuery.data?.base_station_site_certification
+  const channelEmulatorCertification =
+    cmwReadinessQuery.data?.channel_emulator_site_certification_preview
   const cmwReadinessView = describeCmw500Readiness(
     cmwReadiness,
     rawPCell?.duplex,
@@ -1267,6 +1269,19 @@ export function MIMOOTAConfigForm({
                     )}
                   </Text>
                 </Stack>
+              </Alert>
+              <Alert
+                color={channelEmulatorCertification?.status === 'formal_ready'
+                  ? 'green'
+                  : channelEmulatorCertification?.status === 'invalid'
+                    ? 'red'
+                    : 'yellow'}
+                variant="light"
+                title="信道仿真器现场认证"
+              >
+                {channelEmulatorCertification?.status === 'formal_ready'
+                  ? channelEmulatorCertification.detail
+                  : `${channelEmulatorCertification?.detail ?? '尚未取得服务器认证投影'}；仅诊断，正式判定保持 UNKNOWN/N/A`}
               </Alert>
               {showCmwReadiness && (
                 <Alert

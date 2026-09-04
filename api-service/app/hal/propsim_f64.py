@@ -274,9 +274,9 @@ class F64SysInfo:
         - test_f64_license_probe.py fixture strings (multiple
           firmware variants)
 
-    Pure data — no methods, no I/O. The legacy keyword scan in
-    ``_probe_installed_options()`` continues to handle license-token
-    discovery; this dataclass is for hardware metadata only.
+    Pure data — no methods, no I/O. Runtime capability discovery still maps
+    known keywords separately, while ``extra_tokens`` preserves the complete
+    reported license tail for certification identity binding.
     """
     raw: str  # original SYST:INFO? response as received
     product_family: Optional[str] = None  # e.g. "PROPSIM F64"
@@ -638,6 +638,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # PyVISA 资源句柄
         self._visa_resource = None
         self._rm = None
+        self._certification_options_observed: bool = False
+        # Complete normalized license tail from the last structurally valid
+        # SYST:INFO? reply. Runtime capability mapping remains in
+        # ``_installed_options``; certification identity binds every reported
+        # license token, including currently unknown ones.
+        self._certification_options: List[str] = []
         # True 表示操作员已显式要求把控制权交还 F64 前面板。F64 只要收到任意
         # ATE 命令就会再次进入 Remote，因此该标志必须同时禁止监控轮询和静默重连，
         # 不能仅仅 close 当前 socket。
@@ -2293,6 +2299,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             hardware_firmware_version=self.firmware_version if live else None,
             serial_number=identity["serial_number"] if live else None,
             captured_from_live_connection=live,
+        )
+
+    def capture_channel_emulator_certification_identity(self):
+        """Project only identity/options already captured by this live ATE session."""
+
+        from app.services.channel_emulator_certification import (
+            build_channel_emulator_certification_identity,
+        )
+
+        environment = self.capture_evidence_environment()
+        return build_channel_emulator_certification_identity(
+            instrument_id=self.instrument_id,
+            adapter_id=self.adapter_manifest.adapter_id,
+            model=environment.model,
+            firmware_version=environment.firmware_version,
+            serial_number=environment.serial_number,
+            options=tuple(self._certification_options),
+            options_observed=(
+                self._certification_options_observed
+                and environment.captured_from_live_connection
+            ),
+            simulated=False,
+            captured_from_live_connection=environment.captured_from_live_connection,
         )
 
     def build_p0_5_command_evidence(
@@ -5878,24 +5907,52 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         Single source: SYST:INFO? keyword scan (manual §20.4.2.4 — the
         reply carries the license list). Returns canonical option tokens.
-        Missing keyword = "license absent" (fail-closed; explicit config
-        can override). Never raises; SYST:INFO? failure is logged and
+        Missing keyword in a valid F64 system-info reply = "license absent"
+        (fail-closed; explicit config can override runtime capability).  Empty,
+        SCPI-error, or otherwise malformed replies keep certification option
+        observation unknown.  Never raises; SYST:INFO? failure is logged and
         yields an empty list.
         """
         discovered: List[str] = []
         seen: set = set()
+        self._certification_options_observed = False
+        self._certification_options = []
 
         # SYST:INFO? keyword scan. SYST:INFO? is the confirmed-working
         # introspection query (returns the channel-count line we already
         # parse in connect() — see parse_f64_sys_info).
         try:
             info_raw = await self._query("SYST:INFO?")
-            info_lower = (info_raw or "").lower()
-            for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
-                if keyword in info_lower and token not in seen:
-                    discovered.append(token)
-                    seen.add(token)
+            parsed_info = parse_f64_sys_info(info_raw)
+            self._certification_options_observed = bool(
+                isinstance(info_raw, str)
+                and info_raw.strip()
+                and parsed_info.product_family is not None
+                and "PROPSIM F64" in parsed_info.product_family.upper()
+                and parsed_info.channel_count is not None
+                and parsed_info.channel_count > 0
+                and parsed_info.signal_type is not None
+            )
+            if self._certification_options_observed:
+                self._certification_options = sorted(
+                    {
+                        token.strip()
+                        for token in parsed_info.extra_tokens
+                        if token.strip()
+                    }
+                )
+                info_lower = info_raw.lower()
+                for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
+                    if keyword in info_lower and token not in seen:
+                        discovered.append(token)
+                        seen.add(token)
+            else:
+                logger.warning(
+                    "[F64] SYST:INFO? license scan returned an invalid system-info reply",
+                    extra={"instrument_id": self.instrument_id},
+                )
         except Exception as e:
+            self._certification_options_observed = False
             logger.warning(
                 f"[F64] SYST:INFO? license scan failed: {e}",
                 extra={"instrument_id": self.instrument_id},

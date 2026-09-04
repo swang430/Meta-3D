@@ -145,9 +145,27 @@ function buildCells(report: HALReadinessResponse): Cell[] {
   const baseStationCompatibility = projectBaseStationCompatibilityTruth(
     report.base_station_testcase_compatibility,
   )
-  // P2-58 ②：消费 ① 的 CE binding 真值；映射与基站绑定同形（invalid 红 / 仅诊断 黄 / 已解析 绿），
-  // CE 没有现场认证层，不做二次降级。
-  const channelEmulatorBinding = projectChannelEmulatorBindingTruth(report.channel_emulator_binding)
+  const rawChannelEmulatorBinding = projectChannelEmulatorBindingTruth(report.channel_emulator_binding)
+  const channelCertification = report.channel_emulator_site_certification_preview
+  const channelEmulatorBinding = rawChannelEmulatorBinding.light !== 'green'
+    ? rawChannelEmulatorBinding
+    : channelCertification?.status === 'formal_ready'
+      ? {
+          ...rawChannelEmulatorBinding,
+          valueText: `${rawChannelEmulatorBinding.valueText} · 已现场认证`,
+          detail: channelCertification.detail,
+        }
+      : channelCertification?.status === 'invalid'
+        ? {
+            light: 'red' as const,
+            valueText: '现场认证无效',
+            detail: channelCertification.detail,
+          }
+        : {
+            light: 'yellow' as const,
+            valueText: '仅诊断 · UNKNOWN/N/A',
+            detail: channelCertification?.detail ?? '服务器未返回信道仿真器现场认证投影',
+          }
   const certification = report.base_station_site_certification
   const certificationMatches = certification?.status === 'active'
     && certification.binding_digest === report.base_station_binding?.binding_digest

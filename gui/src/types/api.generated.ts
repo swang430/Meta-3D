@@ -151,6 +151,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Certify ChannelEmulator site from one completed execution */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    connection_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelEmulatorSiteCertificationCreate"];
+                };
+            };
+            responses: {
+                /** @description Server-derived channel-emulator site certification */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelEmulatorSiteCertification"];
+                    };
+                };
+                /** @description Connection or source execution not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/connections/{connection_id}/channel-emulator-site-certification/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Revoke current ChannelEmulator site certification */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    connection_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelEmulatorSiteCertificationRevoke"];
+                };
+            };
+            responses: {
+                /** @description Revoked channel-emulator site certification audit row */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelEmulatorSiteCertification"];
+                    };
+                };
+                /** @description Connection not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/connections/{connection_id}/formal-capabilities/cmw500-lte-2x2": {
         parameters: {
             query?: never;
@@ -2183,6 +2295,72 @@ export interface components {
             revoked_by: string;
             reason: string;
         };
+        ChannelEmulatorCertificationProofs: {
+            binding_plan_asset: boolean;
+            hardware_identity_options: boolean;
+            operation_receipts: boolean;
+            frequency: boolean;
+            level: boolean;
+            path_loss: boolean;
+            safe_idle: boolean;
+            transport_release: boolean;
+        };
+        ChannelEmulatorSiteCertification: {
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            status: "active" | "revoked";
+            lab_profile_id: string;
+            instrument_connection_id: string;
+            instrument_model_id: string;
+            binding_digest: string;
+            adapter_id: string;
+            plan_digest: string;
+            asset_digest: string;
+            /** @enum {string} */
+            load_mode: "native_model" | "external_waveform" | "parametric_tdl";
+            model: string;
+            firmware_version: string;
+            serial_number: string;
+            options: string[];
+            identity_digest: string;
+            source_execution_id: string;
+            terminal_evidence_digest: string;
+            operation_receipts_digest: string;
+            measurement_evidence_digest: string;
+            required_proofs: components["schemas"]["ChannelEmulatorCertificationProofs"];
+            certified_by: string;
+            /** Format: date-time */
+            certified_at: string;
+            reason: string;
+            revoked_by?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            revocation_reason?: string | null;
+        };
+        ChannelEmulatorSiteCertificationCreate: {
+            /** Format: uuid */
+            source_execution_id: string;
+            certified_by: string;
+            reason: string;
+        };
+        ChannelEmulatorSiteCertificationRevoke: {
+            revoked_by: string;
+            reason: string;
+        };
+        ChannelEmulatorCertificationPreview: {
+            /** @enum {string} */
+            status: "formal_ready" | "diagnostic" | "invalid" | "not_applicable";
+            binding_digest: string | null;
+            adapter_id: string | null;
+            instrument_model_id: string | null;
+            instrument_connection_id: string | null;
+            lab_profile_id: string | null;
+            site_certification: components["schemas"]["ChannelEmulatorSiteCertification"] | null;
+            site_certification_digest: string | null;
+            reasons: string[];
+            detail: string;
+        };
         ExecutionQualification: {
             /** @enum {integer} */
             schema_version: 1;
@@ -3081,6 +3259,7 @@ export interface components {
             /** Format: date-time */
             cmw500_lte_2x2_formal_updated_at: string | null;
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
+            channel_emulator_site_certification: components["schemas"]["ChannelEmulatorSiteCertification"] | null;
         };
         Cmw500FormalCapabilityUpdate: {
             enabled: boolean;
@@ -3126,6 +3305,7 @@ export interface components {
             channel_emulator_binding: components["schemas"]["ChannelEmulatorBindingPreviewResponse"] | null;
             base_station_testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"];
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
+            channel_emulator_site_certification_preview: components["schemas"]["ChannelEmulatorCertificationPreview"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;
             /**

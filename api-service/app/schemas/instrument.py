@@ -5,6 +5,9 @@ from ._datetime import UTCDateTime
 from uuid import UUID
 
 from app.hal.base_station_manifest import BaseStationAdapterManifest
+from app.services.channel_emulator_certification import (
+    ChannelEmulatorSiteCertification,
+)
 from app.services.execution_qualification import BaseStationSiteCertification
 
 
@@ -96,6 +99,9 @@ class InstrumentConnectionResponse(InstrumentConnectionBase):
     cmw500_lte_2x2_formal_enabled: bool
     cmw500_lte_2x2_formal_updated_at: Optional[UTCDateTime]
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
+    channel_emulator_site_certification: Optional[
+        ChannelEmulatorSiteCertification
+    ] = None
 
     class Config:
         from_attributes = True
@@ -110,6 +116,21 @@ class BaseStationSiteCertificationCreate(BaseModel):
 
 
 class BaseStationSiteCertificationRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revoked_by: str
+    reason: str
+
+
+class ChannelEmulatorSiteCertificationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_execution_id: UUID
+    certified_by: str
+    reason: str
+
+
+class ChannelEmulatorSiteCertificationRevoke(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     revoked_by: str
