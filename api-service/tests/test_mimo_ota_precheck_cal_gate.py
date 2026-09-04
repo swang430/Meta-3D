@@ -34,6 +34,7 @@ from tests.base_station_mock_factory import registered_mock_base_station
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import create_engine
@@ -1141,6 +1142,67 @@ def hal_with_full_mock_chain(instrument_categories):
     yield hal
     hal.drivers.clear()
     hal.drivers.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_ce_plan_drift_rejects_before_any_instrument_connection_or_write(
+    db,
+    lab,
+    hal_with_full_mock_chain,
+    monkeypatch,
+):
+    """冻结后 engine_mode 漂移必须在任何仪器连接/配置写入前 fail-loud。"""
+
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=False,
+        frequency_hz=3500e6,
+    )
+    test_case = db.get(TestCase, ctx.test_execution.test_case_id)
+    frozen_load_mode = ctx.test_execution.config[
+        "channel_emulator_execution_plan_freeze"
+    ]["requested_load_mode"]
+    drifted_engine_mode = (
+        "mimo_first_asc"
+        if frozen_load_mode == "native_model"
+        else "keysight_gcm"
+    )
+    test_case.configuration = canonicalize_mimo_ota_configuration_payload(
+        {
+            **dict(test_case.configuration or {}),
+            "engine_mode": drifted_engine_mode,
+        }
+    )
+    db.commit()
+    base_station = hal_with_full_mock_chain.drivers["baseStation"]
+    _bind_unbound_mock_measurement(monkeypatch, ctx, base_station)
+
+    positioner = hal_with_full_mock_chain.drivers["positioner"]
+    channel_emulator = hal_with_full_mock_chain.drivers["channelEmulator"]
+    io_spies = {
+        "positioner.connect": (positioner, "connect"),
+        "base_station.connect": (base_station, "connect"),
+        "base_station.apply_config": (base_station, "apply_config"),
+        "base_station.apply_route": (base_station, "apply_route"),
+        "base_station.configure_mac_throughput_test": (
+            base_station,
+            "configure_mac_throughput_test",
+        ),
+        "channel_emulator.connect": (channel_emulator, "connect"),
+    }
+    installed_spies = []
+    for label, (driver, method_name) in io_spies.items():
+        spy = AsyncMock(side_effect=AssertionError(f"CE plan drift gate ran after {label}"))
+        setattr(driver, method_name, spy)
+        installed_spies.append(spy)
+
+    with pytest.raises(RuntimeError, match="frozen execution plan does not match"):
+        await MeasureExecutor().execute(ctx)
+
+    for spy in installed_spies:
+        spy.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1463,6 +1463,11 @@ class MeasureExecutor(IStepExecutor):
         ]
         measurement_simulated = bool(simulated_sources)
 
+        # P2-59 ①：纯 DB / 冻结坐标 / BaseStation 资格门完成后、首次仪器 connect/write 前，
+        # 把启动期冻结的 CE 执行计划与当下装载驱动重算的 live 计划对账。兜底 mock 也按
+        # 同一规则算进计划；缺席 / 漂移都 fail-loud，不能先触碰其它仪器再拒绝。
+        ce_plan = self._channel_emulator_plan_context(context, hal, config)
+
         await positioner.connect()
         await base_station.connect()
         # Anything from here through the azimuth loop must be wrapped so an
@@ -1680,10 +1685,6 @@ class MeasureExecutor(IStepExecutor):
             # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
             # 允许第一次 attach，任何失败都直接返回。
             ce_client = ChannelEngineClient(context.db)
-            # P2-59 ①：首次 CE I/O（下方的加载）之前，把启动期冻结的执行计划与当下装载
-            # 驱动重算的 live 计划对账 —— 兜底 mock 也按同一规则算进计划，所以放在造它之前。
-            # 缺席 / 漂移都是缺陷，fail-loud，不回退成「按当下驱动能力办」。
-            ce_plan = self._channel_emulator_plan_context(context, hal, config)
             if emulator is None:
                 from app.hal.channel_emulator import MockChannelEmulator
 
