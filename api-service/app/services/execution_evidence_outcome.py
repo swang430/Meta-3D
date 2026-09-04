@@ -58,7 +58,12 @@ from app.services.channel_emulator_execution_session import (
 )
 from app.services.channel_emulator_operation_receipt import (
     CE_OPERATION_RECEIPTS_CONFIG_KEY,
+    ChannelEmulatorOperationEvidenceProjection,
+    ChannelOperationFieldEvidenceProjection,
+    ChannelOperationReceiptEvidenceProjection,
+    ChannelOperationSessionEvidenceProjection,
     channel_emulator_operation_receipt_chain_digest,
+    empty_channel_emulator_operation_evidence,
     validate_channel_emulator_operation_receipt,
 )
 
@@ -102,7 +107,11 @@ _PRE_P2_54_MANIFESTS = {
 class ExecutionEvidenceOutcome(BaseModel):
     """Single server-owned projection for history, reports, and formal gates."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_serialization_defaults_required=True,
+    )
 
     schema_version: Literal[1] = 1
     compatibility_classification: CompatibilityClassification
@@ -112,6 +121,9 @@ class ExecutionEvidenceOutcome(BaseModel):
     qualification_classification: QualificationClassification
     reasons: tuple[str, ...]
     pipeline_status: str
+    channel_emulator_operation_evidence: (
+        ChannelEmulatorOperationEvidenceProjection
+    ) = empty_channel_emulator_operation_evidence()
 
 
 def _channel_emulator_v2_receipt_chain_error(
@@ -446,6 +458,164 @@ def _channel_emulator_terminal_projection(
     if simulated:
         return "diagnostic", "simulated channelEmulator is excluded from formal KPI"
     return None, None
+
+
+def _public_channel_emulator_operation_evidence(
+    config: Mapping[str, Any],
+    *,
+    pipeline_status: str,
+    classification: Literal["diagnostic", "invalid"] | None,
+    reason: str | None,
+) -> ChannelEmulatorOperationEvidenceProjection:
+    """Redact the already-validated CE receipt chain for every API consumer."""
+
+    reasons = (reason,) if reason is not None else ()
+    if classification == "invalid":
+        return empty_channel_emulator_operation_evidence(
+            status="invalid",
+            reasons=reasons,
+        )
+
+    raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if raw_terminals is None:
+        has_frozen_ce = any(
+            config.get(key) is not None
+            for key in (
+                CE_FREEZE_CONFIG_KEY,
+                CE_PLAN_FREEZE_CONFIG_KEY,
+                CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+            )
+        )
+        return empty_channel_emulator_operation_evidence(
+            status=(
+                "pending"
+                if has_frozen_ce and pipeline_status != "completed"
+                else "not_available"
+            ),
+            reasons=reasons,
+        )
+    if not isinstance(raw_terminals, list):
+        return empty_channel_emulator_operation_evidence(
+            status="invalid",
+            reasons=("channelEmulator terminal evidence is malformed",),
+        )
+
+    validated_terminals: list[Mapping[str, Any]] = []
+    for raw_terminal in raw_terminals:
+        try:
+            validated_terminals.append(
+                validate_channel_emulator_terminal_evidence(dict(raw_terminal))
+            )
+        except (TypeError, ValueError):
+            return empty_channel_emulator_operation_evidence(
+                status="invalid",
+                reasons=("channelEmulator terminal evidence is malformed",),
+            )
+
+    effective: list[Mapping[str, Any]] = []
+    latest_by_scope: dict[str, Mapping[str, Any]] = {}
+    for terminal in validated_terminals:
+        operation_scope = terminal.get("operation_scope")
+        if isinstance(operation_scope, str):
+            latest_by_scope[operation_scope] = terminal
+        else:
+            effective.append(terminal)
+    effective.extend(latest_by_scope.values())
+
+    raw_receipts = config.get(CE_OPERATION_RECEIPTS_CONFIG_KEY)
+    receipts_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(raw_receipts, list):
+        try:
+            receipts_by_id = {
+                receipt["receipt_id"]: receipt
+                for receipt in (
+                    validate_channel_emulator_operation_receipt(dict(item))
+                    for item in raw_receipts
+                )
+            }
+        except (KeyError, TypeError, ValueError):
+            return empty_channel_emulator_operation_evidence(
+                status="invalid",
+                reasons=("channelEmulator operation receipt is malformed",),
+            )
+
+    sessions: list[ChannelOperationSessionEvidenceProjection] = []
+    has_legacy = False
+    for terminal in effective:
+        if terminal.get("schema_version") == 1:
+            has_legacy = True
+            sessions.append(
+                ChannelOperationSessionEvidenceProjection(
+                    session_id=terminal["session_id"],
+                    operation_scope=terminal.get("operation_scope"),
+                    status="legacy",
+                    receipt_count=None,
+                    receipt_chain_digest=None,
+                )
+            )
+            continue
+        selected = [
+            receipts_by_id[receipt_id]
+            for receipt_id in terminal.get("operation_receipt_ids", ())
+        ]
+        receipt_projections: list[ChannelOperationReceiptEvidenceProjection] = []
+        for receipt in selected:
+            terminal_state = receipt["terminal_state"]
+            public_status = (
+                "diagnostic"
+                if receipt["simulated"]
+                else "verified" if terminal_state == "completed" else terminal_state
+            )
+            receipt_projections.append(
+                ChannelOperationReceiptEvidenceProjection(
+                    sequence=receipt["sequence"],
+                    phase=receipt["phase"],
+                    operation=receipt["operation"],
+                    terminal_state=terminal_state,
+                    operation_succeeded=receipt["operation_succeeded"],
+                    simulated=receipt["simulated"],
+                    status=public_status,
+                    fields=tuple(
+                        ChannelOperationFieldEvidenceProjection(
+                            field=field["field"],
+                            status=field["status"],
+                            provenance=field["provenance"],
+                            exchange_ids=tuple(field.get("exchange_ids", ())),
+                            source_reference=field.get("source_reference"),
+                        )
+                        for field in receipt["fields"]
+                    ),
+                    exchange_ids=tuple(receipt.get("exchange_ids", ())),
+                    error_queue_exchange_ids=tuple(
+                        receipt.get("error_queue_exchange_ids", ())
+                    ),
+                )
+            )
+        sessions.append(
+            ChannelOperationSessionEvidenceProjection(
+                session_id=terminal["session_id"],
+                operation_scope=terminal.get("operation_scope"),
+                status=(
+                    "diagnostic"
+                    if classification == "diagnostic"
+                    else "verified"
+                ),
+                receipt_count=terminal["operation_receipt_count"],
+                receipt_chain_digest=terminal["operation_receipts_digest"],
+                receipts=tuple(receipt_projections),
+            )
+        )
+
+    status = (
+        "diagnostic"
+        if classification == "diagnostic"
+        else "legacy" if has_legacy else "verified"
+    )
+    return ChannelEmulatorOperationEvidenceProjection(
+        status=status,
+        reasons=reasons,
+        sessions=tuple(sessions),
+    )
 
 
 def _outer_freeze_digest_error(frozen: Mapping[str, Any]) -> str | None:
@@ -948,6 +1118,15 @@ def project_execution_evidence_outcome(
     else:
         completion = "pipeline_completed"
 
+    channel_emulator_operation_evidence = (
+        _public_channel_emulator_operation_evidence(
+            config,
+            pipeline_status=pipeline_status,
+            classification=ce_classification,
+            reason=ce_reason,
+        )
+    )
+
     return ExecutionEvidenceOutcome(
         compatibility_classification=classification,
         completion_semantic=completion,
@@ -956,6 +1135,9 @@ def project_execution_evidence_outcome(
         qualification_classification=qualification,
         reasons=tuple(dict.fromkeys(reasons)),
         pipeline_status=pipeline_status,
+        channel_emulator_operation_evidence=(
+            channel_emulator_operation_evidence
+        ),
     )
 
 

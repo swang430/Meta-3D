@@ -157,6 +157,49 @@ export type FrozenExecutionQualification = {
   qualification_digest: string
 }
 
+export type ChannelOperationFieldEvidenceProjection = {
+  field: string
+  status: 'requested' | 'applied' | 'confirmed' | 'unknown' | 'not_applicable' | 'unavailable'
+  provenance:
+    | 'authoritative_readback'
+    | 'command_error_queue'
+    | 'runtime_state'
+    | 'transport_release'
+    | 'simulated'
+    | 'unavailable'
+  exchange_ids?: string[]
+  source_reference: string | null
+}
+
+export type ChannelOperationReceiptEvidenceProjection = {
+  sequence: number
+  phase: 'load' | 'configure' | 'start' | 'adjust' | 'stop' | 'cleanup' | 'release'
+  operation: string
+  terminal_state: 'completed' | 'rejected' | 'failed' | 'cancelled'
+  operation_succeeded: boolean | null
+  simulated: boolean
+  status: 'verified' | 'diagnostic' | 'rejected' | 'failed' | 'cancelled'
+  fields: ChannelOperationFieldEvidenceProjection[]
+  exchange_ids?: string[]
+  error_queue_exchange_ids?: string[]
+}
+
+export type ChannelOperationSessionEvidenceProjection = {
+  session_id: string
+  operation_scope: string | null
+  status: 'legacy' | 'verified' | 'diagnostic'
+  receipt_count: number | null
+  receipt_chain_digest: string | null
+  receipts?: ChannelOperationReceiptEvidenceProjection[]
+}
+
+export type ChannelEmulatorOperationEvidenceProjection = {
+  schema_version: 1
+  status: 'not_available' | 'pending' | 'legacy' | 'verified' | 'diagnostic' | 'invalid'
+  reasons: string[]
+  sessions: ChannelOperationSessionEvidenceProjection[]
+}
+
 export type ExecutionEvidenceOutcome = {
   schema_version: 1
   compatibility_classification: 'compatible' | 'diagnostic' | 'legacy' | 'invalid'
@@ -170,6 +213,7 @@ export type ExecutionEvidenceOutcome = {
   qualification_classification: 'formal' | 'diagnostic' | 'legacy'
   reasons: string[]
   pipeline_status: string
+  channel_emulator_operation_evidence: ChannelEmulatorOperationEvidenceProjection
 }
 
 export type Cmw500FormalCapabilityResponse = {

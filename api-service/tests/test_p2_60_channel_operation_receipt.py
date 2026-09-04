@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 import asyncio
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from app.hal.base_station_compatibility import canonical_payload_digest
 
@@ -1049,3 +1052,171 @@ def test_p2_66_requires_v2_terminal_when_measurement_attempt_already_completed()
     )
     assert classification == "invalid"
     assert "terminal evidence" in reason
+
+
+def test_public_projection_is_server_owned_redacted_and_shared_by_outcome():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution, terminal, receipts = _v2_terminal_projection_fixture()
+    projection = project_execution_evidence_outcome(
+        execution
+    ).channel_emulator_operation_evidence
+
+    assert projection.status == "verified"
+    assert projection.reasons == ()
+    assert len(projection.sessions) == 1
+    session = projection.sessions[0]
+    assert session.session_id == terminal["session_id"]
+    assert session.receipt_count == 2
+    assert session.receipt_chain_digest == terminal["operation_receipts_digest"]
+    assert [item.sequence for item in session.receipts] == [0, 1]
+    assert [item.operation for item in session.receipts] == [
+        "stop_emulation",
+        "transport_release",
+    ]
+    assert session.receipts[0].fields[0].provenance == "runtime_state"
+    assert session.receipts[0].fields[0].exchange_ids == ("exchange-safe",)
+    serialized = projection.model_dump(mode="json")
+    assert "requested" not in json.dumps(serialized)
+    assert "applied" not in json.dumps(serialized)
+    assert receipts[0]["fields"][0]["requested"] == "STOPPED"
+
+
+def test_public_projection_marks_invalid_and_simulated_without_green_receipts():
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    invalid, _terminal, receipts = _v2_terminal_projection_fixture()
+    invalid.config[CE_OPERATION_RECEIPTS_CONFIG_KEY] = receipts[:-1]
+    invalid_projection = project_execution_evidence_outcome(
+        invalid
+    ).channel_emulator_operation_evidence
+    assert invalid_projection.status == "invalid"
+    assert invalid_projection.sessions == ()
+    assert invalid_projection.reasons
+
+    simulated, _terminal, _receipts = _v2_terminal_projection_fixture(
+        execution_mode="simulated"
+    )
+    simulated_projection = project_execution_evidence_outcome(
+        simulated
+    ).channel_emulator_operation_evidence
+    assert simulated_projection.status == "diagnostic"
+    assert all(
+        item.status != "verified"
+        for session in simulated_projection.sessions
+        for item in session.receipts
+    )
+
+
+def test_execution_log_metadata_uses_the_same_channel_operation_projection():
+    from app.api.system_logs import _load_execution_export_metadata
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+    execution.id = uuid4()
+
+    class _Query:
+        def filter(self, *_args):
+            return self
+
+        def one_or_none(self):
+            return execution
+
+    class _Db:
+        def query(self, *_args):
+            return _Query()
+
+    metadata = _load_execution_export_metadata(str(execution.id), _Db())
+    expected = project_execution_evidence_outcome(
+        execution
+    ).channel_emulator_operation_evidence.model_dump(mode="json")
+    assert metadata["execution_evidence_outcome"][
+        "channel_emulator_operation_evidence"
+    ] == expected
+
+
+def test_pre_p2_60_stored_report_outcome_accepts_missing_public_projection():
+    from app.api.report import _report_execution_outcome_state
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+    report_source_id = uuid4()
+    stored = project_execution_evidence_outcome(execution).model_dump(mode="json")
+    stored.pop("channel_emulator_operation_evidence")
+    report = SimpleNamespace(
+        status="completed",
+        report_type="single_execution",
+        test_execution_ids=[report_source_id],
+        road_test_execution_id=None,
+        content_data={"execution_evidence_outcome": stored},
+    )
+
+    class _Db:
+        def get(self, _model, execution_id):
+            return execution if execution_id == report_source_id else None
+
+    outcome, matches = _report_execution_outcome_state(_Db(), report)
+    assert matches is True
+    assert outcome is not None
+    assert outcome.channel_emulator_operation_evidence.status == "verified"
+
+
+def test_report_aggregate_digest_is_stable_across_public_projection_addition():
+    from app.api.report import _aggregate_report_execution_outcomes
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+    source_id = uuid4()
+    projected = project_execution_evidence_outcome(execution)
+    expected_digest = canonical_payload_digest(
+        [
+            {
+                "execution_id": str(source_id),
+                "outcome": projected.model_dump(
+                    mode="json",
+                    exclude={"channel_emulator_operation_evidence"},
+                ),
+            }
+        ]
+    )
+
+    aggregate = _aggregate_report_execution_outcomes(
+        [source_id],
+        [execution],
+    )
+    assert aggregate.compatibility_digest == expected_digest
+    assert aggregate.channel_emulator_operation_evidence.status == "verified"
+
+
+def test_live_checked_and_generated_contracts_publish_channel_operation_projection():
+    from app.main import app
+
+    repo_root = API_SERVICE.parent
+    live = app.openapi()["components"]["schemas"]
+    checked = yaml.safe_load(
+        (repo_root / "api/openapi.yaml").read_text(encoding="utf-8")
+    )["components"]["schemas"]
+    for schemas in (live, checked):
+        assert "ChannelEmulatorOperationEvidenceProjection" in schemas
+        outcome = schemas["ExecutionEvidenceOutcome"]
+        assert "channel_emulator_operation_evidence" in outcome["properties"]
+        assert "channel_emulator_operation_evidence" in outcome["required"]
+
+    generated = (
+        repo_root / "gui/src/types/api.generated.ts"
+    ).read_text(encoding="utf-8")
+    assert "ChannelEmulatorOperationEvidenceProjection:" in generated
+    assert "channel_emulator_operation_evidence:" in generated

@@ -69,6 +69,14 @@ ChannelOperationTerminalState = Literal[
     "failed",
     "cancelled",
 ]
+ChannelOperationEvidenceStatus = Literal[
+    "not_available",
+    "pending",
+    "legacy",
+    "verified",
+    "diagnostic",
+    "invalid",
+]
 
 _RECEIPT_OPERATIONS = frozenset(
     (*CHANNEL_EMULATOR_OPERATIONS, "load_channel", "transport_release")
@@ -296,6 +304,76 @@ class FrozenChannelOperationReceipt(BaseModel):
         ):
             raise ValueError("unavailable receipt cannot claim successful operation")
         return self
+
+
+class ChannelOperationFieldEvidenceProjection(BaseModel):
+    """Redacted public field evidence; requested/applied values stay private."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    field: NonEmptyString
+    status: ChannelOperationFieldStatus
+    provenance: ChannelOperationProvenance
+    exchange_ids: tuple[NonEmptyString, ...] = ()
+    source_reference: NonEmptyString | None = None
+
+
+class ChannelOperationReceiptEvidenceProjection(BaseModel):
+    """One immutable receipt's public sequence and evidence classification."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sequence: NonNegativeInt
+    phase: ChannelOperationPhase
+    operation: NonEmptyString
+    terminal_state: ChannelOperationTerminalState
+    operation_succeeded: bool | None
+    simulated: bool
+    status: Literal["verified", "diagnostic", "rejected", "failed", "cancelled"]
+    fields: tuple[ChannelOperationFieldEvidenceProjection, ...]
+    exchange_ids: tuple[NonEmptyString, ...] = ()
+    error_queue_exchange_ids: tuple[NonEmptyString, ...] = ()
+
+
+class ChannelOperationSessionEvidenceProjection(BaseModel):
+    """Public ordered receipt chain for one effective execution session."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session_id: NonEmptyString
+    operation_scope: NonEmptyString | None
+    status: Literal["legacy", "verified", "diagnostic"]
+    receipt_count: NonNegativeInt | None
+    receipt_chain_digest: NonEmptyString | None
+    receipts: tuple[ChannelOperationReceiptEvidenceProjection, ...] = ()
+
+
+class ChannelEmulatorOperationEvidenceProjection(BaseModel):
+    """Server-owned CE audit projection shared by every formal consumer."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_serialization_defaults_required=True,
+    )
+
+    schema_version: Literal[1] = 1
+    status: ChannelOperationEvidenceStatus
+    reasons: tuple[str, ...] = ()
+    sessions: tuple[ChannelOperationSessionEvidenceProjection, ...] = ()
+
+
+def empty_channel_emulator_operation_evidence(
+    *,
+    status: ChannelOperationEvidenceStatus = "not_available",
+    reasons: tuple[str, ...] = (),
+) -> ChannelEmulatorOperationEvidenceProjection:
+    """Build the conservative default used for historical/non-CE outcomes."""
+
+    return ChannelEmulatorOperationEvidenceProjection(
+        status=status,
+        reasons=reasons,
+    )
 
 
 def validate_channel_emulator_operation_receipt(value: Any) -> dict[str, Any]:
