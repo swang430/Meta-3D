@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -1753,6 +1754,20 @@ def test_terminal_v1_validates_its_original_payload_without_v2_defaults():
     )
     with pytest.raises(ValueError, match="v1.*cannot claim receipts"):
         validate_channel_emulator_terminal_evidence(backfilled)
+
+
+def test_terminal_v2_accepts_the_json_array_shape_persisted_by_jsonb():
+    from app.services.channel_emulator_execution_session import (
+        validate_channel_emulator_terminal_evidence,
+    )
+    from tests.test_p2_60_channel_operation_receipt import (
+        _v2_terminal_projection_fixture,
+    )
+
+    _execution, terminal, _receipts = _v2_terminal_projection_fixture()
+    persisted = json.loads(json.dumps(terminal))
+
+    assert validate_channel_emulator_terminal_evidence(persisted) == persisted
 
 
 def test_p2_66_validates_safe_idle_action_per_execution_scope():

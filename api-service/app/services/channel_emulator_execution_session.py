@@ -17,6 +17,7 @@ from pydantic import (
     NonNegativeInt,
     StringConstraints,
     ValidationError,
+    field_validator,
     model_validator,
 )
 
@@ -120,6 +121,13 @@ class FrozenChannelEmulatorTerminalEvidence(BaseModel):
     safe_idle_receipt_id: NonEmptyString | None = None
     transport_release_receipt_id: NonEmptyString | None = None
     digest: NonEmptyString
+
+    @field_validator("operation_receipt_ids", mode="before")
+    @classmethod
+    def accept_persisted_receipt_id_array(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return tuple(value)
+        return value
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "FrozenChannelEmulatorTerminalEvidence":

@@ -754,3 +754,298 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
 
     assert missing_readback["fields"][0]["status"] == "unknown"
     assert missing_readback["fields"][0]["applied"] is None
+
+
+def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_receipt_chain_digest,
+    )
+    from app.hal.channel_emulator import MockChannelEmulator
+    from tests.test_p2_59_3_channel_emulator_session import (
+        _RealCe,
+        _execution_with_ce_evidence,
+        _frozen_binding_for_driver,
+        _frozen_plan,
+    )
+
+    driver = (
+        MockChannelEmulator("ce-runtime", {"model": "Mock Channel Emulator"})
+        if execution_mode == "simulated"
+        else _RealCe()
+    )
+    binding = _frozen_binding_for_driver(driver, execution_mode=execution_mode)
+    plan = _frozen_plan(driver)
+    session_id = "session-v2"
+    lease_id = "lease-v2"
+    instrument_id = "ce-runtime"
+    simulated = execution_mode == "simulated"
+
+    def operation_receipt(
+        *,
+        receipt_id: str,
+        sequence: int,
+        phase: str,
+        operation: str,
+        field: str,
+        requested,
+        applied,
+        provenance: str,
+        exchange_ids: list[str],
+        source_reference: str,
+    ) -> dict:
+        payload = {
+            "schema_version": 1,
+            "receipt_id": receipt_id,
+            "session_id": session_id,
+            "operation_scope": "formal-case:execution-1",
+            "execution_id": "execution-1",
+            "measurement_attempt_id": "attempt-v2",
+            "binding_digest": binding["binding_digest"],
+            "binding_freeze_digest": binding["digest"],
+            "plan_digest": plan["digest"],
+            "asset_digest": None,
+            "lease_id": lease_id,
+            "instrument_id": instrument_id,
+            "adapter_id": plan["adapter_id"],
+            "execution_mode": execution_mode,
+            "sequence": sequence,
+            "phase": phase,
+            "operation": operation,
+            "invocation_id": f"invocation-{sequence}",
+            "terminal_state": "completed",
+            "operation_succeeded": True,
+            "simulated": simulated,
+            "fields": [
+                {
+                    "field": field,
+                    "requested": requested,
+                    "applied": None if simulated else applied,
+                    "applied_present": not simulated,
+                    "status": "unknown" if simulated else "confirmed",
+                    "provenance": "simulated" if simulated else provenance,
+                    "exchange_ids": [] if simulated else exchange_ids,
+                    "source_reference": None if simulated else source_reference,
+                }
+            ],
+            "exchange_ids": [] if simulated else exchange_ids,
+            "error_queue_exchange_ids": [],
+            "error_type": None,
+        }
+        return {**payload, "digest": canonical_payload_digest(payload)}
+
+    safe = operation_receipt(
+        receipt_id="receipt-safe",
+        sequence=0,
+        phase="stop",
+        operation="stop_emulation",
+        field="state",
+        requested="STOPPED",
+        applied="STOPPED",
+        provenance="runtime_state",
+        exchange_ids=["exchange-safe"],
+        source_reference="f64.simulation_state",
+    )
+    release = operation_receipt(
+        receipt_id="receipt-release",
+        sequence=1,
+        phase="release",
+        operation="transport_release",
+        field="control_mode",
+        requested="local",
+        applied="local",
+        provenance="transport_release",
+        exchange_ids=[],
+        source_reference="instrument_test_lease.release_to_local_control",
+    )
+    receipts = [safe, release]
+    terminal_payload = {
+        "schema_version": 2,
+        "session_id": session_id,
+        "operation_scope": "formal-case:execution-1",
+        "execution_id": "execution-1",
+        "binding_digest": binding["binding_digest"],
+        "binding_freeze_digest": binding["digest"],
+        "plan_digest": plan["digest"],
+        "execution_mode": execution_mode,
+        "adapter_id": plan["adapter_id"],
+        "driver_module": binding["expected_driver_module"],
+        "driver_name": binding["expected_driver_name"],
+        "driver_connection": binding["expected_driver_connection"],
+        "lease_id": lease_id,
+        "instrument_id": instrument_id,
+        "remote_acquired_confirmed": None if simulated else True,
+        "required_safe_idle_action": "stop_emulation",
+        "safe_idle_action": "stop_emulation",
+        "safe_idle_confirmed": True,
+        "transport_released_confirmed": None if simulated else True,
+        "operation_succeeded": True,
+        "terminal_state": "completed",
+        "error_type": None,
+        "safe_idle_error_type": None,
+        "operation_receipt_count": len(receipts),
+        "operation_receipts_digest": (
+            channel_emulator_operation_receipt_chain_digest(receipts)
+        ),
+        "operation_receipt_ids": tuple(item["receipt_id"] for item in receipts),
+        "safe_idle_receipt_id": safe["receipt_id"],
+        "transport_release_receipt_id": release["receipt_id"],
+    }
+    terminal = {
+        **terminal_payload,
+        "digest": canonical_payload_digest(terminal_payload),
+    }
+    execution = _execution_with_ce_evidence(binding, plan, terminal)
+    execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY] = receipts
+    execution.config[CE_TERMINAL_EVIDENCE_CONFIG_KEY] = [terminal]
+    return execution, terminal, receipts
+
+
+def _redigest(value: dict) -> None:
+    value["digest"] = canonical_payload_digest(
+        {key: item for key, item in value.items() if key != "digest"}
+    )
+
+
+def test_p2_66_accepts_only_a_complete_real_v2_receipt_chain():
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_receipt",
+        "receipt_chain_digest",
+        "foreign_session",
+        "foreign_lease",
+        "foreign_instrument",
+        "foreign_asset",
+        "unknown_field",
+        "fake_release_field",
+        "transport_provenance_on_safe",
+    ],
+)
+def test_p2_66_rejects_incomplete_or_foreign_v2_receipt_chain(mutation):
+    from app.services.channel_emulator_operation_receipt import (
+        CE_OPERATION_RECEIPTS_CONFIG_KEY,
+        channel_emulator_operation_receipt_chain_digest,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, terminal, receipts = _v2_terminal_projection_fixture()
+    if mutation == "missing_receipt":
+        execution.config[CE_OPERATION_RECEIPTS_CONFIG_KEY] = receipts[:-1]
+    elif mutation == "receipt_chain_digest":
+        terminal["operation_receipts_digest"] = "0" * 64
+        _redigest(terminal)
+    else:
+        receipt = receipts[0]
+        if mutation == "foreign_session":
+            receipt["session_id"] = "foreign-session"
+        elif mutation == "foreign_lease":
+            receipt["lease_id"] = "foreign-lease"
+        elif mutation == "foreign_instrument":
+            receipt["instrument_id"] = "foreign-instrument"
+        elif mutation == "foreign_asset":
+            for item in receipts:
+                item["asset_digest"] = "foreign-asset"
+                _redigest(item)
+        elif mutation == "fake_release_field":
+            receipt = receipts[1]
+            receipt["fields"][0].update(
+                field="unrelated",
+                requested="local",
+                applied="local",
+            )
+        elif mutation == "transport_provenance_on_safe":
+            receipt["fields"][0].update(
+                provenance="transport_release",
+                exchange_ids=[],
+                source_reference="instrument_test_lease.release_to_local_control",
+            )
+            receipt["exchange_ids"] = []
+        else:
+            receipt["fields"][0].update(
+                applied=None,
+                applied_present=False,
+                status="unknown",
+                provenance="command_error_queue",
+                exchange_ids=[],
+                source_reference=None,
+            )
+            receipt["exchange_ids"] = []
+        if mutation != "foreign_asset":
+            _redigest(receipt)
+        try:
+            terminal["operation_receipts_digest"] = (
+                channel_emulator_operation_receipt_chain_digest(receipts)
+            )
+        except ValueError:
+            pass
+        else:
+            _redigest(terminal)
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    assert classification == "invalid"
+    assert reason
+
+
+def test_p2_66_keeps_simulated_v2_receipts_diagnostic():
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture(
+        execution_mode="simulated"
+    )
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    assert classification == "diagnostic"
+    assert "simulated" in reason
+
+
+def test_p2_66_requires_v2_terminal_when_measurement_attempt_already_completed():
+    from app.services.channel_emulator_execution_session import (
+        CE_TERMINAL_EVIDENCE_CONFIG_KEY,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+    execution.status = "running"
+    execution.config.pop(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    execution.config["base_station_execution_evidence"] = {
+        "current_measurement_attempt_state": "completed"
+    }
+
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    )
+    assert classification == "invalid"
+    assert "terminal evidence" in reason
