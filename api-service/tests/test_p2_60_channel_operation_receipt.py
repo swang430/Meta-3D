@@ -733,6 +733,8 @@ def test_execution_bound_effectful_calls_use_the_common_recorder():
             "await self.emulator.load_channel(",
         ),
         "app/services/mimo_ota/executors/measure.py": (
+            "await emulator.ensure_topology(",
+            "await emulator.measure_input(",
             "await emulator.set_output_level_dbm(",
             "await emulator.set_passthrough_mode(",
             "await emulator.start_emulation(",
@@ -741,6 +743,10 @@ def test_execution_bound_effectful_calls_use_the_common_recorder():
             "await emulator.set_crest_factor(",
         ),
         "app/services/input_level_controller.py": (
+            "await self._ce.measure_input(",
+            "await self._ce.get_input_level_limits(",
+            "await self._ce.get_group_clipping(",
+            "await self._ce.get_system_status(",
             "await self._ce.autoset_inputs(",
             "await self._ce.set_input_measurement_mode(",
             "await self._ce.set_burst_trigger_level(",
@@ -1215,6 +1221,36 @@ def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
             "autoset_inputs",
             [1, 2],
             "input_ports",
+            True,
+        ),
+        (
+            "ensure_topology",
+            "active_ports",
+            "topology",
+            True,
+        ),
+        (
+            "measure_input",
+            {"input_port": 1, "measurement_time_s": 1.0},
+            "measurement",
+            True,
+        ),
+        (
+            "get_input_level_limits",
+            {"input_port": 1},
+            "limits",
+            True,
+        ),
+        (
+            "get_group_clipping",
+            {"group_num": 1, "reset": True},
+            "clipping",
+            True,
+        ),
+        (
+            "get_system_status",
+            "channel_emulator",
+            "system_status",
             True,
         ),
         (

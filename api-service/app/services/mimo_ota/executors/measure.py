@@ -130,6 +130,34 @@ async def _invoke_channel_emulator_operation(
     )
 
 
+async def _observe_channel_emulator_operation(
+    recorder: Any | None,
+    *,
+    phase: str,
+    operation: str,
+    requested: Dict[str, Any],
+    invoke: Any,
+) -> Any:
+    """Return an observation while binding it to the execution receipt chain."""
+
+    if recorder is None:
+        return await invoke()
+    observed: Any = None
+
+    async def capture_observation() -> bool:
+        nonlocal observed
+        observed = await invoke()
+        return observed is not None
+
+    recorded = await recorder(
+        phase=phase,
+        operation=operation,
+        requested=requested,
+        invoke=capture_observation,
+    )
+    return observed if recorded else None
+
+
 def _frozen_mac_measurement_basis(profile: FrozenMacTestProfile) -> int:
     """Return the one profile-owned statistics basis for wait/request/audit."""
 
@@ -3855,7 +3883,13 @@ class MeasureExecutor(IStepExecutor):
             return plan.rejection("set_output_gain")
         if plan.planned("ensure_topology"):
             try:
-                await emulator.ensure_topology()
+                await _invoke_channel_emulator_operation(
+                    operation_recorder,
+                    phase="configure",
+                    operation="ensure_topology",
+                    requested={"topology": "active_ports"},
+                    invoke=emulator.ensure_topology,
+                )
             except Exception:  # noqa: BLE001 — 补读失败等同"读不到", 下面 fail-loud
                 pass
         ports = _read_port_list(emulator, "get_active_output_ports")
@@ -3969,7 +4003,18 @@ class MeasureExecutor(IStepExecutor):
         # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
         if plan.planned("measure_input"):
             for i in in_ports:
-                m = await emulator.measure_input(i, 1.0)
+                m = await _observe_channel_emulator_operation(
+                    operation_recorder,
+                    phase="adjust",
+                    operation="measure_input",
+                    requested={
+                        "measurement": {
+                            "input_port": i,
+                            "measurement_time_s": 1.0,
+                        }
+                    },
+                    invoke=lambda i=i: emulator.measure_input(i, 1.0),
+                )
                 payload["readback"].append({
                     "input_num": i,
                     "avg_dbm": m[0] if m else None,
@@ -4079,7 +4124,13 @@ class MeasureExecutor(IStepExecutor):
         # 而闭环报 success=True。判定与下发必须同源, 否则门形同虚设。
         if channel_emulator_plan.planned("ensure_topology"):
             try:
-                await emulator.ensure_topology()
+                await _invoke_channel_emulator_operation(
+                    operation_recorder,
+                    phase="configure",
+                    operation="ensure_topology",
+                    requested={"topology": "active_ports"},
+                    invoke=emulator.ensure_topology,
+                )
             except Exception:  # noqa: BLE001 — 补读失败等同读不到, 走下面的降级
                 pass
         ce_inputs = _read_port_count(emulator, "get_active_input_count")

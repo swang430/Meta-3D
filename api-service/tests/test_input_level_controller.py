@@ -131,6 +131,30 @@ def _coupled_measure(bs: _FakeBS, cable_loss_db: float = 10.0, crest_db: float =
 # ---------------------------------------------------------------------------
 
 class TestOneShotConvergence:
+    async def test_all_formal_observations_flow_through_operation_recorder(self):
+        bs = _FakeBS()
+        ce = _FakeCE(measure=_coupled_measure(bs))
+        recorded: list[str] = []
+
+        async def recorder(*, phase, operation, requested, invoke):
+            recorded.append(operation)
+            return await invoke()
+
+        result = await InputLevelController(
+            ce,
+            bs,
+            active_inputs=(1,),
+            channel_operation_recorder=recorder,
+        ).establish()
+
+        assert result.success is True
+        assert {
+            "measure_input",
+            "get_input_level_limits",
+            "get_group_clipping",
+            "get_system_status",
+        }.issubset(recorded)
+
     async def test_clean_signal_converges_first_iter(self):
         # 初始 UXM=-10, cable=10 → F64 input avg=-20。limits (-23, 0), target_max = 0-15 = -15。
         # avg=-20 ∈ [lo=-23, target_max=-15] → 收敛, 1 轮。

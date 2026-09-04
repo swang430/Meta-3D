@@ -141,6 +141,32 @@ class InputLevelController:
             invoke=invoke,
         )
 
+    async def _observe_channel_operation(
+        self,
+        *,
+        operation: str,
+        requested: dict[str, Any],
+        invoke: Any,
+    ) -> Any:
+        """Bind a non-boolean observation to the same execution receipt chain."""
+
+        if self._channel_operation_recorder is None:
+            return await invoke()
+        observed: Any = None
+
+        async def capture_observation() -> bool:
+            nonlocal observed
+            observed = await invoke()
+            return observed is not None
+
+        recorded = await self._channel_operation_recorder(
+            phase="adjust",
+            operation=operation,
+            requested=requested,
+            invoke=capture_observation,
+        )
+        return observed if recorded else None
+
     async def establish(self) -> InputLevelResult:
         """跑下行静态闭环, 返回收敛结果或失败原因。"""
         base_station_power = self._initial_base_station
@@ -202,8 +228,20 @@ class InputLevelController:
                 )
 
             # F: clipping + 系统警告 (cut-off)
-            clipping = await self._ce.get_group_clipping(self._group, reset=True)
-            status = await self._ce.get_system_status()
+            clipping = await self._observe_channel_operation(
+                operation="get_group_clipping",
+                requested={
+                    "clipping": {"group_num": self._group, "reset": True}
+                },
+                invoke=lambda: self._ce.get_group_clipping(
+                    self._group, reset=True
+                ),
+            )
+            status = await self._observe_channel_operation(
+                operation="get_system_status",
+                requested={"system_status": "channel_emulator"},
+                invoke=self._ce.get_system_status,
+            )
             warnings: List[str] = list(status[1]) if status else []
             cut_off = any(
                 "cut-off" in w.lower() or "cut_off" in w.lower() or "cutoff" in w.lower()
@@ -319,12 +357,25 @@ class InputLevelController:
         out_lo = False
         out_hi = False
         for in_num in self._inputs:
-            meas = await self._ce.measure_input(in_num, 1.0)
+            meas = await self._observe_channel_operation(
+                operation="measure_input",
+                requested={
+                    "measurement": {
+                        "input_port": in_num,
+                        "measurement_time_s": 1.0,
+                    }
+                },
+                invoke=lambda in_num=in_num: self._ce.measure_input(in_num, 1.0),
+            )
             if meas is None:
                 return op_point, out_lo, out_hi, f"measure_input({in_num}) 失败 (无信号)"
             avg, crest = meas
             op_point.append(InputOperatingPoint(in_num, avg, crest))
-            limits = await self._ce.get_input_level_limits(in_num)
+            limits = await self._observe_channel_operation(
+                operation="get_input_level_limits",
+                requested={"limits": {"input_port": in_num}},
+                invoke=lambda in_num=in_num: self._ce.get_input_level_limits(in_num),
+            )
             if limits is None:
                 # 无窗口 → 无法证明 avg 在限内, 不能默认通过 (Codex on PR #96)。
                 return op_point, out_lo, out_hi, (
