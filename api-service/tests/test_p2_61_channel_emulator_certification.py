@@ -528,7 +528,7 @@ def _qualification_hal(*, firmware_version="9.8.7"):
     return SimpleNamespace(drivers={"channelEmulator": driver})
 
 
-def test_hardware_identity_drift_is_diagnostic_before_first_io():
+def test_idle_or_stale_identity_cache_does_not_downgrade_qualification():
     db, execution, case, _certification = _qualification_fixture()
 
     frozen = freeze_channel_emulator_execution_qualification(
@@ -538,8 +538,58 @@ def test_hardware_identity_drift_is_diagnostic_before_first_io():
         case,
     )
 
-    assert frozen.classification == "diagnostic"
-    assert frozen.reasons == ("site_certification_identity_mismatch",)
+    assert frozen.classification == "formal"
+    assert frozen.reasons == ()
+
+
+def test_acquired_identity_is_checked_against_frozen_formal_certification():
+    from app.services.channel_emulator_certification import (
+        validate_acquired_channel_emulator_certification_identity,
+    )
+
+    db, execution, case, certification = _qualification_fixture()
+    freeze_channel_emulator_execution_qualification(
+        db,
+        _qualification_hal(firmware_version="idle-cache-may-be-empty"),
+        execution,
+        case,
+    )
+
+    assert (
+        validate_acquired_channel_emulator_certification_identity(
+            execution.config,
+            build_channel_emulator_certification_identity(
+                instrument_id="ce-runtime",
+                adapter_id="propsim_f64",
+                model="PROPSIM F64",
+                firmware_version="9.8.7",
+                serial_number="SN-F64",
+                options=("F64-OPT",),
+                options_observed=True,
+                simulated=False,
+                captured_from_live_connection=True,
+            ),
+        )
+        is None
+    )
+    assert (
+        validate_acquired_channel_emulator_certification_identity(
+            execution.config,
+            build_channel_emulator_certification_identity(
+                instrument_id="ce-runtime",
+                adapter_id="propsim_f64",
+                model="PROPSIM F64",
+                firmware_version="changed-after-acquire",
+                serial_number="SN-F64",
+                options=("F64-OPT",),
+                options_observed=True,
+                simulated=False,
+                captured_from_live_connection=True,
+            ),
+        )
+        == "acquired channelEmulator identity does not match frozen site certification"
+    )
+    assert certification.identity_digest != ""
 
 
 def test_active_exact_scope_certification_freezes_formal_qualification_once():

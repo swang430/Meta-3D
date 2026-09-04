@@ -661,6 +661,51 @@ def validate_frozen_channel_emulator_execution_qualification(raw: Any) -> str | 
     return None
 
 
+def validate_acquired_channel_emulator_certification_identity(
+    execution_config: Any,
+    acquired_identity: Any,
+) -> str | None:
+    """Bind a frozen formal qualification to identity observed after acquire.
+
+    F64 Local handoff deliberately clears its live identity cache.  Qualification
+    freeze therefore validates only immutable certification scope; the actual
+    hardware identity is compared here, after the lease has acquired Remote and
+    before the execution body can issue any test operation.
+    """
+
+    if not isinstance(execution_config, dict):
+        return "frozen channelEmulator execution qualification is missing or malformed"
+    raw_qualification = execution_config.get(
+        CE_EXECUTION_QUALIFICATION_CONFIG_KEY
+    )
+    if validate_frozen_channel_emulator_execution_qualification(
+        raw_qualification
+    ) is not None:
+        return "frozen channelEmulator execution qualification is invalid"
+    qualification = ChannelEmulatorExecutionQualification.model_validate(
+        raw_qualification
+    )
+    if qualification.classification != "formal":
+        return None
+    try:
+        identity = (
+            acquired_identity
+            if isinstance(acquired_identity, ChannelEmulatorCertificationIdentity)
+            else ChannelEmulatorCertificationIdentity.model_validate(acquired_identity)
+        )
+    except (TypeError, ValueError, ValidationError):
+        return "acquired channelEmulator certification identity is invalid"
+    if (
+        not identity.certification_eligible
+        or identity.adapter_id != qualification.adapter_id
+        or identity.digest != qualification.identity_digest
+    ):
+        return (
+            "acquired channelEmulator identity does not match frozen site certification"
+        )
+    return None
+
+
 def freeze_channel_emulator_execution_qualification(
     db,
     hal,
@@ -681,7 +726,6 @@ def freeze_channel_emulator_execution_qualification(
         CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
         CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
         CE_PLAN_FREEZE_CONFIG_KEY,
-        channel_emulator_for_execution_plan,
         validate_frozen_channel_emulator_execution_plan,
         validate_frozen_channel_emulator_load_context,
     )
@@ -792,36 +836,6 @@ def freeze_channel_emulator_execution_qualification(
         }
         if any(getattr(certification, key) != value for key, value in expected.items()):
             reasons.append("site_certification_scope_mismatch")
-        elif (
-            binding.get("execution_mode") == "real"
-            and resolved.get("status") == "configured"
-        ):
-            driver, _source = channel_emulator_for_execution_plan(hal)
-            projector = getattr(
-                driver,
-                "capture_channel_emulator_certification_identity",
-                None,
-            )
-            try:
-                current_identity = projector() if callable(projector) else None
-                if current_identity is not None and not isinstance(
-                    current_identity,
-                    ChannelEmulatorCertificationIdentity,
-                ):
-                    current_identity = (
-                        ChannelEmulatorCertificationIdentity.model_validate(
-                            current_identity
-                        )
-                    )
-            except (TypeError, ValueError, ValidationError):
-                current_identity = None
-            if (
-                current_identity is None
-                or not current_identity.certification_eligible
-                or current_identity.adapter_id != plan["adapter_id"]
-                or current_identity.digest != certification.identity_digest
-            ):
-                reasons.append("site_certification_identity_mismatch")
     payload: dict[str, Any] = {
         "schema_version": 1,
         "classification": "diagnostic" if reasons else "formal",

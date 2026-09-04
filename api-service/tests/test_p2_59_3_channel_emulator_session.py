@@ -211,6 +211,30 @@ def _scope_execution(plan: dict, *, frozen_mimo: dict | None = None):
         {"engine_mode": "keysight_gcm", "emulation_file": "scenario.smu"}
     ).model_dump(mode="json")
     base_payload = {MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo}
+    qualification_payload = {
+        "schema_version": 1,
+        "classification": "diagnostic",
+        "policy_mode": "diagnostic",
+        "diagnostic_actor": "test",
+        "diagnostic_reasons": ["test_scope"],
+        "base_station_qualification_digest": "a" * 64,
+        "lab_profile_id": "lab-1",
+        "instrument_connection_id": "ce-connection",
+        "instrument_model_id": "ce-model",
+        "binding_digest": BINDING_DIGEST,
+        "plan_digest": plan["digest"],
+        "asset_digest": "c" * 64,
+        "adapter_id": plan["adapter_id"],
+        "load_mode": plan["requested_load_mode"],
+        "site_certification": None,
+        "site_certification_digest": None,
+        "identity_digest": None,
+        "reasons": ["test_scope"],
+        "frozen_at": "2026-09-05T00:00:00Z",
+    }
+    qualification_payload["qualification_digest"] = canonical_payload_digest(
+        qualification_payload
+    )
     return SimpleNamespace(
         id="execution-1",
         config={
@@ -222,6 +246,7 @@ def _scope_execution(plan: dict, *, frozen_mimo: dict | None = None):
             CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: _load_request_for_evidence(
                 frozen_mimo, plan
             ),
+            "channel_emulator_execution_qualification": qualification_payload,
         },
     )
 
@@ -406,6 +431,40 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
 
     assert driver.events == ["acquire", "operation", "safe-idle", "release"]
     assert outcome.channel_emulator_transport_released_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_scope_rejects_acquired_identity_before_execution_body(monkeypatch):
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+    hal = SimpleNamespace(drivers={"channelEmulator": driver}, clear_metrics_cache=None)
+    _install_real_lease(monkeypatch, module, hal)
+    execution = _scope_execution(_frozen_plan(driver))
+    monkeypatch.setattr(
+        module,
+        "validate_acquired_channel_emulator_certification_identity",
+        lambda _config, _identity: (
+            "acquired channelEmulator identity does not match frozen site certification"
+        ),
+    )
+
+    with pytest.raises(
+        module.ChannelEmulatorExecutionSessionError,
+        match="does not match frozen site certification",
+    ):
+        async with module.channel_emulator_execution_scope(
+            None,
+            execution,
+            purpose="formal-case:execution-1",
+            binding=_frozen_binding_for_driver(driver, execution_mode="real"),
+            plan=_frozen_plan(driver),
+            hal=hal,
+            validate_before_remote=lambda _hal: None,
+        ):
+            raise AssertionError("execution body must not run")
+
+    assert driver.events == ["acquire", "safe-idle", "release"]
 
 
 @pytest.mark.asyncio

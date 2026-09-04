@@ -27,6 +27,8 @@ test('GUI consumes only the server certification projection and dedicated writes
   const mocks = read('../api/mockDatabase.ts')
 
   assert.match(app, /channel_emulator_site_certification/)
+  assert.match(app, /fetchReadiness\(selectedLabProfileId/)
+  assert.match(app, /channelEmulatorCertificationPreview\?\.status === 'formal_ready'/)
   assert.match(app, /certifyChannelEmulatorSite/)
   assert.match(app, /revokeChannelEmulatorSiteCertification/)
   assert.match(readiness, /channel_emulator_site_certification_preview/)

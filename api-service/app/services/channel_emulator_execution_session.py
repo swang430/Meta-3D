@@ -41,6 +41,7 @@ from app.services.channel_emulator_execution_plan import (
 )
 from app.services.channel_emulator_certification import (
     ChannelEmulatorCertificationIdentity,
+    validate_acquired_channel_emulator_certification_identity,
 )
 from app.services.channel_emulator_operation_receipt import (
     ChannelEmulatorOperationRecorderOwner,
@@ -706,32 +707,67 @@ async def channel_emulator_execution_scope(
                             outcome.channel_emulator_instrument_id
                             or getattr(acquired_driver, "instrument_id", None)
                         )
-                        identity_capture = getattr(
-                            acquired_driver,
-                            "capture_channel_emulator_certification_identity",
-                            None,
-                        )
-                        if not callable(identity_capture):
-                            raise ChannelEmulatorExecutionSessionError(
-                                "channelEmulator driver has no certification identity protocol"
+                        try:
+                            identity_capture = getattr(
+                                acquired_driver,
+                                "capture_channel_emulator_certification_identity",
+                                None,
                             )
-                        hardware_identity = ChannelEmulatorCertificationIdentity.model_validate(
-                            identity_capture()
-                        )
-                        if hardware_identity.instrument_id != instrument_id:
-                            raise ChannelEmulatorExecutionSessionError(
-                                "channelEmulator acquired instrument identity drift"
+                            if not callable(identity_capture):
+                                raise ChannelEmulatorExecutionSessionError(
+                                    "channelEmulator driver has no certification identity protocol"
+                                )
+                            hardware_identity = (
+                                ChannelEmulatorCertificationIdentity.model_validate(
+                                    identity_capture()
+                                )
                             )
-                        if hardware_identity.adapter_id != parsed_plan.adapter_id:
-                            raise ChannelEmulatorExecutionSessionError(
-                                "channelEmulator acquired adapter identity drift"
+                            if hardware_identity.instrument_id != instrument_id:
+                                raise ChannelEmulatorExecutionSessionError(
+                                    "channelEmulator acquired instrument identity drift"
+                                )
+                            if hardware_identity.adapter_id != parsed_plan.adapter_id:
+                                raise ChannelEmulatorExecutionSessionError(
+                                    "channelEmulator acquired adapter identity drift"
+                                )
+                            if hardware_identity.simulated != (
+                                binding_fields.get("execution_mode") == "simulated"
+                            ):
+                                raise ChannelEmulatorExecutionSessionError(
+                                    "channelEmulator acquired identity execution mode drift"
+                                )
+                            certification_identity_error = (
+                                validate_acquired_channel_emulator_certification_identity(
+                                    execution_config,
+                                    hardware_identity,
+                                )
                             )
-                        if hardware_identity.simulated != (
-                            binding_fields.get("execution_mode") == "simulated"
-                        ):
-                            raise ChannelEmulatorExecutionSessionError(
-                                "channelEmulator acquired identity execution mode drift"
+                            if certification_identity_error is not None:
+                                raise ChannelEmulatorExecutionSessionError(
+                                    certification_identity_error
+                                )
+                        except BaseException as identity_error:
+                            # Remote has already been acquired.  A rejected identity
+                            # must still receive the same conservative SAFE_IDLE action
+                            # before the lease returns Local control.
+                            identity_token = _channel_emulator_safe_idle_owner.set(
+                                safe_idle_state
                             )
+                            try:
+                                await ensure_channel_emulator_safe_idle()
+                            except BaseException as safe_idle_error:
+                                _attach_secondary_failure(
+                                    identity_error,
+                                    attribute="channel_emulator_safe_idle_error",
+                                    stage="SAFE_IDLE",
+                                    secondary=safe_idle_error,
+                                )
+                                logger.exception(
+                                    "channelEmulator identity rejection safe idle failed"
+                                )
+                            finally:
+                                _channel_emulator_safe_idle_owner.reset(identity_token)
+                            raise
                         recorder_owner = ChannelEmulatorOperationRecorderOwner(
                             db=db,
                             execution_pk=execution_pk,

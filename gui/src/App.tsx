@@ -83,6 +83,7 @@ import {
   fetchActiveChamber,
   fetchTestCaseDetail,
   fetchInstrumentCatalog,
+  fetchReadiness,
   fetchChannelModels,
   addChannelModel,
   removeChannelModel,
@@ -1718,6 +1719,13 @@ function EquipmentManager() {
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
   })
+  const channelEmulatorReadinessQuery = useQuery({
+    queryKey: ['cockpit', 'readiness', selectedLabProfileId ?? 'unselected'],
+    queryFn: () => fetchReadiness(selectedLabProfileId!),
+    enabled: Boolean(selectedLabProfileId),
+  })
+  const channelEmulatorCertificationPreview =
+    channelEmulatorReadinessQuery.data?.channel_emulator_site_certification_preview
 
   const categories = useMemo(() => data?.categories ?? [], [data])
 
@@ -2481,12 +2489,17 @@ function EquipmentManager() {
                         <Stack gap="xs">
                           <Text fw={600} size="sm">信道仿真器现场认证</Text>
                           <Alert
-                            color={category.connection.channel_emulator_site_certification?.status === 'active' ? 'green' : 'yellow'}
+                            color={channelEmulatorCertificationPreview?.status === 'formal_ready'
+                              ? 'green'
+                              : channelEmulatorCertificationPreview?.status === 'invalid'
+                                ? 'red'
+                                : 'yellow'}
                             variant="light"
                           >
-                            当前状态：{category.connection.channel_emulator_site_certification?.status === 'active'
-                              ? `已认证 · ${category.connection.channel_emulator_site_certification.certified_at}`
-                              : '未认证或已撤销，仅可诊断（UNKNOWN/N/A）'}。身份、计划、资产与证据均由服务器从来源执行核验。
+                            当前状态：{channelEmulatorCertificationPreview?.status === 'formal_ready'
+                              ? `当前范围已认证 · ${channelEmulatorCertificationPreview.site_certification?.certified_at}`
+                              : channelEmulatorCertificationPreview?.detail
+                                ?? '当前范围尚未由服务器核验，仅可诊断（UNKNOWN/N/A）'}。身份、计划、资产与证据均由服务器投影。
                           </Alert>
                           <TextInput
                             label="来源执行 ID"
