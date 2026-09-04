@@ -98,6 +98,28 @@ class TestSystInfoKeywordScan:
         })
         opts = await d._probe_installed_options()
         assert opts == []
+        assert d._certification_options_observed is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reply",
+        (
+            "",
+            "   ",
+            '-100,"ATE command not supported"',
+            '0,"No error"',
+        ),
+    )
+    async def test_invalid_syst_info_reply_keeps_certification_options_unobserved(
+        self,
+        reply,
+    ):
+        d = _make_driver_with_query_table({"SYST:INFO?": reply})
+
+        opts = await d._probe_installed_options()
+
+        assert opts == []
+        assert d._certification_options_observed is False
 
     @pytest.mark.asyncio
     async def test_syst_info_failure_yields_empty_and_does_not_raise(self):
@@ -294,3 +316,4 @@ class TestScanRejectsInlineErrorPayload:
         })
         opts = await d._probe_installed_options()
         assert opts == []
+        assert d._certification_options_observed is False

@@ -5902,8 +5902,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         Single source: SYST:INFO? keyword scan (manual §20.4.2.4 — the
         reply carries the license list). Returns canonical option tokens.
-        Missing keyword = "license absent" (fail-closed; explicit config
-        can override). Never raises; SYST:INFO? failure is logged and
+        Missing keyword in a valid F64 system-info reply = "license absent"
+        (fail-closed; explicit config can override runtime capability).  Empty,
+        SCPI-error, or otherwise malformed replies keep certification option
+        observation unknown.  Never raises; SYST:INFO? failure is logged and
         yields an empty list.
         """
         discovered: List[str] = []
@@ -5915,12 +5917,27 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # parse in connect() — see parse_f64_sys_info).
         try:
             info_raw = await self._query("SYST:INFO?")
-            self._certification_options_observed = True
-            info_lower = (info_raw or "").lower()
-            for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
-                if keyword in info_lower and token not in seen:
-                    discovered.append(token)
-                    seen.add(token)
+            parsed_info = parse_f64_sys_info(info_raw)
+            self._certification_options_observed = bool(
+                isinstance(info_raw, str)
+                and info_raw.strip()
+                and parsed_info.product_family is not None
+                and "PROPSIM F64" in parsed_info.product_family.upper()
+                and parsed_info.channel_count is not None
+                and parsed_info.channel_count > 0
+                and parsed_info.signal_type is not None
+            )
+            if self._certification_options_observed:
+                info_lower = info_raw.lower()
+                for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
+                    if keyword in info_lower and token not in seen:
+                        discovered.append(token)
+                        seen.add(token)
+            else:
+                logger.warning(
+                    "[F64] SYST:INFO? license scan returned an invalid system-info reply",
+                    extra={"instrument_id": self.instrument_id},
+                )
         except Exception as e:
             self._certification_options_observed = False
             logger.warning(
