@@ -98,3 +98,53 @@ adhoc、run-all 四处同刻冻。`test_commissioning_smoke.py::_create_fast_ses
 2. 无 manifest 的 CE 驱动：此前一路按「不支持」跑到加载；现在启动期拒。生产驱动都有 manifest（P2-57 构建期门），只影响测试替身。
 3. 冻结与测量之间换驱动 / 换 engine_mode：此前零检测；现在 I/O 前 RuntimeError。
 其余：同一驱动上 3 个已 manifest 化站点的答案逐字不变；其余 13 行 `hasattr` 探测本片不动（②）。
+
+### 8.H ③ 的单点插入与阶段所有权（2026-09-04）
+③ 不在 formal、run-phase、adhoc、run-all 四处各复制一份生命周期；四条活路径已经共同经过
+`run_base_station_execution_session`，所以该函数改为进入统一的
+`channel_emulator_execution_scope(plan, binding, hal, execution)`。scope 内部继续复用
+`instrument_test_lease` 的同一把 HAL 协调锁与 Remote/Local 交接，不另造第二把锁，也不改手工 CE
+端点和诊断序列。阶段固定为：冻结件结构/摘要校验 → 锁内 live identity 与 plan 对账 → Remote acquire
+→ 业务 yield → `stop_emulation` safe idle → Local release → terminal evidence。safe idle 位于租约 yield 的
+`finally`，因此严格早于 Local release；terminal evidence 位于租约退出之后，因而读取的是实际 release
+结果，不是预期值。
+
+scope 组合现有 BaseStation `validate_before_remote` 与 CE 校验器，并原样转发前者的
+`validation_identity` / `lease_audit_context`，避免破坏嵌套租约和 P2-67 公共审计。CE 校验器在
+`instrument_test_lease` 已持协调锁、但尚未 clear cache / acquire Remote 的位置执行；因此任何 binding、
+plan、驱动或连接漂移均在首个 CE I/O 前 fail-loud。
+
+### 8.I ③ 的冻结身份与受控模拟边界
+P2-58 的 binding 冻结件补入 `execution_mode`；它进入冻结件外层 digest，已存在但缺该字段的旧冻结件
+不从当前数据库回填，进入③会被判为不完整/legacy，不能继续正式硬件执行。真机模式逐字段核对：
+`expected_driver_module`、`expected_driver_name`、`expected_driver_connection`、冻结 binding digest、计划引用的
+binding digest、计划 digest，以及 live driver 的 manifest 派生计划。任一不一致均零 CE I/O 拒绝。
+
+模拟模式只认 `instrument_hal_service.is_mock_driver()` 的权威白名单和 Mock CE 的 manifest，不靠类名前缀。
+HAL 仍有 mock 时直接对账；HAL 缺 CE 时，只有冻结 `execution_mode == simulated` 才由 scope 临时安装
+`MockChannelEmulator`，租约退出后恢复原 HAL 字典。真机冻结遇到 HAL 缺 CE 必须 fail-loud；执行器
+`measure.py` 不再就地构造 Mock。模拟 acquire/release 明确记 `not_applicable`，绝不伪造 true，且整个
+execution 的正式 outcome 被降为 diagnostic，数值不得进入正式 KPI。
+
+### 8.J ③ 的终态证据与四向状态表
+终态写入 `TestExecution.config.channel_emulator_terminal_evidence`，每次 scope 追加一条不可变、带 canonical
+digest 的记录；同一 `session_id` 幂等复用，冲突内容拒绝覆盖。记录绑定 execution id、scope session id、
+租约 id（若已取得）、binding/plan digest、execution mode、adapter/runtime identity、Remote acquire、
+safe idle、Local release、业务终态与错误。P2-66 outcome 只读这些冻结/终态记录，不查 current HAL、目录、
+LabProfile 或连接。
+
+| 业务方向 | safe idle | release | terminal state | 正式性 |
+|---|---|---|---|---|
+| 成功 | 必须 `stop_emulation is True` | 真机必须确认；模拟为 `not_applicable` | `completed` | 仅真机完整证据可正式 |
+| 设备拒绝/业务失败 | 仍执行 | 仍执行 | `failed` | 不正式 |
+| 异常 | 仍执行；失败与原异常并列留痕 | 仍执行 | `failed` | 不正式 |
+| 取消 | 仍执行；不得因取消跳过 | 仍执行 | `cancelled` | 不正式 |
+
+safe idle 只调用计划声明的既有 `stop_emulation`；计划未声明、方法缺失、返回 False 或抛异常都不能写成
+confirmed。若业务本身已失败，收尾失败不得被吞；聚合错误同时保留原业务异常和收尾失败。若 terminal
+evidence 落库失败，成功链必须失败；异常链按 BaseStation 既有规则保留原异常并记录落库失败日志。
+
+### 8.K ③ 的明确边界
+③ 不清理剩余 13 个 `hasattr/getattr` 能力探测（② 负责），不改 `f64_*` / `f64.*` 键，不触碰手工 CE
+端点或诊断序列，不新增状态查询或任何 SCPI，也不改变现有 provenance 白名单。`stop_emulation` 的既有
+厂商语义、错误队列与回读仍完全由驱动实现负责；共同 scope 只消费其布尔确认。
