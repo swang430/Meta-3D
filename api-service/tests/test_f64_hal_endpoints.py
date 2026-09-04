@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 import app.api.instrument as instrument_api
+from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
 
 BASE = "/api/v1/instruments/channelEmulator"
@@ -27,7 +28,15 @@ class _FakeF64Driver:
     # P2-57：能力改由 manifest 回答（不再靠 getattr 探测），替身必须自述
     adapter_manifest = channel_emulator_manifest_for(
         adapter_id="fake_f64", model_name="Fake F64", vendor="test",
-        implemented=('set_mimo_config', 'set_path_loss', 'set_doppler', 'start_emulation', 'stop_emulation', 'get_channel_state', 'upload_asc_files', 'set_external_attenuators', 'set_baseband_power', 'get_calibration_tone_capabilities', 'set_calibration_tone', 'stop_calibration_tone', 'set_passthrough_mode', 'clear_passthrough_mode'),
+        implemented=(
+            'set_mimo_config', 'set_path_loss', 'set_doppler',
+            'start_emulation', 'stop_emulation', 'get_channel_state',
+            'upload_asc_files', 'set_external_attenuators',
+            'set_baseband_power', 'get_calibration_tone_capabilities',
+            'set_calibration_tone', 'stop_calibration_tone',
+            'set_passthrough_mode', 'clear_passthrough_mode',
+            'ensure_topology', 'set_output_gain', 'set_crest_factor',
+        ),
         load_modes=("native_model", "external_waveform"),
     )
 
@@ -513,6 +522,30 @@ def test_output_gain_empty_ports_422(client, fake_driver):
 def test_crest_factor_empty_ports_422(client, fake_driver):
     resp = client.post(BASE + "/crest-factor", json={"input_ports": [], "crest_db": 15.0})
     assert resp.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "operation"),
+    [
+        ("/output-gain", {"ports": [1], "gain_db": -1.0}, "set_output_gain"),
+        ("/input-reference", {"power_dbm": -17.0}, "ensure_topology"),
+        ("/crest-factor", {"input_ports": [1], "crest_db": 15.0}, "set_crest_factor"),
+    ],
+)
+def test_runtime_protocol_stubs_do_not_make_mock_manual_capabilities_true(
+    client, monkeypatch, path, payload, operation
+):
+    """基类协议桩存在不等于 Mock 实现了对应的手工硬件操作。"""
+
+    driver = MockChannelEmulator("mock-ce", {})
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda key: driver
+    )
+
+    resp = client.post(BASE + path, json=payload)
+
+    assert resp.status_code == 400, resp.text
+    assert operation in resp.json()["detail"]
 
 
 class _FS16LikeDriver:

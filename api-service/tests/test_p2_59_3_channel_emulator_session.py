@@ -1571,6 +1571,67 @@ def test_p2_66_validates_safe_idle_action_per_execution_scope():
     ) == (None, None)
 
 
+def test_p2_66_preserves_completed_real_execution_with_v1_manifest_and_plan():
+    """②部署后不能把③已经完成且不可变的 v1 正式执行反向降成 invalid。"""
+
+    from app.hal.channel_emulator_execution_plan import (
+        CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS,
+    )
+    from app.hal.channel_emulator_manifest import (
+        CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
+    )
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    raw_manifest = binding["resolved_binding"]["manifest"]
+    legacy_manifest = {
+        **raw_manifest,
+        "schema_version": 1,
+        "operations": [
+            item
+            for item in raw_manifest["operations"]
+            if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
+        ],
+    }
+    binding["resolved_binding"] = {
+        **binding["resolved_binding"],
+        "manifest": legacy_manifest,
+    }
+    binding["digest"] = canonical_payload_digest(
+        {key: value for key, value in binding.items() if key != "digest"}
+    )
+
+    current_plan = _frozen_plan(driver)
+    legacy_plan_payload = {
+        **{key: value for key, value in current_plan.items() if key != "digest"},
+        "schema_version": 1,
+        "operations": [
+            item
+            for item in current_plan["operations"]
+            if item["operation"] in CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
+        ],
+    }
+    legacy_plan = {
+        **legacy_plan_payload,
+        "digest": canonical_payload_digest(legacy_plan_payload),
+    }
+    terminal = _terminal_evidence(
+        binding,
+        legacy_plan,
+        execution_mode="real",
+    )
+    execution = _execution_with_ce_evidence(binding, legacy_plan, terminal)
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
+
+
 def test_p2_66_rejects_terminal_action_that_misses_scope_requirement():
     from app.services.execution_evidence_outcome import (
         _channel_emulator_terminal_projection,

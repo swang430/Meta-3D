@@ -43,6 +43,7 @@ from app.services.mimo_ota.executors.measure import (
     _reconfigure_rrc_if_supported,
 )
 from tests.p1_73c_evidence_fixtures import valid_cmw_evidence
+from tests.channel_emulator_plan_helpers import runtime_measure_plan
 
 
 def _item(
@@ -331,6 +332,7 @@ async def test_input_level_site_consumes_plan_not_scattered_attribute():
         config=SimpleNamespace(mimo_layers=2, precheck_strict_input_level=True),
         execution_id="p2-50-input",
         plan=_item("input_level_control", False, reason="计划未开放输入闭环"),
+        channel_emulator_plan=runtime_measure_plan(),
     )
 
     assert payload["skipped"] is True
@@ -349,6 +351,7 @@ async def test_input_level_planned_but_missing_method_is_plan_drift():
             ),
             execution_id="p2-50-drift",
             plan=_item("input_level_control", True),
+            channel_emulator_plan=runtime_measure_plan(),
         )
 
 

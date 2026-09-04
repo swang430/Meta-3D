@@ -1,12 +1,13 @@
 """F64R-2: 编排层读驱动拓扑的防御性 helper 单测。
 
-`measure.py` 用鸭子类型从 CE 驱动读端口信息 (`getattr` 探能力 → 调 getter)。返回值直接
+`measure.py` 从 CE 基类显式协议读端口信息（能力由冻结 plan 判定）。返回值直接
 拿去**给硬件寻址**, 所以"拿到的不是个正经端口号"必须一律降级成"未知"让上层 fail-loud,
 而不是崩、也不是拿它去配口。本文件逐个钉这些边缘形态。
 
 三个 helper 的分工:
-  · `_call_topology_getter` — 调用 + 三种"拿不到"的区分 (无此方法 / 抛异常 / **返回
-    coroutine**)。coroutine 单独识别是因为它意味着**代码问题**(getter 被改成 async),
+  · `_call_topology_getter` — 显式协议分派；缺方法是代码错误而 fail-loud，调用抛异常保持
+    unknown，**返回 coroutine** 时记错并保持 unknown。coroutine 单独识别是因为它意味着**代码问题**,
+    (getter 被改成 async),
     不该被报成"仪器读不到"去误导排障。
   · `_read_port_count` — 只认正整数 (口数), 用于 sanity bound。
   · `_read_port_list`  — 只认全正整数的非空列表 (口号), 用于逐口下发。
@@ -24,6 +25,7 @@ from app.services.mimo_ota.executors.measure import (
     _read_port_list,
 )
 from app.hal.channel_emulator_manifest import channel_emulator_manifest_for
+from tests.channel_emulator_plan_helpers import runtime_measure_plan
 
 # P2-59 ①：手动定标的能力判据改为冻结计划；测试里按替身的 manifest 派生计划（行为等价），
 # 没有 manifest 的替身 → 什么都没计划（与此前「无 manifest → 不支持」同义）。
@@ -73,8 +75,9 @@ def _emu(**getters):
 # ───────────── _read_port_count ─────────────
 
 class TestReadPortCount:
-    def test_missing_getter_is_unknown(self):
-        assert _read_port_count(_Bare(), "get_active_input_count") is None
+    def test_missing_getter_is_protocol_violation(self):
+        with pytest.raises(AttributeError):
+            _read_port_count(_Bare(), "get_active_input_count")
 
     def test_getter_raising_is_unknown(self):
         emu = _emu(get_active_input_count=MagicMock(side_effect=RuntimeError("boom")))
@@ -94,8 +97,9 @@ class TestReadPortCount:
 # ───────────── _read_port_list ─────────────
 
 class TestReadPortList:
-    def test_missing_getter_is_unknown(self):
-        assert _read_port_list(_Bare(), "get_active_output_ports") is None
+    def test_missing_getter_is_protocol_violation(self):
+        with pytest.raises(AttributeError):
+            _read_port_list(_Bare(), "get_active_output_ports")
 
     @pytest.mark.parametrize("bad", [
         None, [], (), 32, "1,2", [0], [-1], [1, 0], [1, "2"], [1, 2.5], [True], [1, None],
@@ -185,7 +189,8 @@ class TestOrchestrationTopologyBranches:
         emu.get_active_output_ports = lambda: None if cold["v"] else [2, 4]
         emu.set_output_gain = _gain
         err = await self._executor()._apply_output_gain(
-            emulator=emu, gain_db=-3.0, execution_id="t")
+            emulator=emu, gain_db=-3.0, execution_id="t",
+            plan=runtime_measure_plan())
         assert err is None, err
         assert order == ["ensure", "gain2", "gain4"], "没先补读就读口号 → 冷缓存下会误拒"
 
@@ -196,7 +201,8 @@ class TestOrchestrationTopologyBranches:
         emu.get_active_output_ports = lambda: None
         emu.set_output_gain = AsyncMock(return_value=True)
         err = await self._executor()._apply_output_gain(
-            emulator=emu, gain_db=-3.0, execution_id="t")
+            emulator=emu, gain_db=-3.0, execution_id="t",
+            plan=runtime_measure_plan())
         assert err and "物理输出口未知" in err
         emu.set_output_gain.assert_not_awaited()
 
@@ -211,7 +217,7 @@ class TestOrchestrationTopologyBranches:
         # 测不到本用例真正要守的零下发假成功）。
         type(emu).adapter_manifest = channel_emulator_manifest_for(
             adapter_id="crest_emu", model_name="Crest Emu", vendor="test",
-            implemented=("set_baseband_power",),
+            implemented=("set_baseband_power", "set_crest_factor"),
         )
         emu.set_baseband_power = AsyncMock(return_value=True)
         emu.set_crest_factor = AsyncMock(return_value=True)

@@ -441,6 +441,21 @@ def frozen_channel_emulator_binding_digest(execution_config: Mapping[str, Any]) 
         raise ValueError(
             "channelEmulator binding 尚未冻结，执行计划必须在 binding 之后冻结"
         )
+    resolved = frozen_binding.get("resolved_binding")
+    if not isinstance(resolved, Mapping):
+        raise ValueError(
+            "channelEmulator binding 冻结件缺少 resolved_binding（冻结件损坏）"
+        )
+    if resolved.get("status") == "configured":
+        manifest = resolved.get("manifest")
+        manifest_version = (
+            manifest.get("schema_version") if isinstance(manifest, Mapping) else None
+        )
+        if manifest_version != 2:
+            raise ValueError(
+                "channelEmulator binding 仍冻结 manifest v1，不能与新 execution plan v2 "
+                "混搭；请重建未开始执行"
+            )
     return digest
 
 
@@ -453,7 +468,10 @@ def validate_frozen_channel_emulator_execution_plan(frozen: Any) -> dict[str, An
         plan = plan_from_frozen_payload(frozen)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"已冻结的 channelEmulator 执行计划结构不合法（冻结件损坏）: {exc}") from exc
-    if frozen.get("digest") != plan.digest:
+    # 摘要必须对冻结时的**原始 payload**校验，绝不把历史 v1
+    # 先重建 / redump 成当前版本再算；那会改写历史语义。
+    raw_payload = {key: value for key, value in frozen.items() if key != "digest"}
+    if frozen.get("digest") != canonical_payload_digest(raw_payload):
         raise ValueError(
             "已冻结的 channelEmulator 执行计划与其 digest 不一致（冻结件被篡改）"
         )
@@ -485,6 +503,11 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
         validate_frozen_channel_emulator_load_context(
             execution_config, frozen_plan
         )
+        if frozen_plan.get("schema_version") == 1:
+            raise ValueError(
+                "channelEmulator 执行计划 v1 不包含 P2-59② 运行时操作；"
+                "未开始执行必须重建冻结件"
+            )
         return frozen_plan
     load_request = _resolve_channel_emulator_load_request(db, execution)
     plan = resolve_live_channel_emulator_execution_plan(
@@ -561,13 +584,24 @@ def freeze_execution_channel_emulator_plan(db, hal, execution) -> dict[str, Any]
 def verify_frozen_channel_emulator_execution_plan(
     frozen: Any,
     live: ChannelEmulatorExecutionPlan,
+    *,
+    allow_legacy: bool = False,
 ) -> str | None:
-    """MEASURE 期对账：冻结件合法且 digest == 当下重算的 live 计划 → None；否则一句可操作的原因。"""
+    """冻结计划对账。
+
+    新执行与 MEASURE 保持 v2-only；只有历史终态投影可显式允许按同一份
+    schema-v1 manifest 重建并核验旧计划，不能用当前 v2 能力回填历史。
+    """
 
     try:
-        validate_frozen_channel_emulator_execution_plan(frozen)
+        validated = validate_frozen_channel_emulator_execution_plan(frozen)
     except ValueError as exc:
         return str(exc)
+    if validated.get("schema_version") == 1 and not allow_legacy:
+        return (
+            "channelEmulator 执行计划 v1 不包含 P2-59② MEASURE 所需操作；"
+            "请重建未开始执行的冻结件"
+        )
     if frozen["digest"] != live.digest:
         return (
             f"冻结时 {frozen.get('adapter_id')} / {frozen.get('requested_load_mode')}"

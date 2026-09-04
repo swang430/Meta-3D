@@ -330,6 +330,97 @@ class ChannelEmulatorDriver(InstrumentDriver):
         raise NotImplementedError
 
     # ==================================================================
+    # P2-59②：MEASURE 使用的执行期操作。是否可调用由 manifest / frozen plan
+    # 决定；基类只给出统一协议，绝不提供「看似成功」的默认实现。
+    # ==================================================================
+
+    async def ensure_topology(self) -> bool:
+        raise NotImplementedError
+
+    def get_center_frequency_mhz(self) -> Optional[float]:
+        raise NotImplementedError
+
+    async def set_output_gain(self, output_num: int, gain_db: float) -> bool:
+        raise NotImplementedError
+
+    async def set_output_level_dbm(
+        self,
+        level_dbm: float,
+        output_ports: Optional[List[int]] = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def set_crest_factor(self, input_num: int, crest_db: float) -> bool:
+        raise NotImplementedError
+
+    async def measure_input(
+        self,
+        input_num: int,
+        measurement_time_s: float = 1.0,
+    ) -> Optional[tuple[float, float]]:
+        raise NotImplementedError
+
+    async def autoset_inputs(
+        self,
+        input_nums: List[int],
+        measurement_time_s: float = 3.0,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def get_input_level_limits(
+        self,
+        input_num: int,
+    ) -> Optional[tuple[float, float]]:
+        raise NotImplementedError
+
+    async def set_input_measurement_mode(
+        self,
+        input_num: int,
+        mode: Any,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def set_burst_trigger_level(
+        self,
+        input_num: int,
+        trigger_dbm: float,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def get_group_clipping(
+        self,
+        group_num: int = 1,
+        reset: bool = False,
+    ) -> Optional[float]:
+        raise NotImplementedError
+
+    async def get_system_status(self) -> Optional[tuple[bool, List[str]]]:
+        raise NotImplementedError
+
+    # ==================================================================
+    # P2-59②：无 I/O 的观察/证据协议。它们不声明能力；不适用的具体驱动必须
+    # 显式返回 None，避免上层再用 hasattr/getattr 猜型号。
+    # ==================================================================
+
+    def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
+        raise NotImplementedError
+
+    def get_loaded_emulation_file(self) -> Optional[str]:
+        raise NotImplementedError
+
+    def get_active_output_count(self) -> Optional[int]:
+        raise NotImplementedError
+
+    def get_active_input_count(self) -> Optional[int]:
+        raise NotImplementedError
+
+    def get_active_output_ports(self) -> Optional[List[int]]:
+        raise NotImplementedError
+
+    def get_active_input_ports(self) -> Optional[List[int]]:
+        raise NotImplementedError
+
+    # ==================================================================
     # 路损校准 tone 链路 (CE+SA 校准的 CE 端)
     #
     # 两条物理可行路径都用 HAL 抽象出来, service 层按 capability 自动选:
@@ -526,12 +617,12 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     """
 
     #: P2-57：Mock 也必须显式声明 —— 它**不能**靠基类默认。
-    #: ⚠️ Mock 自己实现了全部 14 个操作，这正是本片那个结构缺陷
+    #: ⚠️ Mock 原先自己实现了 v1 全部 14 个操作，这正是那个结构缺陷
     #:    （14 个抽象方法整段掉在类体之外）**三个多月无人发现**的原因：
-    #:    F64 与 Mock 各自实现了全集，测试永远绿。所以本片的门一律从
+    #:    F64 与 Mock 当时各自实现了全集，测试永远绿。所以本片的门一律从
     #:    **代码结构**派生（AST），不靠「跑一遍 Mock 看通不通」。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=1,
+        schema_version=2,
         adapter_id="mock_channel_emulator",
         model_name="Mock Channel Emulator",
         vendor="internal",
@@ -606,6 +697,54 @@ class MockChannelEmulator(ChannelEmulatorDriver):
                 operation='clear_passthrough_mode', support='implemented',
                 reason='Mock 实现了全部操作，以便无硬件时完整覆盖两条流水线',
             ),
+            ChannelEmulatorOperationCapability(
+                operation='ensure_topology', support='not_implemented',
+                reason='Mock 不制造仪器拓扑回读；执行期保持 simulated/unknown',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_center_frequency_mhz', support='not_implemented',
+                reason='Mock 不制造仪器中心频率回读；执行期保持 simulated/unknown',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_gain', support='not_implemented',
+                reason='Mock 未实现逐物理输出口增益配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_output_level_dbm', support='not_implemented',
+                reason='Mock 未实现按物理输出口设置输出电平',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_crest_factor', support='not_implemented',
+                reason='Mock 未实现仪器输入 crest factor 配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='measure_input', support='not_implemented',
+                reason='Mock 不制造输入电平回读；执行期保持 simulated/unknown',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='autoset_inputs', support='not_implemented',
+                reason='Mock 未实现仪器输入电平自动设定',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_input_level_limits', support='not_implemented',
+                reason='Mock 不制造仪器输入电平窗口回读',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_input_measurement_mode', support='not_implemented',
+                reason='Mock 未实现仪器输入测量模式配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_burst_trigger_level', support='not_implemented',
+                reason='Mock 未实现仪器 burst 触发电平配置',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_group_clipping', support='not_implemented',
+                reason='Mock 不制造仪器 clipping 回读',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='get_system_status', support='not_implemented',
+                reason='Mock 不制造仪器 system status 回读',
+            ),
         ),
     )
 
@@ -637,6 +776,26 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._passthrough_active = False
         self._passthrough_in_port: str = "A1"
         self._passthrough_out_port: str = "MAIN"
+
+    # P2-59②：Mock 不制造仪器回读或正式命令证据。命令下发侧仍走既有真实
+    # builder/dispatcher；这些只读协议明确返回 None，保持 simulated/unknown。
+    def build_p0_5_command_evidence(self, **kwargs: Any) -> Any | None:
+        return None
+
+    def get_loaded_emulation_file(self) -> Optional[str]:
+        return None
+
+    def get_active_output_count(self) -> Optional[int]:
+        return None
+
+    def get_active_input_count(self) -> Optional[int]:
+        return None
+
+    def get_active_output_ports(self) -> Optional[List[int]]:
+        return None
+
+    def get_active_input_ports(self) -> Optional[List[int]]:
+        return None
 
     async def connect(self) -> bool:
         """Simulate connection to emulator"""

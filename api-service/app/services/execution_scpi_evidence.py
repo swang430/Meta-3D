@@ -2015,6 +2015,8 @@ def record_f64_command_capture(
             after_error, "f64.simulation_state", "query", reverse=True
         ),
     )
+    if item is None:
+        return
     record_execution_scpi_evidence(
         execution,
         requirement_id=requirement_id,

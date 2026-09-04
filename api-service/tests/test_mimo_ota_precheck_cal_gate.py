@@ -408,12 +408,20 @@ def _build_context(
     )
     from app.services.instrument_hal_service import get_hal_service as _hal_service
 
+    hal = _hal_service()
+    ce_driver = hal.drivers["channelEmulator"]
     execution.config = {
         **execution.config,
-        _CE_BINDING_KEY: {"binding_digest": "cal-gate-fixture-" + "0" * 47},
+        _CE_BINDING_KEY: {
+            "binding_digest": "cal-gate-fixture-" + "0" * 47,
+            "resolved_binding": {
+                "status": "configured",
+                "manifest": ce_driver.adapter_manifest.model_dump(mode="json"),
+            },
+        },
     }
     try:
-        _freeze_ce_plan(db, _hal_service(), execution)
+        _freeze_ce_plan(db, hal, execution)
     except ValueError:
         # 用例故意给了冻不出计划的配置（如退役资产）：真实路径会在启动期拒绝（P2-59 门守），
         # 这里不冻，让用例观察 MEASURE 自己那道更早的门。

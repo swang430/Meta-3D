@@ -149,6 +149,7 @@ def test_real_binding_resolves_configured_with_stable_digest_and_zero_io(db, mon
     assert first.status == "configured"
     assert first.execution_mode == "real"
     assert first.manifest is not None
+    assert first.manifest.schema_version == 2
     assert first.manifest.adapter_id == "propsim_f64"
     assert first.instrument_model_id == str(model.id)
     assert first.instrument_connection_id == str(connection.id)

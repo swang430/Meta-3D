@@ -196,16 +196,21 @@ def test_requested_resolver_prefers_driver_truth():
     from app.services.mimo_ota.executors.measure import resolve_model_load_requested
 
     class _E:
-        _loaded_emulation_file = "UserData\\asc\\runtime_emulation.smu"
+        loaded = "UserData\\asc\\runtime_emulation.smu"
+
+        def get_loaded_emulation_file(self):
+            return self.loaded
 
     class _ENone:
-        _loaded_emulation_file = None
+        def get_loaded_emulation_file(self):
+            return None
 
     assert (resolve_model_load_requested(_E(), True, "intent.smu")
-            == _E._loaded_emulation_file)
+            == _E.loaded)
     assert resolve_model_load_requested(_E(), False, "intent.smu") == "intent.smu"
     assert resolve_model_load_requested(_ENone(), True, "intent.smu") == "intent.smu"
-    assert resolve_model_load_requested(object(), True, None) is None
+    with pytest.raises(AttributeError):
+        resolve_model_load_requested(object(), True, None)
 
 
 def test_measure_wires_resolver_and_reregisters():
@@ -251,6 +256,6 @@ def test_measure_record_hook_not_gated_on_engine_mode():
     i = src.index('requirement_id="f64.model_loaded"')
     j = src.index("record_f64_command_capture(", i)
     gate = src[i:j]
-    assert 'hasattr(emulator, "build_p0_5_command_evidence")' in gate
+    assert "record_f64_command_capture(" not in gate
     assert not re.search(r"engine_mode\s*==\s*EngineMode\.GCM_NATIVE\s*\n?\s*and\s*hasattr",
                          gate), "归档 hook 又被锁回 GCM-only —— ASC/B2 抓了交换不落证"

@@ -10,7 +10,7 @@
     答案与 P2-57 的 manifest 查询逐字相同；① 新增的只有三处 fail-closed（设计稿 §8.G）：
     加载模式不支持提前到启动期拒、无 manifest 的驱动启动期拒、冻结与测量之间换驱动 / 换 engine_mode
     → digest 漂移 → I/O 前拒绝。
-  · 除 14 个操作各自的 `planned`，还冻 **请求的加载模式**（由 engine_mode 派生）与**阶段顺序**
+  · 除该 schema 固定词汇中各操作的 `planned`，还冻 **请求的加载模式**（由 engine_mode 派生）与**阶段顺序**
     （字面常量）。加载模式不被 manifest 支持在这里只**记录**（`load_mode_planned=False`），
     启动期 fail-loud 由 services 侧冻结函数做 —— 纯函数保持全域可算，MEASURE 的 live 重算
     才不会因为别的原因先炸。
@@ -25,8 +25,26 @@ from typing import Any, Dict, Literal, Mapping
 from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator_manifest import (
     CHANNEL_EMULATOR_OPERATIONS,
+    CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
     ChannelEmulatorManifest,
 )
+
+#: 已经落库的 P2-59① v1 词汇必须永久固定。
+CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS = (
+    CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
+)
+#: P2-59② 新写入的 v2 词汇。
+CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
+
+
+def channel_emulator_execution_plan_operations_for_schema(
+    schema_version: int,
+) -> tuple[str, ...]:
+    if schema_version == 1:
+        return CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
+    if schema_version == 2:
+        return CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS
+    raise ValueError("unsupported channel emulator execution plan schema")
 
 ChannelEmulatorRequestedLoadMode = Literal[
     "native_model", "external_waveform", "parametric_tdl"
@@ -106,22 +124,23 @@ class ChannelEmulatorExecutionPlanItem:
 class ChannelEmulatorExecutionPlan:
     """Execution-frozen、vendor-neutral 的信道仿真器执行计划（P2-59 ①）。"""
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     #: MEASURE 将要用的驱动的 manifest.adapter_id（HAL 装载的驱动，或兜底的 mock）。
     adapter_id: str
     driver_source: ChannelEmulatorPlanDriverSource
     requested_load_mode: ChannelEmulatorRequestedLoadMode
     load_mode_planned: bool
     load_mode_reason: str
-    #: 恰好 14 项、按 `CHANNEL_EMULATOR_OPERATIONS` 的顺序 —— canonical payload 顺序。
+    #: 按 schema 版本的固定词汇恰好覆盖一次，且保持 canonical 顺序。
     operations: tuple[ChannelEmulatorExecutionPlanItem, ...]
     phase_order: tuple[str, ...]
     #: P2-58 ① 冻结件里的 binding_digest，只引用不重复其字段。
     binding_digest: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ValueError("unsupported channel emulator execution plan schema")
+        expected_operations = channel_emulator_execution_plan_operations_for_schema(
+            self.schema_version
+        )
         if not isinstance(self.adapter_id, str) or not self.adapter_id.strip():
             raise ValueError("execution plan adapter_id must be non-empty")
         if self.driver_source not in ("hal", "fallback_mock"):
@@ -136,7 +155,7 @@ class ChannelEmulatorExecutionPlan:
             not isinstance(item, ChannelEmulatorExecutionPlanItem) for item in self.operations
         ):
             raise TypeError("execution plan operations must be a tuple of plan items")
-        if tuple(item.operation for item in self.operations) != CHANNEL_EMULATOR_OPERATIONS:
+        if tuple(item.operation for item in self.operations) != expected_operations:
             raise ValueError(
                 "execution plan must cover every channel emulator operation exactly once, "
                 "in canonical order"
@@ -150,6 +169,13 @@ class ChannelEmulatorExecutionPlan:
         # 与 `channel_emulator_implements` 同一条规矩：操作名拼错当场炸，不能被当成「不支持」。
         if operation not in CHANNEL_EMULATOR_OPERATIONS:
             raise ValueError(f"unknown channel emulator operation: {operation!r}")
+        if operation not in channel_emulator_execution_plan_operations_for_schema(
+            self.schema_version
+        ):
+            raise ValueError(
+                f"execution plan v{self.schema_version} has no operation {operation!r}; "
+                "请重建执行冻结件"
+            )
         for item in self.operations:
             if item.operation == operation:
                 return item
@@ -208,7 +234,7 @@ def resolve_channel_emulator_execution_plan(
 ) -> ChannelEmulatorExecutionPlan:
     """从 manifest 声明推导冻结计划 —— 纯函数、零 I/O、无型号分支。
 
-    manifest 是唯一判据（P2-57 已保证它恰好覆盖 14 个操作各一次）；没有 manifest 的驱动
+    manifest 是唯一判据（P2-57 已保证它恰好覆盖自身 schema 的操作各一次）；没有 manifest 的驱动
     在调用方就已 fail-closed，这里不接受 None。
     """
 
@@ -216,6 +242,9 @@ def resolve_channel_emulator_execution_plan(
         raise ValueError(
             "channel emulator execution plan requires a channel emulator manifest (fail-closed)"
         )
+    operation_vocabulary = channel_emulator_execution_plan_operations_for_schema(
+        manifest.schema_version
+    )
     load_capability = next(
         (item for item in manifest.load_modes if item.mode == requested_load_mode), None
     )
@@ -235,10 +264,10 @@ def resolve_channel_emulator_execution_plan(
             capability_source=f"manifest.operations:{operation}",
             reason=declared[operation].reason,
         )
-        for operation in CHANNEL_EMULATOR_OPERATIONS
+        for operation in operation_vocabulary
     )
     return ChannelEmulatorExecutionPlan(
-        schema_version=1,
+        schema_version=manifest.schema_version,
         adapter_id=manifest.adapter_id,
         driver_source=driver_source,
         requested_load_mode=requested_load_mode,

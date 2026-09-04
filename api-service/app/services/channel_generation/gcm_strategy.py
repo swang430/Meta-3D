@@ -35,6 +35,7 @@ from typing import Dict, Any, List, Optional
 
 from app.services.channel_generation.base_generator import BaseChannelGenerator
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
+from app.hal.channel_emulator_execution_plan import ChannelEmulatorExecutionPlan
 from app.services.channel_generation.oop_parser import (
     generate_oop_file,
     OOPProfile,
@@ -122,8 +123,7 @@ class NativeModelStrategy(BaseChannelGenerator):
       - 标准信道模型快速加载 (无需外部计算)
       - GCM 合规性验证 (使用 F64 原生 GCM 管线)
 
-    注意: 并非所有信道仿真器都支持此模式。
-    策略初始化前应检查 emulator.get_supported_load_modes()。
+    注意: 并非所有信道仿真器都支持此模式；能力判据来自本次执行冻结计划。
     """
 
     def __init__(
@@ -133,6 +133,8 @@ class NativeModelStrategy(BaseChannelGenerator):
         calibration_entries: List[Dict],
         generate_oop: bool = True,
         azimuth_step_deg: float = 15.0,
+        *,
+        execution_plan: ChannelEmulatorExecutionPlan,
     ):
         """
         Args:
@@ -146,6 +148,7 @@ class NativeModelStrategy(BaseChannelGenerator):
         self.generate_oop = generate_oop
         self.azimuth_step_deg = azimuth_step_deg
         self._last_oop_profile: Optional[OOPProfile] = None
+        self.execution_plan = execution_plan
 
     async def generate_and_load(
         self,
@@ -194,13 +197,12 @@ class NativeModelStrategy(BaseChannelGenerator):
             logger.error("[NativeModel Strategy] Invalid model scenario: %s", exc)
             return False
 
-        # ----- Step 1: 验证仿真器能力 -----
-        supported_modes = self.emulator.get_supported_load_modes()
-        if ChannelLoadMode.NATIVE_MODEL not in supported_modes:
+        # ----- Step 1: 验证本次执行冻结的能力 -----
+        if not self.execution_plan.load_mode_planned:
             logger.error(
-                f"[NativeModel Strategy] Emulator {type(self.emulator).__name__} "
-                f"does not support NATIVE_MODEL mode. "
-                f"Supported: {[m.value for m in supported_modes]}"
+                "[NativeModel Strategy] Frozen channel-emulator plan rejects "
+                "NATIVE_MODEL mode: %s",
+                self.execution_plan.load_mode_reason,
             )
             return False
 

@@ -32,6 +32,7 @@ from app.hal.propsim_fs16 import RealPropsimFs16Driver
 
 
 _APP = pathlib.Path(__file__).resolve().parents[1] / "app"
+_P2_57_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS[:14]
 
 #: ⚠️ **从代码派生，不手写**（内审 F4）：初版手写了 f64 / fs16 两家，把
 #: `MockChannelEmulator` 排除在对账之外 —— 而它在 mock 模式下是**生产驱动**
@@ -444,7 +445,7 @@ def test_capability_checks_in_measure_have_no_silent_negative_path():
 
 @pytest.mark.parametrize("key", sorted(_DRIVERS))
 def test_manifest_covers_every_operation_exactly_once(key):
-    """每个驱动都必须逐个声明全部 14 个操作 —— 不许沉默省略。"""
+    """每个驱动都必须逐个声明当前 schema 全部操作 —— 不许沉默省略。"""
     driver, _, _ = _DRIVERS[key]
     declared = [item.operation for item in driver.adapter_manifest.operations]
     assert sorted(declared) == sorted(CHANNEL_EMULATOR_OPERATIONS)
@@ -535,7 +536,10 @@ def test_declared_load_modes_are_actually_dispatched(key):
 
 
 def test_no_capability_probing_via_hasattr_anywhere_in_app():
-    """全 `app/` 不得再用 `hasattr` / `getattr` **字面量**探测这 14 个操作。
+    """全 `app/` 不得再用 `hasattr` / `getattr` 探测 P2-57 原始 14 个操作。
+
+    P2-59② 新增的仪器操作只在 MEASURE 正式执行链去探测；手工端点与诊断序列
+    明确不在该片范围，由 P2-59② 自己的定向 AST 门约束。
 
     ⚠️ 覆盖面有限（内审 F7）：只认第二实参是字符串字面量的形式。
     `hasattr(ce, m)` 这种**变量**形式抓不到 —— `propsim_f64_p08_gate.py` 的
@@ -576,7 +580,7 @@ def test_no_capability_probing_via_hasattr_anywhere_in_app():
                 # ⚠️ 也要解析模块级字符串常量（变异 M3 实证：把字面量抽成
                 #    `_OP = "stop_emulation"` 再 `hasattr(x, _OP)` 就绕过去了）
                 name = consts.get(probe.id)
-            if name in CHANNEL_EMULATOR_OPERATIONS:
+            if name in _P2_57_OPERATIONS:
                 offenders.append(f"{path.name}:{node.lineno} {node.func.id}(…, {name!r})")
     assert not offenders, "能力探测必须走 manifest：" + "; ".join(offenders)
 
@@ -772,7 +776,7 @@ def test_no_operation_name_collection_is_iterated_into_hasattr():
     同一个文件里的 `_MANIFEST_OPS` 就是一个共同操作名的元组，但它是
     **喂给 `channel_emulator_implements` 的**，正是本片要的形态。
     """
-    ops = set(CHANNEL_EMULATOR_OPERATIONS)
+    ops = set(_P2_57_OPERATIONS)
     offenders: list[str] = []
     for path in sorted(_APP.rglob("*.py")):
         if path.name == "channel_emulator_manifest.py":
@@ -870,19 +874,19 @@ def test_manifest_rejects_silent_omission_and_duplicates():
     # 漏一个 → 拒
     with pytest.raises(Exception):
         ChannelEmulatorManifest(
-            schema_version=1, adapter_id="x", model_name="X", vendor="v",
+            schema_version=2, adapter_id="x", model_name="X", vendor="v",
             load_modes=(), operations=_ops(CHANNEL_EMULATOR_OPERATIONS[:-1]),
         )
     # 重复 → 拒
     with pytest.raises(Exception):
         ChannelEmulatorManifest(
-            schema_version=1, adapter_id="x", model_name="X", vendor="v",
+            schema_version=2, adapter_id="x", model_name="X", vendor="v",
             load_modes=(), operations=_ops(
                 CHANNEL_EMULATOR_OPERATIONS + (CHANNEL_EMULATOR_OPERATIONS[0],)),
         )
     # 全集 → 过
     ok = ChannelEmulatorManifest(
-        schema_version=1, adapter_id="x", model_name="X", vendor="v",
+        schema_version=2, adapter_id="x", model_name="X", vendor="v",
         load_modes=(), operations=_ops(CHANNEL_EMULATOR_OPERATIONS),
     )
     assert ok.implements("stop_emulation") is True
@@ -893,7 +897,7 @@ def test_manifest_rejects_silent_omission_and_duplicates():
 def test_load_mode_duplicates_are_rejected():
     with pytest.raises(Exception):
         ChannelEmulatorManifest(
-            schema_version=1, adapter_id="x", model_name="X", vendor="v",
+            schema_version=2, adapter_id="x", model_name="X", vendor="v",
             load_modes=(
                 ChannelEmulatorLoadModeCapability(
                     mode="native_model", support="implemented", reason="r"),

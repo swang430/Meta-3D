@@ -17,6 +17,7 @@ import logging
 from typing import Any, Dict, List, TYPE_CHECKING
 
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
+from app.hal.channel_emulator_execution_plan import ChannelEmulatorExecutionPlan
 from app.services.channel_generation.base_generator import BaseChannelGenerator
 
 if TYPE_CHECKING:
@@ -35,13 +36,16 @@ class B2ParametricTdlStrategy(BaseChannelGenerator):
         ce_client: "ChannelEngineClient",
         chamber_config: Any,
         calibration_entries: List[Dict],
+        *,
+        execution_plan: ChannelEmulatorExecutionPlan,
     ):
         super().__init__(emulator, chamber_config, calibration_entries)
         self.ce_client = ce_client
+        self.execution_plan = execution_plan
 
     def supports_parametric_tdl(self) -> bool:
         """channelEmulator 是否支持 PARAMETRIC_TDL (.tap/.rtc) 加载。"""
-        return ChannelLoadMode.PARAMETRIC_TDL in self.emulator.get_supported_load_modes()
+        return self.execution_plan.load_mode_planned
 
     @staticmethod
     def _extract_rt_rays(cdl_model_data: Dict[str, Any]) -> List[Dict]:
@@ -56,11 +60,10 @@ class B2ParametricTdlStrategy(BaseChannelGenerator):
     ) -> bool:
         # ── 能力门: 仪器须支持参数化 TDL 加载 ──
         if not self.supports_parametric_tdl():
-            supported = [m.value for m in self.emulator.get_supported_load_modes()]
             logger.error(
                 "[B2ParametricTdl] channelEmulator (%s) 不支持 PARAMETRIC_TDL (.tap/.rtc); "
-                "engine_mode=B2_PARAMETRIC_TDL 无法执行。支持的加载模式: %s",
-                type(self.emulator).__name__, supported,
+                "engine_mode=B2_PARAMETRIC_TDL 无法执行。冻结计划原因: %s",
+                type(self.emulator).__name__, self.execution_plan.load_mode_reason,
             )
             return False
 
