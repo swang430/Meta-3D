@@ -221,10 +221,11 @@ async def cleanup_chamber_instruments(
         #    而会进直通的驱动（F64 与 Mock —— 两家都声明了 set_passthrough_mode，
         #    初版这里写「F64 是唯一」，经不起 grep，内审 R6 F3 抓出）都实现了
         #    stop_emulation、走的是上面那个 if，
-        #    所以「直通态从来没人撤」那个既有缺口本条**管不着** ——
-        #    `clear_passthrough_mode` 全仓只有 path_loss_calibration_service 一个
-        #    调用方，`stop_emulation` 只发 GOS、不清 STATIC。该缺口先于本片存在，
-        #    按 ⑦ 不在本片修，已在 PR 里报告待 triage。
+        #    所以本 generic cleanup 仍**不直接**撤直通态：正式执行由
+        #    `channel_emulator_execution_session` 按冻结的
+        #    `required_safe_idle_action=clear_passthrough_mode` 持有终态清理所有权；
+        #    path-loss 校准则在自己的生命周期内配对清理。手工/诊断路径是否都受同一
+        #    session 约束仍需单独核实，不能从本分支的 stop_emulation 推断已清 STATIC。
         _TRANSMIT_PATHS = (
             "start_emulation", "set_passthrough_mode", "set_calibration_tone",
         )
