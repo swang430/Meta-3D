@@ -1010,6 +1010,20 @@ def _formal_ce_outcome_fixture():
     freeze_channel_emulator_execution_qualification(
         db, _qualification_hal(), execution, case
     )
+    execution.measurements = deepcopy(source.measurements)
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency["channel_emulator_evidence"] = {
+        "schema_version": 1,
+        "adapter_id": execution.config[
+            "channel_emulator_execution_plan_freeze"
+        ]["adapter_id"],
+        "instrument_id": terminal["instrument_id"],
+        "center_readback_mhz": frequency["f64_center_readback_mhz"],
+        "bandwidth_source": frequency["f64_bandwidth_source"],
+        "fully_verified": True,
+    }
     return execution
 
 
@@ -1050,6 +1064,24 @@ def test_p2_66_outcome_accepts_only_formal_ce_qualification_linked_to_bs_freeze(
     assert outcome.compatibility_classification == "invalid"
     assert outcome.formal_eligible is False
     assert "qualification" in "\n".join(outcome.reasons)
+
+
+def test_p2_66_outcome_rejects_schema_v2_without_vendor_neutral_frequency_evidence():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution = _formal_ce_outcome_fixture()
+    del execution.measurements["phases"]["measure"]["frequency_consistency"][
+        "channel_emulator_evidence"
+    ]
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert "frequency" in "\n".join(outcome.reasons)
 
 
 def _derive_certification(execution):
