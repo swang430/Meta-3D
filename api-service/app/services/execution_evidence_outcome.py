@@ -47,6 +47,7 @@ from app.services.channel_emulator_binding import (
 from app.services.channel_emulator_certification import (
     CE_EXECUTION_QUALIFICATION_CONFIG_KEY,
     ChannelEmulatorExecutionQualification,
+    _has_certifiable_channel_emulator_frequency_evidence,
     validate_frozen_channel_emulator_execution_qualification,
 )
 from app.services.channel_emulator_execution_plan import (
@@ -1099,6 +1100,62 @@ def _channel_emulator_qualification_alignment_error(
     return None
 
 
+def _channel_emulator_frequency_evidence_error(
+    execution: Any,
+    config: Mapping[str, Any],
+    qualification: ChannelEmulatorExecutionQualification | None,
+    *,
+    require_formal_confirmation: bool,
+) -> str | None:
+    """Validate current CE frequency proof without consulting mutable state."""
+
+    if (
+        qualification is None
+        or qualification.schema_version == 1
+        or qualification.classification != "formal"
+        or not require_formal_confirmation
+    ):
+        return None
+    attempt_evidence = config.get("base_station_execution_evidence")
+    attempt_id = (
+        attempt_evidence.get("current_measurement_attempt_id")
+        if isinstance(attempt_evidence, Mapping)
+        and attempt_evidence.get("current_measurement_attempt_state") == "completed"
+        else None
+    )
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return "formal channelEmulator frequency evidence has no completed attempt"
+    raw_terminals = config.get(CE_TERMINAL_EVIDENCE_CONFIG_KEY)
+    if not isinstance(raw_terminals, list):
+        return "formal channelEmulator frequency evidence has no terminal identity"
+    instrument_ids = {
+        item.get("instrument_id")
+        for item in raw_terminals
+        if isinstance(item, Mapping)
+        and item.get("measurement_attempt_id") == attempt_id
+        and isinstance(item.get("instrument_id"), str)
+        and item.get("instrument_id")
+    }
+    if len(instrument_ids) != 1:
+        return "formal channelEmulator frequency evidence terminal identity is ambiguous"
+    measurements = getattr(execution, "measurements", None)
+    phases = measurements.get("phases") if isinstance(measurements, Mapping) else None
+    measure = phases.get("measure") if isinstance(phases, Mapping) else None
+    frequency = (
+        measure.get("frequency_consistency")
+        if isinstance(measure, Mapping)
+        else None
+    )
+    if not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id=qualification.adapter_id,
+        instrument_id=next(iter(instrument_ids)),
+        measurement_attempt_id=attempt_id,
+    ):
+        return "formal channelEmulator frequency evidence is incomplete"
+    return None
+
+
 def validate_frozen_mac_profile_evidence(
     config: Mapping[str, Any],
     frozen: Mapping[str, Any],
@@ -1337,14 +1394,35 @@ def project_execution_evidence_outcome(
         config,
         ce_qualification_snapshot,
     )
+    ce_frequency_error = _channel_emulator_frequency_evidence_error(
+        execution,
+        config,
+        ce_qualification_snapshot,
+        require_formal_confirmation=(
+            pipeline_status == "completed"
+            or (
+                isinstance(
+                    config.get("base_station_execution_evidence"),
+                    Mapping,
+                )
+                and config["base_station_execution_evidence"].get(
+                    "current_measurement_attempt_state"
+                )
+                == "completed"
+            )
+        ),
+    )
     if ce_qualification_error is not None:
         reasons.append(ce_qualification_error)
+    if ce_frequency_error is not None:
+        reasons.append(ce_frequency_error)
     if ce_reason is not None:
         reasons.append(ce_reason)
     if (
         ce_classification == "invalid"
         or ce_qualification == "invalid"
         or ce_qualification_error is not None
+        or ce_frequency_error is not None
     ):
         classification = "invalid"
     elif (

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -165,6 +166,87 @@ class ChannelEmulatorCertificationProofs(BaseModel):
         return self
 
 
+class ChannelEmulatorFrequencyEvidence(BaseModel):
+    """Vendor-neutral frozen CE frequency proof from one execution."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[2]
+    adapter_id: str
+    instrument_id: str
+    measurement_attempt_id: str | None
+    center_readback_mhz: float
+    bandwidth_source: Literal["channel_asset_or_scd_declared"]
+    fully_verified: bool
+
+    @field_validator("adapter_id", "instrument_id")
+    @classmethod
+    def _non_blank_identity(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("channelEmulator frequency evidence identity is blank")
+        return normalized
+
+    @field_validator("measurement_attempt_id")
+    @classmethod
+    def _non_blank_attempt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("channelEmulator frequency evidence attempt is blank")
+        return normalized
+
+    @field_validator("center_readback_mhz")
+    @classmethod
+    def _finite_positive_center(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("channelEmulator frequency center is invalid")
+        return value
+
+
+def _has_certifiable_channel_emulator_frequency_evidence(
+    frequency: Any,
+    *,
+    current_adapter_id: str,
+    instrument_id: str,
+    measurement_attempt_id: str,
+    allow_legacy_f64: bool = False,
+) -> bool:
+    if not isinstance(frequency, dict) or frequency.get("fully_verified") is not True:
+        return False
+    if "channel_emulator_evidence" in frequency:
+        raw = frequency["channel_emulator_evidence"]
+        try:
+            evidence = ChannelEmulatorFrequencyEvidence.model_validate(raw)
+        except ValidationError:
+            return False
+        return (
+            evidence.fully_verified is True
+            and evidence.adapter_id == current_adapter_id
+            and evidence.instrument_id == instrument_id
+            and evidence.measurement_attempt_id == measurement_attempt_id
+        )
+
+    # Pre-P2-62 executions only carried the F64-specific mirrors. Preserve that
+    # exact historical proof without extending it to another adapter.
+    if not allow_legacy_f64:
+        return False
+    per_instrument = frequency.get("per_instrument")
+    return (
+        current_adapter_id == "propsim_f64"
+        and isinstance(per_instrument, dict)
+        and isinstance(per_instrument.get("F64"), str)
+        and per_instrument.get("F64") != "未报告(跳过)"
+        and isinstance(frequency.get("f64_center_readback_mhz"), (int, float))
+        and not isinstance(frequency.get("f64_center_readback_mhz"), bool)
+        and math.isfinite(float(frequency["f64_center_readback_mhz"]))
+        and frequency.get("f64_bandwidth_source")
+        == "channel_asset_or_scd_declared"
+        and "F64" not in (frequency.get("unverified") or ())
+    )
+
+
 class ChannelEmulatorSiteCertification(BaseModel):
     """Current certification bound to one exact CE site and evidence scope."""
 
@@ -276,7 +358,8 @@ class ChannelEmulatorExecutionQualification(BaseModel):
         revalidate_instances="always",
     )
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
+    frequency_evidence_schema_version: Literal[2] | None = None
     classification: Literal["formal", "diagnostic"]
     policy_mode: Literal["formal", "diagnostic"]
     diagnostic_actor: str | None
@@ -340,6 +423,16 @@ class ChannelEmulatorExecutionQualification(BaseModel):
     def _qualification_is_consistent_and_digest_bound(
         self,
     ) -> "ChannelEmulatorExecutionQualification":
+        if self.schema_version == 1:
+            if self.frequency_evidence_schema_version is not None:
+                raise ValueError(
+                    "legacy channelEmulator qualification cannot claim current "
+                    "frequency evidence"
+                )
+        elif self.frequency_evidence_schema_version != 2:
+            raise ValueError(
+                "current channelEmulator qualification requires frequency evidence v2"
+            )
         if self.classification == "formal" and self.reasons:
             raise ValueError("formal channelEmulator qualification cannot contain reasons")
         if self.classification == "diagnostic" and not self.reasons:
@@ -359,6 +452,8 @@ class ChannelEmulatorExecutionQualification(BaseModel):
         if self.identity_digest != expected_identity_digest:
             raise ValueError("channelEmulator qualification identity digest mismatch")
         payload = self.model_dump(mode="json", exclude={"qualification_digest"})
+        if self.schema_version == 1:
+            payload.pop("frequency_evidence_schema_version", None)
         if self.qualification_digest != _canonical_digest(payload):
             raise ValueError("channelEmulator execution qualification digest mismatch")
         return self
@@ -837,7 +932,8 @@ def freeze_channel_emulator_execution_qualification(
         if any(getattr(certification, key) != value for key, value in expected.items()):
             reasons.append("site_certification_scope_mismatch")
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "frequency_evidence_schema_version": 2,
         "classification": "diagnostic" if reasons else "formal",
         "policy_mode": base_station_qualification.policy_mode,
         "diagnostic_actor": (
@@ -1112,23 +1208,12 @@ def derive_channel_emulator_site_certification_from_execution(
     if not isinstance(measure, dict):
         raise ValueError("channelEmulator certification measurement proof is missing")
     frequency = measure.get("frequency_consistency")
-    per_instrument = (
-        frequency.get("per_instrument") if isinstance(frequency, dict) else None
-    )
-    f64_frequency_proven = (
-        current_adapter_id == "propsim_f64"
-        and isinstance(per_instrument, dict)
-        and isinstance(per_instrument.get("F64"), str)
-        and per_instrument.get("F64") != "未报告(跳过)"
-        and isinstance(frequency.get("f64_center_readback_mhz"), (int, float))
-        and frequency.get("f64_bandwidth_source")
-        == "channel_asset_or_scd_declared"
-        and "F64" not in (frequency.get("unverified") or ())
-    )
-    if (
-        not isinstance(frequency, dict)
-        or frequency.get("fully_verified") is not True
-        or not f64_frequency_proven
+    if not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id=current_adapter_id,
+        instrument_id=identity.instrument_id,
+        measurement_attempt_id=current_attempt_id,
+        allow_legacy_f64=qualification.schema_version == 1,
     ):
         raise ValueError("channelEmulator certification frequency proof is incomplete")
     if (

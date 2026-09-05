@@ -702,6 +702,8 @@ def test_active_exact_scope_certification_freezes_formal_qualification_once():
     )
 
     assert isinstance(frozen, ChannelEmulatorExecutionQualification)
+    assert frozen.schema_version == 2
+    assert frozen.frequency_evidence_schema_version == 2
     assert frozen.classification == "formal"
     assert frozen.policy_mode == "formal"
     assert frozen.diagnostic_actor is None
@@ -1008,6 +1010,21 @@ def _formal_ce_outcome_fixture():
     freeze_channel_emulator_execution_qualification(
         db, _qualification_hal(), execution, case
     )
+    execution.measurements = deepcopy(source.measurements)
+    frequency = execution.measurements["phases"]["measure"][
+        "frequency_consistency"
+    ]
+    frequency["channel_emulator_evidence"] = {
+        "schema_version": 2,
+        "adapter_id": execution.config[
+            "channel_emulator_execution_plan_freeze"
+        ]["adapter_id"],
+        "instrument_id": terminal["instrument_id"],
+        "measurement_attempt_id": attempt_id,
+        "center_readback_mhz": frequency["f64_center_readback_mhz"],
+        "bandwidth_source": frequency["f64_bandwidth_source"],
+        "fully_verified": True,
+    }
     return execution
 
 
@@ -1048,6 +1065,41 @@ def test_p2_66_outcome_accepts_only_formal_ce_qualification_linked_to_bs_freeze(
     assert outcome.compatibility_classification == "invalid"
     assert outcome.formal_eligible is False
     assert "qualification" in "\n".join(outcome.reasons)
+
+
+def test_p2_66_outcome_rejects_schema_v2_without_vendor_neutral_frequency_evidence():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution = _formal_ce_outcome_fixture()
+    del execution.measurements["phases"]["measure"]["frequency_consistency"][
+        "channel_emulator_evidence"
+    ]
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.completion_semantic == "pipeline_completed"
+    assert outcome.formal_eligible is False
+    assert "frequency" in "\n".join(outcome.reasons)
+
+
+def test_p2_66_outcome_rejects_frequency_evidence_from_previous_attempt():
+    from app.services.execution_evidence_outcome import (
+        project_execution_evidence_outcome,
+    )
+
+    execution = _formal_ce_outcome_fixture()
+    execution.measurements["phases"]["measure"]["frequency_consistency"][
+        "channel_emulator_evidence"
+    ]["measurement_attempt_id"] = "previous-attempt"
+
+    outcome = project_execution_evidence_outcome(execution)
+
+    assert outcome.compatibility_classification == "invalid"
+    assert outcome.formal_eligible is False
+    assert "frequency" in "\n".join(outcome.reasons)
 
 
 def _derive_certification(execution):
