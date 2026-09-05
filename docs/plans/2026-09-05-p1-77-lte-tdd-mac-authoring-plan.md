@@ -108,4 +108,5 @@
 - Codex R1 对 `13d9a6e6` 无 P1、有 1 条本片 P2：非 20 MHz 显式
   `rmc_version: null` 与省略未区分。旧实现反例 RED，改用 Pydantic 字段存在性后受影响链
   406 passed；R1 请求 1 次、重复 0 次，等待约 5 分 24 秒。
-- Task 6 的本地阶段与 R1 修复完成；待覆盖最新修复 HEAD 的 R2 无 P1后合并与同步清理。
+- Task 6 已完成：R2 对最终 HEAD `eae3b97a` 请求 1 次、重复 0 次，等待约 3 分 17 秒，无 P1、
+  无新增 inline；PR #461 随即以 merge commit `1001f1c7` 合入，本地主目录已 ff-only 同步。
