@@ -75,6 +75,30 @@ export function hasUnsavedBaseStationSyncDraft(
   )
 }
 
+/**
+ * Every LabProfile sync endpoint consumes the category's active saved
+ * connection, never the open drawer draft. Keep the BaseStation-specific
+ * profile comparison, while applying the common saved-vs-draft comparison to
+ * every other syncable instrument category.
+ */
+export function hasUnsavedInstrumentSyncDraft(
+  category: InstrumentCategory,
+  draft: BaseStationSyncDraftLike,
+): boolean {
+  if (category.key === 'baseStation') {
+    return hasUnsavedBaseStationSyncDraft(category, draft)
+  }
+
+  return (
+    draft.modelId !== (category.selectedModelId ?? '')
+    || draft.endpoint !== (category.connection.endpoint ?? '')
+    || draft.controller !== (category.connection.controller ?? '')
+    || draft.notes !== (category.connection.notes ?? '')
+    || canonicalParamsText(draft.connection_params)
+      !== canonicalJson(category.connection.connection_params ?? {})
+  )
+}
+
 export function explicitBaseStationConnectionDraft(
   draft: Pick<SavedBaseStationDraft, 'endpoint' | 'controller' | 'notes'>,
   connectionParams: Record<string, unknown>,

@@ -6,6 +6,7 @@ import {
   draftForBaseStationModel,
   explicitBaseStationConnectionDraft,
   hasUnsavedBaseStationSyncDraft,
+  hasUnsavedInstrumentSyncDraft,
 } from './baseStationModelPresetDraft.ts'
 import type { InstrumentCategory } from '../../types/api.ts'
 
@@ -198,19 +199,49 @@ test('LabProfile sync stays blocked until the BaseStation draft is saved as the 
   )
 })
 
-test('the equipment drawer makes Save precede Sync and disables Sync for unsaved BS/CE drafts', () => {
+test('the equipment drawer makes Save precede Sync and disables Sync for every unsaved instrument draft', () => {
   const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
   const drawer = app.slice(
     app.indexOf("const category = categories.find((c) => c.key === editingCategoryKey)"),
     app.indexOf('{/* ─── SCPI 命令终端 ─── */}'),
   )
 
-  assert.match(drawer, /hasUnsavedBaseStationSyncDraft\(category, draft\)/)
-  assert.match(drawer, /hasUnsavedChannelEmulatorDraft\(category, draft\)/)
+  assert.match(drawer, /hasUnsavedInstrumentSyncDraft\(category, draft\)/)
   assert.match(drawer, /disabled=\{[\s\S]*?hasUnsavedSyncDraft[\s\S]*?\}/)
   assert.match(drawer, /请先保存配置，再同步/)
   assert.ok(
     drawer.indexOf('保存配置') < drawer.indexOf('同步已保存配置'),
     'Save must be shown before Sync so the visible workflow matches the server contract',
+  )
+
+  const saveLabel = drawer.indexOf('保存配置')
+  const saveButton = drawer.slice(drawer.lastIndexOf('<Button', saveLabel), saveLabel)
+  assert.match(saveButton, /disabled=\{syncLabBindingMutation\.isPending\}/)
+})
+
+test('every syncable instrument category blocks stale saved-state sync', () => {
+  const genericCategory = {
+    ...category,
+    key: 'signalAnalyzer',
+  } as InstrumentCategory
+  const saved = {
+    modelId: 'uxm',
+    endpoint: '192.168.1.112',
+    controller: 'socket',
+    notes: 'active UXM',
+    connection_params: JSON.stringify({ timeout_ms: 30000 }),
+  }
+
+  assert.equal(hasUnsavedInstrumentSyncDraft(genericCategory, saved), false)
+  assert.equal(
+    hasUnsavedInstrumentSyncDraft(genericCategory, {
+      ...saved,
+      endpoint: '192.168.1.132',
+    }),
+    true,
+  )
+  assert.equal(
+    hasUnsavedInstrumentSyncDraft(genericCategory, { ...saved, modelId: 'cmw' }),
+    true,
   )
 })

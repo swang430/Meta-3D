@@ -110,11 +110,10 @@ import {
 import {
   draftForBaseStationModel,
   explicitBaseStationConnectionDraft,
-  hasUnsavedBaseStationSyncDraft,
+  hasUnsavedInstrumentSyncDraft,
 } from './features/Equipment/baseStationModelPresetDraft'
 import {
   explicitChannelEmulatorConnectionDraft,
-  hasUnsavedChannelEmulatorDraft,
   switchChannelEmulatorModel,
 } from './features/Equipment/channelEmulatorModelPresetDraft'
 import type {
@@ -2289,14 +2288,7 @@ function EquipmentManager() {
           const baseStationCapabilityProjection = drawerSelectedModel?.base_station_manifest
             ? projectBaseStationCapabilities(drawerSelectedModel.base_station_manifest)
             : null
-          const hasUnsavedSyncDraft = category.key === 'baseStation'
-            ? hasUnsavedBaseStationSyncDraft(category, draft)
-            : category.key === 'channelEmulator'
-              ? (
-                  draft.modelId !== (category.selectedModelId ?? '')
-                  || hasUnsavedChannelEmulatorDraft(category, draft)
-                )
-              : false
+          const hasUnsavedSyncDraft = hasUnsavedInstrumentSyncDraft(category, draft)
 
           return (
             <Stack gap="xl">
@@ -2660,6 +2652,7 @@ function EquipmentManager() {
                   <Button
                     color="brand"
                     onClick={() => handleSaveConnection(category.key)}
+                    disabled={syncLabBindingMutation.isPending}
                     loading={instrumentMutation.isPending}
                   >
                     保存配置
