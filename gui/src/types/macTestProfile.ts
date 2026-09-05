@@ -27,6 +27,10 @@ export const UXM_NR_CSI_RS_PORTS_VALUES = [
   1, 2, 4, 8, 12, 16, 24, 32,
 ] as const
 
+export const LTE_TDD_ULDL_CONFIGURATION_VALUES = [0, 1, 2, 3, 4, 5, 6] as const
+export const LTE_TDD_SPECIAL_SUBFRAME_VALUES = [0, 1, 2, 3, 4, 5, 6, 7] as const
+export const LTE_TDD_RMC_VERSION_VALUES = [0, 1] as const
+
 const UXM_NR_SLOT_DURATION_MS: Record<number, number> = {
   15: 1,
   30: 0.5,
@@ -149,22 +153,17 @@ export type LteMacProfileDraft = {
   scheduling_mode: 'rmc'
   resource_allocation: 'full'
   enable_amc: false
-  // P2-56 ②：跟随后端放开。draft 是**服务端冻结 profile 的投影**，锁死 'fdd'
-  // 会让 TDD 用例在表单里显示成 FDD —— 显示层撒谎比缺字段更糟。
-  // ⚠️ 三个 TDD 帧结构字段（uldl_configuration / special_subframe /
-  // rmc_version）**不在 draft 里**：GUI 今天没有创建/编辑 TDD profile 的入口。
-  // 保存时 `updateMacProfileDraft` 对 TDD **保留** mac_profile 原样回传
-  // （见该函数的 LTE 分支），让服务端沿用已冻结的那一份 —— 否则后端会走
-  // legacy 派生并因缺帧结构而拒绝，TDD 用例就成了「可创建、不可编辑」。
-  // ⚠️ 初版注释写「那是既有的 GUI 能力缺口，不是本片新增」是**不准确的**：
-  // 本片之前 duplex 是 Literal["fdd"]，TDD 用例根本不可能存在，缺口不可达。
   duplex: 'fdd' | 'tdd'
   transmission_mode: 'TM3'
+  uldl_configuration: 0 | 1 | 2 | 3 | 4 | 5 | 6 | null
+  special_subframe: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | null
+  rmc_version: 0 | 1 | null
 }
 
 export type MacProfileDraft = NrMacProfileDraft | LteMacProfileDraft
 
 type MacProfileDraftPatch = {
+  duplex?: 'fdd' | 'tdd'
   mcs?: number
   enable_amc?: boolean
   tdd_pattern?: string
@@ -173,6 +172,9 @@ type MacProfileDraftPatch = {
   harq_processes?: number
   csi_rs_ports?: number
   statistical_window_count?: number
+  uldl_configuration?: number | null
+  special_subframe?: number | null
+  rmc_version?: number | null
 }
 
 const LEGACY_MAC_KEYS = [
@@ -189,6 +191,7 @@ const LEGACY_MAC_KEYS = [
   'scheduling_mode',
   'resource_allocation',
   'transmission_mode',
+  'lte_tdd_frame_structure',
 ] as const
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -204,6 +207,29 @@ function finiteNumber(value: unknown, fallback: number): number {
 function positiveInteger(value: unknown, fallback: number): number {
   const candidate = finiteNumber(value, fallback)
   return Number.isInteger(candidate) && candidate > 0 ? candidate : fallback
+}
+
+function enumIntegerOrNull<const T extends readonly number[]>(
+  value: unknown,
+  allowed: T,
+): T[number] | null {
+  if (
+    typeof value === 'number'
+    && Number.isInteger(value)
+    && allowed.includes(value as T[number])
+  ) {
+    return value as T[number]
+  }
+  return null
+}
+
+function primaryBandwidthMhz(configuration: Record<string, unknown>): number | null {
+  const carriers = Array.isArray(configuration.component_carriers)
+    ? configuration.component_carriers
+    : []
+  const pcell = record(carriers[0])
+  const value = pcell?.bandwidth_mhz ?? configuration.bandwidth_mhz
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 /**
@@ -268,10 +294,18 @@ export function profileDraftForConfiguration(
       enable_amc: frozen.enable_amc,
       duplex: frozen.duplex,
       transmission_mode: frozen.transmission_mode,
+      uldl_configuration: frozen.uldl_configuration,
+      special_subframe: frozen.special_subframe,
+      rmc_version: frozen.rmc_version,
     }
   }
   const count = positiveInteger(configuration.stat_count, 5000)
   if (rat === 'lte') {
+    const carriers = Array.isArray(configuration.component_carriers)
+      ? configuration.component_carriers
+      : []
+    const pcell = record(carriers[0])
+    const authoring = record(configuration.lte_tdd_frame_structure)
     return {
       kind: 'lte_rmc',
       rat: 'lte',
@@ -279,8 +313,20 @@ export function profileDraftForConfiguration(
       scheduling_mode: 'rmc',
       resource_allocation: 'full',
       enable_amc: false,
-      duplex: 'fdd',
+      duplex: pcell?.duplex === 'tdd' ? 'tdd' : 'fdd',
       transmission_mode: 'TM3',
+      uldl_configuration: enumIntegerOrNull(
+        authoring?.uldl_configuration,
+        LTE_TDD_ULDL_CONFIGURATION_VALUES,
+      ),
+      special_subframe: enumIntegerOrNull(
+        authoring?.special_subframe,
+        LTE_TDD_SPECIAL_SUBFRAME_VALUES,
+      ),
+      rmc_version: enumIntegerOrNull(
+        authoring?.rmc_version,
+        LTE_TDD_RMC_VERSION_VALUES,
+      ),
     }
   }
   const nrTddPattern = typeof configuration.tdd_pattern === 'string'
@@ -330,31 +376,36 @@ export function updateMacProfileDraft(
   next.stat_count = count
   if (rat === 'lte') {
     next.mimo_layers = 2
-    // P2-56 ②（内审 F5）：TDD 用例必须**原样保留** mac_profile。
-    // 上面那句 `delete next[key]` 会把它剥掉，让后端走 legacy 派生；而
-    // legacy 的扁平字段里没有帧结构（uldl_configuration / special_subframe），
-    // 后端会显式拒绝 —— 结果是 TDD 用例「可创建、不可编辑」。
-    // GUI 今天没有编辑 TDD 帧结构的入口，所以这里的正确行为是**不动它**，
-    // 让服务端沿用已冻结的那一份。
-    // 走本文件既有的 `record()` 守卫，不新增裸类型断言（外审 R2 high 的建议）。
-    // ⚠️ 这里**不改变** null 形态的行为：`configuration` 为 `null` / `undefined`
-    // 时，本函数第一句 `profileDraftForConfiguration(...)` 里的
-    // `frozenProfile(configuration.mac_profile)` 就已经抛 TypeError —— 那是
-    // main 上就有的既有行为，本片不动它（⑦：不改它，本片那个可观察故障还在）。
-    // 换 `record()` 只是不让新增代码再多一处裸 `as`，行为逐格实测等价。
-    const frozen = record(configuration)?.mac_profile
-    const frozenDuplex = record(record(frozen)?.profile)?.duplex
-    if (frozenDuplex === 'tdd') {
-      next.mac_profile = frozen
-      // ⚠️ 同时**撤掉 stat_count**（内审 F1）：后端在 `mac_profile` 存在时
-      // 按**值**对账 —— `stat_count` 与 `mac_profile.statistical_window.count`
-      // **不相等**才拒（"mac_profile conflicts with deprecated stat_count"，
-      // 见 config.py 的 expected_legacy 分支；相等是放行的）。
-      // 而 TDD 分支保留的是**旧的**冻结 profile，用户新改的 stat_count 必然
-      // 与它不等 —— 索性不带出去，让冻结的统计窗口当唯一真值。
-      // 表单已把 TDD 的统计窗口置灰，但本函数是纯函数、可被别处调用 ——
-      // 让它自己不产生冲突形态，比只靠 UI 挡更可靠。
-      delete next.stat_count
+    const lte = current.kind === 'lte_rmc'
+      ? current
+      : profileDraftForConfiguration({}, 'lte') as LteMacProfileDraft
+    const duplex = patch.duplex ?? lte.duplex
+    if (duplex === 'tdd') {
+      const uldl = enumIntegerOrNull(
+        patch.uldl_configuration !== undefined
+          ? patch.uldl_configuration
+          : lte.uldl_configuration,
+        LTE_TDD_ULDL_CONFIGURATION_VALUES,
+      )
+      const special = enumIntegerOrNull(
+        patch.special_subframe !== undefined
+          ? patch.special_subframe
+          : lte.special_subframe,
+        LTE_TDD_SPECIAL_SUBFRAME_VALUES,
+      )
+      const rmc = enumIntegerOrNull(
+        patch.rmc_version !== undefined
+          ? patch.rmc_version
+          : lte.rmc_version,
+        LTE_TDD_RMC_VERSION_VALUES,
+      )
+      next.lte_tdd_frame_structure = {
+        uldl_configuration: uldl,
+        special_subframe: special,
+        ...(primaryBandwidthMhz(configuration) === 20
+          ? { rmc_version: rmc }
+          : {}),
+      }
     }
     return next
   }
@@ -384,7 +435,34 @@ export function validateMacProfileDraftForSave(
     ? configuration.component_carriers
     : []
   const pcell = record(carriers[0])
-  if (pcell?.radio_technology === 'lte') return null
+  if (pcell?.radio_technology === 'lte') {
+    const draft = profileDraftForConfiguration(configuration, 'lte')
+    if (draft.kind !== 'lte_rmc') return 'LTE MAC profile 类型无效'
+    if (draft.duplex === 'fdd') return null
+    if (!LTE_TDD_ULDL_CONFIGURATION_VALUES.includes(
+      draft.uldl_configuration as 0,
+    )) {
+      return 'LTE TDD ULDL 配置必须选择 0 至 6'
+    }
+    if (!LTE_TDD_SPECIAL_SUBFRAME_VALUES.includes(
+      draft.special_subframe as 0,
+    )) {
+      return 'LTE TDD 特殊子帧必须选择 0 至 7'
+    }
+    const bandwidth = primaryBandwidthMhz(configuration)
+    if (![1.4, 3, 5, 10, 15, 20].includes(bandwidth ?? -1)) {
+      return 'LTE TDD 带宽不在 CMW500 已审计 RMC 范围内'
+    }
+    if (bandwidth === 20 && !LTE_TDD_RMC_VERSION_VALUES.includes(
+      draft.rmc_version as 0,
+    )) {
+      return 'LTE TDD 20 MHz 必须选择 RMC 版本 0 或 1'
+    }
+    if (bandwidth !== 20 && draft.rmc_version !== null) {
+      return '当前 LTE TDD 带宽不需要 RMC 版本，必须清空'
+    }
+    return null
+  }
 
   const draft = profileDraftForConfiguration(configuration, 'nr5g')
   if (draft.kind !== 'nr_throughput') return 'NR MAC profile 类型无效'
