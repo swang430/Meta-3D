@@ -62,6 +62,7 @@ from app.hal.lte_earfcn import validate_lte_band_options
 from app.hal.cmw500_command_profile import (
     cmw500_lte_formal_options,
     CMW500_LTE_COMMANDS,
+    CMW500_LTE_BANDWIDTH_TOKEN_BY_MHZ,
     CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH,
     EBLER_SUBFRAMES_MAX,
     EBLER_SUBFRAMES_MIN,
@@ -1163,14 +1164,7 @@ class RealCmw500Driver(BaseStationDriver):
     max_mimo_layers = 4
     # User Manual §2.6.12.1, p.680: <Bandwidth> is exactly
     # B014/B030/B050/B100/B150/B200 for 1.4/3/5/10/15/20 MHz.
-    bandwidth_token_by_mhz = {
-        1.4: "B014",
-        3.0: "B030",
-        5.0: "B050",
-        10.0: "B100",
-        15.0: "B150",
-        20.0: "B200",
-    }
+    bandwidth_token_by_mhz = CMW500_LTE_BANDWIDTH_TOKEN_BY_MHZ
     supported_bandwidths_mhz = frozenset(bandwidth_token_by_mhz)
     supported_mimo_layers = frozenset({1, 2, 4})
 

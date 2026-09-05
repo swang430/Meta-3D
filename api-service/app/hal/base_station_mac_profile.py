@@ -303,11 +303,31 @@ class NrMacTestProfileV1(_MacTestProfileBase):
         return self
 
 
+class LteTddFrameStructureAuthoring(BaseModel):
+    """Operator-supplied LTE TDD frame truth before server-side freezing."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    uldl_configuration: Literal[0, 1, 2, 3, 4, 5, 6]
+    special_subframe: Literal[0, 1, 2, 3, 4, 5, 6, 7]
+    rmc_version: Literal[0, 1] | None = None
+
+    @field_validator(
+        "uldl_configuration", "special_subframe", "rmc_version", mode="before"
+    )
+    @classmethod
+    def _require_integer_tokens(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError("LTE TDD frame values must be integers")
+        return value
+
+
 class LteRmcMacTestProfileV1(_MacTestProfileBase):
     """The exact, deliberately narrow LTE shape implemented today.
 
-    It declares fixed FDD/full-resource RMC only.  Future LTE schedulers need a
-    new profile version rather than silently borrowing NR controls.
+    It declares explicit FDD/TDD frame truth with full-resource RMC only.
+    Future LTE schedulers need a new profile version rather than silently
+    borrowing NR controls.
     """
 
     kind: Literal["lte_rmc"]

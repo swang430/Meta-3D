@@ -46,7 +46,7 @@
 
 - 修改：`gui/src/types/macTestProfile.ts`
 - 修改：`gui/src/types/macTestProfile.test.ts`
-- 修改：`gui/src/types/api.ts`
+- 按实际契约决定是否修改：`gui/src/types/api.ts`
 - 修改：`gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx`
 - 按需新增：`gui/src/components/TestCaseConfig/lteTddMacAuthoringTruth.test.ts`
 
@@ -92,3 +92,17 @@
 6. 覆盖最新 HEAD 的 R2 无 P1且可合并/checks 通过或无必需 checks时，以目标 SHA 合并；若仍有 P1，按同一流程继续 P1-only 外审。
 7. 合并后 fetch 验证 `origin/main`，主目录 `git merge --ff-only origin/main`，保留未跟踪仪器资料，清理 worktree/本地分支。
 8. 汇报 P3-23 试行数据：外审请求次数、重复请求、等待时长、重复全量、R1 后功能缺陷及是否出现“多等一轮”。
+
+## 执行记录（2026-09-05）
+
+- Task 1–4 已完成：服务器 authoring→frozen canonical writer、真实 create/update 保存、GUI 类型化
+  TDD 控件、compatibility/freeze 回归均按 RED→GREEN 落地；没有新增或修改 SCPI。
+- Task 5 已完成：生产入口与对称路径由主代理顺序自查，未发现功能缺陷；这是主代理自查，非独立
+  内审。活文档与紧邻代码说明已同步，历史记录未改写。
+- `TestCase.configuration` 在 OpenAPI 中仍为自由对象，未新增公开 schema；`api/openapi.yaml`、
+  generated TS 与手写 `api.ts` 无需修改，四镜像不适用。
+- 最终受影响链 282 passed；全后端第一次因从仓库根目录启动导致既有 Alembic fixture 4 个 setup
+  errors，改从 `api-service` 启动后 6409 passed / 5 skipped。相同产品输入重复全量 1 次；这是
+  P3-23 试行暴露的流程浪费，PR 中保留原因，不把第一次包装成产品回归失败。
+- GUI 新契约 12 passed、production build、compileall、单一 Alembic head 与 diff-check 通过。
+- Task 6 的本地阶段完成；待 Ready PR、Codex R1→R2、覆盖最新 HEAD 无 P1后合并与同步清理。

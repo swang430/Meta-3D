@@ -107,6 +107,19 @@ class CmwLteFullRbRmcPlan:
 
 
 # P2-51: full-allocation RMC rows per bandwidth token, copied row-by-row from
+# R&S CMW500 LTE UE User Manual §2.6.12.1, printed p.680: <Bandwidth>
+# is exactly B014/B030/B050/B100/B150/B200 for 1.4/3/5/10/15/20 MHz.
+# The driver and TestCase canonical writer consume this same mapping.
+CMW500_LTE_BANDWIDTH_TOKEN_BY_MHZ: dict[float, str] = {
+    1.4: "B014",
+    3.0: "B030",
+    5.0: "B050",
+    10.0: "B100",
+    15.0: "B150",
+    20.0: "B200",
+}
+
+
 # the vendor manual and visually re-checked against the PDF original:
 #   · DL: Table 2-38 "DL RMCs for FDD, multiple TX antennas" (§2.2.19.4,
 #     printed p.78) — per bandwidth the full-RB row with the highest

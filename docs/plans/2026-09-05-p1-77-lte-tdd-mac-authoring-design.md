@@ -87,3 +87,16 @@ P2，R2 无 P1即合并；R2 若有 P1，修复后继续 P1-only 至覆盖最新
 
 PR 记录：开发定点/受影响/全量各运行次数与耗时、同输入重复全量次数、R1 后功能缺陷数、每轮请求
 与结果时间、无结果等待时长、重复请求次数，用于验证 P3-23 是否真正降低等待和重复验证。
+
+## 8. 实现状态（2026-09-05）
+
+A 方案已按设计落地并完成本地验证。服务器新增的 authoring 对象只在请求边界存在，成功保存后只
+留下既有 `lte_rmc@1` frozen profile 与服务器 digest；GUI 不生成摘要。23 条缺损历史记录保持原状，
+操作员必须逐条打开并选择真实 ULDL、special subframe，20 MHz 还需选择真实 RMC version。
+
+本片未新增或修改 SCPI、未改变正式 provenance 白名单、未提升 P2-56 现场状态。OpenAPI 中
+`TestCase.configuration` 继续是自由对象，没有新增可生成的公开 schema，因此四镜像不适用。
+
+验证结果：受影响链 282 passed；全后端在正确工作目录下 6409 passed / 5 skipped；GUI 新契约
+12 passed，production build、compileall、单一 Alembic head 与 diff-check 通过。主代理已按本设计
+的生产关系全集逐项自查；该检查不是独立内审。

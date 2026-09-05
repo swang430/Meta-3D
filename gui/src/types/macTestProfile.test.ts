@@ -179,9 +179,118 @@ test('sparse legacy NR draft derives a TDD period that agrees with its own SCS',
   )
 })
 
-// P2-56 ②（内审 F2）：LTE TDD 用例的 mac_profile 必须原样保留。
-// 这段逻辑此前零测试保护 —— 整段删掉，GUI 测试全绿。
-test('LTE TDD 用例保存时保留 mac_profile 且不与 stat_count 冲突', () => {
+test('legacy LTE TDD stays TDD and never invents frame defaults', () => {
+  const draft = profileDraftForConfiguration({
+    component_carriers: [{
+      radio_technology: 'lte',
+      duplex: 'tdd',
+      bandwidth_mhz: 20,
+    }],
+    stat_count: 5000,
+  }, 'lte')
+
+  assert.equal(draft.kind, 'lte_rmc')
+  assert.equal(draft.duplex, 'tdd')
+  assert.equal(draft.uldl_configuration, null)
+  assert.equal(draft.special_subframe, null)
+  assert.equal(draft.rmc_version, null)
+})
+
+test('editing frozen LTE TDD emits server authoring input and drops old digest', () => {
+  const frozenTdd = {
+    profile: {
+      schema_version: 1 as const,
+      profile_version: 1 as const,
+      kind: 'lte_rmc' as const,
+      rat: 'lte' as const,
+      test_intent: 'downlink_throughput' as const,
+      mimo_layers: 2 as const,
+      statistical_window: { unit: 'subframes' as const, count: 5000 },
+      metric_requirements: [
+        { key: 'dl_throughput_mbps', scope: 'pcell' as const },
+        { key: 'dl_bler_percent', scope: 'pcell' as const },
+      ],
+      scheduling_mode: 'rmc' as const,
+      resource_allocation: 'full' as const,
+      enable_amc: false as const,
+      duplex: 'tdd' as const,
+      transmission_mode: 'TM3' as const,
+      uldl_configuration: 2 as const,
+      special_subframe: 4 as const,
+      rmc_version: 1 as const,
+      source_reference:
+        'Instrument_API_Doc/R&S CMW500/CMW_LTE_UE_UserManual_V4-0-250_en_41 (2).pdf' as const,
+    },
+    profile_digest: 'f'.repeat(64),
+  }
+  const configuration = {
+    component_carriers: [{
+      radio_technology: 'lte' as const,
+      duplex: 'tdd' as const,
+      bandwidth_mhz: 20,
+    }],
+    mac_profile: frozenTdd,
+    mimo_layers: 2,
+  }
+
+  const projected = profileDraftForConfiguration(configuration, 'lte')
+  assert.equal(projected.kind, 'lte_rmc')
+  assert.equal(projected.uldl_configuration, 2)
+  assert.equal(projected.special_subframe, 4)
+  assert.equal(projected.rmc_version, 1)
+
+  const saved = updateMacProfileDraft(configuration, 'lte', {
+    uldl_configuration: 3,
+    statistical_window_count: 6000,
+  })
+  assert.equal(saved.mac_profile, undefined)
+  assert.equal(saved.stat_count, 6000)
+  assert.deepEqual(saved.lte_tdd_frame_structure, {
+    uldl_configuration: 3,
+    special_subframe: 4,
+    rmc_version: 1,
+  })
+})
+
+test('LTE TDD save validation requires exact frame fields and bandwidth version rule', () => {
+  const base = {
+    component_carriers: [{
+      radio_technology: 'lte' as const,
+      duplex: 'tdd' as const,
+      bandwidth_mhz: 20,
+    }],
+  }
+  assert.match(
+    macProfileTruth.validateMacProfileDraftForSave(base) ?? '',
+    /ULDL/,
+  )
+  const frame = { uldl_configuration: 2, special_subframe: 4 }
+  assert.match(
+    macProfileTruth.validateMacProfileDraftForSave({
+      ...base,
+      lte_tdd_frame_structure: frame,
+    }) ?? '',
+    /RMC.*版本/,
+  )
+  assert.equal(
+    macProfileTruth.validateMacProfileDraftForSave({
+      ...base,
+      lte_tdd_frame_structure: { ...frame, rmc_version: 1 },
+    }),
+    null,
+  )
+  assert.match(
+    macProfileTruth.validateMacProfileDraftForSave({
+      component_carriers: [{
+        radio_technology: 'lte', duplex: 'tdd', bandwidth_mhz: 10,
+      }],
+      lte_tdd_frame_structure: { ...frame, rmc_version: 1 },
+    }) ?? '',
+    /不需要.*RMC.*版本/,
+  )
+})
+
+test('LTE editor removes stale profile truth for both duplex modes', () => {
   const frozenTdd = {
     profile: {
       schema_version: 1 as const,
@@ -208,15 +317,23 @@ test('LTE TDD 用例保存时保留 mac_profile 且不与 stat_count 冲突', ()
     },
     profile_digest: 'f'.repeat(64),
   }
-  const tddConfig = { mac_profile: frozenTdd, mimo_layers: 2 }
+  const tddConfig = {
+    component_carriers: [{
+      radio_technology: 'lte', duplex: 'tdd', bandwidth_mhz: 10,
+    }],
+    mac_profile: frozenTdd,
+    mimo_layers: 2,
+  }
 
   const saved = updateMacProfileDraft(tddConfig, 'lte', {})
-  // ① 帧结构随冻结 profile 一起回传 —— 剥掉它后端会走 legacy 派生并拒绝
-  assert.deepEqual(saved.mac_profile, frozenTdd)
-  // ② 不带 stat_count：后端按值对账，改过的值必与冻结窗口不等而被拒
-  assert.equal('stat_count' in saved, false)
+  assert.equal(saved.mac_profile, undefined)
+  assert.equal(saved.stat_count, 5000)
+  assert.deepEqual(saved.lte_tdd_frame_structure, {
+    uldl_configuration: 2,
+    special_subframe: 4,
+  })
 
-  // ③ FDD 行为与改前逐字相同：mac_profile 被剥掉，stat_count 照常带出
+  // FDD 不携带 TDD authoring input。
   const fddConfig = {
     mac_profile: {
       ...frozenTdd,
@@ -228,8 +345,9 @@ test('LTE TDD 用例保存时保留 mac_profile 且不与 stat_count 冲突', ()
   const fdd = updateMacProfileDraft(fddConfig, 'lte', {})
   assert.equal(fdd.mac_profile, undefined)
   assert.equal(fdd.stat_count, 5000)
+  assert.equal(fdd.lte_tdd_frame_structure, undefined)
 
-  // ④ 形态空间：mac_profile 缺失 / null / 非对象 / profile 非对象 —— 一律按 FDD 处理
+  // 形态空间：mac_profile 缺失 / null / 非对象 / profile 非对象 —— 一律按 FDD 处理。
   for (const bad of [undefined, null, 'x', 42, [], { profile: 7 }]) {
     const out = updateMacProfileDraft(
       bad === undefined ? { mimo_layers: 2 } : { mac_profile: bad, mimo_layers: 2 },

@@ -51,6 +51,9 @@ import { describeCmw500Readiness } from './cmw500ReadinessTruth'
 import { projectBaseStationCompatibilityTruth } from '../../features/Dashboard/baseStationBindingTruth'
 import {
   describeFrozenMacProfile,
+  LTE_TDD_RMC_VERSION_VALUES,
+  LTE_TDD_SPECIAL_SUBFRAME_VALUES,
+  LTE_TDD_ULDL_CONFIGURATION_VALUES,
   profileDraftForConfiguration,
   updateMacProfileDraft,
   validateMacProfileDraftForSave,
@@ -126,6 +129,12 @@ export interface MIMOOTAConfiguration {
   stat_count?: number
   /** 服务器生成的不可变执行真值；任一编辑都会丢弃旧 digest 并由后端重新冻结。 */
   mac_profile?: FrozenMacTestProfile
+  /** LTE TDD 保存请求暂态输入；服务端生成摘要后不会原样持久化。 */
+  lte_tdd_frame_structure?: {
+    uldl_configuration: 0 | 1 | 2 | 3 | 4 | 5 | 6 | null
+    special_subframe: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | null
+    rmc_version?: 0 | 1 | null
+  }
   // DUTProfile 阶段 2/3: 引用一个 DUT 自声明能力档案。precheck section 2.3 拿请求 (mimo_layers/
   // modulation) 跟声明比, 请求 > 声明提前 fail (规划期, attach 前)。留空=不做声明校验。
   dut_profile_id?: string
@@ -294,10 +303,16 @@ export function MIMOOTAConfigForm({
     next: number | undefined,
   ): void => {
     if (typeof next !== 'number' || !Number.isFinite(next)) return
-    const editable = key === 'subcarrier_spacing_khz'
-      ? updateMacProfileDraft(value, radioTechnology, {}) as MIMOOTAConfiguration
-      : value
-    onChange(updatePrimaryCarrierValue(editable, key, next))
+    const withCarrier = updatePrimaryCarrierValue(value, key, next)
+    const mustRefreezeMac = key === 'subcarrier_spacing_khz'
+      || (key === 'bandwidth_mhz' && radioTechnology === 'lte')
+    onChange(mustRefreezeMac
+      ? updateMacProfileDraft(
+          withCarrier,
+          radioTechnology,
+          {},
+        ) as MIMOOTAConfiguration
+      : withCarrier)
   }
 
   const patchPCell = (patch: Record<string, unknown>): void => {
@@ -307,6 +322,15 @@ export function MIMOOTAConfigForm({
       {},
     ) as MIMOOTAConfiguration
     onChange(patchPrimaryCarrierFields(editable, patch))
+  }
+
+  const updateLteDuplex = (duplex: 'fdd' | 'tdd'): void => {
+    const withCarrier = patchPrimaryCarrierFields(value, { duplex })
+    onChange(updateMacProfileDraft(
+      withCarrier,
+      'lte',
+      { duplex },
+    ) as MIMOOTAConfiguration)
   }
 
   const switchRadioTechnology = (rat: 'nr5g' | 'lte'): void => {
@@ -545,10 +569,14 @@ export function MIMOOTAConfigForm({
               <>
                 <Select
                   label="双工模式"
-                  data={[{ value: 'fdd', label: 'FDD' }]}
+                  data={[
+                    { value: 'fdd', label: 'FDD' },
+                    { value: 'tdd', label: 'TDD' },
+                  ]}
                   value={rawPCell?.duplex ?? null}
-                  onChange={(v) => patchPCell({ duplex: v ?? undefined })}
-                  disabled
+                  onChange={(v) => updateLteDuplex(v === 'tdd' ? 'tdd' : 'fdd')}
+                  disabled={readOnly}
+                  allowDeselect={false}
                   required
                 />
                 <NumberInput
@@ -1075,7 +1103,7 @@ export function MIMOOTAConfigForm({
               <Alert color="blue" variant="light" title="RAT 判别 MAC profile">
                 {radioTechnology === 'nr5g'
                   ? 'NR 使用 nr_throughput@1；以下编辑由服务器重新校验并冻结。'
-                  : 'LTE 使用固定 lte_rmc@1（FDD / TM3 / 全资源 / AMC 关闭），不会提交 NR 专属字段。'}
+                  : 'LTE 使用 lte_rmc@1（TM3 / 全资源 / AMC 关闭）；TDD 帧结构由操作员明确选择，再由服务器校验并冻结。'}
               </Alert>
               {macProfileDraftError ? (
                 <Alert color="red" variant="light" title="MAC 配置尚不可保存">
@@ -1156,23 +1184,65 @@ export function MIMOOTAConfigForm({
                     <TextInput label="调度模式" value="RMC" disabled />
                     <TextInput label="资源分配" value="全资源" disabled />
                     <TextInput label="传输模式" value="TM3" disabled />
+                    {macProfileDraft.duplex === 'tdd' ? (
+                      <>
+                        <Select
+                          label="UL/DL 配置"
+                          description="LTE TDD ULDL configuration；必须显式选择"
+                          value={macProfileDraft.uldl_configuration === null
+                            ? null
+                            : String(macProfileDraft.uldl_configuration)}
+                          data={LTE_TDD_ULDL_CONFIGURATION_VALUES.map((item) => ({
+                            value: String(item), label: String(item),
+                          }))}
+                          onChange={(item) => updateMacDraft({
+                            uldl_configuration: item === null ? null : Number(item),
+                          })}
+                          disabled={readOnly}
+                          allowDeselect={false}
+                          required
+                        />
+                        <Select
+                          label="特殊子帧配置"
+                          description="LTE TDD special subframe 0–7；不采用仪器默认值"
+                          value={macProfileDraft.special_subframe === null
+                            ? null
+                            : String(macProfileDraft.special_subframe)}
+                          data={LTE_TDD_SPECIAL_SUBFRAME_VALUES.map((item) => ({
+                            value: String(item), label: String(item),
+                          }))}
+                          onChange={(item) => updateMacDraft({
+                            special_subframe: item === null ? null : Number(item),
+                          })}
+                          disabled={readOnly}
+                          allowDeselect={false}
+                          required
+                        />
+                        {primaryCarrierValue(value, 'bandwidth_mhz') === 20 ? (
+                          <Select
+                            label="RMC 版本"
+                            description="20 MHz TDD 的审计 RMC 行存在版本歧义，必须显式选择"
+                            value={macProfileDraft.rmc_version === null
+                              ? null
+                              : String(macProfileDraft.rmc_version)}
+                            data={LTE_TDD_RMC_VERSION_VALUES.map((item) => ({
+                              value: String(item), label: String(item),
+                            }))}
+                            onChange={(item) => updateMacDraft({
+                              rmc_version: item === null ? null : Number(item),
+                            })}
+                            disabled={readOnly}
+                            allowDeselect={false}
+                            required
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
                   </>
                 )}
-                {/* P2-56 ②（内审 F1）：LTE TDD 用例的统计窗口在这里**只读**。
-                    原因：TDD 的 configuration 必须原样保留冻结的 mac_profile
-                    （GUI 没有编辑 TDD 帧结构的入口），而后端按**值**对账：
-                    改过的 stat_count 与冻结 profile 的 statistical_window.count
-                    不等就会被拒（"mac_profile conflicts with deprecated
-                    stat_count"；相等是放行的，见 config.py 的 expected_legacy）。
-                    可编辑但改了会弹回、或改了却存不进去，都比明确置灰更糟。 */}
                 <NumberInput
                   label="统计窗口"
-                  description={
-                    macProfileDraft.kind === 'lte_rmc' &&
-                    macProfileDraft.duplex === 'tdd'
-                      ? '单位：subframes（TDD 用例随冻结 profile，此处不可编辑）'
-                      : '单位：subframes'
-                  }
+                  description="单位：subframes"
                   value={macProfileDraft.statistical_window.count}
                   onChange={(v) => {
                     if (typeof v === 'number') {
@@ -1180,11 +1250,7 @@ export function MIMOOTAConfigForm({
                     }
                   }}
                   min={100}
-                  disabled={
-                    readOnly ||
-                    (macProfileDraft.kind === 'lte_rmc' &&
-                      macProfileDraft.duplex === 'tdd')
-                  }
+                  disabled={readOnly}
                 />
               </SimpleGrid>
             </Stack>

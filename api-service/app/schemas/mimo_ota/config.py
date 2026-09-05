@@ -103,8 +103,13 @@ from app.hal.base_station_mac_profile import (
     UXM_NR_PROFILE_SOURCE,
     FrozenMacTestProfile,
     LteRmcMacTestProfileV1,
+    LteTddFrameStructureAuthoring,
     NrMacTestProfileV1,
     uxm_nr_tdd_period_for_pattern,
+)
+from app.hal.cmw500_command_profile import (
+    CMW500_LTE_BANDWIDTH_TOKEN_BY_MHZ,
+    CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH,
 )
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 
@@ -707,8 +712,13 @@ class MIMOOTAConfiguration(BaseModel):
             elif isinstance(candidate, dict):
                 pcell = candidate
         rat = pcell.get("radio_technology", "nr5g")
+        has_lte_tdd_authoring = "lte_tdd_frame_structure" in data
 
         if "mac_profile" in data:
+            if has_lte_tdd_authoring:
+                raise ValueError(
+                    "mac_profile conflicts with lte_tdd_frame_structure"
+                )
             frozen = FrozenMacTestProfile.model_validate(data["mac_profile"])
             profile = frozen.profile
             expected_legacy: dict[str, Any] = {
@@ -781,18 +791,54 @@ class MIMOOTAConfiguration(BaseModel):
                     }
                 ):
                     return data
-                # P2-56 ②：legacy 派生只能造 FDD profile。LTE TDD 还需要
-                # 配比与特殊子帧（`CELL[:PCC]:ULDL` pp.687-688 /
-                # `SSUBframe` p.688），而 legacy 的扁平字段里没有它们 ——
-                # 从 `*RST`（ULDL=1 / SSUBframe=7）补真是本仓明令禁止的形态。
-                # 所以这里**显式拒绝并给出可操作的理由**，而不是造一个注定
-                # 过不了校验的半成品 profile —— 后者会让报错指向 profile 的
-                # 字段校验，读的人看不出「该给 mac_profile」这个真正的动作。
-                if str(pcell.get("duplex")).strip().lower() == "tdd":
+                # P1-77：LTE TDD 还需要配比与特殊子帧
+                # （`CELL[:PCC]:ULDL` pp.687-688 / `SSUBframe` p.688）。
+                # legacy 扁平字段没有这些真值，因此必须由操作员通过
+                # request-only authoring input 明确提供；绝不从仪器 `*RST`
+                # （ULDL=1 / SSUBframe=7）补真。服务端在这里构造并冻结唯一
+                # profile，成功后不会持久化 authoring input。
+                duplex = str(pcell.get("duplex")).strip().lower()
+                tdd_authoring = None
+                if duplex == "tdd":
+                    if not has_lte_tdd_authoring:
+                        raise ValueError(
+                            "duplex=tdd 的 LTE 配置必须提供 "
+                            "lte_tdd_frame_structure（含 uldl_configuration "
+                            "与 special_subframe）：不从仪器 *RST 补真"
+                        )
+                    tdd_authoring = LteTddFrameStructureAuthoring.model_validate(
+                        data["lte_tdd_frame_structure"]
+                    )
+                    bandwidth_token = CMW500_LTE_BANDWIDTH_TOKEN_BY_MHZ.get(
+                        pcell.get("bandwidth_mhz")
+                    )
+                    rmc_plan = CMW500_LTE_FULL_RB_RMC_BY_BANDWIDTH.get(
+                        bandwidth_token or ""
+                    )
+                    if rmc_plan is None:
+                        raise ValueError(
+                            "LTE TDD bandwidth has no audited CMW500 RMC plan"
+                        )
+                    if (
+                        rmc_plan.tdd_dl_version_required
+                        and tdd_authoring.rmc_version is None
+                    ):
+                        raise ValueError(
+                            "lte_tdd_frame_structure.rmc_version is required "
+                            "for this LTE TDD bandwidth"
+                        )
+                    if (
+                        not rmc_plan.tdd_dl_version_required
+                        and tdd_authoring.rmc_version is not None
+                    ):
+                        raise ValueError(
+                            "lte_tdd_frame_structure.rmc_version must be omitted "
+                            "for this LTE TDD bandwidth"
+                        )
+                elif has_lte_tdd_authoring:
                     raise ValueError(
-                        "duplex=tdd 的 LTE 配置必须显式提供 mac_profile"
-                        "（含 uldl_configuration 与 special_subframe）："
-                        "legacy 扁平字段里没有帧结构，不从仪器 *RST 补真"
+                        "LTE FDD configuration must not carry "
+                        "lte_tdd_frame_structure"
                     )
                 profile = LteRmcMacTestProfileV1.model_validate(
                     {
@@ -813,12 +859,31 @@ class MIMOOTAConfiguration(BaseModel):
                         "scheduling_mode": "rmc",
                         "resource_allocation": "full",
                         "enable_amc": data.get("enable_amc", False),
-                        "duplex": pcell.get("duplex"),
+                        "duplex": duplex,
                         "transmission_mode": transmission_mode,
+                        "uldl_configuration": (
+                            tdd_authoring.uldl_configuration
+                            if tdd_authoring is not None
+                            else None
+                        ),
+                        "special_subframe": (
+                            tdd_authoring.special_subframe
+                            if tdd_authoring is not None
+                            else None
+                        ),
+                        "rmc_version": (
+                            tdd_authoring.rmc_version
+                            if tdd_authoring is not None
+                            else None
+                        ),
                         "source_reference": CMW500_LTE_PROFILE_SOURCE,
                     }
                 )
             else:
+                if has_lte_tdd_authoring:
+                    raise ValueError(
+                        "NR configuration must not carry lte_tdd_frame_structure"
+                    )
                 scheduler = data.get("sched_algo")
                 if scheduler in (
                     None,
@@ -888,6 +953,7 @@ class MIMOOTAConfiguration(BaseModel):
                     }
                 )
             data["mac_profile"] = FrozenMacTestProfile.freeze(profile)
+            data.pop("lte_tdd_frame_structure", None)
         return data
 
     @model_validator(mode="before")
@@ -1115,6 +1181,7 @@ _DEPRECATED_MAC_INPUT_FIELDS = (
     "stat_count",
     "sched_algo",
     "csi_rs_ports",
+    "lte_tdd_frame_structure",
 )
 
 
