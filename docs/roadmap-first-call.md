@@ -10,8 +10,10 @@
 
 **2026-09-05 收口与 triage**：P2-62 已由 PR #459 合并，merge `a0c671c4`；上一轮已批准的
 非现场执行队列已收口。P2-57 声明面残项、CMW 可达能力与各现场半分别保留，不能把合并解释为全部验收。
-当前工作是本轮复盘与待办整理，产品开发 WIP=0；本次整理的后续候选顺序为
-**P1-76 → P2-68 → P2-69 → P2-70**，均为待启动，详见条目；本 PR 固化 **P3-23** 执行规则，
+当前唯一产品开发 WIP 是 **P1-77**：补齐 LTE TDD TestCase 的 MAC 帧结构配置入口，修复现有
+B41/TDD/20 MHz 用例无法保存为有效执行配置、GUI 又把缺损配置显示成 FDD 的故障。完成后顺序为
+**P1-76 → P2-68 → P2-69 → P2-70**，详见条目；P1-77 同时作为 **P3-23** 新规则的第一个功能
+试行片，记录验证复用、外审请求与等待数据；
 P2-57 残项为后续平台设计，
 P2-63 继续 HOLD。本次整理不自动启动这些实现。
 复盘证据、反复发现缺陷的根因与回归分档建议见
@@ -703,7 +705,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 原批准队列至 P2-62 已合并，产品开发 WIP=0。本次 triage 后 P1-76（监控假读数）优先，随后 P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口，均待启动，顺序见顶部。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P3-23 规则固化于本 PR、两个功能 PR 试行待验。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | 当前唯一 WIP 为 P1-77（LTE TDD MAC 帧结构配置入口）；其后 P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口依次待启动，顺序见顶部。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77/P1-76 是 P3-23 规则固化后的两个功能试行片。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3515,7 +3517,29 @@ P2-64～P2-67 分别收口同一次复盘派生的 Mock、Readiness、证据终�
 紧跟本片执行。设计见
 `docs/plans/2026-08-30-base-station-testcase-compatibility-roadmap-design.md`。
 
-### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，当前本地第一优先）
+### P1-77 — LTE TDD TestCase 必须有可达的 MAC 帧结构配置入口（🔄 Current Focus）
+
+**可观察故障**：现有 LTE B41/TDD/20 MHz CMW500 TestCase 没有冻结 `mac_profile`。服务端按安全
+规则拒绝从 legacy 扁平字段或仪器 `*RST` 默认值补出 `uldl_configuration` / `special_subframe`，
+因此启动固定返回 422；但生产 GUI 的双工控件只有 FDD，legacy LTE 投影也固定显示 FDD，且保存前
+对全部 LTE 跳过 MAC 校验。操作员既看不到真实 TDD 状态，也没有入口补齐必需参数。2026-09-05
+手工执行 TestCase `82331c1c-5d9b-4b68-aea9-bf8b08932f60` 已复现；库内另有 23 条同形态
+LTE TDD 历史配置，完整已保存 TDD profile 为 0。历史成功执行没有冻结上述值，不能作为回填依据。
+
+**范围/验收**：GUI 如实显示 PCell duplex，并为 LTE TDD 提供离散的 ULDL `0..6`、special
+subframe `0..7`；20 MHz/B200 按既有表 2-39 计划显式要求 RMC version `0|1`，其余带宽不得
+夹带版本。浏览器只提交 request-only authoring input，不生成 digest；服务器在 TestCase create/update
+共用的 canonical boundary 校验、构造并冻结唯一 `mac_profile`，持久化结果移除 authoring input，
+preview/readiness/freeze/execute 继续只消费冻结 profile。旧缺损记录保持未修改，打开时显示 TDD +
+“需要补全”，未选择时保存与执行均 fail-closed；现有完整 TDD profile 可打开、编辑、重新冻结。
+覆盖 GUI→API→服务端保存→冻结→执行准入的真实生产入口，不以手工构造 profile 代替产品可达性。
+
+**边界**：不批量猜测或修改 23 条旧记录，不使用 `*RST` 默认值，不新增/修改 SCPI，不改变正式
+provenance 白名单，不把本地 Mock 验证称作 P2-56 现场半。设计见
+[`P1-77 设计稿`](plans/2026-09-05-p1-77-lte-tdd-mac-authoring-design.md)。本片作为 P3-23
+首个功能试行，PR 如实记录目标/受影响/全量验证次数、R1 后功能缺陷、等待与重复请求次数。
+
+### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，P1-77 后）
 
 **可观察故障**：`instrument_hal_service.get_aggregated_metrics` 按 snake_case 分流，实际
 drivers 键是 camelCase，读数落入 `_build_monitoring_data` 的默认值；测试租约开放监控期间，
