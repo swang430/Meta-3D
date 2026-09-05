@@ -1,9 +1,12 @@
-"""Bounded, read-only inventory of F64 ``.smu`` project copies (P2-31).
+"""Development/debug inventory of read-only F64 ``.smu`` project copies (P2-31).
 
 The caller supplies a server-side configured local SMB mount and its corresponding F64 Windows
 root.  This module never mounts a share, handles credentials, or writes either filesystem.  The
 only frequency truth is ``[Channel Group 0] CenterFrequency`` inside the project; filenames are
 display-only and are deliberately never parsed here.
+
+This is an offline authoring aid only.  SMB availability is not part of Readiness, execution
+freeze, or MEASURE; formal F64 execution loads the frozen instrument path through the driver.
 """
 from __future__ import annotations
 

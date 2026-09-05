@@ -259,7 +259,9 @@ export function ChannelWorkbench() {
         {smuPreview && (
           <Stack gap="sm">
             <Alert color="blue" variant="light">
-              只读取服务端配置的 SMB 挂载副本；同步时会重新扫描，不接受界面提交频率。
+              开发/调试工具：只读取服务端配置的 SMB 挂载副本；同步时会重新扫描，
+              不接受界面提交频率。该工具不参与 Readiness、执行冻结或 MEASURE；正式执行由
+              F64 驱动通过 SCPI 加载已冻结的仪器路径。
             </Alert>
             <Group gap="xs">
               <Badge color="green">可同步 {smuPreview.items.filter((x) => x.sync_status === 'syncable').length}</Badge>

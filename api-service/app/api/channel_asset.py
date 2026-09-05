@@ -147,7 +147,7 @@ def create_asset(req: ChannelAssetCreate, db: Session = Depends(get_db)):
     response_model=SMUProjectSyncPreviewResponse,
 )
 def scan_vendor_smu_projects(db: Session = Depends(get_db)):
-    """Read the configured mounted SMB copy and preview exact-path updates without mutation."""
+    """Development/debug scan of an SMB copy; never a formal execution prerequisite."""
     try:
         return preview_smu_project_sync(db)
     except SMUProjectInventoryError as exc:
@@ -159,10 +159,11 @@ def scan_vendor_smu_projects(db: Session = Depends(get_db)):
     response_model=SMUProjectSyncResultResponse,
 )
 def sync_vendor_smu_projects(db: Session = Depends(get_db)):
-    """Re-scan server-side and atomically synchronize only provable exact-path matches.
+    """Development/debug sync of provable exact-path matches from an SMB copy.
 
     There is intentionally no request body: clients cannot submit a frequency, ARFCN, mount root,
-    or cached preview as truth.
+    or cached preview as truth.  This offline authoring operation is never consulted by Readiness,
+    execution freeze, or MEASURE.
     """
     try:
         return sync_smu_project_truth(db)
