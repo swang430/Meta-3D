@@ -110,6 +110,7 @@ import {
 import {
   draftForBaseStationModel,
   explicitBaseStationConnectionDraft,
+  hasUnsavedInstrumentSyncDraft,
 } from './features/Equipment/baseStationModelPresetDraft'
 import {
   explicitChannelEmulatorConnectionDraft,
@@ -2287,6 +2288,7 @@ function EquipmentManager() {
           const baseStationCapabilityProjection = drawerSelectedModel?.base_station_manifest
             ? projectBaseStationCapabilities(drawerSelectedModel.base_station_manifest)
             : null
+          const hasUnsavedSyncDraft = hasUnsavedInstrumentSyncDraft(category, draft)
 
           return (
             <Stack gap="xl">
@@ -2648,6 +2650,14 @@ function EquipmentManager() {
 
                 <Group justify="flex-end" mt="md">
                   <Button
+                    color="brand"
+                    onClick={() => handleSaveConnection(category.key)}
+                    disabled={syncLabBindingMutation.isPending}
+                    loading={instrumentMutation.isPending}
+                  >
+                    保存配置
+                  </Button>
+                  <Button
                     variant="light"
                     color="indigo"
                     disabled={
@@ -2655,15 +2665,20 @@ function EquipmentManager() {
                       || !category.selectedModelId
                       || !category.connection.endpoint
                       || instrumentMutation.isPending
+                      || hasUnsavedSyncDraft
                     }
                     loading={syncLabBindingMutation.isPending}
                     onClick={() => {
                       if (!selectedLabProfileId) return
                       syncLabBindingMutation.mutate(category.key)
                     }}
-                    title="同步的是已保存的型号、控制端点和驱动模式"
+                    title={hasUnsavedSyncDraft
+                      ? '当前型号或连接参数尚未保存；请先保存配置，再同步 LabProfile'
+                      : '同步的是已保存的型号、控制端点和驱动模式'}
                   >
-                    同步已保存配置到 {selectedLabProfile?.name ?? '当前 LabProfile'}
+                    {hasUnsavedSyncDraft
+                      ? '请先保存配置，再同步'
+                      : `同步已保存配置到 ${selectedLabProfile?.name ?? '当前 LabProfile'}`}
                   </Button>
                   <Button
                     variant="outline"
@@ -2696,13 +2711,6 @@ function EquipmentManager() {
                     }}
                   >
                     测试连接
-                  </Button>
-                  <Button
-                    color="brand"
-                    onClick={() => handleSaveConnection(category.key)}
-                    loading={instrumentMutation.isPending}
-                  >
-                    保存配置
                   </Button>
                 </Group>
                 {feedback[category.key] ? (
