@@ -1,7 +1,8 @@
 # 2026-09-05 开发复盘与待办裁决
 
 本次核验基线为 `a0c671c4e9c015417db7564fd94d594c2f62e5dd`；本地 main 与 fetch 后的 origin/main 一致。
-本文件记录复盘证据与流程优化建议。**待办状态与顺序唯一入口仍是 `docs/roadmap-first-call.md`**。
+本文件记录复盘证据与已批准优化。**待办状态与顺序唯一入口仍是 `docs/roadmap-first-call.md`**。
+用户随后批准固化并开 PR；执行方法已落入 CLAUDE/reviewer/PR 模板，外审等待取证见 §6。
 本次只整理文档，不执行产品修复、现场操作、数据清理或 P2-63。
 
 ## 1. 这一轮交付到哪里
@@ -80,7 +81,7 @@ binding/profile/plan/asset 与测量窗口。逐项注明权威产生方及核�
 此前多 agent 同改共享证据链，也会增加交接与相互失效的验证；本次没有可核验时间账，不能量化归因。
 后续遵守用户已选的单 agent 顺序执行，外审保留独立渠道，不恢复并行开发。
 
-现有执行文档还有直接冲突：
+本次修改前的执行文档还有直接冲突（现已按 §4 固化；历史原文不伪改）：
 
 - `CLAUDE.md` 一方面写轻量修复，另一方面要求每次修复推送全量；又将“全量后改了文档”作为重跑案例。
 - `.claude/agents/pre-commit-reviewer.md` 末尾仍写“改进默认 backlog”，与 AGENTS §10 冲突。
@@ -97,7 +98,11 @@ P2-55 矩阵有 authoritative 组合，LTE 输入 schema 仍限 TM3/2 层；P2-5
 改法：声明、可达实现、现场认证分别记状态。每片以用户操作和可观察结果结束，不能以字段存在、
 单元测试绿或 PR merged 替代现场验收。
 
-## 4. 回归策略优化方案（待落实，不声称现行强制流程已改变）
+## 4. 回归策略优化
+
+**本次已按用户批准固化**：作者与 reviewer 共用 `CLAUDE.md::验证分档与结果复用`，
+reviewer 不再复制一张全量触发表；PR 模板提供验证输入和外审台账。下表是方案摘要，
+日常执行以 CLAUDE 的该节为准，严重度与轮次收口仍只引用 AGENTS。
 
 | 场景 | 建议验证 | 何时再跑全量 |
 |---|---|---|
@@ -107,8 +112,8 @@ P2-55 矩阵有 authoritative 组合，LTE 输入 schema 仍限 TM3/2 层；P2-5
 | GUI/API 契约变化 | 受影响交互、实际响应对 schema、四镜像和 production build | 涉后端共享功能时再加后端全量 |
 | 修复后复审 | 当前增量 diff、同根路径枚举、关键反例 | 审查者不重复已有效完成的全量 |
 
-优化落地前，仍按当前适用流程完成必要验证。落地时将 `CLAUDE.md` 与 reviewer 的**执行方法**一起
-调整，判据仍引用 AGENTS。禁止通过“轻量”标签跳过无法界定影响面的共享改动。
+`CLAUDE.md` 与 reviewer 的**执行方法**已同步调整。禁止通过“轻量”标签跳过无法界定影响面的
+共享改动；单 agent 自查如实标为非独立，不能冒充 fresh 独立内审。
 
 验证记录复用已有 PR/计划，记命令、退出码、结尾统计、代码版本或 diff 指纹、耗时及触发原因。
 文档变更可复用同代码输入的测试结果，但必须明确结果对应哪个版本；功能、测试、fixture、依赖、
@@ -174,3 +179,49 @@ provenance 字段。它由测试租约控制开放，经 REST/WS 提供；本次
 
 本次重点复核本轮开发相关条目与活动状态镜像。早期 Discovered 原文保留为取证材料；
 未逐项复现的历史候选仍待评估，不把整池宣称为“已清零”，也不批量删除历史证据。
+
+## 6. 外审额外等待的取证与处理
+
+不能断言“总是多一轮”。正常 R1→R2 是既定质量门，不是调度故障；外审服务耗时和本地发现结果
+的延迟必须分开。本次只读取 GitHub 历史记录与仓库规则，没有修改 GitHub 服务或 Codex 调度器。
+仓库 scripts/.github 中未找到该外审轮询执行器；本机 automations 目录未找到现存 automation.toml，
+不新建或恢复已停止的自动化。本次修的是代理执行协议与记录载体，不声称改了产品级调度代码。
+
+| 证据（UTC） | 能确定的事实 | 不能推断的事 |
+|---|---|---|
+| #435 [15:16:50 请求](https://github.com/swang430/Meta-3D/pull/435#issuecomment-5496168937) → [15:22:47 review](https://github.com/swang430/Meta-3D/pull/435#pullrequestreview-5079891021) | 结果 commit_id 是 `ebed87af`；当时本任务记录预期修复为 `f98c9c73`。下一请求才覆盖 `97b53851`，旧轮不能签新代码 | GitHub 索引延迟的精确时长，没有历史 HEAD 采样不能计算 |
+| #459 [00:18:56 请求](https://github.com/swang430/Meta-3D/pull/459#issuecomment-5547986887) 与 [00:19:15 请求](https://github.com/swang430/Meta-3D/pull/459#issuecomment-5547989791) | 同一 HEAD `757dd2e6`、同一 R4，相隔 19 秒重复发出；首条带字面量反斜杠 n | 无服务端 job id，不能声称启动了两个审查作业或因此多耗整轮 |
+| #437 [22:11:03 请求](https://github.com/swang430/Meta-3D/pull/437#issuecomment-5501117689) → [22:17:27 review](https://github.com/swang430/Meta-3D/pull/437#pullrequestreview-5083620789) | R1 在 6 分 24 秒后已有带 HEAD 的结论；[summary](https://github.com/swang430/Meta-3D/pull/437#issuecomment-5501119881) 同一 comment 原地更新 Completed | heartbeat 重复“R1 等待”不能当服务器仍在运行，也不能拿后续修复耗时全算等待 |
+| #437 [23:05:52 额度错误](https://github.com/swang430/Meta-3D/pull/437#issuecomment-5501650898) | 后续请求明确未获得审查服务，应标阻塞，不是无限 Running | 不能自动换 Gemini、超时合并或宣称 clean |
+
+本次读取命令：`gh api repos/swang430/Meta-3D/issues/<PR>/comments --paginate` 与
+`gh api repos/swang430/Meta-3D/pulls/<PR>/reviews --paginate`，按 comment id / commit_id /
+created_at / updated_at / submitted_at 对照；不能按 review 条数推算轮数，空 review 还可能是作者回复。
+
+旧 CLAUDE 的“触发后等满 270s 再查”、单一 HEAD/反应判定、R1 clean 与两轮规则冲突，
+以及旧 heartbeat 不随远端变化刷新，具备造成额外等待或误判的条件。现换为：
+先读最新状态 → 确认远端/PR HEAD → 按 HEAD+Rn 去重请求 → 条件轮询 → 当次消费结果。
+同 HEAD 的 R2 不被去重吞掉；R1 结果也不能复用为 R2。额度/环境错误明确通知，超时没有合并权。
+活跃 30–60 秒轮询与已有后台 heartbeat 二选一，不叠加等待周期；没有授权不新开后台监控。
+
+## 7. 本片验收边界
+
+只改复盘、roadmap、CLAUDE、reviewer 与 PR 模板；P1-76/P2-68～70 产品修复未启动。
+本片是流程文档，不新增轮询器或自然语言检查器。按下列场景逐条走读实际规则，并核对引用/镜像：
+
+| 输入场景 | 规则必须给出的动作 |
+|---|---|
+| 无产品变化的文档提交；或文档本身是测试输入 | 前者不跑全后端，后者跑受影响文档门 |
+| 外审小修触及共享冻结/安全生命周期 | 不因轻量标签跳过全量 |
+| 已验代码只追加不参与测试的进度说明 | 可解释输入差异后复用验证，但不复用旧外审替代新 HEAD 覆盖 |
+| R1 clean，同 HEAD 尚无 R2 | 发独立 R2 请求，不能合并、不能把 R1 结果算两轮 |
+| 本轮已 running，或写评论响应不确定 | 先回读去重，不连发请求 |
+| 推送完成，PR HEAD 仍旧 | 不审旧 HEAD，等索引收敛 |
+| 最新 review 已完成，但 summary 仍 Running | 读取完整结论/inline 后当次处理，不再等 summary/额外反应 |
+| 只有空 review/历史 👍/旧 HEAD 结论 | 不能当最新一轮 clean |
+| summary 原地更新 Completed | 读 body/updated_at，不只筛新建评论；继续核对对应结论 |
+| 明确额度/环境错误；或超过 15 分钟没结果 | 前者阻塞通知；后者延迟提示、保留请求，均不盲重发或超时合并 |
+| 用户暂停；或者合并前 HEAD 改变 | 前者停止并不恢复计时器；后者拒绝合入未审版本 |
+
+本片固化的是上述规则；未来两个功能 PR 的实际效率数据仍待收集，不把规则走读称为运行时测试
+或声称等待问题已在外部服务端修复。
