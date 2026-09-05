@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   draftForBaseStationModel,
   explicitBaseStationConnectionDraft,
+  hasUnsavedBaseStationSyncDraft,
 } from './baseStationModelPresetDraft.ts'
 import type { InstrumentCategory } from '../../types/api.ts'
 
@@ -170,5 +171,46 @@ test('UXM topology card is rendered only for the draft UXM adapter', () => {
   assert.match(
     app,
     /drawerSelectedModel\?\.base_station_manifest\?\.adapter_id === ['"]uxm['"][\s\S]*?<TopologyProfileCard/,
+  )
+})
+
+test('LabProfile sync stays blocked until the BaseStation draft is saved as the active configuration', () => {
+  const savedActiveDraft = {
+    modelId: 'uxm',
+    endpoint: '192.168.1.112',
+    controller: 'socket',
+    notes: 'active UXM',
+    connection_params: JSON.stringify({ timeout_ms: 30000 }),
+  }
+
+  assert.equal(hasUnsavedBaseStationSyncDraft(category, savedActiveDraft), false)
+  assert.equal(
+    hasUnsavedBaseStationSyncDraft(category, {
+      ...savedActiveDraft,
+      endpoint: '192.168.1.132',
+    }),
+    true,
+  )
+  // Even an exact CMW saved preset is still only a draft until modelId is saved active.
+  assert.equal(
+    hasUnsavedBaseStationSyncDraft(category, draftForBaseStationModel(category, 'cmw')),
+    true,
+  )
+})
+
+test('the equipment drawer makes Save precede Sync and disables Sync for unsaved BS/CE drafts', () => {
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  const drawer = app.slice(
+    app.indexOf("const category = categories.find((c) => c.key === editingCategoryKey)"),
+    app.indexOf('{/* ─── SCPI 命令终端 ─── */}'),
+  )
+
+  assert.match(drawer, /hasUnsavedBaseStationSyncDraft\(category, draft\)/)
+  assert.match(drawer, /hasUnsavedChannelEmulatorDraft\(category, draft\)/)
+  assert.match(drawer, /disabled=\{[\s\S]*?hasUnsavedSyncDraft[\s\S]*?\}/)
+  assert.match(drawer, /请先保存配置，再同步/)
+  assert.ok(
+    drawer.indexOf('保存配置') < drawer.indexOf('同步已保存配置'),
+    'Save must be shown before Sync so the visible workflow matches the server contract',
   )
 })
