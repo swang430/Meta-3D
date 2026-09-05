@@ -5168,6 +5168,8 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | P2-51/52/55/56、CE 真实认证、UXM 方言依据 | → **hardware 表 / Known unknown** | 分开软件载体、手册来源与真机复验；本地测试不能签现场完成 |
 | P1-4 “仍只能按 plan 对比” | **软件缺口已由 P1-72/#396 关闭** | 已改 hardware 表为仅缺现场重复执行/对比证据 |
 
+- `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存；仪器侧还暴露“保存配置 → HAL 重载 → 同步 LabProfile”的手工序列，顺序错误曾造成已保存 UXM 与 LabProfile endpoint 漂移。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决保存、HAL 应用和 binding 同步是一次受控编排还是明确的分阶段事务。不得以 GUI 草稿补真，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，LTE 暗室首测能力不随本条补齐。
+
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 
 - `[discovered 2026-09-03 during P2-58 ① 立项]` **`.smu` 拓扑解析 + `ChannelAsset` 拓扑字段 + resolver 离线校验（P2）** —— 用户提供的真实 `.smu`（已收进 `api-service/tests/fixtures/smu/`）证实端口/通道数是 `[Input N]`/`[Output N]`/`[Channel N]` **节的个数**，且每节带**物理连接器号**（本样本输出为 `COMMON 3,4,1,2`，不是 1..4）。它随 .smu 变，**不能进 per-driver 的 manifest**（第一份 asset 就让它过期；`propsim_f64.py:1179` 已有「声明 vs `MODEL:INFO?` 回读」的 fail-loud 门，再加就是第三份声明）。正确归属是 **ChannelAsset**（今天无任何拓扑字段），让 P2-58 的 resolver 能零仪器 I/O 校验 asset↔binding。`app/hal/smu_project.py` 已有同形态的逐行状态机（只解析 `CenterFrequency`），扩起来直接。**动手前欠两样**：① **OTA 形态样本**（本样本是 2×2 双向实验室模型 4/4/8，OTA 是 4/128/32，一份样本推不出节结构不变量）；② **`Direction` 键的手册裁决**（样本里 `Direction = UPLINK` 而 `Group name = Downlink`、`[Link 0]` 证明功能上是下行 —— 按 `Direction` 判 DL/UL 会全判反，属厂商语义，须查 PROPSIM NotebookLM）。拓扑字段只能是**可选**的：F64 ATE Server 无 MMEM/FTP，.smu 仅操作员上传副本时才有。这是 P2-57 拍板原文里「附通道/端口基数」那半的正确出口（P2-57 未交付，见其条目）。

@@ -1,20 +1,21 @@
 # 监控组件使用指南
 
-## Phase 2.7: 实时监控的差异化策略
+## 实时监控组件与当前界面位置
 
-本文档说明系统中两个监控组件的差异化定位和使用场景。
+本文档说明系统中两个实时指标组件的差异化定位，以及它们在当前界面中的实际挂载位置。
+主控台不再常驻显示实时指标；其操作视图由顶部就绪状态、最近执行和实时日志组成。
 
 ---
 
 ## 组件概览
 
-### 1. RealtimeMetricsCard - 系统健康监控
+### 1. RealtimeMetricsCard - 可复用的系统健康监控
 
 **位置**: `gui/src/components/RealtimeMetricsCard.tsx`
 
-**用途**: **Always-on系统健康监控**
+**用途**: 可按需嵌入的系统健康监控
 
-**使用场景**: Dashboard主仪表板
+**当前界面位置**: 当前导航没有直接挂载；2026-09-05 起不再作为主控台常驻区域
 
 **特性**:
 - ✅ 实时WebSocket连接（ws://localhost:8001/api/v1/ws/monitoring）
@@ -31,13 +32,13 @@
 - EIRP
 - 温度 (Temperature)
 
-**数据源**: 后端HAL服务（Mock仪器驱动）
+**数据源**: 后端监控 WebSocket 投影；组件本身不提供测试执行上下文
 
 **示例**:
 ```tsx
 import { RealtimeMetricsCard } from '@/components/RealtimeMetricsCard'
 
-function Dashboard() {
+function StandaloneMetricsView() {
   return (
     <RealtimeMetricsCard
       throttleMs={100}  // 100ms throttling
@@ -55,7 +56,7 @@ function Dashboard() {
 
 **用途**: **测试执行期间的上下文监控**
 
-**使用场景**: 实时监控 Tab（Monitoring）
+**当前界面位置**: 调试维护 → 演示回放
 
 **特性**:
 - ✅ 复用RealtimeMetricsCard的所有性能优化
@@ -94,13 +95,13 @@ function Dashboard() {
    - 当前值颜色变化（黄色表示超出范围）
    - 期望范围始终可见
 
-**数据源**: 与RealtimeMetricsCard相同，但添加了本地的期望值配置
+**数据源**: 与 RealtimeMetricsCard 共用监控 WebSocket Hook，并叠加演示回放的期望值配置
 
 **示例**:
 ```tsx
 import { ExecutionMetricsCard } from '@/features/Monitoring'
 
-function MonitoringTab() {
+function DiagnosticsDemoPlayback() {
   return (
     <ExecutionMetricsCard
       throttleMs={100}
@@ -127,7 +128,7 @@ function MonitoringTab() {
 
 ## 对比表格
 
-| 特性 | RealtimeMetricsCard (Dashboard) | ExecutionMetricsCard (Monitoring) |
+| 特性 | RealtimeMetricsCard（可复用） | ExecutionMetricsCard（调试维护） |
 |------|----------------------------------|-----------------------------------|
 | **用途** | 系统健康监控 | 测试执行监控 |
 | **上下文** | 无 | 测试用例 + 相位 |
@@ -135,23 +136,27 @@ function MonitoringTab() {
 | **合规率** | ❌ 无 | ✅ 进度条显示 |
 | **超出范围提示** | ❌ 无 | ✅ 黄色边框 + 图标 |
 | **性能优化** | ✅ Throttling + Memo | ✅ 继承所有优化 |
-| **使用时机** | Always-on | 测试执行期间 |
-| **显示位置** | Dashboard | Monitoring Tab |
+| **使用时机** | 按需挂载 | 调试演示回放期间 |
+| **显示位置** | 当前无直接导航入口 | 调试维护 → 演示回放 |
 
 ---
 
 ## 差异化策略总结
 
-### Dashboard（RealtimeMetricsCard）
-**场景**: 用户想知道 **"系统当前状态如何？"**
-- 通用系统健康监控
-- 简洁的指标展示
-- 无需测试上下文
-- 持续运行
+### 主控台（当前不挂载实时指标）
 
-### Monitoring Tab（ExecutionMetricsCard）
-**场景**: 用户想知道 **"我的测试进展如何？指标是否符合预期？"**
-- 测试执行监控
+**场景**: 用户要快速判断 **“能不能开测、刚刚发生了什么？”**
+
+- 顶部显示服务器权威的就绪状态与阻塞原因
+- 左侧显示最近执行
+- 右侧显示实时日志与紧凑告警计数
+- 不建立实时指标 WebSocket；需要开发调试时进入“调试维护”
+
+### 调试维护 → 演示回放（ExecutionMetricsCard）
+
+**场景**: 开发或调试人员查看 **“演示执行进展如何、指标是否落在预期范围？”**
+
+- 演示执行监控
 - 期望值vs实际值对比
 - 测试步骤进度
 - 指标合规状态
@@ -196,7 +201,7 @@ function MonitoringTab() {
 ┌────────────────┐  ┌─────────────────┐
 │ RealtimeMetrics│  │ ExecutionMetrics│
 │     Card       │  │      Card       │
-│  (Dashboard)   │  │   (Monitoring)  │
+│ 当前未直接挂载 │  │ 调试维护/演示回放│
 └────────────────┘  └─────────────────┘
 ```
 
@@ -230,8 +235,12 @@ function MonitoringTab() {
 - ✅ 指标合规率可视化
 - ✅ 组件文档
 
+### 当前界面状态
+- ✅ `ExecutionMetricsCard` 已挂载到“调试维护 → 演示回放”
+- ✅ 主控台已移除无操作价值的实时指标区，保留就绪、最近执行和实时日志
+- ⏳ 通用实时指标卡是否重新提供独立入口，需由后续明确的用户场景决定
+
 ### Phase 3 (待实施)
-- ⏳ 在Monitoring Tab中集成ExecutionMetricsCard（替换现有指标显示）
 - ⏳ 历史对比图表
 - ⏳ PDF报告生成
 

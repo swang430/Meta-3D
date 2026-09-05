@@ -2,7 +2,8 @@
  * Realtime Metrics Card Component
  *
  * Demonstrates the useMonitoringWebSocket hook with live data from backend.
- * Can be integrated into Dashboard or Monitoring panels.
+ * Reusable monitoring surface. It is not mounted in the current Dashboard;
+ * the operational cockpit shows readiness, recent executions, and live logs.
  *
  * Phase 2.6 Optimizations:
  * - Memoized helper functions for performance

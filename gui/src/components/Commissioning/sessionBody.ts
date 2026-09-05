@@ -28,6 +28,11 @@ export interface CreateSessionParams {
   executionPolicyUpdatedBy?: string
 }
 
+/** Operator-facing Commissioning default. The backend/TestCase implicit
+ * fallback remains ASC because a GCM request without an explicit asset or
+ * .smu path must fail closed instead of guessing an instrument-side file. */
+export const DEFAULT_COMMISSIONING_ENGINE_MODE = 'keysight_gcm'
+
 export interface CreateSessionBody {
   radio_technology: 'nr5g' | 'lte'
   engine_mode: string
@@ -68,7 +73,7 @@ export const buildCreateSessionBody = (
 ): CreateSessionBody => {
   const {
     radioTechnology = 'nr5g',
-    engineMode = 'mimo_first_asc',
+    engineMode = DEFAULT_COMMISSIONING_ENGINE_MODE,
     labProfileId,
     ascSourcePath,
     channelAssetId,

@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { buildCreateSessionBody } from './sessionBody'
+import { buildCreateSessionBody } from './sessionBody.ts'
+
+test('commissioning starts from the F64 GCM Native engine by default', () => {
+  const body = buildCreateSessionBody()
+  const commissioningSource = readFileSync(
+    new URL('./index.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.equal(body.engine_mode, 'keysight_gcm')
+  assert.match(
+    commissioningSource,
+    /useState<string>\(\s*api\.DEFAULT_COMMISSIONING_ENGINE_MODE,?\s*\)/,
+  )
+})
 
 test('LTE commissioning persists the explicitly selected transmission mode', () => {
   const body = buildCreateSessionBody({
