@@ -104,7 +104,7 @@ git commit -m "fix: 解除 F64 执行的 SMB 前置依赖"
 Run:
 
 ```bash
-cd gui && npm test -- --runInBand test/smuProjectScanWiring.test.ts
+node --experimental-strip-types --test gui/test/smuProjectScanWiring.test.ts
 ```
 
 Expected: FAIL，现有文案只说只读挂载。
@@ -121,7 +121,7 @@ Expected: FAIL，现有文案只说只读挂载。
 Run:
 
 ```bash
-cd gui && npm test -- --runInBand test/smuProjectScanWiring.test.ts
+node --experimental-strip-types --test gui/test/smuProjectScanWiring.test.ts
 api-service/.venv/bin/python -m pytest -q api-service/tests/test_smu_project_scan_api.py
 ```
 
@@ -185,4 +185,3 @@ api-service/.venv/bin/python -m pytest -q \
 
 fetch 验证 `origin/main`，主目录 fast-forward，同步后清理 worktree/本地分支并保留未跟踪仪器资料。
 提示用户重启/重载对应服务后复跑原 LTE CMW500 + F64 TestCase；该手工复验验证真实仪器路径，不能由本地测试替代。
-
