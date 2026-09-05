@@ -1799,7 +1799,7 @@ export interface paths {
         put?: never;
         /**
          * Preview mounted F64 .smu project truth
-         * @description Read-only bounded scan of the server-configured SMB mount. The client cannot submit a path, frequency, ARFCN, or cached preview.
+         * @description Development/debug-only bounded scan of the server-configured SMB copy. The client cannot submit a path, frequency, ARFCN, or cached preview. SMB availability is never a Readiness, execution-freeze, or MEASURE prerequisite.
          */
         post: {
             parameters: {
@@ -1845,7 +1845,7 @@ export interface paths {
         put?: never;
         /**
          * Synchronize mounted F64 .smu project truth
-         * @description Re-scans server-side and atomically updates only exact, registered, provable matches. The client cannot supply truth in a request body.
+         * @description Development/debug-only re-scan that atomically updates exact, registered, provable matches. The client cannot supply truth in a request body, and formal execution never consults this offline SMB copy.
          */
         post: {
             parameters: {

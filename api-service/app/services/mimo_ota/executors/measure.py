@@ -1370,7 +1370,6 @@ class MeasureExecutor(IStepExecutor):
                 validate_resolved_channel_asset_against_freeze(
                     resolved_asset,
                     frozen_asset,
-                    db=context.db,
                 )
             except ValueError as exc:
                 return StepExecutionResult(

@@ -19,6 +19,8 @@ test('SMU scan and sync clients never accept client-supplied truth', () => {
 
 test('workbench previews before explicit sync and refreshes both truth consumers', () => {
   assert.match(workbench, /扫描 F64 工程/)
+  assert.match(workbench, /开发\/调试工具/)
+  assert.match(workbench, /不参与 Readiness、执行冻结或 MEASURE/)
   assert.match(workbench, /scanSMUProjects/)
   assert.match(workbench, /syncSMUProjects/)
   assert.match(workbench, /可同步/)

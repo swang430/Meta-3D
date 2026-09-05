@@ -125,10 +125,13 @@ def freeze_channel_asset_resolution(db: Any, configuration: Any) -> dict[str, An
 def validate_resolved_channel_asset_against_freeze(
     resolved: Any,
     frozen: Any,
-    *,
-    db: Any | None = None,
 ) -> dict[str, Any]:
-    """Reject mutable asset or vendor-file byte drift before model loading."""
+    """Reject mutable ChannelAsset identity/content drift before model loading.
+
+    F64 ``vendor_file`` content is loaded from the execution-frozen instrument
+    path through the driver's SCPI transaction.  A development-time SMB copy
+    is not part of the runtime boundary and must never gate MEASURE.
+    """
 
     identity = validate_frozen_channel_asset_resolution(frozen)
     asset = getattr(resolved, "asset", None)
@@ -144,14 +147,6 @@ def validate_resolved_channel_asset_against_freeze(
     )
     if current_digest != identity["executable_content_digest"]:
         raise ValueError("frozen channel asset executable content drifted")
-    if identity["source_type"] == "vendor_file":
-        if db is None:
-            raise ValueError("vendor_file byte verification requires a database session")
-        from app.services.smu_project_inventory import (
-            verify_channel_asset_smu_project_bytes,
-        )
-
-        verify_channel_asset_smu_project_bytes(db, asset)
     return identity
 
 

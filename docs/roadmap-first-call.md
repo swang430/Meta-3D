@@ -11,8 +11,10 @@
 **2026-09-05 收口与 triage**：P2-62 已由 PR #459 合并，merge `a0c671c4`；上一轮已批准的
 非现场执行队列已收口。P2-57 声明面残项、CMW 可达能力与各现场半分别保留，不能把合并解释为全部验收。
 **P1-77 已由 PR #461 合并，merge `1001f1c7`**：LTE TDD TestCase 现在可在生产 GUI 补齐真实
-ULDL、special subframe 与 20 MHz RMC version，由服务器冻结唯一 MAC profile。当前没有已启动的
-非现场产品开发 WIP；下一批准顺序为 **P1-76 → P2-68 → P2-69 → P2-70**，详见条目。P1-77 是
+ULDL、special subframe 与 20 MHz RMC version，由服务器冻结唯一 MAC profile。手工执行暴露的
+**P1-78 已由本片交付**：F64 正式执行解除 SMB 运行依赖，SMB 扫描/同步收窄为开发调试工具。
+当前没有已启动的非现场产品开发 WIP；下一批准顺序恢复为
+**P1-76 → P2-68 → P2-69 → P2-70**，详见条目。P1-77 是
 **P3-23** 新规则的第一个功能试行片，已记录验证复用、外审请求与等待数据；
 P2-57 残项为后续平台设计，
 P2-63 继续 HOLD。本次整理不自动启动这些实现。
@@ -51,7 +53,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= 无已启动项，下一批准项为 P1-76（监控假读数），不会由本次状态回填自动启动。**
+Current Focus（非现场）= 无已启动项；下一批准项为 P1-76（监控假读数），不会由本次状态回填自动启动。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -705,7 +707,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 当前没有已启动的非现场 WIP；P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口依次待启动，顺序见顶部。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行，P1-76 是下一试行片。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | 当前没有已启动的非现场 WIP；P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口依次待启动，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3557,6 +3559,34 @@ Alembic head 与 diff-check 通过。全量共发起 2 次：第一次从仓库�
 `eae3b97a` 在 08:55:54Z 请求、08:59:11Z 完成，等待约 3 分 17 秒，无 P1、无新增 inline；
 重复请求 0 次。PR 随即以目标 SHA 约束合并为 `1001f1c7`，没有固定冷却期、额外 R3 或审后尾提交。
 
+### P1-78 — F64 正式执行解除 SMB 运行依赖（✅ 本片交付）
+
+**可观察故障**：已有 `vendor_file` ChannelAsset 冻结的是 F64 仪器侧 Windows 路径，F64 驱动也会
+通过现有 SCPI 事务加载该路径；但 MEASURE 前额外调用 SMB 副本字节校验。开发期间生成的临时
+`local_mount_root` 消失后，执行在首条 F64 SCPI 前失败为“SMB 只读挂载不存在”，把离线开发工具
+误升成正式运行依赖。2026-09-05 手工执行已复现。
+
+**范围/验收**：正式运行只校验冻结 ChannelAsset 的身份、可执行内容摘要与仪器路径，并继续由
+F64 现有 SCPI load/state/error-queue/operation receipt/lifecycle 证据 fail-closed；Readiness、执行
+冻结和 MEASURE 均不得访问 SMB。既有 `smu-scan` / `smu-sync` API、界面与保存配置暂不删除，明确
+降级为操作员主动触发的开发/调试离线 authoring 工具。`smu_project_truth.sha256` 只说明离线导入
+来源，不宣称每次执行时 F64 实际文件字节仍等于 SMB 副本。
+
+**边界**：不新增、猜测或改写 SCPI；不放宽 F64 路径、加载状态、错误队列、receipt 或正式
+provenance 门；不把本地回归当作真实 F64 复验。SMB 常态挂载、设备侧文件分发和版本管理另由
+P2-71 调研，本片不建立新的文件传输机制。设计与计划见
+[`P1-78 设计`](plans/2026-09-05-p1-78-f64-smb-runtime-decoupling-design.md) 与
+[`P1-78 实施计划`](plans/2026-09-05-p1-78-f64-smb-runtime-decoupling-plan.md)。
+
+**本地实现与验证（2026-09-05）**：MEASURE 的冻结资产校验器已删除数据库 session 和
+SMB verifier 依赖；`vendor_file` 仍按冻结资产摘要拒绝数据库内容漂移，随后沿用 F64 既有 SCPI
+加载与 operation receipt/P2-66 正式证据链。SMB scan/sync 行为未改，API、checked OpenAPI、
+generated TS 与 GUI 均明确为开发/调试工具。严格 RED→GREEN；受影响链 **188 passed**，全后端
+**6409 passed / 5 skipped**，GUI 契约 **3 passed**、production build、compileall、单一 Alembic
+head `c5e7f9a1b3d6` 与 diff-check 通过。相同产品输入的全量运行 1 次、重复 0 次；代码检查为
+**主代理自查，非独立内审**，结论 P1/P2/P3=0。没有新增/修改 SCPI 或正式 provenance 白名单，
+本地结果不替代真实 F64 手工复验。
+
 ### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，P1-77 后）
 
 **可观察故障**：`instrument_hal_service.get_aggregated_metrics` 按 snake_case 分流，实际
@@ -5035,6 +5065,18 @@ digest 或正式能力，不为契约补齐顺带放开 CMW 取值域。来源�
 真实抽样仍由 P2-55 现场半签收。正式 schema/GUI 扩域是后续设计决定，须同时打通驱动、compatibility、
 回读和正式消费者；不能只改 Literal。P2-69 不依赖本项，按顶部顺序先处理已复现故障。
 
+### P2-71 — F64 文件常态化提供与版本控制调研（待调研，不自动启动）
+
+**问题边界**：P1-78 只纠正正式执行不应依赖开发机 SMB 副本，并不回答 `.smu` 文件如何稳定到达
+F64、如何核对设备侧版本、如何处理替换/回滚，以及 F64 在正常运行中实际提供哪些受支持的文件管理
+能力。当前仓库证据只足以使用已存在的仪器侧 Windows 路径，不足以发明传输协议或远程查询。
+
+**调研出口**：先以 PROPSIM F64 手册和真实设备能力为准，列出已有 SCPI/厂商工具支持的文件
+上传、列举、校验、激活、版本标识与并发限制；再决定文件制品、部署责任、冻结身份和回滚策略。
+若手册不支持远程传输或内容摘要，必须显式保留人工 provision/现场核验边界，不能把 SMB 副本摘要
+包装成设备侧证明。调研完成前不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 的正式依赖，
+也不得新增或猜测 SCPI。本项不在当前批准执行顺序中。
+
 ## 🟢 P3 — Polish / tooling
 
 **P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入
@@ -5111,6 +5153,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | CE 损坏 certification 使仪器目录返回空（#458 / 3938243884） | → **P2-68** | 当前 main 构造复现；修产品可见故障，不是清数据库 |
 | MAC dimensions 缺 checked OpenAPI/TS 契约 | → **P2-69** | 当前真实 manifest 输出与 YAML 比较仍有差集 |
 | TM1/1 天线现场抽样既不能保存为正式用例、又无诊断载体 | → **P2-70** + P2-55 现场半 | schema 仍 TM3/2 层；先准备真实可执行载体，再安排现场抽样 |
+| SMB 只读副本被误作 F64 正式运行依赖 | → **P1-78** + **P2-71** | P1-78 移除 Readiness/freeze/MEASURE 的 SMB 前置条件；设备侧文件常态提供与版本控制另行调研，不自动启动 |
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
 | P2-57 声明面剩余项 / `.smu` 拓扑 | → **已有残项，先取证再设计** | 先抵扣 P2-59～62 已有机制；按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest。当前 parser 只解析中心频率；拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
@@ -5207,7 +5250,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | P3-14 频率输入/显示粒度与 TestCase 摘要换源 | ✅ **P3-14 / PR #262** |
 | P1-55 顶层与 PCell 真值分叉 | ✅ **P1-55 / PR #349** |
 | 执行历史一键跳日志 | ✅ **P1-39 / PR #292** 已交付；P2-36 重复项已关闭 |
-| SMB / EMQuest 自动化 | 保留并收窄 **P2-31 = SMB `.smu` 工程扫描**；EMQuest 10-band 表已交付 |
+| SMB / EMQuest 自动化 | 保留并收窄 **P2-31 = 开发/调试用 SMB `.smu` 工程扫描**；不得作为正式运行前置，EMQuest 10-band 表已交付 |
 | QZ / Pattern / Multi real warning 闭环 | → 功能启用池（原 P2-32，不进当前执行队列） |
 | 失效校准导入/导出、两套 UXM 诊断 error reader | → 非阻塞维护池（原 P3-20/P3-21） |
 | G11/p08/G20/变异保护等纯测试门精化、默认关闭 mock、已执行计划文字镜像 | → 非阻塞测试/文档维护池，不再编号 |
