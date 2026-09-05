@@ -1,5 +1,5 @@
 /**
- * P2-8 ④ 实时日志 + 紧凑告警计数 — bottom wide bar.
+ * P2-8 ③ 实时日志 + 紧凑告警计数 — 最近执行右侧主区.
  *
  * 左 日志: GET /system-logs/tail — level 多选过滤 (INFO/WARN/ERROR/CRITICAL, P2-33 补 CRITICAL) +
  *   关键字搜索 + 自动滚动开关 + filename 下拉. Polls ~3s (pausable via

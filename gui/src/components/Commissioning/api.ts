@@ -10,6 +10,7 @@ import type { FrozenExecutionQualification } from '../../types/api'
 
 export {
   buildCreateSessionBody,
+  DEFAULT_COMMISSIONING_ENGINE_MODE,
   type CreateSessionBody,
   type CreateSessionParams,
 } from './sessionBody'

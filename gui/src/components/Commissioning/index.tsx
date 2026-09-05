@@ -38,13 +38,12 @@ export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
-  // ⚠ 必须跟后端 `CreateSessionRequest.engine_mode` / `MIMOOTAConfiguration.engine_mode`
-  //   保持一致（三处同步）。2026-08-07 现场一度三处都改成 'keysight_gcm'，
-  //   2026-08-08 后端两处撤回 'mimo_first_asc' 时**漏了这里**（Antigravity 异源审查
-  //   Finding 1 抓出）：GCM 路必须配 .smu，而 emulation_file 已撤回成 None ——
-  //   GUI 默认建的会话会被 emulation_file 严格门在 precheck/measure 阶段拒掉。
-  //   现场要走 GCM 时在界面上显式选，别靠默认值。
-  const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
+  // 暗室首测是操作员显式选择资产后启动的临时 bring-up UI，默认走 F64
+  // 原生 GCM；无 ChannelAsset / .smu 时下方启动门保持禁用。后端与正式
+  // TestCase 的无参默认仍是 ASC，避免把缺资产的隐式请求改成必然失败。
+  const [engineMode, setEngineMode] = useState<string>(
+    api.DEFAULT_COMMISSIONING_ENGINE_MODE,
+  )
   // RF 冷启动工作点：2026-08-07 现场已验证的基线。它们不是共享 schema
   // 默认，而是本次 session 的显式输入；创建后会固定进 execution.config。
   const [frequencyMhz, setFrequencyMhz] = useState(3549.99)

@@ -262,7 +262,7 @@ const sections: Array<{
   {
     key: 'dashboard',
     label: '主控台',
-    description: '系统总览、实时监控、执行控制与日志——一站式操作中心。',
+    description: '系统就绪、最近执行与实时日志——一站式操作中心。',
   },
   {
     key: 'equipment',
