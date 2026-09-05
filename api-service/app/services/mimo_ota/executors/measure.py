@@ -2230,9 +2230,10 @@ class MeasureExecutor(IStepExecutor):
                     _unverified.append(ce_frequency_label)
                 frequency_consistency_payload["unverified"] = _unverified
             frequency_consistency_payload["channel_emulator_evidence"] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "adapter_id": ce_plan.adapter_id,
                 "instrument_id": str(emulator.instrument_id),
+                "measurement_attempt_id": base_station_attempt.attempt_id,
                 "center_readback_mhz": f64_center_mhz,
                 "bandwidth_source": f64_bandwidth_source,
                 "fully_verified": f64_frequency_fully_verified,

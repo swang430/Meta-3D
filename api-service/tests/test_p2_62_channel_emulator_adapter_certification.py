@@ -602,9 +602,12 @@ def test_site_certification_consumes_vendor_neutral_frequency_evidence():
     frequency.pop("f64_bandwidth_source")
     frequency["per_instrument"].pop("F64")
     frequency["channel_emulator_evidence"] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter_id": "propsim_f64",
         "instrument_id": "ce-runtime",
+        "measurement_attempt_id": execution.config[
+            "base_station_execution_evidence"
+        ]["current_measurement_attempt_id"],
         "center_readback_mhz": 3500.01,
         "bandwidth_source": "channel_asset_or_scd_declared",
         "fully_verified": True,
@@ -625,9 +628,12 @@ def test_site_certification_rejects_frequency_evidence_from_another_adapter():
         "frequency_consistency"
     ]
     frequency["channel_emulator_evidence"] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter_id": "certfake_ce",
         "instrument_id": "ce-runtime",
+        "measurement_attempt_id": execution.config[
+            "base_station_execution_evidence"
+        ]["current_measurement_attempt_id"],
         "center_readback_mhz": 3500.01,
         "bandwidth_source": "channel_asset_or_scd_declared",
         "fully_verified": True,
@@ -664,7 +670,7 @@ def test_current_qualification_does_not_fallback_when_frequency_evidence_is_miss
     frequency.pop("channel_emulator_evidence", None)
     qualification = execution.config["channel_emulator_execution_qualification"]
     qualification["schema_version"] = 2
-    qualification["frequency_evidence_schema_version"] = 1
+    qualification["frequency_evidence_schema_version"] = 2
     qualification["qualification_digest"] = canonical_payload_digest(
         {
             key: value
@@ -681,9 +687,10 @@ def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
     frequency = {
         "fully_verified": True,
         "channel_emulator_evidence": {
-            "schema_version": 1,
+            "schema_version": 2,
             "adapter_id": "certfake_ce",
             "instrument_id": "ce-certfake",
+            "measurement_attempt_id": "attempt-certfake",
             "center_readback_mhz": 3500.0,
             "bandwidth_source": "channel_asset_or_scd_declared",
             "fully_verified": True,
@@ -694,16 +701,25 @@ def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
         frequency,
         current_adapter_id="certfake_ce",
         instrument_id="ce-certfake",
+        measurement_attempt_id="attempt-certfake",
     )
     assert not _has_certifiable_channel_emulator_frequency_evidence(
         frequency,
         current_adapter_id="certfake_ce",
         instrument_id="another-instrument",
+        measurement_attempt_id="attempt-certfake",
     )
     assert not _has_certifiable_channel_emulator_frequency_evidence(
         frequency,
         current_adapter_id="propsim_f64",
         instrument_id="ce-certfake",
+        measurement_attempt_id="attempt-certfake",
+    )
+    assert not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id="certfake_ce",
+        instrument_id="ce-certfake",
+        measurement_attempt_id="next-attempt",
     )
 
 

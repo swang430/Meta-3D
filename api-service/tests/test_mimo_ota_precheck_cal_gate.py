@@ -1433,9 +1433,10 @@ async def test_third_channel_adapter_measure_emits_vendor_neutral_frequency_evid
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     frequency = result.measurements["frequency_consistency"]
     assert frequency["channel_emulator_evidence"] == {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter_id": "certfake_ce",
         "instrument_id": "ce-certfake-measure",
+        "measurement_attempt_id": None,
         "center_readback_mhz": 3500.01,
         "bandwidth_source": "channel_asset_or_scd_declared",
         "fully_verified": True,
