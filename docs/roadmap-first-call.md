@@ -8,6 +8,15 @@
 
 ## 🎯 Current Focus
 
+**2026-09-05 收口与 triage**：P2-62 已由 PR #459 合并，merge `a0c671c4`；上一轮已批准的
+非现场执行队列已收口。P2-57 声明面残项、CMW 可达能力与各现场半分别保留，不能把合并解释为全部验收。
+当前工作是本轮复盘与待办整理，产品开发 WIP=0；本次整理的后续候选顺序为
+**P1-76 → P2-68 → P2-69 → P2-70**，均为待启动，详见条目；本 PR 固化 **P3-23** 执行规则，
+P2-57 残项为后续平台设计，
+P2-63 继续 HOLD。本次整理不自动启动这些实现。
+复盘证据、反复发现缺陷的根因与回归分档建议见
+[2026-09-05 开发复盘与待办裁决](plans/2026-09-05-development-review-and-triage.md)。
+
 **当前状态（现场链事实与本地队列截至 2026-08-30）**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；P1-47A/B/C 已补齐关键
 SCPI“发送 → 接受 → 生效 → 业务结果”的同次执行机制。2026-08-27 已在诊断链证明 Aerotech
@@ -40,14 +49,14 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-62（第三种 Channel Emulator Adapter 接入认证套件。P2-57～P2-61 已分别由 PR #448/#450+#452/#454+#456/#457/#458 合并；P2-56 的 ③ 现场半仍待真机，已进 ON-SITE-BLOCKED）。**
+Current Focus（非现场）= 本轮复盘与 triage（P2-62 已由 #459 合并，原批准队列收口；后续待启动项见顶部）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
 adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道仿真器接入平台化加入雷达，
 并在 Mock UXM 接受 LTE TestCase 的复盘后批准插入执行兼容性硬门；顺序为
 **~~P1-74~~（✅ 非现场半 #429，现场半待真机） → ~~P1-75~~（✅ #431） → ~~P2-64~~（✅ #433） → ~~P2-65~~（✅ #434） → ~~P2-66~~（✅ #435） → ~~P2-67~~（✅ #436） → ~~P2-54~~（✅ #437） → ~~P2-55~~（✅ 非现场半 #440，真机抽样待现场） → ~~P2-56~~（✅ ① #444 / ✅ ② #446，③ 现场半待真机） →
-~~P2-57~~（✅ #448）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ ~~P2-59~~（✅ ① #454 / ✅ ② #456）→ ~~P2-60~~（✅ #457）→ ~~P2-61~~（✅ #458）→ P2-62（🔄 当前 WIP）→ P2-63（HOLD）**。
+~~P2-57~~（✅ 已交付半 #448，声明残项见条目）→ ~~P2-58~~（✅ ① #450 / ✅ ② #452）→ ~~P2-59~~（✅ ① #454 / ✅ ② #456）→ ~~P2-60~~（✅ #457）→ ~~P2-61~~（✅ #458）→ ~~P2-62~~（✅ #459）→ P2-63（HOLD）**。
 2026-08-31 用户批准把 P2-64～P2-67 整组前移到 P1-75 之后。理由有二：这四片是同一次 Mock 复盘的
 直接派生，旧顺序下它们前面压着 P2-54～P2-56、P2-57～P2-62 与 P2-63 共十片，轮到时本次复盘的
 上下文早已冷却；其中 P2-67 要解决的取证混淆（两份附件字节级相同、公共 release 日志硬编码
@@ -56,7 +65,7 @@ adapter 复用。2026-08-30 用户批准把 CMW500 MAC 能力补齐与多信道�
 的依赖同样全部满足。前移后重算依赖图零违反。条目本体本次共动三处：P1-74 与 P1-75 两条的
 「先于」表述换源到本顺序串（不再在条目内复制清单），P2-54 补记本次前移新产生的 compatibility
 digest 版本迁移义务；其余各条的依赖关系逐条复核后仍成立、未动。P2-63
-在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），P2-57 已由 PR #448 合并；P2-58 ① #450 / ② #452、P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458 已合并，当前 WIP=1 落在 P2-62。
+在真实型号与手册确定前保持 HOLD，位于队列末尾且不阻断任何已批准片。P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并，四片整组收口完毕；P2-54 已由 PR #437 合并；P2-55 的非现场半已由 PR #440 合并（其真机矩阵抽样复验待现场），P2-56 的 ① ② 两半已由 PR #444 / #446 合并（③ 现场半待真机），P2-57 已交付半由 PR #448 合并；P2-58 ① #450 / ② #452、P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458、P2-62 #459 均已合并。
 P1-73A/B/C 已分别由 PR #400/#401/#402 合并，现场修复 PR #403 也已合并到
 `main`（merge `7ac4b959`）。当前先使用现有 TestCase 做真实 DUT/SIM Attach 和诊断执行，
 不为架构整理延迟现场测试；只有 `PCCBBBoard` 专用回读经真机复验、真实路损校准、转台冻结坐标、同次
@@ -84,7 +93,7 @@ P3-20/P3-21 仍不得自动启动。
    下一批：**P2-64～P2-67 已由 PR #433/#434/#435/#436 全部合并**，同一次 Mock 复盘派生的
    Mock 能力、Readiness、证据终态与日志导出四片整组收口完毕；**P2-54 已由 PR #437 合并**
    （RAT-neutral 执行冻结 MAC profile）；**P2-55 的非现场半已由 PR #440 合并**（CMW500 LTE FDD
-   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458 已合并。**当前非现场 WIP = P2-62**（第三种 Channel Emulator Adapter 接入认证套件），P2-56 仅剩 ③ 现场半待真机。
+   能力矩阵，真机抽样待现场）。**P2-56 的 ① ② 两半已由 PR #444 / #446 合并**（① 建 LTE TDD 四维能力矩阵并**有意零新增可达状态**；② 才放开取值域并补上下发路径 —— ② 的全部意义就是新增可达状态，两半的性质相反，别把 ① 的那句话读到 ② 头上）。P2-59 ① #454 / ② #456、P2-60 #457、P2-61 #458、P2-62 #459 已合并。**原批准非现场队列已收口**，P2-56 仅剩 ③ 现场半待真机；后续待启动项以顶部为准。
    最后 P2-57（✅ #448）～P2-62 建立 Channel Emulator 接入平台；P2-63 等待真实型号和手册，位于队列末尾。
    P0-9B-1 已完成手册支持
    来源、七字段 query/parser 与驱动双回读的本地半；P0-9B-3 已完成 execution-frozen 转台坐标
@@ -694,9 +703,9 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前非现场 WIP=1：P2-62（第三种 Channel Emulator Adapter 接入认证套件）**；NEW-1/P2-42～P2-61 已按批准顺序完成，其中 P2-57～P2-61 对应 PR #448/#450+#452/#454+#456/#457/#458。P2-63 继续 HOLD 且位于队列末尾。该本地顺序不关闭、不降级 ON-SITE-BLOCKED 中原有 First-call Todo。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
-| **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-55** / **P2-56** 的现场半（详见下方「Blocked on hardware」）。P1-74 现场半 = 在真实 CMW500 上用至少两个不同统计长度连续执行，证明 Extended BLER 统计基不继承上一 session（非现场半已由 PR #429 合并）。P2-55 现场半 = 在真实 CMW500 上抽样验证已声明 `authoritative` 的 TM / 天线组合确实可配置并回读一致（非现场半已由 PR #440 合并）。P1-33 已完成，不再列开放项。 |
-| **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
+| **LOCAL-OPEN (roadmap 内)** | 原批准队列至 P2-62 已合并，产品开发 WIP=0。本次 triage 后 P1-76（监控假读数）优先，随后 P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口，均待启动，顺序见顶部。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P3-23 规则固化于本 PR、两个功能 PR 试行待验。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
+| **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
 | **off-roadmap 候选 (需先 triage，非积压)** | GUI 测试框架引入 (与 `feedback_browser_test_frontend_work` 对齐，ROI 最高) / HTTP distributed pytest 缺口 / 后端告警规则引擎 / CLAUDE.md 列的 Queue 重排序·Auth Context·报告对比 |
 
@@ -712,6 +721,12 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 ---
 
 ## 🚧 Blocked on hardware (on-site queue —— **P0 优先**)
+
+**2026-09-05 现场编排**：CMW 在场时以 P0-9 同一条真实链为主线，先满足互锁/坐标与路损等安全前置，
+再 Attach、MAC/窗口、业务测量、SAFE_IDLE/release、报告。P0-8b、P2-51 与 P1-74 可复用该执行证据，
+但各自验收条件独立核对。P2-55 扩域抽样与 P2-56 TDD 在基线可复现后进行；P1-4 以第二次执行对比收口。
+UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以下状态是“未取得可核验的关闭证据”，
+不是本次已经重新连接硬件实测。P2-55 的软件载体缺口已移交 P2-70，不再只写成等设备到场。
 
 > ⚠️ **「正式载体」这一列必须填得出**（2026-08-06 用户定，正式条目见 `### P1-45`）——
 > **填不出 = 不能带到现场临时补**。它继续留在原有 Discovered / Blocked / HOLD 分区，
@@ -739,14 +754,17 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 |----|------|---------|---------|
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
+| **P2-51（现场半）** | **CMW MAC requested/applied 真机闭环** | #420/#437 的本地实现不能代替真实下发、回读、窗口与安全释放证明；与 P0-9/P1-74 共用现场窗口，分别签收 | ✅ 当前 TM3/2 层 LTE MIMO_OTA TestCase；保存同 execution/attempt 的 MAC receipt、窗口、SAFE_IDLE/release 与报告。不是重新开发 #420 |
+| **P2-52 / P2-54 UXM 证据边界** | **UXM 窗口关闭与 IRAT MAC 错误队列权威来源** | 先补当前方言适用的厂商出处；`uxm.error_queue` 现仍 unverified，不能借 F64 目录或一次零错误响应变成 confirmed。来源确定后才安排 UXM 窗口复验；证据不足维持 unknown | ✅ 已登记 `uxm_window_boundary_probe` 仅按既有零写边界采集；MAC/吞吐正式复验使用 NR MIMO_OTA TestCase。无原文的查询/关闭命令不临时新增 |
+| **P2-61/62 真实 CE 验收** | **commissioning 引导认证 → 后续执行 → 冷释放/再次 acquire** | #458/#459 完成软件机制与测试域认证，不证明现场 active certification 已可用。需同一真实 binding/plan/asset、完整身份/许可、同 attempt receipts、频率/电平/路损及 SAFE_IDLE/release；BaseStation/路损等前置未满足时不得强升 Formal | ✅ 当前 MIMO_OTA TestCase 的 commissioning 入口（`executed_by=commissioning_api`）取得 source execution，经现有 CE certification API 激活，再用正式 TestCase 验后续执行；显式 diagnostic、Mock 和旧 attempt 不得引导升级。每次保留 execution_id 与终态，不把 certfake 当现场证据 |
 | **P1-74（现场半）** | **CMW500 Extended BLER 统计基不继承旧 session 的真机证明** | 非现场半已由 PR #429 合并（下发 `EBLer:SFRames` + 回读 + 全域 fail-closed）。现场缺的是真机行为证明：在真实 CMW500 上用**至少两个不同统计长度**连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase 变化、**不继承上一 session**。⚠️ 手册（Base SW UM p.139）说运行中改结果相关参数会重启测量并清零统计计数器 —— 该行为本地无法证伪 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase，改 `stat_count` 跑两次即可对照（窗口证据里 `trust.reason` 带 applied 值）；诊断辅助：CMW500 已登记序列 |
 | **P2-56（现场半）** | **LTE TDD 正式路径的真机认证** | ① ② 两半已合（#444 / #446）：矩阵声明 + 下发回读均已就位，且已用 TDD profile 在 fake transport 上闭环。现场缺的是：真实 CMW500 上完成 Attach / 业务窗口 / SAFE_IDLE / release，并留下正式证据。⚠️ 本地证不了三件事：① 仪器是否真接受 `CELL:PCC:ULDL`（选件需 **KS550 and KS510**，pp.687-688）与 `SSUBframe`（只需 **KS550**，p.688；KS512 另限于 value 7+扩展CP / value 9）这两条写 —— **两条的选件要求不同**，别按同一套核；② `DLEQual ON` 对 `RMC:VERSion:DL2` 是「开的那一刻快照」还是「开着时持续传播」—— 本驱动把 DLEQual 排在 RMC 之前，而手册示例 §2.5.20（p.342）排在之后；③ TDD 帧结构两组相对 RMC 行的下发顺序（手册未给出顺序错了会怎样） | ✅ 正式载体：建一个 `duplex=tdd` 的 LTE MIMO_OTA TestCase（`uldl_configuration` / `special_subframe` 必填）跑一次，抄回 execution_id + `formal=` 那行 + 报告 |
-| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据见驱动内矩阵声明上方注释）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，而 **P2-56 ① 声明片（已由 PR #444 合并）有意不放开它**（声明 ≠ 可达，见该条目）。**两条腿处境不同**：TM3+2 层恰是 `Literal` 锁定的那个组合，**走现有 TestCase 的正式路径即可取证**；被挡住的只有 TM1+1 天线那条腿 —— 而它今天**连诊断载体都没有**：`app/diagnostics/` 全目录 grep `TRANsmission|NENBantennas` 零命中，唯一相关的 `baseStation_attach_check` 硬编码 `mimo_layers: 2` 且从不传 `lte_transmission_mode`。**出发前必须先补/参数化一个能下发这两条命令的序列**（CLAUDE.md 诊断序列一节：「没有就出发前补一个」）。⚠️ **别等 P2-56 ②** —— 它放开的是 **TDD** 那一格（`duplex` 与三个 TDD 字段），而挡住本行抽样的是 **FDD 侧**的 `transmission_mode: Literal["TM3"]` 与 `mimo_layers: Literal[2]`，② 合完它们仍旧锁死。**这两维的放开今天没有归属片**（P2-55 只建了矩阵、没指定打开者），要走正式路径得先给它立一片 |
+| **P2-55（现场半）** | **能力矩阵里 `authoritative` 组合的真机抽样验证** | 非现场半已由 PR #440 合并（manifest 逐维度取值域 + 判定器逐维度对账；判据见驱动内矩阵声明上方注释）。现场缺的是：矩阵声明为 `authoritative` 的组合在真机上**确实可配置且回读一致**。抽样至少覆盖 TM1+1 天线（走表 2-37）与 TM3+2 天线（走表 2-38）两条路径，各自保存写/回读/错误队列证据。⚠️ 本地只能证明「声明与手册一致」，证不了「仪器真的接受」——尤其选件缺失时的实际行为（矩阵记的是手册 Options，不是整机 `*OPT?` 实况） | ✅ 正式载体：现有 LTE MIMO_OTA TestCase 改 `transmission_mode` / `mimo_layers` 各跑一次；⚠️ 注意 profile 的 `Literal` 目前仍锁死 TM3/2 层，而 **P2-56 ① 声明片（已由 PR #444 合并）有意不放开它**（声明 ≠ 可达，见该条目）。**两条腿处境不同**：TM3+2 层恰是 `Literal` 锁定的那个组合，**走现有 TestCase 的正式路径即可取证**；被挡住的只有 TM1+1 天线那条腿 —— 而它今天**连诊断载体都没有**：`app/diagnostics/` 全目录 grep `TRANsmission|NENBantennas` 零命中，唯一相关的 `baseStation_attach_check` 硬编码 `mimo_layers: 2` 且从不传 `lte_transmission_mode`。**出发前必须先补/参数化一个能下发这两条命令的序列**（CLAUDE.md 诊断序列一节：「没有就出发前补一个」）。⚠️ **别等 P2-56 ②** —— 它放开的是 **TDD** 那一格（`duplex` 与三个 TDD 字段），而挡住本行抽样的是 **FDD 侧**的 `transmission_mode: Literal["TM3"]` 与 `mimo_layers: Literal[2]`，② 合完它们仍旧锁死。**2026-09-05 已归属 P2-70**：先准备抽样诊断载体；正式两维扩域仍待该条后续设计，不因本次整理自动开放 |
 | **P0-9** | **CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环** | 2026-08-27 已证明 CMW500/F64/转台链到 Attach 前；P0-9B-3 已完成 `+90°` 偏置的 execution freeze 与证据消费。本地仍缺真实 DUT/SIM Attach、`PCCBBBoard` 专用有据 query 的真机复验、真实路径损耗校准、同一 TestCase 转台方位/HOME 复验，以及同一 attempt 的真实报告/cleanup/release 证据 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase；诊断辅助：CMW500/F64/Aerotech 已登记序列。按 P0-9A/B/C 顺序关闭；任一正式前置未知时允许诊断运行但 KPI 保持 UNKNOWN/N/A |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **仅余 b 半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | ✅ **2026-08-27 P0-8a 已现场通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b：纳入 P0-9 的同一 LTE MIMO_OTA TestCase，不另造流程 |
 | P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-27 人工接受、程序证据未关闭**：已在清理历史 `-100` 后按手册只读路径对账，操作员判通过；当日没有新的 SUCCESS DiagnosticRun，故仍保留现场半 | ✅ 载体：[`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py)；驱动探针已由 P1-66 删除，能力单源 `SYSTem:INFO?` + `USER:GET?`。只需在干净错误队列上重跑并留 SUCCESS，不恢复无手册命令 |
-| P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
+| P1-4 | first-call repeatability test | on-site 全链路 | ✅ **软件载体已由 P1-72 / #396 补齐**：同一 MIMO_OTA TestCase 两次 execution，使用 execution 级 ReportComparison 与 repeatability_tests 对齐；现场实际重复执行及对比证据仍未关闭。不再把旧 plan_id 契约当待开发缺口 |
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
@@ -3497,6 +3515,20 @@ P2-64～P2-67 分别收口同一次复盘派生的 Mock、Readiness、证据终�
 紧跟本片执行。设计见
 `docs/plans/2026-08-30-base-station-testcase-compatibility-roadmap-design.md`。
 
+### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，当前本地第一优先）
+
+**可观察故障**：`instrument_hal_service.get_aggregated_metrics` 按 snake_case 分流，实际
+drivers 键是 camelCase，读数落入 `_build_monitoring_data` 的默认值；测试租约开放监控期间，
+REST/WS 可发布固定吞吐/SNR/EIRP/温度。HAL 返回空或异常时，`monitoring._generate_fallback_data`
+还生成随机值，响应没有 provenance。2026-09-05 在 `a0c671c4` 用两个不同的内存 driver 读数
+10/90 调用生产聚合函数，两次都得到 `0/0/0/23`。没有连接硬件；未证明本路径进入正式报告。
+
+**最小方向/验收**：先去掉默认/随机读数，再换源到权威品类及可信测量。不能仅改键拼写后
+保留“功率默认加 3 dBi 就是 EIRP”等无依据推算。缺测/错误显示 unavailable，模拟必须显式标记且
+不能显示正式通过；逐项核对物理量来源，不以 CE 的同名字段替代基站吞吐。枚举聚合、缓存、REST、
+WS、响应类型与 GUI 的数值/状态消费者，证明两组真实输入可区分、缺测不补零、错误不造数。
+保留空闲不查询仪器和原测试租约边界，不加轮询、不新增 SCPI、不扩正式 KPI 范围。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -4622,6 +4654,15 @@ nx2（`SCENario:TRO:FLEXible`，pp.630-631），所以它与 TM2/4/6 并非同�
 
 ### P2-57 — Channel Emulator Capability Manifest ✅ 结构缺陷 + operation×support 半（#448）/ ⏳ 声明面其余项未交付
 
+**2026-09-05 残项裁决**：下文“未交付”清单是 #448 收口时的范围记录。后续 P2-59～62 已在
+operation plan/session/receipt/certification 中覆盖 SAFE_IDLE、release 与正式证据消费，不能再整套重复建设。
+资产类型与逐操作证据强度等原始声明需求，先抵扣后续实现，再保留真正缺项做后续设计。
+**通道/端口基数的归属已被用户 2026-09-03 拍板修正**：随 `.smu` 改变的活动拓扑归
+ChannelAsset，不进 per-driver manifest；拓扑解析另片，先补 OTA 样本与 Direction 手册依据。
+排在当前已复现产品缺陷之后、P2-63 接入之前核对实际需要。先列“现有哪个对象已承载这个事实”，
+复用既有来源再补真实缺口，不新造并行真值。下方旧“直通态从来没人撤”已被 P2-59 session 的
+`required_safe_idle_action` / `require_channel_emulator_passthrough_clear` 路径覆盖；诊断侧旧标志仍另行待评估。
+
 **可观察故障**：共同 `ChannelEmulatorDriver` 目前默认宣称所有信道仿真器支持
 `EXTERNAL_WAVEFORM`，但 FS16 的 upload/start/path loss/doppler/MIMO 能力仍未实现；F64 的
 Native/ASC/TDL、输入/输出控制和权威回读则散落在厂商类与 MEASURE 分支。新增型号会继承假的共同能力。
@@ -4788,7 +4829,7 @@ execution 的冻结 binding/plan/asset、硬件身份/选件、逐操作 receipt
 统一阻断 diagnostic/simulated/unknown。设备抽屉、Dashboard、TestCase readiness 与 OpenAPI/TS 镜像只读
 服务器投影；未执行现场认证，F64/FS16 仍须按真实现场证据取得 active certification 后才可能 Formal。
 
-### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（🔄 当前 WIP）
+### P2-62 — 第三种 Channel Emulator Adapter 接入认证套件（✅ PR #459）
 
 **可观察故障**：没有参数化套件能证明新信道仿真器只需 adapter/manifest/profile/manual evidence 即可
 接入；缺口会在真实第三型号 PR 中再次扩散到 MEASURE、commissioning、报告和 GUI。
@@ -4804,7 +4845,14 @@ adapter/manifest/profile 缺口，不要求修改共同消费者。不新增或�
 完整与部分回读、错误队列、超时/取消、资产 load、run/adjust/stop、SAFE_IDLE、release 与模拟排除；
 生产目录零测试 adapter 泄漏。MEASURE 新增 adapter/instrument 绑定的通用冻结频率证据，certification
 优先消费该共同投影，旧 F64 字段仅作 pre-P2-62 历史兼容；第三 adapter 不再被写成 F64。未新增或
-猜测任何厂商命令，P2-63 仍保持 HOLD。完整回归、fresh 内审与外审尚待收口。
+猜测任何厂商命令，P2-63 仍保持 HOLD。
+
+**最终收口（2026-09-05）**：PR #459 已合并为 `a0c671c4`。功能 HEAD `757dd2e6` 将频率证据
+升级为 schema v2，绑定 `measurement_attempt_id`，qualification 摘要同时固定证据版本；认证派生
+与共同正式 outcome 均核对 adapter/instrument/当前 completed attempt，现代缺证不能回退旧 F64 字段。
+PR 最终记录：focused 242 passed、全后端 6393 passed / 5 skipped、compileall、单一 Alembic
+head `c5e7f9a1b3d6` 与 diff-check 通过，R4 覆盖最终功能 HEAD 无 P1。此处是历史验证记录，
+本次文档整理未重跑全后端；真实 CE 认证验收继续留在 hardware 表。
 
 ### P2-63 — 下一真实 Channel Emulator Adapter（HOLD，型号/手册待定）
 
@@ -4910,9 +4958,53 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 
 ---
 
+### P2-68 — 损坏仪器认证不能隐藏整张仪器目录（待启动）
+
+**可观察故障**：一条 InstrumentConnection 的 CE certification JSON 缺字段时，
+`app/api/instrument.py::_convert_connection` 构造响应抛 ValidationError；
+`get_instrument_catalog` 捕获后返回 `categories=[]`，全部仪器从 GUI 消失，操作员无法定位损坏项。
+2026-09-05 在 `a0c671c4` 用生产函数、内存对象和 fake DB query 构造复现：损坏认证返回 0 类，
+相同连接改为无认证返回 1 类。没有发生数据库删除。来源：#458 行内发现 3938243884，本次独立 triage。
+
+**最小方向/验收**：收窄认证解析失败的影响面，保留可显示的 category/model/connection；损坏认证
+明确 invalid/unavailable 且不能得到正式资格。枚举 BS/CE certification、preset 与目录各转换入口，
+只修会造成同一整目录丢失的路径，不把真实 DB 查询故障伪装成“零仪器”。GUI 显示与 API 契约同步。
+回归用正常项与损坏项共存的目录证明，正式门仍拒绝损坏证据。纯本地，零 SCPI。
+
+### P2-69 — MAC capability 输出契约补齐 dimensions（待启动）
+
+**可观察故障**：真实 `RealCmw500Driver.adapter_manifest` 输出 `mac_profiles[].dimensions`，
+`api/openapi.yaml::BaseStationMacProfileCapability` 没有此属性且禁止额外属性；严格客户端无法接受合法响应。
+2026-09-05 实跑 model_dump 与 YAML 属性集比较，差集为 `['dimensions']`。
+
+**最小方向/验收**：补齐 dimension/value capability 的 live OpenAPI、checked YAML、generated TS 与
+手写类型；用实际序列化响应验证契约，不能只验“文档是实现的子集”。不改变 manifest 运行内容、
+digest 或正式能力，不为契约补齐顺带放开 CMW 取值域。来源：P2-56 声明半 discovered。
+
+### P2-70 — CMW FDD 矩阵抽样的可达载体（待设计/启动）
+
+**可观察缺口**：P2-55 要求 TM1/1 天线与 TM3/2 天线真机抽样，但当前 LTE profile 的
+`transmission_mode: Literal["TM3"]` / `mimo_layers: Literal[2]` 只允许后一条，现有 Attach
+诊断也未提供前一条载体。只把事项标成 hardware blocked，设备到场仍无法完成抽样。
+
+**首片范围**：先设计一个 checked-in、可从现有诊断入口运行的参数化载体，最少覆盖 TM1/1 天线
+与当前 TM3/2 天线；命令、组合、RMC 行、选件/固件和安全前置必须逐项有手册出处，输出为诊断证据。
+不把单维 authoritative 当成跨维组合合法，不默认开放其他 TM、4 层、AMC 或全带宽。
+真实抽样仍由 P2-55 现场半签收。正式 schema/GUI 扩域是后续设计决定，须同时打通驱动、compatibility、
+回读和正式消费者；不能只改 Literal。P2-69 不依赖本项，按顶部顺序先处理已复现故障。
+
 ## 🟢 P3 — Polish / tooling
 
-**P3-1～P3-19 ✅ Done；P3-20/P3-21 已转非阻塞维护池，P3-22 为当前队列末项。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)；新增项的当前范围与顺序只看顶部 Current Focus 表。速览：
+**P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入
+重复全量、纯文档触发后端全量，以及“建议默认 backlog”和 AGENTS 的冲突。执行方法唯一入口为
+CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer 与 PR 模板引用同源规则。
+取证与范围见 [复盘 §4](plans/2026-09-05-development-review-and-triage.md#4-回归策略优化)。
+外审改为先读状态、确认 HEAD、按 HEAD+Rn 去重、当次消费完成结果，删除固定等待与超时合并冲突。
+保留正常 R1→R2 与功能 P1 续审；独立审查、自查与未发生分别记账。不新建测试/审查平台，不批量
+删测试，不恢复并行 agent，不改产品代码。后续两个功能 PR 记录耗时与重复验证等数据后再验效率；
+本片未修改 GitHub/Codex 调度器或恢复 automation，不能宣称服务端等待时长已缩短。
+
+**P3-1～P3-19 ✅ Done；P3-20/P3-21 已转非阻塞维护池；P3-22 ✅ PR #369；P3-23 规则固化于本 PR、试行待验。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)；新增项的当前范围与顺序只看顶部 Current Focus 表。速览：
 
 | ID | Item | Done |
 |----|------|------|
@@ -4963,6 +5055,33 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+### 2026-09-05 本轮开发 triage checkpoint
+
+**本表给出当前出口，覆盖下方同源历史发现的旧“待 triage”标记；原文保留审计。**
+本次用户明确要求整理后才独立重评 #458 的剩余项；不是把 R2+ P2/P3 自动积压。
+未列出的早期发现仍是待评估，不视为已经复现或已经关闭。
+
+| 发现 / 复核范围 | 当前出口 | 依据与下一步 |
+|---|---|---|
+| P2-62 已合并，顶部/分桶/条目仍 WIP | resolved（本次文档） | #459 / `a0c671c4`，同步活状态镜像；历史快照不改 |
+| 监控 snake/camel 键错配、缺读数补常量/随机数 | → **P1-76** | 当前生产聚合函数两组输入得到相同固定值；API fallback 仍造随机值且无 provenance。独立 triage 按实际假读数升级，未声称正式报告污染 |
+| CE 损坏 certification 使仪器目录返回空（#458 / 3938243884） | → **P2-68** | 当前 main 构造复现；修产品可见故障，不是清数据库 |
+| MAC dimensions 缺 checked OpenAPI/TS 契约 | → **P2-69** | 当前真实 manifest 输出与 YAML 比较仍有差集 |
+| TM1/1 天线现场抽样既不能保存为正式用例、又无诊断载体 | → **P2-70** + P2-55 现场半 | schema 仍 TM3/2 层；先准备真实可执行载体，再安排现场抽样 |
+| 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
+| P2-57 声明面剩余项 / `.smu` 拓扑 | → **已有残项，先取证再设计** | 先抵扣 P2-59～62 已有机制；按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest。当前 parser 只解析中心频率；拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
+| P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
+| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **保留待评估，配置完整性下一批候选** | 当前 `_sync_projection_for_binding` 仍按 connection 聚合，增删模型入口与该投影仍有未加行锁读写。原反例未在本次 PG 重跑，不宣称并发复现；应分别设计型号归属与同序锁，不塞入 P2-68 目录读取修复 |
+| 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
+| 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
+| #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |
+| 窗口 evidence item 结构化内容未完整落库 | **保留待评估** | `append_base_station_measurement_window` 仍以 exchange ids 与 trust/metric 投影为主；先列具体报告/审计消费需求，不重复 P2-60 的 CE operation receipt |
+| 诊断侧 `SUPPORTS_STATIC_PASSTHROUGH` 等能力副本 | **保留待评估** | 正式 MEASURE 已走 plan，`baseStation_attach_check`/`propsim_f64_state_machine` 仍有旧标志；先给出当前误判场景，再决定载体 |
+| CMW 页码入 digest、4 流否定措辞、3GPP/厂商支持叙述 | **维护候选，待独立取证设计** | 页码/措辞残留可搜索；本次未重新审计手册或统计认证存量，不能沿用旧 DB 数字决定迁移成本；统一核范围，不再扩大自然语言正则门 |
+| #442 自然语言检查器返工、roadmap 顺序/链接门、测试冗余 | → **P3-23 流程优化评估** | 优先删冲突、少重复运行；是否改检查器/删测试另需具体证据，不按测试行数定目标 |
+| P2-51/52/55/56、CE 真实认证、UXM 方言依据 | → **hardware 表 / Known unknown** | 分开软件载体、手册来源与真机复验；本地测试不能签现场完成 |
+| P1-4 “仍只能按 plan 对比” | **软件缺口已由 P1-72/#396 关闭** | 已改 hardware 表为仅缺现场重复执行/对比证据 |
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 
