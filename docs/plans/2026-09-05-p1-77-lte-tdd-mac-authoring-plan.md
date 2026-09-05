@@ -105,4 +105,7 @@
   errors，改从 `api-service` 启动后 6409 passed / 5 skipped。相同产品输入重复全量 1 次；这是
   P3-23 试行暴露的流程浪费，PR 中保留原因，不把第一次包装成产品回归失败。
 - GUI 新契约 12 passed、production build、compileall、单一 Alembic head 与 diff-check 通过。
-- Task 6 的本地阶段完成；待 Ready PR、Codex R1→R2、覆盖最新 HEAD 无 P1后合并与同步清理。
+- Codex R1 对 `13d9a6e6` 无 P1、有 1 条本片 P2：非 20 MHz 显式
+  `rmc_version: null` 与省略未区分。旧实现反例 RED，改用 Pydantic 字段存在性后受影响链
+  406 passed；R1 请求 1 次、重复 0 次，等待约 5 分 24 秒。
+- Task 6 的本地阶段与 R1 修复完成；待覆盖最新修复 HEAD 的 R2 无 P1后合并与同步清理。

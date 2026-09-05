@@ -179,6 +179,10 @@ def test_rmc_version_requirement_comes_from_the_selected_bandwidth_plan():
     with pytest.raises(ValidationError, match="rmc_version.*omitted"):
         MIMOOTAConfiguration.model_validate(stray_for_10)
 
+    stray_for_10["lte_tdd_frame_structure"]["rmc_version"] = None
+    with pytest.raises(ValidationError, match="rmc_version.*omitted"):
+        MIMOOTAConfiguration.model_validate(stray_for_10)
+
     stray_for_10["lte_tdd_frame_structure"].pop("rmc_version")
     canonical = canonicalize_mimo_ota_configuration_payload(stray_for_10)
     assert canonical["mac_profile"]["profile"]["rmc_version"] is None

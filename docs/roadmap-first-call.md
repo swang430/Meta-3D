@@ -3552,7 +3552,10 @@ schema，故 OpenAPI/YAML/generated TS 四镜像不适用，不制造无消费�
 Alembic head 与 diff-check 通过。全量共发起 2 次：第一次从仓库根目录启动，旧 migration 测试因
 找不到 Alembic `script_location` 出现 4 个 setup errors（其余 6405 passed / 5 skipped），切到
 `api-service` 后通过；因此相同产品输入的重复全量计 **1 次**，原因与耗时在 PR 如实登记。代码检查
-为**主代理自查，非独立内审**；外审请求/重复请求/等待时长与 R1 后功能缺陷在 PR 阶段继续回填。
+为**主代理自查，非独立内审**。Codex R1 对 `13d9a6e6` 在 08:47:17Z 请求、08:52:41Z 完成，
+等待约 5 分 24 秒；无 P1，1 条本片 P2 指出非 20 MHz 显式 `rmc_version: null` 被误当作省略。
+该反例已按 RED→GREEN 收窄为检查字段是否出现，受影响链 406 passed；R1 重复请求 0 次。R2 请求
+与等待数据在最新修复 HEAD 推送后继续回填。
 
 ### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，P1-77 后）
 

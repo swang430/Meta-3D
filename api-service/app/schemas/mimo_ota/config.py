@@ -829,7 +829,7 @@ class MIMOOTAConfiguration(BaseModel):
                         )
                     if (
                         not rmc_plan.tdd_dl_version_required
-                        and tdd_authoring.rmc_version is not None
+                        and "rmc_version" in tdd_authoring.model_fields_set
                     ):
                         raise ValueError(
                             "lte_tdd_frame_structure.rmc_version must be omitted "
