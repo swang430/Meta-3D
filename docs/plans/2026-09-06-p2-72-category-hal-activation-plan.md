@@ -50,7 +50,7 @@
 - Produces: `InstrumentHALService._initialize_from_db(*, only_category_key: str | None = None) -> dict[str, DriverReadinessRow]`。
 - Constraint: 无参数调用保持现有全量启动行为；传 key 时只查询、构造、连接该类别，并把该行合并进现有 `last_readiness_report`。
 
-- [ ] **Step 1: 写单类别构造 RED**
+- [x] **Step 1: 写单类别构造 RED**
 
 新测试先锁住：
 
@@ -75,7 +75,7 @@ fixture 使用内存 DB 的三类 active category 与无 I/O fake driver registr
 `readiness_with_rows(*keys)` 是本测试文件的局部 helper：用现有 `ReadinessReport` / `DriverReadinessRow`
 构造指定 category 的 ok 行，并给 lab/cal/dut 填现有 dataclass 所需的明确测试值。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```bash
 api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activation.py -k targeted_initialization
@@ -83,7 +83,7 @@ api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activa
 
 Expected: FAIL，因为 `_initialize_from_db` 尚不接受 `only_category_key`，且 readiness 尚无单行合并。
 
-- [ ] **Step 3: 提取唯一 runtime 解析 helper**
+- [x] **Step 3: 提取唯一 runtime 解析 helper**
 
 在 HAL service 定义：
 
@@ -105,7 +105,7 @@ class ResolvedCategoryRuntime:
 `_real_driver_registry()`、`_MOCK_FALLBACK_BY_CATEGORY`、`_decide_use_real()` 与
 `_instantiate_hal_driver()` 的原有语义。forced real 无实现时仍写 connection error，不允许回落 Mock。
 
-- [ ] **Step 4: 加精确类别过滤与 readiness 合并**
+- [x] **Step 4: 加精确类别过滤与 readiness 合并**
 
 ```python
 query = db.query(InstrumentCategoryModel).filter(InstrumentCategoryModel.is_active == True)
@@ -117,7 +117,7 @@ categories = query.order_by(InstrumentCategoryModel.display_order).all()
 单类别完成后，以 `category` 为键替换旧 readiness 行，再与未变类别行合并；lab/cal/dut 与 subnet 投影
 仍调用现有 builder 重新生成。全量启动继续使用本轮全部行。
 
-- [ ] **Step 5: 运行 GREEN 与既有启动回归**
+- [x] **Step 5: 运行 GREEN 与既有启动回归**
 
 ```bash
 api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activation.py api-service/tests/test_hal_reload_policy.py api-service/tests/test_hal_lifecycle_lock_ordering.py
@@ -125,7 +125,7 @@ api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activa
 
 Expected: PASS；既有全量 reload 行为不变。
 
-- [ ] **Step 6: 提交 Task 1**
+- [x] **Step 6: 提交 Task 1**
 
 ```bash
 git add api-service/app/services/instrument_hal_service.py api-service/tests/test_p2_72_category_hal_activation.py
@@ -150,7 +150,7 @@ git commit -m "refactor: expose single-category HAL initialization"
 - Produces: `HALCategoryNotFoundError`、`HALCategoryConfigurationError`、`HALCategoryActivationError`，
   分别表示未知类别、持久配置不可构造、释放/连接失败；API 依此映射 404/422/503。
 
-- [ ] **Step 1: 写隔离替换、no-op 与失败安全 RED**
+- [x] **Step 1: 写隔离替换、no-op 与失败安全 RED**
 
 ```python
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_real_cmw_disconnect_refusal_keeps_old_object(monkeypatch):
 取消传播且不吞 release error。
 inactive 与 unknown 必须先以独立 DB 查询分类；不能把“active 查询无行”同时解释成二者。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```bash
 api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activation.py -k 'activation or disconnect or unchanged or inactive'
@@ -194,7 +194,7 @@ api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activa
 
 Expected: FAIL，因为激活与目标 park 接口尚不存在。
 
-- [ ] **Step 3: 实现 runtime 精确匹配与安全替换**
+- [x] **Step 3: 实现 runtime 精确匹配与安全替换**
 
 匹配条件固定为：
 
@@ -211,7 +211,7 @@ same_runtime = (
 `disconnect() is True` 才可删除。其他 driver 抛异常后从 registry 移除，避免断开对象继续被消费。
 随后调用单类别初始化；目标未登记时从该类别 readiness 取真实错误并抛 `HALCategoryActivationError`。
 
-- [ ] **Step 4: 实现目标类别 park 并保持锁顺序**
+- [x] **Step 4: 实现目标类别 park 并保持锁顺序**
 
 ```python
 async def park_idle_instrument(self, category_key: str) -> bool:
@@ -227,7 +227,7 @@ async def park_idle_instrument(self, category_key: str) -> bool:
 cancellation/error 合并逻辑，再以 `controls` 调 `_settle_local_controls`。`activate_hal_category_atomic`
 只在 lifecycle lock 外调用模块级 `park_idle_instrument(category_key)`；锁顺序测试钉死该调用位置。
 
-- [ ] **Step 5: 运行 GREEN 与 release 回归**
+- [x] **Step 5: 运行 GREEN 与 release 回归**
 
 ```bash
 api-service/.venv/bin/pytest -q \
@@ -240,7 +240,7 @@ api-service/.venv/bin/pytest -q \
 
 Expected: PASS；把 targeted park 的两个 control flag 同时设为 True 的变异必须被测试检出。
 
-- [ ] **Step 6: 提交 Task 2**
+- [x] **Step 6: 提交 Task 2**
 
 ```bash
 git add api-service/app/services/instrument_hal_service.py api-service/app/services/instrument_test_lease.py api-service/tests/test_p2_72_category_hal_activation.py api-service/tests/test_hal_lifecycle_lock_ordering.py
@@ -260,7 +260,7 @@ git commit -m "feat: activate one HAL instrument category"
 - Produces: `POST /api/v1/instruments/{category_key}/hal/activate`。
 - Produces: `HALCategoryActivationResult` 与 `HALCategoryActivationRefusedResult` wire models。
 
-- [ ] **Step 1: 写 200/409/失败映射/live OpenAPI RED**
+- [x] **Step 1: 写 200/409/失败映射/live OpenAPI RED**
 
 ```python
 def test_activation_endpoint_returns_runtime_identity(client, monkeypatch):
@@ -286,7 +286,7 @@ def test_activation_endpoint_maps_runtime_failure_to_503(client, monkeypatch):
 `executed_by="test_case_runner"` 构造现有 reload policy 会识别的最小执行行。另断言 live
 `app.openapi()` 含路径、成功状态枚举与 409 schema；checked YAML 不新增该路径。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```bash
 api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activation.py -k endpoint
@@ -294,7 +294,7 @@ api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activa
 
 Expected: FAIL/404，因为路由尚不存在。
 
-- [ ] **Step 3: 实现 blocker 双检查与错误映射**
+- [x] **Step 3: 实现 blocker 双检查与错误映射**
 
 ```python
 blockers = find_reload_blockers(db)
@@ -316,7 +316,7 @@ async with hal_mutation_guard():
 
 路由不声明 `force`；409 body 复用 `HalReloadBlocker` 行形态，但不复用带 `force_hint` 的全局 reload body。
 
-- [ ] **Step 4: 运行 GREEN 与 reload policy 回归**
+- [x] **Step 4: 运行 GREEN 与 reload policy 回归**
 
 ```bash
 api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activation.py api-service/tests/test_hal_reload_policy.py
@@ -324,7 +324,7 @@ api-service/.venv/bin/pytest -q api-service/tests/test_p2_72_category_hal_activa
 
 Expected: PASS；全局 reload 的 force 行为保持原样，类别端点无 force。
 
-- [ ] **Step 5: 提交 Task 3**
+- [x] **Step 5: 提交 Task 3**
 
 ```bash
 git add api-service/app/api/instrument.py api-service/tests/test_p2_72_category_hal_activation.py
@@ -347,7 +347,7 @@ git commit -m "feat: expose category HAL activation endpoint"
 - Produces: `activateInstrumentCategoryHAL(categoryKey: string): Promise<HALCategoryActivationResult>`。
 - Produces: `EquipmentMutationResult { updatedCategory, activation?, activationError? }`。
 
-- [ ] **Step 1: 写 GUI 编排 RED**
+- [x] **Step 1: 写 GUI 编排 RED**
 
 ```typescript
 test('save awaits category activation and never syncs LabProfile', () => {
@@ -371,7 +371,7 @@ test('driver mode activates the same category once', () => {
 
 service 测试断言 POST 精确为 `/instruments/${categoryKey}/hal/activate` 且没有请求配置 body。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```bash
 cd gui && node --import tsx --test src/features/Equipment/categoryHalActivation.test.ts src/features/Equipment/baseStationModelPresetDraft.test.ts
@@ -379,7 +379,7 @@ cd gui && node --import tsx --test src/features/Equipment/categoryHalActivation.
 
 Expected: FAIL，旧实现只保存并提示手工全局 reload。
 
-- [ ] **Step 3: 增加手写类型与 API client**
+- [x] **Step 3: 增加手写类型与 API client**
 
 ```typescript
 export type HALCategoryActivationResult = {
@@ -401,18 +401,18 @@ export const activateInstrumentCategoryHAL = async (
 }
 ```
 
-- [ ] **Step 4: 把保存 mutation 改为两阶段结果**
+- [x] **Step 4: 把保存 mutation 改为两阶段结果**
 
 `mutationFn` 先 await PUT；第二阶段单独 try/catch activation，并始终返回 `updatedCategory`。`onSuccess`
 先写 catalog/draft；有 `activationError` 时显示“配置已保存，但 HAL 尚未激活：…”并刷新 catalog/HAL
 status/readiness，没有错误时显示 `activation.message`。`onError` 只代表保存失败。不得调用 LabProfile sync。
 
-- [ ] **Step 5: 把 driver mode handler 接到同一 client**
+- [x] **Step 5: 把 driver mode handler 接到同一 client**
 
 PATCH 成功后 await `activateInstrumentCategoryHAL(category.key)`；激活失败沿同一部分成功文案处理，不回写旧 mode。
 active toggle 与 topology handler 不调用 activation。
 
-- [ ] **Step 6: 运行 GREEN 与 production build**
+- [x] **Step 6: 运行 GREEN 与 production build**
 
 ```bash
 cd gui && node --import tsx --test src/features/Equipment/categoryHalActivation.test.ts src/features/Equipment/baseStationModelPresetDraft.test.ts src/features/Equipment/channelEmulatorModelPresetDraft.test.ts
@@ -421,7 +421,7 @@ npm run build
 
 Expected: 所有合同 PASS，TypeScript/Vite production build PASS。
 
-- [ ] **Step 7: 提交 Task 4**
+- [x] **Step 7: 提交 Task 4**
 
 ```bash
 git add gui/src/types/api.ts gui/src/api/service.ts gui/src/App.tsx gui/src/features/Equipment/categoryHalActivation.test.ts gui/src/features/Equipment/baseStationModelPresetDraft.test.ts
@@ -440,7 +440,7 @@ git commit -m "feat: activate category HAL after instrument save"
 - Consumes: Tasks 1–4 完整功能。
 - Produces: 可复核验证记录、主代理自查结论、Ready PR 与 Codex R1→R2 外审记录。
 
-- [ ] **Step 1: 运行受影响链与规则门**
+- [x] **Step 1: 运行受影响链与规则门**
 
 ```bash
 api-service/.venv/bin/pytest -q \
@@ -457,27 +457,32 @@ api-service/.venv/bin/pytest -q \
 
 Expected: PASS；不得把本地回归表述成真机复验。
 
-- [ ] **Step 2: 运行全后端与静态检查**
+- [x] **Step 2: 运行全后端与静态检查**
 
 ```bash
-api-service/.venv/bin/pytest -q api-service/tests
-api-service/.venv/bin/python -m compileall -q api-service/app
-cd api-service && .venv/bin/alembic heads
+cd api-service
+.venv/bin/pytest -q
+.venv/bin/python -m compileall -q app tests
+.venv/bin/alembic heads
 ```
 
 Expected: 全后端零失败；compileall 成功；Alembic 只有一个 head，且本片无 migration。
 
-- [ ] **Step 3: 运行完整 GUI 合同与 build**
+- [x] **Step 3: 运行受影响 GUI 合同与 build**
 
 ```bash
 cd gui
-node --import tsx --test $(find src test -name '*.test.ts' -print)
+npx --yes tsx --test \
+  src/features/Equipment/categoryHalActivation.test.ts \
+  src/features/Equipment/baseStationModelPresetDraft.test.ts \
+  src/features/Equipment/channelEmulatorModelPresetDraft.test.ts
 npm run build
 ```
 
-Expected: 全部 GUI 合同与 production build PASS。
+Expected: 本片受影响 GUI 合同与 production build PASS。仓库历史测试没有一个可受支持的“全文件
+单命令”运行器；按 `CLAUDE.md` 验证分档执行受影响交互，不把不兼容的扩展名/导入方式扫描冒充门。
 
-- [ ] **Step 4: 做 base-to-HEAD diff-check 与主代理功能自查**
+- [x] **Step 4: 做 base-to-HEAD diff-check 与主代理功能自查**
 
 ```bash
 git diff --check 05c7c0d9..HEAD
@@ -490,7 +495,7 @@ git diff 05c7c0d9..HEAD -- api-service/app/services/instrument_hal_service.py ap
 保存与激活错误分流；没有 `sync-current` 调用；没有新增 SCPI 字面量；`api-service/.venv` 未暂存。
 由于用户指定单 agent 顺序执行，自查必须如实标为“主代理自查，非独立内审”。
 
-- [ ] **Step 5: 更新 roadmap 完成证据并提交**
+- [x] **Step 5: 更新 roadmap 完成证据并提交**
 
 在 P2-72 条目补当前 HEAD 的专项/全量/GUI/build/compileall/Alembic/diff-check 数字；状态写“Ready PR”，
 不提前写已合并。

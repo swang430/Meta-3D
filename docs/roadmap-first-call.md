@@ -5077,7 +5077,7 @@ F64、如何核对设备侧版本、如何处理替换/回滚，以及 F64 在�
 包装成设备侧证明。调研完成前不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 的正式依赖，
 也不得新增或猜测 SCPI。本项不在当前批准执行顺序中。
 
-### P2-72 — 仪器配置保存后按类别激活 HAL（WIP）
+### P2-72 — 仪器配置保存后按类别激活 HAL（Ready PR）
 
 **可观察故障**：操作员在“仪器资源配置”修改型号、endpoint、controller、连接参数或 driver mode
 并保存后，数据库已经是新配置，运行中的 HAL 却仍装载旧 driver；必须再执行一次全局“重新加载驱动”，
@@ -5102,6 +5102,15 @@ LabProfile 三入口统一工作单元仍保留在 Discovered，不能因本片�
 
 **设计**：见
 [P2-72 仪器配置保存后按类别激活 HAL 设计](plans/2026-09-06-p2-72-category-hal-activation-design.md)。
+
+**实现与验证（2026-09-06，待外审）**：已完成启动时构造路径复用、单类别安全替换、无 force 的
+类别激活 API，以及“保存/driver mode 提交成功后激活同类别”的 GUI 两阶段编排。激活只读取已提交
+数据库真值；执行/租约 blocker 双检查，断开或安全驻车未确认即 fail-loud；其他类别 runtime 不动，
+LabProfile 同步仍为独立操作。最终输入上受影响后端与规则门 `206 passed`，全后端
+`6432 passed / 5 skipped`，受影响 GUI 合同 `22 passed`，production build、`compileall`、单一
+Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。主代理按用户要求顺序完成实现、验证与功能自查，
+自查 P1/P2/P3=0；这是主代理自查，不冒充 fresh 独立内审。未新增/修改 SCPI，未改变正式
+provenance；本地验证不替代现场复验。
 
 ## 🟢 P3 — Polish / tooling
 
