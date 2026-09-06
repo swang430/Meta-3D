@@ -110,6 +110,14 @@ class _RecordingDriver:
         return {}
 
 
+class _SafelyParkedDriver(_RecordingDriver):
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        self._status = InstrumentStatus.DISCONNECTED
+        self.local_control_reserved = True
+        self.local_release_failed = False
+
+
 class _FailingConnectDriver(_RecordingDriver):
     async def connect(self):
         type(self).connected_instrument_ids.append(self.instrument_id)
@@ -329,6 +337,63 @@ def test_matching_connected_runtime_is_unchanged(monkeypatch, db):
     assert loaded.disconnect_calls == 0
     assert service.drivers["baseStation"] is loaded
     assert parked == ["baseStation"]
+
+
+def test_matching_safely_parked_runtime_is_unchanged(monkeypatch, db):
+    category = _seed_category(db, "channelEmulator", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "channelEmulator": {
+                "channelEmulator-MODEL": _SafelyParkedDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    resolved = service._resolve_category_runtime(db, category)
+    assert resolved is not None
+    loaded = _SafelyParkedDriver(
+        resolved.instrument_id,
+        resolved.driver_config,
+    )
+    service.drivers["channelEmulator"] = loaded
+    _install_global_service(monkeypatch, service)
+
+    result = asyncio.run(activate_hal_category_atomic("channelEmulator"))
+
+    assert result.status == "unchanged"
+    assert loaded.disconnect_calls == 0
+    assert service.drivers["channelEmulator"] is loaded
+
+
+def test_failed_local_release_is_not_reused_as_safely_parked(monkeypatch, db):
+    category = _seed_category(db, "channelEmulator", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "channelEmulator": {
+                "channelEmulator-MODEL": _SafelyParkedDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    resolved = service._resolve_category_runtime(db, category)
+    assert resolved is not None
+    loaded = _SafelyParkedDriver(
+        resolved.instrument_id,
+        resolved.driver_config,
+    )
+    loaded.local_release_failed = True
+    service.drivers["channelEmulator"] = loaded
+    _install_global_service(monkeypatch, service)
+
+    result = asyncio.run(activate_hal_category_atomic("channelEmulator"))
+
+    assert result.status == "activated"
+    assert loaded.disconnect_calls == 1
+    assert service.drivers["channelEmulator"] is not loaded
 
 
 @pytest.mark.parametrize(
@@ -871,3 +936,12 @@ def test_activation_route_is_live_openapi_and_has_no_force_parameter():
     assert {parameter["name"] for parameter in operation["parameters"]} == {
         "category_key"
     }
+
+
+def test_driver_mode_endpoint_docs_do_not_require_global_reload():
+    from app.api.instrument import set_instrument_driver_mode
+
+    documentation = set_instrument_driver_mode.__doc__ or ""
+
+    assert "重新切换全局 HAL 模式" not in documentation
+    assert "HAL 激活端点" in documentation

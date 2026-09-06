@@ -4502,7 +4502,8 @@ def set_instrument_driver_mode(
     - mock: 强制使用仿真驱动（不论全局设定）
     - real: 强制使用真实驱动（不论全局设定）
 
-    修改后需要重新切换全局 HAL 模式（或重启服务）以应用。
+    本端点只提交数据库真值；保存成功后由客户端调用对应类别的 HAL 激活端点。
+    全局 HAL 重载仅保留为故障恢复手段。
     """
     valid_modes = ("auto", "mock", "real")
     if request.mode not in valid_modes:

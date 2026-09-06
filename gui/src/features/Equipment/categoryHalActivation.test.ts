@@ -89,6 +89,7 @@ test('equipment saves and driver-mode writes both use commit-then-activate orche
   )
   assert.match(driverModeControl, /commitThenActivateCategory\(/)
   assert.doesNotMatch(saveMutation, /请点击页面顶部「↻ 重新加载驱动」/)
+  assert.doesNotMatch(app, /改完仪器配置后必须点这个/)
 })
 
 test('automatic category activation remains separate from LabProfile sync', () => {

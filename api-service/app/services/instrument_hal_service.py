@@ -1984,13 +1984,22 @@ async def activate_hal_category_atomic(
                     )
                 loaded = service.drivers.get(category_key)
                 loaded_status = getattr(loaded, "status", None)
+                safely_parked = (
+                    loaded_status is InstrumentStatus.DISCONNECTED
+                    and getattr(loaded, "local_control_reserved", None) is True
+                    and getattr(loaded, "local_release_failed", None) is False
+                )
                 same_runtime = (
                     loaded is not None
                     and type(loaded) is resolved.driver_class
-                    and loaded_status in {
-                        InstrumentStatus.CONNECTED,
-                        InstrumentStatus.READY,
-                    }
+                    and (
+                        loaded_status
+                        in {
+                            InstrumentStatus.CONNECTED,
+                            InstrumentStatus.READY,
+                        }
+                        or safely_parked
+                    )
                     and getattr(loaded, "config", None) == resolved.driver_config
                     and bool(is_mock_driver(loaded)) == resolved.simulated
                 )

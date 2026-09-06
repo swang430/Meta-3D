@@ -2255,11 +2255,10 @@ function EquipmentManager() {
     [queryClient, refetchHAL, showFeedback],
   )
   const handleHALReload = useCallback(() => {
-    // POST /instruments/hal/reload — needed after editing endpoint /
-    // selectedModel / driver_mode for the change to take effect without
-    // restarting the backend (HAL init runs once at FastAPI lifespan
-    // startup). 10s+ duration is normal — driver.connect() runs once
-    // per category, with full VISA / SOCKET dial timeouts.
+    // POST /instruments/hal/reload is the whole-HAL recovery fallback.
+    // Normal equipment/model/driver-mode saves activate only their target
+    // category. 10s+ duration is normal here because recovery reconnects
+    // every configured category with full VISA / SOCKET dial timeouts.
     modals.openConfirmModal({
       title: '确认重新加载驱动',
       centered: true,
@@ -2969,7 +2968,7 @@ function EquipmentManager() {
               color="brand"
               onClick={handleHALReload}
               loading={halReloading}
-              title="重新初始化所有驱动 (改完仪器配置后必须点这个,新配置才生效)"
+              title="重新初始化所有驱动（故障恢复使用；日常保存会自动激活对应类别）"
             >
               ↻ 重新加载驱动
             </Button>
