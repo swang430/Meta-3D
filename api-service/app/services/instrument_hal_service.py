@@ -339,6 +339,23 @@ class Cmw500Lte2x2Readiness:
     binding_digest: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedCategoryRuntime:
+    """One committed instrument category resolved to its runtime driver."""
+
+    category_key: str
+    driver_class: type[InstrumentDriver]
+    driver_config: Dict[str, Any]
+    driver_mode: str
+    model_name: str
+    model_label: str
+    endpoint: str
+    instrument_id: str
+    simulated: bool
+    model_row: Any
+    connection_row: Any
+
+
 def build_cmw500_lte_2x2_readiness(
     db,
     *,
@@ -674,7 +691,141 @@ class InstrumentHALService:
             logger.error(f"Failed to initialize HAL service: {e}")
             raise
 
-    async def _initialize_from_db(self):
+    def _resolve_category_runtime(
+        self,
+        db: Any,
+        category: Any,
+    ) -> Optional[ResolvedCategoryRuntime]:
+        """Resolve one category from committed DB truth without hardware I/O."""
+        from app.models.instrument import (
+            InstrumentConnection as InstrumentConnectionDB,
+            InstrumentModel as InstrumentModelDB,
+        )
+
+        model = db.query(InstrumentModelDB).filter(
+            InstrumentModelDB.id == category.selected_model_id
+        ).first()
+        if model is None:
+            logger.warning(
+                "[HAL-REAL] %s: selected model not found",
+                category.category_key,
+            )
+            return None
+
+        conn = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == category.id
+        ).first()
+        driver_config: Dict[str, Any] = {
+            "model": model.model,
+            "vendor": model.vendor,
+            "full_name": model.full_name,
+            **(model.capabilities or {}),
+        }
+        if conn is not None:
+            driver_config.update({
+                "endpoint": conn.endpoint,
+                "ip": conn.controller_ip,
+                "port": conn.port,
+                "protocol": conn.protocol,
+            })
+            if isinstance(conn.connection_params, dict):
+                driver_config.update(conn.connection_params)
+
+        cat_mode = getattr(category, "driver_mode", None) or "auto"
+        use_real = self._decide_use_real(cat_mode)
+        if self.mode == DriverMode.MOCK_FORCE:
+            mode_source = (
+                f"global MOCK_FORCE (overrides per-instrument {cat_mode!r})"
+                if cat_mode == "real"
+                else f"global MOCK_FORCE (per-instrument {cat_mode!r})"
+            )
+        elif cat_mode == "mock":
+            mode_source = "per-instrument (forced mock)"
+        elif cat_mode == "real":
+            mode_source = "per-instrument (forced real)"
+        else:
+            mode_source = f"auto (global={self.mode.value})"
+        logger.info(
+            "[HAL] %s: mode=%s, use_real=%s (%s)",
+            category.category_key,
+            cat_mode,
+            use_real,
+            mode_source,
+        )
+
+        driver_class = None
+        if use_real:
+            driver_class = _real_driver_registry().get(
+                category.category_key,
+                {},
+            ).get(model.model)
+        if driver_class is not None:
+            logger.info(
+                "[HAL] %s: using REAL driver %s for %s %s",
+                category.category_key,
+                driver_class.__name__,
+                model.vendor,
+                model.model,
+            )
+        elif use_real and cat_mode == "real":
+            logger.error(
+                "[HAL] %s: forced real mode, but no real driver for %s %s "
+                "— skipping (will NOT fallback to mock)",
+                category.category_key,
+                model.vendor,
+                model.model,
+            )
+            if conn is not None:
+                conn.status = "error"
+                conn.last_error = f"Forced real mode but no driver for {model.model}"
+                db.commit()
+            return None
+        else:
+            driver_class = _MOCK_FALLBACK_BY_CATEGORY.get(category.category_key)
+            if driver_class is None:
+                logger.info(
+                    "[HAL] %s: no driver available, skipping",
+                    category.category_key,
+                )
+                return None
+            if use_real:
+                logger.warning(
+                    "[HAL] %s: auto → fallback to Mock "
+                    "(real driver not available for %s)",
+                    category.category_key,
+                    model.model,
+                )
+            else:
+                logger.info(
+                    "[HAL] %s: using Mock driver %s",
+                    category.category_key,
+                    driver_class.__name__,
+                )
+
+        endpoint = (
+            f"{conn.controller_ip}:{conn.port}"
+            if conn is not None and conn.controller_ip
+            else (conn.endpoint if conn is not None and conn.endpoint else "")
+        )
+        return ResolvedCategoryRuntime(
+            category_key=category.category_key,
+            driver_class=driver_class,
+            driver_config=driver_config,
+            driver_mode=cat_mode,
+            model_name=model.model,
+            model_label=f"{model.vendor} {model.model}",
+            endpoint=endpoint,
+            instrument_id=f"{category.category_key}_{str(category.id)[:8]}",
+            simulated=driver_class in _MOCK_DRIVER_CLASSES,
+            model_row=model,
+            connection_row=conn,
+        )
+
+    async def _initialize_from_db(
+        self,
+        *,
+        only_category_key: Optional[str] = None,
+    ) -> Dict[str, "DriverReadinessRow"]:
         """
         Initialize drivers from database instrument configuration.
 
@@ -690,17 +841,7 @@ class InstrumentHALService:
         from app.db.database import SessionLocal
         from app.models.instrument import (
             InstrumentCategory as InstrumentCategoryModel,
-            InstrumentModel as InstrumentModelDB,
-            InstrumentConnection as InstrumentConnectionDB,
         )
-
-        # Real driver registry shared with the catalog API — single source
-        # of truth (P2-3). See ``_real_driver_registry`` at module level.
-        REAL_DRIVER_REGISTRY = _real_driver_registry()
-
-        # 类目 → mock 驱动类：用模块级那份唯一的表（原先这里另有一份局部副本，
-        # 靠注释"keep in sync"维持一致，已于 2026-08-10 合并）
-        MOCK_FALLBACK = _MOCK_FALLBACK_BY_CATEGORY
 
         from app.services.readiness import (
             DriverReadinessRow,
@@ -724,10 +865,18 @@ class InstrumentHALService:
         # yet checked; True = canary dead → preflight trustworthy; False = canary
         # alive → network is lying, skip preflight network-wide.
         preflight_trustworthy: Optional[bool] = None
+        initialized_rows: List[DriverReadinessRow] = []
         try:
-            categories = db.query(InstrumentCategoryModel).filter(
+            categories_query = db.query(InstrumentCategoryModel).filter(
                 InstrumentCategoryModel.is_active == True
-            ).order_by(InstrumentCategoryModel.display_order).all()
+            )
+            if only_category_key is not None:
+                categories_query = categories_query.filter(
+                    InstrumentCategoryModel.category_key == only_category_key
+                )
+            categories = categories_query.order_by(
+                InstrumentCategoryModel.display_order
+            ).all()
 
             for cat in categories:
                 if not cat.selected_model_id:
@@ -741,109 +890,23 @@ class InstrumentHALService:
                     ))
                     continue
 
-                model = db.query(InstrumentModelDB).filter(
-                    InstrumentModelDB.id == cat.selected_model_id
-                ).first()
-                if not model:
-                    logger.warning(f"[HAL-REAL] {cat.category_key}: selected model not found")
+                resolved = self._resolve_category_runtime(db, cat)
+                if resolved is None:
                     continue
-
-                conn = db.query(InstrumentConnectionDB).filter(
-                    InstrumentConnectionDB.category_id == cat.id
-                ).first()
-
-                # Build driver config from DB
-                driver_config = {
-                    "model": model.model,
-                    "vendor": model.vendor,
-                    "full_name": model.full_name,
-                    **(model.capabilities or {}),
-                }
-                if conn:
-                    driver_config.update({
-                        "endpoint": conn.endpoint,
-                        "ip": conn.controller_ip,
-                        "port": conn.port,
-                        "protocol": conn.protocol,
-                    })
-                    # Merge connection_params (e.g. port_maps for RF Switch Option B)
-                    if conn.connection_params and isinstance(conn.connection_params, dict):
-                        driver_config.update(conn.connection_params)
-
-                # Determine driver class based on per-instrument mode + global fallback
-                DriverClass = None
-                cat_mode = getattr(cat, 'driver_mode', None) or "auto"
-
-                use_real = self._decide_use_real(cat_mode)
-                if self.mode == DriverMode.MOCK_FORCE:
-                    mode_source = (
-                        f"global MOCK_FORCE (overrides per-instrument {cat_mode!r})"
-                        if cat_mode == "real"
-                        else f"global MOCK_FORCE (per-instrument {cat_mode!r})"
-                    )
-                elif cat_mode == "mock":
-                    mode_source = "per-instrument (forced mock)"
-                elif cat_mode == "real":
-                    mode_source = "per-instrument (forced real)"
-                else:
-                    mode_source = f"auto (global={self.mode.value})"
-
-                logger.info(
-                    f"[HAL] {cat.category_key}: mode={cat_mode}, "
-                    f"use_real={use_real} ({mode_source})"
-                )
-
-                if use_real:
-                    category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
-                    DriverClass = category_drivers.get(model.model)
-
-                if DriverClass:
-                    logger.info(
-                        f"[HAL] {cat.category_key}: using REAL driver "
-                        f"{DriverClass.__name__} for {model.vendor} {model.model}"
-                    )
-                elif use_real and cat_mode == "real":
-                    # 强制 real 模式但没有对应的真实驱动实现 → 不降级，跳过并报错
-                    logger.error(
-                        f"[HAL] {cat.category_key}: forced real mode, but no real driver "
-                        f"for {model.vendor} {model.model} — skipping (will NOT fallback to mock)"
-                    )
-                    if conn:
-                        conn.status = "error"
-                        conn.last_error = f"Forced real mode but no driver for {model.model}"
-                        db.commit()
-                    continue
-                else:
-                    DriverClass = MOCK_FALLBACK.get(cat.category_key)
-                    if DriverClass:
-                        if use_real:
-                            logger.warning(
-                                f"[HAL] {cat.category_key}: auto → fallback to Mock "
-                                f"(real driver not available for {model.model})"
-                            )
-                        else:
-                            logger.info(
-                                f"[HAL] {cat.category_key}: using Mock driver "
-                                f"{DriverClass.__name__}"
-                            )
-                    else:
-                        logger.info(
-                            f"[HAL] {cat.category_key}: no driver available, skipping"
-                        )
-                        continue
+                model = resolved.model_row
+                conn = resolved.connection_row
+                driver_config = resolved.driver_config
+                DriverClass = resolved.driver_class
 
                 # Instantiate and connect
                 driver = _instantiate_hal_driver(
                     DriverClass,
                     category_key=cat.category_key,
                     model_name=model.model,
-                    instrument_id=f"{cat.category_key}_{str(cat.id)[:8]}",
+                    instrument_id=resolved.instrument_id,
                     config=driver_config,
                 )
-                endpoint_str = (
-                    f"{conn.controller_ip}:{conn.port}" if conn and conn.controller_ip
-                    else (conn.endpoint if conn and conn.endpoint else "")
-                )
+                endpoint_str = resolved.endpoint
 
                 # Pre-flight TCP reachability — skip driver.connect()
                 # entirely when the host is unreachable. Avoids 10s × N
@@ -1111,6 +1174,14 @@ class InstrumentHALService:
                         network_reachable=host_reachable,
                     ))
 
+            initialized_rows = list(report_rows)
+            if only_category_key is not None and self.last_readiness_report is not None:
+                report_rows = [
+                    row
+                    for row in self.last_readiness_report.drivers
+                    if row.category != only_category_key
+                ] + initialized_rows
+
             logger.info(
                 f"[HAL-REAL] Driver factory complete: "
                 f"{len(self.drivers)} drivers initialized"
@@ -1147,6 +1218,7 @@ class InstrumentHALService:
 
         finally:
             db.close()
+        return {row.category: row for row in initialized_rows}
 
     @staticmethod
     def _log_readiness_report(report: "ReadinessReport") -> None:
