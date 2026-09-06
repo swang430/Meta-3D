@@ -156,6 +156,22 @@ class _CancellableDisconnectDriver(_RecordingDriver):
         return True
 
 
+class _CancellableTopologyDriver(_RecordingDriver):
+    instances: list["_CancellableTopologyDriver"] = []
+    topology_started: asyncio.Event
+    topology_release: asyncio.Event
+    _default_topology_profile_id = "p2_72_cancel_fixture"
+
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        type(self).instances.append(self)
+
+    async def apply_topology_profile(self, _profile):
+        type(self).topology_started.set()
+        await type(self).topology_release.wait()
+        return {"applied": True}
+
+
 def _seed_category(db, category_key: str, *, display_order: int) -> InstrumentCategory:
     category = InstrumentCategory(
         id=uuid.uuid4(),
@@ -525,6 +541,63 @@ def test_cancel_during_connect_closes_orphan_session_and_marks_not_ready(
         if row.category == "baseStation"
     )
     assert row.status == "fail"
+
+
+def test_cancel_during_post_connect_topology_disconnects_published_runtime(
+    monkeypatch,
+    db,
+):
+    from app.services import topology_profile_service
+
+    _seed_category(db, "baseStation", display_order=1)
+    _CancellableTopologyDriver.instances = []
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "baseStation": {
+                "baseStation-MODEL": _CancellableTopologyDriver,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        topology_profile_service,
+        "get_dataclass",
+        lambda _db, _profile_id: object(),
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    untouched_f64 = object()
+    service.drivers["channelEmulator"] = untouched_f64
+    service.last_readiness_report = _readiness_with_rows(
+        db,
+        "baseStation",
+        "channelEmulator",
+    )
+    _install_global_service(monkeypatch, service)
+
+    async def _scenario():
+        _CancellableTopologyDriver.topology_started = asyncio.Event()
+        _CancellableTopologyDriver.topology_release = asyncio.Event()
+        task = asyncio.create_task(activate_hal_category_atomic("baseStation"))
+        await _CancellableTopologyDriver.topology_started.wait()
+        task.cancel()
+        _CancellableTopologyDriver.topology_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
+
+    assert len(_CancellableTopologyDriver.instances) == 1
+    created = _CancellableTopologyDriver.instances[0]
+    assert created.disconnect_calls == 1
+    assert "baseStation" not in service.drivers
+    assert service.drivers["channelEmulator"] is untouched_f64
+    rows = {
+        row.category: row
+        for row in service.last_readiness_report.drivers
+    }
+    assert rows["baseStation"].status == "fail"
+    assert rows["channelEmulator"].status == "ok"
 
 
 def test_inactive_category_unloads_only_target(monkeypatch, db):

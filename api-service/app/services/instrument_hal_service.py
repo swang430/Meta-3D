@@ -2002,13 +2002,46 @@ async def activate_hal_category_atomic(
                         rows = await service._initialize_from_db(
                             only_category_key=category_key
                         )
-                    except asyncio.CancelledError:
+                    except asyncio.CancelledError as cancellation:
+                        cleanup_error: BaseException | None = None
+                        if service.drivers.get(category_key) is not None:
+                            try:
+                                await _disconnect_category_driver(
+                                    service,
+                                    category_key,
+                                )
+                            except asyncio.CancelledError as cleanup_cancellation:
+                                # A second caller cancellation can be delayed
+                                # until disconnect finishes.  If the runtime is
+                                # gone, cleanup succeeded and the original
+                                # cancellation remains the one to propagate.
+                                if service.drivers.get(category_key) is not None:
+                                    cleanup_error = getattr(
+                                        cleanup_cancellation,
+                                        "instrument_activation_error",
+                                        RuntimeError(
+                                            "cancelled post-connect cleanup did not "
+                                            "remove the target runtime"
+                                        ),
+                                    )
+                            except BaseException as exc:
+                                cleanup_error = exc
+                        if cleanup_error is not None:
+                            setattr(
+                                cancellation,
+                                "instrument_activation_error",
+                                cleanup_error,
+                            )
+                            cancellation.add_note(
+                                "cancelled post-connect HAL cleanup also failed: "
+                                f"{type(cleanup_error).__name__}: {cleanup_error}"
+                            )
                         _mark_category_readiness_failed(
                             service,
                             category_key,
                             f"{category_key} 激活在连接期间已取消",
                         )
-                        raise
+                        raise cancellation
                     fresh = service.drivers.get(category_key)
                     if fresh is None:
                         row = rows.get(category_key)

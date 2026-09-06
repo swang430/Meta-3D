@@ -5109,7 +5109,7 @@ LabProfile 三入口统一工作单元仍保留在 Discovered，不能因本片�
 LabProfile 同步仍为独立操作。fresh 独立内审发现并收口两条功能 P1 和一条本片 P2：
 connect/disconnect 取消必须等到硬件生命周期终态并清理未登记会话；断开/驻车失败不再保留旧
 readiness 绿色；GUI 会展示 409 的 blocker 身份和原因。最终输入上受影响后端与规则门
-`208 passed`，全后端 `6434 passed / 5 skipped`，受影响 GUI 合同 `23 passed`，production build、
+`209 passed`，全后端 `6435 passed / 5 skipped`，受影响 GUI 合同 `23 passed`，production build、
 `compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式
 provenance；本地验证不替代现场复验。
 

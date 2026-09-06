@@ -430,7 +430,7 @@ git commit -m "feat: activate category HAL after instrument save"
 
 ---
 
-### Task 5: 全链验证、主代理自查与 Ready PR
+### Task 5: 全链验证、受控独立内审与 Ready PR
 
 **Files:**
 - Modify: `docs/roadmap-first-call.md`
@@ -438,7 +438,7 @@ git commit -m "feat: activate category HAL after instrument save"
 
 **Interfaces:**
 - Consumes: Tasks 1–4 完整功能。
-- Produces: 可复核验证记录、主代理自查结论、Ready PR 与 Codex R1→R2 外审记录。
+- Produces: 可复核验证记录、主代理自查与受控独立内审结论、Ready PR 与 Codex R1→R2 外审记录。
 
 - [x] **Step 1: 运行受影响链与规则门**
 
@@ -482,7 +482,7 @@ npm run build
 Expected: 本片受影响 GUI 合同与 production build PASS。仓库历史测试没有一个可受支持的“全文件
 单命令”运行器；按 `CLAUDE.md` 验证分档执行受影响交互，不把不兼容的扩展名/导入方式扫描冒充门。
 
-- [x] **Step 4: 做 base-to-HEAD diff-check 与主代理功能自查**
+- [x] **Step 4: 做 base-to-HEAD diff-check、主代理功能自查与受控独立尾审**
 
 ```bash
 git diff --check 05c7c0d9..HEAD
@@ -493,7 +493,8 @@ git diff 05c7c0d9..HEAD -- api-service/app/services/instrument_hal_service.py ap
 
 逐项确认：只改目标类别；no-op 不重连；失败不留伪激活；blocker 双检查；park 在 lifecycle lock 外；
 保存与激活错误分流；没有 `sync-current` 调用；没有新增 SCPI 字面量；`api-service/.venv` 未暂存。
-由于用户指定单 agent 顺序执行，自查必须如实标为“主代理自查，非独立内审”。
+主开发线严格 WIP=1，不让 subagent 并行改代码或接管主线；允许一个有界的只读 subagent
+作为 fresh 独立复核角色。独立内审发现的功能缺陷仍由主代理按 TDD 顺序收口。
 
 - [x] **Step 5: 更新 roadmap 完成证据并提交**
 
@@ -508,7 +509,7 @@ git commit -m "docs: record P2-72 verification"
 - [ ] **Step 6: 推送并创建 Ready PR**
 
 PR 描述只声明实际跑过的验证，并明确可观察故障、两阶段语义、LabProfile sync 未自动化、
-主代理自查而非独立内审、零 SCPI / 零 provenance 变化、本地验证不能替代现场复验。
+受控独立内审的实际 findings 与收口结果、零 SCPI / 零 provenance 变化、本地验证不能替代现场复验。
 
 - [ ] **Step 7: 执行 Codex R1→R2 收口**
 
