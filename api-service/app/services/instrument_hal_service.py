@@ -1829,11 +1829,13 @@ async def activate_hal_category_atomic(
                 result = _activation_result(category_key, "inactive")
             else:
                 if not category.selected_model_id:
+                    await _disconnect_category_driver(service, category_key)
                     raise HALCategoryConfigurationError(
                         f"{category_key} has no selected model"
                     )
                 resolved = service._resolve_category_runtime(db, category)
                 if resolved is None:
+                    await _disconnect_category_driver(service, category_key)
                     raise HALCategoryConfigurationError(
                         f"{category_key} committed configuration cannot resolve a driver"
                     )
@@ -1871,7 +1873,15 @@ async def activate_hal_category_atomic(
     if result.status == "activated":
         from app.services.instrument_test_lease import park_idle_instrument
 
-        await park_idle_instrument(category_key)
+        try:
+            await park_idle_instrument(category_key)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise HALCategoryActivationError(
+                f"{category_key} 新驱动激活后的安全驻车失败: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
     return result
 
 

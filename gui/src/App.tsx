@@ -94,6 +94,7 @@ import {
   type TopologyProfileDetail,
   deleteTestCase,
   updateInstrumentCategory,
+  activateInstrumentCategoryHAL,
   certifyBaseStationSite,
   revokeBaseStationSiteCertification,
   certifyChannelEmulatorSite,
@@ -116,6 +117,7 @@ import {
   explicitChannelEmulatorConnectionDraft,
   switchChannelEmulatorModel,
 } from './features/Equipment/channelEmulatorModelPresetDraft'
+import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1819,8 +1821,12 @@ function EquipmentManager() {
 
   const instrumentMutation = useMutation({
     mutationFn: ({ categoryKey, payload }: EquipmentMutationVariables) =>
-      updateInstrumentCategory(categoryKey, payload),
-    onSuccess: (updatedCategory, variables) => {
+      commitThenActivateCategory(
+        categoryKey,
+        () => updateInstrumentCategory(categoryKey, payload),
+        activateInstrumentCategoryHAL,
+      ),
+    onSuccess: ({ committed: updatedCategory, activation, activationError }, variables) => {
       queryClient.setQueryData(
         ['instruments', 'catalog'],
         (previous: InstrumentsResponse | undefined): InstrumentsResponse => {
@@ -1856,15 +1862,24 @@ function EquipmentManager() {
           },
         }
       })
-      const needsHALReload =
-        updatedCategory.key === 'baseStation' || updatedCategory.key === 'channelEmulator'
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      if (updatedCategory.key === 'baseStation') {
+        queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
+      }
+      if (activationError) {
+        showFeedback(
+          variables.categoryKey,
+          'error',
+          `配置已保存，但 HAL 尚未激活: ${diagnosticErrorMessage(activationError)}。请重试保存，必要时使用全局重新加载驱动。LabProfile 未自动同步。`,
+          12000,
+        )
+        return
+      }
       showFeedback(
         variables.categoryKey,
         'success',
-        needsHALReload
-          ? '配置已保存；请点击页面顶部「↻ 重新加载驱动」，再进行同步、连接测试或用例执行。'
-          : '配置已保存。',
-        updatedCategory.key === 'baseStation' ? 12000 : 2000,
+        `配置已保存；${activation?.message ?? '该类别 HAL 已激活'}。LabProfile 同步仍需单独执行。`,
       )
     },
     onError: (error: unknown, variables) => {
@@ -3017,10 +3032,32 @@ function EquipmentManager() {
                       value={(category as any).driverMode || 'auto'}
                       onChange={async (val) => {
                         try {
-                          await client.patch(`/instruments/${category.key}/driver-mode`, { mode: val })
+                          const { activation, activationError } = await commitThenActivateCategory(
+                            category.key,
+                            async () => {
+                              await client.patch(`/instruments/${category.key}/driver-mode`, { mode: val })
+                              return val
+                            },
+                            activateInstrumentCategoryHAL,
+                          )
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+                          queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+                          queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
                           const modeLabels: Record<string, string> = { auto: 'Auto', mock: 'Mock', real: 'Real' }
-                          showFeedback(category.key, 'success', `✅ 驱动模式 → ${modeLabels[val] || val}`)
+                          if (activationError) {
+                            showFeedback(
+                              category.key,
+                              'error',
+                              `驱动模式已保存为 ${modeLabels[val] || val}，但 HAL 尚未激活: ${diagnosticErrorMessage(activationError)}。LabProfile 未自动同步。`,
+                              12000,
+                            )
+                          } else {
+                            showFeedback(
+                              category.key,
+                              'success',
+                              `驱动模式 → ${modeLabels[val] || val}；${activation?.message ?? '该类别 HAL 已激活'}。`,
+                            )
+                          }
                         } catch (err: any) {
                           showFeedback(category.key, 'error', `切换失败: ${err.message}`)
                         }

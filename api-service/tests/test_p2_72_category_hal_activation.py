@@ -373,6 +373,52 @@ def test_inactive_category_unloads_only_target(monkeypatch, db):
     assert service.drivers["channelEmulator"] is original_f64
 
 
+def test_invalid_committed_configuration_removes_stale_target(monkeypatch, db):
+    category = _seed_category(db, "baseStation", display_order=1)
+    category.selected_model_id = None
+    db.commit()
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    old_base = _RecordingDriver("old-base", {"model": "OLD"})
+    old_base._status = InstrumentStatus.READY
+    original_f64 = object()
+    service.drivers.update({
+        "baseStation": old_base,
+        "channelEmulator": original_f64,
+    })
+    _install_global_service(monkeypatch, service)
+
+    with pytest.raises(
+        hal_mod.HALCategoryConfigurationError,
+        match="no selected model",
+    ):
+        asyncio.run(activate_hal_category_atomic("baseStation"))
+
+    assert old_base.disconnect_calls == 1
+    assert "baseStation" not in service.drivers
+    assert service.drivers["channelEmulator"] is original_f64
+
+
+def test_targeted_park_failure_is_reported_as_activation_failure(monkeypatch, db):
+    from app.services import instrument_test_lease as lease_mod
+
+    _seed_category(db, "baseStation", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {"baseStation": {"baseStation-MODEL": _RecordingDriver}},
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    _install_global_service(monkeypatch, service)
+
+    async def _park_fails(_category_key: str) -> bool:
+        raise RuntimeError("safe idle failed")
+
+    monkeypatch.setattr(lease_mod, "park_idle_instrument", _park_fails)
+
+    with pytest.raises(HALCategoryActivationError, match="驻车失败"):
+        asyncio.run(activate_hal_category_atomic("baseStation"))
+
+
 @pytest.mark.parametrize(
     ("category_key", "expected_flags"),
     [

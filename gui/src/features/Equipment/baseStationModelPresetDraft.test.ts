@@ -147,7 +147,7 @@ test('BaseStation save submits cleared fields instead of silently keeping the ol
   assert.match(saveHandler, /explicitBaseStationConnectionDraft\(/)
 })
 
-test('BaseStation save keeps an actionable HAL reload reminder visible', () => {
+test('BaseStation save reports automatic category HAL activation without a manual reload reminder', () => {
   const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
   const feedbackHelper = app.slice(
     app.indexOf('const showFeedback'),
@@ -160,10 +160,11 @@ test('BaseStation save keeps an actionable HAL reload reminder visible', () => {
     app.indexOf('const instrumentMutation'),
     app.indexOf('const siteCertificationMutation'),
   )
-  assert.match(saveMutation, /页面顶部「↻ 重新加载驱动」/)
+  assert.match(saveMutation, /HAL 尚未激活/)
+  assert.doesNotMatch(saveMutation, /页面顶部「↻ 重新加载驱动」/)
   assert.match(
     saveMutation,
-    /updatedCategory\.key\s*===\s*['"]baseStation['"]\s*\?\s*12000\s*:\s*2000/,
+    /activationError[\s\S]*?12000/,
   )
 })
 
