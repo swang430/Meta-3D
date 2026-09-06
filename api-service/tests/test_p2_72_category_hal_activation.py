@@ -3,18 +3,22 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db.database import Base
+from app.db.database import Base, get_db
+from app.main import app
 from app.models.instrument import InstrumentCategory, InstrumentModel
 from app.services import instrument_hal_service as hal_mod
 from app.hal.base import InstrumentStatus
 from app.services.instrument_hal_service import (
     DriverMode,
+    HALCategoryActivation,
     HALCategoryActivationError,
     InstrumentHALService,
     activate_hal_category_atomic,
@@ -36,6 +40,15 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+client = TestClient(app)
+
+
+def _override_get_db():
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 @pytest.fixture(autouse=True)
@@ -44,8 +57,16 @@ def setup_db(monkeypatch):
     import app.db.database as dbmod
 
     monkeypatch.setattr(dbmod, "SessionLocal", TestingSessionLocal)
-    yield
-    Base.metadata.drop_all(bind=engine)
+    prior = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        yield
+    finally:
+        if prior is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = prior
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -385,3 +406,117 @@ def test_targeted_idle_park_is_noop_for_uncontrolled_category(monkeypatch):
     monkeypatch.setattr(lease, "_settle_local_controls", _forbidden)
 
     assert asyncio.run(lease.park_idle_instrument("positioner")) is True
+
+
+def test_activation_endpoint_returns_runtime_identity():
+    result = HALCategoryActivation(
+        category_key="baseStation",
+        status="activated",
+        driver_class="RealUxmDriver",
+        instrument_id="baseStation_12345678",
+        simulated=False,
+        message="已激活",
+    )
+    with patch(
+        "app.services.instrument_hal_service.activate_hal_category_atomic",
+        new=AsyncMock(return_value=result),
+    ):
+        response = client.post(
+            "/api/v1/instruments/baseStation/hal/activate"
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "category_key": "baseStation",
+        "status": "activated",
+        "driver_class": "RealUxmDriver",
+        "instrument_id": "baseStation_12345678",
+        "simulated": False,
+        "message": "已激活",
+    }
+
+
+def test_activation_endpoint_refuses_blocker_without_force_hint():
+    from app.services.hal_reload_policy import ReloadBlocker
+
+    blocker = ReloadBlocker(
+        kind="instrument_lease",
+        id="manual-scpi",
+        name="manual-scpi",
+        status="running",
+        detail="仪表正在使用",
+    )
+    with patch(
+        "app.services.hal_reload_policy.find_reload_blockers",
+        return_value=[blocker],
+    ), patch(
+        "app.services.instrument_hal_service.activate_hal_category_atomic",
+        new=AsyncMock(),
+    ) as activate:
+        response = client.post(
+            "/api/v1/instruments/baseStation/hal/activate"
+        )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["refused"] is True
+    assert body["blockers"][0]["kind"] == "instrument_lease"
+    assert "force_hint" not in body
+    activate.assert_not_awaited()
+
+
+def test_activation_endpoint_rechecks_blockers_inside_guard():
+    from app.services.hal_reload_policy import ReloadBlocker
+
+    blocker = ReloadBlocker(
+        kind="instrument_lease",
+        id="late-lease",
+        name="late-lease",
+        status="running",
+        detail="第一次检查后开始占用",
+    )
+    with patch(
+        "app.services.hal_reload_policy.find_reload_blockers",
+        side_effect=[[], [blocker]],
+    ) as find_blockers, patch(
+        "app.services.instrument_hal_service.activate_hal_category_atomic",
+        new=AsyncMock(),
+    ) as activate:
+        response = client.post(
+            "/api/v1/instruments/baseStation/hal/activate"
+        )
+
+    assert response.status_code == 409
+    assert find_blockers.call_count == 2
+    activate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (hal_mod.HALCategoryNotFoundError("missing"), 404),
+        (hal_mod.HALCategoryConfigurationError("bad config"), 422),
+        (hal_mod.HALCategoryActivationError("connect failed"), 503),
+    ],
+)
+def test_activation_endpoint_maps_domain_errors(error, expected_status):
+    with patch(
+        "app.services.instrument_hal_service.activate_hal_category_atomic",
+        new=AsyncMock(side_effect=error),
+    ):
+        response = client.post(
+            "/api/v1/instruments/baseStation/hal/activate"
+        )
+
+    assert response.status_code == expected_status
+    assert str(error) in response.json()["detail"]
+
+
+def test_activation_route_is_live_openapi_and_has_no_force_parameter():
+    operation = app.openapi()["paths"][
+        "/api/v1/instruments/{category_key}/hal/activate"
+    ]["post"]
+
+    assert {parameter["name"] for parameter in operation["parameters"]} == {
+        "category_key"
+    }

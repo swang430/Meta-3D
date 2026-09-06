@@ -512,6 +512,25 @@ class HalReloadRefusedResult(BaseModel):
     )
 
 
+class HALCategoryActivationResult(BaseModel):
+    """Result of activating one category from its committed configuration."""
+
+    category_key: str
+    status: Literal["activated", "unchanged", "inactive"]
+    driver_class: Optional[str] = None
+    instrument_id: Optional[str] = None
+    simulated: Optional[bool] = None
+    message: str
+
+
+class HALCategoryActivationRefusedResult(BaseModel):
+    """Automatic category activation has no force override."""
+
+    refused: bool = True
+    reason: str
+    blockers: List[HalReloadBlocker]
+
+
 class ChannelModelEntry(BaseModel):
     """One operator-selectable channel-model file."""
     filename: str
@@ -711,6 +730,69 @@ async def reload_hal_service(
         duration_ms=duration_ms,
         forced=force,
     )
+
+
+@router.post(
+    "/instruments/{category_key}/hal/activate",
+    response_model=HALCategoryActivationResult,
+    responses={409: {"model": HALCategoryActivationRefusedResult}},
+)
+async def activate_instrument_category_hal(
+    category_key: str,
+    db: Session = Depends(get_db),
+) -> HALCategoryActivationResult:
+    """Activate only the saved runtime for ``category_key``.
+
+    The request carries no configuration payload and has no force option.  It
+    reads committed DB truth, refuses while an execution or instrument lease
+    is active, and never changes a LabProfile binding.
+    """
+    from app.services.hal_reload_policy import find_reload_blockers
+    from app.services.instrument_hal_service import (
+        HALCategoryActivationError,
+        HALCategoryConfigurationError,
+        HALCategoryNotFoundError,
+        activate_hal_category_atomic,
+    )
+    from app.services.instrument_test_lease import hal_mutation_guard
+
+    def _refused_response(blockers):
+        payload = HALCategoryActivationRefusedResult(
+            reason=(
+                f"HAL category activation refused: {len(blockers)} active "
+                "blocker(s). Wait for the in-flight work to finish before retrying."
+            ),
+            blockers=[
+                HalReloadBlocker(
+                    kind=blocker.kind,
+                    id=blocker.id,
+                    name=blocker.name,
+                    status=blocker.status,
+                    detail=blocker.detail,
+                )
+                for blocker in blockers
+            ],
+        )
+        return JSONResponse(status_code=409, content=payload.model_dump())
+
+    blockers = find_reload_blockers(db)
+    if blockers:
+        return _refused_response(blockers)
+
+    async with hal_mutation_guard():
+        blockers = find_reload_blockers(db)
+        if blockers:
+            return _refused_response(blockers)
+        try:
+            result = await activate_hal_category_atomic(category_key)
+        except HALCategoryNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HALCategoryConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except HALCategoryActivationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return HALCategoryActivationResult(**asdict(result))
 
 
 @router.get(
