@@ -685,8 +685,13 @@ class InstrumentTestLease:
                         )
                     raise delayed_cancellation
 
-    async def park_idle_instruments(self) -> bool:
-        """HAL 初始化/重载完成后，关闭 F64 与 UXM 的控制会话。"""
+    async def _park_idle_controls(
+        self,
+        *,
+        control_f64: bool,
+        control_uxm: bool,
+        controlled_instruments: tuple[str, ...],
+    ) -> bool:
         async with self._coordinated():
             if self.is_active:
                 return False
@@ -695,8 +700,8 @@ class InstrumentTestLease:
                 self._settle_local_controls(
                     hal,
                     "idle-park",
-                    control_f64=True,
-                    control_uxm=True,
+                    control_f64=control_f64,
+                    control_uxm=control_uxm,
                 )
             )
             if cleanup.error is not None:
@@ -714,16 +719,35 @@ class InstrumentTestLease:
                 "[instrument-lease] 空闲停放完成：已配置仪表均不保持 Remote",
                 extra={
                     "lease_event": "idle_parked",
-                    "controlled_instruments": (
-                        "channelEmulator",
-                        "baseStation",
-                    ),
+                    "controlled_instruments": controlled_instruments,
                     "base_station_adapter_id": None,
                     "base_station_binding_digest": None,
                     "execution_id": current_execution_id.get("-"),
                 },
             )
             return True
+
+    async def park_idle_instruments(self) -> bool:
+        """HAL 初始化/重载完成后，关闭 F64 与 UXM 的控制会话。"""
+        return await self._park_idle_controls(
+            control_f64=True,
+            control_uxm=True,
+            controlled_instruments=("channelEmulator", "baseStation"),
+        )
+
+    async def park_idle_instrument(self, category_key: str) -> bool:
+        """只停放刚完成激活的目标类别，其他仪表保持原状态。"""
+        controls = {
+            "channelEmulator": (True, False),
+            "baseStation": (False, True),
+        }.get(category_key)
+        if controls is None:
+            return True
+        return await self._park_idle_controls(
+            control_f64=controls[0],
+            control_uxm=controls[1],
+            controlled_instruments=(category_key,),
+        )
 
     @asynccontextmanager
     async def hal_mutation_guard(self) -> AsyncIterator[None]:
@@ -794,6 +818,10 @@ async def instrument_test_lease(
 
 async def park_idle_instruments() -> bool:
     return await _LEASE.park_idle_instruments()
+
+
+async def park_idle_instrument(category_key: str) -> bool:
+    return await _LEASE.park_idle_instrument(category_key)
 
 
 @asynccontextmanager

@@ -318,7 +318,7 @@ def test_single_session_instruments_reject_address_override_before_lease(
             ))
         error_text = str(exc_info.value.detail)
 
-    assert "先保存配置并重新加载 HAL" in error_text
+    assert "先保存配置并确认对应类别 HAL 激活成功" in error_text
 
 
 @pytest.mark.parametrize(

@@ -519,8 +519,8 @@ class InstrumentDriver(ABC):
                 self._connection_config_error
             )
         error = (
-            f"{self.instrument_id}: 未配置连接地址；请在仪表目录/LabProfile 中设置 "
-            "IP 或 endpoint 后重新加载 HAL"
+            f"{self.instrument_id}: 未配置连接地址；请在仪表目录中设置 IP 或 endpoint "
+            "并保存，确认对应类别 HAL 已激活；LabProfile 变更仍需单独同步"
         )
         self._set_status(InstrumentStatus.ERROR, error)
         return False
@@ -528,8 +528,8 @@ class InstrumentDriver(ABC):
     def _fail_connection_configuration(self, detail: str) -> bool:
         """在任何外部 I/O 前把矛盾或无效连接配置收敛成明确失败。"""
         error = (
-            f"{self.instrument_id}: 连接配置无效：{detail}；请在仪表目录/LabProfile "
-            "中修正后重新加载 HAL"
+            f"{self.instrument_id}: 连接配置无效：{detail}；请在仪表目录中修正并保存，"
+            "确认对应类别 HAL 已激活；LabProfile 变更仍需单独同步"
         )
         self._set_status(InstrumentStatus.ERROR, error)
         return False

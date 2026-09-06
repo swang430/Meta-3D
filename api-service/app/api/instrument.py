@@ -512,6 +512,25 @@ class HalReloadRefusedResult(BaseModel):
     )
 
 
+class HALCategoryActivationResult(BaseModel):
+    """Result of activating one category from its committed configuration."""
+
+    category_key: str
+    status: Literal["activated", "unchanged", "inactive"]
+    driver_class: Optional[str] = None
+    instrument_id: Optional[str] = None
+    simulated: Optional[bool] = None
+    message: str
+
+
+class HALCategoryActivationRefusedResult(BaseModel):
+    """Automatic category activation has no force override."""
+
+    refused: bool = True
+    reason: str
+    blockers: List[HalReloadBlocker]
+
+
 class ChannelModelEntry(BaseModel):
     """One operator-selectable channel-model file."""
     filename: str
@@ -609,9 +628,10 @@ async def reload_hal_service(
 ) -> HalReloadResult:
     """Tear down the HAL service and re-init it from the current DB state.
 
-    Use after editing instrument selection / endpoint / driver_mode in
-    the GUI — without this, those changes don't take effect until a
-    backend restart (HAL initializes once at FastAPI lifespan startup).
+    Use as the whole-HAL recovery fallback when every configured category
+    must be rebuilt. Normal instrument selection / endpoint / driver_mode
+    saves activate only the committed target category and do not require
+    this global operation.
 
     Returns a summary of what's now loaded. The full readiness report
     is also logged to stdout/log file with the formatted table.
@@ -711,6 +731,69 @@ async def reload_hal_service(
         duration_ms=duration_ms,
         forced=force,
     )
+
+
+@router.post(
+    "/instruments/{category_key}/hal/activate",
+    response_model=HALCategoryActivationResult,
+    responses={409: {"model": HALCategoryActivationRefusedResult}},
+)
+async def activate_instrument_category_hal(
+    category_key: str,
+    db: Session = Depends(get_db),
+) -> HALCategoryActivationResult:
+    """Activate only the saved runtime for ``category_key``.
+
+    The request carries no configuration payload and has no force option.  It
+    reads committed DB truth, refuses while an execution or instrument lease
+    is active, and never changes a LabProfile binding.
+    """
+    from app.services.hal_reload_policy import find_reload_blockers
+    from app.services.instrument_hal_service import (
+        HALCategoryActivationError,
+        HALCategoryConfigurationError,
+        HALCategoryNotFoundError,
+        activate_hal_category_atomic,
+    )
+    from app.services.instrument_test_lease import hal_mutation_guard
+
+    def _refused_response(blockers):
+        payload = HALCategoryActivationRefusedResult(
+            reason=(
+                f"HAL category activation refused: {len(blockers)} active "
+                "blocker(s). Wait for the in-flight work to finish before retrying."
+            ),
+            blockers=[
+                HalReloadBlocker(
+                    kind=blocker.kind,
+                    id=blocker.id,
+                    name=blocker.name,
+                    status=blocker.status,
+                    detail=blocker.detail,
+                )
+                for blocker in blockers
+            ],
+        )
+        return JSONResponse(status_code=409, content=payload.model_dump())
+
+    blockers = find_reload_blockers(db)
+    if blockers:
+        return _refused_response(blockers)
+
+    async with hal_mutation_guard():
+        blockers = find_reload_blockers(db)
+        if blockers:
+            return _refused_response(blockers)
+        try:
+            result = await activate_hal_category_atomic(category_key)
+        except HALCategoryNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HALCategoryConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except HALCategoryActivationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return HALCategoryActivationResult(**asdict(result))
 
 
 @router.get(
@@ -2694,7 +2777,7 @@ def _resolve_diagnostic_tcp_target(
         if default_port is None:
             return None, None, (
                 "单会话仪表未配置显式连接端口或完整 VISA resource；"
-                "请保存完整配置并重新加载 HAL"
+                "请保存完整配置并确认对应类别 HAL 已激活"
             )
         port = default_port
     return host, port, None
@@ -2718,7 +2801,8 @@ def _reconcile_diagnostic_target_with_live_driver(
     if not isinstance(driver_config, dict):
         if must_match:
             return None, None, (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 if require_saved_match and not override_requested
                 else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
             )
@@ -2730,7 +2814,8 @@ def _reconcile_diagnostic_target_with_live_driver(
     if live_error or not live_ip:
         if must_match:
             prefix = (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 if require_saved_match and not override_requested
                 else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
             )
@@ -2748,7 +2833,10 @@ def _reconcile_diagnostic_target_with_live_driver(
             break
     if actual_port is None:
         if must_match:
-            return None, None, "无法核实活动 HAL 会话的实际端口；请重新加载 HAL"
+            return None, None, (
+                "无法核实活动 HAL 会话的实际端口；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
+            )
         return requested_ip, requested_port, target_error
     if must_match and (
         requested_ip != live_ip or requested_port != actual_port
@@ -2756,11 +2844,11 @@ def _reconcile_diagnostic_target_with_live_driver(
         if require_saved_match and not override_requested:
             return None, None, (
                 "已保存配置与活动 HAL 会话目标不一致；"
-                "请重新加载 HAL 后再操作"
+                "请重新保存配置并确认对应类别 HAL 激活成功后再操作"
             )
         return None, None, (
             "请求体覆盖目标与活动 HAL 会话目标不一致；"
-            "请先保存配置并重新加载 HAL"
+            "请先保存配置并确认对应类别 HAL 激活成功"
         )
     return live_ip, actual_port, None
 
@@ -2817,18 +2905,22 @@ def _single_session_saved_target_validator(
 
         driver_config = getattr(driver, "config", None)
         if not isinstance(driver_config, dict):
-            return "无法核实活动 HAL 会话目标；请重新加载 HAL"
+            return (
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
+            )
         live_identity = _canonical_identity(driver_config)
         live_ip, _live_port, _live_resource, live_error, _, _ = live_identity
         if live_error or not live_ip:
             return (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 + (f": {live_error}" if live_error else "")
             )
         if current_identity != live_identity:
             return (
                 "已保存配置与活动 HAL 会话目标不一致；"
-                "请重新加载 HAL 后再操作"
+                "请重新保存配置并确认对应类别 HAL 激活成功后再操作"
             )
         return None
 
@@ -2841,7 +2933,7 @@ def _single_session_override_error(
     if override_requested and category_key in {"baseStation", "channelEmulator"}:
         return (
             "基站/信道仿真器为单会话控制类别，不允许一次性地址覆盖；"
-            "请先保存配置并重新加载 HAL"
+            "请先保存配置并确认对应类别 HAL 激活成功"
         )
     return None
 
@@ -2859,7 +2951,7 @@ async def test_instrument_connection(
     如果是 SCPI 协议，发送 *IDN? 查询。
 
     非单会话仪表支持请求体覆盖 IP/Port。基站/信道仿真器类别必须先保存地址并
-    reload HAL，再复用唯一活动会话，禁止用临时地址另开连接。
+    确认对应类别 HAL 自动激活成功，再复用唯一活动会话，禁止用临时地址另开连接。
     """
     import socket
     import time
@@ -4420,7 +4512,8 @@ def set_instrument_driver_mode(
     - mock: 强制使用仿真驱动（不论全局设定）
     - real: 强制使用真实驱动（不论全局设定）
 
-    修改后需要重新切换全局 HAL 模式（或重启服务）以应用。
+    本端点只提交数据库真值；保存成功后由客户端调用对应类别的 HAL 激活端点。
+    全局 HAL 重载仅保留为故障恢复手段。
     """
     valid_modes = ("auto", "mock", "real")
     if request.mode not in valid_modes:

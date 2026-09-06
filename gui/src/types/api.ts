@@ -315,6 +315,15 @@ export type InstrumentCategory = {
   driverMode: string
 }
 
+export type HALCategoryActivationResult = {
+  category_key: string
+  status: 'activated' | 'unchanged' | 'inactive'
+  driver_class: string | null
+  instrument_id: string | null
+  simulated: boolean | null
+  message: string
+}
+
 export type SequenceStep = {
   id: string
   title: string

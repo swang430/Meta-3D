@@ -320,6 +320,15 @@ def is_mock_driver(driver) -> bool:
     return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
 
 
+def _requires_recoverable_base_station_disconnect(driver: Any) -> bool:
+    """Keep real base-station sessions reachable until teardown is proven."""
+
+    return (
+        getattr(driver, "adapter_id", None) in {"cmw500", "uxm"}
+        and not is_mock_driver(driver)
+    )
+
+
 @dataclass(frozen=True)
 class Cmw500Lte2x2Readiness:
     """Read-only preview bound to the selected LabProfile connection."""
@@ -337,6 +346,45 @@ class Cmw500Lte2x2Readiness:
     tdd_ready: bool
     detail: str
     binding_digest: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedCategoryRuntime:
+    """One committed instrument category resolved to its runtime driver."""
+
+    category_key: str
+    driver_class: type[InstrumentDriver]
+    driver_config: Dict[str, Any]
+    driver_mode: str
+    model_name: str
+    model_label: str
+    endpoint: str
+    instrument_id: str
+    simulated: bool
+    model_row: Any
+    connection_row: Any
+
+
+class HALCategoryNotFoundError(LookupError):
+    """The requested instrument category does not exist."""
+
+
+class HALCategoryConfigurationError(ValueError):
+    """Committed category configuration cannot produce a runtime."""
+
+
+class HALCategoryActivationError(RuntimeError):
+    """The target category could not be safely replaced or connected."""
+
+
+@dataclass(frozen=True)
+class HALCategoryActivation:
+    category_key: str
+    status: str  # "activated" | "unchanged" | "inactive"
+    driver_class: Optional[str]
+    instrument_id: Optional[str]
+    simulated: Optional[bool]
+    message: str
 
 
 def build_cmw500_lte_2x2_readiness(
@@ -674,7 +722,141 @@ class InstrumentHALService:
             logger.error(f"Failed to initialize HAL service: {e}")
             raise
 
-    async def _initialize_from_db(self):
+    def _resolve_category_runtime(
+        self,
+        db: Any,
+        category: Any,
+    ) -> Optional[ResolvedCategoryRuntime]:
+        """Resolve one category from committed DB truth without hardware I/O."""
+        from app.models.instrument import (
+            InstrumentConnection as InstrumentConnectionDB,
+            InstrumentModel as InstrumentModelDB,
+        )
+
+        model = db.query(InstrumentModelDB).filter(
+            InstrumentModelDB.id == category.selected_model_id
+        ).first()
+        if model is None:
+            logger.warning(
+                "[HAL-REAL] %s: selected model not found",
+                category.category_key,
+            )
+            return None
+
+        conn = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == category.id
+        ).first()
+        driver_config: Dict[str, Any] = {
+            "model": model.model,
+            "vendor": model.vendor,
+            "full_name": model.full_name,
+            **(model.capabilities or {}),
+        }
+        if conn is not None:
+            driver_config.update({
+                "endpoint": conn.endpoint,
+                "ip": conn.controller_ip,
+                "port": conn.port,
+                "protocol": conn.protocol,
+            })
+            if isinstance(conn.connection_params, dict):
+                driver_config.update(conn.connection_params)
+
+        cat_mode = getattr(category, "driver_mode", None) or "auto"
+        use_real = self._decide_use_real(cat_mode)
+        if self.mode == DriverMode.MOCK_FORCE:
+            mode_source = (
+                f"global MOCK_FORCE (overrides per-instrument {cat_mode!r})"
+                if cat_mode == "real"
+                else f"global MOCK_FORCE (per-instrument {cat_mode!r})"
+            )
+        elif cat_mode == "mock":
+            mode_source = "per-instrument (forced mock)"
+        elif cat_mode == "real":
+            mode_source = "per-instrument (forced real)"
+        else:
+            mode_source = f"auto (global={self.mode.value})"
+        logger.info(
+            "[HAL] %s: mode=%s, use_real=%s (%s)",
+            category.category_key,
+            cat_mode,
+            use_real,
+            mode_source,
+        )
+
+        driver_class = None
+        if use_real:
+            driver_class = _real_driver_registry().get(
+                category.category_key,
+                {},
+            ).get(model.model)
+        if driver_class is not None:
+            logger.info(
+                "[HAL] %s: using REAL driver %s for %s %s",
+                category.category_key,
+                driver_class.__name__,
+                model.vendor,
+                model.model,
+            )
+        elif use_real and cat_mode == "real":
+            logger.error(
+                "[HAL] %s: forced real mode, but no real driver for %s %s "
+                "— skipping (will NOT fallback to mock)",
+                category.category_key,
+                model.vendor,
+                model.model,
+            )
+            if conn is not None:
+                conn.status = "error"
+                conn.last_error = f"Forced real mode but no driver for {model.model}"
+                db.commit()
+            return None
+        else:
+            driver_class = _MOCK_FALLBACK_BY_CATEGORY.get(category.category_key)
+            if driver_class is None:
+                logger.info(
+                    "[HAL] %s: no driver available, skipping",
+                    category.category_key,
+                )
+                return None
+            if use_real:
+                logger.warning(
+                    "[HAL] %s: auto → fallback to Mock "
+                    "(real driver not available for %s)",
+                    category.category_key,
+                    model.model,
+                )
+            else:
+                logger.info(
+                    "[HAL] %s: using Mock driver %s",
+                    category.category_key,
+                    driver_class.__name__,
+                )
+
+        endpoint = (
+            f"{conn.controller_ip}:{conn.port}"
+            if conn is not None and conn.controller_ip
+            else (conn.endpoint if conn is not None and conn.endpoint else "")
+        )
+        return ResolvedCategoryRuntime(
+            category_key=category.category_key,
+            driver_class=driver_class,
+            driver_config=driver_config,
+            driver_mode=cat_mode,
+            model_name=model.model,
+            model_label=f"{model.vendor} {model.model}",
+            endpoint=endpoint,
+            instrument_id=f"{category.category_key}_{str(category.id)[:8]}",
+            simulated=driver_class in _MOCK_DRIVER_CLASSES,
+            model_row=model,
+            connection_row=conn,
+        )
+
+    async def _initialize_from_db(
+        self,
+        *,
+        only_category_key: Optional[str] = None,
+    ) -> Dict[str, "DriverReadinessRow"]:
         """
         Initialize drivers from database instrument configuration.
 
@@ -690,17 +872,7 @@ class InstrumentHALService:
         from app.db.database import SessionLocal
         from app.models.instrument import (
             InstrumentCategory as InstrumentCategoryModel,
-            InstrumentModel as InstrumentModelDB,
-            InstrumentConnection as InstrumentConnectionDB,
         )
-
-        # Real driver registry shared with the catalog API — single source
-        # of truth (P2-3). See ``_real_driver_registry`` at module level.
-        REAL_DRIVER_REGISTRY = _real_driver_registry()
-
-        # 类目 → mock 驱动类：用模块级那份唯一的表（原先这里另有一份局部副本，
-        # 靠注释"keep in sync"维持一致，已于 2026-08-10 合并）
-        MOCK_FALLBACK = _MOCK_FALLBACK_BY_CATEGORY
 
         from app.services.readiness import (
             DriverReadinessRow,
@@ -724,10 +896,18 @@ class InstrumentHALService:
         # yet checked; True = canary dead → preflight trustworthy; False = canary
         # alive → network is lying, skip preflight network-wide.
         preflight_trustworthy: Optional[bool] = None
+        initialized_rows: List[DriverReadinessRow] = []
         try:
-            categories = db.query(InstrumentCategoryModel).filter(
+            categories_query = db.query(InstrumentCategoryModel).filter(
                 InstrumentCategoryModel.is_active == True
-            ).order_by(InstrumentCategoryModel.display_order).all()
+            )
+            if only_category_key is not None:
+                categories_query = categories_query.filter(
+                    InstrumentCategoryModel.category_key == only_category_key
+                )
+            categories = categories_query.order_by(
+                InstrumentCategoryModel.display_order
+            ).all()
 
             for cat in categories:
                 if not cat.selected_model_id:
@@ -741,109 +921,23 @@ class InstrumentHALService:
                     ))
                     continue
 
-                model = db.query(InstrumentModelDB).filter(
-                    InstrumentModelDB.id == cat.selected_model_id
-                ).first()
-                if not model:
-                    logger.warning(f"[HAL-REAL] {cat.category_key}: selected model not found")
+                resolved = self._resolve_category_runtime(db, cat)
+                if resolved is None:
                     continue
-
-                conn = db.query(InstrumentConnectionDB).filter(
-                    InstrumentConnectionDB.category_id == cat.id
-                ).first()
-
-                # Build driver config from DB
-                driver_config = {
-                    "model": model.model,
-                    "vendor": model.vendor,
-                    "full_name": model.full_name,
-                    **(model.capabilities or {}),
-                }
-                if conn:
-                    driver_config.update({
-                        "endpoint": conn.endpoint,
-                        "ip": conn.controller_ip,
-                        "port": conn.port,
-                        "protocol": conn.protocol,
-                    })
-                    # Merge connection_params (e.g. port_maps for RF Switch Option B)
-                    if conn.connection_params and isinstance(conn.connection_params, dict):
-                        driver_config.update(conn.connection_params)
-
-                # Determine driver class based on per-instrument mode + global fallback
-                DriverClass = None
-                cat_mode = getattr(cat, 'driver_mode', None) or "auto"
-
-                use_real = self._decide_use_real(cat_mode)
-                if self.mode == DriverMode.MOCK_FORCE:
-                    mode_source = (
-                        f"global MOCK_FORCE (overrides per-instrument {cat_mode!r})"
-                        if cat_mode == "real"
-                        else f"global MOCK_FORCE (per-instrument {cat_mode!r})"
-                    )
-                elif cat_mode == "mock":
-                    mode_source = "per-instrument (forced mock)"
-                elif cat_mode == "real":
-                    mode_source = "per-instrument (forced real)"
-                else:
-                    mode_source = f"auto (global={self.mode.value})"
-
-                logger.info(
-                    f"[HAL] {cat.category_key}: mode={cat_mode}, "
-                    f"use_real={use_real} ({mode_source})"
-                )
-
-                if use_real:
-                    category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
-                    DriverClass = category_drivers.get(model.model)
-
-                if DriverClass:
-                    logger.info(
-                        f"[HAL] {cat.category_key}: using REAL driver "
-                        f"{DriverClass.__name__} for {model.vendor} {model.model}"
-                    )
-                elif use_real and cat_mode == "real":
-                    # 强制 real 模式但没有对应的真实驱动实现 → 不降级，跳过并报错
-                    logger.error(
-                        f"[HAL] {cat.category_key}: forced real mode, but no real driver "
-                        f"for {model.vendor} {model.model} — skipping (will NOT fallback to mock)"
-                    )
-                    if conn:
-                        conn.status = "error"
-                        conn.last_error = f"Forced real mode but no driver for {model.model}"
-                        db.commit()
-                    continue
-                else:
-                    DriverClass = MOCK_FALLBACK.get(cat.category_key)
-                    if DriverClass:
-                        if use_real:
-                            logger.warning(
-                                f"[HAL] {cat.category_key}: auto → fallback to Mock "
-                                f"(real driver not available for {model.model})"
-                            )
-                        else:
-                            logger.info(
-                                f"[HAL] {cat.category_key}: using Mock driver "
-                                f"{DriverClass.__name__}"
-                            )
-                    else:
-                        logger.info(
-                            f"[HAL] {cat.category_key}: no driver available, skipping"
-                        )
-                        continue
+                model = resolved.model_row
+                conn = resolved.connection_row
+                driver_config = resolved.driver_config
+                DriverClass = resolved.driver_class
 
                 # Instantiate and connect
                 driver = _instantiate_hal_driver(
                     DriverClass,
                     category_key=cat.category_key,
                     model_name=model.model,
-                    instrument_id=f"{cat.category_key}_{str(cat.id)[:8]}",
+                    instrument_id=resolved.instrument_id,
                     config=driver_config,
                 )
-                endpoint_str = (
-                    f"{conn.controller_ip}:{conn.port}" if conn and conn.controller_ip
-                    else (conn.endpoint if conn and conn.endpoint else "")
-                )
+                endpoint_str = resolved.endpoint
 
                 # Pre-flight TCP reachability — skip driver.connect()
                 # entirely when the host is unreachable. Avoids 10s × N
@@ -886,7 +980,8 @@ class InstrumentHALService:
                             logger.warning(
                                 f"[HAL] {cat.category_key}: preflight failed "
                                 f"({reason}); skipping driver.connect() — set the "
-                                f"correct IP/port and reload HAL."
+                                f"correct IP/port, save it, and confirm category "
+                                f"HAL activation."
                             )
                             if conn:
                                 conn.status = "error"
@@ -909,7 +1004,58 @@ class InstrumentHALService:
                     # through to driver.connect() (still surfaces ok/scpi).
 
                 try:
-                    success = await driver.connect()
+                    # A category activation can be cancelled while a real
+                    # driver is opening its VISA/socket session.  Letting the
+                    # caller unwind immediately would orphan that session: the
+                    # driver has not been published in ``self.drivers`` yet,
+                    # so no later lifecycle operation can find and close it.
+                    # Finish connect to a terminal result, then close the
+                    # unpublished object before propagating cancellation.
+                    from app.services.instrument_test_lease import (
+                        await_completion_despite_cancellation,
+                    )
+
+                    connect_outcome = await await_completion_despite_cancellation(
+                        driver.connect()
+                    )
+                    connect_cancellation = (
+                        connect_outcome.delayed_cancellation
+                        or (
+                            connect_outcome.error
+                            if isinstance(connect_outcome.error, asyncio.CancelledError)
+                            else None
+                        )
+                    )
+                    if connect_cancellation is not None:
+                        cleanup = await await_completion_despite_cancellation(
+                            driver.disconnect()
+                        )
+                        cleanup_error = cleanup.error
+                        if cleanup_error is None and cleanup.value is not True:
+                            cleanup_error = RuntimeError(
+                                "cancelled connect cleanup was not confirmed"
+                            )
+                        if cleanup_error is not None:
+                            # The connect finished and this unpublished real
+                            # base-station object still owns a recoverable
+                            # transport. Publish that exact runtime before
+                            # propagating cancellation so a later lifecycle
+                            # operation can retry the safe teardown.
+                            if _requires_recoverable_base_station_disconnect(driver):
+                                self.drivers[cat.category_key] = driver
+                            setattr(
+                                connect_cancellation,
+                                "instrument_activation_error",
+                                cleanup_error,
+                            )
+                            connect_cancellation.add_note(
+                                "cancelled HAL connect cleanup also failed: "
+                                f"{type(cleanup_error).__name__}: {cleanup_error}"
+                            )
+                        raise connect_cancellation
+                    if connect_outcome.error is not None:
+                        raise connect_outcome.error
+                    success = connect_outcome.value
                     if success:
                         self.drivers[cat.category_key] = driver
                         # 真假按**这台驱动自己**的标记，不按全局模式（P1-48）：
@@ -1111,6 +1257,14 @@ class InstrumentHALService:
                         network_reachable=host_reachable,
                     ))
 
+            initialized_rows = list(report_rows)
+            if only_category_key is not None and self.last_readiness_report is not None:
+                report_rows = [
+                    row
+                    for row in self.last_readiness_report.drivers
+                    if row.category != only_category_key
+                ] + initialized_rows
+
             logger.info(
                 f"[HAL-REAL] Driver factory complete: "
                 f"{len(self.drivers)} drivers initialized"
@@ -1147,6 +1301,7 @@ class InstrumentHALService:
 
         finally:
             db.close()
+        return {row.category: row for row in initialized_rows}
 
     @staticmethod
     def _log_readiness_report(report: "ReadinessReport") -> None:
@@ -1270,32 +1425,42 @@ class InstrumentHALService:
             except asyncio.CancelledError:
                 pass
 
-        unsafe_cmw_disconnects: list[str] = []
+        unsafe_base_station_disconnects: list[str] = []
         for name, driver in list(self.drivers.items()):
-            real_cmw = (
-                getattr(driver, "adapter_id", None) == "cmw500"
-                and not is_mock_driver(driver)
+            recoverable_base_station = (
+                _requires_recoverable_base_station_disconnect(driver)
             )
+            adapter_label = {
+                "cmw500": "CMW500",
+                "uxm": "UXM",
+            }.get(getattr(driver, "adapter_id", None), "BaseStation")
+            if recoverable_base_station:
+                try:
+                    # A parked BaseStation has intentionally closed its
+                    # transport while retaining Local control.  Reuse the
+                    # category lifecycle path so shutdown/reload must regain
+                    # Remote before STOP + authoritative SAFE_IDLE teardown.
+                    await _disconnect_category_driver(self, name)
+                    logger.info(f"Disconnected driver: {name}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error disconnecting {name}: {e}")
+                    unsafe_base_station_disconnects.append(
+                        f"{name} {adapter_label}"
+                    )
+                continue
             try:
                 disconnected = await driver.disconnect()
-                if real_cmw and disconnected is not True:
-                    unsafe_cmw_disconnects.append(name)
-                    logger.error(
-                        "CMW500 driver %s refused unsafe disconnect; retaining driver",
-                        name,
-                    )
-                    continue
                 logger.info(f"Disconnected driver: {name}")
             except Exception as e:
                 logger.error(f"Error disconnecting {name}: {e}")
-                if real_cmw:
-                    unsafe_cmw_disconnects.append(name)
-                    continue
             self.drivers.pop(name, None)
 
-        if unsafe_cmw_disconnects:
+        if unsafe_base_station_disconnects:
             raise RuntimeError(
-                "baseStation CMW500 无法确认安全断开；HAL 保留恢复会话并拒绝卸载"
+                f"{', '.join(unsafe_base_station_disconnects)} 无法确认安全断开；"
+                "HAL 保留恢复会话并拒绝卸载"
             )
 
         self.drivers.clear()
@@ -1661,6 +1826,378 @@ async def shutdown_hal_service():
     """Shutdown the global HAL service (serialised via lifecycle lock)."""
     async with _get_lifecycle_lock():
         await _shutdown_hal_service_inner()
+
+
+def _activation_result(
+    category_key: str,
+    status: str,
+    driver: Any = None,
+) -> HALCategoryActivation:
+    messages = {
+        "activated": "已按最新保存配置激活该类别 HAL",
+        "unchanged": "当前 HAL 已与最新保存配置一致",
+        "inactive": "该类别已停用，目标 HAL runtime 已卸载",
+    }
+    return HALCategoryActivation(
+        category_key=category_key,
+        status=status,
+        driver_class=type(driver).__name__ if driver is not None else None,
+        instrument_id=getattr(driver, "instrument_id", None),
+        simulated=is_mock_driver(driver) if driver is not None else None,
+        message=messages[status],
+    )
+
+
+def _mark_category_readiness_failed(
+    service: InstrumentHALService,
+    category_key: str,
+    detail: str,
+) -> None:
+    """Replace a target's stale green readiness after lifecycle failure."""
+    report = service.last_readiness_report
+    if report is None:
+        return
+    from app.services.readiness import (
+        DriverReadinessRow,
+        ReadinessReport,
+        build_subnet_reachability,
+    )
+
+    rows: List[DriverReadinessRow] = []
+    target_found = False
+    for row in report.drivers:
+        if row.category != category_key:
+            rows.append(row)
+            continue
+        target_found = True
+        rows.append(DriverReadinessRow(
+            category=row.category,
+            model=row.model,
+            endpoint=row.endpoint,
+            status="fail",
+            detail=detail,
+            extras=row.extras,
+            fail_kind="scpi",
+            network_reachable=row.network_reachable,
+        ))
+    if not target_found:
+        rows.append(DriverReadinessRow(
+            category=category_key,
+            model="(activation failed)",
+            endpoint="",
+            status="fail",
+            detail=detail,
+            fail_kind="scpi",
+        ))
+    service.last_readiness_report = ReadinessReport(
+        drivers=rows,
+        lab_profile=report.lab_profile,
+        calibration=report.calibration,
+        dut_attach=report.dut_attach,
+        generated_at_iso=datetime.utcnow().isoformat(),
+        subnets=build_subnet_reachability(rows),
+    )
+
+
+async def _disconnect_category_driver(
+    service: InstrumentHALService,
+    category_key: str,
+) -> None:
+    """Safely detach one runtime without bypassing a parked Local-control gate."""
+    from app.hal.base_station import BaseStationRemoteSessionResult
+    from app.services.instrument_test_lease import (
+        await_completion_despite_cancellation,
+    )
+
+    driver = service.drivers.get(category_key)
+    if driver is None:
+        return
+    adapter_id = getattr(driver, "adapter_id", None)
+    real_cmw = adapter_id == "cmw500" and not is_mock_driver(driver)
+    real_uxm = adapter_id == "uxm" and not is_mock_driver(driver)
+    recoverable_base_station = (
+        _requires_recoverable_base_station_disconnect(driver)
+    )
+    requires_remote_reacquire = (
+        getattr(driver, "local_control_reserved", None) is True
+        and getattr(driver, "local_release_failed", None) is False
+    )
+    delayed_cancellation: asyncio.CancelledError | None = None
+    if requires_remote_reacquire:
+        reacquire = await await_completion_despite_cancellation(
+            driver.acquire_remote_control()
+        )
+        delayed_cancellation = reacquire.delayed_cancellation
+        if reacquire.error is not None:
+            exc = reacquire.error
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动无法重新取得 Remote；"
+                f"保留旧 runtime 并拒绝激活: {type(exc).__name__}: {exc}"
+            )
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                str(activation_error),
+            )
+            cancellation = delayed_cancellation or (
+                exc if isinstance(exc, asyncio.CancelledError) else None
+            )
+            if cancellation is not None:
+                setattr(
+                    cancellation,
+                    "instrument_activation_error",
+                    activation_error,
+                )
+                cancellation.add_note(str(activation_error))
+                raise cancellation
+            raise activation_error from exc
+
+        acquired = reacquire.value
+        if category_key == "baseStation":
+            reacquire_confirmed = (
+                isinstance(acquired, BaseStationRemoteSessionResult)
+                and acquired.acquired_confirmed is True
+                and bool(acquired.session_token)
+                and acquired.adapter_id == getattr(driver, "adapter_id", None)
+            )
+        elif category_key == "channelEmulator":
+            reacquire_confirmed = acquired is True
+        else:
+            reacquire_confirmed = False
+        if not reacquire_confirmed:
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动无法重新取得 Remote；"
+                "保留旧 runtime 并拒绝激活"
+            )
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                str(activation_error),
+            )
+            if delayed_cancellation is not None:
+                setattr(
+                    delayed_cancellation,
+                    "instrument_activation_error",
+                    activation_error,
+                )
+                delayed_cancellation.add_note(str(activation_error))
+                raise delayed_cancellation
+            raise activation_error
+
+    outcome = await await_completion_despite_cancellation(driver.disconnect())
+    if outcome.error is not None:
+        exc = outcome.error
+        if not (recoverable_base_station or requires_remote_reacquire):
+            service.drivers.pop(category_key, None)
+        activation_error = HALCategoryActivationError(
+            f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
+        )
+        _mark_category_readiness_failed(service, category_key, str(activation_error))
+        cancellation = delayed_cancellation or outcome.delayed_cancellation or (
+            exc if isinstance(exc, asyncio.CancelledError) else None
+        )
+        if cancellation is not None:
+            setattr(cancellation, "instrument_activation_error", activation_error)
+            cancellation.add_note(str(activation_error))
+            raise cancellation
+        raise activation_error from exc
+    disconnected = outcome.value
+    if disconnected is not True:
+        if real_cmw:
+            activation_error = HALCategoryActivationError(
+                "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
+            )
+        elif real_uxm:
+            activation_error = HALCategoryActivationError(
+                "baseStation UXM 无法确认安全断开；保留旧 runtime 并拒绝激活"
+            )
+        elif requires_remote_reacquire:
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动重新取得 Remote 后无法确认安全断开；"
+                "保留旧 runtime 并拒绝激活"
+            )
+        else:
+            service.drivers.pop(category_key, None)
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动断开未确认；移除旧 runtime 并拒绝激活"
+            )
+        _mark_category_readiness_failed(service, category_key, str(activation_error))
+        cancellation = delayed_cancellation or outcome.delayed_cancellation
+        if cancellation is not None:
+            setattr(
+                cancellation,
+                "instrument_activation_error",
+                activation_error,
+            )
+            cancellation.add_note(str(activation_error))
+            raise cancellation
+        raise activation_error
+    service.drivers.pop(category_key, None)
+    cancellation = delayed_cancellation or outcome.delayed_cancellation
+    if cancellation is not None:
+        _mark_category_readiness_failed(
+            service,
+            category_key,
+            f"{category_key} 激活已取消，旧 runtime 已安全断开",
+        )
+        raise cancellation
+
+
+async def activate_hal_category_atomic(
+    category_key: str,
+) -> HALCategoryActivation:
+    """Replace exactly one HAL runtime from committed database truth."""
+    from app.db.database import SessionLocal
+    from app.models.instrument import InstrumentCategory as InstrumentCategoryModel
+
+    async with _get_lifecycle_lock():
+        service = get_hal_service()
+        db = SessionLocal()
+        try:
+            category = db.query(InstrumentCategoryModel).filter(
+                InstrumentCategoryModel.category_key == category_key
+            ).first()
+            if category is None:
+                raise HALCategoryNotFoundError(
+                    f"Instrument category {category_key!r} not found"
+                )
+            if not category.is_active:
+                await _disconnect_category_driver(service, category_key)
+                # Remove the target's old readiness row as part of the same
+                # category-scoped lifecycle update.  Leaving the previous
+                # READY row behind would make the refreshed cockpit claim an
+                # unloaded runtime was still usable.
+                await service._initialize_from_db(
+                    only_category_key=category_key
+                )
+                result = _activation_result(category_key, "inactive")
+            else:
+                if not category.selected_model_id:
+                    await _disconnect_category_driver(service, category_key)
+                    await service._initialize_from_db(
+                        only_category_key=category_key
+                    )
+                    raise HALCategoryConfigurationError(
+                        f"{category_key} has no selected model"
+                    )
+                resolved = service._resolve_category_runtime(db, category)
+                if resolved is None:
+                    await _disconnect_category_driver(service, category_key)
+                    await service._initialize_from_db(
+                        only_category_key=category_key
+                    )
+                    raise HALCategoryConfigurationError(
+                        f"{category_key} committed configuration cannot resolve a driver"
+                    )
+                loaded = service.drivers.get(category_key)
+                loaded_status = getattr(loaded, "status", None)
+                safely_parked = (
+                    loaded_status is InstrumentStatus.DISCONNECTED
+                    and getattr(loaded, "local_control_reserved", None) is True
+                    and getattr(loaded, "local_release_failed", None) is False
+                )
+                same_runtime = (
+                    loaded is not None
+                    and type(loaded) is resolved.driver_class
+                    and (
+                        loaded_status
+                        in {
+                            InstrumentStatus.CONNECTED,
+                            InstrumentStatus.READY,
+                        }
+                        or safely_parked
+                    )
+                    and getattr(loaded, "config", None) == resolved.driver_config
+                    and bool(is_mock_driver(loaded)) == resolved.simulated
+                )
+                if same_runtime:
+                    result = _activation_result(category_key, "unchanged", loaded)
+                else:
+                    await _disconnect_category_driver(service, category_key)
+                    try:
+                        rows = await service._initialize_from_db(
+                            only_category_key=category_key
+                        )
+                    except asyncio.CancelledError as cancellation:
+                        cleanup_error: BaseException | None = None
+                        if service.drivers.get(category_key) is not None:
+                            try:
+                                await _disconnect_category_driver(
+                                    service,
+                                    category_key,
+                                )
+                            except asyncio.CancelledError as cleanup_cancellation:
+                                # A second caller cancellation can be delayed
+                                # until disconnect finishes.  If the runtime is
+                                # gone, cleanup succeeded and the original
+                                # cancellation remains the one to propagate.
+                                if service.drivers.get(category_key) is not None:
+                                    cleanup_error = getattr(
+                                        cleanup_cancellation,
+                                        "instrument_activation_error",
+                                        RuntimeError(
+                                            "cancelled post-connect cleanup did not "
+                                            "remove the target runtime"
+                                        ),
+                                    )
+                            except BaseException as exc:
+                                cleanup_error = exc
+                        if cleanup_error is not None:
+                            setattr(
+                                cancellation,
+                                "instrument_activation_error",
+                                cleanup_error,
+                            )
+                            cancellation.add_note(
+                                "cancelled post-connect HAL cleanup also failed: "
+                                f"{type(cleanup_error).__name__}: {cleanup_error}"
+                            )
+                        _mark_category_readiness_failed(
+                            service,
+                            category_key,
+                            f"{category_key} 激活在连接期间已取消",
+                        )
+                        raise cancellation
+                    fresh = service.drivers.get(category_key)
+                    if fresh is None:
+                        row = rows.get(category_key)
+                        detail = row.detail if row is not None else "connect failed"
+                        raise HALCategoryActivationError(
+                            f"{category_key} connect failed: {detail}"
+                        )
+                    service._initialized = True
+                    result = _activation_result(category_key, "activated", fresh)
+        finally:
+            db.close()
+
+    if result.status in {"activated", "unchanged"}:
+        from app.services.instrument_test_lease import park_idle_instrument
+
+        try:
+            parked = await park_idle_instrument(category_key)
+            if parked is not True:
+                error = HALCategoryActivationError(
+                    f"{category_key} 类别 HAL 激活后的安全驻车未确认"
+                )
+                _mark_category_readiness_failed(service, category_key, str(error))
+                raise error
+        except asyncio.CancelledError:
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                f"{category_key} 类别 HAL 激活后的安全驻车已取消",
+            )
+            raise
+        except HALCategoryActivationError:
+            raise
+        except Exception as exc:
+            error = HALCategoryActivationError(
+                f"{category_key} 类别 HAL 激活后的安全驻车失败: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            _mark_category_readiness_failed(service, category_key, str(error))
+            raise error from exc
+    return result
 
 
 async def reload_hal_service_atomic(mode: DriverMode) -> None:

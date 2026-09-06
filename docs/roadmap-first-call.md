@@ -13,7 +13,7 @@
 **P1-77 已由 PR #461 合并，merge `1001f1c7`**：LTE TDD TestCase 现在可在生产 GUI 补齐真实
 ULDL、special subframe 与 20 MHz RMC version，由服务器冻结唯一 MAC profile。手工执行暴露的
 **P1-78 已由本片交付**：F64 正式执行解除 SMB 运行依赖，SMB 扫描/同步收窄为开发调试工具。
-当前没有已启动的非现场产品开发 WIP；下一批准顺序恢复为
+当前非现场产品开发 WIP 为 **P2-72（仪器配置保存后按类别激活 HAL）**；随后批准顺序为
 **P1-76 → P2-68 → P2-69 → P2-70**，详见条目。P1-77 是
 **P3-23** 新规则的第一个功能试行片，已记录验证复用、外审请求与等待数据；
 P2-57 残项为后续平台设计，
@@ -53,7 +53,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= 无已启动项；下一批准项为 P1-76（监控假读数），不会由本次状态回填自动启动。**
+Current Focus（非现场）= P2-72（仪器配置保存后按类别激活 HAL）；完成后下一批准项为 P1-76（监控假读数）。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -707,7 +707,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 当前没有已启动的非现场 WIP；P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口依次待启动，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | 当前唯一 WIP 为 P2-72（保存仪器配置或 driver mode 后只激活对应类别 HAL，LabProfile 同步仍为独立操作）；完成后依次为 P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5077,6 +5077,70 @@ F64、如何核对设备侧版本、如何处理替换/回滚，以及 F64 在�
 包装成设备侧证明。调研完成前不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 的正式依赖，
 也不得新增或猜测 SCPI。本项不在当前批准执行顺序中。
 
+### P2-72 — 仪器配置保存后按类别激活 HAL（Ready PR）
+
+**可观察故障**：操作员在“仪器资源配置”修改型号、endpoint、controller、连接参数或 driver mode
+并保存后，数据库已经是新配置，运行中的 HAL 却仍装载旧 driver；必须再执行一次全局“重新加载驱动”，
+期间会无关地拆卸其他仪器。漏做或顺序做错时，连接测试、LabProfile 同步或执行冻结会看到旧 runtime，
+形成“配置已保存但没有生效”、`binding does not match selected_model_id` 或
+`loaded driver adapter does not match frozen adapter`。现有 fail-closed 门能阻止错误执行，但把正常保存流程
+变成了易错的三步手工序列。
+
+**范围/验收**：服务器新增按 `category_key` 激活 HAL 的唯一入口；GUI 在
+`PUT /instruments/{category_key}` 保存成功以及 `PATCH /instruments/{category_key}/driver-mode`
+成功后立即调用该入口。入口只从已提交数据库配置构造目标 driver，在既有 HAL mutation guard 与生命周期锁
+下检查执行/租约 blocker，绝不自动 force；仅安全释放并重建目标类别，其他类别 driver、连接和状态不变。
+若已装载 driver 的类、模式与规范化运行配置均等于数据库真值则幂等 no-op。激活失败不得回滚已经成功的配置
+保存，也不得继续把旧 driver 显示成新配置已生效；GUI 必须明确提示“配置已保存，但 HAL 尚未激活”并保留
+全局 reload 作为人工恢复入口。连接保存与激活采用“最新已提交配置获胜”，激活响应后刷新服务器目录，
+客户端不得把未保存草稿或整张 preset map 作为运行真值。
+
+**边界**：本片不自动调用 `sync-current`，不修改 LabProfile binding、拓扑或正式 provenance；
+“同步到 LabProfile”继续是操作员确认后的独立事务，只能消费已保存、resolver-valid 且与已加载 runtime
+一致的配置。本片不改变 active toggle 语义、不移除全局 HAL reload、不新增或猜测 SCPI。
+LabProfile 三入口统一工作单元仍保留在 Discovered，不能因本片关闭。
+
+**设计**：见
+[P2-72 仪器配置保存后按类别激活 HAL 设计](plans/2026-09-06-p2-72-category-hal-activation-design.md)。
+
+**实现与验证（2026-09-06，外审收口中）**：已完成启动时构造路径复用、单类别安全替换、无 force 的
+类别激活 API，以及“保存/driver mode 提交成功后激活同类别”的 GUI 两阶段编排。激活只读取已提交
+数据库真值；执行/租约 blocker 双检查，断开或安全驻车未确认即 fail-loud；其他类别 runtime 不动，
+LabProfile 同步仍为独立操作。fresh 独立内审发现并收口两条功能 P1 和一条本片 P2：
+connect/disconnect 取消必须等到硬件生命周期终态并清理未登记会话；断开/驻车失败不再保留旧
+readiness 绿色；GUI 会展示 409 的 blocker 身份和原因。最终输入上受影响后端与规则门
+`209 passed`，全后端 `6435 passed / 5 skipped`，受影响 GUI 合同 `23 passed`，production build、
+`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过；修复后 fresh 独立尾审
+P1/P2/P3=0。Codex R1 进一步发现安全驻车后的同配置 F64 被误当作普通断开态重建，已收窄为仅当
+`DISCONNECTED + local_control_reserved=true + local_release_failed=false` 且类、模式、规范化配置完全一致时
+幂等复用；普通断开态或释放失败仍强制重建。R1 同时指出活运行提示仍有一组镜像暗示日常保存需要
+全局 reload，现已逐一改为“保存后确认类别 HAL 激活；全局 reload 仅作失败恢复”。R1 修复后受影响链
+`162 passed`、最终文案消费链与规则门 `238 passed`、全后端 `6438 passed / 5 skipped`、受影响 GUI
+合同 `23 passed`（末次文案定点 `14 passed`）、production build、`compileall`、单一
+Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式 provenance；
+本地验证不替代现场复验。Codex R2 进一步发现：安全驻车的 F64/UXM 在配置变化后不能绕过 Local
+控制门直接 teardown；现统一先重新取得 Remote，再执行安全断开，重取或断开失败均保留旧 runtime
+并拒绝激活。UXM 只有在停止信令与权威 SAFE_IDLE 同时确认后才关闭 transport；5G NR profile 当前
+没有权威 `CELL_STATUS_QUERY`，因此绝不把诊断性 `CELL_STATE_QUERY` 的 `OFF` 回声当作安全证明，
+无法确认时 fail-closed 并保留会话供恢复。类别激活、全局 shutdown/reload 与连接期间取消三条消费
+路径均保留未安全断开的真实 UXM/CMW；普通 F64 与 Mock 语义不变。R2 修复后受影响生命周期与规则门
+`189 passed`，最终全后端 `6449 passed / 5 skipped`，`compileall`、单一 Alembic head
+`c5e7f9a1b3d6` 与 diff-check 通过；最终只读独立功能复核 P1/P2/P3=0。Codex R3 又指出全局
+shutdown/reload 仍直接调用 parked UXM 的 `disconnect()`，可能在 transport 已关闭时绕过停止信令与
+SAFE_IDLE 门；现让真实 UXM/CMW 的全局卸载复用同一类别安全断开路径，必须先确认重新取得 Remote，
+失败则保留原 runtime 并拒绝卸载。旧实现的生命周期序列只有 `disconnect`，RED→GREEN 后 UXM/CMW
+均为 `acquire → disconnect`，UXM 重获失败保持已加载。R3 修复后的计划受影响链 `176 passed`、
+全后端 `6452 passed / 5 skipped`、`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check
+通过；GUI 未变，复用同一生产输入上既有 GUI 合同/build 结果。Codex R4 继续发现：安全驻车的
+F64/UXM/CMW 第一次重新取得 Remote 失败时，驱动会把瞬时连接状态记为 `ERROR`，但仍保留
+`local_control_reserved=true + local_release_failed=false` 这组持久 Local 控制权标记；旧逻辑第二次
+激活或 shutdown 因只认 `DISCONNECTED` 而绕过重获门。现安全 teardown 只用这组持久标记判断是否
+必须重获 Remote，瞬时 `ERROR` 不再改变控制权事实；同配置幂等复用仍严格要求
+`DISCONNECTED + Local 标记`，普通错误、释放失败与 Mock 不会被放宽。旧实现在第二次激活与第二次
+shutdown 回归均为 RED，修复后调用序列保持 `acquire → acquire` 且不触发 `disconnect`、原 runtime
+继续保留。最终受影响链 `176 passed`、全后端 `6452 passed / 5 skipped`、`compileall`、单一
+Alembic head `c5e7f9a1b3d6` 与 diff-check 通过；有界只读功能复核 P1/P2/P3=0。
+
 ## 🟢 P3 — Polish / tooling
 
 **P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入
@@ -5161,6 +5225,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
 | 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
 | #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |
+| 保存仪器配置后还需手工全局 HAL reload | → **P2-72（当前 WIP）** | 保存与 driver-mode 两入口自动调用服务器按类别激活；LabProfile 同步保持独立事务，统一工作单元另行设计 |
 | 窗口 evidence item 结构化内容未完整落库 | **保留待评估** | `append_base_station_measurement_window` 仍以 exchange ids 与 trust/metric 投影为主；先列具体报告/审计消费需求，不重复 P2-60 的 CE operation receipt |
 | 诊断侧 `SUPPORTS_STATIC_PASSTHROUGH` 等能力副本 | **保留待评估** | 正式 MEASURE 已走 plan，`baseStation_attach_check`/`propsim_f64_state_machine` 仍有旧标志；先给出当前误判场景，再决定载体 |
 | CMW 页码入 digest、4 流否定措辞、3GPP/厂商支持叙述 | **维护候选，待独立取证设计** | 页码/措辞残留可搜索；本次未重新审计手册或统计认证存量，不能沿用旧 DB 数字决定迁移成本；统一核范围，不再扩大自然语言正则门 |
@@ -5168,7 +5233,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | P2-51/52/55/56、CE 真实认证、UXM 方言依据 | → **hardware 表 / Known unknown** | 分开软件载体、手册来源与真机复验；本地测试不能签现场完成 |
 | P1-4 “仍只能按 plan 对比” | **软件缺口已由 P1-72/#396 关闭** | 已改 hardware 表为仅缺现场重复执行/对比证据 |
 
-- `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存；仪器侧还暴露“保存配置 → HAL 重载 → 同步 LabProfile”的手工序列，顺序错误曾造成已保存 UXM 与 LabProfile endpoint 漂移。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决保存、HAL 应用和 binding 同步是一次受控编排还是明确的分阶段事务。不得以 GUI 草稿补真，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，LTE 暗室首测能力不随本条补齐。
+- `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存。手工序列里的“保存配置 → 全局 HAL 重载”已提升为 **P2-72**，只解决按类别激活 runtime；“同步到 LabProfile”仍保持操作员确认后的独立事务。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决多份配置如何受控编排，不得把 GUI 草稿直接写入 binding，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，P2-72 完成后也不关闭；LTE 暗室首测能力不随本条补齐。
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 

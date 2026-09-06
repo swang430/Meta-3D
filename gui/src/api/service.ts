@@ -19,6 +19,7 @@ import type {
   TestExecutionListResponse,
   SystemLogTailResponse,
   DashboardAlertSummary,
+  HALCategoryActivationResult,
 } from '../types/api'
 import type { components as ApiComponents } from '../types/api.generated'
 
@@ -156,6 +157,15 @@ export const updateInstrumentCategory = async (
   const response = await client.put<InstrumentCategory>(
     `/instruments/${categoryKey}`,
     payload,
+  )
+  return response.data
+}
+
+export const activateInstrumentCategoryHAL = async (
+  categoryKey: string,
+): Promise<HALCategoryActivationResult> => {
+  const response = await client.post<HALCategoryActivationResult>(
+    `/instruments/${categoryKey}/hal/activate`,
   )
   return response.data
 }

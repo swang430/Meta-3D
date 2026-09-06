@@ -1308,12 +1308,36 @@ class RealUxmDriver(BaseStationDriver):
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
         try:
-            # P0-2 F1 (agent 门 P1): **无条件**发 stop_signaling, 不看缓存门。
+            # P0-2 F1 (agent 门 P1): 有真实 transport 时**无条件**发
+            # stop_signaling, 不看缓存门。
             # D1 之后 _cell_state 只从状态查询解析来 — 轮询零次成功 (会话错位/
             # 未知形态) 时它停在 OFF, 旧门 `!= OFF` 会跳过 stop → 小区带着下行
             # 功率没人关。代价不对称: 对 OFF 小区多发一次 stop 是无害冗余
-            # (stop_signaling 自 catch 异常), 漏发是仪器带功率没人管。
-            await self.stop_signaling()
+            # (stop_signaling 自 catch 异常), 漏发是仪器带功率没人管。停止未确认
+            # 时必须保留 transport 供安全重试，不能关掉会话后假报断开成功。
+            if self._visa_session is not None:
+                stop_confirmed = await self.stop_signaling()
+                # SAFE_IDLE 只能由当前方言已确认的 live status 查询证明。
+                # 5G NR profile 的 CELL_STATE_QUERY 是无权威出处的诊断
+                # fallback，不能拿其 "OFF" 回声作为关闭 transport 的安全证据。
+                status_query = self._cmd(
+                    "CELL_STATUS_QUERY",
+                    cell=self._cell_id,
+                )
+                safe_idle_confirmed = (
+                    await self.ensure_safe_idle()
+                    if status_query is not None
+                    else False
+                )
+                if (
+                    stop_confirmed is not True
+                    or safe_idle_confirmed is not True
+                ):
+                    logger.error(
+                        "[UXM] Signaling stop or SAFE_IDLE was not confirmed; "
+                        "transport remains open for safe recovery"
+                    )
+                    return False
 
             if self._visa_session:
                 self._visa_session.close()
