@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -948,3 +949,27 @@ def test_driver_mode_endpoint_docs_do_not_require_global_reload():
     assert "HAL 激活端点" in documentation
     assert "Use after editing instrument selection" not in reload_documentation
     assert "whole-HAL recovery" in reload_documentation
+
+
+def test_live_save_guidance_does_not_require_global_reload():
+    repo_root = Path(__file__).resolve().parents[2]
+    stale_guidance = {
+        "api-service/app/hal/base.py": "后重新加载 HAL",
+        "api-service/app/services/instrument_hal_service.py": (
+            "correct IP/port and reload HAL"
+        ),
+        "api-service/app/api/instrument.py": "请先保存配置并重新加载 HAL",
+        "api-service/app/services/base_station_binding.py": (
+            "reload HAL after BaseStation model change"
+        ),
+        "gui/src/features/Equipment/diagnosticTarget.ts": (
+            "请先保存配置并重新加载 HAL"
+        ),
+        "scripts/onsite-run-channel-throughput.sh": (
+            "驱动模式已切 Real + 重新加载驱动"
+        ),
+    }
+
+    for relative_path, stale_text in stale_guidance.items():
+        source = (repo_root / relative_path).read_text(encoding="utf-8")
+        assert stale_text not in source, relative_path

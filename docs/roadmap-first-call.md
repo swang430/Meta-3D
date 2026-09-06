@@ -5113,9 +5113,10 @@ readiness 绿色；GUI 会展示 409 的 blocker 身份和原因。最终输入�
 `compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过；修复后 fresh 独立尾审
 P1/P2/P3=0。Codex R1 进一步发现安全驻车后的同配置 F64 被误当作普通断开态重建，已收窄为仅当
 `DISCONNECTED + local_control_reserved=true + local_release_failed=false` 且类、模式、规范化配置完全一致时
-幂等复用；普通断开态或释放失败仍强制重建。R1 同时指出两处仍暗示日常保存需要全局 reload 的旧文案，
-现已统一改为“全局恢复兜底”。R1 修复后受影响链 `162 passed`、全后端
-`6438 passed / 5 skipped`、受影响 GUI 合同 `23 passed`、production build、`compileall`、单一
+幂等复用；普通断开态或释放失败仍强制重建。R1 同时指出活运行提示仍有一组镜像暗示日常保存需要
+全局 reload，现已逐一改为“保存后确认类别 HAL 激活；全局 reload 仅作失败恢复”。R1 修复后受影响链
+`162 passed`、最终文案消费链与规则门 `238 passed`、全后端 `6438 passed / 5 skipped`、受影响 GUI
+合同 `23 passed`（末次文案定点 `14 passed`）、production build、`compileall`、单一
 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式 provenance；
 本地验证不替代现场复验。
 

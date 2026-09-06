@@ -2777,7 +2777,7 @@ def _resolve_diagnostic_tcp_target(
         if default_port is None:
             return None, None, (
                 "单会话仪表未配置显式连接端口或完整 VISA resource；"
-                "请保存完整配置并重新加载 HAL"
+                "请保存完整配置并确认对应类别 HAL 已激活"
             )
         port = default_port
     return host, port, None
@@ -2801,7 +2801,8 @@ def _reconcile_diagnostic_target_with_live_driver(
     if not isinstance(driver_config, dict):
         if must_match:
             return None, None, (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 if require_saved_match and not override_requested
                 else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
             )
@@ -2813,7 +2814,8 @@ def _reconcile_diagnostic_target_with_live_driver(
     if live_error or not live_ip:
         if must_match:
             prefix = (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 if require_saved_match and not override_requested
                 else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
             )
@@ -2831,7 +2833,10 @@ def _reconcile_diagnostic_target_with_live_driver(
             break
     if actual_port is None:
         if must_match:
-            return None, None, "无法核实活动 HAL 会话的实际端口；请重新加载 HAL"
+            return None, None, (
+                "无法核实活动 HAL 会话的实际端口；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
+            )
         return requested_ip, requested_port, target_error
     if must_match and (
         requested_ip != live_ip or requested_port != actual_port
@@ -2839,11 +2844,11 @@ def _reconcile_diagnostic_target_with_live_driver(
         if require_saved_match and not override_requested:
             return None, None, (
                 "已保存配置与活动 HAL 会话目标不一致；"
-                "请重新加载 HAL 后再操作"
+                "请重新保存配置并确认对应类别 HAL 激活成功后再操作"
             )
         return None, None, (
             "请求体覆盖目标与活动 HAL 会话目标不一致；"
-            "请先保存配置并重新加载 HAL"
+            "请先保存配置并确认对应类别 HAL 激活成功"
         )
     return live_ip, actual_port, None
 
@@ -2900,18 +2905,22 @@ def _single_session_saved_target_validator(
 
         driver_config = getattr(driver, "config", None)
         if not isinstance(driver_config, dict):
-            return "无法核实活动 HAL 会话目标；请重新加载 HAL"
+            return (
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
+            )
         live_identity = _canonical_identity(driver_config)
         live_ip, _live_port, _live_resource, live_error, _, _ = live_identity
         if live_error or not live_ip:
             return (
-                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                "无法核实活动 HAL 会话目标；请重新保存配置以激活对应类别 HAL，"
+                "激活失败时再使用全局重新加载恢复"
                 + (f": {live_error}" if live_error else "")
             )
         if current_identity != live_identity:
             return (
                 "已保存配置与活动 HAL 会话目标不一致；"
-                "请重新加载 HAL 后再操作"
+                "请重新保存配置并确认对应类别 HAL 激活成功后再操作"
             )
         return None
 
@@ -2924,7 +2933,7 @@ def _single_session_override_error(
     if override_requested and category_key in {"baseStation", "channelEmulator"}:
         return (
             "基站/信道仿真器为单会话控制类别，不允许一次性地址覆盖；"
-            "请先保存配置并重新加载 HAL"
+            "请先保存配置并确认对应类别 HAL 激活成功"
         )
     return None
 
@@ -2942,7 +2951,7 @@ async def test_instrument_connection(
     如果是 SCPI 协议，发送 *IDN? 查询。
 
     非单会话仪表支持请求体覆盖 IP/Port。基站/信道仿真器类别必须先保存地址并
-    reload HAL，再复用唯一活动会话，禁止用临时地址另开连接。
+    确认对应类别 HAL 自动激活成功，再复用唯一活动会话，禁止用临时地址另开连接。
     """
     import socket
     import time

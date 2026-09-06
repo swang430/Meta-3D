@@ -81,7 +81,7 @@ export function buildDiagnosticTarget(
   if (singleSession) {
     if (draftEndpoint.trim() !== savedEndpoint.trim()) {
       return {
-        error: '单会话仪表地址已修改；请先保存配置并重新加载 HAL',
+        error: '单会话仪表地址已修改；请先保存配置并确认对应类别 HAL 激活成功',
       }
     }
     return { payload: {} }

@@ -971,7 +971,8 @@ class InstrumentHALService:
                             logger.warning(
                                 f"[HAL] {cat.category_key}: preflight failed "
                                 f"({reason}); skipping driver.connect() — set the "
-                                f"correct IP/port and reload HAL."
+                                f"correct IP/port, save it, and confirm category "
+                                f"HAL activation."
                             )
                             if conn:
                                 conn.status = "error"
