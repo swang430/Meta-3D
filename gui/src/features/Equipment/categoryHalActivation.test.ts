@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { commitThenActivateCategory } from './categoryHalActivation.ts'
+import { diagnosticErrorMessage } from './diagnosticTarget.ts'
 
 test('committed instrument write is followed by activation for the same category', async () => {
   const calls: string[] = []
@@ -94,4 +95,27 @@ test('automatic category activation remains separate from LabProfile sync', () =
   const helper = readFileSync(new URL('./categoryHalActivation.ts', import.meta.url), 'utf8')
 
   assert.doesNotMatch(helper, /syncCurrentInstrumentBinding|LabProfile|sync-current/)
+})
+
+test('activation refusal exposes the execution or lease blocker reason', () => {
+  const message = diagnosticErrorMessage({
+    message: 'Request failed with status code 409',
+    response: {
+      data: {
+        reason: 'HAL category activation refused: 1 active blocker(s).',
+        blockers: [
+          {
+            kind: 'execution',
+            name: '暗室首测',
+            status: 'running',
+            detail: 'execution is still active',
+          },
+        ],
+      },
+    },
+  })
+
+  assert.match(message, /HAL category activation refused/)
+  assert.match(message, /暗室首测/)
+  assert.match(message, /execution is still active/)
 })

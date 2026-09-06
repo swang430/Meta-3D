@@ -6,10 +6,34 @@ export type DiagnosticTarget = {
 export function diagnosticErrorMessage(error: unknown): string {
   const candidate = error as {
     message?: string
-    response?: { data?: { detail?: unknown } }
+    response?: {
+      data?: {
+        detail?: unknown
+        reason?: unknown
+        blockers?: unknown
+      }
+    }
   }
-  const detail = candidate?.response?.data?.detail
+  const data = candidate?.response?.data
+  const detail = data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
+  const reason = data?.reason
+  if (typeof reason === 'string' && reason.trim()) {
+    const blockers = Array.isArray(data?.blockers)
+      ? data.blockers.flatMap((raw) => {
+          if (raw === null || typeof raw !== 'object') return []
+          const blocker = raw as Record<string, unknown>
+          const parts = ['name', 'kind', 'status', 'detail'].flatMap((key) => {
+            const value = blocker[key]
+            return typeof value === 'string' && value.trim() ? [value.trim()] : []
+          })
+          return parts.length ? [parts.join(' / ')] : []
+        })
+      : []
+    return blockers.length
+      ? `${reason.trim()}：${blockers.join('；')}`
+      : reason.trim()
+  }
   if (typeof candidate?.message === 'string' && candidate.message.trim()) {
     return candidate.message
   }

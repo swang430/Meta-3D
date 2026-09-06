@@ -118,6 +118,44 @@ class _FailingConnectDriver(_RecordingDriver):
         return False
 
 
+class _CancellableConnectDriver(_RecordingDriver):
+    instances: list["_CancellableConnectDriver"] = []
+    connect_started: asyncio.Event
+    connect_release: asyncio.Event
+
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        self.session_open = False
+        type(self).instances.append(self)
+
+    async def connect(self):
+        self.session_open = True
+        type(self).connect_started.set()
+        await type(self).connect_release.wait()
+        self._status = InstrumentStatus.READY
+        return True
+
+    async def disconnect(self):
+        self.disconnect_calls += 1
+        self.session_open = False
+        self._status = InstrumentStatus.DISCONNECTED
+        return True
+
+
+class _CancellableDisconnectDriver(_RecordingDriver):
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        self.disconnect_started = asyncio.Event()
+        self.disconnect_release = asyncio.Event()
+
+    async def disconnect(self):
+        self.disconnect_calls += 1
+        self.disconnect_started.set()
+        await self.disconnect_release.wait()
+        self._status = InstrumentStatus.DISCONNECTED
+        return True
+
+
 def _seed_category(db, category_key: str, *, display_order: int) -> InstrumentCategory:
     category = InstrumentCategory(
         id=uuid.uuid4(),
@@ -384,6 +422,11 @@ def test_non_cmw_disconnect_refusal_stops_replacement_and_removes_stale_object(
         "channelEmulator": old_f64,
         "baseStation": untouched_base,
     })
+    service.last_readiness_report = _readiness_with_rows(
+        db,
+        "channelEmulator",
+        "baseStation",
+    )
     _install_global_service(monkeypatch, service)
 
     with pytest.raises(HALCategoryActivationError, match="断开未确认"):
@@ -392,6 +435,96 @@ def test_non_cmw_disconnect_refusal_stops_replacement_and_removes_stale_object(
     assert old_f64.disconnect_calls == 1
     assert "channelEmulator" not in service.drivers
     assert service.drivers["baseStation"] is untouched_base
+    rows = {
+        row.category: row
+        for row in service.last_readiness_report.drivers
+    }
+    assert rows["channelEmulator"].status == "fail"
+    assert rows["baseStation"].status == "ok"
+
+
+def test_cancel_during_disconnect_waits_for_terminal_cleanup_and_marks_not_ready(
+    monkeypatch,
+    db,
+):
+    category = _seed_category(db, "baseStation", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {"baseStation": {"baseStation-MODEL": _RecordingDriver}},
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    resolved = service._resolve_category_runtime(db, category)
+    assert resolved is not None
+    old_base = _CancellableDisconnectDriver(
+        resolved.instrument_id,
+        {"model": "OLD"},
+    )
+    old_base._status = InstrumentStatus.READY
+    service.drivers["baseStation"] = old_base
+    service.last_readiness_report = _readiness_with_rows(db, "baseStation")
+    _install_global_service(monkeypatch, service)
+
+    async def _scenario():
+        task = asyncio.create_task(activate_hal_category_atomic("baseStation"))
+        await old_base.disconnect_started.wait()
+        task.cancel()
+        old_base.disconnect_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
+
+    assert old_base.disconnect_calls == 1
+    assert "baseStation" not in service.drivers
+    row = next(
+        row for row in service.last_readiness_report.drivers
+        if row.category == "baseStation"
+    )
+    assert row.status == "fail"
+
+
+def test_cancel_during_connect_closes_orphan_session_and_marks_not_ready(
+    monkeypatch,
+    db,
+):
+    _seed_category(db, "baseStation", display_order=1)
+    _CancellableConnectDriver.instances = []
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "baseStation": {
+                "baseStation-MODEL": _CancellableConnectDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    service.last_readiness_report = _readiness_with_rows(db, "baseStation")
+    _install_global_service(monkeypatch, service)
+
+    async def _scenario():
+        _CancellableConnectDriver.connect_started = asyncio.Event()
+        _CancellableConnectDriver.connect_release = asyncio.Event()
+        task = asyncio.create_task(activate_hal_category_atomic("baseStation"))
+        await _CancellableConnectDriver.connect_started.wait()
+        task.cancel()
+        _CancellableConnectDriver.connect_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
+
+    assert len(_CancellableConnectDriver.instances) == 1
+    created = _CancellableConnectDriver.instances[0]
+    assert created.disconnect_calls == 1
+    assert created.session_open is False
+    assert "baseStation" not in service.drivers
+    row = next(
+        row for row in service.last_readiness_report.drivers
+        if row.category == "baseStation"
+    )
+    assert row.status == "fail"
 
 
 def test_inactive_category_unloads_only_target(monkeypatch, db):
@@ -480,6 +613,12 @@ def test_targeted_park_failure_is_reported_as_activation_failure(monkeypatch, db
     with pytest.raises(HALCategoryActivationError, match="驻车失败"):
         asyncio.run(activate_hal_category_atomic("baseStation"))
 
+    row = next(
+        row for row in service.last_readiness_report.drivers
+        if row.category == "baseStation"
+    )
+    assert row.status == "fail"
+
 
 def test_targeted_park_false_is_not_reported_as_activation_success(monkeypatch, db):
     from app.services import instrument_test_lease as lease_mod
@@ -504,6 +643,12 @@ def test_targeted_park_false_is_not_reported_as_activation_success(monkeypatch, 
 
     with pytest.raises(HALCategoryActivationError, match="驻车未确认"):
         asyncio.run(activate_hal_category_atomic("baseStation"))
+
+    row = next(
+        row for row in service.last_readiness_report.drivers
+        if row.category == "baseStation"
+    )
+    assert row.status == "fail"
 
 
 @pytest.mark.parametrize(

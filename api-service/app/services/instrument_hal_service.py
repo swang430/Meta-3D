@@ -994,7 +994,51 @@ class InstrumentHALService:
                     # through to driver.connect() (still surfaces ok/scpi).
 
                 try:
-                    success = await driver.connect()
+                    # A category activation can be cancelled while a real
+                    # driver is opening its VISA/socket session.  Letting the
+                    # caller unwind immediately would orphan that session: the
+                    # driver has not been published in ``self.drivers`` yet,
+                    # so no later lifecycle operation can find and close it.
+                    # Finish connect to a terminal result, then close the
+                    # unpublished object before propagating cancellation.
+                    from app.services.instrument_test_lease import (
+                        await_completion_despite_cancellation,
+                    )
+
+                    connect_outcome = await await_completion_despite_cancellation(
+                        driver.connect()
+                    )
+                    connect_cancellation = (
+                        connect_outcome.delayed_cancellation
+                        or (
+                            connect_outcome.error
+                            if isinstance(connect_outcome.error, asyncio.CancelledError)
+                            else None
+                        )
+                    )
+                    if connect_cancellation is not None:
+                        cleanup = await await_completion_despite_cancellation(
+                            driver.disconnect()
+                        )
+                        cleanup_error = cleanup.error
+                        if cleanup_error is None and cleanup.value is not True:
+                            cleanup_error = RuntimeError(
+                                "cancelled connect cleanup was not confirmed"
+                            )
+                        if cleanup_error is not None:
+                            setattr(
+                                connect_cancellation,
+                                "instrument_activation_error",
+                                cleanup_error,
+                            )
+                            connect_cancellation.add_note(
+                                "cancelled HAL connect cleanup also failed: "
+                                f"{type(cleanup_error).__name__}: {cleanup_error}"
+                            )
+                        raise connect_cancellation
+                    if connect_outcome.error is not None:
+                        raise connect_outcome.error
+                    success = connect_outcome.value
                     if success:
                         self.drivers[cat.category_key] = driver
                         # 真假按**这台驱动自己**的标记，不按全局模式（P1-48）：
@@ -1777,11 +1821,66 @@ def _activation_result(
     )
 
 
+def _mark_category_readiness_failed(
+    service: InstrumentHALService,
+    category_key: str,
+    detail: str,
+) -> None:
+    """Replace a target's stale green readiness after lifecycle failure."""
+    report = service.last_readiness_report
+    if report is None:
+        return
+    from app.services.readiness import (
+        DriverReadinessRow,
+        ReadinessReport,
+        build_subnet_reachability,
+    )
+
+    rows: List[DriverReadinessRow] = []
+    target_found = False
+    for row in report.drivers:
+        if row.category != category_key:
+            rows.append(row)
+            continue
+        target_found = True
+        rows.append(DriverReadinessRow(
+            category=row.category,
+            model=row.model,
+            endpoint=row.endpoint,
+            status="fail",
+            detail=detail,
+            extras=row.extras,
+            fail_kind="scpi",
+            network_reachable=row.network_reachable,
+        ))
+    if not target_found:
+        rows.append(DriverReadinessRow(
+            category=category_key,
+            model="(activation failed)",
+            endpoint="",
+            status="fail",
+            detail=detail,
+            fail_kind="scpi",
+        ))
+    service.last_readiness_report = ReadinessReport(
+        drivers=rows,
+        lab_profile=report.lab_profile,
+        calibration=report.calibration,
+        dut_attach=report.dut_attach,
+        generated_at_iso=datetime.utcnow().isoformat(),
+        subnets=build_subnet_reachability(rows),
+    )
+
+
 async def _disconnect_category_driver(
     service: InstrumentHALService,
     category_key: str,
 ) -> None:
     """Safely detach one runtime; never leave a stale non-CMW entry live."""
+    from app.services.instrument_test_lease import (
+        await_completion_despite_cancellation,
+    )
+
     driver = service.drivers.get(category_key)
     if driver is None:
         return
@@ -1789,26 +1888,52 @@ async def _disconnect_category_driver(
         getattr(driver, "adapter_id", None) == "cmw500"
         and not is_mock_driver(driver)
     )
-    try:
-        disconnected = await driver.disconnect()
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
+    outcome = await await_completion_despite_cancellation(driver.disconnect())
+    if outcome.error is not None:
+        exc = outcome.error
         if not real_cmw:
             service.drivers.pop(category_key, None)
-        raise HALCategoryActivationError(
+        activation_error = HALCategoryActivationError(
             f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
-        ) from exc
+        )
+        _mark_category_readiness_failed(service, category_key, str(activation_error))
+        cancellation = outcome.delayed_cancellation or (
+            exc if isinstance(exc, asyncio.CancelledError) else None
+        )
+        if cancellation is not None:
+            setattr(cancellation, "instrument_activation_error", activation_error)
+            cancellation.add_note(str(activation_error))
+            raise cancellation
+        raise activation_error from exc
+    disconnected = outcome.value
     if disconnected is not True:
         if real_cmw:
-            raise HALCategoryActivationError(
+            activation_error = HALCategoryActivationError(
                 "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
             )
-        service.drivers.pop(category_key, None)
-        raise HALCategoryActivationError(
-            f"{category_key} 旧驱动断开未确认；移除旧 runtime 并拒绝激活"
-        )
+        else:
+            service.drivers.pop(category_key, None)
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动断开未确认；移除旧 runtime 并拒绝激活"
+            )
+        _mark_category_readiness_failed(service, category_key, str(activation_error))
+        if outcome.delayed_cancellation is not None:
+            setattr(
+                outcome.delayed_cancellation,
+                "instrument_activation_error",
+                activation_error,
+            )
+            outcome.delayed_cancellation.add_note(str(activation_error))
+            raise outcome.delayed_cancellation
+        raise activation_error
     service.drivers.pop(category_key, None)
+    if outcome.delayed_cancellation is not None:
+        _mark_category_readiness_failed(
+            service,
+            category_key,
+            f"{category_key} 激活已取消，旧 runtime 已安全断开",
+        )
+        raise outcome.delayed_cancellation
 
 
 async def activate_hal_category_atomic(
@@ -1873,9 +1998,17 @@ async def activate_hal_category_atomic(
                     result = _activation_result(category_key, "unchanged", loaded)
                 else:
                     await _disconnect_category_driver(service, category_key)
-                    rows = await service._initialize_from_db(
-                        only_category_key=category_key
-                    )
+                    try:
+                        rows = await service._initialize_from_db(
+                            only_category_key=category_key
+                        )
+                    except asyncio.CancelledError:
+                        _mark_category_readiness_failed(
+                            service,
+                            category_key,
+                            f"{category_key} 激活在连接期间已取消",
+                        )
+                        raise
                     fresh = service.drivers.get(category_key)
                     if fresh is None:
                         row = rows.get(category_key)
@@ -1894,18 +2027,27 @@ async def activate_hal_category_atomic(
         try:
             parked = await park_idle_instrument(category_key)
             if parked is not True:
-                raise HALCategoryActivationError(
+                error = HALCategoryActivationError(
                     f"{category_key} 类别 HAL 激活后的安全驻车未确认"
                 )
+                _mark_category_readiness_failed(service, category_key, str(error))
+                raise error
         except asyncio.CancelledError:
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                f"{category_key} 类别 HAL 激活后的安全驻车已取消",
+            )
             raise
         except HALCategoryActivationError:
             raise
         except Exception as exc:
-            raise HALCategoryActivationError(
+            error = HALCategoryActivationError(
                 f"{category_key} 类别 HAL 激活后的安全驻车失败: "
                 f"{type(exc).__name__}: {exc}"
-            ) from exc
+            )
+            _mark_category_readiness_failed(service, category_key, str(error))
+            raise error from exc
     return result
 
 
