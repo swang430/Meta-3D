@@ -1862,6 +1862,10 @@ function EquipmentManager() {
           },
         }
       })
+      // The activation endpoint resolves the latest committed row, which may
+      // already be newer than this mutation's response when two saves race.
+      // Refetch instead of letting the earlier response remain a second truth.
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
       queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       if (updatedCategory.key === 'baseStation') {

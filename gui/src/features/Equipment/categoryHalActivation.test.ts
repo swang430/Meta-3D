@@ -82,6 +82,10 @@ test('equipment saves and driver-mode writes both use commit-then-activate orche
 
   assert.match(saveMutation, /commitThenActivateCategory\(/)
   assert.match(saveMutation, /activationError/)
+  assert.match(
+    saveMutation,
+    /invalidateQueries\(\{ queryKey: \['instruments', 'catalog'\] \}\)/,
+  )
   assert.match(driverModeControl, /commitThenActivateCategory\(/)
   assert.doesNotMatch(saveMutation, /请点击页面顶部「↻ 重新加载驱动」/)
 })

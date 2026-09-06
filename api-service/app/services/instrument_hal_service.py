@@ -1799,9 +1799,14 @@ async def _disconnect_category_driver(
         raise HALCategoryActivationError(
             f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
         ) from exc
-    if real_cmw and disconnected is not True:
+    if disconnected is not True:
+        if real_cmw:
+            raise HALCategoryActivationError(
+                "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
+            )
+        service.drivers.pop(category_key, None)
         raise HALCategoryActivationError(
-            "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
+            f"{category_key} 旧驱动断开未确认；移除旧 runtime 并拒绝激活"
         )
     service.drivers.pop(category_key, None)
 
@@ -1826,16 +1831,29 @@ async def activate_hal_category_atomic(
                 )
             if not category.is_active:
                 await _disconnect_category_driver(service, category_key)
+                # Remove the target's old readiness row as part of the same
+                # category-scoped lifecycle update.  Leaving the previous
+                # READY row behind would make the refreshed cockpit claim an
+                # unloaded runtime was still usable.
+                await service._initialize_from_db(
+                    only_category_key=category_key
+                )
                 result = _activation_result(category_key, "inactive")
             else:
                 if not category.selected_model_id:
                     await _disconnect_category_driver(service, category_key)
+                    await service._initialize_from_db(
+                        only_category_key=category_key
+                    )
                     raise HALCategoryConfigurationError(
                         f"{category_key} has no selected model"
                     )
                 resolved = service._resolve_category_runtime(db, category)
                 if resolved is None:
                     await _disconnect_category_driver(service, category_key)
+                    await service._initialize_from_db(
+                        only_category_key=category_key
+                    )
                     raise HALCategoryConfigurationError(
                         f"{category_key} committed configuration cannot resolve a driver"
                     )
@@ -1870,16 +1888,22 @@ async def activate_hal_category_atomic(
         finally:
             db.close()
 
-    if result.status == "activated":
+    if result.status in {"activated", "unchanged"}:
         from app.services.instrument_test_lease import park_idle_instrument
 
         try:
-            await park_idle_instrument(category_key)
+            parked = await park_idle_instrument(category_key)
+            if parked is not True:
+                raise HALCategoryActivationError(
+                    f"{category_key} 类别 HAL 激活后的安全驻车未确认"
+                )
         except asyncio.CancelledError:
+            raise
+        except HALCategoryActivationError:
             raise
         except Exception as exc:
             raise HALCategoryActivationError(
-                f"{category_key} 新驱动激活后的安全驻车失败: "
+                f"{category_key} 类别 HAL 激活后的安全驻车失败: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
     return result

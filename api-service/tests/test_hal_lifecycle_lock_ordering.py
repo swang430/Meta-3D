@@ -135,7 +135,7 @@ def test_category_activation_parks_outside_the_lifecycle_lock():
     )
     guard_line = next(
         i for i, line in enumerate(lines)
-        if "if result.status == \"activated\"" in line
+        if "if result.status in" in line
     )
     lock_indent = len(lines[lock_line]) - len(lines[lock_line].lstrip())
     guard_indent = len(lines[guard_line]) - len(lines[guard_line].lstrip())

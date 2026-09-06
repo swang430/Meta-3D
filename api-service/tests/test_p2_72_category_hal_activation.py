@@ -246,6 +246,8 @@ def test_activation_replaces_only_target_driver(monkeypatch, db):
 
 
 def test_matching_connected_runtime_is_unchanged(monkeypatch, db):
+    from app.services import instrument_test_lease as lease_mod
+
     category = _seed_category(db, "baseStation", display_order=1)
     monkeypatch.setattr(
         hal_mod,
@@ -259,12 +261,20 @@ def test_matching_connected_runtime_is_unchanged(monkeypatch, db):
     loaded._status = InstrumentStatus.READY
     service.drivers["baseStation"] = loaded
     _install_global_service(monkeypatch, service)
+    parked: list[str] = []
+
+    async def _park_target(category_key: str) -> bool:
+        parked.append(category_key)
+        return True
+
+    monkeypatch.setattr(lease_mod, "park_idle_instrument", _park_target)
 
     result = asyncio.run(activate_hal_category_atomic("baseStation"))
 
     assert result.status == "unchanged"
     assert loaded.disconnect_calls == 0
     assert service.drivers["baseStation"] is loaded
+    assert parked == ["baseStation"]
 
 
 @pytest.mark.parametrize(
@@ -351,6 +361,39 @@ def test_real_cmw_disconnect_refusal_keeps_old_object(monkeypatch, db):
     assert service.drivers["baseStation"] is original_cmw
 
 
+def test_non_cmw_disconnect_refusal_stops_replacement_and_removes_stale_object(
+    monkeypatch,
+    db,
+):
+    _seed_category(db, "channelEmulator", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "channelEmulator": {
+                "channelEmulator-MODEL": _RecordingDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    old_f64 = _RecordingDriver("old-f64", {"model": "OLD"})
+    old_f64.disconnect_result = False
+    old_f64._status = InstrumentStatus.READY
+    untouched_base = object()
+    service.drivers.update({
+        "channelEmulator": old_f64,
+        "baseStation": untouched_base,
+    })
+    _install_global_service(monkeypatch, service)
+
+    with pytest.raises(HALCategoryActivationError, match="断开未确认"):
+        asyncio.run(activate_hal_category_atomic("channelEmulator"))
+
+    assert old_f64.disconnect_calls == 1
+    assert "channelEmulator" not in service.drivers
+    assert service.drivers["baseStation"] is untouched_base
+
+
 def test_inactive_category_unloads_only_target(monkeypatch, db):
     category = _seed_category(db, "baseStation", display_order=1)
     category.is_active = False
@@ -363,6 +406,11 @@ def test_inactive_category_unloads_only_target(monkeypatch, db):
         "baseStation": old_base,
         "channelEmulator": original_f64,
     })
+    service.last_readiness_report = _readiness_with_rows(
+        db,
+        "baseStation",
+        "channelEmulator",
+    )
     _install_global_service(monkeypatch, service)
 
     result = asyncio.run(activate_hal_category_atomic("baseStation"))
@@ -371,6 +419,9 @@ def test_inactive_category_unloads_only_target(monkeypatch, db):
     assert old_base.disconnect_calls == 1
     assert "baseStation" not in service.drivers
     assert service.drivers["channelEmulator"] is original_f64
+    assert {
+        row.category for row in service.last_readiness_report.drivers
+    } == {"channelEmulator"}
 
 
 def test_invalid_committed_configuration_removes_stale_target(monkeypatch, db):
@@ -385,6 +436,11 @@ def test_invalid_committed_configuration_removes_stale_target(monkeypatch, db):
         "baseStation": old_base,
         "channelEmulator": original_f64,
     })
+    service.last_readiness_report = _readiness_with_rows(
+        db,
+        "baseStation",
+        "channelEmulator",
+    )
     _install_global_service(monkeypatch, service)
 
     with pytest.raises(
@@ -396,6 +452,12 @@ def test_invalid_committed_configuration_removes_stale_target(monkeypatch, db):
     assert old_base.disconnect_calls == 1
     assert "baseStation" not in service.drivers
     assert service.drivers["channelEmulator"] is original_f64
+    rows = {
+        row.category: row
+        for row in service.last_readiness_report.drivers
+    }
+    assert rows["baseStation"].status == "skipped"
+    assert rows["channelEmulator"].status == "ok"
 
 
 def test_targeted_park_failure_is_reported_as_activation_failure(monkeypatch, db):
@@ -416,6 +478,31 @@ def test_targeted_park_failure_is_reported_as_activation_failure(monkeypatch, db
     monkeypatch.setattr(lease_mod, "park_idle_instrument", _park_fails)
 
     with pytest.raises(HALCategoryActivationError, match="驻车失败"):
+        asyncio.run(activate_hal_category_atomic("baseStation"))
+
+
+def test_targeted_park_false_is_not_reported_as_activation_success(monkeypatch, db):
+    from app.services import instrument_test_lease as lease_mod
+
+    _seed_category(db, "baseStation", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {"baseStation": {"baseStation-MODEL": _RecordingDriver}},
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    _install_global_service(monkeypatch, service)
+
+    async def _park_unconfirmed(_category_key: str) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        lease_mod,
+        "park_idle_instrument",
+        _park_unconfirmed,
+    )
+
+    with pytest.raises(HALCategoryActivationError, match="驻车未确认"):
         asyncio.run(activate_hal_category_atomic("baseStation"))
 
 
