@@ -134,6 +134,12 @@ class _ReacquirableParkedDriver(_RecordingDriver):
         if self.acquire_result is True:
             self.local_control_reserved = False
             self._status = InstrumentStatus.READY
+        else:
+            # Mirror RealPropsimF64Driver: connect() records a transient ERROR,
+            # while the durable Local-control reservation remains in force.
+            self._status = InstrumentStatus.ERROR
+            self.local_control_reserved = True
+            self.local_release_failed = False
         return self.acquire_result
 
     async def disconnect(self):
@@ -155,6 +161,11 @@ class _ReacquirableParkedBaseStationDriver(_ReacquirableParkedDriver):
         if self.acquire_result is True:
             self.local_control_reserved = False
             self._status = InstrumentStatus.READY
+        else:
+            # Mirror RealUxmDriver/RealCmw500Driver after a failed reconnect.
+            self._status = InstrumentStatus.ERROR
+            self.local_control_reserved = True
+            self.local_release_failed = False
         return BaseStationRemoteSessionResult(
             adapter_id=self.adapter_id,
             session_token="replacement-session" if self.acquire_result else "",
@@ -523,6 +534,13 @@ def test_failed_parked_runtime_reacquire_preserves_old_runtime(monkeypatch, db):
     assert loaded.lifecycle_calls == ["acquire"]
     assert service.drivers[category_key] is loaded
 
+    with pytest.raises(HALCategoryActivationError, match="重新取得 Remote"):
+        asyncio.run(activate_hal_category_atomic(category_key))
+
+    assert loaded.lifecycle_calls == ["acquire", "acquire"]
+    assert loaded.disconnect_calls == 0
+    assert service.drivers[category_key] is loaded
+
 
 def test_failed_teardown_after_parked_reacquire_preserves_old_runtime(
     monkeypatch,
@@ -848,6 +866,14 @@ async def test_hal_shutdown_preserves_parked_uxm_when_reacquire_fails():
         await service.shutdown()
 
     assert driver.lifecycle_calls == ["acquire"]
+    assert service.drivers == {"baseStation": driver}
+    assert service._initialized is True
+
+    with pytest.raises(RuntimeError, match="baseStation UXM.*安全断开"):
+        await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire", "acquire"]
+    assert driver.disconnect_calls == 0
     assert service.drivers == {"baseStation": driver}
     assert service._initialized is True
 

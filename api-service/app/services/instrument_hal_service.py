@@ -1918,13 +1918,12 @@ async def _disconnect_category_driver(
     recoverable_base_station = (
         _requires_recoverable_base_station_disconnect(driver)
     )
-    safely_parked = (
-        getattr(driver, "status", None) is InstrumentStatus.DISCONNECTED
-        and getattr(driver, "local_control_reserved", None) is True
+    requires_remote_reacquire = (
+        getattr(driver, "local_control_reserved", None) is True
         and getattr(driver, "local_release_failed", None) is False
     )
     delayed_cancellation: asyncio.CancelledError | None = None
-    if safely_parked:
+    if requires_remote_reacquire:
         reacquire = await await_completion_despite_cancellation(
             driver.acquire_remote_control()
         )
@@ -1988,7 +1987,7 @@ async def _disconnect_category_driver(
     outcome = await await_completion_despite_cancellation(driver.disconnect())
     if outcome.error is not None:
         exc = outcome.error
-        if not (recoverable_base_station or safely_parked):
+        if not (recoverable_base_station or requires_remote_reacquire):
             service.drivers.pop(category_key, None)
         activation_error = HALCategoryActivationError(
             f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
@@ -2012,7 +2011,7 @@ async def _disconnect_category_driver(
             activation_error = HALCategoryActivationError(
                 "baseStation UXM 无法确认安全断开；保留旧 runtime 并拒绝激活"
             )
-        elif safely_parked:
+        elif requires_remote_reacquire:
             activation_error = HALCategoryActivationError(
                 f"{category_key} 旧驱动重新取得 Remote 后无法确认安全断开；"
                 "保留旧 runtime 并拒绝激活"

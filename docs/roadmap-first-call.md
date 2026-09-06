@@ -5131,7 +5131,15 @@ SAFE_IDLE 门；现让真实 UXM/CMW 的全局卸载复用同一类别安全断�
 失败则保留原 runtime 并拒绝卸载。旧实现的生命周期序列只有 `disconnect`，RED→GREEN 后 UXM/CMW
 均为 `acquire → disconnect`，UXM 重获失败保持已加载。R3 修复后的计划受影响链 `176 passed`、
 全后端 `6452 passed / 5 skipped`、`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check
-通过；GUI 未变，复用同一生产输入上既有 GUI 合同/build 结果。
+通过；GUI 未变，复用同一生产输入上既有 GUI 合同/build 结果。Codex R4 继续发现：安全驻车的
+F64/UXM/CMW 第一次重新取得 Remote 失败时，驱动会把瞬时连接状态记为 `ERROR`，但仍保留
+`local_control_reserved=true + local_release_failed=false` 这组持久 Local 控制权标记；旧逻辑第二次
+激活或 shutdown 因只认 `DISCONNECTED` 而绕过重获门。现安全 teardown 只用这组持久标记判断是否
+必须重获 Remote，瞬时 `ERROR` 不再改变控制权事实；同配置幂等复用仍严格要求
+`DISCONNECTED + Local 标记`，普通错误、释放失败与 Mock 不会被放宽。旧实现在第二次激活与第二次
+shutdown 回归均为 RED，修复后调用序列保持 `acquire → acquire` 且不触发 `disconnect`、原 runtime
+继续保留。最终受影响链 `176 passed`、全后端 `6452 passed / 5 skipped`、`compileall`、单一
+Alembic head `c5e7f9a1b3d6` 与 diff-check 通过；有界只读功能复核 P1/P2/P3=0。
 
 ## 🟢 P3 — Polish / tooling
 
