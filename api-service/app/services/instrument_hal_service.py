@@ -320,6 +320,15 @@ def is_mock_driver(driver) -> bool:
     return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
 
 
+def _requires_recoverable_base_station_disconnect(driver: Any) -> bool:
+    """Keep real base-station sessions reachable until teardown is proven."""
+
+    return (
+        getattr(driver, "adapter_id", None) in {"cmw500", "uxm"}
+        and not is_mock_driver(driver)
+    )
+
+
 @dataclass(frozen=True)
 class Cmw500Lte2x2Readiness:
     """Read-only preview bound to the selected LabProfile connection."""
@@ -1027,6 +1036,13 @@ class InstrumentHALService:
                                 "cancelled connect cleanup was not confirmed"
                             )
                         if cleanup_error is not None:
+                            # The connect finished and this unpublished real
+                            # base-station object still owns a recoverable
+                            # transport. Publish that exact runtime before
+                            # propagating cancellation so a later lifecycle
+                            # operation can retry the safe teardown.
+                            if _requires_recoverable_base_station_disconnect(driver):
+                                self.drivers[cat.category_key] = driver
                             setattr(
                                 connect_cancellation,
                                 "instrument_activation_error",
@@ -1409,32 +1425,41 @@ class InstrumentHALService:
             except asyncio.CancelledError:
                 pass
 
-        unsafe_cmw_disconnects: list[str] = []
+        unsafe_base_station_disconnects: list[str] = []
         for name, driver in list(self.drivers.items()):
-            real_cmw = (
-                getattr(driver, "adapter_id", None) == "cmw500"
-                and not is_mock_driver(driver)
+            recoverable_base_station = (
+                _requires_recoverable_base_station_disconnect(driver)
             )
+            adapter_label = {
+                "cmw500": "CMW500",
+                "uxm": "UXM",
+            }.get(getattr(driver, "adapter_id", None), "BaseStation")
             try:
                 disconnected = await driver.disconnect()
-                if real_cmw and disconnected is not True:
-                    unsafe_cmw_disconnects.append(name)
+                if recoverable_base_station and disconnected is not True:
+                    unsafe_base_station_disconnects.append(
+                        f"{name} {adapter_label}"
+                    )
                     logger.error(
-                        "CMW500 driver %s refused unsafe disconnect; retaining driver",
+                        "%s driver %s refused unsafe disconnect; retaining driver",
+                        adapter_label,
                         name,
                     )
                     continue
                 logger.info(f"Disconnected driver: {name}")
             except Exception as e:
                 logger.error(f"Error disconnecting {name}: {e}")
-                if real_cmw:
-                    unsafe_cmw_disconnects.append(name)
+                if recoverable_base_station:
+                    unsafe_base_station_disconnects.append(
+                        f"{name} {adapter_label}"
+                    )
                     continue
             self.drivers.pop(name, None)
 
-        if unsafe_cmw_disconnects:
+        if unsafe_base_station_disconnects:
             raise RuntimeError(
-                "baseStation CMW500 无法确认安全断开；HAL 保留恢复会话并拒绝卸载"
+                f"{', '.join(unsafe_base_station_disconnects)} 无法确认安全断开；"
+                "HAL 保留恢复会话并拒绝卸载"
             )
 
         self.drivers.clear()
@@ -1877,7 +1902,8 @@ async def _disconnect_category_driver(
     service: InstrumentHALService,
     category_key: str,
 ) -> None:
-    """Safely detach one runtime; never leave a stale non-CMW entry live."""
+    """Safely detach one runtime without bypassing a parked Local-control gate."""
+    from app.hal.base_station import BaseStationRemoteSessionResult
     from app.services.instrument_test_lease import (
         await_completion_despite_cancellation,
     )
@@ -1885,20 +1911,89 @@ async def _disconnect_category_driver(
     driver = service.drivers.get(category_key)
     if driver is None:
         return
-    real_cmw = (
-        getattr(driver, "adapter_id", None) == "cmw500"
-        and not is_mock_driver(driver)
+    adapter_id = getattr(driver, "adapter_id", None)
+    real_cmw = adapter_id == "cmw500" and not is_mock_driver(driver)
+    real_uxm = adapter_id == "uxm" and not is_mock_driver(driver)
+    recoverable_base_station = (
+        _requires_recoverable_base_station_disconnect(driver)
     )
+    safely_parked = (
+        getattr(driver, "status", None) is InstrumentStatus.DISCONNECTED
+        and getattr(driver, "local_control_reserved", None) is True
+        and getattr(driver, "local_release_failed", None) is False
+    )
+    delayed_cancellation: asyncio.CancelledError | None = None
+    if safely_parked:
+        reacquire = await await_completion_despite_cancellation(
+            driver.acquire_remote_control()
+        )
+        delayed_cancellation = reacquire.delayed_cancellation
+        if reacquire.error is not None:
+            exc = reacquire.error
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动无法重新取得 Remote；"
+                f"保留旧 runtime 并拒绝激活: {type(exc).__name__}: {exc}"
+            )
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                str(activation_error),
+            )
+            cancellation = delayed_cancellation or (
+                exc if isinstance(exc, asyncio.CancelledError) else None
+            )
+            if cancellation is not None:
+                setattr(
+                    cancellation,
+                    "instrument_activation_error",
+                    activation_error,
+                )
+                cancellation.add_note(str(activation_error))
+                raise cancellation
+            raise activation_error from exc
+
+        acquired = reacquire.value
+        if category_key == "baseStation":
+            reacquire_confirmed = (
+                isinstance(acquired, BaseStationRemoteSessionResult)
+                and acquired.acquired_confirmed is True
+                and bool(acquired.session_token)
+                and acquired.adapter_id == getattr(driver, "adapter_id", None)
+            )
+        elif category_key == "channelEmulator":
+            reacquire_confirmed = acquired is True
+        else:
+            reacquire_confirmed = False
+        if not reacquire_confirmed:
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动无法重新取得 Remote；"
+                "保留旧 runtime 并拒绝激活"
+            )
+            _mark_category_readiness_failed(
+                service,
+                category_key,
+                str(activation_error),
+            )
+            if delayed_cancellation is not None:
+                setattr(
+                    delayed_cancellation,
+                    "instrument_activation_error",
+                    activation_error,
+                )
+                delayed_cancellation.add_note(str(activation_error))
+                raise delayed_cancellation
+            raise activation_error
+
     outcome = await await_completion_despite_cancellation(driver.disconnect())
     if outcome.error is not None:
         exc = outcome.error
-        if not real_cmw:
+        if not (recoverable_base_station or safely_parked):
             service.drivers.pop(category_key, None)
         activation_error = HALCategoryActivationError(
             f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
         )
         _mark_category_readiness_failed(service, category_key, str(activation_error))
-        cancellation = outcome.delayed_cancellation or (
+        cancellation = delayed_cancellation or outcome.delayed_cancellation or (
             exc if isinstance(exc, asyncio.CancelledError) else None
         )
         if cancellation is not None:
@@ -1912,29 +2007,40 @@ async def _disconnect_category_driver(
             activation_error = HALCategoryActivationError(
                 "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
             )
+        elif real_uxm:
+            activation_error = HALCategoryActivationError(
+                "baseStation UXM 无法确认安全断开；保留旧 runtime 并拒绝激活"
+            )
+        elif safely_parked:
+            activation_error = HALCategoryActivationError(
+                f"{category_key} 旧驱动重新取得 Remote 后无法确认安全断开；"
+                "保留旧 runtime 并拒绝激活"
+            )
         else:
             service.drivers.pop(category_key, None)
             activation_error = HALCategoryActivationError(
                 f"{category_key} 旧驱动断开未确认；移除旧 runtime 并拒绝激活"
             )
         _mark_category_readiness_failed(service, category_key, str(activation_error))
-        if outcome.delayed_cancellation is not None:
+        cancellation = delayed_cancellation or outcome.delayed_cancellation
+        if cancellation is not None:
             setattr(
-                outcome.delayed_cancellation,
+                cancellation,
                 "instrument_activation_error",
                 activation_error,
             )
-            outcome.delayed_cancellation.add_note(str(activation_error))
-            raise outcome.delayed_cancellation
+            cancellation.add_note(str(activation_error))
+            raise cancellation
         raise activation_error
     service.drivers.pop(category_key, None)
-    if outcome.delayed_cancellation is not None:
+    cancellation = delayed_cancellation or outcome.delayed_cancellation
+    if cancellation is not None:
         _mark_category_readiness_failed(
             service,
             category_key,
             f"{category_key} 激活已取消，旧 runtime 已安全断开",
         )
-        raise outcome.delayed_cancellation
+        raise cancellation
 
 
 async def activate_hal_category_atomic(

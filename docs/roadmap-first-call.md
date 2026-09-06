@@ -5118,7 +5118,14 @@ P1/P2/P3=0。Codex R1 进一步发现安全驻车后的同配置 F64 被误当�
 `162 passed`、最终文案消费链与规则门 `238 passed`、全后端 `6438 passed / 5 skipped`、受影响 GUI
 合同 `23 passed`（末次文案定点 `14 passed`）、production build、`compileall`、单一
 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式 provenance；
-本地验证不替代现场复验。
+本地验证不替代现场复验。Codex R2 进一步发现：安全驻车的 F64/UXM 在配置变化后不能绕过 Local
+控制门直接 teardown；现统一先重新取得 Remote，再执行安全断开，重取或断开失败均保留旧 runtime
+并拒绝激活。UXM 只有在停止信令与权威 SAFE_IDLE 同时确认后才关闭 transport；5G NR profile 当前
+没有权威 `CELL_STATUS_QUERY`，因此绝不把诊断性 `CELL_STATE_QUERY` 的 `OFF` 回声当作安全证明，
+无法确认时 fail-closed 并保留会话供恢复。类别激活、全局 shutdown/reload 与连接期间取消三条消费
+路径均保留未安全断开的真实 UXM/CMW；普通 F64 与 Mock 语义不变。R2 修复后受影响生命周期与规则门
+`189 passed`，最终全后端 `6449 passed / 5 skipped`，`compileall`、单一 Alembic head
+`c5e7f9a1b3d6` 与 diff-check 通过；最终只读独立功能复核 P1/P2/P3=0。
 
 ## 🟢 P3 — Polish / tooling
 

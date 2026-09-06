@@ -294,6 +294,18 @@ class TestDisconnectDoesNotKillPeers:
                 return True
 
             d.ensure_safe_idle = _confirmed_safe_idle
+        elif cls_name == "RealUxmDriver":
+            # 本测试只验证 ResourceManager 所有权，不验证 UXM 安全停机门。
+            # 给出已确认的停止与 SAFE_IDLE，才能合法到达 session.close()。
+            async def _confirmed_stop():
+                return True
+
+            async def _confirmed_safe_idle():
+                return True
+
+            d.stop_signaling = _confirmed_stop
+            d.ensure_safe_idle = _confirmed_safe_idle
+            d._cmd = lambda _name, **_fmt: "CONFIRMED:STATUS?"
 
         await d.disconnect()
 

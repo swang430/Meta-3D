@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -119,6 +119,50 @@ class _SafelyParkedDriver(_RecordingDriver):
         self.local_release_failed = False
 
 
+class _ReacquirableParkedDriver(_RecordingDriver):
+    adapter_id = "f64"
+
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        self.local_control_reserved = False
+        self.local_release_failed = False
+        self.acquire_result = True
+        self.lifecycle_calls: list[str] = []
+
+    async def acquire_remote_control(self):
+        self.lifecycle_calls.append("acquire")
+        if self.acquire_result is True:
+            self.local_control_reserved = False
+            self._status = InstrumentStatus.READY
+        return self.acquire_result
+
+    async def disconnect(self):
+        self.lifecycle_calls.append("disconnect")
+        self.disconnect_calls += 1
+        if self.local_control_reserved or self.disconnect_result is not True:
+            return False
+        self._status = InstrumentStatus.DISCONNECTED
+        return True
+
+
+class _ReacquirableParkedBaseStationDriver(_ReacquirableParkedDriver):
+    adapter_id = "uxm"
+
+    async def acquire_remote_control(self):
+        from app.hal.base_station import BaseStationRemoteSessionResult
+
+        self.lifecycle_calls.append("acquire")
+        if self.acquire_result is True:
+            self.local_control_reserved = False
+            self._status = InstrumentStatus.READY
+        return BaseStationRemoteSessionResult(
+            adapter_id=self.adapter_id,
+            session_token="replacement-session" if self.acquire_result else "",
+            acquired_confirmed=self.acquire_result is True,
+            warnings=(),
+        )
+
+
 class _FailingConnectDriver(_RecordingDriver):
     async def connect(self):
         type(self).connected_instrument_ids.append(self.instrument_id)
@@ -149,6 +193,14 @@ class _CancellableConnectDriver(_RecordingDriver):
         self.session_open = False
         self._status = InstrumentStatus.DISCONNECTED
         return True
+
+
+class _CancellableUxmConnectDriver(_CancellableConnectDriver):
+    adapter_id = "uxm"
+
+    async def disconnect(self):
+        self.disconnect_calls += 1
+        return False
 
 
 class _CancellableDisconnectDriver(_RecordingDriver):
@@ -398,6 +450,193 @@ def test_failed_local_release_is_not_reused_as_safely_parked(monkeypatch, db):
 
 
 @pytest.mark.parametrize(
+    ("category_key", "driver_class"),
+    [
+        ("channelEmulator", _ReacquirableParkedDriver),
+        ("baseStation", _ReacquirableParkedBaseStationDriver),
+    ],
+)
+def test_changed_safely_parked_runtime_is_reacquired_before_teardown(
+    monkeypatch,
+    db,
+    category_key,
+    driver_class,
+):
+    _seed_category(db, category_key, display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {category_key: {f"{category_key}-MODEL": driver_class}},
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    loaded = driver_class("parked-old-runtime", {"model": "STALE"})
+    loaded._status = InstrumentStatus.DISCONNECTED
+    loaded.local_control_reserved = True
+    service.drivers[category_key] = loaded
+    _install_global_service(monkeypatch, service)
+
+    result = asyncio.run(activate_hal_category_atomic(category_key))
+
+    assert result.status == "activated"
+    assert loaded.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers[category_key] is not loaded
+
+
+def test_failed_parked_runtime_reacquire_preserves_old_runtime(monkeypatch, db):
+    category_key = "channelEmulator"
+    _seed_category(db, category_key, display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            category_key: {
+                f"{category_key}-MODEL": _ReacquirableParkedDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    loaded = _ReacquirableParkedDriver(
+        "parked-old-runtime",
+        {"model": "STALE"},
+    )
+    loaded._status = InstrumentStatus.DISCONNECTED
+    loaded.local_control_reserved = True
+    loaded.acquire_result = False
+    service.drivers[category_key] = loaded
+    _install_global_service(monkeypatch, service)
+
+    with pytest.raises(HALCategoryActivationError, match="重新取得 Remote"):
+        asyncio.run(activate_hal_category_atomic(category_key))
+
+    assert loaded.lifecycle_calls == ["acquire"]
+    assert service.drivers[category_key] is loaded
+
+
+def test_failed_teardown_after_parked_reacquire_preserves_old_runtime(
+    monkeypatch,
+    db,
+):
+    category_key = "channelEmulator"
+    _seed_category(db, category_key, display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            category_key: {
+                f"{category_key}-MODEL": _ReacquirableParkedDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    loaded = _ReacquirableParkedDriver(
+        "parked-old-runtime",
+        {"model": "STALE"},
+    )
+    loaded._status = InstrumentStatus.DISCONNECTED
+    loaded.local_control_reserved = True
+    loaded.disconnect_result = False
+    service.drivers[category_key] = loaded
+    _install_global_service(monkeypatch, service)
+
+    with pytest.raises(HALCategoryActivationError, match="保留旧 runtime"):
+        asyncio.run(activate_hal_category_atomic(category_key))
+
+    assert loaded.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers[category_key] is loaded
+
+
+@pytest.mark.asyncio
+async def test_uxm_disconnect_keeps_transport_when_stop_is_unconfirmed():
+    from app.hal.uxm_base_station import RealUxmDriver
+
+    class _Session:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    driver = RealUxmDriver("uxm-old-runtime", {"ip": "192.0.2.20"})
+    session = _Session()
+    driver._visa_session = session
+    driver._session_token = "old-session"
+    driver.stop_signaling = AsyncMock(return_value=False)
+
+    assert await driver.disconnect() is False
+    assert driver._visa_session is session
+    assert driver._session_token == "old-session"
+    assert session.closed is False
+
+
+@pytest.mark.asyncio
+async def test_uxm_disconnect_keeps_transport_when_cell_is_not_confirmed_off():
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+
+    class _Session:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    driver = RealUxmDriver("uxm-old-runtime", {"ip": "192.0.2.20"})
+    session = _Session()
+    driver._visa_session = session
+    driver._session_token = "old-session"
+    driver._cmds = UxmLteNrIratProfile
+    driver._cell_id = UxmLteNrIratProfile.PRIMARY_CELL
+    driver._write = MagicMock()
+    driver._query = MagicMock(
+        side_effect=lambda command: (
+            "1"
+            if command == "*OPC?"
+            else "ON"
+        )
+    )
+
+    assert await driver.disconnect() is False
+    assert driver._visa_session is session
+    assert driver._session_token == "old-session"
+    assert session.closed is False
+    driver._query.assert_any_call("BSE:STATus:NR5G:CELL1?")
+
+
+@pytest.mark.asyncio
+async def test_uxm_disconnect_rejects_unverified_5g_state_fallback():
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.hal.uxm_command_profiles import Uxm5GNRTestAppProfile
+
+    class _Session:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    driver = RealUxmDriver("uxm-old-runtime", {"ip": "192.0.2.20"})
+    session = _Session()
+    driver._visa_session = session
+    driver._session_token = "old-session"
+    driver._cmds = Uxm5GNRTestAppProfile
+    driver._cell_id = Uxm5GNRTestAppProfile.PRIMARY_CELL
+    driver._write = MagicMock()
+    driver._query = MagicMock(
+        side_effect=lambda command: (
+            "1"
+            if command == "*OPC?"
+            else "OFF"
+        )
+    )
+
+    assert await driver.disconnect() is False
+    assert driver._visa_session is session
+    assert driver._session_token == "old-session"
+    assert session.closed is False
+    assert driver._query.call_args_list == [call("*OPC?")]
+
+
+@pytest.mark.parametrize(
     ("loaded_status", "loaded_config"),
     [
         (InstrumentStatus.DISCONNECTED, "resolved"),
@@ -525,6 +764,46 @@ def test_non_cmw_disconnect_refusal_stops_replacement_and_removes_stale_object(
     assert rows["baseStation"].status == "ok"
 
 
+def test_real_uxm_disconnect_refusal_preserves_recoverable_runtime(
+    monkeypatch,
+    db,
+):
+    _seed_category(db, "baseStation", display_order=1)
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {"baseStation": {"baseStation-MODEL": _RecordingDriver}},
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    old_uxm = _RecordingDriver("old-uxm", {"model": "OLD"})
+    old_uxm.adapter_id = "uxm"
+    old_uxm.disconnect_result = False
+    old_uxm._status = InstrumentStatus.READY
+    service.drivers["baseStation"] = old_uxm
+    _install_global_service(monkeypatch, service)
+
+    with pytest.raises(HALCategoryActivationError, match="保留旧 runtime"):
+        asyncio.run(activate_hal_category_atomic("baseStation"))
+
+    assert service.drivers["baseStation"] is old_uxm
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_retains_real_uxm_when_safe_idle_is_unconfirmed():
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _RecordingDriver("uxm", {})
+    driver.adapter_id = "uxm"
+    driver.disconnect_result = False
+    service.drivers = {"baseStation": driver}
+    service._initialized = True
+
+    with pytest.raises(RuntimeError, match="baseStation UXM.*安全断开"):
+        await service.shutdown()
+
+    assert service.drivers == {"baseStation": driver}
+    assert service._initialized is True
+
+
 def test_cancel_during_disconnect_waits_for_terminal_cleanup_and_marks_not_ready(
     monkeypatch,
     db,
@@ -607,6 +886,44 @@ def test_cancel_during_connect_closes_orphan_session_and_marks_not_ready(
         if row.category == "baseStation"
     )
     assert row.status == "fail"
+
+
+def test_cancelled_uxm_connect_cleanup_refusal_keeps_runtime_recoverable(
+    monkeypatch,
+    db,
+):
+    _seed_category(db, "baseStation", display_order=1)
+    _CancellableUxmConnectDriver.instances = []
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "baseStation": {
+                "baseStation-MODEL": _CancellableUxmConnectDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    service.last_readiness_report = _readiness_with_rows(db, "baseStation")
+    _install_global_service(monkeypatch, service)
+
+    async def _scenario():
+        _CancellableUxmConnectDriver.connect_started = asyncio.Event()
+        _CancellableUxmConnectDriver.connect_release = asyncio.Event()
+        task = asyncio.create_task(activate_hal_category_atomic("baseStation"))
+        await _CancellableUxmConnectDriver.connect_started.wait()
+        task.cancel()
+        _CancellableUxmConnectDriver.connect_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
+
+    assert len(_CancellableUxmConnectDriver.instances) == 1
+    created = _CancellableUxmConnectDriver.instances[0]
+    assert created.disconnect_calls == 2
+    assert created.session_open is True
+    assert service.drivers["baseStation"] is created
 
 
 def test_cancel_during_post_connect_topology_disconnects_published_runtime(
