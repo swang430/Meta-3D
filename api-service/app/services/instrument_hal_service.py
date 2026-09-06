@@ -1434,26 +1434,27 @@ class InstrumentHALService:
                 "cmw500": "CMW500",
                 "uxm": "UXM",
             }.get(getattr(driver, "adapter_id", None), "BaseStation")
-            try:
-                disconnected = await driver.disconnect()
-                if recoverable_base_station and disconnected is not True:
+            if recoverable_base_station:
+                try:
+                    # A parked BaseStation has intentionally closed its
+                    # transport while retaining Local control.  Reuse the
+                    # category lifecycle path so shutdown/reload must regain
+                    # Remote before STOP + authoritative SAFE_IDLE teardown.
+                    await _disconnect_category_driver(self, name)
+                    logger.info(f"Disconnected driver: {name}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error disconnecting {name}: {e}")
                     unsafe_base_station_disconnects.append(
                         f"{name} {adapter_label}"
                     )
-                    logger.error(
-                        "%s driver %s refused unsafe disconnect; retaining driver",
-                        adapter_label,
-                        name,
-                    )
-                    continue
+                continue
+            try:
+                disconnected = await driver.disconnect()
                 logger.info(f"Disconnected driver: {name}")
             except Exception as e:
                 logger.error(f"Error disconnecting {name}: {e}")
-                if recoverable_base_station:
-                    unsafe_base_station_disconnects.append(
-                        f"{name} {adapter_label}"
-                    )
-                    continue
             self.drivers.pop(name, None)
 
         if unsafe_base_station_disconnects:

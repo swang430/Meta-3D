@@ -5125,7 +5125,13 @@ Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，�
 无法确认时 fail-closed 并保留会话供恢复。类别激活、全局 shutdown/reload 与连接期间取消三条消费
 路径均保留未安全断开的真实 UXM/CMW；普通 F64 与 Mock 语义不变。R2 修复后受影响生命周期与规则门
 `189 passed`，最终全后端 `6449 passed / 5 skipped`，`compileall`、单一 Alembic head
-`c5e7f9a1b3d6` 与 diff-check 通过；最终只读独立功能复核 P1/P2/P3=0。
+`c5e7f9a1b3d6` 与 diff-check 通过；最终只读独立功能复核 P1/P2/P3=0。Codex R3 又指出全局
+shutdown/reload 仍直接调用 parked UXM 的 `disconnect()`，可能在 transport 已关闭时绕过停止信令与
+SAFE_IDLE 门；现让真实 UXM/CMW 的全局卸载复用同一类别安全断开路径，必须先确认重新取得 Remote，
+失败则保留原 runtime 并拒绝卸载。旧实现的生命周期序列只有 `disconnect`，RED→GREEN 后 UXM/CMW
+均为 `acquire → disconnect`，UXM 重获失败保持已加载。R3 修复后的计划受影响链 `176 passed`、
+全后端 `6452 passed / 5 skipped`、`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check
+通过；GUI 未变，复用同一生产输入上既有 GUI 合同/build 结果。
 
 ## 🟢 P3 — Polish / tooling
 

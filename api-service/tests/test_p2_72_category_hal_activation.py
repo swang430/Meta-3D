@@ -163,6 +163,18 @@ class _ReacquirableParkedBaseStationDriver(_ReacquirableParkedDriver):
         )
 
 
+class _PermissiveParkedBaseStationDriver(
+    _ReacquirableParkedBaseStationDriver
+):
+    """Mirror UXM's no-session disconnect path for the shutdown regression."""
+
+    async def disconnect(self):
+        self.lifecycle_calls.append("disconnect")
+        self.disconnect_calls += 1
+        self._status = InstrumentStatus.DISCONNECTED
+        return True
+
+
 class _FailingConnectDriver(_RecordingDriver):
     async def connect(self):
         type(self).connected_instrument_ids.append(self.instrument_id)
@@ -800,6 +812,42 @@ async def test_hal_shutdown_retains_real_uxm_when_safe_idle_is_unconfirmed():
     with pytest.raises(RuntimeError, match="baseStation UXM.*安全断开"):
         await service.shutdown()
 
+    assert service.drivers == {"baseStation": driver}
+    assert service._initialized is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter_id", ["uxm", "cmw500"])
+async def test_hal_shutdown_reacquires_parked_base_station_before_disconnect(
+    adapter_id,
+):
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _PermissiveParkedBaseStationDriver(adapter_id, {})
+    driver.adapter_id = adapter_id
+    driver.local_control_reserved = True
+    service.drivers = {"baseStation": driver}
+    service._initialized = True
+
+    await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers == {}
+    assert service._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_preserves_parked_uxm_when_reacquire_fails():
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _PermissiveParkedBaseStationDriver("uxm", {})
+    driver.local_control_reserved = True
+    driver.acquire_result = False
+    service.drivers = {"baseStation": driver}
+    service._initialized = True
+
+    with pytest.raises(RuntimeError, match="baseStation UXM.*安全断开"):
+        await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire"]
     assert service.drivers == {"baseStation": driver}
     assert service._initialized is True
 
