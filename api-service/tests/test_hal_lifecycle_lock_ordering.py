@@ -117,3 +117,28 @@ def test_park_is_called_outside_the_lifecycle_lock():
                     f"  {lines[j].strip()}\n  ...\n  {lines[idx].strip()}"
                 )
             break   # 只看最近的那层外围块
+
+
+def test_category_activation_parks_outside_the_lifecycle_lock():
+    """P2-72 类别激活也不得持生命周期锁再进入 idle park。"""
+    import inspect
+
+    src = inspect.getsource(hal_service.activate_hal_category_atomic)
+    lines = src.splitlines()
+    lock_line = next(
+        i for i, line in enumerate(lines)
+        if "async with _get_lifecycle_lock()" in line
+    )
+    park_line = next(
+        i for i, line in enumerate(lines)
+        if "await park_idle_instrument(category_key)" in line
+    )
+    guard_line = next(
+        i for i, line in enumerate(lines)
+        if "if result.status == \"activated\"" in line
+    )
+    lock_indent = len(lines[lock_line]) - len(lines[lock_line].lstrip())
+    guard_indent = len(lines[guard_line]) - len(lines[guard_line].lstrip())
+
+    assert park_line > guard_line > lock_line
+    assert guard_indent == lock_indent

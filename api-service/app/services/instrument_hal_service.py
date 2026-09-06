@@ -356,6 +356,28 @@ class ResolvedCategoryRuntime:
     connection_row: Any
 
 
+class HALCategoryNotFoundError(LookupError):
+    """The requested instrument category does not exist."""
+
+
+class HALCategoryConfigurationError(ValueError):
+    """Committed category configuration cannot produce a runtime."""
+
+
+class HALCategoryActivationError(RuntimeError):
+    """The target category could not be safely replaced or connected."""
+
+
+@dataclass(frozen=True)
+class HALCategoryActivation:
+    category_key: str
+    status: str  # "activated" | "unchanged" | "inactive"
+    driver_class: Optional[str]
+    instrument_id: Optional[str]
+    simulated: Optional[bool]
+    message: str
+
+
 def build_cmw500_lte_2x2_readiness(
     db,
     *,
@@ -1733,6 +1755,124 @@ async def shutdown_hal_service():
     """Shutdown the global HAL service (serialised via lifecycle lock)."""
     async with _get_lifecycle_lock():
         await _shutdown_hal_service_inner()
+
+
+def _activation_result(
+    category_key: str,
+    status: str,
+    driver: Any = None,
+) -> HALCategoryActivation:
+    messages = {
+        "activated": "已按最新保存配置激活该类别 HAL",
+        "unchanged": "当前 HAL 已与最新保存配置一致",
+        "inactive": "该类别已停用，目标 HAL runtime 已卸载",
+    }
+    return HALCategoryActivation(
+        category_key=category_key,
+        status=status,
+        driver_class=type(driver).__name__ if driver is not None else None,
+        instrument_id=getattr(driver, "instrument_id", None),
+        simulated=is_mock_driver(driver) if driver is not None else None,
+        message=messages[status],
+    )
+
+
+async def _disconnect_category_driver(
+    service: InstrumentHALService,
+    category_key: str,
+) -> None:
+    """Safely detach one runtime; never leave a stale non-CMW entry live."""
+    driver = service.drivers.get(category_key)
+    if driver is None:
+        return
+    real_cmw = (
+        getattr(driver, "adapter_id", None) == "cmw500"
+        and not is_mock_driver(driver)
+    )
+    try:
+        disconnected = await driver.disconnect()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        if not real_cmw:
+            service.drivers.pop(category_key, None)
+        raise HALCategoryActivationError(
+            f"{category_key} 旧驱动断开失败: {type(exc).__name__}: {exc}"
+        ) from exc
+    if real_cmw and disconnected is not True:
+        raise HALCategoryActivationError(
+            "baseStation CMW500 无法确认安全断开；保留旧 runtime 并拒绝激活"
+        )
+    service.drivers.pop(category_key, None)
+
+
+async def activate_hal_category_atomic(
+    category_key: str,
+) -> HALCategoryActivation:
+    """Replace exactly one HAL runtime from committed database truth."""
+    from app.db.database import SessionLocal
+    from app.models.instrument import InstrumentCategory as InstrumentCategoryModel
+
+    async with _get_lifecycle_lock():
+        service = get_hal_service()
+        db = SessionLocal()
+        try:
+            category = db.query(InstrumentCategoryModel).filter(
+                InstrumentCategoryModel.category_key == category_key
+            ).first()
+            if category is None:
+                raise HALCategoryNotFoundError(
+                    f"Instrument category {category_key!r} not found"
+                )
+            if not category.is_active:
+                await _disconnect_category_driver(service, category_key)
+                result = _activation_result(category_key, "inactive")
+            else:
+                if not category.selected_model_id:
+                    raise HALCategoryConfigurationError(
+                        f"{category_key} has no selected model"
+                    )
+                resolved = service._resolve_category_runtime(db, category)
+                if resolved is None:
+                    raise HALCategoryConfigurationError(
+                        f"{category_key} committed configuration cannot resolve a driver"
+                    )
+                loaded = service.drivers.get(category_key)
+                loaded_status = getattr(loaded, "status", None)
+                same_runtime = (
+                    loaded is not None
+                    and type(loaded) is resolved.driver_class
+                    and loaded_status in {
+                        InstrumentStatus.CONNECTED,
+                        InstrumentStatus.READY,
+                    }
+                    and getattr(loaded, "config", None) == resolved.driver_config
+                    and bool(is_mock_driver(loaded)) == resolved.simulated
+                )
+                if same_runtime:
+                    result = _activation_result(category_key, "unchanged", loaded)
+                else:
+                    await _disconnect_category_driver(service, category_key)
+                    rows = await service._initialize_from_db(
+                        only_category_key=category_key
+                    )
+                    fresh = service.drivers.get(category_key)
+                    if fresh is None:
+                        row = rows.get(category_key)
+                        detail = row.detail if row is not None else "connect failed"
+                        raise HALCategoryActivationError(
+                            f"{category_key} connect failed: {detail}"
+                        )
+                    service._initialized = True
+                    result = _activation_result(category_key, "activated", fresh)
+        finally:
+            db.close()
+
+    if result.status == "activated":
+        from app.services.instrument_test_lease import park_idle_instrument
+
+        await park_idle_instrument(category_key)
+    return result
 
 
 async def reload_hal_service_atomic(mode: DriverMode) -> None:
