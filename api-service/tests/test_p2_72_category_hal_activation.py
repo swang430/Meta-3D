@@ -939,9 +939,12 @@ def test_activation_route_is_live_openapi_and_has_no_force_parameter():
 
 
 def test_driver_mode_endpoint_docs_do_not_require_global_reload():
-    from app.api.instrument import set_instrument_driver_mode
+    from app.api.instrument import reload_hal_service, set_instrument_driver_mode
 
     documentation = set_instrument_driver_mode.__doc__ or ""
+    reload_documentation = reload_hal_service.__doc__ or ""
 
     assert "重新切换全局 HAL 模式" not in documentation
     assert "HAL 激活端点" in documentation
+    assert "Use after editing instrument selection" not in reload_documentation
+    assert "whole-HAL recovery" in reload_documentation

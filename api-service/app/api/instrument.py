@@ -628,9 +628,10 @@ async def reload_hal_service(
 ) -> HalReloadResult:
     """Tear down the HAL service and re-init it from the current DB state.
 
-    Use after editing instrument selection / endpoint / driver_mode in
-    the GUI — without this, those changes don't take effect until a
-    backend restart (HAL initializes once at FastAPI lifespan startup).
+    Use as the whole-HAL recovery fallback when every configured category
+    must be rebuilt. Normal instrument selection / endpoint / driver_mode
+    saves activate only the committed target category and do not require
+    this global operation.
 
     Returns a summary of what's now loaded. The full readiness report
     is also logged to stdout/log file with the formatted table.

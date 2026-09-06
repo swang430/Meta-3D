@@ -5103,7 +5103,7 @@ LabProfile 三入口统一工作单元仍保留在 Discovered，不能因本片�
 **设计**：见
 [P2-72 仪器配置保存后按类别激活 HAL 设计](plans/2026-09-06-p2-72-category-hal-activation-design.md)。
 
-**实现与验证（2026-09-06，待外审）**：已完成启动时构造路径复用、单类别安全替换、无 force 的
+**实现与验证（2026-09-06，外审收口中）**：已完成启动时构造路径复用、单类别安全替换、无 force 的
 类别激活 API，以及“保存/driver mode 提交成功后激活同类别”的 GUI 两阶段编排。激活只读取已提交
 数据库真值；执行/租约 blocker 双检查，断开或安全驻车未确认即 fail-loud；其他类别 runtime 不动，
 LabProfile 同步仍为独立操作。fresh 独立内审发现并收口两条功能 P1 和一条本片 P2：
@@ -5111,8 +5111,13 @@ connect/disconnect 取消必须等到硬件生命周期终态并清理未登记�
 readiness 绿色；GUI 会展示 409 的 blocker 身份和原因。最终输入上受影响后端与规则门
 `209 passed`，全后端 `6435 passed / 5 skipped`，受影响 GUI 合同 `23 passed`，production build、
 `compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过；修复后 fresh 独立尾审
-P1/P2/P3=0。未新增/修改 SCPI，未改变正式
-provenance；本地验证不替代现场复验。
+P1/P2/P3=0。Codex R1 进一步发现安全驻车后的同配置 F64 被误当作普通断开态重建，已收窄为仅当
+`DISCONNECTED + local_control_reserved=true + local_release_failed=false` 且类、模式、规范化配置完全一致时
+幂等复用；普通断开态或释放失败仍强制重建。R1 同时指出两处仍暗示日常保存需要全局 reload 的旧文案，
+现已统一改为“全局恢复兜底”。R1 修复后受影响链 `162 passed`、全后端
+`6438 passed / 5 skipped`、受影响 GUI 合同 `23 passed`、production build、`compileall`、单一
+Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式 provenance；
+本地验证不替代现场复验。
 
 ## 🟢 P3 — Polish / tooling
 
