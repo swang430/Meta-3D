@@ -57,7 +57,7 @@ POST /api/v1/instruments/{category_key}/hal/activate
 成为第二真值。成功响应至少包含：
 
 - `category_key`
-- `status`: `activated` 或 `unchanged`
+- `status`: `activated`、`unchanged` 或 `inactive`（类别已停用且 runtime 已卸载）
 - 实际装载的 driver 标识与 simulated/mode 状态
 - 便于 GUI 刷新的明确消息
 
@@ -92,12 +92,13 @@ TCP preflight、自动 topology 或 readiness 逻辑。计划先把现有初始�
 2. 运行既有 reload blocker 检查；
 3. 进入 `hal_mutation_guard`，再次检查 blocker，关闭检查到执行之间的竞态；
 4. 进入 HAL lifecycle lock；
-5. 若 loaded driver 仍处于可用/已连接态，且其类、mode/simulated 与规范化 `driver.config` 均匹配，
+5. 若类别已停用，只安全卸载该类别并返回 `inactive`，不得因保存动作反向启用它；
+6. 若 loaded driver 仍处于可用/已连接态，且其类、mode/simulated 与规范化 `driver.config` 均匹配，
    返回 `unchanged`；同配置但 driver 已断开或处于错误态仍须重建；
-6. 安全断开目标类别旧 driver；真实 CMW 等 driver 若拒绝安全断开，则保留旧实例并失败，不继续覆盖；
-7. 只构造、连接并登记目标类别的新 driver，更新该类别 readiness / connection status；
-8. 离开 lifecycle lock 后，只对目标类别执行必要的 idle park，不触碰其他类别；
-9. 返回实际 runtime 身份。
+7. 安全断开目标类别旧 driver；真实 CMW 等 driver 若拒绝安全断开，则保留旧实例并失败，不继续覆盖；
+8. 只构造、连接并登记目标类别的新 driver，更新该类别 readiness / connection status；
+9. 离开 lifecycle lock 后，只对目标类别执行必要的 idle park，不触碰其他类别；
+10. 返回实际 runtime 身份。
 
 任何失败都不能让旧实例冒充新配置已激活：
 
@@ -154,7 +155,10 @@ fail-closed，并给出同一可操作原因。
 7. 两个 GUI 保存入口各只触发一次对应类别激活；active/topology 操作不触发；
 8. 自动流程从不调用 `sync-current`，LabProfile binding 不变；
 9. 全局 reload 行为与恢复入口保持兼容；
-10. OpenAPI live、checked YAML、generated TypeScript 与手写 GUI 类型四镜像一致。
+10. live OpenAPI 与手写 GUI 类型一致；沿 D19 既有边界，HAL 操作端点不扩入 checked YAML / generated TS。
+
+`api/openapi.yaml` 已明确把 `/hal/status`、`/hal/reload`、`/hal/switch` 排除在 checked contract 外；
+本片新增端点保持同一 D19 边界，不单独制造一条半生成的 HAL 操作契约。
 
 验证按共享 HAL 生命周期改动的高风险档执行：受影响专项与规则门、全后端、GUI 契约与 production build、
 `compileall`、单一 Alembic head、base-to-HEAD diff-check。功能实现不新增或修改任何 SCPI。
