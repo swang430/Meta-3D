@@ -5110,7 +5110,8 @@ LabProfile 同步仍为独立操作。fresh 独立内审发现并收口两条功
 connect/disconnect 取消必须等到硬件生命周期终态并清理未登记会话；断开/驻车失败不再保留旧
 readiness 绿色；GUI 会展示 409 的 blocker 身份和原因。最终输入上受影响后端与规则门
 `209 passed`，全后端 `6435 passed / 5 skipped`，受影响 GUI 合同 `23 passed`，production build、
-`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过。未新增/修改 SCPI，未改变正式
+`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 均通过；修复后 fresh 独立尾审
+P1/P2/P3=0。未新增/修改 SCPI，未改变正式
 provenance；本地验证不替代现场复验。
 
 ## 🟢 P3 — Polish / tooling
