@@ -92,6 +92,29 @@ test('equipment saves and driver-mode writes both use commit-then-activate orche
   assert.doesNotMatch(app, /改完仪器配置后必须点这个/)
 })
 
+test('lab setup wizard activates every saved category before advancing', () => {
+  const wizard = readFileSync(
+    new URL('../../components/LabProfile/LabProfileWizard.tsx', import.meta.url),
+    'utf8',
+  )
+  const updateMutation = wizard.slice(
+    wizard.indexOf('const updateCategoryMutation'),
+    wizard.indexOf('const createMutation'),
+  )
+  const step2Next = wizard.slice(
+    wizard.indexOf('const onStep2Next'),
+    wizard.indexOf('// ---- Step 3 actions'),
+  )
+
+  assert.match(updateMutation, /commitThenActivateCategory\(/)
+  assert.match(updateMutation, /activateInstrumentCategoryHAL/)
+  assert.match(step2Next, /activationError/)
+  assert.ok(
+    step2Next.indexOf('activationError') < step2Next.indexOf('active: 2'),
+    'activation failure must be handled before the wizard advances',
+  )
+})
+
 test('automatic category activation remains separate from LabProfile sync', () => {
   const helper = readFileSync(new URL('./categoryHalActivation.ts', import.meta.url), 'utf8')
 

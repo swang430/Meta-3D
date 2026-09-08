@@ -51,6 +51,7 @@ import {
 } from '@tabler/icons-react'
 
 import {
+  activateInstrumentCategoryHAL,
   createChamberFromTemplate,
   fetchChamberPresets,
   fetchInstrumentCatalog,
@@ -60,6 +61,8 @@ import {
   createLabProfile,
   type InstrumentBindingPayload,
 } from '../../api/labProfileService'
+import { commitThenActivateCategory } from '../../features/Equipment/categoryHalActivation'
+import { diagnosticErrorMessage } from '../../features/Equipment/diagnosticTarget'
 import type { ChamberType } from '../../types/api'
 
 const WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v1'
@@ -163,7 +166,11 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
     mutationFn: ({ key, payload }: {
       key: string
       payload: { modelId?: string; connection?: { endpoint?: string } }
-    }) => updateInstrumentCategory(key, payload),
+    }) => commitThenActivateCategory(
+      key,
+      () => updateInstrumentCategory(key, payload),
+      activateInstrumentCategoryHAL,
+    ),
   })
 
   const createMutation = useMutation({
@@ -212,15 +219,37 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
   const onStep2Next = async () => {
     // Save each configured binding back to the backend so the
     // /instruments/{key} resources reflect what the operator chose
-    // — keeps the existing instrument-management UI in sync.
-    for (const b of configuredBindings) {
-      await updateCategoryMutation.mutateAsync({
-        key: b.categoryKey,
-        payload: {
-          modelId: b.modelId ?? undefined,
-          connection: { endpoint: b.endpoint },
-        },
+    // — keeps the existing instrument-management UI in sync.  Each
+    // committed category must also activate before the wizard may
+    // declare the lab ready; activation refusal leaves the saved truth
+    // intact and keeps the operator on this step.
+    try {
+      for (const b of configuredBindings) {
+        const { activationError } = await updateCategoryMutation.mutateAsync({
+          key: b.categoryKey,
+          payload: {
+            modelId: b.modelId ?? undefined,
+            connection: { endpoint: b.endpoint },
+          },
+        })
+        if (activationError) {
+          notifications.show({
+            color: 'red',
+            title: `${b.categoryLabel} HAL 激活失败`,
+            message: diagnosticErrorMessage(activationError),
+            icon: <IconAlertCircle size={16} />,
+          })
+          return
+        }
+      }
+    } catch (err: unknown) {
+      notifications.show({
+        color: 'red',
+        title: '保存仪器配置失败',
+        message: diagnosticErrorMessage(err),
+        icon: <IconAlertCircle size={16} />,
       })
+      return
     }
     setState((s) => ({ ...s, active: 2 }))
   }

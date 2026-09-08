@@ -5166,6 +5166,11 @@ manifest-aware 读取器，并让取消清理、类别 teardown、全局 shutdow
 及可恢复会话判据共同消费；真实形态下取消清理与第二次 teardown 两条旧实现回归均为 RED。修复后
 定点 `5 passed`、受影响链与规则门 `274 passed`、全后端 `6456 passed / 5 skipped`；未扩大 adapter
 集合，未新增状态、硬件调用或 SCPI。
+Codex R9 继续核出首次 `LabProfileWizard` 也是 `PUT /instruments/{category}` 的活写入口，旧实现保存
+型号与 endpoint 后直接进入确认步骤，未激活对应 HAL。现让向导复用同一 `commitThenActivateCategory`
+编排；保存失败或激活失败均停留在仪器绑定步骤，激活失败保留已提交配置并展示服务器 blocker，绝不
+宣告 Lab 已就绪，也不自动同步 LabProfile。旧实现 GUI 合同为 RED，修复后定点 `7 passed`、production
+build 通过；后端生产输入未变，复用最终全后端 `6456 passed / 5 skipped` 结果。
 
 ## 🟢 P3 — Polish / tooling
 

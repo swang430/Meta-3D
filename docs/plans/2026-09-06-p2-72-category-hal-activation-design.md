@@ -68,14 +68,16 @@ POST /api/v1/instruments/{category_key}/hal/activate
 - 断连或新 driver 初始化失败：返回非 2xx，日志保留具体原因，GUI 显示
   “配置已保存，但 HAL 尚未激活：<原因>”。
 
-GUI 两个入口改为串行编排：
+GUI 的 Equipment 配置保存、driver mode 保存与首次 `LabProfileWizard` 仪器绑定保存三个入口
+共同改为串行编排：
 
 1. 保存连接配置成功；
 2. 调用类别激活；
 3. 激活成功后刷新 catalog，并提示已保存且 HAL 已激活；
 4. 激活失败仍刷新 catalog，保留已保存值并给出可操作警告，不自动同步 LabProfile。
 
-driver mode 的保存采用同一流程。active toggle、topology 保存以及全局 reload 按钮不改语义。
+driver mode 与首次配置向导的保存采用同一流程；向导在任一类别激活失败时停留于仪器绑定步骤，
+不得宣告 Lab 已就绪。active toggle、topology 保存以及全局 reload 按钮不改语义。
 
 并发保存采用“最新已提交配置获胜”：激活入口重新读取数据库，并返回实际激活的 runtime 身份；GUI
 以刷新后的服务器响应为准，不假定它激活的一定是本地提交瞬间的草稿。
