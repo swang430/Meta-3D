@@ -136,6 +136,7 @@ class _ReacquirableParkedDriver(_RecordingDriver):
         super().__init__(instrument_id, config)
         self.local_control_reserved = False
         self.local_release_failed = False
+        self.teardown_unconfirmed = False
         self.acquire_result = True
         self.lifecycle_calls: list[str] = []
 
@@ -156,7 +157,10 @@ class _ReacquirableParkedDriver(_RecordingDriver):
         self.lifecycle_calls.append("disconnect")
         self.disconnect_calls += 1
         if self.local_control_reserved or self.disconnect_result is not True:
+            self.teardown_unconfirmed = True
+            self._status = InstrumentStatus.DISCONNECTED
             return False
+        self.teardown_unconfirmed = False
         self._status = InstrumentStatus.DISCONNECTED
         return True
 
@@ -584,6 +588,12 @@ def test_failed_teardown_after_parked_reacquire_preserves_old_runtime(
     assert loaded.lifecycle_calls == ["acquire", "disconnect"]
     assert service.drivers[category_key] is loaded
 
+    with pytest.raises(HALCategoryActivationError, match="保留旧 runtime"):
+        asyncio.run(activate_hal_category_atomic(category_key))
+
+    assert loaded.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers[category_key] is loaded
+
 
 @pytest.mark.asyncio
 async def test_uxm_disconnect_keeps_transport_when_stop_is_unconfirmed():
@@ -902,6 +912,30 @@ async def test_hal_shutdown_reacquires_parked_f64_before_disconnect():
     assert driver.lifecycle_calls == ["acquire", "disconnect"]
     assert service.drivers == {}
     assert service._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_preserves_f64_after_reacquired_teardown_failure():
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _ReacquirableParkedDriver("f64", {})
+    driver.local_control_reserved = True
+    driver.disconnect_result = False
+    driver._status = InstrumentStatus.DISCONNECTED
+    service.drivers = {"channelEmulator": driver}
+    service._initialized = True
+
+    with pytest.raises(RuntimeError, match="channelEmulator PROPSIM F64.*安全断开"):
+        await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers == {"channelEmulator": driver}
+
+    with pytest.raises(RuntimeError, match="channelEmulator PROPSIM F64.*安全断开"):
+        await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers == {"channelEmulator": driver}
+    assert service._initialized is True
 
 
 @pytest.mark.asyncio

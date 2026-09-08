@@ -5147,6 +5147,13 @@ fail-closed 终态：类别激活与全局 shutdown 均不再尝试断开或卸�
 `local_release_failed=false` 的正常驻车 F64 才先 `acquire → disconnect`。旧实现三条回归为 RED，
 修复后定点 `5 passed`、受影响链 `178 passed`、全后端 `6454 passed / 5 skipped`、`compileall`、
 单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过；有界只读功能复核 P1/P2/P3=0。
+Codex R6 随后发现：正常驻车的 F64 已重新取得 Remote，但安全断开仍无法确认 STOP 时，驱动会持久
+记录“安全拆卸未确认”；旧逻辑第一次虽保留 runtime，第二次激活或 shutdown 却因 Local 标记已清除而
+再次进入普通断开并删除可能仍在运行的 runtime。现直接消费真实 F64 已有的持久
+`teardown_unconfirmed` 真值：后续类别激活与全局 shutdown 均不再重复发送硬件命令，也不卸载旧
+runtime，而是明确 fail-closed；只有后续显式成功建立的新会话才能按原有语义清除此标记。旧实现两条
+二次尝试回归为 RED，修复后定点 `2 passed`、受影响链 `286 passed`、全后端
+`6455 passed / 5 skipped`、`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过。
 
 ## 🟢 P3 — Polish / tooling
 

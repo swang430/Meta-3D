@@ -1430,14 +1430,18 @@ class InstrumentHALService:
             recoverable_base_station = (
                 _requires_recoverable_base_station_disconnect(driver)
             )
-            local_control_guarded = (
-                getattr(driver, "local_control_reserved", None) is True
-                or getattr(driver, "local_release_failed", None) is True
-            )
             driver_adapter_id = getattr(driver, "adapter_id", None) or getattr(
                 getattr(driver, "adapter_manifest", None),
                 "adapter_id",
                 None,
+            )
+            safety_guarded = (
+                getattr(driver, "local_control_reserved", None) is True
+                or getattr(driver, "local_release_failed", None) is True
+                or (
+                    driver_adapter_id in {"f64", "propsim_f64"}
+                    and getattr(driver, "teardown_unconfirmed", None) is True
+                )
             )
             adapter_label = {
                 "cmw500": "CMW500",
@@ -1445,7 +1449,7 @@ class InstrumentHALService:
                 "f64": "PROPSIM F64",
                 "propsim_f64": "PROPSIM F64",
             }.get(driver_adapter_id, "BaseStation")
-            if recoverable_base_station or local_control_guarded:
+            if recoverable_base_station or safety_guarded:
                 try:
                     # A parked instrument has intentionally closed its
                     # transport while retaining Local control. Reuse the
@@ -1932,9 +1936,18 @@ async def _disconnect_category_driver(
     local_release_unconfirmed = (
         getattr(driver, "local_release_failed", None) is True
     )
-    if local_release_unconfirmed:
+    f64_teardown_unconfirmed = (
+        adapter_id in {"f64", "propsim_f64"}
+        and getattr(driver, "teardown_unconfirmed", None) is True
+    )
+    if local_release_unconfirmed or f64_teardown_unconfirmed:
+        retained_reason = (
+            "交还 Local 未确认"
+            if local_release_unconfirmed
+            else "上次安全拆卸未确认"
+        )
         activation_error = HALCategoryActivationError(
-            f"{category_key} 旧驱动交还 Local 未确认；"
+            f"{category_key} 旧驱动{retained_reason}；"
             "保留旧 runtime 并拒绝激活"
         )
         _mark_category_readiness_failed(
