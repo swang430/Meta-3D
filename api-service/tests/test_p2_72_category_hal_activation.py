@@ -240,6 +240,20 @@ class _CancellableUxmConnectDriver(_CancellableConnectDriver):
         return False
 
 
+class _CancellableF64ConnectDriver(_CancellableConnectDriver):
+    adapter_id = "f64"
+
+    def __init__(self, instrument_id, config):
+        super().__init__(instrument_id, config)
+        self.teardown_unconfirmed = False
+
+    async def disconnect(self):
+        self.disconnect_calls += 1
+        self.teardown_unconfirmed = True
+        self._status = InstrumentStatus.DISCONNECTED
+        return False
+
+
 class _CancellableDisconnectDriver(_RecordingDriver):
     def __init__(self, instrument_id, config):
         super().__init__(instrument_id, config)
@@ -1074,6 +1088,50 @@ def test_cancelled_uxm_connect_cleanup_refusal_keeps_runtime_recoverable(
     assert created.disconnect_calls == 2
     assert created.session_open is True
     assert service.drivers["baseStation"] is created
+
+
+def test_cancelled_f64_connect_unconfirmed_cleanup_keeps_guarded_runtime(
+    monkeypatch,
+    db,
+):
+    _seed_category(db, "channelEmulator", display_order=1)
+    _CancellableF64ConnectDriver.instances = []
+    monkeypatch.setattr(
+        hal_mod,
+        "_real_driver_registry",
+        lambda: {
+            "channelEmulator": {
+                "channelEmulator-MODEL": _CancellableF64ConnectDriver,
+            },
+        },
+    )
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    service.last_readiness_report = _readiness_with_rows(db, "channelEmulator")
+    _install_global_service(monkeypatch, service)
+
+    async def _scenario():
+        _CancellableF64ConnectDriver.connect_started = asyncio.Event()
+        _CancellableF64ConnectDriver.connect_release = asyncio.Event()
+        task = asyncio.create_task(activate_hal_category_atomic("channelEmulator"))
+        await _CancellableF64ConnectDriver.connect_started.wait()
+        task.cancel()
+        _CancellableF64ConnectDriver.connect_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
+
+    assert len(_CancellableF64ConnectDriver.instances) == 1
+    created = _CancellableF64ConnectDriver.instances[0]
+    assert created.disconnect_calls == 1
+    assert created.teardown_unconfirmed is True
+    assert service.drivers["channelEmulator"] is created
+
+    with pytest.raises(HALCategoryActivationError, match="保留旧 runtime"):
+        asyncio.run(activate_hal_category_atomic("channelEmulator"))
+
+    assert created.disconnect_calls == 1
+    assert len(_CancellableF64ConnectDriver.instances) == 1
 
 
 def test_cancel_during_post_connect_topology_disconnects_published_runtime(

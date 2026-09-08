@@ -5154,6 +5154,12 @@ Codex R6 随后发现：正常驻车的 F64 已重新取得 Remote，但安全�
 runtime，而是明确 fail-closed；只有后续显式成功建立的新会话才能按原有语义清除此标记。旧实现两条
 二次尝试回归为 RED，修复后定点 `2 passed`、受影响链 `286 passed`、全后端
 `6455 passed / 5 skipped`、`compileall`、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过。
+Codex R7 继续发现：真实 F64 在连接将要完成时收到取消，若取消清理无法确认 STOP，未发布的新
+runtime 会在异常上抛前丢失，后续激活可能新建第二个会话。现仅当该 F64 runtime 已持久标记
+`teardown_unconfirmed=true` 时，将同一个实例发布回类别注册表；后续激活与 shutdown 复用 R6 的
+同一 fail-closed 门，不重复发送硬件命令，也不创建新 driver。旧实现定点回归为 RED，修复后定点与
+对称路径 `5 passed`、受影响链与规则门 `274 passed`、全后端 `6456 passed / 5 skipped`；未新增状态、
+未新增或修改 SCPI，Mock、普通清理成功与既有 UXM 可恢复路径保持原语义。
 
 ## 🟢 P3 — Polish / tooling
 

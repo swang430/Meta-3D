@@ -1037,11 +1037,21 @@ class InstrumentHALService:
                             )
                         if cleanup_error is not None:
                             # The connect finished and this unpublished real
-                            # base-station object still owns a recoverable
-                            # transport. Publish that exact runtime before
-                            # propagating cancellation so a later lifecycle
-                            # operation can retry the safe teardown.
-                            if _requires_recoverable_base_station_disconnect(driver):
+                            # hardware runtime still owns a recoverable or
+                            # teardown-unconfirmed transport. Publish that
+                            # exact runtime before propagating cancellation so
+                            # a later lifecycle operation can retry or guard
+                            # the safe teardown.
+                            f64_teardown_unconfirmed = (
+                                getattr(driver, "adapter_id", None)
+                                in {"f64", "propsim_f64"}
+                                and getattr(driver, "teardown_unconfirmed", None)
+                                is True
+                            )
+                            if (
+                                _requires_recoverable_base_station_disconnect(driver)
+                                or f64_teardown_unconfirmed
+                            ):
                                 self.drivers[cat.category_key] = driver
                             setattr(
                                 connect_cancellation,
