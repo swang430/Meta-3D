@@ -154,6 +154,23 @@ test('lab setup wizard seeds driver mode from the persisted catalog truth', () =
   assert.doesNotMatch(bindingSeed, /driverMode: ['"]auto['"]/)
 })
 
+test('lab setup wizard invalidates pre-mode-source v1 drafts', () => {
+  const wizard = readFileSync(
+    new URL('../../components/LabProfile/LabProfileWizard.tsx', import.meta.url),
+    'utf8',
+  )
+  const persistence = wizard.slice(
+    wizard.indexOf('const LEGACY_WIZARD_STORAGE_KEY'),
+    wizard.indexOf('interface LabProfileWizardProps'),
+  )
+
+  assert.match(persistence, /LEGACY_WIZARD_STORAGE_KEY = ['"]mimo-first-lab-wizard-state-v1['"]/)
+  assert.match(persistence, /WIZARD_STORAGE_KEY = ['"]mimo-first-lab-wizard-state-v2['"]/)
+  assert.match(persistence, /localStorage\.removeItem\(LEGACY_WIZARD_STORAGE_KEY\)/)
+  assert.match(persistence, /localStorage\.getItem\(WIZARD_STORAGE_KEY\)/)
+  assert.doesNotMatch(persistence, /localStorage\.getItem\(LEGACY_WIZARD_STORAGE_KEY\)/)
+})
+
 test('automatic category activation remains separate from LabProfile sync', () => {
   const helper = readFileSync(new URL('./categoryHalActivation.ts', import.meta.url), 'utf8')
 

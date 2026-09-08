@@ -5182,6 +5182,11 @@ Codex R11 继续核出向导 seed 仍把 `driverMode` 硬编码为 `auto`，会�
 并保留后续用户选择，不新增默认推断。旧实现新增合同为 RED，修复后定点 `9 passed`、相关 GUI/
 Operational Lab 合同 `36 passed`、production build 与 diff-check 通过；后端生产输入未变，继续复用
 最终全后端 `6456 passed / 5 skipped` 结果。
+Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driverMode=auto` 无法区分旧硬编码值与
+操作员显式选择，会绕过新 catalog seed。现将本地草稿版本升为 v2，并一次性删除、不读取 v1；升级
+后的首次草稿重新从 catalog 权威真值 seed，之后 v2 用户编辑照常恢复。旧实现新增合同为 RED，修复后
+定点 `10 passed`、相关 GUI/Operational Lab 合同 `37 passed`、production build 与 diff-check 通过；
+后端生产输入未变，继续复用最终全后端 `6456 passed / 5 skipped` 结果。
 
 ## 🟢 P3 — Polish / tooling
 

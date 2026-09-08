@@ -66,7 +66,8 @@ import { commitThenActivateCategory } from '../../features/Equipment/categoryHal
 import { diagnosticErrorMessage } from '../../features/Equipment/diagnosticTarget'
 import type { ChamberType } from '../../types/api'
 
-const WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v1'
+const LEGACY_WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v1'
+const WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v2'
 
 type DriverMode = 'auto' | 'mock' | 'real'
 
@@ -102,6 +103,11 @@ const EMPTY_STATE: WizardState = {
 
 function loadPersisted(): WizardState {
   try {
+    // V1 always stored ``driverMode: auto`` at seed time, so it cannot
+    // distinguish an operator choice from the old hard-coded default.
+    // Invalidate it once rather than risk overwriting the server's persisted
+    // real/mock truth during the first post-upgrade activation.
+    localStorage.removeItem(LEGACY_WIZARD_STORAGE_KEY)
     const raw = localStorage.getItem(WIZARD_STORAGE_KEY)
     if (!raw) return EMPTY_STATE
     const parsed = JSON.parse(raw) as Partial<WizardState>

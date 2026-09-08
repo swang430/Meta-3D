@@ -409,7 +409,8 @@ export const activateInstrumentCategoryHAL = async (
 status/readiness，没有错误时显示 `activation.message`。`onError` 只代表保存失败。不得调用 LabProfile sync。
 首次 `LabProfileWizard` 的逐类别保存也必须复用同一编排；每个类别的型号/endpoint 与所选 driver mode
 都提交成功后才激活，且初始 mode 必须读取 catalog 已保存真值；任一保存或激活失败时显示具体原因并
-留在当前步骤，不得继续到“Lab 已就绪”。
+留在当前步骤，不得继续到“Lab 已就绪”。升级时废弃无法区分旧硬编码 `auto` 与显式用户选择的 v1
+浏览器草稿，后续只恢复 v2 草稿。
 
 - [x] **Step 5: 把 driver mode handler 接到同一 client**
 
