@@ -61,6 +61,7 @@ import {
   createLabProfile,
   type InstrumentBindingPayload,
 } from '../../api/labProfileService'
+import client from '../../api/client'
 import { commitThenActivateCategory } from '../../features/Equipment/categoryHalActivation'
 import { diagnosticErrorMessage } from '../../features/Equipment/diagnosticTarget'
 import type { ChamberType } from '../../types/api'
@@ -163,12 +164,17 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
   })
 
   const updateCategoryMutation = useMutation({
-    mutationFn: ({ key, payload }: {
+    mutationFn: ({ key, payload, driverMode }: {
       key: string
       payload: { modelId?: string; connection?: { endpoint?: string } }
+      driverMode: DriverMode
     }) => commitThenActivateCategory(
       key,
-      () => updateInstrumentCategory(key, payload),
+      async () => {
+        const committed = await updateInstrumentCategory(key, payload)
+        await client.patch(`/instruments/${key}/driver-mode`, { mode: driverMode })
+        return committed
+      },
       activateInstrumentCategoryHAL,
     ),
   })
@@ -227,6 +233,7 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
       for (const b of configuredBindings) {
         const { activationError } = await updateCategoryMutation.mutateAsync({
           key: b.categoryKey,
+          driverMode: b.driverMode,
           payload: {
             modelId: b.modelId ?? undefined,
             connection: { endpoint: b.endpoint },
@@ -245,7 +252,7 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
     } catch (err: unknown) {
       notifications.show({
         color: 'red',
-        title: '保存仪器配置失败',
+        title: '保存仪器配置或驱动模式失败',
         message: diagnosticErrorMessage(err),
         icon: <IconAlertCircle size={16} />,
       })

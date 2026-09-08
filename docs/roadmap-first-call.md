@@ -5171,6 +5171,12 @@ Codex R9 继续核出首次 `LabProfileWizard` 也是 `PUT /instruments/{categor
 编排；保存失败或激活失败均停留在仪器绑定步骤，激活失败保留已提交配置并展示服务器 blocker，绝不
 宣告 Lab 已就绪，也不自动同步 LabProfile。旧实现 GUI 合同为 RED，修复后定点 `7 passed`、production
 build 通过；后端生产输入未变，复用最终全后端 `6456 passed / 5 skipped` 结果。
+Codex R10 进一步指出向导虽开始激活 HAL，却仍只保存型号与 endpoint，未把同一草稿中的 driver mode
+写入 InstrumentCategory，可能按旧 mode 激活 runtime、再创建携带新 mode 的 LabProfile，最终被 binding
+resolver 拒绝。现把每个类别的型号/endpoint 与 driver mode 纳入同一 commit 阶段，二者成功后才执行
+一次类别激活；任一写入失败均不激活、不前进。旧实现新增合同为 RED，修复后定点 `8 passed`、相关
+GUI/Operational Lab 合同 `35 passed`、production build 通过；后端生产输入未变，继续复用最终全后端
+`6456 passed / 5 skipped` 结果。
 
 ## 🟢 P3 — Polish / tooling
 

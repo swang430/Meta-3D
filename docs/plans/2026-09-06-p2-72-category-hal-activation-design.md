@@ -76,8 +76,9 @@ GUI 的 Equipment 配置保存、driver mode 保存与首次 `LabProfileWizard` 
 3. 激活成功后刷新 catalog，并提示已保存且 HAL 已激活；
 4. 激活失败仍刷新 catalog，保留已保存值并给出可操作警告，不自动同步 LabProfile。
 
-driver mode 与首次配置向导的保存采用同一流程；向导在任一类别激活失败时停留于仪器绑定步骤，
-不得宣告 Lab 已就绪。active toggle、topology 保存以及全局 reload 按钮不改语义。
+driver mode 与首次配置向导的保存采用同一流程；向导必须先持久化该类别的型号、endpoint 与所选
+driver mode，再执行一次类别激活，并在任一保存或激活失败时停留于仪器绑定步骤，不得宣告 Lab
+已就绪。active toggle、topology 保存以及全局 reload 按钮不改语义。
 
 并发保存采用“最新已提交配置获胜”：激活入口重新读取数据库，并返回实际激活的 runtime 身份；GUI
 以刷新后的服务器响应为准，不假定它激活的一定是本地提交瞬间的草稿。

@@ -407,8 +407,8 @@ export const activateInstrumentCategoryHAL = async (
 `mutationFn` 先 await PUT；第二阶段单独 try/catch activation，并始终返回 `updatedCategory`。`onSuccess`
 先写 catalog/draft；有 `activationError` 时显示“配置已保存，但 HAL 尚未激活：…”并刷新 catalog/HAL
 status/readiness，没有错误时显示 `activation.message`。`onError` 只代表保存失败。不得调用 LabProfile sync。
-首次 `LabProfileWizard` 的逐类别保存也必须复用同一编排；任一激活失败时显示具体原因并留在当前步骤，
-不得继续到“Lab 已就绪”。
+首次 `LabProfileWizard` 的逐类别保存也必须复用同一编排；每个类别的型号/endpoint 与所选 driver mode
+都提交成功后才激活，任一保存或激活失败时显示具体原因并留在当前步骤，不得继续到“Lab 已就绪”。
 
 - [x] **Step 5: 把 driver mode handler 接到同一 client**
 

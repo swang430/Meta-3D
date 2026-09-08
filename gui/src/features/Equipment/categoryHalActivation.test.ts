@@ -115,6 +115,31 @@ test('lab setup wizard activates every saved category before advancing', () => {
   )
 })
 
+test('lab setup wizard persists the selected driver mode before activation', () => {
+  const wizard = readFileSync(
+    new URL('../../components/LabProfile/LabProfileWizard.tsx', import.meta.url),
+    'utf8',
+  )
+  const updateMutation = wizard.slice(
+    wizard.indexOf('const updateCategoryMutation'),
+    wizard.indexOf('const createMutation'),
+  )
+  const step2Next = wizard.slice(
+    wizard.indexOf('const onStep2Next'),
+    wizard.indexOf('// ---- Step 3 actions'),
+  )
+
+  assert.match(updateMutation, /driverMode: DriverMode/)
+  assert.match(updateMutation, /\/driver-mode/)
+  assert.match(updateMutation, /mode: driverMode/)
+  assert.ok(
+    updateMutation.indexOf('/driver-mode') <
+      updateMutation.indexOf('activateInstrumentCategoryHAL'),
+    'driver mode must be committed before category activation',
+  )
+  assert.match(step2Next, /driverMode: b\.driverMode/)
+})
+
 test('automatic category activation remains separate from LabProfile sync', () => {
   const helper = readFileSync(new URL('./categoryHalActivation.ts', import.meta.url), 'utf8')
 
