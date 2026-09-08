@@ -5160,6 +5160,12 @@ runtime 会在异常上抛前丢失，后续激活可能新建第二个会话。
 同一 fail-closed 门，不重复发送硬件命令，也不创建新 driver。旧实现定点回归为 RED，修复后定点与
 对称路径 `5 passed`、受影响链与规则门 `274 passed`、全后端 `6456 passed / 5 skipped`；未新增状态、
 未新增或修改 SCPI，Mock、普通清理成功与既有 UXM 可恢复路径保持原语义。
+Codex R8 指出上述身份判断仍读取 driver 的直接 `adapter_id`，而真实 F64 的权威身份只在
+`adapter_manifest.adapter_id`，测试 double 因多声明了直接字段而掩盖生产故障。现收敛为单一
+manifest-aware 读取器，并让取消清理、类别 teardown、全局 shutdown、BaseStation Remote 重获确认
+及可恢复会话判据共同消费；真实形态下取消清理与第二次 teardown 两条旧实现回归均为 RED。修复后
+定点 `5 passed`、受影响链与规则门 `274 passed`、全后端 `6456 passed / 5 skipped`；未扩大 adapter
+集合，未新增状态、硬件调用或 SCPI。
 
 ## 🟢 P3 — Polish / tooling
 

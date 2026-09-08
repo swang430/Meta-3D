@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -120,7 +121,7 @@ class _SafelyParkedDriver(_RecordingDriver):
 
 
 class _FailedLocalReleaseDriver(_SafelyParkedDriver):
-    adapter_id = "f64"
+    adapter_manifest = SimpleNamespace(adapter_id="propsim_f64")
 
     async def disconnect(self):
         # Mirror RealPropsimF64Driver: the retained handle cannot issue STOP or
@@ -130,7 +131,7 @@ class _FailedLocalReleaseDriver(_SafelyParkedDriver):
 
 
 class _ReacquirableParkedDriver(_RecordingDriver):
-    adapter_id = "f64"
+    adapter_manifest = SimpleNamespace(adapter_id="propsim_f64")
 
     def __init__(self, instrument_id, config):
         super().__init__(instrument_id, config)
@@ -241,7 +242,9 @@ class _CancellableUxmConnectDriver(_CancellableConnectDriver):
 
 
 class _CancellableF64ConnectDriver(_CancellableConnectDriver):
-    adapter_id = "f64"
+    # Match RealPropsimF64Driver: identity is manifest-backed, not a direct
+    # ``adapter_id`` attribute.
+    adapter_manifest = SimpleNamespace(adapter_id="propsim_f64")
 
     def __init__(self, instrument_id, config):
         super().__init__(instrument_id, config)

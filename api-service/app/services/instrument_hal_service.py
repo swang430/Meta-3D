@@ -320,11 +320,25 @@ def is_mock_driver(driver) -> bool:
     return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
 
 
+def _driver_adapter_id(driver: Any) -> str | None:
+    """Read adapter identity from the driver's authoritative declaration."""
+
+    direct_adapter_id = getattr(driver, "adapter_id", None)
+    if isinstance(direct_adapter_id, str) and direct_adapter_id:
+        return direct_adapter_id
+    manifest_adapter_id = getattr(
+        getattr(driver, "adapter_manifest", None),
+        "adapter_id",
+        None,
+    )
+    return manifest_adapter_id if isinstance(manifest_adapter_id, str) else None
+
+
 def _requires_recoverable_base_station_disconnect(driver: Any) -> bool:
     """Keep real base-station sessions reachable until teardown is proven."""
 
     return (
-        getattr(driver, "adapter_id", None) in {"cmw500", "uxm"}
+        _driver_adapter_id(driver) in {"cmw500", "uxm"}
         and not is_mock_driver(driver)
     )
 
@@ -1043,8 +1057,7 @@ class InstrumentHALService:
                             # a later lifecycle operation can retry or guard
                             # the safe teardown.
                             f64_teardown_unconfirmed = (
-                                getattr(driver, "adapter_id", None)
-                                in {"f64", "propsim_f64"}
+                                _driver_adapter_id(driver) in {"f64", "propsim_f64"}
                                 and getattr(driver, "teardown_unconfirmed", None)
                                 is True
                             )
@@ -1440,11 +1453,7 @@ class InstrumentHALService:
             recoverable_base_station = (
                 _requires_recoverable_base_station_disconnect(driver)
             )
-            driver_adapter_id = getattr(driver, "adapter_id", None) or getattr(
-                getattr(driver, "adapter_manifest", None),
-                "adapter_id",
-                None,
-            )
+            driver_adapter_id = _driver_adapter_id(driver)
             safety_guarded = (
                 getattr(driver, "local_control_reserved", None) is True
                 or getattr(driver, "local_release_failed", None) is True
@@ -1937,7 +1946,7 @@ async def _disconnect_category_driver(
     driver = service.drivers.get(category_key)
     if driver is None:
         return
-    adapter_id = getattr(driver, "adapter_id", None)
+    adapter_id = _driver_adapter_id(driver)
     real_cmw = adapter_id == "cmw500" and not is_mock_driver(driver)
     real_uxm = adapter_id == "uxm" and not is_mock_driver(driver)
     recoverable_base_station = (
@@ -2006,7 +2015,7 @@ async def _disconnect_category_driver(
                 isinstance(acquired, BaseStationRemoteSessionResult)
                 and acquired.acquired_confirmed is True
                 and bool(acquired.session_token)
-                and acquired.adapter_id == getattr(driver, "adapter_id", None)
+                and acquired.adapter_id == _driver_adapter_id(driver)
             )
         elif category_key == "channelEmulator":
             reacquire_confirmed = acquired is True
