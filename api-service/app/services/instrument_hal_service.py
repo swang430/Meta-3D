@@ -1425,28 +1425,39 @@ class InstrumentHALService:
             except asyncio.CancelledError:
                 pass
 
-        unsafe_base_station_disconnects: list[str] = []
+        unsafe_disconnects: list[str] = []
         for name, driver in list(self.drivers.items()):
             recoverable_base_station = (
                 _requires_recoverable_base_station_disconnect(driver)
             )
+            local_control_guarded = (
+                getattr(driver, "local_control_reserved", None) is True
+                or getattr(driver, "local_release_failed", None) is True
+            )
+            driver_adapter_id = getattr(driver, "adapter_id", None) or getattr(
+                getattr(driver, "adapter_manifest", None),
+                "adapter_id",
+                None,
+            )
             adapter_label = {
                 "cmw500": "CMW500",
                 "uxm": "UXM",
-            }.get(getattr(driver, "adapter_id", None), "BaseStation")
-            if recoverable_base_station:
+                "f64": "PROPSIM F64",
+                "propsim_f64": "PROPSIM F64",
+            }.get(driver_adapter_id, "BaseStation")
+            if recoverable_base_station or local_control_guarded:
                 try:
-                    # A parked BaseStation has intentionally closed its
-                    # transport while retaining Local control.  Reuse the
+                    # A parked instrument has intentionally closed its
+                    # transport while retaining Local control. Reuse the
                     # category lifecycle path so shutdown/reload must regain
-                    # Remote before STOP + authoritative SAFE_IDLE teardown.
+                    # Remote before its authoritative safe teardown.
                     await _disconnect_category_driver(self, name)
                     logger.info(f"Disconnected driver: {name}")
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.error(f"Error disconnecting {name}: {e}")
-                    unsafe_base_station_disconnects.append(
+                    unsafe_disconnects.append(
                         f"{name} {adapter_label}"
                     )
                 continue
@@ -1457,9 +1468,9 @@ class InstrumentHALService:
                 logger.error(f"Error disconnecting {name}: {e}")
             self.drivers.pop(name, None)
 
-        if unsafe_base_station_disconnects:
+        if unsafe_disconnects:
             raise RuntimeError(
-                f"{', '.join(unsafe_base_station_disconnects)} 无法确认安全断开；"
+                f"{', '.join(unsafe_disconnects)} 无法确认安全断开；"
                 "HAL 保留恢复会话并拒绝卸载"
             )
 
@@ -1918,6 +1929,20 @@ async def _disconnect_category_driver(
     recoverable_base_station = (
         _requires_recoverable_base_station_disconnect(driver)
     )
+    local_release_unconfirmed = (
+        getattr(driver, "local_release_failed", None) is True
+    )
+    if local_release_unconfirmed:
+        activation_error = HALCategoryActivationError(
+            f"{category_key} 旧驱动交还 Local 未确认；"
+            "保留旧 runtime 并拒绝激活"
+        )
+        _mark_category_readiness_failed(
+            service,
+            category_key,
+            str(activation_error),
+        )
+        raise activation_error
     requires_remote_reacquire = (
         getattr(driver, "local_control_reserved", None) is True
         and getattr(driver, "local_release_failed", None) is False

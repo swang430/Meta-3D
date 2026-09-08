@@ -5140,6 +5140,13 @@ F64/UXM/CMW 第一次重新取得 Remote 失败时，驱动会把瞬时连接状
 shutdown 回归均为 RED，修复后调用序列保持 `acquire → acquire` 且不触发 `disconnect`、原 runtime
 继续保留。最终受影响链 `176 passed`、全后端 `6452 passed / 5 skipped`、`compileall`、单一
 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过；有界只读功能复核 P1/P2/P3=0。
+Codex R5 最后发现 F64 交还 Local 时若关闭 VISA 失败，会同时保留
+`local_control_reserved=true + local_release_failed=true` 与可恢复句柄；旧类别激活和全局 shutdown
+仍会调用被 Local 门阻断的 `disconnect()`，随后错误移除 runtime。现将“交还 Local 未确认”作为独立
+fail-closed 终态：类别激活与全局 shutdown 均不再尝试断开或卸载，明确报错并保留原 runtime；只有
+`local_release_failed=false` 的正常驻车 F64 才先 `acquire → disconnect`。旧实现三条回归为 RED，
+修复后定点 `5 passed`、受影响链 `178 passed`、全后端 `6454 passed / 5 skipped`、`compileall`、
+单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过；有界只读功能复核 P1/P2/P3=0。
 
 ## 🟢 P3 — Polish / tooling
 

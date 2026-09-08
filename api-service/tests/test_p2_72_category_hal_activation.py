@@ -119,6 +119,16 @@ class _SafelyParkedDriver(_RecordingDriver):
         self.local_release_failed = False
 
 
+class _FailedLocalReleaseDriver(_SafelyParkedDriver):
+    adapter_id = "f64"
+
+    async def disconnect(self):
+        # Mirror RealPropsimF64Driver: the retained handle cannot issue STOP or
+        # CLOSE while the Local-control gate remains reserved.
+        self.disconnect_calls += 1
+        return False
+
+
 class _ReacquirableParkedDriver(_RecordingDriver):
     adapter_id = "f64"
 
@@ -443,21 +453,21 @@ def test_matching_safely_parked_runtime_is_unchanged(monkeypatch, db):
     assert service.drivers["channelEmulator"] is loaded
 
 
-def test_failed_local_release_is_not_reused_as_safely_parked(monkeypatch, db):
+def test_failed_local_release_retains_f64_runtime_without_disconnect(monkeypatch, db):
     category = _seed_category(db, "channelEmulator", display_order=1)
     monkeypatch.setattr(
         hal_mod,
         "_real_driver_registry",
         lambda: {
             "channelEmulator": {
-                "channelEmulator-MODEL": _SafelyParkedDriver,
+                "channelEmulator-MODEL": _FailedLocalReleaseDriver,
             },
         },
     )
     service = InstrumentHALService(mode=DriverMode.REAL)
     resolved = service._resolve_category_runtime(db, category)
     assert resolved is not None
-    loaded = _SafelyParkedDriver(
+    loaded = _FailedLocalReleaseDriver(
         resolved.instrument_id,
         resolved.driver_config,
     )
@@ -465,11 +475,11 @@ def test_failed_local_release_is_not_reused_as_safely_parked(monkeypatch, db):
     service.drivers["channelEmulator"] = loaded
     _install_global_service(monkeypatch, service)
 
-    result = asyncio.run(activate_hal_category_atomic("channelEmulator"))
+    with pytest.raises(HALCategoryActivationError, match="交还 Local 未确认"):
+        asyncio.run(activate_hal_category_atomic("channelEmulator"))
 
-    assert result.status == "activated"
-    assert loaded.disconnect_calls == 1
-    assert service.drivers["channelEmulator"] is not loaded
+    assert loaded.disconnect_calls == 0
+    assert service.drivers["channelEmulator"] is loaded
 
 
 @pytest.mark.parametrize(
@@ -875,6 +885,38 @@ async def test_hal_shutdown_preserves_parked_uxm_when_reacquire_fails():
     assert driver.lifecycle_calls == ["acquire", "acquire"]
     assert driver.disconnect_calls == 0
     assert service.drivers == {"baseStation": driver}
+    assert service._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_reacquires_parked_f64_before_disconnect():
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _ReacquirableParkedDriver("f64", {})
+    driver.local_control_reserved = True
+    driver._status = InstrumentStatus.DISCONNECTED
+    service.drivers = {"channelEmulator": driver}
+    service._initialized = True
+
+    await service.shutdown()
+
+    assert driver.lifecycle_calls == ["acquire", "disconnect"]
+    assert service.drivers == {}
+    assert service._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_hal_shutdown_preserves_f64_when_local_release_is_unconfirmed():
+    service = InstrumentHALService(mode=DriverMode.REAL)
+    driver = _FailedLocalReleaseDriver("f64", {})
+    driver.local_release_failed = True
+    service.drivers = {"channelEmulator": driver}
+    service._initialized = True
+
+    with pytest.raises(RuntimeError, match="channelEmulator PROPSIM F64.*安全断开"):
+        await service.shutdown()
+
+    assert driver.disconnect_calls == 0
+    assert service.drivers == {"channelEmulator": driver}
     assert service._initialized is True
 
 
