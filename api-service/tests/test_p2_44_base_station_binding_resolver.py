@@ -178,7 +178,7 @@ def test_configured_authoritative_mock_keeps_manifest_and_profile_but_is_simulat
         ("UXM 5G E7515B", "CMW500"),
     ],
 )
-def test_configured_mock_rejects_stale_adapter_until_hal_is_reloaded(
+def test_configured_mock_rejects_stale_adapter_until_category_is_activated(
     db,
     selected_model,
     loaded_model,
@@ -194,7 +194,7 @@ def test_configured_mock_rejects_stale_adapter_until_hal_is_reloaded(
         ValueError,
         match=(
             "loaded mock driver adapter does not match selected adapter; "
-            "reload HAL after BaseStation model change"
+            "save the BaseStation selection and confirm category HAL activation"
         ),
     ):
         resolve_base_station_binding(

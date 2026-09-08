@@ -51,6 +51,7 @@ import {
 } from '@tabler/icons-react'
 
 import {
+  activateInstrumentCategoryHAL,
   createChamberFromTemplate,
   fetchChamberPresets,
   fetchInstrumentCatalog,
@@ -60,9 +61,13 @@ import {
   createLabProfile,
   type InstrumentBindingPayload,
 } from '../../api/labProfileService'
+import client from '../../api/client'
+import { commitThenActivateCategory } from '../../features/Equipment/categoryHalActivation'
+import { diagnosticErrorMessage } from '../../features/Equipment/diagnosticTarget'
 import type { ChamberType } from '../../types/api'
 
-const WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v1'
+const LEGACY_WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v1'
+const WIZARD_STORAGE_KEY = 'mimo-first-lab-wizard-state-v2'
 
 type DriverMode = 'auto' | 'mock' | 'real'
 
@@ -98,6 +103,11 @@ const EMPTY_STATE: WizardState = {
 
 function loadPersisted(): WizardState {
   try {
+    // V1 always stored ``driverMode: auto`` at seed time, so it cannot
+    // distinguish an operator choice from the old hard-coded default.
+    // Invalidate it once rather than risk overwriting the server's persisted
+    // real/mock truth during the first post-upgrade activation.
+    localStorage.removeItem(LEGACY_WIZARD_STORAGE_KEY)
     const raw = localStorage.getItem(WIZARD_STORAGE_KEY)
     if (!raw) return EMPTY_STATE
     const parsed = JSON.parse(raw) as Partial<WizardState>
@@ -150,7 +160,7 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
       categoryLabel: cat.label,
       modelId: cat.selectedModelId,
       endpoint: cat.connection.endpoint ?? '',
-      driverMode: 'auto',
+      driverMode: cat.driverMode as DriverMode,
     }))
     setState((s) => ({ ...s, bindings: seeded }))
   }, [catalogQuery.data, state.bindings.length])
@@ -160,10 +170,19 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
   })
 
   const updateCategoryMutation = useMutation({
-    mutationFn: ({ key, payload }: {
+    mutationFn: ({ key, payload, driverMode }: {
       key: string
       payload: { modelId?: string; connection?: { endpoint?: string } }
-    }) => updateInstrumentCategory(key, payload),
+      driverMode: DriverMode
+    }) => commitThenActivateCategory(
+      key,
+      async () => {
+        const committed = await updateInstrumentCategory(key, payload)
+        await client.patch(`/instruments/${key}/driver-mode`, { mode: driverMode })
+        return committed
+      },
+      activateInstrumentCategoryHAL,
+    ),
   })
 
   const createMutation = useMutation({
@@ -212,15 +231,38 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
   const onStep2Next = async () => {
     // Save each configured binding back to the backend so the
     // /instruments/{key} resources reflect what the operator chose
-    // — keeps the existing instrument-management UI in sync.
-    for (const b of configuredBindings) {
-      await updateCategoryMutation.mutateAsync({
-        key: b.categoryKey,
-        payload: {
-          modelId: b.modelId ?? undefined,
-          connection: { endpoint: b.endpoint },
-        },
+    // — keeps the existing instrument-management UI in sync.  Each
+    // committed category must also activate before the wizard may
+    // declare the lab ready; activation refusal leaves the saved truth
+    // intact and keeps the operator on this step.
+    try {
+      for (const b of configuredBindings) {
+        const { activationError } = await updateCategoryMutation.mutateAsync({
+          key: b.categoryKey,
+          driverMode: b.driverMode,
+          payload: {
+            modelId: b.modelId ?? undefined,
+            connection: { endpoint: b.endpoint },
+          },
+        })
+        if (activationError) {
+          notifications.show({
+            color: 'red',
+            title: `${b.categoryLabel} HAL 激活失败`,
+            message: diagnosticErrorMessage(activationError),
+            icon: <IconAlertCircle size={16} />,
+          })
+          return
+        }
+      }
+    } catch (err: unknown) {
+      notifications.show({
+        color: 'red',
+        title: '保存仪器配置或驱动模式失败',
+        message: diagnosticErrorMessage(err),
+        icon: <IconAlertCircle size={16} />,
       })
+      return
     }
     setState((s) => ({ ...s, active: 2 }))
   }

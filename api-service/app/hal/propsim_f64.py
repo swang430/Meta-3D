@@ -2036,6 +2036,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """最近一次 Local 交接是否因 socket 未能关闭而未完成。"""
         return self._local_release_failed
 
+    @property
+    def teardown_unconfirmed(self) -> bool:
+        """最近一次安全拆卸是否仍无法确认 F64 已停止。"""
+        return self._teardown_unconfirmed
+
     async def release_to_local_control(self) -> bool:
         """非破坏性地释放 ATE socket，并禁止后台重新夺回 Remote。
 

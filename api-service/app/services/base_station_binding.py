@@ -438,7 +438,7 @@ def resolve_base_station_binding(
     ):
         raise ValueError(
             "loaded mock driver adapter does not match selected adapter; "
-            "reload HAL after BaseStation model change"
+            "save the BaseStation selection and confirm category HAL activation"
         )
     expected_transport = _expected_transport(connection)
     expected_class = registration.driver_class
