@@ -5177,6 +5177,11 @@ resolver 拒绝。现把每个类别的型号/endpoint 与 driver mode 纳入同
 一次类别激活；任一写入失败均不激活、不前进。旧实现新增合同为 RED，修复后定点 `8 passed`、相关
 GUI/Operational Lab 合同 `35 passed`、production build 通过；后端生产输入未变，继续复用最终全后端
 `6456 passed / 5 skipped` 结果。
+Codex R11 继续核出向导 seed 仍把 `driverMode` 硬编码为 `auto`，会在已有 Equipment 配置为 `real` 或
+`mock` 时把预填草稿反向覆盖成 auto，再按错误 mode 激活。现直接读取 catalog 的权威 `cat.driverMode`
+并保留后续用户选择，不新增默认推断。旧实现新增合同为 RED，修复后定点 `9 passed`、相关 GUI/
+Operational Lab 合同 `36 passed`、production build 与 diff-check 通过；后端生产输入未变，继续复用
+最终全后端 `6456 passed / 5 skipped` 结果。
 
 ## 🟢 P3 — Polish / tooling
 

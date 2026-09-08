@@ -154,7 +154,7 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
       categoryLabel: cat.label,
       modelId: cat.selectedModelId,
       endpoint: cat.connection.endpoint ?? '',
-      driverMode: 'auto',
+      driverMode: cat.driverMode as DriverMode,
     }))
     setState((s) => ({ ...s, bindings: seeded }))
   }, [catalogQuery.data, state.bindings.length])

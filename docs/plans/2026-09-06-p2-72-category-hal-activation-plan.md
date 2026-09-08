@@ -408,7 +408,8 @@ export const activateInstrumentCategoryHAL = async (
 先写 catalog/draft；有 `activationError` 时显示“配置已保存，但 HAL 尚未激活：…”并刷新 catalog/HAL
 status/readiness，没有错误时显示 `activation.message`。`onError` 只代表保存失败。不得调用 LabProfile sync。
 首次 `LabProfileWizard` 的逐类别保存也必须复用同一编排；每个类别的型号/endpoint 与所选 driver mode
-都提交成功后才激活，任一保存或激活失败时显示具体原因并留在当前步骤，不得继续到“Lab 已就绪”。
+都提交成功后才激活，且初始 mode 必须读取 catalog 已保存真值；任一保存或激活失败时显示具体原因并
+留在当前步骤，不得继续到“Lab 已就绪”。
 
 - [x] **Step 5: 把 driver mode handler 接到同一 client**
 

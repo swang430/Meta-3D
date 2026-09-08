@@ -140,6 +140,20 @@ test('lab setup wizard persists the selected driver mode before activation', () 
   assert.match(step2Next, /driverMode: b\.driverMode/)
 })
 
+test('lab setup wizard seeds driver mode from the persisted catalog truth', () => {
+  const wizard = readFileSync(
+    new URL('../../components/LabProfile/LabProfileWizard.tsx', import.meta.url),
+    'utf8',
+  )
+  const bindingSeed = wizard.slice(
+    wizard.indexOf('const seeded: BindingDraft[]'),
+    wizard.indexOf('setState((s) => ({ ...s, bindings: seeded }))'),
+  )
+
+  assert.match(bindingSeed, /driverMode: cat\.driverMode/)
+  assert.doesNotMatch(bindingSeed, /driverMode: ['"]auto['"]/)
+})
+
 test('automatic category activation remains separate from LabProfile sync', () => {
   const helper = readFileSync(new URL('./categoryHalActivation.ts', import.meta.url), 'utf8')
 
