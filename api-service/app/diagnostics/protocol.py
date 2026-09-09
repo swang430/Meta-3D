@@ -6,6 +6,7 @@ on-site quick fixes harder.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
 
@@ -79,6 +80,14 @@ class SequenceRunResult:
     summary: str
     steps: List[SequenceStepResult] = field(default_factory=list)
     extra: Dict[str, Any] = field(default_factory=dict)
+
+
+class SequenceRunCancelled(asyncio.CancelledError):
+    """Propagate cancellation while preserving safety-critical partial evidence."""
+
+    def __init__(self, sequence_run_result: SequenceRunResult) -> None:
+        super().__init__()
+        self.sequence_run_result = sequence_run_result
 
 
 def driver_not_loaded_summary(category: str) -> str:

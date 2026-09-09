@@ -7,7 +7,9 @@ State 1，并说明 BLER 结果首字段 progress-count 达到 Length 时测量�
 该文档的 Application Mode 只标 NSA | SA，没有覆盖 LTE_NR_IRAT；当前方言的
 错误队列也仍是 unverified，所以本序列绝不发送错误队列查询。它只记录两次真机
 行为观察，永远不正式判绿，不写 execution/report/KPI，也不改变正式 lifecycle
-或 provenance 白名单。
+或 provenance 白名单。由于当前没有 LTE_NR_IRAT 下可引用的接受性回读，cleanup
+只能记录命令已发送；运行后必须由操作员在仪表侧完成完整 preset/reset，HAL 重载
+或传输重连不能替代该动作。
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from app.diagnostics.protocol import (
     SequenceMetadata,
+    SequenceRunCancelled,
     SequenceRunResult,
     SequenceStepResult,
     driver_not_loaded_summary,
@@ -37,7 +40,8 @@ metadata = SequenceMetadata(
         "手册既有 Clear/State 0/Length/Continuous 0/State 1 顺序执行两个"
         "窗口，以 DL BLER 首字段 progress-count 精确到界、到界停住和第二"
         "窗口重新起算形成诊断证据。手册范围只标 NSA/SA，故结果始终 "
-        "unverified，不进入正式 KPI/lifecycle。"
+        "unverified，不进入正式 KPI/lifecycle；写入后须操作员在仪表侧完整复位，"
+        "HAL 重载不能替代。"
     ),
     required_categories=["baseStation"],
     params_schema=[
@@ -99,8 +103,12 @@ def _base_extra() -> Dict[str, Any]:
             "attempted": False,
             "state_off_sent": False,
             "continuous_mode_restore_required": False,
-            "continuous_mode_restored": None,
+            "continuous_mode_restore_sent": None,
             "device_acceptance": "unverified",
+            "confirmed": False,
+            "requires_operator_reset": False,
+            "instrument_reusable": None,
+            "operator_action_required": None,
             "errors": [],
         },
     }
@@ -332,7 +340,7 @@ async def run(
         # cleanup 必须按“可能已切到 Single”处理。
         single_mode_attempted = True
         extra["cleanup"]["continuous_mode_restore_required"] = True
-        extra["cleanup"]["continuous_mode_restored"] = False
+        extra["cleanup"]["continuous_mode_restore_sent"] = False
         await checked_write(
             f'{commands["MEAS_BTHROUGHPUT_CONTINUOUS_ALL"]} 0',
             f"窗口 {index} 请求 Single 模式",
@@ -388,9 +396,10 @@ async def run(
         cleanup_state = extra["cleanup"]
         cleanup_state["attempted"] = True
         try:
-            # 先停再恢复 Continuous，避免切换模式时继续运行；手册条目明确
-            # Continuous=1 是连续模式及默认值。Length 留存但在连续模式下不生效，
-            # 不猜测手册范围之外的 Length 恢复值。
+            # 先停再尝试发送 Continuous=1。当前 LTE_NR_IRAT 没有权威接受性
+            # 回读，所以这里只记录 transport sent，绝不写成 restored/complete。
+            # Length 留存但在 Continuous 模式下不生效；运行后仍须操作员在
+            # 仪表侧执行完整 preset/reset，不能以 HAL reload 或重连冒充复位。
             await _invoke_driver_method(
                 write, f'{commands["MEAS_BTHROUGHPUT_STATE"]} 0'
             )
@@ -404,11 +413,11 @@ async def run(
                 await _invoke_driver_method(
                     write, f'{commands["MEAS_BTHROUGHPUT_CONTINUOUS_ALL"]} 1'
                 )
-                cleanup_state["continuous_mode_restored"] = True
+                cleanup_state["continuous_mode_restore_sent"] = True
                 add_step(
                     "cleanup Continuous 1",
                     True,
-                    "已恢复生产测量依赖的连续模式；设备接受性未验证",
+                    "传输完成；设备接受性未验证，不声明连续模式已恢复",
                 )
         except asyncio.CancelledError:
             raise
@@ -453,6 +462,11 @@ async def run(
         result_summary = f"{result_verdict}: 未预期异常 {type(error).__name__}: {error}"
     finally:
         if write_attempted:
+            extra["cleanup"]["requires_operator_reset"] = True
+            extra["cleanup"]["instrument_reusable"] = False
+            extra["cleanup"]["operator_action_required"] = (
+                "front_panel_full_preset_or_reset"
+            )
             cleanup_task = asyncio.create_task(cleanup())
             while not cleanup_task.done():
                 try:
@@ -468,27 +482,48 @@ async def run(
                 extra["cleanup"]["exception"] = f"{type(error).__name__}: {error}"
 
     if cancelled is not None:
-        raise cancelled
-    cleanup_complete = (
-        extra["cleanup"]["state_off_sent"] is True
-        and (
-            extra["cleanup"]["continuous_mode_restore_required"] is False
-            or extra["cleanup"]["continuous_mode_restored"] is True
+        extra["cancelled"] = True
+        extra["partial_result_available"] = True
+        if write_attempted:
+            extra["verdict"] = "BLOCKED"
+            result_summary = (
+                "BLOCKED: 诊断被取消；cleanup 只记录命令已发送、设备接受性未验证。"
+                "复用 UXM 前必须由操作员在仪表侧完成完整 preset/reset；"
+                "HAL 重载不能替代操作员复位。"
+            )
+            cleanup_error = extra["cleanup"].get("exception")
+            if cleanup_error:
+                result_summary = (
+                    f"{result_summary} cleanup 传输异常：{cleanup_error}"
+                )
+        else:
+            extra["verdict"] = "ABORTED"
+            result_summary = "ABORTED: 诊断在发送任何写命令前被取消。"
+        partial_result = SequenceRunResult(
+            success=False,
+            summary=result_summary,
+            steps=steps,
+            extra=extra,
         )
-    )
-    if write_attempted and not cleanup_complete:
-        cleanup_detail = extra["cleanup"].get("exception") or (
-            "STATe 0 / Continuous 1 必需恢复未完成"
-        )
+        raise SequenceRunCancelled(partial_result) from cancelled
+    if write_attempted:
+        cleanup_error = extra["cleanup"].get("exception")
         was_observed = result_verdict == "OBSERVED"
         result_verdict = "BLOCKED"
         if was_observed:
             result_summary = (
-                "BLOCKED: 窗口行为已观察，但 cleanup 未同时完成 STATe 0 与 "
-                f"Continuous 1 恢复：{cleanup_detail}"
+                "BLOCKED: 两个窗口行为已观察；cleanup 的 STATe 0 / Continuous 1 "
+                "仅确认命令已发送，LTE_NR_IRAT 设备接受性未验证。复用 UXM 前必须"
+                "由操作员在仪表侧完成完整 preset/reset；HAL 重载不能替代操作员复位。"
             )
         else:
-            result_summary = f"{result_summary}; cleanup 未完成：{cleanup_detail}"
+            result_summary = (
+                f"{result_summary}; cleanup 只记录命令已发送、设备接受性未验证。"
+                "复用 UXM 前必须由操作员在仪表侧完成完整 preset/reset；"
+                "HAL 重载不能替代操作员复位。"
+            )
+        if cleanup_error:
+            result_summary = f"{result_summary} cleanup 传输异常：{cleanup_error}"
     extra["verdict"] = result_verdict
     return SequenceRunResult(
         success=False,

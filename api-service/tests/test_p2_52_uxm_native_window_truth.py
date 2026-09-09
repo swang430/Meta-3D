@@ -12,6 +12,7 @@ from zipfile import ZipFile
 import pytest
 
 from app.diagnostics import loader
+from app.diagnostics.protocol import SequenceRunCancelled
 from app.diagnostics.sequences import uxm_native_window_truth as seq
 from app.diagnostics.sequences import uxm_scpi_compatibility as compatibility
 from app.hal.uxm_command_profiles import (
@@ -170,6 +171,8 @@ def test_invalid_or_missing_confirmation_refuses_all_scpi(params):
     assert result.success is False
     assert result.extra["verdict"] == "ABORTED"
     assert result.extra["formal_verdict"] == "unverified"
+    assert result.extra["cleanup"]["requires_operator_reset"] is False
+    assert result.extra["cleanup"]["instrument_reusable"] is None
     assert bs.ops == []
 
 
@@ -236,7 +239,7 @@ def test_two_exact_single_windows_are_observed_but_never_formally_green():
     ]
     assert ("Q", profile.ERR) not in bs.ops
     assert result.success is False
-    assert result.extra["verdict"] == "OBSERVED"
+    assert result.extra["verdict"] == "BLOCKED"
     assert result.extra["formal_verdict"] == "unverified"
     assert result.extra["requested_length"] == 2000
     assert result.extra["observed_boundary"] is True
@@ -248,7 +251,11 @@ def test_two_exact_single_windows_are_observed_but_never_formally_green():
     ]
     assert "applied_length" not in result.extra
     assert result.extra["cleanup"]["state_off_sent"] is True
-    assert result.extra["cleanup"]["continuous_mode_restored"] is True
+    assert result.extra["cleanup"]["continuous_mode_restore_sent"] is True
+    assert result.extra["cleanup"]["confirmed"] is False
+    assert result.extra["cleanup"]["requires_operator_reset"] is True
+    assert "操作员复位" in result.summary
+    assert "HAL 重载不能替代" in result.summary
     assert bs.call_threads and all(
         thread_id != event_loop_thread for thread_id in bs.call_threads
     )
@@ -322,7 +329,7 @@ def test_driver_exception_after_first_write_still_sends_state_off():
     assert result.extra["cleanup"]["continuous_mode_restore_required"] is False
 
 
-def test_ambiguous_single_mode_write_failure_still_restores_continuous_mode():
+def test_ambiguous_single_mode_write_failure_only_records_restore_command_sent():
     single = f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 0"
     bs = _FakeBs(raise_on={("W", single): TimeoutError("ambiguous write")})
 
@@ -334,7 +341,9 @@ def test_ambiguous_single_mode_write_failure_still_restores_continuous_mode():
         f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1",
     ]
     assert result.extra["cleanup"]["continuous_mode_restore_required"] is True
-    assert result.extra["cleanup"]["continuous_mode_restored"] is True
+    assert result.extra["cleanup"]["continuous_mode_restore_sent"] is True
+    assert result.extra["cleanup"]["confirmed"] is False
+    assert result.extra["cleanup"]["requires_operator_reset"] is True
 
 
 def test_cleanup_failure_is_recorded_and_never_hidden_by_observation():
@@ -345,8 +354,27 @@ def test_cleanup_failure_is_recorded_and_never_hidden_by_observation():
 
     assert result.extra["verdict"] == "BLOCKED"
     assert result.extra["cleanup"]["state_off_sent"] is True
-    assert result.extra["cleanup"]["continuous_mode_restored"] is False
+    assert result.extra["cleanup"]["continuous_mode_restore_sent"] is False
+    assert result.extra["cleanup"]["confirmed"] is False
+    assert result.extra["cleanup"]["requires_operator_reset"] is True
     assert "cleanup timeout" in result.extra["cleanup"]["exception"]
+
+
+def test_transport_success_never_claims_cleanup_or_instrument_reusable():
+    bs = _FakeBs()
+
+    result = _run(bs, {"confirm_write": True})
+
+    cleanup = result.extra["cleanup"]
+    assert cleanup["state_off_sent"] is True
+    assert cleanup["continuous_mode_restore_sent"] is True
+    assert cleanup["device_acceptance"] == "unverified"
+    assert cleanup["confirmed"] is False
+    assert cleanup["requires_operator_reset"] is True
+    assert cleanup["instrument_reusable"] is False
+    assert "continuous_mode_restored" not in cleanup
+    assert "cleanup_complete" not in cleanup
+    assert result.extra["verdict"] == "BLOCKED"
 
 
 def test_cleanup_failure_is_visible_even_when_window_already_blocked():
@@ -397,8 +425,14 @@ def test_run_cancellation_waits_for_inflight_write_then_performs_cleanup():
         await loop.run_in_executor(None, lambda: None)
         assert task.done() is False
         release.set()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as captured:
             await task
+        assert isinstance(captured.value, SequenceRunCancelled)
+        partial = captured.value.sequence_run_result
+        assert partial.extra["verdict"] == "BLOCKED"
+        assert partial.extra["cleanup"]["requires_operator_reset"] is True
+        assert partial.extra["cleanup"]["instrument_reusable"] is False
+        assert "操作员复位" in partial.summary
 
     asyncio.run(exercise())
     assert _writes(bs)[-1] == f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0"

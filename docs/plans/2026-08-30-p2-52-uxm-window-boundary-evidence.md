@@ -160,12 +160,13 @@ test_p2_48_measurement_window_plan + test_p2_46` = **53 passed**。
    第二次首样本小于 Length；任一传输异常、回退、越界、超时或继承都保留 Blocked。
    `SYSTem:ERRor?` 在 IRAT 下没有权威来源，序列不得发送。
 3. 核对 `extra.windows`、每步 raw、`cleanup.state_off_sent=true` 且
-   `cleanup.continuous_mode_restored=true`；lease release 由外层诊断审计负责，不由
-   序列伪称。
-4. 即使得到 `verdict=OBSERVED`，结果也应保持 `success=false` 与
-   `formal_verdict=unverified`：手册 Application Mode 只写 NSA|SA，且 IRAT ERR 仍
-   未取得权威来源。不得据此升级 `authoritative_closed`、正式 KPI 或 provenance
-   白名单；是否把经现场验证的边界接入正式执行须另开设计片。
+   `cleanup.continuous_mode_restore_sent=true`。这两个字段只表示命令已发到 transport，
+   不表示设备接受或状态已恢复；lease release 也只释放连接，不复位仪表业务状态。
+4. 只要序列尝试过写入，最终就保持 `verdict=BLOCKED`、`success=false`、
+   `formal_verdict=unverified` 与 `cleanup.requires_operator_reset=true`。记录结果后必须由
+   操作员在仪表侧完成完整 preset/reset，再开始任何正式 TestCase；HAL 重载或传输重连
+   不能替代该动作。不得据此升级 `authoritative_closed`、正式 KPI 或 provenance 白名单；
+   是否把经现场验证的边界接入正式执行须另开设计片。
 
 ## 7. Discovered 候选(待 triage,不自动启动)
 

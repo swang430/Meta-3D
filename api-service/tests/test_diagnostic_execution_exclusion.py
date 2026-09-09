@@ -16,6 +16,7 @@ from app.api import diagnostic_sequence as diagnostic_api
 from app.db.database import Base
 from app.diagnostics.protocol import (
     SequenceMetadata,
+    SequenceRunCancelled,
     SequenceRunResult,
     SequenceStepResult,
 )
@@ -366,6 +367,54 @@ async def test_unsafe_sequence_cancellation_propagates_and_releases_guard(
         },
     }
     assert "cancelled" in (audit.output_excerpt or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sequence_persists_attached_partial_safety_evidence(
+    db, lab_with_bs, monkeypatch,
+):
+    partial = SequenceRunResult(
+        success=False,
+        summary="BLOCKED: 已写仪表；HAL 重载不能替代操作员复位。",
+        steps=[SequenceStepResult(
+            label="cleanup STATe 0",
+            success=True,
+            detail="仅确认命令已发送；设备接受性未验证",
+        )],
+        extra={
+            "verdict": "BLOCKED",
+            "cancelled": True,
+            "partial_result_available": True,
+            "cleanup": {
+                "requires_operator_reset": True,
+                "instrument_reusable": False,
+            },
+        },
+    )
+
+    async def _cancel(*_args, **_kwargs):
+        raise SequenceRunCancelled(partial)
+
+    _patch_sequence(monkeypatch, _sequence(safe=False, run=_cancel))
+    with pytest.raises(asyncio.CancelledError):
+        await diagnostic_api.run_diagnostic_sequence(
+            "unsafe", _request(lab_with_bs.id), db,
+        )
+
+    audit = db.query(DiagnosticRun).one()
+    assert audit.success is False
+    assert audit.error_message == "Sequence cancelled"
+    assert audit.result_extra == partial.extra
+    assert audit.sequence_evidence["summary"] == partial.summary
+    assert audit.sequence_evidence["steps"] == [
+        {
+            "label": "cleanup STATe 0",
+            "success": True,
+            "detail": "仅确认命令已发送；设备接受性未验证",
+            "duration_ms": None,
+            "raw": None,
+        },
+    ]
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,8 @@ Length，也不能证明 `progress-count` 会在长度边界停止、连续两�
 - 所有命令和原始回复留在诊断步骤与 `extra`，不写入正式 execution、报告或 KPI；
 - 即使全部观察成立，`SequenceRunResult.success` 与 `formal_verdict` 仍保持 false /
   `unverified`。手册 Application Mode 只标 NSA/SA，不能据此宣称 IRAT 正式适用；
+- 只要尝试过写入，最终结果固定 `BLOCKED` 并要求操作员在仪表侧完整 preset/reset；
+  cleanup 写调用返回、HAL 重载、transport release/reconnect 都不能冒充设备已恢复；
 - 不改变 P2-48/P2-54 正式窗口实现、provenance 白名单或 lifecycle；不新增或猜测
   SCPI，不发送在 LTE_NR_IRAT 下无权威来源的错误队列查询，也不用 `*OPC?`
   冒充设备接受性或进度证据。
@@ -74,27 +76,31 @@ Length，也不能证明 `progress-count` 会在长度边界停止、连续两�
 ### 4.3 收尾与取消
 
 只要尝试过写入，`finally` 必须发送同一已取证写形的 `STATe 0`；若已尝试写
-`CONTinuous:ALL 0`（包括传输结果含糊），还必须发送 `CONTinuous:ALL 1` 恢复手册
-明确的连续模式，避免本诊断的 Single/Length 全局状态污染下一次正式测量。未尝试切换
-Single 时不得额外改模式。Length 在 Continuous 模式下不生效，因此不猜测恢复值。必需
-步骤任一传输失败都判 `BLOCKED`。同步 PyVISA I/O 在线程执行，取消时等待线程真实结束后再传播
-`CancelledError`，避免外层先释放 unsafe lease 而旧 I/O 仍在仪表上运行。序列不伪称
-自己完成了 release；lease release 由诊断 API 外层负责。
+`CONTinuous:ALL 0`（包括传输结果含糊），还必须尝试发送 `CONTinuous:ALL 1`。未尝试切换
+Single 时不得额外改模式。Length 在 Continuous 模式下不生效，因此不猜测恢复值。当前
+LTE_NR_IRAT 没有权威接受性回读，所以 cleanup 只能记 `state_off_sent` 与
+`continuous_mode_restore_sent`，不得称 `restored` / `complete` / reusable；无论 transport
+是否返回成功，运行后都要求操作员在仪表侧完整 preset/reset，HAL 重载不能替代。同步
+PyVISA I/O 在线程执行，取消时等待线程真实结束后再传播 `CancelledError`，避免外层先释放
+unsafe lease 而旧 I/O 仍在仪表上运行；传播取消时附带 partial `SequenceRunResult`，使
+诊断 API 仍能归档 sent/unverified 与操作员复位要求。序列不伪称自己完成了 release；
+诊断 API 外层释放的只是 transport lease，不是仪表业务状态复位。
 
 ## 5. 输出语义
 
-- `verdict=OBSERVED`：两次行为观察均成立，但 `success=false`；
-- `verdict=BLOCKED`：现场行为与前提不成立或不可判；
+- `verdict=BLOCKED`：只要发送过写命令即使用该值；窗口行为可单独记录为 observed，
+  但设备接受与 cleanup 恢复不可判，必须操作员复位；
 - `verdict=ABORTED`：写前门未过，零写命令；
 - `formal_verdict=unverified` 恒定；
 - `observed_boundary`、`single_shot_observed`、`repeatable_observed` 只表达诊断事实；
-- 保留每个窗口 progress 数组和 cleanup 状态；所有设备接受性均标 `unverified`，
-  不生成 KPI 数值。
+- 保留每个窗口 progress 数组和 cleanup 的 sent 状态；`confirmed=false`、
+  `requires_operator_reset=true`、`instrument_reusable=false`，所有设备接受性均标
+  `unverified`，不生成 KPI 数值。
 
 ## 6. 测试与镜像
 
 测试必须覆盖零写前门、两窗口命令顺序、绝不发送无权威 IRAT `ERR`、正常到界但仍
 非正式、畸形/回退/越界/超时/继承、异常与取消 cleanup、HAL 权威 Mock 拒绝、连续
-模式恢复、手册锚点，以及新常量没有进入正式窗口消费路径。更新 roadmap blocker、
+模式恢复命令只记 sent/unknown、操作员复位要求、手册锚点，以及新常量没有进入正式窗口消费路径。更新 roadmap blocker、
 U-13 和旧 P2-52 计划的“现场复验”未来清单；历史结论保持原样，只标明已被新受控
 载体取代。

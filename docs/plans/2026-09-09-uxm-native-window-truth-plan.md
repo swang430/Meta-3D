@@ -37,9 +37,11 @@
 - 修改 `api-service/tests/test_p2_52_uxm_native_window_truth.py`
 - 修改 `api-service/app/diagnostics/sequences/uxm_native_window_truth.py`
 
-1. 写异常和取消 RED，证明尝试过写入后一定发送 `STATe 0`；尝试过 Single 写入后再恢复
+1. 写异常和取消 RED，证明尝试过写入后一定发送 `STATe 0`；尝试过 Single 写入后再发送
    `CONTinuous:ALL 1`，未尝试 Single 时不额外改模式；同步 I/O 未结束前不传播取消。
-2. 实现 `finally` cleanup；保留 raw，不把 cleanup 或外层 lease release 伪装成正式证据。
+2. 实现 `finally` cleanup；保留 raw，只记 sent/acceptance-unverified，结果保持 BLOCKED 并
+   要求操作员完整 preset/reset；取消仍传播，但必须把 partial safety evidence 交给 API 归档；
+   不把 cleanup、HAL reload 或外层 lease release 伪装成复位证据。
 3. 增加源码/消费方门，证明新诊断常量不进入正式 measurement、execution、report、KPI。
 
 ## Task 4：更新活文档与旧计划的未来指引
@@ -57,7 +59,8 @@
 
 1. 运行 P2-52 专项、诊断序列合同、rule gates 和受影响链。
 2. 运行全后端、`compileall`、单一 Alembic head、base-to-HEAD diff-check。
-3. 逐文件 fresh 功能内审，重点检查：无权威错误查询隔离、取消/cleanup、连续模式恢复、
+3. 逐文件 fresh 功能内审，重点检查：无权威错误查询隔离、取消/cleanup、连续模式恢复命令
+   只记 sent/unknown、操作员复位要求、
    第二窗口继承、正式消费隔离和文档镜像；P1 必须为 0。
 4. 提交、推送、创建 Ready PR，执行 Codex R1；修复功能 P1 与本片内 P2 后触发 R2。
 5. 覆盖最新 HEAD 的 R2 无 P1且 mergeable/checks 通过或无必需 checks 时合并；否则只

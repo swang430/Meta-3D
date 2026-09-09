@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.diagnostics import loader
+from app.diagnostics.protocol import SequenceRunCancelled
 from app.models.diagnostic_run import DiagnosticKind
 from app.schemas.diagnostic_evidence import (
     SequenceEvidence,
@@ -222,16 +223,23 @@ async def run_diagnostic_sequence(
             step_results = [asdict(s) for s in result.steps]
             extra = result.extra
         except asyncio.CancelledError as exc:
-            # 请求取消也必须留下“这次诊断发生过”的审计记录。序列尚未返回
-            # SequenceRunResult，不能声称拿到了内部 partial steps/extra；明确记录
-            # 该边界，待同步 I/O/序列取消收尾和下方同步 DB commit 完成后再重抛。
+            # 请求取消也必须留下“这次诊断发生过”的审计记录。只有显式携带
+            # SequenceRunResult 的 SequenceRunCancelled 才能归档内部 partial
+            # steps/extra；普通取消仍明确记录“partial 不可用”。待同步 I/O、
+            # 序列取消收尾和下方同步 DB commit 完成后再重抛。
             success = False
-            summary = "Sequence cancelled"
-            error_msg = summary
-            extra = {
-                "cancelled": True,
-                "partial_result_available": False,
-            }
+            error_msg = "Sequence cancelled"
+            if isinstance(exc, SequenceRunCancelled):
+                partial_result = exc.sequence_run_result
+                summary = partial_result.summary
+                step_results = [asdict(s) for s in partial_result.steps]
+                extra = partial_result.extra
+            else:
+                summary = error_msg
+                extra = {
+                    "cancelled": True,
+                    "partial_result_available": False,
+                }
             cancelled_exc = exc
         except Exception as e:  # noqa: BLE001
             # Sequence raised — record as failure, surface error to UI.
