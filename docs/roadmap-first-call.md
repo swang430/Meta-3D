@@ -759,7 +759,7 @@ UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以�
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | **P2-51（现场半）** | **CMW MAC requested/applied 真机闭环** | #420/#437 的本地实现不能代替真实下发、回读、窗口与安全释放证明；与 P0-9/P1-74 共用现场窗口，分别签收 | ✅ 当前 TM3/2 层 LTE MIMO_OTA TestCase；保存同 execution/attempt 的 MAC receipt、窗口、SAFE_IDLE/release 与报告。不是重新开发 #420 |
-| **P2-52 / P2-54 UXM 证据边界** | **UXM 窗口关闭与 IRAT MAC 错误队列权威来源** | 先补当前方言适用的厂商出处；`uxm.error_queue` 现仍 unverified，不能借 F64 目录或一次零错误响应变成 confirmed。来源确定后才安排 UXM 窗口复验；证据不足维持 unknown | ✅ 已登记 `uxm_window_boundary_probe` 仅按既有零写边界采集；MAC/吞吐正式复验使用 NR MIMO_OTA TestCase。无原文的查询/关闭命令不临时新增 |
+| **P2-52 / P2-54 UXM 证据边界** | **UXM 原生有限窗口与 IRAT MAC 错误队列权威来源** | **2026-09-09 原始手册复核纠偏**：NotebookLM 所用的归档手册并非只说明 `CLEar`；`Examples > Measuring BLER` 明确给出 `CONTinuous:ALL 0`（Single）+ `LENGth:ALL 5000` + `STATe 1`，并规定结果首字段 `progress-count` 达到配置长度即 “measurement is done”。现有实现未冻结/下发/核验这组原生窗口参数，当前观察到的 `requested=3` 只是 TestCase/开发采样策略，不是 UXM 硬件要求；同时该章节只标 NSA/SA，LTE_NR_IRAT 适用性仍无书面依据。现场须确认当前 Test Application/选件接受 Single/Length、错误队列干净、progress-count 到界且连续两次窗口不继承；任一项不成立均维持 `clear_read_only` / unknown。`uxm.error_queue` 仍 unverified，不能借 F64 目录或一次零错误响应变成 confirmed | ⚠️ 当前 `uxm_window_boundary_probe` 只覆盖零写查询，**不足以关闭本项**。出发前须把上述手册既有命令做成 checked-in、需操作员确认的受控诊断/正式 NR MIMO_OTA TestCase 路径，冻结 requested/applied/进度/错误队列/cleanup/release；不得现场临时拼命令，不得在取得 IRAT 正面证据前升级正式 KPI |
 | **P2-61/62 真实 CE 验收** | **commissioning 引导认证 → 后续执行 → 冷释放/再次 acquire** | #458/#459 完成软件机制与测试域认证，不证明现场 active certification 已可用。需同一真实 binding/plan/asset、完整身份/许可、同 attempt receipts、频率/电平/路损及 SAFE_IDLE/release；BaseStation/路损等前置未满足时不得强升 Formal | ✅ 当前 MIMO_OTA TestCase 的 commissioning 入口（`executed_by=commissioning_api`）取得 source execution，经现有 CE certification API 激活，再用正式 TestCase 验后续执行；显式 diagnostic、Mock 和旧 attempt 不得引导升级。每次保留 execution_id 与终态，不把 certfake 当现场证据 |
 | **P1-74（现场半）** | **CMW500 Extended BLER 统计基不继承旧 session 的真机证明** | 非现场半已由 PR #429 合并（下发 `EBLer:SFRames` + 回读 + 全域 fail-closed）。现场缺的是真机行为证明：在真实 CMW500 上用**至少两个不同统计长度**连续执行，保存原始写/读/错误队列与报告证据，证明统计基随本次 TestCase 变化、**不继承上一 session**。⚠️ 手册（Base SW UM p.139）说运行中改结果相关参数会重启测量并清零统计计数器 —— 该行为本地无法证伪 | ✅ 正式载体：当前 LTE UMa 20 MHz MIMO_OTA TestCase，改 `stat_count` 跑两次即可对照（窗口证据里 `trust.reason` 带 applied 值）；诊断辅助：CMW500 已登记序列 |
 | **P2-56（现场半）** | **LTE TDD 正式路径的真机认证** | ① ② 两半已合（#444 / #446）：矩阵声明 + 下发回读均已就位，且已用 TDD profile 在 fake transport 上闭环。现场缺的是：真实 CMW500 上完成 Attach / 业务窗口 / SAFE_IDLE / release，并留下正式证据。⚠️ 本地证不了三件事：① 仪器是否真接受 `CELL:PCC:ULDL`（选件需 **KS550 and KS510**，pp.687-688）与 `SSUBframe`（只需 **KS550**，p.688；KS512 另限于 value 7+扩展CP / value 9）这两条写 —— **两条的选件要求不同**，别按同一套核；② `DLEQual ON` 对 `RMC:VERSion:DL2` 是「开的那一刻快照」还是「开着时持续传播」—— 本驱动把 DLEQual 排在 RMC 之前，而手册示例 §2.5.20（p.342）排在之后；③ TDD 帧结构两组相对 RMC 行的下发顺序（手册未给出顺序错了会怎样） | ✅ 正式载体：建一个 `duplex=tdd` 的 LTE MIMO_OTA TestCase（`uldl_configuration` / `special_subframe` 必填）跑一次，抄回 execution_id + `formal=` 那行 + 报告 |
@@ -4579,6 +4579,21 @@ STATe 查询形只进零写探针（uxm_window_boundary_probe，撞 cap 一律�
 5444 passed / 5 skipped。**UXM 到场复验为现场半**（取证 evidence.md §6：探针 → 操作员 OFF
 写形剧本 → authoritative_closed 升级前置）。
 
+**⚠️ 2026-09-09 原始手册复核纠偏 / 新增现场 blocker**：上面的“无独立
+STARt/STOP”是事实，但不能推出 UXM 只能做软件 `clear/read` 窗口。NotebookLM 所用归档底本
+`Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.zip`
+内 HTML 的 `#examples-measuring-bler` 还给出了一条完整的 single-shot 路径：先 `CLEar` / `STATe 0`，
+再设置 `LENGth:ALL 5000` 与 `CONTinuous:ALL 0`，用 `STATe 1` 触发；结果数组首字段
+`progress-count` 达到配置的 `LENGth` 时，手册原文判定 measurement is done。P2-52 当时把
+`LENGth` / `CONTinuous` 未驱动记入 Discovered，却没有把这段示例纳入窗口完成边界裁决，
+所以“UXM requested 三窗、CMW single 一窗”的现状不能解释成两台硬件的固有差异。
+
+本纠偏**不直接把 UXM 升为 `authoritative_closed`**：示例所属条目的 Application Mode 仍只标
+NSA/SA，现场使用的 LTE_NR_IRAT 是否接受、当前选件/版本的写后状态、进度到界、错误队列与
+第二次测量是否从零开始，均须在同一冻结 execution/attempt 内取证。出发前还须补齐受控载体；
+在此之前当前三窗只按软件重复策略解释，UXM 指标继续保持 diagnostic/unknown，不用本地 fake
+transport 或 `*OPC?=1` 冒充窗口完成。
+
 原条目：按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
 永久声明 clear/read-only、diagnostic。分为非现场取证/实现与 UXM 到场复验，不盲试命令。
 
@@ -5241,6 +5256,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | U-10 | CMW500 `PCCBBBoard` 如何权威确认？ | **本地半完成，待现场复验。** 依据 LTE UE Manual 1173.9628.02-41 §2.6.8.1 pp.630–631 与 Remote Control via SCPI 1179.4592.02-04 §3.6 p.22，已实现 `ROUTe:LTE:SIGN<i>:SCENario:TRO:FLEXible?` 七字段严格回读，并与通用 query 的六个物理路径交叉确认。真机原始响应未取得前 Route 仍只作诊断、正式 KPI UNKNOWN/N/A。 |
 | U-11 | F64 ATE socket 释放与前面板 Local 的精确关系是什么？ | 驱动只能证明 `ate_socket_released`；用 `propsim_f64_local_handback_check` 的两段式人工确认记录 Remote 水印/Local Mode，取得 SUCCESS 前不声称已 Local。 |
 | U-12 | FSVA IQ 参数查询能否贯穿真实 PDP/Doppler 采集？ | 2026-08-27 IQ ON 临时查询已两次 SUCCESS 且恢复 OFF；后续须在不并发 LTE 正式执行时分别跑真实 PDP/Doppler 全采集，能力探针成功不等于测量链已验。FSVA 不参与当前 LTE MIMO OTA 正式必需链。 |
+| U-13 | UXM 在现场 LTE_NR_IRAT Test Application 下，能否按手册的 Single + Length + progress-count 形成可重复、互不继承的原生有限窗口？ | 关联 Blocked 表 P2-52/P2-54。出发前补 checked-in 受控载体；现场在同一冻结 execution 内核对 `CONTinuous:ALL 0` / `LENGth:ALL` 的 requested/applied、错误队列、progress-count 到界、连续两次从零计数及 SAFE_IDLE/release。手册示例与 NotebookLM 摘要只证明 NSA/SA 文档路径，不替代 LTE_NR_IRAT 真机证据。 |
 
 ---
 
