@@ -291,6 +291,41 @@ async def test_probe_records_rejected_inferred_query_as_an_answer():
 
 
 @pytest.mark.asyncio
+async def test_probe_never_instructs_operator_to_issue_unsourced_window_writes():
+    """可达 GUI/结果文本只能说明取证阻塞，不能把无出处写操作转交给人。"""
+    from app.diagnostics.sequences import uxm_window_boundary_probe as probe
+
+    query_cmd = UxmLteNrIratProfile.MEAS_BTHROUGHPUT_STATE_QUERY
+    results = []
+    for response in ("1", TimeoutError("no reply")):
+        driver = _FakeUxmDriver(
+            UxmLteNrIratProfile(),
+            {
+                query_cmd: response,
+                "SYSTem:ERRor?": [
+                    '0,"No error"',
+                    '-113,"Undefined header"',
+                    '0,"No error"',
+                    '0,"No error"',
+                ],
+            },
+        )
+        results.append(await _run_probe(driver))
+
+    user_facing = [probe.metadata.description]
+    for result in results:
+        user_facing.append(result.summary)
+        user_facing.extend(step.detail for step in result.steps)
+
+    forbidden = ("操作员按", "人工执行", "手工执行", "STATe OFF", "STATE OFF")
+    assert all(
+        token not in text
+        for text in user_facing
+        for token in forbidden
+    ), "零写探针不得指示操作员绕过取证门执行窗口写操作"
+
+
+@pytest.mark.asyncio
 async def test_probe_aborts_on_profile_without_inferred_query_definition():
     """5G_NR_Test 方言未定义推断查询形（BSE 树认不认未经查证）→ 拒跑，
     STATe? 一条都不发。"""

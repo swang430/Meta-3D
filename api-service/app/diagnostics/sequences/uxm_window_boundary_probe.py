@@ -25,10 +25,9 @@ single-shot 完成判据；当前探针只核 `STATe?`，**不能验证或否定
    5G_NR_Test —— BSE 树在该方言认不认未经查证，不猜）→ 直接拒跑。
 2. 预排水 `SYSTem:ERRor?` 到 0（stale 错误不许挂到本探针的命令名下）。
 3. 发 `BTHRoughput:STATe?` 读现状 → 立即归属错误队列。
-4. **读到 ON 也不动**（测量在累积，本探针不干预）；**绝不发 OFF/ON** ——
-   条目明令不盲试，OFF 写形复验留给现场操作员按取证文档
-   `docs/plans/2026-08-30-p2-52-uxm-window-boundary-evidence.md` §现场复验
-   在本探针结果指引下人工执行。
+4. **读到 ON 也不动**（测量在累积，本探针不干预）；**绝不发 OFF/ON**。
+   当前手册只覆盖 NSA/SA，不能授权 LTE_NR_IRAT 窗口写入；必须先取得
+   可审计的 IRAT 厂商依据，零写探针结果不能作为写入授权。
 5. 收尾排水一轮。
 
 **零写命令**：全程只有 `STATe?` / `SYSTem:ERRor?` 两种查询（连 `*CLS` 都
@@ -61,8 +60,8 @@ metadata = SequenceMetadata(
         "队列，判定该推断形在真机成不成立、顺带归档累积开关现状。"
         "本探针不覆盖手册 Single + LENGth + progress-count 完成边界；该路径"
         "须由另一个受控载体在 LTE_NR_IRAT 下取证。"
-        "**零写命令**：读到 ON 也不动，绝不发 OFF/ON（条目明令不盲试；"
-        "OFF 写形复验由现场操作员按取证文档人工执行）。"
+        "**零写命令**：读到 ON 也不动，绝不发 OFF/ON。当前手册只覆盖"
+        " NSA/SA，不能授权 LTE_NR_IRAT 窗口写入；须先取得可审计的厂商依据。"
     ),
     required_categories=["baseStation"],
     params_schema=[],
@@ -228,7 +227,7 @@ async def run(
               f"推断查询形**被拒**（错误队列: {errors}"
               + (f"; 查询异常 {type(query_exc).__name__}" if query_exc else "")
               + "）—— `[:STATe]?` 在本 Test App 不成立，累积开关现状不可回读。"
-              "OFF 写形复验仍待操作员按取证文档人工执行。",
+              "LTE_NR_IRAT 窗口写入仍无厂商依据，不得据此探针安排。",
               raw_state, started)
         residue, res_decidable = await _drain("收尾错误队列")
         extra["residue_clean"] = (residue == []) if res_decidable else None
@@ -279,6 +278,7 @@ async def run(
     return _result(
         "SUCCESS",
         f"SUCCESS: 推断查询形 `{query_cmd}` 真机成立，现状 = {token!r}；"
-        "本探针零写命令。OFF 写形复验按取证文档 §现场复验由操作员执行。",
+        "本探针零写命令；该结果不授权 LTE_NR_IRAT 窗口写入，"
+        "须先取得可审计的厂商依据。",
         steps, extra,
     )
