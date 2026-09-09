@@ -147,23 +147,21 @@ test_p2_48_measurement_window_plan + test_p2_46` = **53 passed**。
 
 ## 6. UXM 到场复验清单(现场半,本地测试不替代)
 
-1. **跑 `uxm_window_boundary_probe`**(诊断面板,LTE_NR_IRAT 下):
-   - `state_query_supported=True` ⇒ 推断查询形 `BTHRoughput:STATe?`
-     真机成立,归档 `bthroughput_state` 原样 token —— F2 缺口关掉一半
-     (查询形实测成立;IRAT 适用性 F3 随之得到该条的正面样本)。
-   - `SUCCESS` + 被拒(-113)⇒ 查询形不成立**也是答案**:closed/OFF
-     回读无路,lifecycle 永久停在 clear_read_only,探针与本清单归档即止。
-2. **STATe OFF 写形复验(操作员人工,不入探针)**:仅在非测试时段、
-   探针先行判定查询形成立后,由操作员手动 `STATe OFF` → `STATe?` 回读
-   → `SYSTem:ERRor?` 归属 → 立即 `STATe ON` 恢复并回读。写形被拒或
-   回读与写入不符,原样记录字面值。
-3. **每窗口 CLEar 生效佐证**:正式执行链跑一个窗口,对照 P2-48 evidence
-   里 `trust.stages.clear`(应 confirmed 携 exchange id)与
-   吞吐量 progress-count 在 CLEar 后归零重累积。
-4. 若 1+2 两个缺口都取得正面证据(查询形成立 + OFF 写形有效且回读一致),
-   届时才有资格讨论 `authoritative_closed` 升级 —— 仍需先解决 F3
-   (IRAT 适用性)的书面依据或系统性实测,并按 P2-48 契约补 closed
-   阶段的权威回读实现。**本片不预支。**
+> **2026-09-09 安全复核：**仓库手册的 Single + Length 示例和命令条目只标
+> NSA/SA，没有覆盖现场使用的 `LTE_NR_IRAT`。因此不能用“结果标 unverified”作为向
+> 真机试写的授权；也没有权威回读或生产 gate 能在写后确认仪表已恢复、阻止下一次正式
+> 执行。原拟新增的真实写诊断已撤回，旧 `uxm_window_boundary_probe` 只保留零写辅助。
+
+1. 先取得可审计的厂商资料，明确当前 Test Application / 固件 / 选件下
+   `LENGth:ALL`、`CONTinuous:ALL`、`STATe` 和错误队列的 `LTE_NR_IRAT` 适用性、值域、
+   前置条件与复位方法；只有 NSA/SA 示例不算 IRAT 依据。
+2. 资料未取得前，不从软件或操作说明安排上述 IRAT 写入；零写探针的结果也不能关闭
+   Single + Length 行为缺口。
+3. 依据齐全后另开实现片，先设计独占监控、设备接受性核验和持久 quarantine/reset
+   解除门，再实现两次 Clear → State 0 → Length → Continuous 0 → State 1 的受控诊断。
+4. 真机验收须证明两次 progress-count 精确到界、到界停住、第二次不继承，并证明
+   cleanup 与复位已由权威回读确认；否则继续保持 `clear_read_only` / unknown，绝不升级
+   正式 KPI、lifecycle 或 provenance 白名单。
 
 ## 7. Discovered 候选(待 triage,不自动启动)
 
