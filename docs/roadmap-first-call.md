@@ -4576,8 +4576,8 @@ lifecycle 升 clear_read_only（CLEar 原文 + IRAT 现场双证据）；不升 
 STATe 查询形只进零写探针（uxm_window_boundary_probe，撞 cap 一律不可判）不进正式
 路径。内审 P1（记账过滤 wire token "write"≠传输层 "command"，测试 fake 曾 pin 住错误
 契约）修复 + 真实传输模板成因门；Gemini R1 首轮明文 clean。变异 16 条全红，全量
-5444 passed / 5 skipped。**UXM 到场复验为现场半**（取证 evidence.md §6：探针 → 操作员 OFF
-写形剧本 → authoritative_closed 升级前置）。
+5444 passed / 5 skipped。当时 evidence.md §6 仍含操作员 OFF 写形剧本；该剧本已在
+2026-09-09 安全复核中撤回，当前零写探针和现场清单均不再授权这类操作。
 
 **⚠️ 2026-09-09 原始手册复核纠偏 / 新增现场 blocker**：上面的“无独立
 STARt/STOP”是事实，但不能推出 UXM 只能做软件 `clear/read` 窗口。NotebookLM 所用归档底本
@@ -4588,11 +4588,15 @@ STARt/STOP”是事实，但不能推出 UXM 只能做软件 `clear/read` 窗口
 `LENGth` / `CONTinuous` 未驱动记入 Discovered，却没有把这段示例纳入窗口完成边界裁决，
 所以“UXM requested 三窗、CMW single 一窗”的现状不能解释成两台硬件的固有差异。
 
-本纠偏**不直接把 UXM 升为 `authoritative_closed`**：示例所属条目的 Application Mode 仍只标
-NSA/SA，现场使用的 LTE_NR_IRAT 是否接受、当前选件/版本的写后状态、进度到界、错误队列与
-第二次测量是否从零开始，均须在同一冻结 execution/attempt 内取证。出发前还须补齐受控载体；
-在此之前当前三窗只按软件重复策略解释，UXM 指标继续保持 diagnostic/unknown，不用本地 fake
-transport 或 `*OPC?=1` 冒充窗口完成。
+本纠偏**不直接把 UXM 升为 `authoritative_closed`**。任何仪器写入之前，必须先取得可审计的 LTE_NR_IRAT 厂商资料，
+明确当前 Test Application / 固件 / 选件下这些命令的适用性、值域、
+前置条件、错误队列和 cleanup/reset 方法；只有 NSA/SA 示例不构成依据。资料未齐前，不得通过执行或人工试写
+来“证明”适用性，零写探针也只能观察既有状态，不能成为写入授权。
+
+依据齐全后另开实现片，先设计监控独占、设备接受性核验和持久 quarantine/reset 解除门，再实现
+受控载体，并在同一冻结 execution/attempt 内核验写后状态、进度到界和第二次测量不继承。在此之前
+当前三窗只按软件重复策略解释，UXM 指标继续保持 diagnostic/unknown，不用本地 fake transport
+或 `*OPC?=1` 冒充窗口完成。
 
 原条目：按 Keysight 原始手册与既有 NotebookLM 规则查证 stop/closed 生命周期；有出处才实现并回读，没有则
 永久声明 clear/read-only、diagnostic。分为非现场取证/实现与 UXM 到场复验，不盲试命令。
