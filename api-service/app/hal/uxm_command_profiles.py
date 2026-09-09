@@ -533,9 +533,11 @@ class UxmLteNrIratProfile(UxmTestApp):
     #     `:STATe` 写形已在 IRAT 真机实发有效（2026-07-03/08-27 现场执行链）。
     #   · CLEar 手册原文："Resets the BLER measurement. NB if a measurement
     #     is in-progress it will automatically be restarted."（Imm Action /
-    #     No query）—— 即 NR 域 BTHRoughput 树只有 clear 边界，**没有**
-    #     独立的 STARt/STOP 或权威 closed 边界（控制命令恰 4 条：
-    #     [:STATe] / CONTinuous[:ALL] / LENGth[:ALL] / CLEar，其余全 Query only）。
+    #     No query）。控制命令恰 4 条（[:STATe] / CONTinuous[:ALL] /
+    #     LENGth[:ALL] / CLEar，无独立 STARt/STOP）；但同一手册的
+    #     Examples > Measuring BLER 明确给出 Single + LENGth + progress-count
+    #     到界的 single-shot 完成判据。当前 profile 只实现 clear/read，
+    #     该完成判据尚未在 LTE_NR_IRAT 下实现或真机验证。
     #   出处锚：#scpi/bse:measure:nr5g:bthroughput(:state) 与
     #   #scpi/bse:measure:nr5g:bthroughput:clear。
     MEAS_BTHROUGHPUT_STATE = "BSE:MEASure:NR5G:BTHRoughput:STATe"

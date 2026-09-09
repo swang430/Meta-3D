@@ -243,8 +243,8 @@ def test_uxm_manifest_v2_declares_only_capabilities_common_to_all_profiles():
     assert manifest.measurement is not None
     assert manifest.measurement.cardinality == "requested"
     assert manifest.measurement.scopes == ("pcell", "all_cells")
-    # P2-52：clear 边界双证据（CLEar 手册原文 + IRAT 现场实测）→ clear_read_only；
-    # closed 无出处（IRAT 适用性未说明 + [:STATe]? 查询形无原文）→ 不升
+    # P2-52：当前只实现有双证据的 clear；手册 Single+LENGth 完成边界尚未
+    # 在 IRAT 下实现/验证，且 [:STATe]? 查询形无原文 → 不升
     # authoritative_closed。metrics = 两个可选 profile registry 的保守交集
     # （逐字段一致性由 test_p2_52 的不变量门守着）。
     assert manifest.measurement.lifecycle == "clear_read_only"

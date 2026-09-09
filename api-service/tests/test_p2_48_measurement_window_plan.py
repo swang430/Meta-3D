@@ -31,8 +31,8 @@ def test_uxm_manifest_freezes_requested_diagnostic_windows_without_closed_claim(
     manifest = RealUxmDriver.adapter_manifest
 
     assert manifest.measurement is not None
-    # P2-52：clear 边界有手册出处（CLEar）+ IRAT 现场实测 → clear_read_only；
-    # closed 仍无出处，绝不声明 authoritative_closed。
+    # P2-52：当前只实现有据的 CLEar；手册 Single+LENGth 完成边界尚未在
+    # IRAT 下实现/验证 → clear_read_only，不声明 authoritative_closed。
     assert manifest.measurement.lifecycle == "clear_read_only"
     assert manifest.measurement.source_reference is not None
     assert {metric.key for metric in manifest.measurement.metrics} == {
