@@ -550,11 +550,14 @@ class UxmLteNrIratProfile(UxmTestApp):
     # 仓库原件：5G_NR_Test_Application_SCPI_Reference.zip，
     # Examples > Measuring BLER（#examples-measuring-bler）原文示例依次下发
     # `LENGth:ALL 5000` / `CONTinuous:ALL 0`，并以 BLER 首字段
-    # progress-count 达到 Length 作为完成边界；对应命令条目同时列出
+    # progress-count 达到 Length 作为完成边界；Continuous 条目同时明确
+    # Single=0、Continuous=1、Default=1；对应命令条目列出
     # `BSE:MEASure:NR5G:BTHRoughput:...` 这个与生产驱动一致的等价路径。
     # ⚠ 条目的 Application Mode 只写 NSA | SA；目标是 LTE_NR_IRAT，范围
     # 不匹配，所以即使真机行为观察成立也只能 unverified，不能升级正式 KPI、
-    # lifecycle 或 provenance 白名单，也不得据此反推查询形。
+    # lifecycle 或 provenance 白名单，也不得据此反推查询形。该诊断收尾用
+    # `CONTinuous:ALL 1` 恢复生产窗口依赖的连续模式，但不猜 Length 恢复值；
+    # 也不得发送在 IRAT 下无权威来源的继承 ERR 命令。
     MEAS_BTHROUGHPUT_LENGTH_ALL = (
         "BSE:MEASure:NR5G:BTHRoughput:LENGth:ALL"
     )

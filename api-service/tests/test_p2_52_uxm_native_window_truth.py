@@ -19,10 +19,11 @@ from app.hal.uxm_command_profiles import (
     UxmLteNrIratProfile,
     UxmTestApp,
 )
+from app.hal.base_station import MockBaseStation
 
 
 class _SentinelProfile(UxmLteNrIratProfile):
-    """用哨兵 ERR 证明序列不硬编码另一条错误队列。"""
+    """用哨兵 ERR 证明序列不会发送未经 IRAT 手册确认的错误查询。"""
 
     ERR = "SENTINEL:ERR?"
 
@@ -45,20 +46,14 @@ class _FakeBs:
         profile: type[UxmTestApp] = _SentinelProfile,
         status: str = "CONN",
         progress: list[object] | None = None,
-        errors_after: dict[str, list[str] | str] | None = None,
         raise_on: dict[tuple[str, str], BaseException] | None = None,
     ) -> None:
         self._cmds = profile
         self.status = status
         self.progress = list(progress or [0, 1000, 2000, 2000, 0, 1200, 2000, 2000])
-        self.errors_after = {
-            key: list(value) if isinstance(value, list) else [value]
-            for key, value in (errors_after or {}).items()
-        }
         self.raise_on = raise_on or {}
         self.ops: list[tuple[str, str]] = []
         self.call_threads: list[int] = []
-        self._last_operation: str | None = None
 
     def _query(self, command: str) -> str:
         self.call_threads.append(threading.get_ident())
@@ -66,13 +61,6 @@ class _FakeBs:
         error = self.raise_on.get(("Q", command))
         if error is not None:
             raise error
-        if command == self._cmds.ERR:
-            key = self._last_operation or "<initial>"
-            values = self.errors_after.get(key)
-            if values:
-                return values.pop(0)
-            return '0,"No error"'
-        self._last_operation = command
         if command == self._cmds.CELL_STATUS_QUERY.format(cell="CELL1"):
             return self.status
         if command == self._cmds.MEAS_BLER_DL.format(cell="CELL1"):
@@ -83,14 +71,24 @@ class _FakeBs:
     def _write(self, command: str) -> None:
         self.call_threads.append(threading.get_ident())
         self.ops.append(("W", command))
-        self._last_operation = command
         error = self.raise_on.get(("W", command))
         if error is not None:
             raise error
 
 
-class MockFakeBs(_FakeBs):
-    pass
+class RenamedAuthoritativeMock(MockBaseStation):
+    """类名不以 Mock 开头，但仍属于 HAL 权威 mock 类族。"""
+
+    def __init__(self) -> None:
+        self._cmds = _SentinelProfile
+        self.ops: list[tuple[str, str]] = []
+
+    def _query(self, command: str) -> str:
+        self.ops.append(("Q", command))
+        return "CONN"
+
+    def _write(self, command: str) -> None:
+        self.ops.append(("W", command))
 
 
 @pytest.fixture(autouse=True)
@@ -175,9 +173,8 @@ def test_invalid_or_missing_confirmation_refuses_all_scpi(params):
     assert bs.ops == []
 
 
-def test_mock_wrong_profile_and_missing_control_refuse_all_scpi():
+def test_wrong_profile_and_missing_control_refuse_all_scpi():
     for bs in (
-        MockFakeBs(),
         _FakeBs(profile=Uxm5GNRTestAppProfile),
         _FakeBs(profile=type(
             "MissingLengthProfile",
@@ -188,6 +185,16 @@ def test_mock_wrong_profile_and_missing_control_refuse_all_scpi():
         result = _run(bs, {"confirm_write": True})
         assert result.success is False
         assert bs.ops == []
+
+
+def test_authoritative_mock_classifier_rejects_renamed_mock_without_io():
+    bs = RenamedAuthoritativeMock()
+
+    result = _run(bs, {"confirm_write": True})
+
+    assert result.success is False
+    assert "mock" in result.summary.lower()
+    assert bs.ops == []
 
 
 @pytest.mark.parametrize("status", ["", "ON", "OFF", "IDLE", "AGGR", "ACT"])
@@ -224,8 +231,10 @@ def test_two_exact_single_windows_are_observed_but_never_formally_green():
         f"{profile.MEAS_BTHROUGHPUT_STATE} 1",
     ]
     assert _writes(bs) == per_window + per_window + [
-        f"{profile.MEAS_BTHROUGHPUT_STATE} 0"
+        f"{profile.MEAS_BTHROUGHPUT_STATE} 0",
+        f"{profile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1",
     ]
+    assert ("Q", profile.ERR) not in bs.ops
     assert result.success is False
     assert result.extra["verdict"] == "OBSERVED"
     assert result.extra["formal_verdict"] == "unverified"
@@ -239,7 +248,7 @@ def test_two_exact_single_windows_are_observed_but_never_formally_green():
     ]
     assert "applied_length" not in result.extra
     assert result.extra["cleanup"]["state_off_sent"] is True
-    assert result.extra["cleanup"]["error_queue_clean"] is True
+    assert result.extra["cleanup"]["continuous_mode_restored"] is True
     assert bs.call_threads and all(
         thread_id != event_loop_thread for thread_id in bs.call_threads
     )
@@ -262,7 +271,10 @@ def test_invalid_progress_blocks_and_still_cleans_up(progress, reason):
     assert result.success is False
     assert result.extra["verdict"] == "BLOCKED"
     assert reason in result.summary
-    assert _writes(bs)[-1] == f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0"
+    assert _writes(bs)[-2:] == [
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0",
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1",
+    ]
     assert result.extra["cleanup"]["state_off_sent"] is True
 
 
@@ -280,32 +292,20 @@ def test_progress_timeout_blocks_and_still_cleans_up():
 
     assert result.extra["verdict"] == "BLOCKED"
     assert "超时" in result.summary
-    assert _writes(bs)[-1].endswith("STATe 0")
+    assert _writes(bs)[-2:] == [
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0",
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1",
+    ]
 
 
-def test_command_error_stops_window_and_cleanup_error_is_separately_recorded():
-    rejected = f"{_SentinelProfile.MEAS_BTHROUGHPUT_LENGTH_ALL} 2000"
-    cleanup = f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0"
-    bs = _FakeBs(
-        errors_after={
-            rejected: ['-222,"Data out of range"', '0,"No error"'],
-            # 第一次 STATe 0 属于窗口配置；第二次才是 finally cleanup。
-            cleanup: [
-                '0,"No error"',
-                '-200,"Cleanup rejected"',
-                '0,"No error"',
-            ],
-        }
-    )
+def test_diagnostic_never_sends_unverified_irat_error_queue_command():
+    bs = _FakeBs(status="OFF")
 
     result = _run(bs, {"confirm_write": True})
 
-    assert result.extra["verdict"] == "BLOCKED"
-    assert rejected in result.summary
-    assert cleanup == _writes(bs)[-1]
-    assert result.extra["cleanup"]["state_off_sent"] is True
-    assert result.extra["cleanup"]["error_queue_clean"] is False
-    assert "Cleanup rejected" in result.extra["cleanup"]["errors"][0]
+    assert result.extra["verdict"] == "ABORTED"
+    assert ("Q", _SentinelProfile.ERR) not in bs.ops
+    assert _writes(bs) == []
 
 
 def test_driver_exception_after_first_write_still_sends_state_off():
@@ -316,29 +316,52 @@ def test_driver_exception_after_first_write_still_sends_state_off():
 
     assert result.extra["verdict"] == "BLOCKED"
     assert "TimeoutError" in result.summary
-    assert any("异常后错误队列" in step.label for step in result.steps)
+    assert not any("错误队列" in step.label for step in result.steps)
     assert _writes(bs)[-1] == f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0"
+    assert f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1" not in _writes(bs)
+    assert result.extra["cleanup"]["continuous_mode_restore_required"] is False
 
 
-@pytest.mark.parametrize(
-    "errors_after",
-    [
-        {"<initial>": ["malformed"]},
-        {
-            _SentinelProfile.CELL_STATUS_QUERY.format(cell="CELL1"): [
-                '-200,"Status unavailable"',
-                '0,"No error"',
-            ]
-        },
-    ],
-)
-def test_untrusted_preflight_error_state_aborts_before_any_write(errors_after):
-    bs = _FakeBs(errors_after=errors_after)
+def test_ambiguous_single_mode_write_failure_still_restores_continuous_mode():
+    single = f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 0"
+    bs = _FakeBs(raise_on={("W", single): TimeoutError("ambiguous write")})
 
     result = _run(bs, {"confirm_write": True})
 
-    assert result.extra["verdict"] == "ABORTED"
-    assert _writes(bs) == []
+    assert result.extra["verdict"] == "BLOCKED"
+    assert _writes(bs)[-2:] == [
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0",
+        f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1",
+    ]
+    assert result.extra["cleanup"]["continuous_mode_restore_required"] is True
+    assert result.extra["cleanup"]["continuous_mode_restored"] is True
+
+
+def test_cleanup_failure_is_recorded_and_never_hidden_by_observation():
+    cleanup = f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1"
+    bs = _FakeBs(raise_on={("W", cleanup): TimeoutError("cleanup timeout")})
+
+    result = _run(bs, {"confirm_write": True})
+
+    assert result.extra["verdict"] == "BLOCKED"
+    assert result.extra["cleanup"]["state_off_sent"] is True
+    assert result.extra["cleanup"]["continuous_mode_restored"] is False
+    assert "cleanup timeout" in result.extra["cleanup"]["exception"]
+
+
+def test_cleanup_failure_is_visible_even_when_window_already_blocked():
+    cleanup = f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1"
+    bs = _FakeBs(
+        progress=["bad"],
+        raise_on={("W", cleanup): TimeoutError("cleanup timeout")},
+    )
+
+    result = _run(bs, {"confirm_write": True})
+
+    assert result.extra["verdict"] == "BLOCKED"
+    assert "progress-count" in result.summary
+    assert "cleanup" in result.summary
+    assert "cleanup timeout" in result.summary
 
 
 def test_run_cancellation_waits_for_inflight_write_then_performs_cleanup():
@@ -379,7 +402,8 @@ def test_run_cancellation_waits_for_inflight_write_then_performs_cleanup():
 
     asyncio.run(exercise())
     assert _writes(bs)[-1] == f"{_SentinelProfile.MEAS_BTHROUGHPUT_STATE} 0"
-    assert bs.ops[-1] == ("Q", _SentinelProfile.ERR)
+    assert f"{_SentinelProfile.MEAS_BTHROUGHPUT_CONTINUOUS_ALL} 1" not in _writes(bs)
+    assert ("Q", _SentinelProfile.ERR) not in bs.ops
 
 
 def test_manual_archive_contains_the_exact_single_length_progress_contract():
@@ -396,6 +420,7 @@ def test_manual_archive_contains_the_exact_single_length_progress_contract():
         "BTHRoughput</span><span class=\"op\">:</span><span class=\"dt\">LENGth",
         "BTHRoughput</span><span class=\"op\">:</span><span class=\"dt\">CONTinuous",
         "progress-count is what you must compare to the configured",
+        "1 (i.e. ON)",
         "Application Mode",
         "NSA | SA",
     ):

@@ -156,10 +156,12 @@ test_p2_48_measurement_window_plan + test_p2_46` = **53 passed**。
 1. 在非测试时段、真实 `LTE_NR_IRAT` 且 CELL1 已连接时，从诊断面板选择
    **`uxm_native_window_truth`**，保守使用默认 Length=2000，显式勾选写入确认。
 2. 序列固定执行两次 Clear → State 0 → Length → Continuous 0 → State 1；逐条
-   归属当前方言 ERR，轮询 DL BLER 首字段。检查两次都精确到 Length、到界后再读仍
-   不变，第二次首样本小于 Length；任一错误、回退、越界、超时或继承都保留 Blocked。
-3. 核对 `extra.windows`、每步 raw、`cleanup.state_off_sent=true` 且 cleanup 错误队列
-   干净；lease release 由外层诊断审计负责，不由序列伪称。
+   记录传输结果并轮询 DL BLER 首字段。检查两次都精确到 Length、到界后再读仍不变，
+   第二次首样本小于 Length；任一传输异常、回退、越界、超时或继承都保留 Blocked。
+   `SYSTem:ERRor?` 在 IRAT 下没有权威来源，序列不得发送。
+3. 核对 `extra.windows`、每步 raw、`cleanup.state_off_sent=true` 且
+   `cleanup.continuous_mode_restored=true`；lease release 由外层诊断审计负责，不由
+   序列伪称。
 4. 即使得到 `verdict=OBSERVED`，结果也应保持 `success=false` 与
    `formal_verdict=unverified`：手册 Application Mode 只写 NSA|SA，且 IRAT ERR 仍
    未取得权威来源。不得据此升级 `authoritative_closed`、正式 KPI 或 provenance

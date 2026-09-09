@@ -5,8 +5,9 @@ Examples > Measuring BLER 给出 Clear → State 0 → Length → Continuous 0 �
 State 1，并说明 BLER 结果首字段 progress-count 达到 Length 时测量结束。
 
 该文档的 Application Mode 只标 NSA | SA，没有覆盖 LTE_NR_IRAT；当前方言的
-错误队列也仍是 unverified。因此本序列只记录两次真机行为观察，永远不正式判绿，
-不写 execution/report/KPI，也不改变正式 lifecycle 或 provenance 白名单。
+错误队列也仍是 unverified，所以本序列绝不发送错误队列查询。它只记录两次真机
+行为观察，永远不正式判绿，不写 execution/report/KPI，也不改变正式 lifecycle
+或 provenance 白名单。
 """
 from __future__ import annotations
 
@@ -22,12 +23,11 @@ from app.diagnostics.protocol import (
     SequenceRunResult,
     SequenceStepResult,
     driver_not_loaded_summary,
-    mock_driver_refusal_summary,
 )
 from app.diagnostics.sequences.uxm_scpi_compatibility import (
-    _parse_err,
     _profile_for_driver,
 )
+from app.services.instrument_hal_service import is_mock_driver
 
 
 metadata = SequenceMetadata(
@@ -71,7 +71,6 @@ metadata = SequenceMetadata(
 
 
 _CONNECTED_PROTOCOL_STATES = frozenset({"CONN", "CONNECTED"})
-_MAX_ERROR_DRAIN = 10
 _MAX_PROGRESS_POLLS = 6001
 _CELL = "CELL1"
 
@@ -99,7 +98,9 @@ def _base_extra() -> Dict[str, Any]:
         "cleanup": {
             "attempted": False,
             "state_off_sent": False,
-            "error_queue_clean": None,
+            "continuous_mode_restore_required": False,
+            "continuous_mode_restored": None,
+            "device_acceptance": "unverified",
             "errors": [],
         },
     }
@@ -203,9 +204,15 @@ async def run(
         return SequenceRunResult(
             success=False, summary=driver_not_loaded_summary("baseStation"), extra=extra
         )
-    refusal = mock_driver_refusal_summary("baseStation", bs)
-    if refusal:
-        return SequenceRunResult(success=False, summary=refusal, extra=extra)
+    if is_mock_driver(bs):
+        return SequenceRunResult(
+            success=False,
+            summary=(
+                f"baseStation 当前是 mock 驱动（{type(bs).__name__}，HAL 在 mock 模式）。"
+                "本探针只允许连接真实 UXM 后运行。"
+            ),
+            extra=extra,
+        )
     query = getattr(bs, "_query", None)
     write = getattr(bs, "_write", None)
     if not callable(query) or not callable(write):
@@ -226,7 +233,6 @@ async def run(
         )
 
     required_names = (
-        "ERR",
         "CELL_STATUS_QUERY",
         "MEAS_BTHROUGHPUT_CLEAR",
         "MEAS_BTHROUGHPUT_STATE",
@@ -248,6 +254,7 @@ async def run(
 
     steps: List[SequenceStepResult] = []
     write_attempted = False
+    single_mode_attempted = False
     cancelled: Optional[asyncio.CancelledError] = None
     result_summary = ""
     result_verdict = "ABORTED"
@@ -276,30 +283,6 @@ async def run(
         value = await _invoke_driver_method(query, command)
         return value if isinstance(value, str) else (None if value is None else str(value))
 
-    async def drain_errors(label: str) -> List[str]:
-        errors: List[str] = []
-        raw_values: List[str] = []
-        started = time.monotonic()
-        for _ in range(_MAX_ERROR_DRAIN):
-            raw = await query_raw(commands["ERR"])
-            raw_values.append("" if raw is None else raw)
-            code, _text = _parse_err(raw or "")
-            if code is None:
-                add_step(label, False, "错误队列回复不可解析", raw=raw, started=started)
-                raise _ObservationBlocked(f"{label}：错误队列回复不可解析 {raw!r}")
-            if code == 0:
-                add_step(
-                    label,
-                    not errors,
-                    "错误队列干净" if not errors else f"发现 {len(errors)} 条错误",
-                    raw="\n".join(raw_values),
-                    started=started,
-                )
-                return errors
-            errors.append(raw or "")
-        add_step(label, False, f"错误队列 {_MAX_ERROR_DRAIN} 次仍未到 0", started=started)
-        raise _ObservationBlocked(f"{label}：错误队列未在上限内排空")
-
     async def checked_query(command: str, label: str) -> str:
         started = time.monotonic()
         try:
@@ -307,20 +290,10 @@ async def run(
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001
-            attributed_errors: List[str] = []
-            try:
-                attributed_errors = await drain_errors(f"{label} 异常后错误队列")
-            except _ObservationBlocked:
-                pass
             add_step(label, False, f"查询异常 {type(error).__name__}: {error}", started=started)
             raise _ObservationBlocked(
-                f"{label} 查询异常 {type(error).__name__}: {error}; "
-                f"归属错误={attributed_errors}"
+                f"{label} 查询异常 {type(error).__name__}: {error}"
             ) from error
-        errors = await drain_errors(f"{label} 后错误队列")
-        if errors:
-            add_step(label, False, f"查询被仪表拒绝: {errors}", raw=raw, started=started)
-            raise _ObservationBlocked(f"{label} 查询被仪表拒绝: {errors}")
         add_step(label, True, "查询完成", raw=raw, started=started)
         return "" if raw is None else raw
 
@@ -333,23 +306,19 @@ async def run(
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001
-            attributed_errors: List[str] = []
-            try:
-                attributed_errors = await drain_errors(f"{label} 异常后错误队列")
-            except _ObservationBlocked:
-                pass
             add_step(label, False, f"写入异常 {type(error).__name__}: {error}", started=started)
             raise _ObservationBlocked(
-                f"{command} 写入异常 {type(error).__name__}: {error}; "
-                f"归属错误={attributed_errors}"
+                f"{command} 写入异常 {type(error).__name__}: {error}"
             ) from error
-        errors = await drain_errors(f"{label} 后错误队列")
-        if errors:
-            add_step(label, False, f"写入被仪表拒绝: {errors}", started=started)
-            raise _ObservationBlocked(f"{command} 写入被仪表拒绝: {errors}")
-        add_step(label, True, "写入后错误队列干净", started=started)
+        add_step(
+            label,
+            True,
+            "传输完成；LTE_NR_IRAT 设备接受性仍未验证",
+            started=started,
+        )
 
     async def observe_window(index: int) -> Dict[str, Any]:
+        nonlocal single_mode_attempted
         length = validated.measurement_length
         await checked_write(commands["MEAS_BTHROUGHPUT_CLEAR"], f"窗口 {index} 清除旧测量")
         await checked_write(
@@ -359,6 +328,11 @@ async def run(
             f'{commands["MEAS_BTHROUGHPUT_LENGTH_ALL"]} {length}',
             f"窗口 {index} 请求有限长度",
         )
+        # 从调用这一刻起写入结果可能含糊（例如 VISA timeout 发生在设备已接受后），
+        # cleanup 必须按“可能已切到 Single”处理。
+        single_mode_attempted = True
+        extra["cleanup"]["continuous_mode_restore_required"] = True
+        extra["cleanup"]["continuous_mode_restored"] = False
         await checked_write(
             f'{commands["MEAS_BTHROUGHPUT_CONTINUOUS_ALL"]} 0',
             f"窗口 {index} 请求 Single 模式",
@@ -413,23 +387,37 @@ async def run(
     async def cleanup() -> None:
         cleanup_state = extra["cleanup"]
         cleanup_state["attempted"] = True
-        command = f'{commands["MEAS_BTHROUGHPUT_STATE"]} 0'
         try:
-            await _invoke_driver_method(write, command)
+            # 先停再恢复 Continuous，避免切换模式时继续运行；手册条目明确
+            # Continuous=1 是连续模式及默认值。Length 留存但在连续模式下不生效，
+            # 不猜测手册范围之外的 Length 恢复值。
+            await _invoke_driver_method(
+                write, f'{commands["MEAS_BTHROUGHPUT_STATE"]} 0'
+            )
             cleanup_state["state_off_sent"] = True
-            errors = await drain_errors("cleanup STATe 0 后错误队列")
-            cleanup_state["errors"] = errors
-            cleanup_state["error_queue_clean"] = not errors
+            add_step(
+                "cleanup STATe 0",
+                True,
+                "传输完成；设备接受性未验证",
+            )
+            if single_mode_attempted:
+                await _invoke_driver_method(
+                    write, f'{commands["MEAS_BTHROUGHPUT_CONTINUOUS_ALL"]} 1'
+                )
+                cleanup_state["continuous_mode_restored"] = True
+                add_step(
+                    "cleanup Continuous 1",
+                    True,
+                    "已恢复生产测量依赖的连续模式；设备接受性未验证",
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001
-            cleanup_state["error_queue_clean"] = False
             cleanup_state["exception"] = f"{type(error).__name__}: {error}"
-            add_step("cleanup STATe 0", False, cleanup_state["exception"])
+            cleanup_state["errors"].append(cleanup_state["exception"])
+            add_step("cleanup", False, cleanup_state["exception"])
 
     try:
-        initial_errors = await drain_errors("运行前排空错误队列")
-        extra["initial_errors"] = initial_errors
         status_command = commands["CELL_STATUS_QUERY"].format(cell=_CELL)
         status_raw = await checked_query(status_command, "确认 CELL1 已连接")
         status = status_raw.strip().strip('"').upper()
@@ -450,7 +438,7 @@ async def run(
         result_summary = (
             "OBSERVED: 两个 UXM 原生 Single + Length 窗口均精确到界、到界后停住且"
             "第二窗口未继承；但手册范围只标 NSA/SA，LTE_NR_IRAT 仍 unverified，"
-            "不进入正式 KPI/lifecycle。"
+            "且未发送无权威依据的 IRAT 错误队列查询，不进入正式 KPI/lifecycle。"
         )
     except asyncio.CancelledError as error:
         cancelled = error
@@ -477,15 +465,30 @@ async def run(
             except asyncio.CancelledError as error:
                 cancelled = cancelled or error
             except Exception as error:  # noqa: BLE001
-                extra["cleanup"]["error_queue_clean"] = False
                 extra["cleanup"]["exception"] = f"{type(error).__name__}: {error}"
 
     if cancelled is not None:
         raise cancelled
-    if write_attempted and extra["cleanup"]["error_queue_clean"] is not True:
-        if result_verdict == "OBSERVED":
-            result_verdict = "BLOCKED"
-            result_summary = "BLOCKED: 窗口行为已观察，但 cleanup STATe 0 未得到干净错误队列。"
+    cleanup_complete = (
+        extra["cleanup"]["state_off_sent"] is True
+        and (
+            extra["cleanup"]["continuous_mode_restore_required"] is False
+            or extra["cleanup"]["continuous_mode_restored"] is True
+        )
+    )
+    if write_attempted and not cleanup_complete:
+        cleanup_detail = extra["cleanup"].get("exception") or (
+            "STATe 0 / Continuous 1 必需恢复未完成"
+        )
+        was_observed = result_verdict == "OBSERVED"
+        result_verdict = "BLOCKED"
+        if was_observed:
+            result_summary = (
+                "BLOCKED: 窗口行为已观察，但 cleanup 未同时完成 STATe 0 与 "
+                f"Continuous 1 恢复：{cleanup_detail}"
+            )
+        else:
+            result_summary = f"{result_summary}; cleanup 未完成：{cleanup_detail}"
     extra["verdict"] = result_verdict
     return SequenceRunResult(
         success=False,
