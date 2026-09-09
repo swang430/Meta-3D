@@ -5,8 +5,10 @@
 NR 域 BTHRoughput 树的控制命令恰 4 条：`BSE:MEASure:NR5G:BTHRoughput[:STATe]`
 （"Enables/disables BLER measurement"，Boolean，Default 0）/ `CONTinuous[:ALL]`
 / `LENGth[:ALL]` / `CLEar`（"Resets... if in-progress it will automatically be
-restarted"）——其余全 Query only，**没有**独立 STARt/STOP，也没有权威
-closed 边界。两处推断缺口挡住了 lifecycle 升级到 authoritative_closed：
+restarted"）——其余全 Query only，没有独立 STARt/STOP。同一手册的
+Examples > Measuring BLER 另有 Single + LENGth + progress-count 到界的
+single-shot 完成判据；当前探针只核 `STATe?`，**不能验证或否定该判据**。
+两处推断缺口与尚未实现/验证的 single-shot 路径共同挡住 lifecycle 升级：
 
 1. `[:STATe]?` **查询形手册未列**（显式 `:STATe` 展开是方括号可选节点的
    SCPI 标准等价 —— 推断；对比 `CSI:STATe?` 手册显式带 `?` 并标 Query only）。
@@ -57,6 +59,8 @@ metadata = SequenceMetadata(
         "P2-52 现场复验载体：只读 `BSE:MEASure:NR5G:BTHRoughput:STATe?`"
         "（⚠ 推断查询形 —— 方括号展开 + 查询形无手册原文）并立即归属错误"
         "队列，判定该推断形在真机成不成立、顺带归档累积开关现状。"
+        "本探针不覆盖手册 Single + LENGth + progress-count 完成边界；该路径"
+        "须由另一个受控载体在 LTE_NR_IRAT 下取证。"
         "**零写命令**：读到 ON 也不动，绝不发 OFF/ON（条目明令不盲试；"
         "OFF 写形复验由现场操作员按取证文档人工执行）。"
     ),

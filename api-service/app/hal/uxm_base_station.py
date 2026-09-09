@@ -510,7 +510,10 @@ class RealUxmDriver(BaseStationDriver):
         #     LENGth[:ALL] / CLEar，其余全 Query only，无独立 STARt/STOP）。
         #     CLEar = "Resets the BLER measurement. NB if a measurement is
         #     in-progress it will automatically be restarted."（Imm Action /
-        #     No query）—— 即窗口边界的最强手册事实是 **clear**，不是 closed。
+        #     No query）。同一手册的 Examples > Measuring BLER 还明确给出
+        #     Single + LENGth + progress-count 到界的 single-shot 完成判据；
+        #     当前 IRAT 路径尚未实现或真机验证该判据，不能把它冒充已确认的
+        #     closed lifecycle，也不能继续声称手册只提供 clear 边界。
         #   · 现场实测：IRAT 真机已实发 `BTHRoughput:STATe ON` 与每窗口
         #     `CLEar`（2026-07-03 / 08-27 执行链），写形有效。
         #   **不升 authoritative_closed** —— 两个缺口都在：① 上述条目
@@ -4255,10 +4258,11 @@ class RealUxmDriver(BaseStationDriver):
     ) -> BaseStationMeasurementWindow:
         """Expose the existing UXM clear/read window without inventing closure.
 
-        P2-52（2026-08-30，手册双源取证）：NR 域 BTHRoughput 树只有 clear
-        边界（`CLEar` —— "if a measurement is in-progress it will
-        automatically be restarted"），**没有**权威 stop/closed 边界，
-        `[:STATe]?` 查询形也无手册原文。所以 lifecycle 冻结为
+        P2-52（2026-08-30，手册双源取证）：当前实现只拥有 clear 边界
+        （`CLEar` —— "if a measurement is in-progress it will automatically
+        be restarted"）；手册另有 Single + LENGth + progress-count 到界的
+        single-shot 完成判据，但尚未在 LTE_NR_IRAT 下实现/真机验证，且
+        没有独立 STOP，`[:STATe]?` 查询形也无手册原文。所以 lifecycle 冻结为
         ``clear_read_only``：clear 阶段按本窗口内 CLEar 是否真的发成逐次
         记账（confirmed 携 exchange 证据 / 发不成如实 unavailable），
         run/ready/closed 永远不 confirmed —— ``clear_read_only`` 依契约
@@ -4327,13 +4331,14 @@ class RealUxmDriver(BaseStationDriver):
                 "running state cannot be read back authoritatively"
             ),
             "ready": (
-                "manual defines no readiness boundary for the NR BTHRoughput "
-                "tree; readiness cannot be confirmed"
+                "manual defines a Single+LENGth progress-count completion "
+                "boundary, but this IRAT path does not freeze, drive, or "
+                "verify it; readiness cannot be confirmed"
             ),
             "closed": (
-                "manual defines no stop/closed boundary for the NR "
-                "BTHRoughput tree (control commands are [:STATe]/CONTinuous/"
-                "LENGth/CLEar only); clear_read_only never confirms closure"
+                "manual defines no independent STOP/state-query closure; its "
+                "Single+LENGth progress-count boundary is not implemented or "
+                "IRAT-verified here, so clear_read_only cannot confirm closure"
             ),
         }
         evidence = InstrumentEvidenceItem(
@@ -4353,13 +4358,15 @@ class RealUxmDriver(BaseStationDriver):
             evidence_level=EvidenceLevel.TRANSPORT,
             source_reference=(
                 f"{_UXM_MANUAL_SOURCE}"
-                "#scpi/bse:measure:nr5g:bthroughput:clear ; sourced clear "
-                "boundary only — no authoritative closed window boundary"
+                "#scpi/bse:measure:nr5g:bthroughput:clear ; current path "
+                "implements clear only; same manual #examples-measuring-bler "
+                "defines an unimplemented, IRAT-unverified single-shot boundary"
             ),
             verdict=EvidenceVerdict.UNKNOWN,
             reason=(
-                "UXM window has a sourced clear boundary but no authoritative "
-                "closed lifecycle; values are diagnostic only"
+                "UXM current path has a sourced clear boundary; the manual "
+                "Single+LENGth completion boundary is not implemented or "
+                "IRAT-verified, so values remain diagnostic only"
             ),
         )
         trust = BaseStationMeasurementWindowTrust(

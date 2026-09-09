@@ -1,8 +1,9 @@
 """P2-52 —— UXM 权威测量窗口关闭边界（非现场半）的守门测试。
 
 取证结论（docs/plans/2026-08-30-p2-52-uxm-window-boundary-evidence.md）：
-NR 域 BTHRoughput 树只有 clear 边界（CLEar 手册原文 + IRAT 现场实测双证据），
-无权威 stop/closed 边界，`[:STATe]?` 查询形无手册原文。据此：
+当前实现只有 clear 边界（CLEar 手册原文 + IRAT 现场实测双证据）；手册另有
+Single + LENGth + progress-count 到界的完成判据，但该路径尚未在 IRAT 下实现/验证，
+且无独立 STOP，`[:STATe]?` 查询形无手册原文。据此：
 
 - manifest lifecycle 升级 unavailable → **clear_read_only**（不升
   authoritative_closed —— IRAT 适用性未说明 + 查询形无原文两缺口都在）；
