@@ -151,6 +151,14 @@ _MANDATORY_ACTIONS_REQUIRING_DIRECT_EVIDENCE = frozenset({
     "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
 })
 
+# 这两项只有手册明确列出的**写形**，本仓不据相似 SCPI 语法发明查询形。
+# 通用普查通常会对写头补 `?`；必须在调用 `_to_probe_command` 前显式跳过，
+# 否则新增现场诊断载体反而让另一个诊断序列向真机发送未经取证的命令。
+_UNVERIFIED_QUERY_FORM_NAMES = frozenset({
+    "MEAS_BTHROUGHPUT_LENGTH_ALL",
+    "MEAS_BTHROUGHPUT_CONTINUOUS_ALL",
+})
+
 # MAC 子集只有一个真值源：生产驱动真正会用来配置 MAC 吞吐量的 mandatory
 # 契约。诊断侧不再复制第二份 MAC 清单，否则驱动把旧的 TDD_PATTERN 拆成六个
 # 数以后，这里仍会因 profile.TDD_PATTERN=None 恒红。
@@ -462,6 +470,19 @@ async def run(
     err_query = profile.ERR or UxmScpiCommands.ERR
 
     for name, value in all_cmds:
+        if name in _UNVERIFIED_QUERY_FORM_NAMES:
+            counts["SKIPPED_UNVERIFIED_QUERY"] = (
+                counts.get("SKIPPED_UNVERIFIED_QUERY", 0) + 1
+            )
+            if include_supported:
+                steps.append(SequenceStepResult(
+                    label=f"{name} (WRITE ONLY) → {value}",
+                    success=False,
+                    detail=("SKIPPED：手册查询形无来源；只允许 "
+                            "uxm_native_window_truth 使用已取证写形"),
+                    duration_ms=0,
+                ))
+            continue
         # Skip ACTIONs in the first pass; infer from neighbors later.
         if name in _ACTION_NEIGHBOR_QUERY:
             action_pending.append((name, value))
