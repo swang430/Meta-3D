@@ -147,26 +147,21 @@ test_p2_48_measurement_window_plan + test_p2_46` = **53 passed**。
 
 ## 6. UXM 到场复验清单(现场半,本地测试不替代)
 
-> **2026-09-09 superseded：**以下主动现场步骤由 checked-in
-> `uxm_native_window_truth` 取代。旧的 `uxm_window_boundary_probe` 仍可作零写
-> `STATe?` 辅助，但不得再以“先跑零写探针、再由操作员临时手敲 OFF/ON”作为关闭
-> 路径；那会漏掉手册已有的 Single + Length + progress-count 真正边界，也没有统一
-> cleanup。上文记录的是 2026-08-30 当时的设计与验证事实，不回写历史。
+> **2026-09-09 安全复核：**仓库手册的 Single + Length 示例和命令条目只标
+> NSA/SA，没有覆盖现场使用的 `LTE_NR_IRAT`。因此不能用“结果标 unverified”作为向
+> 真机试写的授权；也没有权威回读或生产 gate 能在写后确认仪表已恢复、阻止下一次正式
+> 执行。原拟新增的真实写诊断已撤回，旧 `uxm_window_boundary_probe` 只保留零写辅助。
 
-1. 在非测试时段、真实 `LTE_NR_IRAT` 且 CELL1 已连接时，从诊断面板选择
-   **`uxm_native_window_truth`**，保守使用默认 Length=2000，显式勾选写入确认。
-2. 序列固定执行两次 Clear → State 0 → Length → Continuous 0 → State 1；逐条
-   记录传输结果并轮询 DL BLER 首字段。检查两次都精确到 Length、到界后再读仍不变，
-   第二次首样本小于 Length；任一传输异常、回退、越界、超时或继承都保留 Blocked。
-   `SYSTem:ERRor?` 在 IRAT 下没有权威来源，序列不得发送。
-3. 核对 `extra.windows`、每步 raw、`cleanup.state_off_sent=true` 且
-   `cleanup.continuous_mode_restore_sent=true`。这两个字段只表示命令已发到 transport，
-   不表示设备接受或状态已恢复；lease release 也只释放连接，不复位仪表业务状态。
-4. 只要序列尝试过写入，最终就保持 `verdict=BLOCKED`、`success=false`、
-   `formal_verdict=unverified` 与 `cleanup.requires_operator_reset=true`。记录结果后必须由
-   操作员在仪表侧完成完整 preset/reset，再开始任何正式 TestCase；HAL 重载或传输重连
-   不能替代该动作。不得据此升级 `authoritative_closed`、正式 KPI 或 provenance 白名单；
-   是否把经现场验证的边界接入正式执行须另开设计片。
+1. 先取得可审计的厂商资料，明确当前 Test Application / 固件 / 选件下
+   `LENGth:ALL`、`CONTinuous:ALL`、`STATe` 和错误队列的 `LTE_NR_IRAT` 适用性、值域、
+   前置条件与复位方法；只有 NSA/SA 示例不算 IRAT 依据。
+2. 资料未取得前，不从软件或操作说明安排上述 IRAT 写入；零写探针的结果也不能关闭
+   Single + Length 行为缺口。
+3. 依据齐全后另开实现片，先设计独占监控、设备接受性核验和持久 quarantine/reset
+   解除门，再实现两次 Clear → State 0 → Length → Continuous 0 → State 1 的受控诊断。
+4. 真机验收须证明两次 progress-count 精确到界、到界停住、第二次不继承，并证明
+   cleanup 与复位已由权威回读确认；否则继续保持 `clear_read_only` / unknown，绝不升级
+   正式 KPI、lifecycle 或 provenance 白名单。
 
 ## 7. Discovered 候选(待 triage,不自动启动)
 

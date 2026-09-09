@@ -166,10 +166,6 @@ class UxmTestApp:
     # 全局累积开关 + 清零 (不带 cell —— 手册明确是技术层全局设置)
     MEAS_BTHROUGHPUT_STATE: Optional[str] = None
     MEAS_BTHROUGHPUT_CLEAR: Optional[str] = None
-    # UXM 原生有限窗口写形。只有具有逐项手册出处并显式覆写的方言才能用于
-    # 受控现场诊断；None 表示禁止按相似 SCPI 树猜测。
-    MEAS_BTHROUGHPUT_LENGTH_ALL: Optional[str] = None
-    MEAS_BTHROUGHPUT_CONTINUOUS_ALL: Optional[str] = None
     # ⚠ STATe 的**查询形**（P2-52 取证，2026-08-30）：手册条目
     #   `BSE:MEASure:NR5G:BTHRoughput[:STATe]`（5G_NR_Test_Application_SCPI_
     #   Reference.zip!...html#scpi/bse:measure:nr5g:bthroughput(:state)，
@@ -546,24 +542,6 @@ class UxmLteNrIratProfile(UxmTestApp):
     #   #scpi/bse:measure:nr5g:bthroughput:clear。
     MEAS_BTHROUGHPUT_STATE = "BSE:MEASure:NR5G:BTHRoughput:STATe"
     MEAS_BTHROUGHPUT_CLEAR = "BSE:MEASure:NR5G:BTHRoughput:CLEar"
-    # 仅供 `uxm_native_window_truth` 受控现场诊断，不进正式 MEASURE 路径。
-    # 仓库原件：5G_NR_Test_Application_SCPI_Reference.zip，
-    # Examples > Measuring BLER（#examples-measuring-bler）原文示例依次下发
-    # `LENGth:ALL 5000` / `CONTinuous:ALL 0`，并以 BLER 首字段
-    # progress-count 达到 Length 作为完成边界；Continuous 条目同时明确
-    # Single=0、Continuous=1、Default=1；对应命令条目列出
-    # `BSE:MEASure:NR5G:BTHRoughput:...` 这个与生产驱动一致的等价路径。
-    # ⚠ 条目的 Application Mode 只写 NSA | SA；目标是 LTE_NR_IRAT，范围
-    # 不匹配，所以即使真机行为观察成立也只能 unverified，不能升级正式 KPI、
-    # lifecycle 或 provenance 白名单，也不得据此反推查询形。该诊断收尾用
-    # `CONTinuous:ALL 1` 恢复生产窗口依赖的连续模式，但不猜 Length 恢复值；
-    # 也不得发送在 IRAT 下无权威来源的继承 ERR 命令。
-    MEAS_BTHROUGHPUT_LENGTH_ALL = (
-        "BSE:MEASure:NR5G:BTHRoughput:LENGth:ALL"
-    )
-    MEAS_BTHROUGHPUT_CONTINUOUS_ALL = (
-        "BSE:MEASure:NR5G:BTHRoughput:CONTinuous:ALL"
-    )
     # ⚠ 推断形（基类注释有完整依据）：方括号展开 + 查询形无手册原文。
     #   只供诊断探针（uxm_window_boundary_probe）读现状；AppMode NSA|SA 在
     #   LTE_NR_IRAT 下认不认同样未经手册说明 —— 探针读完立即归属错误队列定案。
