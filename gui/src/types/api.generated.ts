@@ -3027,8 +3027,22 @@ export interface components {
             executed_at?: string;
             duration_minutes?: number | null;
         };
+        MonitoringMetric: {
+            name: string;
+            value: number | null;
+            unit: string;
+            /** Format: date-time */
+            timestamp: string;
+            /** @enum {string} */
+            status: "observed" | "unavailable" | "simulated";
+            /** @enum {string} */
+            provenance: "real" | "simulated" | "unknown";
+            reason: string | null;
+        };
         MonitoringFeedsResponse: {
-            feeds: components["schemas"]["MetricItem"][];
+            feeds: components["schemas"]["MonitoringMetric"][];
+            /** Format: date-time */
+            timestamp: string;
         };
         InstrumentsResponse: {
             categories: components["schemas"]["InstrumentCategory"][];

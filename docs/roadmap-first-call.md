@@ -13,8 +13,8 @@
 **P1-77 已由 PR #461 合并，merge `1001f1c7`**：LTE TDD TestCase 现在可在生产 GUI 补齐真实
 ULDL、special subframe 与 20 MHz RMC version，由服务器冻结唯一 MAC profile。手工执行暴露的
 **P1-78 已由本片交付**：F64 正式执行解除 SMB 运行依赖，SMB 扫描/同步收窄为开发调试工具。
-当前非现场产品开发 WIP 为 **P2-72（仪器配置保存后按类别激活 HAL）**；随后批准顺序为
-**P1-76 → P2-68 → P2-69 → P2-70**，详见条目。P1-77 是
+P2-72 已由 PR #466 合并；当前非现场产品开发 WIP 为
+**P1-76（实时监控观测真值）**，随后批准顺序为 **P2-68 → P2-69 → P2-70**，详见条目。P1-77 是
 **P3-23** 新规则的第一个功能试行片，已记录验证复用、外审请求与等待数据；
 P2-57 残项为后续平台设计，
 P2-63 继续 HOLD。本次整理不自动启动这些实现。
@@ -53,7 +53,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-72（仪器配置保存后按类别激活 HAL）；完成后下一批准项为 P1-76（监控假读数）。**
+Current Focus（非现场）= P1-76（实时监控不得展示固定/随机的假读数）；完成后下一批准项为 P2-68。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -707,7 +707,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 当前唯一 WIP 为 P2-72（保存仪器配置或 driver mode 后只激活对应类别 HAL，LabProfile 同步仍为独立操作）；完成后依次为 P1-76（监控假读数）、P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-72 已由 PR #466 合并；当前唯一 WIP 为 P1-76（监控假读数），随后依次为 P2-68/P2-69 两项已复现产品缺陷、P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 已完成 P3-23 首个功能试行。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3587,7 +3587,7 @@ head `c5e7f9a1b3d6` 与 diff-check 通过。相同产品输入的全量运行 1 
 **主代理自查，非独立内审**，结论 P1/P2/P3=0。没有新增/修改 SCPI 或正式 provenance 白名单，
 本地结果不替代真实 F64 手工复验。
 
-### P1-76 — 实时监控不得展示固定/随机的假读数（待启动，P1-77 后）
+### P1-76 — 实时监控不得展示固定/随机的假读数（Ready PR）
 
 **可观察故障**：`instrument_hal_service.get_aggregated_metrics` 按 snake_case 分流，实际
 drivers 键是 camelCase，读数落入 `_build_monitoring_data` 的默认值；测试租约开放监控期间，
@@ -3600,6 +3600,21 @@ REST/WS 可发布固定吞吐/SNR/EIRP/温度。HAL 返回空或异常时，`mon
 不能显示正式通过；逐项核对物理量来源，不以 CE 的同名字段替代基站吞吐。枚举聚合、缓存、REST、
 WS、响应类型与 GUI 的数值/状态消费者，证明两组真实输入可区分、缺测不补零、错误不造数。
 保留空闲不查询仪器和原测试租约边界，不加轮询、不新增 SCPI、不扩正式 KPI 范围。
+
+**A 方案实现（2026-09-10）**：实时观测统一为
+`value|null + status + provenance + reason + timestamp`；只允许真实 BaseStation 明确标记为有效、
+有限且非负，并具有 `pcell` 或 `nr_all_cells` 明确口径的当前下行吞吐进入数值显示。SNR、EIRP 与温度在没有权威来源时保持 N/A，Mock 只显示
+simulated；固定/随机 fallback、无依据 EIRP 推算以及 GUI 硬编码合规率均已删除。REST、WS、缓存、
+OpenAPI/TS 与两个 GUI 卡片共用同一形态；租约结束后发布 unavailable 清除陈旧值，但空闲态不访问
+HAL。设计与实施证据见
+[`P1-76 实施计划`](plans/2026-09-10-p1-76-monitoring-truth-plan.md)。INFO 成功轮询降噪是独立
+Discovered，不在本片顺手修改。
+
+**本地验证**：严格 RED→GREEN；提交前功能审查新增 unknown/缺失 scope 反例，旧判据两条均 RED，
+收窄后受影响链 **21 passed**。最终全后端 **6475 passed / 5 skipped**、GUI 合同 **17 passed**、
+production build、compileall、单一 Alembic head `c5e7f9a1b3d6` 与 diff-check 通过。相同最终产品输入的
+全量运行 1 次；代码与现状指南共同消费方已全仓扫描，历史记录未被改写。独立只读功能内审
+P1=0；其指出的两处当前文档镜像（旧三仪表聚合修法、WebSocket 开发端口）已在提交前同步收口。
 
 ## 🟡 P2 — Abstraction debt
 
@@ -5096,7 +5111,7 @@ F64、如何核对设备侧版本、如何处理替换/回滚，以及 F64 在�
 包装成设备侧证明。调研完成前不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 的正式依赖，
 也不得新增或猜测 SCPI。本项不在当前批准执行顺序中。
 
-### P2-72 — 仪器配置保存后按类别激活 HAL（Ready PR）
+### P2-72 — 仪器配置保存后按类别激活 HAL（✅ PR #466）
 
 **可观察故障**：操作员在“仪器资源配置”修改型号、endpoint、controller、连接参数或 driver mode
 并保存后，数据库已经是新配置，运行中的 HAL 却仍装载旧 driver；必须再执行一次全局“重新加载驱动”，
@@ -5207,6 +5222,8 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 定点 `10 passed`、相关 GUI/Operational Lab 合同 `37 passed`、production build 与 diff-check 通过；
 后端生产输入未变，继续复用最终全后端 `6456 passed / 5 skipped` 结果。
 
+**已由 PR #466 合并**（merge `8148bb7f`）；本项不再占用非现场 WIP。
+
 ## 🟢 P3 — Polish / tooling
 
 **P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入
@@ -5292,7 +5309,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
 | 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
 | #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |
-| 保存仪器配置后还需手工全局 HAL reload | → **P2-72（当前 WIP）** | 保存与 driver-mode 两入口自动调用服务器按类别激活；LabProfile 同步保持独立事务，统一工作单元另行设计 |
+| 保存仪器配置后还需手工全局 HAL reload | ✅ **P2-72 / PR #466** | 保存与 driver-mode 两入口自动调用服务器按类别激活；LabProfile 同步保持独立事务，统一工作单元另行设计 |
 | 窗口 evidence item 结构化内容未完整落库 | **保留待评估** | `append_base_station_measurement_window` 仍以 exchange ids 与 trust/metric 投影为主；先列具体报告/审计消费需求，不重复 P2-60 的 CE operation receipt |
 | 诊断侧 `SUPPORTS_STATIC_PASSTHROUGH` 等能力副本 | **保留待评估** | 正式 MEASURE 已走 plan，`baseStation_attach_check`/`propsim_f64_state_machine` 仍有旧标志；先给出当前误判场景，再决定载体 |
 | CMW 页码入 digest、4 流否定措辞、3GPP/厂商支持叙述 | **维护候选，待独立取证设计** | 页码/措辞残留可搜索；本次未重新审计手册或统计认证存量，不能沿用旧 DB 数字决定迁移成本；统一核范围，不再扩大自然语言正则门 |
@@ -5301,14 +5318,14 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | P1-4 “仍只能按 plan 对比” | **软件缺口已由 P1-72/#396 关闭** | 已改 hardware 表为仅缺现场重复执行/对比证据 |
 
 - `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存。手工序列里的“保存配置 → 全局 HAL 重载”已提升为 **P2-72**，只解决按类别激活 runtime；“同步到 LabProfile”仍保持操作员确认后的独立事务。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决多份配置如何受控编排，不得把 GUI 草稿直接写入 binding，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，P2-72 完成后也不关闭；LTE 暗室首测能力不随本条补齐。
+- `[discovered 2026-09-10 during P1-76 INFO 分布审计]` **成功轮询请求占据系统 INFO 主体，降低人工诊断信噪比（待评估）** —— 抽查 `api-service/logs/app.log.2026-09-09` 共 1270 行，其中 1244 行为 INFO、1088 行来自 `app.audit`；`GET /road-test/executions`、`GET /test-executions`、`GET /instruments/hal/readiness`、`GET /lab-profiles`、`GET /dashboard/alerts/summary` 五类成功轮询合计 1041 行。错误和告警仍应保留，测试租约取得/释放、HAL 生命周期与硬件动作也不能降级。本条后续应在 audit middleware 既有成功高频路径排除机制上评估：仅压低可预测的 2xx 轮询，4xx/5xx 原样 INFO/ERROR，并用周期摘要或计数器保留“轮询仍在工作”的可观测性；不得用全局 INFO→DEBUG 或大范围 logger 静音。P1-76 不实现本条，避免把假读数修复与日志策略混成一片。
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 
 - `[discovered 2026-09-03 during P2-58 ① 立项]` **`.smu` 拓扑解析 + `ChannelAsset` 拓扑字段 + resolver 离线校验（P2）** —— 用户提供的真实 `.smu`（已收进 `api-service/tests/fixtures/smu/`）证实端口/通道数是 `[Input N]`/`[Output N]`/`[Channel N]` **节的个数**，且每节带**物理连接器号**（本样本输出为 `COMMON 3,4,1,2`，不是 1..4）。它随 .smu 变，**不能进 per-driver 的 manifest**（第一份 asset 就让它过期；`propsim_f64.py:1179` 已有「声明 vs `MODEL:INFO?` 回读」的 fail-loud 门，再加就是第三份声明）。正确归属是 **ChannelAsset**（今天无任何拓扑字段），让 P2-58 的 resolver 能零仪器 I/O 校验 asset↔binding。`app/hal/smu_project.py` 已有同形态的逐行状态机（只解析 `CenterFrequency`），扩起来直接。**动手前欠两样**：① **OTA 形态样本**（本样本是 2×2 双向实验室模型 4/4/8，OTA 是 4/128/32，一份样本推不出节结构不变量）；② **`Direction` 键的手册裁决**（样本里 `Direction = UPLINK` 而 `Group name = Downlink`、`[Link 0]` 证明功能上是下行 —— 按 `Direction` 判 DL/UL 会全判反，属厂商语义，须查 PROPSIM NotebookLM）。拓扑字段只能是**可选**的：F64 ATE Server 无 MMEM/FTP，.smu 仅操作员上传副本时才有。这是 P2-57 拍板原文里「附通道/端口基数」那半的正确出口（P2-57 未交付，见其条目）。
 - `[discovered 2026-09-04 during P2-58 ② Agent H 落地]` **BaseStation preset 回填迁移 `f2a4c6e8b0d1` 在 SQLite 下写出非规范 UUID 键（P3，生产 PG 不受影响）** —— `postgresql.UUID(as_uuid=True)` 列经裸 `sa.text SELECT` 在 SQLite 回来的是 32-hex 无连字符字串，迁移直接 `str(...)` 当 `base_station_model_presets` 的键，而 `parse_base_station_model_presets` 要求键 `== str(UUID)`（带连字符）→ 该库上回填出的 map 会让 parse 抛错。BS 那条迁移门（`tests/` 只查源码 token）是**存在性门**，从未真跑过回填，所以三周没暴露；CE 的同形迁移 `a3c5e7f9b1d3` 已用 `str(uuid.UUID(str(raw)))` 规范化并有真跑门（变异实证照抄 BS 写法会红）。修法：BS 迁移加同一规范化（一行）+ 把 BS 迁移门升成真跑门。⑦ 判据下不在 P2-58 ② 修（不改它，② 的可观察故障仍在）。注意：只影响 SQLite（测试/本地），生产 PG 原生 UUID 无此形态。
 - `[discovered 2026-09-03 during P2-58 ① 内审 F1]` **CE 冻结件复用时不对照当前 HAL 驱动 —— 多相位 commissioning 相位间隙换驱动照样跑（P2）** —— `app/services/channel_emulator_binding.py` `freeze_channel_emulator_binding` 的「已存在」分支只做结构自洽校验（digest 重算相等），**不接 `hal`**；`commissioning.py` `_freeze_instrument_lease` 的 `_validate` / `validation_identity` 也只装 baseStation / positioner 校验器。内审探针实跑：`POST /sessions` 时 HAL 装 F64@.50 → 冻结通过 → 行回 `pending` → HAL reload 被放行（`hal_reload_policy.py:111` 只拦 `running` 与 VRT `paused`）→ 装载变成 F64@.51 / mock / 无 CE 三种情形 → `run-phase MIMO_OTA_MEASURE` **三种全部复用旧冻结件通过**，随后 MEASURE 用 `hal.drivers["channelEmulator"]` 对另一台仪器下发；而同一状态下直接 `resolve_channel_emulator_binding` 会拒「驱动连接身份 / transport 与所选连接不一致」。BaseStation 同位置有 `validate_frozen_base_station_before_remote(hal, existing)`（`base_station_adapter_profile.py:193`），CE 没镜像。不产假数据（mock 换入仍由 provenance 标 simulated）故 P2 不 P1；改前什么都不查，Y ≤ X。修法：**镜像 BS** —— 已存在分支用冻结件的 `expected_driver_module/name` + `expected_driver_connection` + simulated 与当前 `hal` 零 I/O 对照，不重算 digest（与「二次调用不得再解析」的门不冲突）；顺带把 CE digest 并进 `_freeze_instrument_lease` 的 `validation_identity`。P2-58 ① 按 ⑤（审查轮不加机制）未修。
-- `[discovered 2026-09-03 during P2-58 ① 立项 / Agent F 枚举]` **品类键 snake/camel 双拼写 —— 其中一处是活路径上的静默假数据（P2）** —— 活路径 `app/services/instrument_hal_service.py:912` 以 `cat.category_key`（驼峰 `channelEmulator` / `baseStation` / `signalAnalyzer`）为 `self.drivers` 的键；而**同一文件** `get_aggregated_metrics`（`:1339-1344`）取 `list(self.drivers.keys())[i]` 后比对 **snake** `"channel_emulator"` / `"base_station"` / `"signal_analyzer"` —— **三个分支恒为死枝**，`channel_metrics` / `base_station_metrics` / `analyzer_metrics` 永远 `None`，`_build_monitoring_data(None, None, None)` 落到硬编码默认值 `throughput=0.0 / snr=0.0 / eirp=0.0 / temperature=23.0`（`:1375-1380`），无异常、无日志。**可观察故障：监控面板显示的吞吐 / SNR / EIRP / 温度与仪器状态无关，恒为这四个常数。** 暴露面：唯一调用方 `app/api/monitoring.py:98`（`generate_monitoring_data`），被 `:179-200` 的 WebSocket 广播循环**每秒**推一次 + `:211` 的 REST 端点各取一次；受 `is_test_monitoring_enabled()` 门控 —— 即**只在测试租约期间**出数，而那正是操作员盯着面板的时候。 修法：**换源** —— 三个比对改用 `cat.category_key` 同一套驼峰常量（不许再手写字面量；P2-58 ① 已把 `instrument_test_lease.py:160` 的 `or drivers.get("channel_emulator")` 删掉，用户拍板决定 ②）。⑦ 判据下**不在 P2-58 ① 修**（不改它，「无单一 CE binding 真值」那个故障仍在）。
-  同族一并登记（F 枚举，均越界未动）：① `app/hal/driver_registry.py:8/20/31/117/128/178/217/263` 整套 snake 键注册表，经 `app/hal/__init__.py:47` 再导出，生产代码疑似无人 import（仅一测试）—— **动手前须二次确认再删**（同族先例：P2-57 `mock_instruments.py` 同名类差点被当死代码）；② `instrument_test_lease.py:180` 与 `base_station_execution_session.py:51` 的 `drivers.get("baseStation") or drivers.get("base_station")` —— 与已删那行同一种病、不同品类，全仓无 `"base_station"` 键的写方，今天是死分支。**不属此族**（另一命名空间，勿误删）：`app/schemas/road_test/topology.py:24` / `app/services/road_test/network_topology_service.py:56/75` 的 VRT 拓扑 `DeviceType`，`standard_channel_service.py:42` 的说明注释。
+- `[discovered 2026-09-03 during P2-58 ① 立项 / Agent F 枚举]` **[→ P1-76 已收口] 监控品类键错配导致固定假读数** —— P1-76 没有把旧三仪表分支机械改成 camelCase：实时监控已删除固定/随机 fallback，只读取权威 BaseStation 的当前下行吞吐，并要求 `kpi_valid.dl_throughput_current=true`、有限非负值和明确 `pcell` / `nr_all_cells` scope；Channel Emulator 与 Signal Analyzer 不再被当作吞吐/SNR/EIRP/温度的替代真值。其余 snake/camel 兼容分支不属于监控故障，只有出现独立可观察故障并完成写方/消费方二次枚举后才能另行 triage，不沿用本条旧修法批量修改。
 - `[discovered 2026-09-04 during P2-59 立项]` **手工 CE 端点与诊断序列各写一份 CE 生命周期，不在四类入口之内（P3）** —— `api/instrument.py` 的 `load-smu` / `emulation-control` / `output-gain` / `output-calibration` / `input-reference` / `crest-factor` 六个端点各开一把 `instrument_test_lease`、经 `_call_f64_method` 与 `getattr(driver, "load_local_scenario", None)` 取 F64 专属方法名；诊断序列（`api/diagnostic_sequence.py:212` 自开租约）序列体各写收尾。用户 2026-09-04 拍板：不在 P2-59（条目写的是 formal / commissioning / adhoc / run-all 四类入口）。修法：P2-59 ③ 落地后让它们改走同一 CE 作用域，另立片。
 - `[discovered 2026-09-04 during P2-59 立项]` **`f64_*` 六个配置字段与 `f64.*` 证据键是厂商命名（P3，契约破坏面大）** —— `app/schemas/mimo_ota/config.py` 的 `f64_bypass_mode` / `f64_fade_after_attach` / `f64_input_ref_dbm` / `f64_crest_db` / `f64_output_gain_db` / `f64_output_level_dbm`，与 `measure.py` 的证据键 `f64.model_loaded` / `f64.model_load` / `f64.output_state` / `f64.bypass_mode` / `f64.simulation_state`。改名牵动 openapi / GUI / 报告 / 测试。用户 2026-09-04 拍板：P2-59 不改名（消费方经执行计划判能力即可），另立片。
 - `[discovered 2026-09-04 during P2-59 立项]` **CE 加载模式双真值：驱动运行时 `get_supported_load_modes()` 与 manifest `load_modes`（P3）** —— `measure.py:1781` 与 `channel_generation/gcm_strategy.py:199` / `b2_parametric_strategy.py:44` 按运行时方法判，P2-59 ① 的执行计划按 manifest 判并把判定前移到启动期；两者今天同源（`channel_emulator.py:124-132` 运行时方法由 manifest 派生）但是两个问法。修法：**换源** —— ② 把三处运行时判定改读执行计划的 `load_mode_planned`。

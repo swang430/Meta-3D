@@ -645,7 +645,8 @@ export type DashboardAlertSummary = {
 }
 
 // MockServer 的演示监控帧；不是 live `/monitoring/feeds` 契约。live 元素是
-// `{name, value:number, unit, timestamp}`，不得再复用本类型的展示型 MetricItem。
+// `{name, value:number|null, unit, timestamp, status, provenance, reason}`，不得再复用
+// 本类型的展示型 MetricItem。
 export type MockMonitoringFeedsResponse = {
   feeds: MetricItem[]
 }

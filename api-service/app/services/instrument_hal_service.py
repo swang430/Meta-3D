@@ -10,6 +10,7 @@ Phase 3+: Real drivers for production
 
 import asyncio
 import logging
+import math
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     # lazy-import discipline at the top of the module stays uniform.
     from app.services.readiness import ReadinessReport
 from app.hal.channel_emulator import MockChannelEmulator
-from app.hal.base_station import MockBaseStation
+from app.hal.base_station import MockBaseStation, ThroughputMetrics
 from app.hal.signal_analyzer import MockSignalAnalyzer
 from app.hal.vna import MockVNA
 from app.hal.positioner import MockPositioner
@@ -308,6 +309,35 @@ _MOCK_FALLBACK_BY_CATEGORY: Dict[str, type] = {
 # 从上表派生，不再手写 —— 供 service 之外的调用方（如 commissioning 建会话）
 # 问"这是不是真驱动"。见 ``is_mock_driver``。
 _MOCK_DRIVER_CLASSES: tuple = tuple(_MOCK_FALLBACK_BY_CATEGORY.values())
+
+
+_MONITORING_METRIC_UNITS: Dict[str, str] = {
+    "throughput": "Mbps",
+    "snr": "dB",
+    "eirp": "dBm",
+    "temperature": "°C",
+}
+
+
+def build_unavailable_monitoring_data(
+    *,
+    timestamp: str | None = None,
+    reason: str,
+) -> Dict[str, Dict[str, Any]]:
+    """返回完整实时监控形态，不为缺测指标编造数值。"""
+
+    observed_at = timestamp or datetime.utcnow().isoformat()
+    return {
+        name: {
+            "value": None,
+            "unit": unit,
+            "timestamp": observed_at,
+            "status": "unavailable",
+            "provenance": "unknown",
+            "reason": reason,
+        }
+        for name, unit in _MONITORING_METRIC_UNITS.items()
+    }
 
 
 def is_mock_driver(driver) -> bool:
@@ -1502,66 +1532,70 @@ class InstrumentHALService:
 
     async def get_aggregated_metrics(self) -> Dict[str, Any]:
         """
-        Get aggregated metrics from all instruments
+        返回实时监控允许使用的最小权威观测集合。
 
-        Returns monitoring data in the format expected by monitoring.py
-        Uses cache to reduce redundant HAL queries
+        实时监控不是 KPI 推导层。这里只显示所选真实 BaseStation 驱动明确验证的当前
+        下行吞吐；SNR、EIRP 与温度在本服务中尚无权威实时来源，故保持 unavailable。
+        缓存只保存带来源的投影结果。
         """
         if not self._initialized:
-            logger.warning("HAL service not initialized, returning empty metrics")
-            return {}
+            logger.warning("HAL 服务尚未初始化，实时监控不可用")
+            return build_unavailable_monitoring_data(
+                reason="HAL 服务尚未初始化",
+            )
 
-        # Check cache first
+        # 先读缓存，避免同一测试租约内重复轮询仪器。
         cached_metrics = await self._metrics_cache.get()
         if cached_metrics is not None:
             return cached_metrics
 
-        try:
-            # Cache miss - collect metrics from all drivers
-            metrics_tasks = [
-                driver.get_metrics()
-                for driver in self.drivers.values()
-            ]
-            all_metrics = await asyncio.gather(*metrics_tasks, return_exceptions=True)
+        base_station = self.drivers.get("baseStation")
+        now = datetime.utcnow().isoformat()
 
-            # Aggregate metrics from different instruments
-            now = datetime.utcnow().isoformat()
-
-            # Extract relevant metrics
-            channel_metrics = None
-            base_station_metrics = None
-            analyzer_metrics = None
-
-            for i, result in enumerate(all_metrics):
-                if isinstance(result, Exception):
-                    logger.error(f"Error getting metrics from driver {i}: {result}")
-                    continue
-
-                driver_name = list(self.drivers.keys())[i]
-                if driver_name == "channel_emulator":
-                    channel_metrics = result.metrics
-                elif driver_name == "base_station":
-                    base_station_metrics = result.metrics
-                elif driver_name == "signal_analyzer":
-                    analyzer_metrics = result.metrics
-
-            # Build monitoring data structure
-            # Map instrument metrics to monitoring display metrics
-            aggregated = self._build_monitoring_data(
-                channel_metrics,
-                base_station_metrics,
-                analyzer_metrics,
-                now
+        if base_station is None:
+            aggregated = build_unavailable_monitoring_data(
+                timestamp=now,
+                reason="未加载 BaseStation 驱动",
             )
+        elif is_mock_driver(base_station):
+            aggregated = self._build_monitoring_data(
+                None,
+                now,
+                base_station_provenance="simulated",
+                unavailable_reason="所选 BaseStation 驱动为模拟驱动",
+            )
+        else:
+            try:
+                result = await base_station.get_metrics()
+                result_timestamp = getattr(result, "timestamp", None)
+                observed_at = (
+                    result_timestamp.isoformat()
+                    if isinstance(result_timestamp, datetime)
+                    else now
+                )
+                result_status = getattr(result, "status", None)
+                result_metrics = getattr(result, "metrics", None)
+                aggregated = self._build_monitoring_data(
+                    result_metrics if isinstance(result_metrics, dict) else None,
+                    observed_at,
+                    base_station_provenance="real",
+                    unavailable_reason=(
+                        "BaseStation 指标读取未返回正常状态"
+                        if result_status != "normal"
+                        else None
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("读取 BaseStation 监控指标失败: %s", exc)
+                aggregated = build_unavailable_monitoring_data(
+                    timestamp=now,
+                    reason="BaseStation 指标读取失败",
+                )
 
-            # Update cache with fresh data
-            await self._metrics_cache.set(aggregated)
-
-            return aggregated
-
-        except Exception as e:
-            logger.error(f"Error aggregating metrics: {e}")
-            return {}
+        await self._metrics_cache.set(aggregated)
+        return aggregated
 
     async def clear_metrics_cache(self) -> None:
         """测试租约切换控制权时清掉跨边界的监控快照。"""
@@ -1569,82 +1603,68 @@ class InstrumentHALService:
 
     def _build_monitoring_data(
         self,
-        channel_metrics: Optional[Dict[str, Any]],
         base_station_metrics: Optional[Dict[str, Any]],
-        analyzer_metrics: Optional[Dict[str, Any]],
-        timestamp: str
+        timestamp: str,
+        *,
+        base_station_provenance: str,
+        unavailable_reason: str | None = None,
     ) -> Dict[str, Any]:
-        """
-        Build monitoring data structure from instrument metrics
+        """把一次 BaseStation 结果投影为统一监控观测契约。"""
 
-        Maps instrument-specific metrics to standardized monitoring metrics
-        """
+        observations = build_unavailable_monitoring_data(
+            timestamp=timestamp,
+            reason="该指标尚未配置权威实时来源",
+        )
+        throughput = observations["throughput"]
 
-        # Default values
-        throughput = 0.0
-        snr = 0.0
-        eirp = 0.0
-        temperature = 23.0
+        if base_station_provenance == "simulated":
+            throughput.update(
+                status="simulated",
+                provenance="simulated",
+                reason=unavailable_reason or "BaseStation 观测来自模拟驱动",
+            )
+            return observations
 
-        # Extract throughput from channel emulator
-        if channel_metrics:
-            throughput = channel_metrics.get("throughput_mbps", 0.0)
-            snr = channel_metrics.get("snr_db", 0.0)
+        throughput["provenance"] = "real"
+        if unavailable_reason:
+            throughput["reason"] = unavailable_reason
+            return observations
 
-        # Extract EIRP from analyzer
-        if analyzer_metrics:
-            power_dbm = analyzer_metrics.get("measured_power_dbm", -50.0)
-            # EIRP approximation (power + antenna gain)
-            # Assuming 3dBi antenna gain for now
-            eirp = power_dbm + 3.0
+        payload = base_station_metrics or {}
+        value = payload.get("dl_throughput_current_mbps")
+        validity = payload.get("kpi_valid")
+        scope = payload.get("throughput_scope")
+        if scope == "simulated":
+            throughput.update(
+                status="simulated",
+                provenance="simulated",
+                reason="BaseStation 吞吐范围为模拟",
+            )
+            return observations
 
-        # Temperature from base station (if available)
-        if base_station_metrics:
-            # Mock base stations don't expose temperature yet
-            # This would come from environmental sensors
-            pass
-
-        # Status determination
-        def get_status(value: float, warning_threshold: float, critical_threshold: float,
-                       is_higher_better: bool = True) -> str:
-            if is_higher_better:
-                if value < critical_threshold:
-                    return "critical"
-                elif value < warning_threshold:
-                    return "warning"
-            else:
-                if value > critical_threshold:
-                    return "critical"
-                elif value > warning_threshold:
-                    return "warning"
-            return "normal"
-
-        return {
-            "throughput": {
-                "value": round(throughput, 2),
-                "unit": "Mbps",
-                "timestamp": timestamp,
-                "status": get_status(throughput, 140, 120)
-            },
-            "snr": {
-                "value": round(snr, 2),
-                "unit": "dB",
-                "timestamp": timestamp,
-                "status": get_status(snr, 22, 18)
-            },
-            "eirp": {
-                "value": round(eirp, 2),
-                "unit": "dBm",
-                "timestamp": timestamp,
-                "status": get_status(eirp, 43, 41)
-            },
-            "temperature": {
-                "value": round(temperature, 1),
-                "unit": "°C",
-                "timestamp": timestamp,
-                "status": get_status(temperature, 25, 28, is_higher_better=False)
+        if (
+            isinstance(validity, dict)
+            and validity.get("dl_throughput_current") is True
+            and scope in {
+                ThroughputMetrics.SCOPE_PCELL,
+                ThroughputMetrics.SCOPE_NR_ALL_CELLS,
             }
-        }
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and float(value) >= 0.0
+        ):
+            throughput.update(
+                value=round(float(value), 2),
+                status="observed",
+                provenance="real",
+                reason=None,
+            )
+        else:
+            throughput["reason"] = (
+                "BaseStation 未返回有效的当前吞吐观测"
+            )
+        return observations
 
     async def get_driver_status(self) -> Dict[str, Dict[str, Any]]:
         """Get status of all drivers"""

@@ -2,15 +2,17 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Literal, Set
 from datetime import datetime
 import logging
 import asyncio
 import json
-import random
 
 from app.db.database import get_db
-from app.services.instrument_hal_service import get_hal_service
+from app.services.instrument_hal_service import (
+    build_unavailable_monitoring_data,
+    get_hal_service,
+)
 from app.services.instrument_test_lease import is_test_monitoring_enabled
 
 router = APIRouter()
@@ -18,11 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class MonitoringMetric(BaseModel):
-    """Single monitoring metric"""
+    """单项实时监控观测。"""
     name: str
-    value: float
+    value: float | None
     unit: str
     timestamp: datetime
+    status: Literal["observed", "unavailable", "simulated"]
+    provenance: Literal["real", "simulated", "unknown"]
+    reason: str | None
 
 
 class MonitoringFeedsResponse(BaseModel):
@@ -32,12 +37,14 @@ class MonitoringFeedsResponse(BaseModel):
 
 
 class MonitoringDataPoint(BaseModel):
-    """Real-time monitoring data point"""
+    """实时监控数据点。"""
     metric_name: str
-    value: float
+    value: float | None
     unit: str
     timestamp: str
-    status: str  # "normal", "warning", "critical"
+    status: Literal["observed", "unavailable", "simulated"]
+    provenance: Literal["real", "simulated", "unknown"]
+    reason: str | None
 
 
 class MonitoringBroadcast(BaseModel):
@@ -81,15 +88,16 @@ manager = ConnectionManager()
 
 async def generate_monitoring_data() -> Dict[str, Any]:
     """
-    Generate monitoring data from instrument HAL
+    从仪表 HAL 生成实时监控观测。
 
-    Phase 2.4.6: Uses HAL service with mock drivers
-    Phase 3+: Will use real instrument drivers
+    缺测、模拟与读取失败均保留显式状态，不生成数值兜底。
     """
     # 空闲时不允许 GUI 的 REST/WS 刷新重新触发任何仪表 SCPI。测试租约进入后
     # 才开放实时指标；退出时租约先关此门，再释放 F64 ATE socket。
     if not is_test_monitoring_enabled():
-        return {}
+        return build_unavailable_monitoring_data(
+            reason="当前没有启用实时监控的测试租约",
+        )
 
     hal_service = get_hal_service()
 
@@ -98,88 +106,30 @@ async def generate_monitoring_data() -> Dict[str, Any]:
         metrics = await hal_service.get_aggregated_metrics()
 
         if not metrics:
-            # Fallback to simple mock data if HAL service not initialized
-            logger.warning("HAL service returned empty metrics, using fallback")
-            return _generate_fallback_data()
+            return build_unavailable_monitoring_data(
+                reason="HAL 服务未返回监控观测",
+            )
 
         return metrics
 
     except Exception as e:
-        logger.error(f"Error getting HAL metrics: {e}")
-        return _generate_fallback_data()
-
-
-def _generate_fallback_data() -> Dict[str, Any]:
-    """
-    Fallback monitoring data generator
-
-    Used when HAL service is unavailable or returns errors
-    """
-    now = datetime.utcnow().isoformat()
-
-    # Generate realistic metrics with random variations
-    throughput = 150.0 + random.uniform(-20, 30)
-    snr = 25.0 + random.uniform(-3, 3)
-    eirp = 45.0 + random.uniform(-2, 2)
-    temperature = 23.0 + random.uniform(-1, 1)
-
-    # Determine status based on thresholds
-    def get_status(value: float, warning_threshold: float, critical_threshold: float,
-                   is_higher_better: bool = True) -> str:
-        if is_higher_better:
-            if value < critical_threshold:
-                return "critical"
-            elif value < warning_threshold:
-                return "warning"
-        else:
-            if value > critical_threshold:
-                return "critical"
-            elif value > warning_threshold:
-                return "warning"
-        return "normal"
-
-    metrics = {
-        "throughput": {
-            "value": round(throughput, 2),
-            "unit": "Mbps",
-            "timestamp": now,
-            "status": get_status(throughput, 140, 120)
-        },
-        "snr": {
-            "value": round(snr, 2),
-            "unit": "dB",
-            "timestamp": now,
-            "status": get_status(snr, 22, 18)
-        },
-        "eirp": {
-            "value": round(eirp, 2),
-            "unit": "dBm",
-            "timestamp": now,
-            "status": get_status(eirp, 43, 41)
-        },
-        "temperature": {
-            "value": round(temperature, 1),
-            "unit": "°C",
-            "timestamp": now,
-            "status": get_status(temperature, 25, 28, is_higher_better=False)
-        }
-    }
-
-    return metrics
+        logger.error(f"读取 HAL 监控指标失败: {e}")
+        return build_unavailable_monitoring_data(
+            reason="HAL 监控读取失败",
+        )
 
 
 async def monitoring_data_broadcaster():
     """
-    Background task to broadcast monitoring data to all connected clients
-
-    Runs continuously and sends updates every 1 second
+    向所有已连接客户端广播实时监控观测，每秒更新一次。
     """
     logger.info("Starting monitoring data broadcaster")
 
     while True:
         try:
-            if manager.active_connections and is_test_monitoring_enabled():
-                # Generate monitoring data from HAL service
+            if manager.active_connections:
+                # 租约关闭后仍发布完整 unavailable 形态，避免客户端继续把最后一个
+                # 数值当作实时值；generate_monitoring_data 的空闲门保证不访问 HAL。
                 metrics = await generate_monitoring_data()
 
                 # Create broadcast message
@@ -207,7 +157,6 @@ async def get_monitoring_feeds(db: Session = Depends(get_db)):
 
     For one-time data fetch. For real-time updates, use WebSocket endpoint.
     """
-    now = datetime.utcnow()
     metrics_data = await generate_monitoring_data()
 
     feeds = [
@@ -215,12 +164,15 @@ async def get_monitoring_feeds(db: Session = Depends(get_db)):
             name=name,
             value=data["value"],
             unit=data["unit"],
-            timestamp=now
+            timestamp=data["timestamp"],
+            status=data["status"],
+            provenance=data["provenance"],
+            reason=data["reason"],
         )
         for name, data in metrics_data.items()
     ]
 
-    return MonitoringFeedsResponse(feeds=feeds, timestamp=now)
+    return MonitoringFeedsResponse(feeds=feeds, timestamp=datetime.utcnow())
 
 
 @router.websocket("/ws/monitoring")
@@ -236,10 +188,12 @@ async def websocket_monitoring_endpoint(websocket: WebSocket):
         "type": "metrics",
         "data": {
             "metric_name": {
-                "value": float,
+                "value": float | null,
                 "unit": str,
                 "timestamp": str,
-                "status": "normal" | "warning" | "critical"
+                "status": "observed" | "unavailable" | "simulated",
+                "provenance": "real" | "simulated" | "unknown",
+                "reason": str | null
             },
             ...
         },

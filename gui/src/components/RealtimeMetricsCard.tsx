@@ -27,19 +27,17 @@ interface RealtimeMetricsCardProps {
 // Memoized helper functions
 const getStatusColor = (status: string): string => {
   switch (status) {
-    case 'normal':
-      return 'green'
-    case 'warning':
+    case 'observed':
+      return 'blue'
+    case 'simulated':
       return 'yellow'
-    case 'critical':
-      return 'red'
     default:
       return 'gray'
   }
 }
 
-const formatValue = (value: number, decimals: number = 2): string => {
-  return value.toFixed(decimals)
+const formatValue = (value: number | null, decimals: number = 2): string => {
+  return value === null ? 'N/A' : value.toFixed(decimals)
 }
 
 // Metric display labels in Chinese
@@ -84,8 +82,13 @@ const MetricCard = memo(({ label, data, decimals = 2 }: MetricCardProps) => {
             transition: 'color 0.3s ease',
           }}
         >
-          {formatValue(data.value, decimals)} {data.unit}
+          {formatValue(data.value, decimals)} {data.value === null ? '' : data.unit}
         </Text>
+        {data.reason && (
+          <Text size="xs" c="dimmed">
+            {data.reason}
+          </Text>
+        )}
       </Stack>
     </Card>
   )

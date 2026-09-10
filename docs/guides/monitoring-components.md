@@ -18,7 +18,8 @@
 **当前界面位置**: 当前导航没有直接挂载；2026-09-05 起不再作为主控台常驻区域
 
 **特性**:
-- ✅ 实时WebSocket连接（ws://localhost:8001/api/v1/ws/monitoring）
+- ✅ 实时 WebSocket 连接（同源路径 `/api/v1/ws/monitoring`；本地开发默认
+  `ws://localhost:8000/api/v1/ws/monitoring`）
 - ✅ Phase 2.6性能优化（throttling 100ms, React.memo, useMemo）
 - ✅ 自动重连机制
 - ✅ Skeleton加载状态
@@ -33,6 +34,10 @@
 - 温度 (Temperature)
 
 **数据源**: 后端监控 WebSocket 投影；组件本身不提供测试执行上下文
+
+**观测契约**: 每项均携带 `value|null`、`status`、`provenance`、`reason` 与 `timestamp`。
+只有真实 BaseStation 明确验证且口径为 `pcell` / `nr_all_cells` 的当前下行吞吐可以显示数值；
+SNR、EIRP、温度没有权威实时来源时显示 N/A，模拟值只作黄色诊断，不能解释为正式通过。
 
 **示例**:
 ```tsx
@@ -61,10 +66,9 @@ function StandaloneMetricsView() {
 **特性**:
 - ✅ 复用RealtimeMetricsCard的所有性能优化
 - ✅ **测试执行上下文**（测试用例名称、当前相位；ARCH-1 前这里显示的是计划名）
-- ✅ **期望值vs实际值对比**
-- ✅ **指标合规率进度条**
-- ✅ **超出范围可视化提示**（黄色边框 + 警告图标）
-- ✅ 期望值范围显示
+- ✅ **逐指标观测状态与来源**
+- ✅ 缺测显示 N/A，模拟值显示黄色诊断状态
+- ✅ 不在监控组件内产生 pass/fail 或“合规率”
 
 **差异化内容**:
 
@@ -73,29 +77,23 @@ function StandaloneMetricsView() {
    - 显示步骤进度（步骤 2/5）
    - 显示当前步骤标题
 
-2. **期望值对比**
+2. **观测真值**
    ```
    ┌────────────────────────┐
-   │ 吞吐量          [⚠️]   │  ← 超出范围警告
-   │ 148.5 Mbps            │  ← 当前值（黄色）
-   │ 🎯 期望: 140-160 Mbps │  ← 期望范围
+   │ 吞吐量      [observed] │  ← 真实权威观测
+   │ 148.5 Mbps            │
+   ├────────────────────────┤
+   │ EIRP      [unavailable]│  ← 尚无权威实时来源
+   │ N/A                   │
    └────────────────────────┘
    ```
 
-3. **指标合规率**
-   - 进度条显示符合预期的指标百分比
-   - 颜色编码：
-     - 绿色：≥80%
-     - 黄色：60-80%
-     - 红色：<60%
-   - 显示统计：4/5 项指标在期望范围内
+3. **状态颜色**
+   - 蓝色：`observed`，表示有真实权威观测，不表示通过
+   - 黄色：`simulated`，只作诊断
+   - 灰色：`unavailable`，显示 N/A 与具体原因
 
-4. **增强的可视化**
-   - 超出范围的指标：黄色边框（2px）+ 警告图标
-   - 当前值颜色变化（黄色表示超出范围）
-   - 期望范围始终可见
-
-**数据源**: 与 RealtimeMetricsCard 共用监控 WebSocket Hook，并叠加演示回放的期望值配置
+**数据源**: 与 RealtimeMetricsCard 共用服务器权威监控 WebSocket 投影，不叠加客户端阈值或第二判据
 
 **示例**:
 ```tsx
@@ -111,13 +109,6 @@ function DiagnosticsDemoPlayback() {
         total: 5,
         title: "方位角扫描 (0° - 360°)"
       }}
-      expectedRanges={{
-        throughput: { min: 140, max: 160 },
-        snr: { min: 23, max: 27 },
-        quiet_zone_uniformity: { min: 0.7, max: 1.0 },
-        eirp: { min: 43, max: 47 },
-        temperature: { min: 20, max: 25 }
-      }}
       debug={false}
     />
   )
@@ -132,9 +123,9 @@ function DiagnosticsDemoPlayback() {
 |------|----------------------------------|-----------------------------------|
 | **用途** | 系统健康监控 | 测试执行监控 |
 | **上下文** | 无 | 测试用例 + 相位 |
-| **期望值** | ❌ 无 | ✅ 显示并对比 |
-| **合规率** | ❌ 无 | ✅ 进度条显示 |
-| **超出范围提示** | ❌ 无 | ✅ 黄色边框 + 图标 |
+| **判定** | 不产生 pass/fail | 不产生 pass/fail |
+| **来源状态** | ✅ | ✅ |
+| **缺测/模拟** | N/A / 黄色诊断 | N/A / 黄色诊断 |
 | **性能优化** | ✅ Throttling + Memo | ✅ 继承所有优化 |
 | **使用时机** | 按需挂载 | 调试演示回放期间 |
 | **显示位置** | 当前无直接导航入口 | 调试维护 → 演示回放 |
@@ -154,12 +145,11 @@ function DiagnosticsDemoPlayback() {
 
 ### 调试维护 → 演示回放（ExecutionMetricsCard）
 
-**场景**: 开发或调试人员查看 **“演示执行进展如何、指标是否落在预期范围？”**
+**场景**: 开发或调试人员查看 **“演示执行进展如何、当前有哪些可信观测？”**
 
 - 演示执行监控
-- 期望值vs实际值对比
 - 测试步骤进度
-- 指标合规状态
+- 观测来源与缺测原因
 - 仅在测试运行时使用
 
 ---
@@ -181,7 +171,7 @@ function DiagnosticsDemoPlayback() {
 
 ```
 ┌─────────────────┐
-│   HAL Service   │ ← Mock Drivers (Channel Emulator, Base Station, Analyzer)
+│   HAL Service   │ ← 当前只消费 BaseStation 权威实时吞吐
 │  (0.5s cache)   │
 └────────┬────────┘
          │
@@ -231,9 +221,12 @@ function DiagnosticsDemoPlayback() {
 ### Phase 2.7 (已完成)
 - ✅ `ExecutionMetricsCard` 差异化组件
 - ✅ 测试执行上下文集成
-- ✅ 期望值对比功能
-- ✅ 指标合规率可视化
 - ✅ 组件文档
+
+### P1-76（已实现，Ready PR）
+- ✅ 删除固定/随机 fallback 与无依据 EIRP/温度
+- ✅ 统一 nullable + provenance 观测契约
+- ✅ 删除客户端硬编码期望范围与合规率
 
 ### 当前界面状态
 - ✅ `ExecutionMetricsCard` 已挂载到“调试维护 → 演示回放”

@@ -4,14 +4,14 @@
  * Phase 2.7: Differentiated monitoring for test execution
  *
  * 差异化特性：
- * - 显示测试执行上下文（当前值 vs 期望值范围）
+ * - 显示测试执行上下文与带来源的观测值
  * - 复用 RealtimeMetricsCard 的优化（throttling, memo）
  * - 增加执行状态指示器
  * - 与主控台的就绪、最近执行、实时日志操作视图形成差异化
  *
  * 使用场景：
  * - 主控台: 就绪状态 + 最近执行 + 实时日志（不挂载实时指标）
- * - 调试维护 / 演示回放: 测试执行监控（带期望值对比）
+ * - 调试维护 / 演示回放: 测试执行监控（不产生正式判定）
  */
 
 import {
@@ -26,7 +26,6 @@ import {
   ActionIcon,
   Tooltip,
   Skeleton,
-  Progress,
   Paper,
 } from '@mantine/core'
 import {
@@ -34,8 +33,6 @@ import {
   IconPlugConnectedX,
   IconRefresh,
   IconActivity,
-  IconTarget,
-  IconAlertTriangle,
 } from '@tabler/icons-react'
 import { useMonitoringWebSocket, type MonitoringMetricData } from '../../../hooks/useMonitoringWebSocket'
 import { UnavailableMetricCard } from '../../../components/RealtimeMetricsCard'
@@ -54,13 +51,6 @@ interface ExecutionMetricsCardProps {
     total: number
     title?: string
   }
-  /** 期望值范围（用于对比） */
-  expectedRanges?: {
-    throughput?: { min: number; max: number }
-    snr?: { min: number; max: number }
-    eirp?: { min: number; max: number }
-    temperature?: { min: number; max: number }
-  }
 }
 
 // 指标显示标签（中文）
@@ -75,41 +65,29 @@ const METRIC_LABELS: Record<string, string> = {
 // 获取状态颜色
 const getStatusColor = (status: string): string => {
   switch (status) {
-    case 'normal':
-      return 'green'
-    case 'warning':
+    case 'observed':
+      return 'blue'
+    case 'simulated':
       return 'yellow'
-    case 'critical':
-      return 'red'
     default:
       return 'gray'
   }
 }
 
 // 格式化数值
-const formatValue = (value: number, decimals: number = 2): string => {
-  return value.toFixed(decimals)
+const formatValue = (value: number | null, decimals: number = 2): string => {
+  return value === null ? 'N/A' : value.toFixed(decimals)
 }
 
-// 检查值是否在期望范围内
-const isWithinRange = (value: number, range?: { min: number; max: number }): boolean => {
-  if (!range) return true
-  return value >= range.min && value <= range.max
-}
-
-// 带期望值对比的指标卡片（子组件）
+// 带来源状态的指标卡片（子组件）
 interface ExecutionMetricCardProps {
   label: string
   data: MonitoringMetricData
   decimals?: number
-  expectedRange?: { min: number; max: number }
 }
 
 const ExecutionMetricCard = memo(
-  ({ label, data, decimals = 2, expectedRange }: ExecutionMetricCardProps) => {
-    const withinRange = isWithinRange(data.value, expectedRange)
-    const hasExpectedRange = expectedRange !== undefined
-
+  ({ label, data, decimals = 2 }: ExecutionMetricCardProps) => {
     return (
       <Card
         withBorder
@@ -117,8 +95,6 @@ const ExecutionMetricCard = memo(
         radius="sm"
         style={{
           transition: 'all 0.3s ease',
-          borderColor: hasExpectedRange && !withinRange ? 'var(--mantine-color-yellow-5)' : undefined,
-          borderWidth: hasExpectedRange && !withinRange ? 2 : undefined,
         }}
       >
         <Stack gap="xs">
@@ -131,11 +107,6 @@ const ExecutionMetricCard = memo(
               <Badge size="xs" color={getStatusColor(data.status)}>
                 {data.status}
               </Badge>
-              {hasExpectedRange && !withinRange && (
-                <Tooltip label="超出期望范围">
-                  <IconAlertTriangle size={14} color="var(--mantine-color-yellow-6)" />
-                </Tooltip>
-              )}
             </Group>
           </Group>
 
@@ -143,23 +114,17 @@ const ExecutionMetricCard = memo(
           <Text
             size="xl"
             fw={700}
-            c={hasExpectedRange && !withinRange ? 'yellow.6' : undefined}
             style={{
               transition: 'color 0.3s ease',
             }}
           >
-            {formatValue(data.value, decimals)} {data.unit}
+            {formatValue(data.value, decimals)} {data.value === null ? '' : data.unit}
           </Text>
 
-          {/* 期望值范围 */}
-          {hasExpectedRange && (
-            <Group gap={4}>
-              <IconTarget size={12} color="var(--mantine-color-gray-6)" />
-              <Text size="xs" c="dimmed">
-                期望: {formatValue(expectedRange.min, decimals)} - {formatValue(expectedRange.max, decimals)}{' '}
-                {data.unit}
-              </Text>
-            </Group>
+          {data.reason && (
+            <Text size="xs" c="dimmed">
+              {data.reason}
+            </Text>
           )}
         </Stack>
       </Card>
@@ -174,7 +139,6 @@ export function ExecutionMetricsCard({
   throttleMs = 100,
   testPlanName,
   currentStep,
-  expectedRanges,
 }: ExecutionMetricsCardProps) {
   const { metrics, isConnected, error, reconnect } = useMonitoringWebSocket({
     debug: debug,
@@ -182,19 +146,6 @@ export function ExecutionMetricsCard({
     reconnectDelay: 3000,
     throttleMs: throttleMs,
   })
-
-  // 计算在范围内的指标数量
-  const metricsInRange = metrics
-    ? Object.keys(metrics).filter((key) => {
-        const metricKey = key as keyof typeof metrics
-        const metricData = metrics[metricKey]
-        const expectedRange = expectedRanges?.[metricKey]
-        return isWithinRange(metricData.value, expectedRange)
-      }).length
-    : 0
-
-  const totalMetrics = metrics ? Object.keys(metrics).length : 5
-  const complianceRate = totalMetrics > 0 ? (metricsInRange / totalMetrics) * 100 : 100
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -250,29 +201,6 @@ export function ExecutionMetricsCard({
           </Alert>
         )}
 
-        {/* 指标合规率 */}
-        {expectedRanges && metrics && (
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                指标合规率
-              </Text>
-              <Text size="sm" fw={500} c={complianceRate < 80 ? 'yellow.6' : 'green.6'}>
-                {complianceRate.toFixed(0)}%
-              </Text>
-            </Group>
-            <Progress
-              value={complianceRate}
-              color={complianceRate >= 80 ? 'green' : complianceRate >= 60 ? 'yellow' : 'red'}
-              size="sm"
-              radius="sm"
-            />
-            <Text size="xs" c="dimmed">
-              {metricsInRange}/{totalMetrics} 项指标在期望范围内
-            </Text>
-          </Stack>
-        )}
-
         {/* 错误提示 */}
         {error && (
           <Alert color="red" variant="light" title="连接错误">
@@ -287,26 +215,22 @@ export function ExecutionMetricsCard({
               label={METRIC_LABELS.throughput}
               data={metrics.throughput}
               decimals={2}
-              expectedRange={expectedRanges?.throughput}
             />
             <ExecutionMetricCard
               label={METRIC_LABELS.snr}
               data={metrics.snr}
               decimals={2}
-              expectedRange={expectedRanges?.snr}
             />
             <UnavailableMetricCard label={METRIC_LABELS.quiet_zone_uniformity} />
             <ExecutionMetricCard
               label={METRIC_LABELS.eirp}
               data={metrics.eirp}
               decimals={2}
-              expectedRange={expectedRanges?.eirp}
             />
             <ExecutionMetricCard
               label={METRIC_LABELS.temperature}
               data={metrics.temperature}
               decimals={1}
-              expectedRange={expectedRanges?.temperature}
             />
           </SimpleGrid>
         ) : (
