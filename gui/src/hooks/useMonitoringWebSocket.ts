@@ -15,17 +15,19 @@
  *
  * // Access real-time metrics
  * console.log(metrics.throughput.value, metrics.throughput.unit);
- * console.log(metrics.snr.status); // "normal" | "warning" | "critical"
+ * console.log(metrics.snr.status); // "observed" | "unavailable" | "simulated"
  * ```
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 export interface MonitoringMetricData {
-  value: number
+  value: number | null
   unit: string
   timestamp: string
-  status: 'normal' | 'warning' | 'critical'
+  status: 'observed' | 'unavailable' | 'simulated'
+  provenance: 'real' | 'simulated' | 'unknown'
+  reason: string | null
 }
 
 export interface MonitoringMetrics {

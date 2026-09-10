@@ -682,7 +682,9 @@ async def test_monitoring_source_does_not_touch_hal_while_no_test_is_active(
         lambda: pytest.fail("空闲监控不应读取 HAL"),
     )
 
-    assert await monitoring.generate_monitoring_data() == {}
+    observations = await monitoring.generate_monitoring_data()
+    assert set(observations) == {"throughput", "snr", "eirp", "temperature"}
+    assert all(item["value"] is None for item in observations.values())
 
 
 @pytest.mark.asyncio

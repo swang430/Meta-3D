@@ -4184,14 +4184,7 @@ function Monitoring({
       {/* Phase 2.7: 差异化的测试执行监控 - 始终显示 */}
       {/* ARCH-1 S4a: 计划名与"第几步/共几步"来自 TestPlan, 随计划链删除。
           这个卡片本身(实时指标)不依赖计划, 保留。 */}
-      <ExecutionMetricsCard
-        expectedRanges={{
-          throughput: { min: 140, max: 160 },
-          snr: { min: 23, max: 27 },
-          eirp: { min: 43, max: 47 },
-          temperature: { min: 20, max: 25 },
-        }}
-      />
+      <ExecutionMetricsCard />
 
       <Grid gutter="xl">
         <Grid.Col span={12}>

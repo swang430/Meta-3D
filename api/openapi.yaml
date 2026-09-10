@@ -2316,14 +2316,41 @@ components:
         duration_minutes:
           type: number
           nullable: true
+    MonitoringMetric:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        value:
+          type: number
+          nullable: true
+        unit:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [observed, unavailable, simulated]
+        provenance:
+          type: string
+          enum: [real, simulated, unknown]
+        reason:
+          type: string
+          nullable: true
+      required: [name, value, unit, timestamp, status, provenance, reason]
     MonitoringFeedsResponse:
       type: object
       properties:
         feeds:
           type: array
           items:
-            $ref: '#/components/schemas/MetricItem'
-      required: [feeds]
+            $ref: '#/components/schemas/MonitoringMetric'
+        timestamp:
+          type: string
+          format: date-time
+      required: [feeds, timestamp]
     InstrumentsResponse:
       type: object
       properties:
