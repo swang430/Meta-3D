@@ -119,7 +119,7 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
   守卫 `connectionParamsGuarded`：origin 'invalid'，或标记存在且 origin ≠ 'operator' → 不发送 connection_params **与** BS 的
   `base_station_adapter_profile`（库里就是同一字段的子键，草稿同样是灌入派生；被守卫时也不在客户端校验合成出来的空 profile）；
   派生的 BS profile 草稿与文本共用来源：行变坏且非 operator 一起清空，修好一起重建；BS profile 字段编辑同样标 'operator'；
-  alignment 输入框的禁用同一判据；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
+  alignment 输入框与 BS profile 输入框的禁用同一判据（被守卫时局部 profile 编辑不能把整份草稿标成 operator 去解锁替换，Codex R4）；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
   红「认证数据损坏」；否则黄「未认证或已撤销」。CE 侧已有 readiness `invalid` 红态，本片只保证目录侧
   同一连接 `invalid_fields` 与 preview `status="invalid"` 同时成立（回归断言）。
 

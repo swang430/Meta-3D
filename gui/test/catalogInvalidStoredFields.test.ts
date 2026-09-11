@@ -29,6 +29,19 @@ test('ordinary save routes the connection payload through withoutSynthesizedConn
   assert.match(fn, /categoryKey === 'baseStation' && manifest && !paramsGuarded/)
 })
 
+test('BS adapter profile inputs are disabled while stored connection_params is guarded (Codex #471 R4)', () => {
+  assert.match(appSource, /const bsParamsGuarded = connectionParamsGuarded\(category\.connection\.invalid_fields, draft\.connection_params_origin\)/)
+  assert.match(appSource, /placeholder=\{field\.placeholder\}\s*\n\s*disabled=\{bsParamsGuarded\}/)
+  // 守卫判据只有一个：保存路径 / CE alignment / BS profile 三处都调它
+  assert.equal((appSource.match(/connectionParamsGuarded\(/g) ?? []).length, 3)
+})
+
+test('BS model change ignores deselect / same model like the CE planner does', () => {
+  const start = appSource.indexOf('const handleModelChange = useCallback(')
+  const bs = appSource.slice(appSource.indexOf("categoryKey === 'baseStation' && category", start), appSource.indexOf("categoryKey === 'channelEmulator' && category", start))
+  assert.match(bs, /if \(!modelId \|\| drafts\[categoryKey\]\?\.modelId === modelId\) return/)
+})
+
 test('drafts carry connection_params provenance from every (re)hydration point (Codex #471 R2 P1)', () => {
   assert.match(appSource, /connection_params_origin\?: 'server' \| 'invalid'/)
   // 目录刷新 effect 与保存成功后的草稿更新都经 nextConnectionParamsDraft，不再直接 previous ?? server

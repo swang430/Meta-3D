@@ -40,7 +40,7 @@ export type ConnectionParamsOrigin = 'server' | 'invalid' | 'operator'
 
 export type ConnectionParamsDraft = { text: string; origin: ConnectionParamsOrigin }
 
-/** 当前草稿的 connection_params 能不能被拿去保存（也决定 CE alignment 输入框是否禁用）。 */
+/** 当前草稿的 connection_params 能不能被拿去保存（也决定 CE alignment / BS adapter profile 输入框是否禁用）。 */
 export function connectionParamsGuarded(
   invalidFields: InvalidStoredFields | undefined,
   draftOrigin: ConnectionParamsOrigin | undefined,

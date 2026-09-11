@@ -2023,6 +2023,9 @@ function EquipmentManager() {
     (categoryKey: string, modelId: string) => {
       const category = categories.find((item) => item.key === categoryKey)
       if (categoryKey === 'baseStation' && category) {
+        // 与 CE 的 noop 对称：Select 的 deselect（空 modelId）/ 重选同型号不算切型号 —— 否则一份全空草稿会被标成
+        // operator，解锁对被守卫存值的替换（轻量内审 R4-F1）
+        if (!modelId || drafts[categoryKey]?.modelId === modelId) return
         setDrafts((prev) => ({
           ...prev,
           // 选型号是操作员动作：preset 文本按 'operator' 来源对待（填了照发，修库后不做跨型号重建）
@@ -2690,7 +2693,17 @@ function EquipmentManager() {
                           </Group>
                         </Stack>
                       )}
-                      {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (
+                      {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (() => {
+                        // P2-68（Codex #471 R4）：库里 connection_params 被标坏时 profile 字段也禁用 ——
+                        // 局部编辑不能把整份草稿标成 operator 去解锁对整份存值的替换（与 CE alignment 输入框同款）。
+                        const bsParamsGuarded = connectionParamsGuarded(category.connection.invalid_fields, draft.connection_params_origin)
+                        return (
+                        <Stack gap="xs">
+                        {bsParamsGuarded && (
+                          <Text size="xs" c="red">
+                            库里的连接参数无法解析，adapter profile 字段已禁用：以空草稿为底编辑会覆盖原值，请先由管理员修复数据库。
+                          </Text>
+                        )}
                         <SimpleGrid cols={{ base: 1, sm: 2 }}>
                         {drawerSelectedModel.base_station_manifest.profile_fields.map((field) => (
                           <TextInput
@@ -2699,6 +2712,7 @@ function EquipmentManager() {
                             description={field.description}
                             required={field.required}
                             placeholder={field.placeholder}
+                            disabled={bsParamsGuarded}
                             value={(draft.base_station_profile
                               ?? emptyBaseStationProfileDraft(
                                 drawerSelectedModel.base_station_manifest!,
@@ -2724,7 +2738,9 @@ function EquipmentManager() {
                           />
                         ))}
                         </SimpleGrid>
-                      )}
+                        </Stack>
+                        )
+                      })()}
                     </Stack>
                   </Card>
                 )}
