@@ -91,6 +91,8 @@ export type InstrumentConnection = {
   cmw500_lte_2x2_formal_updated_at: string | null
   base_station_site_certification: BaseStationSiteCertification | null
   channel_emulator_site_certification: ChannelEmulatorSiteCertification | null
+  /** P2-68：服务器保存的字段解析失败时的「字段 → 原因」；出现在这里的字段其投影为 null / {}。两个现场认证损坏 → 正式执行不能获得资格；preset / connection_params 损坏只影响草稿与参数投影 */
+  invalid_fields: Record<string, string>
 }
 
 export type BaseStationModelPreset = {

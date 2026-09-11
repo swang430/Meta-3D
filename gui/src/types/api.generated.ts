@@ -3274,6 +3274,10 @@ export interface components {
             cmw500_lte_2x2_formal_updated_at: string | null;
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
             channel_emulator_site_certification: components["schemas"]["ChannelEmulatorSiteCertification"] | null;
+            /** @description 服务器保存的字段解析失败时的「字段 → 原因」映射（P2-68）；出现在这里的字段其正常投影一律为 null / {}。其中两个现场认证字段损坏时正式执行不能获得资格；两个 preset map 与 connection_params 损坏只影响配置草稿与连接参数投影，不改变正式资格判定。可能的键：base_station_site_certification, channel_emulator_site_certification, base_station_model_presets, channel_emulator_model_presets, connection_params */
+            invalid_fields: {
+                [key: string]: string;
+            };
         };
         Cmw500FormalCapabilityUpdate: {
             enabled: boolean;

@@ -97,6 +97,31 @@ class FEInstrumentModel(BaseModel):
     base_station_manifest: Optional[BaseStationAdapterManifest] = None
 
 
+# P2-68：_convert_connection 里逐个受保护解析的 JSON 列。改这里必须同时改
+# _convert_connection 的 _project(...) 调用与 api/openapi.yaml 里 invalid_fields 的 description
+# （tests/test_p2_68_catalog_invalid_stored_fields.py 的不变量门守着三处相等）。
+PROJECTED_STORED_FIELDS: tuple[str, ...] = (
+    "base_station_site_certification",
+    "channel_emulator_site_certification",
+    "base_station_model_presets",
+    "channel_emulator_model_presets",
+    "connection_params",
+)
+_INVALID_REASON_MAX_CHARS = 200
+
+
+def _invalid_reason(exc: BaseException) -> str:
+    """解析器给的原因压成一行、截断；空文本退回异常类名。"""
+    text = " ".join(str(exc).split()) or exc.__class__.__name__
+    return text[:_INVALID_REASON_MAX_CHARS]
+
+
+def _connection_params_or_raise(raw: Any) -> Optional[Dict[str, Any]]:
+    if raw is None or isinstance(raw, dict):
+        return raw
+    raise ValueError("connection_params must be a JSON object")
+
+
 class FEInstrumentConnection(BaseModel):
     """对应前端 InstrumentConnection 类型"""
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -118,6 +143,17 @@ class FEInstrumentConnection(BaseModel):
     channel_emulator_site_certification: Optional[
         ChannelEmulatorSiteCertification
     ] = None
+    # P2-68：库里某个 JSON 列损坏时，只让那个字段的投影为 null / {}，并在这里记
+    # 「字段 → 原因」；整条 connection 与整张目录照常返回。键 ∈ PROJECTED_STORED_FIELDS。
+    invalid_fields: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "服务器保存的字段解析失败时的「字段 → 原因」映射；出现在这里的字段其正常投影一律为 "
+            "null / {}。其中两个现场认证字段损坏时正式执行不能获得资格；两个 preset map 与 "
+            "connection_params 损坏只影响配置草稿与连接参数投影，不改变正式资格判定。可能的键："
+            + ", ".join(PROJECTED_STORED_FIELDS)
+        ),
+    )
 
 
 class FEInstrumentCategory(BaseModel):
@@ -245,28 +281,59 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
 
 
 def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrumentConnection:
-    """DB InstrumentConnection → 前端 FEInstrumentConnection"""
+    """DB InstrumentConnection → 前端 FEInstrumentConnection
+
+    P2-68：五个 JSON 列各自经权威解析器投影；某一列存坏了只让它自己变成 null / {}
+    并记进 ``invalid_fields``，其余字段、其余 connection 与整张目录照常。解析器本身的
+    fail-loud 不动（写方 / 正式门仍靠它们拒绝坏数据），这里只是读侧投影。
+    """
     if not conn_db:
         return FEInstrumentConnection()
     from app.services.base_station_model_preset import (
         parse_base_station_model_presets,
     )
+    from app.services.channel_emulator_certification import (
+        parse_channel_emulator_site_certification,
+    )
     from app.services.channel_emulator_model_preset import (
         parse_channel_emulator_model_presets,
     )
-
-    presets = parse_base_station_model_presets(
-        conn_db.base_station_model_presets
+    from app.services.execution_qualification import (
+        parse_base_station_site_certification,
     )
-    channel_emulator_presets = parse_channel_emulator_model_presets(
-        conn_db.channel_emulator_model_presets
+
+    invalid_fields: Dict[str, str] = {}
+
+    def _project(field: str, parser, fallback):
+        try:
+            return parser(getattr(conn_db, field))
+        except ValueError as exc:  # pydantic ValidationError 也是 ValueError 的子类
+            invalid_fields[field] = _invalid_reason(exc)
+            return fallback
+
+    presets = _project(
+        "base_station_model_presets", parse_base_station_model_presets, {}
+    )
+    channel_emulator_presets = _project(
+        "channel_emulator_model_presets", parse_channel_emulator_model_presets, {}
+    )
+    base_station_certification = _project(
+        "base_station_site_certification", parse_base_station_site_certification, None
+    )
+    channel_emulator_certification = _project(
+        "channel_emulator_site_certification",
+        parse_channel_emulator_site_certification,
+        None,
+    )
+    connection_params = _project(
+        "connection_params", _connection_params_or_raise, None
     )
     return FEInstrumentConnection(
         id=str(conn_db.id),
         endpoint=conn_db.endpoint or "",
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",
-        connection_params=conn_db.connection_params,
+        connection_params=connection_params,
         base_station_model_presets={
             key: preset.model_dump(mode="json")
             for key, preset in presets.items()
@@ -281,10 +348,9 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         cmw500_lte_2x2_formal_updated_at=(
             conn_db.cmw500_lte_2x2_formal_updated_at
         ),
-        base_station_site_certification=conn_db.base_station_site_certification,
-        channel_emulator_site_certification=(
-            conn_db.channel_emulator_site_certification
-        ),
+        base_station_site_certification=base_station_certification,
+        channel_emulator_site_certification=channel_emulator_certification,
+        invalid_fields=invalid_fields,
     )
 
 
@@ -445,29 +511,28 @@ def get_instrument_catalog(db: Session = Depends(get_db)):
 
     返回格式严格对齐前端 InstrumentsResponse 类型:
     { categories: InstrumentCategory[] }
+
+    P2-68：不再用 ``except Exception`` 把故障洗成空目录 —— 某条连接的坏字段由
+    ``_convert_connection`` 单独标进 ``invalid_fields``；DB / 代码故障按 FastAPI 默认 500 上抛（API 层
+    不再伪装成空目录；GUI 目录页对 5xx 仍显示空态文案，见 roadmap Discovered）。
     """
-    try:
-        categories_db = db.query(InstrumentCategoryModel).order_by(
-            InstrumentCategoryModel.display_order
-        ).all()
+    categories_db = db.query(InstrumentCategoryModel).order_by(
+        InstrumentCategoryModel.display_order
+    ).all()
 
-        fe_categories = []
-        for cat in categories_db:
-            models = db.query(InstrumentModelDB).filter(
-                InstrumentModelDB.category_id == cat.id
-            ).order_by(InstrumentModelDB.display_order).all()
+    fe_categories = []
+    for cat in categories_db:
+        models = db.query(InstrumentModelDB).filter(
+            InstrumentModelDB.category_id == cat.id
+        ).order_by(InstrumentModelDB.display_order).all()
 
-            conn = db.query(InstrumentConnectionDB).filter(
-                InstrumentConnectionDB.category_id == cat.id
-            ).first()
+        conn = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == cat.id
+        ).first()
 
-            fe_categories.append(_convert_category(cat, models, conn))
+        fe_categories.append(_convert_category(cat, models, conn))
 
-        return FEInstrumentsResponse(categories=fe_categories)
-
-    except Exception as e:
-        logger.error(f"Error fetching instrument catalog: {e}", exc_info=True)
-        return FEInstrumentsResponse(categories=[])
+    return FEInstrumentsResponse(categories=fe_categories)
 
 
 class HalReloadResult(BaseModel):

@@ -34,6 +34,8 @@ test('live response envelopes and nested view models expose their required field
     connection,
     /\n\s*connection_params\?:\s*Record<string,\s*any>\s*\|\s*null/,
   )
+  // P2-68：损坏字段的显式标记是必填的 Record，不是可选字段（消费端不用再判 undefined）
+  assert.match(connection, /\n\s*invalid_fields:\s*Record<string,\s*string>/)
 })
 
 test('chamber create payload only requires the two live request fields', () => {

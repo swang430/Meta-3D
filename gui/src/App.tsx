@@ -117,6 +117,12 @@ import {
   explicitChannelEmulatorConnectionDraft,
   switchChannelEmulatorModel,
 } from './features/Equipment/channelEmulatorModelPresetDraft'
+import {
+  connectionParamsGuarded,
+  invalidStoredFieldHint,
+  nextConnectionParamsDraft,
+  withoutSynthesizedConnectionParams,
+} from './features/Equipment/invalidStoredFields'
 import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
 import type {
   DemoRunPlan,
@@ -227,6 +233,8 @@ type EquipmentDraft = {
   controller: string
   notes: string
   connection_params?: string
+  // P2-68：'server' 从有效服务器值灌入 / 'invalid' 标坏时初始化（空不代表操作员想清空）/ 'operator' 操作员改过或选了型号
+  connection_params_origin?: 'server' | 'invalid' | 'operator'
   base_station_profile?: BaseStationProfileDraft
 }
 
@@ -1760,20 +1768,35 @@ function EquipmentManager() {
           (model) => model.id === (previous?.modelId ?? category.selectedModelId),
         )
         const manifest = selectedModel?.base_station_manifest
+        // P2-68（Codex #471 R2 + 轻量内审 F1）：connection_params 文本与从它派生的 BS profile 草稿一起做 provenance
+        const paramsDraft = nextConnectionParamsDraft(
+          previous
+            ? { text: previous.connection_params ?? '', origin: previous.connection_params_origin ?? 'server' }
+            : undefined,
+          {
+            text: category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : '',
+            invalid: 'connection_params' in category.connection.invalid_fields,
+          },
+        )
+        // 标记刚消失、未动的空草稿刚用服务器值重建 → 从同一坏字段合成出来的空 profile 草稿也一起重建
+        const rehydrated = previous?.connection_params_origin === 'invalid'
+          && paramsDraft.origin === 'server'
+        // 行变坏（非 operator 来源）→ 派生的 profile 草稿与文本一起清空；修好 → 一起重建（轻量内审 R3-F1）
+        const resyncProfile = rehydrated || paramsDraft.origin === 'invalid'
+        const serverProfile = manifest
+          ? readBaseStationProfileDraft(
+              manifest,
+              category.connection.connection_params?.base_station_adapter_profile,
+            )
+          : undefined
         next[category.key] = {
           modelId: previous?.modelId ?? (category.selectedModelId ?? ''),
           endpoint: previous?.endpoint ?? (category.connection.endpoint ?? ''),
           controller: previous?.controller ?? (category.connection.controller ?? ''),
           notes: previous?.notes ?? (category.connection.notes ?? ''),
-          connection_params: previous?.connection_params ?? (category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : ''),
-          base_station_profile: previous?.base_station_profile ?? (
-            manifest
-              ? readBaseStationProfileDraft(
-                  manifest,
-                  category.connection.connection_params?.base_station_adapter_profile,
-                )
-              : undefined
-          ),
+          connection_params: paramsDraft.text,
+          connection_params_origin: paramsDraft.origin,
+          base_station_profile: resyncProfile ? serverProfile : (previous?.base_station_profile ?? serverProfile),
         }
       })
       return next
@@ -1850,9 +1873,15 @@ function EquipmentManager() {
           endpoint: updatedCategory.connection.endpoint ?? '',
           controller: updatedCategory.connection.controller ?? '',
           notes: updatedCategory.connection.notes ?? '',
-          connection_params: updatedCategory.connection.connection_params
-            ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
-            : '',
+          ...(() => {
+            const paramsDraft = nextConnectionParamsDraft(undefined, {
+              text: updatedCategory.connection.connection_params
+                ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
+                : '',
+              invalid: 'connection_params' in updatedCategory.connection.invalid_fields,
+            })
+            return { connection_params: paramsDraft.text, connection_params_origin: paramsDraft.origin }
+          })(),
             base_station_profile: manifest
               ? readBaseStationProfileDraft(
                   manifest,
@@ -1994,9 +2023,13 @@ function EquipmentManager() {
     (categoryKey: string, modelId: string) => {
       const category = categories.find((item) => item.key === categoryKey)
       if (categoryKey === 'baseStation' && category) {
+        // 与 CE 的 noop 对称：Select 的 deselect（空 modelId）/ 重选同型号不算切型号 —— 否则一份全空草稿会被标成
+        // operator，解锁对被守卫存值的替换（轻量内审 R4-F1）
+        if (!modelId || drafts[categoryKey]?.modelId === modelId) return
         setDrafts((prev) => ({
           ...prev,
-          [categoryKey]: draftForBaseStationModel(category, modelId),
+          // 选型号是操作员动作：preset 文本按 'operator' 来源对待（填了照发，修库后不做跨型号重建）
+          [categoryKey]: { ...draftForBaseStationModel(category, modelId), connection_params_origin: 'operator' },
         }))
         return
       }
@@ -2004,7 +2037,7 @@ function EquipmentManager() {
         // P2-58 ②：切型号只改草稿（有未保存草稿先确认），model 只在保存时随 connection 一起发。
         // 这个分支不发请求 —— 后端 CE 块对只带 modelId 的 PUT 返回 422。
         switchChannelEmulatorModel(category, drafts[categoryKey], modelId, {
-          applyDraft: (next) => setDrafts((prev) => ({ ...prev, [categoryKey]: next })),
+          applyDraft: (next) => setDrafts((prev) => ({ ...prev, [categoryKey]: { ...next, connection_params_origin: 'operator' } })),
           confirmDiscard: (apply) => modals.openConfirmModal({
             title: '切换型号会丢弃未保存的配置',
             centered: true,
@@ -2099,8 +2132,10 @@ function EquipmentManager() {
       const category = categories.find((item) => item.key === categoryKey)
       const selectedModel = category?.models.find((model) => model.id === draft.modelId)
       const manifest = selectedModel?.base_station_manifest
+      // P2-68：被守卫时 connection_params 与派生的 profile 都不发（交服务器回填），所以也不在客户端校验一份合成出来的空 profile
+      const paramsGuarded = connectionParamsGuarded(category?.connection.invalid_fields, draft.connection_params_origin)
       let baseStationProfile: Record<string, unknown> | null | undefined
-      if (categoryKey === 'baseStation' && manifest) {
+      if (categoryKey === 'baseStation' && manifest && !paramsGuarded) {
         try {
           baseStationProfile = buildBaseStationAdapterProfile(
             manifest,
@@ -2116,6 +2151,25 @@ function EquipmentManager() {
         }
       }
 
+      // P2-68（Codex #471 R1 P1）：库里 connection_params 被标坏时，空草稿不能被当成 {} 发出去覆盖原值。
+      const connectionPayload = withoutSynthesizedConnectionParams(
+        categoryKey === 'baseStation'
+          ? explicitBaseStationConnectionDraft(
+              draft,
+              parsedParams ?? {},
+              baseStationProfile ?? null,
+            )
+          : categoryKey === 'channelEmulator'
+            ? explicitChannelEmulatorConnectionDraft(draft, parsedParams ?? {})
+            : {
+                endpoint: draft.endpoint || undefined,
+                controller: draft.controller || undefined,
+                notes: draft.notes || undefined,
+                ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+              },
+        category?.connection.invalid_fields,
+        draft.connection_params_origin,
+      )
       instrumentMutation.mutate({
         categoryKey,
         payload: {
@@ -2123,20 +2177,7 @@ function EquipmentManager() {
           ...(categoryKey === 'baseStation' || categoryKey === 'channelEmulator'
             ? { modelId: draft.modelId }
             : {}),
-          connection: categoryKey === 'baseStation'
-            ? explicitBaseStationConnectionDraft(
-                draft,
-                parsedParams ?? {},
-                baseStationProfile ?? null,
-              )
-            : categoryKey === 'channelEmulator'
-              ? explicitChannelEmulatorConnectionDraft(draft, parsedParams ?? {})
-              : {
-                  endpoint: draft.endpoint || undefined,
-                  controller: draft.controller || undefined,
-                  notes: draft.notes || undefined,
-                  ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-                },
+          connection: connectionPayload,
         },
       })
     },
@@ -2442,6 +2483,21 @@ function EquipmentManager() {
                   value={draft.notes}
                   onChange={handleFieldChange(category.key, 'notes')}
                 />
+                {Object.keys(category.connection.invalid_fields).length > 0 && (
+                  <Alert color="red" variant="light" title="服务器保存的配置有损坏字段（P2-68）">
+                    <Stack gap={4}>
+                      {Object.entries(category.connection.invalid_fields).map(([field, reason]) => (
+                        <Text key={field} size="sm">
+                          <Text span fw={600}>{field}</Text>：{invalidStoredFieldHint(field)}
+                          <Text span c="dimmed">（服务器原因：{reason}）</Text>
+                        </Text>
+                      ))}
+                      <Text size="xs" c="dimmed">
+                        只有现场认证损坏会影响正式资格；其它字段只影响这里的草稿 / 参数显示。目录其余内容与本连接的其它字段不受影响。
+                      </Text>
+                    </Stack>
+                  </Alert>
+                )}
                 
                 {category.key === 'rfSwitch' && (
                   <JsonInput
@@ -2455,7 +2511,7 @@ function EquipmentManager() {
                     value={draft.connection_params || ''}
                     onChange={(val) => setDrafts(prev => ({
                       ...prev,
-                      [category.key]: { ...prev[category.key], connection_params: val }
+                      [category.key]: { ...prev[category.key], connection_params: val, connection_params_origin: 'operator' }
                     }))}
                   />
                 )}
@@ -2477,12 +2533,16 @@ function EquipmentManager() {
                   const currentAlignment = typeof parsedParams.alignment_name === 'string'
                     ? parsedParams.alignment_name
                     : ''
+                  // P2-68（内审 F3）：库里 connection_params 被标坏时草稿为空，这里再填一个名字就会以 {alignment_name} 覆盖原值 → 禁用。
+                  const connectionParamsInvalid = connectionParamsGuarded(category.connection.invalid_fields, draft.connection_params_origin)
                   return (
                     <>
                       <TextInput
                         label="F64 User Alignment 文件名"
                         description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
                         placeholder="例: CAICT_5G_3500MHz"
+                        disabled={connectionParamsInvalid}
+                        error={connectionParamsInvalid ? '库里的连接参数无法解析，此处已禁用：以空草稿为底编辑会覆盖原值，请先由管理员修复数据库' : undefined}
                         value={currentAlignment}
                         onChange={(e) => {
                           const newName = e.currentTarget.value
@@ -2497,7 +2557,7 @@ function EquipmentManager() {
                             : ''
                           setDrafts(prev => ({
                             ...prev,
-                            [category.key]: { ...prev[category.key], connection_params: serialized },
+                            [category.key]: { ...prev[category.key], connection_params: serialized, connection_params_origin: 'operator' },
                           }))
                         }}
                       />
@@ -2586,12 +2646,16 @@ function EquipmentManager() {
                       </Stack>
                       {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (
                         <Alert
-                          color={category.connection.base_station_site_certification?.status === 'active' ? 'green' : 'yellow'}
+                          color={category.connection.base_station_site_certification?.status === 'active'
+                            ? 'green'
+                            : 'base_station_site_certification' in category.connection.invalid_fields ? 'red' : 'yellow'}
                           variant="light"
                         >
                           当前现场认证：{category.connection.base_station_site_certification?.status === 'active'
                             ? `已认证 · ${category.connection.base_station_site_certification.certified_at}`
-                            : '未认证或已撤销，仅可诊断'}。服务器认证变化仅影响后续执行。
+                            : 'base_station_site_certification' in category.connection.invalid_fields
+                              ? `认证数据损坏（${category.connection.invalid_fields.base_station_site_certification}），不能得到正式资格`
+                              : '未认证或已撤销，仅可诊断'}。服务器认证变化仅影响后续执行。
                         </Alert>
                       )}
                       {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (
@@ -2629,7 +2693,17 @@ function EquipmentManager() {
                           </Group>
                         </Stack>
                       )}
-                      {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (
+                      {drawerSelectedModel.base_station_manifest.profile_requirement === 'required' && (() => {
+                        // P2-68（Codex #471 R4）：库里 connection_params 被标坏时 profile 字段也禁用 ——
+                        // 局部编辑不能把整份草稿标成 operator 去解锁对整份存值的替换（与 CE alignment 输入框同款）。
+                        const bsParamsGuarded = connectionParamsGuarded(category.connection.invalid_fields, draft.connection_params_origin)
+                        return (
+                        <Stack gap="xs">
+                        {bsParamsGuarded && (
+                          <Text size="xs" c="red">
+                            库里的连接参数无法解析，adapter profile 字段已禁用：以空草稿为底编辑会覆盖原值，请先由管理员修复数据库。
+                          </Text>
+                        )}
                         <SimpleGrid cols={{ base: 1, sm: 2 }}>
                         {drawerSelectedModel.base_station_manifest.profile_fields.map((field) => (
                           <TextInput
@@ -2638,6 +2712,7 @@ function EquipmentManager() {
                             description={field.description}
                             required={field.required}
                             placeholder={field.placeholder}
+                            disabled={bsParamsGuarded}
                             value={(draft.base_station_profile
                               ?? emptyBaseStationProfileDraft(
                                 drawerSelectedModel.base_station_manifest!,
@@ -2648,6 +2723,8 @@ function EquipmentManager() {
                                 ...prev,
                                 [category.key]: {
                                   ...prev[category.key],
+                                  // profile 与 connection_params 是同一个存储字段：编辑即 operator 来源
+                                  connection_params_origin: 'operator',
                                   base_station_profile: {
                                     ...(prev[category.key]?.base_station_profile
                                       ?? emptyBaseStationProfileDraft(
@@ -2661,7 +2738,9 @@ function EquipmentManager() {
                           />
                         ))}
                         </SimpleGrid>
-                      )}
+                        </Stack>
+                        )
+                      })()}
                     </Stack>
                   </Card>
                 )}
