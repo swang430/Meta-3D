@@ -1,6 +1,6 @@
 # P2-69 — MAC capability `dimensions` 输出契约补齐设计
 
-> 状态：**v1 已批准，待严格 TDD 实现**（用户于 2026-09-11 选择方案 A）。
+> 状态：**✅ 已由 PR #473 合并**（merge `4ca4aba6`；用户于 2026-09-11 选择方案 A）。
 > roadmap 条目：`docs/roadmap-first-call.md` `### P2-69`。
 
 ## 1. 可观察故障与目标
