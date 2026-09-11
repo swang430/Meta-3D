@@ -76,8 +76,17 @@ async def run(ctx, hal, params, *, log, resolved_binding=None, preflight_only=Fa
 
     def read(label, query, parser=lambda raw: raw.strip()):
         raw = driver._query(query)
+        try:
+            # Consume the device's failure channel before parsing can abort.
+            # ERR reads are the terminal case, not recursively drained.
+            if query != CmwScpiCommands.ERR:
+                clean(f"{label} query errors")
+            value = parser(raw)
+        except Exception as exc:
+            record(label, False, f"{query}: {exc}", raw)
+            raise
         record(label, True, query, raw)
-        return parser(raw)
+        return value
 
     def clean(label):
         raw = read(label, CmwScpiCommands.ERR)

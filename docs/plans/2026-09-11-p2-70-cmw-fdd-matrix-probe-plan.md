@@ -99,3 +99,19 @@ with tempfile.TemporaryDirectory(prefix="p270-test-db-") as database_dir:
 覆盖本片最终代码和测试输入（后续只有文档记录更新），没有忽略或跳过上述 F64 用例。
 补充静态门：`.venv/bin/python -m compileall -q app`、`.venv/bin/alembic heads`、
 `git diff --check` 均 exit 0；唯一 head `c5e7f9a1b3d6`。现场零执行，P2-55 保持开放。
+
+### R1 增量（PR #475）
+
+R1 覆盖 `48b53807`，review `5179344637`，无 P1；P2 inline `3989742896`：
+解析异常跳过错误队列，归档缺仪器原因。route/DCI 空回复且产生 `-221` 的两条反例
+先 RED（pending 错误未消费），后仅调整本序列 `read()`：普通查询先归档/核对错误队列，
+再解析；异常将该 raw step 记为 False；ERR 是递归终点。没有修改公共驱动、租约或正式链。
+
+最终相关命令（同上统一 pytest 参数）覆盖：
+`tests/test_p2_70_cmw_fdd_matrix_probe.py tests/test_p1_73b_cmw_command_profile.py
+tests/test_diagnostic_sequences.py tests/test_p2_51_cmw_mac_config.py
+tests/test_diagnostic_execution_exclusion.py tests/test_p2_28_diagnostic_sequence_evidence.py
+tests/test_rule_gates.py` → `231 passed, 174 warnings in 8.95s`，exit 0。
+compileall / diff-check exit 0。本次为单一诊断局部错误处理，既有 API/共享安全/正式执行输入未变，
+按验证分档不重复后端全量；上面的 6520 passed 是 `48b53807` 的全量，不冒称在本增量重跑。
+GUI 和依赖未变，复用原 GUI 契约/build。独立增量内审及 R2 结果在 PR 台账留痕。

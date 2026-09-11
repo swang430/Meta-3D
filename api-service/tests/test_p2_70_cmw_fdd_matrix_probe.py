@@ -148,6 +148,33 @@ async def test_bad_readback_never_claims_diagnostic_success(rig, query, value):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["ROUTe:LTE:SIGN1?", ROOT + "DCIFormat?"])
+async def test_parse_failure_archives_and_consumes_device_error(rig, monkeypatch, query):
+    driver, transport, hal, binding, _ = rig
+    pending = []
+    original = transport.query
+
+    def query_with_error(command):
+        if command == query:
+            transport.commands.append(command)
+            pending.append('-221,"Settings conflict"')
+            return ""
+        if command == "SYSTem:ERRor:ALL?" and pending:
+            transport.commands.append(command)
+            return pending.pop()
+        return original(command)
+
+    monkeypatch.setattr(driver, "_do_query", query_with_error)
+    result = await loader.get_sequence("cmw500_fdd_matrix_probe").run(
+        None, hal, {"sample": "tm1_one"}, log=lambda _: None, resolved_binding=binding)
+    assert not result.success
+    assert not pending
+    assert any(step.raw == "" and not step.success for step in result.steps)
+    assert any(step.raw == '-221,"Settings conflict"' for step in result.steps)
+    assert result.extra["formal_eligible"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["identity", "firmware", "options", "binding"])
 async def test_unverified_identity_or_binding_no_io(rig, change):
     driver, transport, hal, binding, _ = rig
