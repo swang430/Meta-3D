@@ -223,7 +223,7 @@ function DiagnosticsDemoPlayback() {
 - ✅ 测试执行上下文集成
 - ✅ 组件文档
 
-### P1-76（已实现，Ready PR）
+### P1-76（✅ PR #469 已合并）
 - ✅ 删除固定/随机 fallback 与无依据 EIRP/温度
 - ✅ 统一 nullable + provenance 观测契约
 - ✅ 删除客户端硬编码期望范围与合规率
