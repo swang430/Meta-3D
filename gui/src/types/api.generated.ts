@@ -3274,6 +3274,10 @@ export interface components {
             cmw500_lte_2x2_formal_updated_at: string | null;
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
             channel_emulator_site_certification: components["schemas"]["ChannelEmulatorSiteCertification"] | null;
+            /** @description 服务器保存的字段解析失败时的「字段 → 原因」映射（P2-68）；出现在这里的字段其正常投影一律为 null / {}，且不能得到正式资格。可能的键：base_station_site_certification, channel_emulator_site_certification, base_station_model_presets, channel_emulator_model_presets, connection_params */
+            invalid_fields: {
+                [key: string]: string;
+            };
         };
         Cmw500FormalCapabilityUpdate: {
             enabled: boolean;

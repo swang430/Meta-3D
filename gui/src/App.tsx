@@ -2442,6 +2442,20 @@ function EquipmentManager() {
                   value={draft.notes}
                   onChange={handleFieldChange(category.key, 'notes')}
                 />
+                {Object.keys(category.connection.invalid_fields).length > 0 && (
+                  <Alert color="red" variant="light" title="服务器保存的配置有损坏字段（P2-68）">
+                    <Stack gap={4}>
+                      {Object.entries(category.connection.invalid_fields).map(([field, reason]) => (
+                        <Text key={field} size="sm">
+                          <Text span fw={600}>{field}</Text>：{reason}
+                        </Text>
+                      ))}
+                      <Text size="xs" c="dimmed">
+                        这些字段已按「不可用」显示，不能得到正式资格。现场认证可通过重新认证覆盖；型号 preset / 连接参数的坏存值需要管理员修复数据库，GUI 保存不会覆盖它们。目录其余内容不受影响。
+                      </Text>
+                    </Stack>
+                  </Alert>
+                )}
                 
                 {category.key === 'rfSwitch' && (
                   <JsonInput
@@ -2586,12 +2600,16 @@ function EquipmentManager() {
                       </Stack>
                       {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (
                         <Alert
-                          color={category.connection.base_station_site_certification?.status === 'active' ? 'green' : 'yellow'}
+                          color={category.connection.base_station_site_certification?.status === 'active'
+                            ? 'green'
+                            : 'base_station_site_certification' in category.connection.invalid_fields ? 'red' : 'yellow'}
                           variant="light"
                         >
                           当前现场认证：{category.connection.base_station_site_certification?.status === 'active'
                             ? `已认证 · ${category.connection.base_station_site_certification.certified_at}`
-                            : '未认证或已撤销，仅可诊断'}。服务器认证变化仅影响后续执行。
+                            : 'base_station_site_certification' in category.connection.invalid_fields
+                              ? `认证数据损坏（${category.connection.invalid_fields.base_station_site_certification}），不能得到正式资格`
+                              : '未认证或已撤销，仅可诊断'}。服务器认证变化仅影响后续执行。
                         </Alert>
                       )}
                       {drawerSelectedModel.base_station_manifest.formal_gate === 'site_certification' && (

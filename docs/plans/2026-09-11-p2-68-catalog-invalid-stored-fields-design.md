@@ -21,6 +21,8 @@ category / model / connection 照常显示；正式资格门对损坏证据继�
 
 ## 2. 全集与权威源（生产入口 → 权威判据 → 正式消费者 → 可观察断言）
 
+> 本节行号是 2026-09-11 复核 HEAD `b4e840e0` 时的值，改动合入后会漂移；以符号名为准。
+
 ### 2.1 会让「整目录丢失」的路径（同一入口、同一机制，全部枚举）
 
 `get_instrument_catalog` → 逐 category `_convert_category`（:416）→ `_convert_connection`（:247）。
@@ -35,8 +37,11 @@ category / model / connection 照常显示；正式资格门对损坏证据继�
 | 5 | `connection_params` | 直接进 `Optional[Dict[str, Any]]` | 非对象（如 list / 字符串）→ `ValidationError` | 无专用解析器；判据 = `isinstance(dict)` |
 
 另一个能进同一函数的入口：`PUT /instruments/{category_key}`（`update_instrument_category`，:2248）的三个
-返回点 :2398 / :2519 / :2634 都经 `_convert_category` → 同一 `_convert_connection`。那里没有 `except Exception`
-兜底，坏字段会让**保存成功后的响应**抛 500（配置已落库、GUI 却报错）。修 `_convert_connection` 一处同时覆盖两入口。
+返回点 :2398 / :2519 / :2634 都经 `_convert_category` → 同一 `_convert_connection`。但 PUT 在到达响应投影**之前**
+就先 `parse_*(connection.xxx_model_presets)`、先 `dict(connection.connection_params or {})`（内审探针实跑：
+三列坏值下 PUT 一律 500、什么都没写；两认证列不在 PUT 读取路径上，PUT 200）。所以修 `_convert_connection`
+覆盖的是：**目录入口 × 五列 + PUT 入口 × 两认证列**；PUT 对坏 preset / connection_params 的 500 是 PUT 自己的
+逻辑（main 上已如此），进 Discovered，不在本片。
 
 `InstrumentConnectionResponse`（`app/schemas/instrument.py:89`）也带两个认证字段，但 `app/` 下**零使用点**
 （grep 只命中 schema 自身），不是活路径。
@@ -59,7 +64,7 @@ category / model / connection 照常显示；正式资格门对损坏证据继�
 | checked OpenAPI | `api/openapi.yaml::InstrumentConnection`（:2735，`additionalProperties: false` + `required` 全列） |
 | 生成 TS | `gui/src/types/api.generated.ts`（`npm run openapi:generate`） |
 | 手写 TS | `gui/src/types/api.ts::InstrumentConnection`（:81-94） |
-| mock 数据（类型约束） | `gui/src/api/mockDatabase.ts` :1052-1053 / :1102 / :1124 三处 connection 字面量 |
+| mock 数据（类型约束） | `gui/src/api/mockDatabase.ts` :1052-1053 / :1102 / :1124 / :1166 / :1208 五处 connection 字面量 |
 | 显示 | BS 认证徽标 `App.tsx:2587-2596`（今天二态：active → 绿「已认证」，否则黄「未认证或已撤销」——损坏会被显示成「未认证」）；CE 抽屉走 readiness preview（:2512-2521，已有 `invalid` 红态） |
 
 ### 2.4 值的形态空间（每个 JSON 列都过一遍）
@@ -99,7 +104,7 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
 - `openapi.yaml::InstrumentConnection`：加 `invalid_fields: {type: object, additionalProperties: {type: string}}`，
   进 `required`；description 写明键集合（G9 门：description ⊇ 枚举取值）。
 - `api.generated.ts` 重生成；`api.ts::InstrumentConnection` 加 `invalid_fields: Record<string, string>`；
-  `mockDatabase.ts` 三处字面量补 `invalid_fields: {}`（只为满足类型，mock 已禁用）。
+  `mockDatabase.ts` 五处 connection 字面量补 `invalid_fields: {}`（只为满足类型，mock 已禁用）。
 - GUI 抽屉连接区块：`invalid_fields` 非空时显示红色 Alert「服务器保存的以下配置已损坏，不能用于正式资格，
   需重新保存 / 重新认证：<字段: 原因>」；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
   红「认证数据损坏」；否则黄「未认证或已撤销」。CE 侧已有 readiness `invalid` 红态，本片只保证目录侧
@@ -125,7 +130,7 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
 | G1 行为门（参数化 ×5 字段） | 真 SQLite `StaticPool` + `TestClient`，两条 category：一条连接对应字段存坏值，另一条正常 | 200；两条 category 都在；坏连接该字段为 `null`/`{}` 且 `invalid_fields` 恰含该键；正常连接原样 | 把 `_convert_connection` 的某一路 `except ValueError` 删掉 → 整目录空 → 红 |
 | G2 行为门 | 同上，坏 preset 的连接其**认证字段仍正常投影**（字段级隔离，不是连接级） | `base_station_site_certification` 非 null 且 `invalid_fields` 只含 preset 键 | 改成「任一失败即整个 connection 置空」→ 红 |
 | G3 行为门（DB 故障诚实） | monkeypatch `Session.query` 抛 `OperationalError` | 响应 5xx，不是 200 `[]` | 把 `except Exception → []` 加回 → 红 |
-| G4 正式门不松动 | 用同一条坏认证连接调生产 `build_channel_emulator_certification_preview` → `status == "invalid"`；调 `freeze_execution_qualification` / `freeze_channel_emulator_execution_qualification` → `ValueError` 上抛 | 与 G1 同一份坏数据 | 让 `_convert_connection` 把坏认证「修补」成合法对象再投影 → G4 仍绿但 G1 的 `invalid_fields` 断言红（两门互锁） |
+| G4 正式门不松动 | 用同一份坏认证调生产 `build_channel_emulator_certification_preview` → `status == "invalid"`；两个 `parse_*_site_certification` 对同一坏值抛 `ValueError`；`freeze_execution_qualification` 源码确实调用 `parse_base_station_site_certification`（无 try）。实现记录：`services/` 零 diff，:338 / :900 两处调 parse 均无 try —— 正式门未动 | 与 G1 同一份坏数据 | 让 `_convert_connection` 把坏认证「修补」成合法对象再投影 → G4 仍绿但 G1 的 `invalid_fields` 断言红（两门互锁） |
 | G5 不变量门 | `invalid_fields` 允许键集合 == `_convert_connection` 里受保护子投影集合（模块常量 `PROJECTED_STORED_FIELDS`），且 == OpenAPI description 里列出的键 | 三处相等 | 加一个受保护字段却不更新常量 → 红 |
 | G6 契约门 | 既有 G11（openapi ⊆ live schema）+ `gui/test/apiContractAlignment.test.ts` 加 `invalid_fields` 断言 + `npm run build` | — | 删 openapi 字段 → G11 红 |
 | G7 PUT 入口 | `PUT /instruments/{category_key}` 保存 endpoint 时该连接带坏认证 → 200 且响应含 `invalid_fields` | — | 由 G1 的变异一并覆盖（同函数） |
@@ -135,6 +140,8 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
 ## 7. 非目标（枚举到、不做、进报告）
 
 - readiness BS 认证的 `except ValidationError: None` 静默投影（:4261-4266）—— 同母题不同可观察面，报告待 triage。
+- `PUT /instruments/{category_key}` 对库里坏 preset / `connection_params` 在投影前 500、GUI 保存无法覆盖 —— PUT 自身逻辑，main 上已如此，进 Discovered。
+- GUI 目录页对 5xx 仍显示「暂无仪器信息」空态（无 `isError` 分支）—— 本片按拍板 Q3 只改 API 层；操作员视角的区分进 Discovered，待用户决定是否补一个错误分支。
 - 新增「修复 / 清除损坏认证」端点 —— 修复入口仍是重新认证（PUT）或人工清库；不加机制。
 - `InstrumentConnectionResponse` 死 schema 的清理 —— 与故障无关。
 - 解析器行为、schema_version 迁移、认证内容的正确性 —— 不动。

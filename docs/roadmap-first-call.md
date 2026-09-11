@@ -5086,11 +5086,30 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 
 **设计稿与拍板（2026-09-11）**：[`P2-68 设计`](plans/2026-09-11-p2-68-catalog-invalid-stored-fields-design.md) v1 已批准。
 全集枚举：整目录丢失的路径共 5 条，全在 `app/api/instrument.py::_convert_connection`（BS/CE 认证直接进严格模型、
-两个 preset 解析器按设计 fail-loud、`connection_params` 非对象），两个入口共用（catalog 与 `PUT /instruments/{category_key}`
-三个返回点）；正式门 `freeze_execution_qualification` / `freeze_channel_emulator_execution_qualification` 对坏认证已 `ValueError`
+两个 preset 解析器按设计 fail-loud、`connection_params` 非对象）；`PUT /instruments/{category_key}` 三个返回点共用同一投影，但 PUT
+对坏 preset / `connection_params` 在投影前就 500（见 Discovered），故本片覆盖 = 目录 × 五列 + PUT × 两认证列；正式门 `freeze_execution_qualification` / `freeze_channel_emulator_execution_qualification` 对坏认证已 `ValueError`
 上抛，不受本片影响。开发库只读实查 7 条连接、认证列全 NULL、0 条坏值 —— 修的是故障类，不是现存事故。用户拍板：
 五路径统一隔离；单一 `invalid_fields: Dict[str, str]` 契约字段；去掉 `except Exception → []` 让 DB 故障 5xx 上抛；
 抽屉红 Alert + BS 徽标三态；readiness BS 认证的静默 None 只进 Discovered。
+
+**实现与验证（2026-09-11，Ready PR）**：`_convert_connection` 改为容错投影 —— 五个 JSON 列各自经权威解析器
+（`parse_base_station_site_certification` / `parse_channel_emulator_site_certification` /
+`parse_base_station_model_presets` / `parse_channel_emulator_model_presets`，`connection_params` 判对象），
+失败的那一列投影为 `null` / `{}` 并记进新字段 `invalid_fields: Dict[str, str]`（键集合由常量
+`PROJECTED_STORED_FIELDS` 固定），其余字段、其余连接与整张目录照常；`get_instrument_catalog` 删除
+`except Exception → categories=[]`，DB / 代码故障按 500 上抛（API 层；GUI 目录页对 5xx 的空态文案见 Discovered）。解析器与正式门未改。契约四镜像同步
+（`FEInstrumentConnection` / `openapi.yaml::InstrumentConnection` 加 `invalid_fields` 进 `required` /
+`api.generated.ts` 重生成 / `api.ts`），mock 五处连接字面量补 `invalid_fields: {}`；抽屉连接区块新增红色
+Alert 逐字段列原因，BS 现场认证徽标改三态（active 绿 / 损坏红 / 未认证黄）。P2-58 ② 那条钉住
+「坏 map 经 `_convert_connection` 大声失败」的用例改为在解析器层断言 fail-loud、在投影层断言
+`invalid_fields`。**验证**：新门 `tests/test_p2_68_catalog_invalid_stored_fields.py` 11 条（五列参数化隔离 / BS preset 内 pydantic 错直抛也隔离 /
+字段级而非连接级 / DB 故障 5xx / 正式门 fail-closed 不松动 / 常量=转换器=契约 不变量 / PUT 响应同投影）先 RED
+（8 失败：整目录为空、PUT 500、DB 故障 200 `[]`）后 GREEN；8 条变异全红（去捕获、连接级置空、加回兜底、只置空不记
+invalid_fields、常量漏字段、契约去 required、GUI 删 Alert、徽标退二态），内存快照还原并校验哈希；受影响链
+**95 passed**；全后端 **6487 passed / 4 skipped**（155 s，最终版本；产品代码定稿时 6486/4，追加 G1b 后 +1）；GUI 合同 **5 passed**、production
+build、compileall、`git diff --check` 通过；浏览器实测：临时 SQLite + mock 演示后端（不触碰开发库）走完首次配置
+向导后，在「仪器资源配置」抽屉看到 CE 连接的红色 Alert（`channel_emulator_site_certification: stored Channel
+Emulator site certification is invalid`）、BS 连接的徽标「认证数据损坏（…），不能得到正式资格」，目录 7 类全在。
 
 ### P2-69 — MAC capability 输出契约补齐 dimensions（待启动）
 
@@ -5335,6 +5354,8 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 - `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存。手工序列里的“保存配置 → 全局 HAL 重载”已提升为 **P2-72**，只解决按类别激活 runtime；“同步到 LabProfile”仍保持操作员确认后的独立事务。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决多份配置如何受控编排，不得把 GUI 草稿直接写入 binding，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，P2-72 完成后也不关闭；LTE 暗室首测能力不随本条补齐。
 - `[discovered 2026-09-10 during P1-76 INFO 分布审计]` **成功轮询请求占据系统 INFO 主体，降低人工诊断信噪比（待评估）** —— 抽查 `api-service/logs/app.log.2026-09-09` 共 1270 行，其中 1244 行为 INFO、1088 行来自 `app.audit`；`GET /road-test/executions`、`GET /test-executions`、`GET /instruments/hal/readiness`、`GET /lab-profiles`、`GET /dashboard/alerts/summary` 五类成功轮询合计 1041 行。错误和告警仍应保留，测试租约取得/释放、HAL 生命周期与硬件动作也不能降级。本条后续应在 audit middleware 既有成功高频路径排除机制上评估：仅压低可预测的 2xx 轮询，4xx/5xx 原样 INFO/ERROR，并用周期摘要或计数器保留“轮询仍在工作”的可观测性；不得用全局 INFO→DEBUG 或大范围 logger 静音。P1-76 不实现本条，避免把假读数修复与日志策略混成一片。
 - `[discovered 2026-09-11 during P2-68 设计]` **readiness 把损坏的 BaseStation 现场认证静默投影成「未认证」（P3）** —— `app/api/instrument.py` readiness 组装处对 `connection.base_station_site_certification` 做 `BaseStationSiteCertification.model_validate`，`except ValidationError: site_certification = None`，损坏与「未认证」不可区分；同文件 CE 侧 `build_channel_emulator_certification_preview` 已给 `status="invalid"`。可观察面是 readiness / 主控台而非目录，⑦ 判越界未并入 P2-68；修法应镜像 CE 的 invalid 形态（换源到 `parse_base_station_site_certification` + 显式状态），不加新机制。
+- `[discovered 2026-09-11 during P2-68 内审]` **`PUT /instruments/{category_key}` 在库里 preset / `connection_params` 坏值时 500，操作员无法用 GUI 覆盖修复（P3）** —— `update_instrument_category` 在响应投影之前就 `parse_*(connection.xxx_model_presets)`、`dict(connection.connection_params or {})`（内审探针：三列坏值下只改 notes 也 500、什么都没写；两认证列不受影响）。main 上已如此，P2-68 只修目录读投影，抽屉文案已如实写「需管理员修复数据库」。修法候选：请求显式给了替代值时容忍坏存值（收窄读取），不为此新增修复端点。
+- `[discovered 2026-09-11 during P2-68 内审]` **GUI 仪器目录页对 5xx 仍显示「暂无仪器信息，请在后端添加型号」（P3）** —— `EquipmentManager` 只解构 `{ data, isLoading }`，`!isLoading && categories.length === 0` 即空态；P2-68 按拍板只改 API 层（不再返回空目录）。操作员视角要区分「DB 故障」与「零仪器」需加一个 `isError` 渲染分支（1 处 JSX）—— 待用户决定，不在本片顺手加。
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 

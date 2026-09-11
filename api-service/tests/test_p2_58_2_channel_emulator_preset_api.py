@@ -198,9 +198,10 @@ def _nr_model_payload(filename: str) -> dict:
 def test_put_persists_presets_and_response_carries_serialized_map(ce_api_db):
     """PUT 带 model + connection → 200；响应 ``connection.channel_emulator_model_presets[model_id]``
     是六字段 JSON dict（``model_id`` 为 str）；``GET /instruments/catalog`` 同样带出；库里存坏的 map
-    经 ``_convert_connection`` 大声失败（``parse_*`` 接在响应路径上），不静默放行。
+    解析器仍大声失败，而 P2-68 起 ``_convert_connection`` 把它单独标进 ``invalid_fields``
+    （不静默放行、也不再让整目录消失，见 tests/test_p2_68_catalog_invalid_stored_fields.py）。
     变异：``_convert_connection`` 不接该字段 → 响应恒 ``{}`` → 红；跳过 ``parse_*`` 直传库里原值 →
-    坏 map 不再抛 → 红。
+    坏 map 既不抛也不进 ``invalid_fields`` → 红。
     """
 
     Session, ids = ce_api_db
@@ -230,10 +231,19 @@ def test_put_persists_presets_and_response_carries_serialized_map(ce_api_db):
     with Session() as db:
         _category, connection = _load(db, ids)
         assert _canonical(connection.channel_emulator_model_presets) == _canonical(presets)
-        # 库里键与 model_id 不一致 → 响应路径必须大声失败（中文 ValueError），不能带着坏 map 200
+        # 库里键与 model_id 不一致 → 权威解析器必须大声失败（中文 ValueError）；
+        # P2-68 起读侧投影不再抛、也不带着坏 map 200：这一列单独变 {} 并进 invalid_fields，
+        # 原因就是解析器那条中文，其余字段照常。
         connection.channel_emulator_model_presets = {"not-the-id": preset}
         with pytest.raises(ValueError, match="信道仿真器"):
-            instrument_api._convert_connection(connection)
+            preset_module.parse_channel_emulator_model_presets(
+                connection.channel_emulator_model_presets
+            )
+        projected = instrument_api._convert_connection(connection)
+        assert projected.channel_emulator_model_presets == {}
+        assert set(projected.invalid_fields) == {"channel_emulator_model_presets"}
+        assert "信道仿真器" in projected.invalid_fields["channel_emulator_model_presets"]
+        assert projected.endpoint == F64_ENDPOINT
 
 
 # ---------------------------------------------------------------------------
