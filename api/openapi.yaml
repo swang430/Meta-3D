@@ -2558,6 +2558,48 @@ components:
         rat: {type: string, enum: [lte, nr5g]}
         source_reference: {type: string}
       required: [rat, source_reference]
+    BaseStationMacDimensionValueCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        value:
+          anyOf:
+            - {type: string}
+            - {type: integer}
+            - {type: boolean}
+            - {type: 'null'}
+        support:
+          type: string
+          enum: [authoritative, diagnostic_only, not_applicable]
+        satisfying_options:
+          type: array
+          items: {type: string}
+          default: []
+        required_options:
+          type: array
+          items: {type: string}
+          default: []
+        minimum_firmware:
+          anyOf:
+            - {type: string}
+            - {type: 'null'}
+        requires:
+          type: array
+          items: {type: string, const: normal_cyclic_prefix}
+          default: []
+        reason: {type: string}
+        source_reference: {type: string}
+      required: [value, support, reason, source_reference]
+    BaseStationMacDimensionCapability:
+      type: object
+      additionalProperties: false
+      properties:
+        dimension: {type: string}
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationMacDimensionValueCapability'
+      required: [dimension, values]
     BaseStationMacProfileCapability:
       type: object
       additionalProperties: false
@@ -2569,6 +2611,11 @@ components:
           type: string
           enum: [authoritative_readback, command_error_queue]
         source_reference: {type: string}
+        dimensions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BaseStationMacDimensionCapability'
+          default: []
       required: [kind, profile_version, rat, application_evidence, source_reference]
     BaseStationConfigFieldCapability:
       type: object
