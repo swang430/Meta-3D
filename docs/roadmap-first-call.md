@@ -15,9 +15,10 @@ ULDL、special subframe 与 20 MHz RMC version，由服务器冻结唯一 MAC pr
 **P1-78 已由本片交付**：F64 正式执行解除 SMB 运行依赖，SMB 扫描/同步收窄为开发调试工具。
 P2-72 已由 PR #466 合并；**P1-76 已由 PR #469 合并，merge `b4e840e0`**：实时监控只发布带
 provenance 的真实 BaseStation 当前下行吞吐，其余缺测/模拟显式 N/A 或 simulated，固定/随机造数路径
-已删除。当前非现场产品开发 WIP 为 **P2-68（损坏仪器认证不能隐藏整张仪器目录）** —— 2026-09-11 用户
-批准在 P1-76 收口后接续启动，设计稿尚未产出、用户过目后才动代码；随后批准顺序为 **P2-69 → P2-70**，
-详见条目。P1-77 与 P1-76 是显式记录了 **P3-23** 试行数据（验证复用、外审请求与等待）的功能片；
+已删除。**P2-68 已由 PR #471 合并，merge `83ad1779`**：一条连接的坏存储字段不再让整张仪器目录消失（五列各自
+标进 `invalid_fields`，DB 故障按 5xx 上抛），GUI 草稿带三态来源守住坏值期间的保存。当前非现场产品开发 WIP 为
+**P2-69（MAC capability 输出契约补齐 dimensions）** —— 按 2026-09-05 批准的顺序（P1-76 → P2-68 → P2-69 → P2-70）于
+2026-09-11 接续启动，设计稿尚未产出、用户过目后才动代码；随后 **P2-70**，详见条目。P1-77 与 P1-76 是显式记录了 **P3-23** 试行数据（验证复用、外审请求与等待）的功能片；
 P2-57 残项为后续平台设计，
 P2-63 继续 HOLD。本次整理不自动启动这些实现。
 复盘证据、反复发现缺陷的根因与回归分档建议见
@@ -55,7 +56,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-68（损坏仪器认证不能隐藏整张仪器目录；2026-09-11 用户批准启动，设计稿尚未产出，尚未动代码）；P1-76 已由 PR #469 合并。**
+Current Focus（非现场）= P2-69（MAC capability 输出契约补齐 dimensions；按 2026-09-05 批准的顺序于 2026-09-11 接续启动，设计稿尚未产出，尚未动代码）；P2-68 已由 PR #471 合并。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -709,7 +710,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P1-76 已由 PR #469 合并；当前唯一 WIP 为 P2-68（损坏认证隐藏整张仪器目录；设计稿尚未产出，尚未动代码），随后依次为 P2-69 已复现产品缺陷、P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-68 已由 PR #471 合并；当前唯一 WIP 为 P2-69（MAC capability 契约缺 dimensions；按 2026-09-05 批准顺序接续，设计稿尚未产出，尚未动代码），随后 P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5071,7 +5072,7 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 
 ---
 
-### P2-68 — 损坏仪器认证不能隐藏整张仪器目录（🚧 Current Focus（非现场）：2026-09-11 批准启动，设计稿尚未产出，尚未动代码）
+### P2-68 — 损坏仪器认证不能隐藏整张仪器目录（✅ PR #471）
 
 **可观察故障**：一条 InstrumentConnection 的 CE certification JSON 缺字段时，
 `app/api/instrument.py::_convert_connection` 构造响应抛 ValidationError；
@@ -5109,12 +5110,21 @@ Alert 曾把 preset 损坏也说成「不能得到正式资格」，而 `freeze_
 字段级而非连接级 / DB 故障 5xx / 正式门 fail-closed 不松动 / 常量=转换器=契约 不变量 / PUT 响应同投影）先 RED
 （8 失败：整目录为空、PUT 500、DB 故障 200 `[]`）后 GREEN；8 条变异全红（去捕获、连接级置空、加回兜底、只置空不记
 invalid_fields、常量漏字段、契约去 required、GUI 删 Alert、徽标退二态），内存快照还原并校验哈希；受影响链
-**95 passed**；全后端 **6487 passed / 4 skipped**（155 s，最终版本；产品代码定稿时 6486/4，追加 G1b 后 +1）；GUI 合同 **5 passed**、production
+**95 passed**；全后端 **6487 passed / 4 skipped**（155 s，最终版本；产品代码定稿时 6486/4，追加 G1b 后 +1）；GUI 合同 **5 passed**（初版；最终 HEAD 为 15 passed）、production
 build、compileall、`git diff --check` 通过；浏览器实测：临时 SQLite + mock 演示后端（不触碰开发库）走完首次配置
 向导后，在「仪器资源配置」抽屉看到 CE 连接的红色 Alert（`channel_emulator_site_certification: stored Channel
 Emulator site certification is invalid`）、BS 连接的徽标「认证数据损坏（…），不能得到正式资格」，目录 7 类全在。
 
-### P2-69 — MAC capability 输出契约补齐 dimensions（待启动）
+**外审与合并**（PR #471，2026-09-11，Codex，P1-only 续审到覆盖最新 HEAD 无 P1）：R1 对 `256eb8d2` 03:43:04Z 请求 →
+03:47:59Z 回 1 P1 + 1 P2（GUI 把被标坏的 `connection_params` 空草稿当 `{}` 发出覆盖存值 / preset 损坏被说成影响正式资格）→
+修复 `5ca02b3f`；R2 06:30:00Z → 06:34:13Z 回 1 P1（标记消失后旧空草稿仍放行）→ 修复 `0614db87`；R3 06:53:27Z → 06:56:44Z
+回 1 P1（两态来源分不清操作员输入与服务器灌入的陈旧文本）→ 停下报告，用户拍板方案 A（三态 provenance）→ 修复 `6d65c95b`；
+R4 07:46:29Z → 07:50:52Z 回 1 P1（BS profile 局部编辑解锁整份替换）→ 修复 `63b4928c`；R5 08:08:21Z → 08:11:26Z clean、零
+inline；08:12:25Z 以 merge commit `83ad1779` 合入。每轮各请求 1 次、重复请求 0 次，每次修复推送前都过独立轻量内审
+（共 1 全套 + 5 轻量，其中一次抓到 P1：派生的 BS profile 草稿未并入同一 provenance）。各轮变异（全红）见 PR #471 正文的
+逐轮记录。R1–R4 的四条 P1 全在「服务器值不可信期间 GUI 草稿能否被拿去保存」这一条线上，复盘结论已记入 memory：让坏数据可见的片，必须同时设计草稿来源与保存守卫。
+
+### P2-69 — MAC capability 输出契约补齐 dimensions（🚧 Current Focus（非现场）：按 2026-09-05 批准顺序于 2026-09-11 接续启动，设计稿尚未产出，尚未动代码）
 
 **可观察故障**：真实 `RealCmw500Driver.adapter_manifest` 输出 `mac_profiles[].dimensions`，
 `api/openapi.yaml::BaseStationMacProfileCapability` 没有此属性且禁止额外属性；严格客户端无法接受合法响应。
