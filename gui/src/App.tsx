@@ -119,6 +119,7 @@ import {
 } from './features/Equipment/channelEmulatorModelPresetDraft'
 import {
   invalidStoredFieldHint,
+  nextConnectionParamsDraft,
   withoutSynthesizedConnectionParams,
 } from './features/Equipment/invalidStoredFields'
 import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
@@ -231,6 +232,8 @@ type EquipmentDraft = {
   controller: string
   notes: string
   connection_params?: string
+  // P2-68：'invalid' = 该文本是在服务器把 connection_params 标坏时初始化的，空文本不代表操作员想清空
+  connection_params_origin?: 'server' | 'invalid'
   base_station_profile?: BaseStationProfileDraft
 }
 
@@ -1764,20 +1767,34 @@ function EquipmentManager() {
           (model) => model.id === (previous?.modelId ?? category.selectedModelId),
         )
         const manifest = selectedModel?.base_station_manifest
+        // P2-68（Codex #471 R2 + 轻量内审 F1）：connection_params 文本与从它派生的 BS profile 草稿一起做 provenance
+        const paramsDraft = nextConnectionParamsDraft(
+          previous
+            ? { text: previous.connection_params ?? '', origin: previous.connection_params_origin ?? 'server' }
+            : undefined,
+          {
+            text: category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : '',
+            invalid: 'connection_params' in category.connection.invalid_fields,
+          },
+        )
+        // 标记刚消失、未动的空草稿刚用服务器值重建 → 从同一坏字段合成出来的空 profile 草稿也一起重建
+        const rehydrated = previous?.connection_params_origin === 'invalid'
+          && paramsDraft.origin === 'server'
+          && !(previous?.connection_params ?? '').trim()
+        const serverProfile = manifest
+          ? readBaseStationProfileDraft(
+              manifest,
+              category.connection.connection_params?.base_station_adapter_profile,
+            )
+          : undefined
         next[category.key] = {
           modelId: previous?.modelId ?? (category.selectedModelId ?? ''),
           endpoint: previous?.endpoint ?? (category.connection.endpoint ?? ''),
           controller: previous?.controller ?? (category.connection.controller ?? ''),
           notes: previous?.notes ?? (category.connection.notes ?? ''),
-          connection_params: previous?.connection_params ?? (category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : ''),
-          base_station_profile: previous?.base_station_profile ?? (
-            manifest
-              ? readBaseStationProfileDraft(
-                  manifest,
-                  category.connection.connection_params?.base_station_adapter_profile,
-                )
-              : undefined
-          ),
+          connection_params: paramsDraft.text,
+          connection_params_origin: paramsDraft.origin,
+          base_station_profile: rehydrated ? serverProfile : (previous?.base_station_profile ?? serverProfile),
         }
       })
       return next
@@ -1854,9 +1871,15 @@ function EquipmentManager() {
           endpoint: updatedCategory.connection.endpoint ?? '',
           controller: updatedCategory.connection.controller ?? '',
           notes: updatedCategory.connection.notes ?? '',
-          connection_params: updatedCategory.connection.connection_params
-            ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
-            : '',
+          ...(() => {
+            const paramsDraft = nextConnectionParamsDraft(undefined, {
+              text: updatedCategory.connection.connection_params
+                ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
+                : '',
+              invalid: 'connection_params' in updatedCategory.connection.invalid_fields,
+            })
+            return { connection_params: paramsDraft.text, connection_params_origin: paramsDraft.origin }
+          })(),
             base_station_profile: manifest
               ? readBaseStationProfileDraft(
                   manifest,
@@ -2138,6 +2161,7 @@ function EquipmentManager() {
               },
         category?.connection.invalid_fields,
         draft.connection_params,
+        draft.connection_params_origin,
       )
       instrumentMutation.mutate({
         categoryKey,
@@ -2504,6 +2528,7 @@ function EquipmentManager() {
                     : ''
                   // P2-68（内审 F3）：库里 connection_params 被标坏时草稿为空，这里再填一个名字就会以 {alignment_name} 覆盖原值 → 禁用。
                   const connectionParamsInvalid = 'connection_params' in category.connection.invalid_fields
+                    || draft.connection_params_origin === 'invalid'
                   return (
                     <>
                       <TextInput

@@ -35,10 +35,36 @@ export function withoutSynthesizedConnectionParams<T extends { connection_params
   payload: T,
   invalidFields: InvalidStoredFields | undefined,
   draftParamsText: string | undefined,
+  draftOrigin: ConnectionParamsOrigin | undefined = 'server',
 ): T {
-  if (!invalidFields || !('connection_params' in invalidFields)) return payload
+  // 服务器仍标坏，或草稿还是无效来源、尚未用修好的值重建（Codex #471 R2 P1：标记消失≠草稿已刷新）
+  const guarded = (invalidFields !== undefined && 'connection_params' in invalidFields) || draftOrigin === 'invalid'
+  if (!guarded) return payload
   if ((draftParamsText ?? '').trim()) return payload
   const rest = { ...payload }
   delete rest.connection_params
   return rest
+}
+
+/** 草稿里 connection_params 文本的来源：'invalid' = 初始化时服务器把该字段标坏，空文本不代表操作员意图。 */
+export type ConnectionParamsOrigin = 'server' | 'invalid'
+
+export type ConnectionParamsDraft = { text: string; origin: ConnectionParamsOrigin }
+
+/**
+ * 目录每次刷新时算下一份 connection_params 草稿（Codex #471 R2 P1）：
+ * - 服务器仍标坏：保留操作员可能已输入的文本（初值空）；首次看到坏值记 'invalid'，已有草稿保留自己的来源；
+ * - 标记刚消失、草稿还是无效来源的未动空文本：用修好的服务器值重建（rehydrate），origin 回 'server'——
+ *   否则管理员修库后、抽屉没关，下一次不相关的保存又会把空草稿当 {} 发出去覆盖修好的值；
+ * - 其它：沿用旧草稿（未保存的编辑不丢），没有旧草稿就取服务器值。
+ */
+export function nextConnectionParamsDraft(
+  previous: ConnectionParamsDraft | undefined,
+  server: { text: string; invalid: boolean },
+): ConnectionParamsDraft {
+  // 只有首次看到坏值（还没有草稿）才记 'invalid'；已有草稿保留自己的来源 —— 切型号 / preset 产生的草稿是 'server'，
+  // 修好后不能被活动型号的参数跨型号重建（轻量内审 F2）
+  if (server.invalid) return { text: previous?.text ?? '', origin: previous?.origin ?? 'invalid' }
+  if (previous?.origin === 'invalid' && !previous.text.trim()) return { text: server.text, origin: 'server' }
+  return { text: previous?.text ?? server.text, origin: 'server' }
 }

@@ -111,7 +111,12 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
   preset：只影响草稿、服务器会拒绝保存需管理员修库；connection_params：已按空显示、普通保存不再发送空草稿）+ 服务器原因；
   **保存路径收窄**（Codex #471 R1 P1）：`connection_params` 被标坏且操作员未填新 JSON 时，BS / CE 的显式全字段保存**不发送**
   该键 —— 否则 `dict()` 可转换的坏形态（如 `[["k","v"]]`）会被服务器接受并用 `{}` 覆盖原值、再按 P2-72 用空配置激活 HAL；
-  纯逻辑放在 `gui/src/features/Equipment/invalidStoredFields.ts`（`invalidStoredFieldHint` / `withoutSynthesizedConnectionParams`）；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
+  纯逻辑放在 `gui/src/features/Equipment/invalidStoredFields.ts`（`invalidStoredFieldHint` / `withoutSynthesizedConnectionParams`）；
+  **Codex R2 P1 再收窄**：标记消失 ≠ 草稿已刷新 —— 管理员修库后抽屉未关，下一次目录刷新会清掉 `invalid_fields`，但旧草稿仍是
+  无效来源的空文本，不相关的保存又会发 `{}` 覆盖修好的值。草稿因此带 `connection_params_origin: 'server' | 'invalid'`
+  （`nextConnectionParamsDraft`）：首次看到坏值记 'invalid'、已有草稿保留自己的来源（切型号 / preset 来的草稿是 'server'，修好后不做
+  跨型号重建）；标记消失且草稿仍是未动空文本时用服务器值重建，并把从同一坏字段派生的 BS profile 草稿一起重建；守卫在标记存在**或**
+  origin 仍为 'invalid' 时都不发空草稿；alignment 输入框的禁用同样看 origin；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
   红「认证数据损坏」；否则黄「未认证或已撤销」。CE 侧已有 readiness `invalid` 红态，本片只保证目录侧
   同一连接 `invalid_fields` 与 preview `status="invalid"` 同时成立（回归断言）。
 

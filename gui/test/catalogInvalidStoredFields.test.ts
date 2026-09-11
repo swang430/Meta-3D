@@ -22,8 +22,19 @@ test('ordinary save routes the connection payload through withoutSynthesizedConn
   assert.ok(start > 0)
   const fn = appSource.slice(start, appSource.indexOf('[categories, drafts, instrumentMutation, showFeedback]', start))
   assert.match(fn, /withoutSynthesizedConnectionParams\(/)
-  assert.match(fn, /category\?\.connection\.invalid_fields,\s*\n\s*draft\.connection_params,/)
+  assert.match(fn, /category\?\.connection\.invalid_fields,\s*\n\s*draft\.connection_params,\s*\n\s*draft\.connection_params_origin,/)
   assert.match(fn, /connection: connectionPayload,/)
+})
+
+test('drafts carry connection_params provenance from every (re)hydration point (Codex #471 R2 P1)', () => {
+  assert.match(appSource, /connection_params_origin\?: 'server' \| 'invalid'/)
+  // 目录刷新 effect 与保存成功后的草稿更新都经 nextConnectionParamsDraft，不再直接 previous ?? server
+  assert.equal((appSource.match(/nextConnectionParamsDraft\(/g) ?? []).length, 2)
+  assert.doesNotMatch(appSource, /connection_params: previous\?\.connection_params \?\?/)
+  assert.match(appSource, /\|\| draft\.connection_params_origin === 'invalid'/)
+  // 从同一坏字段派生的 BS profile 草稿随 rehydrate 一起重建（轻量内审 F1）
+  assert.match(appSource, /const rehydrated = previous\?\.connection_params_origin === 'invalid'/)
+  assert.match(appSource, /base_station_profile: rehydrated \? serverProfile : \(previous\?\.base_station_profile \?\? serverProfile\)/)
 })
 
 test('CE alignment input is disabled while stored connection_params is invalid', () => {
