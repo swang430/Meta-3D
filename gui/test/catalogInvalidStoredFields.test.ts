@@ -22,8 +22,11 @@ test('ordinary save routes the connection payload through withoutSynthesizedConn
   assert.ok(start > 0)
   const fn = appSource.slice(start, appSource.indexOf('[categories, drafts, instrumentMutation, showFeedback]', start))
   assert.match(fn, /withoutSynthesizedConnectionParams\(/)
-  assert.match(fn, /category\?\.connection\.invalid_fields,\s*\n\s*draft\.connection_params,\s*\n\s*draft\.connection_params_origin,/)
+  assert.match(fn, /category\?\.connection\.invalid_fields,\s*\n\s*draft\.connection_params_origin,/)
   assert.match(fn, /connection: connectionPayload,/)
+  // 被守卫时不在客户端校验合成出来的空 profile（否则 CMW500 必填项会把保存拦下，且那份 profile 本来就不发）
+  assert.match(fn, /const paramsGuarded = connectionParamsGuarded\(category\?\.connection\.invalid_fields, draft\.connection_params_origin\)/)
+  assert.match(fn, /categoryKey === 'baseStation' && manifest && !paramsGuarded/)
 })
 
 test('drafts carry connection_params provenance from every (re)hydration point (Codex #471 R2 P1)', () => {
@@ -31,17 +34,21 @@ test('drafts carry connection_params provenance from every (re)hydration point (
   // 目录刷新 effect 与保存成功后的草稿更新都经 nextConnectionParamsDraft，不再直接 previous ?? server
   assert.equal((appSource.match(/nextConnectionParamsDraft\(/g) ?? []).length, 2)
   assert.doesNotMatch(appSource, /connection_params: previous\?\.connection_params \?\?/)
-  assert.match(appSource, /\|\| draft\.connection_params_origin === 'invalid'/)
+  assert.match(appSource, /connectionParamsGuarded\(category\.connection\.invalid_fields, draft\.connection_params_origin\)/)
+  // 操作员动作（rfSwitch JSON / CE alignment / BS·CE 切型号）都把草稿标成 'operator'，四处缺一不可
+  assert.equal((appSource.match(/connection_params_origin: 'operator'/g) ?? []).length, 5) // JsonInput / alignment / BS 切型号 / CE 切型号 / BS profile 字段
+  assert.match(appSource, /connection_params_origin\?: 'server' \| 'invalid' \| 'operator'/)
   // 从同一坏字段派生的 BS profile 草稿随 rehydrate 一起重建（轻量内审 F1）
   assert.match(appSource, /const rehydrated = previous\?\.connection_params_origin === 'invalid'/)
-  assert.match(appSource, /base_station_profile: rehydrated \? serverProfile : \(previous\?\.base_station_profile \?\? serverProfile\)/)
+  assert.match(appSource, /const resyncProfile = rehydrated \|\| paramsDraft\.origin === 'invalid'/)
+  assert.match(appSource, /base_station_profile: resyncProfile \? serverProfile : \(previous\?\.base_station_profile \?\? serverProfile\)/)
 })
 
 test('CE alignment input is disabled while stored connection_params is invalid', () => {
   const start = appSource.indexOf('label="F64 User Alignment 文件名"')
   assert.ok(start > 0)
   const block = appSource.slice(appSource.lastIndexOf('const connectionParamsInvalid', start), appSource.indexOf('<ChannelModelsCard', start))
-  assert.match(block, /const connectionParamsInvalid = 'connection_params' in category\.connection\.invalid_fields/)
+  assert.match(block, /const connectionParamsInvalid = connectionParamsGuarded\(category\.connection\.invalid_fields, draft\.connection_params_origin\)/)
   assert.match(block, /disabled=\{connectionParamsInvalid\}/)
   assert.match(block, /error=\{connectionParamsInvalid \?/)
 })

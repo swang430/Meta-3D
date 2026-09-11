@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   INVALID_STORED_FIELD_HINTS,
+  connectionParamsGuarded,
   invalidStoredFieldHint,
   nextConnectionParamsDraft,
   withoutSynthesizedConnectionParams,
@@ -28,59 +29,63 @@ test('every projected stored field has a hint, and only certification hints talk
   assert.match(invalidStoredFieldHint('something_else'), /不可用/)
 })
 
-test('an invalid stored connection_params with an empty draft is not sent as {}', () => {
-  const payload = { endpoint: '1.2.3.4', controller: 'LAN', notes: '', connection_params: {} }
-  const out = withoutSynthesizedConnectionParams(
-    payload,
-    { connection_params: 'connection_params must be a JSON object' },
-    '',
-  )
-  assert.equal('connection_params' in out, false)
-  assert.deepEqual(out, { endpoint: '1.2.3.4', controller: 'LAN', notes: '' })
-  assert.deepEqual(payload.connection_params, {}) // 不改入参
+const BAD = { connection_params: 'connection_params must be a JSON object' }
+
+test('guard matrix: invalid-origin drafts never send; while the marker is present only operator edits send; healthy drafts send as-is', () => {
+  // (marker, origin) → guarded?
+  const cases: Array<[Record<string, string> | undefined, 'server' | 'invalid' | 'operator' | undefined, boolean]> = [
+    [BAD, 'server', true],       // 服务器说坏了，灌入的旧文本不可信（R3 P1）
+    [BAD, 'invalid', true],
+    [BAD, 'operator', false],    // 操作员明确改过 → 填了照发
+    [BAD, undefined, true],
+    [{}, 'invalid', true],       // 标记消失但草稿尚未重建（R2 P1）
+    [{}, 'server', false],
+    [{}, 'operator', false],
+    [undefined, undefined, false],
+    [{ base_station_model_presets: 'bad' }, 'server', false], // 别的字段坏不影响
+  ]
+  for (const [marker, origin, expected] of cases) {
+    assert.equal(connectionParamsGuarded(marker, origin), expected, `${JSON.stringify(marker)} / ${origin}`)
+  }
+  const payload = { endpoint: '1.2.3.4', controller: 'LAN', notes: '', connection_params: { stale: 1 } }
+  const dropped = withoutSynthesizedConnectionParams(payload, BAD, 'server')
+  assert.equal('connection_params' in dropped, false)
+  assert.deepEqual(dropped, { endpoint: '1.2.3.4', controller: 'LAN', notes: '' })
+  assert.deepEqual(payload.connection_params, { stale: 1 }) // 不改入参
+  assert.deepEqual(withoutSynthesizedConnectionParams(payload, BAD, 'operator'), payload)
+  assert.deepEqual(withoutSynthesizedConnectionParams(payload, {}, 'server'), payload)
 })
 
-test('operator-typed JSON still wins even when the stored value is invalid', () => {
-  const payload = { endpoint: '1.2.3.4', controller: 'LAN', notes: '', connection_params: { a: 1 } }
-  const out = withoutSynthesizedConnectionParams(payload, { connection_params: 'bad' }, '{"a": 1}')
-  assert.deepEqual(out, payload)
+test('BS adapter profile is derived from the same stored field and leaves the payload together with it', () => {
+  const bs = { endpoint: 'x', controller: 'LAN', notes: '', connection_params: { stale: 1 }, base_station_adapter_profile: { pcc_bb_board: 'stale' } }
+  const dropped = withoutSynthesizedConnectionParams(bs, BAD, 'server')
+  assert.deepEqual(dropped, { endpoint: 'x', controller: 'LAN', notes: '' })
+  assert.deepEqual(withoutSynthesizedConnectionParams(bs, BAD, 'operator'), bs)
+  assert.deepEqual(withoutSynthesizedConnectionParams(bs, {}, 'server'), bs)
 })
 
-test('a healthy connection keeps the explicit full-field semantics (empty object is sent as-is)', () => {
-  const payload = { endpoint: '1.2.3.4', controller: 'LAN', notes: '', connection_params: {} }
-  assert.deepEqual(withoutSynthesizedConnectionParams(payload, {}, ''), payload)
-  assert.deepEqual(withoutSynthesizedConnectionParams(payload, undefined, ''), payload)
-  assert.deepEqual(
-    withoutSynthesizedConnectionParams(payload, { base_station_model_presets: 'bad' }, ''),
-    payload,
-  )
-})
-
-test('guard survives the invalid→valid refetch until the draft is rehydrated (Codex #471 R2 P1)', () => {
-  const payload = { endpoint: '1.2.3.4', controller: 'LAN', notes: '', connection_params: {} }
-  // 标记已消失，但草稿仍是无效来源的空文本 → 仍不能发 {}
-  const out = withoutSynthesizedConnectionParams(payload, {}, '', 'invalid')
-  assert.equal('connection_params' in out, false)
-  // 重建之后（origin 回 server）恢复显式全字段语义
-  assert.deepEqual(withoutSynthesizedConnectionParams(payload, {}, '', 'server'), payload)
-})
-
-test('nextConnectionParamsDraft: invalid keeps an empty invalid-origin draft, repair rehydrates it, edits survive', () => {
+test('nextConnectionParamsDraft: server text is dropped when the row turns invalid, operator text survives, repair rehydrates', () => {
   const invalid = { text: '', invalid: true }
   const repaired = { text: '{\n  "port": 3334\n}', invalid: false }
-  // 第一次看到坏值
+  // 首次看到坏值 / 坏值期间刷新
   assert.deepEqual(nextConnectionParamsDraft(undefined, invalid), { text: '', origin: 'invalid' })
-  // 坏值期间刷新：仍是 invalid 来源，操作员若输入了文本（rfSwitch JsonInput）也保留；
-  // 切型号 / preset 来的草稿（origin 'server'）在坏值期间保持自己的来源，修好后不做跨型号重建（内审 F2）
-  assert.deepEqual(nextConnectionParamsDraft({ text: '', origin: 'server' }, invalid), { text: '', origin: 'server' })
-  assert.deepEqual(nextConnectionParamsDraft({ text: '', origin: 'server' }, repaired), { text: '', origin: 'server' })
   assert.deepEqual(nextConnectionParamsDraft({ text: '', origin: 'invalid' }, invalid), { text: '', origin: 'invalid' })
-  assert.deepEqual(nextConnectionParamsDraft({ text: '{"a":1}', origin: 'invalid' }, invalid), { text: '{"a":1}', origin: 'invalid' })
-  // 管理员修好库 → 标记消失：未动的空草稿用服务器值重建
+  // 健康草稿所在的行变坏：从服务器灌入的旧 JSON 不可信 → 清空并标 invalid（R3 P1）
+  assert.deepEqual(nextConnectionParamsDraft({ text: '{"stale": 1}', origin: 'server' }, invalid), { text: '', origin: 'invalid' })
+  // 操作员改过的文本（rfSwitch JsonInput / 切型号选的 preset）在坏值期间保留
+  assert.deepEqual(nextConnectionParamsDraft({ text: '{"a":1}', origin: 'operator' }, invalid), { text: '{"a":1}', origin: 'operator' })
+  // 修好：invalid 草稿用服务器值重建；operator / server 草稿沿用（不重刷未保存编辑、不跨型号重建）
   assert.deepEqual(nextConnectionParamsDraft({ text: '', origin: 'invalid' }, repaired), { text: repaired.text, origin: 'server' })
-  // 操作员在坏值期间输入过的文本不被服务器值覆盖
-  assert.deepEqual(nextConnectionParamsDraft({ text: '{"a":1}', origin: 'invalid' }, repaired), { text: '{"a":1}', origin: 'server' })
-  // 健康连接：沿用旧草稿（未保存编辑不丢）；没有旧草稿取服务器值
+  assert.deepEqual(nextConnectionParamsDraft({ text: '{"a":1}', origin: 'operator' }, repaired), { text: '{"a":1}', origin: 'operator' })
   assert.deepEqual(nextConnectionParamsDraft({ text: '{"b":2}', origin: 'server' }, repaired), { text: '{"b":2}', origin: 'server' })
   assert.deepEqual(nextConnectionParamsDraft(undefined, repaired), { text: repaired.text, origin: 'server' })
+})
+
+test('R3 scenario end to end: healthy draft → row corrupted → unrelated save must not send the stale JSON', () => {
+  const hydrated = nextConnectionParamsDraft(undefined, { text: '{"port": 3334}', invalid: false })
+  const afterCorruption = nextConnectionParamsDraft(hydrated, { text: '', invalid: true })
+  const payload = { endpoint: 'x', controller: 'LAN', notes: '改备注', connection_params: JSON.parse(hydrated.text) }
+  assert.equal('connection_params' in withoutSynthesizedConnectionParams(payload, BAD, afterCorruption.origin), false)
+  // 即使刷新还没跑到（草稿仍是 server 来源），标记一到就已经守住
+  assert.equal('connection_params' in withoutSynthesizedConnectionParams(payload, BAD, hydrated.origin), false)
 })

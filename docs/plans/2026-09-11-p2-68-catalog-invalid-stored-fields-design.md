@@ -112,11 +112,14 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
   **保存路径收窄**（Codex #471 R1 P1）：`connection_params` 被标坏且操作员未填新 JSON 时，BS / CE 的显式全字段保存**不发送**
   该键 —— 否则 `dict()` 可转换的坏形态（如 `[["k","v"]]`）会被服务器接受并用 `{}` 覆盖原值、再按 P2-72 用空配置激活 HAL；
   纯逻辑放在 `gui/src/features/Equipment/invalidStoredFields.ts`（`invalidStoredFieldHint` / `withoutSynthesizedConnectionParams`）；
-  **Codex R2 P1 再收窄**：标记消失 ≠ 草稿已刷新 —— 管理员修库后抽屉未关，下一次目录刷新会清掉 `invalid_fields`，但旧草稿仍是
-  无效来源的空文本，不相关的保存又会发 `{}` 覆盖修好的值。草稿因此带 `connection_params_origin: 'server' | 'invalid'`
-  （`nextConnectionParamsDraft`）：首次看到坏值记 'invalid'、已有草稿保留自己的来源（切型号 / preset 来的草稿是 'server'，修好后不做
-  跨型号重建）；标记消失且草稿仍是未动空文本时用服务器值重建，并把从同一坏字段派生的 BS profile 草稿一起重建；守卫在标记存在**或**
-  origin 仍为 'invalid' 时都不发空草稿；alignment 输入框的禁用同样看 origin；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
+  **Codex R2 / R3 P1 后定稿为三态 provenance**（用户 2026-09-11 拍板 A）：草稿带 `connection_params_origin: 'server' | 'invalid' | 'operator'`
+  （`nextConnectionParamsDraft`）—— 'server' 从有效服务器值灌入且未动；'invalid' 标坏时初始化（文本恒空）；'operator' 操作员改过
+  （rfSwitch JsonInput / CE alignment / BS·CE 切型号选 preset）。服务器标坏时 'operator' 保留、其余清空标 'invalid'（灌入的旧文本不可信，R3）；
+  修好时 'invalid' 用服务器值重建并连带重建派生的 BS profile 草稿（R2），'server' / 'operator' 沿用（不重刷未保存编辑、不跨型号重建）。
+  守卫 `connectionParamsGuarded`：origin 'invalid'，或标记存在且 origin ≠ 'operator' → 不发送 connection_params **与** BS 的
+  `base_station_adapter_profile`（库里就是同一字段的子键，草稿同样是灌入派生；被守卫时也不在客户端校验合成出来的空 profile）；
+  派生的 BS profile 草稿与文本共用来源：行变坏且非 operator 一起清空，修好一起重建；BS profile 字段编辑同样标 'operator'；
+  alignment 输入框的禁用同一判据；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
   红「认证数据损坏」；否则黄「未认证或已撤销」。CE 侧已有 readiness `invalid` 红态，本片只保证目录侧
   同一连接 `invalid_fields` 与 preview `status="invalid"` 同时成立（回归断言）。
 

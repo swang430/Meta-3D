@@ -3,10 +3,12 @@
  * 这里是 GUI 侧的两条纯逻辑，都来自 Codex #471 R1：
  * - ① 每个字段给操作员的提示要**区分**「影响正式资格」（两个现场认证）与「只影响草稿 / 参数投影」
  *   （两个 preset map、connection_params）——正式门 `freeze_*` 不读 preset，不能一概说成"不能得到正式资格"（P2）。
+ * - ③ 草稿带三态来源（server / invalid / operator），见下方 `ConnectionParamsOrigin`。
  * - ② 普通保存不得把被标坏的 `connection_params` 的**空草稿**当成 `{}` 发出去：抽屉对 BS / CE 一向显式发全字段，
  *   而库里的坏值一旦是 `dict()` 能转换的形态（如 `[["k","v"]]`），服务器就会接受 `{}` 并覆盖原值、还按 P2-72
- *   用空配置激活 HAL（P1）。收窄为：该字段被标坏且操作员没填新 JSON 时，不发送它 —— 服务器对 dict() 可转换的坏形态
- *   会按已保存 preset 回填或写回 dict 化的原值，对其它坏形态在投影前就 500（什么都不写）；两种结果都不是「用 {} 覆盖」。
+ *   用空配置激活 HAL（P1）。收窄为：草稿不是 operator 来源（操作员没改过）时不发送它（BS 的 profile 兄弟键一起）——
+ *   服务器对 dict() 可转换的坏形态会按已保存 preset 回填或写回 dict 化的原值，对其它坏形态在投影前就 500（什么都不写）；
+ *   两种结果都不是「用 {} 覆盖」。
  */
 export type InvalidStoredFields = Record<string, string>
 
@@ -28,43 +30,64 @@ export function invalidStoredFieldHint(field: string): string {
 }
 
 /**
- * 被标坏的 connection_params + 空草稿 → 从保存 payload 里去掉该键；操作员真填了新 JSON 则原样发。
- * 其它情况（字段没被标坏）payload 原样返回，保持 BS / CE "显式发全字段、清空才真清空" 的既有语义。
+ * 草稿里 connection_params 文本的来源（Codex #471 R2/R3 + 用户 2026-09-11 拍板 A）：
+ * - 'server'   = 从**有效**的服务器值灌入、操作员未动；
+ * - 'invalid'  = 服务器把该字段标坏时初始化，文本恒为空 —— 空不代表操作员想清空；
+ * - 'operator' = 操作员改过（rfSwitch JsonInput / CE alignment 输入 / BS profile 字段 / 切型号选 preset）—— 填了照发。
+ * BS 的 profile 草稿从同一个存储字段派生，与文本共用这份来源：行变坏时一起清空、修好时一起重建、被守卫时一起不发。
  */
-export function withoutSynthesizedConnectionParams<T extends { connection_params?: unknown }>(
-  payload: T,
-  invalidFields: InvalidStoredFields | undefined,
-  draftParamsText: string | undefined,
-  draftOrigin: ConnectionParamsOrigin | undefined = 'server',
-): T {
-  // 服务器仍标坏，或草稿还是无效来源、尚未用修好的值重建（Codex #471 R2 P1：标记消失≠草稿已刷新）
-  const guarded = (invalidFields !== undefined && 'connection_params' in invalidFields) || draftOrigin === 'invalid'
-  if (!guarded) return payload
-  if ((draftParamsText ?? '').trim()) return payload
-  const rest = { ...payload }
-  delete rest.connection_params
-  return rest
-}
-
-/** 草稿里 connection_params 文本的来源：'invalid' = 初始化时服务器把该字段标坏，空文本不代表操作员意图。 */
-export type ConnectionParamsOrigin = 'server' | 'invalid'
+export type ConnectionParamsOrigin = 'server' | 'invalid' | 'operator'
 
 export type ConnectionParamsDraft = { text: string; origin: ConnectionParamsOrigin }
 
+/** 当前草稿的 connection_params 能不能被拿去保存（也决定 CE alignment 输入框是否禁用）。 */
+export function connectionParamsGuarded(
+  invalidFields: InvalidStoredFields | undefined,
+  draftOrigin: ConnectionParamsOrigin | undefined,
+): boolean {
+  const origin = draftOrigin ?? 'server'
+  if (origin === 'invalid') return true
+  const markerPresent = invalidFields !== undefined && 'connection_params' in invalidFields
+  // 服务器仍标坏：只有操作员明确改过的文本可以发；从服务器灌入的（可能已陈旧的）文本不可信（Codex #471 R3 P1）
+  return markerPresent && origin !== 'operator'
+}
+
 /**
- * 目录每次刷新时算下一份 connection_params 草稿（Codex #471 R2 P1）：
- * - 服务器仍标坏：保留操作员可能已输入的文本（初值空）；首次看到坏值记 'invalid'，已有草稿保留自己的来源；
- * - 标记刚消失、草稿还是无效来源的未动空文本：用修好的服务器值重建（rehydrate），origin 回 'server'——
- *   否则管理员修库后、抽屉没关，下一次不相关的保存又会把空草稿当 {} 发出去覆盖修好的值；
- * - 其它：沿用旧草稿（未保存的编辑不丢），没有旧草稿就取服务器值。
+ * 被守卫时，从保存 payload 里去掉 connection_params **和**从同一存储字段拆出去的 BS
+ * `base_station_adapter_profile`（它在库里就是 connection_params.base_station_adapter_profile，
+ * 草稿同样是从服务器灌入派生的 —— 轻量内审 R3-F1），交给服务器按已保存 preset / 活动连接回填；
+ * 其它情况 payload 原样返回，保持 BS / CE "显式发全字段、清空才真清空" 的既有语义。
+ */
+export function withoutSynthesizedConnectionParams<
+  T extends { connection_params?: unknown; base_station_adapter_profile?: unknown },
+>(
+  payload: T,
+  invalidFields: InvalidStoredFields | undefined,
+  draftOrigin: ConnectionParamsOrigin | undefined,
+): T {
+  if (!connectionParamsGuarded(invalidFields, draftOrigin)) return payload
+  const rest = { ...payload }
+  delete rest.connection_params
+  delete rest.base_station_adapter_profile
+  return rest
+}
+
+/**
+ * 目录每次刷新时算下一份 connection_params 草稿：
+ * - 服务器标坏：'operator' 来源保留（操作员的输入不丢）；'server' / 'invalid' / 无草稿 → 清空并记 'invalid'
+ *   （服务器说它坏了，之前从服务器灌入的旧文本不可信 —— R3 P1）；
+ * - 服务器有效：'invalid' → 用修好的服务器值重建（rehydrate，R2 P1）；'server' / 'operator' → 沿用（不重刷未保存的编辑）；
+ *   无草稿 → 取服务器值。
+ * 切型号选 preset 由调用方标成 'operator'，所以修好后不会被活动型号的参数跨型号重建（轻量内审 F2）。
  */
 export function nextConnectionParamsDraft(
   previous: ConnectionParamsDraft | undefined,
   server: { text: string; invalid: boolean },
 ): ConnectionParamsDraft {
-  // 只有首次看到坏值（还没有草稿）才记 'invalid'；已有草稿保留自己的来源 —— 切型号 / preset 产生的草稿是 'server'，
-  // 修好后不能被活动型号的参数跨型号重建（轻量内审 F2）
-  if (server.invalid) return { text: previous?.text ?? '', origin: previous?.origin ?? 'invalid' }
-  if (previous?.origin === 'invalid' && !previous.text.trim()) return { text: server.text, origin: 'server' }
-  return { text: previous?.text ?? server.text, origin: 'server' }
+  if (server.invalid) {
+    if (previous?.origin === 'operator') return previous
+    return { text: '', origin: 'invalid' }
+  }
+  if (!previous || previous.origin === 'invalid') return { text: server.text, origin: 'server' }
+  return previous
 }

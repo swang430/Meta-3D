@@ -118,6 +118,7 @@ import {
   switchChannelEmulatorModel,
 } from './features/Equipment/channelEmulatorModelPresetDraft'
 import {
+  connectionParamsGuarded,
   invalidStoredFieldHint,
   nextConnectionParamsDraft,
   withoutSynthesizedConnectionParams,
@@ -232,8 +233,8 @@ type EquipmentDraft = {
   controller: string
   notes: string
   connection_params?: string
-  // P2-68：'invalid' = 该文本是在服务器把 connection_params 标坏时初始化的，空文本不代表操作员想清空
-  connection_params_origin?: 'server' | 'invalid'
+  // P2-68：'server' 从有效服务器值灌入 / 'invalid' 标坏时初始化（空不代表操作员想清空）/ 'operator' 操作员改过或选了型号
+  connection_params_origin?: 'server' | 'invalid' | 'operator'
   base_station_profile?: BaseStationProfileDraft
 }
 
@@ -1780,7 +1781,8 @@ function EquipmentManager() {
         // 标记刚消失、未动的空草稿刚用服务器值重建 → 从同一坏字段合成出来的空 profile 草稿也一起重建
         const rehydrated = previous?.connection_params_origin === 'invalid'
           && paramsDraft.origin === 'server'
-          && !(previous?.connection_params ?? '').trim()
+        // 行变坏（非 operator 来源）→ 派生的 profile 草稿与文本一起清空；修好 → 一起重建（轻量内审 R3-F1）
+        const resyncProfile = rehydrated || paramsDraft.origin === 'invalid'
         const serverProfile = manifest
           ? readBaseStationProfileDraft(
               manifest,
@@ -1794,7 +1796,7 @@ function EquipmentManager() {
           notes: previous?.notes ?? (category.connection.notes ?? ''),
           connection_params: paramsDraft.text,
           connection_params_origin: paramsDraft.origin,
-          base_station_profile: rehydrated ? serverProfile : (previous?.base_station_profile ?? serverProfile),
+          base_station_profile: resyncProfile ? serverProfile : (previous?.base_station_profile ?? serverProfile),
         }
       })
       return next
@@ -2023,7 +2025,8 @@ function EquipmentManager() {
       if (categoryKey === 'baseStation' && category) {
         setDrafts((prev) => ({
           ...prev,
-          [categoryKey]: draftForBaseStationModel(category, modelId),
+          // 选型号是操作员动作：preset 文本按 'operator' 来源对待（填了照发，修库后不做跨型号重建）
+          [categoryKey]: { ...draftForBaseStationModel(category, modelId), connection_params_origin: 'operator' },
         }))
         return
       }
@@ -2031,7 +2034,7 @@ function EquipmentManager() {
         // P2-58 ②：切型号只改草稿（有未保存草稿先确认），model 只在保存时随 connection 一起发。
         // 这个分支不发请求 —— 后端 CE 块对只带 modelId 的 PUT 返回 422。
         switchChannelEmulatorModel(category, drafts[categoryKey], modelId, {
-          applyDraft: (next) => setDrafts((prev) => ({ ...prev, [categoryKey]: next })),
+          applyDraft: (next) => setDrafts((prev) => ({ ...prev, [categoryKey]: { ...next, connection_params_origin: 'operator' } })),
           confirmDiscard: (apply) => modals.openConfirmModal({
             title: '切换型号会丢弃未保存的配置',
             centered: true,
@@ -2126,8 +2129,10 @@ function EquipmentManager() {
       const category = categories.find((item) => item.key === categoryKey)
       const selectedModel = category?.models.find((model) => model.id === draft.modelId)
       const manifest = selectedModel?.base_station_manifest
+      // P2-68：被守卫时 connection_params 与派生的 profile 都不发（交服务器回填），所以也不在客户端校验一份合成出来的空 profile
+      const paramsGuarded = connectionParamsGuarded(category?.connection.invalid_fields, draft.connection_params_origin)
       let baseStationProfile: Record<string, unknown> | null | undefined
-      if (categoryKey === 'baseStation' && manifest) {
+      if (categoryKey === 'baseStation' && manifest && !paramsGuarded) {
         try {
           baseStationProfile = buildBaseStationAdapterProfile(
             manifest,
@@ -2160,7 +2165,6 @@ function EquipmentManager() {
                 ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
               },
         category?.connection.invalid_fields,
-        draft.connection_params,
         draft.connection_params_origin,
       )
       instrumentMutation.mutate({
@@ -2504,7 +2508,7 @@ function EquipmentManager() {
                     value={draft.connection_params || ''}
                     onChange={(val) => setDrafts(prev => ({
                       ...prev,
-                      [category.key]: { ...prev[category.key], connection_params: val }
+                      [category.key]: { ...prev[category.key], connection_params: val, connection_params_origin: 'operator' }
                     }))}
                   />
                 )}
@@ -2527,8 +2531,7 @@ function EquipmentManager() {
                     ? parsedParams.alignment_name
                     : ''
                   // P2-68（内审 F3）：库里 connection_params 被标坏时草稿为空，这里再填一个名字就会以 {alignment_name} 覆盖原值 → 禁用。
-                  const connectionParamsInvalid = 'connection_params' in category.connection.invalid_fields
-                    || draft.connection_params_origin === 'invalid'
+                  const connectionParamsInvalid = connectionParamsGuarded(category.connection.invalid_fields, draft.connection_params_origin)
                   return (
                     <>
                       <TextInput
@@ -2551,7 +2554,7 @@ function EquipmentManager() {
                             : ''
                           setDrafts(prev => ({
                             ...prev,
-                            [category.key]: { ...prev[category.key], connection_params: serialized },
+                            [category.key]: { ...prev[category.key], connection_params: serialized, connection_params_origin: 'operator' },
                           }))
                         }}
                       />
@@ -2706,6 +2709,8 @@ function EquipmentManager() {
                                 ...prev,
                                 [category.key]: {
                                   ...prev[category.key],
+                                  // profile 与 connection_params 是同一个存储字段：编辑即 operator 来源
+                                  connection_params_origin: 'operator',
                                   base_station_profile: {
                                     ...(prev[category.key]?.base_station_profile
                                       ?? emptyBaseStationProfileDraft(
