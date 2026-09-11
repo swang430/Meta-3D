@@ -3158,6 +3158,24 @@ export interface components {
             rat: "lte" | "nr5g";
             source_reference: string;
         };
+        BaseStationMacDimensionValueCapability: {
+            value: string | number | boolean | null;
+            /** @enum {string} */
+            support: "authoritative" | "diagnostic_only" | "not_applicable";
+            /** @default [] */
+            satisfying_options: string[];
+            /** @default [] */
+            required_options: string[];
+            minimum_firmware?: string | null;
+            /** @default [] */
+            requires: "normal_cyclic_prefix"[];
+            reason: string;
+            source_reference: string;
+        };
+        BaseStationMacDimensionCapability: {
+            dimension: string;
+            values: components["schemas"]["BaseStationMacDimensionValueCapability"][];
+        };
         BaseStationMacProfileCapability: {
             kind: string;
             profile_version: number;
@@ -3166,6 +3184,8 @@ export interface components {
             /** @enum {string} */
             application_evidence: "authoritative_readback" | "command_error_queue";
             source_reference: string;
+            /** @default [] */
+            dimensions: components["schemas"]["BaseStationMacDimensionCapability"][];
         };
         BaseStationConfigFieldCapability: {
             field: string;

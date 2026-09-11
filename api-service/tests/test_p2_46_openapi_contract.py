@@ -35,6 +35,44 @@ NESTED_SCHEMAS = {
     "BaseStationMeasurementCapability",
     "BaseStationMetricCapability",
     "BaseStationMacProfileCapability",
+    "BaseStationMacDimensionCapability",
+    "BaseStationMacDimensionValueCapability",
+}
+MAC_CAPABILITY_SHAPES = {
+    "BaseStationMacProfileCapability": (
+        {
+            "kind",
+            "profile_version",
+            "rat",
+            "application_evidence",
+            "source_reference",
+            "dimensions",
+        },
+        {
+            "kind",
+            "profile_version",
+            "rat",
+            "application_evidence",
+            "source_reference",
+        },
+    ),
+    "BaseStationMacDimensionCapability": (
+        {"dimension", "values"},
+        {"dimension", "values"},
+    ),
+    "BaseStationMacDimensionValueCapability": (
+        {
+            "value",
+            "support",
+            "satisfying_options",
+            "required_options",
+            "minimum_firmware",
+            "requires",
+            "reason",
+            "source_reference",
+        },
+        {"value", "support", "reason", "source_reference"},
+    ),
 }
 
 
@@ -92,3 +130,38 @@ def test_profile_version_and_nullable_capability_fields_are_not_manifest_version
             "unavailable",
             "not_applicable",
         ]
+
+
+def test_live_and_checked_openapi_define_the_same_mac_dimension_contract():
+    live = app.openapi()["components"]["schemas"]
+    checked = _checked()["components"]["schemas"]
+
+    for schemas in (live, checked):
+        assert set(MAC_CAPABILITY_SHAPES) <= set(schemas)
+        for name, (properties, required) in MAC_CAPABILITY_SHAPES.items():
+            schema = schemas[name]
+            assert set(schema["properties"]) == properties
+            assert set(schema["required"]) == required
+            assert schema["additionalProperties"] is False
+
+        profile = schemas["BaseStationMacProfileCapability"]
+        assert profile["properties"]["dimensions"]["items"]["$ref"].endswith(
+            "/BaseStationMacDimensionCapability"
+        )
+        dimension = schemas["BaseStationMacDimensionCapability"]
+        assert dimension["properties"]["values"]["items"]["$ref"].endswith(
+            "/BaseStationMacDimensionValueCapability"
+        )
+        value = schemas["BaseStationMacDimensionValueCapability"]["properties"]
+        assert {branch["type"] for branch in value["value"]["anyOf"]} == {
+            "string",
+            "integer",
+            "boolean",
+            "null",
+        }
+        assert value["support"]["enum"] == [
+            "authoritative",
+            "diagnostic_only",
+            "not_applicable",
+        ]
+        assert value["requires"]["items"]["const"] == "normal_cyclic_prefix"

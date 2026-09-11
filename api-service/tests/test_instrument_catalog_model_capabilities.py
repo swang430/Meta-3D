@@ -13,14 +13,21 @@ the GUI's capability gap UX.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+import yaml
 
 from app.db.database import Base, get_db
 from app.main import app
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -71,6 +78,28 @@ def _find_model(body: dict, category_key: str, model_name: str) -> dict:
 
 
 class TestCatalogModelCapabilitiesField:
+    def test_checked_openapi_accepts_the_actual_cmw_mac_dimension_payload(
+        self, test_db
+    ):
+        with TestClient(app) as client:
+            response = client.get("/api/v1/instruments/catalog")
+        assert response.status_code == 200, response.text
+
+        cmw = _find_model(response.json(), "baseStation", "CMW500")
+        mac_profiles = cmw["base_station_manifest"]["mac_profiles"]
+        assert mac_profiles
+        assert any(profile["dimensions"] for profile in mac_profiles)
+
+        checked = yaml.safe_load((REPO_ROOT / "api/openapi.yaml").read_text())
+        schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/components/schemas/BaseStationMacProfileCapability",
+            "components": checked["components"],
+        }
+        validator = Draft202012Validator(schema)
+        for profile in mac_profiles:
+            validator.validate(profile)
+
     def test_registered_base_station_models_expose_public_adapter_manifests(
         self, test_db
     ):

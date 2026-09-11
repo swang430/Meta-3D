@@ -17,12 +17,29 @@ export type BaseStationRatCapability = {
   source_reference: string
 }
 
+export type BaseStationMacDimensionValueCapability = {
+  value: string | number | boolean | null
+  support: 'authoritative' | 'diagnostic_only' | 'not_applicable'
+  satisfying_options: string[]
+  required_options: string[]
+  minimum_firmware?: string | null
+  requires: Array<'normal_cyclic_prefix'>
+  reason: string
+  source_reference: string
+}
+
+export type BaseStationMacDimensionCapability = {
+  dimension: string
+  values: BaseStationMacDimensionValueCapability[]
+}
+
 export type BaseStationMacProfileCapability = {
   kind: string
   profile_version: number
   rat: 'lte' | 'nr5g'
   application_evidence: 'authoritative_readback' | 'command_error_queue'
   source_reference: string
+  dimensions: BaseStationMacDimensionCapability[]
 }
 
 export type BaseStationConfigFieldCapability = {
