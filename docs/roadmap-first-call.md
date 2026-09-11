@@ -56,7 +56,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-69（MAC capability 输出契约补齐 dimensions；按 2026-09-05 批准的顺序于 2026-09-11 接续启动，设计稿尚未产出，尚未动代码）；P2-68 已由 PR #471 合并。**
+Current Focus（非现场）= P2-69（MAC capability 输出契约补齐 dimensions；设计 v1 已于 2026-09-11 批准，严格 TDD 实现中）；P2-68 已由 PR #471 合并。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -710,7 +710,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P2-68 已由 PR #471 合并；当前唯一 WIP 为 P2-69（MAC capability 契约缺 dimensions；按 2026-09-05 批准顺序接续，设计稿尚未产出，尚未动代码），随后 P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-68 已由 PR #471 合并；当前唯一 WIP 为 P2-69（MAC capability 契约缺 dimensions；设计 v1 已于 2026-09-11 批准，严格 TDD 实现中），随后 P2-70 CMW 抽样载体缺口，顺序见顶部。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-55 TM1/1 天线当前无载体，先由 P2-70 准备。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5124,7 +5124,7 @@ inline；08:12:25Z 以 merge commit `83ad1779` 合入。每轮各请求 1 次、
 （共 1 全套 + 5 轻量，其中一次抓到 P1：派生的 BS profile 草稿未并入同一 provenance）。各轮变异（全红）见 PR #471 正文的
 逐轮记录。R1–R4 的四条 P1 全在「服务器值不可信期间 GUI 草稿能否被拿去保存」这一条线上，复盘结论已记入 memory：让坏数据可见的片，必须同时设计草稿来源与保存守卫。
 
-### P2-69 — MAC capability 输出契约补齐 dimensions（🚧 Current Focus（非现场）：按 2026-09-05 批准顺序于 2026-09-11 接续启动，设计稿尚未产出，尚未动代码）
+### P2-69 — MAC capability 输出契约补齐 dimensions（🚧 Current Focus（非现场）：设计 v1 已批准，严格 TDD 实现中）
 
 **可观察故障**：真实 `RealCmw500Driver.adapter_manifest` 输出 `mac_profiles[].dimensions`，
 `api/openapi.yaml::BaseStationMacProfileCapability` 没有此属性且禁止额外属性；严格客户端无法接受合法响应。
@@ -5133,6 +5133,9 @@ inline；08:12:25Z 以 merge commit `83ad1779` 合入。每轮各请求 1 次、
 **最小方向/验收**：补齐 dimension/value capability 的 live OpenAPI、checked YAML、generated TS 与
 手写类型；用实际序列化响应验证契约，不能只验“文档是实现的子集”。不改变 manifest 运行内容、
 digest 或正式能力，不为契约补齐顺带放开 CMW 取值域。来源：P2-56 声明半 discovered。
+
+**设计稿与拍板（2026-09-11）**：[`P2-69 设计`](plans/2026-09-11-p2-69-mac-dimensions-contract-design.md)
+v1 已批准（方案 A：精确补齐 checked OpenAPI 与 TS 两镜像，并用真实 CMW 目录响应递归验约）。
 
 ### P2-70 — CMW FDD 矩阵抽样的可达载体（待设计/启动）
 
