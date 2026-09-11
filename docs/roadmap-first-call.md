@@ -5084,6 +5084,14 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 只修会造成同一整目录丢失的路径，不把真实 DB 查询故障伪装成“零仪器”。GUI 显示与 API 契约同步。
 回归用正常项与损坏项共存的目录证明，正式门仍拒绝损坏证据。纯本地，零 SCPI。
 
+**设计稿与拍板（2026-09-11）**：[`P2-68 设计`](plans/2026-09-11-p2-68-catalog-invalid-stored-fields-design.md) v1 已批准。
+全集枚举：整目录丢失的路径共 5 条，全在 `app/api/instrument.py::_convert_connection`（BS/CE 认证直接进严格模型、
+两个 preset 解析器按设计 fail-loud、`connection_params` 非对象），两个入口共用（catalog 与 `PUT /instruments/{category_key}`
+三个返回点）；正式门 `freeze_execution_qualification` / `freeze_channel_emulator_execution_qualification` 对坏认证已 `ValueError`
+上抛，不受本片影响。开发库只读实查 7 条连接、认证列全 NULL、0 条坏值 —— 修的是故障类，不是现存事故。用户拍板：
+五路径统一隔离；单一 `invalid_fields: Dict[str, str]` 契约字段；去掉 `except Exception → []` 让 DB 故障 5xx 上抛；
+抽屉红 Alert + BS 徽标三态；readiness BS 认证的静默 None 只进 Discovered。
+
 ### P2-69 — MAC capability 输出契约补齐 dimensions（待启动）
 
 **可观察故障**：真实 `RealCmw500Driver.adapter_manifest` 输出 `mac_profiles[].dimensions`，
@@ -5326,6 +5334,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 - `[discovered 2026-09-05 during LabProfile/暗室首测手工调试]` **LabProfile 相关配置被拆散成三个独立入口，操作员无法通盘设计与确认最终生效态（待评估）** —— “仪器资源配置”“探头与暗室配置”“射频拓扑编辑器”实际共同决定同一个 LabProfile，但当前分别保存。手工序列里的“保存配置 → 全局 HAL 重载”已提升为 **P2-72**，只解决按类别激活 runtime；“同步到 LabProfile”仍保持操作员确认后的独立事务。#464 已用 dirty/race guard 阻断旧配置同步，但没有解决整体工作流。后续应先设计一个 LabProfile 工作单元，把三类配置作为同一上下文的子视图，统一呈现草稿、resolver/readiness 校验与最终生效态；再裁决多份配置如何受控编排，不得把 GUI 草稿直接写入 binding，不得绕过现有 resolver/正式 provenance 门。本条仅进入 Discovered，P2-72 完成后也不关闭；LTE 暗室首测能力不随本条补齐。
 - `[discovered 2026-09-10 during P1-76 INFO 分布审计]` **成功轮询请求占据系统 INFO 主体，降低人工诊断信噪比（待评估）** —— 抽查 `api-service/logs/app.log.2026-09-09` 共 1270 行，其中 1244 行为 INFO、1088 行来自 `app.audit`；`GET /road-test/executions`、`GET /test-executions`、`GET /instruments/hal/readiness`、`GET /lab-profiles`、`GET /dashboard/alerts/summary` 五类成功轮询合计 1041 行。错误和告警仍应保留，测试租约取得/释放、HAL 生命周期与硬件动作也不能降级。本条后续应在 audit middleware 既有成功高频路径排除机制上评估：仅压低可预测的 2xx 轮询，4xx/5xx 原样 INFO/ERROR，并用周期摘要或计数器保留“轮询仍在工作”的可观测性；不得用全局 INFO→DEBUG 或大范围 logger 静音。P1-76 不实现本条，避免把假读数修复与日志策略混成一片。
+- `[discovered 2026-09-11 during P2-68 设计]` **readiness 把损坏的 BaseStation 现场认证静默投影成「未认证」（P3）** —— `app/api/instrument.py` readiness 组装处对 `connection.base_station_site_certification` 做 `BaseStationSiteCertification.model_validate`，`except ValidationError: site_certification = None`，损坏与「未认证」不可区分；同文件 CE 侧 `build_channel_emulator_certification_preview` 已给 `status="invalid"`。可观察面是 readiness / 主控台而非目录，⑦ 判越界未并入 P2-68；修法应镜像 CE 的 invalid 形态（换源到 `parse_base_station_site_certification` + 显式状态），不加新机制。
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 
