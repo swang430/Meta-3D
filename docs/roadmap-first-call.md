@@ -5100,7 +5100,10 @@ fresh 内审 P1/P2/P3=0。**已由 PR #436 合并**（merge `07580d72`，2026-09
 `except Exception → categories=[]`，DB / 代码故障按 500 上抛（API 层；GUI 目录页对 5xx 的空态文案见 Discovered）。解析器与正式门未改。契约四镜像同步
 （`FEInstrumentConnection` / `openapi.yaml::InstrumentConnection` 加 `invalid_fields` 进 `required` /
 `api.generated.ts` 重生成 / `api.ts`），mock 五处连接字面量补 `invalid_fields: {}`；抽屉连接区块新增红色
-Alert 逐字段列原因，BS 现场认证徽标改三态（active 绿 / 损坏红 / 未认证黄）。P2-58 ② 那条钉住
+Alert 逐字段列原因，BS 现场认证徽标改三态（active 绿 / 损坏红 / 未认证黄）。**Codex R1 两条已收窄**：P1 —— GUI 对 BS / CE 一向显式发全字段，
+库里 `connection_params` 被标坏时空草稿会被当成 `{}` 发出去，遇 `dict()` 可转换的坏形态（如 `[["k","v"]]`）服务器会接受并覆盖原值、再用空配置激活 HAL
+→ 新纯模块 `invalidStoredFields.ts::withoutSynthesizedConnectionParams` 在该字段被标坏且操作员未填新 JSON 时不发送它（轻量内审再补：CE「F64 User Alignment」输入框同时禁用，否则填一个名字就会合成 `{alignment_name}` 覆盖原值）；P2 —— 契约 description 与
+Alert 曾把 preset 损坏也说成「不能得到正式资格」，而 `freeze_*` 不读 preset → 按字段区分措辞（`invalidStoredFieldHint`）。P2-58 ② 那条钉住
 「坏 map 经 `_convert_connection` 大声失败」的用例改为在解析器层断言 fail-loud、在投影层断言
 `invalid_fields`。**验证**：新门 `tests/test_p2_68_catalog_invalid_stored_fields.py` 11 条（五列参数化隔离 / BS preset 内 pydantic 错直抛也隔离 /
 字段级而非连接级 / DB 故障 5xx / 正式门 fail-closed 不松动 / 常量=转换器=契约 不变量 / PUT 响应同投影）先 RED

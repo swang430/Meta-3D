@@ -117,6 +117,10 @@ import {
   explicitChannelEmulatorConnectionDraft,
   switchChannelEmulatorModel,
 } from './features/Equipment/channelEmulatorModelPresetDraft'
+import {
+  invalidStoredFieldHint,
+  withoutSynthesizedConnectionParams,
+} from './features/Equipment/invalidStoredFields'
 import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
 import type {
   DemoRunPlan,
@@ -2116,6 +2120,25 @@ function EquipmentManager() {
         }
       }
 
+      // P2-68（Codex #471 R1 P1）：库里 connection_params 被标坏时，空草稿不能被当成 {} 发出去覆盖原值。
+      const connectionPayload = withoutSynthesizedConnectionParams(
+        categoryKey === 'baseStation'
+          ? explicitBaseStationConnectionDraft(
+              draft,
+              parsedParams ?? {},
+              baseStationProfile ?? null,
+            )
+          : categoryKey === 'channelEmulator'
+            ? explicitChannelEmulatorConnectionDraft(draft, parsedParams ?? {})
+            : {
+                endpoint: draft.endpoint || undefined,
+                controller: draft.controller || undefined,
+                notes: draft.notes || undefined,
+                ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
+              },
+        category?.connection.invalid_fields,
+        draft.connection_params,
+      )
       instrumentMutation.mutate({
         categoryKey,
         payload: {
@@ -2123,20 +2146,7 @@ function EquipmentManager() {
           ...(categoryKey === 'baseStation' || categoryKey === 'channelEmulator'
             ? { modelId: draft.modelId }
             : {}),
-          connection: categoryKey === 'baseStation'
-            ? explicitBaseStationConnectionDraft(
-                draft,
-                parsedParams ?? {},
-                baseStationProfile ?? null,
-              )
-            : categoryKey === 'channelEmulator'
-              ? explicitChannelEmulatorConnectionDraft(draft, parsedParams ?? {})
-              : {
-                  endpoint: draft.endpoint || undefined,
-                  controller: draft.controller || undefined,
-                  notes: draft.notes || undefined,
-                  ...(parsedParams !== undefined ? { connection_params: parsedParams } : {}),
-                },
+          connection: connectionPayload,
         },
       })
     },
@@ -2447,11 +2457,12 @@ function EquipmentManager() {
                     <Stack gap={4}>
                       {Object.entries(category.connection.invalid_fields).map(([field, reason]) => (
                         <Text key={field} size="sm">
-                          <Text span fw={600}>{field}</Text>：{reason}
+                          <Text span fw={600}>{field}</Text>：{invalidStoredFieldHint(field)}
+                          <Text span c="dimmed">（服务器原因：{reason}）</Text>
                         </Text>
                       ))}
                       <Text size="xs" c="dimmed">
-                        这些字段已按「不可用」显示，不能得到正式资格。现场认证可通过重新认证覆盖；型号 preset / 连接参数的坏存值需要管理员修复数据库，GUI 保存不会覆盖它们。目录其余内容不受影响。
+                        只有现场认证损坏会影响正式资格；其它字段只影响这里的草稿 / 参数显示。目录其余内容与本连接的其它字段不受影响。
                       </Text>
                     </Stack>
                   </Alert>
@@ -2491,12 +2502,16 @@ function EquipmentManager() {
                   const currentAlignment = typeof parsedParams.alignment_name === 'string'
                     ? parsedParams.alignment_name
                     : ''
+                  // P2-68（内审 F3）：库里 connection_params 被标坏时草稿为空，这里再填一个名字就会以 {alignment_name} 覆盖原值 → 禁用。
+                  const connectionParamsInvalid = 'connection_params' in category.connection.invalid_fields
                   return (
                     <>
                       <TextInput
                         label="F64 User Alignment 文件名"
                         description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
                         placeholder="例: CAICT_5G_3500MHz"
+                        disabled={connectionParamsInvalid}
+                        error={connectionParamsInvalid ? '库里的连接参数无法解析，此处已禁用：以空草稿为底编辑会覆盖原值，请先由管理员修复数据库' : undefined}
                         value={currentAlignment}
                         onChange={(e) => {
                           const newName = e.currentTarget.value

@@ -99,14 +99,19 @@ invalid_fields: Dict[str, str] = Field(default_factory=dict)
 # 键 ∈ {"base_station_site_certification", "channel_emulator_site_certification",
 #        "base_station_model_presets", "channel_emulator_model_presets", "connection_params"}
 # 值 = 权威解析器给出的中文/英文原因（截断到 200 字）。字段出现在这里时，其正常投影一律为 null / {}。
+# 语义分两类（Codex #471 R1 P2）：两个现场认证损坏 → 正式执行不能获得资格；两个 preset map 与
+# connection_params 损坏 → 只影响配置草稿 / 连接参数投影，正式门 freeze_* 不读它们。
 ```
 
 - `openapi.yaml::InstrumentConnection`：加 `invalid_fields: {type: object, additionalProperties: {type: string}}`，
   进 `required`；description 写明键集合（G9 门：description ⊇ 枚举取值）。
 - `api.generated.ts` 重生成；`api.ts::InstrumentConnection` 加 `invalid_fields: Record<string, string>`；
   `mockDatabase.ts` 五处 connection 字面量补 `invalid_fields: {}`（只为满足类型，mock 已禁用）。
-- GUI 抽屉连接区块：`invalid_fields` 非空时显示红色 Alert「服务器保存的以下配置已损坏，不能用于正式资格，
-  需重新保存 / 重新认证：<字段: 原因>」；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
+- GUI 抽屉连接区块：`invalid_fields` 非空时显示红色 Alert，逐字段给出**按字段区分**的提示（认证：影响正式资格、可重新认证覆盖；
+  preset：只影响草稿、服务器会拒绝保存需管理员修库；connection_params：已按空显示、普通保存不再发送空草稿）+ 服务器原因；
+  **保存路径收窄**（Codex #471 R1 P1）：`connection_params` 被标坏且操作员未填新 JSON 时，BS / CE 的显式全字段保存**不发送**
+  该键 —— 否则 `dict()` 可转换的坏形态（如 `[["k","v"]]`）会被服务器接受并用 `{}` 覆盖原值、再按 P2-72 用空配置激活 HAL；
+  纯逻辑放在 `gui/src/features/Equipment/invalidStoredFields.ts`（`invalidStoredFieldHint` / `withoutSynthesizedConnectionParams`）；BS 认证徽标改三态：active → 绿；`invalid_fields` 含 BS 认证键 →
   红「认证数据损坏」；否则黄「未认证或已撤销」。CE 侧已有 readiness `invalid` 红态，本片只保证目录侧
   同一连接 `invalid_fields` 与 preview `status="invalid"` 同时成立（回归断言）。
 

@@ -149,7 +149,8 @@ class FEInstrumentConnection(BaseModel):
         default_factory=dict,
         description=(
             "服务器保存的字段解析失败时的「字段 → 原因」映射；出现在这里的字段其正常投影一律为 "
-            "null / {}，且不能得到正式资格。可能的键："
+            "null / {}。其中两个现场认证字段损坏时正式执行不能获得资格；两个 preset map 与 "
+            "connection_params 损坏只影响配置草稿与连接参数投影，不改变正式资格判定。可能的键："
             + ", ".join(PROJECTED_STORED_FIELDS)
         ),
     )
