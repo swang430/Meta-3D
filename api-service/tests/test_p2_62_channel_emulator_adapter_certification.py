@@ -18,7 +18,10 @@ from app.hal.channel_emulator import ChannelEmulatorDriver
 from app.hal.channel_emulator_execution_plan import (
     resolve_channel_emulator_execution_plan,
 )
-from app.hal.channel_emulator_manifest import CHANNEL_EMULATOR_OPERATIONS
+from app.hal.channel_emulator_manifest import (
+    CHANNEL_EMULATOR_OPERATIONS,
+    validate_channel_emulator_registration,
+)
 from app.models.instrument import (
     InstrumentCategory,
     InstrumentConnection,
@@ -72,7 +75,16 @@ def test_certfake_ce_five_piece_registration_contract_is_complete():
     parsed = CertFakeChannelEmulatorProfile.model_validate(CERTFAKE_CE_PROFILE)
 
     assert parsed.adapter == "certfake_ce"
+    assert CERTFAKE_CE_MANIFEST.schema_version == 3
     assert CERTFAKE_CE_MANIFEST.adapter_id == "certfake_ce"
+    assert {
+        item.source_type: item.support for item in CERTFAKE_CE_MANIFEST.asset_sources
+    } == {
+        "standard_3gpp": "implemented",
+        "custom_static": "not_implemented",
+        "vendor_file": "not_implemented",
+        "rt_dynamic": "not_implemented",
+    }
     assert {item.operation for item in CERTFAKE_CE_MANIFEST.operations} == set(
         CHANNEL_EMULATOR_OPERATIONS
     )
@@ -81,6 +93,10 @@ def test_certfake_ce_five_piece_registration_contract_is_complete():
         for item in CERTFAKE_CE_MANIFEST.operations
     )
     assert CertFakeChannelEmulatorDriver.adapter_manifest is CERTFAKE_CE_MANIFEST
+    validate_channel_emulator_registration(
+        CertFakeChannelEmulatorDriver,
+        model_name="Certification Fixture CE",
+    )
 
 
 def test_certfake_ce_manifest_and_driver_cover_the_same_operations():

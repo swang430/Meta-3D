@@ -541,6 +541,21 @@ def test_asset_source_is_checked_separately_from_load_mode_before_freeze_and_on_
             execution,
         )
     original_binding = execution.config[CE_FREEZE_CONFIG_KEY]
+    legacy_binding = {
+        **original_binding,
+        "resolved_binding": {
+            **original_binding["resolved_binding"],
+            "manifest": legacy_live_payload,
+        },
+    }
+    execution.config = {**execution.config, CE_FREEZE_CONFIG_KEY: legacy_binding}
+    with pytest.raises(ValueError, match="manifest v3"):
+        freeze_channel_emulator_execution_plan(
+            db,
+            _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(legacy_live_payload))),
+            execution,
+        )
+    execution.config = {**execution.config, CE_FREEZE_CONFIG_KEY: original_binding}
     execution.config = {
         **execution.config,
         CE_FREEZE_CONFIG_KEY: {

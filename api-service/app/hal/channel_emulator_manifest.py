@@ -587,6 +587,8 @@ def validate_channel_emulator_registration(
     manifest = getattr(driver_class, "adapter_manifest", None)
     if not issubclass(driver_class, ChannelEmulatorDriver) or not isinstance(manifest, ChannelEmulatorManifest):
         raise ValueError(f"{model_name}: channel emulator registration lacks a driver manifest")
+    if manifest.schema_version < 3:
+        raise ValueError(f"{model_name}: 新注册的 channel emulator 驱动必须声明 manifest v3")
     if manifest.model_name != model_name:
         raise ValueError(f"{model_name}: channel emulator manifest model_name mismatch")
     for item in manifest.operations:
@@ -611,8 +613,6 @@ def validate_channel_emulator_registration(
                 f"{model_name}: manifest claims {mode}=implemented but load_channel "
                 "has no effective dispatch path"
             )
-    if manifest.schema_version < 3:
-        return
     supported_modes = manifest.supported_load_modes()
     for source in manifest.asset_sources:
         if source.support != "implemented":

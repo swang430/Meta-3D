@@ -342,6 +342,22 @@ def test_registered_class_without_manifest_is_rejected(db, monkeypatch):
         resolve_channel_emulator_binding(db, _hal(driver), lab)
 
 
+def test_new_binding_rejects_registered_driver_with_historical_v2_manifest(db, monkeypatch):
+    _, _, _, lab = _configured(db)
+    legacy_payload = RealPropsimF64Driver.adapter_manifest.model_dump(mode="json")
+    legacy_payload["schema_version"] = 2
+    legacy_payload.pop("asset_sources")
+
+    class NewLegacyDriver(RealPropsimF64Driver):
+        adapter_manifest = ChannelEmulatorManifest.model_validate(legacy_payload)
+
+    driver = NewLegacyDriver("ce", {"ip_address": "192.0.2.10"})
+    _forbid_io(monkeypatch, driver)
+    monkeypatch.setattr(ceb, "get_real_driver_class", lambda *_args: NewLegacyDriver)
+    with pytest.raises(ValueError, match="manifest v3"):
+        resolve_channel_emulator_binding(db, _hal(driver), lab)
+
+
 def test_test_double_without_manifest_never_passes_as_a_driver(db):
     _, _, _, lab = _configured(db, driver_mode="auto")
 

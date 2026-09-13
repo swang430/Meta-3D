@@ -517,16 +517,14 @@ def validate_live_channel_emulator_asset_source(
     if load_request["source"] != "channel_asset":
         return
     frozen_manifest = _frozen_manifest_for_asset_source(execution_config)
-    if live_manifest is None and frozen_manifest is not None:
-        raise ValueError("channelEmulator asset source 缺少装载驱动 manifest")
     if live_manifest is None:
-        return  # 无驱动的历史只读路径保持原有分类
+        raise ValueError("channelEmulator asset source 待执行路径需要 live manifest v3")
     if frozen_manifest is not None and live_manifest.schema_version < 3:
         raise ValueError(
             "channelEmulator 冻结 manifest v3 资产来源不能由 live v1/v2 manifest 执行"
         )
     if live_manifest.schema_version < 3:
-        return
+        raise ValueError("channelEmulator asset source 待执行路径需要 live manifest v3")
     validate_channel_emulator_asset_source(
         manifest=live_manifest,
         source_type=load_request["channel_asset_source_type"],

@@ -976,6 +976,20 @@ def test_registration_rejects_claimed_operation_with_only_refusal_stub():
         validate_channel_emulator_registration(FalseStop, model_name="PROPSIM F64")
 
 
+def test_registration_rejects_new_driver_with_historical_v2_manifest():
+    legacy_payload = RealPropsimF64Driver.adapter_manifest.model_dump(mode="json")
+    legacy_payload["schema_version"] = 2
+    legacy_payload.pop("asset_sources")
+
+    class NewLegacyDriver(RealPropsimF64Driver):
+        adapter_manifest = ChannelEmulatorManifest.model_validate(legacy_payload)
+
+    with pytest.raises(ValueError, match="manifest v3"):
+        validate_channel_emulator_registration(
+            NewLegacyDriver, model_name="PROPSIM F64",
+        )
+
+
 def test_registration_rejects_implemented_stop_hidden_as_unsupported():
     class HiddenStop(RealPropsimF64Driver):
         adapter_manifest = RealPropsimF64Driver.adapter_manifest.model_copy(
