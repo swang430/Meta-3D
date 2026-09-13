@@ -10,8 +10,9 @@
   ``connect()`` 路径上回读进 ``connection_params`` 的运行期观测键。
   ``available_channel_models`` **不是**运行期键（外审 #451 R2 纠正）：它的 4 个写点全在
   API / 服务层（``api/instrument.py`` 操作员增删、``standard_channel_service.py`` SCD 关联
-  投影、``smu_project_inventory.py`` smu-sync 扫描），F64 ATE 模式无 MMEM/FTP 无法运行期
-  重新发现 —— 剔掉它会在切型号时清空操作员维护的模型清单。
+  投影、``smu_project_inventory.py`` smu-sync 扫描）。CAICT F8800A 历史实测
+  ``MMEM:CDIR?/CAT?`` 不支持且 FTP(21) 关闭；通用新版 PROPSIM 手册有 MMEM 命令，
+  不等于该机可运行期重新发现。剔掉此键会在切型号时清空操作员维护的模型清单。
   往这个集合加键前，先在 ``app/hal/`` 里找到 ``connect()`` 路径的写入点：
   ``tests/test_p2_58_2_channel_emulator_model_presets.py`` 的门会逐键要求这一点。
 """

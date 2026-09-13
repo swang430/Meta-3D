@@ -878,10 +878,14 @@ async def list_channel_models_endpoint(
     Source of truth (today): the operator's curated list in
     ``InstrumentConnection.connection_params['available_channel_models']``.
     We deliberately don't probe the F64 over SCPI/FTP because:
-    - F64 ATE Server doesn't expose MMEM SCPI (verified 2026-05-13);
+    - CAICT F8800A returned -100 for MMEM:CDIR?/CAT? in 2026-05-13
+      observations; generic PROPSIM User Reference Rev 10.2 §20.4.13
+      does list MMEM commands, so do not generalize the site result;
     - the CAICT chamber's F64 has its FTP service disabled.
 
-    See memory ``project_f64_ate_server_capabilities`` for the field reality.
+    See ``docs/site-debug/2026-05-13-summary.md`` and
+    ``api-service/tests/test_f64_channel_model_listing.py`` for the
+    historical site observation; it is not a current-device re-test.
 
     When ``items`` is empty:
     - ``reason="driver_not_loaded"`` — HAL hasn't bound a driver for this
@@ -919,7 +923,8 @@ async def list_channel_models_endpoint(
     # self._available_channel_models 快照, MockChannelEmulator 没 override 返回 [] —— 两者在
     # SCD associate / ChannelModelsCard add 更新 DB 后都 stale (smoke 2026-06-03 抓到:
     # associate 后 emulation_file 下拉 / ChannelModelsCard 看不到新条目)。且无 driver 做真正
-    # 动态发现 (F64 ATE Server 无 MMEM SCPI, FTP closed)。故统一读实时 DB connection_params。
+    # 动态发现 (CAICT 该机 MMEM:CDIR?/CAT? 历史实测 -100、FTP closed)。故统一读
+    # 实时 DB connection_params；通用手册 MMEM 命令不构成该机运行期能力证明。
     if driver is not None and not callable(getattr(driver, "list_channel_models", None)):
         return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
 

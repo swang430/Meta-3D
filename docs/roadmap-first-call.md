@@ -20,7 +20,7 @@ provenance 的真实 BaseStation 当前下行吞吐，其余缺测/模拟显式 
 merge `4ca4aba6`**：checked OpenAPI、generated TS 与手写 GUI 类型已精确镜像真实 CMW MAC `dimensions`，并由真实
 目录响应递归验约。已批准顺序（P1-76 → P2-68 → P2-69 → P2-70）已实施并合并到 **P2-70 / PR #475**；真机抽样仍由 P2-55 现场半签收。
 P1-77 与 P1-76 是显式记录了 **P3-23** 试行数据（验证复用、外审请求与等待）的功能片；
-P2-57 静态声明残项的[设计](plans/2026-09-13-p2-57-residual-manifest-design.md)与[实施记录](plans/2026-09-13-p2-57-residual-manifest-implementation.md)已成文；交付状态以对应 PR 为准。随 `.smu` 改变的拓扑仍独立待评估，
+P2-57 静态声明残项的[设计](plans/2026-09-13-p2-57-residual-manifest-design.md)与[实施记录](plans/2026-09-13-p2-57-residual-manifest-implementation.md)已成文，并由 PR #476 合并。随 `.smu` 改变的拓扑仍独立待评估，
 P2-63 继续 HOLD；本次 P2-57 工作不自动启动 P2-63 或现场项。
 复盘证据、反复发现缺陷的根因与回归分档建议见
 [2026-09-05 开发复盘与待办裁决](plans/2026-09-05-development-review-and-triage.md)。
@@ -57,7 +57,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-57 静态声明残项交付状态见对应 PR；P2-70 已由 PR #475 合并，不代表 P2-55 真机验收。**
+Current Focus（非现场）= P2-71 文件提供/版本调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧发布和字节验约仍待现场；P2-57 已由 PR #476 合并，P2-70 已由 PR #475 合并，不代表 P2-55 真机验收。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -711,7 +711,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账的交付状态见对应 PR，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 经用户启动，非现场调研见[结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)；设备侧发布/验约仍 Hardware Blocked，不自动开始实现。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样未验收。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -778,6 +778,7 @@ UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以�
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
 | P2-9 **现场半** | EMCenter switch bring-up | **2026-08-28 本地分类已收口，安全真值仍待现场**：VXI-11、机箱身份与继电器回读已于 08-27 人工接受；序列只对系统软件 2.5.1 的完整 `ERROR 3;(INTLK? SAFETYRELAY);` 原始回复精确归类为 `known_unsupported`，并保持 `UNDETERMINED`；其他近似值仍 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。现场若仍为已知不支持，只能留 UNKNOWN 证据；取得权威互锁 0 或独立可审计的安全状态证据后才关闭。TopologyEditor mapping 与真机切换仍是独立未完成项 |
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
+| **P2-71（设备半）** | **F64 `.smu` 常态发布、设备侧版本/字节验约与回滚** | 2024 通用 User Reference §20.4.13–14 列有 `MMEM` 文件命令，但 CAICT F8800A 历史实测 `MMEM:CDIR?` / `CAT?` 为 `-100`，FTP(21) 关闭；当前冻结/加载证明不了设备字节。原因未定，不能按通用手册上线自动发布；详见[调研结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md) | ⚠️ **能力分类半载体**：已有 [`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 的 `MMEM_CDIR/CAT` 可在独占维护窗口复核支持分类，但整个序列发送 `*CLS`、消耗错误队列且不保留查询原始回复；运行前保全已有错误证据，执行中禁用。**原始回复、文件取回/写入/替换均无 checked-in 受控诊断载体**，不得在临时脚本或正式 TestCase 试探。先独立设计安全载体，再谈设备字节认证；本地/文档调研不关闭本行 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_sim_identity_truth`](../api-service/app/diagnostics/sequences/uxm_sim_identity_truth.py) —— `UEReported:IMSI?` 与 SIMProfile 对账，四出口脱敏 |
 | **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | **2026-08-28 本地半完成，现场 SUCCESS 仍待复验**：序列不再采信人工 `outputs`、驱动旧缓存或 `SYSTem:INFO?` 通道数；每次按手册实时读取 `MODEL:INFO?` 与各组 `GROUP:OUTPUTS:GET?` 并交叉核对，只查询当前活动物理输出口。未进入活动集合的硬件口不探测、不阻塞；两个拓扑来源矛盾时保持 UNDETERMINED | ✅ 载体：[`propsim_f64_output_level_windows`](../api-service/app/diagnostics/sequences/propsim_f64_output_level_windows.py)；回现场加载同一场景后重跑并取得 SUCCESS 才关闭 |
@@ -4064,7 +4065,7 @@ TopologyEditor mapping 与真机切换仍按原 P2-9 范围另行完成，不阻
 
 | Step | Subject | 本地/现场 |
 |------|---------|----------|
-| 1 🔄 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) — **本地半 done (#116)**: inventory 加频率元数据 (`center_frequency_mhz` + `nr_arfcn`, 从文件名 token 解析或 config 显式给), 从"名字清单"变"带频率的资产盘点", 服务 emulation_file 选择 (.smu↔TestCase 频率匹配, P2-11 Phase 2)。`parse_smu_center_freq_mhz` 抽共享 (propsim 回读 + inventory 同源)。剩: F64 MMEM 不可用 → 动态发现 blocked, **现场 .smu 资产盘点**填 config | 现场盘点 + 本地 API |
+| 1 🔄 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) — **本地半 done (#116)**: inventory 加频率元数据 (`center_frequency_mhz` + `nr_arfcn`, 从文件名 token 解析或 config 显式给), 从"名字清单"变"带频率的资产盘点", 服务 emulation_file 选择 (.smu↔TestCase 频率匹配, P2-11 Phase 2)。`parse_smu_center_freq_mhz` 抽共享 (propsim 回读 + inventory 同源)。剩: CAICT F8800A 历史实测 `MMEM:CDIR?/CAT?` 不支持，设备侧动态发现 blocked；通用手册有 MMEM 命令但不证明该机可用，**现场 .smu 资产盘点**仍填 config，详见 P2-71 调研 | 现场盘点 + 本地 API |
 | 2 🔄 | 外部输出端口精细配置: 输出电平/功率 method (超出当前 loss 补偿) + 物理路由 OUTP:CON 接入 topology — **本地 driver 框架 done (#125)**: per-output `set_output_path_loss` (单通道, vs batch set_path_loss) + `set_output_gain` (支持正增益, vs set_external_attenuators 强制衰减)。剩: OUTP:CON connector 路由 method + topology 集成 (待 topology 语义) + 现场验 | 本地 driver + 现场验 |
 | 3 🔄 | user alignment cal 刷新策略: 何时重标 (温度/时间漂移) + readiness 上报 + 漂移监控 — **本地框架 done (#125)**: `alignment_freshness` 解析 INFO? 标定日期 (实测 DD.MM.YYYY 格式) + `alignment_max_age_days` 阈值 → fresh/stale/unknown; precheck 上报 + stale warning 建议重标。剩: 现场确认 INFO 格式全集 + 漂移监控 (关联 operating-point backlog) | 本地框架 + 现场真值 |
 
@@ -5162,17 +5163,21 @@ CMW 手册表 2-32/2-37/2-38，经用户批准已实现两个 FDD 20 MHz 固定 
 真实抽样仍由 P2-55 现场半签收。正式 schema/GUI 扩域是后续设计决定，须同时打通驱动、compatibility、
 回读和正式消费者；不能只改 Literal。P2-69 不依赖本项，按顶部顺序先处理已复现故障。
 
-### P2-71 — F64 文件常态化提供与版本控制调研（待调研，不自动启动）
+### P2-71 — F64 文件常态化提供与版本控制调研（非现场调研完成；设备半 Blocked）
 
 **问题边界**：P1-78 只纠正正式执行不应依赖开发机 SMB 副本，并不回答 `.smu` 文件如何稳定到达
 F64、如何核对设备侧版本、如何处理替换/回滚，以及 F64 在正常运行中实际提供哪些受支持的文件管理
 能力。当前仓库证据只足以使用已存在的仪器侧 Windows 路径，不足以发明传输协议或远程查询。
 
-**调研出口**：先以 PROPSIM F64 手册和真实设备能力为准，列出已有 SCPI/厂商工具支持的文件
-上传、列举、校验、激活、版本标识与并发限制；再决定文件制品、部署责任、冻结身份和回滚策略。
-若手册不支持远程传输或内容摘要，必须显式保留人工 provision/现场核验边界，不能把 SMB 副本摘要
-包装成设备侧证明。调研完成前不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 的正式依赖，
-也不得新增或猜测 SCPI。本项不在当前批准执行顺序中。
+**调研出口与结论（2026-09-13）**：用户已明确启动 P2-71；[调研计划](plans/2026-09-13-p2-71-f64-file-provisioning-plan.md)
+与[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)逐项对账手册、NotebookLM 原文定位、
+CAICT 历史现场和现行软件。通用 User Reference Rev 10.2 §20.4.13 有 `MMEM:CAT?`、`MMEM:DATA[?]`
+等文件命令，不能继续笼统说“PROPSIM F64 手册无 MMEM”；但该机历史实测两条 `MMEM` 查询不支持，
+FTP 关闭，`MMEM:DATA[?]`/设备字节摘要没有该机真机证据。当前维持操作员预先提供仪器侧路径，
+沿用现有 SCPI 加载/运行证据，**不宣称设备侧字节等于离线 `smu_project_truth.sha256`**。
+版本包、独立设备字节验约和回滚仅为有门槛的后续候选；设备半列入上方 Hardware Blocked。
+不得把 SMB 恢复成 Readiness、执行冻结或 MEASURE 正式依赖，不新增/猜测 SCPI，也不因调研文档
+将当前设备升级为支持自动发布。没有新批准与受控诊断载体前，不自动启动该实现片。
 
 ### P2-72 — 仪器配置保存后按类别激活 HAL（✅ PR #466）
 
@@ -5364,7 +5369,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | CE 损坏 certification 使仪器目录返回空（#458 / 3938243884） | → **P2-68** | 当前 main 构造复现；修产品可见故障，不是清数据库 |
 | MAC dimensions 缺 checked OpenAPI/TS 契约 | ✅ **P2-69 / PR #473** | checked OpenAPI/TS 镜像已补齐，真实 CMW 目录响应递归验约通过 |
 | TM1/1 天线现场抽样的载体缺口 | → **P2-70** + P2-55 现场半 | P2-70 本地诊断载体已实现，本地验证完成，交付状态见 PR；正式 schema 仍 TM3/2 层，真机两个样本仍待签收 |
-| SMB 只读副本被误作 F64 正式运行依赖 | → **P1-78** + **P2-71** | P1-78 移除 Readiness/freeze/MEASURE 的 SMB 前置条件；设备侧文件常态提供与版本控制另行调研，不自动启动 |
+| SMB 只读副本被误作 F64 正式运行依赖 | → **P1-78** + **P2-71** | P1-78 已移除 Readiness/freeze/MEASURE 的 SMB 前置条件；P2-71 非现场研究已厘清手册 MMEM 与 CAICT 实测差异，设备侧发布/字节版本/回滚仍 Hardware Blocked，不能自动启动实现 |
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
 | P2-57 静态声明残项 / `.smu` 拓扑 | → **P2-57 残项交付状态见 PR；拓扑另片待评估** | 静态 source-type 四格与注册对账见 2026-09-13 设计；P2-59～62 逐次证据机制不重复建设。按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest；当前 parser 只解析中心频率，拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
@@ -5388,7 +5393,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 ### 2026-08-30 BaseStation TestCase × Adapter 兼容性复盘（已 triage）
 
-- `[discovered 2026-09-03 during P2-58 ① 立项]` **`.smu` 拓扑解析 + `ChannelAsset` 拓扑字段 + resolver 离线校验（P2）** —— 用户提供的真实 `.smu`（已收进 `api-service/tests/fixtures/smu/`）证实端口/通道数是 `[Input N]`/`[Output N]`/`[Channel N]` **节的个数**，且每节带**物理连接器号**（本样本输出为 `COMMON 3,4,1,2`，不是 1..4）。它随 .smu 变，**不能进 per-driver 的 manifest**（第一份 asset 就让它过期；`propsim_f64.py:1179` 已有「声明 vs `MODEL:INFO?` 回读」的 fail-loud 门，再加就是第三份声明）。正确归属是 **ChannelAsset**（今天无任何拓扑字段），让 P2-58 的 resolver 能零仪器 I/O 校验 asset↔binding。`app/hal/smu_project.py` 已有同形态的逐行状态机（只解析 `CenterFrequency`），扩起来直接。**动手前欠两样**：① **OTA 形态样本**（本样本是 2×2 双向实验室模型 4/4/8，OTA 是 4/128/32，一份样本推不出节结构不变量）；② **`Direction` 键的手册裁决**（样本里 `Direction = UPLINK` 而 `Group name = Downlink`、`[Link 0]` 证明功能上是下行 —— 按 `Direction` 判 DL/UL 会全判反，属厂商语义，须查 PROPSIM NotebookLM）。拓扑字段只能是**可选**的：F64 ATE Server 无 MMEM/FTP，.smu 仅操作员上传副本时才有。这是 P2-57 拍板原文里「附通道/端口基数」那半的正确出口（P2-57 未交付，见其条目）。
+- `[discovered 2026-09-03 during P2-58 ① 立项]` **`.smu` 拓扑解析 + `ChannelAsset` 拓扑字段 + resolver 离线校验（P2）** —— 用户提供的真实 `.smu`（已收进 `api-service/tests/fixtures/smu/`）证实端口/通道数是 `[Input N]`/`[Output N]`/`[Channel N]` **节的个数**，且每节带**物理连接器号**（本样本输出为 `COMMON 3,4,1,2`，不是 1..4）。它随 .smu 变，**不能进 per-driver 的 manifest**（第一份 asset 就让它过期；`propsim_f64.py:1179` 已有「声明 vs `MODEL:INFO?` 回读」的 fail-loud 门，再加就是第三份声明）。正确归属是 **ChannelAsset**（今天无任何拓扑字段），让 P2-58 的 resolver 能零仪器 I/O 校验 asset↔binding。`app/hal/smu_project.py` 已有同形态的逐行状态机（只解析 `CenterFrequency`），扩起来直接。**动手前欠两样**：① **OTA 形态样本**（本样本是 2×2 双向实验室模型 4/4/8，OTA 是 4/128/32，一份样本推不出节结构不变量）；② **`Direction` 键的手册裁决**（样本里 `Direction = UPLINK` 而 `Group name = Downlink`、`[Link 0]` 证明功能上是下行 —— 按 `Direction` 判 DL/UL 会全判反，属厂商语义，须查 PROPSIM NotebookLM）。拓扑字段只能是**可选**的：CAICT F8800A 历史实测 `MMEM:CDIR?/CAT?` 不支持、FTP(21) 关闭，当前只在操作员提供工程副本时能离线解析；通用手册的 MMEM 命令不能推成该机可用。这是 P2-57 拍板原文里「附通道/端口基数」那半的独立出口（P2-57 静态声明残项已由 PR #476 合并，不含本拓扑解析）。
 - `[discovered 2026-09-04 during P2-58 ② Agent H 落地]` **BaseStation preset 回填迁移 `f2a4c6e8b0d1` 在 SQLite 下写出非规范 UUID 键（P3，生产 PG 不受影响）** —— `postgresql.UUID(as_uuid=True)` 列经裸 `sa.text SELECT` 在 SQLite 回来的是 32-hex 无连字符字串，迁移直接 `str(...)` 当 `base_station_model_presets` 的键，而 `parse_base_station_model_presets` 要求键 `== str(UUID)`（带连字符）→ 该库上回填出的 map 会让 parse 抛错。BS 那条迁移门（`tests/` 只查源码 token）是**存在性门**，从未真跑过回填，所以三周没暴露；CE 的同形迁移 `a3c5e7f9b1d3` 已用 `str(uuid.UUID(str(raw)))` 规范化并有真跑门（变异实证照抄 BS 写法会红）。修法：BS 迁移加同一规范化（一行）+ 把 BS 迁移门升成真跑门。⑦ 判据下不在 P2-58 ② 修（不改它，② 的可观察故障仍在）。注意：只影响 SQLite（测试/本地），生产 PG 原生 UUID 无此形态。
 - `[discovered 2026-09-03 during P2-58 ① 内审 F1]` **CE 冻结件复用时不对照当前 HAL 驱动 —— 多相位 commissioning 相位间隙换驱动照样跑（P2）** —— `app/services/channel_emulator_binding.py` `freeze_channel_emulator_binding` 的「已存在」分支只做结构自洽校验（digest 重算相等），**不接 `hal`**；`commissioning.py` `_freeze_instrument_lease` 的 `_validate` / `validation_identity` 也只装 baseStation / positioner 校验器。内审探针实跑：`POST /sessions` 时 HAL 装 F64@.50 → 冻结通过 → 行回 `pending` → HAL reload 被放行（`hal_reload_policy.py:111` 只拦 `running` 与 VRT `paused`）→ 装载变成 F64@.51 / mock / 无 CE 三种情形 → `run-phase MIMO_OTA_MEASURE` **三种全部复用旧冻结件通过**，随后 MEASURE 用 `hal.drivers["channelEmulator"]` 对另一台仪器下发；而同一状态下直接 `resolve_channel_emulator_binding` 会拒「驱动连接身份 / transport 与所选连接不一致」。BaseStation 同位置有 `validate_frozen_base_station_before_remote(hal, existing)`（`base_station_adapter_profile.py:193`），CE 没镜像。不产假数据（mock 换入仍由 provenance 标 simulated）故 P2 不 P1；改前什么都不查，Y ≤ X。修法：**镜像 BS** —— 已存在分支用冻结件的 `expected_driver_module/name` + `expected_driver_connection` + simulated 与当前 `hal` 零 I/O 对照，不重算 digest（与「二次调用不得再解析」的门不冲突）；顺带把 CE digest 并进 `_freeze_instrument_lease` 的 `validation_identity`。P2-58 ① 按 ⑤（审查轮不加机制）未修。
 - `[discovered 2026-09-03 during P2-58 ① 立项 / Agent F 枚举]` **[→ P1-76 已收口] 监控品类键错配导致固定假读数** —— P1-76 没有把旧三仪表分支机械改成 camelCase：实时监控已删除固定/随机 fallback，只读取权威 BaseStation 的当前下行吞吐，并要求 `kpi_valid.dl_throughput_current=true`、有限非负值和明确 `pcell` / `nr_all_cells` scope；Channel Emulator 与 Signal Analyzer 不再被当作吞吐/SNR/EIRP/温度的替代真值。其余 snake/camel 兼容分支不属于监控故障，只有出现独立可观察故障并完成写方/消费方二次枚举后才能另行 triage，不沿用本条旧修法批量修改。

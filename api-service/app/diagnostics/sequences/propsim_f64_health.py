@@ -164,12 +164,11 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("CAL_USER_INFO",      "SYSTem:CALIBration:USER:INFO?",    False, "user calibration metadata"),
     # External units — SGH discovery, required for path-loss across SGH.
     ("EXT_UNIT_LIST",      "SYSTem:EXTernal:UNIT:LIST? 0",     False, "connected external units (SGH)"),
-    # Mass-memory subsystem — required if we want to list available .smu
-    # channel-model files on the F64's local disk (GUI dropdown of
-    # operator-selectable models, instead of typing a path). FS16 already
-    # supports these; F64 same firmware family is expected to as well,
-    # but we've never verified on a real F64 — this probe row is the
-    # verification step.
+    # Mass-memory capability observation only. User Reference Rev 10.2
+    # §20.4.13 lists these queries, but CAICT F8800A returned -100 for both
+    # in 2026-05-13 site records; no generic-F64 capability inference.
+    # These query rows do not turn GUI inventory into runtime discovery;
+    # the surrounding health sequence sends *CLS and drains SYST:ERR?.
     ("MMEM_CDIR",          "MMEM:CDIR?",                       False, "current mass-memory working directory"),
     ("MMEM_CAT",           "MMEM:CAT?",                        False, "directory listing (used,free,\"name,type,size\",...)"),
     # P1-66: 原 INT_LIST 行 (`OUTPut:INTERFerence:LIST?`) 已删 —— 该命令手册

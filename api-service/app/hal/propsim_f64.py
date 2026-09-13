@@ -681,12 +681,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._current_model: Optional[str] = None
         self._current_scenario: Optional[str] = None
 
-        # 操作员维护的可选信道模型清单 (CAICT 现场验证: F64 SCPI 不支持
-        # MMEM, FTP 在这台 F64 上未启用 — 不能动态发现 D:\User Emulations
-        # 下有哪些 .smu/.rtc 文件. 操作员把文件名列在 InstrumentConnection.
-        # connection_params['available_channel_models'] 里, GUI 下拉框拉这
-        # 个清单). 等 F64 那边启了 FTP 或者我们走通 SMB 之后, 这个 field
-        # 由动态发现取代, 但 API 接口形态不变.
+        # 操作员维护的可选信道模型清单。CAICT F8800A 历史实测
+        # MMEM:CDIR?/CAT? 返回 -100、FTP(21) 关闭，不能实时发现
+        # D:\User Emulations 文件；通用新版手册有 MMEM 命令但不证明该机支持。
+        # 文件名由操作员列在 InstrumentConnection.connection_params
+        # ['available_channel_models']，GUI 下拉消费；开发 SMB 扫描不是正式
+        # 运行期发现或设备侧版本验约（P2-71 调研）。
         # 每条可以是 str (只有文件名) 或 dict {filename, label, description}.
         self._available_channel_models: List[Any] = (
             config.get("available_channel_models") or []
@@ -2779,7 +2779,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def _parse_loaded_center_freq_mhz(self) -> Optional[float]:
         """已加载 .smu 的**文件名** loose 频率 (P1-18 ⚠: 只可作提示不可作真值 ——
         文件名是场景族标称, 系统性说谎, 实录 UMa_3600M 工程实为 3549.99; 工程内
-        真值解析见 ``smu_project``, 但 ATE 无 MMEM/FTP 拿不到工程文件, 运行时
+        真值解析见 ``smu_project``；CAICT 该机历史实测两条 MMEM 查询不支持且
+        FTP(21) 关闭，当前运行路径不取回工程文件，
         只能在未显式下发时以此作 get_frequency_identity 的降级参考)。
 
         复用 nr_arfcn.parse_smu_center_freq_mhz (P2-10 Step 1 抽共享) —— 跟 channel model
