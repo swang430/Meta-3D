@@ -27,6 +27,7 @@ from app.hal.channel_emulator_manifest import (
     channel_emulator_manifest_for,
     channel_emulator_manifest_of,
     channel_emulator_operation_names,
+    validate_channel_emulator_registration,
 )
 from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.propsim_fs16 import RealPropsimFs16Driver
@@ -958,6 +959,50 @@ def test_v2_manifest_has_no_asset_source_field_and_keeps_original_payload():
                 source_type="standard_3gpp", support="implemented", reason="test",
             ).model_dump()
         ]})
+
+
+def test_registration_rejects_claimed_operation_with_only_refusal_stub():
+    class FalseStop(RealPropsimF64Driver):
+        async def stop_emulation(self):
+            raise NotImplementedError("not implemented")
+
+    with pytest.raises(ValueError, match="stop_emulation"):
+        validate_channel_emulator_registration(FalseStop, model_name="PROPSIM F64")
+
+
+def test_registration_rejects_source_without_its_load_mode():
+    class FalseSource(RealPropsimF64Driver):
+        adapter_manifest = RealPropsimF64Driver.adapter_manifest.model_copy(
+            update={"load_modes": tuple(
+                item.model_copy(update={"support": "not_implemented"})
+                if item.mode == "external_waveform" else item
+                for item in RealPropsimF64Driver.adapter_manifest.load_modes
+            )}
+        )
+
+    with pytest.raises(ValueError, match="standard_3gpp.*external_waveform"):
+        validate_channel_emulator_registration(FalseSource, model_name="PROPSIM F64")
+
+
+def test_registered_ce_classes_are_checked_before_registry_is_cached(monkeypatch):
+    import app.services.instrument_hal_service as hal_service
+    from app.hal.channel_emulator import MockChannelEmulator
+
+    for driver in (RealPropsimF64Driver, RealPropsimFs16Driver, MockChannelEmulator):
+        validate_channel_emulator_registration(
+            driver, model_name=driver.adapter_manifest.model_name,
+        )
+    monkeypatch.setattr(hal_service, "_REAL_DRIVER_REGISTRY_CACHE", None)
+    original = hal_service.validate_channel_emulator_registration
+    checked = []
+
+    def _record(driver, *, model_name):
+        checked.append(model_name)
+        return original(driver, model_name=model_name)
+
+    monkeypatch.setattr(hal_service, "validate_channel_emulator_registration", _record)
+    hal_service._real_driver_registry()
+    assert checked == ["PROPSIM F64", "PROPSIM FS16"]
 
 
 # --------------------------------------------------------------------------

@@ -22,6 +22,9 @@
 from __future__ import annotations
 
 import re
+import ast
+import inspect
+import textwrap
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_serializer, model_validator
@@ -462,3 +465,68 @@ def channel_emulator_manifest_for(
             for name in CHANNEL_EMULATOR_OPERATIONS
         ),
     )
+
+
+def _is_pure_refusal(owner: type, operation: str) -> bool:
+    """Only a lone ``raise NotImplementedError`` is a non-implementation."""
+
+    source = textwrap.dedent(inspect.getsource(owner))
+    class_node = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == owner.__name__
+    )
+    method = next(
+        (node for node in class_node.body
+         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and node.name == operation), None,
+    )
+    if method is None:
+        return False
+    body = method.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Raise):
+        return False
+    exc = body[0].exc
+    return (
+        isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
+        or isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name)
+        and exc.func.id == "NotImplementedError"
+    )
+
+
+def validate_channel_emulator_registration(
+    driver_class: type, *, model_name: str,
+) -> None:
+    """Pure class check before publishing a CE driver; never creates/connects hardware."""
+
+    from app.hal.channel_emulator import ChannelEmulatorDriver
+    from app.hal.channel_emulator_execution_plan import requested_channel_emulator_load_mode
+    from app.services.mimo_ota.channel_asset_resolver import engine_mode_for_channel_asset_source_type
+
+    manifest = getattr(driver_class, "adapter_manifest", None)
+    if not issubclass(driver_class, ChannelEmulatorDriver) or not isinstance(manifest, ChannelEmulatorManifest):
+        raise ValueError(f"{model_name}: channel emulator registration lacks a driver manifest")
+    if manifest.model_name != model_name:
+        raise ValueError(f"{model_name}: channel emulator manifest model_name mismatch")
+    for item in manifest.operations:
+        if item.support != "implemented":
+            continue
+        owner = next((cls for cls in driver_class.__mro__ if item.operation in cls.__dict__), None)
+        if owner is None or owner is ChannelEmulatorDriver or _is_pure_refusal(owner, item.operation):
+            raise ValueError(
+                f"{model_name}: manifest claims {item.operation}=implemented but driver has only a refusal stub"
+            )
+    if manifest.schema_version < 3:
+        return
+    supported_modes = manifest.supported_load_modes()
+    for source in manifest.asset_sources:
+        if source.support != "implemented":
+            continue
+        engine_mode = engine_mode_for_channel_asset_source_type(source.source_type)
+        load_mode = requested_channel_emulator_load_mode(engine_mode)
+        if load_mode not in supported_modes:
+            raise ValueError(
+                f"{model_name}: asset source {source.source_type} claims implemented "
+                f"but requested load mode {load_mode} is not implemented"
+            )
