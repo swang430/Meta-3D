@@ -590,7 +590,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # ── F64R-2: 拓扑**人工声明**兜底 (bring-up 绕过开关) ──
         # 回读永远优先; 只有**回读不到**时才用这里声明的值 (并打 WARNING)。
         # 为什么必须有: `GROUP:*` / `MODEL:INFO?` 这几条**没在真机验过**, 而本项目实证
-        # 过"手册里有、这台机器回 -100 命令不存在"(MMEM/FTP/*OPT?)。若真机不支持, 路损/
+        # 过"手册有命令、该机某些查询回 -100"(MMEM:CDIR?/CAT?、*OPT?)；
+        # FTP(21) 关闭是另一个独立观测。若真机不支持, 路损/
         # 增益/多普勒/CENT 会全线 fail-loud 且**现场无解** —— 输入侧还能用 input_ports
         # 显式传, 输出侧一个口子都没有。这违反项目铁律「新增 fail-loud 门必须同步给
         # bring-up 绕过开关」(memory strict-gate-extend-bypass-toggle)。
