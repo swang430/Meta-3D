@@ -2,9 +2,11 @@
 
 Stage 1 source of truth for the F64 channel-model list is the operator-
 curated ``InstrumentConnection.connection_params['available_channel_models']``
-in the DB, not a live SCPI/FTP query (F64 ATE Server has no MMEM, and
-the CAICT chamber unit's FTP is closed — see memory
-`project_f64_ate_server_capabilities`).
+in the DB, not a live SCPI/FTP query: CAICT F8800A 的历史记录中，
+``MMEM:CDIR?`` / ``MMEM:CAT?`` 返回 ``-100``，FTP(21) 关闭；通用
+PROPSIM User Reference Rev 10.2 §20.4.13 列有 MMEM 命令，不证明
+该机当前可用。见 ``docs/site-debug/2026-05-13-summary.md`` 与
+``tests/test_f64_channel_model_listing.py`` 的历史说明。
 
 Pre-fix: the endpoint short-circuited to ``driver_not_loaded`` whenever
 HAL hadn't bound a driver — so the operator couldn't see the curated

@@ -117,7 +117,8 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("SIMU_MODEL_STATIC",  "DIAG:SIMU:MODEL:STATIC?",          True,  "static bypass mode"),
     # F64R-2 拓扑回读五条 —— 现在是**所有端口写操作的硬前置**(路损/增益/输入电平/CENT/
     # 多普勒 拿不到真实端口号就一律 fail-loud)。这台机器上万一不支持(手册有、固件回
-    # -100 的情况本项目实证过: MMEM/FTP/*OPT?), 不探就只能等测试步骤炸掉才发现。
+    # -100 的情况本项目实证过: MMEM:CDIR?/CAT?、*OPT?；FTP(21) 则为端口关闭),
+    # 不探就只能等测试步骤炸掉才发现。
     # **is_critical=True**: 未加载仿真时回 -200, `_categorize_status` 归
     # SUPPORTED_BUT_STATE → step_ok=True, **不会**因"自检时没加载仿真"误报; 真正被
     # critical 抓住的只有 -100/-113 = 固件里根本没这条命令, 那正是必须当场亮红的情况。
@@ -164,12 +165,11 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("CAL_USER_INFO",      "SYSTem:CALIBration:USER:INFO?",    False, "user calibration metadata"),
     # External units — SGH discovery, required for path-loss across SGH.
     ("EXT_UNIT_LIST",      "SYSTem:EXTernal:UNIT:LIST? 0",     False, "connected external units (SGH)"),
-    # Mass-memory subsystem — required if we want to list available .smu
-    # channel-model files on the F64's local disk (GUI dropdown of
-    # operator-selectable models, instead of typing a path). FS16 already
-    # supports these; F64 same firmware family is expected to as well,
-    # but we've never verified on a real F64 — this probe row is the
-    # verification step.
+    # Mass-memory capability observation only. User Reference Rev 10.2
+    # §20.4.13 lists these queries, but CAICT F8800A returned -100 for both
+    # in 2026-05-13 site records; no generic-F64 capability inference.
+    # These query rows do not turn GUI inventory into runtime discovery;
+    # the surrounding health sequence sends *CLS and drains SYST:ERR?.
     ("MMEM_CDIR",          "MMEM:CDIR?",                       False, "current mass-memory working directory"),
     ("MMEM_CAT",           "MMEM:CAT?",                        False, "directory listing (used,free,\"name,type,size\",...)"),
     # P1-66: 原 INT_LIST 行 (`OUTPut:INTERFerence:LIST?`) 已删 —— 该命令手册

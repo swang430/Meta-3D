@@ -213,14 +213,15 @@ class ChannelEmulatorDriver(InstrumentDriver):
         Each entry: ``{filename, label, description, type}``.
 
         Implementation note — *not* runtime file discovery on the
-        instrument: the F64's ATE Server doesn't expose MMEM SCPI for
-        directory listing, and FTP isn't always running on chamber-side
-        units (verified at CAICT 2026-05-13 — F64 0.132 has FTP closed).
+        instrument: CAICT F8800A historically returned -100 for
+        ``MMEM:CDIR?/CAT?`` and had FTP(21) closed (2026-05-13). Generic
+        PROPSIM User Reference Rev 10.2 §20.4.13 lists MMEM commands, but
+        their presence in a manual does not certify this particular unit.
         So the default behaviour is to surface a user-curated list from
         ``connection_params['available_channel_models']`` instead of
         scraping the device. Drivers with a usable file-listing channel
-        (SMB, working FTP, vendor REST API) may override this to do
-        dynamic discovery.
+        may override this only after device-specific capability/safety
+        verification. Development SMB scan is not formal runtime discovery.
 
         Returns the empty list when nothing is configured.
         """

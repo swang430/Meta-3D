@@ -1,10 +1,10 @@
 """RealPropsimF64Driver.list_channel_models() — operator-curated model list.
 
-CAICT 2026-05-13 verified that the F64's ATE Server doesn't expose MMEM
-SCPI (``MMEM:CDIR?`` / ``MMEM:CAT?`` return ``-100,"ATE command not
-supported"``) AND the FTP service is closed on the chamber's F64. We
-can't dynamically discover .smu / .rtc files on the F64's local disk
-right now. Stage 1: operator-curated list in
+CAICT 2026-05-13 历史记录仅证明这台 F8800A 的 ``MMEM:CDIR?`` /
+``MMEM:CAT?`` 返回 ``-100,"ATE command not supported"``，且 FTP(21)
+关闭；通用 PROPSIM User Reference Rev 10.2 §20.4.13 仍列有 MMEM
+文件命令，不能推广成所有 F64 都不支持。当前运行路径无法动态盘点该机
+本地 .smu / .rtc 文件；Stage 1 使用操作员维护的
 ``InstrumentConnection.connection_params['available_channel_models']``.
 
 These tests pin the normalisation behaviour of

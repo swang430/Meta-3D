@@ -6,7 +6,9 @@
 UMa_1800M → 1842.50 / UMa_2450M → 2592.99), 只可作 loose 提示
 (``nr_arfcn.parse_smu_center_freq_mhz``); 本模块给出可作登记真值的工程内声明。
 
-消费方 (离线路径 —— F64 ATE Server 无 MMEM/FTP, 运行时拉不到工程文件):
+消费方 (离线路径 —— CAICT F8800A 历史实测 MMEM:CDIR?/CAT? 返回 -100、
+FTP(21) 关闭；通用 PROPSIM User Reference Rev 10.2 §20.4.13 虽列出
+MMEM:DATA?，不能据此推定该机可运行期取回工程文件):
 - 资产登记 / 审计脚本 (P2-18 资产真值自动化的地基, 替代 onsite 脚本硬表);
 - 操作员上传工程副本时的 SCD 声明校验。
 
