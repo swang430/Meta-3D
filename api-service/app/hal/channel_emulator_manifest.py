@@ -22,9 +22,12 @@
 from __future__ import annotations
 
 import re
+import ast
+import inspect
+import textwrap
 from typing import Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_serializer, model_validator
 
 
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -79,7 +82,7 @@ def channel_emulator_manifest_operations_for_schema(
 
     if schema_version == 1:
         return CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
-    if schema_version == 2:
+    if schema_version in (2, 3):
         return CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
     raise ValueError(
         f"unsupported channel emulator manifest schema_version: {schema_version!r}"
@@ -121,6 +124,32 @@ ChannelEmulatorLoadMode = Literal[
     "external_waveform",
     "parametric_tdl",
 ]
+
+CHANNEL_EMULATOR_ASSET_SOURCE_TYPES: tuple[str, ...] = (
+    "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic",
+)
+ChannelEmulatorAssetSourceType = Literal[
+    "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic",
+]
+
+
+class ChannelEmulatorAssetSourceCapability(BaseModel):
+    """静态资产来源支持声明；不代表一次加载已生效或可作正式证据。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_type: ChannelEmulatorAssetSourceType
+    support: Literal["implemented", "not_implemented", "not_applicable"]
+    reason: str
+    source_reference: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_non_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("asset source capability reason must be non-blank")
+        return normalized
 
 
 class ChannelEmulatorOperationCapability(BaseModel):
@@ -168,12 +197,20 @@ class ChannelEmulatorManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     adapter_id: str
     model_name: str
     vendor: str
     load_modes: tuple[ChannelEmulatorLoadModeCapability, ...]
     operations: tuple[ChannelEmulatorOperationCapability, ...]
+    asset_sources: tuple[ChannelEmulatorAssetSourceCapability, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def _serialize_by_schema(self, handler):
+        payload = handler(self)
+        if self.schema_version < 3:
+            payload.pop("asset_sources", None)
+        return payload
 
     @field_validator("adapter_id")
     @classmethod
@@ -210,6 +247,23 @@ class ChannelEmulatorManifest(BaseModel):
         modes = [item.mode for item in self.load_modes]
         if len(set(modes)) != len(modes):
             raise ValueError("channel emulator load modes must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _asset_sources_match_schema(self) -> "ChannelEmulatorManifest":
+        if self.schema_version < 3:
+            if "asset_sources" in self.model_fields_set:
+                raise ValueError("asset source declarations require manifest v3")
+            return self
+        declared = tuple(item.source_type for item in self.asset_sources)
+        if (
+            len(declared) != len(CHANNEL_EMULATOR_ASSET_SOURCE_TYPES)
+            or set(declared) != set(CHANNEL_EMULATOR_ASSET_SOURCE_TYPES)
+        ):
+            raise ValueError(
+                "channel emulator asset source vocabulary mismatch: "
+                f"expected={CHANNEL_EMULATOR_ASSET_SOURCE_TYPES}, actual={declared}"
+            )
         return self
 
     # ------------------------------------------------------------------
@@ -255,6 +309,24 @@ class ChannelEmulatorManifest(BaseModel):
     def supported_load_modes(self) -> tuple[str, ...]:
         return tuple(
             item.mode for item in self.load_modes if item.support == "implemented"
+        )
+
+    def implements_asset_source(self, source_type: str) -> bool:
+        if source_type not in CHANNEL_EMULATOR_ASSET_SOURCE_TYPES:
+            raise ValueError(f"unknown channel emulator asset source: {source_type!r}")
+        return any(
+            item.source_type == source_type and item.support == "implemented"
+            for item in self.asset_sources
+        )
+
+    def asset_source_rejection(self, source_type: str) -> str | None:
+        if self.implements_asset_source(source_type):
+            return None
+        item = next((item for item in self.asset_sources if item.source_type == source_type), None)
+        return (
+            f"{self.model_name} 不支持资产来源 {source_type}（{item.support}）：{item.reason}"
+            if item else
+            f"{self.model_name} 的 manifest v{self.schema_version} 未声明资产来源 {source_type}"
         )
 
 
@@ -396,3 +468,159 @@ def channel_emulator_manifest_for(
             for name in CHANNEL_EMULATOR_OPERATIONS
         ),
     )
+
+
+def _is_pure_refusal(owner: type, operation: str) -> bool:
+    """仅以单独抛出 ``NotImplementedError`` 的方法视为未实现。"""
+
+    source = textwrap.dedent(inspect.getsource(owner))
+    class_node = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == owner.__name__
+    )
+    method = next(
+        (node for node in class_node.body
+         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and node.name == operation), None,
+    )
+    if method is None:
+        return False
+    body = method.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Raise):
+        return False
+    exc = body[0].exc
+    return (
+        isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
+        or isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name)
+        and exc.func.id == "NotImplementedError"
+    )
+
+
+def _dispatched_load_modes(driver_class: type) -> set[str]:
+    """仅凭类定义保守证明加载路径，不实例化驱动或执行 CE I/O。
+
+    共享分派器通过两个底层方法实现加载模式；覆写方法必须在非拒绝分支中
+    显式分派所声明的模式。未知分派形态不能被认作已实现。
+    """
+
+    from app.hal.channel_emulator import ChannelEmulatorDriver
+
+    owner = next(
+        cls for cls in driver_class.__mro__ if "load_channel" in cls.__dict__
+    )
+    if owner is ChannelEmulatorDriver:
+        supported: set[str] = set()
+        for mode, primitive in (
+            ("native_model", "set_channel_model"),
+            ("external_waveform", "upload_asc_files"),
+        ):
+            primitive_owner = next(
+                (cls for cls in driver_class.__mro__ if primitive in cls.__dict__),
+                None,
+            )
+            if (
+                primitive_owner is not None
+                and primitive_owner is not ChannelEmulatorDriver
+                and not _is_pure_refusal(primitive_owner, primitive)
+            ):
+                supported.add(mode)
+        return supported
+
+    source = textwrap.dedent(inspect.getsource(owner))
+    class_node = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == owner.__name__
+    )
+    method = next(
+        node for node in class_node.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "load_channel"
+    )
+
+    def positive_modes(condition: ast.AST) -> set[str]:
+        if isinstance(condition, ast.BoolOp):
+            return set().union(*(positive_modes(value) for value in condition.values))
+        if not isinstance(condition, ast.Compare) or len(condition.ops) != 1:
+            return set()
+        if not isinstance(condition.ops[0], ast.Eq):
+            return set()
+        left, right = condition.left, condition.comparators[0]
+        for mode_arg, enum_arg in ((left, right), (right, left)):
+            if (
+                isinstance(mode_arg, ast.Name)
+                and mode_arg.id == "mode"
+                and isinstance(enum_arg, ast.Attribute)
+                and isinstance(enum_arg.value, ast.Name)
+                and enum_arg.value.id == "ChannelLoadMode"
+            ):
+                return {enum_arg.attr.lower()}
+        return set()
+
+    supported = set()
+    for branch in ast.walk(method):
+        if not isinstance(branch, ast.If):
+            continue
+        body = branch.body
+        terminal = body[-1] if body else None
+        if (
+            isinstance(terminal, ast.Raise)
+            or isinstance(terminal, ast.Return)
+            and isinstance(terminal.value, ast.Constant)
+            and terminal.value.value is False
+        ):
+            continue
+        supported.update(positive_modes(branch.test))
+    return supported
+
+
+def validate_channel_emulator_registration(
+    driver_class: type, *, model_name: str,
+) -> None:
+    """发布 CE 驱动前只检查类定义，不实例化或连接硬件。"""
+
+    from app.hal.channel_emulator import ChannelEmulatorDriver
+    from app.hal.channel_emulator_execution_plan import requested_channel_emulator_load_mode
+    from app.services.mimo_ota.channel_asset_resolver import engine_mode_for_channel_asset_source_type
+
+    manifest = getattr(driver_class, "adapter_manifest", None)
+    if not issubclass(driver_class, ChannelEmulatorDriver) or not isinstance(manifest, ChannelEmulatorManifest):
+        raise ValueError(f"{model_name}: channel emulator registration lacks a driver manifest")
+    if manifest.schema_version < 3:
+        raise ValueError(f"{model_name}: 新注册的 channel emulator 驱动必须声明 manifest v3")
+    if manifest.model_name != model_name:
+        raise ValueError(f"{model_name}: channel emulator manifest model_name mismatch")
+    for item in manifest.operations:
+        owner = next((cls for cls in driver_class.__mro__ if item.operation in cls.__dict__), None)
+        has_implementation = (
+            owner is not None
+            and owner is not ChannelEmulatorDriver
+            and not _is_pure_refusal(owner, item.operation)
+        )
+        if item.support == "implemented" and not has_implementation:
+            raise ValueError(
+                f"{model_name}: manifest claims {item.operation}=implemented but driver has only a refusal stub"
+            )
+        if item.support != "implemented" and has_implementation:
+            raise ValueError(
+                f"{model_name}: driver implements {item.operation} but manifest hides it as {item.support}"
+            )
+    dispatched_modes = _dispatched_load_modes(driver_class)
+    for mode in manifest.supported_load_modes():
+        if mode not in dispatched_modes:
+            raise ValueError(
+                f"{model_name}: manifest claims {mode}=implemented but load_channel "
+                "has no effective dispatch path"
+            )
+    supported_modes = manifest.supported_load_modes()
+    for source in manifest.asset_sources:
+        if source.support != "implemented":
+            continue
+        engine_mode = engine_mode_for_channel_asset_source_type(source.source_type)
+        load_mode = requested_channel_emulator_load_mode(engine_mode)
+        if load_mode not in supported_modes:
+            raise ValueError(
+                f"{model_name}: asset source {source.source_type} claims implemented "
+                f"but requested load mode {load_mode} is not implemented"
+            )

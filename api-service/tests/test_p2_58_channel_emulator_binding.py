@@ -149,7 +149,7 @@ def test_real_binding_resolves_configured_with_stable_digest_and_zero_io(db, mon
     assert first.status == "configured"
     assert first.execution_mode == "real"
     assert first.manifest is not None
-    assert first.manifest.schema_version == 2
+    assert first.manifest.schema_version == 3
     assert first.manifest.adapter_id == "propsim_f64"
     assert first.instrument_model_id == str(model.id)
     assert first.instrument_connection_id == str(connection.id)
@@ -168,6 +168,23 @@ def test_real_binding_resolves_configured_with_stable_digest_and_zero_io(db, mon
         first.status = "changed"  # type: ignore[misc]
     with pytest.raises(Exception):
         first.runtime_driver.simulated = True  # type: ignore[misc]
+
+
+def test_v3_asset_source_explanations_do_not_change_binding_identity():
+    original = RealPropsimF64Driver.adapter_manifest
+    edited_payload = original.model_dump(mode="json")
+    edited_payload["asset_sources"][0]["reason"] = "new operator wording"
+    edited_payload["asset_sources"][0]["source_reference"] = "documentation edit"
+    edited = ChannelEmulatorManifest.model_validate(edited_payload)
+    assert ceb._digest_safe_manifest_payload(original) == ceb._digest_safe_manifest_payload(edited)
+    reordered = ChannelEmulatorManifest.model_validate({
+        **edited_payload,
+        "asset_sources": list(reversed(edited_payload["asset_sources"])),
+    })
+    assert ceb._digest_safe_manifest_payload(original) == ceb._digest_safe_manifest_payload(reordered)
+    edited_payload["asset_sources"][0]["support"] = "not_implemented"
+    changed = ChannelEmulatorManifest.model_validate(edited_payload)
+    assert ceb._digest_safe_manifest_payload(original) != ceb._digest_safe_manifest_payload(changed)
 
 
 # ----------------------------------------------------------------------
@@ -322,6 +339,22 @@ def test_registered_class_without_manifest_is_rejected(db, monkeypatch):
     driver.adapter_manifest = manifest  # 装载实例有、注册类没有 → 注册侧 fail-closed
 
     with pytest.raises(ValueError, match="注册的驱动 RealPropsimF64Driver 没有声明 channel emulator manifest"):
+        resolve_channel_emulator_binding(db, _hal(driver), lab)
+
+
+def test_new_binding_rejects_registered_driver_with_historical_v2_manifest(db, monkeypatch):
+    _, _, _, lab = _configured(db)
+    legacy_payload = RealPropsimF64Driver.adapter_manifest.model_dump(mode="json")
+    legacy_payload["schema_version"] = 2
+    legacy_payload.pop("asset_sources")
+
+    class NewLegacyDriver(RealPropsimF64Driver):
+        adapter_manifest = ChannelEmulatorManifest.model_validate(legacy_payload)
+
+    driver = NewLegacyDriver("ce", {"ip_address": "192.0.2.10"})
+    _forbid_io(monkeypatch, driver)
+    monkeypatch.setattr(ceb, "get_real_driver_class", lambda *_args: NewLegacyDriver)
+    with pytest.raises(ValueError, match="manifest v3"):
         resolve_channel_emulator_binding(db, _hal(driver), lab)
 
 

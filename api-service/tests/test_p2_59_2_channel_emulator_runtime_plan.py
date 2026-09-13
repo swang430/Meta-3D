@@ -72,6 +72,7 @@ def test_manifest_v1_keeps_original_vocabulary_and_binding_digest() -> None:
             if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
         ],
     }
+    legacy_manifest.pop("asset_sources")
     parsed = ChannelEmulatorManifest.model_validate(legacy_manifest)
     assert parsed.schema_version == 1
     assert tuple(item.operation for item in parsed.operations) == (

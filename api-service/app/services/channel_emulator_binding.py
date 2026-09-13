@@ -345,13 +345,19 @@ def _digest_safe_manifest_payload(manifest: ChannelEmulatorManifest) -> dict[str
     语义内容，照常进 digest —— 翻一格 support 就该让 digest 变。
     """
 
-    return manifest.model_dump(
+    payload = manifest.model_dump(
         mode="json",
         exclude={
             "operations": {"__all__": {"reason", "source_reference"}},
             "load_modes": {"__all__": {"reason"}},
+            "asset_sources": {"__all__": {"reason", "source_reference"}},
         },
     )
+    if manifest.schema_version >= 3:
+        payload["asset_sources"] = sorted(
+            payload["asset_sources"], key=lambda item: item["source_type"]
+        )
+    return payload
 
 
 def _validate_loaded_real_driver(
@@ -556,6 +562,10 @@ def resolve_channel_emulator_binding(
         raise ValueError(
             f"所选 channelEmulator 型号 {model.model!r} 注册的驱动"
             f" {expected_class.__name__} 没有声明 channel emulator manifest（fail-closed）"
+        )
+    if expected_manifest.schema_version < 3:
+        raise ValueError(
+            f"所选 channelEmulator 型号 {model.model!r} 的新 binding 必须使用 manifest v3"
         )
     expected_transport = _expected_transport(connection)
     if not simulated:

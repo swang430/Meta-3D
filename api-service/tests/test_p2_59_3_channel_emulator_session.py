@@ -433,6 +433,95 @@ async def test_scope_validates_then_orders_operation_safe_idle_and_release(monke
     assert outcome.channel_emulator_transport_released_confirmed is True
 
 
+@pytest.mark.parametrize(
+    "frozen_manifest_kind, live_manifest_kind, expected_error",
+    [
+        ("v3", "unsupported", "custom_static"),
+        ("v3", "legacy", "v3"),
+        ("legacy", "unsupported", "custom_static"),
+    ],
+)
+def test_session_rejects_live_asset_source_drift_before_remote(
+    frozen_manifest_kind, live_manifest_kind, expected_error,
+):
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY, MIMO_OTA_CONFIGURATION_FREEZE_KEY
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+    )
+    from app.services import channel_emulator_execution_session as module
+
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    if frozen_manifest_kind == "legacy":
+        legacy_payload = driver.adapter_manifest.model_dump(mode="json")
+        legacy_payload["schema_version"] = 2
+        legacy_payload.pop("asset_sources")
+        binding = {
+            **binding,
+            "resolved_binding": {
+                **binding["resolved_binding"], "manifest": legacy_payload,
+            },
+        }
+        binding["digest"] = canonical_payload_digest({
+            key: value for key, value in binding.items() if key != "digest"
+        })
+    plan_model = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="external_waveform",
+        binding_digest=BINDING_DIGEST,
+    )
+    plan = {**plan_model.as_payload(), "digest": plan_model.digest}
+    asset_id = str(uuid4())
+    frozen_mimo = MIMOOTAConfiguration.model_validate({
+        "engine_mode": "keysight_gcm", "channel_asset_id": asset_id,
+    }).model_dump(mode="json")
+    execution = _scope_execution(plan, frozen_mimo=frozen_mimo)
+    asset_payload = {
+        "schema_version": 1,
+        "channel_asset_id": asset_id,
+        "source_type": "custom_static",
+        "executable_content_digest": "a" * 64,
+    }
+    base_payload = {
+        MIMO_OTA_CONFIGURATION_FREEZE_KEY: frozen_mimo,
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY: {
+            **asset_payload, "digest": canonical_payload_digest(asset_payload),
+        },
+    }
+    execution.config = {
+        **execution.config,
+        "channel_emulator_binding_freeze": binding,
+        FREEZE_CONFIG_KEY: {
+            **base_payload, "digest": canonical_payload_digest(base_payload),
+        },
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY: _load_request_for_evidence(
+            frozen_mimo, plan, source="channel_asset", channel_asset_id=asset_id,
+            channel_asset_source_type="custom_static",
+            effective_engine_mode="mimo_first_asc",
+        ),
+    }
+    if live_manifest_kind == "unsupported":
+        driver.adapter_manifest = driver.adapter_manifest.model_copy(update={
+            "asset_sources": tuple(
+                item.model_copy(update={"support": "not_implemented"})
+                if item.source_type == "custom_static" else item
+                for item in driver.adapter_manifest.asset_sources
+            ),
+        })
+    else:
+        driver.adapter_manifest = driver.adapter_manifest.model_copy(update={
+            "schema_version": 2, "asset_sources": (),
+        })
+    hal = SimpleNamespace(drivers={"channelEmulator": driver})
+    error = module._validate_frozen_pair_and_live_driver(
+        hal, binding, plan, execution.config, "hal",
+    )
+    assert error is not None and expected_error in error
+
+
 @pytest.mark.asyncio
 async def test_scope_rejects_acquired_identity_before_execution_body(monkeypatch):
     from app.services import channel_emulator_execution_session as module
@@ -1965,6 +2054,7 @@ def test_p2_66_preserves_completed_real_execution_with_v1_manifest_and_plan():
             if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
         ],
     }
+    legacy_manifest.pop("asset_sources", None)
     binding["resolved_binding"] = {
         **binding["resolved_binding"],
         "manifest": legacy_manifest,
@@ -2156,6 +2246,53 @@ def test_p2_66_uses_frozen_channel_asset_load_truth_instead_of_stale_mimo_engine
         execution_id=execution.id,
         pipeline_status=execution.status,
     ) == (None, None)
+
+
+def test_p2_66_rejects_unsupported_frozen_asset_source_even_with_supported_load_mode():
+    from app.hal.channel_emulator_execution_plan import resolve_channel_emulator_execution_plan
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+    from app.services.execution_evidence_outcome import _channel_emulator_terminal_projection
+
+    asset_id = "f2b3465e-c86e-45a8-b1e8-9d1aaf03d37a"
+    frozen_mimo = MIMOOTAConfiguration.model_validate({
+        "engine_mode": "keysight_gcm", "channel_asset_id": asset_id,
+    }).model_dump(mode="json")
+    driver = _RealCe()
+    binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    manifest = binding["resolved_binding"]["manifest"]
+    narrowed = {
+        **manifest,
+        "asset_sources": [
+            {**item, "support": "not_implemented"}
+            if item["source_type"] == "custom_static" else item
+            for item in manifest["asset_sources"]
+        ],
+    }
+    binding["resolved_binding"] = {**binding["resolved_binding"], "manifest": narrowed}
+    binding["digest"] = canonical_payload_digest({
+        key: value for key, value in binding.items() if key != "digest"
+    })
+    resolved = resolve_channel_emulator_execution_plan(
+        manifest=driver.adapter_manifest,
+        driver_source="hal",
+        requested_load_mode="external_waveform",
+        binding_digest=binding["binding_digest"],
+    )
+    plan = {**resolved.as_payload(), "digest": resolved.digest}
+    terminal = _terminal_evidence(binding, plan, execution_mode="real")
+    request = _load_request_for_evidence(
+        frozen_mimo, plan, source="channel_asset", channel_asset_id=asset_id,
+        channel_asset_source_type="custom_static",
+        effective_engine_mode="mimo_first_asc",
+    )
+    execution = _execution_with_ce_evidence(
+        binding, plan, terminal, frozen_mimo=frozen_mimo, load_request=request,
+    )
+    classification, reason = _channel_emulator_terminal_projection(
+        execution.config, execution_id=execution.id, pipeline_status=execution.status,
+    )
+    assert classification == "invalid"
+    assert "custom_static" in reason
 
 
 def test_p2_66_rejects_rehashed_asset_source_that_disagrees_with_independent_freeze():

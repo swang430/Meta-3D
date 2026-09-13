@@ -28,6 +28,7 @@ from app.hal.base_station_manifest import (
     BaseStationAdapterRegistration,
     validate_base_station_adapter_registrations,
 )
+from app.hal.channel_emulator_manifest import validate_channel_emulator_registration
 
 if TYPE_CHECKING:
     # P3-5: only needed for the type annotation on _log_readiness_report;
@@ -97,6 +98,10 @@ def _instantiate_hal_driver(
             config=config,
             adapter_manifest=registration.manifest,
         )
+    if category_key == "channelEmulator" and driver_class is MockChannelEmulator:
+        validate_channel_emulator_registration(
+            driver_class, model_name=driver_class.adapter_manifest.model_name,
+        )
     return driver_class(instrument_id=instrument_id, config=config)
 
 
@@ -158,6 +163,8 @@ def _real_driver_registry() -> Dict[str, Dict[str, type]]:
         },
     }
     _validate_base_station_adapter_ids(registry["baseStation"])
+    for model_name, driver_class in registry["channelEmulator"].items():
+        validate_channel_emulator_registration(driver_class, model_name=model_name)
     _REAL_DRIVER_REGISTRY_CACHE = registry
     return _REAL_DRIVER_REGISTRY_CACHE
 

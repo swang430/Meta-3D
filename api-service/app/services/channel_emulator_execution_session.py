@@ -37,6 +37,7 @@ from app.services.channel_emulator_execution_plan import (
     CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
     validate_frozen_channel_emulator_load_context,
     validate_frozen_channel_emulator_execution_plan,
+    validate_live_channel_emulator_asset_source,
     verify_frozen_channel_emulator_execution_plan,
 )
 from app.services.channel_emulator_certification import (
@@ -529,6 +530,9 @@ def _validate_frozen_pair_and_live_driver(
     if manifest is None:
         return "loaded channelEmulator driver has no manifest"
     try:
+        validate_live_channel_emulator_asset_source(
+            execution_config, load_request, manifest,
+        )
         live = resolve_channel_emulator_execution_plan(
             manifest=manifest,
             driver_source=authoritative_driver_source,

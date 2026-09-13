@@ -24,6 +24,7 @@ from app.hal.channel_emulator import (
 )
 from app.hal.channel_emulator_manifest import (
     CHANNEL_EMULATOR_OPERATIONS,
+    ChannelEmulatorAssetSourceCapability,
     ChannelEmulatorManifest,
     channel_emulator_manifest_for,
 )
@@ -68,12 +69,30 @@ _manifest = channel_emulator_manifest_for(
     model_name="Certification Fixture CE",
     vendor="Test Fixture",
     implemented=CHANNEL_EMULATOR_OPERATIONS,
-    load_modes=("native_model", "external_waveform", "parametric_tdl"),
+    load_modes=("native_model", "external_waveform"),
     reason="implemented by the P2-62 test fixture contract",
 )
 CERTFAKE_CE_MANIFEST = ChannelEmulatorManifest(
     **{
         **_manifest.model_dump(mode="python"),
+        "schema_version": 3,
+        "asset_sources": (
+            ChannelEmulatorAssetSourceCapability(
+                source_type="standard_3gpp",
+                support="implemented",
+                reason="P2-62 test fixture covers the standard ChannelAsset path",
+                source_reference=_CERTFAKE_CE_SOURCE,
+            ),
+            *(
+                ChannelEmulatorAssetSourceCapability(
+                    source_type=source_type,
+                    support="not_implemented",
+                    reason="P2-62 test fixture does not exercise this ChannelAsset source",
+                    source_reference=_CERTFAKE_CE_SOURCE,
+                )
+                for source_type in ("custom_static", "vendor_file", "rt_dynamic")
+            ),
+        ),
         "operations": tuple(
             item.model_copy(update={"source_reference": _CERTFAKE_CE_SOURCE})
             for item in _manifest.operations
