@@ -61,6 +61,7 @@ from app.hal.channel_emulator import (
     F64_STATE_QUERY,
 )
 from app.hal.channel_emulator_manifest import (
+    ChannelEmulatorAssetSourceCapability,
     ChannelEmulatorLoadModeCapability,
     ChannelEmulatorManifest,
     ChannelEmulatorOperationCapability,
@@ -380,10 +381,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
     #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=2,
+        schema_version=3,
         adapter_id='propsim_f64',
         model_name='PROPSIM F64',
         vendor='Keysight',
+        asset_sources=(
+            ChannelEmulatorAssetSourceCapability(
+                source_type='standard_3gpp', support='implemented',
+                reason='当前软件将标准模型资产解析到 ASC Runtime 加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='custom_static', support='implemented',
+                reason='当前软件将静态自定义资产解析到 ASC Runtime 加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='vendor_file', support='implemented',
+                reason='当前软件将厂商文件资产解析到 GCM native 加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='rt_dynamic', support='implemented',
+                reason='仅现有单快照参数化 TDL 路线；不声明多快照能力',
+            ),
+        ),
         load_modes=(
             ChannelEmulatorLoadModeCapability(
                 mode='native_model', support='implemented',

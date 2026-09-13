@@ -81,6 +81,7 @@ from app.hal.channel_emulator import (
     ChannelLoadMode,
 )
 from app.hal.channel_emulator_manifest import (
+    ChannelEmulatorAssetSourceCapability,
     ChannelEmulatorLoadModeCapability,
     ChannelEmulatorManifest,
     ChannelEmulatorOperationCapability,
@@ -111,10 +112,28 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
     #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=2,
+        schema_version=3,
         adapter_id='propsim_fs16',
         model_name='PROPSIM FS16',
         vendor='Keysight',
+        asset_sources=(
+            ChannelEmulatorAssetSourceCapability(
+                source_type='standard_3gpp', support='not_implemented',
+                reason='尚无经实现的标准模型资产加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='custom_static', support='not_implemented',
+                reason='尚无经实现的静态自定义资产加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='vendor_file', support='not_implemented',
+                reason='尚无经实现的厂商文件资产加载路线',
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type='rt_dynamic', support='not_implemented',
+                reason='尚无经实现的动态参数资产加载路线',
+            ),
+        ),
         load_modes=(
             ChannelEmulatorLoadModeCapability(
                 mode='native_model', support='not_implemented',

@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from typing import Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_serializer, model_validator
 
 
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -79,7 +79,7 @@ def channel_emulator_manifest_operations_for_schema(
 
     if schema_version == 1:
         return CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
-    if schema_version == 2:
+    if schema_version in (2, 3):
         return CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
     raise ValueError(
         f"unsupported channel emulator manifest schema_version: {schema_version!r}"
@@ -121,6 +121,32 @@ ChannelEmulatorLoadMode = Literal[
     "external_waveform",
     "parametric_tdl",
 ]
+
+CHANNEL_EMULATOR_ASSET_SOURCE_TYPES: tuple[str, ...] = (
+    "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic",
+)
+ChannelEmulatorAssetSourceType = Literal[
+    "standard_3gpp", "custom_static", "vendor_file", "rt_dynamic",
+]
+
+
+class ChannelEmulatorAssetSourceCapability(BaseModel):
+    """静态资产来源支持声明；不代表一次加载已生效或可作正式证据。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_type: ChannelEmulatorAssetSourceType
+    support: Literal["implemented", "not_implemented", "not_applicable"]
+    reason: str
+    source_reference: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_non_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("asset source capability reason must be non-blank")
+        return normalized
 
 
 class ChannelEmulatorOperationCapability(BaseModel):
@@ -168,12 +194,20 @@ class ChannelEmulatorManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     adapter_id: str
     model_name: str
     vendor: str
     load_modes: tuple[ChannelEmulatorLoadModeCapability, ...]
     operations: tuple[ChannelEmulatorOperationCapability, ...]
+    asset_sources: tuple[ChannelEmulatorAssetSourceCapability, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def _serialize_by_schema(self, handler):
+        payload = handler(self)
+        if self.schema_version < 3:
+            payload.pop("asset_sources", None)
+        return payload
 
     @field_validator("adapter_id")
     @classmethod
@@ -210,6 +244,20 @@ class ChannelEmulatorManifest(BaseModel):
         modes = [item.mode for item in self.load_modes]
         if len(set(modes)) != len(modes):
             raise ValueError("channel emulator load modes must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _asset_sources_match_schema(self) -> "ChannelEmulatorManifest":
+        if self.schema_version < 3:
+            if "asset_sources" in self.model_fields_set:
+                raise ValueError("asset source declarations require manifest v3")
+            return self
+        declared = tuple(item.source_type for item in self.asset_sources)
+        if declared != CHANNEL_EMULATOR_ASSET_SOURCE_TYPES:
+            raise ValueError(
+                "channel emulator asset source vocabulary mismatch: "
+                f"expected={CHANNEL_EMULATOR_ASSET_SOURCE_TYPES}, actual={declared}"
+            )
         return self
 
     # ------------------------------------------------------------------
@@ -255,6 +303,24 @@ class ChannelEmulatorManifest(BaseModel):
     def supported_load_modes(self) -> tuple[str, ...]:
         return tuple(
             item.mode for item in self.load_modes if item.support == "implemented"
+        )
+
+    def implements_asset_source(self, source_type: str) -> bool:
+        if source_type not in CHANNEL_EMULATOR_ASSET_SOURCE_TYPES:
+            raise ValueError(f"unknown channel emulator asset source: {source_type!r}")
+        return any(
+            item.source_type == source_type and item.support == "implemented"
+            for item in self.asset_sources
+        )
+
+    def asset_source_rejection(self, source_type: str) -> str | None:
+        if self.implements_asset_source(source_type):
+            return None
+        item = next((item for item in self.asset_sources if item.source_type == source_type), None)
+        return (
+            f"{self.model_name} 不支持资产来源 {source_type}（{item.support}）：{item.reason}"
+            if item else
+            f"{self.model_name} 的 manifest v{self.schema_version} 未声明资产来源 {source_type}"
         )
 
 

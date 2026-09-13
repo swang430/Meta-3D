@@ -27,6 +27,7 @@ from app.hal.base import (
     InstrumentMetrics
 )
 from app.hal.channel_emulator_manifest import (
+    ChannelEmulatorAssetSourceCapability,
     ChannelEmulatorLoadModeCapability,
     ChannelEmulatorManifest,
     ChannelEmulatorOperationCapability,
@@ -662,10 +663,28 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     #:    F64 与 Mock 当时各自实现了全集，测试永远绿。所以本片的门一律从
     #:    **代码结构**派生（AST），不靠「跑一遍 Mock 看通不通」。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=2,
+        schema_version=3,
         adapter_id="mock_channel_emulator",
         model_name="Mock Channel Emulator",
         vendor="internal",
+        asset_sources=(
+            ChannelEmulatorAssetSourceCapability(
+                source_type="standard_3gpp", support="implemented",
+                reason="Mock 仅覆盖标准模型诊断路径，不产生正式证据",
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type="custom_static", support="implemented",
+                reason="Mock 仅覆盖静态自定义诊断路径，不产生正式证据",
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type="vendor_file", support="implemented",
+                reason="Mock 仅覆盖厂商文件诊断路径，不产生正式证据",
+            ),
+            ChannelEmulatorAssetSourceCapability(
+                source_type="rt_dynamic", support="not_implemented",
+                reason="Mock 未覆盖参数化 TDL 路线",
+            ),
+        ),
         load_modes=(
             ChannelEmulatorLoadModeCapability(
                 mode="external_waveform", support="implemented",

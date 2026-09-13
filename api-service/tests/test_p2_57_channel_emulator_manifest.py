@@ -18,6 +18,7 @@ import pytest
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
 from app.hal.channel_emulator_manifest import (
     CHANNEL_EMULATOR_OPERATIONS,
+    ChannelEmulatorAssetSourceCapability,
     channel_emulator_rejection,
     ChannelEmulatorLoadModeCapability,
     ChannelEmulatorManifest,
@@ -909,6 +910,54 @@ def test_load_mode_duplicates_are_rejected():
                     operation=n, support="not_implemented", reason="r")
                 for n in CHANNEL_EMULATOR_OPERATIONS),
         )
+
+
+def test_v3_asset_sources_are_complete_unique_and_distinct_from_load_modes():
+    base = RealPropsimF64Driver.adapter_manifest
+    assert base.schema_version == 3
+    assert "external_waveform" in base.supported_load_modes()
+    assert base.implements_asset_source("custom_static") is True
+    payload = base.model_dump()
+    custom = next(item for item in payload["asset_sources"] if item["source_type"] == "custom_static")
+    custom["support"] = "not_implemented"
+    narrowed = ChannelEmulatorManifest.model_validate(payload)
+    assert narrowed.implements_asset_source("standard_3gpp") is True
+    assert narrowed.implements_asset_source("custom_static") is False
+    assert "custom_static" in narrowed.asset_source_rejection("custom_static")
+
+    for sources in (payload["asset_sources"][:-1], payload["asset_sources"] + (custom,)):
+        with pytest.raises(ValueError, match="asset source"):
+            ChannelEmulatorManifest.model_validate({**payload, "asset_sources": sources})
+    with pytest.raises(ValueError, match="asset source"):
+        ChannelEmulatorManifest.model_validate({**payload, "asset_sources": []})
+
+
+def test_production_asset_source_declarations_do_not_upgrade_mock_or_fs16():
+    from app.hal.channel_emulator import MockChannelEmulator
+
+    expected = ("standard_3gpp", "custom_static", "vendor_file", "rt_dynamic")
+    for driver in (RealPropsimF64Driver, RealPropsimFs16Driver, MockChannelEmulator):
+        assert tuple(item.source_type for item in driver.adapter_manifest.asset_sources) == expected
+    assert all(RealPropsimF64Driver.adapter_manifest.implements_asset_source(name) for name in expected)
+    assert not any(RealPropsimFs16Driver.adapter_manifest.implements_asset_source(name) for name in expected)
+    assert all(MockChannelEmulator.adapter_manifest.implements_asset_source(name) for name in expected[:-1])
+    assert MockChannelEmulator.adapter_manifest.implements_asset_source("rt_dynamic") is False
+
+
+def test_v2_manifest_has_no_asset_source_field_and_keeps_original_payload():
+    historical = channel_emulator_manifest_for(
+        adapter_id="historic", model_name="Historic", vendor="test", implemented=(),
+    )
+    payload = historical.model_dump(mode="json")
+    assert historical.schema_version == 2
+    assert "asset_sources" not in payload
+    assert ChannelEmulatorManifest.model_validate(payload).model_dump(mode="json") == payload
+    with pytest.raises(ValueError):
+        ChannelEmulatorManifest.model_validate({**payload, "asset_sources": [
+            ChannelEmulatorAssetSourceCapability(
+                source_type="standard_3gpp", support="implemented", reason="test",
+            ).model_dump()
+        ]})
 
 
 # --------------------------------------------------------------------------
