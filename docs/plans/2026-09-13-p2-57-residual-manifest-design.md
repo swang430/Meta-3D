@@ -40,6 +40,9 @@ F64、FS16、Mock 逐项字面声明；FS16 不得因继承基类而宣称可加
 v1/v2 的词汇、冻结 payload 与原始 digest 保持原样解析；不得在读历史件时填入 v3
 字段、重算旧 digest 或补授正式资格。新冻结件使用 v3。说明性 `reason` 与出处不进
 binding digest；source type 与 support 状态进 digest，因此支持矩阵改变会被漂移门发现。
+执行计划是另一份独立版本化契约：v3 manifest 仍映射到现有 **v2 execution plan**
+操作词汇，不把 manifest 版本直接赋给 plan 版本。现有冻结 binding 校验接受 v2
+历史与 v3 当前 manifest；旧 plan 的原始 digest 不变，现代新写入仍需完整 load request。
 
 ## 产生方与消费方全集
 
