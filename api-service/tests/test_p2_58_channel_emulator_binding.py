@@ -177,6 +177,11 @@ def test_v3_asset_source_explanations_do_not_change_binding_identity():
     edited_payload["asset_sources"][0]["source_reference"] = "documentation edit"
     edited = ChannelEmulatorManifest.model_validate(edited_payload)
     assert ceb._digest_safe_manifest_payload(original) == ceb._digest_safe_manifest_payload(edited)
+    reordered = ChannelEmulatorManifest.model_validate({
+        **edited_payload,
+        "asset_sources": list(reversed(edited_payload["asset_sources"])),
+    })
+    assert ceb._digest_safe_manifest_payload(original) == ceb._digest_safe_manifest_payload(reordered)
     edited_payload["asset_sources"][0]["support"] = "not_implemented"
     changed = ChannelEmulatorManifest.model_validate(edited_payload)
     assert ceb._digest_safe_manifest_payload(original) != ceb._digest_safe_manifest_payload(changed)

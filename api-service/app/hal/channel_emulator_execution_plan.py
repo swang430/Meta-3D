@@ -242,8 +242,8 @@ def resolve_channel_emulator_execution_plan(
         raise ValueError(
             "channel emulator execution plan requires a channel emulator manifest (fail-closed)"
         )
-    # Manifest v3 adds only static asset declarations.  The persisted plan
-    # operation vocabulary remains v2; never emit an unrecognised plan v3.
+    # Manifest v3 只增加静态资产声明；持久化计划的操作词汇仍为 v2，
+    # 不得写出尚无解析器认识的 plan v3。
     plan_schema_version = 1 if manifest.schema_version == 1 else 2
     operation_vocabulary = channel_emulator_execution_plan_operations_for_schema(
         plan_schema_version

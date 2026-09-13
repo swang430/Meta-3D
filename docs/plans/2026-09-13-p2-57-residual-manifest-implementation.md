@@ -127,7 +127,7 @@ def test_explicit_asset_requires_its_own_declared_source_type():
         )
 ```
 
-- [ ] **Step 2: GREEN**：用既有 source→engine→load 映射核对请求，v3 source 不支持即 fail-loud；冻结写入和 `validate_frozen_channel_emulator_load_context` 共用同一纯判据，后者只读冻结 manifest，simulated 使用权威 Mock manifest。v1/v2 历史件跳过新声明判断且保持原摘要/历史证据分类。`resolve_channel_emulator_execution_plan` 的计划版本独立于 manifest：v1→v1，v2/v3→v2；`frozen_channel_emulator_binding_digest` 接受 v2/v3，仍拒 v1 与新计划混搭。修正从当前 F64 manifest dump 构造 v1/v2 历史 fixture 时必须显式去掉 `asset_sources`，不在生产解析器偷删字段。
+- [ ] **Step 2: GREEN**：用既有 source→engine→load 映射核对请求，v3 source 不支持即 fail-loud；冻结写入和 `validate_frozen_channel_emulator_load_context` 共用同一纯判据，后者只读冻结 manifest，simulated 使用权威 Mock manifest。v1/v2 历史结果保持原摘要/历史证据分类；未完成的旧执行若今天仍要 I/O，则按 live v3 的来源拒绝声明核准，不回写旧冻结件，v3 冻结件不得由退回 v1/v2 的 live 声明执行。`resolve_channel_emulator_execution_plan` 的计划版本独立于 manifest：v1→v1，v2/v3→v2；`frozen_channel_emulator_binding_digest` 接受 v2/v3，仍拒 v1 与新计划混搭。修正从当前 F64 manifest dump 构造 v1/v2 历史 fixture 时必须显式去掉 `asset_sources`，不在生产解析器偷删字段。
 
 ```python
 plan_schema_version = 1 if manifest.schema_version == 1 else 2

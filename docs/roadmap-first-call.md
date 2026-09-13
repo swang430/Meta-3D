@@ -18,10 +18,10 @@ provenance 的真实 BaseStation 当前下行吞吐，其余缺测/模拟显式 
 已删除。**P2-68 已由 PR #471 合并，merge `83ad1779`**：一条连接的坏存储字段不再让整张仪器目录消失（五列各自
 标进 `invalid_fields`，DB 故障按 5xx 上抛），GUI 草稿带三态来源守住坏值期间的保存。**P2-69 已由 PR #473 合并，
 merge `4ca4aba6`**：checked OpenAPI、generated TS 与手写 GUI 类型已精确镜像真实 CMW MAC `dimensions`，并由真实
-目录响应递归验约。已批准顺序（P1-76 → P2-68 → P2-69 → P2-70）已实施到 **P2-70**：非现场实现与本地验证完成；外审/合并以对应 PR 台账为准，详见条目。
+目录响应递归验约。已批准顺序（P1-76 → P2-68 → P2-69 → P2-70）已实施并合并到 **P2-70 / PR #475**；真机抽样仍由 P2-55 现场半签收。
 P1-77 与 P1-76 是显式记录了 **P3-23** 试行数据（验证复用、外审请求与等待）的功能片；
-P2-57 残项为后续平台设计，
-P2-63 继续 HOLD。本次整理不自动启动这些实现。
+P2-57 静态声明残项的[设计](plans/2026-09-13-p2-57-residual-manifest-design.md)与[实施记录](plans/2026-09-13-p2-57-residual-manifest-implementation.md)已成文；交付状态以对应 PR 为准。随 `.smu` 改变的拓扑仍独立待评估，
+P2-63 继续 HOLD；本次 P2-57 工作不自动启动 P2-63 或现场项。
 复盘证据、反复发现缺陷的根因与回归分档建议见
 [2026-09-05 开发复盘与待办裁决](plans/2026-09-05-development-review-and-triage.md)。
 
@@ -57,7 +57,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= P0-9：CAICT CMW500 LTE 2×2 MIMO OTA 真实执行与正式证据闭环；
-Current Focus（非现场）= P2-70 CMW FDD 抽样载体交付；P2-69 已由 PR #473 合并，后续条目不自动启动。**
+Current Focus（非现场）= P2-57 静态声明残项交付状态见对应 PR；P2-70 已由 PR #475 合并，不代表 P2-55 真机验收。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -711,7 +711,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P2-68 / P2-69 已由 PR #471 / #473 合并；P2-70 CMW 抽样载体已实现并通过本地验证/独立内审，交付状态以 PR 台账为准。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动。P2-57 残项仍待设计，资产拓扑不得放进 manifest；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账的交付状态见对应 PR，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 仅登记 F64 文件常态化提供与版本控制调研，不自动启动；P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | **P0-9**（CMW500 Attach、PCCBBBoard 专用 query 真机复验、真实路损校准、转台冻结坐标、真实报告）+ P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P0-8b / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-51/52/55/56** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样未验收。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -4767,7 +4767,9 @@ nx2（`SCENario:TRO:FLEXible`，pp.630-631），所以它与 TM2/4/6 并非同�
 内审**四轮，最终 CLEAN**（R1 一条 P1 = 四条命令的 Firmware 行只录了 2/4，而 Range 与 Options 都做了 4/4；R2 两条 P2 = 门注释写着「按维度全集」但作用域只有本片四维、以及三个新字段破了 openapi 契约；R3 零 P1）；外审 Gemini R1 无意见、R2 无 P1（一条 PEP 8 风格建议：把测试文件里的函数内 import
 提到顶部。按 CLAUDE.md 第 6 条报告一次、不修、不阻塞、不自动进 Discovered）。
 
-### P2-57 — Channel Emulator Capability Manifest ✅ 结构缺陷 + operation×support 半（#448）/ ⏳ 声明面其余项未交付
+### P2-57 — Channel Emulator Capability Manifest ✅ 结构缺陷 + operation×support 半（#448）/ 静态来源声明残项（交付状态见 PR）
+
+**2026-09-13 残项设计与实施**：[独立设计](plans/2026-09-13-p2-57-residual-manifest-design.md)将未交付项收窄为 per-adapter 静态 `ChannelAsset.source_type` 四格支持声明与注册期类实现对账；v3 manifest 不改变 v2 execution plan 词汇。显式资产的冻结/历史读取校验同一来源与 load mode，v1/v2 冻结件不补写声明或升级正式资格。P2-59～62 的逐次 operation receipt、SAFE_IDLE/release、site certification 继续是正式证据来源，不复制到 manifest。`.smu` 通道/端口拓扑归 ChannelAsset，仍欠 OTA 样本与 Direction 手册裁决；P2-63 HOLD，P2-55 真机抽样开放。交付状态以对应 PR 为准；下文“未交付”及 #448 的结果均为当时收口记录。
 
 **2026-09-05 残项裁决**：下文“未交付”清单是 #448 收口时的范围记录。后续 P2-59～62 已在
 operation plan/session/receipt/certification 中覆盖 SAFE_IDLE、release 与正式证据消费，不能再整套重复建设。
@@ -5148,7 +5150,7 @@ GUI 契约 7 passed，严格 TypeScript typecheck 与 production build 通过；
 2026-09-11 用户启动；[首片设计](design/2026-09-11-p2-70-cmw-fdd-matrix-probe.md)已核对现有诊断链与
 CMW 手册表 2-32/2-37/2-38，经用户批准已实现两个 FDD 20 MHz 固定 sample，仅做安全空闲下的配置/回读诊断。
 本地验证及独立内审完成；命令、统计与限制见[实施记录](plans/2026-09-11-p2-70-cmw-fdd-matrix-probe-plan.md)，
-外审/合并以对应 PR 台账为准。P2-55 现场半保持开放，不把本地测试写成真机验收。
+已由 PR #475 合并；P2-55 现场半保持开放，不把本地测试写成真机验收。
 
 **可观察缺口**：P2-55 要求 TM1/1 天线与 TM3/2 天线真机抽样，但当前 LTE profile 的
 `transmission_mode: Literal["TM3"]` / `mimo_layers: Literal[2]` 只允许后一条，现有 Attach
@@ -5364,7 +5366,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | TM1/1 天线现场抽样的载体缺口 | → **P2-70** + P2-55 现场半 | P2-70 本地诊断载体已实现，本地验证完成，交付状态见 PR；正式 schema 仍 TM3/2 层，真机两个样本仍待签收 |
 | SMB 只读副本被误作 F64 正式运行依赖 | → **P1-78** + **P2-71** | P1-78 移除 Readiness/freeze/MEASURE 的 SMB 前置条件；设备侧文件常态提供与版本控制另行调研，不自动启动 |
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
-| P2-57 声明面剩余项 / `.smu` 拓扑 | → **已有残项，先取证再设计** | 先抵扣 P2-59～62 已有机制；按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest。当前 parser 只解析中心频率；拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
+| P2-57 静态声明残项 / `.smu` 拓扑 | → **P2-57 残项交付状态见 PR；拓扑另片待评估** | 静态 source-type 四格与注册对账见 2026-09-13 设计；P2-59～62 逐次证据机制不重复建设。按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest；当前 parser 只解析中心频率，拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
 | SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **保留待评估，配置完整性下一批候选** | 当前 `_sync_projection_for_binding` 仍按 connection 聚合，增删模型入口与该投影仍有未加行锁读写。原反例未在本次 PG 重跑，不宣称并发复现；应分别设计型号归属与同序锁，不塞入 P2-68 目录读取修复 |
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |

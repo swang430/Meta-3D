@@ -67,6 +67,8 @@ adapter 身份、每个 implemented 操作是否有非基类拒绝桩的有效�
 - 当前驱动与冻结 manifest、source type 或 load mode 漂移：沿用 P2-58/59 的
   loaded-driver 与 digest 拒绝门，不重新查询可变 TestCase 或资产补真。
 - 旧 v1/v2 冻结件按原 schema/digest 历史读取；缺少资产声明不算已证实的 v3 支持。
+- 未完成的旧 v1/v2 执行若今天仍要做 CE I/O，不改写其冻结件；但 live 驱动已是 v3
+  时须遵守当前来源拒绝声明。反向地，v3 冻结来源不得由退回 v1/v2 的 live 声明执行。
 - SAFE_IDLE、release、错误队列、频率/电平/路损/多普勒回读继续只由现有实际 exchange
   与 receipt/session 判定；模拟或未知证据不得进入正式 KPI。
 

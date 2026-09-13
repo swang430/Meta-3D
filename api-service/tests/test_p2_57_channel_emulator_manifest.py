@@ -919,6 +919,12 @@ def test_v3_asset_sources_are_complete_unique_and_distinct_from_load_modes():
     assert "external_waveform" in base.supported_load_modes()
     assert base.implements_asset_source("custom_static") is True
     payload = base.model_dump()
+    reordered = ChannelEmulatorManifest.model_validate({
+        **payload, "asset_sources": list(reversed(payload["asset_sources"])),
+    })
+    assert {item.source_type for item in reordered.asset_sources} == {
+        item["source_type"] for item in payload["asset_sources"]
+    }
     custom = next(item for item in payload["asset_sources"] if item["source_type"] == "custom_static")
     custom["support"] = "not_implemented"
     narrowed = ChannelEmulatorManifest.model_validate(payload)
@@ -970,6 +976,20 @@ def test_registration_rejects_claimed_operation_with_only_refusal_stub():
         validate_channel_emulator_registration(FalseStop, model_name="PROPSIM F64")
 
 
+def test_registration_rejects_implemented_stop_hidden_as_unsupported():
+    class HiddenStop(RealPropsimF64Driver):
+        adapter_manifest = RealPropsimF64Driver.adapter_manifest.model_copy(
+            update={"operations": tuple(
+                item.model_copy(update={"support": "not_implemented"})
+                if item.operation == "stop_emulation" else item
+                for item in RealPropsimF64Driver.adapter_manifest.operations
+            )}
+        )
+
+    with pytest.raises(ValueError, match="stop_emulation"):
+        validate_channel_emulator_registration(HiddenStop, model_name="PROPSIM F64")
+
+
 def test_registration_rejects_source_without_its_load_mode():
     class FalseSource(RealPropsimF64Driver):
         adapter_manifest = RealPropsimF64Driver.adapter_manifest.model_copy(
@@ -982,6 +1002,46 @@ def test_registration_rejects_source_without_its_load_mode():
 
     with pytest.raises(ValueError, match="standard_3gpp.*external_waveform"):
         validate_channel_emulator_registration(FalseSource, model_name="PROPSIM F64")
+
+
+def test_registration_rejects_load_mode_with_only_base_refusal_path():
+    class FalseNativeLoad(RealPropsimFs16Driver):
+        adapter_manifest = RealPropsimFs16Driver.adapter_manifest.model_copy(
+            update={
+                "load_modes": tuple(
+                    item.model_copy(update={"support": "implemented"})
+                    if item.mode == "native_model" else item
+                    for item in RealPropsimFs16Driver.adapter_manifest.load_modes
+                ),
+                "asset_sources": tuple(
+                    item.model_copy(update={"support": "implemented"})
+                    if item.source_type == "vendor_file" else item
+                    for item in RealPropsimFs16Driver.adapter_manifest.asset_sources
+                ),
+            }
+        )
+
+    with pytest.raises(ValueError, match="native_model"):
+        validate_channel_emulator_registration(FalseNativeLoad, model_name="PROPSIM FS16")
+
+    class InvertedNativeLoad(FalseNativeLoad):
+        async def load_channel(self, mode, model_name, scenario, parameters, waveform_dir=None):
+            if mode != ChannelLoadMode.NATIVE_MODEL:
+                return True
+            return False
+
+    with pytest.raises(ValueError, match="native_model"):
+        validate_channel_emulator_registration(InvertedNativeLoad, model_name="PROPSIM FS16")
+
+    class LoggedFalseNativeLoad(FalseNativeLoad):
+        async def load_channel(self, mode, model_name, scenario, parameters, waveform_dir=None):
+            if mode == ChannelLoadMode.NATIVE_MODEL:
+                self.last_rejection = "not supported"
+                return False
+            return True
+
+    with pytest.raises(ValueError, match="native_model"):
+        validate_channel_emulator_registration(LoggedFalseNativeLoad, model_name="PROPSIM FS16")
 
 
 def test_registered_ce_classes_are_checked_before_registry_is_cached(monkeypatch):

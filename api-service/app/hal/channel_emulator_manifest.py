@@ -256,7 +256,10 @@ class ChannelEmulatorManifest(BaseModel):
                 raise ValueError("asset source declarations require manifest v3")
             return self
         declared = tuple(item.source_type for item in self.asset_sources)
-        if declared != CHANNEL_EMULATOR_ASSET_SOURCE_TYPES:
+        if (
+            len(declared) != len(CHANNEL_EMULATOR_ASSET_SOURCE_TYPES)
+            or set(declared) != set(CHANNEL_EMULATOR_ASSET_SOURCE_TYPES)
+        ):
             raise ValueError(
                 "channel emulator asset source vocabulary mismatch: "
                 f"expected={CHANNEL_EMULATOR_ASSET_SOURCE_TYPES}, actual={declared}"
@@ -468,7 +471,7 @@ def channel_emulator_manifest_for(
 
 
 def _is_pure_refusal(owner: type, operation: str) -> bool:
-    """Only a lone ``raise NotImplementedError`` is a non-implementation."""
+    """仅以单独抛出 ``NotImplementedError`` 的方法视为未实现。"""
 
     source = textwrap.dedent(inspect.getsource(owner))
     class_node = next(
@@ -495,10 +498,87 @@ def _is_pure_refusal(owner: type, operation: str) -> bool:
     )
 
 
+def _dispatched_load_modes(driver_class: type) -> set[str]:
+    """仅凭类定义保守证明加载路径，不实例化驱动或执行 CE I/O。
+
+    共享分派器通过两个底层方法实现加载模式；覆写方法必须在非拒绝分支中
+    显式分派所声明的模式。未知分派形态不能被认作已实现。
+    """
+
+    from app.hal.channel_emulator import ChannelEmulatorDriver
+
+    owner = next(
+        cls for cls in driver_class.__mro__ if "load_channel" in cls.__dict__
+    )
+    if owner is ChannelEmulatorDriver:
+        supported: set[str] = set()
+        for mode, primitive in (
+            ("native_model", "set_channel_model"),
+            ("external_waveform", "upload_asc_files"),
+        ):
+            primitive_owner = next(
+                (cls for cls in driver_class.__mro__ if primitive in cls.__dict__),
+                None,
+            )
+            if (
+                primitive_owner is not None
+                and primitive_owner is not ChannelEmulatorDriver
+                and not _is_pure_refusal(primitive_owner, primitive)
+            ):
+                supported.add(mode)
+        return supported
+
+    source = textwrap.dedent(inspect.getsource(owner))
+    class_node = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == owner.__name__
+    )
+    method = next(
+        node for node in class_node.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "load_channel"
+    )
+
+    def positive_modes(condition: ast.AST) -> set[str]:
+        if isinstance(condition, ast.BoolOp):
+            return set().union(*(positive_modes(value) for value in condition.values))
+        if not isinstance(condition, ast.Compare) or len(condition.ops) != 1:
+            return set()
+        if not isinstance(condition.ops[0], ast.Eq):
+            return set()
+        left, right = condition.left, condition.comparators[0]
+        for mode_arg, enum_arg in ((left, right), (right, left)):
+            if (
+                isinstance(mode_arg, ast.Name)
+                and mode_arg.id == "mode"
+                and isinstance(enum_arg, ast.Attribute)
+                and isinstance(enum_arg.value, ast.Name)
+                and enum_arg.value.id == "ChannelLoadMode"
+            ):
+                return {enum_arg.attr.lower()}
+        return set()
+
+    supported = set()
+    for branch in ast.walk(method):
+        if not isinstance(branch, ast.If):
+            continue
+        body = branch.body
+        terminal = body[-1] if body else None
+        if (
+            isinstance(terminal, ast.Raise)
+            or isinstance(terminal, ast.Return)
+            and isinstance(terminal.value, ast.Constant)
+            and terminal.value.value is False
+        ):
+            continue
+        supported.update(positive_modes(branch.test))
+    return supported
+
+
 def validate_channel_emulator_registration(
     driver_class: type, *, model_name: str,
 ) -> None:
-    """Pure class check before publishing a CE driver; never creates/connects hardware."""
+    """发布 CE 驱动前只检查类定义，不实例化或连接硬件。"""
 
     from app.hal.channel_emulator import ChannelEmulatorDriver
     from app.hal.channel_emulator_execution_plan import requested_channel_emulator_load_mode
@@ -510,12 +590,26 @@ def validate_channel_emulator_registration(
     if manifest.model_name != model_name:
         raise ValueError(f"{model_name}: channel emulator manifest model_name mismatch")
     for item in manifest.operations:
-        if item.support != "implemented":
-            continue
         owner = next((cls for cls in driver_class.__mro__ if item.operation in cls.__dict__), None)
-        if owner is None or owner is ChannelEmulatorDriver or _is_pure_refusal(owner, item.operation):
+        has_implementation = (
+            owner is not None
+            and owner is not ChannelEmulatorDriver
+            and not _is_pure_refusal(owner, item.operation)
+        )
+        if item.support == "implemented" and not has_implementation:
             raise ValueError(
                 f"{model_name}: manifest claims {item.operation}=implemented but driver has only a refusal stub"
+            )
+        if item.support != "implemented" and has_implementation:
+            raise ValueError(
+                f"{model_name}: driver implements {item.operation} but manifest hides it as {item.support}"
+            )
+    dispatched_modes = _dispatched_load_modes(driver_class)
+    for mode in manifest.supported_load_modes():
+        if mode not in dispatched_modes:
+            raise ValueError(
+                f"{model_name}: manifest claims {mode}=implemented but load_channel "
+                "has no effective dispatch path"
             )
     if manifest.schema_version < 3:
         return

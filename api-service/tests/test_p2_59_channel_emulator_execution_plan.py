@@ -531,10 +531,43 @@ def test_asset_source_is_checked_separately_from_load_mode_before_freeze_and_on_
             _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(partial))),
             execution,
         )
+    legacy_live_payload = F64_MANIFEST.model_dump(mode="json")
+    legacy_live_payload["schema_version"] = 2
+    legacy_live_payload.pop("asset_sources")
+    with pytest.raises(ValueError, match="v3"):
+        freeze_channel_emulator_execution_plan(
+            db,
+            _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(legacy_live_payload))),
+            execution,
+        )
+    original_binding = execution.config[CE_FREEZE_CONFIG_KEY]
+    execution.config = {
+        **execution.config,
+        CE_FREEZE_CONFIG_KEY: {
+            **original_binding,
+            "resolved_binding": {
+                **original_binding["resolved_binding"],
+                "manifest": legacy_live_payload,
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="custom_static"):
+        freeze_channel_emulator_execution_plan(
+            db,
+            _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(partial))),
+            execution,
+        )
+    execution.config = {**execution.config, CE_FREEZE_CONFIG_KEY: original_binding}
     assert CE_PLAN_FREEZE_CONFIG_KEY not in execution.config
 
     frozen = freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
     assert frozen["schema_version"] == 2
+    with pytest.raises(ValueError, match="custom_static"):
+        freeze_channel_emulator_execution_plan(
+            db,
+            _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(partial))),
+            execution,
+        )
     with pytest.raises(ValueError, match="custom_static"):
         validate_channel_emulator_asset_source(
             manifest=ChannelEmulatorManifest.model_validate(partial),

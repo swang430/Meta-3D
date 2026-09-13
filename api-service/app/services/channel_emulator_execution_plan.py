@@ -456,7 +456,7 @@ def validate_channel_emulator_asset_source(
     *, manifest: ChannelEmulatorManifest, source_type: str,
     requested_load_mode: str,
 ) -> None:
-    """Check the frozen asset route and v3 source claim, without CE I/O."""
+    """不做 CE I/O，核对冻结资产路由与 v3 来源声明。"""
 
     from app.services.mimo_ota.channel_asset_resolver import (
         engine_mode_for_channel_asset_source_type,
@@ -470,7 +470,7 @@ def validate_channel_emulator_asset_source(
             f"not {requested_load_mode}"
         )
     if manifest.schema_version < 3:
-        return  # historical v1/v2: no new declaration to infer or backfill
+        return  # 历史 v1/v2 不推断或回填新声明
     reason = manifest.asset_source_rejection(source_type)
     if reason is not None:
         raise ValueError(reason)
@@ -482,7 +482,7 @@ def validate_channel_emulator_asset_source(
 
 
 def _frozen_manifest_for_asset_source(execution_config: Mapping[str, Any]) -> ChannelEmulatorManifest | None:
-    """Only a configured v3 binding creates a new source gate; legacy stays legacy."""
+    """仅已配置的 v3 binding 启用新来源门；旧件维持历史分类。"""
 
     frozen_binding = execution_config.get(CE_FREEZE_CONFIG_KEY)
     if not isinstance(frozen_binding, Mapping):
@@ -501,6 +501,37 @@ def _frozen_manifest_for_asset_source(execution_config: Mapping[str, Any]) -> Ch
     if frozen_binding.get("execution_mode") == "simulated":
         return MockChannelEmulator.adapter_manifest
     return selected
+
+
+def validate_live_channel_emulator_asset_source(
+    execution_config: Mapping[str, Any],
+    load_request: Mapping[str, Any],
+    live_manifest: ChannelEmulatorManifest | None,
+) -> None:
+    """新 I/O 前核对 live v3 来源支持，不改写历史冻结件。
+
+    v1/v2 冻结载荷及既有 outcome 保持原样；待执行任务不能忽略当前
+    已装载 v3 驱动对资产来源的显式拒绝。
+    """
+
+    if load_request["source"] != "channel_asset":
+        return
+    frozen_manifest = _frozen_manifest_for_asset_source(execution_config)
+    if live_manifest is None and frozen_manifest is not None:
+        raise ValueError("channelEmulator asset source 缺少装载驱动 manifest")
+    if live_manifest is None:
+        return  # 无驱动的历史只读路径保持原有分类
+    if frozen_manifest is not None and live_manifest.schema_version < 3:
+        raise ValueError(
+            "channelEmulator 冻结 manifest v3 资产来源不能由 live v1/v2 manifest 执行"
+        )
+    if live_manifest.schema_version < 3:
+        return
+    validate_channel_emulator_asset_source(
+        manifest=live_manifest,
+        source_type=load_request["channel_asset_source_type"],
+        requested_load_mode=load_request["requested_load_mode"],
+    )
 
 
 def frozen_channel_emulator_binding_digest(execution_config: Mapping[str, Any]) -> str:
@@ -571,9 +602,15 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
         # structurally readable.  They cannot acquire today's asset truth or
         # become formal evidence later; P2-66 classifies the missing projection
         # fail-closed instead of backfilling from mutable current state.
-        validate_frozen_channel_emulator_load_context(
+        load_request, _configuration = validate_frozen_channel_emulator_load_context(
             execution_config, frozen_plan
         )
+        if load_request["source"] == "channel_asset":
+            live_driver, _source = channel_emulator_for_execution_plan(hal)
+            live_manifest = channel_emulator_manifest_of(live_driver)
+            validate_live_channel_emulator_asset_source(
+                execution_config, load_request, live_manifest,
+            )
         if frozen_plan.get("schema_version") == 1:
             raise ValueError(
                 "channelEmulator 执行计划 v1 不包含 P2-59② 运行时操作；"
@@ -601,12 +638,8 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
             )
         live_driver, _source = channel_emulator_for_execution_plan(hal)
         live_manifest = channel_emulator_manifest_of(live_driver)
-        if live_manifest is None:
-            raise ValueError("channelEmulator asset source 缺少装载驱动 manifest")
-        validate_channel_emulator_asset_source(
-            manifest=live_manifest,
-            source_type=load_request["channel_asset_source_type"],
-            requested_load_mode=load_request["requested_load_mode"],
+        validate_live_channel_emulator_asset_source(
+            execution_config, load_request, live_manifest,
         )
     frozen = {**plan.as_payload(), "digest": plan.digest}
     request_payload = {
