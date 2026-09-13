@@ -53,6 +53,9 @@ def test_reachable_cmw_commands_carry_manual_source_and_purpose():
         "mac_dl_padding_query",
         "mac_ul_multicluster_query",
         "mac_harq_dl_enable_query",
+        # P2-70：仅诊断固定矩阵的 DCI（User Manual pp.752–753）。
+        "mac_dci",
+        "mac_dci_query",
     }
 
     assert required == set(CMW500_LTE_COMMANDS)

@@ -19,6 +19,7 @@ import io
 import logging
 import time
 from dataclasses import asdict
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -178,6 +179,79 @@ async def run_diagnostic_sequence(
     success = False
     summary = ""
     cancelled_exc: Optional[asyncio.CancelledError] = None
+    is_cmw_probe = key == "cmw500_fdd_matrix_probe"
+    lease_outcome = None
+    captured = []
+    resolved_binding = None
+    locked_hal = None
+    validator = None
+    if is_cmw_probe:
+        from app.diagnostics.sequences.cmw500_fdd_matrix_probe import (
+            ProbeCancelled, ProbePreflightRejected, validate_params,
+        )
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.hal.scpi_evidence import capture_scpi_exchanges
+        from app.models.lab_profile import LabProfile
+        from app.services.base_station_binding import resolve_base_station_binding
+        from app.services.instrument_hal_service import is_mock_driver
+        from app.services.instrument_test_lease import hal_mutation_guard
+
+        extra = {"formal_eligible": False, "classification": "diagnostic_only"}
+
+        def validator(hal):
+            nonlocal resolved_binding, locked_hal
+            # Same HAL mutation lock as Remote acquisition; no client snapshot.
+            try:
+                validate_params(request.params)
+                lab = db.get(LabProfile, ctx.lab_profile_id)
+                if lab is None:
+                    return "CMW 抽样缺少所选 LabProfile"
+                resolved_binding = resolve_base_station_binding(db, hal, lab, lock=True)
+                driver = hal.drivers.get("baseStation")
+                if is_mock_driver(driver) or type(driver) is not RealCmw500Driver:
+                    return "CMW 抽样只接受真实 CMW500；模拟结果不能作为现场证据"
+                locked_hal = hal
+                extra["binding"] = resolved_binding.model_dump(mode="json")
+            except ValueError as exc:
+                return str(exc)
+            finally:
+                # Resolver is read-only; don't retain row locks across awaited I/O.
+                db.rollback()
+            return None
+
+    @asynccontextmanager
+    async def sequence_lease(lease_categories):
+        # Only this probe needs a non-mutating RF preflight before the common
+        # lease (CMW release always enforces SAFE_IDLE). Reuse the same HAL lock
+        # across preflight/connect/acquire; never weaken release to preserve ON.
+        if is_cmw_probe:
+            async with hal_mutation_guard():
+                error = validator(get_hal_service())
+                if error:
+                    raise ValueError(error)
+                driver = locked_hal.drivers["baseStation"]
+                if driver._visa_session is None and not await driver.connect():
+                    raise ValueError("CMW 只读前置连接失败")
+                preflight = await sequence.run(
+                    ctx, locked_hal, request.params, log=_log,
+                    resolved_binding=resolved_binding, preflight_only=True,
+                )
+                if not preflight.success:
+                    # On refusal keep the HAL-owned transport; closing through
+                    # release_remote_session would shut down an out-of-scope cell.
+                    raise ProbePreflightRejected(preflight)
+                async with instrument_test_lease(
+                    f"diagnostic-sequence:{key}", control_f64=False, control_uxm=True,
+                    validate_before_remote=validator, enable_monitoring=False,
+                ) as outcome:
+                    yield outcome
+        else:
+            async with instrument_test_lease(
+                f"diagnostic-sequence:{key}",
+                control_f64="channelEmulator" in lease_categories,
+                control_uxm="baseStation" in lease_categories,
+            ) as outcome:
+                yield outcome
 
     try:
         try:
@@ -209,37 +283,55 @@ async def run_diagnostic_sequence(
                     for binding in (ctx.instrument_bindings or [])
                     if binding.category_key
                 )
-            async with instrument_test_lease(
-                f"diagnostic-sequence:{key}",
-                control_f64="channelEmulator" in lease_categories,
-                control_uxm="baseStation" in lease_categories,
-            ):
-                # 在租约内解析 HAL，避免 reload 在“拿实例→首条命令”窗口换掉驱动。
-                hal = get_hal_service()
-                result = await sequence.run(ctx, hal, request.params, log=_log)
-            success = bool(result.success)
-            summary = result.summary
-            step_results = [asdict(s) for s in result.steps]
-            extra = result.extra
+            with (capture_scpi_exchanges() if is_cmw_probe else nullcontext([])) as captured:
+                async with sequence_lease(lease_categories) as lease_outcome:
+                    # CMW uses the exact HAL resolved by the lock-time validator.
+                    hal = locked_hal if is_cmw_probe else get_hal_service()
+                    try:
+                        result = await sequence.run(
+                            ctx, hal, request.params, log=_log,
+                            **({"resolved_binding": resolved_binding} if is_cmw_probe else {}),
+                        )
+                    except asyncio.CancelledError as exc:
+                        if is_cmw_probe and isinstance(exc, ProbeCancelled):
+                            step_results = [asdict(s) for s in exc.result.steps]
+                            extra = exc.result.extra
+                        raise
+                    # Keep the completed/partial result even if transport release fails.
+                    success = bool(result.success)
+                    summary = result.summary
+                    step_results = [asdict(s) for s in result.steps]
+                    extra = result.extra
         except asyncio.CancelledError as exc:
-            # 请求取消也必须留下“这次诊断发生过”的审计记录。序列尚未返回
-            # SequenceRunResult，不能声称拿到了内部 partial steps/extra；明确记录
-            # 该边界，待同步 I/O/序列取消收尾和下方同步 DB commit 完成后再重抛。
+            if is_cmw_probe and isinstance(exc, ProbeCancelled):
+                step_results = [asdict(s) for s in exc.result.steps]
+                extra = exc.result.extra
+            # 请求取消也必须留下审计记录。CMW probe 显式携带部分结果；其他
+            # 序列若尚未返回则不能声称拿到内部证据。完成安全收尾与 DB commit 后重抛。
             success = False
             summary = "Sequence cancelled"
             error_msg = summary
-            extra = {
-                "cancelled": True,
-                "partial_result_available": False,
-            }
+            extra.update(cancelled=True, partial_result_available=(
+                is_cmw_probe and bool(step_results)))
             cancelled_exc = exc
         except Exception as e:  # noqa: BLE001
+            if is_cmw_probe and isinstance(e, ProbePreflightRejected):
+                step_results = [asdict(s) for s in e.result.steps]
+                extra = e.result.extra
             # Sequence raised — record as failure, surface error to UI.
             success = False
             summary = f"Sequence aborted: {e}"
             error_msg = str(e)
             logger.exception("Sequence %s aborted with exception", key)
     finally:
+        if is_cmw_probe:
+            extra["formal_eligible"] = False
+            extra["exchanges"] = [item.model_dump(mode="json") for item in captured]
+            extra["release"] = (
+                asdict(lease_outcome.base_station_release)
+                if lease_outcome is not None and lease_outcome.base_station_release is not None
+                else None
+            )
         # asyncio.CancelledError 属于 BaseException，不会被上面的普通异常分支吞掉；
         # 但它仍必须释放破坏性诊断占位，避免进程永久 409。
         if unsafe_token is not None:

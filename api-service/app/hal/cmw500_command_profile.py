@@ -322,6 +322,20 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
         ),
         minimum_firmware="V3.0.10",
     ),
+    # P2-70: User Manual 1173.9628.02-41 pp.752-753: D1A / D2A,
+    # both since V3.2.70. Query form follows §1.2.4, not a separate p.753 example.
+    "mac_dci": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CONNection:PCC:DCIFormat",
+        source_reference=f"{_LTE_MANUAL}, printed p.752-753",
+        purpose="Select the documented DCI format for diagnostic matrix samples",
+        minimum_firmware="V3.2.70",
+    ),
+    "mac_dci_query": CmwCommandSpec(
+        template="CONFigure:LTE:SIGN{i}:CONNection:PCC:DCIFormat?",
+        source_reference=f"{_LTE_MANUAL}, printed p.752-753; {_QUERY_FORM_RULE}",
+        purpose="Read back DCI; unknown response tokens must fail closed",
+        minimum_firmware="V3.2.70",
+    ),
     "mac_sched_type_query": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:CONNection:PCC:STYPe?",
         source_reference=(
@@ -754,6 +768,17 @@ class Cmw500LteCommandProfile:
     @classmethod
     def mac_scheduling_type_query(cls, sign_channel: int) -> str:
         return cls._format("mac_sched_type_query", sign_channel)
+
+    @classmethod
+    def build_mac_dci(cls, sign_channel: int, dci: str) -> str:
+        # Table 2-32 pp.65-66: this probe covers TM1/1A and TM3/2A only.
+        if dci not in {"D1A", "D2A"}:
+            raise ValueError("DCI is outside the diagnostic sample domain")
+        return f"{cls._format('mac_dci', sign_channel)} {dci}"
+
+    @classmethod
+    def mac_dci_query(cls, sign_channel: int) -> str:
+        return cls._format("mac_dci_query", sign_channel)
 
     @classmethod
     def build_mac_rmc_dl(
