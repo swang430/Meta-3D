@@ -58,6 +58,8 @@ from app.services.channel_emulator_execution_plan import (
     freeze_channel_emulator_execution_plan,
     freeze_channel_asset_resolution,
     validate_frozen_channel_emulator_execution_plan,
+    validate_frozen_channel_emulator_load_context,
+    validate_channel_emulator_asset_source,
     freeze_execution_channel_emulator_plan,
     resolve_live_channel_emulator_execution_plan,
     verify_frozen_channel_emulator_execution_plan,
@@ -206,6 +208,7 @@ def _legacy_v1_binding():
             if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
         ],
     }
+    legacy_manifest.pop("asset_sources")
     identity = {
         "schema_version": 1,
         "binding_digest": BINDING_DIGEST,
@@ -233,6 +236,13 @@ def test_new_plan_is_v2_and_legacy_v1_keeps_its_original_digest_and_shape():
     assert tuple(item.operation for item in parsed.operations) == (
         CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
     )
+
+    v2_manifest = ChannelEmulatorManifest.model_validate({
+        **{key: value for key, value in F64_MANIFEST.model_dump(mode="json").items()
+           if key != "asset_sources"},
+        "schema_version": 2,
+    })
+    assert _plan(v2_manifest).schema_version == 2
     assert validate_frozen_channel_emulator_execution_plan(frozen) == frozen
 
 
@@ -489,6 +499,59 @@ def test_freeze_binds_effective_channel_asset_load_truth_and_never_reloads_curre
     assert calls == [
         {"source_type": "standard_3gpp", "engine_mode": "mimo_first_asc"}
     ]
+
+
+def test_asset_source_is_checked_separately_from_load_mode_before_freeze_and_on_read(db, monkeypatch):
+    from app.services.mimo_ota import channel_asset_resolver
+
+    asset_id = uuid4()
+    configuration = _configuration("keysight_gcm")
+    configuration["channel_asset_id"] = str(asset_id)
+    monkeypatch.setattr(channel_asset_resolver, "resolve_channel_asset", lambda *_args: SimpleNamespace(
+        engine_mode="mimo_first_asc",
+        asset=SimpleNamespace(id=asset_id, source_type="custom_static"),
+    ))
+    execution = _execution(db, configuration=configuration)
+    base = execution.config[FREEZE_CONFIG_KEY]
+    identity = freeze_channel_asset_resolution(db, MIMOOTAConfiguration.model_validate(configuration))
+    base_payload = {key: value for key, value in base.items() if key != "digest"}
+    base_payload[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = identity
+    execution.config = {
+        **execution.config,
+        FREEZE_CONFIG_KEY: {**base_payload, "digest": canonical_payload_digest(base_payload)},
+    }
+    partial = F64_MANIFEST.model_dump(mode="json")
+    partial["asset_sources"] = [
+        {**item, "support": "not_implemented"} if item["source_type"] == "custom_static" else item
+        for item in partial["asset_sources"]
+    ]
+    with pytest.raises(ValueError, match="custom_static"):
+        freeze_channel_emulator_execution_plan(
+            db,
+            _hal(SimpleNamespace(adapter_manifest=ChannelEmulatorManifest.model_validate(partial))),
+            execution,
+        )
+    assert CE_PLAN_FREEZE_CONFIG_KEY not in execution.config
+
+    frozen = freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
+    assert frozen["schema_version"] == 2
+    with pytest.raises(ValueError, match="custom_static"):
+        validate_channel_emulator_asset_source(
+            manifest=ChannelEmulatorManifest.model_validate(partial),
+            source_type="custom_static",
+            requested_load_mode="external_waveform",
+        )
+
+    binding = execution.config[CE_FREEZE_CONFIG_KEY]
+    execution.config = {
+        **execution.config,
+        CE_FREEZE_CONFIG_KEY: {
+            **binding,
+            "resolved_binding": {**binding["resolved_binding"], "manifest": partial},
+        },
+    }
+    with pytest.raises(ValueError, match="custom_static"):
+        validate_frozen_channel_emulator_load_context(execution.config, frozen)
 
 
 def test_frozen_channel_asset_rejects_executable_content_drift_before_remote(

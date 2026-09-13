@@ -350,6 +350,7 @@ def _digest_safe_manifest_payload(manifest: ChannelEmulatorManifest) -> dict[str
         exclude={
             "operations": {"__all__": {"reason", "source_reference"}},
             "load_modes": {"__all__": {"reason"}},
+            "asset_sources": {"__all__": {"reason", "source_reference"}},
         },
     )
 

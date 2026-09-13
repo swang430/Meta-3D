@@ -242,8 +242,11 @@ def resolve_channel_emulator_execution_plan(
         raise ValueError(
             "channel emulator execution plan requires a channel emulator manifest (fail-closed)"
         )
+    # Manifest v3 adds only static asset declarations.  The persisted plan
+    # operation vocabulary remains v2; never emit an unrecognised plan v3.
+    plan_schema_version = 1 if manifest.schema_version == 1 else 2
     operation_vocabulary = channel_emulator_execution_plan_operations_for_schema(
-        manifest.schema_version
+        plan_schema_version
     )
     load_capability = next(
         (item for item in manifest.load_modes if item.mode == requested_load_mode), None
@@ -267,7 +270,7 @@ def resolve_channel_emulator_execution_plan(
         for operation in operation_vocabulary
     )
     return ChannelEmulatorExecutionPlan(
-        schema_version=manifest.schema_version,
+        schema_version=plan_schema_version,
         adapter_id=manifest.adapter_id,
         driver_source=driver_source,
         requested_load_mode=requested_load_mode,
