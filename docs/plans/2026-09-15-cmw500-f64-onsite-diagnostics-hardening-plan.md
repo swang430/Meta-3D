@@ -180,11 +180,15 @@ Run: `.venv/bin/python -m pytest -q tests/test_p1_65_propsim_f64_local_handback_
 
 Run: `.venv/bin/python -m pytest -q`
 
-- [ ] **Step 3: Run GUI contracts and build**
+- [ ] **Step 3: Run affected GUI contracts and full production build**
 
-Run: `node --test test/*.test.ts src/**/*.test.ts src/**/*.test.tsx`
+Run: `node --test test/diagnosticSequenceParams.test.ts test/diagnosticSequenceEvidence.test.ts`
 
 Run: `npm run build`
+
+说明：仓库没有统一 GUI test script；直接把全部 `.test.ts(x)` 交给原生 Node runner
+会命中不同历史模块解析约定与过期 fixture，不是可复现的本片门。这里跑本片全部 GUI
+消费契约，再用 production build 覆盖全量 TypeScript 与打包。
 
 - [ ] **Step 4: Run static/repository gates**
 
@@ -205,4 +209,3 @@ Re-enumerate every changed field’s producers/consumers and the four failure pa
 - [ ] **Step 6: Push and open Ready PR**
 
 Push `codex/cmw500-f64-onsite-diagnostics-hardening`, open a Ready PR against `main`, include the observable failures and exact verification outputs, and keep the worktree for review feedback.
-

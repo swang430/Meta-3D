@@ -63,4 +63,3 @@ GUI 不再公开 `operator_confirmed_local: boolean`，改为必须显式选择�
 - 不改变正式 provenance 白名单、qualification 或 KPI 判据。
 - 不把 persisted `connected` 当作现场 live 连接证据。
 - 不尝试关闭 P2-71 的设备字节摘要、版本管理或回滚半项。
-

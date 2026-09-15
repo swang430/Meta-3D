@@ -16,7 +16,7 @@ python scripts/onsite-f64-control.py load 'D:\User Emulations\onsite\attach.smu'
 后台会拒绝切换控制权和换场景，避免破坏正在运行的流程。
 
 CMW500 + F64 的正式测试不再由一键 shell 脚本拼装临时 TestCase。请在 GUI 中使用已保存的
-TestCase 与 LabProfile；单步硬件核验使用「调试维护 → 调试序列」。2026-09-16 现场顺序、
+TestCase 与 LabProfile；单步硬件核验使用「调试维护 → 调试序列 + 单阶段」。2026-09-16 现场顺序、
 停止条件和证据清单见
 [`docs/guides/2026-09-16-cmw500-f64-onsite-runbook.md`](../docs/guides/2026-09-16-cmw500-f64-onsite-runbook.md)。
 

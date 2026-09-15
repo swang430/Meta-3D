@@ -52,7 +52,7 @@
 
 ## 2. CMW500 关闭小区矩阵抽样
 
-在 GUI「调试维护 → 调试序列」中运行 `cmw500_fdd_matrix_probe`：
+在 GUI「调试维护 → 调试序列 + 单阶段」中运行 `cmw500_fdd_matrix_probe`：
 
 1. 选择 `TM1 + 1 TX（SIMO 1x2）`（参数值 `tm1_one`），保存 `diagnostic_run_id`、写入、
    回读和错误队列证据。

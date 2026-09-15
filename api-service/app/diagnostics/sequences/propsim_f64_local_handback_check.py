@@ -74,7 +74,7 @@ metadata = SequenceMetadata(
         },
         {
             "name": "operator_local_state",
-            "label": "confirm 必填：面板已回到 Local（背景 Remote mode 水印消失、右上角 Local Mode 按钮不再亮蓝）",
+            "label": "confirm 必填：面板观察状态（Local = Remote mode 水印消失且 Local Mode 按钮不再亮蓝）",
             "type": "string",
             "default": "",
             "choices": [
