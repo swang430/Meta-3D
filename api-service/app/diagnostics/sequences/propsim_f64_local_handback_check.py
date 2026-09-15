@@ -104,6 +104,19 @@ _RELEASE_INSTRUCTIONS = (
 )
 
 
+def validate_before_lease(params: Dict[str, Any]) -> Tuple[str, str]:
+    """Pure validation used by the API before it acquires the F64 lease."""
+    phase = str(params.get("phase") or "release").strip().lower()
+    if phase not in _PHASES:
+        raise ValueError(f"phase={phase!r} 非法，只能是 release / confirm")
+    state = str(params.get("operator_local_state") or "").strip().lower()
+    if phase == "confirm" and state and state not in _LOCAL_STATES:
+        raise ValueError(
+            f"operator_local_state={state!r} 非法，只能是 local / remote"
+        )
+    return phase, state
+
+
 def _result(verdict: str, summary: str, steps: List[SequenceStepResult],
             extra: Dict[str, Any]) -> SequenceRunResult:
     extra = dict(extra)
@@ -202,6 +215,31 @@ async def run(
     *,
     log: Callable[[str], None],
 ) -> SequenceRunResult:
+    try:
+        phase, validated_state = validate_before_lease(params)
+    except ValueError as exc:
+        raw_phase = str(params.get("phase") or "release").strip().lower()
+        raw_state = str(params.get("operator_local_state") or "").strip().lower()
+        extra: Dict[str, Any] = {
+            "phase": raw_phase,
+            "scpi_sent": False,
+        }
+        if raw_phase == "confirm":
+            extra.update({
+                "evidence_kind": "onsite-observed",
+                "operator_observation": (
+                    str(params.get("operator_observation") or "").strip() or None
+                ),
+                "operator_local_state": raw_state or None,
+                "operator_confirmed_local": None,
+            })
+        return _result(
+            "ABORTED",
+            f"ABORTED: {exc}；未发任何 SCPI",
+            [],
+            extra,
+        )
+
     drivers = getattr(hal, "drivers", {}) or {}
     ce = drivers.get("channelEmulator")
     if ce is None:
@@ -211,30 +249,12 @@ async def run(
     if refusal:
         return SequenceRunResult(success=False, summary=refusal)
 
-    phase = str(params.get("phase") or "release").strip().lower()
     extra: Dict[str, Any] = {"phase": phase}
-    if phase not in _PHASES:
-        return _result("ABORTED", f"ABORTED: phase={phase!r} 非法，只能是 release / confirm；未发任何 SCPI",
-                       [], extra)
 
     if phase == "confirm":
         # 零 SCPI：面板观察与 SCPI 无关。
         observation = str(params.get("operator_observation") or "").strip()
-        state = str(params.get("operator_local_state") or "").strip().lower()
-        if state and state not in _LOCAL_STATES:
-            extra.update({
-                "evidence_kind": "onsite-observed",
-                "operator_observation": observation or None,
-                "operator_local_state": state,
-                "operator_confirmed_local": None,
-                "scpi_sent": False,
-            })
-            return _result(
-                "ABORTED",
-                f"ABORTED: operator_local_state={state!r} 非法，只能是 local / remote；"
-                "本段未发任何 SCPI。",
-                [], extra,
-            )
+        state = validated_state
         if not state:
             # 已登记调用方可能仍发送旧 boolean；它不再出现在 GUI metadata 中。
             legacy_confirmed = _as_bool(params.get("operator_confirmed_local"))

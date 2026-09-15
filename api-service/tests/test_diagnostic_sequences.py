@@ -11,6 +11,7 @@ from tests.base_station_mock_factory import registered_mock_base_station
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -271,6 +272,43 @@ class TestListSequences:
             {"value": "local", "label": "已回 Local"},
             {"value": "remote", "label": "仍为 Remote"},
         ]
+
+    @pytest.mark.parametrize(("params", "invalid_field"), [
+        ({"phase": "invalid"}, "phase"),
+        ({
+            "phase": "confirm",
+            "operator_observation": "面板观察完成",
+            "operator_local_state": "maybe",
+        }, "operator_local_state"),
+    ])
+    def test_invalid_handback_params_are_rejected_before_instrument_lease(
+        self, lab_with_ce, monkeypatch, params, invalid_field,
+    ):
+        """Caller-invalid confirm input must not reacquire F64 Remote control."""
+        _patched_hal(monkeypatch, drivers={"channelEmulator": MagicMock()})
+        lease_calls = []
+
+        @asynccontextmanager
+        async def recording_lease(*args, **kwargs):
+            lease_calls.append((args, kwargs))
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.instrument_test_lease",
+            recording_lease,
+        )
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_local_handback_check/run",
+            json={
+                "lab_profile_id": str(lab_with_ce.id),
+                "params": params,
+            },
+        )
+
+        assert resp.status_code == 422
+        assert invalid_field in resp.json()["detail"]
+        assert lease_calls == []
 
 
 class TestRunSequence:
