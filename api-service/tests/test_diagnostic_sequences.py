@@ -1143,6 +1143,7 @@ class TestPropsimF64HealthSequence:
         idn: str = DEFAULT_IDN,
         sys_info: str = "",
         err_for_probe=lambda probed_cmd: '0,"No error"',
+        probe_replies=None,
         runtime_env=None,
         alignment=None,
         external_units=None,
@@ -1162,6 +1163,7 @@ class TestPropsimF64HealthSequence:
         ce = MagicMock()
         ce._write = MagicMock(return_value=None)
         state = {"last_probe": None}
+        probe_replies = probe_replies or {}
 
         def fake_query(cmd, *_args, **_kw):
             if cmd == "*IDN?":
@@ -1172,7 +1174,10 @@ class TestPropsimF64HealthSequence:
                 last = state["last_probe"]
                 return err_for_probe(last) if last else '0,"No error"'
             state["last_probe"] = cmd
-            return ""
+            reply = probe_replies.get(cmd, "")
+            if isinstance(reply, BaseException):
+                raise reply
+            return reply
 
         ce._query = fake_query
         ce.query_runtime_environment = AsyncMock(
@@ -1209,6 +1214,78 @@ class TestPropsimF64HealthSequence:
         labels = [s["label"] for s in body["steps"]]
         assert "get_metrics()" in labels
         assert any("query_runtime_environment" in lb for lb in labels)
+
+    def test_phase_a_persists_raw_query_and_error_queue_for_every_probe(
+        self, lab_with_ce, monkeypatch,
+    ):
+        ce = self._build_ce(
+            probe_replies={
+                "MMEM:CDIR?": '"D:\\SCENARIOS"',
+                "MMEM:CAT?": '1024,2048,"LTE_UMA,DIR,0"',
+            },
+            err_for_probe=lambda _cmd: '0,"No error"',
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={
+                "lab_profile_id": str(lab_with_ce.id),
+                "params": {"include_supported": False, "functional_checks": False},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        observations = body["extra"]["scpi_observations"]
+        assert len(observations) == body["extra"]["scpi_probed"]
+        by_name = {item["name"]: item for item in observations}
+        assert by_name["MMEM_CDIR"]["query_raw"] == '"D:\\SCENARIOS"'
+        assert by_name["MMEM_CAT"]["query_raw"] == '1024,2048,"LTE_UMA,DIR,0"'
+        assert by_name["MMEM_CAT"]["error_queue_query"] == "SYST:ERR?"
+        assert by_name["MMEM_CAT"]["error_queue_raw"] == '0,"No error"'
+        assert by_name["MMEM_CAT"]["error_code"] == 0
+        assert by_name["MMEM_CAT"]["status"] == "SUPPORTED"
+        idn_step = next(
+            step for step in body["steps"] if step["label"].startswith("IDN ")
+        )
+        assert idn_step["raw"] == self.DEFAULT_IDN
+        # include_supported=False suppresses the visible row, not the audit evidence.
+        assert not any(
+            step["label"].startswith("MMEM_CAT ") for step in body["steps"]
+        )
+
+    def test_phase_a_preserves_empty_reply_and_query_exception_separately(
+        self, lab_with_ce, monkeypatch,
+    ):
+        ce = self._build_ce(
+            probe_replies={
+                "MMEM:CDIR?": "",
+                "MMEM:CAT?": RuntimeError("catalog query failed"),
+            },
+            err_for_probe=lambda _cmd: '-200,"Simulation not open"',
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={
+                "lab_profile_id": str(lab_with_ce.id),
+                "params": {"include_supported": False, "functional_checks": False},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        observations = {
+            item["name"]: item for item in resp.json()["extra"]["scpi_observations"]
+        }
+        assert observations["MMEM_CDIR"]["query_raw"] == ""
+        assert observations["MMEM_CDIR"]["query_error"] is None
+        assert observations["MMEM_CAT"]["query_raw"] is None
+        assert observations["MMEM_CAT"]["query_error"] == (
+            "RuntimeError: catalog query failed"
+        )
+        assert observations["MMEM_CAT"]["error_queue_raw"] == (
+            '-200,"Simulation not open"'
+        )
 
     def test_f64_opt_unsupported_is_expected_and_not_a_blocker(self, lab_with_ce, monkeypatch):
         """Real F64 ATE firmware does not implement ``*OPT?``.

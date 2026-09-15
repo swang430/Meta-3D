@@ -258,13 +258,17 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-async def _drain_err(query_fn: Callable[[str], Any]) -> Tuple[Optional[int], str]:
-    """Single SYST:ERR? read with await-handling."""
+async def _drain_err(
+    query_fn: Callable[[str], Any],
+) -> Tuple[Optional[str], Optional[int], str]:
+    """Single SYST:ERR? read, preserving the exact reply for audit."""
     try:
         raw = await _maybe_await(query_fn("SYST:ERR?"))
     except Exception as e:  # noqa: BLE001
-        return None, f"err-read raised: {e}"
-    return _parse_err(raw if isinstance(raw, str) else str(raw))
+        return None, None, f"err-read raised: {e}"
+    raw_text = raw if isinstance(raw, str) else (None if raw is None else str(raw))
+    err_code, err_text = _parse_err(raw_text or "")
+    return raw_text, err_code, err_text
 
 
 async def _run_scpi_surface(
@@ -272,8 +276,8 @@ async def _run_scpi_surface(
     *,
     include_supported: bool,
     log: Callable[[str], None],
-) -> Tuple[List[SequenceStepResult], Dict[str, int], List[str], bool]:
-    """Phase A. Returns (steps, counts, critical_unsupported_names, aborted_early)."""
+) -> Tuple[List[SequenceStepResult], Dict[str, int], List[str], bool, List[Dict[str, Any]]]:
+    """Phase A, including one raw observation record per attempted probe."""
     query_fn = ce._query  # noqa: SLF001
     write_fn = getattr(ce, "_write", None)
     # Clear the error queue once so the first probe sees a clean state.
@@ -286,6 +290,7 @@ async def _run_scpi_surface(
     steps: List[SequenceStepResult] = []
     counts = {"SUPPORTED": 0, "SUPPORTED_BUT_STATE": 0, "UNSUPPORTED": 0, "UNKNOWN": 0}
     critical_unsupported: List[str] = []
+    observations: List[Dict[str, Any]] = []
     # Fail-fast: 3 consecutive VISA timeouts during err-read => SCPI
     # channel is stuck. Continuing eats ~10 s per remaining command for
     # no useful signal. (Backported from the FS16 probe after the
@@ -297,14 +302,17 @@ async def _run_scpi_surface(
 
     for name, query, is_critical, desc in PROPSIM_SCPI:
         started = time.monotonic()
-        # Send the probe; we don't care about the return — the error queue is
-        # the source of truth. Some queries legitimately raise on this
-        # firmware/state (e.g. "not ready" responses); swallow and inspect ERR.
+        # Classification remains driven by the error queue. The target reply
+        # and exception are nevertheless preserved verbatim so unsupported
+        # MMEM probes and empty replies remain auditable after the run.
+        query_raw: Optional[str] = None
+        query_error: Optional[str] = None
         try:
-            await _maybe_await(query_fn(query))
-        except Exception:  # noqa: BLE001
-            pass
-        err_code, err_text = await _drain_err(query_fn)
+            raw = await _maybe_await(query_fn(query))
+            query_raw = raw if isinstance(raw, str) else (None if raw is None else str(raw))
+        except Exception as e:  # noqa: BLE001
+            query_error = f"{type(e).__name__}: {e}"
+        error_queue_raw, err_code, err_text = await _drain_err(query_fn)
         status = _categorize_status(err_code)
         counts[status] = counts.get(status, 0) + 1
         step_ok = status in ("SUPPORTED", "SUPPORTED_BUT_STATE")
@@ -324,6 +332,19 @@ async def _run_scpi_surface(
         )
         detail = f"{status}{crit_part}{err_part} — {desc}"
         duration_ms = int((time.monotonic() - started) * 1000)
+        observations.append({
+            "name": name,
+            "query": query,
+            "critical": is_critical,
+            "description": desc,
+            "query_raw": query_raw,
+            "query_error": query_error,
+            "error_queue_query": "SYST:ERR?",
+            "error_queue_raw": error_queue_raw,
+            "error_code": err_code,
+            "error_text": err_text,
+            "status": status,
+        })
 
         # Suppress noisy SUPPORTED rows unless the operator opts in — keeps
         # the GUI step list focused on real findings. Always emit critical
@@ -335,6 +356,7 @@ async def _run_scpi_surface(
                 success=step_ok,
                 detail=detail,
                 duration_ms=duration_ms,
+                raw=query_raw,
             ))
 
         if consecutive_timeouts >= 3:
@@ -367,7 +389,7 @@ async def _run_scpi_surface(
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
 
-    return steps, counts, critical_unsupported, aborted_early
+    return steps, counts, critical_unsupported, aborted_early, observations
 
 
 async def _run_functional_check(
@@ -506,9 +528,13 @@ async def run(
     log(f"  ✓ *IDN?: {idn_str}")
 
     # ----- Phase A: SCPI surface -----
-    steps_a, counts, critical_unsupported, phase_a_aborted = await _run_scpi_surface(
-        ce, include_supported=include_supported, log=log
-    )
+    (
+        steps_a,
+        counts,
+        critical_unsupported,
+        phase_a_aborted,
+        scpi_observations,
+    ) = await _run_scpi_surface(ce, include_supported=include_supported, log=log)
 
     # ----- Phase B: Functional smoke (driver APIs) -----
     # Skipped if Phase A aborted on a stuck channel — Phase B would reuse
@@ -601,6 +627,7 @@ async def run(
             "scpi_probed": len(PROPSIM_SCPI),
             "functional_failures": functional_failures,
             "phase_a_aborted": phase_a_aborted,
+            "scpi_observations": scpi_observations,
             "include_supported": include_supported,
             "functional_checks": do_functional,
         },
