@@ -346,8 +346,8 @@ class CreateSessionRequest(BaseModel):
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
     lab_profile_id: Optional[UUID] = None
-    # P3-14: 统一信道资产 (P2-16) 进会话创建 — 此前只能建完会话再 PATCH
-    # configuration 绕道 (scripts/onsite-run-channel-throughput.sh 固化的临时路)。
+    # P3-14: 统一信道资产 (P2-16) 直接进入会话创建。旧现场流程曾在建完会话后
+    # PATCH configuration；该临时脚本已经退役，当前执行只消费本请求冻结的资产。
     # None = 不带资产, 走 cdl_model_name 等显式参数 (兼容不变)。
     channel_asset_id: Optional[UUID] = None
     # Lab-smoke opt-outs for strict safety gates：cal 在 PRECHECK；managed

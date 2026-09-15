@@ -16,9 +16,8 @@
 **"TestCase 直接驱动"的执行链已经存在,而且是现场验证过的那条** ——
 就是 GUI 主控台的**「暗室首测 (Sandbox)」面板**那条链(内部: `TestCase →
 TestExecution → dispatch_step 5 相位`,全程不碰 TestPlan,
-`commissioning.py:351-383/684-703`)和现场脚本
-(`onsite-run-channel-throughput.sh` 只用 `/test-plans/cases*` + commissioning 会话)
-走的都是它。ARCH-1 不是新建执行链,是**把 GUI 正门从 plan 链切换到这条已验证链,
+`commissioning.py:351-383/684-703`)；当前产品执行也只走 TestCase + commissioning
+会话。ARCH-1 不是新建执行链,是**把 GUI 正门从 plan 链切换到这条已验证链,
 然后拆掉 plan 链** —— 修法全程「去掉 > 换源」,唯一的"加"是一个薄执行入口和一个
 最小协作式 cancel。
 
@@ -131,7 +130,7 @@ TestExecution → dispatch_step 5 相位`,全程不碰 TestPlan,
 | 模型类 TestPlan / TestStep / TestQueue / TestPlanExecution | **保留,标 deprecated 只读**(docstring 写明"ARCH-1 封存,仅供历史数据查询") —— 表不 drop,brownfield 两台机器(Mac + 现场本)的历史行原地保留;greenfield create_all 仍建表(无害) |
 | GUI PlansTab / QueueTab / 死组件 5 个 / `testManagementAPI.patch.ts` / `useSequenceLibrary` | **删除**(全部是 plan/queue 遗物或零引用死代码,属本改动范围,不算顺手优化) |
 | bootstrap `sequences_seeder`(14 条 TestSequence,8 条只喂已删的 road-test 桥) | **删除 seeder + 封存模型**(消费方全部退场后是纯孤儿) |
-| `scripts/cleanup-test-queue.py` | 保留一版(清历史残留用),README 注明表已封存 |
+| `scripts/cleanup-test-queue.py` | **删除**（2026-09-15：队列路由与运行架构均已拆除；保留一个调用已删除 API 的脚本会误导现场操作） |
 
 ---
 
