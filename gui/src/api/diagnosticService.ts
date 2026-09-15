@@ -8,11 +8,17 @@
  */
 import apiClient from './client'
 
+export interface SequenceParamChoice {
+  value: string
+  label: string
+}
+
 export interface SequenceParamSpec {
   name: string
   label: string
   type: 'number' | 'string' | 'boolean'
   default?: number | string | boolean | null
+  choices?: SequenceParamChoice[] | null
 }
 
 export interface DiagnosticSequenceMetadata {

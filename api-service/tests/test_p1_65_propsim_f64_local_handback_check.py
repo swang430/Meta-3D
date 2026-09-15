@@ -65,9 +65,20 @@ def test_mock_driver_is_refused_in_both_phases():
 def test_metadata_params():
     assert seq.metadata.required_categories == ["channelEmulator"]
     names = {p["name"] for p in seq.metadata.params_schema}
-    assert names == {"phase", "operator_observation", "operator_confirmed_local"}
+    assert names == {"phase", "operator_observation", "operator_local_state"}
     phase = next(p for p in seq.metadata.params_schema if p["name"] == "phase")
     assert phase["default"] == "release"
+    assert phase["choices"] == [
+        {"value": "release", "label": "release：释放前登记"},
+        {"value": "confirm", "label": "confirm：记回面板观察"},
+    ]
+    state = next(p for p in seq.metadata.params_schema
+                 if p["name"] == "operator_local_state")
+    assert state["default"] == ""
+    assert state["choices"] == [
+        {"value": "local", "label": "已回 Local"},
+        {"value": "remote", "label": "仍为 Remote"},
+    ]
 
 
 # ── release 段 ───────────────────────────────────────────────────────────────
@@ -114,7 +125,7 @@ def test_confirm_phase_sends_zero_scpi():
     result = _run(ce, {
         "phase": "confirm",
         "operator_observation": "背景 Remote mode 水印消失，Local Mode 按钮不再亮蓝",
-        "operator_confirmed_local": True,
+        "operator_local_state": "local",
     })
     assert ce.queries == []
     assert ce.release_calls == 0
@@ -126,10 +137,11 @@ def test_confirm_phase_records_observation_as_onsite_evidence():
     obs = "背景 Remote mode 水印消失，Local Mode 按钮不再亮蓝"
     ce = _ScriptedCe()
     result = _run(ce, {
-        "phase": "confirm", "operator_observation": obs, "operator_confirmed_local": True,
+        "phase": "confirm", "operator_observation": obs, "operator_local_state": "local",
     })
     assert result.extra["evidence_kind"] == "onsite-observed"
     assert result.extra["operator_observation"] == obs
+    assert result.extra["operator_local_state"] == "local"
     assert result.extra["operator_confirmed_local"] is True
     assert "人工面板观察" in result.summary
     assert "非 SCPI 证据" in result.summary
@@ -140,18 +152,19 @@ def test_confirm_phase_false_is_blocker():
     result = _run(ce, {
         "phase": "confirm",
         "operator_observation": "Local Mode 按钮仍是蓝色，背景仍显示 Remote mode",
-        "operator_confirmed_local": False,
+        "operator_local_state": "remote",
     })
     assert ce.queries == []
     assert result.success is False
     assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["operator_local_state"] == "remote"
     assert result.extra["operator_confirmed_local"] is False
     assert "人工面板观察" in result.summary
 
 
 def test_confirm_phase_missing_observation_is_undetermined_naming_the_gap():
     ce = _ScriptedCe()
-    result = _run(ce, {"phase": "confirm", "operator_confirmed_local": True})
+    result = _run(ce, {"phase": "confirm", "operator_local_state": "local"})
     assert ce.queries == []
     assert result.success is False
     assert result.extra["verdict"] == "UNDETERMINED"
@@ -159,22 +172,35 @@ def test_confirm_phase_missing_observation_is_undetermined_naming_the_gap():
     assert result.extra["missing"] == ["operator_observation"]
 
 
-def test_confirm_phase_missing_boolean_is_undetermined():
+def test_confirm_phase_missing_explicit_state_is_undetermined():
     ce = _ScriptedCe()
     result = _run(ce, {"phase": "confirm", "operator_observation": "看了面板"})
     assert result.success is False
     assert result.extra["verdict"] == "UNDETERMINED"
-    assert result.extra["missing"] == ["operator_confirmed_local"]
-    assert "operator_confirmed_local" in result.summary
+    assert result.extra["missing"] == ["operator_local_state"]
+    assert "operator_local_state" in result.summary
 
 
-def test_confirm_phase_accepts_string_booleans_from_api_callers():
+def test_confirm_phase_accepts_deprecated_boolean_from_api_callers():
     ce = _ScriptedCe()
     result = _run(ce, {
         "phase": "confirm", "operator_observation": "看了面板", "operator_confirmed_local": "true",
     })
     assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["operator_local_state"] == "local"
     assert result.extra["operator_confirmed_local"] is True
+
+
+def test_confirm_phase_rejects_unknown_state_without_scpi():
+    ce = _ScriptedCe()
+    result = _run(ce, {
+        "phase": "confirm",
+        "operator_observation": "看了面板",
+        "operator_local_state": "maybe",
+    })
+    assert ce.queries == []
+    assert result.extra["verdict"] == "ABORTED"
+    assert "operator_local_state" in result.summary
 
 
 def test_unknown_phase_is_aborted_without_scpi():
@@ -199,7 +225,7 @@ def test_operator_facing_texts_follow_manual_button_semantics():
         assert "按钮可点" not in t, t
         assert "可点" not in t, t
     confirm_label = next(p for p in seq.metadata.params_schema
-                         if p["name"] == "operator_confirmed_local")["label"]
+                         if p["name"] == "operator_local_state")["label"]
     assert "水印" in confirm_label and "亮蓝" in confirm_label
     assert "水印" in seq._RELEASE_INSTRUCTIONS and "亮蓝" in seq._RELEASE_INSTRUCTIONS
     # release 段 summary 就是这段指令，运行态也要同向

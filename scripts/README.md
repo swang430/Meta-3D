@@ -15,6 +15,21 @@ python scripts/onsite-f64-control.py load 'D:\User Emulations\onsite\attach.smu'
 `load` 必须给出 F64 本机上的完整 `.smu` 路径，不会猜路径或自动选择文件。测试执行中，
 后台会拒绝切换控制权和换场景，避免破坏正在运行的流程。
 
+CMW500 + F64 的正式测试不再由一键 shell 脚本拼装临时 TestCase。请在 GUI 中使用已保存的
+TestCase 与 LabProfile；单步硬件核验使用「调试维护 → 调试序列 + 单阶段」。2026-09-16 现场顺序、
+停止条件和证据清单见
+[`docs/guides/2026-09-16-cmw500-f64-onsite-runbook.md`](../docs/guides/2026-09-16-cmw500-f64-onsite-runbook.md)。
+
+## 已退役的现场脚本（2026-09-15）
+
+- `onsite-fix-f64-scenario-assets.py`：硬编码资产表会覆盖现场真值。资产盘点改用受控的
+  `/channel-assets/vendor-files/smu-scan` 与服务端同步流程。
+- `onsite-run-channel-throughput.sh`：通过全局 ID 差值猜测新 TestCase，并在建会话后 PATCH
+  配置；当前由 TestCase 编辑器、`CreateSessionRequest.channel_asset_id` 和正式执行入口取代。
+- `cleanup-test-queue.py`：调用已经拆除的执行队列 API；当前架构没有待清理的执行队列。
+
+历史现场记录仍会引用这些文件名，用于叙述当时发生过的操作；它们不是当前操作说明。
+
 ## 脚本列表
 
 ### 1. cleanup-ports.sh

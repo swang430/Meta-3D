@@ -1493,9 +1493,6 @@ def test_live_save_guidance_does_not_require_global_reload():
         "gui/src/features/Equipment/diagnosticTarget.ts": (
             "请先保存配置并重新加载 HAL"
         ),
-        "scripts/onsite-run-channel-throughput.sh": (
-            "驱动模式已切 Real + 重新加载驱动"
-        ),
     }
 
     for relative_path, stale_text in stale_guidance.items():

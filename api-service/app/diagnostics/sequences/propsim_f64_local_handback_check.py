@@ -19,13 +19,12 @@ Local"，方向反了）。给操作员的判据只留手册有据的两条：Re
   结束时会做；序列自己调等于把交接做两遍，结果无法归因。verdict 恒 UNDETERMINED（等待人工确认）。
 - `phase=confirm`：**不发任何 SCPI**（面板观察与 SCPI 无关；而且下一次取租约本身就会再发
   ATE 命令把仪器重新置 Remote —— 所以观察必须在**开始 confirm 之前**做完）。把操作员在面板
-  看到的原文 + 是否已回 Local 记进 extra（`evidence_kind: "onsite-observed"`），verdict 按布尔
-  SUCCESS / BLOCKER，summary 写明"来源 = 人工面板观察，非 SCPI 证据"。缺观察原文或缺布尔 →
+  看到的原文 + 显式 Local/Remote 选择记进 extra（`evidence_kind: "onsite-observed"`），verdict 按状态
+  SUCCESS / BLOCKER，summary 写明"来源 = 人工面板观察，非 SCPI 证据"。缺观察原文或缺显式状态 →
   UNDETERMINED 并说明缺什么。
 
-⚠ GUI 对 boolean 参数不给默认时会填 false（`SequenceRunnerPanel` 的初始化），所以
-`operator_confirmed_local` 在 GUI 路径上永远"有值"；真正守住"操作员看过了"的是
-`operator_observation` 必填 —— 没有观察原文就不收布尔。
+旧 API 参数 `operator_confirmed_local` 只做调用兼容，不再暴露给 GUI；GUI 的
+`operator_local_state` 默认空值，未显式选择不能静默变成 Remote。
 """
 from __future__ import annotations
 
@@ -59,9 +58,13 @@ metadata = SequenceMetadata(
     params_schema=[
         {
             "name": "phase",
-            "label": "阶段：release（释放前登记）/ confirm（记回面板观察）",
+            "label": "阶段",
             "type": "string",
             "default": "release",
+            "choices": [
+                {"value": "release", "label": "release：释放前登记"},
+                {"value": "confirm", "label": "confirm：记回面板观察"},
+            ],
         },
         {
             "name": "operator_observation",
@@ -70,10 +73,14 @@ metadata = SequenceMetadata(
             "default": "",
         },
         {
-            "name": "operator_confirmed_local",
-            "label": "confirm 必填：面板已回到 Local（背景 Remote mode 水印消失、右上角 Local Mode 按钮不再亮蓝）",
-            "type": "boolean",
-            "default": False,
+            "name": "operator_local_state",
+            "label": "confirm 必填：面板观察状态（Local = Remote mode 水印消失且 Local Mode 按钮不再亮蓝）",
+            "type": "string",
+            "default": "",
+            "choices": [
+                {"value": "local", "label": "已回 Local"},
+                {"value": "remote", "label": "仍为 Remote"},
+            ],
         },
     ],
     safe_during_test=False,
@@ -83,6 +90,7 @@ _ERR_QUERY = "SYSTem:ERRor?"   # §20.4.2.1
 _INFO_QUERY = "SYSTem:INFO?"   # §20.4.2.4（仅身份兜底）
 _RESIDUE_CAP = 100
 _PHASES = ("release", "confirm")
+_LOCAL_STATES = ("local", "remote")
 
 _RELEASE_INSTRUCTIONS = (
     "UNDETERMINED（等待人工确认）：本序列结束、租约释放（驱动关闭 ATE socket）后，"
@@ -90,9 +98,23 @@ _RELEASE_INSTRUCTIONS = (
     "（手册 §20.1 原文：Remote 态下该按钮 is activated (turns blue) —— 按钮亮蓝是 Remote 的标志，"
     "不是已回 Local）；回 Local 只能点 GUI 的 Local Mode 按钮，没有 SCPI 能切回或查询。"
     "看完后用 phase=confirm 再跑一次，把观察原文填进 operator_observation、"
-    "结论填进 operator_confirmed_local（⚠ 先看面板再开始 confirm —— 取租约本身会再发 ATE 命令，"
+    "并在 operator_local_state 显式选择 local 或 remote（⚠ 先看面板再开始 confirm —— "
+    "取租约本身会再发 ATE 命令，"
     "仪器会重新进 Remote）。"
 )
+
+
+def validate_before_lease(params: Dict[str, Any]) -> Tuple[str, str]:
+    """Pure validation used by the API before it acquires the F64 lease."""
+    phase = str(params.get("phase") or "release").strip().lower()
+    if phase not in _PHASES:
+        raise ValueError(f"phase={phase!r} 非法，只能是 release / confirm")
+    state = str(params.get("operator_local_state") or "").strip().lower()
+    if phase == "confirm" and state and state not in _LOCAL_STATES:
+        raise ValueError(
+            f"operator_local_state={state!r} 非法，只能是 local / remote"
+        )
+    return phase, state
 
 
 def _result(verdict: str, summary: str, steps: List[SequenceStepResult],
@@ -193,6 +215,31 @@ async def run(
     *,
     log: Callable[[str], None],
 ) -> SequenceRunResult:
+    try:
+        phase, validated_state = validate_before_lease(params)
+    except ValueError as exc:
+        raw_phase = str(params.get("phase") or "release").strip().lower()
+        raw_state = str(params.get("operator_local_state") or "").strip().lower()
+        extra: Dict[str, Any] = {
+            "phase": raw_phase,
+            "scpi_sent": False,
+        }
+        if raw_phase == "confirm":
+            extra.update({
+                "evidence_kind": "onsite-observed",
+                "operator_observation": (
+                    str(params.get("operator_observation") or "").strip() or None
+                ),
+                "operator_local_state": raw_state or None,
+                "operator_confirmed_local": None,
+            })
+        return _result(
+            "ABORTED",
+            f"ABORTED: {exc}；未发任何 SCPI",
+            [],
+            extra,
+        )
+
     drivers = getattr(hal, "drivers", {}) or {}
     ce = drivers.get("channelEmulator")
     if ce is None:
@@ -202,24 +249,27 @@ async def run(
     if refusal:
         return SequenceRunResult(success=False, summary=refusal)
 
-    phase = str(params.get("phase") or "release").strip().lower()
     extra: Dict[str, Any] = {"phase": phase}
-    if phase not in _PHASES:
-        return _result("ABORTED", f"ABORTED: phase={phase!r} 非法，只能是 release / confirm；未发任何 SCPI",
-                       [], extra)
 
     if phase == "confirm":
         # 零 SCPI：面板观察与 SCPI 无关。
         observation = str(params.get("operator_observation") or "").strip()
-        confirmed = _as_bool(params.get("operator_confirmed_local"))
+        state = validated_state
+        if not state:
+            # 已登记调用方可能仍发送旧 boolean；它不再出现在 GUI metadata 中。
+            legacy_confirmed = _as_bool(params.get("operator_confirmed_local"))
+            if legacy_confirmed is not None:
+                state = "local" if legacy_confirmed else "remote"
+        confirmed = None if not state else state == "local"
         missing: List[str] = []
         if not observation:
             missing.append("operator_observation")
         if confirmed is None:
-            missing.append("operator_confirmed_local")
+            missing.append("operator_local_state")
         extra.update({
             "evidence_kind": "onsite-observed",
             "operator_observation": observation or None,
+            "operator_local_state": state or None,
             "operator_confirmed_local": confirmed,
             "missing": missing,
             "scpi_sent": False,
@@ -228,7 +278,7 @@ async def run(
             return _result(
                 "UNDETERMINED",
                 f"UNDETERMINED: confirm 段缺 {missing} —— 面板观察原文与是否已回 Local 都必须由"
-                f"操作员填写（来源 = 人工面板观察，非 SCPI 证据）；本段未发任何 SCPI。",
+                f"操作员填写/选择（来源 = 人工面板观察，非 SCPI 证据）；本段未发任何 SCPI。",
                 [], extra,
             )
         step = SequenceStepResult(

@@ -528,8 +528,8 @@ def test_legacy_nr_float_shaped_numbers_stay_accepted(field, value, expected):
     pydantic 的 lax 模式把 4.0 / 30.0 归一成 int，所以它们本来就能进
     `Literal[1, 2, 4]` 与 `Literal[15, 30, 60, 120]`。守卫若只认 `int`，
     这些值就会「好到能进 schema，却不够格参与派生」——那是回归不是收紧。
-    现场脚本 scripts/onsite-run-channel-throughput.sh 把 LAYERS 裸插值进
-    JSON，`LAYERS=4.0` 正是这个形态。
+    历史 JSON 调用方可能把数值写成 `4.0` / `30.0`；这里保留的是 API
+    兼容边界，不依赖已经退役的现场脚本。
     """
     raw = _sparse_nr_legacy_row()
     raw[field] = value

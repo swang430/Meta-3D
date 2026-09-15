@@ -59,9 +59,12 @@ import {
   evidenceViewFromDiagnosticRun,
   sequenceVerdictView,
 } from './sequenceEvidence'
+import {
+  initialSequenceParamValues,
+  sequenceParamSelectData,
+  type ParamValue,
+} from './diagnosticSequenceParams'
 import { logFrontendEvent } from '../../observability/frontendLogger'
-
-type ParamValue = number | string | boolean
 
 function SequenceEvidenceResult({
   result,
@@ -184,19 +187,7 @@ export function SequenceRunnerPanel() {
       setParamValues({})
       return
     }
-    const next: Record<string, ParamValue> = {}
-    for (const p of selectedSequence.params_schema) {
-      if (p.default !== undefined && p.default !== null) {
-        next[p.name] = p.default as ParamValue
-      } else if (p.type === 'number') {
-        next[p.name] = 0
-      } else if (p.type === 'boolean') {
-        next[p.name] = false
-      } else {
-        next[p.name] = ''
-      }
-    }
-    setParamValues(next)
+    setParamValues(initialSequenceParamValues(selectedSequence.params_schema))
   }, [selectedSequence])
 
   const refreshRecent = () => {
@@ -295,6 +286,26 @@ export function SequenceRunnerPanel() {
 
   const renderParamField = (spec: DiagnosticSequenceMetadata['params_schema'][number]) => {
     const value = paramValues[spec.name]
+    const selectData = sequenceParamSelectData(spec)
+    if (selectData) {
+      return (
+        <Select
+          key={spec.name}
+          label={spec.label}
+          description={`参数: ${spec.name}`}
+          placeholder="请选择"
+          data={selectData}
+          value={typeof value === 'string' && value ? value : null}
+          clearable={spec.default === undefined || spec.default === null || spec.default === ''}
+          onChange={(nextValue) =>
+            setParamValues((current) => ({
+              ...current,
+              [spec.name]: nextValue ?? '',
+            }))
+          }
+        />
+      )
+    }
     if (spec.type === 'number') {
       return (
         <NumberInput

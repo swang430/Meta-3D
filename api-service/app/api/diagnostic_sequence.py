@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -57,11 +57,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagnostic-sequences", tags=["Diagnostics"])
 
 
+class SequenceParamChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    value: str
+    label: str
+
+
 class SequenceParamSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     name: str
     label: str
     type: str
     default: Optional[Any] = None
+    choices: Optional[List[SequenceParamChoice]] = None
 
 
 class SequenceMetadataResponse(BaseModel):
@@ -106,6 +116,20 @@ async def run_diagnostic_sequence(
         sequence = loader.get_sequence(key)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    # A sequence may expose a pure ``validate_before_lease`` hook when bad input
+    # must be rejected before the common lease acquires Remote control.  The
+    # GUI schema is only a rendering hint, so API callers remain untrusted.
+    # This hook must not inspect HAL/current hardware or perform I/O.
+    param_validator = getattr(sequence, "validate_before_lease", None)
+    if callable(param_validator):
+        try:
+            param_validator(request.params)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Sequence '{key}' 参数无效，未获取仪器租约: {e}",
+            ) from e
 
     # Build context — workshop tools accept lab_profile_id=None for
     # category-less probes, but most sequences will need a lab.
