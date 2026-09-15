@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -57,11 +57,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagnostic-sequences", tags=["Diagnostics"])
 
 
+class SequenceParamChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    value: str
+    label: str
+
+
 class SequenceParamSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     name: str
     label: str
     type: str
     default: Optional[Any] = None
+    choices: Optional[List[SequenceParamChoice]] = None
 
 
 class SequenceMetadataResponse(BaseModel):

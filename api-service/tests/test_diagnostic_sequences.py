@@ -249,6 +249,29 @@ class TestListSequences:
         assert any(p["name"] == "frequency_mhz" for p in attach["params_schema"])
         assert attach["safe_during_test"] is False
 
+    def test_metadata_preserves_labeled_parameter_choices(self):
+        resp = client.get("/api/v1/diagnostic-sequences")
+        assert resp.status_code == 200
+        body = resp.json()
+        cmw = next(s for s in body if s["key"] == "cmw500_fdd_matrix_probe")
+        sample = next(p for p in cmw["params_schema"] if p["name"] == "sample")
+        assert sample["choices"] == [
+            {"value": "tm1_one", "label": "TM1 + 1 TX（SIMO 1x2）"},
+            {"value": "tm3_two", "label": "TM3 + 2 TX（MIMO 2x2）"},
+        ]
+
+        handback = next(
+            s for s in body if s["key"] == "propsim_f64_local_handback_check"
+        )
+        state = next(
+            p for p in handback["params_schema"] if p["name"] == "operator_local_state"
+        )
+        assert state["default"] == ""
+        assert state["choices"] == [
+            {"value": "local", "label": "已回 Local"},
+            {"value": "remote", "label": "仍为 Remote"},
+        ]
+
 
 class TestRunSequence:
     def test_404_on_unknown_sequence(self):

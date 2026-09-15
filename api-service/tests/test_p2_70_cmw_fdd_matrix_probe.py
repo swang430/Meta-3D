@@ -81,6 +81,17 @@ def rig(db, monkeypatch):
     return driver, transport, hal, binding, lab
 
 
+def test_metadata_exposes_only_fixed_matrix_samples():
+    sample = next(
+        item for item in loader.get_sequence("cmw500_fdd_matrix_probe").metadata.params_schema
+        if item["name"] == "sample"
+    )
+    assert sample["choices"] == [
+        {"value": "tm1_one", "label": "TM1 + 1 TX（SIMO 1x2）"},
+        {"value": "tm3_two", "label": "TM3 + 2 TX（MIMO 2x2）"},
+    ]
+
+
 def test_verified_dci_builder_rejects_outside_probe_domain():
     assert Cmw500LteCommandProfile.build_mac_dci(1, "D1A") == ROOT + "DCIFormat D1A"
     assert Cmw500LteCommandProfile.mac_dci_query(1) == ROOT + "DCIFormat?"

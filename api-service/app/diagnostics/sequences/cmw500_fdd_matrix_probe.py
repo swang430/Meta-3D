@@ -27,8 +27,16 @@ metadata = SequenceMetadata(
     description=("仅 FDD/20MHz/1CC-nx2：tm1_one 或 tm3_two。会关闭小区并保留目标配置；"
                  "不启射频、不 Attach、不测吞吐、不授予正式资格。"),
     required_categories=["baseStation"],
-    params_schema=[{"name": "sample", "label": "样本（tm1_one / tm3_two）",
-                    "type": "string", "default": "tm1_one"}],
+    params_schema=[{
+        "name": "sample",
+        "label": "样本",
+        "type": "string",
+        "default": "tm1_one",
+        "choices": [
+            {"value": "tm1_one", "label": "TM1 + 1 TX（SIMO 1x2）"},
+            {"value": "tm3_two", "label": "TM3 + 2 TX（MIMO 2x2）"},
+        ],
+    }],
     safe_during_test=False,
 )
 

@@ -33,8 +33,10 @@ class SequenceMetadata:
 
     `params_schema` is a *non-validated* hint to the GUI for rendering an
     inputs form. Keep it shallow: each entry { name, label, type:
-    "number"|"string"|"boolean", default? }. We deliberately don't pull in
-    Pydantic / JSON Schema for these — sequences should be cheap to add.
+    "number"|"string"|"boolean", default?, choices?: [{value, label}] }.
+    `choices` only narrows operator input in the GUI; every sequence still
+    validates its params before the first instrument I/O. We deliberately
+    don't pull in Pydantic / JSON Schema here — sequences should be cheap to add.
     """
 
     name: str
