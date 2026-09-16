@@ -12,7 +12,7 @@ from app.hal.base_station import BaseStationMeasurementWindowRequest, Throughput
 from app.hal.cmw500_base_station import RealCmw500Driver
 
 
-ABSOLUTE = "0,900,100,1000,123456.5,120000,125000,0,1000,15"
+ABSOLUTE = "0,900,100,5000,123456.5,120000,125000,0,1000,15"
 RELATIVE = "0,99.5,0.5,0.5,87.25,0"
 SUBFRAMES = 5000
 
@@ -110,17 +110,16 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
     assert driver.writes == [
         "ABORt:LTE:SIGN1:EBLer",
         "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
-        "CONFigure:LTE:SIGN1:EBLer:REPetition CONTinuous",
+        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGle",
         "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
         f"CONFigure:LTE:SIGN1:EBLer:SFRames {SUBFRAMES}",
         "INITiate:LTE:SIGN1:EBLer",
-        "STOP:LTE:SIGN1:EBLer",
         "ABORt:LTE:SIGN1:EBLer",
     ]
 
 
 @pytest.mark.asyncio
-async def test_continuous_window_rejects_uncommanded_early_ready():
+async def test_single_shot_accepts_natural_ready_without_forced_stop():
     driver = _WindowDriver(states=["OFF", "RUN", "RDY", "OFF"])
 
     with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
@@ -128,11 +127,30 @@ async def test_continuous_window_rejects_uncommanded_early_ready():
             0.1, request=_window_request()
         )
 
-    assert window.confirmed is False
+    assert window.confirmed is True
     assert "STOP:LTE:SIGN1:EBLer" not in driver.writes
-    assert not any(
-        "ABSolute?" in query or "RELative?" in query for query in driver.queries
+    assert window.metrics.dl_throughput_mbps == pytest.approx(123.4565)
+
+
+@pytest.mark.asyncio
+async def test_completed_window_rejects_fewer_processed_subframes_than_requested():
+    driver = _WindowDriver(
+        states=["OFF", "RUN", "RDY", "OFF"],
+        absolute=(
+            "0,8640,0,4800,4.582000E+004,4.582000E+004,"
+            "4.582000E+004,0,4320,INV"
+        ),
     )
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
+
+    assert window.confirmed is True
+    assert window.metrics.dl_throughput_mbps is None
+    assert window.metrics.dl_bler is None
+    assert "processed 4800 subframes" in window.reason
 
 
 @pytest.mark.asyncio
@@ -154,7 +172,7 @@ async def test_pcc_window_rejects_an_all_cells_scope_before_instrument_io():
     ("absolute", "relative", "throughput_valid", "bler_valid"),
     [
         (ABSOLUTE, "0,99.5,0.5,NAV,87.25,0", True, False),
-        ("1,900,100,1000,123456.5,120000,125000,0,1000,15", RELATIVE, False, True),
+        ("1,900,100,5000,123456.5,120000,125000,0,1000,15", RELATIVE, False, True),
         (RuntimeError("absolute fetch failed"), RELATIVE, False, True),
     ],
 )
@@ -182,7 +200,7 @@ async def test_kpi_fields_fail_independently_without_borrowing_each_other(
 @pytest.mark.asyncio
 async def test_stop_rejection_prevents_fetch_and_still_confirms_final_abort():
     driver = _WindowDriver(
-        states=["OFF", "RUN", "RUN", "OFF"],
+        states=["OFF", "RUN", "RUN", "OFF", "OFF"],
         # 写组顺序：pre-clear / TOUT / REPetition / SCONdition / SFRames /
         # INIT / STOP / final ABORT —— -221 落在 STOP 那一组。
         errors=[

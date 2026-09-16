@@ -44,6 +44,18 @@ def test_absolute_parser_uses_field_five_as_kbit_per_second():
     assert parsed.median_cqi == 15
 
 
+def test_absolute_parser_keeps_valid_throughput_when_median_cqi_is_invalid():
+    """现场回归：独立的 CQI 不可用不得吞掉已经返回的吞吐量。"""
+
+    parsed = Cmw500LteCommandProfile.parse_ebler_absolute(
+        "0,8640,0,5000,4.582000E+004,4.582000E+004,4.582000E+004,0,4320,INV"
+    )
+
+    assert parsed.throughput_average_kbit_per_s == 45_820.0
+    assert parsed.subframe_count == 5000
+    assert parsed.median_cqi is None
+
+
 def test_relative_parser_uses_field_four_as_bler_percent():
     parsed = Cmw500LteCommandProfile.parse_ebler_relative(
         "0,99.5,0.5,0.5,87.25,0"

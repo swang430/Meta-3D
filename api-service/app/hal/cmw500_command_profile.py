@@ -182,7 +182,7 @@ class CmwExtendedBlerAbsolute:
     throughput_maximum_kbit_per_s: float
     dtx_count: int
     scheduled_count: int
-    median_cqi: int
+    median_cqi: int | None
 
 
 @dataclass(frozen=True)
@@ -275,7 +275,10 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
     "ebler_repetition": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:EBLer:REPetition",
         source_reference=f"{_LTE_MANUAL}, §3.3.3 and §3.4.3, printed p.941, 953",
-        purpose="Select continuous repetition so STOP owns the requested window end",
+        purpose=(
+            "Select single-shot repetition so one frozen SFRames cycle owns "
+            "the formal window end"
+        ),
         minimum_firmware="V3.0.30",
     ),
     "ebler_stop_condition": CmwCommandSpec(
@@ -736,6 +739,13 @@ class Cmw500LteCommandProfile:
         return f"{cls._format('ebler_repetition', sign_channel)} CONTinuous"
 
     @classmethod
+    def ebler_repetition_single_shot(cls, sign_channel: int) -> str:
+        # LTE UE User Manual §3.2.4 / §3.3.4, printed pp.937, 942:
+        # Single-Shot + stop condition NONE completes after exactly one
+        # configured No. of Subframes measurement cycle.
+        return f"{cls._format('ebler_repetition', sign_channel)} SINGle"
+
+    @classmethod
     def ebler_stop_condition_none(cls, sign_channel: int) -> str:
         return f"{cls._format('ebler_stop_condition', sign_channel)} NONE"
 
@@ -955,6 +965,15 @@ class Cmw500LteCommandProfile:
     @staticmethod
     def parse_ebler_absolute(response: str) -> CmwExtendedBlerAbsolute:
         values = _csv(response, 10)
+        # 2026-09-16 CMW500 3.7.130 true-hardware evidence returned ``INV``
+        # only for field 10 while reliability=0 and fields 1..9 were valid.
+        # CQI reporting is an independent view; its unavailable sentinel must
+        # not invalidate the sourced throughput/count fields.
+        median_cqi = (
+            None
+            if values[9].strip().upper() == "INV"
+            else _integer(values[9], "median CQI")
+        )
         return CmwExtendedBlerAbsolute(
             reliability=_reliability(values[0]),
             ack_count=_integer(values[1], "ACK count"),
@@ -965,7 +984,7 @@ class Cmw500LteCommandProfile:
             throughput_maximum_kbit_per_s=_finite(values[6], "maximum throughput"),
             dtx_count=_integer(values[7], "DTX count"),
             scheduled_count=_integer(values[8], "scheduled count"),
-            median_cqi=_integer(values[9], "median CQI"),
+            median_cqi=median_cqi,
         )
 
     @staticmethod

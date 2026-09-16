@@ -3566,13 +3566,14 @@ class RealCmw500Driver(BaseStationDriver):
         ue_connected_before = False
         ue_connected_after = False
         stop_attempted = False
-        ended_before_stop = False
         lifecycle_failures: list[str] = []
         metric_failures: list[str] = []
         absolute_raw: str | None = None
         relative_raw: str | None = None
         throughput_mbps: float | None = None
         bler_percent: float | None = None
+        processed_subframes: int | None = None
+        statistical_cycle_complete = True
         cancelled: asyncio.CancelledError | None = None
 
         def _write_and_confirm_state(
@@ -3621,10 +3622,8 @@ class RealCmw500Driver(BaseStationDriver):
             """Write the frozen statistical basis and prove it took effect.
 
             Manual §3.4.3 printed p.953 documents the command form and its
-            domain; §3.3.1 printed p.940 puts it inside the very continuous
-            configuration block written here, and p.937 defines SCONdition
-            "None" as running "according to its Repetition mode and the
-            specified No. of Subframes".
+            domain; §3.2.4 / §3.3.4 printed pp.937, 942 define Single-Shot +
+            stop condition NONE as exactly one configured subframe cycle.
 
             It must stay **before** INIT: CMW500 Base Software User Manual
             1173.9463.02-06 printed p.139 — changing a parameter with
@@ -3641,7 +3640,7 @@ class RealCmw500Driver(BaseStationDriver):
             if statistical_basis_command is None:  # narrowed by the caller
                 return False
             if not _write_and_confirm(
-                statistical_basis_command, "continuous window statistical basis"
+                statistical_basis_command, "single-shot window statistical basis"
             ):
                 return False
             try:
@@ -3695,19 +3694,19 @@ class RealCmw500Driver(BaseStationDriver):
                                 Cmw500LteCommandProfile.ebler_timeout_disabled(
                                     self._sign_channel
                                 ),
-                                "continuous window timeout",
+                                "window timeout disabled",
                             ),
                             (
-                                Cmw500LteCommandProfile.ebler_repetition_continuous(
+                                Cmw500LteCommandProfile.ebler_repetition_single_shot(
                                     self._sign_channel
                                 ),
-                                "continuous window repetition",
+                                "single-shot window repetition",
                             ),
                             (
                                 Cmw500LteCommandProfile.ebler_stop_condition_none(
                                     self._sign_channel
                                 ),
-                                "continuous window stop condition",
+                                "single-shot window stop condition",
                             ),
                         )
                     ) and _drive_statistical_basis()
@@ -3719,35 +3718,37 @@ class RealCmw500Driver(BaseStationDriver):
                     )
                 if running_confirmed:
                     await asyncio.sleep(max(float(window_s), 0.0))
-                    try:
-                        state = Cmw500LteCommandProfile.parse_ebler_state(
-                            self._query(
-                                Cmw500LteCommandProfile.ebler_state_query(
-                                    self._sign_channel
+                    # Single-shot owns the exact SFRames boundary.  The wall
+                    # clock estimate can trail the instrument by a few hundred
+                    # milliseconds, so poll for at most one bounded second;
+                    # never force STOP and call a partial cycle complete.
+                    for poll_index in range(11):
+                        try:
+                            state = Cmw500LteCommandProfile.parse_ebler_state(
+                                self._query(
+                                    Cmw500LteCommandProfile.ebler_state_query(
+                                        self._sign_channel
+                                    )
                                 )
                             )
-                        )
-                    except Exception as exc:
-                        lifecycle_failures.append(f"window state: {exc}")
-                    else:
-                        if state == "RUN":
-                            stop_attempted = True
-                            ready_confirmed = _write_and_confirm_state(
-                                Cmw500LteCommandProfile.ebler_stop(
-                                    self._sign_channel
-                                ),
-                                "RDY",
-                                "STOP/RDY",
-                            )
-                        elif state == "RDY":
-                            ended_before_stop = True
-                            lifecycle_failures.append(
-                                "window state: continuous measurement ended before requested STOP"
-                            )
-                        else:
+                        except Exception as exc:
+                            lifecycle_failures.append(f"window state: {exc}")
+                            break
+                        if state == "RDY":
+                            ready_confirmed = True
+                            break
+                        if state != "RUN":
                             lifecycle_failures.append(
                                 f"window state: expected RUN or RDY, got {state}"
                             )
+                            break
+                        if poll_index < 10:
+                            await asyncio.sleep(0.1)
+                    else:
+                        lifecycle_failures.append(
+                            "window state: single-shot did not reach RDY within "
+                            "the bounded completion grace"
+                        )
 
                 if ready_confirmed:
                     try:
@@ -3759,9 +3760,18 @@ class RealCmw500Driver(BaseStationDriver):
                         absolute = Cmw500LteCommandProfile.parse_ebler_absolute(
                             absolute_raw
                         )
-                        throughput_mbps = (
-                            absolute.throughput_average_kbit_per_s / 1000.0
-                        )
+                        processed_subframes = absolute.subframe_count
+                        if processed_subframes != statistical_basis_requested:
+                            statistical_cycle_complete = False
+                            metric_failures.append(
+                                "statistical cycle incomplete: processed "
+                                f"{processed_subframes} subframes, requested "
+                                f"{statistical_basis_requested}"
+                            )
+                        else:
+                            throughput_mbps = (
+                                absolute.throughput_average_kbit_per_s / 1000.0
+                            )
                     except Exception as exc:
                         metric_failures.append(f"DL throughput unavailable: {exc}")
                     try:
@@ -3786,13 +3796,12 @@ class RealCmw500Driver(BaseStationDriver):
                     running_confirmed
                     and not ready_confirmed
                     and not stop_attempted
-                    and not ended_before_stop
                 ):
                     stop_attempted = True
-                    ready_confirmed = _write_and_confirm_state(
+                    _write_and_confirm_state(
                         Cmw500LteCommandProfile.ebler_stop(self._sign_channel),
                         "RDY",
-                        "cleanup STOP/RDY",
+                        "cleanup STOP/RDY after incomplete single-shot",
                     )
                 closed_off_confirmed = _write_and_confirm_state(
                     Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
@@ -3819,6 +3828,9 @@ class RealCmw500Driver(BaseStationDriver):
             )
         )
         if not lifecycle_confirmed:
+            throughput_mbps = None
+            bler_percent = None
+        elif not statistical_cycle_complete:
             throughput_mbps = None
             bler_percent = None
 
