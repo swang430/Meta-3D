@@ -51,6 +51,9 @@ from app.services.mimo_ota.path_loss_preflight import (
     _evaluate_path_loss_provenance_for_measure,
     evaluate_path_loss_preflight,
 )
+from app.services.mimo_ota.attach_power_observation import (
+    run_attach_power_observation,
+)
 from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from app.services.mimo_ota.rf_kpi_trust import (
     build_rf_kpi_trust,
@@ -2512,7 +2515,46 @@ class MeasureExecutor(IStepExecutor):
             # BaseStation 的 channel/BW/功率已由上面的配置入口下发并回读；F64
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
             # 能借用仪表上一次执行的遗留场景。
-            attach_receipt = await base_station.attach()
+            attach_power_observation: Optional[Dict[str, Any]] = None
+            if (
+                base_station_attempt.execution_plan.adapter_id == "cmw500"
+                and ce_plan.adapter_id == "propsim_f64"
+            ):
+                observation_holder: Dict[str, Dict[str, Any]] = {}
+
+                async def _observation_cancelled() -> bool:
+                    # request_cancel() uses another DB session. Refresh once per
+                    # second during the deliberate onsite hold so the operator
+                    # can still abort without waiting for the next phase.
+                    context.db.expire(context.test_execution)
+                    context.db.refresh(context.test_execution)
+                    return context.test_execution.status != "running"
+
+                async def _observe_attach_power() -> bool:
+                    observation = await run_attach_power_observation(
+                        base_station=base_station,
+                        channel_emulator=emulator,
+                        observation_s=config.attach_power_observation_s,
+                        strict_input_level=config.precheck_strict_input_level,
+                        execution_id=str(context.test_execution.id),
+                        is_cancelled=_observation_cancelled,
+                    )
+                    observation_holder["result"] = observation
+                    measurements = dict(
+                        context.test_execution.measurements or {}
+                    )
+                    measurements["attach_power_observation"] = observation
+                    context.test_execution.measurements = measurements
+                    flag_modified(context.test_execution, "measurements")
+                    context.db.commit()
+                    return observation["accepted"] is True
+
+                attach_receipt = await base_station.attach(
+                    on_cell_ready=_observe_attach_power,
+                )
+                attach_power_observation = observation_holder.get("result")
+            else:
+                attach_receipt = await base_station.attach()
             if base_station_attempt.attempt_id is not None:
                 from app.hal.base_station_manifest import BaseStationAdapterManifest
                 from app.services.execution_scpi_evidence import (
@@ -2557,6 +2599,21 @@ class MeasureExecutor(IStepExecutor):
                         context.test_execution.id,
                     )
             if attach_receipt.diagnostic_execution_allowed is not True:
+                if (
+                    attach_power_observation is not None
+                    and attach_power_observation.get("accepted") is not True
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "CMW500 Cell ON 后功率观察未通过，UE attach 尚未开始："
+                            + str(
+                                attach_power_observation.get("failure_reason")
+                                or attach_power_observation.get("status")
+                            )
+                            + "。明细见 measurements.attach_power_observation。"
+                        ),
+                    )
                 terminal_attach_stage = attach_receipt.terminal_stage_receipt
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
@@ -3752,6 +3809,10 @@ class MeasureExecutor(IStepExecutor):
                 },
                 "controlled_dut_attach": controlled_attach,
             }
+            if attach_power_observation is not None:
+                result_payload["attach_power_observation"] = (
+                    attach_power_observation
+                )
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /
             # ExternalAscPathStrategy): GCM mode (NativeModelStrategy) doesn't

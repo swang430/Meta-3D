@@ -30,7 +30,7 @@ import re
 from uuid import uuid4
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Awaitable, Callable, Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from app.hal.base import (
@@ -3105,6 +3105,30 @@ class RealCmw500Driver(BaseStationDriver):
             logger.error(f"[CMW500] set_downlink_power failed: {e}")
             return False
 
+    async def read_configured_downlink_power_dbm(self) -> Optional[float]:
+        """Read the current configured LTE PCC RS-EPRE without changing state.
+
+        Reuses the same documented query used by ``set_cell_config`` readback:
+        LTE UE User Manual 1173.9628.02-41, printed p.656, PCC RS EPRE.
+        This is a configured reference value, not a measured RF output power.
+        """
+
+        try:
+            value = float(
+                self._query(
+                    self._fmt(CmwScpiCommands.DL_POWER_RS) + "?"
+                ).strip()
+            )
+            if not math.isfinite(value):
+                logger.warning("[CMW500] configured RS-EPRE readback is non-finite")
+                return None
+            return value
+        except Exception as exc:
+            logger.warning(
+                "[CMW500] configured RS-EPRE readback failed: %s", exc
+            )
+            return None
+
     # ===================================================================
     # 3. 信令控制
     # ===================================================================
@@ -3270,15 +3294,28 @@ class RealCmw500Driver(BaseStationDriver):
             simulated=False,
         )
 
-    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
+    async def attach(
+        self,
+        timeout_s: float = 60.0,
+        *,
+        on_cell_ready: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> BaseStationAttachReceipt:
         with capture_scpi_exchanges() as exchanges:
-            operation_succeeded = await self._run_attach_operation(timeout_s)
+            operation_succeeded = await self._run_attach_operation(
+                timeout_s,
+                on_cell_ready=on_cell_ready,
+            )
         return self._build_attach_receipt(
             exchanges,
             operation_succeeded=operation_succeeded,
         )
 
-    async def _run_attach_operation(self, timeout_s: float = 60.0) -> bool:
+    async def _run_attach_operation(
+        self,
+        timeout_s: float = 60.0,
+        *,
+        on_cell_ready: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> bool:
         """
         激活小区、等待 UE Attach 并建立 PS 数据连接。
 
@@ -3318,6 +3355,13 @@ class RealCmw500Driver(BaseStationDriver):
             else:
                 return False
             self._cell_state = CellState.IDLE
+            if on_cell_ready is not None:
+                observer_accepted = await on_cell_ready()
+                if observer_accepted is not True:
+                    logger.warning(
+                        "[CMW500] Cell-ready observation rejected before UE attach"
+                    )
+                    return False
             logger.info("[CMW500] Cell ON, waiting for UE attach...")
 
             self._visa_session.timeout = VISA_TIMEOUT_ATTACH
