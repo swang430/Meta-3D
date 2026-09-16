@@ -163,6 +163,8 @@ export interface MIMOOTAConfiguration {
   f64_output_gain_db?: number
   // AUTOSET 闭环的 UXM 起始功率 (留空 = controller 默认 -10 dBm)。
   input_loop_initial_dl_power_dbm?: number
+  // CMW500 Cell ON 后、UE attach 计时前的现场功率观察秒数；0 = 只采一次不等待。
+  attach_power_observation_s?: number
   base_station_config_mode?: string
   /** @deprecated 仅用于读取旧 TestCase；表单不再写该键。 */
   uxm_config_mode?: string
@@ -1468,6 +1470,22 @@ export function MIMOOTAConfigForm({
                     )
                   }
                   decimalScale={1}
+                  disabled={readOnly}
+                />
+                <NumberInput
+                  label="Cell ON 后功率观察窗口"
+                  suffix=" s"
+                  description="CMW500 到达 ON,ADJUSTED 后先记录 CMW 配置功率、F64 .smu 拓扑和输入/输出实测；窗口结束后才开始 UE attach 60 秒计时。0 = 不额外等待"
+                  value={value.attach_power_observation_s ?? 0}
+                  onChange={(v) =>
+                    update(
+                      'attach_power_observation_s',
+                      typeof v === 'number' ? v : 0,
+                    )
+                  }
+                  min={0}
+                  max={300}
+                  decimalScale={0}
                   disabled={readOnly}
                 />
               </SimpleGrid>
