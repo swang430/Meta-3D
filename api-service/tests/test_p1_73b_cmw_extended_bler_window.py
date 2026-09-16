@@ -110,7 +110,7 @@ async def test_extended_bler_window_confirms_full_lifecycle_and_shared_metrics()
     assert driver.writes == [
         "ABORt:LTE:SIGN1:EBLer",
         "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
-        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGle",
+        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGleshot",
         "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
         f"CONFigure:LTE:SIGN1:EBLer:SFRames {SUBFRAMES}",
         "INITiate:LTE:SIGN1:EBLer",
