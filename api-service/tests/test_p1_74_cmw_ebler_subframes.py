@@ -409,7 +409,7 @@ async def test_window_drives_and_confirms_the_frozen_statistical_basis():
     assert driver.writes == [
         "ABORt:LTE:SIGN1:EBLer",
         "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
-        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGle",
+        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGleshot",
         "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
         _sframes_write(5000),
         "INITiate:LTE:SIGN1:EBLer",

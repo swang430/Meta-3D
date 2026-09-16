@@ -740,10 +740,11 @@ class Cmw500LteCommandProfile:
 
     @classmethod
     def ebler_repetition_single_shot(cls, sign_channel: int) -> str:
-        # LTE UE User Manual §3.2.4 / §3.3.4, printed pp.937, 942:
-        # Single-Shot + stop condition NONE completes after exactly one
-        # configured No. of Subframes measurement cycle.
-        return f"{cls._format('ebler_repetition', sign_channel)} SINGle"
+        # LTE UE User Manual §3.3.4 / §3.4.3, printed pp.942, 953:
+        # the command example uses the short form SING and the parameter
+        # grammar is exactly ``SINGleshot | CONTinuous``.  Use the documented
+        # full form so a partial token such as ``SINGle`` cannot reach hardware.
+        return f"{cls._format('ebler_repetition', sign_channel)} SINGleshot"
 
     @classmethod
     def ebler_stop_condition_none(cls, sign_channel: int) -> str:
