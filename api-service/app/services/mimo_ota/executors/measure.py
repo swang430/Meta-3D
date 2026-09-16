@@ -1603,11 +1603,14 @@ class MeasureExecutor(IStepExecutor):
                 # 小区配置进测量, 正是回读门要拦的实验污染。
                 # 先落“必需项”，即使 HAL 调用随后异常/进程中断，收尾也会显示
                 # missing，而不是空集合误绿。
-                config_receipt = await base_station.apply_config(
-                    pcell_requested_config,
-                )
+                # CMW LTE User Manual §2.2.2 / Table 2-32：先选择测试场景，
+                # 随后才能下发与该场景兼容的 transmission mode / eNB 天线数。
+                # UXM 也接受该 vendor-neutral 顺序，因此先冻结并应用执行路由。
                 route_receipt = await base_station.apply_route(
                     base_station_attempt.frozen_adapter
+                )
+                config_receipt = await base_station.apply_config(
+                    pcell_requested_config,
                 )
                 from app.services.execution_scpi_evidence import (
                     confirm_base_station_configuration_and_route,

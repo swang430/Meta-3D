@@ -70,6 +70,15 @@ def test_measure_new_writer_uses_only_base_station_evidence_hooks_and_keys():
     assert "base_station.dl_throughput" in source
 
 
+def test_measure_applies_execution_route_before_pcell_configuration():
+    """CMW500 的 1CC-nx2 场景必须先激活，TM3/TWO 才是合法配置。"""
+    source = inspect.getsource(MeasureExecutor.execute)
+
+    assert source.index("base_station.apply_route(") < source.index(
+        "base_station.apply_config("
+    )
+
+
 def test_legacy_uxm_translation_requires_exact_live_uxm_identity():
     translator = getattr(
         evidence_service, "translate_legacy_uxm_execution_evidence", None
