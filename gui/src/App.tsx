@@ -17,6 +17,7 @@ import {
   Alert,
   Badge,
   Box,
+  Burger,
   Button,
   Card,
   Checkbox,
@@ -402,6 +403,7 @@ function App() {
   }, [isDark, setColorScheme])
 
   const [activeSection, setActiveSection] = useState<SectionKey>('dashboard')
+  const [mobileNavOpened, setMobileNavOpened] = useState(false)
   // P1-39: 执行历史「查看日志」→ 切到报告页并预填日志过滤。
   // ⚠ 存的是**完整 execution_id**, 不是给人看的短标签 —— 过滤要全长。
   const [pendingLogExecutionId, setPendingLogExecutionId] = useState<string | null>(null)
@@ -720,8 +722,9 @@ function App() {
       navbar={{
         width: 320,
         breakpoint: 'md',
+        collapsed: { mobile: !mobileNavOpened },
       }}
-      header={{ height: 84 }}
+      header={{ height: { base: 172, sm: 140, '87.5em': 84 } }}
     >
       <AppShell.Navbar
         p="lg"
@@ -787,11 +790,15 @@ function App() {
                       )}
                     <UnstyledButton
                       type="button"
-                      onClick={() => setActiveSection(item.key)}
+                      onClick={() => {
+                        setActiveSection(item.key)
+                        setMobileNavOpened(false)
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
                           setActiveSection(item.key)
+                          setMobileNavOpened(false)
                         }
                       }}
                       role="tab"
@@ -852,14 +859,28 @@ function App() {
           borderBottom: `1px solid ${headerBorderColor}`,
         }}
       >
-        <Group justify="space-between" h="100%">
-          <Stack gap={4}>
-            <Title order={2}>{sectionDescriptor?.label}</Title>
-            <Text size="sm" c={isDark ? theme.colors.gray[4] : 'gray.6'}>
-              {sectionDescriptor?.description}
-            </Text>
-          </Stack>
-          <Group gap="sm">
+        <Flex className="app-header-layout">
+          <Group gap="sm" wrap="nowrap" className="app-header-title">
+            <Burger
+              opened={mobileNavOpened}
+              onClick={() => setMobileNavOpened((opened) => !opened)}
+              hiddenFrom="md"
+              size="sm"
+              aria-label={mobileNavOpened ? '关闭主导航' : '打开主导航'}
+            />
+            <Stack gap={4} className="app-header-title-copy">
+              <Title order={2}>{sectionDescriptor?.label}</Title>
+              <Text
+                visibleFrom="xs"
+                size="sm"
+                c={isDark ? theme.colors.gray[4] : 'gray.6'}
+                truncate="end"
+              >
+                {sectionDescriptor?.description}
+              </Text>
+            </Stack>
+          </Group>
+          <Group gap="sm" className="app-header-actions">
             <OperationalLabSelector />
             <Tooltip label={isDark ? '切换至浅色模式' : '切换至深色模式'} position="bottom">
               <ActionIcon
@@ -880,13 +901,11 @@ function App() {
               新建任务
             </Button>
           </Group>
-        </Group>
+        </Flex>
       </AppShell.Header>
 
-      <AppShell.Main>
-        <ScrollArea h="100%">
-          <Box className="workspace__content">{sectionContent}</Box>
-        </ScrollArea>
+      <AppShell.Main className="app-main">
+        <Box className="workspace__content">{sectionContent}</Box>
       </AppShell.Main>
     </AppShell>
   )
@@ -2335,8 +2354,12 @@ function EquipmentManager() {
         onClose={() => setEditingCategoryKey(null)}
         title={<Title order={4}>参数配置</Title>}
         position="right"
-        size="lg"
+        size="min(900px, 100vw)"
         padding="xl"
+        classNames={{
+          content: 'instrument-config-drawer__content',
+          body: 'instrument-config-drawer__body',
+        }}
       >
         {(() => {
           const category = categories.find((c) => c.key === editingCategoryKey)
@@ -2745,7 +2768,7 @@ function EquipmentManager() {
                   </Card>
                 )}
 
-                <Group justify="flex-end" mt="md">
+                <Group justify="flex-end" mt="md" className="instrument-config-drawer__actions">
                   <Button
                     color="brand"
                     onClick={() => handleSaveConnection(category.key)}

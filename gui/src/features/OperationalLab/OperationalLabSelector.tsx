@@ -41,7 +41,7 @@ export function OperationalLabSelector() {
       </Text>
       <Select
         size="sm"
-        w={260}
+        w={{ base: 200, sm: 260 }}
         aria-label="当前 LabProfile"
         placeholder="请选择当前 LabProfile"
         data={activeLabs.map((l) => ({
