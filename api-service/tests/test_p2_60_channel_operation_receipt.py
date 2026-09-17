@@ -857,9 +857,21 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
     assert missing_readback["fields"][0]["applied"] is None
 
 
-@pytest.mark.parametrize("terminal_state", ["STOPPED", "CLOSED"])
-def test_f64_stop_receipt_confirms_same_invocation_safe_idle_state(terminal_state):
-    """A GOS + clean queue + terminal state must produce a usable safe-idle receipt."""
+@pytest.mark.parametrize(
+    ("error_reply", "terminal_state", "expected_status", "expected_applied"),
+    [
+        # 2026-09-16 真机 12 次 GOS 的三种形态（scpi.log）：7 / 3 / 2 次。
+        ('0,"No error"', "STOPPED", "confirmed", "STOPPED"),
+        ('-200,"Execution error;Wrong device state for command"', "STOPPED", "unknown", None),
+        ('-200,"Execution error;Wrong device state for command"', "CLOSED", "unknown", None),
+        # 真机从未出现「队列干净 + CLOSED」；回读 CLOSED ≠ 请求的 STOPPED，同样不得确认。
+        ('0,"No error"', "CLOSED", "unknown", None),
+    ],
+)
+def test_f64_stop_receipt_confirms_only_clean_gos_that_reads_back_stopped(
+    error_reply, terminal_state, expected_status, expected_applied
+):
+    """只有「GOS + 干净错误队列 + STATE?=STOPPED」才产出可用的 safe-idle 回执。"""
 
     from app.core.logging_config import current_execution_id
     from app.hal.propsim_f64 import RealPropsimF64Driver
@@ -909,7 +921,7 @@ def test_f64_stop_receipt_confirms_same_invocation_safe_idle_state(terminal_stat
         ),
         exchange(
             "error", 3, "SYST:ERR?", operation="query",
-            result_type="response", response='0,"No error"',
+            result_type="response", response=error_reply,
         ),
         exchange(
             "state", 4, "DIAG:SIMU:STATE?", operation="query",
@@ -928,21 +940,20 @@ def test_f64_stop_receipt_confirms_same_invocation_safe_idle_state(terminal_stat
     finally:
         current_execution_id.reset(token)
 
-    assert projected["fields"] == [
-        {
-            "field": "state",
-            "requested": "STOPPED",
-            "applied": terminal_state,
-            "applied_present": True,
-            "status": "confirmed",
-            "provenance": "authoritative_readback",
-            "exchange_ids": ["preclear", "gos", "opc", "error", "state"],
-            "source_reference": (
-                "notebooklm:982222b7-4953-46cd-9949-00fa97882353:"
-                "Propsim User Reference#20.4.3.11"
-            ),
-        }
-    ]
+    assert len(projected["fields"]) == 1
+    field = projected["fields"][0]
+    assert field["field"] == "state"
+    assert field["requested"] == "STOPPED"
+    assert field["status"] == expected_status
+    assert field.get("applied") == expected_applied
+    if expected_status == "confirmed":
+        assert field["applied_present"] is True
+        assert field["provenance"] == "authoritative_readback"
+        assert field["exchange_ids"] == ["preclear", "gos", "opc", "error", "state"]
+        assert field["source_reference"] == (
+            "notebooklm:982222b7-4953-46cd-9949-00fa97882353:"
+            "Propsim User Reference#20.4.3.11"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1456,7 +1467,7 @@ def test_p2_66_accepts_only_a_complete_real_v2_receipt_chain():
     ) == (None, None)
 
 
-def test_p2_66_accepts_closed_as_confirmed_f64_safe_idle_state():
+def test_p2_66_rejects_closed_as_f64_safe_idle_applied_state():
     from app.services.execution_evidence_outcome import (
         _channel_emulator_terminal_projection,
     )
@@ -1465,11 +1476,15 @@ def test_p2_66_accepts_closed_as_confirmed_f64_safe_idle_state():
         safe_idle_applied="CLOSED"
     )
 
-    assert _channel_emulator_terminal_projection(
+    # completed 的正式执行没有任何合法流程以 CLOSED 收尾：每条流程都先加载，加载过却读到
+    # CLOSED 意味着仿真中途被卸载。误拒只是重跑一次，误收则给这轮盖上「CE 链有效」。
+    status, reason = _channel_emulator_terminal_projection(
         execution.config,
         execution_id=execution.id,
         pipeline_status=execution.status,
-    ) == (None, None)
+    )
+    assert status == "invalid"
+    assert "safe-idle receipt fields are invalid" in reason
 
 
 def test_p2_66_allows_empty_failed_v2_retry_to_be_superseded():
