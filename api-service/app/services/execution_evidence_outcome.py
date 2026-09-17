@@ -271,9 +271,9 @@ def _channel_emulator_v2_receipt_chain_error(
         return "channelEmulator v2 terminal release receipt is not final"
     safe_fields = safe_receipt.get("fields")
     expected_safe_field = (
-        ("state", "STOPPED")
+        ("state", "STOPPED", {"STOPPED", "CLOSED"})
         if safe_receipt.get("operation") == "stop_emulation"
-        else ("mode", 0)
+        else ("mode", 0, {0})
     )
     if (
         not isinstance(safe_fields, (list, tuple))
@@ -283,7 +283,7 @@ def _channel_emulator_v2_receipt_chain_error(
         or safe_fields[0].get("requested") != expected_safe_field[1]
         or (
             not simulated
-            and safe_fields[0].get("applied") != expected_safe_field[1]
+            and safe_fields[0].get("applied") not in expected_safe_field[2]
         )
         or safe_fields[0].get("provenance") == "transport_release"
     ):
