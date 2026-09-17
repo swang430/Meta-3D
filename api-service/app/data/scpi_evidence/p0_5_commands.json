@@ -29,6 +29,12 @@
       "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "RUNNING 是仿真实际运行判据。"
     },
     {
+      "id": "f64.simulation_stop_state", "instrument": "f64", "mandatory": false,
+      "command": "DIAGnostic:SIMUlation:GOS", "query": "DIAGnostic:SIMUlation:STATE?", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3.11"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "GOS 后 STOPPED 或 CLOSED 均为安全空闲终态；必须结合 OPC、干净错误队列与 STATE? 回读。"
+    },
+    {
       "id": "f64.model_state", "instrument": "f64", "mandatory": true,
       "command": "DIAGnostic:SIMUlation:MODel:STATE?", "query": "DIAGnostic:SIMUlation:MODel:STATE?", "status": "confirmed", "max_evidence_level": "E3",
       "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3"},

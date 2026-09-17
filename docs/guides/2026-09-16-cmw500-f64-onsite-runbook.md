@@ -33,6 +33,9 @@
 确保没有第二个 ATE 客户端。
 
 1. 运行 `propsim_f64_license_truth`，保存 `diagnostic_run_id`、身份、许可/校准原始证据和终态。
+   **2026-09-16 现场更正**：当日两次连续运行已稳定复现本序列自身产生错误队列残留，
+   详见 §7；在软件修复前不再重复运行，也不得据当前绿色步骤或总体 `UNDETERMINED`
+   关闭 P1-2。
 2. 通过产品受控资产流程加载指定 LTE UMa `.smu`。确需命令行交还控制权或加载时，只保留的
    入口是：
 
@@ -42,7 +45,12 @@
    ```
 
    不猜路径、不扫 SMB、不用已退役的一键吞吐脚本。
-3. 运行 `propsim_f64_p08_gate`，保存加载、运行、错误队列和安全收尾证据。
+3. **CMW500 本轮禁止运行 `propsim_f64_p08_gate`**。该序列的当前契约硬编码
+   `uxm_dl_confirmed`、“UXM 满 RB DL”和“UXM DL 接入”，不是 CMW500 输入源的合法载体。
+   2026-09-16 误启动的 `diagnostic_run_id=78aa4816-7eab-435b-aec9-7866a1152d31`
+   因未勾选 UXM 确认而在参数门拒绝，未进入 F64 动作；不得为了让它继续而虚假勾选。
+   当日 F64 + CMW500 闭环改由 §2 的 CMW 诊断和 §3 的正式 LTE TestCase 取证；
+   不为跑过本序列而切换到 UXM、改写 LabProfile 或重载错的 adapter。
 4. 运行 `propsim_f64_output_level_windows`，只接受本次仪器返回的活动物理输出集合；记录
    `diagnostic_run_id` 与每个活动口的窗口。
 5. 仅在需要复核 P2-71 支持分类时运行 `propsim_f64_health`。它会发送 `*CLS` 并消耗错误
@@ -51,6 +59,11 @@
    版本、发布或回滚。
 
 ## 2. CMW500 关闭小区矩阵抽样
+
+> **2026-09-17 更正：本节由必做降为可选。** 现场结论：开测前的矩阵抽样对「这次测试」不必要 —— 探针产出只进
+> `DiagnosticRun`、正式执行链零读取；§3 的正式执行自带同次的写→错误队列→回读证据；`tm1_one` 在正式 schema 不可达；
+> 且探针要求仪器「已配置 FDD」却不切 duplex，该前置只有正式执行才会建立（2026-09-16 `a0395c8a` 因仪器在 TDD 被预检拒）。
+> P2-55 的 TM3+2TX 格改由正式执行的同次回执签收。只有在评估「是否开放 TM1 等新取值域」时才需要跑本节。
 
 在 GUI「调试维护 → 调试序列 + 单阶段」中运行 `cmw500_fdd_matrix_probe`：
 
@@ -110,7 +123,63 @@
 - DUT Attach、转台方位/HOME、SAFE_IDLE、transport release 与报告 outcome；
 - 任何 BLOCKER/UNDETERMINED 的原始回复和操作员观察，不只抄摘要。
 
-本轮优先可关闭 P2-55、P1-2、NEW-1、NEW-2；P2-51、P1-74、P0-9、P0-8b、P1-4、
+本轮优先可关闭 P2-55、NEW-1、NEW-2；P1-2 已因 §7 的现场发现转为“软件修复后现场复验”，
+当前不能关闭。P2-51、P1-74、P0-9、P0-8b、P1-4、
 P2-56 与 P2-61/62 是否关闭取决于同一真实执行能否满足各自独立验收条件。P2-71 本轮最多
 补设备查询支持分类，文件字节摘要、版本发布和回滚仍保持 Hardware Blocked。UXM 专属项与其他
 不在 CMW500 + F64 链上的硬件项不由本轮关闭。
+
+> **2026-09-17 结果**：以上是出发前的预期。实际关闭了 P0-8b、P2-51 现场半（按现场证据）；P2-55 现场半（改验收后收口）；P0-9 整项与 P2-56 现场半（用户 2026-09-17 裁决关闭 —— 校准相关条件移交、TDD 下的真实 Attach / 窗口仍无真机样本，不是验收条件已满足）；P1-74 / P1-4 / P1-2 未关闭；
+> NEW-1 / NEW-2 / P2-71 / P2-61/62 当日未跑。逐项依据见[现场总结](../site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。
+
+## 7. 当日现场发现（只记录，不在现场临时修）
+
+### `instrument_idn_sweep` 范围与身份读取契约失效
+
+- 现场执行：`diagnostic_run_id=94a93c8a-9035-4190-acef-baea28b41cad`，结果为
+  `7/7 instruments did not respond`。该摘要**不能作为七台仪表均离线的证据**。
+- 当日仪器目录中只有 `baseStation`、`channelEmulator`、`positioner`、`rfSwitch` 四类启用，
+  但 `CAICT-Lab-1.instrument_bindings` 仍保留七类；停用的 `vectorSignalGenerator`、`vna`、
+  `signalAnalyzer` 因序列无条件遍历全部 LabProfile binding 而被纳入。VNA binding 还保留
+  `192.168.100.25`，与当前仪器目录 endpoint `192.168.0.10` 不同，属于配置漂移证据。
+- 四个已加载驱动均在 `0 ms` 内返回
+  `Driver exposes none of get_identity/query_idn/query`，证明失败发生在本地方法分派、没有向仪表
+  发出身份查询。CMW500、F64/UXM 已分别拥有结构化身份/环境快照接口，序列却仍探测早期通用
+  方法名；转台当前明确没有安全的型号/固件查询，RF Switch 也没有统一身份投影。因此这四项是
+  “诊断契约不匹配/身份不适用”，不能解释成硬件无响应。
+- 该序列还没有服务器侧核对 selected model、endpoint 与 loaded adapter；即使取得字符串，也只能
+  靠操作员人工比对，无法兑现序列描述中的“确认与 LabProfile 声明一致”。
+- 现场处置：保留本次审计记录，不据此重连、reload 或改写 LabProfile，不临时增加/猜测身份 SCPI；
+  分别使用已有分类健康探针和 HAL readiness 判断四台当前连接状态。
+- 后续软件修复已登记到 `docs/roadmap-first-call.md` 的 2026-09-16 Discovered 条目：目标范围应明确为
+  当前启用类别与所选 LabProfile binding 的受控交集，并显式报告被排除的旧 binding；身份读取改用
+  adapter 已有的只读结构化投影，区分“匹配 / 不匹配 / 未加载 / 身份未知或不适用”，不得重新开放
+  任意底层 `query("*IDN?")`。
+
+### `propsim_f64_license_truth` 把错误空回复显示为成功
+
+- 现场连续两次执行分别为
+  `e916b910-a7cf-4d1e-a89c-54941c4e6ccd`（2026-09-16 03:49:48Z）和
+  `c3a445a2-cad7-427f-8567-1b6d2cf20c40`（03:54:34Z）；两次均为
+  `UNDETERMINED`，并稳定得到完全相同的尾队列：
+  `-200,"Execution error;No simulation opened"`、
+  `-100,"Command error;ATE command not supported"`。
+- 两次运行之间第一轮已经把错误队列读到零，且没有第二个 ATE 客户端或其他 F64 操作；因此
+  第二轮复现排除了“历史残留”解释。不要继续重跑、`*CLS` 或为变绿而临时打开仿真。
+- 当日 `DIAG:SIMU:STATE?=CLOSED`；`SYSTem:CALIBration:VALid?` 返回空串，却被步骤显示为
+  `✓ 解析不出 <in use>,<valid>`。2026-08-27 的同机历史运行
+  `4aa35f2b-d240-409c-8158-776015a173a4` 在 `STOPPED` 时该查询返回 `1,0`，尾队列只有
+  `-100`。结合本次命令顺序，现场证据把新增 `-200 No simulation opened` 归到 CLOSED 下的
+  `CALIBration:VALid?`。
+- `SYSTem:CALIBration:USER:GET?` 在上述三次运行中都返回空串；2026-08-27 即使
+  `VALid?=1,0`、仿真为 `STOPPED`，尾队列仍稳定只有 `-100 ATE command not supported`。
+  因而本机空串不能继续解释为“未启用用户对齐”，应为 `UNKNOWN/unsupported on observed unit`；
+  不把这一台 F8800A/当前软件面的观察推广成所有 F64 的能力结论。
+- 当前能确认的真机事实只有：身份匹配；`SYSTem:INFO?` 返回 10 条许可字段且与驱动
+  `INT-GEN` 声明无差异；`CALIBration:LIST?` 返回
+  `CalibrationConfig10,CalibrationConfig12`。当前加载校准、校准有效性与用户对齐状态均未确认，
+  不得进入正式 calibration/site-certification/KPI 资格。
+- 后续软件修复并入 P1-2：错误队列须能归属到具体查询；空回复只有在该查询的错误队列为零且
+  符合手册值域时才算成功；结果须分列 `license`、`calibration`、`user_alignment`，不得用许可
+  成功补真校准。优先按已观察状态/许可收窄现有查询，不新增或猜测替代 SCPI。修复完成后在同一
+  F8800A 上从干净队列复验，只有有效子判决与终态零残留同时成立才可关闭 P1-2。

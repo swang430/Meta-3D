@@ -2419,7 +2419,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         recipe = {
             "load_channel": ("f64.model_load", "emulation_file"),
             "start_emulation": ("f64.simulation_state", "state"),
-            "stop_emulation": ("f64.simulation_state", "state"),
+            "stop_emulation": ("f64.simulation_stop_state", "state"),
             "set_passthrough_mode": ("f64.bypass_mode", "mode"),
             "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
             "set_output_gain": ("f64.output_gain", "gain_db"),
@@ -2713,9 +2713,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             requested_value = actual_command_value
         if requested_value is None:
             return projected
+        evidence_requested_value = requested_value
+        if operation == "stop_emulation":
+            # User Reference §20.4.3.11: GOS stops and rewinds the
+            # emulation.  The driver already treats STOPPED and CLOSED as
+            # the two safe-idle terminal states; preserve the actual STATE?
+            # value in the receipt instead of fabricating STOPPED.
+            readback_exchange = selected.get("readback_exchange")
+            actual_state = (
+                readback_exchange.response.strip().upper()
+                if readback_exchange is not None
+                and isinstance(readback_exchange.response, str)
+                else None
+            )
+            if actual_state not in {"STOPPED", "CLOSED"}:
+                return projected
+            evidence_requested_value = actual_state
         item = build_f64_evidence(
             evidence_key=evidence_key,
-            requested=requested_value,
+            requested=evidence_requested_value,
             scope=scope_for_evidence(
                 evidence_key, self.capture_evidence_environment()
             ),
@@ -2733,7 +2749,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         applied_value = (
             actual_command_value
             if operation == "load_channel"
-            else requested_value
+            else evidence_requested_value
         )
         confirmed_field = {
             "field": field_name,

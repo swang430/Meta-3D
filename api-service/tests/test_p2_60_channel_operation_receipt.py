@@ -857,6 +857,94 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
     assert missing_readback["fields"][0]["applied"] is None
 
 
+@pytest.mark.parametrize("terminal_state", ["STOPPED", "CLOSED"])
+def test_f64_stop_receipt_confirms_same_invocation_safe_idle_state(terminal_state):
+    """A GOS + clean queue + terminal state must produce a usable safe-idle receipt."""
+
+    from app.core.logging_config import current_execution_id
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.scpi_evidence import InstrumentEnvironment, ScpiExchangeRef
+
+    driver = RealPropsimF64Driver("ce-live", {})
+    driver.capture_evidence_environment = lambda: InstrumentEnvironment(
+        instrument_id="ce-live",
+        instrument="f64",
+        model="PROPSIM F64",
+        firmware_version="8.0",
+        captured_from_live_connection=True,
+    )
+
+    def exchange(
+        exchange_id: str,
+        sequence: int,
+        command: str,
+        *,
+        operation: str,
+        result_type: str,
+        response: str | None = None,
+    ) -> ScpiExchangeRef:
+        return ScpiExchangeRef(
+            exchange_id=exchange_id,
+            instrument_id="ce-live",
+            operation=operation,
+            command=command,
+            execution_id="execution-1",
+            capture_id="capture-stop",
+            sequence=sequence,
+            result_type=result_type,
+            response=response,
+        )
+
+    exchanges = (
+        exchange(
+            "preclear", 0, "SYST:ERR?", operation="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange(
+            "gos", 1, "DIAG:SIMU:GOS", operation="command", result_type="ok",
+        ),
+        exchange(
+            "opc", 2, "*OPC?", operation="query",
+            result_type="response", response="1",
+        ),
+        exchange(
+            "error", 3, "SYST:ERR?", operation="query",
+            result_type="response", response='0,"No error"',
+        ),
+        exchange(
+            "state", 4, "DIAG:SIMU:STATE?", operation="query",
+            result_type="response", response=terminal_state,
+        ),
+    )
+    token = current_execution_id.set("execution-1")
+    try:
+        projected = driver.project_channel_operation_evidence(
+            operation="stop_emulation",
+            requested={"state": "STOPPED"},
+            operation_succeeded=True,
+            exchanges=exchanges,
+            execution_mode="real",
+        )
+    finally:
+        current_execution_id.reset(token)
+
+    assert projected["fields"] == [
+        {
+            "field": "state",
+            "requested": "STOPPED",
+            "applied": terminal_state,
+            "applied_present": True,
+            "status": "confirmed",
+            "provenance": "authoritative_readback",
+            "exchange_ids": ["preclear", "gos", "opc", "error", "state"],
+            "source_reference": (
+                "notebooklm:982222b7-4953-46cd-9949-00fa97882353:"
+                "Propsim User Reference#20.4.3.11"
+            ),
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("operation", "requested", "command", "readback_query", "readback"),
     [
@@ -1195,7 +1283,11 @@ def test_f64_receipt_confirms_only_complete_cross_checked_topology_readback():
     assert incomplete["fields"][0]["status"] == "unknown"
 
 
-def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
+def _v2_terminal_projection_fixture(
+    *,
+    execution_mode: str = "real",
+    safe_idle_applied: str = "STOPPED",
+):
     from app.services.channel_emulator_execution_session import (
         CE_TERMINAL_EVIDENCE_CONFIG_KEY,
     )
@@ -1283,7 +1375,7 @@ def _v2_terminal_projection_fixture(*, execution_mode: str = "real"):
         operation="stop_emulation",
         field="state",
         requested="STOPPED",
-        applied="STOPPED",
+        applied=safe_idle_applied,
         provenance="runtime_state",
         exchange_ids=["exchange-safe"],
         source_reference="f64.simulation_state",
@@ -1356,6 +1448,22 @@ def test_p2_66_accepts_only_a_complete_real_v2_receipt_chain():
     )
 
     execution, _terminal, _receipts = _v2_terminal_projection_fixture()
+
+    assert _channel_emulator_terminal_projection(
+        execution.config,
+        execution_id=execution.id,
+        pipeline_status=execution.status,
+    ) == (None, None)
+
+
+def test_p2_66_accepts_closed_as_confirmed_f64_safe_idle_state():
+    from app.services.execution_evidence_outcome import (
+        _channel_emulator_terminal_projection,
+    )
+
+    execution, _terminal, _receipts = _v2_terminal_projection_fixture(
+        safe_idle_applied="CLOSED"
+    )
 
     assert _channel_emulator_terminal_projection(
         execution.config,

@@ -630,6 +630,11 @@ _F64_RECIPES = {
         "f64.simulation_state",
         "f64.simulation_state",
     ),
+    "f64.simulation_stop_state": (
+        "f64.simulation_stop_state",
+        "f64.simulation_state",
+        "f64.simulation_state",
+    ),
     "f64.center_frequency": ("f64.center_frequency", "f64.center_frequency", None),
     "f64.input_reference": ("f64.input_reference", "f64.input_reference", None),
     "f64.crest_factor": ("f64.crest_factor", "f64.crest_factor", None),
@@ -641,6 +646,10 @@ _F64_RECIPES = {
         "f64.simulation_state",
     ),
 }
+
+_F64_STATE_EVIDENCE_KEYS = frozenset(
+    {"f64.simulation_state", "f64.simulation_stop_state"}
+)
 
 _F64_SIMULATION_STATES = frozenset(
     {"CLOSED", "OPENING", "STOPPING", "STOPPED", "RUNNING", "EDITING", "CLOSING"}
@@ -741,7 +750,7 @@ def _f64_roles_match(
     command_key, readback_key, state_key = recipe
     if not _matches_catalog_role(command_exchange, command_key, "command"):
         return False
-    if evidence_key == "f64.simulation_state":
+    if evidence_key in _F64_STATE_EVIDENCE_KEYS:
         # 运行态 recipe 既可带 MODEL:STATE? 作为模型上下文，再用 STATE?
         # 判 RUNNING；也可像活跃 start_emulation 一样直接以同一条 STATE?
         # 同时承担回读和生效状态。
@@ -933,12 +942,12 @@ def build_f64_evidence(
     expected_readback = _requested_scalar(requested)
     command_operand = _command_operand(command_exchange)
     command_matches_requested = (
-        evidence_key == "f64.simulation_state"
+        evidence_key in _F64_STATE_EVIDENCE_KEYS
         or _scalar_values_match(command_operand, expected_readback)
     )
     wire_expected = (
         expected_readback
-        if evidence_key == "f64.simulation_state"
+        if evidence_key in _F64_STATE_EVIDENCE_KEYS
         else command_operand
     )
     readback_matches_wire = (
@@ -1082,7 +1091,7 @@ def build_f64_evidence(
         readback_exchange,
         state_exchange,
     ]
-    if evidence_key == "f64.simulation_state":
+    if evidence_key in _F64_STATE_EVIDENCE_KEYS:
         # GO 的业务回读与生效状态是同一条 STATE?；只在 provenance 顺序门中
         # 去重，摘要 exchange_ids 本来也按 ID 去重。
         seen_origin_ids: set[str] = set()
