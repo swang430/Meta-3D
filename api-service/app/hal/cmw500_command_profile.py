@@ -269,7 +269,7 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
     "ebler_timeout": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:EBLer:TOUT",
         source_reference=f"{_LTE_MANUAL}, §3.4.3, printed p.952",
-        purpose="Disable a retained early timeout before a bounded continuous window",
+        purpose="Disable a retained early timeout before a bounded single-shot window",
         minimum_firmware="V2.0.10",
     ),
     "ebler_repetition": CmwCommandSpec(
@@ -289,7 +289,8 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
     ),
     # P1-74：统计基（每 measurement cycle 处理的子帧数）。p.937 的 SCONdition
     # "None" 定义直说「测量按 Repetition 模式与指定的 No. of Subframes 执行」，
-    # p.938 与 §3.3.1 示例 p.940 也把它放在 continuous 配置里；p.953 的
+    # p.938 与 §3.3.1 示例 p.940 也把它放在 continuous 配置里（那是手册示例；本驱动的
+    # 正式窗口自 2026-09-16 起用 Single-Shot，p.938：单发测量恰好覆盖一个测量周期）；p.953 的
     # 「只影响 trace 长度」一句**限定 confidence 模式**（SCONdition CLEVel），
     # 不适用于正式窗口。
     "ebler_subframes": CmwCommandSpec(

@@ -137,7 +137,13 @@ async def run_attach_power_observation(
     is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> dict[str, Any]:
-    """Collect Cell-ready power truth and optionally hold before attach polling."""
+    """Collect Cell-ready power truth and optionally hold before attach polling.
+
+    ``accepted=True`` 只表示「活动输入口都读到了有限数值、允许继续 attach」，**不判断功率是否存在**：
+    真机上「无输入信号」在 F64 的实测读数里是一个很低的有限值（2026-09-16 执行 ``f8f5fd90`` 输入口 2
+    两次采样均为 -108.0 dBm），不是空值，所以严格门拦不住缺一路 TX。要判有无信号须换到带该语义的
+    查询并有 PROPSIM 手册出处；不凭一次观察值加阈值。状态用 ``recorded`` 而不是「通过」，读数请看 samples。
+    """
 
     samples = [
         await _collect_sample(
@@ -210,7 +216,7 @@ async def run_attach_power_observation(
     return {
         "schema_version": 1,
         "accepted": True,
-        "status": "warning" if warning else "accepted",
+        "status": "warning" if warning else "recorded",
         "wait_seconds_requested": float(observation_s),
         "samples": samples,
         "invalid_input_ports": invalid_ports,

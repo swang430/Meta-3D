@@ -50,3 +50,19 @@
 2. 运行 schema、CMW attach、观察器、MIMO measure、GUI 定点测试。
 3. 运行 GUI production build、Python `compileall` 与 diff-check。
 4. 做一次只读 fresh 功能内审；现场片只处理功能 P1，测试增强按仓库规则不阻塞。
+
+## 落地实况（2026-09-18 过审时补记；上文是现场当时的计划，未改动）
+
+实际落地的范围比计划窄，过审时又按内审意见改了几处：
+
+- **Task 2 没有改公共契约**：`on_cell_ready` 与 `read_configured_downlink_power_dbm()` 只存在于
+  `cmw500_base_station.py`；`base_station.py`、`uxm_base_station.py` 与 Mock 都没动。
+  `measure.py` 用 `_cell_ready_power_observation_is_wired()` 按「基站驱动是否实现该只读回读」接线，
+  不具备的 adapter 走原来的 `attach()`。现场最初写的是 `adapter_id == "cmw500"` 厂商分支，踩红
+  P2-43 / P2-46 两道规则门，过审时换掉。
+- **Task 4 无需同步镜像**：`MIMOOTAConfiguration` 的逐字段不在 `api/openapi.yaml` 与生成类型里
+  （邻近的 `precheck_strict_input_level` 同样不在），只有 GUI 表单的本地接口加了这个键。
+- **观察结果的状态**：放行时是 `recorded` / `warning`，不叫「通过」。它只表示活动输入口都读到了有限数值；
+  真机无信号读出来是 −108 dBm 而不是空值（09-16 执行 `f8f5fd90` 输入口 2），严格门拦不住缺一路 TX。
+- **回调本体与「被拒 → 本次执行失败」的映射**抽成了 `_observe_cell_ready_power()` /
+  `_attach_power_observation_failure()` 两个模块级函数，各有行为测试（现场版本这段只有源码文本检查）。

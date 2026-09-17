@@ -69,7 +69,8 @@ async def test_observation_records_cmw_config_and_f64_smu_power_topology():
     )
 
     assert result["accepted"] is True
-    assert result["status"] == "accepted"
+    # 只表示「读到了数」，不表示功率在：真机无信号读出来是很低的有限值（-108 dBm），不是空值。
+    assert result["status"] == "recorded"
     assert len(result["samples"]) == 1
     sample = result["samples"][0]
     assert sample["cmw_configured_rs_epre_dbm"] == -50.25
@@ -174,9 +175,10 @@ def test_measure_wires_observation_through_the_capability_predicate():
 
     assert "_cell_ready_power_observation_is_wired(base_station, ce_plan)" in source
     assert 'adapter_id == "cmw500"' not in source
-    assert "run_attach_power_observation(" in source
+    assert "_observe_cell_ready_power(" in source
+    assert "_attach_power_observation_failure(" in source
     assert "on_cell_ready=_observe_attach_power" in source
-    assert 'measurements["attach_power_observation"]' in source
+    # 落库由 test_cell_ready_hook_* 两条行为测试断言，不再靠源码文本。
     assert 'result_payload["attach_power_observation"]' in source
 
 
@@ -202,3 +204,97 @@ def test_observation_predicate_follows_driver_capability_not_vendor_identity():
     assert _cell_ready_power_observation_is_wired(_WithReadback(), f64_plan) is True
     assert _cell_ready_power_observation_is_wired(_WithoutReadback(), f64_plan) is False
     assert _cell_ready_power_observation_is_wired(_WithReadback(), mock_plan) is False
+
+
+@pytest.mark.asyncio
+async def test_finite_but_absent_signal_reading_is_recorded_not_judged():
+    # 2026-09-16 执行 f8f5fd90：F64 输入口 2 两次采样均为 -108.0 dBm（无信号），输入口 1 约 -29 dBm。
+    # 观察不凭数值判断有无信号，所以这里必须仍放行 —— 但状态不得读成「通过」。
+    result = await run_attach_power_observation(
+        base_station=_BaseStation(),
+        channel_emulator=_ChannelEmulator([_metrics(input_1=-28.9, input_2=-108.0)]),
+        observation_s=0.0,
+        strict_input_level=True,
+        execution_id="execution-5",
+    )
+
+    assert result["accepted"] is True
+    assert result["status"] == "recorded"
+    assert result["invalid_input_ports"] == []
+    assert result["samples"][0]["input_powers_dbm"][1] == {"port": 2, "value_dbm": -108.0}
+
+
+class _ExecutionRow:
+    def __init__(self) -> None:
+        self.id = "execution-hook"
+        self.status = "running"
+        self.measurements = {"phases": {"precheck": {"ok": True}}}
+
+
+class _Db:
+    def __init__(self) -> None:
+        self.commits = 0
+
+    def expire(self, _row) -> None:
+        return None
+
+    def refresh(self, _row) -> None:
+        return None
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def _hook_context():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(db=_Db(), test_execution=_ExecutionRow())
+
+
+@pytest.mark.asyncio
+async def test_cell_ready_hook_blocks_attach_and_persists_a_rejected_observation(monkeypatch):
+    from app.services.mimo_ota.executors import measure as measure_module
+
+    monkeypatch.setattr(measure_module, "flag_modified", lambda *_args: None)
+    context = _hook_context()
+    holder: dict = {}
+
+    allowed = await measure_module._observe_cell_ready_power(
+        context=context,
+        base_station=_BaseStation(),
+        channel_emulator=_ChannelEmulator([_metrics(input_2=None)]),
+        config=MIMOOTAConfiguration(),  # 默认：0 秒 + 严格
+        holder=holder,
+    )
+
+    assert allowed is False
+    stored = context.test_execution.measurements["attach_power_observation"]
+    assert stored is holder["result"]
+    assert stored["status"] == "rejected"
+    assert context.test_execution.measurements["phases"] == {"precheck": {"ok": True}}
+    assert context.db.commits == 1
+    message = measure_module._attach_power_observation_failure(stored)
+    assert message is not None
+    assert "UE attach 尚未开始" in message
+    assert "F64 活动输入口缺少有效实测功率" in message
+
+
+@pytest.mark.asyncio
+async def test_cell_ready_hook_allows_attach_when_readings_are_complete(monkeypatch):
+    from app.services.mimo_ota.executors import measure as measure_module
+
+    monkeypatch.setattr(measure_module, "flag_modified", lambda *_args: None)
+    context = _hook_context()
+    holder: dict = {}
+
+    allowed = await measure_module._observe_cell_ready_power(
+        context=context,
+        base_station=_BaseStation(),
+        channel_emulator=_ChannelEmulator([_metrics()]),
+        config=MIMOOTAConfiguration(),
+        holder=holder,
+    )
+
+    assert allowed is True
+    assert measure_module._attach_power_observation_failure(holder["result"]) is None
+    assert measure_module._attach_power_observation_failure(None) is None

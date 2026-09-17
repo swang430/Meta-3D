@@ -1143,8 +1143,9 @@ class RealCmw500Driver(BaseStationDriver):
         "MEAS_TPUT_STAT_COUNT": (
             "EBLer:SFRames（p.953）有对应命令：p.953『只影响 trace 长度』"
             "限定 confidence 模式（SCONdition CLEVel），而正式窗口是"
-            "continuous（SCONdition NONE，P1-73B）——该模式下 SFRames ="
-            "每周期统计子帧数（§3.3.1 p.940 示例明示）。命令归窗口层所有："
+            "Single-Shot + SCONdition NONE（2026-09-16 起；此前为 continuous）"
+            "——无停止条件时 SFRames = 每个测量周期处理的子帧数，单发测量恰好"
+            "覆盖一个周期（§3.2.4 p.938）。命令归窗口层所有："
             "P1-74 起由 measure_base_station_window 从 execution 冻结的统计基"
             "下发并回读确认（回读不符/不可读一律 fail-closed），"
             "**仍不在 MAC 配置层下发** —— 统计基是测量窗口的属性，"
@@ -3772,6 +3773,9 @@ class RealCmw500Driver(BaseStationDriver):
                         absolute = Cmw500LteCommandProfile.parse_ebler_absolute(
                             absolute_raw
                         )
+                        # 手册 §3.4 printed p.958：ABSolute? 第 4 字段 = "Number of already
+                        # processed subframes"；§3.2.3.7 printed p.935：单发、定长测量的
+                        # Subframes 进度在结束时 = 配置的总数。两者不等说明这不是一个完整周期。
                         processed_subframes = absolute.subframe_count
                         if processed_subframes != statistical_basis_requested:
                             statistical_cycle_complete = False
