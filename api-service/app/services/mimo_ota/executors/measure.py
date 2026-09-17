@@ -1608,7 +1608,8 @@ class MeasureExecutor(IStepExecutor):
                 # missing，而不是空集合误绿。
                 # CMW LTE User Manual §2.2.2 / Table 2-32：先选择测试场景，
                 # 随后才能下发与该场景兼容的 transmission mode / eNB 天线数。
-                # UXM 也接受该 vendor-neutral 顺序，因此先冻结并应用执行路由。
+                # 这个顺序对没有路由操作的 adapter 无影响：基类 apply_route 只返回
+                # not_applicable 回执、不发任何 SCPI（UXM 即如此，并非「UXM 仪器接受该顺序」）。
                 route_receipt = await base_station.apply_route(
                     base_station_attempt.frozen_adapter
                 )

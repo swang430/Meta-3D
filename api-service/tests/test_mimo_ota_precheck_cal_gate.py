@@ -583,6 +583,7 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
 
         def __init__(self) -> None:
             self.add_calls = 0
+            self.apply_order: list[str] = []
 
         async def connect(self):
             return True
@@ -594,9 +595,11 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
             return True
 
         async def apply_config(self, requested):
+            self.apply_order.append("config")
             return await BaseStationDriver.apply_config(self, requested)
 
         async def apply_route(self, frozen_adapter):
+            self.apply_order.append("route")
             return await BaseStationDriver.apply_route(self, frozen_adapter)
 
         def route_allows_diagnostic_execution(self, receipt):
@@ -665,6 +668,9 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
 
     assert result.status == StepExecutionStatus.FAILED
     assert "SCell 2 添加失败" in (result.error_message or "")
+    # 2026-09-16 现场：CMW500 必须先激活测试场景（route），随后的 TM / 天线数配置才合法。
+    # 这里经完整 MeasureExecutor.execute 断言真实调用顺序（行为门）；源码文本顺序只是粗筛。
+    assert hal_with_mocks.drivers["baseStation"].apply_order[:2] == ["route", "config"]
     assert "remove_all_secondary_cells" in (result.error_message or "")
     assert any(
         "remove_all_secondary_cells" in warning

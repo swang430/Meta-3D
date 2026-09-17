@@ -154,6 +154,28 @@ async def test_completed_window_rejects_fewer_processed_subframes_than_requested
 
 
 @pytest.mark.asyncio
+async def test_single_shot_still_running_after_bounded_grace_is_not_a_complete_window():
+    # 单发窗口在墙钟估计 + 有界宽限（11 次轮询）后仍是 RUN：不得用强制 STOP 把半个
+    # 统计周期冒充成完整窗口 —— 收尾照常 STOP/ABORT，但 ready 不成立、不取数。
+    driver = _WindowDriver(states=["OFF", "RUN"] + ["RUN"] * 11 + ["RDY", "OFF"])
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        window = await driver.measure_base_station_window(
+            0.1, request=_window_request()
+        )
+
+    assert window.confirmed is False
+    assert window.ready_confirmed is False
+    assert window.closed_off_confirmed is True
+    assert window.metrics.dl_throughput_mbps is None
+    assert window.metrics.dl_bler is None
+    assert "did not reach RDY" in window.reason
+    assert not any("ABSolute?" in query or "RELative?" in query for query in driver.queries)
+    assert "STOP:LTE:SIGN1:EBLer" in driver.writes
+    assert driver.writes[-1] == "ABORt:LTE:SIGN1:EBLer"
+
+
+@pytest.mark.asyncio
 async def test_pcc_window_rejects_an_all_cells_scope_before_instrument_io():
     driver = _WindowDriver(states=[])
 
