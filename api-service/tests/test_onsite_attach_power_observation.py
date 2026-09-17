@@ -168,12 +168,37 @@ async def test_observation_window_honors_cooperative_cancel_each_second():
     assert sleeps == [1.0]
 
 
-def test_measure_wires_observation_only_for_frozen_cmw500_f64_pair():
+def test_measure_wires_observation_through_the_capability_predicate():
+    # 源码文本只是粗筛：execute 必须经能力判据接线，且不得再按基站厂商身份分支。
     source = inspect.getsource(MeasureExecutor.execute)
 
-    assert 'execution_plan.adapter_id == "cmw500"' in source
-    assert 'ce_plan.adapter_id == "propsim_f64"' in source
+    assert "_cell_ready_power_observation_is_wired(base_station, ce_plan)" in source
+    assert 'adapter_id == "cmw500"' not in source
     assert "run_attach_power_observation(" in source
     assert "on_cell_ready=_observe_attach_power" in source
     assert 'measurements["attach_power_observation"]' in source
     assert 'result_payload["attach_power_observation"]' in source
+
+
+def test_observation_predicate_follows_driver_capability_not_vendor_identity():
+    from types import SimpleNamespace
+
+    from app.services.mimo_ota.executors.measure import (
+        _cell_ready_power_observation_is_wired,
+    )
+
+    class _WithReadback:
+        adapter_id = "some_other_vendor"
+
+        async def read_configured_downlink_power_dbm(self):
+            return -50.0
+
+    class _WithoutReadback:
+        adapter_id = "cmw500"  # 身份像 CMW500，但没有该只读能力（Mock 即如此）
+
+    f64_plan = SimpleNamespace(adapter_id="propsim_f64")
+    mock_plan = SimpleNamespace(adapter_id="mock_channel_emulator")
+
+    assert _cell_ready_power_observation_is_wired(_WithReadback(), f64_plan) is True
+    assert _cell_ready_power_observation_is_wired(_WithoutReadback(), f64_plan) is False
+    assert _cell_ready_power_observation_is_wired(_WithReadback(), mock_plan) is False

@@ -245,6 +245,24 @@ class _BaseStationAttemptContext:
     mac_profile: FrozenMacTestProfile | None
 
 
+def _cell_ready_power_observation_is_wired(base_station: Any, ce_plan: Any) -> bool:
+    """Cell-ready 功率观察只在两台仪器都读得到所需真值时接线。
+
+    基站一侧的判据是「驱动实现了已配置下行功率的只读回读」，不按厂商身份分支
+    （P2-43 / P2-46 规则门）；不具备的 adapter（含 Mock）走原来的 attach()，行为不变。
+    CE 一侧沿用本文件既有的 propsim_f64 计划判断：观察读的是 F64 get_metrics() 的
+    活动端口 / 实测功率，Mock CE 虽声明 measure_input 却没有这些键。
+    """
+
+    configured_power_readback = getattr(
+        base_station, "read_configured_downlink_power_dbm", None
+    )
+    return (
+        callable(configured_power_readback)
+        and getattr(ce_plan, "adapter_id", None) == "propsim_f64"
+    )
+
+
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
     """Only an explicitly real certificate may be labelled verified."""
     return use_mock is False
@@ -2517,10 +2535,7 @@ class MeasureExecutor(IStepExecutor):
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
             # 能借用仪表上一次执行的遗留场景。
             attach_power_observation: Optional[Dict[str, Any]] = None
-            if (
-                base_station_attempt.execution_plan.adapter_id == "cmw500"
-                and ce_plan.adapter_id == "propsim_f64"
-            ):
+            if _cell_ready_power_observation_is_wired(base_station, ce_plan):
                 observation_holder: Dict[str, Dict[str, Any]] = {}
 
                 async def _observation_cancelled() -> bool:
