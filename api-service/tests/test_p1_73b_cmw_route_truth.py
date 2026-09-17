@@ -120,7 +120,7 @@ async def test_common_route_receipt_confirms_each_authoritatively_read_field():
 async def test_common_route_receipt_keeps_only_pcc_unknown_when_specific_query_fails():
     driver = _driver(
         nx2_readback=TimeoutError("setting query unsupported"),
-        error=['0,"No error"', '-113,"Undefined header"', '0,"No error"'],
+        error=['0,"No error"', '0,"No error"', '-113,"Undefined header"', '0,"No error"'],
     )
 
     receipt = await driver.apply_route(_frozen_route())
@@ -153,6 +153,7 @@ async def test_route_uses_only_the_complete_execution_frozen_profile_and_reads_a
     ]
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",  # 写前丢弃既有错误（route 是第一个写）
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "ROUTe:LTE:SIGN1?",
@@ -285,7 +286,7 @@ async def test_route_pcc_board_mismatch_keeps_confirmation_false_without_backfil
 async def test_route_specific_query_unavailable_keeps_confirmation_false():
     driver = _driver(
         nx2_readback=TimeoutError("setting query unsupported"),
-        error=['0,"No error"', '-113,"Undefined header"', '0,"No error"'],
+        error=['0,"No error"', '0,"No error"', '-113,"Undefined header"', '0,"No error"'],
     )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
@@ -303,6 +304,7 @@ async def test_route_specific_query_unavailable_keeps_confirmation_false():
     assert "Undefined header" in result.reason
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",  # 写前丢弃既有错误（route 是第一个写）
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "SYSTem:ERRor:ALL?",
@@ -314,7 +316,7 @@ async def test_route_specific_query_unavailable_keeps_confirmation_false():
 @pytest.mark.asyncio
 async def test_route_readback_error_queue_entry_blocks_confirmation():
     driver = _driver(
-        error=['0,"No error"', '-200,"Execution error"'],
+        error=['0,"No error"', '0,"No error"', '-200,"Execution error"'],
     )
 
     result = await driver.apply_internal_lte_2x2_route(_frozen_route())
@@ -323,9 +325,27 @@ async def test_route_readback_error_queue_entry_blocks_confirmation():
     assert "readback error queue" in result.reason
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",  # 写前丢弃既有错误（route 是第一个写）
         "SYSTem:ERRor:ALL?",
         "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?",
         "ROUTe:LTE:SIGN1?",
+        "SYSTem:ERRor:ALL?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unreadable_error_queue_before_route_write_returns_an_unconfirmed_receipt():
+    # 写前清旧错误那次查询若超时 / 断链，必须回结构化的未确认回执（执行器据此落证、给出路由原因），
+    # 不得裸抛异常；也不得在队列状态未知时继续写路由。
+    driver = _driver(error=TimeoutError("VI_ERROR_TMO"))
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert "unreadable before route apply" in result.reason
+    assert driver.writes == []
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
         "SYSTem:ERRor:ALL?",
     ]
 
@@ -340,6 +360,7 @@ async def test_route_error_queue_entry_blocks_readback_and_confirmation():
     assert "error queue" in result.reason
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",  # 写前丢弃既有错误（route 是第一个写）
         "SYSTem:ERRor:ALL?",
     ]
 
@@ -354,5 +375,6 @@ async def test_route_error_queue_zero_prefix_cannot_hide_a_following_error():
     assert "error queue" in result.reason
     assert driver.queries == [
         "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",  # 写前丢弃既有错误（route 是第一个写）
         "SYSTem:ERRor:ALL?",
     ]

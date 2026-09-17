@@ -103,3 +103,47 @@ async def test_cmw_unknown_ps_reply_is_unknown_not_confirmed_false_or_cached_tru
     assert stages["ue_registered"].applied is None
     assert stages["data_bearer_established"].status == "unknown"
     assert receipt.exchange_ids == stages["cell_ready"].exchange_ids
+
+
+@pytest.mark.asyncio
+async def test_cmw_runs_cell_ready_observer_before_first_attach_poll():
+    driver = _driver_with_states(["ON,ADJ", "ATT", "CEST"])
+    observer_queries: list[list[str]] = []
+
+    async def _observe() -> bool:
+        observer_queries.append(list(driver.queries))
+        return True
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        receipt = await driver.attach(timeout_s=3.0, on_cell_ready=_observe)
+
+    assert receipt.diagnostic_execution_allowed is True
+    assert len(observer_queries) == 1
+    assert observer_queries[0][-1] == "SOURce:LTE:SIGN1:CELL:STATe:ALL?"
+    assert "FETCh:LTE:SIGN1:PSWitched:STATe?" not in observer_queries[0]
+
+
+@pytest.mark.asyncio
+async def test_cmw_cell_ready_observer_can_reject_before_attach_poll():
+    driver = _driver_with_states(["ON,ADJ", "OFF,ADJ"])
+
+    async def _reject() -> bool:
+        return False
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        receipt = await driver.attach(timeout_s=3.0, on_cell_ready=_reject)
+
+    assert receipt.diagnostic_execution_allowed is False
+    assert "FETCh:LTE:SIGN1:PSWitched:STATe?" not in driver.queries
+
+
+@pytest.mark.asyncio
+async def test_cmw_reads_current_configured_rs_epre_with_existing_query():
+    driver = _StateDriver(
+        {"CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?": "-50.25"}
+    )
+
+    observed = await driver.read_configured_downlink_power_dbm()
+
+    assert observed == -50.25
+    assert driver.queries == ["CONFigure:LTE:SIGN1:DL:RSEPre:LEVel?"]

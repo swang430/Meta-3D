@@ -1858,7 +1858,8 @@ def test_g12_p0_5_scpi_evidence_catalog_is_strict_and_complete():
     mandatory = {entry.id for entry in catalog.entries.values() if entry.mandatory}
     expected = {
         "f64.model_load", "f64.operation_complete", "f64.error_queue",
-        "f64.simulation_state", "f64.model_state", "f64.center_frequency",
+        "f64.simulation_state", "f64.simulation_stop_state", "f64.model_state",
+        "f64.center_frequency",
         "f64.input_reference", "f64.crest_factor", "f64.output_gain",
         "f64.output_loss", "f64.bypass_mode", "f64.topology_model_info",
         "f64.topology_group_count", "f64.topology_group_channels",

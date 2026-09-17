@@ -557,11 +557,13 @@ async def test_direct_measure_rejects_inactive_asset_before_hardware_connect(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("route_rejected", [False, True])
 async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     db,
     lab,
     hal_with_mocks,
     monkeypatch,
+    route_rejected,
 ):
     from app.hal import MockPositioner
 
@@ -583,6 +585,7 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
 
         def __init__(self) -> None:
             self.add_calls = 0
+            self.apply_order: list[str] = []
 
         async def connect(self):
             return True
@@ -591,12 +594,36 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
             return True
 
         async def apply_requested_config(self, _requested):
-            return True
+            # 路由被拒的场景里配置也一并被拒（真机上场景未激活时 TM / 天线数会被拒）。
+            return not route_rejected
 
         async def apply_config(self, requested):
+            self.apply_order.append("config")
             return await BaseStationDriver.apply_config(self, requested)
 
         async def apply_route(self, frozen_adapter):
+            self.apply_order.append("route")
+            if route_rejected:
+                from app.hal.base_station import (
+                    BaseStationApplyReceipt,
+                    BaseStationFieldReceipt,
+                )
+
+                return BaseStationApplyReceipt(
+                    schema_version=1,
+                    operation="route",
+                    fields=(
+                        BaseStationFieldReceipt(
+                            field="route",
+                            requested="requested-route",
+                            applied=None,
+                            status="unknown",
+                            reason="error queue rejected route: -221",
+                        ),
+                    ),
+                    reason="error queue rejected route: -221",
+                    simulated=True,
+                )
             return await BaseStationDriver.apply_route(self, frozen_adapter)
 
         def route_allows_diagnostic_execution(self, receipt):
@@ -664,7 +691,17 @@ async def test_ca_partial_add_surfaces_cleanup_failure_in_failed_result(
     result = await MeasureExecutor().execute(ctx)
 
     assert result.status == StepExecutionStatus.FAILED
+    if route_rejected:
+        # 先下发的先判：两者都被拒时报路由，不把操作员引去查配置。
+        assert "execution route 未获足够权威确认" in (result.error_message or "")
+        assert "-221" in (result.error_message or "")
+        assert "set_cell_config" not in (result.error_message or "")
+        assert hal_with_mocks.drivers["baseStation"].apply_order[:2] == ["route", "config"]
+        return
     assert "SCell 2 添加失败" in (result.error_message or "")
+    # 2026-09-16 现场：CMW500 必须先激活测试场景（route），随后的 TM / 天线数配置才合法。
+    # 这里经完整 MeasureExecutor.execute 断言真实调用顺序（行为门）；源码文本顺序只是粗筛。
+    assert hal_with_mocks.drivers["baseStation"].apply_order[:2] == ["route", "config"]
     assert "remove_all_secondary_cells" in (result.error_message or "")
     assert any(
         "remove_all_secondary_cells" in warning

@@ -76,7 +76,7 @@ class _FakeTransportCmw(RealCmw500Driver):
         if command == "CONFigure:LTE:SIGN1:CONNection:PCC:NENBantennas?":
             return "TWO"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?":
-            return "0,900,100,1000,123456.5,120000,125000,0,1000,15"
+            return "0,900,100,5000,123456.5,120000,125000,0,1000,15"
         if command == "FETCh:LTE:SIGN1:EBLer:PCC:RELative?":
             return "0,99.5,0.5,0.5,87.25,0"
         if command == "CONFigure:LTE:SIGN1:EBLer:SFRames?":
@@ -169,6 +169,39 @@ async def test_fake_transport_runs_config_route_attach_window_cleanup_then_relea
     assert session.closed is True
     assert driver._visa_session is None
     assert driver.ebler_states == deque()
+
+
+@pytest.mark.asyncio
+async def test_route_as_first_write_is_not_rejected_by_a_stale_error_queue():
+    # 2026-09-16 起 route 是一次执行里对 CMW 的第一个写。设备级错误队列读后清空：
+    # 队列里留着本次执行之前的无关错误（诊断序列 / 原始 SCPI 端点 / 前面板）时，
+    # 不得被读成「路由被拒」—— 旧顺序下这一步由 set_cell_config 的清队列兜着。
+    class _StaleQueueCmw(_FakeTransportCmw):
+        def __init__(self) -> None:
+            super().__init__()
+            self.error_queue = deque(['-113,"Undefined header"'])
+
+        def _do_query(self, command: str) -> str:
+            if command == "SYSTem:ERRor:ALL?":
+                self.queries.append(command)
+                return self.error_queue.popleft() if self.error_queue else '0,"No error"'
+            return super()._do_query(command)
+
+    driver = _StaleQueueCmw()
+
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        route = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert route.confirmed is True
+    assert route.reason == "CMW500 route write and both readbacks confirmed"
+    # 清旧错误发生在路由写入之前，且不混进本次路由的证据往返里。
+    first_route_write = next(
+        index for index, item in enumerate(driver.writes) if item.startswith("ROUTe:")
+    )
+    assert first_route_write == 0
+    assert driver.queries.index("SYSTem:ERRor:ALL?") < driver.queries.index(
+        "ROUTe:LTE:SIGN1:SCENario:TRO:FLEXible?"
+    )
 
 
 @pytest.mark.asyncio

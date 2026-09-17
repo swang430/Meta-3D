@@ -590,6 +590,16 @@ class MIMOOTAConfiguration(BaseModel):
     # azimuth 扫描, 在 result_payload["input_level_calibration"] 留 audit 痕迹。
     # 同 precheck_strict_cal/dut: GUI 不暴露, fixture/config 级别 opt-in。
 
+    attach_power_observation_s: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=300.0,
+    )
+    # CMW500 Cell ON 且硬件报告 ON,ADJUSTED 后、UE attach 计时开始前的现场
+    # 功率观察窗口。0 = 只采一次不等待；大于 0 = 保持当前 RF 状态并在窗口首尾
+    # 各采一次，等待时间不计入 UE attach timeout。观察只读已有的 CMW 配置功率
+    # 与 F64 实测/拓扑，不推算 DUT 功率，也不把配置值冒充实际 RF 输出。
+
     precheck_strict_frequency: bool = True
     # P2-11 Phase 1 (2026-05-30): 多方频率一致性校验。measure phase 在 UXM
     # set_cell_config + F64 信道加载后，UXM 用完整 (中心 ARFCN, 带宽) 回读；

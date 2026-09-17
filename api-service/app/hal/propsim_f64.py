@@ -2419,7 +2419,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         recipe = {
             "load_channel": ("f64.model_load", "emulation_file"),
             "start_emulation": ("f64.simulation_state", "state"),
-            "stop_emulation": ("f64.simulation_state", "state"),
+            "stop_emulation": ("f64.simulation_stop_state", "state"),
             "set_passthrough_mode": ("f64.bypass_mode", "mode"),
             "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
             "set_output_gain": ("f64.output_gain", "gain_db"),

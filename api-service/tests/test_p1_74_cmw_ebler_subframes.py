@@ -46,7 +46,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
 from app.services.mimo_ota.executors.measure import MeasureExecutor
 
 
-ABSOLUTE = "0,900,100,1000,123456.5,120000,125000,0,1000,15"
+ABSOLUTE = "0,900,100,5000,123456.5,120000,125000,0,1000,15"
 RELATIVE = "0,99.5,0.5,0.5,87.25,0"
 STATE_QUERY = "FETCh:LTE:SIGN1:EBLer:STATe?"
 SFRAMES_QUERY = "CONFigure:LTE:SIGN1:EBLer:SFRames?"
@@ -409,11 +409,10 @@ async def test_window_drives_and_confirms_the_frozen_statistical_basis():
     assert driver.writes == [
         "ABORt:LTE:SIGN1:EBLer",
         "CONFigure:LTE:SIGN1:EBLer:TOUT 0",
-        "CONFigure:LTE:SIGN1:EBLer:REPetition CONTinuous",
+        "CONFigure:LTE:SIGN1:EBLer:REPetition SINGleshot",
         "CONFigure:LTE:SIGN1:EBLer:SCONdition NONE",
         _sframes_write(5000),
         "INITiate:LTE:SIGN1:EBLer",
-        "STOP:LTE:SIGN1:EBLer",
         "ABORt:LTE:SIGN1:EBLer",
     ]
     assert SFRAMES_QUERY in driver.queries

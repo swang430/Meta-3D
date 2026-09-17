@@ -51,6 +51,9 @@ from app.services.mimo_ota.path_loss_preflight import (
     _evaluate_path_loss_provenance_for_measure,
     evaluate_path_loss_preflight,
 )
+from app.services.mimo_ota.attach_power_observation import (
+    run_attach_power_observation,
+)
 from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from app.services.mimo_ota.rf_kpi_trust import (
     build_rf_kpi_trust,
@@ -240,6 +243,73 @@ class _BaseStationAttemptContext:
     # P2-54: parsed exactly once from the execution freeze.  No downstream
     # consumer may rebuild this intent from the mutable TestCase.
     mac_profile: FrozenMacTestProfile | None
+
+
+def _cell_ready_power_observation_is_wired(base_station: Any, ce_plan: Any) -> bool:
+    """Cell-ready 功率观察只在两台仪器都读得到所需真值时接线。
+
+    基站一侧的判据是「驱动实现了已配置下行功率的只读回读」，不按厂商身份分支
+    （P2-43 / P2-46 规则门）；不具备的 adapter（含 Mock）走原来的 attach()，行为不变。
+    CE 一侧沿用本文件既有的 propsim_f64 计划判断：观察读的是 F64 get_metrics() 的
+    活动端口 / 实测功率，Mock CE 虽声明 measure_input 却没有这些键。
+    """
+
+    configured_power_readback = getattr(
+        base_station, "read_configured_downlink_power_dbm", None
+    )
+    return (
+        callable(configured_power_readback)
+        and getattr(ce_plan, "adapter_id", None) == "propsim_f64"
+    )
+
+
+async def _observe_cell_ready_power(
+    *,
+    context: Any,
+    base_station: Any,
+    channel_emulator: Any,
+    config: Any,
+    holder: Dict[str, Dict[str, Any]],
+) -> bool:
+    """Cell-ready 回调本体：采样、落到本次执行的 measurements，返回是否允许继续 attach。"""
+
+    async def _observation_cancelled() -> bool:
+        # request_cancel() uses another DB session. Refresh once per
+        # second during the deliberate onsite hold so the operator
+        # can still abort without waiting for the next phase.
+        context.db.expire(context.test_execution)
+        context.db.refresh(context.test_execution)
+        return context.test_execution.status != "running"
+
+    observation = await run_attach_power_observation(
+        base_station=base_station,
+        channel_emulator=channel_emulator,
+        observation_s=config.attach_power_observation_s,
+        strict_input_level=config.precheck_strict_input_level,
+        execution_id=str(context.test_execution.id),
+        is_cancelled=_observation_cancelled,
+    )
+    holder["result"] = observation
+    measurements = dict(context.test_execution.measurements or {})
+    measurements["attach_power_observation"] = observation
+    context.test_execution.measurements = measurements
+    flag_modified(context.test_execution, "measurements")
+    context.db.commit()
+    return observation["accepted"] is True
+
+
+def _attach_power_observation_failure(
+    observation: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """观察拒绝 / 取消了本次 attach 时给出失败文案；未接线或放行时返回 None。"""
+
+    if observation is None or observation.get("accepted") is True:
+        return None
+    return (
+        "CMW500 Cell ON 后功率观察未通过，UE attach 尚未开始："
+        + str(observation.get("failure_reason") or observation.get("status"))
+        + "。明细见 measurements.attach_power_observation。"
+    )
 
 
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
@@ -1603,11 +1673,15 @@ class MeasureExecutor(IStepExecutor):
                 # 小区配置进测量, 正是回读门要拦的实验污染。
                 # 先落“必需项”，即使 HAL 调用随后异常/进程中断，收尾也会显示
                 # missing，而不是空集合误绿。
-                config_receipt = await base_station.apply_config(
-                    pcell_requested_config,
-                )
+                # CMW LTE User Manual §2.2.2 / Table 2-32：先选择测试场景，
+                # 随后才能下发与该场景兼容的 transmission mode / eNB 天线数。
+                # 这个顺序对没有路由操作的 adapter 无影响：基类 apply_route 只返回
+                # not_applicable 回执、不发任何 SCPI（UXM 即如此，并非「UXM 仪器接受该顺序」）。
                 route_receipt = await base_station.apply_route(
                     base_station_attempt.frozen_adapter
+                )
+                config_receipt = await base_station.apply_config(
+                    pcell_requested_config,
                 )
                 from app.services.execution_scpi_evidence import (
                     confirm_base_station_configuration_and_route,
@@ -1623,20 +1697,22 @@ class MeasureExecutor(IStepExecutor):
                         route_receipt=route_receipt,
                     )
                     context.db.commit()
-                if config_receipt.diagnostic_execution_allowed is not True:
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=(
-                            "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
-                            "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
-                        ),
-                    )
+                # route 先下发，也先判：路由被拒时随后的 TM / 天线数配置往往跟着被拒，
+                # 先报配置失败会把操作员引去查配置，真正原因只留在驱动日志里。
                 if not base_station.route_allows_diagnostic_execution(route_receipt):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
                             "BaseStation execution route 未获足够权威确认；"
                             f"中止执行: {route_receipt.reason}"
+                        ),
+                    )
+                if config_receipt.diagnostic_execution_allowed is not True:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
+                            "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
                         ),
                     )
 
@@ -2509,7 +2585,25 @@ class MeasureExecutor(IStepExecutor):
             # BaseStation 的 channel/BW/功率已由上面的配置入口下发并回读；F64
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
             # 能借用仪表上一次执行的遗留场景。
-            attach_receipt = await base_station.attach()
+            attach_power_observation: Optional[Dict[str, Any]] = None
+            if _cell_ready_power_observation_is_wired(base_station, ce_plan):
+                observation_holder: Dict[str, Dict[str, Any]] = {}
+
+                async def _observe_attach_power() -> bool:
+                    return await _observe_cell_ready_power(
+                        context=context,
+                        base_station=base_station,
+                        channel_emulator=emulator,
+                        config=config,
+                        holder=observation_holder,
+                    )
+
+                attach_receipt = await base_station.attach(
+                    on_cell_ready=_observe_attach_power,
+                )
+                attach_power_observation = observation_holder.get("result")
+            else:
+                attach_receipt = await base_station.attach()
             if base_station_attempt.attempt_id is not None:
                 from app.hal.base_station_manifest import BaseStationAdapterManifest
                 from app.services.execution_scpi_evidence import (
@@ -2554,6 +2648,14 @@ class MeasureExecutor(IStepExecutor):
                         context.test_execution.id,
                     )
             if attach_receipt.diagnostic_execution_allowed is not True:
+                observation_failure = _attach_power_observation_failure(
+                    attach_power_observation
+                )
+                if observation_failure is not None:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=observation_failure,
+                    )
                 terminal_attach_stage = attach_receipt.terminal_stage_receipt
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
@@ -3749,6 +3851,10 @@ class MeasureExecutor(IStepExecutor):
                 },
                 "controlled_dut_attach": controlled_attach,
             }
+            if attach_power_observation is not None:
+                result_payload["attach_power_observation"] = (
+                    attach_power_observation
+                )
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /
             # ExternalAscPathStrategy): GCM mode (NativeModelStrategy) doesn't

@@ -182,7 +182,7 @@ class CmwExtendedBlerAbsolute:
     throughput_maximum_kbit_per_s: float
     dtx_count: int
     scheduled_count: int
-    median_cqi: int
+    median_cqi: int | None
 
 
 @dataclass(frozen=True)
@@ -269,13 +269,16 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
     "ebler_timeout": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:EBLer:TOUT",
         source_reference=f"{_LTE_MANUAL}, §3.4.3, printed p.952",
-        purpose="Disable a retained early timeout before a bounded continuous window",
+        purpose="Disable a retained early timeout before a bounded single-shot window",
         minimum_firmware="V2.0.10",
     ),
     "ebler_repetition": CmwCommandSpec(
         template="CONFigure:LTE:SIGN{i}:EBLer:REPetition",
         source_reference=f"{_LTE_MANUAL}, §3.3.3 and §3.4.3, printed p.941, 953",
-        purpose="Select continuous repetition so STOP owns the requested window end",
+        purpose=(
+            "Select single-shot repetition so one frozen SFRames cycle owns "
+            "the formal window end"
+        ),
         minimum_firmware="V3.0.30",
     ),
     "ebler_stop_condition": CmwCommandSpec(
@@ -286,7 +289,8 @@ CMW500_LTE_COMMANDS: dict[str, CmwCommandSpec] = {
     ),
     # P1-74：统计基（每 measurement cycle 处理的子帧数）。p.937 的 SCONdition
     # "None" 定义直说「测量按 Repetition 模式与指定的 No. of Subframes 执行」，
-    # p.938 与 §3.3.1 示例 p.940 也把它放在 continuous 配置里；p.953 的
+    # p.938 与 §3.3.1 示例 p.940 也把它放在 continuous 配置里（那是手册示例；本驱动的
+    # 正式窗口自 2026-09-16 起用 Single-Shot，p.938：单发测量恰好覆盖一个测量周期）；p.953 的
     # 「只影响 trace 长度」一句**限定 confidence 模式**（SCONdition CLEVel），
     # 不适用于正式窗口。
     "ebler_subframes": CmwCommandSpec(
@@ -736,6 +740,14 @@ class Cmw500LteCommandProfile:
         return f"{cls._format('ebler_repetition', sign_channel)} CONTinuous"
 
     @classmethod
+    def ebler_repetition_single_shot(cls, sign_channel: int) -> str:
+        # LTE UE User Manual §3.3.4 / §3.4.3, printed pp.942, 953:
+        # the command example uses the short form SING and the parameter
+        # grammar is exactly ``SINGleshot | CONTinuous``.  Use the documented
+        # full form so a partial token such as ``SINGle`` cannot reach hardware.
+        return f"{cls._format('ebler_repetition', sign_channel)} SINGleshot"
+
+    @classmethod
     def ebler_stop_condition_none(cls, sign_channel: int) -> str:
         return f"{cls._format('ebler_stop_condition', sign_channel)} NONE"
 
@@ -955,6 +967,15 @@ class Cmw500LteCommandProfile:
     @staticmethod
     def parse_ebler_absolute(response: str) -> CmwExtendedBlerAbsolute:
         values = _csv(response, 10)
+        # 2026-09-16 CMW500 3.7.130 true-hardware evidence returned ``INV``
+        # only for field 10 while reliability=0 and fields 1..9 were valid.
+        # CQI reporting is an independent view; its unavailable sentinel must
+        # not invalidate the sourced throughput/count fields.
+        median_cqi = (
+            None
+            if values[9].strip().upper() == "INV"
+            else _integer(values[9], "median CQI")
+        )
         return CmwExtendedBlerAbsolute(
             reliability=_reliability(values[0]),
             ack_count=_integer(values[1], "ACK count"),
@@ -965,7 +986,7 @@ class Cmw500LteCommandProfile:
             throughput_maximum_kbit_per_s=_finite(values[6], "maximum throughput"),
             dtx_count=_integer(values[7], "DTX count"),
             scheduled_count=_integer(values[8], "scheduled count"),
-            median_cqi=_integer(values[9], "median CQI"),
+            median_cqi=median_cqi,
         )
 
     @staticmethod

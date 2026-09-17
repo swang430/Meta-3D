@@ -30,7 +30,7 @@ import re
 from uuid import uuid4
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Awaitable, Callable, Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from app.hal.base import (
@@ -1143,8 +1143,9 @@ class RealCmw500Driver(BaseStationDriver):
         "MEAS_TPUT_STAT_COUNT": (
             "EBLer:SFRames（p.953）有对应命令：p.953『只影响 trace 长度』"
             "限定 confidence 模式（SCONdition CLEVel），而正式窗口是"
-            "continuous（SCONdition NONE，P1-73B）——该模式下 SFRames ="
-            "每周期统计子帧数（§3.3.1 p.940 示例明示）。命令归窗口层所有："
+            "Single-Shot + SCONdition NONE（2026-09-16 起；此前为 continuous）"
+            "——无停止条件时 SFRames = 每个测量周期处理的子帧数，单发测量恰好"
+            "覆盖一个周期（§3.2.4 p.938）。命令归窗口层所有："
             "P1-74 起由 measure_base_station_window 从 execution 冻结的统计基"
             "下发并回读确认（回读不符/不可读一律 fail-closed），"
             "**仍不在 MAC 配置层下发** —— 统计基是测量窗口的属性，"
@@ -1511,6 +1512,24 @@ class RealCmw500Driver(BaseStationDriver):
             return _result(
                 requested=requested,
                 reason="CMW500 SAFE_IDLE is not confirmed before route apply",
+            )
+
+        # 2026-09-16 起 route 先于 cell config，是一次执行里对 CMW 的第一个写。
+        # SYSTem:ERRor:ALL? 是设备级队列且读取后清空：先丢弃本次写入之前已存在的错误
+        # （后台诊断 / 原始 SCPI 端点 / 前面板留下的），否则会被下面的写后验错读成
+        # 「路由被拒」。与 set_cell_config 的同名步骤同义；放在证据捕获之外，
+        # 不混进本次路由的往返。写后验错仍由下面独立完成。
+        try:
+            stale_errors = self._query(CmwScpiCommands.ERR)
+        except Exception as exc:  # noqa: BLE001 — 与本函数其余 I/O 一致：回未确认回执，不裸抛
+            return _result(
+                requested=requested,
+                reason=f"CMW500 error queue is unreadable before route apply: {exc}",
+            )
+        if not self._error_queue_is_empty(stale_errors):
+            logger.warning(
+                "[CMW500] Discarded pre-existing error queue before route apply: %s",
+                stale_errors.strip(),
             )
 
         with capture_scpi_exchanges() as exchanges:
@@ -3105,6 +3124,30 @@ class RealCmw500Driver(BaseStationDriver):
             logger.error(f"[CMW500] set_downlink_power failed: {e}")
             return False
 
+    async def read_configured_downlink_power_dbm(self) -> Optional[float]:
+        """Read the current configured LTE PCC RS-EPRE without changing state.
+
+        Reuses the same documented query used by ``set_cell_config`` readback:
+        LTE UE User Manual 1173.9628.02-41, printed p.656, PCC RS EPRE.
+        This is a configured reference value, not a measured RF output power.
+        """
+
+        try:
+            value = float(
+                self._query(
+                    self._fmt(CmwScpiCommands.DL_POWER_RS) + "?"
+                ).strip()
+            )
+            if not math.isfinite(value):
+                logger.warning("[CMW500] configured RS-EPRE readback is non-finite")
+                return None
+            return value
+        except Exception as exc:
+            logger.warning(
+                "[CMW500] configured RS-EPRE readback failed: %s", exc
+            )
+            return None
+
     # ===================================================================
     # 3. 信令控制
     # ===================================================================
@@ -3270,15 +3313,28 @@ class RealCmw500Driver(BaseStationDriver):
             simulated=False,
         )
 
-    async def attach(self, timeout_s: float = 60.0) -> BaseStationAttachReceipt:
+    async def attach(
+        self,
+        timeout_s: float = 60.0,
+        *,
+        on_cell_ready: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> BaseStationAttachReceipt:
         with capture_scpi_exchanges() as exchanges:
-            operation_succeeded = await self._run_attach_operation(timeout_s)
+            operation_succeeded = await self._run_attach_operation(
+                timeout_s,
+                on_cell_ready=on_cell_ready,
+            )
         return self._build_attach_receipt(
             exchanges,
             operation_succeeded=operation_succeeded,
         )
 
-    async def _run_attach_operation(self, timeout_s: float = 60.0) -> bool:
+    async def _run_attach_operation(
+        self,
+        timeout_s: float = 60.0,
+        *,
+        on_cell_ready: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> bool:
         """
         激活小区、等待 UE Attach 并建立 PS 数据连接。
 
@@ -3318,6 +3374,13 @@ class RealCmw500Driver(BaseStationDriver):
             else:
                 return False
             self._cell_state = CellState.IDLE
+            if on_cell_ready is not None:
+                observer_accepted = await on_cell_ready()
+                if observer_accepted is not True:
+                    logger.warning(
+                        "[CMW500] Cell-ready observation rejected before UE attach"
+                    )
+                    return False
             logger.info("[CMW500] Cell ON, waiting for UE attach...")
 
             self._visa_session.timeout = VISA_TIMEOUT_ATTACH
@@ -3522,13 +3585,14 @@ class RealCmw500Driver(BaseStationDriver):
         ue_connected_before = False
         ue_connected_after = False
         stop_attempted = False
-        ended_before_stop = False
         lifecycle_failures: list[str] = []
         metric_failures: list[str] = []
         absolute_raw: str | None = None
         relative_raw: str | None = None
         throughput_mbps: float | None = None
         bler_percent: float | None = None
+        processed_subframes: int | None = None
+        statistical_cycle_complete = True
         cancelled: asyncio.CancelledError | None = None
 
         def _write_and_confirm_state(
@@ -3577,10 +3641,8 @@ class RealCmw500Driver(BaseStationDriver):
             """Write the frozen statistical basis and prove it took effect.
 
             Manual §3.4.3 printed p.953 documents the command form and its
-            domain; §3.3.1 printed p.940 puts it inside the very continuous
-            configuration block written here, and p.937 defines SCONdition
-            "None" as running "according to its Repetition mode and the
-            specified No. of Subframes".
+            domain; §3.2.4 / §3.3.4 printed pp.937, 942 define Single-Shot +
+            stop condition NONE as exactly one configured subframe cycle.
 
             It must stay **before** INIT: CMW500 Base Software User Manual
             1173.9463.02-06 printed p.139 — changing a parameter with
@@ -3597,7 +3659,7 @@ class RealCmw500Driver(BaseStationDriver):
             if statistical_basis_command is None:  # narrowed by the caller
                 return False
             if not _write_and_confirm(
-                statistical_basis_command, "continuous window statistical basis"
+                statistical_basis_command, "single-shot window statistical basis"
             ):
                 return False
             try:
@@ -3651,19 +3713,19 @@ class RealCmw500Driver(BaseStationDriver):
                                 Cmw500LteCommandProfile.ebler_timeout_disabled(
                                     self._sign_channel
                                 ),
-                                "continuous window timeout",
+                                "window timeout disabled",
                             ),
                             (
-                                Cmw500LteCommandProfile.ebler_repetition_continuous(
+                                Cmw500LteCommandProfile.ebler_repetition_single_shot(
                                     self._sign_channel
                                 ),
-                                "continuous window repetition",
+                                "single-shot window repetition",
                             ),
                             (
                                 Cmw500LteCommandProfile.ebler_stop_condition_none(
                                     self._sign_channel
                                 ),
-                                "continuous window stop condition",
+                                "single-shot window stop condition",
                             ),
                         )
                     ) and _drive_statistical_basis()
@@ -3675,35 +3737,37 @@ class RealCmw500Driver(BaseStationDriver):
                     )
                 if running_confirmed:
                     await asyncio.sleep(max(float(window_s), 0.0))
-                    try:
-                        state = Cmw500LteCommandProfile.parse_ebler_state(
-                            self._query(
-                                Cmw500LteCommandProfile.ebler_state_query(
-                                    self._sign_channel
+                    # Single-shot owns the exact SFRames boundary.  The wall
+                    # clock estimate can trail the instrument by a few hundred
+                    # milliseconds, so poll for at most one bounded second;
+                    # never force STOP and call a partial cycle complete.
+                    for poll_index in range(11):
+                        try:
+                            state = Cmw500LteCommandProfile.parse_ebler_state(
+                                self._query(
+                                    Cmw500LteCommandProfile.ebler_state_query(
+                                        self._sign_channel
+                                    )
                                 )
                             )
-                        )
-                    except Exception as exc:
-                        lifecycle_failures.append(f"window state: {exc}")
-                    else:
-                        if state == "RUN":
-                            stop_attempted = True
-                            ready_confirmed = _write_and_confirm_state(
-                                Cmw500LteCommandProfile.ebler_stop(
-                                    self._sign_channel
-                                ),
-                                "RDY",
-                                "STOP/RDY",
-                            )
-                        elif state == "RDY":
-                            ended_before_stop = True
-                            lifecycle_failures.append(
-                                "window state: continuous measurement ended before requested STOP"
-                            )
-                        else:
+                        except Exception as exc:
+                            lifecycle_failures.append(f"window state: {exc}")
+                            break
+                        if state == "RDY":
+                            ready_confirmed = True
+                            break
+                        if state != "RUN":
                             lifecycle_failures.append(
                                 f"window state: expected RUN or RDY, got {state}"
                             )
+                            break
+                        if poll_index < 10:
+                            await asyncio.sleep(0.1)
+                    else:
+                        lifecycle_failures.append(
+                            "window state: single-shot did not reach RDY within "
+                            "the bounded completion grace"
+                        )
 
                 if ready_confirmed:
                     try:
@@ -3715,9 +3779,21 @@ class RealCmw500Driver(BaseStationDriver):
                         absolute = Cmw500LteCommandProfile.parse_ebler_absolute(
                             absolute_raw
                         )
-                        throughput_mbps = (
-                            absolute.throughput_average_kbit_per_s / 1000.0
-                        )
+                        # 手册 §3.4 printed p.958：ABSolute? 第 4 字段 = "Number of already
+                        # processed subframes"；§3.2.3.7 printed p.935：单发、定长测量的
+                        # Subframes 进度在结束时 = 配置的总数。两者不等说明这不是一个完整周期。
+                        processed_subframes = absolute.subframe_count
+                        if processed_subframes != statistical_basis_requested:
+                            statistical_cycle_complete = False
+                            metric_failures.append(
+                                "statistical cycle incomplete: processed "
+                                f"{processed_subframes} subframes, requested "
+                                f"{statistical_basis_requested}"
+                            )
+                        else:
+                            throughput_mbps = (
+                                absolute.throughput_average_kbit_per_s / 1000.0
+                            )
                     except Exception as exc:
                         metric_failures.append(f"DL throughput unavailable: {exc}")
                     try:
@@ -3742,13 +3818,12 @@ class RealCmw500Driver(BaseStationDriver):
                     running_confirmed
                     and not ready_confirmed
                     and not stop_attempted
-                    and not ended_before_stop
                 ):
                     stop_attempted = True
-                    ready_confirmed = _write_and_confirm_state(
+                    _write_and_confirm_state(
                         Cmw500LteCommandProfile.ebler_stop(self._sign_channel),
                         "RDY",
-                        "cleanup STOP/RDY",
+                        "cleanup STOP/RDY after incomplete single-shot",
                     )
                 closed_off_confirmed = _write_and_confirm_state(
                     Cmw500LteCommandProfile.ebler_abort(self._sign_channel),
@@ -3775,6 +3850,9 @@ class RealCmw500Driver(BaseStationDriver):
             )
         )
         if not lifecycle_confirmed:
+            throughput_mbps = None
+            bler_percent = None
+        elif not statistical_cycle_complete:
             throughput_mbps = None
             bler_percent = None
 
