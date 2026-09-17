@@ -96,8 +96,8 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 | # | 发现 | 级 |
 |---|---|---|
 | D1–D3 | `instrument_idn_sweep` 范围 / 身份契约、`propsim_f64_license_truth` 空回复显示成功（并入 P1-2）、`propsim_f64_p08_gate` 硬编码 UXM —— 09-16 当场已登记 | 见原条目 |
-| **D4** | CMW500 配置回执里 `radio_technology` / `channel_kind` / `frequency_mhz` 三个字段恒为 unknown → `base_station_execution_evidence.config_confirmed=False`。**配置其实回读了**：请求的 10 个非空字段里 7 个（band / 带宽 / EARFCN / duplex / TM / 层数 / 下行功率）逐条「写→回读一致」confirmed；没确认的这 3 个不是仪器参数，而是请求里的描述 / 派生字段（`"lte"`、`"lte_dl_earfcn"`、由 band + EARFCN 换算的 `1960.0`）。规则要求请求里**每个**非空字段都有权威确认（`receipt_payload()`），而 CMW500 驱动的回读字典（`_last_common_config_readback`）从不放这三项 → 恒 unknown。后果：**签发不了基站站点认证**（签发是操作员动作，09-16 审计日志里没有任何签发请求；即使去签也会被拒 —— `activate_base_station_site_certification` 要求来源执行 `config_confirmed is True`），于是每次执行都只能是 diagnostic；同一个标志还让 attempt 生命周期与正式信封返回 `config_not_confirmed`（`base_station_execution_evidence.py`），吞吐投影因此进不了 trusted。与校准无关。（更正 2026-09-17：初稿写「→ 强制证据 `config_applied` 缺失」，因果写错了 —— 那条缺失另有原因，见 D5） | P1（正式判词的软件缺口，与校准无关） |
-| **D5** | **正式强制证据（`scpi_evidence`）的基站一侧只有 UXM 驱动实现了**：`build_p0_5_config_evidence` / `build_p0_5_throughput_evidence` / `get_frequency_identity`（基站侧）仅 `uxm_base_station.py` 有，`capture_evidence_environment` 也没有 CMW500 版本；`measure.py` 用 `hasattr` 守着写方，没有接口就不写。所以 CMW500 的 `base_station.pcell.config_applied` 与 `base_station.throughput.azimuth.NNN` **没有写方、恒缺失**，频率一致性网记 BaseStation「未报告(跳过)」→ `fully_verified=false` → 判词恒为 `frequency_identity_not_fully_verified`。与校准无关 | P1（同上） |
+| **D4** | CMW500 配置回执里 `radio_technology` / `channel_kind` / `frequency_mhz` 三个字段恒为 unknown → `base_station_execution_evidence.config_confirmed=False`。**配置其实回读了**：请求的 10 个非空字段里 7 个（band / 带宽 / EARFCN / duplex / TM / 层数 / 下行功率）逐条「写→回读一致」confirmed；没确认的这 3 个不是仪器参数，而是请求里的描述 / 派生字段（`"lte"`、`"lte_dl_earfcn"`、由 band + EARFCN 换算的 `1960.0`）。规则要求请求里**每个**非空字段都有权威确认（`receipt_payload()`），而 CMW500 驱动的回读字典（`_last_common_config_readback`）从不放这三项 → 恒 unknown。后果：**签发不了基站站点认证**（签发是操作员动作，09-16 审计日志里没有任何签发请求；即使去签也会被拒 —— `activate_base_station_site_certification` 要求来源执行 `config_confirmed is True`），于是每次执行都只能是 diagnostic；同一个标志还让 attempt 生命周期与正式信封返回 `config_not_confirmed`（`base_station_execution_evidence.py`），吞吐投影因此进不了 trusted。与校准无关。（更正 2026-09-17：初稿写「→ 强制证据 `config_applied` 缺失」，因果写错了 —— 那条缺失另有原因，见 D5） | 候选（只影响正式结论，对日常测试没必要） |
+| **D5** | **正式强制证据（`scpi_evidence`）的基站一侧只有 UXM 驱动实现了**：`build_p0_5_config_evidence` / `build_p0_5_throughput_evidence` / `get_frequency_identity`（基站侧）仅 `uxm_base_station.py` 有，`capture_evidence_environment` 也没有 CMW500 版本；`measure.py` 用 `hasattr` 守着写方，没有接口就不写。所以 CMW500 的 `base_station.pcell.config_applied` 与 `base_station.throughput.azimuth.NNN` **没有写方、恒缺失**，频率一致性网记 BaseStation「未报告(跳过)」→ `fully_verified=false` → 判词恒为 `frequency_identity_not_fully_verified`。与校准无关 | 候选（同上） |
 | D6 | 窗口 confirmed、吞吐 `throughput_valid=true`、45.82 Mbps 已读到，但 `base_station.throughput.azimuth.000` 仍列为缺失。**已核：不是 D4 的连带**，是 D5 —— CMW500 没有 `build_p0_5_throughput_evidence`，读到的吞吐从未被记成强制证据。同一份证据里另两条 `unknown`（§3）也与校准无关：`f64.output_state` 的命令与回读都对（RUNNING = RUNNING），但记证据那一刻 F64 的仪器身份快照被判为非 live（型号 / 固件置空）。**根因已查清，是确定性缺陷不是现场偶发**：`start_emulation()` 成功后把驱动状态置为 `InstrumentStatus.BUSY`，而 `capture_evidence_environment()` 只把 `CONNECTED` / `READY` 算作 live —— 仿真一运行，这条证据就必然记成 unknown，与基站型号无关（UXM 链走同一段 `measure.py`）。修之前先用一条 RED 测试坐实；`positioner.azimuth.000` 的角度回读无误（误差 0.0°），缺的是 Aerotech 型号 / 固件的只读确认（roadmap U-8）—— 驱动的 `capture_evidence_environment()` 把 `model` / `firmware_version` 写死为 `None`（「AeroBasic 当前路径无安全的型号 / 固件查询」），这条证据同样是构造上恒 unknown。ANALYSIS 层同一次执行的实况：`measurement_verified=true`，其余 `frequency_identity_verified` / `path_loss_verified` / `throughput_verified` / `rf_kpi_verified`（RSRP / SINR / RI 在 0° 方位均无真实来源证据）/ `qz_verified` 全为 false，首个停因是「执行冻结为 diagnostic」—— 补齐任何一层，结论只会挪到下一个原因 | P2 |
 | D7 | B41 TDD（EARFCN 40340、F64 `CENT 2565`）attach 4/4 超时；同日 B2 FDD 3 s / 30 s 挂上。**用户 2026-09-17 确认原因：被测手机不支持 B41 频段** | resolved |
 | D8 | Aerotech：`MOVEABS` 途中 `Connection reset by peer` → 非幂等命令结局未知 → ABORT 读 `VFBK(X)` 得空串无法证明停止 → 急停；全天 `Disconnect error [Errno 54]` ×10、「transport already closed — lazy reconnect」×9。另：单轴台每次连接都以 ERROR 级打印 `PFBK(Y)`（×30），随后才识别单轴 | P2（安全 / 稳定）+ P3（日志噪音） |
@@ -110,9 +110,9 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 | D15 | 信号分析仪 FSVA `192.168.0.134:5025` 当日连不上（10:11 VISA 连接失败，10:13 操作员停用该品类）。它只用于路损 / 探头校准与参考 TRP，吞吐测试链不用它，当天测试未受影响 | 不再是前置：校准正式启动时再处理 |
 | D16 | 调试机开着代理 / VPN：HAL 连仪器前会先探两个按标准**不可能存在**的地址（`192.0.2.1` / `198.51.100.1`），当天它们居然「连得上」—— 说明代理在替任何地址应答，「子网通不通」的预检结果不可信，系统于是整天跳过预检（告警 ×21）。不影响测量；代价是连不上的仪器要等约 10 s 的 VISA 超时才报错，且就绪页的子网状态全显示「未探测」 | 现场 checklist：到场先关代理 |
 
-## 5. 下一轮安排（待用户批准顺序；WIP = 1）
+## 5. 下一轮安排（第 0 步已获批准，其余待用户批准；WIP = 1）
 
-**第 0 步 — 现场改动落地（建议不做完不开新片）**：现场的 6 个提交与当时未提交的 5 个代码 / 测试文件已原样保存到远端分支 `onsite/2026-09-16-wip`
+**第 0 步 — 现场改动落地（用户 2026-09-17 批准：现场代码融进 `main`，逐片全套内审 + 外审；不做完不开新片）**：现场的 6 个提交与当时未提交的 5 个代码 / 测试文件已原样保存到远端分支 `onsite/2026-09-16-wip`
 （末端 `5387ac1e` = 6 个现场提交 + 1 个保存未提交改动的 WIP 提交；**仅为保全，不是评审单元**；那个 WIP 提交里还夹着三份 triage 文档的旧稿，拆 PR 时不要带出来），本地 `main` 已对回 `origin/main`。
 下列提交号都可从该分支取回。各改动从 `origin/main` 另起分支，拆成独立 PR，逐片内审 + Codex R1→R2：
 
@@ -124,14 +124,6 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 
 **第 1 批 — 纯软件修复（不需要现场；批内先后待用户定）**：
 
-- **P1-79 已撤销伞形项，按根因拆成子项**（用户 2026-09-17 指示；每个子项 = 1 个 PR，各自走完整生命周期；批内先后待用户定，建议 A → B → C → D，E 等手册）：
-  - **P1-79A** F64 运行态身份快照被判非 live → `f64.output_state` 恒 unknown。根因确定、改动最小、与基站型号无关。修法形状：收窄 live 判据（连接在即 live，`BUSY` 不是「未连接」）。
-  - **P1-79B** CMW500 配置回执三个描述 / 派生字段的确认来源 → 解锁 `config_confirmed`（站点认证签发、attempt 生命周期、正式信封 / 吞吐 trusted 三个读方）。要设计：由已确认的仪器事实派生，还是移出「须确认字段集」；CMW 语义须有 R&S 手册出处。
-  - **P1-79C** 基站强制证据记录器去 UXM 写死 + CMW500 的配置 / 吞吐证据写方与仪器身份快照（`base_station.pcell.config_applied`、`base_station.throughput.azimuth.NNN`）。共享证据契约，全套审查。
-  - **P1-79D** CMW500 频率身份回读（`get_frequency_identity`），让频率一致性网的 BaseStation 一方不再「未报告(跳过)」。须有 R&S 手册出处。
-  - **P1-79E**（= roadmap U-8）Aerotech 型号 / 固件的安全只读确认 → `positioner.azimuth.NNN` 不再恒 unknown。前置：厂商手册里找到安全的身份查询，找不到就保持 unknown。
-  判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。**前两层的判据里没有路损 / 校准条件，上述子项都在这两层，不因「校准未启动」而可忽略**；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以这些子项做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。
-  另记候选（不立项）：CMW500 的 RSRP / SINR / RI 在 ANALYSIS 层无真实来源证据（`rf_kpi_verified=false`），排在路损之后，校准启动时再评估。
 - **建议 P2-74**：Aerotech 传输稳定性与单轴日志（D8）—— 当天唯一一次急停出在这里，下次跑多方位先得它稳。先枚举断连形态，修法优先收窄 / 换源。
 - **建议 P1-80**：P1-2 序列修复（逐查询错误归属、空回复 fail-closed、license / calibration / user-alignment 分判）。
 - **建议 P2-73**：`propsim_f64_p08_gate` 按服务器权威 BaseStation 身份 fail-closed 为 UXM-only（D3）。
@@ -144,6 +136,17 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
   可核对的 PROPSIM 手册章节 / 页码或原文（NotebookLM 的回答要追问「是原文还是推断」），说明 `CENT` 可改范围是否受 `.smu` 内滤波器 / 带宽 / 许可限制；一次现场接受不算依据。**查不到就保持现有的 fail-closed 语义，不放宽**；查到了再出设计稿。
 - P2-55 验收换源与 runbook §2 降级（D11）——随本次 triage 文档落地。
 - D13 / D14 保留候选，不自动立项。
+
+**低优先级候选（不进执行队列）— P1-79 拆分**：伞形项 P1-79 按用户 2026-09-17 指示撤销，按根因拆成子项；**判定（用户 2026-09-17 要求：对日常测试没必要的降为低优先级候选）：A～E 对日常测试都没有必要。** 诊断执行照常完成、照常出报告，吞吐 / BLER 以「诊断值」呈现（`report.py::_serialized_base_station_metric`，`dbd53e6f` 的 45.82 Mbps 即如此）；这五项只影响「正式结论」这条线（站点认证 → formal 资格 → 强制证据），而正式 KPI 结论在 ANALYSIS 层还要过路损校准，校准未启动前无论如何出不来。故全部列**低优先级候选**，不进执行队列；校准正式启动、需要出正式结论时再评估，届时建议先做 A（最小、根因确定）。
+
+- **P1-79A** F64 运行态身份快照被判非 live → `f64.output_state` 恒 unknown。根因确定、改动最小、与基站型号无关。修法形状：收窄 live 判据（连接在即 live，`BUSY` 不是「未连接」）。
+- **P1-79B** CMW500 配置回执三个描述 / 派生字段的确认来源 → 解锁 `config_confirmed`（站点认证签发、attempt 生命周期、正式信封 / 吞吐 trusted 三个读方）。要设计：由已确认的仪器事实派生，还是移出「须确认字段集」；CMW 语义须有 R&S 手册出处。
+- **P1-79C** 基站强制证据记录器去 UXM 写死 + CMW500 的配置 / 吞吐证据写方与仪器身份快照（`base_station.pcell.config_applied`、`base_station.throughput.azimuth.NNN`）。共享证据契约，全套审查。
+- **P1-79D** CMW500 频率身份回读（`get_frequency_identity`），让频率一致性网的 BaseStation 一方不再「未报告(跳过)」。须有 R&S 手册出处。
+- **P1-79E**（= roadmap U-8）Aerotech 型号 / 固件的安全只读确认 → `positioner.azimuth.NNN` 不再恒 unknown。前置：厂商手册里找到安全的身份查询，找不到就保持 unknown。
+
+判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。**前两层的判据里没有路损 / 校准条件，上述子项都在这两层，不因「校准未启动」而可忽略**；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以这些子项做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。
+另记候选（不立项）：CMW500 的 RSRP / SINR / RI 在 ANALYSIS 层无真实来源证据（`rf_kpi_verified=false`），排在路损之后，校准启动时再评估。
 
 **下次现场的前置清单**：关闭调试机代理（D16）；要测 TDD 就带支持对应频段的 DUT；多方位用例等 P2-74 修完再带；
 NEW-1 / NEW-2 / P1-74 / P1-4 / P2-61/62 排独立时段。**不排校准**（用户 2026-09-17 定：校准尚未正式启动），信号分析仪不需要到场。
