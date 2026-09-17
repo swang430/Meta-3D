@@ -41,6 +41,9 @@ class ScriptedMotionDriver(RealAerotechDriver):
                 "motion_truth_xf_speed": 5.0,
                 "motion_truth_coordinate_offset_verified": True,
                 "motion_truth_coordinate_offset_deg": 0.0,
+                # 本文件测的是回执 / 停止 / 取消等性质，不是分段：预算设大，保持单条 MOVEABS 线路。
+                # 分段行为由 test_p2_74_aerotech_segmented_motion.py 覆盖。
+                "blocking_command_budget_s": 1e6,
             },
         )
         self._axes_present = ["X"]
