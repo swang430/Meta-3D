@@ -1513,6 +1513,18 @@ class RealCmw500Driver(BaseStationDriver):
                 reason="CMW500 SAFE_IDLE is not confirmed before route apply",
             )
 
+        # 2026-09-16 起 route 先于 cell config，是一次执行里对 CMW 的第一个写。
+        # SYSTem:ERRor:ALL? 是设备级队列且读取后清空：先丢弃本次写入之前已存在的错误
+        # （后台诊断 / 原始 SCPI 端点 / 前面板留下的），否则会被下面的写后验错读成
+        # 「路由被拒」。与 set_cell_config 的同名步骤同义；放在证据捕获之外，
+        # 不混进本次路由的往返。写后验错仍由下面独立完成。
+        stale_errors = self._query(CmwScpiCommands.ERR)
+        if not self._error_queue_is_empty(stale_errors):
+            logger.warning(
+                "[CMW500] Discarded pre-existing error queue before route apply: %s",
+                stale_errors.strip(),
+            )
+
         with capture_scpi_exchanges() as exchanges:
             nx2_applied: dict[str, str] | None = None
             nx2_readback_error: str | None = None
