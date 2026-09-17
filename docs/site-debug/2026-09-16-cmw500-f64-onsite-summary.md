@@ -112,15 +112,14 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 
 ## 5. 下一轮安排（第 0 步已获批准，其余待用户批准；WIP = 1）
 
-**第 0 步 — 现场改动落地（用户 2026-09-17 批准：现场代码融进 `main`，逐片全套内审 + 外审；不做完不开新片）**：现场的 6 个提交与当时未提交的 5 个代码 / 测试文件已原样保存到远端分支 `onsite/2026-09-16-wip`
+**第 0 步 — 现场改动落地（用户 2026-09-17 批准：现场代码融进 `main`，**合成一个 PR 整体过审**，全套内审 + 外审；不做完不开新片）**：现场的 6 个提交与当时未提交的 5 个代码 / 测试文件已原样保存到远端分支 `onsite/2026-09-16-wip`
 （末端 `5387ac1e` = 6 个现场提交 + 1 个保存未提交改动的 WIP 提交；**仅为保全，不是评审单元**；那个 WIP 提交里还夹着三份 triage 文档的旧稿，拆 PR 时不要带出来），本地 `main` 已对回 `origin/main`。
-下列提交号都可从该分支取回。各改动从 `origin/main` 另起分支，拆成独立 PR，逐片内审 + Codex R1→R2：
+下列提交号都可从该分支取回。本次 triage 文档单独一个 PR（纯文档）；**其余现场代码按用户 2026-09-17 指示合成一个 PR**（从 `origin/main` 另起分支，外审渠道为 Gemini），包内含：
 
-1. 本次 triage 文档（纯文档）。
-2. `fix(cmw500)`：route 先于 config + 单发吞吐窗口 + `SINGleshot`（`a5206310` / `fc3fbccc` / `4c5fa624`）——正式 KPI 采集语义变化，全套审查。
-3. `feat(onsite)`：Cell-ready 功率观察窗（`0cd48ea4` / `dc0d3ecc`）——**先把厂商分支换源到 manifest / 执行计划能力**（D12），两道红门转绿后再审。
-4. `fix(f64)`：stop 回执接受 `CLOSED` 为安全空闲终态（WIP 提交 `5387ac1e` 里的 5 个代码 / 测试文件）。
-5. `fix(gui)`：app shell 裁切（`660ef580`）。
+1. `fix(cmw500)`：route 先于 config + 单发吞吐窗口 + `SINGleshot`（`a5206310` / `fc3fbccc` / `4c5fa624`）——正式 KPI 采集语义变化。
+2. `feat(onsite)`：Cell-ready 功率观察窗（`0cd48ea4` / `dc0d3ecc`）——**先把厂商分支换源到 manifest / 执行计划能力**（D12），两道红门转绿。
+3. `fix(f64)`：stop 回执接受 `CLOSED` 为安全空闲终态（WIP 提交 `5387ac1e` 里的 5 个代码 / 测试文件）。
+4. `fix(gui)`：app shell 裁切（`660ef580`）。
 
 **第 1 批 — 纯软件修复（不需要现场；批内先后待用户定）**：
 
@@ -137,15 +136,15 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 - P2-55 验收换源与 runbook §2 降级（D11）——随本次 triage 文档落地。
 - D13 / D14 保留候选，不自动立项。
 
-**低优先级候选（不进执行队列）— P1-79 拆分**：伞形项 P1-79 按用户 2026-09-17 指示撤销，按根因拆成子项；**判定（用户 2026-09-17 要求：对日常测试没必要的降为低优先级候选）：A～E 对日常测试都没有必要。** 诊断执行照常完成、照常出报告，吞吐 / BLER 以「诊断值」呈现（`report.py::_serialized_base_station_metric`，`dbd53e6f` 的 45.82 Mbps 即如此）；这五项只影响「正式结论」这条线（站点认证 → formal 资格 → 强制证据），而正式 KPI 结论在 ANALYSIS 层还要过路损校准，校准未启动前无论如何出不来。故全部列**低优先级候选**，不进执行队列；校准正式启动、需要出正式结论时再评估，届时建议先做 A（最小、根因确定）。
+**低优先级候选（不进执行队列）— P1-79 拆分**：伞形项 P1-79 按用户 2026-09-17 指示撤销，按根因拆成子项；**判定（用户 2026-09-17 要求：对日常测试没必要的降为低优先级候选）：A～E 对日常测试都没有必要。** 诊断执行照常完成、照常出报告，吞吐 / BLER 以「诊断值」呈现（`report.py::_serialized_base_station_metric`，`dbd53e6f` 的 45.82 Mbps 即如此）；这五项只影响「正式结论」这条线（站点认证 → formal 资格 → 强制证据），而正式 KPI 结论在 ANALYSIS 层还要过路损校准，校准未启动前无论如何出不来。故全部列**低优先级候选**，不进执行队列。**例外提示：A 与 E 同时是 P0-5（UXM 5G NR）验收的前置** —— P0-5 的 Acceptance 要求同一执行里有「F64 simulation state is RUNNING」与转台方位的 E0–E4 证据及实时型号 / 固件快照，不含校准条件；A 的缺陷与基站型号无关，UXM 链同样会中，E 即 U-8（原文「P0-5 前」）。所以重估触发点 = **校准正式启动，或 UXM 现场排期前，取先到者**；A 是纯软件、不需要现场，建议在下次 UXM 现场之前做掉。B / C / D 只涉及 CMW500，触发点仍是需要出 CMW500 正式结论时。
 
-- **P1-79A** F64 运行态身份快照被判非 live → `f64.output_state` 恒 unknown。根因确定、改动最小、与基站型号无关。修法形状：收窄 live 判据（连接在即 live，`BUSY` 不是「未连接」）。
+- **P1-79A** F64 运行态身份快照被判非 live → `f64.output_state` 恒 unknown。根因确定、改动最小、与基站型号无关。修法形状：live 白名单补 `BUSY`（不放宽成「连接在即 live」，`ERROR` / `CONNECTING` 仍不算）。
 - **P1-79B** CMW500 配置回执三个描述 / 派生字段的确认来源 → 解锁 `config_confirmed`（站点认证签发、attempt 生命周期、正式信封 / 吞吐 trusted 三个读方）。要设计：由已确认的仪器事实派生，还是移出「须确认字段集」；CMW 语义须有 R&S 手册出处。
 - **P1-79C** 基站强制证据记录器去 UXM 写死 + CMW500 的配置 / 吞吐证据写方与仪器身份快照（`base_station.pcell.config_applied`、`base_station.throughput.azimuth.NNN`）。共享证据契约，全套审查。
 - **P1-79D** CMW500 频率身份回读（`get_frequency_identity`），让频率一致性网的 BaseStation 一方不再「未报告(跳过)」。须有 R&S 手册出处。
 - **P1-79E**（= roadmap U-8）Aerotech 型号 / 固件的安全只读确认 → `positioner.azimuth.NNN` 不再恒 unknown。前置：厂商手册里找到安全的身份查询，找不到就保持 unknown。
 
-判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。**前两层的判据里没有路损 / 校准条件，上述子项都在这两层，不因「校准未启动」而可忽略**；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以这些子项做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。
+判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。前两层的判据里没有路损 / 校准条件，上述子项都在这两层；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以这些子项做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。
 另记候选（不立项）：CMW500 的 RSRP / SINR / RI 在 ANALYSIS 层无真实来源证据（`rf_kpi_verified=false`），排在路损之后，校准启动时再评估。
 
 **下次现场的前置清单**：关闭调试机代理（D16）；要测 TDD 就带支持对应频段的 DUT；多方位用例等 P2-74 修完再带；

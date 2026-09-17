@@ -14,10 +14,10 @@
 据此**收口 P0-9A、P0-9B-1、P0-8（b 半）、P2-51 现场半，并按用户现场结论改 P2-55 验收后收口其现场半**。
 **2026-09-17 用户裁决**：① **P0-9 整项关闭**；② **P2-56 现场半关闭** —— B41 下 attach 超时的原因是被测手机不支持 B41 频段，不是系统缺陷；
 ③ **校准尚未正式启动，现在做校准只浪费时间**：凡以「缺路损校准」为由挂着的关闭条件（P0-9B-2、P0-9C）不再阻塞当前项，校准正式启动时另立项。
-P0-9 关闭后开放的 P0 只剩 P0-5（UXM 5G NR，等现场），按治理规则 2 焦点降到非现场队列：**用户 2026-09-17 批准先做「现场改动落地」**（现场代码融进 `main`，逐片全套内审 + 外审），其后各批仍待批准（见下方 Current Focus（非现场）行）。
+P0-9 关闭后开放的 P0 只剩 P0-5（UXM 5G NR，等现场），按治理规则 2 焦点降到非现场队列：**用户 2026-09-17 批准先做「现场改动落地」**（现场代码融进 `main`，合成一个 PR 整体过审：全套内审 + 外审），其后各批仍待批准（见下方 Current Focus（非现场）行）。
 P1-74 / P1-4 取得新事实但未关闭；新增发现 D4–D16 及其出口见下方「2026-09-17 现场 triage checkpoint」。逐项依据、原始回复与下一轮安排见
 [`2026-09-16 现场总结与 triage`](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)。⚠️ 产出这些证据的 **6 个现场提交 + 当时未提交的 5 个代码文件尚未过审**（已原样保存在远端分支 `onsite/2026-09-16-wip`，不在 `main`），且其中一处
-踩红两道厂商分支规则门；**第 0 步「把它们拆 PR 落地」已获用户批准（2026-09-17），落地完成前不开新片**；其后各批待用户批准。
+踩红两道厂商分支规则门；**第 0 步「现场代码落地」已获用户批准（2026-09-17；按用户指示合成一个 PR 整体过审），落地完成前不开新片**；其后各批待用户批准。
 
 **2026-09-05 收口与 triage**：P2-62 已由 PR #459 合并，merge `a0c671c4`；上一轮已批准的
 非现场执行队列已收口。P2-57 声明面残项、CMW 可达能力与各现场半分别保留，不能把合并解释为全部验收。
@@ -68,7 +68,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= 无进行中的 P0：P0-9 已于 2026-09-17 由用户裁决关闭，开放的 P0 只剩 P0-5（UXM 5G NR，等 UXM 在场）。下文凡写「P0-9 待关闭」「P2-55 / P2-56 现场半待真机」的段落均为 2026-09-17 之前的表述，原文保留审计，现状以本行与「Blocked on hardware」表为准；
-Current Focus（非现场）= **2026-09-16 现场改动落地**（用户 2026-09-17 批准；6 个未过审提交 + 当时未提交的 5 个代码文件，已原样保存在远端分支 `onsite/2026-09-16-wip`，从 `origin/main` 另起分支拆 PR，逐片全套内审 + 外审）。其后各批见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §5，仍待用户批准，建议编号在批准前不进执行队列。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场；P2-57 / P2-70 已由 PR #476 / #475 合并。**
+Current Focus（非现场）= **2026-09-16 现场改动落地**（用户 2026-09-17 批准；6 个未过审提交 + 当时未提交的 5 个代码文件，已原样保存在远端分支 `onsite/2026-09-16-wip`，从 `origin/main` 另起分支，按用户指示合成一个 PR 整体过审：全套内审 + 外审）。其后各批见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §5，仍待用户批准，建议编号在批准前不进执行队列。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场；P2-57 / P2-70 已由 PR #476 / #475 合并。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -723,7 +723,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前唯一 WIP：2026-09-16 现场改动落地**（用户 2026-09-17 批准；从 `origin/main` 拆 PR，逐片全套内审 + 外审）。其后各批是建议稿，待用户批准，见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §5；建议编号在批准前不列入本行。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 经用户启动，非现场调研见[结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)；设备侧发布/验约仍 Hardware Blocked，不自动开始实现。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前唯一 WIP：2026-09-16 现场改动落地**（用户 2026-09-17 批准；从 `origin/main` 另起分支，合成一个 PR 整体过审：全套内审 + 外审）。其后各批是建议稿，待用户批准，见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §5；建议编号在批准前不列入本行。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 经用户启动，非现场调研见[结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)；设备侧发布/验约仍 Hardware Blocked，不自动开始实现。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5387,7 +5387,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 | 发现 | 当前出口 | 依据与下一步 |
 |---|---|---|
-| D4 CMW500 配置回执三个通用字段恒 unknown（→ 签发不了站点认证）；D5 / D6 正式强制证据的基站一侧只有 UXM 实现，CMW500 的配置 / 吞吐证据无写方、无频率身份（同一份证据里 `f64.output_state`、`positioner.azimuth.000` 也是 `unknown`，后者与 U-8 同源） | → **候选 P1-79A～E（低优先级备选；伞形项撤销，拆分与判定见表下）** | 判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。**前两层的判据里没有路损 / 校准条件，P1-79 的缺口都在这两层，不因「校准未启动」而可忽略**；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以 P1-79 做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。`dbd53e6f`：`config_confirmed=False`、`formal reason=frequency_identity_not_fully_verified`、`missing_requirements` 两项；纯软件、不需现场；命令 / 回读须有 R&S 手册出处 |
+| D4 CMW500 配置回执三个通用字段恒 unknown（→ 签发不了站点认证）；D5 / D6 正式强制证据的基站一侧只有 UXM 实现，CMW500 的配置 / 吞吐证据无写方、无频率身份（同一份证据里 `f64.output_state`、`positioner.azimuth.000` 也是 `unknown`，后者与 U-8 同源） | → **候选 P1-79A～E（低优先级备选；伞形项撤销，拆分与判定见表下）** | 缺口在资格、强制证据两层，与校准无关；三层关系与判定见表下。`dbd53e6f`：`config_confirmed=False`、`formal reason=frequency_identity_not_fully_verified`、`missing_requirements` 两项；纯软件、不需现场；命令 / 回读须有 R&S 手册出处 |
 | D2 `propsim_f64_license_truth` 空回复显示成功 | → **建议 P1-80**（即 P1-2 的软件半） | 两次运行稳定复现；修后同机复验 |
 | D3 `propsim_f64_p08_gate` 硬编码 UXM | → **建议 P2-73** | 最小修复：按服务器权威 BaseStation 身份 fail-closed 为 UXM-only |
 | D8 Aerotech 传输 reset / 结局未知 / 单轴 `PFBK(Y)` ERROR 噪音 | → **建议 P2-74** | 先枚举断连形态；安全判据偏保守侧 |
@@ -5403,11 +5403,11 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 **P1-79 拆分 → 全部列低优先级候选（用户 2026-09-17 指示：撤销伞形项，按根因拆成子项；对日常测试没必要的作候选备选）**
 
-**判定（用户 2026-09-17 要求：对日常测试没必要的降为低优先级候选）：A～E 对日常测试都没有必要。** 诊断执行照常完成、照常出报告，吞吐 / BLER 以「诊断值」呈现（`report.py::_serialized_base_station_metric`，`dbd53e6f` 的 45.82 Mbps 即如此）；这五项只影响「正式结论」这条线（站点认证 → formal 资格 → 强制证据），而正式 KPI 结论在 ANALYSIS 层还要过路损校准，校准未启动前无论如何出不来。故全部列**低优先级候选**，不进执行队列；校准正式启动、需要出正式结论时再评估，届时建议先做 A（最小、根因确定）。
+**判定（用户 2026-09-17 要求：对日常测试没必要的降为低优先级候选）：A～E 对日常测试都没有必要。** 诊断执行照常完成、照常出报告，吞吐 / BLER 以「诊断值」呈现（`report.py::_serialized_base_station_metric`，`dbd53e6f` 的 45.82 Mbps 即如此）；这五项只影响「正式结论」这条线（站点认证 → formal 资格 → 强制证据），而正式 KPI 结论在 ANALYSIS 层还要过路损校准，校准未启动前无论如何出不来。故全部列**低优先级候选**，不进执行队列。**例外提示：A 与 E 同时是 P0-5（UXM 5G NR）验收的前置** —— P0-5 的 Acceptance 要求同一执行里有「F64 simulation state is RUNNING」与转台方位的 E0–E4 证据及实时型号 / 固件快照，不含校准条件；A 的缺陷与基站型号无关，UXM 链同样会中，E 即 U-8（原文「P0-5 前」）。所以重估触发点 = **校准正式启动，或 UXM 现场排期前，取先到者**；A 是纯软件、不需要现场，建议在下次 UXM 现场之前做掉。B / C / D 只涉及 CMW500，触发点仍是需要出 CMW500 正式结论时。
 
 | 子项 | 可观察故障 | 根因（已对着代码与 `dbd53e6f` 库内数据核实） | 修法形状 / 前置 |
 |---|---|---|---|
-| **P1-79A** | `f64.output_state` 恒 `unknown`（命令与回读都对：RUNNING = RUNNING） | `start_emulation()` 成功后驱动状态 = `InstrumentStatus.BUSY`；`capture_evidence_environment()` 只把 `CONNECTED` / `READY` 算 live → 仿真一运行身份快照就被置空。确定性缺陷，与基站型号无关 | 收窄 live 判据；先写 RED 测试坐实。最小、最先做 |
+| **P1-79A** | `f64.output_state` 恒 `unknown`（命令与回读都对：RUNNING = RUNNING） | `start_emulation()` 成功后驱动状态 = `InstrumentStatus.BUSY`；`capture_evidence_environment()` 只把 `CONNECTED` / `READY` 算 live → 仿真一运行身份快照就被置空。确定性缺陷，与基站型号无关 | live 白名单补 `BUSY`（不放宽成「连接在即 live」，`ERROR` / `CONNECTING` 仍不算）；先写 RED 测试坐实 |
 | **P1-79B** | `config_confirmed=False` → 签发不了基站站点认证（09-16 无人尝试签发，去签也会被拒）、attempt 生命周期与正式信封返回 `config_not_confirmed` | 配置其实回读了：10 个非空请求字段 7 个 confirmed；`radio_technology` / `channel_kind` / `frequency_mhz` 是描述 / 派生字段，CMW500 的 `_last_common_config_readback` 从不放它们，而规则要求每个非空字段都确认 | 设计先行：由已确认的仪器事实派生，或移出「须确认字段集」；须 R&S 手册出处 |
 | **P1-79C** | `base_station.pcell.config_applied`、`base_station.throughput.azimuth.NNN` 恒缺失（45.82 Mbps 读到了但没被记成强制证据） | `measure.py` 以 `hasattr` 守着写方，`build_p0_5_config_evidence` / `build_p0_5_throughput_evidence` / 基站侧 `capture_evidence_environment` 只有 UXM 驱动有；记录器本身按 UXM 写死（`"ARFCN"`、`uxm.config_readback` / `uxm.config_apply` / `uxm.cell_status` / `uxm.dl_throughput`） | 共享证据契约 → 全套审查；设计先行 |
 | **P1-79D** | 正式判词恒停在 `frequency_identity_not_fully_verified` | 基站侧 `get_frequency_identity` 仅 UXM 有，频率一致性网记 BaseStation「未报告(跳过)」 | 须 R&S 手册出处 |
