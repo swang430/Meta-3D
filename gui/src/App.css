@@ -248,10 +248,10 @@
   z-index: 3;
   margin-inline: -8px;
   padding: 12px 8px;
-  border-top: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid var(--mantine-color-default-border);
+  /* 跟随 Mantine 主题：写死白色在深色模式下是一条白带 */
+  background: var(--mantine-color-body);
   box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(8px);
 }
 
 @media (max-width: 87.49em) {

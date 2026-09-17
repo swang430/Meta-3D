@@ -2768,7 +2768,19 @@ function EquipmentManager() {
                   </Card>
                 )}
 
-                <Group justify="flex-end" mt="md" className="instrument-config-drawer__actions">
+                {/* 操作区吸底后，操作结果必须跟着吸底：放在文档流里会落到屏幕外、2 秒后自动消失，
+                    失败时操作员看不到任何报错。 */}
+                <Stack gap="xs" mt="md" className="instrument-config-drawer__actions">
+                {feedback[category.key] ? (
+                  <Alert
+                    color={feedback[category.key].type === 'error' ? 'red' : 'green'}
+                    variant="light"
+                    radius="md"
+                  >
+                    {feedback[category.key].message}
+                  </Alert>
+                ) : null}
+                <Group justify="flex-end">
                   <Button
                     color="brand"
                     onClick={() => handleSaveConnection(category.key)}
@@ -2833,15 +2845,7 @@ function EquipmentManager() {
                     测试连接
                   </Button>
                 </Group>
-                {feedback[category.key] ? (
-                  <Alert
-                    color={feedback[category.key].type === 'error' ? 'red' : 'green'}
-                    variant="light"
-                    radius="md"
-                  >
-                    {feedback[category.key].message}
-                  </Alert>
-                ) : null}
+                </Stack>
 
                 {/* ─── SCPI 命令终端 ─── */}
                 <Card withBorder radius="md" padding="md" mt="sm" bg="dark.8" style={{ border: '1px solid var(--mantine-color-dark-4)' }}>
