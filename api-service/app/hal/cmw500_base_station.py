@@ -1519,7 +1519,13 @@ class RealCmw500Driver(BaseStationDriver):
         # （后台诊断 / 原始 SCPI 端点 / 前面板留下的），否则会被下面的写后验错读成
         # 「路由被拒」。与 set_cell_config 的同名步骤同义；放在证据捕获之外，
         # 不混进本次路由的往返。写后验错仍由下面独立完成。
-        stale_errors = self._query(CmwScpiCommands.ERR)
+        try:
+            stale_errors = self._query(CmwScpiCommands.ERR)
+        except Exception as exc:  # noqa: BLE001 — 与本函数其余 I/O 一致：回未确认回执，不裸抛
+            return _result(
+                requested=requested,
+                reason=f"CMW500 error queue is unreadable before route apply: {exc}",
+            )
         if not self._error_queue_is_empty(stale_errors):
             logger.warning(
                 "[CMW500] Discarded pre-existing error queue before route apply: %s",

@@ -334,6 +334,23 @@ async def test_route_readback_error_queue_entry_blocks_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_unreadable_error_queue_before_route_write_returns_an_unconfirmed_receipt():
+    # 写前清旧错误那次查询若超时 / 断链，必须回结构化的未确认回执（执行器据此落证、给出路由原因），
+    # 不得裸抛异常；也不得在队列状态未知时继续写路由。
+    driver = _driver(error=TimeoutError("VI_ERROR_TMO"))
+
+    result = await driver.apply_internal_lte_2x2_route(_frozen_route())
+
+    assert result.confirmed is False
+    assert "unreadable before route apply" in result.reason
+    assert driver.writes == []
+    assert driver.queries == [
+        "SOURce:LTE:SIGN1:CELL:STATe:ALL?",
+        "SYSTem:ERRor:ALL?",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_route_error_queue_entry_blocks_readback_and_confirmation():
     driver = _driver(error='-221,"Settings conflict"')
 
