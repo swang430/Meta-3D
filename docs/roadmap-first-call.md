@@ -5317,6 +5317,29 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 
 **已由 PR #466 合并**（merge `8148bb7f`）；本项不再占用非现场 WIP。
 
+
+### P2-74 — Aerotech 转台：行程超过阻塞预算的移动按段下发（2026-09-18 立项，本片交付）
+
+**可观察故障**：真机上从未成功完成过一次超过约 2 s 的转台移动。全部历史 `scpi.log*` 共 33 次 `MOVEABS`：
+成功的全是 0 s（已在目标位）或 2.1 s（10° 小步）；仅有的两次行程 > 10 s（2026-08-27 `X 100`、2026-09-16 `X -90`）都在
+第 10.0 s 失败（前者驱动自身超时，后者对端 reset）→ 结局未知 → 急停。下次现场的多方位用例（90° / 5°/s = 18 s）会次次失败。
+
+**根因**（[设计稿](design/2026-09-18-p2-74-aerotech-long-move-design.md)）：`MOVEABS` 在该控制器上阻塞到移动完成
+（Ensemble 样例默认 `WAIT MODE MOVEDONE`），而 ASCII 套接字有空闲超时（集成说明 `Socket2Timeout`，实测 10 s）；
+阻塞等待期间线路无往返，控制器把连接当空闲。
+
+**本片**：驱动新增 `blocking_command_budget_s`（默认 6 s，软件预算，非控制器参数镜像）；`move_to()` 行程时间超预算时按
+`ceil(行程时间 / 预算)` 拆段，每段独立 `MOVEABS → WAIT INPOS → PFBK/VFBK 真值门`，段间重新检查人工急停，
+最后一段落在精确目标；不超预算线路序列不变。正式证据 `record_positioner_capture` 改取**最后一条** `MOVEABS`
+（与末条 `PFBK` 对齐；否则分段后 `command_sent` 是中间段、程序误差被记成段差）。顺带：单轴台连接时探测不存在的轴
+被拒是预期结果，日志由 ERROR 降为 INFO。**不改** `HOME` / `ABORT` / 急停 / 结局未知 / 重连。
+
+**验收**：按真机行为造的假控制器（`MOVEABS` 阻塞 = 行程时间，> 10 s 即 reset）下 90° @ 5°/s 拆 3 段成功且每段 ≤ 预算；
+不拆段（预算设大）复现现场断连；段间叫停不再发下一段；某段编码器未动在下一段前 fail-closed；证据绑定末条 `MOVEABS`。
+每道门配变异实跑。**现场半**：用正式多方位用例复跑（它的方位移动走 `move_to()`）；用 `aerotech_positioner_motion_truth`
+的原始时间序列记录设计稿 §3 的三个未知（控制器 `Socket2Timeout` 实际值；固件是否支持 ASCII `WAIT MODE NOWAIT`；
+断连后 `ABORT` 为何 8 s 才被确认）。下次现场清单：A 方案 —— 把控制器 `Socket2Timeout` 调大（厂商工具，可能要重启）。
+
 ## 🟢 P3 — Polish / tooling
 
 **P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入

@@ -116,7 +116,9 @@ async def test_unsplit_long_move_reproduces_the_field_failure():
 
     assert driver.moveabs_targets() == [0.0]
     assert driver.blocked_seconds == [18.0]
-    assert "ABORT X" in driver.sent  # 结局未知 → 不重放 → 急停确认
+    # 假控制器在 _send 层直接抛 ConnectionResetError，绕过了真 _send 的「重连 → 结局未知」翻译；
+    # 这里证明的是「阻塞过久必失败 + 任何异常出口都急停」，不是那条翻译路径（它由 test_p1_56 覆盖）。
+    assert "ABORT X" in driver.sent
 
 
 @pytest.mark.asyncio

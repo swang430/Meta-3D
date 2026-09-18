@@ -2030,8 +2030,11 @@ def record_positioner_capture(
         tolerance_deg=(
             profile.position_tolerance_deg if profile is not None else 1.0
         ),
+        # P2-74：行程超过阻塞预算的 move_to 会拆成多条 MOVEABS，只有最后一条落在
+        # 最终程序目标上（驱动 _plan_program_segments 保证）；与下面反向取末条 PFBK 对齐。
+        # 取首条会把中间段命令记成 command_sent、把段差记成程序误差。
         move_exchange=_find_exchange(
-            exchanges, "positioner.move_absolute", "command"
+            exchanges, "positioner.move_absolute", "command", reverse=True
         ),
         # 双轴 move_to 最后一条 PFBK 是 elevation；必须精确绑定 az_axis，
         # 否则会拿俯仰反馈核对方位请求。

@@ -526,6 +526,104 @@ def test_dual_axis_position_capture_binds_azimuth_feedback_not_last_elevation(db
     assert finalize_execution_scpi_evidence(execution).formal_acceptance is True
 
 
+def test_segmented_position_capture_binds_the_final_moveabs_not_the_first(db):
+    # P2-74：行程超过阻塞预算的 move_to 会拆成多条 MOVEABS（09-16 形态：PFBK +90 → 请求 0°、
+    # offset +90 → 程序目标 -90，5°/s，默认预算 6 s → -30 / -60 / -90 三段）。证据必须绑定
+    # 落在最终目标的那一条，否则 command_sent 是中间段、程序误差被记成 60°。
+    execution = _execution(db)
+    requirement_id = "positioner.azimuth.000"
+    register_required_scpi_evidence(
+        execution,
+        requirement_id=requirement_id,
+        evidence_key="positioner.angle",
+        requested={"angle_deg": 0.0},
+        required_evidence_level=EvidenceLevel.APPLIED,
+    )
+    captured = {}
+
+    class _Positioner:
+        az_axis = "X"
+
+        def capture_evidence_environment(self):
+            return InstrumentEnvironment(
+                instrument_id="positioner",
+                instrument="positioner",
+                model="A3200",
+                firmware_version="1.0",
+                captured_from_live_connection=True,
+            )
+
+        def build_p0_5_position_evidence(self, **kwargs):
+            captured.update(kwargs)
+            move = kwargs["move_exchange"]
+            feedback = kwargs["feedback_exchange"]
+            return InstrumentEvidenceItem(
+                instrument="positioner",
+                evidence_key="positioner.angle",
+                requested={"angle_deg": kwargs["requested_angle_deg"]},
+                command_sent=move.command,
+                readback={"raw_feedback_angle_deg": 0.0},
+                exchange_ids=[move.exchange_id, feedback.exchange_id],
+                evidence_level=EvidenceLevel.APPLIED,
+                source_reference="notebooklm:source:aerobasic#pfbk",
+                verdict=EvidenceVerdict.PASSED,
+                reason="calibrated_feedback_within_tolerance",
+            )
+
+    def _ref(exchange_id, sequence, command, *, operation="command", result_type="ok", response=None):
+        return ScpiExchangeRef(
+            exchange_id=exchange_id, instrument_id="positioner", operation=operation,
+            command=command, execution_id=str(execution.id),
+            capture_id="position-capture", sequence=sequence, result_type=result_type,
+            response=response,
+        )
+
+    exchanges = []
+    seq = 0
+    for exchange_id, program in (("move-1", "-30.0000"), ("move-2", "-60.0000"), ("move-3", "-90.0000")):
+        exchanges.append(_ref(exchange_id, seq, f"MOVEABS X {program} XF5.0000")); seq += 1
+        exchanges.append(_ref(f"wait-{exchange_id}", seq, "WAIT INPOS X")); seq += 1
+        exchanges.append(_ref(f"vfbk-{exchange_id}", seq, "VFBK(X)", operation="query", result_type="response", response="0")); seq += 1
+        exchanges.append(_ref(f"pfbk-{exchange_id}", seq, "PFBK(X)", operation="query", result_type="response",
+                              response={"move-1": "60.0", "move-2": "30.0", "move-3": "0.0"}[exchange_id])); seq += 1
+
+    record_positioner_capture(
+        execution,
+        requirement_id=requirement_id,
+        requested_angle_deg=0.0,
+        frozen_positioner={
+            "resolution": {
+                "schema_version": 1,
+                "adapter": "aerotech",
+                "status": "verified",
+                "execution_mode": "real",
+            },
+            "profile": {
+                "schema_version": 1,
+                "user_units": "degree",
+                "units_verified": True,
+                "coordinate_offset_deg": 90.0,
+                "coordinate_offset_verified": True,
+                "coordinate_offset_verification_source": (
+                    "docs/site-debug/2026-08-27-lte-cmw500-onsite-summary.md"
+                    "#44-aerotech-转台"
+                ),
+                "coordinate_offset_verified_at": "2026-08-27T16:59:50+08:00",
+                "minimum_deg": -180.0,
+                "maximum_deg": 360.0,
+                "xf_speed": 5.0,
+                "position_tolerance_deg": 0.5,
+                "azimuth_axis": "X",
+            },
+        },
+        driver=_Positioner(),
+        exchanges=exchanges,
+    )
+    assert captured["move_exchange"].command == "MOVEABS X -90.0000 XF5.0000"
+    assert captured["move_exchange"].exchange_id == "move-3"
+    assert captured["feedback_exchange"].exchange_id == "pfbk-move-3"
+
+
 def test_f64_bypass_capture_selects_final_command_and_static_readback(db):
     execution = _execution(db)
     register_required_scpi_evidence(

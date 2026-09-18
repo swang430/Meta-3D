@@ -543,7 +543,8 @@ class RealAerotechDriver(PositionerDriver):
 
         MOVEABS 在该控制器上阻塞到移动完成（Ensemble 样例：默认 WAIT MODE MOVEDONE），
         而 ASCII 套接字空闲超时实测 10 s（集成说明 Socket2Timeout）：历史 33 次 MOVEABS 里
-        仅有的两次行程 > 10 s 都恰在第 10.0 s 断连。段数 = ceil(行程时间 / 预算)，
+        仅有的两次行程 > 10 s 都在第 10.0 s 失败（08-27 是驱动自身超时，09-16 是对端 reset）。
+        段数 = ceil(行程时间 / 预算)，
         最后一段落在精确目标上；行程时间不超预算时只有一段，线路序列与从前完全相同。
         """
         values = (current_program, program_target, feed, self.blocking_command_budget_s)
