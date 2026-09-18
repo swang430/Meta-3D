@@ -222,6 +222,13 @@ class _ScriptedStreams:
 async def test_expected_axis_probe_rejection_is_not_logged_as_error(caplog):
     # 单轴台每次连接都会探测 PFBK(Y) 并被控制器拒（"!"）：预期结果，不该按 ERROR 记
     # （09-16 一天 30 条）。走真驱动的 _send → _tx_rx，只替换线路字节。
+    # 前序测试在进程内跑 alembic fileConfig(disable_existing_loggers=True) 会把已导入的 logger
+    # 永久置为 disabled，单跑绿、全量红（memory: feedback_test_logger_emit_alembic_pollution）。先复位。
+    # 复现对：tests/test_channel_asset_migration.py + 本文件（去掉复位即红）。
+    target_logger = logging.getLogger("app.hal.aerotech_positioner")
+    target_logger.disabled = False
+    target_logger.propagate = True
+
     driver = RealAerotechDriver("p2-74-probe", {"ip": "192.0.2.10"})
     streams = _ScriptedStreams([b"!\n"])  # 探测 Y 轴：拒绝
     driver._reader = streams  # type: ignore[assignment]
