@@ -154,7 +154,7 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 判「正式」有三层：① 资格（`execution_qualification.py`）② 强制证据（`execution_scpi_evidence.py`）③ ANALYSIS 阶段的 KPI 结论（`analysis.py`）。前两层的判据里没有路损 / 校准条件，上述子项都在这两层；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标（RSRP / SINR / RI）→ 静区场扫描。所以这些子项做完而校准未做时：站点认证签得出、执行可归 formal、证据层通过，但报告的 KPI 结论仍是 `UNKNOWN`，原因换成路损。
 另记候选（不立项）：CMW500 的 RSRP / SINR / RI 在 ANALYSIS 层无真实来源证据（`rf_kpi_verified=false`），排在路损之后，校准启动时再评估。
 
-**下次现场的前置清单**：**用合并后的版本（PR #480）复跑一次 `dbd53e6f` 同款用例并补记** —— 过审改了 CMW 路由写前的错误队列读弃、未确认回执路径与 F64 stop 回执的证据键，这几处从未在真机上跑过（§4.1 的约定）；关闭调试机代理（D16）；要测 TDD 就带支持对应频段的 DUT；多方位用例可以带（P2-74 本地半已由 PR #482 合并）—— 用它复验分段移动，同时用 `aerotech_positioner_motion_truth` 的原始时间序列记录三个未知（控制器 `Socket2Timeout` 实际值、固件是否支持 ASCII `WAIT MODE NOWAIT`、断连后 `ABORT` 为何 8 s 才被确认），并用厂商工具把 `Socket2Timeout` 调大（可能要重启控制器）；
+**下次现场的前置清单**：**用合并后的版本（PR #480）复跑一次 `dbd53e6f` 同款用例并补记** —— 过审改了 CMW 路由写前的错误队列读弃、未确认回执路径与 F64 stop 回执的证据键，这几处从未在真机上跑过（§4.1 的约定）；关闭调试机代理（D16）；要测 TDD 就带支持对应频段的 DUT；多方位用例可以带去复验（P2-74 本地半已由 PR #482 合并，分段移动只在假控制器上验过）—— 次序：先在控制器原有超时下复跑；再用厂商工具读出并记录 `Socket2Timeout` 实际值；最后才调大（可能要重启控制器）。`WAIT MODE NOWAIT` 目前没有载体、不盲试；`ABORT` 8 s 才确认只在断连再次发生时从原始日志里记；`HOME` 同样受 10 s 限制、未改；
 NEW-1 / NEW-2 / P1-74 / P1-4 / P2-61/62 排独立时段。**不排校准**（用户 2026-09-17 定：校准尚未正式启动），信号分析仪不需要到场。
 
 ## 6. 过程复盘
