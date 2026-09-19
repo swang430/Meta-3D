@@ -143,6 +143,8 @@ def _make_driver(known_axes=("X", "Y"), config=None) -> "tuple[StubbedDriver, Fa
         "motion_truth_min_deg": 0.0,
         "motion_truth_max_deg": 360.0,
         "motion_truth_xf_speed": 5.0,
+        # 本文件测单轴命令形态，不测分段（见 test_p2_74_aerotech_segmented_motion.py）。
+        "blocking_command_budget_s": 1e6,
         "motion_truth_coordinate_offset_verified": True,
         "motion_truth_coordinate_offset_deg": 0.0,
         **(config or {}),

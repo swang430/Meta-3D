@@ -111,6 +111,10 @@ class RealAerotechDriver(PositionerDriver):
         elevation_axis: 俯仰角轴名 (默认 "Y")
         timeout_s: 命令超时秒数 (默认 10)
         settle_timeout_s: 到位等待超时 (默认 60)
+        blocking_command_budget_s: 单条阻塞命令（MOVEABS）允许占线的秒数 (默认 6)。
+            控制器 ASCII 套接字有空闲超时（集成说明 Socket2Timeout，真机实测 10 s），
+            MOVEABS 默认阻塞到移动完成，行程时间超过它必然半路断连；
+            行程更长的移动按此预算拆段。这是软件预算，不是控制器参数的镜像。
         poll_interval_s: 状态轮询间隔 (默认 0.2)
         position_tolerance_deg: 控制器坐标反馈容差 (默认 0.5)
     """
@@ -136,6 +140,13 @@ class RealAerotechDriver(PositionerDriver):
             config.get("position_tolerance_deg", 0.5),
             name="position_tolerance_deg",
         )
+        self.blocking_command_budget_s: float = self._finite_positive_config_value(
+            config.get("blocking_command_budget_s", 6.0),
+            name="blocking_command_budget_s",
+        )
+        # _probe_axis 探测不存在的轴时，控制器回 "!" 是预期结果，不是故障；
+        # _tx_rx 据此把那一条拒绝按 INFO 记，而不是 ERROR。
+        self._expected_rejection_cmd: Optional[str] = None
 
         # asyncio TCP 流
         self._reader: Optional[asyncio.StreamReader] = None
@@ -323,7 +334,11 @@ class RealAerotechDriver(PositionerDriver):
                 error_msg = (
                     f"AeroBasic error for '{safe_cmd}': {safe_response}"
                 )
-                logger.error(f"[Aerotech] {error_msg}")
+                if cmd == self._expected_rejection_cmd:
+                    # 轴探测：控制器没有这个轴就回 "!"，是预期结果（单轴台每次连接都会遇到）。
+                    logger.info(f"[Aerotech] {error_msg} (expected axis probe rejection)")
+                else:
+                    logger.error(f"[Aerotech] {error_msg}")
                 raise AerotechCommandRejected(error_msg)
             if task_fault:
                 safe_cmd = redact_instrument_log_text(cmd)
@@ -516,6 +531,38 @@ class RealAerotechDriver(PositionerDriver):
         if not math.isfinite(parsed):
             raise ValueError(f"{name} must be a finite number")
         return parsed
+
+    def _plan_program_segments(
+        self,
+        *,
+        current_program: float,
+        program_target: float,
+        feed: float,
+    ) -> List[float]:
+        """把一次绝对移动拆成若干段，使每段行程时间不超过阻塞命令预算。
+
+        MOVEABS 在该控制器上阻塞到移动完成（Ensemble 样例：默认 WAIT MODE MOVEDONE），
+        而 ASCII 套接字空闲超时实测 10 s（集成说明 Socket2Timeout）：历史 33 次 MOVEABS 里
+        仅有的两次行程 > 10 s 都在第 10.0 s 失败（08-27 是驱动自身超时，09-16 是对端 reset）。
+        段数 = ceil(行程时间 / 预算)，
+        最后一段落在精确目标上；行程时间不超预算时只有一段，线路序列与从前完全相同。
+        """
+        values = (current_program, program_target, feed, self.blocking_command_budget_s)
+        if any(isinstance(v, bool) or not math.isfinite(v) for v in values) or feed <= 0:
+            raise AerotechError(
+                "cannot plan motion segments: "
+                f"current={current_program!r}, target={program_target!r}, "
+                f"feed={feed!r}, budget_s={self.blocking_command_budget_s!r}"
+            )
+        travel_deg = abs(program_target - current_program)
+        travel_s = travel_deg / feed
+        segments = max(1, math.ceil(travel_s / self.blocking_command_budget_s - 1e-9))
+        if segments == 1:
+            return [program_target]
+        step = (program_target - current_program) / segments
+        targets = [current_program + step * index for index in range(1, segments)]
+        targets.append(program_target)
+        return targets
 
     def _sync_cached_feedback(self, feedback: Tuple[float, float]) -> None:
         """Publish the latest finite encoder truth, independent of verdict."""
@@ -840,11 +887,15 @@ class RealAerotechDriver(PositionerDriver):
         ``connect()`` to decide whether the configured ``elevation_axis``
         actually exists on this hardware.
         """
+        probe = AeroBasicCmd.POSITION_FEEDBACK.format(axis=axis)
+        self._expected_rejection_cmd = probe
         try:
-            await self._send(AeroBasicCmd.POSITION_FEEDBACK.format(axis=axis))
+            await self._send(probe)
             return True
         except AerotechCommandRejected:
             return False
+        finally:
+            self._expected_rejection_cmd = None
 
     @property
     def is_single_axis(self) -> bool:
@@ -1244,37 +1295,60 @@ class RealAerotechDriver(PositionerDriver):
             # Ensemble integration guide §§5–7 / reference implementation:
             # explicit feed is controller user-units per second.  The site
             # attestation above proves those units are degree / degree/s.
-                cmd_str = AeroBasicCmd.MOVE_ABS.format(
-                    axis=self.az_axis,
-                    position=f"{program_target:.4f}",
-                    feed=f"{feed:.4f}",
+                # 行程时间超过阻塞命令预算就拆段：每段独立 MOVEABS → WAIT INPOS →
+                # PFBK/VFBK 真值门，段间重新检查人工急停。段与段之间转台停稳，
+                # 不会出现新的不受控运动；断连的老病根（阻塞 > Socket2Timeout）从此到不了。
+                segment_targets = self._plan_program_segments(
+                    current_program=before[0] - coordinate_offset,
+                    program_target=program_target,
+                    feed=feed,
                 )
-                command_accepted = True
-                await self._send(
-                    cmd_str,
-                    expected_operator_stop_generation=operator_stop_generation,
-                )
+                if len(segment_targets) > 1:
+                    logger.info(
+                        "[Aerotech] Move split into %d segments "
+                        "(travel %.1f° at %.2f°/s exceeds blocking budget %.1f s)",
+                        len(segment_targets),
+                        abs(program_target - (before[0] - coordinate_offset)),
+                        feed,
+                        self.blocking_command_budget_s,
+                    )
+                segment_before = before
+                for segment_program in segment_targets:
+                    self._require_operator_stop_generation(operator_stop_generation)
+                    cmd_str = AeroBasicCmd.MOVE_ABS.format(
+                        axis=self.az_axis,
+                        position=f"{segment_program:.4f}",
+                        feed=f"{feed:.4f}",
+                    )
+                    command_accepted = True
+                    await self._send(
+                        cmd_str,
+                        expected_operator_stop_generation=operator_stop_generation,
+                    )
 
-            # 等待到位
-                await self._wait_for_settle(
-                    expected_operator_stop_generation=operator_stop_generation
-                )
+                    # 等待到位
+                    await self._wait_for_settle(
+                        expected_operator_stop_generation=operator_stop_generation
+                    )
 
-            # WAIT INPOS proves controller completion, not physical motion.
-            # The checked-in Ensemble integration guide §6 requires PFBK
-            # verification before sampling; fail closed unless finite encoder
-            # feedback both moved when needed and reached the requested target.
-                self._require_operator_stop_generation(operator_stop_generation)
-                after = await self._read_motion_feedback(
-                    expected_operator_stop_generation=operator_stop_generation
-                )
-                self._require_operator_stop_generation(operator_stop_generation)
-                self._sync_cached_feedback(after)
-                target = (
-                    target_azimuth,
-                    0.0 if self.is_single_axis else target_elevation,
-                )
-                self._verify_motion_feedback(before=before, after=after, target=target)
+                    # WAIT INPOS proves controller completion, not physical motion.
+                    # The checked-in Ensemble integration guide §6 requires PFBK
+                    # verification before sampling; fail closed unless finite encoder
+                    # feedback both moved when needed and reached the requested target.
+                    self._require_operator_stop_generation(operator_stop_generation)
+                    after = await self._read_motion_feedback(
+                        expected_operator_stop_generation=operator_stop_generation
+                    )
+                    self._require_operator_stop_generation(operator_stop_generation)
+                    self._sync_cached_feedback(after)
+                    target = (
+                        segment_program + coordinate_offset,
+                        0.0 if self.is_single_axis else target_elevation,
+                    )
+                    self._verify_motion_feedback(
+                        before=segment_before, after=after, target=target
+                    )
+                    segment_before = after
 
                 logger.info(
                     f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°"
