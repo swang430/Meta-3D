@@ -14,10 +14,10 @@
 据此**收口 P0-9A、P0-9B-1、P0-8（b 半）、P2-51 现场半，并按用户现场结论改 P2-55 验收后收口其现场半**。
 **2026-09-17 用户裁决**：① **P0-9 整项关闭**；② **P2-56 现场半关闭** —— B41 下 attach 超时的原因是被测手机不支持 B41 频段，不是系统缺陷；
 ③ **校准尚未正式启动，现在做校准只浪费时间**：凡以「缺路损校准」为由挂着的关闭条件（P0-9B-2、P0-9C）不再阻塞当前项，校准正式启动时另立项。
-P0-9 关闭后开放的 P0 只剩 P0-5（UXM 5G NR，等现场），按治理规则 2 焦点降到非现场队列：用户 2026-09-17 批准先做「现场改动落地」（已由 PR #480 完成），2026-09-18 批准其后按队列继续，**当前片 = P2-74**（见下方 Current Focus（非现场）行）。
+P0-9 关闭后开放的 P0 只剩 P0-5（UXM 5G NR，等现场），按治理规则 2 焦点降到非现场队列：用户 2026-09-17 批准先做「现场改动落地」（已由 PR #480 完成），2026-09-18 批准其后按队列继续，**当前片 = P1-80**（队列第 1 项 P2-74 的本地半已由 PR #482 合并；见下方 Current Focus（非现场）行）。
 P1-74 / P1-4 取得新事实但未关闭；新增发现 D4–D17 及其出口见下方「2026-09-17 现场 triage checkpoint」。逐项依据、原始回复与下一轮安排见
 [`2026-09-16 现场总结与 triage`](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)。产出这些证据的 6 个现场提交 + 当时未提交的 5 个代码文件**当时未过审**（原样保存在远端分支 `onsite/2026-09-16-wip`），现已由 PR #480 过审合入 `main`；其中一处当时
-踩红两道厂商分支规则门；**第 0 步「现场代码落地」已由 PR #480 合并（merge `7aa652da`，2026-09-18）**：6 个现场提交 + 当时未提交的代码合成一个 PR 整体过审（三路全套内审 P1=0 / P2=8 / P3=8 全部处置，另有几条报告不修，见下方 Discovered；外审 Gemini R1→R2 无 high）。过审时去掉 / 改掉了现场的主要三处：功率观察基站一侧的厂商分支（CE 一侧的 `propsim_f64` 判断保留）、F64「接受 CLOSED」（真机不可达）、观察状态名（真机无信号读数是 −108 dBm，不是空值）；另新增了两处**从未在真机上跑过**的 CMW 路由改动（路由写前先读弃既有错误队列、读弃失败时回未确认回执）并换了 F64 stop 回执的证据键 —— 按现场总结 §4.1 的约定，下次现场须用合并后的版本复跑一次同款用例并补记。**用户 2026-09-18 批准其后按队列顺序继续**（原话：「合并到 main 后，按照 todo list 的序列继续开发」）：P2-74（转台传输稳定性）→ P1-80（P1-2 许可序列修复）→ P2-73（`propsim_f64_p08_gate` 限 UXM）→ P2-75（`instrument_idn_sweep` 范围与身份）→ P2-76（`input_level_calibration` 空回读不得记成功）→ P2-77（信道资产频率语义，设计先行、须先有手册出处）。
+踩红两道厂商分支规则门；**第 0 步「现场代码落地」已由 PR #480 合并（merge `7aa652da`，2026-09-18）**：6 个现场提交 + 当时未提交的代码合成一个 PR 整体过审（三路全套内审 P1=0 / P2=8 / P3=8 全部处置，另有几条报告不修，见下方 Discovered；外审 Gemini R1→R2 无 high）。过审时去掉 / 改掉了现场的主要三处：功率观察基站一侧的厂商分支（CE 一侧的 `propsim_f64` 判断保留）、F64「接受 CLOSED」（真机不可达）、观察状态名（真机无信号读数是 −108 dBm，不是空值）；另新增了两处**从未在真机上跑过**的 CMW 路由改动（路由写前先读弃既有错误队列、读弃失败时回未确认回执）并换了 F64 stop 回执的证据键 —— 按现场总结 §4.1 的约定，下次现场须用合并后的版本复跑一次同款用例并补记。**用户 2026-09-18 批准其后按队列顺序继续**（原话：「合并到 main 后，按照 todo list 的序列继续开发」）：P2-74（转台传输稳定性）→ P1-80（P1-2 许可序列修复）→ P2-73（`propsim_f64_p08_gate` 限 UXM）→ P2-75（`instrument_idn_sweep` 范围与身份）→ P2-76（`input_level_calibration` 空回读不得记成功）→ P2-77（信道资产频率语义，设计先行、须先有手册出处）。**队列第 1 项 P2-74 的本地半已由 PR #482 合并（merge `4d6050fb`，2026-09-19）**，现场半待下次现场复验；焦点顺移到 P1-80。
 
 **2026-09-05 收口与 triage**：P2-62 已由 PR #459 合并，merge `a0c671c4`；上一轮已批准的
 非现场执行队列已收口。P2-57 声明面残项、CMW 可达能力与各现场半分别保留，不能把合并解释为全部验收。
@@ -68,7 +68,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= 无进行中的 P0：P0-9 已于 2026-09-17 由用户裁决关闭，开放的 P0 只剩 P0-5（UXM 5G NR，等 UXM 在场）。下文凡写「P0-9 待关闭」「P2-55 / P2-56 现场半待真机」的段落均为 2026-09-17 之前的表述，原文保留审计，现状以本行与「Blocked on hardware」表为准；
-Current Focus（非现场）= **P2-74：Aerotech 转台传输稳定性与单轴日志**（现场改动落地已由 PR #480 合并，merge `7aa652da`；用户 2026-09-18 批准按队列继续）。队列：P2-74（转台传输稳定性）→ P1-80（P1-2 许可序列修复）→ P2-73（`propsim_f64_p08_gate` 限 UXM）→ P2-75（`instrument_idn_sweep` 范围与身份）→ P2-76（`input_level_calibration` 空回读不得记成功）→ P2-77（信道资产频率语义，设计先行、须先有手册出处）；各片照常走「设计稿 → 用户过目 → 实现 → 内审 / 外审」，WIP = 1。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场；P2-57 / P2-70 已由 PR #476 / #475 合并。**
+Current Focus（非现场）= **P1-80：P1-2 许可序列修复**（现场改动落地已由 PR #480 合并，merge `7aa652da`；用户 2026-09-18 批准按队列继续；队列第 1 项 P2-74 的本地半已由 PR #482 合并（merge `4d6050fb`，2026-09-19），现场半待复验）。队列：P1-80（P1-2 许可序列修复）→ P2-73（`propsim_f64_p08_gate` 限 UXM）→ P2-75（`instrument_idn_sweep` 范围与身份）→ P2-76（`input_level_calibration` 空回读不得记成功）→ P2-77（信道资产频率语义，设计先行、须先有手册出处）；各片照常走「设计稿 → 用户过目 → 实现 → 内审 / 外审」，WIP = 1。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场；P2-57 / P2-70 已由 PR #476 / #475 合并。**
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -723,7 +723,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **当前唯一 WIP：P2-74（Aerotech 转台传输稳定性与单轴日志）**；其后 P1-80 → P2-73 → P2-75 → P2-76 → P2-77（用户 2026-09-18 批准的顺序；2026-09-16 现场改动落地已由 PR #480 合并）。P1-79A～E 为低优先级候选，不在队列内。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 经用户启动，非现场调研见[结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)；设备侧发布/验约仍 Hardware Blocked，不自动开始实现。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | **当前唯一 WIP：P1-80（P1-2 许可序列修复）**；其后 P2-73 → P2-75 → P2-76 → P2-77（用户 2026-09-18 批准的顺序；2026-09-16 现场改动落地已由 PR #480 合并；队列第 1 项 P2-74 的本地半已由 PR #482 合并（merge `4d6050fb`，2026-09-19），现场半待复验）。P1-79A～E 为低优先级候选，不在队列内。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 经用户启动，非现场调研见[结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)；设备侧发布/验约仍 Hardware Blocked，不自动开始实现。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -752,7 +752,7 @@ UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以�
 凡以「缺路损校准」为由的关闭条件，在校准正式启动前不阻塞当前项；校准启动时另立项，届时才需要信号分析仪到场并连通。
 这只影响 roadmap 条目的关闭判定，**不改变执行门**：无校准时正式 KPI 照旧保持 `UNKNOWN` / N/A，也不得据此强升 Formal。
 
-**2026-09-18 更新**：2026-09-16 现场代码已由 PR #480 过审合入。过审改了几处从未在真机上跑过的路径（CMW 路由写前的错误队列读弃与未确认回执、F64 stop 回执的证据键）——下次 CMW500 + F64 在场时，先用合并后的版本复跑一次 `dbd53e6f` 同款用例并补记；转台多方位用例等 P2-74 合并后再带（历史日志显示真机上从未成功完成过超过约 2 s 的移动）。
+**2026-09-18 更新**：2026-09-16 现场代码已由 PR #480 过审合入。过审改了几处从未在真机上跑过的路径（CMW 路由写前的错误队列读弃与未确认回执、F64 stop 回执的证据键）——下次 CMW500 + F64 在场时，先用合并后的版本复跑一次 `dbd53e6f` 同款用例并补记；转台多方位用例：P2-74 本地半已由 PR #482 合并（merge `4d6050fb`，2026-09-19），**可以带** —— 用它现场复验分段移动（历史日志显示真机上此前从未成功完成过超过约 2 s 的移动），并按下文 `### P2-74` 条目的「验收 / 现场半」记录三个未知、把控制器 `Socket2Timeout` 调大。
 
 > ⚠️ **「正式载体」这一列必须填得出**（2026-08-06 用户定，正式条目见 `### P1-45`）——
 > **填不出 = 不能带到现场临时补**。它继续留在原有 Discovered / Blocked / HOLD 分区，
@@ -5320,7 +5320,9 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 **已由 PR #466 合并**（merge `8148bb7f`）；本项不再占用非现场 WIP。
 
 
-### P2-74 — Aerotech 转台：行程超过阻塞预算的移动按段下发（2026-09-18 立项，本片交付）
+### P2-74 — Aerotech 转台：行程超过阻塞预算的移动按段下发（2026-09-18 立项；本地半 ✅ PR #482，现场半待验）
+
+**本地半已由 PR #482 合并（merge `4d6050fb`，2026-09-19）**；本项不再占用非现场 WIP。现场半见下「验收」，随下次现场走。
 
 **可观察故障**：真机上从未成功完成过一次超过约 2 s 的转台移动。全部历史 `scpi.log*` 共 33 次 `MOVEABS`：
 成功的全是 0 s（已在目标位）或 2.1 s（10° 小步）；仅有的两次行程 > 10 s（2026-08-27 `X 100`、2026-09-16 `X -90`）都在
@@ -5418,7 +5420,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | D4 CMW500 配置回执三个通用字段恒 unknown（→ 签发不了站点认证）；D5 / D6 正式强制证据的基站一侧只有 UXM 实现，CMW500 的配置 / 吞吐证据无写方、无频率身份（同一份证据里 `f64.output_state`、`positioner.azimuth.000` 也是 `unknown`，后者与 U-8 同源） | → **候选 P1-79A～E（低优先级备选；伞形项撤销，拆分与判定见表下）** | 缺口在资格、强制证据两层，与校准无关；三层关系与判定见表下。`dbd53e6f`：`config_confirmed=False`、`formal reason=frequency_identity_not_fully_verified`、`missing_requirements` 两项；纯软件、不需现场；命令 / 回读须有 R&S 手册出处 |
 | D2 `propsim_f64_license_truth` 空回复显示成功 | → **P1-80**（已批准，队列第 2；即 P1-2 的软件半） | 两次运行稳定复现；修后同机复验 |
 | D3 `propsim_f64_p08_gate` 硬编码 UXM | → **P2-73**（已批准，队列第 3） | 最小修复：按服务器权威 BaseStation 身份 fail-closed 为 UXM-only |
-| D8 Aerotech 传输 reset / 结局未知 / 单轴 `PFBK(Y)` ERROR 噪音 | → **P2-74**（已批准，队列第 1） | 先枚举断连形态；安全判据偏保守侧 |
+| D8 Aerotech 传输 reset / 结局未知 / 单轴 `PFBK(Y)` ERROR 噪音 | → **P2-74**（本地半 ✅ PR #482；现场半待复验） | 根因 = 阻塞命令撞上套接字空闲超时；按段下发，安全判据未放松 |
 | D1 `instrument_idn_sweep` 范围与身份契约 | → **P2-75**（已批准，队列第 4） | 「所选 LabProfile binding × 当前启用类别」+ 结构化身份投影 |
 | D9 `input_level_calibration` 空回读仍记 `success: true` | → **P2-76**（已批准，队列第 5） | 功率观察窗已补后置真值，字段本身仍须 fail-closed |
 | D10 `.smu` 中心频可被 API 改写，资产频率不排他 | → **P2-77**（已批准，队列第 6；设计先行） | 开工条件：取得并记录可核对的 PROPSIM 手册章节 / 页码或原文，说明 `CENT` 可改范围的限制（一次现场接受不算依据）；查不到就保持现有 fail-closed 语义。查到后再定「默认值 vs 本次执行真值」 |
@@ -5447,7 +5449,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 - `[discovered 2026-09-18 during PR #480 内审；待 triage]` **Cell-ready 功率观察的严格门判不了「无信号」** —— 真机上无输入信号的实测读数是很低的有限值，不是空值：09-16 执行 `f8f5fd90`（B41 TDD）F64 输入口 2 两次采样均为 −108.0 dBm、输入口 1 为 −28.9 / −30.7 dBm，16 路输出均值 −52.3 / −53.8 dBm，比上一次取到观察的执行 `d058d9de`（−50.0 / −49.8 dBm）低 2.3 / 3.9 dB（第二次多掉的部分与输入口 1 自身低了约 1.8 dB 同向，不全是缺一路造成）（`app.log.2026-09-16`；现场总结原稿未记）。严格门只拦「读不到数」，缺一路 TX 时照常放行（#480 已把放行状态改名为 `recorded` 并写明局限）。要判有无信号须换到带该语义的查询并有 PROPSIM 手册出处，不凭一次观察值加阈值。
 - `[discovered 2026-09-18 during PR #480 内审；保留候选]` **CMW 单发窗口「墙钟 + 1 s 宽限」只有一个真机样本** —— `dbd53e6f`：INIT 后 5.14 s 仍 RUN、5.24 s 到 RDY。大统计基下滞后是否变大未知；超宽限的代价是白跑一窗（置空，不出假数）。暂不立片，下次现场多取几个不同统计长度的样本再评估。
 - `[discovered 2026-09-16 during CMW500 + F64 现场；2026-09-17 triage]` **CMW500 适配器拿不到正式判词的一组软件缺口（→ 候选 P1-79A～E，低优先级备选：对日常测试没有必要）** —— 执行 `dbd53e6f` 的配置、路由、MAC、窗口、cleanup、release 全部 confirmed，但 `base_station_execution_evidence.config_confirmed=False`：`radio_technology` / `channel_kind` / `frequency_mhz` 三个通用字段 `applied=None, status=unknown`（「CMW500 configuration field was not authoritatively confirmed」），后果是签发不了基站站点认证（`activate_base_station_site_certification` 要求 `config_confirmed is True`）；强制证据 `base_station.pcell.config_applied` 的缺失另有原因 —— 写方以 `hasattr(base_station, "build_p0_5_config_evidence")` 守着，而该接口仅 UXM 驱动有；同理 `RealCmw500Driver` 没有 `get_frequency_identity`（BaseStation 驱动里仅 `uxm_base_station.py` 有；`propsim_f64.py` 的同名方法属信道仿真器一侧），频率一致性网记 BaseStation「未报告(跳过)」→ `fully_verified=false` → `formal reason=frequency_identity_not_fully_verified`。另 `base_station.throughput.azimuth.000` 在窗口 confirmed、`throughput_valid=true` 时仍列为缺失：已核不是前者的连带，而是 CMW500 没有 `build_p0_5_throughput_evidence`，读到的吞吐从未被记成强制证据。这些缺口出在与校准无关的资格、强制证据两层 —— 校准齐备也救不了；反过来，补齐它们后报告的 KPI 结论仍要过 ANALYSIS 层的路损校准条件（见现场总结 §5）。
-- `[discovered 2026-09-16 during CMW500 + F64 现场]` **Aerotech 传输不稳与单轴日志噪音（P2 + P3，→ P2-74，已批准、当前片）** —— 12:13 执行 `7d347c03`：`MOVEABS X -90.0000 XF5.0000` 发出 10 s 后 `ConnectionResetError [Errno 54]`，静默重连只恢复了传输；非幂等命令结局未知、未重放（正确）；ABORT 读 `VFBK(X)` 得空串无法证明停止 → 急停并以零速度确认。全天 `Disconnect error [Errno 54]` ×10、「transport already closed — lazy reconnect」×9、`positioner/hal/activate` 一次 503（旧驱动断开未确认）。另：单轴转台每次连接都先以 ERROR 级打印 `AeroBasic error for 'PFBK(Y)'`（×30）再识别为单轴，污染错误统计。
+- `[discovered 2026-09-16 during CMW500 + F64 现场]` **Aerotech 传输不稳与单轴日志噪音（P2 + P3，→ P2-74，本地半已由 PR #482 合并，现场半待复验）** —— 12:13 执行 `7d347c03`：`MOVEABS X -90.0000 XF5.0000` 发出 10 s 后 `ConnectionResetError [Errno 54]`，静默重连只恢复了传输；非幂等命令结局未知、未重放（正确）；ABORT 读 `VFBK(X)` 得空串无法证明停止 → 急停并以零速度确认。全天 `Disconnect error [Errno 54]` ×10、「transport already closed — lazy reconnect」×9、`positioner/hal/activate` 一次 503（旧驱动断开未确认）。另：单轴转台每次连接都先以 ERROR 级打印 `AeroBasic error for 'PFBK(Y)'`（×30）再识别为单轴，污染错误统计。
 - `[discovered 2026-09-16 during CMW500 + F64 现场]` **`input_level_calibration` 在回读全空时仍记成功（P2，→ P2-76，已批准）** —— `dbd53e6f` 的 `measure.input_level_calibration`：`success: true`、`failure_reason: null`，而两路 `readback` 的 `avg_dbm` / `crest_db` 均为 `null`（Cell ON 前 `measure_input` 返回空串，日志 `parse failed: ''`）。当日新增的 Cell-ready 功率观察窗在 Cell ON 后取到了真值（−29 / −28 dBm），但这个字段仍把「没测到」写成「成功」。
 - `[discovered 2026-09-16 during CMW500 + F64 现场；用户现场发现]` **`.smu` 内置中心频可被 API 改写，文件名与资产登记频率不排他（设计，→ P2-77，已批准、设计先行）** —— 同一个 `TS_LTE_MIMO_OTA_SCME_UMa_8DP.smu` 当日先后被 `CALC:FILT:CENT:CH 1,2565.0`（B41）与 `1,1960.0`（B2）改写并被仪器接受。驱动层早已按「显式下发 > 加载后回读 > 文件名」处理，但资产层仍把频率当排他身份：执行 `f7afe522` 在 F64 已接受 1960.0 的情况下，被 P2-11 以「SCD 登记 B41/40340 ≠ 用例 B2/900」拦下，操作员随后改了资产登记才放行（其间两次 `PUT /channel-assets` 的 400 是 `19600 MHz` 笔误被一致性校验正确拦下，与排他性无关）。放宽前必须取得并记录可核对的 PROPSIM 手册章节 / 页码或原文，确认 `CENT` 可改范围是否受 `.smu` 内滤波器 / 带宽 / 许可限制；不凭一次现场接受就放开，查不到就保持现有 fail-closed 语义。
 - `[discovered 2026-09-16 during CMW500 + F64 现场]` **B41 TDD 下 UE attach 4/4 超时（resolved 2026-09-17）** —— `31ec74a2` / `804ca4fe` / `d058d9de` / `f8f5fd90`：TDD 配置、RMC、路由、F64 `CENT 2565.0` 全部被接受，`PSWitched:STATe?` 60 s 内恒为 `ON`（仅一次瞬时 `SIGN`）；同日改 B2 FDD 后 3 s / 30 s 挂上，RS-EPRE 同为 −50 dBm、同一 `.smu`。DUT 频段支持、SIM、2.5 GHz 链路、TDD 帧结构当时均未排除。**2026-09-17 用户确认：被测手机不支持 B41 频段** —— resolved，P2-56 现场半随之关闭。
