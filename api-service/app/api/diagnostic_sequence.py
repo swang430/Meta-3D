@@ -39,7 +39,7 @@ from app.services.diagnostic_context import (
     build_diagnostic_context,
     DiagnosticContext,
 )
-from app.services.instrument_hal_service import get_hal_service
+from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 from app.services.instrument_test_lease import instrument_test_lease
 from app.services.execution_exclusion_guard import (
     active_unsafe_diagnostic,
@@ -217,7 +217,6 @@ async def run_diagnostic_sequence(
         from app.hal.scpi_evidence import capture_scpi_exchanges
         from app.models.lab_profile import LabProfile
         from app.services.base_station_binding import resolve_base_station_binding
-        from app.services.instrument_hal_service import is_mock_driver
         from app.services.instrument_test_lease import hal_mutation_guard
 
         extra = {"formal_eligible": False, "classification": "diagnostic_only"}
@@ -270,12 +269,46 @@ async def run_diagnostic_sequence(
                 ) as outcome:
                     yield outcome
         else:
+            # P1-80：该序列用“业务 query 后立即排 SYSTem:ERRor?”做错误归属。
+            # 1 Hz monitoring 的 get_metrics() 若插在两者之间，会把自己的错误
+            # 错归给业务 query，或先排掉业务错误而重现空回复假绿。只收窄这一条
+            # 序列；其他诊断继续沿用租约默认的实时监控行为。
+            lease_options = (
+                {"enable_monitoring": False}
+                if key == "propsim_f64_license_truth"
+                else {}
+            )
             async with instrument_test_lease(
                 f"diagnostic-sequence:{key}",
                 control_f64="channelEmulator" in lease_categories,
                 control_uxm="baseStation" in lease_categories,
+                **lease_options,
             ) as outcome:
                 yield outcome
+
+    @asynccontextmanager
+    async def sequence_scpi_transaction(hal):
+        if key != "propsim_f64_license_truth":
+            yield
+            return
+        driver = (getattr(hal, "drivers", {}) or {}).get("channelEmulator")
+        # Missing/Mock drivers do not send real F64 SCPI. Let the sequence's
+        # existing preflight return its precise operator-facing refusal instead
+        # of replacing it with the transaction-lock failure below.
+        if driver is None or is_mock_driver(driver):
+            yield
+            return
+        scpi_lock = getattr(driver, "_scpi_lock", None)
+        if scpi_lock is None:
+            raise RuntimeError(
+                "propsim_f64_license_truth 需要 F64 可重入 SCPI 事务锁；"
+                "无法保证业务查询与错误队列排水的原子归属"
+            )
+        # 已经启动的 monitoring 轮可能越过 enable_monitoring=False 的门。
+        # 在同一 driver 锁内运行整个序列：先等旧单命令结束，再从开场排水到
+        # 收尾排水都不允许其他 SCPI 插入。F64 _query 内层会安全重入此锁。
+        async with scpi_lock:
+            yield
 
     try:
         try:
@@ -312,10 +345,11 @@ async def run_diagnostic_sequence(
                     # CMW uses the exact HAL resolved by the lock-time validator.
                     hal = locked_hal if is_cmw_probe else get_hal_service()
                     try:
-                        result = await sequence.run(
-                            ctx, hal, request.params, log=_log,
-                            **({"resolved_binding": resolved_binding} if is_cmw_probe else {}),
-                        )
+                        async with sequence_scpi_transaction(hal):
+                            result = await sequence.run(
+                                ctx, hal, request.params, log=_log,
+                                **({"resolved_binding": resolved_binding} if is_cmw_probe else {}),
+                            )
                     except asyncio.CancelledError as exc:
                         if is_cmw_probe and isinstance(exc, ProbeCancelled):
                             step_results = [asdict(s) for s in exc.result.steps]

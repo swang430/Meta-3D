@@ -1201,6 +1201,185 @@ async def test_diagnostic_sequence_holds_lease_around_sequence_run(monkeypatch):
     ]
 
 
+@pytest.mark.asyncio
+async def test_f64_license_truth_disables_monitoring_for_query_error_attribution(
+    monkeypatch,
+):
+    """业务查询与紧随其后的错误队列排水之间不得插入 1 Hz 监控 SCPI。"""
+    import app.api.diagnostic_sequence as api
+    from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult
+
+    seen: dict[str, object] = {}
+    events: list[str] = []
+
+    class _ScpiLock:
+        active = False
+
+        async def __aenter__(self):
+            self.active = True
+            events.append("scpi-lock-enter")
+            return self
+
+        async def __aexit__(self, *_args):
+            self.active = False
+            events.append("scpi-lock-exit")
+
+    scpi_lock = _ScpiLock()
+    hal = SimpleNamespace(
+        drivers={"channelEmulator": SimpleNamespace(_scpi_lock=scpi_lock)}
+    )
+
+    class _Context:
+        lab_profile_name = "unit-test"
+
+        def find_binding_by_category_key(self, key):
+            return object() if key == "channelEmulator" else None
+
+        def find_binding_by_role(self, _key):
+            return None
+
+        def record_run(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                id=UUID("00000000-0000-0000-0000-000000000080")
+            )
+
+    async def _run(_ctx, _hal, _params, *, log):
+        assert _hal is hal
+        assert scpi_lock.active is True, (
+            "序列没有在 F64 的同一可重入 SCPI 锁里运行；已启动的旧 monitoring 轮"
+            "仍可插入 query 与错误队列排水之间"
+        )
+        events.append("sequence-run")
+        return SequenceRunResult(success=True, summary="ok")
+
+    sequence = SimpleNamespace(
+        metadata=SequenceMetadata(
+            name="F64 license truth",
+            description="query/error attribution",
+            required_categories=["channelEmulator"],
+            safe_during_test=False,
+        ),
+        run=_run,
+    )
+
+    @asynccontextmanager
+    async def _lease(_purpose: str, **kwargs):
+        seen.update(kwargs)
+        events.append("lease-enter")
+        yield
+        events.append("lease-exit")
+
+    monkeypatch.setattr(api.loader, "get_sequence", lambda _key: sequence)
+    monkeypatch.setattr(api, "build_diagnostic_context", lambda *_a, **_k: _Context())
+    monkeypatch.setattr(api, "get_hal_service", lambda: hal)
+    monkeypatch.setattr(api, "instrument_test_lease", _lease, raising=False)
+    monkeypatch.setattr(api, "has_active_case_run", lambda: None)
+    monkeypatch.setattr(api, "has_running_case_run_row", lambda _db: None)
+    monkeypatch.setattr(api, "try_acquire_unsafe_diagnostic", lambda _key: "token")
+    monkeypatch.setattr(api, "release_unsafe_diagnostic", lambda _token: None)
+
+    response = await api.run_diagnostic_sequence(
+        "propsim_f64_license_truth",
+        api.RunSequenceRequest(),
+        db=object(),
+    )
+
+    assert response.success is True
+    assert seen["control_f64"] is True
+    assert seen["enable_monitoring"] is False, (
+        "监控保持开启时，get_metrics() 可插入业务 query 与 SYSTem:ERRor? 之间，"
+        "把错误错归到本序列或提前排掉，原假绿仍可达"
+    )
+    assert events == [
+        "lease-enter",
+        "scpi-lock-enter",
+        "sequence-run",
+        "scpi-lock-exit",
+        "lease-exit",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("driver", "expected_summary", "mock_driver"),
+    [
+        (None, "未加载 channelEmulator 驱动", False),
+        (object(), "Mock 驱动不能形成现场许可证据", True),
+    ],
+)
+async def test_f64_license_truth_preserves_sequence_preflight_for_missing_or_mock_driver(
+    monkeypatch,
+    driver,
+    expected_summary,
+    mock_driver,
+):
+    """事务锁只约束真实 F64；缺驱动/Mock 的既有明确拒绝原因必须保留。"""
+    import app.api.diagnostic_sequence as api
+    from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult
+
+    events: list[str] = []
+    drivers = {} if driver is None else {"channelEmulator": driver}
+    hal = SimpleNamespace(drivers=drivers)
+
+    class _Context:
+        lab_profile_name = "unit-test"
+
+        def find_binding_by_category_key(self, key):
+            return object() if key == "channelEmulator" else None
+
+        def find_binding_by_role(self, _key):
+            return None
+
+        def record_run(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                id=UUID("00000000-0000-0000-0000-000000000081")
+            )
+
+    async def _run(_ctx, _hal, _params, *, log):
+        assert _hal is hal
+        events.append("sequence-run")
+        return SequenceRunResult(success=False, summary=expected_summary)
+
+    sequence = SimpleNamespace(
+        metadata=SequenceMetadata(
+            name="F64 license truth",
+            description="preflight refusal",
+            required_categories=["channelEmulator"],
+            safe_during_test=False,
+        ),
+        run=_run,
+    )
+
+    @asynccontextmanager
+    async def _lease(_purpose: str, **_kwargs):
+        yield
+
+    monkeypatch.setattr(api.loader, "get_sequence", lambda _key: sequence)
+    monkeypatch.setattr(api, "build_diagnostic_context", lambda *_a, **_k: _Context())
+    monkeypatch.setattr(api, "get_hal_service", lambda: hal)
+    monkeypatch.setattr(api, "instrument_test_lease", _lease, raising=False)
+    monkeypatch.setattr(
+        api,
+        "is_mock_driver",
+        lambda candidate: mock_driver and candidate is driver,
+        raising=False,
+    )
+    monkeypatch.setattr(api, "has_active_case_run", lambda: None)
+    monkeypatch.setattr(api, "has_running_case_run_row", lambda _db: None)
+    monkeypatch.setattr(api, "try_acquire_unsafe_diagnostic", lambda _key: "token")
+    monkeypatch.setattr(api, "release_unsafe_diagnostic", lambda _token: None)
+
+    response = await api.run_diagnostic_sequence(
+        "propsim_f64_license_truth",
+        api.RunSequenceRequest(),
+        db=object(),
+    )
+
+    assert response.success is False
+    assert response.summary == expected_summary
+    assert events == ["sequence-run"]
+
+
 class TestLeaseErrorReachesTheOperator:
     """内审 F7：租约取不到控制权时，端点必须回 409 + 那句中文原因。
 

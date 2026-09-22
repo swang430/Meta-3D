@@ -27,9 +27,21 @@ FORBIDDEN = {"SYSTem:CALibration:USER:LIST?", "OUTPut:INTERFerence:LIST?"}
 
 
 class _ScriptedCe:
-    def __init__(self, replies, *, err_queue=None, raise_for=(), installed_options=None):
+    def __init__(
+        self,
+        replies,
+        *,
+        err_queue=None,
+        query_errors=None,
+        raise_for=(),
+        installed_options=None,
+    ):
         self._replies = dict(replies)
         self._err_queue = list(err_queue or [])
+        self._query_errors = {
+            command: list(errors)
+            for command, errors in (query_errors or {}).items()
+        }
         self._raise_for = set(raise_for)
         self.queries = []
         if installed_options is not None:
@@ -48,6 +60,7 @@ class _ScriptedCe:
             return self._err_queue.pop(0) if self._err_queue else '0,"No error"'
         if cmd not in self._replies:
             raise AssertionError(f"序列发了脚本外的命令: {cmd!r}")
+        self._err_queue.extend(self._query_errors.get(cmd, []))
         return self._replies[cmd]
 
 
@@ -133,6 +146,10 @@ def test_all_replies_is_success_read_only_and_raw_archived():
     assert result.extra["calibration"]["current_query_sent"] is True
     assert result.extra["interference"]["sent"] is True
     assert result.extra["interference"]["sources"] == []
+    assert result.extra["license"]["verdict"] == "CONFIRMED"
+    assert result.extra["calibration"]["verdict"] == "CONFIRMED"
+    assert result.extra["user_alignment"]["verdict"] == "CONFIRMED"
+    assert result.extra["query_errors"] == {}
 
 
 def test_closed_state_does_not_send_interference_get():
@@ -151,7 +168,7 @@ def test_unreadable_state_does_not_send_interference_get():
     result = _run(ce)
     assert "OUTPut:INTERFerence:GET?" not in ce.queries
     assert result.extra["interference"]["sent"] is False
-    assert result.extra["verdict"] == "SUCCESS"
+    assert result.extra["verdict"] == "BLOCKER"
 
 
 def test_interference_sources_are_parsed_in_triples():
@@ -226,15 +243,90 @@ def test_driver_without_options_attribute_still_reports():
 
 # ── 错误队列结尾读取 ─────────────────────────────────────────────────────────
 
-def test_error_queue_read_at_end_until_clean_and_residue_blocks_green():
+def test_opening_residue_is_archived_without_contaminating_queries():
     ce = _ScriptedCe(_replies(), err_queue=['-100,"ATE command not supported"'],
                      installed_options=[])
     result = _run(ce)
     assert ce.queries[-1] == "SYSTem:ERRor?"
-    assert ce.queries.count("SYSTem:ERRor?") == 2
-    assert result.extra["residue_clean"] is False
-    assert result.extra["verdict"] == "UNDETERMINED"
+    assert result.extra["opening_residue"] == ['-100,"ATE command not supported"']
+    assert result.extra["residue_clean"] is True
+    assert result.extra["verdict"] == "SUCCESS"
+    assert result.success is True
+
+
+def test_empty_calibration_valid_with_attributed_error_is_unknown():
+    """现场反例：CLOSED 下 VALid? 空回复并产生 -200，不能显示绿色。"""
+    ce = _ScriptedCe(
+        _replies(
+            state="CLOSED",
+            **{"SYSTem:CALIBration:VALid?": ""},
+        ),
+        query_errors={
+            "SYSTem:CALIBration:VALid?": [
+                '-200,"Execution error;No simulation opened"',
+            ],
+        },
+        installed_options=["INT-GEN"],
+    )
+    result = _run(ce)
     assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["license"]["verdict"] == "CONFIRMED"
+    assert result.extra["calibration"]["verdict"] == "UNKNOWN"
+    assert result.extra["calibration"]["in_use"] is None
+    assert result.extra["query_errors"]["SYSTem:CALIBration:VALid?"] == [
+        '-200,"Execution error;No simulation opened"',
+    ]
+    assert result.extra["residue_clean"] is True
+    steps = {step.label: step for step in result.steps}
+    assert steps["SYSTem:CALIBration:VALid?"].success is False
+
+
+def test_empty_user_alignment_with_attributed_error_is_unknown_not_disabled():
+    """现场反例：空 USER:GET? 后有 -100 时，空串不能解释为未启用。"""
+    ce = _ScriptedCe(
+        _replies(),
+        query_errors={
+            "SYSTem:CALIBration:USER:GET?": [
+                '-100,"Command error;ATE command not supported"',
+            ],
+        },
+        installed_options=["INT-GEN"],
+    )
+    result = _run(ce)
+    assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["license"]["verdict"] == "CONFIRMED"
+    assert result.extra["calibration"]["verdict"] == "CONFIRMED"
+    assert result.extra["user_alignment"]["verdict"] == "UNKNOWN"
+    assert result.extra["user_alignment"]["enabled"] is None
+    assert result.extra["user_alignment"]["name"] is None
+    assert "SYSTem:CALIBration:USER:INFO?" not in ce.queries
+    assert result.extra["query_errors"]["SYSTem:CALIBration:USER:GET?"] == [
+        '-100,"Command error;ATE command not supported"',
+    ]
+
+
+def test_empty_user_alignment_with_clean_queue_is_confirmed_disabled():
+    ce = _ScriptedCe(_replies(), installed_options=[])
+    result = _run(ce)
+    assert result.extra["user_alignment"]["verdict"] == "CONFIRMED"
+    assert result.extra["user_alignment"]["enabled"] is False
+    assert result.extra["user_alignment"]["name"] is None
+    assert result.extra["query_errors"] == {}
+
+
+def test_post_query_error_queue_unreadable_blocks_attribution():
+    ce = _ScriptedCe(
+        _replies(),
+        query_errors={"SYSTem:CALIBration:VALid?": ["not-an-error-tuple"]},
+        installed_options=[],
+    )
+    result = _run(ce)
+    assert result.success is False
+    assert result.extra["verdict"] == "BLOCKER"
+    assert result.extra["calibration"]["verdict"] == "UNKNOWN"
+    assert result.extra["error_queue_failures"] == ["SYSTem:CALIBration:VALid?"]
 
 
 def test_identity_mismatch_aborts_before_license_queries():
@@ -255,6 +347,7 @@ def test_user_info_only_sent_when_user_alignment_enabled():
     result = _run(ce)
     assert "SYSTem:CALIBration:USER:INFO?" in ce.queries
     assert result.extra["user_alignment"] == {
+        "verdict": "CONFIRMED",
         "enabled": True, "name": "MyAlign", "info": "FI1234567, 29.01.2024",
         "info_query_sent": True,
     }
@@ -277,6 +370,22 @@ def test_calibration_get_not_sent_when_valid_unparseable():
     assert "SYSTem:CALIBration:GET?" not in ce.queries
     assert result.extra["calibration"]["in_use"] is None
     assert result.extra["calibration"]["current_query_sent"] is False
+    assert result.extra["calibration"]["verdict"] == "UNKNOWN"
+    assert result.extra["verdict"] == "BLOCKER"
+
+
+def test_calibration_valid_rejects_trailing_fields():
+    """§20.4.2.13 只有两个 0/1；尾随字段不能被截断后洗成 CONFIRMED。"""
+    ce = _ScriptedCe(
+        _replies(**{"SYSTem:CALIBration:VALid?": "1,1,unexpected"}),
+        installed_options=[],
+    )
+    result = _run(ce)
+    assert "SYSTem:CALIBration:GET?" not in ce.queries
+    assert result.extra["calibration"]["in_use"] is None
+    assert result.extra["calibration"]["valid"] is None
+    assert result.extra["calibration"]["verdict"] == "UNKNOWN"
+    assert result.extra["verdict"] == "BLOCKER"
 
 
 # ── F3：错误 payload 当响应串回来时不能被解析成"值"────────────────────────────
@@ -292,8 +401,9 @@ def test_error_payload_reply_is_not_a_value_and_blocks():
         "SYSTem:CALIBration:LIST?": _ERR_PAYLOAD,
     }), installed_options=[])
     result = _run(ce)
-    assert result.extra["user_alignment"]["enabled"] is False
+    assert result.extra["user_alignment"]["enabled"] is None
     assert result.extra["user_alignment"]["name"] is None
+    assert result.extra["user_alignment"]["verdict"] == "UNKNOWN"
     assert result.extra["calibration"]["list"] == []
     # USER:GET? 回错误 payload → 不是"启用" → INFO? 不发
     assert "SYSTem:CALIBration:USER:INFO?" not in ce.queries
