@@ -15,7 +15,9 @@ Supports vendors like R&S, Keysight, Spirent, etc.
 
 import asyncio
 import logging
+import math
 import random
+from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, Dict, Any, List, Optional
 from datetime import datetime
@@ -39,6 +41,93 @@ logger = logging.getLogger(__name__)
 
 F64_GO_COMMAND = "DIAG:SIMU:GO"
 F64_STATE_QUERY = "DIAG:SIMU:STATE?"
+
+
+@dataclass(frozen=True)
+class CenterFrequencyRange:
+    """厂商无关的中心频率允许闭区间，单位 MHz。"""
+
+    lower_mhz: float
+    upper_mhz: float
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            for value in (self.lower_mhz, self.upper_mhz)
+        ):
+            raise ValueError("center frequency range bounds must be finite numbers")
+        if self.lower_mhz > self.upper_mhz:
+            raise ValueError("center frequency range lower bound exceeds upper bound")
+
+    def contains(self, frequency_mhz: float) -> bool:
+        return self.lower_mhz <= frequency_mhz <= self.upper_mhz
+
+
+@dataclass(frozen=True)
+class CenterFrequencyGroupApplication:
+    """一次有界调频中，一个真实通道组的允许域与最终回读。"""
+
+    group_number: int
+    representative_channel: int
+    allowed_ranges: tuple[CenterFrequencyRange, ...]
+    applied_mhz: float | None
+
+    def __post_init__(self) -> None:
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 1
+            for value in (self.group_number, self.representative_channel)
+        ):
+            raise ValueError(
+                "center frequency group/channel identifiers must be positive integers"
+            )
+        if not self.allowed_ranges:
+            raise ValueError("center frequency group must carry at least one allowed range")
+        if self.applied_mhz is not None and (
+            isinstance(self.applied_mhz, bool)
+            or not isinstance(self.applied_mhz, (int, float))
+            or not math.isfinite(float(self.applied_mhz))
+        ):
+            raise ValueError("applied center frequency must be finite when present")
+
+
+@dataclass(frozen=True)
+class CenterFrequencyApplicationEvidence:
+    """有界调频的不可变结果；只有逐组精确回读一致才 ``confirmed``。"""
+
+    requested_mhz: float
+    groups: tuple[CenterFrequencyGroupApplication, ...]
+    confirmed: bool
+    reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.requested_mhz, bool)
+            or not isinstance(self.requested_mhz, (int, float))
+            or not math.isfinite(float(self.requested_mhz))
+        ):
+            raise ValueError("requested center frequency must be finite")
+        if not isinstance(self.confirmed, bool):
+            raise TypeError("center frequency evidence confirmed must be bool")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("center frequency evidence reason must be non-empty")
+        group_numbers = tuple(item.group_number for item in self.groups)
+        representatives = tuple(item.representative_channel for item in self.groups)
+        if len(set(group_numbers)) != len(group_numbers):
+            raise ValueError("center frequency evidence group numbers must be unique")
+        if len(set(representatives)) != len(representatives):
+            raise ValueError("center frequency representative channels must be unique")
+        proven = bool(self.groups) and all(
+            any(item_range.contains(self.requested_mhz) for item_range in item.allowed_ranges)
+            and item.applied_mhz == self.requested_mhz
+            for item in self.groups
+        )
+        if self.confirmed != proven:
+            raise ValueError(
+                "confirmed center frequency evidence must match every group's ranges/readback"
+            )
 
 
 # ===========================================================================
@@ -341,6 +430,21 @@ class ChannelEmulatorDriver(InstrumentDriver):
 
     def get_center_frequency_mhz(self) -> Optional[float]:
         raise NotImplementedError
+
+    async def set_center_frequency_bounded(
+        self,
+        frequency_mhz: float,
+    ) -> CenterFrequencyApplicationEvidence:
+        """按 adapter 的权威范围预检并逐组回读；未实现的驱动显式拒绝。"""
+
+        raise NotImplementedError
+
+    def get_center_frequency_application_evidence(
+        self,
+    ) -> CenterFrequencyApplicationEvidence | None:
+        """只读最近一次本进程有界调频证据，不执行 I/O。"""
+
+        return None
 
     async def set_output_gain(self, output_num: int, gain_db: float) -> bool:
         raise NotImplementedError

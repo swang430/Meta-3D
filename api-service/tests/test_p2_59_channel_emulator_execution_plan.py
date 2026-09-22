@@ -30,6 +30,7 @@ from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.channel_emulator_execution_plan import (
     CHANNEL_EMULATOR_PHASE_ORDER,
     CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS,
+    CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS,
     ENGINE_MODE_TO_REQUESTED_LOAD_MODE,
     ChannelEmulatorExecutionPlan,
     ChannelEmulatorExecutionPlanItem,
@@ -38,6 +39,7 @@ from app.hal.channel_emulator_execution_plan import (
     resolve_channel_emulator_execution_plan,
 )
 from app.hal.channel_emulator_manifest import (
+    CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS,
     CHANNEL_EMULATOR_OPERATIONS,
     ChannelEmulatorManifest,
 )
@@ -225,10 +227,10 @@ def _legacy_v1_binding():
 # ----------------------------------------------------------------------
 
 
-def test_new_plan_is_v2_and_legacy_v1_keeps_its_original_digest_and_shape():
+def test_new_plan_is_v3_and_legacy_versions_keep_their_original_shape():
     current = _plan()
-    assert current.schema_version == 2
-    assert len(current.operations) == len(CHANNEL_EMULATOR_OPERATIONS) == 26
+    assert current.schema_version == 3
+    assert len(current.operations) == len(CHANNEL_EMULATOR_OPERATIONS) == 27
 
     frozen = _legacy_v1_frozen()
     parsed = plan_from_frozen_payload(frozen)
@@ -241,8 +243,17 @@ def test_new_plan_is_v2_and_legacy_v1_keeps_its_original_digest_and_shape():
         **{key: value for key, value in F64_MANIFEST.model_dump(mode="json").items()
            if key != "asset_sources"},
         "schema_version": 2,
+        "operations": [
+            item.model_dump(mode="json")
+            for item in F64_MANIFEST.operations
+            if item.operation in CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+        ],
     })
-    assert _plan(v2_manifest).schema_version == 2
+    historical_plan = _plan(v2_manifest)
+    assert historical_plan.schema_version == 2
+    assert tuple(item.operation for item in historical_plan.operations) == (
+        CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS
+    )
     assert validate_frozen_channel_emulator_execution_plan(frozen) == frozen
 
 
@@ -534,6 +545,10 @@ def test_asset_source_is_checked_separately_from_load_mode_before_freeze_and_on_
     legacy_live_payload = F64_MANIFEST.model_dump(mode="json")
     legacy_live_payload["schema_version"] = 2
     legacy_live_payload.pop("asset_sources")
+    legacy_live_payload["operations"] = [
+        item for item in legacy_live_payload["operations"]
+        if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+    ]
     with pytest.raises(ValueError, match="v3"):
         freeze_channel_emulator_execution_plan(
             db,
@@ -576,7 +591,7 @@ def test_asset_source_is_checked_separately_from_load_mode_before_freeze_and_on_
     assert CE_PLAN_FREEZE_CONFIG_KEY not in execution.config
 
     frozen = freeze_channel_emulator_execution_plan(db, _hal(_f64()), execution)
-    assert frozen["schema_version"] == 2
+    assert frozen["schema_version"] == 3
     with pytest.raises(ValueError, match="custom_static"):
         freeze_channel_emulator_execution_plan(
             db,

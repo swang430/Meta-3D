@@ -65,6 +65,11 @@ class ResolvedChannelAsset:
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
     rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
     scd_freq_identity: Any = None  # vendor_file/rt_dynamic 声明频率 → 频率一致性网 (Codex #174 复查 P2)
+    # P2-77: vendor .smu 的声明频率是工程默认值；是否能在本次执行改到 TestCase
+    # 频率只能由冻结 execution plan + 仪器逐组应用证据裁决。保留
+    # ``scd_freq_identity`` 是为了让旧 plan 继续按固定身份 fail-closed。
+    project_default_frequency_identity: Any = None
+    declared_bandwidth_mhz: Optional[float] = None
     ue_velocity_mps: Any = None  # rt_dynamic 顶层速度 → B2 sim_rules 多普勒上下文 (Codex 9d4e758 P2)
     scenario: Optional[str] = None  # vendor_file scd_config 的显式场景真值
 
@@ -141,6 +146,8 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
             cdl_model_name=scd.get("model"),
             emulation_file=asset.associated_file_path,
             scd_freq_identity=freq_id,
+            project_default_frequency_identity=freq_id,
+            declared_bandwidth_mhz=float(freq_id.bandwidth_mhz),
             scenario=scd.get("scenario"),
         )
     # rt_dynamic: 透传单快照 rays 到 B2 (对称 custom clusters 透传; 多快照轨迹/ACP 装配是 S3)。

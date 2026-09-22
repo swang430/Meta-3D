@@ -85,6 +85,7 @@ from app.hal.base_station_manifest import BaseStationAdapterManifest
 from app.hal.base_station_mac_profile import FrozenMacTestProfile
 from app.hal.scpi_evidence import capture_scpi_exchanges
 from app.hal.channel_emulator_execution_plan import ChannelEmulatorExecutionPlan
+from app.hal.channel_emulator import CenterFrequencyApplicationEvidence
 from app.services.channel_emulator_execution_session import (
     ensure_channel_emulator_safe_idle,
     require_channel_emulator_passthrough_clear,
@@ -111,6 +112,123 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查（adapter-native 统计窗口自身负责确认窗口边界与链路状态）；
 # azimuth 间隔检查能在转台移动期间发现掉线。
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+@dataclass(frozen=True)
+class _RuntimeBoundedVendorFrequency:
+    """P2-77 execution decision for one vendor project frequency.
+
+    ``runtime_bounded=False`` deliberately means the historical fixed-asset
+    contract remains in force.  A v1/v2 plan can therefore never acquire the
+    new meaning merely because the live driver was upgraded.
+    """
+
+    runtime_bounded: bool
+    declared_bandwidth_mhz: float | None
+    project_default_description: str | None
+    application_payload: Dict[str, Any] | None
+    failure_reason: str | None
+
+
+def _center_frequency_application_payload(
+    evidence: CenterFrequencyApplicationEvidence,
+) -> Dict[str, Any]:
+    return {
+        "requested_mhz": float(evidence.requested_mhz),
+        "confirmed": evidence.confirmed,
+        "reason": evidence.reason,
+        "groups": [
+            {
+                "group_number": item.group_number,
+                "representative_channel": item.representative_channel,
+                "allowed_ranges_mhz": [
+                    [float(allowed.lower_mhz), float(allowed.upper_mhz)]
+                    for allowed in item.allowed_ranges
+                ],
+                "applied_mhz": (
+                    float(item.applied_mhz)
+                    if item.applied_mhz is not None
+                    else None
+                ),
+            }
+            for item in evidence.groups
+        ],
+    }
+
+
+def _resolve_runtime_bounded_vendor_frequency(
+    *,
+    resolved_asset: Any,
+    plan: ChannelEmulatorExecutionPlan,
+    emulator: Any,
+    requested_mhz: float,
+) -> _RuntimeBoundedVendorFrequency:
+    """Interpret a vendor-file frequency only from the frozen plan + receipt."""
+
+    asset = getattr(resolved_asset, "asset", None)
+    if getattr(asset, "source_type", None) != "vendor_file":
+        return _RuntimeBoundedVendorFrequency(False, None, None, None, None)
+    project_default = getattr(
+        resolved_asset, "project_default_frequency_identity", None
+    )
+    project_description = (
+        project_default.describe() if project_default is not None else None
+    )
+    declared_bandwidth = getattr(resolved_asset, "declared_bandwidth_mhz", None)
+    # Only plan v3 contains this operation in its frozen vocabulary.  Do not
+    # call ``planned`` on historical plans because that must fail loudly when
+    # asked about a future operation.
+    if plan.schema_version < 3 or not plan.planned("set_center_frequency_bounded"):
+        return _RuntimeBoundedVendorFrequency(
+            False,
+            float(declared_bandwidth) if declared_bandwidth is not None else None,
+            project_description,
+            None,
+            None,
+        )
+    getter = getattr(emulator, "get_center_frequency_application_evidence", None)
+    evidence = getter() if callable(getter) else None
+    if not isinstance(evidence, CenterFrequencyApplicationEvidence):
+        return _RuntimeBoundedVendorFrequency(
+            True,
+            float(declared_bandwidth) if declared_bandwidth is not None else None,
+            project_description,
+            None,
+            "missing bounded center-frequency application evidence",
+        )
+    payload = _center_frequency_application_payload(evidence)
+    if float(evidence.requested_mhz) != float(requested_mhz):
+        return _RuntimeBoundedVendorFrequency(
+            True,
+            float(declared_bandwidth) if declared_bandwidth is not None else None,
+            project_description,
+            payload,
+            "requested center frequency does not match the TestCase PCell",
+        )
+    if evidence.confirmed is not True:
+        return _RuntimeBoundedVendorFrequency(
+            True,
+            float(declared_bandwidth) if declared_bandwidth is not None else None,
+            project_description,
+            payload,
+            "unconfirmed bounded center-frequency application evidence: "
+            + evidence.reason,
+        )
+    if declared_bandwidth is None:
+        return _RuntimeBoundedVendorFrequency(
+            True,
+            None,
+            project_description,
+            payload,
+            "vendor project has no declared bandwidth for frequency verification",
+        )
+    return _RuntimeBoundedVendorFrequency(
+        True,
+        float(declared_bandwidth),
+        project_description,
+        payload,
+        None,
+    )
 
 
 async def _invoke_channel_emulator_operation(
@@ -2304,6 +2422,39 @@ class MeasureExecutor(IStepExecutor):
                     error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
                 )
 
+            runtime_vendor_frequency = _resolve_runtime_bounded_vendor_frequency(
+                resolved_asset=resolved_asset,
+                plan=ce_plan,
+                emulator=emulator,
+                requested_mhz=pcell.frequency_hz / 1e6,
+            )
+            if runtime_vendor_frequency.failure_reason is not None:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "ChannelAsset 运行时有界中心频率未获权威确认: "
+                        + runtime_vendor_frequency.failure_reason
+                    ),
+                    measurements={
+                        "frequency_consistency": {
+                            "consistent": False,
+                            "fully_verified": False,
+                            "project_default_frequency": (
+                                runtime_vendor_frequency.project_default_description
+                            ),
+                            "project_default_role": "audit_only",
+                            "bounded_center_frequency_application": (
+                                runtime_vendor_frequency.application_payload
+                            ),
+                        }
+                    },
+                )
+            if runtime_vendor_frequency.runtime_bounded:
+                # The project frequency remains auditable, but is no longer an
+                # exclusive peer after the frozen capability and per-group
+                # readback prove this execution's requested frequency.
+                scd_freq_identity = None
+
             # --- P2-11 Phase 1: 多方频率一致性 fail-loud 校验 ---
             # BaseStation + F64 (信道加载后) 都已配置; 把各
             # 仪表归一到 (中心 ARFCN, 带宽) 跟 TestCase 精确比对。不一致 = 静默错配
@@ -2311,13 +2462,16 @@ class MeasureExecutor(IStepExecutor):
             # 下发 band fallback 基线值 ≠ 标称), strict 模式 FAIL。频率错了下面
             # input level / RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
             from app.services.mimo_ota.frequency_consistency import (
+                CenterFrequencyBandwidthObservation,
                 CenterFrequencyObservation,
                 as_channel_frequency_identity,
                 check_frequency_consistency,
             )
             # 资产声明频率统一兜底喂一致性网 (Codex 0ea6cca P2: standard_3gpp 走 ASC 路, GCM/B2
             # 分支没设 scd_freq_identity; 补 standard 资产声明载频; GCM/B2 已设则 is None 跳过)
-            if (resolved_asset is not None and resolved_asset.scd_freq_identity is not None
+            if (not runtime_vendor_frequency.runtime_bounded
+                    and resolved_asset is not None
+                    and resolved_asset.scd_freq_identity is not None
                     and scd_freq_identity is None):
                 scd_freq_identity = resolved_asset.scd_freq_identity
             # 开关 1 inherit: BaseStation identity 换源 — 下发记录必 None (没下发过),
@@ -2373,11 +2527,30 @@ class MeasureExecutor(IStepExecutor):
                 else None
             )
             declared_f64_bandwidth_mhz = (
-                float(scd_freq_identity.bandwidth_mhz)
-                if scd_freq_identity is not None
-                else None
+                runtime_vendor_frequency.declared_bandwidth_mhz
+                if runtime_vendor_frequency.runtime_bounded
+                else (
+                    float(scd_freq_identity.bandwidth_mhz)
+                    if scd_freq_identity is not None
+                    else None
+                )
             )
-            if f64_center_mhz is not None and scd_freq_identity is not None:
+            if (
+                f64_center_mhz is not None
+                and runtime_vendor_frequency.runtime_bounded
+                and declared_f64_bandwidth_mhz is not None
+            ):
+                f64_identity = CenterFrequencyBandwidthObservation(
+                    center_frequency_hz=int(
+                        round(float(f64_center_mhz) * 1_000_000)
+                    ),
+                    bandwidth_mhz=declared_f64_bandwidth_mhz,
+                    source=(
+                        "bounded application readback + frozen vendor project bandwidth"
+                    ),
+                )
+                f64_bandwidth_source = "frozen_vendor_project_declared"
+            elif f64_center_mhz is not None and scd_freq_identity is not None:
                 declared_identity = as_channel_frequency_identity(scd_freq_identity)
                 live_center_hz = int(round(float(f64_center_mhz) * 1_000_000))
                 f64_identity = (
@@ -2437,7 +2610,10 @@ class MeasureExecutor(IStepExecutor):
                 )
             f64_frequency_fully_verified = (
                 f64_center_mhz is not None
-                and f64_bandwidth_source == "channel_asset_or_scd_declared"
+                and f64_bandwidth_source in {
+                    "channel_asset_or_scd_declared",
+                    "frozen_vendor_project_declared",
+                }
             )
             if not f64_frequency_fully_verified:
                 frequency_consistency_payload["fully_verified"] = False
@@ -2448,7 +2624,9 @@ class MeasureExecutor(IStepExecutor):
                     _unverified.append(ce_frequency_label)
                 frequency_consistency_payload["unverified"] = _unverified
             frequency_consistency_payload["channel_emulator_evidence"] = {
-                "schema_version": 2,
+                "schema_version": (
+                    3 if runtime_vendor_frequency.runtime_bounded else 2
+                ),
                 "adapter_id": ce_plan.adapter_id,
                 "instrument_id": str(emulator.instrument_id),
                 "measurement_attempt_id": base_station_attempt.attempt_id,
@@ -2456,6 +2634,28 @@ class MeasureExecutor(IStepExecutor):
                 "bandwidth_source": f64_bandwidth_source,
                 "fully_verified": f64_frequency_fully_verified,
             }
+            if runtime_vendor_frequency.runtime_bounded:
+                frequency_consistency_payload.update(
+                    {
+                        "project_default_frequency": (
+                            runtime_vendor_frequency.project_default_description
+                        ),
+                        "project_default_role": "audit_only",
+                        "bounded_center_frequency_application": (
+                            runtime_vendor_frequency.application_payload
+                        ),
+                    }
+                )
+                frequency_consistency_payload["channel_emulator_evidence"].update(
+                    {
+                        "project_default_frequency": (
+                            runtime_vendor_frequency.project_default_description
+                        ),
+                        "bounded_center_frequency_application": (
+                            runtime_vendor_frequency.application_payload
+                        ),
+                    }
+                )
             if not freq_result.consistent:
                 if config.precheck_strict_frequency:
                     return StepExecutionResult(

@@ -84,6 +84,8 @@ class TestResolver:
         # scd_config 声明频率喂一致性网 (Codex #174 复查 P2: 防选错频率 .smu)
         assert r.scd_freq_identity is not None
         assert r.scd_freq_identity.center_arfcn == 640000
+        assert r.project_default_frequency_identity == r.scd_freq_identity
+        assert r.declared_bandwidth_mhz == 100.0
         assert r.cdl_model_name == "CDLC"
         assert r.scenario == "UMa"
 
@@ -99,6 +101,8 @@ class TestResolver:
         resolved = resolve_channel_asset(db, _cfg(channel_asset_id=str(asset.id)))
 
         identity = resolved.scd_freq_identity
+        assert resolved.project_default_frequency_identity == identity
+        assert resolved.declared_bandwidth_mhz == 20.0
         assert identity.radio_technology == "lte"
         assert identity.channel_kind == "lte_dl_earfcn"
         assert identity.lte_dl_earfcn == 1575

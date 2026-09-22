@@ -179,7 +179,7 @@ export function ChannelWorkbench() {
                 <Table.Th>来源</Table.Th>
                 <Table.Th>规范名</Table.Th>
                 <Table.Th>注入路径</Table.Th>
-                <Table.Th>中心频率</Table.Th>
+                <Table.Th>中心频率 / 工程默认</Table.Th>
                 <Table.Th>状态</Table.Th>
                 <Table.Th ta="right">操作</Table.Th>
               </Table.Tr>
@@ -204,7 +204,7 @@ export function ChannelWorkbench() {
                   <Table.Td>
                     <Text size="sm">
                       {a.center_frequency_hz != null
-                        ? `${(a.center_frequency_hz / 1e6).toFixed(3)} MHz`
+                        ? `${a.source_type === 'vendor_file' ? '工程默认 ' : ''}${(a.center_frequency_hz / 1e6).toFixed(3)} MHz`
                         : '—'}
                     </Text>
                   </Table.Td>
@@ -318,7 +318,7 @@ function AssetDetail({ asset }: { asset: ChannelAsset }) {
     ['规范名 canonical_name', asset.canonical_name ?? '—'],
     ['派生自 derived_from', asset.derived_from ?? '—'],
     ['注入路径 allowed_targets', asset.allowed_targets.map((t) => TARGET_LABEL[t] ?? t).join(' / ')],
-    ['中心频率', asset.center_frequency_hz != null ? `${(asset.center_frequency_hz / 1e6).toFixed(3)} MHz` : '—'],
+    [asset.source_type === 'vendor_file' ? '工程默认中心频率' : '中心频率', asset.center_frequency_hz != null ? `${(asset.center_frequency_hz / 1e6).toFixed(3)} MHz` : '—'],
     ['带宽', asset.bandwidth_mhz != null ? `${asset.bandwidth_mhz} MHz` : '—'],
     ['LOS', asset.is_los == null ? '未声明' : asset.is_los ? '是' : '否'],
     ['K 因子', asset.k_factor_db != null ? `${asset.k_factor_db} dB` : '—'],

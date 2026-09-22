@@ -35,6 +35,7 @@ def _make_driver(syst_err_responses):
     drv._channel_count = 2
     visa = MagicMock()
     queue = list(syst_err_responses)
+    programmed: dict[int, str] = {}
 
     def _router(cmd):
         if cmd == "*OPC?":
@@ -45,8 +46,11 @@ def _make_driver(syst_err_responses):
         # 继续; CENT:CH? 回读真频; F64R-2 起再回读拓扑 (下面的 MODEL:INFO? + GROUP:*)。
         if cmd == "DIAG:SIMU:STATE?":
             return "CLOSED"
+        if cmd.startswith("CALC:FILT:CENT:LIM?"):
+            return "350,6000"
         if cmd.startswith("CALC:FILT:CENT:CH?"):
-            return ""  # 回读真频不可用 → 非致命, 加载仍成功
+            channel = int(cmd.rsplit(" ", 1)[1])
+            return programmed.get(channel, "")
         # F64R-2: 加载成功后回读真实拓扑 —— 2 输入 × 2 输出 = 4 逻辑通道。
         # 分组按手册 §20.4.6.1「同输入**或**同输出即同组」(有传递性): 这里造**互不重叠**
         # 的 2 组 —— 组 1 = 输入 1 × 输出 1, 组 2 = 输入 2 × 输出 2。
@@ -74,6 +78,10 @@ def _make_driver(syst_err_responses):
 
     async def _async_write(cmd, timeout=None):
         visa.write(cmd)
+        if cmd.startswith("CALC:FILT:CENT:CH "):
+            channel_and_frequency = cmd.rsplit(" ", 1)[1]
+            channel, frequency = channel_and_frequency.split(",", 1)
+            programmed[int(channel)] = frequency
 
     async def _async_query(cmd, timeout=None, **_kw):
         return visa.query(cmd)

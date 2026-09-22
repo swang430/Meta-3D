@@ -55,6 +55,9 @@ from app.hal.base import (
 )
 from app.hal.channel_emulator import (
     CalibrationToneCapability,
+    CenterFrequencyApplicationEvidence,
+    CenterFrequencyGroupApplication,
+    CenterFrequencyRange,
     ChannelEmulatorDriver,
     ChannelLoadMode,
     F64_GO_COMMAND,
@@ -381,7 +384,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     #: 它替换掉了散落在服务层/API 的 `hasattr(emulator, ...)` 探测：
     #: 基类补齐 14 个 NotImplementedError 桩之后，`hasattr` 对每个驱动恒为真。
     adapter_manifest: ClassVar[ChannelEmulatorManifest] = ChannelEmulatorManifest(
-        schema_version=3,
+        schema_version=4,
         adapter_id='propsim_f64',
         model_name='PROPSIM F64',
         vendor='Keysight',
@@ -533,6 +536,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 operation='get_system_status', support='implemented',
                 reason='读取系统 warning/alarm 状态',
                 source_reference='app/hal/propsim_f64.py::get_system_status（既有驱动源码）',
+            ),
+            ChannelEmulatorOperationCapability(
+                operation='set_center_frequency_bounded', support='implemented',
+                reason='逐通道组预检允许区间、设置后逐组回读，任何未知或漂移均拒绝',
+                source_reference=(
+                    'PROPSIM User Reference Rev 10.2 '
+                    '§20.4.6.1, §20.4.6.2, §20.4.6.8 (pp. 280-282)'
+                ),
             ),
         ),
     )
@@ -709,6 +720,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # (get_frequency_identity 优先于文件名, 治 "3600M.smu 实为 3550")。None = 尚未
         # 加载 / 回读失败。
         self._readback_center_freq_mhz: Optional[float] = None
+        self._last_center_frequency_application_evidence: Optional[
+            CenterFrequencyApplicationEvidence
+        ] = None
 
         # ── F64R-2 (2026-07-24): 加载后从仿真回读的**真实拓扑** ──
         # 治 review 母题②「端口靠 tx×rx 猜」。手册 §20.4.3.6 `MODEL:INFO?` 返回
@@ -1140,6 +1154,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._loaded_emulation_file = None
         self._center_freq_programmed = False
         self._readback_center_freq_mhz = None
+        self._last_center_frequency_application_evidence = None
         self._active_pipeline = None
         # 信道模型 / 场景名同属"由已加载文件决定" (写于 set_channel_model, 读于
         # get_channel_state)。漏清的后果跟 loaded_file 漏清一模一样: 仿真被前面板
@@ -2890,6 +2905,202 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         from app.hal.channel_emulator import normalize_channel_model_entries
         return normalize_channel_model_entries(self._available_channel_models)
 
+    @staticmethod
+    def parse_center_frequency_limits(raw: str) -> tuple[CenterFrequencyRange, ...]:
+        """解析 F64 按通道组返回的中心频率允许区间。
+
+        PROPSIM User Reference Rev 10.2 §20.4.6.8 (pp. 282):
+        ``CALCulate:FILTer:CENTer:LIMits? <channel>`` 返回 MHz 闭区间；
+        多个不连续区间以 ``;`` 分隔，每段为 ``<lower>,<higher>``。
+        空值、非有限值、反向区间或尾随分隔符都不猜，直接拒绝。
+        """
+
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("center frequency limits response is empty")
+        segments = raw.strip().split(";")
+        parsed: list[CenterFrequencyRange] = []
+        for segment in segments:
+            tokens = [token.strip() for token in segment.split(",")]
+            if len(tokens) != 2 or not all(tokens):
+                raise ValueError(
+                    f"malformed center frequency limits segment: {segment!r}"
+                )
+            try:
+                lower_mhz, upper_mhz = (float(token) for token in tokens)
+            except ValueError as exc:
+                raise ValueError(
+                    f"non-numeric center frequency limits segment: {segment!r}"
+                ) from exc
+            parsed.append(CenterFrequencyRange(lower_mhz, upper_mhz))
+        return tuple(parsed)
+
+    def get_center_frequency_application_evidence(
+        self,
+    ) -> CenterFrequencyApplicationEvidence | None:
+        """只读最近一次有界调频结果，不查询仪器。"""
+
+        return self._last_center_frequency_application_evidence
+
+    async def set_center_frequency_bounded(
+        self,
+        frequency_mhz: float,
+    ) -> CenterFrequencyApplicationEvidence:
+        """预检每个真实组的范围，整批写入后逐组回读确认。
+
+        手册依据：PROPSIM User Reference Rev 10.2 §20.4.6.1/.2/.8
+        (pp. 280-282)。§20.4.6.8 明确说明越界请求会被仪器自动钳位到
+        最近的可接受值，所以“写命令无错误”不能证明请求频率已生效；只有所有
+        通道组的 ``CENTer:CH?`` 回读与请求精确一致才更新本地真值缓存。
+        """
+
+        try:
+            requested_mhz = float(frequency_mhz)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("center frequency request must be numeric") from exc
+        if isinstance(frequency_mhz, bool) or not math.isfinite(requested_mhz):
+            raise ValueError("center frequency request must be finite")
+
+        def finish(
+            *,
+            groups: list[CenterFrequencyGroupApplication],
+            confirmed: bool,
+            reason: str,
+        ) -> CenterFrequencyApplicationEvidence:
+            evidence = CenterFrequencyApplicationEvidence(
+                requested_mhz=requested_mhz,
+                groups=tuple(groups),
+                confirmed=confirmed,
+                reason=reason,
+            )
+            self._last_center_frequency_application_evidence = evidence
+            if not confirmed:
+                self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None
+                self._last_error = reason
+            return evidence
+
+        if self._visa_resource is None:
+            return finish(groups=[], confirmed=False, reason="F64 未连接，无法有界调频")
+
+        groups: list[CenterFrequencyGroupApplication] = []
+        async with self._scpi_lock:
+            # 拓扑快照必须和后续查询/写入位于同一个锁域。若并发 load 在我们
+            # 等锁时换了工程，锁外快照会把旧工程的代表通道写到新工程。
+            representatives = tuple(self._group_repr_channels or ())
+            if not representatives:
+                return finish(
+                    groups=[],
+                    confirmed=False,
+                    reason=(
+                        "F64 信道组信息未知，无法按真实组预检中心频率；"
+                        f"{_TOPOLOGY_ESCAPE_HINT}"
+                    ),
+                )
+            # 必须先完成全部组的只读预检，再发第一条 CENT 写命令。
+            for group_number, channel in enumerate(representatives, start=1):
+                try:
+                    raw_limits = await self._query(
+                        f"CALC:FILT:CENT:LIM? {channel}"
+                    )
+                    ranges = self.parse_center_frequency_limits(raw_limits)
+                except Exception as exc:  # noqa: BLE001 - 统一转受控 fail-closed 证据
+                    return finish(
+                        groups=groups,
+                        confirmed=False,
+                        reason=(
+                            f"F64 通道组 {group_number}（代表通道 {channel}）"
+                            f"中心频率允许区间不可用: {exc}"
+                        ),
+                    )
+                groups.append(
+                    CenterFrequencyGroupApplication(
+                        group_number=group_number,
+                        representative_channel=channel,
+                        allowed_ranges=ranges,
+                        applied_mhz=None,
+                    )
+                )
+
+            for item in groups:
+                if not any(
+                    allowed.contains(requested_mhz)
+                    for allowed in item.allowed_ranges
+                ):
+                    return finish(
+                        groups=groups,
+                        confirmed=False,
+                        reason=(
+                            f"请求中心频率 {requested_mhz} MHz 超出 F64 通道组 "
+                            f"{item.group_number}（代表通道 "
+                            f"{item.representative_channel}）允许区间"
+                        ),
+                    )
+
+            write_ok = await self._gated_write_transaction(
+                "set_center_frequency_bounded",
+                [
+                    f"CALC:FILT:CENT:CH {item.representative_channel},{requested_mhz}"
+                    for item in groups
+                ],
+            )
+            if not write_ok:
+                return finish(
+                    groups=groups,
+                    confirmed=False,
+                    reason=self._last_error or "F64 中心频率写入被拒",
+                )
+
+            readback_groups: list[CenterFrequencyGroupApplication] = []
+            for item in groups:
+                try:
+                    raw_readback = (
+                        await self._query(
+                            f"CALC:FILT:CENT:CH? {item.representative_channel}"
+                        )
+                    ).strip()
+                    if not raw_readback or "," in raw_readback or ";" in raw_readback:
+                        raise ValueError(f"unexpected scalar response {raw_readback!r}")
+                    applied_mhz = float(raw_readback)
+                    if not math.isfinite(applied_mhz):
+                        raise ValueError("non-finite readback")
+                except Exception as exc:  # noqa: BLE001 - 统一转受控 fail-closed 证据
+                    readback_groups.append(item)
+                    return finish(
+                        groups=readback_groups + groups[len(readback_groups):],
+                        confirmed=False,
+                        reason=(
+                            f"F64 通道组 {item.group_number}（代表通道 "
+                            f"{item.representative_channel}）中心频率回读不可用: {exc}"
+                        ),
+                    )
+                applied = CenterFrequencyGroupApplication(
+                    group_number=item.group_number,
+                    representative_channel=item.representative_channel,
+                    allowed_ranges=item.allowed_ranges,
+                    applied_mhz=applied_mhz,
+                )
+                readback_groups.append(applied)
+                if applied_mhz != requested_mhz:
+                    return finish(
+                        groups=readback_groups + groups[len(readback_groups):],
+                        confirmed=False,
+                        reason=(
+                            f"F64 通道组 {item.group_number}（代表通道 "
+                            f"{item.representative_channel}）中心频率回读 "
+                            f"{applied_mhz} MHz 与请求 {requested_mhz} MHz 不一致"
+                        ),
+                    )
+
+        evidence = finish(
+            groups=readback_groups,
+            confirmed=True,
+            reason="全部 F64 通道组的允许区间与中心频率回读均已确认",
+        )
+        self._center_freq_mhz = requested_mhz
+        self._readback_center_freq_mhz = requested_mhz
+        self._center_freq_programmed = True
+        return evidence
+
     # ===================================================================
     # 2. Pipeline A — GCM 原生管线 SCPI 翻译
     # ===================================================================
@@ -2981,57 +3192,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # CENT:CH? 回读真频 > .smu 文件名 loose 解析)。None 视同缺省 (显式 null
             # 不能变成字面 "CALC:FILT:CENT:CH 1,None" 下发)。
             if parameters.get("center_frequency_mhz") is not None:
-                freq_mhz = parameters["center_frequency_mhz"]
-                # R10 平行族: CENT 写序列过 _first_error 门 — 被拒 (超范围等) 不许假
-                # 成功; 缓存/programmed 门过才更新 (R8 被拒状态不动)。
-                # F64R-2: CENT 是 **per-group** 生效 (手册 §20.4.6.1: "Frequency is set
-                # for given channel and for all the other channels belonging to the same
-                # group"); 同组判定 = **输入相同或输出相同**(§20.4.6.4/6, 满足其一即可)。
-                # 组数**不可推算, 必须回读**(GROUP:GET?): 全交叉拓扑下通道经输入/输出
-                # 两个维度连通, 可能整个仿真只有 1 组。正确下发 = 按**实际组数**逐组发
-                # 一次, 每次用该组代表通道号。旧的循环 1..64(_channel_count) 两头都错:
-                # 同组通道被重复写(浪费+无谓抖动), 且 <64 通道的模型会撞不存在的通道 -200。
-                # 整段持锁 (与 set_path_loss/doppler/baseband 四个消费方一致): 加载事务
-                # 已释放锁, 若"读组代表通道"和"下发"之间另一协程换了仿真, CENT 就会打在
-                # **上一个仿真**的组号上 (号在新仿真里存在 = 静默配错组)。
-                async with self._scpi_lock:
-                    repr_channels = self._group_repr_channels
-                    if not repr_channels:
-                        # 拓扑/组信息未知 → fail-loud, 不按猜测的通道循环下发。
-                        # ⚠ 与下面被拒分支同样要**复位** programmed (Codex #211 母题): 新
-                        # 文件此刻已 load 成功, 上一个 model 若置过 True, 那个频率已彻底
-                        # 无效 —— 残留 True 会让 get_frequency_identity 谎报没真下发的旧频。
-                        self._center_freq_programmed = False
-                        self._last_error = (
-                            "set_channel_model 中心频下发拒绝: 信道组信息未知 (GROUP:GET? / "
-                            "GROUP:CHANNELS:GET? 回读失败) — 不按猜测的通道号下发 CENT。"
-                            f"{_TOPOLOGY_ESCAPE_HINT}"
-                        )
-                        logger.error(f"[F64] {self._last_error}")
-                        return False
-                    _cent_ok = await self._gated_write_transaction(
-                        "set_channel_model center-freq",
-                        [
-                            f"CALC:FILT:CENT:CH {ch},{freq_mhz}"
-                            for ch in repr_channels
-                        ],
-                    )
-                if not _cent_ok:
-                    # Codex #211 follow-up: CENT 被拒时**复位** programmed (不只
-                    # 是"不置") — 上一个 model 若已置 True, 新文件此刻已 load
-                    # 成功 (第 908 行), 旧 programmed 频率彻底无效; 残留 True 会
-                    # 让 get_frequency_identity 谎报没真下发的旧频率。复位 False
-                    # → 退回**新**加载文件的文件名 loose 解析 (test_real_dispatch
-                    # 母题; F2 只修了 configure 入口, 漏了 set_channel_model 自身)。
-                    self._center_freq_programmed = False
+                evidence = await self.set_center_frequency_bounded(
+                    parameters["center_frequency_mhz"]
+                )
+                if not evidence.confirmed:
+                    logger.error("[F64/GCM] 中心频率有界设置失败: %s", evidence.reason)
                     return False
-                self._center_freq_mhz = freq_mhz
-                self._center_freq_programmed = True
             else:
                 # 缺省加载 → 频率回归新工程内声明, 之前的显式下发值不再代表
-                # 当前实际 — 复位 programmed, identity 退回文件名 loose 参考
+                # 当前实际 — 复位 programmed；identity 继续只认本次加载后的仪器
+                # 回读，回读不可用时才退到文件名 loose 参考
                 # (上报=实际的闭环, 否则换工程后仍报旧显式值)。
                 self._center_freq_programmed = False
+                self._last_center_frequency_application_evidence = None
 
             # Step 5: 验证连接器映射
             # 查询第一个通道的物理连接, 确保路由正确

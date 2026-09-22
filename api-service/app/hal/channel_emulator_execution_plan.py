@@ -26,6 +26,7 @@ from app.hal.base_station_compatibility import canonical_payload_digest
 from app.hal.channel_emulator_manifest import (
     CHANNEL_EMULATOR_OPERATIONS,
     CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
+    CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS,
     ChannelEmulatorManifest,
 )
 
@@ -33,8 +34,10 @@ from app.hal.channel_emulator_manifest import (
 CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS = (
     CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
 )
-#: P2-59② 新写入的 v2 词汇。
-CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
+#: P2-59② 新写入的 v2 词汇；manifest v2/v3 都映射到此历史词汇。
+CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS = CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS
+#: P2-77 v3 新增有界中心频率设置。
+CHANNEL_EMULATOR_EXECUTION_PLAN_V3_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
 
 
 def channel_emulator_execution_plan_operations_for_schema(
@@ -44,6 +47,8 @@ def channel_emulator_execution_plan_operations_for_schema(
         return CHANNEL_EMULATOR_EXECUTION_PLAN_V1_OPERATIONS
     if schema_version == 2:
         return CHANNEL_EMULATOR_EXECUTION_PLAN_V2_OPERATIONS
+    if schema_version == 3:
+        return CHANNEL_EMULATOR_EXECUTION_PLAN_V3_OPERATIONS
     raise ValueError("unsupported channel emulator execution plan schema")
 
 ChannelEmulatorRequestedLoadMode = Literal[
@@ -124,7 +129,7 @@ class ChannelEmulatorExecutionPlanItem:
 class ChannelEmulatorExecutionPlan:
     """Execution-frozen、vendor-neutral 的信道仿真器执行计划（P2-59 ①）。"""
 
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     #: MEASURE 将要用的驱动的 manifest.adapter_id（HAL 装载的驱动，或兜底的 mock）。
     adapter_id: str
     driver_source: ChannelEmulatorPlanDriverSource
@@ -242,9 +247,13 @@ def resolve_channel_emulator_execution_plan(
         raise ValueError(
             "channel emulator execution plan requires a channel emulator manifest (fail-closed)"
         )
-    # Manifest v3 只增加静态资产声明；持久化计划的操作词汇仍为 v2，
-    # 不得写出尚无解析器认识的 plan v3。
-    plan_schema_version = 1 if manifest.schema_version == 1 else 2
+    # Manifest v3 只增加静态资产声明，因此仍映射到历史 plan v2；
+    # 只有显式 v4 manifest 才能冻结 P2-77 的 plan v3 新操作。
+    plan_schema_version = (
+        1 if manifest.schema_version == 1
+        else 3 if manifest.schema_version == 4
+        else 2
+    )
     operation_vocabulary = channel_emulator_execution_plan_operations_for_schema(
         plan_schema_version
     )

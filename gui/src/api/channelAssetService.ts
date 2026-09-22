@@ -84,6 +84,7 @@ export interface ChannelAsset {
   description?: string | null
   canonical_name?: string | null
   derived_from?: string | null
+  /** vendor_file=工程默认；其他来源=执行物理身份。运行时允许范围只信服务器冻结能力与仪器回读。 */
   center_frequency_hz?: number | null
   bandwidth_mhz?: number | null
   is_los?: boolean | null
@@ -133,6 +134,7 @@ export interface ChannelAssetCreatePayload {
   description?: string | null
   canonical_name?: string | null
   derived_from?: string | null
+  /** vendor_file=工程默认；其他来源=执行物理身份。 */
   center_frequency_hz?: number | null
   bandwidth_mhz?: number | null
   is_los?: boolean | null

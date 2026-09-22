@@ -961,6 +961,81 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SCDResponse' }
+  /api/v1/channel-assets:
+    get:
+      summary: List channel assets
+      parameters:
+        - name: source_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [standard_3gpp, custom_static, rt_dynamic, vendor_file]
+            nullable: true
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Channel assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ChannelAssetResponse' }
+    post:
+      summary: Create a channel asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChannelAssetCreate' }
+      responses:
+        '201':
+          description: Channel asset created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelAssetResponse' }
+  /api/v1/channel-assets/{asset_id}:
+    parameters:
+      - name: asset_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a channel asset
+      responses:
+        '200':
+          description: Channel asset
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelAssetResponse' }
+        '404': { description: Channel asset not found }
+    put:
+      summary: Update a channel asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChannelAssetUpdate' }
+      responses:
+        '200':
+          description: Channel asset updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelAssetResponse' }
+        '404': { description: Channel asset not found }
+    delete:
+      summary: Delete or retire a channel asset
+      parameters:
+        - name: hard
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Channel asset deleted or retired }
+        '404': { description: Channel asset not found }
   /api/v1/channel-assets/vendor-files/smu-scan:
     post:
       summary: Preview mounted F64 .smu project truth
@@ -1920,6 +1995,84 @@ components:
             association_source: { type: string }
             created_at: { type: string, format: date-time, nullable: true }
             updated_at: { type: string, format: date-time, nullable: true }
+    ChannelAssetCreate:
+      type: object
+      required: [name, source_type, payload]
+      properties:
+        name: { type: string }
+        source_type:
+          type: string
+          enum: [standard_3gpp, custom_static, rt_dynamic, vendor_file]
+        payload: { type: object, additionalProperties: true }
+        description: { type: string, nullable: true }
+        canonical_name: { type: string, nullable: true }
+        derived_from: { type: string, nullable: true }
+        center_frequency_hz:
+          type: number
+          nullable: true
+          description: "vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。"
+        bandwidth_mhz: { type: number, nullable: true }
+        is_los: { type: boolean, nullable: true }
+        k_factor_db: { type: number, nullable: true }
+        ue_velocity_mps:
+          type: array
+          nullable: true
+          items: { type: number }
+        instrument_connection_id: { type: string, format: uuid, nullable: true }
+        associated_file_path: { type: string, nullable: true }
+        created_by: { type: string, nullable: true }
+    ChannelAssetUpdate:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        payload: { type: object, additionalProperties: true, nullable: true }
+        description: { type: string, nullable: true }
+        canonical_name: { type: string, nullable: true }
+        derived_from: { type: string, nullable: true }
+        center_frequency_hz:
+          type: number
+          nullable: true
+          description: "vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。"
+        bandwidth_mhz: { type: number, nullable: true }
+        is_los: { type: boolean, nullable: true }
+        k_factor_db: { type: number, nullable: true }
+        ue_velocity_mps:
+          type: array
+          nullable: true
+          items: { type: number }
+        instrument_connection_id: { type: string, format: uuid, nullable: true }
+        associated_file_path: { type: string, nullable: true }
+        is_active: { type: boolean, nullable: true }
+    ChannelAssetResponse:
+      type: object
+      required: [id, name, source_type, payload, allowed_targets, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source_type:
+          type: string
+          enum: [standard_3gpp, custom_static, rt_dynamic, vendor_file]
+        payload: { type: object, additionalProperties: true }
+        allowed_targets:
+          type: array
+          items: { type: string }
+        is_active: { type: boolean }
+        description: { type: string, nullable: true }
+        canonical_name: { type: string, nullable: true }
+        derived_from: { type: string, nullable: true }
+        center_frequency_hz:
+          type: number
+          nullable: true
+          description: "vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。"
+        bandwidth_mhz: { type: number, nullable: true }
+        is_los: { type: boolean, nullable: true }
+        k_factor_db: { type: number, nullable: true }
+        ue_velocity_mps:
+          type: array
+          nullable: true
+          items: { type: number }
+        instrument_connection_id: { type: string, format: uuid, nullable: true }
+        associated_file_path: { type: string, nullable: true }
     SMUProjectSyncItemResponse:
       type: object
       properties:

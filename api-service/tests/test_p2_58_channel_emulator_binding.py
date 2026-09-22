@@ -149,7 +149,7 @@ def test_real_binding_resolves_configured_with_stable_digest_and_zero_io(db, mon
     assert first.status == "configured"
     assert first.execution_mode == "real"
     assert first.manifest is not None
-    assert first.manifest.schema_version == 3
+    assert first.manifest.schema_version == 4
     assert first.manifest.adapter_id == "propsim_f64"
     assert first.instrument_model_id == str(model.id)
     assert first.instrument_connection_id == str(connection.id)
@@ -347,6 +347,11 @@ def test_new_binding_rejects_registered_driver_with_historical_v2_manifest(db, m
     legacy_payload = RealPropsimF64Driver.adapter_manifest.model_dump(mode="json")
     legacy_payload["schema_version"] = 2
     legacy_payload.pop("asset_sources")
+    legacy_payload["operations"] = [
+        item
+        for item in legacy_payload["operations"]
+        if item["operation"] != "set_center_frequency_bounded"
+    ]
 
     class NewLegacyDriver(RealPropsimF64Driver):
         adapter_manifest = ChannelEmulatorManifest.model_validate(legacy_payload)

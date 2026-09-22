@@ -51,12 +51,12 @@ CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS: tuple[str, ...] = (
     "clear_passthrough_mode",
 )
 
-#: `ChannelEmulatorDriver` 上**必须存在**的当前抽象操作全集（v2）。
+#: P2-57 v2 / P2-60 v3 已经进入历史冻结件的操作词汇。v3 只增加
+#: ``asset_sources``，操作集合没有变化；两版都不得随当前代码扩容。
 #:
-#: ⚠️ 这个元组同时是三件事的真值源：① manifest 必须逐个声明（不许沉默省略）；
-#:    ② 类体完整性门按它检查基类；③ 换源后的能力查询按它取值。
-#:    加操作要同时更新这三处 —— 门会强制。
-CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
+#: ⚠️ 不要把它重新指向 ``CHANNEL_EMULATOR_OPERATIONS``。当前全集会继续增长，
+#:    历史 manifest 若借当前全集重解释，就会在部署升级后静默改变摘要语义。
+CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS: tuple[str, ...] = (
     *CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS,
     "ensure_topology",
     "get_center_frequency_mhz",
@@ -71,8 +71,19 @@ CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
     "get_group_clipping",
     "get_system_status",
 )
+CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS = CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
 
-CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
+#: P2-77 v4 新增有界中心频率设置。它是当前抽象操作全集。
+#: `ChannelEmulatorDriver` 上**必须存在**的当前抽象操作全集（v4）。
+#:
+#: ⚠️ 这个元组同时是三件事的真值源：① manifest 必须逐个声明（不许沉默省略）；
+#:    ② 类体完整性门按它检查基类；③ 换源后的能力查询按它取值。
+#:    加操作要同时更新这三处 —— 门会强制。
+CHANNEL_EMULATOR_OPERATIONS: tuple[str, ...] = (
+    *CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS,
+    "set_center_frequency_bounded",
+)
+CHANNEL_EMULATOR_MANIFEST_V4_OPERATIONS = CHANNEL_EMULATOR_OPERATIONS
 
 
 def channel_emulator_manifest_operations_for_schema(
@@ -82,8 +93,12 @@ def channel_emulator_manifest_operations_for_schema(
 
     if schema_version == 1:
         return CHANNEL_EMULATOR_MANIFEST_V1_OPERATIONS
-    if schema_version in (2, 3):
+    if schema_version == 2:
         return CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+    if schema_version == 3:
+        return CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS
+    if schema_version == 4:
+        return CHANNEL_EMULATOR_MANIFEST_V4_OPERATIONS
     raise ValueError(
         f"unsupported channel emulator manifest schema_version: {schema_version!r}"
     )
@@ -115,6 +130,7 @@ ChannelEmulatorOperation = Literal[
     "set_burst_trigger_level",
     "get_group_clipping",
     "get_system_status",
+    "set_center_frequency_bounded",
 ]
 
 #: 与 `ChannelLoadMode` 枚举同源；这里独立写一份是为了让 manifest 模块
@@ -197,7 +213,7 @@ class ChannelEmulatorManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2, 3]
+    schema_version: Literal[1, 2, 3, 4]
     adapter_id: str
     model_name: str
     vendor: str
@@ -465,7 +481,7 @@ def channel_emulator_manifest_for(
                 support="implemented" if name in implemented else "not_implemented",
                 reason=reason,
             )
-            for name in CHANNEL_EMULATOR_OPERATIONS
+            for name in CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
         ),
     )
 
@@ -473,15 +489,18 @@ def channel_emulator_manifest_for(
 def _is_pure_refusal(owner: type, operation: str) -> bool:
     """仅以单独抛出 ``NotImplementedError`` 的方法视为未实现。"""
 
-    source = textwrap.dedent(inspect.getsource(owner))
-    class_node = next(
-        node for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ClassDef) and node.name == owner.__name__
-    )
+    member = owner.__dict__.get(operation)
+    if member is None:
+        return False
+    source = textwrap.dedent(inspect.getsource(member))
     method = next(
-        (node for node in class_node.body
-         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-         and node.name == operation), None,
+        (
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == operation
+        ),
+        None,
     )
     if method is None:
         return False
