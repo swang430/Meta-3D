@@ -5504,7 +5504,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 > `not_applicable`；Mock 或真实身份快照不完整为 `UNDETERMINED`，配置 / adapter
 > 漂移与驱动缺失为 `BLOCKER`。历史 / 停用 binding 在 `excluded` 中逐项留因，
 > 不再抢租约，也不再调用通用 `query("*IDN?")`。本地最终验证：P2-75 专项
-> 14 passed，相关上下文 / 规则门 177 passed，全后端 6617 passed / 5 skipped，
+> 16 passed，相关上下文 / 规则门 179 passed，全后端 6619 passed / 5 skipped，
 > GUI production build、compileall、单一 Alembic head 与 diff-check 通过。软件验证
 > 不替代现场真机复验。
 - `[resolved locally by P1-80；discovered 2026-09-16 during CMW500 + F64 现场调试；并入 P1-2]` **`propsim_f64_license_truth` 把会入错误队列的空回复显示为成功，许可成立却可能把校准/用户对齐未知误写成绿色（P2）** —— 同机连续运行 `e916b910-a7cf-4d1e-a89c-54941c4e6ccd` / `c3a445a2-cad7-427f-8567-1b6d2cf20c40`，第一轮已排空队列后第二轮仍精确复现 `-200 No simulation opened` + `-100 ATE command not supported`。P1-80 已让开场 residue 单独归档、整段诊断关闭后台仪表监控并持有 F64 可重入 SCPI 事务锁、每条业务查询后立即排水并把错误归属到该查询；空串与畸形回复只有在队列干净且符合命令手册值域时才成立，license/calibration/user-alignment 分判，许可成功不再补真校准。查询集合未扩大，未新增/猜测 SCPI。**这只关闭软件故障，不关闭 P1-2**：仍须在同一 F8800A 的干净队列上取得有效子判决与终态零残留。完整原始事实见 [`guides/2026-09-16-cmw500-f64-onsite-runbook.md`](guides/2026-09-16-cmw500-f64-onsite-runbook.md#propsim_f64_license_truth-%E6%8A%8A%E9%94%99%E8%AF%AF%E7%A9%BA%E5%9B%9E%E5%A4%8D%E6%98%BE%E7%A4%BA%E4%B8%BA%E6%88%90%E5%8A%9F)。

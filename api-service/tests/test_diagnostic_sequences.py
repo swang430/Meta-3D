@@ -473,6 +473,34 @@ class TestRunSequence:
         assert len(body["steps"]) == 1
         assert "simulated" in body["steps"][0]["detail"]
 
+    @pytest.mark.parametrize("drift", ["adapter", "transport"])
+    def test_idn_sweep_blocks_mock_binding_drift(
+        self, lab_with_bs, monkeypatch, drift,
+    ):
+        binding = lab_with_bs.instrument_bindings[0]
+        model = "UXM 5G E7515B" if drift == "adapter" else "CMW500"
+        endpoint = (
+            binding["connection_endpoint"]
+            if drift == "adapter"
+            else "TCPIP0::192.168.1.99::hislip0::INSTR"
+        )
+        driver = registered_mock_base_station(
+            "baseStation-fixture",
+            {"model": model, "endpoint": endpoint},
+        )
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+
     def test_idn_sweep_scopes_to_active_catalog_and_uses_cached_adapter_identity(
         self,
         lab_with_historical_instrument_bindings,

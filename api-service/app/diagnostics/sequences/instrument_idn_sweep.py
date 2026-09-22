@@ -171,12 +171,6 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
         }
     if driver is None:
         return {**base, "status": "mismatch", "reason": "current enabled driver is not loaded"}
-    if is_mock_driver(driver):
-        return {
-            **base,
-            "status": "unknown",
-            "reason": "loaded adapter is simulated; no real identity is admissible",
-        }
 
     expected_class = get_real_driver_class(category_key, binding.selected_model_name)
     if expected_class is None:
@@ -185,7 +179,22 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
             "status": "mismatch",
             "reason": "selected model has no registered real adapter",
         }
-    if not isinstance(driver, expected_class):
+    driver_is_mock = is_mock_driver(driver)
+    if driver_is_mock:
+        configured_model = str(getattr(driver, "config", {}).get("model") or "").strip()
+        expected_adapter_id = _adapter_id(expected_class)
+        mock_model_mismatch = configured_model != binding.selected_model_name
+        mock_adapter_mismatch = (
+            category_key == "baseStation"
+            and loaded_adapter_id != expected_adapter_id
+        )
+        if mock_model_mismatch or mock_adapter_mismatch:
+            return {
+                **base,
+                "status": "mismatch",
+                "reason": "loaded mock adapter does not match the selected model",
+            }
+    elif not isinstance(driver, expected_class):
         return {
             **base,
             "status": "mismatch",
@@ -202,6 +211,12 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
             **base,
             "status": "mismatch",
             "reason": "loaded driver transport differs from current saved transport",
+        }
+    if driver_is_mock:
+        return {
+            **base,
+            "status": "unknown",
+            "reason": "loaded adapter is simulated; no real identity is admissible",
         }
 
     if category_key in {"positioner", "rfSwitch"}:
