@@ -65,6 +65,7 @@ class InstrumentBinding:
     # sequences must not treat a historical LabProfile binding as currently
     # enabled, nor compare it against browser-owned copies.
     category_is_active: Optional[bool] = None
+    category_driver_mode: Optional[str] = None
     selected_model_id: Optional[UUID] = None
     selected_model_name: Optional[str] = None
     current_connection_endpoint: Optional[str] = None
@@ -170,7 +171,11 @@ def _truncate_excerpt(output: Optional[str]) -> Optional[str]:
 
 
 def _parse_instrument_bindings(
-    db: Session, raw: Optional[Any]
+    db: Session,
+    raw: Optional[Any],
+    *,
+    refresh_current: bool = False,
+    lock_current: bool = False,
 ) -> List[InstrumentBinding]:
     """Lab profiles store bindings as a JSON array of dicts. Resolve UUID
     strings to actual UUIDs and pull category_key by joining."""
@@ -203,9 +208,16 @@ def _parse_instrument_bindings(
 
     categories_by_id: Dict[UUID, InstrumentCategory] = {}
     if category_ids:
-        for cat in db.query(InstrumentCategory).filter(
+        category_query = db.query(InstrumentCategory).filter(
             InstrumentCategory.id.in_(category_ids)
-        ).all():
+        )
+        if refresh_current or lock_current:
+            category_query = category_query.execution_options(populate_existing=True)
+        if lock_current:
+            category_query = category_query.order_by(
+                InstrumentCategory.id
+            ).with_for_update()
+        for cat in category_query.all():
             categories_by_id[cat.id] = cat
 
     selected_model_ids = {
@@ -215,19 +227,29 @@ def _parse_instrument_bindings(
     }
     models_by_id: Dict[UUID, InstrumentModel] = {}
     if selected_model_ids:
+        model_query = db.query(InstrumentModel).filter(
+            InstrumentModel.id.in_(selected_model_ids)
+        )
+        if refresh_current or lock_current:
+            model_query = model_query.execution_options(populate_existing=True)
         models_by_id = {
             model.id: model
-            for model in db.query(InstrumentModel).filter(
-                InstrumentModel.id.in_(selected_model_ids)
-            ).all()
+            for model in model_query.all()
         }
     connections_by_category_id: Dict[UUID, InstrumentConnection] = {}
     if categories_by_id:
+        connection_query = db.query(InstrumentConnection).filter(
+            InstrumentConnection.category_id.in_(categories_by_id)
+        )
+        if refresh_current or lock_current:
+            connection_query = connection_query.execution_options(populate_existing=True)
+        if lock_current:
+            connection_query = connection_query.order_by(
+                InstrumentConnection.category_id
+            ).with_for_update()
         connections_by_category_id = {
             connection.category_id: connection
-            for connection in db.query(InstrumentConnection).filter(
-                InstrumentConnection.category_id.in_(categories_by_id)
-            ).all()
+            for connection in connection_query.all()
         }
 
     bindings: List[InstrumentBinding] = []
@@ -274,6 +296,9 @@ def _parse_instrument_bindings(
                 category_is_active=(
                     category.is_active if category is not None else None
                 ),
+                category_driver_mode=(
+                    category.driver_mode if category is not None else None
+                ),
                 selected_model_id=(
                     category.selected_model_id if category is not None else None
                 ),
@@ -299,6 +324,9 @@ def build_diagnostic_context(
     operating_mode: str = "mimo_ota",
     resolve_rf_chains_too: bool = True,
     audit_chamber_integrity_too: bool = False,
+    refresh_current: bool = False,
+    lock_current: bool = False,
+    prelock_category_ids: Optional[List[UUID]] = None,
 ) -> DiagnosticContext:
     """Resolve everything the workshop tools commonly need.
 
@@ -315,7 +343,27 @@ def build_diagnostic_context(
             chamber_name=None,
         )
 
-    lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).first()
+    if lock_current and prelock_category_ids:
+        # Mirror the established persistent lock order used by the formal
+        # binding resolvers: category -> LabProfile -> connection.  A binding
+        # added before the LabProfile lock is taken is picked up and locked by
+        # _parse_instrument_bindings below; an in-flight writer cannot make it
+        # visible while this transaction owns the LabProfile row.
+        (
+            db.query(InstrumentCategory)
+            .filter(InstrumentCategory.id.in_(prelock_category_ids))
+            .order_by(InstrumentCategory.id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .all()
+        )
+
+    lab_query = db.query(LabProfile).filter(LabProfile.id == lab_profile_id)
+    if refresh_current or lock_current:
+        lab_query = lab_query.execution_options(populate_existing=True)
+    if lock_current:
+        lab_query = lab_query.with_for_update()
+    lab = lab_query.first()
     if lab is None:
         # Workshop tools should fail loud rather than silently assume a
         # different lab; ValueError surfaces as 422 in API handlers.
@@ -334,7 +382,12 @@ def build_diagnostic_context(
                 f"LabProfile {lab.name} references missing chamber {lab.chamber_config_id}"
             )
 
-    bindings = _parse_instrument_bindings(db, lab.instrument_bindings)
+    bindings = _parse_instrument_bindings(
+        db,
+        lab.instrument_bindings,
+        refresh_current=refresh_current or lock_current,
+        lock_current=lock_current,
+    )
 
     chamber_integrity = (
         audit_chamber_integrity(db, lab.id)

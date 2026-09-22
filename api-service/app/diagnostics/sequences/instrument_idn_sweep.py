@@ -109,6 +109,7 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
     current_endpoint = (binding.current_connection_endpoint or "").strip()
     loaded_driver = type(driver).__name__ if driver is not None else None
     loaded_adapter_id = _adapter_id(driver) if driver is not None else None
+    driver_is_mock = is_mock_driver(driver) if driver is not None else None
     expected_transport = _transport(
         binding.current_connection_host,
         binding.current_connection_port,
@@ -138,6 +139,11 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
         "current_endpoint": current_endpoint or None,
         "loaded_driver": loaded_driver,
         "loaded_adapter_id": loaded_adapter_id,
+        "binding_driver_mode": binding.driver_mode,
+        "category_driver_mode": binding.category_driver_mode,
+        "loaded_driver_mode": (
+            "mock" if driver_is_mock else "real"
+        ) if driver_is_mock is not None else None,
         "expected_transport": {
             "host": expected_transport[0] or None,
             "port": expected_transport[1],
@@ -169,8 +175,30 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
             "status": "mismatch",
             "reason": "LabProfile binding endpoint differs from current saved endpoint",
         }
+    valid_modes = {"auto", "mock", "real"}
+    if (
+        binding.driver_mode not in valid_modes
+        or binding.category_driver_mode not in valid_modes
+        or binding.driver_mode != binding.category_driver_mode
+    ):
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "LabProfile binding driver mode differs from current category mode",
+        }
     if driver is None:
         return {**base, "status": "mismatch", "reason": "current enabled driver is not loaded"}
+
+    if (
+        binding.category_driver_mode == "real" and driver_is_mock
+    ) or (
+        binding.category_driver_mode == "mock" and not driver_is_mock
+    ):
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "loaded driver mode differs from current category mode",
+        }
 
     expected_class = get_real_driver_class(category_key, binding.selected_model_name)
     if expected_class is None:
@@ -179,7 +207,6 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
             "status": "mismatch",
             "reason": "selected model has no registered real adapter",
         }
-    driver_is_mock = is_mock_driver(driver)
     if driver_is_mock:
         configured_model = str(getattr(driver, "config", {}).get("model") or "").strip()
         expected_adapter_id = _adapter_id(expected_class)

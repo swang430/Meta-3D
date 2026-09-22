@@ -98,6 +98,7 @@ def lab_with_bs(db, chamber):
         id=uuid.uuid4(),
         category_key="baseStation",
         category_name="Base Station",
+        driver_mode="real",
         is_active=True,
     )
     db.add(cat)
@@ -452,6 +453,16 @@ class TestRunSequence:
     def test_idn_sweep_marks_mock_identity_undetermined(
         self, db, lab_with_bs, monkeypatch,
     ):
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = "mock"
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = "mock"
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
         bs_driver = registered_mock_base_station(
             "baseStation-fixture",
             {
@@ -475,8 +486,18 @@ class TestRunSequence:
 
     @pytest.mark.parametrize("drift", ["adapter", "transport"])
     def test_idn_sweep_blocks_mock_binding_drift(
-        self, lab_with_bs, monkeypatch, drift,
+        self, db, lab_with_bs, monkeypatch, drift,
     ):
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = "mock"
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = "mock"
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
         binding = lab_with_bs.instrument_bindings[0]
         model = "UXM 5G E7515B" if drift == "adapter" else "CMW500"
         endpoint = (
@@ -787,6 +808,128 @@ class TestRunSequence:
 
         body = response.json()
         assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+
+    @pytest.mark.parametrize(
+        ("category_mode", "binding_mode", "loaded_mode"),
+        [
+            ("real", "mock", "real"),
+            ("mock", "real", "mock"),
+            ("real", "real", "mock"),
+            ("mock", "mock", "real"),
+        ],
+    )
+    def test_idn_sweep_blocks_binding_or_loaded_driver_mode_drift(
+        self,
+        db,
+        lab_with_bs,
+        monkeypatch,
+        category_mode,
+        binding_mode,
+        loaded_mode,
+    ):
+        """任一 mode 镜像漂移都不能把旧 driver 身份投影成绿色。"""
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = category_mode
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = binding_mode
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
+
+        binding = lab_with_bs.instrument_bindings[0]
+        if loaded_mode == "mock":
+            driver = registered_mock_base_station(
+                "baseStation-fixture",
+                {
+                    "model": "CMW500",
+                    "endpoint": binding["connection_endpoint"],
+                },
+            )
+        else:
+            driver = RealCmw500Driver(
+                "baseStation-fixture",
+                {"endpoint": binding["connection_endpoint"]},
+            )
+            driver._identity_model = "CMW"
+            driver._firmware_version = "3.7.130"
+            driver._identity_model_verified = True
+            driver._options_snapshot_verified = True
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+        assert "mode" in body["extra"]["identities"][0]["reason"]
+
+    def test_idn_sweep_reloads_catalog_truth_after_waiting_for_lease(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        """等待 lease 期间保存的新 endpoint 必须覆盖请求开始时的旧快照。"""
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.models.instrument import InstrumentConnection
+        from app.services.diagnostic_context import (
+            build_diagnostic_context as real_build_diagnostic_context,
+        )
+
+        binding = lab_with_bs.instrument_bindings[0]
+        driver = RealCmw500Driver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        driver._identity_model = "CMW"
+        driver._firmware_version = "3.7.130"
+        driver._identity_model_verified = True
+        driver._options_snapshot_verified = True
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        route_db = None
+        context_builds = 0
+
+        def capture_route_db(session, **kwargs):
+            nonlocal route_db, context_builds
+            route_db = session
+            context_builds += 1
+            return real_build_diagnostic_context(session, **kwargs)
+
+        @asynccontextmanager
+        async def mutate_while_waiting(*args, **kwargs):
+            assert route_db is not None
+            connection = route_db.query(InstrumentConnection).one()
+            connection.endpoint = "TCPIP0::192.168.1.112::hislip0::INSTR"
+            route_db.commit()
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.build_diagnostic_context",
+            capture_route_db,
+        )
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.instrument_test_lease",
+            mutate_while_waiting,
+        )
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert context_builds == 2
         assert body["success"] is False
         assert body["extra"]["verdict"] == "BLOCKER"
         assert body["extra"]["identities"][0]["status"] == "mismatch"
