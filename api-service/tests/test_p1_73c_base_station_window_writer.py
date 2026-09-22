@@ -10,6 +10,7 @@ from app.hal.base_station import (
     BaseStationCleanupResult,
     BaseStationFieldReceipt,
     BaseStationMeasurementWindow,
+    BaseStationRequestedConfig,
     ThroughputMetrics,
 )
 from app.hal.scpi_evidence import (
@@ -95,7 +96,8 @@ def _route_result(*, confirmed=True):
 
 
 def _config_receipt(*, confirmed=True):
-    payload = valid_cmw_evidence()["requested_config"]["payload"]
+    frozen_payload = valid_cmw_evidence()["requested_config"]["payload"]
+    payload = BaseStationRequestedConfig.receipt_payload_from_mapping(frozen_payload)
     return BaseStationApplyReceipt(
         schema_version=1,
         operation="config",
@@ -109,7 +111,6 @@ def _config_receipt(*, confirmed=True):
                 exchange_ids=("config-1",),
             )
             for name, value in payload.items()
-            if value is not None
         ),
         reason="confirmed" if confirmed else "rejected",
         simulated=False,

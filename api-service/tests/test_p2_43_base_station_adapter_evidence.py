@@ -13,6 +13,7 @@ import pytest
 from app.hal.base_station import (
     BaseStationApplyReceipt,
     BaseStationFieldReceipt,
+    BaseStationRequestedConfig,
     MockBaseStation,
 )
 from app.models.test_plan import TestExecution
@@ -105,9 +106,10 @@ def _field(
 
 
 def _config_receipt(execution, *, partial: bool = False, simulated: bool = False):
-    payload = execution.config["base_station_execution_evidence"][
+    frozen_payload = execution.config["base_station_execution_evidence"][
         "requested_config"
     ]["payload"]
+    payload = BaseStationRequestedConfig.receipt_payload_from_mapping(frozen_payload)
     fields = [
         _field(
             name,
@@ -398,16 +400,16 @@ def test_writer_rejects_confirmed_receipt_without_exchange_evidence(monkeypatch)
         "active_base_station_lease_identity",
         lambda: _lease(),
     )
-    payload = execution.config["base_station_execution_evidence"][
+    frozen_payload = execution.config["base_station_execution_evidence"][
         "requested_config"
     ]["payload"]
+    payload = BaseStationRequestedConfig.receipt_payload_from_mapping(frozen_payload)
     no_evidence = BaseStationApplyReceipt(
         schema_version=1,
         operation="config",
         fields=tuple(
             _field(name, value, exchange_id="")
             for name, value in payload.items()
-            if value is not None
         ),
         reason="unproven",
         simulated=False,

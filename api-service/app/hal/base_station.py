@@ -145,9 +145,15 @@ class BaseStationRequestedConfig:
         because it omitted an actual control from its readback.
         """
 
+        return self.receipt_payload_from_mapping(asdict(self))
+
+    @staticmethod
+    def receipt_payload_from_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Project a current or frozen request onto receipt-covered controls."""
+
         return {
             name: value
-            for name, value in asdict(self).items()
+            for name, value in payload.items()
             if value is not None and name not in _CONFIG_RECEIPT_DESCRIPTOR_FIELDS
         }
 
