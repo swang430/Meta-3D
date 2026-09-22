@@ -312,6 +312,149 @@ def _attach_power_observation_failure(
     )
 
 
+def _manual_input_initialization_failure(
+    payload: Dict[str, Any],
+) -> Optional[str]:
+    """Return only an *application* failure before Cell ON.
+
+    A manual reference can be written before the base-station cell is on, but
+    F64 may legitimately have no finite input-power readback at that point.
+    That state must continue to the existing Cell-ready observation without
+    being called successful.  Device rejection still fails immediately.
+    """
+
+    if payload.get("skipped") or payload.get("application_succeeded") is True:
+        return None
+    return str(payload.get("failure_reason") or "F64 输入参考/crest 下发未确认")
+
+
+def _finite_manual_power(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _finalize_manual_input_reference(
+    payload: Dict[str, Any],
+    observation: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Finalize manual input-level truth from the same execution's Cell-ready sample.
+
+    The attach observation already owns the post-Cell-ON F64 power readback.
+    Reusing it avoids a second SCPI query and, more importantly, a second
+    competing truth.  ``accepted`` alone is insufficient in non-strict mode;
+    every active input must carry a finite measured value.
+    """
+
+    result = dict(payload)
+    if (
+        result.get("mode") != "manual"
+        or result.get("skipped")
+        or result.get("application_succeeded") is not True
+    ):
+        return result
+    if (
+        observation is None
+        and result.get("success") is True
+        and result.get("verification_status") == "verified_pre_cell"
+        and result.get("verification_source") == "pre_cell_measure_input"
+    ):
+        # UXM does not expose the CMW-specific configured-power readback used
+        # to wire the Cell-ready callback.  A complete finite readback already
+        # verified by _apply_manual_input_reference remains the only available
+        # measured truth; absence of a second observation must not erase it.
+        return result
+
+    result.update(
+        success=False,
+        verification_status="failed",
+        verification_source="attach_power_observation",
+        readback=[],
+    )
+    if not isinstance(observation, dict):
+        result["failure_reason"] = (
+            "未取得 Cell ON 后 F64 活动输入功率，手动输入工作点未验证"
+        )
+        return result
+    if observation.get("accepted") is not True:
+        result["failure_reason"] = str(
+            observation.get("failure_reason")
+            or "Cell ON 后功率观察未接受，手动输入工作点未验证"
+        )
+        return result
+
+    samples = observation.get("samples")
+    sample = samples[-1] if isinstance(samples, list) and samples else None
+    if not isinstance(sample, dict):
+        result["failure_reason"] = "Cell ON 后功率观察缺少采样结果"
+        return result
+
+    topology = sample.get("topology")
+    observed_ports = (
+        topology.get("active_input_ports")
+        if isinstance(topology, dict)
+        else None
+    )
+    if not isinstance(observed_ports, list) or not observed_ports:
+        result["failure_reason"] = "F64 活动输入口拓扑未知，手动输入工作点未验证"
+        return result
+    expected_ports = result.get("input_ports")
+    if isinstance(expected_ports, list) and expected_ports and (
+        set(observed_ports) != set(expected_ports)
+    ):
+        result["failure_reason"] = (
+            "Cell ON 后 F64 活动输入口与手动下发时不一致: "
+            f"expected={expected_ports}, observed={observed_ports}"
+        )
+        return result
+
+    rows = sample.get("input_powers_dbm")
+    row_by_port: Dict[int, float] = {}
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            port = row.get("port")
+            if isinstance(port, bool):
+                continue
+            try:
+                normalized_port = int(port)
+            except (TypeError, ValueError):
+                continue
+            value = _finite_manual_power(row.get("value_dbm"))
+            if value is not None:
+                row_by_port[normalized_port] = value
+
+    missing_ports = [port for port in observed_ports if port not in row_by_port]
+    if missing_ports:
+        result["failure_reason"] = (
+            f"F64 活动输入口缺少有效实测功率: {missing_ports}"
+        )
+        return result
+
+    result.update(
+        success=True,
+        verification_status="verified_cell_ready",
+        verification_source="attach_power_observation",
+        readback=[
+            {
+                "input_num": port,
+                "avg_dbm": row_by_port[port],
+                # Cell-ready metrics only prove average input power.  Do not
+                # invent crest-factor readback from the requested value.
+                "crest_db": None,
+            }
+            for port in observed_ports
+        ],
+        failure_reason=None,
+    )
+    return result
+
+
 def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
     """Only an explicitly real certificate may be labelled verified."""
     return use_mock is False
@@ -2420,17 +2563,16 @@ class MeasureExecutor(IStepExecutor):
                     execution_id=context.test_execution.id,
                     operation_recorder=record_channel_emulator_operation,
                 )
-                if (
-                    not input_level_payload.get("skipped")
-                    and not input_level_payload.get("success")
-                    and config.precheck_strict_input_level
-                ):
+                initialization_failure = _manual_input_initialization_failure(
+                    input_level_payload
+                )
+                if initialization_failure and config.precheck_strict_input_level:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         measurements={"input_level_calibration": input_level_payload},
                         error_message=(
                             "F64 显式输入工作点初始化失败（发生在 DUT attach 前）: "
-                            f"{input_level_payload.get('failure_reason')}。"
+                            f"{initialization_failure}。"
                             "不带着未知输入参考/crest 继续 attach。"
                         ),
                     )
@@ -2604,6 +2746,22 @@ class MeasureExecutor(IStepExecutor):
                 attach_power_observation = observation_holder.get("result")
             else:
                 attach_receipt = await base_station.attach()
+            if input_level_payload is not None and (
+                input_level_payload.get("mode") == "manual"
+            ):
+                input_level_payload = _finalize_manual_input_reference(
+                    input_level_payload,
+                    attach_power_observation,
+                )
+            attach_failure_measurements: Dict[str, Any] = {}
+            if input_level_payload is not None:
+                attach_failure_measurements["input_level_calibration"] = (
+                    input_level_payload
+                )
+            if attach_power_observation is not None:
+                attach_failure_measurements["attach_power_observation"] = (
+                    attach_power_observation
+                )
             if base_station_attempt.attempt_id is not None:
                 from app.hal.base_station_manifest import BaseStationAdapterManifest
                 from app.services.execution_scpi_evidence import (
@@ -2654,11 +2812,13 @@ class MeasureExecutor(IStepExecutor):
                 if observation_failure is not None:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
+                        measurements=attach_failure_measurements,
                         error_message=observation_failure,
                     )
                 terminal_attach_stage = attach_receipt.terminal_stage_receipt
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
+                    measurements=attach_failure_measurements,
                     error_message=(
                         "RF 初始化已完成，但 BaseStation 本次 attach 未确认可继续；"
                         f"终止阶段={attach_receipt.terminal_stage or 'none'}，"
@@ -4076,7 +4236,12 @@ class MeasureExecutor(IStepExecutor):
             "requested_ref_dbm": ref,
             "requested_crest_db": crest,
             "skipped": False,
+            "application_succeeded": False,
             "success": False,
+            "verification_status": "not_started",
+            "verification_source": None,
+            "input_ports": [],
+            "pre_cell_readback": [],
             "readback": [],
             "failure_reason": None,
         }
@@ -4106,6 +4271,7 @@ class MeasureExecutor(IStepExecutor):
         # 不再读 _tx_antennas 也不假定 1..N —— 前者冷重启/手动加载 4x4 .smu 后会停在构造
         # 默认 2 只覆盖输入 1/2, 后者在非连续端口分配下会误配。
         in_ports = _read_port_list(emulator, "get_active_input_ports") or []
+        payload["input_ports"] = list(in_ports)
         if crest is not None and not in_ports:
             # ⚠ 要下发 crest 却不知道发给谁 → **fail-loud, 不静默零下发报成功**。
             # 旧代码用 _tx_antennas (实例默认 2, 永不为 0) 一定会发几条; 换成回读后
@@ -4131,7 +4297,10 @@ class MeasureExecutor(IStepExecutor):
                         "[%s] 手动定标: %s", execution_id, payload["failure_reason"]
                     )
                     return payload
-        # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
+        payload["application_succeeded"] = True
+        # Cell ON 前读回只作机会式验证。无信号态 measure_input 会返回 None，
+        # 这不是下发失败，但也绝不能记作定标成功；后续复用同次执行已有的
+        # Cell-ready 功率观察完成验证，不增加第二次 SCPI 查询。
         if plan.planned("measure_input"):
             for i in in_ports:
                 m = await _observe_channel_emulator_operation(
@@ -4146,16 +4315,42 @@ class MeasureExecutor(IStepExecutor):
                     },
                     invoke=lambda i=i: emulator.measure_input(i, 1.0),
                 )
-                payload["readback"].append({
+                payload["pre_cell_readback"].append({
                     "input_num": i,
                     "avg_dbm": m[0] if m else None,
                     "crest_db": m[1] if m else None,
                 })
-        payload["success"] = True
+        complete_pre_cell = bool(in_ports) and len(
+            payload["pre_cell_readback"]
+        ) == len(in_ports) and all(
+            _finite_manual_power(row.get("avg_dbm")) is not None
+            for row in payload["pre_cell_readback"]
+        )
+        if complete_pre_cell:
+            payload.update(
+                success=True,
+                verification_status="verified_pre_cell",
+                verification_source="pre_cell_measure_input",
+                readback=list(payload["pre_cell_readback"]),
+                failure_reason=None,
+            )
+        else:
+            payload.update(
+                success=False,
+                verification_status="pending_cell_ready",
+                verification_source=None,
+                readback=[],
+                failure_reason=(
+                    "Cell ON 前 F64 活动输入功率回读不完整；"
+                    "等待同次执行的 Cell-ready 功率观察验证"
+                ),
+            )
         logger.info(
-            "[%s] 手动定标完成: ref=%.1f dBm crest=%s × %d 输入 (readback=%s)",
+            "[%s] 手动定标下发完成: ref=%.1f dBm crest=%s × %d 输入 "
+            "(verification=%s, pre_cell_readback=%s)",
             execution_id, ref, crest, len(in_ports),
-            [r["avg_dbm"] for r in payload["readback"]],
+            payload["verification_status"],
+            [r["avg_dbm"] for r in payload["pre_cell_readback"]],
         )
         return payload
 

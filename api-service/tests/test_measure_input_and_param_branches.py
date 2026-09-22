@@ -85,6 +85,197 @@ class TestManualInputReference:
         assert payload["readback"][0]["avg_dbm"] == -15.2
 
     @pytest.mark.asyncio
+    async def test_manual_ref_empty_pre_cell_readback_is_pending_not_success(self):
+        """旧故障：Cell ON 前两路 ``measure_input`` 都为空仍被写成 success=true。"""
+        ex, cfg = self._executor_and_config(f64_input_ref_dbm=-15.0)
+        emu = AsyncMock()
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
+            vendor="test", implemented=("set_baseband_power", "measure_input"),
+        )
+        emu.get_active_input_ports = MagicMock(return_value=[1, 2])
+        emu.set_baseband_power = AsyncMock(return_value=True)
+        emu.measure_input = AsyncMock(return_value=None)
+
+        payload = await ex._apply_manual_input_reference(
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t",
+        )
+
+        assert payload["application_succeeded"] is True
+        assert payload["success"] is False
+        assert payload["verification_status"] == "pending_cell_ready"
+        assert payload["readback"] == []
+        assert [row["avg_dbm"] for row in payload["pre_cell_readback"]] == [
+            None,
+            None,
+        ]
+        assert "Cell ON" in payload["failure_reason"]
+
+    @pytest.mark.asyncio
+    async def test_manual_ref_partial_pre_cell_readback_is_not_success(self):
+        """只读到一路也不能把两路输入工作点整体判成功。"""
+        ex, cfg = self._executor_and_config(f64_input_ref_dbm=-15.0)
+        emu = AsyncMock()
+        type(emu).adapter_manifest = channel_emulator_manifest_for(
+            adapter_id="manual_ref_emu", model_name="Manual Ref Emu",
+            vendor="test", implemented=("set_baseband_power", "measure_input"),
+        )
+        emu.get_active_input_ports = MagicMock(return_value=[1, 2])
+        emu.set_baseband_power = AsyncMock(return_value=True)
+        emu.measure_input = AsyncMock(side_effect=[(-15.2, 11.8), None])
+
+        payload = await ex._apply_manual_input_reference(
+            emulator=emu, plan=_plan_for(emu), config=cfg, execution_id="t",
+        )
+
+        assert payload["application_succeeded"] is True
+        assert payload["success"] is False
+        assert payload["verification_status"] == "pending_cell_ready"
+        assert payload["readback"] == []
+
+    def test_pending_manual_ref_does_not_abort_before_cell_on(self):
+        """成功下发但待 Cell-ready 验证时必须继续，否则永远得不到后置真值。"""
+        from app.services.mimo_ota.executors import measure as measure_module
+
+        pending = {
+            "skipped": False,
+            "success": False,
+            "application_succeeded": True,
+            "verification_status": "pending_cell_ready",
+        }
+        rejected = {**pending, "application_succeeded": False}
+
+        assert measure_module._manual_input_initialization_failure(pending) is None
+        assert measure_module._manual_input_initialization_failure(rejected)
+
+    def test_cell_ready_observation_finalizes_same_execution_manual_truth(self):
+        """同次执行的活动输入功率齐全后，才允许把手动定标记为成功。"""
+        from app.services.mimo_ota.executors import measure as measure_module
+
+        pending = {
+            "mode": "manual",
+            "skipped": False,
+            "success": False,
+            "application_succeeded": True,
+            "verification_status": "pending_cell_ready",
+            "verification_source": None,
+            "input_ports": [1, 2],
+            "pre_cell_readback": [
+                {"input_num": 1, "avg_dbm": None, "crest_db": None},
+                {"input_num": 2, "avg_dbm": None, "crest_db": None},
+            ],
+            "readback": [],
+            "failure_reason": "pending",
+        }
+        observation = {
+            "accepted": True,
+            "status": "recorded",
+            "failure_reason": None,
+            "samples": [{
+                "phase": "cell_ready",
+                "input_topology_known": True,
+                "invalid_input_ports": [],
+                "topology": {"active_input_ports": [1, 2]},
+                "input_powers_dbm": [
+                    {"port": 1, "value_dbm": -29.0},
+                    {"port": 2, "value_dbm": -28.0},
+                ],
+            }],
+        }
+
+        result = measure_module._finalize_manual_input_reference(
+            pending, observation
+        )
+
+        assert result["success"] is True
+        assert result["verification_status"] == "verified_cell_ready"
+        assert result["verification_source"] == "attach_power_observation"
+        assert result["failure_reason"] is None
+        assert result["readback"] == [
+            {"input_num": 1, "avg_dbm": -29.0, "crest_db": None},
+            {"input_num": 2, "avg_dbm": -28.0, "crest_db": None},
+        ]
+
+    def test_verified_pre_cell_truth_survives_when_no_callback_is_wired(self):
+        """UXM 无 Cell-ready 功率回调时，不得抹掉完整的机会式预读真值。"""
+        from app.services.mimo_ota.executors import measure as measure_module
+
+        verified = {
+            "mode": "manual",
+            "skipped": False,
+            "success": True,
+            "application_succeeded": True,
+            "verification_status": "verified_pre_cell",
+            "verification_source": "pre_cell_measure_input",
+            "input_ports": [1, 2],
+            "pre_cell_readback": [
+                {"input_num": 1, "avg_dbm": -15.2, "crest_db": 11.8},
+                {"input_num": 2, "avg_dbm": -15.1, "crest_db": 11.9},
+            ],
+            "readback": [
+                {"input_num": 1, "avg_dbm": -15.2, "crest_db": 11.8},
+                {"input_num": 2, "avg_dbm": -15.1, "crest_db": 11.9},
+            ],
+            "failure_reason": None,
+        }
+
+        result = measure_module._finalize_manual_input_reference(verified, None)
+
+        assert result == verified
+
+    @pytest.mark.parametrize(
+        ("observation", "reason_fragment"),
+        [
+            (None, "未取得 Cell ON 后"),
+            (
+                {
+                    "accepted": True,
+                    "status": "warning",
+                    "failure_reason": None,
+                    "samples": [{
+                        "phase": "cell_ready",
+                        "input_topology_known": True,
+                        "invalid_input_ports": [2],
+                        "topology": {"active_input_ports": [1, 2]},
+                        "input_powers_dbm": [
+                            {"port": 1, "value_dbm": -29.0},
+                            {"port": 2, "value_dbm": None},
+                        ],
+                    }],
+                },
+                "缺少有效实测功率",
+            ),
+        ],
+    )
+    def test_missing_or_partial_cell_ready_truth_stays_false(
+        self, observation, reason_fragment
+    ):
+        """非严格观察即使 accepted=true，也不能把部分功率读数洗成成功。"""
+        from app.services.mimo_ota.executors import measure as measure_module
+
+        pending = {
+            "mode": "manual",
+            "skipped": False,
+            "success": False,
+            "application_succeeded": True,
+            "verification_status": "pending_cell_ready",
+            "verification_source": None,
+            "input_ports": [1, 2],
+            "pre_cell_readback": [],
+            "readback": [],
+            "failure_reason": "pending",
+        }
+
+        result = measure_module._finalize_manual_input_reference(
+            pending, observation
+        )
+
+        assert result["success"] is False
+        assert result["verification_status"] == "failed"
+        assert result["readback"] == []
+        assert reason_fragment in result["failure_reason"]
+
+    @pytest.mark.asyncio
     async def test_manual_ref_rejected_fails_loud(self):
         ex, cfg = self._executor_and_config(f64_input_ref_dbm=-15.0)
         emu = AsyncMock()
