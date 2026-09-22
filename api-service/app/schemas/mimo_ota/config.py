@@ -532,8 +532,9 @@ class MIMOOTAConfiguration(BaseModel):
 
     f64_input_ref_dbm: Optional[float] = None
     # 非 None = **手动定标**: 直接 set F64 输入参考 (INP:LEV:AMP × 全输入),
-    # 跳过 AUTOSET 闭环; 读回 (measure_input) 进 input_level_calibration
-    # payload 作反馈。None = AUTOSET 闭环。
+    # 跳过 AUTOSET 闭环；Cell ON 前 measure_input 只作机会式读回，空/部分回读
+    # 不得记 success。执行链复用同次 Cell-ready 功率观察完成验证并写入
+    # input_level_calibration，不增加第二套真值。None = AUTOSET 闭环。
     #
     # 2026-08-07 现场（用户当场指定 -17）：UXM 出 -15 dBm/BW，UXM→F64 路损
     # **按 2 dB 估**（尚未实测，见下方警告），故 F64 输入口实际 -17。
