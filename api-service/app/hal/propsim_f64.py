@@ -1140,6 +1140,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     #   - 会话边界 (connect/disconnect/reset) → _apply_session_reset (再清 bypass)。
     # ===================================================================
 
+    def _apply_confirmed_project_replacement(self) -> None:
+        """清除只对上一已加载工程成立的应用证明。
+
+        只能在 ``CALC:FILT:FILE`` 已完成且紧邻错误门确认干净后调用。FTP 失败或
+        CLOSE 未确认时旧工程仍可能是仪器真值，不能提前清除它的证明；FILE 被拒则
+        沿用既有 unload/failure reset，因为此前 CLOSE 已确认卸载旧工程。
+        三条加载管线都在首次后续 ``await`` 之前经过本边界，避免取消窗口把上一工程
+        的有界调频证明留给新工程。
+        """
+        self._last_center_frequency_application_evidence = None
+
     def _apply_unload(self) -> None:
         """卸载 / 加载失败后复位"已加载场景"状态 (调用点需自证 CLOSE/*RST 已发 →
         旧仿真已停+卸载)。清运行态 + 加载文件 + freq identity (programmed/readback) +
@@ -1154,7 +1165,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._loaded_emulation_file = None
         self._center_freq_programmed = False
         self._readback_center_freq_mhz = None
-        self._last_center_frequency_application_evidence = None
+        self._apply_confirmed_project_replacement()
         self._active_pipeline = None
         # 信道模型 / 场景名同属"由已加载文件决定" (写于 set_channel_model, 读于
         # get_channel_state)。漏清的后果跟 loaded_file 漏清一模一样: 仿真被前面板
@@ -1702,6 +1713,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     logger.error(f"[F64] {self._last_error}")
                     self._apply_unload()  # CLOSE 已发 (旧仿真已停+卸载) → 清加载态
                     return False
+                self._apply_confirmed_project_replacement()
                 # 手册确认的模型/仿真状态回读进入同一 FILE 事务证据。模型状态
                 # 证明已存在可读模型；加载阶段通常 STOPPED，运行态由后续 GO 单独到 E3。
                 await self._query_model_state_for_evidence()
@@ -1847,6 +1859,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
                 if load_err is None:
+                    self._apply_confirmed_project_replacement()
                     # ——成功分支整段在锁内 (与 GCM 路对称)——
                     # ⚠ 必须持锁: 拓扑回读是"先清空再逐条填满"的多命令序列 (5+3N 条),
                     # 放锁外的话这段窗口里并发的**端口写** (如 /input-reference 端点) 会
@@ -3202,9 +3215,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 缺省加载 → 频率回归新工程内声明, 之前的显式下发值不再代表
                 # 当前实际 — 复位 programmed；identity 继续只认本次加载后的仪器
                 # 回读，回读不可用时才退到文件名 loose 参考
-                # (上报=实际的闭环, 否则换工程后仍报旧显式值)。
+                # (上报=实际的闭环, 否则换工程后仍报旧显式值)。bounded proof 已在
+                # helper 的 confirmed-project-replacement 边界统一清除。
                 self._center_freq_programmed = False
-                self._last_center_frequency_application_evidence = None
 
             # Step 5: 验证连接器映射
             # 查询第一个通道的物理连接, 确保路由正确
@@ -3309,6 +3322,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
                 if load_err is None:
+                    self._apply_confirmed_project_replacement()
                     # ——成功分支整段在锁内 (与 GCM 路对称)——
                     # ⚠ 必须持锁: 拓扑回读是"先清空再逐条填满"的多命令序列, 放锁外的话
                     # 这段窗口里并发的**端口写**会读到清空后的 None → 加载成功却被拒。
