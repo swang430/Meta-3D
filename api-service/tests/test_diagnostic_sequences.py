@@ -2,8 +2,8 @@
 
 The two example sequences (instrument_idn_sweep, baseStation_attach_check)
 exercise both branches: parameter-less + parameterised, no required
-categories + required categories. We mock the HAL drivers since these
-tests run against in-memory SQLite without real instruments.
+categories + required categories. Tests inject isolated HAL driver objects;
+they never connect to real instruments.
 """
 from __future__ import annotations
 
@@ -88,23 +88,48 @@ def chamber(db):
 @pytest.fixture
 def lab_with_bs(db, chamber):
     """Lab with a baseStation binding so attach_check sequence can run."""
-    from app.models.instrument import InstrumentCategory
+    from app.models.instrument import (
+        InstrumentCategory,
+        InstrumentConnection,
+        InstrumentModel,
+    )
 
     cat = InstrumentCategory(
         id=uuid.uuid4(),
         category_key="baseStation",
         category_name="Base Station",
+        driver_mode="real",
         is_active=True,
     )
     db.add(cat)
-    db.commit()
+    db.flush()
+    model = InstrumentModel(
+        id=uuid.uuid4(),
+        category_id=cat.id,
+        vendor="Rohde & Schwarz",
+        model="CMW500",
+        full_name="CMW500",
+        capabilities={},
+        is_available=True,
+    )
+    db.add(model)
+    db.flush()
+    cat.selected_model_id = model.id
+    endpoint = "TCPIP0::192.168.1.5::hislip0::INSTR"
+    db.add(InstrumentConnection(
+        category_id=cat.id,
+        endpoint=endpoint,
+        status="connected",
+        created_by="pytest",
+    ))
     lp = LabProfile(
         name="P3-Phase2-Lab",
         chamber_config_id=chamber.id,
         instrument_bindings=[
             {
                 "category_id": str(cat.id),
-                "connection_endpoint": "192.168.1.5:5025",
+                "instrument_model_id": str(model.id),
+                "connection_endpoint": endpoint,
                 "driver_mode": "real",
                 "role": "primary_base_station",
             },
@@ -219,6 +244,74 @@ def lab_with_vna(db, chamber):
     db.commit()
     db.refresh(lp)
     return lp
+
+
+@pytest.fixture
+def lab_with_historical_instrument_bindings(db, chamber):
+    """现场形态：LabProfile 留有 7 条 binding，目录当前只启用 4 类。"""
+    from app.models.instrument import (
+        InstrumentCategory,
+        InstrumentConnection,
+        InstrumentModel,
+    )
+
+    rows = [
+        ("baseStation", "CMW500", "TCPIP0::192.168.0.149::hislip0::INSTR", True),
+        ("channelEmulator", "PROPSIM F64", "TCPIP0::192.168.0.132::3334::SOCKET", True),
+        ("positioner", "A3200", "192.168.0.16:8000", True),
+        ("rfSwitch", "EMCenter Switch", "TCPIP0::192.168.0.50::inst0::INSTR", True),
+        ("vectorSignalGenerator", "N5182B MXG", "TCPIP0::192.168.100.27::inst0::INSTR", False),
+        ("vna", "E5071C ENA", "TCPIP0::192.168.100.25::inst0::INSTR", False),
+        ("signalAnalyzer", "FSW43", "TCPIP0::192.168.0.134::5025::SOCKET", False),
+    ]
+    bindings = []
+    for order, (category_key, model_name, endpoint, is_active) in enumerate(rows):
+        category = InstrumentCategory(
+            id=uuid.uuid4(),
+            category_key=category_key,
+            category_name=category_key,
+            display_order=order,
+            driver_mode="real",
+            is_active=is_active,
+        )
+        db.add(category)
+        db.flush()
+        model = InstrumentModel(
+            id=uuid.uuid4(),
+            category_id=category.id,
+            vendor="fixture-vendor",
+            model=model_name,
+            full_name=model_name,
+            capabilities={},
+            is_available=True,
+        )
+        db.add(model)
+        db.flush()
+        category.selected_model_id = model.id
+        db.add(InstrumentConnection(
+            category_id=category.id,
+            endpoint=endpoint,
+            status="connected",
+            created_by="pytest",
+        ))
+        bindings.append({
+            "category_id": str(category.id),
+            "instrument_model_id": str(model.id),
+            "connection_endpoint": endpoint,
+            "driver_mode": "real",
+            "role": f"primary_{category_key}",
+        })
+
+    lab = LabProfile(
+        name="P2-75-Historical-Bindings",
+        chamber_config_id=chamber.id,
+        instrument_bindings=bindings,
+        is_active=True,
+    )
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    return lab
 
 
 def _patched_hal(monkeypatch, drivers: dict):
@@ -347,7 +440,7 @@ class TestRunSequence:
         assert body["success"] is False
         # One step (the lab has one binding), and it should report driver missing.
         assert len(body["steps"]) == 1
-        assert "未加载" in body["steps"][0]["detail"]
+        assert "driver is not loaded" in body["steps"][0]["detail"]
         # Audit row written
         audit = db.query(DiagnosticRun).filter(
             DiagnosticRun.id == uuid.UUID(body["diagnostic_run_id"])
@@ -355,11 +448,28 @@ class TestRunSequence:
         assert audit is not None
         assert audit.success is False
         assert audit.run_by == "pytest"
-        assert "driver not loaded" in (audit.output_excerpt or "")
+        assert "driver is not loaded" in (audit.output_excerpt or "")
 
-    def test_idn_sweep_succeeds_with_mock_driver(self, db, lab_with_bs, monkeypatch):
-        bs_driver = MagicMock()
-        bs_driver.get_identity = AsyncMock(return_value="VENDOR,MODEL,SN12345")
+    def test_idn_sweep_marks_mock_identity_undetermined(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = "mock"
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = "mock"
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
+        bs_driver = registered_mock_base_station(
+            "baseStation-fixture",
+            {
+                "model": "CMW500",
+                "endpoint": "TCPIP0::192.168.1.5::hislip0::INSTR",
+            },
+        )
         _patched_hal(monkeypatch, drivers={"baseStation": bs_driver})
 
         resp = client.post(
@@ -367,9 +477,541 @@ class TestRunSequence:
             json={"lab_profile_id": str(lab_with_bs.id)},
         )
         body = resp.json()
-        assert body["success"] is True
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["identities"][0]["status"] == "unknown"
+        assert body["extra"]["identities"][0]["observed_identity"] is None
         assert len(body["steps"]) == 1
-        assert "VENDOR" in body["steps"][0]["detail"]
+        assert "simulated" in body["steps"][0]["detail"]
+
+    @pytest.mark.parametrize("drift", ["adapter", "transport"])
+    def test_idn_sweep_blocks_mock_binding_drift(
+        self, db, lab_with_bs, monkeypatch, drift,
+    ):
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = "mock"
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = "mock"
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
+        binding = lab_with_bs.instrument_bindings[0]
+        model = "UXM 5G E7515B" if drift == "adapter" else "CMW500"
+        endpoint = (
+            binding["connection_endpoint"]
+            if drift == "adapter"
+            else "TCPIP0::192.168.1.99::hislip0::INSTR"
+        )
+        driver = registered_mock_base_station(
+            "baseStation-fixture",
+            {"model": model, "endpoint": endpoint},
+        )
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+
+    def test_idn_sweep_scopes_to_active_catalog_and_uses_cached_adapter_identity(
+        self,
+        lab_with_historical_instrument_bindings,
+        monkeypatch,
+    ):
+        """旧实现会扫 7 项并调通用 query；正确实现只投影 4 个启用 adapter。"""
+        from app.hal.aerotech_positioner import RealAerotechDriver
+        from app.hal.base import InstrumentStatus
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        from app.hal.rf_switch import EtslSwitchDriver
+
+        cmw = RealCmw500Driver(
+            "baseStation-fixture",
+            {"endpoint": "TCPIP0::192.168.0.149::hislip0::INSTR"},
+        )
+        cmw._identity_model = "CMW"
+        cmw._firmware_version = "3.7.130"
+        cmw._identity_model_verified = True
+        cmw._options_snapshot_verified = True
+        cmw._installed_options = ["KS510", "KS520"]
+        cmw.query = AsyncMock(side_effect=AssertionError("identity sweep performed I/O"))
+
+        f64 = RealPropsimF64Driver(
+            "channelEmulator-fixture",
+            {"endpoint": "TCPIP0::192.168.0.132::3334::SOCKET"},
+        )
+        f64._visa_resource = object()
+        f64._identity_response = "Keysight Technologies,F8800A,FI64201631,8.0"
+        f64.product_family = "PROPSIM F64"
+        f64._set_status(InstrumentStatus.CONNECTED)
+        f64.query = AsyncMock(side_effect=AssertionError("identity sweep performed I/O"))
+
+        positioner = RealAerotechDriver(
+            "positioner-fixture",
+            {"ip": "192.168.0.16", "port": 8000},
+        )
+        rf_switch = EtslSwitchDriver(
+            "rfSwitch-fixture",
+            {"endpoint": "TCPIP0::192.168.0.50::inst0::INSTR"},
+        )
+        _patched_hal(monkeypatch, drivers={
+            "baseStation": cmw,
+            "channelEmulator": f64,
+            "positioner": positioner,
+            "rfSwitch": rf_switch,
+        })
+
+        lease_calls = []
+
+        @asynccontextmanager
+        async def recording_lease(*args, **kwargs):
+            lease_calls.append((args, kwargs))
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.instrument_test_lease",
+            recording_lease,
+        )
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_historical_instrument_bindings.id)},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["extra"]["verdict"] == "SUCCESS"
+        assert [item["category_key"] for item in body["extra"]["identities"]] == [
+            "baseStation",
+            "channelEmulator",
+            "positioner",
+            "rfSwitch",
+        ]
+        assert [item["status"] for item in body["extra"]["identities"]] == [
+            "match",
+            "match",
+            "not_applicable",
+            "not_applicable",
+        ]
+        assert [item["category_key"] for item in body["extra"]["excluded"]] == [
+            "vectorSignalGenerator",
+            "vna",
+            "signalAnalyzer",
+        ]
+        assert all(
+            item["reason"] == "category_inactive"
+            for item in body["extra"]["excluded"]
+        )
+        assert len(body["steps"]) == 4
+        assert lease_calls[0][1]["control_f64"] is False
+        assert lease_calls[0][1]["control_uxm"] is False
+        cmw.query.assert_not_awaited()
+        f64.query.assert_not_awaited()
+
+    def test_idn_sweep_uses_cached_uxm_platform_identity(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        """UXM 身份来自 connect 时缓存的 endpoint/platform 快照，不现场查询。"""
+        from app.hal.base import InstrumentStatus
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.models.instrument import InstrumentModel
+
+        binding = lab_with_bs.instrument_bindings[0]
+        model = db.query(InstrumentModel).filter(
+            InstrumentModel.id == uuid.UUID(binding["instrument_model_id"])
+        ).one()
+        model.model = "UXM 5G E7515B"
+        model.full_name = "UXM 5G E7515B"
+        db.commit()
+
+        uxm = RealUxmDriver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        uxm._visa_session = object()
+        uxm._identity_response = "Keysight Technologies,5G Test Application,MYAPP,3.1"
+        uxm._platform_identity_response = "Keysight Technologies,E7515B,MY12345,4.0"
+        uxm.detected_test_app = "5G_NR"
+        uxm._set_status(InstrumentStatus.CONNECTED)
+        uxm.query = AsyncMock(side_effect=AssertionError("identity sweep performed I/O"))
+        _patched_hal(monkeypatch, drivers={"baseStation": uxm})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["extra"]["verdict"] == "SUCCESS"
+        item = body["extra"]["identities"][0]
+        assert item["status"] == "match"
+        assert item["loaded_adapter_id"] == "uxm"
+        assert item["observed_identity"]["model"] == "E7515B"
+        assert item["observed_identity"]["serial_number"] == "MY12345"
+        uxm.query.assert_not_awaited()
+
+    def test_idn_sweep_does_not_green_uxm_without_platform_identity(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        """TAF 端点在线不等于 UXM 平台身份完整，缺平台快照必须保持未知。"""
+        from app.hal.base import InstrumentStatus
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.models.instrument import InstrumentModel
+
+        binding = lab_with_bs.instrument_bindings[0]
+        model = db.query(InstrumentModel).filter(
+            InstrumentModel.id == uuid.UUID(binding["instrument_model_id"])
+        ).one()
+        model.model = "UXM 5G E7515B"
+        model.full_name = "UXM 5G E7515B"
+        db.commit()
+
+        uxm = RealUxmDriver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        uxm._visa_session = object()
+        uxm._identity_response = (
+            "Keysight Technologies,5G Test Application,MYAPP,3.1"
+        )
+        uxm._platform_identity_response = None
+        uxm.detected_test_app = "5G_NR"
+        uxm._set_status(InstrumentStatus.CONNECTED)
+        uxm.query = AsyncMock(side_effect=AssertionError("identity sweep performed I/O"))
+        _patched_hal(monkeypatch, drivers={"baseStation": uxm})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        item = body["extra"]["identities"][0]
+        assert item["status"] == "unknown"
+        assert item["observed_identity"]["model"] is None
+        assert "incomplete" in item["reason"]
+        uxm.query.assert_not_awaited()
+
+    def test_idn_sweep_reuses_f64_certification_identity_completeness(self):
+        """F64 身份完整性复用既有 certification_eligible，不另造放行条件。"""
+        from app.diagnostics.sequences.instrument_idn_sweep import _cached_identity
+        from app.hal.base import InstrumentStatus
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+
+        f64 = RealPropsimF64Driver("channelEmulator-fixture", {})
+        f64._visa_resource = object()
+        f64._identity_response = "Keysight Technologies,F8800A,FI64201631"
+        f64.product_family = "PROPSIM F64"
+        f64._set_status(InstrumentStatus.CONNECTED)
+
+        observed, verified, reason = _cached_identity("channelEmulator", f64)
+
+        assert verified is False
+        assert observed["model"] == "PROPSIM F64"
+        assert observed["firmware_version"] is None
+        assert "incomplete" in reason
+
+    @pytest.mark.parametrize(
+        "drift",
+        [
+            "model",
+            "endpoint",
+            "loaded_adapter",
+            "loaded_endpoint",
+            "unregistered_model",
+        ],
+    )
+    def test_idn_sweep_blocks_catalog_or_loaded_adapter_drift(
+        self, db, lab_with_bs, monkeypatch, drift,
+    ):
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.models.instrument import (
+            InstrumentCategory,
+            InstrumentConnection,
+            InstrumentModel,
+        )
+
+        binding = lab_with_bs.instrument_bindings[0]
+        cmw = RealCmw500Driver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        cmw._identity_model = "CMW"
+        cmw._firmware_version = "3.7.130"
+        cmw._identity_model_verified = True
+        cmw._options_snapshot_verified = True
+        driver = cmw
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        if drift == "model":
+            other_model = InstrumentModel(
+                id=uuid.uuid4(),
+                category_id=category.id,
+                vendor="Keysight",
+                model="UXM 5G E7515B",
+                full_name="UXM 5G E7515B",
+                capabilities={},
+                is_available=True,
+            )
+            db.add(other_model)
+            db.flush()
+            category.selected_model_id = other_model.id
+        elif drift == "endpoint":
+            connection = db.query(InstrumentConnection).filter(
+                InstrumentConnection.category_id == category.id
+            ).one()
+            connection.endpoint = "TCPIP0::192.168.1.112::hislip0::INSTR"
+        elif drift == "loaded_adapter":
+            driver = RealUxmDriver(
+                "baseStation-fixture",
+                {"endpoint": binding["connection_endpoint"]},
+            )
+        elif drift == "loaded_endpoint":
+            driver = RealCmw500Driver(
+                "baseStation-fixture",
+                {"endpoint": "TCPIP0::192.168.0.199::hislip0::INSTR"},
+            )
+            driver._identity_model = "CMW"
+            driver._firmware_version = "3.7.130"
+            driver._identity_model_verified = True
+            driver._options_snapshot_verified = True
+        else:
+            selected_model = db.query(InstrumentModel).filter(
+                InstrumentModel.id == category.selected_model_id
+            ).one()
+            selected_model.model = "Unsupported Base Station"
+            selected_model.full_name = "Unsupported Base Station"
+        db.commit()
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+
+    @pytest.mark.parametrize(
+        ("category_mode", "binding_mode", "loaded_mode"),
+        [
+            ("real", "mock", "real"),
+            ("mock", "real", "mock"),
+            ("real", "real", "mock"),
+            ("mock", "mock", "real"),
+        ],
+    )
+    def test_idn_sweep_blocks_binding_or_loaded_driver_mode_drift(
+        self,
+        db,
+        lab_with_bs,
+        monkeypatch,
+        category_mode,
+        binding_mode,
+        loaded_mode,
+    ):
+        """任一 mode 镜像漂移都不能把旧 driver 身份投影成绿色。"""
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.driver_mode = category_mode
+        bindings = [dict(item) for item in lab_with_bs.instrument_bindings]
+        bindings[0]["driver_mode"] = binding_mode
+        lab_with_bs.instrument_bindings = bindings
+        db.commit()
+
+        binding = lab_with_bs.instrument_bindings[0]
+        if loaded_mode == "mock":
+            driver = registered_mock_base_station(
+                "baseStation-fixture",
+                {
+                    "model": "CMW500",
+                    "endpoint": binding["connection_endpoint"],
+                },
+            )
+        else:
+            driver = RealCmw500Driver(
+                "baseStation-fixture",
+                {"endpoint": binding["connection_endpoint"]},
+            )
+            driver._identity_model = "CMW"
+            driver._firmware_version = "3.7.130"
+            driver._identity_model_verified = True
+            driver._options_snapshot_verified = True
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+        assert "mode" in body["extra"]["identities"][0]["reason"]
+
+    def test_idn_sweep_reloads_catalog_truth_after_waiting_for_lease(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        """等待 lease 期间保存的新 endpoint 必须覆盖请求开始时的旧快照。"""
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.models.instrument import InstrumentConnection
+        from app.services.diagnostic_context import (
+            build_diagnostic_context as real_build_diagnostic_context,
+        )
+
+        binding = lab_with_bs.instrument_bindings[0]
+        driver = RealCmw500Driver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        driver._identity_model = "CMW"
+        driver._firmware_version = "3.7.130"
+        driver._identity_model_verified = True
+        driver._options_snapshot_verified = True
+        _patched_hal(monkeypatch, drivers={"baseStation": driver})
+
+        route_db = None
+        context_builds = 0
+
+        def capture_route_db(session, **kwargs):
+            nonlocal route_db, context_builds
+            route_db = session
+            context_builds += 1
+            return real_build_diagnostic_context(session, **kwargs)
+
+        @asynccontextmanager
+        async def mutate_while_waiting(*args, **kwargs):
+            assert route_db is not None
+            connection = route_db.query(InstrumentConnection).one()
+            connection.endpoint = "TCPIP0::192.168.1.112::hislip0::INSTR"
+            route_db.commit()
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.build_diagnostic_context",
+            capture_route_db,
+        )
+        monkeypatch.setattr(
+            "app.api.diagnostic_sequence.instrument_test_lease",
+            mutate_while_waiting,
+        )
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert context_builds == 2
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "BLOCKER"
+        assert body["extra"]["identities"][0]["status"] == "mismatch"
+
+    def test_idn_sweep_does_not_green_incomplete_real_identity(
+        self, lab_with_bs, monkeypatch,
+    ):
+        from app.hal.cmw500_base_station import RealCmw500Driver
+
+        binding = lab_with_bs.instrument_bindings[0]
+        cmw = RealCmw500Driver(
+            "baseStation-fixture",
+            {"endpoint": binding["connection_endpoint"]},
+        )
+        cmw.query = AsyncMock(side_effect=AssertionError("identity sweep performed I/O"))
+        _patched_hal(monkeypatch, drivers={"baseStation": cmw})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["identities"][0]["status"] == "unknown"
+        cmw.query.assert_not_awaited()
+
+    def test_idn_sweep_blocks_stale_positioner_transport_before_identity_na(
+        self, lab_with_historical_instrument_bindings, monkeypatch,
+    ):
+        """无 IDN 投影的 adapter 也不能绕过已加载 transport 漂移门。"""
+        from app.hal.aerotech_positioner import RealAerotechDriver
+
+        positioner = RealAerotechDriver(
+            "positioner-fixture",
+            {"ip": "192.168.0.99", "port": 8000},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": positioner})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={
+                "lab_profile_id": str(
+                    lab_with_historical_instrument_bindings.id
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        positioner_result = next(
+            item
+            for item in response.json()["extra"]["identities"]
+            if item["category_key"] == "positioner"
+        )
+        assert positioner_result["status"] == "mismatch"
+        assert "transport" in positioner_result["reason"]
+
+    def test_idn_sweep_does_not_green_when_no_binding_is_currently_active(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        from app.models.instrument import InstrumentCategory
+
+        category = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "baseStation"
+        ).one()
+        category.is_active = False
+        db.commit()
+        _patched_hal(monkeypatch, drivers={})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["success"] is False
+        assert body["extra"]["verdict"] == "UNDETERMINED"
+        assert body["extra"]["identities"] == []
+        assert body["extra"]["excluded"][0]["reason"] == "category_inactive"
 
     def test_attach_check_sequence_runs_with_mock_bs(self, db, lab_with_bs, monkeypatch):
         """The sequence does mutate state — verify it walks through cleanly when

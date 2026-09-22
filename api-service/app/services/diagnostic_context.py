@@ -25,9 +25,14 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.hal.base import resolve_configured_tcpip_connection
 from app.models.chamber import ChamberConfiguration
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
-from app.models.instrument import InstrumentCategory
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
@@ -56,6 +61,18 @@ class InstrumentBinding:
     connection_endpoint: Optional[str]  # "192.168.1.10:5025" — what SCPI dials
     driver_mode: str  # "auto" | "mock" | "real"
     role: Optional[str]  # "primary_channel_emulator", "vna", etc.
+    # Current catalog truth resolved in the same DB snapshot.  Diagnostic
+    # sequences must not treat a historical LabProfile binding as currently
+    # enabled, nor compare it against browser-owned copies.
+    category_is_active: Optional[bool] = None
+    category_driver_mode: Optional[str] = None
+    selected_model_id: Optional[UUID] = None
+    selected_model_name: Optional[str] = None
+    current_connection_endpoint: Optional[str] = None
+    current_connection_host: Optional[str] = None
+    current_connection_port: Optional[int] = None
+    current_connection_resource: Optional[str] = None
+    current_connection_error: Optional[str] = None
 
 
 @dataclass
@@ -154,7 +171,11 @@ def _truncate_excerpt(output: Optional[str]) -> Optional[str]:
 
 
 def _parse_instrument_bindings(
-    db: Session, raw: Optional[Any]
+    db: Session,
+    raw: Optional[Any],
+    *,
+    refresh_current: bool = False,
+    lock_current: bool = False,
 ) -> List[InstrumentBinding]:
     """Lab profiles store bindings as a JSON array of dicts. Resolve UUID
     strings to actual UUIDs and pull category_key by joining."""
@@ -185,16 +206,81 @@ def _parse_instrument_bindings(
             category_ids.append(cid_uuid)
         rows.append({**entry, "_category_uuid": cid_uuid})
 
-    keys_by_id: Dict[UUID, str] = {}
+    categories_by_id: Dict[UUID, InstrumentCategory] = {}
     if category_ids:
-        for cat in db.query(InstrumentCategory).filter(
+        category_query = db.query(InstrumentCategory).filter(
             InstrumentCategory.id.in_(category_ids)
-        ).all():
-            keys_by_id[cat.id] = cat.category_key
+        )
+        if refresh_current or lock_current:
+            category_query = category_query.execution_options(populate_existing=True)
+        if lock_current:
+            category_query = category_query.order_by(
+                InstrumentCategory.id
+            ).with_for_update()
+        for cat in category_query.all():
+            categories_by_id[cat.id] = cat
+
+    selected_model_ids = {
+        cat.selected_model_id
+        for cat in categories_by_id.values()
+        if cat.selected_model_id is not None
+    }
+    models_by_id: Dict[UUID, InstrumentModel] = {}
+    if selected_model_ids:
+        model_query = db.query(InstrumentModel).filter(
+            InstrumentModel.id.in_(selected_model_ids)
+        )
+        if refresh_current or lock_current:
+            model_query = model_query.execution_options(populate_existing=True)
+        models_by_id = {
+            model.id: model
+            for model in model_query.all()
+        }
+    connections_by_category_id: Dict[UUID, InstrumentConnection] = {}
+    if categories_by_id:
+        connection_query = db.query(InstrumentConnection).filter(
+            InstrumentConnection.category_id.in_(categories_by_id)
+        )
+        if refresh_current or lock_current:
+            connection_query = connection_query.execution_options(populate_existing=True)
+        if lock_current:
+            connection_query = connection_query.order_by(
+                InstrumentConnection.category_id
+            ).with_for_update()
+        connections_by_category_id = {
+            connection.category_id: connection
+            for connection in connection_query.all()
+        }
 
     bindings: List[InstrumentBinding] = []
     for row in rows:
         cid = row.get("_category_uuid")
+        category = categories_by_id.get(cid) if cid else None
+        selected_model = (
+            models_by_id.get(category.selected_model_id)
+            if category is not None and category.selected_model_id is not None
+            else None
+        )
+        connection = connections_by_category_id.get(cid) if cid else None
+        current_host: Optional[str] = None
+        current_port: Optional[int] = None
+        current_resource: Optional[str] = None
+        current_error: Optional[str] = None
+        if connection is not None:
+            connection_config: Dict[str, Any] = {
+                "endpoint": connection.endpoint,
+                "ip": connection.controller_ip,
+                "port": connection.port,
+                "protocol": connection.protocol,
+            }
+            if isinstance(connection.connection_params, dict):
+                connection_config.update(connection.connection_params)
+            (
+                current_host,
+                current_port,
+                current_resource,
+                current_error,
+            ) = resolve_configured_tcpip_connection(connection_config)
         try:
             mid_uuid = UUID(row["instrument_model_id"]) if row.get("instrument_model_id") else None
         except (ValueError, TypeError):
@@ -202,11 +288,30 @@ def _parse_instrument_bindings(
         bindings.append(
             InstrumentBinding(
                 category_id=cid,
-                category_key=keys_by_id.get(cid) if cid else None,
+                category_key=category.category_key if category is not None else None,
                 instrument_model_id=mid_uuid,
                 connection_endpoint=row.get("connection_endpoint"),
                 driver_mode=row.get("driver_mode") or "auto",
                 role=row.get("role"),
+                category_is_active=(
+                    category.is_active if category is not None else None
+                ),
+                category_driver_mode=(
+                    category.driver_mode if category is not None else None
+                ),
+                selected_model_id=(
+                    category.selected_model_id if category is not None else None
+                ),
+                selected_model_name=(
+                    selected_model.model if selected_model is not None else None
+                ),
+                current_connection_endpoint=(
+                    connection.endpoint if connection is not None else None
+                ),
+                current_connection_host=current_host,
+                current_connection_port=current_port,
+                current_connection_resource=current_resource,
+                current_connection_error=current_error,
             )
         )
     return bindings
@@ -219,6 +324,9 @@ def build_diagnostic_context(
     operating_mode: str = "mimo_ota",
     resolve_rf_chains_too: bool = True,
     audit_chamber_integrity_too: bool = False,
+    refresh_current: bool = False,
+    lock_current: bool = False,
+    prelock_category_ids: Optional[List[UUID]] = None,
 ) -> DiagnosticContext:
     """Resolve everything the workshop tools commonly need.
 
@@ -235,7 +343,27 @@ def build_diagnostic_context(
             chamber_name=None,
         )
 
-    lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).first()
+    if lock_current and prelock_category_ids:
+        # Mirror the established persistent lock order used by the formal
+        # binding resolvers: category -> LabProfile -> connection.  A binding
+        # added before the LabProfile lock is taken is picked up and locked by
+        # _parse_instrument_bindings below; an in-flight writer cannot make it
+        # visible while this transaction owns the LabProfile row.
+        (
+            db.query(InstrumentCategory)
+            .filter(InstrumentCategory.id.in_(prelock_category_ids))
+            .order_by(InstrumentCategory.id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+            .all()
+        )
+
+    lab_query = db.query(LabProfile).filter(LabProfile.id == lab_profile_id)
+    if refresh_current or lock_current:
+        lab_query = lab_query.execution_options(populate_existing=True)
+    if lock_current:
+        lab_query = lab_query.with_for_update()
+    lab = lab_query.first()
     if lab is None:
         # Workshop tools should fail loud rather than silently assume a
         # different lab; ValueError surfaces as 422 in API handlers.
@@ -254,7 +382,12 @@ def build_diagnostic_context(
                 f"LabProfile {lab.name} references missing chamber {lab.chamber_config_id}"
             )
 
-    bindings = _parse_instrument_bindings(db, lab.instrument_bindings)
+    bindings = _parse_instrument_bindings(
+        db,
+        lab.instrument_bindings,
+        refresh_current=refresh_current or lock_current,
+        lock_current=lock_current,
+    )
 
     chamber_integrity = (
         audit_chamber_integrity(db, lab.id)

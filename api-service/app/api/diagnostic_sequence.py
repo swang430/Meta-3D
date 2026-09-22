@@ -368,14 +368,24 @@ async def run_diagnostic_sequence(
                 c for c in sequence.metadata.optional_categories
                 if ctx.find_binding_by_category_key(c) is not None
             }
-            if key == "instrument_idn_sweep":
-                lease_categories.update(
-                    binding.category_key
-                    for binding in (ctx.instrument_bindings or [])
-                    if binding.category_key
-                )
             with (capture_scpi_exchanges() if is_cmw_probe else nullcontext([])) as captured:
                 async with sequence_lease(lease_categories) as lease_outcome:
+                    if key == "instrument_idn_sweep":
+                        # The request may have waited behind another lease while
+                        # instrument selection/activation changed.  Re-read the
+                        # server-owned LabProfile/catalog/connection truth only
+                        # after the common HAL coordination lock is held.
+                        ctx = build_diagnostic_context(
+                            db,
+                            lab_profile_id=request.lab_profile_id,
+                            operating_mode=request.operating_mode,
+                            lock_current=True,
+                            prelock_category_ids=[
+                                binding.category_id
+                                for binding in ctx.instrument_bindings
+                                if binding.category_id is not None
+                            ],
+                        )
                     # CMW uses the exact HAL resolved by the lock-time validator.
                     hal = locked_hal if is_cmw_probe else get_hal_service()
                     try:
