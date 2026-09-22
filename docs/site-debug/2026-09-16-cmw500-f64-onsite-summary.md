@@ -117,7 +117,9 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 > 包内第 2 项写「换源到 manifest / 执行计划能力」，实际换成了「基站驱动是否实现配置功率回读」；第 3 项写「stop 回执接受 `CLOSED`」，
 > 实际过审时**去掉了**接受 `CLOSED`（真机不可达），只保留让 `RUNNING → GOS → STOPPED` 回执可确认的那处。下文的「建议 P2-7x / P1-80」已于 2026-09-18 转正，
 > 顺序为 P2-74 → P1-80 → P2-73 → P2-75 → P2-76 → P2-77；P1-79A～E 仍为低优先级候选。
-> **2026-09-19**：P2-74 的本地半已由 PR #482 合并（merge `4d6050fb`），现场半待复验；当前片 = P1-80。
+> **2026-09-19**：P2-74 的本地半已由 PR #482 合并（merge `4d6050fb`），现场半待复验。
+> **2026-09-22**：P1-80 软件半已完成诊断期监控隔离与 F64 SCPI 事务锁、逐查询错误归属、空/畸形回复 fail-closed 与三个子域分判；P1-2
+> 仍待同一 F8800A 现场复验。非现场焦点顺移到 P2-73。
 
 **第 0 步 — 现场改动落地（用户 2026-09-17 批准：现场代码融进 `main`，**合成一个 PR 整体过审**，全套内审 + 外审；不做完不开新片）**：现场的 6 个提交与当时未提交的 5 个代码 / 测试文件已原样保存到远端分支 `onsite/2026-09-16-wip`
 （末端 `5387ac1e` = 6 个现场提交 + 1 个保存未提交改动的 WIP 提交；**仅为保全，不是评审单元**；那个 WIP 提交里还夹着三份 triage 文档的旧稿，拆 PR 时不要带出来），本地 `main` 已对回 `origin/main`。
@@ -131,7 +133,7 @@ NEW-1（`propsim_f64_output_level_windows`）、NEW-2（`propsim_f64_local_handb
 **第 1 批 — 纯软件修复（不需要现场；批内先后待用户定）**：
 
 - **建议 P2-74**：Aerotech 传输稳定性与单轴日志（D8）—— 当天唯一一次急停出在这里，下次跑多方位先得它稳。先枚举断连形态，修法优先收窄 / 换源。
-- **建议 P1-80**：P1-2 序列修复（逐查询错误归属、空回复 fail-closed、license / calibration / user-alignment 分判）。
+- **P1-80 软件半已完成**：P1-2 序列已实现诊断期监控隔离与 F64 SCPI 事务锁、逐查询错误归属、空/畸形回复 fail-closed、license / calibration / user-alignment 分判；同机现场复验仍属 P1-2。
 - **建议 P2-73**：`propsim_f64_p08_gate` 按服务器权威 BaseStation 身份 fail-closed 为 UXM-only（D3）。
 - **建议 P2-75**：`instrument_idn_sweep` 范围与结构化身份投影（D1）。
 - **建议 P2-76**：`input_level_calibration` 空回读不得记成功（D9）。
