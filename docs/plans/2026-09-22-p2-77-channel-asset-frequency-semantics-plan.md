@@ -72,7 +72,6 @@
 
 **Files:**
 - Modify: `api-service/app/hal/propsim_f64.py`
-- Modify: `api-service/app/data/scpi_evidence/p0_5_commands.json`
 - Test: `api-service/tests/test_p2_77_channel_asset_frequency_semantics.py`
 - Test: `api-service/tests/test_f64_center_freq_dispatch.py`
 - Test: `api-service/tests/test_f64_topology_readback_f64r2.py`
@@ -108,9 +107,9 @@
 
   `set_channel_model()` 在加载/拓扑回读后调用 `set_center_frequency_bounded()`，不再保留第二份 CENT 写逻辑。缺省频率仍零 CENT I/O，并清除上次 application evidence。
 
-- [ ] **Step 7: 登记命令来源并跑 GREEN**
+- [ ] **Step 7: 固化邻接手册来源并跑 GREEN**
 
-  `p0_5_commands.json` 为 `CENT:LIM?` 增加紧邻手册 §20.4.6.8/page 282 来源；保留既有 `CENT` 与 `CENT?` 来源。运行：
+  在 F64 实现中为 `CENT:LIM?`、`CENT` 与 `CENT?` 保留可核对的手册章节/页码邻接注释。正式 provenance 白名单保持不变：本片只收窄既有 F64 中心频率能力的运行时证据边界，不把一次实现或现场成功扩张成新的正式资格。运行：
 
   `cd api-service && .venv/bin/python -m pytest tests/test_p2_77_channel_asset_frequency_semantics.py tests/test_f64_center_freq_dispatch.py tests/test_f64_topology_readback_f64r2.py tests/test_rule_gates.py -q`
 

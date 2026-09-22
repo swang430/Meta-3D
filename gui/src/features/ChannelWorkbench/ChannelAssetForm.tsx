@@ -316,10 +316,14 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
           </>
         )}
 
-        <Divider label="物理声明 (频率一致性网)" labelPosition="left" />
+        <Divider label="频率语义 (频率一致性网)" labelPosition="left" />
         <SimpleGrid cols={2}>
-          <NumberInput label="中心频率 (MHz)" value={centerMhz} decimalScale={3} step={1}
-            description="MHz 口径跟 ARFCN/报错文案一致 (例 3549.99)"
+          <NumberInput
+            label={sourceType === 'vendor_file' ? '工程默认中心频率 (MHz)' : '中心频率 (MHz)'}
+            value={centerMhz} decimalScale={3} step={1}
+            description={sourceType === 'vendor_file'
+              ? '工程默认值仅用于审计；本次执行频率由冻结 adapter 能力、仪表运行时范围和逐组回读裁决'
+              : '执行物理身份；MHz 口径跟 ARFCN/报错文案一致 (例 3549.99)'}
             onChange={(v) => setCenterMhz(v)} />
           <NumberInput label="带宽 (MHz)" value={bandwidthMhz}
             onChange={(v) => setBandwidthMhz(v)} />

@@ -42,7 +42,13 @@ class ChannelAssetBase(BaseModel):
     description: Optional[str] = None
     canonical_name: Optional[str] = None
     derived_from: Optional[str] = None
-    center_frequency_hz: Optional[float] = None
+    center_frequency_hz: Optional[float] = Field(
+        None,
+        description=(
+            "vendor_file=工程默认中心频率；其他来源=执行物理身份。"
+            "vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。"
+        ),
+    )
     bandwidth_mhz: Optional[float] = None
     is_los: Optional[bool] = None
     k_factor_db: Optional[float] = None

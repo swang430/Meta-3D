@@ -1788,6 +1788,178 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/channel-assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List channel assets */
+        get: {
+            parameters: {
+                query?: {
+                    source_type?: "standard_3gpp" | "custom_static" | "rt_dynamic" | "vendor_file" | null;
+                    include_inactive?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Channel assets */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelAssetResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a channel asset */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelAssetCreate"];
+                };
+            };
+            responses: {
+                /** @description Channel asset created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelAssetResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a channel asset */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    asset_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Channel asset */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelAssetResponse"];
+                    };
+                };
+                /** @description Channel asset not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Update a channel asset */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    asset_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelAssetUpdate"];
+                };
+            };
+            responses: {
+                /** @description Channel asset updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelAssetResponse"];
+                    };
+                };
+                /** @description Channel asset not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete or retire a channel asset */
+        delete: {
+            parameters: {
+                query?: {
+                    hard?: boolean;
+                };
+                header?: never;
+                path: {
+                    asset_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Channel asset deleted or retired */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Channel asset not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/vendor-files/smu-scan": {
         parameters: {
             query?: never;
@@ -2834,6 +3006,70 @@ export interface components {
             created_at?: string | null;
             /** Format: date-time */
             updated_at?: string | null;
+        };
+        ChannelAssetCreate: {
+            name: string;
+            /** @enum {string} */
+            source_type: "standard_3gpp" | "custom_static" | "rt_dynamic" | "vendor_file";
+            payload: {
+                [key: string]: unknown;
+            };
+            description?: string | null;
+            canonical_name?: string | null;
+            derived_from?: string | null;
+            /** @description vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。 */
+            center_frequency_hz?: number | null;
+            bandwidth_mhz?: number | null;
+            is_los?: boolean | null;
+            k_factor_db?: number | null;
+            ue_velocity_mps?: number[] | null;
+            /** Format: uuid */
+            instrument_connection_id?: string | null;
+            associated_file_path?: string | null;
+            created_by?: string | null;
+        };
+        ChannelAssetUpdate: {
+            name?: string | null;
+            payload?: {
+                [key: string]: unknown;
+            } | null;
+            description?: string | null;
+            canonical_name?: string | null;
+            derived_from?: string | null;
+            /** @description vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。 */
+            center_frequency_hz?: number | null;
+            bandwidth_mhz?: number | null;
+            is_los?: boolean | null;
+            k_factor_db?: number | null;
+            ue_velocity_mps?: number[] | null;
+            /** Format: uuid */
+            instrument_connection_id?: string | null;
+            associated_file_path?: string | null;
+            is_active?: boolean | null;
+        };
+        ChannelAssetResponse: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            source_type: "standard_3gpp" | "custom_static" | "rt_dynamic" | "vendor_file";
+            payload: {
+                [key: string]: unknown;
+            };
+            allowed_targets: string[];
+            is_active: boolean;
+            description?: string | null;
+            canonical_name?: string | null;
+            derived_from?: string | null;
+            /** @description vendor_file=工程默认中心频率；其他来源=执行物理身份。vendor_file 的本次执行频率仅由冻结 adapter 能力、仪器运行时范围和逐组回读裁决。 */
+            center_frequency_hz?: number | null;
+            bandwidth_mhz?: number | null;
+            is_los?: boolean | null;
+            k_factor_db?: number | null;
+            ue_velocity_mps?: number[] | null;
+            /** Format: uuid */
+            instrument_connection_id?: string | null;
+            associated_file_path?: string | null;
         };
         SMUProjectSyncItemResponse: {
             relative_path: string;

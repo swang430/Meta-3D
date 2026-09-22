@@ -520,6 +520,9 @@ export function MIMOOTAConfigForm({
               已选统一信道资产
               {selectedAsset ? `「${selectedAsset.name}」（${CHANNEL_ASSET_SOURCE_LABEL[selectedAsset.source_type] ?? selectedAsset.source_type}）` : ''}
               —— 后端按其 source_type 派生 engine_mode 并覆盖下方标称/自定义 CDL / .smu 字段（下方信道源已禁用）。
+              {selectedAsset?.source_type === 'vendor_file'
+                ? ' 文件内频率是工程默认值；本次频率由冻结 adapter 能力 + 仪表运行时范围 + 逐组回读裁决，界面不自行计算允许范围。'
+                : ''}
             </Alert>
           )}
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
