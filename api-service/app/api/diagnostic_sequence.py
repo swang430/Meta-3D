@@ -368,12 +368,6 @@ async def run_diagnostic_sequence(
                 c for c in sequence.metadata.optional_categories
                 if ctx.find_binding_by_category_key(c) is not None
             }
-            if key == "instrument_idn_sweep":
-                lease_categories.update(
-                    binding.category_key
-                    for binding in (ctx.instrument_bindings or [])
-                    if binding.category_key
-                )
             with (capture_scpi_exchanges() if is_cmw_probe else nullcontext([])) as captured:
                 async with sequence_lease(lease_categories) as lease_outcome:
                     # CMW uses the exact HAL resolved by the lock-time validator.

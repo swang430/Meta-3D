@@ -27,7 +27,11 @@ from sqlalchemy.orm import Session
 
 from app.models.chamber import ChamberConfiguration
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
-from app.models.instrument import InstrumentCategory
+from app.models.instrument import (
+    InstrumentCategory,
+    InstrumentConnection,
+    InstrumentModel,
+)
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
@@ -56,6 +60,13 @@ class InstrumentBinding:
     connection_endpoint: Optional[str]  # "192.168.1.10:5025" — what SCPI dials
     driver_mode: str  # "auto" | "mock" | "real"
     role: Optional[str]  # "primary_channel_emulator", "vna", etc.
+    # Current catalog truth resolved in the same DB snapshot.  Diagnostic
+    # sequences must not treat a historical LabProfile binding as currently
+    # enabled, nor compare it against browser-owned copies.
+    category_is_active: Optional[bool] = None
+    selected_model_id: Optional[UUID] = None
+    selected_model_name: Optional[str] = None
+    current_connection_endpoint: Optional[str] = None
 
 
 @dataclass
@@ -185,16 +196,45 @@ def _parse_instrument_bindings(
             category_ids.append(cid_uuid)
         rows.append({**entry, "_category_uuid": cid_uuid})
 
-    keys_by_id: Dict[UUID, str] = {}
+    categories_by_id: Dict[UUID, InstrumentCategory] = {}
     if category_ids:
         for cat in db.query(InstrumentCategory).filter(
             InstrumentCategory.id.in_(category_ids)
         ).all():
-            keys_by_id[cat.id] = cat.category_key
+            categories_by_id[cat.id] = cat
+
+    selected_model_ids = {
+        cat.selected_model_id
+        for cat in categories_by_id.values()
+        if cat.selected_model_id is not None
+    }
+    models_by_id: Dict[UUID, InstrumentModel] = {}
+    if selected_model_ids:
+        models_by_id = {
+            model.id: model
+            for model in db.query(InstrumentModel).filter(
+                InstrumentModel.id.in_(selected_model_ids)
+            ).all()
+        }
+    connections_by_category_id: Dict[UUID, InstrumentConnection] = {}
+    if categories_by_id:
+        connections_by_category_id = {
+            connection.category_id: connection
+            for connection in db.query(InstrumentConnection).filter(
+                InstrumentConnection.category_id.in_(categories_by_id)
+            ).all()
+        }
 
     bindings: List[InstrumentBinding] = []
     for row in rows:
         cid = row.get("_category_uuid")
+        category = categories_by_id.get(cid) if cid else None
+        selected_model = (
+            models_by_id.get(category.selected_model_id)
+            if category is not None and category.selected_model_id is not None
+            else None
+        )
+        connection = connections_by_category_id.get(cid) if cid else None
         try:
             mid_uuid = UUID(row["instrument_model_id"]) if row.get("instrument_model_id") else None
         except (ValueError, TypeError):
@@ -202,11 +242,23 @@ def _parse_instrument_bindings(
         bindings.append(
             InstrumentBinding(
                 category_id=cid,
-                category_key=keys_by_id.get(cid) if cid else None,
+                category_key=category.category_key if category is not None else None,
                 instrument_model_id=mid_uuid,
                 connection_endpoint=row.get("connection_endpoint"),
                 driver_mode=row.get("driver_mode") or "auto",
                 role=row.get("role"),
+                category_is_active=(
+                    category.is_active if category is not None else None
+                ),
+                selected_model_id=(
+                    category.selected_model_id if category is not None else None
+                ),
+                selected_model_name=(
+                    selected_model.model if selected_model is not None else None
+                ),
+                current_connection_endpoint=(
+                    connection.endpoint if connection is not None else None
+                ),
             )
         )
     return bindings

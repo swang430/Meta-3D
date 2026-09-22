@@ -1,37 +1,183 @@
-"""Ping every instrument bound to the LabProfile and report *IDN?.
+"""Project cached adapter identity for the active LabProfile instrument set.
 
-Used as the first thing operators run when they walk into a rack: "are
-all the boxes alive and still the model number I think they are?"
-Doesn't move any RF state — safe to run at any time.
+This sequence performs no instrument I/O.  It intersects historical
+LabProfile bindings with the currently enabled catalog, validates each binding
+against server-owned model/endpoint truth, then consumes only identity already
+captured by the loaded adapter during connection.
 """
 from __future__ import annotations
 
 import logging
-import time
+from dataclasses import asdict
 from typing import Any, Callable, Dict
 
-from app.diagnostics.protocol import (
-    SequenceMetadata,
-    SequenceRunResult,
-    driver_not_loaded_summary,
-    SequenceStepResult,
-)
+from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult, SequenceStepResult
 from app.services.diagnostic_context import DiagnosticContext
+from app.services.instrument_hal_service import get_real_driver_class, is_mock_driver
 
 logger = logging.getLogger(__name__)
 
 
 metadata = SequenceMetadata(
-    name="Instrument *IDN? sweep",
+    name="Instrument identity sweep",
     description=(
-        "Walks every category bound to the selected LabProfile and queries "
-        "*IDN?. First-thing-in-the-morning sanity check — confirms each "
-        "box is online and still the vendor/model the lab profile claims."
+        "Projects cached identity from enabled adapters bound to the selected "
+        "LabProfile. It performs no instrument query and explicitly reports "
+        "inactive historical bindings and configuration drift."
     ),
-    required_categories=[],  # uses whatever the lab has bound; never required-fixed
+    required_categories=[],
     params_schema=[],  # parameter-less
-    safe_during_test=True,  # *IDN? doesn't disturb anything
+    safe_during_test=True,
 )
+
+
+def _adapter_id(driver: Any) -> str | None:
+    direct = getattr(driver, "adapter_id", None)
+    if isinstance(direct, str) and direct:
+        return direct
+    manifest = getattr(driver, "adapter_manifest", None)
+    candidate = getattr(manifest, "adapter_id", None)
+    return candidate if isinstance(candidate, str) and candidate else None
+
+
+def _cached_identity(category_key: str, driver: Any) -> tuple[dict[str, Any], bool, str]:
+    """Return (projection, live_verified, reason) without instrument I/O."""
+    adapter_id = _adapter_id(driver)
+    if category_key == "baseStation" and adapter_id == "cmw500":
+        identity = driver.get_base_station_identity()
+        verified = getattr(driver, "identity_snapshot_verified", None) is True
+        return (
+            {
+                **asdict(identity),
+                "options": list(identity.options),
+                "captured_from_live_connection": verified,
+            },
+            verified,
+            "CMW500 cached connection identity",
+        )
+    if category_key == "baseStation" and adapter_id == "uxm":
+        environment = driver.capture_evidence_environment()
+        projection = environment.model_dump(mode="json")
+        verified = (
+            environment.captured_from_live_connection is True
+            and bool(environment.model)
+            and bool(environment.firmware_version)
+        )
+        return (
+            projection,
+            verified,
+            (
+                "UXM cached connection environment"
+                if verified
+                else "UXM cached connection identity is incomplete"
+            ),
+        )
+    if category_key == "channelEmulator" and adapter_id == "propsim_f64":
+        environment = driver.capture_evidence_environment()
+        projection = environment.model_dump(mode="json")
+        # Keep the identity boundary aligned with the required identity fields
+        # used by ChannelEmulatorCertificationIdentity without turning this
+        # read-only sweep into an options/site-certification gate.
+        verified = (
+            environment.captured_from_live_connection is True
+            and bool(environment.model)
+            and bool(environment.firmware_version)
+            and bool(environment.serial_number)
+        )
+        return (
+            projection,
+            verified,
+            (
+                "F64 cached connection identity/options"
+                if verified
+                else "F64 cached connection identity/options are incomplete"
+            ),
+        )
+    return ({}, False, "adapter has no approved cached identity projection")
+
+
+def _projection(binding: Any, driver: Any) -> dict[str, Any]:
+    category_key = binding.category_key or "(unknown)"
+    binding_endpoint = (binding.connection_endpoint or "").strip()
+    current_endpoint = (binding.current_connection_endpoint or "").strip()
+    loaded_driver = type(driver).__name__ if driver is not None else None
+    loaded_adapter_id = _adapter_id(driver) if driver is not None else None
+    base = {
+        "category_key": category_key,
+        "binding_model_id": (
+            str(binding.instrument_model_id)
+            if binding.instrument_model_id is not None else None
+        ),
+        "selected_model_id": (
+            str(binding.selected_model_id)
+            if binding.selected_model_id is not None else None
+        ),
+        "selected_model": binding.selected_model_name,
+        "binding_endpoint": binding_endpoint or None,
+        "current_endpoint": current_endpoint or None,
+        "loaded_driver": loaded_driver,
+        "loaded_adapter_id": loaded_adapter_id,
+        "observed_identity": None,
+    }
+
+    if binding.selected_model_id is None or binding.selected_model_name is None:
+        return {**base, "status": "mismatch", "reason": "no current model is selected"}
+    if binding.instrument_model_id != binding.selected_model_id:
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "LabProfile binding model differs from selected_model_id",
+        }
+    if not current_endpoint or binding_endpoint != current_endpoint:
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "LabProfile binding endpoint differs from current saved endpoint",
+        }
+    if driver is None:
+        return {**base, "status": "mismatch", "reason": "current enabled driver is not loaded"}
+    if is_mock_driver(driver):
+        return {
+            **base,
+            "status": "unknown",
+            "reason": "loaded adapter is simulated; no real identity is admissible",
+        }
+
+    expected_class = get_real_driver_class(category_key, binding.selected_model_name)
+    if expected_class is None:
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "selected model has no registered real adapter",
+        }
+    if not isinstance(driver, expected_class):
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "loaded driver does not match the selected model adapter",
+        }
+
+    if category_key in {"positioner", "rfSwitch"}:
+        return {
+            **base,
+            "status": "not_applicable",
+            "reason": "no approved non-invasive identity projection exists for this adapter",
+        }
+
+    observed, verified, reason = _cached_identity(category_key, driver)
+    if not verified:
+        return {
+            **base,
+            "observed_identity": observed or None,
+            "status": "unknown",
+            "reason": reason,
+        }
+    return {
+        **base,
+        "observed_identity": observed,
+        "status": "match",
+        "reason": reason,
+    }
 
 
 async def run(
@@ -41,7 +187,7 @@ async def run(
     *,
     log: Callable[[str], None],
 ) -> SequenceRunResult:
-    """Iterate the lab's instrument bindings, query *IDN? on each."""
+    """Project the active binding/adapter identity set without hardware I/O."""
     if ctx.lab_profile_id is None:
         return SequenceRunResult(
             success=False,
@@ -56,71 +202,65 @@ async def run(
 
     drivers = getattr(hal, "drivers", {}) or {}
     steps: list[SequenceStepResult] = []
-    failures = 0
+    identities: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
 
     for binding in ctx.instrument_bindings:
-        cat_key = binding.category_key or "(unknown)"
-        endpoint = binding.connection_endpoint or "(no endpoint)"
-        label = f"{cat_key} @ {endpoint}"
-
-        driver = drivers.get(binding.category_key) if binding.category_key else None
-        if driver is None:
-            steps.append(SequenceStepResult(
-                label=label,
-                success=False,
-                detail=driver_not_loaded_summary(cat_key),
-            ))
-            failures += 1
-            log(f"  ✗ {label}: driver not loaded")
+        category_key = binding.category_key or "(unknown)"
+        if binding.category_is_active is not True:
+            excluded.append({
+                "category_key": category_key,
+                "category_id": (
+                    str(binding.category_id) if binding.category_id is not None else None
+                ),
+                "binding_endpoint": binding.connection_endpoint,
+                "reason": (
+                    "category_inactive"
+                    if binding.category_is_active is False
+                    else "category_missing"
+                ),
+            })
             continue
+        driver = drivers.get(binding.category_key) if binding.category_key else None
+        item = _projection(binding, driver)
+        identities.append(item)
+        status = item["status"]
+        steps.append(SequenceStepResult(
+            label=f"{category_key} @ {item['binding_endpoint'] or '(no endpoint)'}",
+            success=status in {"match", "not_applicable"},
+            detail=f"{status}: {item['reason']}",
+            duration_ms=0,
+        ))
+        marker = "✓" if status in {"match", "not_applicable"} else "✗"
+        log(f"  {marker} {category_key}: {status} — {item['reason']}")
 
-        # Try the standard ways HAL drivers expose IDN. Different vendors
-        # called it different things in the codebase, so try a few.
-        idn = None
-        err: str | None = None
-        started = time.monotonic()
-        for method_name in ("get_identity", "query_idn", "query"):
-            method = getattr(driver, method_name, None)
-            if method is None:
-                continue
-            try:
-                if method_name == "query":
-                    idn = await method("*IDN?")
-                else:
-                    idn = await method()
-                break
-            except Exception as e:  # noqa: BLE001
-                err = f"{method_name}() raised: {e}"
-                continue
-
-        duration_ms = int((time.monotonic() - started) * 1000)
-        if idn is None:
-            steps.append(SequenceStepResult(
-                label=label,
-                success=False,
-                detail=err or "Driver exposes none of get_identity/query_idn/query",
-                duration_ms=duration_ms,
-            ))
-            failures += 1
-            log(f"  ✗ {label}: {err or 'no IDN method available'}")
-        else:
-            idn_str = str(idn).strip()
-            steps.append(SequenceStepResult(
-                label=label,
-                success=True,
-                detail=idn_str,
-                duration_ms=duration_ms,
-            ))
-            log(f"  ✓ {label}: {idn_str}")
-
-    summary = (
-        f"All {len(steps)} bound instruments responded"
-        if failures == 0
-        else f"{failures}/{len(steps)} instruments did not respond"
-    )
+    statuses = {item["status"] for item in identities}
+    if not identities:
+        success = False
+        verdict = "UNDETERMINED"
+        summary = "LabProfile has no currently active instrument bindings"
+    elif "mismatch" in statuses:
+        success = False
+        verdict = "BLOCKER"
+        summary = "Active instrument identity/configuration mismatch detected"
+    elif "unknown" in statuses:
+        success = False
+        verdict = "UNDETERMINED"
+        summary = "Active instrument identity is incomplete"
+    else:
+        success = True
+        verdict = "SUCCESS"
+        summary = f"All {len(identities)} active instrument bindings are consistent"
     return SequenceRunResult(
-        success=failures == 0,
+        success=success,
         summary=summary,
         steps=steps,
-        extra={"total": len(steps), "failures": failures},
+        extra={
+            "schema_version": 1,
+            "verdict": verdict,
+            "identities": identities,
+            "excluded": excluded,
+            "included_count": len(identities),
+            "excluded_count": len(excluded),
+        },
     )

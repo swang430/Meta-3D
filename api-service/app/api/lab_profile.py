@@ -85,8 +85,8 @@ class InstrumentBinding(BaseModel):
     this rather than accept arbitrary strings because the diagnostic
     context resolver (`services/diagnostic_context._parse_instrument_bindings`)
     joins on UUID to populate `category_key`; non-UUID values would
-    silently degrade the *IDN? sweep into "no HAL driver" for every
-    bound instrument. Wizard reads the UUID from
+    silently degrade the cached identity projection into a missing-category
+    exclusion for every bound instrument. Wizard reads the UUID from
     `GET /instruments/catalog` → `categoryId` field, which is exposed
     precisely for this purpose. (Codex P1 review on PR #18.)
     """

@@ -2257,8 +2257,8 @@ def test_g16_checker_detects_a_planted_conflict():
 # 2026-08-07 实证 (内审 F3): `baseStation_attach_check` 只声明 baseStation,
 # 序列体却实打实调 channelEmulator 的 `stop_emulation` / `set_passthrough_mode`
 # → F64 不在 Remote → 整条 attach 主力序列失败, 报错还指向 F64 状态机 (错方向)。
-# 同文件里那句 `if key == "instrument_idn_sweep"` 的硬编码特判, 就是这个洞
-# 已经咬过一次的物证。
+# 这个洞曾逼出 API 层 `if key == "instrument_idn_sweep"` 的硬编码特判；
+# P2-75 把该序列收窄为零仪器 I/O 的缓存投影后已删除那处特判。
 #
 # ⚠ 本门是**不变量门**: 从代码派生"声明集 ⊇ 实碰集"这个恒成立的关系,
 #   不是"某个 token 在不在"的存在性门。新加序列漏声明会直接红。

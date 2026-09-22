@@ -286,8 +286,8 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
     // string key. Downstream resolvers (services/diagnostic_context
     // `_parse_instrument_bindings`) parse this field as UUID to join
     // back to InstrumentCategory.id; a non-UUID silently collapses
-    // to category_key=None, and the *IDN? diagnostic sweep then
-    // reports "no HAL driver" for every binding the wizard created.
+    // to category_key=None, and the cached identity diagnostic then
+    // excludes every binding the wizard created as category_missing.
     // (Codex P1 review on PR #18.)
     const bindingsPayload: InstrumentBindingPayload[] = configuredBindings.flatMap(
       (b) => {
