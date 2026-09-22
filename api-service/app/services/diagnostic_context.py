@@ -25,6 +25,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.hal.base import resolve_configured_tcpip_connection
 from app.models.chamber import ChamberConfiguration
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.instrument import (
@@ -67,6 +68,10 @@ class InstrumentBinding:
     selected_model_id: Optional[UUID] = None
     selected_model_name: Optional[str] = None
     current_connection_endpoint: Optional[str] = None
+    current_connection_host: Optional[str] = None
+    current_connection_port: Optional[int] = None
+    current_connection_resource: Optional[str] = None
+    current_connection_error: Optional[str] = None
 
 
 @dataclass
@@ -235,6 +240,25 @@ def _parse_instrument_bindings(
             else None
         )
         connection = connections_by_category_id.get(cid) if cid else None
+        current_host: Optional[str] = None
+        current_port: Optional[int] = None
+        current_resource: Optional[str] = None
+        current_error: Optional[str] = None
+        if connection is not None:
+            connection_config: Dict[str, Any] = {
+                "endpoint": connection.endpoint,
+                "ip": connection.controller_ip,
+                "port": connection.port,
+                "protocol": connection.protocol,
+            }
+            if isinstance(connection.connection_params, dict):
+                connection_config.update(connection.connection_params)
+            (
+                current_host,
+                current_port,
+                current_resource,
+                current_error,
+            ) = resolve_configured_tcpip_connection(connection_config)
         try:
             mid_uuid = UUID(row["instrument_model_id"]) if row.get("instrument_model_id") else None
         except (ValueError, TypeError):
@@ -259,6 +283,10 @@ def _parse_instrument_bindings(
                 current_connection_endpoint=(
                     connection.endpoint if connection is not None else None
                 ),
+                current_connection_host=current_host,
+                current_connection_port=current_port,
+                current_connection_resource=current_resource,
+                current_connection_error=current_error,
             )
         )
     return bindings

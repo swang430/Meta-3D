@@ -96,12 +96,33 @@ def _cached_identity(category_key: str, driver: Any) -> tuple[dict[str, Any], bo
     return ({}, False, "adapter has no approved cached identity projection")
 
 
+def _transport(host: Any, port: Any, resource: Any) -> tuple[str, int | None, str | None]:
+    """Normalize the already-parsed transport identity without performing I/O."""
+    normalized_port = port if isinstance(port, int) else None
+    normalized_resource = str(resource).strip().casefold() if resource else None
+    return (str(host or "").strip().casefold(), normalized_port, normalized_resource)
+
+
 def _projection(binding: Any, driver: Any) -> dict[str, Any]:
     category_key = binding.category_key or "(unknown)"
     binding_endpoint = (binding.connection_endpoint or "").strip()
     current_endpoint = (binding.current_connection_endpoint or "").strip()
     loaded_driver = type(driver).__name__ if driver is not None else None
     loaded_adapter_id = _adapter_id(driver) if driver is not None else None
+    expected_transport = _transport(
+        binding.current_connection_host,
+        binding.current_connection_port,
+        binding.current_connection_resource,
+    )
+    loaded_transport = (
+        _transport(
+            getattr(driver, "_connection_host", None),
+            getattr(driver, "_connection_port", None),
+            getattr(driver, "_connection_resource", None),
+        )
+        if driver is not None
+        else None
+    )
     base = {
         "category_key": category_key,
         "binding_model_id": (
@@ -117,6 +138,20 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
         "current_endpoint": current_endpoint or None,
         "loaded_driver": loaded_driver,
         "loaded_adapter_id": loaded_adapter_id,
+        "expected_transport": {
+            "host": expected_transport[0] or None,
+            "port": expected_transport[1],
+            "resource": expected_transport[2],
+        },
+        "loaded_transport": (
+            {
+                "host": loaded_transport[0] or None,
+                "port": loaded_transport[1],
+                "resource": loaded_transport[2],
+            }
+            if loaded_transport is not None
+            else None
+        ),
         "observed_identity": None,
     }
 
@@ -155,6 +190,18 @@ def _projection(binding: Any, driver: Any) -> dict[str, Any]:
             **base,
             "status": "mismatch",
             "reason": "loaded driver does not match the selected model adapter",
+        }
+    if binding.current_connection_error or not expected_transport[0]:
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "current saved transport is invalid or unresolved",
+        }
+    if getattr(driver, "_connection_config_error", None) or loaded_transport != expected_transport:
+        return {
+            **base,
+            "status": "mismatch",
+            "reason": "loaded driver transport differs from current saved transport",
         }
 
     if category_key in {"positioner", "rfSwitch"}:

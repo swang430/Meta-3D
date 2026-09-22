@@ -677,7 +677,14 @@ class TestRunSequence:
         assert "incomplete" in reason
 
     @pytest.mark.parametrize(
-        "drift", ["model", "endpoint", "loaded_adapter", "unregistered_model"],
+        "drift",
+        [
+            "model",
+            "endpoint",
+            "loaded_adapter",
+            "loaded_endpoint",
+            "unregistered_model",
+        ],
     )
     def test_idn_sweep_blocks_catalog_or_loaded_adapter_drift(
         self, db, lab_with_bs, monkeypatch, drift,
@@ -727,6 +734,15 @@ class TestRunSequence:
                 "baseStation-fixture",
                 {"endpoint": binding["connection_endpoint"]},
             )
+        elif drift == "loaded_endpoint":
+            driver = RealCmw500Driver(
+                "baseStation-fixture",
+                {"endpoint": "TCPIP0::192.168.0.199::hislip0::INSTR"},
+            )
+            driver._identity_model = "CMW"
+            driver._firmware_version = "3.7.130"
+            driver._identity_model_verified = True
+            driver._options_snapshot_verified = True
         else:
             selected_model = db.query(InstrumentModel).filter(
                 InstrumentModel.id == category.selected_model_id
@@ -771,6 +787,36 @@ class TestRunSequence:
         assert body["extra"]["verdict"] == "UNDETERMINED"
         assert body["extra"]["identities"][0]["status"] == "unknown"
         cmw.query.assert_not_awaited()
+
+    def test_idn_sweep_blocks_stale_positioner_transport_before_identity_na(
+        self, lab_with_historical_instrument_bindings, monkeypatch,
+    ):
+        """无 IDN 投影的 adapter 也不能绕过已加载 transport 漂移门。"""
+        from app.hal.aerotech_positioner import RealAerotechDriver
+
+        positioner = RealAerotechDriver(
+            "positioner-fixture",
+            {"ip": "192.168.0.99", "port": 8000},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": positioner})
+
+        response = client.post(
+            "/api/v1/diagnostic-sequences/instrument_idn_sweep/run",
+            json={
+                "lab_profile_id": str(
+                    lab_with_historical_instrument_bindings.id
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        positioner_result = next(
+            item
+            for item in response.json()["extra"]["identities"]
+            if item["category_key"] == "positioner"
+        )
+        assert positioner_result["status"] == "mismatch"
+        assert "transport" in positioner_result["reason"]
 
     def test_idn_sweep_does_not_green_when_no_binding_is_currently_active(
         self, db, lab_with_bs, monkeypatch,
