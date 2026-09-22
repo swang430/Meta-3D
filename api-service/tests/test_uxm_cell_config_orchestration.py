@@ -120,10 +120,11 @@ async def test_common_uxm_config_receipt_confirms_only_authoritative_readbacks(
         "downlink_power_dbm": -50.0,
     }
     assert all(fields[name].status == "confirmed" for name in authoritative)
-    assert all(
-        fields[name].status == "unknown" and fields[name].applied is None
-        for name in {"radio_technology", "channel_kind", "frequency_mhz", "band"}
+    assert set(fields).isdisjoint(
+        {"radio_technology", "channel_kind", "frequency_mhz"}
     )
+    assert fields["band"].status == "unknown"
+    assert fields["band"].applied is None
     assert receipt.exchange_ids
 
 
@@ -139,12 +140,7 @@ async def test_common_uxm_config_receipt_marks_only_mismatched_readback_unknown(
     assert receipt.confirmed is False
     assert fields["mimo_layers"].status == "unknown"
     assert fields["mimo_layers"].applied is None
-    non_authoritative = {
-        "radio_technology",
-        "channel_kind",
-        "frequency_mhz",
-        "band",
-    }
+    non_authoritative = {"band"}
     for name, field in fields.items():
         if name not in non_authoritative | {"mimo_layers"}:
             assert field.status == "confirmed"
@@ -214,12 +210,7 @@ async def test_common_uxm_config_receipt_keeps_query_timeout_field_unknown(
     fields = {field.field: field for field in receipt.fields}
     assert receipt.confirmed is False
     assert fields["mimo_layers"].status == "unknown"
-    non_authoritative = {
-        "radio_technology",
-        "channel_kind",
-        "frequency_mhz",
-        "band",
-    }
+    non_authoritative = {"band"}
     assert all(
         field.status == "confirmed"
         for name, field in fields.items()
