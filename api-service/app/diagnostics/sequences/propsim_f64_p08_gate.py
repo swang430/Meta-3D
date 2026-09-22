@@ -65,7 +65,10 @@ from app.diagnostics.sequences.propsim_f64_health import _maybe_await, _parse_er
 from app.diagnostics.sequences.propsim_f64_state_machine import classify_state
 from app.hal.propsim_f64 import F64BypassMode
 from app.services.diagnostic_context import DiagnosticContext
-from app.services.base_station_binding import ResolvedBaseStationBinding
+from app.services.base_station_binding import (
+    ResolvedBaseStationBinding,
+    validate_resolved_base_station_runtime,
+)
 from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 
@@ -316,6 +319,13 @@ async def run(
         return _reject(
             "BaseStation binding 只接受真实 UXM；当前 selected model / LabProfile "
             "binding / loaded adapter 未共同解析为 UXM，未执行任何 F64 动作。"
+        )
+
+    runtime_error = validate_resolved_base_station_runtime(resolved_binding, hal)
+    if runtime_error is not None:
+        return _reject(
+            "BaseStation binding 与当前 HAL 不一致；"
+            f"{runtime_error}，未执行任何 F64 动作。"
         )
 
     drivers = getattr(hal, "drivers", {}) or {}

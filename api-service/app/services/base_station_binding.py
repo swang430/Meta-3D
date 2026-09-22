@@ -298,6 +298,33 @@ def _runtime_driver_identity(driver, simulated: bool) -> dict[str, Any]:
     }
 
 
+def validate_resolved_base_station_runtime(
+    resolved: ResolvedBaseStationBinding,
+    hal,
+) -> str | None:
+    """Confirm that a frozen binding still names the active HAL driver.
+
+    Diagnostic sequences may receive an already-resolved object directly, so
+    they must not let a missing, replaced, or simulated driver reuse that stale
+    authority after the database resolver has returned.
+    """
+
+    driver = _loaded_base_station(hal)
+    if driver is None:
+        return "loaded driver is missing"
+    if is_mock_driver(driver):
+        return "loaded driver is simulated"
+    if resolved.runtime_driver.simulated:
+        return "resolved runtime driver is simulated"
+
+    current = BaseStationRuntimeDriverIdentity.model_validate(
+        _runtime_driver_identity(driver, False)
+    )
+    if current != resolved.runtime_driver:
+        return "loaded driver identity/transport does not match resolved binding"
+    return None
+
+
 def resolve_base_station_binding(
     db,
     hal,

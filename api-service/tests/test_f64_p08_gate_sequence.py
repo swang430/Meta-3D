@@ -31,6 +31,8 @@ from app.services.base_station_binding import (
     BaseStationTransportIdentity,
     ResolvedBaseStationBinding,
 )
+from app.hal.base_station import MockBaseStation
+from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.propsim_f64 import RealPropsimF64Driver
 
@@ -169,8 +171,14 @@ class _FakeF64Scpi:
 
 
 class _FakeHal:
-    def __init__(self, ce: Any) -> None:
+    def __init__(self, ce: Any, *, base_station: Any = ...) -> None:
+        if base_station is ...:
+            base_station = RealUxmDriver(
+                "uxm-p08", {"ip_address": "192.0.2.11"}
+            )
         self.drivers = {"channelEmulator": ce}
+        if base_station is not None:
+            self.drivers["baseStation"] = base_station
 
 
 def _make(**fake_kw):
@@ -443,6 +451,47 @@ class TestResidueSites:
 
 
 class TestParamGates:
+    @pytest.mark.parametrize(
+        "base_station_factory",
+        [
+            pytest.param(lambda: None, id="missing"),
+            pytest.param(
+                lambda: RealCmw500Driver(
+                    "cmw-p08", {"ip_address": "192.0.2.11"}
+                ),
+                id="cmw500",
+            ),
+            pytest.param(
+                lambda: MockBaseStation(
+                    "mock-uxm-p08",
+                    {"model": RealUxmDriver.adapter_manifest.model_name},
+                    adapter_manifest=RealUxmDriver.adapter_manifest,
+                ),
+                id="mock-uxm",
+            ),
+            pytest.param(
+                lambda: RealUxmDriver(
+                    "different-uxm", {"ip_address": "192.0.2.11"}
+                ),
+                id="stale-uxm-identity",
+            ),
+        ],
+    )
+    async def test_frozen_binding_must_match_current_hal_before_f64_io(
+        self, base_station_factory,
+    ):
+        drv, fake = _make()
+        result = await run_gate(
+            None,
+            _FakeHal(drv, base_station=base_station_factory()),
+            dict(_OK_PARAMS),
+            log=lambda _message: None,
+            resolved_binding=_resolved_uxm_binding(),
+        )
+        assert not result.success
+        assert "BaseStation" in result.summary and "binding" in result.summary
+        assert fake.writes == []
+
     async def test_missing_server_resolved_uxm_binding_refuses_before_f64_io(self):
         """Direct callers cannot replace server binding truth with the checkbox."""
         drv, fake = _make()
