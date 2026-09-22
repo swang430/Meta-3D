@@ -41,8 +41,9 @@ P0-8 的现场协议 (`docs/guides/on-site-debug-protocol.md` Phase 1.5) 要求�
 `start_emulation` / `stop_emulation` / `set_bypass_mode` / `set_output_gain` /
 `measure_input`。剧本级直查 (`_query`) 只用于**原样归档**回读值与零残留检查。
 
-**前置声明**: UXM 满 RB DL 已激活是 CE↔BS 协调的操作员确认项, 序列不隐式假设 ——
-参数 `uxm_dl_confirmed` 必须显式传 JSON true 才开跑。
+**前置声明**: 服务器必须先在租约锁内把 selected model、LabProfile binding
+与 loaded adapter 共同解析为真实 UXM；`uxm_dl_confirmed` 只是操作员对“UXM 满 RB DL
+已激活”这一现场条件的确认，不能代替型号、连接或驱动真值。
 
 会改仪器状态 (加载/GO/旁路/增益), 故 `safe_during_test=False`。
 """
@@ -64,6 +65,7 @@ from app.diagnostics.sequences.propsim_f64_health import _maybe_await, _parse_er
 from app.diagnostics.sequences.propsim_f64_state_machine import classify_state
 from app.hal.propsim_f64 import F64BypassMode
 from app.services.diagnostic_context import DiagnosticContext
+from app.services.base_station_binding import ResolvedBaseStationBinding
 from app.hal.channel_emulator_manifest import channel_emulator_implements
 
 
@@ -73,9 +75,10 @@ metadata = SequenceMetadata(
         "P0-8 出发前半的门剧本: 加载 p08 场景包(生产事务) → AUTOSET 输入参考"
         "(stopped 态) → SYST:STAT? 收敛判定 → GO → 运行中 ±Δ 增益往返(写后回读) → "
         "衰落/旁路两态 INP:LEV:MEAS? → 还原并停住。每步后核错误队列零残留。"
-        "前置: UXM 满 RB DL 已激活(参数显式确认)。会改仪器状态。"
+        "前置: 服务器权威 binding/adapter 已解析为真实 UXM，且 UXM 满 RB "
+        "DL 已激活(参数显式确认)。会改仪器状态。"
     ),
-    required_categories=["channelEmulator"],
+    required_categories=["baseStation", "channelEmulator"],
     params_schema=[
         {"name": "uxm_dl_confirmed",
          "label": "UXM 满 RB DL 已激活 (操作员确认, 必须勾选)",
@@ -294,7 +297,27 @@ async def run(
     params: Dict[str, Any],
     *,
     log: Callable[[str], None],
+    resolved_binding: Optional[ResolvedBaseStationBinding] = None,
 ) -> SequenceRunResult:
+    if not isinstance(resolved_binding, ResolvedBaseStationBinding):
+        return _reject(
+            "缺少服务器权威 BaseStation binding；本门只允许已解析并与当前 HAL "
+            "一致的真实 UXM，不能用 uxm_dl_confirmed 参数代替型号校验。"
+        )
+    manifest = resolved_binding.manifest
+    runtime = resolved_binding.runtime_driver
+    if (
+        resolved_binding.execution_mode != "real"
+        or manifest is None
+        or manifest.adapter_id != "uxm"
+        or runtime.simulated
+        or runtime.adapter_id != "uxm"
+    ):
+        return _reject(
+            "BaseStation binding 只接受真实 UXM；当前 selected model / LabProfile "
+            "binding / loaded adapter 未共同解析为 UXM，未执行任何 F64 动作。"
+        )
+
     drivers = getattr(hal, "drivers", {}) or {}
     ce = drivers.get("channelEmulator")
     if ce is None:
@@ -351,7 +374,9 @@ async def run(
     delta = float(delta)
 
     g = _Gate(ce, log)
-    findings: Dict[str, Any] = {}
+    findings: Dict[str, Any] = {
+        "base_station_binding": resolved_binding.stable_projection(),
+    }
     aborted: Optional[str] = None
 
     # 还原簿记: 只记"我们动过什么", 还原段对着当前实际值收敛。
