@@ -196,6 +196,33 @@ class TestManualInputReference:
             {"input_num": 2, "avg_dbm": -28.0, "crest_db": None},
         ]
 
+    def test_verified_pre_cell_truth_survives_when_no_callback_is_wired(self):
+        """UXM 无 Cell-ready 功率回调时，不得抹掉完整的机会式预读真值。"""
+        from app.services.mimo_ota.executors import measure as measure_module
+
+        verified = {
+            "mode": "manual",
+            "skipped": False,
+            "success": True,
+            "application_succeeded": True,
+            "verification_status": "verified_pre_cell",
+            "verification_source": "pre_cell_measure_input",
+            "input_ports": [1, 2],
+            "pre_cell_readback": [
+                {"input_num": 1, "avg_dbm": -15.2, "crest_db": 11.8},
+                {"input_num": 2, "avg_dbm": -15.1, "crest_db": 11.9},
+            ],
+            "readback": [
+                {"input_num": 1, "avg_dbm": -15.2, "crest_db": 11.8},
+                {"input_num": 2, "avg_dbm": -15.1, "crest_db": 11.9},
+            ],
+            "failure_reason": None,
+        }
+
+        result = measure_module._finalize_manual_input_reference(verified, None)
+
+        assert result == verified
+
     @pytest.mark.parametrize(
         ("observation", "reason_fragment"),
         [

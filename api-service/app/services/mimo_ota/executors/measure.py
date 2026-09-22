@@ -357,6 +357,17 @@ def _finalize_manual_input_reference(
         or result.get("application_succeeded") is not True
     ):
         return result
+    if (
+        observation is None
+        and result.get("success") is True
+        and result.get("verification_status") == "verified_pre_cell"
+        and result.get("verification_source") == "pre_cell_measure_input"
+    ):
+        # UXM does not expose the CMW-specific configured-power readback used
+        # to wire the Cell-ready callback.  A complete finite readback already
+        # verified by _apply_manual_input_reference remains the only available
+        # measured truth; absence of a second observation must not erase it.
+        return result
 
     result.update(
         success=False,
