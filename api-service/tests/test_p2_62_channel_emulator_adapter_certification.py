@@ -721,24 +721,28 @@ def test_certfake_frequency_evidence_is_adapter_and_instrument_bound():
         current_adapter_id="certfake_ce",
         instrument_id="ce-certfake",
         measurement_attempt_id="attempt-certfake",
+        expected_schema_version=2,
     )
     assert not _has_certifiable_channel_emulator_frequency_evidence(
         frequency,
         current_adapter_id="certfake_ce",
         instrument_id="another-instrument",
         measurement_attempt_id="attempt-certfake",
+        expected_schema_version=2,
     )
     assert not _has_certifiable_channel_emulator_frequency_evidence(
         frequency,
         current_adapter_id="propsim_f64",
         instrument_id="ce-certfake",
         measurement_attempt_id="attempt-certfake",
+        expected_schema_version=2,
     )
     assert not _has_certifiable_channel_emulator_frequency_evidence(
         frequency,
         current_adapter_id="certfake_ce",
         instrument_id="ce-certfake",
         measurement_attempt_id="next-attempt",
+        expected_schema_version=2,
     )
 
 

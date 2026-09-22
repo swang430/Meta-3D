@@ -1151,6 +1151,7 @@ def _channel_emulator_frequency_evidence_error(
         current_adapter_id=qualification.adapter_id,
         instrument_id=next(iter(instrument_ids)),
         measurement_attempt_id=attempt_id,
+        expected_schema_version=qualification.frequency_evidence_schema_version,
     ):
         return "formal channelEmulator frequency evidence is incomplete"
     return None

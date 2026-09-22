@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from pathlib import Path
@@ -35,6 +36,7 @@ from app.services.mimo_ota.frequency_consistency import (
 )
 from app.services.channel_emulator_certification import (
     _has_certifiable_channel_emulator_frequency_evidence,
+    freeze_channel_emulator_execution_qualification,
 )
 
 
@@ -240,6 +242,34 @@ async def test_bounded_frequency_confirms_every_group_before_updating_cache() ->
     assert driver._center_freq_mhz == 1842.5
 
 
+async def test_bounded_frequency_snapshots_groups_only_after_acquiring_scpi_lock() -> None:
+    driver, visa = _frequency_driver(
+        representatives=[1],
+        limits={1: "350,6000", 9: "350,6000"},
+        readbacks={1: "1842.5", 9: "1842.5"},
+    )
+
+    async with driver._scpi_lock:
+        pending = asyncio.create_task(driver.set_center_frequency_bounded(1842.5))
+        await asyncio.sleep(0)
+        driver._group_repr_channels = [9]
+
+    evidence = await pending
+
+    assert evidence.confirmed is True
+    assert [item.representative_channel for item in evidence.groups] == [9]
+    assert visa.frequency_writes == ["CALC:FILT:CENT:CH 9,1842.5"]
+
+
+def test_unload_clears_bounded_center_frequency_application_evidence() -> None:
+    driver = RealPropsimF64Driver("p2-77-f64", {})
+    driver._last_center_frequency_application_evidence = _confirmed_application()
+
+    driver._apply_unload()
+
+    assert driver.get_center_frequency_application_evidence() is None
+
+
 def _vendor_resolution(*, project_default_mhz: float = 2565.0):
     return SimpleNamespace(
         asset=SimpleNamespace(source_type="vendor_file"),
@@ -415,6 +445,14 @@ def test_certification_accepts_only_complete_bounded_frequency_evidence() -> Non
         current_adapter_id="propsim_f64",
         instrument_id="f64-1",
         measurement_attempt_id="attempt-1",
+        expected_schema_version=3,
+    )
+    assert not _has_certifiable_channel_emulator_frequency_evidence(
+        frequency,
+        current_adapter_id="propsim_f64",
+        instrument_id="f64-1",
+        measurement_attempt_id="attempt-1",
+        expected_schema_version=2,
     )
 
     frequency["channel_emulator_evidence"] = {
@@ -429,7 +467,72 @@ def test_certification_accepts_only_complete_bounded_frequency_evidence() -> Non
         current_adapter_id="propsim_f64",
         instrument_id="f64-1",
         measurement_attempt_id="attempt-1",
+        expected_schema_version=3,
     )
+
+
+def test_vendor_asset_plan_v3_freezes_frequency_evidence_schema_v3() -> None:
+    from copy import deepcopy
+
+    from app.hal.base_station_compatibility import canonical_payload_digest
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
+    from app.services.channel_emulator_execution_plan import (
+        CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,
+    )
+    from tests.test_p2_61_channel_emulator_certification import (
+        _qualification_fixture,
+        _qualification_hal,
+    )
+
+    db, execution, case, certification = _qualification_fixture()
+    asset_payload = {
+        "schema_version": 1,
+        "channel_asset_id": "11111111-1111-4111-8111-111111111111",
+        "source_type": "vendor_file",
+        "executable_content_digest": "e" * 64,
+    }
+    frozen_asset = {
+        **asset_payload,
+        "digest": canonical_payload_digest(asset_payload),
+    }
+    base_freeze = execution.config[FREEZE_CONFIG_KEY]
+    base_payload = deepcopy(
+        {key: value for key, value in base_freeze.items() if key != "digest"}
+    )
+    frozen_mimo = base_payload["mimo_ota_configuration"]
+    frozen_mimo["channel_asset_id"] = asset_payload["channel_asset_id"]
+    base_payload[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = frozen_asset
+    execution.config[FREEZE_CONFIG_KEY] = {
+        **base_payload,
+        "digest": canonical_payload_digest(base_payload),
+    }
+    load_request = execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY]
+    load_payload = {key: value for key, value in load_request.items() if key != "digest"}
+    load_payload.update(
+        {
+            "source": "channel_asset",
+            "channel_asset_id": asset_payload["channel_asset_id"],
+            "channel_asset_source_type": "vendor_file",
+            "mimo_configuration_digest": canonical_payload_digest(frozen_mimo),
+        }
+    )
+    execution.config[CE_LOAD_REQUEST_FREEZE_CONFIG_KEY] = {
+        **load_payload,
+        "digest": canonical_payload_digest(load_payload),
+    }
+    connection = (
+        db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value
+    )
+    connection.channel_emulator_site_certification = certification.model_copy(
+        update={"asset_digest": frozen_asset["digest"]}
+    ).model_dump(mode="json")
+
+    frozen = freeze_channel_emulator_execution_qualification(
+        db, _qualification_hal(), execution, case
+    )
+
+    assert frozen.frequency_evidence_schema_version == 3
 
 
 def _center_frequency_application_payload_for_test(evidence):

@@ -1154,6 +1154,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._loaded_emulation_file = None
         self._center_freq_programmed = False
         self._readback_center_freq_mhz = None
+        self._last_center_frequency_application_evidence = None
         self._active_pipeline = None
         # 信道模型 / 场景名同属"由已加载文件决定" (写于 set_channel_model, 读于
         # get_channel_state)。漏清的后果跟 loaded_file 漏清一模一样: 仿真被前面板
@@ -2980,19 +2981,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         if self._visa_resource is None:
             return finish(groups=[], confirmed=False, reason="F64 未连接，无法有界调频")
-        representatives = tuple(self._group_repr_channels or ())
-        if not representatives:
-            return finish(
-                groups=[],
-                confirmed=False,
-                reason=(
-                    "F64 信道组信息未知，无法按真实组预检中心频率；"
-                    f"{_TOPOLOGY_ESCAPE_HINT}"
-                ),
-            )
 
         groups: list[CenterFrequencyGroupApplication] = []
         async with self._scpi_lock:
+            # 拓扑快照必须和后续查询/写入位于同一个锁域。若并发 load 在我们
+            # 等锁时换了工程，锁外快照会把旧工程的代表通道写到新工程。
+            representatives = tuple(self._group_repr_channels or ())
+            if not representatives:
+                return finish(
+                    groups=[],
+                    confirmed=False,
+                    reason=(
+                        "F64 信道组信息未知，无法按真实组预检中心频率；"
+                        f"{_TOPOLOGY_ESCAPE_HINT}"
+                    ),
+                )
             # 必须先完成全部组的只读预检，再发第一条 CENT 写命令。
             for group_number, channel in enumerate(representatives, start=1):
                 try:
