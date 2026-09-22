@@ -1856,7 +1856,9 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # base-station signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
-        pending_base_station_windows: List[tuple[float, Any]] = []
+        pending_base_station_windows: List[
+            tuple[int, float, Any, List[Any], Dict[str, Any]]
+        ] = []
         ca_setup_blocker: Optional[str] = None
         base_station_config_capture_manager = None
         base_station_config_exchanges = []
@@ -2962,6 +2964,7 @@ class MeasureExecutor(IStepExecutor):
                 attach_failure_measurements["attach_power_observation"] = (
                     attach_power_observation
                 )
+            execution_manifest = None
             if base_station_attempt.attempt_id is not None:
                 from app.hal.base_station_manifest import BaseStationAdapterManifest
                 from app.services.execution_scpi_evidence import (
@@ -2988,9 +2991,7 @@ class MeasureExecutor(IStepExecutor):
             if base_station_config_capture_manager is not None:
                 base_station_config_capture_manager.__exit__(None, None, None)
                 base_station_config_capture_manager = None
-            if not base_station_inherit and hasattr(
-                base_station, "build_p0_5_config_evidence"
-            ):
+            if not base_station_inherit:
                 try:
                     record_base_station_config_capture(
                         context.test_execution,
@@ -2998,6 +2999,9 @@ class MeasureExecutor(IStepExecutor):
                         requested=pcell_channel_number,
                         driver=base_station,
                         exchanges=base_station_config_exchanges,
+                        manifest=execution_manifest,
+                        attempt_id=base_station_attempt.attempt_id,
+                        lease_identity=base_station_attempt.lease_identity,
                     )
                     context.db.commit()
                 except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
@@ -3812,11 +3816,6 @@ class MeasureExecutor(IStepExecutor):
                 samples_sinr: List[float] = []
                 samples_tput: List[float] = []
                 samples_ri: List[float] = []
-                # 同一方位的 formal requirement 只保留最终统计窗。旧实现每个窗口都
-                # 覆写同一 JSONB 摘要并 commit，窗口数增大时会造成不必要的整行写放大；
-                # 必需项已经在动作前落库，因此中途异常仍会安全地保持 missing/unknown。
-                latest_throughput_exchanges = []
-
                 az_meta = azimuth_probe_gains.get(azimuth, {})
                 # P0: per-chain path-loss when available; falls back to avg.
                 az_path_loss_db = az_meta.get("path_loss_db")
@@ -3870,10 +3869,18 @@ class MeasureExecutor(IStepExecutor):
                     raise
                 for sample in base_station_samples:
                     metrics = sample.metrics
-                    latest_throughput_exchanges = list(sample.exchanges)
                     if sample.window is not None:
                         pending_base_station_windows.append(
-                            (float(azimuth), sample.window)
+                            (
+                                az_idx,
+                                float(azimuth),
+                                sample.window,
+                                list(sample.exchanges),
+                                {
+                                    "azimuth_deg": azimuth,
+                                    "window_s": window_s,
+                                },
+                            )
                         )
 
                     # P1-63: target power / path loss / probe gain describe the
@@ -3916,27 +3923,6 @@ class MeasureExecutor(IStepExecutor):
                             _mcs if (_mcs and _mcs > 0) else None
                         )
 
-                if (
-                    latest_throughput_exchanges
-                    and hasattr(base_station, "build_p0_5_throughput_evidence")
-                ):
-                    try:
-                        record_base_station_throughput_capture(
-                            context.test_execution,
-                            requirement_id=f"base_station.throughput.azimuth.{az_idx:03d}",
-                            requested={
-                                "azimuth_deg": azimuth,
-                                "window_s": window_s,
-                            },
-                            driver=base_station,
-                            exchanges=latest_throughput_exchanges,
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.exception(
-                            "[%s] BaseStation %.1f° E4 证据归档失败；正式判定将保持 unknown",
-                            context.test_execution.id,
-                            azimuth,
-                        )
                 # 每个方位只提交一次：同时持久化转台与最终吞吐窗证据，避免同一
                 # TestExecution.config JSONB 在一个角度内被重复整块改写。
                 context.db.commit()
@@ -4257,7 +4243,16 @@ class MeasureExecutor(IStepExecutor):
                     append_base_station_measurement_window,
                 )
 
-                for azimuth, window in pending_base_station_windows:
+                latest_windows: Dict[
+                    int, tuple[float, Any, List[Any], Dict[str, Any]]
+                ] = {}
+                for (
+                    az_idx,
+                    azimuth,
+                    window,
+                    window_exchanges,
+                    evidence_request,
+                ) in pending_base_station_windows:
                     append_base_station_measurement_window(
                         context.db,
                         context.test_execution.id,
@@ -4271,6 +4266,37 @@ class MeasureExecutor(IStepExecutor):
                         window=window,
                         cleanup=cleanup_result.base_station,
                     )
+                    latest_windows[az_idx] = (
+                        azimuth,
+                        window,
+                        window_exchanges,
+                        evidence_request,
+                    )
+                for az_idx, (
+                    azimuth,
+                    window,
+                    window_exchanges,
+                    evidence_request,
+                ) in latest_windows.items():
+                    try:
+                        record_base_station_throughput_capture(
+                            context.test_execution,
+                            requirement_id=(
+                                f"base_station.throughput.azimuth.{az_idx:03d}"
+                            ),
+                            requested=evidence_request,
+                            driver=base_station,
+                            exchanges=window_exchanges,
+                            attempt_id=base_station_attempt.attempt_id,
+                            lease_identity=base_station_attempt.lease_identity,
+                            window_id=window.window_id,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] BaseStation %.1f° E4 证据归档失败；正式判定将保持 unknown",
+                            context.test_execution.id,
+                            azimuth,
+                        )
                 context.db.commit()
 
         if ca_setup_blocker is not None:

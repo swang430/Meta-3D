@@ -18,10 +18,13 @@ CMW500 已完成配置回读、attach、测量窗口和吞吐量回读，但
 2. 吞吐证据消费 cleanup 后已经持久化的
    `BaseStationMeasurementWindowEvidence`、冻结 metric registry 与冻结 manifest；
 3. 原始 SCPI exchange 只用于核对 execution/capture/instrument 并回链日志，
-   共同投影不解析厂商命令文本、不新增命令、不猜测厂商语义；
+   共同回执/窗口投影不解析厂商命令文本、不新增命令、不猜测厂商语义；
 4. 环境快照来自 execution 初始化时冻结的、已经由真实连接验证的身份，
    不重新查询当前 HAL，也不从 adapter 名称推导真实性；
-5. 历史 UXM translator 只读保留，不给旧记录补造新证据。
+5. UXM 部分已验证 Test App 的配置回执仍可能不完整：共同回执无法产出
+   E3 时，只对冻结 adapter=uxm 复用现有、已带手册目录范围的 P0-5
+   证明器。该兼容路径不是新真值，不向 CMW 泛化，对外仍只写
+   `base_station.*`；历史 UXM translator 只读保留，不给旧记录补造新证据。
 
 ## 配置投影
 
@@ -31,14 +34,16 @@ CMW500 已完成配置回读、attach、测量窗口和吞吐量回读，但
   `formally_confirmed=true`；
 - manifest 中所有被确认控制字段及已确认 attach 阶段必须具有权威来源；
 - 满足全部条件才输出 E3/APPLIED + passed；缺失、漂移、模拟或来源不足均输出
-  unknown/rejected，绝不借 `operation_succeeded` 或当前仪表状态补真。
+  unknown/rejected，绝不借 `operation_succeeded` 或当前仪表状态补真。仅前述
+  UXM 目录证明器作为受限兼容路径。
 
 ## 吞吐投影
 
 - 先持久化窗口，再从同一 execution/attempt/lease/position 读取唯一窗口；
 - `dl_throughput_mbps` 必须来自冻结 registry 的 authoritative capability，
-  metric value 为有限正数，window trust 正式确认，且 metric exchange IDs 属于窗口；
-- 满足全部条件才输出 E4/OUTCOME + passed；模拟、diagnostic-only、零值、缺值、
+  metric value 为有限非负数（权威 `0 Mbps` 是失败结果，不是缺测），window trust 正式确认，
+  且 metric exchange IDs 属于窗口；
+- 满足全部条件才输出 E4/OUTCOME + passed；模拟、diagnostic-only、缺值、
   registry/digest/position/attempt 漂移均保持 unknown 或 rejected；
 - source reference 只复用冻结 manifest/registry 已有出处，不改变正式 provenance
   白名单。
