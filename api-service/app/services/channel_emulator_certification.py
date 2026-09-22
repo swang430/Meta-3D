@@ -171,13 +171,17 @@ class ChannelEmulatorFrequencyEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal[2]
+    schema_version: Literal[2, 3]
     adapter_id: str
     instrument_id: str
     measurement_attempt_id: str | None
     center_readback_mhz: float
-    bandwidth_source: Literal["channel_asset_or_scd_declared"]
+    bandwidth_source: Literal[
+        "channel_asset_or_scd_declared", "frozen_vendor_project_declared"
+    ]
     fully_verified: bool
+    project_default_frequency: str | None = None
+    bounded_center_frequency_application: dict[str, Any] | None = None
 
     @field_validator("adapter_id", "instrument_id")
     @classmethod
@@ -203,6 +207,68 @@ class ChannelEmulatorFrequencyEvidence(BaseModel):
         if not math.isfinite(value) or value <= 0:
             raise ValueError("channelEmulator frequency center is invalid")
         return value
+
+    @model_validator(mode="after")
+    def _validate_schema_specific_proof(self) -> "ChannelEmulatorFrequencyEvidence":
+        if self.schema_version == 2:
+            if self.bandwidth_source != "channel_asset_or_scd_declared":
+                raise ValueError("v2 frequency evidence has an unknown bandwidth source")
+            if (
+                self.project_default_frequency is not None
+                or self.bounded_center_frequency_application is not None
+            ):
+                raise ValueError("v2 frequency evidence carries v3 bounded proof")
+            return self
+
+        if self.bandwidth_source != "frozen_vendor_project_declared":
+            raise ValueError("v3 frequency evidence requires frozen vendor bandwidth")
+        if not isinstance(self.project_default_frequency, str) or not (
+            self.project_default_frequency.strip()
+        ):
+            raise ValueError("v3 frequency evidence is missing the project default")
+        raw = self.bounded_center_frequency_application
+        if not isinstance(raw, dict):
+            raise ValueError("v3 frequency evidence is missing bounded application proof")
+        try:
+            from app.hal.channel_emulator import (
+                CenterFrequencyApplicationEvidence,
+                CenterFrequencyGroupApplication,
+                CenterFrequencyRange,
+            )
+
+            parsed_groups = []
+            for item in raw["groups"]:
+                parsed_ranges = []
+                for pair in item["allowed_ranges_mhz"]:
+                    if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                        raise ValueError("allowed range is not a two-value pair")
+                    parsed_ranges.append(CenterFrequencyRange(pair[0], pair[1]))
+                parsed_groups.append(
+                    CenterFrequencyGroupApplication(
+                        group_number=item["group_number"],
+                        representative_channel=item["representative_channel"],
+                        allowed_ranges=tuple(parsed_ranges),
+                        applied_mhz=item.get("applied_mhz"),
+                    )
+                )
+            groups = tuple(parsed_groups)
+            application = CenterFrequencyApplicationEvidence(
+                requested_mhz=raw["requested_mhz"],
+                groups=groups,
+                confirmed=raw["confirmed"],
+                reason=raw["reason"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"v3 bounded center-frequency proof is invalid: {exc}"
+            ) from exc
+        if application.confirmed is not True:
+            raise ValueError("v3 bounded center-frequency proof is unconfirmed")
+        if float(application.requested_mhz) != float(self.center_readback_mhz):
+            raise ValueError(
+                "v3 bounded requested frequency does not match the live readback"
+            )
+        return self
 
 
 def _has_certifiable_channel_emulator_frequency_evidence(

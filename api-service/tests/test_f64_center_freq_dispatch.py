@@ -35,6 +35,7 @@ def _make_driver(config=None, channels=4, *, groups=None):
     # 所有通道共用那 1 个输入 ⇒ **必然同属 1 组**。旧的"每通道自成一组"物理上不可能。
     group_map = groups if groups is not None else {1: list(range(1, channels + 1))}
     visa = MagicMock()
+    programmed: dict[int, str] = {}
 
     def _router(cmd):
         if cmd == "*OPC?":
@@ -47,8 +48,11 @@ def _make_driver(config=None, channels=4, *, groups=None):
         # CENT 被拒 / 加载失败的判定语义不变。
         if cmd == "DIAG:SIMU:STATE?":
             return "CLOSED"
+        if cmd.startswith("CALC:FILT:CENT:LIM?"):
+            return "350,6000"
         if cmd.startswith("CALC:FILT:CENT:CH?"):
-            return ""  # 回读真频不可用 → 非致命 (本文件不验 identity)
+            channel = int(cmd.rsplit(" ", 1)[1])
+            return programmed.get(channel, "")
         if cmd == "DIAG:SIMU:MODEL:INFO?":
             # <inputs>,<channels>,<outputs> — 取 1 输入 × N 输出 使 1×N=N 自洽
             return f"1,{channels},{channels}"
@@ -72,6 +76,10 @@ def _make_driver(config=None, channels=4, *, groups=None):
 
     async def _async_write(cmd, timeout=None):
         visa.write(cmd)
+        if cmd.startswith("CALC:FILT:CENT:CH "):
+            channel_and_frequency = cmd.rsplit(" ", 1)[1]
+            channel, frequency = channel_and_frequency.split(",", 1)
+            programmed[int(channel)] = frequency
 
     async def _async_query(cmd, timeout=None, **_kw):
         return visa.query(cmd)
@@ -186,6 +194,8 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd.startswith("CALC:FILT:CENT:LIM?"):
+                return "350,6000"
             if cmd == "DIAG:SIMU:MODEL:INFO?":
                 return "1,2,2"
             if cmd == "GROUP:GET?":
@@ -239,6 +249,8 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd.startswith("CALC:FILT:CENT:LIM?"):
+                return "350,6000"
             if cmd == "DIAG:SIMU:MODEL:INFO?":
                 return "1,2,2"
             if cmd == "GROUP:GET?":
@@ -258,7 +270,7 @@ class TestCentDispatchOnlyWhenExplicit:
         drv._write = _w  # type: ignore[assignment]
         drv._query = _q  # type: ignore[assignment]
         ok = await drv.set_channel_model(
-            "CDL-C", "UMa", {"center_frequency_mhz": 9999.0}
+            "CDL-C", "UMa", {"center_frequency_mhz": 3550.0}
         )
         assert ok is False
         assert drv._center_freq_programmed is False  # 被拒不置
@@ -296,6 +308,8 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd.startswith("CALC:FILT:CENT:LIM?"):
+                return "350,6000"
             if cmd == "DIAG:SIMU:MODEL:INFO?":
                 return "1,2,2"
             if cmd == "GROUP:GET?":

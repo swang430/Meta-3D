@@ -17,6 +17,7 @@ import pytest
 
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
 from app.hal.channel_emulator_manifest import (
+    CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS,
     CHANNEL_EMULATOR_OPERATIONS,
     ChannelEmulatorAssetSourceCapability,
     channel_emulator_rejection,
@@ -25,6 +26,7 @@ from app.hal.channel_emulator_manifest import (
     ChannelEmulatorOperationCapability,
     channel_emulator_implements,
     channel_emulator_manifest_for,
+    channel_emulator_manifest_operations_for_schema,
     channel_emulator_manifest_of,
     channel_emulator_operation_names,
     validate_channel_emulator_registration,
@@ -160,10 +162,16 @@ def _is_pure_refusal(owner, op: str) -> bool:
     """`owner` 上的 `op` 是不是一个「函数体只有 raise NotImplementedError」的自写桩。"""
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(owner)))
+    member = owner.__dict__.get(op)
+    if member is None:
+        return False
+    tree = ast.parse(textwrap.dedent(inspect.getsource(member)))
     fn = next(
-        (n for n in tree.body[0].body
-         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == op),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == op
+        ),
         None,
     )
     return fn is not None and _body_is_pure_refusal(fn.body)
@@ -450,7 +458,11 @@ def test_manifest_covers_every_operation_exactly_once(key):
     """每个驱动都必须逐个声明当前 schema 全部操作 —— 不许沉默省略。"""
     driver, _, _ = _DRIVERS[key]
     declared = [item.operation for item in driver.adapter_manifest.operations]
-    assert sorted(declared) == sorted(CHANNEL_EMULATOR_OPERATIONS)
+    assert sorted(declared) == sorted(
+        channel_emulator_manifest_operations_for_schema(
+            driver.adapter_manifest.schema_version
+        )
+    )
 
 
 def test_fs16_declares_no_load_mode_until_playback_is_implemented():
@@ -877,19 +889,20 @@ def test_manifest_rejects_silent_omission_and_duplicates():
     with pytest.raises(Exception):
         ChannelEmulatorManifest(
             schema_version=2, adapter_id="x", model_name="X", vendor="v",
-            load_modes=(), operations=_ops(CHANNEL_EMULATOR_OPERATIONS[:-1]),
+            load_modes=(), operations=_ops(CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS[:-1]),
         )
     # 重复 → 拒
     with pytest.raises(Exception):
         ChannelEmulatorManifest(
             schema_version=2, adapter_id="x", model_name="X", vendor="v",
             load_modes=(), operations=_ops(
-                CHANNEL_EMULATOR_OPERATIONS + (CHANNEL_EMULATOR_OPERATIONS[0],)),
+                CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+                + (CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS[0],)),
         )
     # 全集 → 过
     ok = ChannelEmulatorManifest(
         schema_version=2, adapter_id="x", model_name="X", vendor="v",
-        load_modes=(), operations=_ops(CHANNEL_EMULATOR_OPERATIONS),
+        load_modes=(), operations=_ops(CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS),
     )
     assert ok.implements("stop_emulation") is True
     with pytest.raises(ValueError):
@@ -909,13 +922,13 @@ def test_load_mode_duplicates_are_rejected():
             operations=tuple(
                 ChannelEmulatorOperationCapability(
                     operation=n, support="not_implemented", reason="r")
-                for n in CHANNEL_EMULATOR_OPERATIONS),
+                for n in CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS),
         )
 
 
-def test_v3_asset_sources_are_complete_unique_and_distinct_from_load_modes():
+def test_current_asset_sources_are_complete_unique_and_distinct_from_load_modes():
     base = RealPropsimF64Driver.adapter_manifest
-    assert base.schema_version == 3
+    assert base.schema_version == 4
     assert "external_waveform" in base.supported_load_modes()
     assert base.implements_asset_source("custom_static") is True
     payload = base.model_dump()
@@ -980,6 +993,10 @@ def test_registration_rejects_new_driver_with_historical_v2_manifest():
     legacy_payload = RealPropsimF64Driver.adapter_manifest.model_dump(mode="json")
     legacy_payload["schema_version"] = 2
     legacy_payload.pop("asset_sources")
+    legacy_payload["operations"] = [
+        item for item in legacy_payload["operations"]
+        if item["operation"] in CHANNEL_EMULATOR_MANIFEST_V2_OPERATIONS
+    ]
 
     class NewLegacyDriver(RealPropsimF64Driver):
         adapter_manifest = ChannelEmulatorManifest.model_validate(legacy_payload)

@@ -551,9 +551,9 @@ def frozen_channel_emulator_binding_digest(execution_config: Mapping[str, Any]) 
         manifest_version = (
             manifest.get("schema_version") if isinstance(manifest, Mapping) else None
         )
-        if manifest_version not in (2, 3):
+        if manifest_version not in (2, 3, 4):
             raise ValueError(
-                "channelEmulator binding 仍冻结 manifest v1，不能与新 execution plan v2 "
+                "channelEmulator binding 仍冻结 manifest v1，不能与新 execution plan "
                 "混搭；请重建未开始执行"
             )
     return digest

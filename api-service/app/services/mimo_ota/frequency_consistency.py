@@ -182,6 +182,38 @@ class CenterFrequencyObservation:
 
 
 @dataclass(frozen=True)
+class CenterFrequencyBandwidthObservation:
+    """RAT-neutral live center readback paired with a frozen asset bandwidth."""
+
+    center_frequency_hz: int
+    bandwidth_mhz: float
+    source: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.center_frequency_hz, int):
+            raise ValueError("center_frequency_hz must be an integer")
+        if (
+            isinstance(self.bandwidth_mhz, bool)
+            or not isinstance(self.bandwidth_mhz, (int, float))
+            or self.bandwidth_mhz <= 0
+        ):
+            raise ValueError("bandwidth_mhz must be positive")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError("frequency observation source must be non-empty")
+        object.__setattr__(self, "bandwidth_mhz", float(self.bandwidth_mhz))
+
+    @property
+    def center_freq_mhz(self) -> float:
+        return self.center_frequency_hz / 1e6
+
+    def describe(self) -> str:
+        return (
+            f"{self.center_freq_mhz:.2f} MHz / "
+            f"BW {self.bandwidth_mhz:g} MHz ({self.source})"
+        )
+
+
+@dataclass(frozen=True)
 class FrequencyMismatch:
     instrument: str
     expected: str  # TestCase identity describe (真值)
@@ -230,7 +262,14 @@ class FrequencyConsistencyResult:
 def check_frequency_consistency(
     testcase: TypedFrequencyIdentity,
     instruments: Dict[
-        str, Optional[Union[TypedFrequencyIdentity, CenterFrequencyObservation]]
+        str,
+        Optional[
+            Union[
+                TypedFrequencyIdentity,
+                CenterFrequencyObservation,
+                CenterFrequencyBandwidthObservation,
+            ]
+        ],
     ],
 ) -> FrequencyConsistencyResult:
     """校验各仪表频率规范标识跟 TestCase 精确一致。
@@ -258,6 +297,11 @@ def check_frequency_consistency(
         if isinstance(ident, CenterFrequencyObservation):
             unverified.append(name)
             matches = ident.center_frequency_hz == expected.center_frequency_hz
+        elif isinstance(ident, CenterFrequencyBandwidthObservation):
+            matches = (
+                ident.center_frequency_hz == expected.center_frequency_hz
+                and ident.bandwidth_mhz == expected.bandwidth_mhz
+            )
         else:
             ident = as_channel_frequency_identity(ident)
             matches = ident == expected

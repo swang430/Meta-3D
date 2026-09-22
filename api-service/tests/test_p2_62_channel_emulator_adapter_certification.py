@@ -19,7 +19,7 @@ from app.hal.channel_emulator_execution_plan import (
     resolve_channel_emulator_execution_plan,
 )
 from app.hal.channel_emulator_manifest import (
-    CHANNEL_EMULATOR_OPERATIONS,
+    CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS,
     validate_channel_emulator_registration,
 )
 from app.models.instrument import (
@@ -86,7 +86,7 @@ def test_certfake_ce_five_piece_registration_contract_is_complete():
         "rt_dynamic": "not_implemented",
     }
     assert {item.operation for item in CERTFAKE_CE_MANIFEST.operations} == set(
-        CHANNEL_EMULATOR_OPERATIONS
+        CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS
     )
     assert all(
         item.source_reference and "test fixture" in item.source_reference
@@ -107,7 +107,7 @@ def test_certfake_ce_manifest_and_driver_cover_the_same_operations():
     }
     implemented = {
         operation
-        for operation in CHANNEL_EMULATOR_OPERATIONS
+        for operation in CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS
         if getattr(CertFakeChannelEmulatorDriver, operation)
         is not getattr(ChannelEmulatorDriver, operation)
     }
@@ -199,7 +199,10 @@ def test_certfake_ce_saved_preset_binding_and_plan_need_no_production_registrati
     assert binding.status == "configured"
     assert binding.manifest.adapter_id == "certfake_ce"
     assert plan.adapter_id == "certfake_ce"
-    assert all(plan.planned(operation) for operation in CHANNEL_EMULATOR_OPERATIONS)
+    assert all(
+        plan.planned(operation)
+        for operation in CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS
+    )
 
 
 def test_certfake_ce_binding_and_saved_preset_fail_closed_on_drift(db):

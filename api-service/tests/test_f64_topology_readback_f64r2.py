@@ -128,7 +128,14 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
             return ",".join(str(p) for p in group_out_ports.get(g, []))
         if cmd == "DIAG:SIMU:STATE?":
             return sim_state[0]
+        if cmd.startswith("CALC:FILT:CENT:LIM?"):
+            return "350,6000"
         if cmd.startswith("CALC:FILT:CENT:CH?"):
+            channel = int(cmd.rsplit(" ", 1)[1])
+            prefix = f"CALC:FILT:CENT:CH {channel},"
+            for write in reversed(writes):
+                if write.startswith(prefix):
+                    return write.split(",", 1)[1]
             return "3550.0"
         if cmd.startswith("INP:LEV:AMP:CH?"):
             port = cmd.split("?", 1)[1].strip()

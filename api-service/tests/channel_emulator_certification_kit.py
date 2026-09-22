@@ -23,7 +23,7 @@ from app.hal.channel_emulator import (
     ChannelEmulatorDriver,
 )
 from app.hal.channel_emulator_manifest import (
-    CHANNEL_EMULATOR_OPERATIONS,
+    CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS,
     ChannelEmulatorAssetSourceCapability,
     ChannelEmulatorManifest,
     channel_emulator_manifest_for,
@@ -68,7 +68,7 @@ _manifest = channel_emulator_manifest_for(
     adapter_id="certfake_ce",
     model_name="Certification Fixture CE",
     vendor="Test Fixture",
-    implemented=CHANNEL_EMULATOR_OPERATIONS,
+    implemented=CHANNEL_EMULATOR_MANIFEST_V3_OPERATIONS,
     load_modes=("native_model", "external_waveform"),
     reason="implemented by the P2-62 test fixture contract",
 )
