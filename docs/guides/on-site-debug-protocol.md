@@ -129,9 +129,12 @@ Phase 2/3 的 SA 与校准 —— 排在握手后立即做，问题越早暴露�
 P1-24 已落地：复用生产原子编排 + D-1 行为门（真驱动+按手册建模的假 SCPI 层）——
 Codex #257 核实过现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
 GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这活）：
-0. **前置：激活 UXM 满 RB 下行信号**（CE↔BS 协调，见
+0. **前置：服务器在租约锁内把 selected model、LabProfile binding 与 loaded
+   adapter 共同解析为真实 UXM，再激活 UXM 满 RB 下行信号**（CE↔BS 协调，见
    [`../architecture/f64-input-level-and-dynamic-range.md`](../architecture/f64-input-level-and-dynamic-range.md)
-   操作点流程；序列参数 `uxm_dl_confirmed` 必须显式确认，不隐式假设。
+   操作点流程；CMW500、Mock、缺少 binding 或任一漂移都在 Remote/F64 I/O 前
+   fail-closed。序列参数 `uxm_dl_confirmed` 必须显式确认，但它只证明
+   操作员已核对本次的物理满 RB DL 条件，不代替服务器型号/连接/驱动真值。
    无信号时 `INP:LEV:MEAS?`/`AUTOSET` = **设备错误进 SYST:ERR? 队列**，判据 =
    队列出现测量失败错误（2026-05-27 现场实证错误码在 -300 段）。⚠ 本段原文
    "返 -300"把它写成了查询的**哨兵返回值** —— 手册无任何哨兵返回值语义

@@ -26,6 +26,14 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app.diagnostics.sequences.propsim_f64_p08_gate import _Gate, run as run_gate
+from app.services.base_station_binding import (
+    BaseStationRuntimeDriverIdentity,
+    BaseStationTransportIdentity,
+    ResolvedBaseStationBinding,
+)
+from app.hal.base_station import MockBaseStation
+from app.hal.cmw500_base_station import RealCmw500Driver
+from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.propsim_f64 import RealPropsimF64Driver
 
 
@@ -163,8 +171,14 @@ class _FakeF64Scpi:
 
 
 class _FakeHal:
-    def __init__(self, ce: Any) -> None:
+    def __init__(self, ce: Any, *, base_station: Any = ...) -> None:
+        if base_station is ...:
+            base_station = RealUxmDriver(
+                "uxm-p08", {"ip_address": "192.0.2.11"}
+            )
         self.drivers = {"channelEmulator": ce}
+        if base_station is not None:
+            self.drivers["baseStation"] = base_station
 
 
 def _make(**fake_kw):
@@ -186,11 +200,47 @@ _OK_PARAMS = {
 }
 
 
-async def _run(drv, params=None):
+def _resolved_uxm_binding() -> ResolvedBaseStationBinding:
+    return ResolvedBaseStationBinding(
+        schema_version=1,
+        status="not_applicable",
+        execution_mode="real",
+        category_id="category-uxm",
+        instrument_model_id="model-uxm",
+        instrument_connection_id="connection-uxm",
+        lab_profile_id="lab-uxm",
+        manifest=RealUxmDriver.adapter_manifest,
+        profile=None,
+        expected_driver_module=RealUxmDriver.__module__,
+        expected_driver_name=RealUxmDriver.__name__,
+        expected_transport=BaseStationTransportIdentity(
+            host="192.0.2.11", port=None, resource=None,
+        ),
+        formal_capability=None,
+        binding_digest="test-binding-digest",
+        runtime_driver=BaseStationRuntimeDriverIdentity(
+            module=RealUxmDriver.__module__,
+            name=RealUxmDriver.__name__,
+            instrument_id="uxm-p08",
+            adapter_id="uxm",
+            simulated=False,
+            transport=BaseStationTransportIdentity(
+                host="192.0.2.11", port=None, resource=None,
+            ),
+        ),
+    )
+
+
+async def _run(drv, params=None, *, resolved_binding=None):
     logs: List[str] = []
     result = await run_gate(
         None, _FakeHal(drv), dict(_OK_PARAMS if params is None else params),
         log=logs.append,
+        resolved_binding=(
+            _resolved_uxm_binding()
+            if resolved_binding is None
+            else resolved_binding
+        ),
     )
     return result, logs
 
@@ -401,6 +451,61 @@ class TestResidueSites:
 
 
 class TestParamGates:
+    @pytest.mark.parametrize(
+        "base_station_factory",
+        [
+            pytest.param(lambda: None, id="missing"),
+            pytest.param(
+                lambda: RealCmw500Driver(
+                    "cmw-p08", {"ip_address": "192.0.2.11"}
+                ),
+                id="cmw500",
+            ),
+            pytest.param(
+                lambda: MockBaseStation(
+                    "mock-uxm-p08",
+                    {"model": RealUxmDriver.adapter_manifest.model_name},
+                    adapter_manifest=RealUxmDriver.adapter_manifest,
+                ),
+                id="mock-uxm",
+            ),
+            pytest.param(
+                lambda: RealUxmDriver(
+                    "different-uxm", {"ip_address": "192.0.2.11"}
+                ),
+                id="stale-uxm-identity",
+            ),
+        ],
+    )
+    async def test_frozen_binding_must_match_current_hal_before_f64_io(
+        self, base_station_factory,
+    ):
+        drv, fake = _make()
+        result = await run_gate(
+            None,
+            _FakeHal(drv, base_station=base_station_factory()),
+            dict(_OK_PARAMS),
+            log=lambda _message: None,
+            resolved_binding=_resolved_uxm_binding(),
+        )
+        assert not result.success
+        assert "BaseStation" in result.summary and "binding" in result.summary
+        assert fake.writes == []
+
+    async def test_missing_server_resolved_uxm_binding_refuses_before_f64_io(self):
+        """Direct callers cannot replace server binding truth with the checkbox."""
+        drv, fake = _make()
+        result = await run_gate(
+            None,
+            _FakeHal(drv),
+            dict(_OK_PARAMS),
+            log=lambda _message: None,
+            resolved_binding=None,
+        )
+        assert not result.success
+        assert "BaseStation" in result.summary and "UXM" in result.summary
+        assert fake.writes == []
+
     async def test_uxm_dl_not_confirmed_refused(self):
         drv, fake = _make()
         for bad in ({}, {"uxm_dl_confirmed": False}, {"uxm_dl_confirmed": "true"},

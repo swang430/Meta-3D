@@ -2,6 +2,11 @@
 
 > 状态：**已实现**（v1.1 —— v1 经用户 review 后开工；实现期两处修正见 §0.4，
 > 待决两项拍板见 §3）
+
+> **P2-73 现行约束（2026-09-22）**：这条序列仅接受服务器在租约锁内解析的
+> 真实 UXM binding；selected model、LabProfile binding 或 loaded adapter 任一不是
+> UXM，或三者漂移，都在 Remote/F64 I/O 前拒绝。`uxm_dl_confirmed` 仍保留，
+> 但只是操作员对本次物理满 RB DL 条件的确认，不是型号真值。
 > Roadmap：**P1-24**（2026-08-01 用户拍板提升，出发前硬门槛 —— 不写完不出发）
 > 双实证：memory ✅（诊断序列规矩 / F64 禁盲试 / 现场协议 P1-23）/
 > **NotebookLM ✅ 已查**（PROPSIM notebook `982222b7`，2026-08-01，逐命令拿手册出处）

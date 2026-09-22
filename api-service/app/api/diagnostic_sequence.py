@@ -204,6 +204,7 @@ async def run_diagnostic_sequence(
     summary = ""
     cancelled_exc: Optional[asyncio.CancelledError] = None
     is_cmw_probe = key == "cmw500_fdd_matrix_probe"
+    is_f64_p08_gate = key == "propsim_f64_p08_gate"
     lease_outcome = None
     captured = []
     resolved_binding = None
@@ -235,6 +236,37 @@ async def run_diagnostic_sequence(
                     return "CMW 抽样只接受真实 CMW500；模拟结果不能作为现场证据"
                 locked_hal = hal
                 extra["binding"] = resolved_binding.model_dump(mode="json")
+            except ValueError as exc:
+                return str(exc)
+            finally:
+                # Resolver is read-only; don't retain row locks across awaited I/O.
+                db.rollback()
+            return None
+    elif is_f64_p08_gate:
+        from app.models.lab_profile import LabProfile
+        from app.services.base_station_binding import resolve_base_station_binding
+
+        def validator(hal):
+            nonlocal resolved_binding
+            try:
+                lab = db.get(LabProfile, ctx.lab_profile_id)
+                if lab is None:
+                    return "F64 P0-8a 门缺少所选 LabProfile"
+                candidate = resolve_base_station_binding(db, hal, lab, lock=True)
+                manifest = candidate.manifest
+                runtime = candidate.runtime_driver
+                if (
+                    candidate.execution_mode != "real"
+                    or manifest is None
+                    or manifest.adapter_id != "uxm"
+                    or runtime.simulated
+                    or runtime.adapter_id != "uxm"
+                ):
+                    return (
+                        "F64 P0-8a 门只接受真实 UXM；当前服务器权威 BaseStation "
+                        "binding/adapter 不是 UXM"
+                    )
+                resolved_binding = candidate
             except ValueError as exc:
                 return str(exc)
             finally:
@@ -278,6 +310,8 @@ async def run_diagnostic_sequence(
                 if key == "propsim_f64_license_truth"
                 else {}
             )
+            if is_f64_p08_gate:
+                lease_options["validate_before_remote"] = validator
             async with instrument_test_lease(
                 f"diagnostic-sequence:{key}",
                 control_f64="channelEmulator" in lease_categories,
@@ -348,7 +382,11 @@ async def run_diagnostic_sequence(
                         async with sequence_scpi_transaction(hal):
                             result = await sequence.run(
                                 ctx, hal, request.params, log=_log,
-                                **({"resolved_binding": resolved_binding} if is_cmw_probe else {}),
+                                **(
+                                    {"resolved_binding": resolved_binding}
+                                    if is_cmw_probe or is_f64_p08_gate
+                                    else {}
+                                ),
                             )
                     except asyncio.CancelledError as exc:
                         if is_cmw_probe and isinstance(exc, ProbeCancelled):
