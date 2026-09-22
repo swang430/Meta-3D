@@ -2337,10 +2337,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         )
 
         identity = parse_ieee488_identity(self._identity_response)
+        # start_emulation 确认 RUNNING 后进入 BUSY；运行不使本次连接身份失效。
         live = (
             self._visa_resource is not None
             and bool(self._identity_response)
-            and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+            and self._status in {
+                InstrumentStatus.CONNECTED, InstrumentStatus.READY, InstrumentStatus.BUSY,
+            }
         )
         return InstrumentEnvironment(
             instrument_id=self.instrument_id,

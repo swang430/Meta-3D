@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.logging_config import current_execution_id
+from app.hal.base import InstrumentStatus
+from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.db.database import Base, get_db
 from app.hal.scpi_evidence import (
     EvidenceLevel,
@@ -19,6 +21,7 @@ from app.hal.scpi_evidence import (
     InstrumentEnvironment,
     InstrumentEvidenceItem,
     ScpiExchangeRef,
+    capture_scpi_exchanges,
 )
 from app.main import app
 from app.models.report import TestReport
@@ -622,6 +625,57 @@ def test_segmented_position_capture_binds_the_final_moveabs_not_the_first(db):
     assert captured["move_exchange"].command == "MOVEABS X -90.0000 XF5.0000"
     assert captured["move_exchange"].exchange_id == "move-3"
     assert captured["feedback_exchange"].exchange_id == "pfbk-move-3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("simulated", [False, True])
+async def test_f64_started_execution_keeps_live_output_evidence(db, simulated):
+    """真实启动/捕获/记录链只替换 VISA；BUSY 不应丢身份，模拟交换仍不得正式通过。"""
+    class Session:
+        def write(self, command):
+            assert command in {"DIAG:SIMU:MODEL:STATIC 0", "DIAG:SIMU:GO"}
+
+        def query(self, command):
+            return {
+                "SYST:ERR?": '0,"No error"',
+                "*OPC?": "1",
+                "DIAG:SIMU:STATE?": "RUNNING",
+            }[command]
+
+        def close(self):
+            pass
+
+    driver = RealPropsimF64Driver("channelEmulator", {})
+    for serial in ("SN-FIRST", "SN-SECOND"):
+        execution = _execution(db)
+        # 连接边界的已读取身份；两次执行各自使用新会话，不触及现场硬件。
+        driver._visa_resource = Session()
+        driver._local_control_reserved = False
+        driver._status = InstrumentStatus.READY
+        driver._identity_response = f"Keysight Technologies,F8800A,{serial},8.0"
+        register_required_scpi_evidence(
+            execution, requirement_id="f64.output_state",
+            evidence_key="f64.simulation_state", requested="RUNNING",
+            required_evidence_level=EvidenceLevel.APPLIED,
+        )
+        with capture_scpi_exchanges() as exchanges:
+            assert await driver.start_emulation()
+        assert driver._status is InstrumentStatus.BUSY
+        if simulated:
+            exchanges = [item.model_copy(update={"simulated": True}) for item in exchanges]
+        record_f64_command_capture(
+            execution, requirement_id="f64.output_state",
+            evidence_key="f64.simulation_state", requested="RUNNING",
+            driver=driver, exchanges=exchanges,
+        )
+        summary = finalize_execution_scpi_evidence(execution)
+        assert summary.formal_acceptance is (not simulated)
+        env = driver.capture_evidence_environment()
+        assert env.serial_number == serial
+        assert env.firmware_version == "8.0"
+        assert env.captured_from_live_connection
+        assert await driver.release_to_local_control()
+        assert not driver.capture_evidence_environment().captured_from_live_connection
 
 
 def test_f64_bypass_capture_selects_final_command_and_static_readback(db):
