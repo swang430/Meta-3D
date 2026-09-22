@@ -337,6 +337,18 @@ def test_identity_mismatch_aborts_before_license_queries():
     assert "SYSTem:CALIBration:LIST?" not in ce.queries
 
 
+def test_clean_empty_idn_uses_system_info_identity_fallback():
+    """空 IDN 本身不补真身份；干净错误队列后仍须用手册有据的 INFO? 核验。"""
+    ce = _ScriptedCe(_replies(**{"*IDN?": ""}), installed_options=[])
+    result = _run(ce)
+    assert result.success is True
+    assert ce.queries.index("SYSTem:INFO?") > ce.queries.index("*IDN?")
+    assert result.extra["idn"] == ""
+    assert result.extra["sys_info"] == SYS_INFO
+    assert result.extra["license"]["verdict"] == "CONFIRMED"
+    assert result.extra["failed_queries"] == []
+
+
 # ── F6：先查状态再决定发不发（USER:INFO? / CALIBration:GET? 的前置）────────
 
 def test_user_info_only_sent_when_user_alignment_enabled():

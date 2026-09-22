@@ -377,12 +377,16 @@ async def _identity_gate(rec: _Recorder) -> Tuple[bool, str, Optional[str]]:
     idn_raw = await rec.read(
         "*IDN?",
         lambda r: "身份匹配" if any(tag in r.upper() for tag in _IDN_MODEL_TAGS)
-        else "身份回复有效；型号未匹配，继续用 SYSTem:INFO? 兜底",
-        validate=_nonempty_value("*IDN?"),
+        else (
+            "身份为空；继续用 SYSTem:INFO? 兜底"
+            if not r.strip()
+            else "身份回复有效；型号未匹配，继续用 SYSTem:INFO? 兜底"
+        ),
     )
-    if idn_raw is None:
-        return False, "", None
-    idn = idn_raw.strip()
+    # IDN 空回复在现场可能存在；只要其查询后错误队列干净，就不把空串当身份，
+    # 而是继续用手册有据的 SYSTem:INFO? 独立核验。None 也继续兜底，但已由
+    # recorder 记为失败，因此即使 INFO? 可识别，最终总判仍保持 BLOCKER。
+    idn = (idn_raw or "").strip()
     if any(tag in idn.upper() for tag in _IDN_MODEL_TAGS):
         return True, idn, None
     info = await rec.read(
