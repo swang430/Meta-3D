@@ -202,7 +202,8 @@ def test_config_or_unknown_environment_cannot_impersonate_live_snapshot():
     assert not evaluate_catalog_scope(entry, unknown_fw).eligible
 
 
-def test_f64_environment_snapshot_uses_live_identity_not_config_claims():
+@pytest.mark.parametrize("status", [InstrumentStatus.CONNECTED, InstrumentStatus.READY, InstrumentStatus.BUSY])
+def test_f64_environment_snapshot_uses_live_identity_not_config_claims(status):
     driver = RealPropsimF64Driver(
         "f64-live",
         {"model": "FAKE-CONFIG-MODEL", "firmware_version": "fake-fw"},
@@ -210,7 +211,7 @@ def test_f64_environment_snapshot_uses_live_identity_not_config_claims():
     assert driver.capture_evidence_environment().captured_from_live_connection is False
 
     driver._visa_resource = object()
-    driver._status = InstrumentStatus.READY
+    driver._status = status
     driver._identity_response = "Keysight Technologies,F8800A,SN-F64,9.8.7"
     driver.sys_info = F64SysInfo(
         raw="PROPSIM F64,64,RF,v1.0,16",
@@ -234,6 +235,31 @@ def test_f64_environment_snapshot_uses_live_identity_not_config_claims():
     missing_idn_firmware = driver.capture_evidence_environment()
     assert missing_idn_firmware.firmware_version is None
     assert missing_idn_firmware.hardware_firmware_version == "v1.0"
+
+
+@pytest.mark.parametrize("status", [
+    InstrumentStatus.DISCONNECTED, InstrumentStatus.CONNECTING,
+    InstrumentStatus.ERROR, InstrumentStatus.UNKNOWN,
+])
+def test_f64_inactive_snapshot_does_not_publish_stale_identity(status):
+    driver = RealPropsimF64Driver("f64-stale", {})
+    driver._visa_resource = object()
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64,8.0"
+    driver._status = status
+    env = driver.capture_evidence_environment()
+    assert not env.captured_from_live_connection
+    assert (env.model, env.firmware_version, env.serial_number) == (None, None, None)
+
+
+@pytest.mark.parametrize("missing", ["transport", "identity"])
+def test_f64_busy_snapshot_still_requires_transport_and_identity(missing):
+    driver = RealPropsimF64Driver("f64-incomplete", {})
+    driver._status = InstrumentStatus.BUSY
+    driver._visa_resource = None if missing == "transport" else object()
+    driver._identity_response = None if missing == "identity" else "Keysight,F8800A,SN,8.0"
+    env = driver.capture_evidence_environment()
+    assert not env.captured_from_live_connection
+    assert (env.model, env.firmware_version, env.serial_number) == (None, None, None)
 
 
 def test_uxm_environment_snapshot_requires_live_detected_test_app():
