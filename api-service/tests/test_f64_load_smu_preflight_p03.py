@@ -24,7 +24,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.hal.propsim_f64 import F64BypassMode, F64Pipeline, RealPropsimF64Driver
 
@@ -109,6 +112,15 @@ class TestLoadLocalScenario:
         assert "DIAG:SIMU:CLOSE" in w
         assert w.index("DIAG:SIMU:CLOSE") < w.index("CALC:FILT:FILE D:\\UMa_3600M.smu")
 
+    async def test_successful_project_replacement_clears_prior_bounded_frequency_proof(self):
+        """换成另一个本地工程后，上一工程的有界调频证明不得继续对外可见。"""
+        drv, _ = _driver(state_seq=("STOPPED", "CLOSED"))
+        drv._last_center_frequency_application_evidence = MagicMock(name="old_project_proof")
+
+        assert await drv.load_local_scenario("D:\\new.smu") is True
+
+        assert drv.get_center_frequency_application_evidence() is None
+
     async def test_running_stops_before_close(self):
         """加载前 RUNNING → 先 DIAG:SIMU:STOP 再 CLOSE (手册: pause 语义 + *OPC?)。"""
         drv, visa = _driver(state_seq=("RUNNING", "CLOSED"))
@@ -132,6 +144,8 @@ class TestLoadLocalScenario:
         drv._loaded_emulation_file = "D:\\old.smu"  # 旧场景仍加载
         drv._readback_center_freq_mhz = 3550.0
         drv._emulation_running = True
+        old_proof = MagicMock(name="old_project_proof")
+        drv._last_center_frequency_application_evidence = old_proof
         assert await drv.load_local_scenario("D:\\x.smu") is False
         w = _writes(visa)
         assert not any(c.startswith("CALC:FILT:FILE") for c in w)  # 没硬闯 FILE
@@ -141,6 +155,7 @@ class TestLoadLocalScenario:
         assert drv._readback_center_freq_mhz == 3550.0
         assert drv._emulation_running is False
         assert drv.get_center_frequency_mhz() == 3550.0  # 报旧中心频率, 非 None
+        assert drv.get_center_frequency_application_evidence() is old_proof
 
     async def test_load_error_fails_clears_stale(self):
         """CLOSE 成功但 CALC:FILT:FILE 后 SYST:ERR? 有错 → fail-loud + 清 stale file。"""
@@ -150,8 +165,10 @@ class TestLoadLocalScenario:
             err_seq={f"CALC:FILT:FILE {fp}": [SYST_FAIL]},
         )
         drv._loaded_emulation_file = "old.smu"
+        drv._last_center_frequency_application_evidence = MagicMock(name="old_project_proof")
         assert await drv.load_local_scenario(fp) is False
         assert drv._loaded_emulation_file is None
+        assert drv.get_center_frequency_application_evidence() is None
         assert "load .smu failed" in (drv._last_error or "")
 
     async def test_file_timeout_exception_fails_clears(self):
@@ -241,6 +258,39 @@ class TestSetChannelModelPreflight:
         # 仪器回读留 F64R-2)。构造默认文件 == driver 默认 → 触发同步。
         assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
 
+    async def test_cancellation_after_project_replacement_cannot_leave_prior_bounded_proof(self):
+        """FILE 已确认替换后，即使后续有界调频被取消，也不能暴露上一工程的证明。"""
+        drv, _ = _driver(state_seq=("STOPPED", "CLOSED"))
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._last_center_frequency_application_evidence = MagicMock(name="old_project_proof")
+        bounded_started = asyncio.Event()
+
+        async def _block_bounded_frequency(_frequency_mhz: float):
+            bounded_started.set()
+            await asyncio.Event().wait()
+
+        with patch.object(
+            drv,
+            "set_center_frequency_bounded",
+            new=_block_bounded_frequency,
+        ):
+            pending = asyncio.create_task(
+                drv.set_channel_model(
+                    "CDL-C",
+                    "UMa",
+                    {
+                        "emulation_file": "D:\\default.smu",
+                        "center_frequency_mhz": 1842.5,
+                    },
+                )
+            )
+            await asyncio.wait_for(bounded_started.wait(), timeout=1.0)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+
+        assert drv.get_center_frequency_application_evidence() is None
+
     async def test_set_channel_model_close_not_confirmed_fails(self):
         """set_channel_model 的 CLOSE 复查也 fail-loud (helper 共享)。"""
         drv, _ = _driver(state_seq=("STOPPED", "RUNNING"))  # CLOSE 后非 CLOSED
@@ -306,6 +356,17 @@ class TestIdentityResetNetFanout:
         # ASC runtime 文件名无频率 pattern → identity 报 None (一致性网跳过 F64)
         assert drv.get_frequency_identity() is None
 
+    async def test_asc_success_clears_prior_bounded_frequency_proof(self):
+        """ASC 工程替换确认后，不得把上一 GCM 工程的有界调频证明带过去。"""
+        drv, _ = _driver(state_seq=("CLOSED",))
+        drv._last_center_frequency_application_evidence = MagicMock(name="old_project_proof")
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["runtime_emulation.smu"]
+        ):
+            assert await drv.upload_asc_files("/local/asc", "UMa") is True
+
+        assert drv.get_center_frequency_application_evidence() is None
+
     async def test_connect_reset_net_clears_stale_readback(self):
         """连接起始复位网含新字段: 跨重连清 stale (无真仪器 → 连接失败, 但顶部复位网
         在 try 之前已跑, 证明懒重连后未 load 前查 identity 不谎报上会话真频)。"""
@@ -335,6 +396,27 @@ class TestIdentityResetNetFanout:
         assert drv._center_freq_programmed is False
         # B-2 .rtc 文件名无频率 pattern → identity 报 None (一致性网跳过 F64)
         assert drv.get_frequency_identity() is None
+
+    async def test_b2_success_clears_prior_bounded_frequency_proof(self):
+        """B-2 工程替换确认后，不得把上一 GCM 工程的有界调频证明带过去。"""
+        drv, _ = _driver(state_seq=("CLOSED",))
+        drv._last_center_frequency_application_evidence = MagicMock(name="old_project_proof")
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["b2_model.rtc"]
+        ):
+            assert await drv.load_parametric_tdl("/local/b2", "UMa") is True
+
+        assert drv.get_center_frequency_application_evidence() is None
+
+    async def test_failure_before_project_replacement_preserves_prior_bounded_frequency_proof(self):
+        """FTP 在 CLOSE/FILE 前失败时旧工程仍在，必须保留与它绑定的原证明。"""
+        drv, _ = _driver()
+        old_proof = MagicMock(name="old_project_proof")
+        drv._last_center_frequency_application_evidence = old_proof
+        with patch.object(drv, "_ftp_upload_directory", return_value=[]):
+            assert await drv.upload_asc_files("/local/asc", "UMa") is False
+
+        assert drv.get_center_frequency_application_evidence() is old_proof
 
     async def test_b2_load_failure_clears_stale_identity(self):
         """B-2 加载失败 (SYST:ERR?) → 清 stale loaded/programmed/readback (CLOSE 已停旧
