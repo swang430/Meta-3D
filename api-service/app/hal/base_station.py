@@ -39,6 +39,16 @@ from app.hal.base_station_mac_profile import (
 
 logger = logging.getLogger(__name__)
 
+# Frozen request descriptors select/validate the adapter and canonical channel
+# identity, but they are not independent instrument controls.  Requiring a
+# device-side readback for them makes an otherwise complete config receipt
+# impossible for adapters whose authoritative controls are band/channel based.
+# They remain protected by the frozen compatibility and RAT-aware request
+# schema; P1-79D consumes only confirmed applied controls for frequency truth.
+_CONFIG_RECEIPT_DESCRIPTOR_FIELDS = frozenset(
+    {"radio_technology", "channel_kind", "frequency_mhz"}
+)
+
 LTE_TRANSMISSION_MODES = (
     "TM1",
     "TM2",
@@ -127,18 +137,18 @@ class BaseStationRequestedConfig:
         return payload
 
     def receipt_payload(self) -> dict[str, Any]:
-        """Return every non-null field covered by the frozen request receipt.
+        """Return non-null, independently applied instrument controls.
 
-        This uses the same dataclass field names persisted by the execution
-        evidence writer.  Adapter-specific payload aliases are deliberately
-        excluded: a partial hardware readback must not confirm a larger frozen
-        request merely because the adapter did not include the other fields.
+        RAT/channel/frequency descriptors are frozen execution truth, not
+        separate device registers.  All remaining non-null fields stay in the
+        confirmation set: an adapter cannot confirm a larger request merely
+        because it omitted an actual control from its readback.
         """
 
         return {
             name: value
             for name, value in asdict(self).items()
-            if value is not None
+            if value is not None and name not in _CONFIG_RECEIPT_DESCRIPTOR_FIELDS
         }
 
 

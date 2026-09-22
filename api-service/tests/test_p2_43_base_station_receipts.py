@@ -9,6 +9,7 @@ import pytest
 from app.hal.base_station import (
     BaseStationApplyReceipt,
     BaseStationFieldReceipt,
+    BaseStationRequestedConfig,
 )
 
 
@@ -114,6 +115,33 @@ def test_apply_confirmation_is_derived_from_every_applicable_field():
     )
     assert partial.confirmed is False
     assert partial.exchange_ids == ("exchange-1", "exchange-2")
+
+
+def test_requested_config_receipt_contains_only_independent_applied_controls():
+    requested = BaseStationRequestedConfig(
+        radio_technology="lte",
+        channel_kind="lte_dl_earfcn",
+        frequency_mhz=1815.0,
+        bandwidth_mhz=20.0,
+        band="B3",
+        duplex="fdd",
+        nr_arfcn=None,
+        lte_dl_earfcn=1300,
+        lte_transmission_mode="TM3",
+        subcarrier_spacing_khz=None,
+        mimo_layers=2,
+        downlink_power_dbm=-65.25,
+    )
+
+    assert requested.receipt_payload() == {
+        "bandwidth_mhz": 20.0,
+        "band": "B3",
+        "duplex": "fdd",
+        "lte_dl_earfcn": 1300,
+        "lte_transmission_mode": "TM3",
+        "mimo_layers": 2,
+        "downlink_power_dbm": -65.25,
+    }
 
 
 def test_apply_receipt_rejects_duplicate_fields_but_allows_shared_evidence():

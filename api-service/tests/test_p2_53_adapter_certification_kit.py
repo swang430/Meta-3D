@@ -37,7 +37,7 @@ from tests.base_station_certification_kit import (
     certify_fake_transport_exchange_provenance,
     certify_measurement_window_contract,
     certify_metric_registry_trust,
-    certify_partial_readback_receipt,
+    certify_config_readback_receipt,
     certify_registration_gate,
     certify_release_token_boundary,
     certify_safe_idle_boundary,
@@ -128,6 +128,7 @@ def _uxm_subject() -> AdapterCertificationSubject:
         sleep_patch_target="app.hal.uxm_base_station.asyncio.sleep",
         expect_attach_formally_confirmed=False,
         expect_window_formally_confirmed=False,
+        expect_config_formally_confirmed=False,
         requested_config=_uxm_requested_config(),
         build_offline_driver=lambda: _uxm_driver({"BSE:STATus:NR5G": "IDLE"}),
         build_attach_ready_driver=lambda: _uxm_driver(
@@ -230,6 +231,7 @@ def _cmw_subject() -> AdapterCertificationSubject:
         sleep_patch_target="app.hal.cmw500_base_station.asyncio.sleep",
         expect_attach_formally_confirmed=True,
         expect_window_formally_confirmed=True,
+        expect_config_formally_confirmed=True,
         requested_config=_cmw_requested_config(),
         build_offline_driver=lambda: _StateDriver(
             {
@@ -310,6 +312,7 @@ def _certfake_subject() -> AdapterCertificationSubject:
         sleep_patch_target="tests.base_station_certification_kit.asyncio.sleep",
         expect_attach_formally_confirmed=True,
         expect_window_formally_confirmed=True,
+        expect_config_formally_confirmed=False,
         requested_config=_certfake_requested_config(),
         build_offline_driver=lambda: _certfake(),
         build_attach_ready_driver=lambda: _certfake(),
@@ -357,8 +360,8 @@ async def test_dimension_01_fake_transport(subject):
 
 
 @pytest.mark.asyncio
-async def test_dimension_02_partial_readback(subject):
-    await certify_partial_readback_receipt(subject)
+async def test_dimension_02_config_readback_boundary(subject):
+    await certify_config_readback_receipt(subject)
 
 
 @pytest.mark.asyncio

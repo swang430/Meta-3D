@@ -16,7 +16,7 @@
  #   维度                  模板函数
 ===  ====================  ==========================================
  1   fake transport        certify_fake_transport_exchange_provenance
- 2   部分回读              certify_partial_readback_receipt
+ 2   配置回读边界          certify_config_readback_receipt
  3   错误队列              certify_error_queue_consultation
  4   超时 / 取消           certify_attach_timeout_returns_receipt /
                            certify_cancellation_propagates
@@ -890,6 +890,7 @@ class AdapterCertificationSubject:
     sleep_patch_target: str
     expect_attach_formally_confirmed: bool
     expect_window_formally_confirmed: bool
+    expect_config_formally_confirmed: bool
     requested_config: BaseStationRequestedConfig
     build_offline_driver: Callable[[], Any]
     build_attach_ready_driver: Callable[[], Any]
@@ -946,14 +947,14 @@ async def certify_fake_transport_exchange_provenance(
     )
 
 
-async def certify_partial_readback_receipt(
+async def certify_config_readback_receipt(
     subject: AdapterCertificationSubject,
 ) -> None:
-    """维度 2（部分回读）。
+    """维度 2（配置回读边界）。
 
-    提炼自 test_p2_43(_partial_config_receipt) 与
-    test_p1_73b_cmw_state_machine.py:106（部分权威回读时 confirmed=False、
-    unknown 字段不携 applied、操作接受与证据完备分离）。
+    部分权威回读时 unknown 字段不携 applied，操作接受与证据完备分离；
+    能权威回读全部实际控制字段的 adapter 则必须形成完整确认。冻结描述符
+    不属于独立仪器控制，不得为了制造 partial 而强行加入回执。
     """
 
     driver = subject.build_partial_config_driver()
@@ -965,9 +966,13 @@ async def certify_partial_readback_receipt(
         subject.requested_config.receipt_payload()
     ), f"{subject.label}: receipt 必须覆盖冻结请求的全部字段"
     unknown = [item for item in receipt.fields if item.status == "unknown"]
-    assert unknown, f"{subject.label}: 共同请求必然存在无权威回读的字段"
-    assert all(item.applied is None for item in unknown)
-    assert receipt.confirmed is False
+    if subject.expect_config_formally_confirmed:
+        assert not unknown, f"{subject.label}: 全部实际控制字段均应获得权威回读"
+        assert receipt.confirmed is True
+    else:
+        assert unknown, f"{subject.label}: 部分回读场景必须保留 unknown 字段"
+        assert all(item.applied is None for item in unknown)
+        assert receipt.confirmed is False
     assert receipt.operation_succeeded is True
     assert receipt.diagnostic_execution_allowed is True
 
