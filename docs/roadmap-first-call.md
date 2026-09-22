@@ -1329,7 +1329,7 @@ execution 的报告证明 cleanup 与 transport release 属于同一 attempt/lea
 **2026-09-17 用户裁决：整项关闭。** P0-9B-2（路损校准）与 P0-9C（正式验收）以校准为前提，而校准尚未正式启动，现在做只浪费时间 —— 不再作为本项关闭条件，校准正式启动时另立项（下方「正式关闭条件」里涉及校准与正式 KPI 白名单的几条随之移交，不是已满足；第 5 条「第二次重复执行」由 P1-4 承接，同样未满足；第 4 条「报告详情、下载、比较、历史和 GUI 与 execution evidence 一致」现场只取得了报告生成，其余未逐项核对，也不是已满足）。P0-9B-3（单方位用例；`-90°` 移动结局未知）的转台复验内容随 P0-5 行与 NEW-4 / P1-56 行走。新暴露的**纯软件缺口**：
 CMW500 配置回执的 `radio_technology` / `channel_kind` / `frequency_mhz` 恒为 unknown（`config_confirmed=False` → 签发不了基站站点认证）；
 且正式强制证据的基站一侧只有 UXM 驱动实现了（配置 / 吞吐证据、频率身份、仪器身份快照四个接口 CMW500 都没有）—— 与校准无关，
-正式判词会停在 `frequency_identity_not_fully_verified`，`base_station.pcell.config_applied` 与 `base_station.throughput.azimuth.NNN` 恒缺失；已按根因拆成 P1-79A～E；A 已于 2026-09-22 获批并在本片软件修复，B～E 仍为低优先级候选（对日常测试没有必要；伞形项 P1-79 撤销，见下方 2026-09-17 triage checkpoint）：这些缺口都在与校准无关的资格、强制证据两层；报告的 KPI 结论另有 ANALYSIS 层的路损校准条件，见现场总结 §5。详见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)。
+正式判词会停在 `frequency_identity_not_fully_verified`，`base_station.pcell.config_applied` 与 `base_station.throughput.azimuth.NNN` 恒缺失；已按根因拆成 P1-79A～E；A 已由 PR #491 合并，E 已完成取证并转 Hardware/Vendor-Protocol Blocked，B～D 仍为低优先级候选（对日常测试没有必要；伞形项 P1-79 撤销，见下方 2026-09-17 triage checkpoint）：这些缺口都在与校准无关的资格、强制证据两层；报告的 KPI 结论另有 ANALYSIS 层的路损校准条件，见现场总结 §5。详见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)。
 
 **正式关闭条件**：
 
@@ -5420,7 +5420,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 ### 2026-09-17 现场 triage checkpoint（2026-09-16 CMW500 + F64）
 
-**本表给出 2026-09-16 现场发现的当前出口；原始事实在[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)与 runbook §7。** 编号与顺序已由用户 2026-09-18 批准（P1-79A 随后于 2026-09-22 获批，本片软件修复；B～E 仍为低优先级候选）。
+**本表给出 2026-09-16 现场发现的当前出口；原始事实在[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md)与 runbook §7。** 编号与顺序已由用户 2026-09-18 批准；P1-79A 已由 PR #491 合并，P1-79E 已完成取证并转 Hardware/Vendor-Protocol Blocked，B～D 仍为低优先级候选。
 
 | 发现 | 当前出口 | 依据与下一步 |
 |---|---|---|
