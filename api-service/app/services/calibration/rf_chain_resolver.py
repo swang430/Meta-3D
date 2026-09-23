@@ -52,6 +52,24 @@ class RFChainSpec:
     cable_loss_db: float = 0.0  # from connection.calibrated_loss_db or .cable_loss_db
 
 
+def normalize_rf_chain_identity(value: object) -> Optional[str]:
+    """Return a usable frozen route identifier, or ``None`` for placeholders."""
+
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized if normalized and normalized != "?" else None
+
+
+def rf_chain_identity_is_complete(chain: RFChainSpec) -> bool:
+    """A formal RF-chain identity needs stable chain and CE-port values."""
+
+    return (
+        normalize_rf_chain_identity(chain.chain_id) is not None
+        and normalize_rf_chain_identity(chain.ce_port) is not None
+    )
+
+
 @dataclass
 class RFChainResolution:
     lab_profile_id: UUID
@@ -146,11 +164,13 @@ def _binding_to_spec(binding: ProbePortBinding) -> Optional[RFChainSpec]:
     """
     if binding.probe_id is None or binding.polarization is None:
         return None
-    if binding.connection_id is None:
+    chain_id = normalize_rf_chain_identity(binding.connection_id)
+    ce_port = normalize_rf_chain_identity(binding.ce_port)
+    if chain_id is None or ce_port is None:
         return None
     return RFChainSpec(
-        chain_id=str(binding.connection_id),
-        ce_port=binding.ce_port,
+        chain_id=chain_id,
+        ce_port=ce_port,
         probe_id=int(binding.probe_id),
         polarization=binding.polarization.upper(),
         cable_loss_db=float(binding.cable_loss_db or 0.0),

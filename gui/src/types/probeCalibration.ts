@@ -157,7 +157,9 @@ export interface PolarizationCalibrationResponse {
 // ==================== Pattern Calibration ====================
 
 export interface StartPatternCalibrationRequest {
+  lab_profile_id: string
   chamber_id: string
+  operating_mode: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   frequency_mhz: number
@@ -166,6 +168,10 @@ export interface StartPatternCalibrationRequest {
   measurement_distance_m?: number
   reference_antenna_id?: string
   turntable_id?: string
+  ce_tx_power_dbm: number
+  sgh_gain_dbi: number
+  chain_correction_db?: number | null
+  use_mock: boolean
   calibrated_by: string
 }
 
@@ -173,6 +179,14 @@ export interface PatternCalibrationResponse {
   id: string
   chamber_id: string
   use_mock?: boolean | null
+  warnings?: string[] | null
+  lab_profile_id?: string | null
+  operating_mode?: string | null
+  topology_id?: string | null
+  chain_id?: string | null
+  ce_port?: string | null
+  chain_correction_db?: number | null
+  source?: string | null
   probe_id: number
   polarization: string
   frequency_mhz: number

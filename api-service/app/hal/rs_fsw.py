@@ -107,10 +107,15 @@ class RealRsFswDriver(SignalAnalyzerDriver):
             self._set_status(InstrumentStatus.BUSY)
             self._query(FswScpi.TRIG)
             data = await self.get_trace()
+            if not data:
+                raise RuntimeError("signal analyzer returned no trace samples")
             self._set_status(InstrumentStatus.READY)
-            return sum(data) / len(data) if data else -100.0
-        except Exception:
-            return -100.0
+            return sum(data) / len(data)
+        except Exception as e:
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            raise RuntimeError(
+                f"FSW channel power measurement failed: {e}"
+            ) from e
 
     async def get_trace(self) -> List[float]:
         try:

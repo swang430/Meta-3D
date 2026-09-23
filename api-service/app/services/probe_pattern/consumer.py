@@ -19,16 +19,36 @@ is good enough.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.probe_calibration import CalibrationStatus, ProbePattern
+from app.services.calibration.rf_chain_resolver import (
+    normalize_rf_chain_identity,
+    rf_chain_identity_is_complete,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def infer_rf_chain_probe_id_base(
+    num_probes: int,
+    probe_ids: List[int],
+) -> Optional[int]:
+    """Infer a zero/one-based RF-chain namespace only from a proven edge."""
+    ids = set(probe_ids)
+    zero_based = set(range(num_probes))
+    one_based = set(range(1, num_probes + 1))
+    if ids == zero_based or (ids and ids <= zero_based and 0 in ids):
+        return 0
+    if ids == one_based or (ids and ids <= one_based and num_probes in ids):
+        return 1
+    return None
 
 
 def _query_valid_pattern(
@@ -39,6 +59,10 @@ def _query_valid_pattern(
     freq_tolerance_pct: float = 5.0,
     *,
     chamber_id: UUID,
+    num_probes: int,
+    lab_profile_id: Optional[UUID] = None,
+    operating_mode: str = "mimo_ota",
+    route_cache: Optional[Dict[str, Any]] = None,
 ) -> Optional[ProbePattern]:
     """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq.
 
@@ -49,6 +73,8 @@ def _query_valid_pattern(
         raise ValueError("chamber_id is required for formal ProbePattern consumption")
     f_min = frequency_mhz * (1.0 - freq_tolerance_pct / 100.0)
     f_max = frequency_mhz * (1.0 + freq_tolerance_pct / 100.0)
+    if route_cache is None:
+        route_cache = {}
 
     def _base():
         return db.query(ProbePattern).filter(
@@ -61,13 +87,82 @@ def _query_valid_pattern(
             ProbePattern.valid_until > datetime.utcnow(),
         )
 
-    exact = (
+    candidates = (
         _base()
         .filter(ProbePattern.chamber_id == chamber_id)
         .order_by(desc(ProbePattern.measured_at))
-        .first()
+        .all()
     )
-    return exact
+    for pattern in candidates:
+        if pattern.source == "vendor_datasheet":
+            return pattern
+        if pattern.source != "in_chamber_measured":
+            continue
+        if (
+            pattern.chain_correction_db is None
+            or not math.isfinite(float(pattern.chain_correction_db))
+        ):
+            continue
+        if (
+            pattern.lab_profile_id != lab_profile_id
+            or pattern.operating_mode != operating_mode
+        ):
+            continue
+
+        if "resolution" not in route_cache:
+            try:
+                from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+                route_cache["resolution"] = resolve_rf_chains(
+                    db, lab_profile_id, operating_mode
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "[ProbePattern] current route resolution failed for lab=%s "
+                    "mode=%s: %s",
+                    lab_profile_id,
+                    operating_mode,
+                    exc,
+                )
+                route_cache["resolution"] = None
+        resolution = route_cache["resolution"]
+        if (
+            resolution is None
+            or resolution.chamber_id != chamber_id
+            or not resolution.topology_id
+            or pattern.topology_id != str(resolution.topology_id)
+        ):
+            continue
+        probe_id_base = infer_rf_chain_probe_id_base(
+            num_probes,
+            [candidate.probe_id for candidate in resolution.chains],
+        )
+        if probe_id_base is None:
+            continue
+        matching = [
+            chain
+            for chain in resolution.chains
+            if chain.probe_id == probe_id + probe_id_base
+            and chain.polarization.upper() == polarization.upper()
+        ]
+        if len(matching) != 1:
+            continue
+        chain = matching[0]
+        if not rf_chain_identity_is_complete(chain):
+            continue
+        frozen_chain_id = normalize_rf_chain_identity(pattern.chain_id)
+        frozen_ce_port = normalize_rf_chain_identity(pattern.ce_port)
+        current_chain_id = normalize_rf_chain_identity(chain.chain_id)
+        current_ce_port = normalize_rf_chain_identity(chain.ce_port)
+        if frozen_chain_id is None or frozen_ce_port is None:
+            continue
+        if (
+            frozen_chain_id != current_chain_id
+            or frozen_ce_port != current_ce_port
+        ):
+            continue
+        return pattern
+    return None
 
 
 def select_active_probe_id(num_probes: int, azimuth_deg: float) -> Optional[int]:
@@ -110,6 +205,8 @@ def get_probe_gain_at_azimuth(
     polarization: str = "V",
     *,
     chamber_id: UUID,
+    lab_profile_id: UUID,
+    operating_mode: str,
 ) -> Optional[float]:
     """Return peak gain (dBi) of the probe closest to `azimuth_deg`.
 
@@ -126,7 +223,15 @@ def get_probe_gain_at_azimuth(
     if probe_id is None:
         return None
     pattern = _query_valid_pattern(
-        db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+        db,
+        probe_id,
+        polarization,
+        frequency_mhz,
+        chamber_id=chamber_id,
+        num_probes=num_probes,
+        lab_profile_id=lab_profile_id,
+        operating_mode=operating_mode,
+        route_cache={},
     )
     if pattern is None or pattern.peak_gain_dbi is None:
         return None
@@ -140,6 +245,8 @@ def estimate_quiet_zone_ripple_db(
     polarization: str = "V",
     *,
     chamber_id: UUID,
+    lab_profile_id: UUID,
+    operating_mode: str,
 ) -> Optional[float]:
     """Estimate QZ ripple from cross-probe peak-gain spread.
 
@@ -156,9 +263,18 @@ def estimate_quiet_zone_ripple_db(
     Returns None if fewer than 2 probes have data (insufficient sample).
     """
     patterns: List[ProbePattern] = []
+    route_cache: Dict[str, Any] = {}
     for probe_id in range(num_probes):
         p = _query_valid_pattern(
-            db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+            db,
+            probe_id,
+            polarization,
+            frequency_mhz,
+            chamber_id=chamber_id,
+            num_probes=num_probes,
+            lab_profile_id=lab_profile_id,
+            operating_mode=operating_mode,
+            route_cache=route_cache,
         )
         if p is not None and p.peak_gain_dbi is not None:
             patterns.append(p)

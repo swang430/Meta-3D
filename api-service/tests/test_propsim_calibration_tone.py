@@ -161,6 +161,24 @@ class TestSetCalibrationTone:
         assert any("OUTPut:INTERFerence:ADD 5," in s for s in sent)
 
     @pytest.mark.asyncio
+    async def test_caict_bare_b_port_uses_its_declared_output_number(self):
+        """CAICT topology convention: B17 is physical F64 output 17."""
+        drv, visa = _make_driver(has_interference_generator=True)
+        await drv.set_calibration_tone(3500e6, -20.0, ce_port="B17")
+        sent = _writes(visa)
+        assert any("OUTPut:INTERFerence:ADD 17," in s for s in sent)
+
+    @pytest.mark.asyncio
+    async def test_explicit_unrecognized_port_is_rejected_before_scpi(self):
+        drv, visa = _make_driver(has_interference_generator=True)
+        for ce_port in ("PROPSIM F64", "B33"):
+            with pytest.raises(ValueError, match="unrecognized ce_port"):
+                await drv.set_calibration_tone(
+                    3500e6, -20.0, ce_port=ce_port
+                )
+        assert not _writes(visa)
+
+    @pytest.mark.asyncio
     async def test_no_license_returns_false_without_scpi(self):
         """has_interference_generator=False → reject early, don't touch SCPI."""
         drv, visa = _make_driver(has_interference_generator=False)
@@ -305,6 +323,14 @@ class TestCalibrationToneFailLoud:
 # ============================================================================
 
 class TestPassthroughMode:
+
+    @pytest.mark.asyncio
+    async def test_explicit_unknown_output_is_rejected_before_bypass_scpi(self):
+        drv, visa = _make_driver(has_interference_generator=False)
+        for ce_port in ("PROPSIM F64", "B33", ""):
+            with pytest.raises(ValueError, match="unrecognized ce_port"):
+                await drv.set_passthrough_mode(ce_port=ce_port)
+        assert not _writes(visa)
 
     @pytest.mark.asyncio
     async def test_set_passthrough_drives_calibration_bypass(self):

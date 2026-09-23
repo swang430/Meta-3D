@@ -265,6 +265,41 @@ class TestPassthroughBPath:
     upstream SG.set_cw + start_tx + (later) stop_tx + ce.clear_passthrough."""
 
     @pytest.mark.asyncio
+    async def test_passthrough_fixed_cabling_is_rejected_before_hardware_io(
+        self, db, monkeypatch
+    ):
+        """Global F64 bypass cannot isolate one fixed-wired output.
+
+        Without a real downstream switch, B1/B17/B32 would all energize the
+        same global passthrough state and could be persisted as distinct formal
+        chains.  Reject this path before CE/VSG/SA I/O.
+        """
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        sg = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        with pytest.raises(RuntimeError, match="real rfSwitch"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=7,
+                polarization=PolarizationType.H,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+                ce_port="B17",
+                route_target="conn_ce_b17_to_hprobe_9h",
+            )
+
+        ce.set_passthrough_mode.assert_not_awaited()
+        sg.set_cw.assert_not_awaited()
+        sg.start_tx.assert_not_awaited()
+        sa.setup_spectrum.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_passthrough_happy_path(self, db, monkeypatch):
         """Same math as D path (SG output = CE output, 0 dB passthrough),
         but driver calls hit set_passthrough_mode + SG.set_cw / start_tx
@@ -274,7 +309,9 @@ class TestPassthroughBPath:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, sg=sg, rf_switch=_make_rf_switch()
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         m = await svc._real_path_loss_measurement_via_ce_sa(
@@ -285,6 +322,7 @@ class TestPassthroughBPath:
             sgh_gain_dbi=10.0,
             probe_gain_dbi=8.0,
             cable_sgh_to_sa_loss_db=1.5,
+            route_target="conn-7h",
         )
         # Same algebra: -20 - (-85) + 10 + 8 - 1.5 = 81.5 dB
         assert m.path_loss_db == pytest.approx(81.5, abs=0.01)
@@ -312,7 +350,9 @@ class TestPassthroughBPath:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, bse=bse, rf_switch=_make_rf_switch()
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         with pytest.raises(RuntimeError, match="vectorSignalGenerator"):
@@ -324,6 +364,7 @@ class TestPassthroughBPath:
                 sgh_gain_dbi=10.0,
                 probe_gain_dbi=8.0,
                 cable_sgh_to_sa_loss_db=1.5,
+                route_target="conn-1v",
             )
         bse.set_cw.assert_not_awaited()
         bse.start_tx.assert_not_awaited()
@@ -341,7 +382,10 @@ class TestPassthroughBPath:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse, sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, bse=bse, sg=sg,
+            rf_switch=_make_rf_switch(),
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         await svc._real_path_loss_measurement_via_ce_sa(
@@ -352,6 +396,7 @@ class TestPassthroughBPath:
             sgh_gain_dbi=10.0,
             probe_gain_dbi=8.0,
             cable_sgh_to_sa_loss_db=1.5,
+            route_target="conn-1v",
         )
         sg.set_cw.assert_awaited_once()
         sg.start_tx.assert_awaited_once()
@@ -368,7 +413,9 @@ class TestPassthroughBPath:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, rf_switch=_make_rf_switch()
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         with pytest.raises(RuntimeError, match="vectorSignalGenerator"):
@@ -380,6 +427,7 @@ class TestPassthroughBPath:
                 sgh_gain_dbi=10.0,
                 probe_gain_dbi=8.0,
                 cable_sgh_to_sa_loss_db=1.5,
+                route_target="conn-1v",
             )
         # Neither path was touched
         ce.set_calibration_tone.assert_not_awaited()
@@ -394,7 +442,9 @@ class TestPassthroughBPath:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=False)  # ← fails after SG running
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, sg=sg, rf_switch=_make_rf_switch()
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         with pytest.raises(RuntimeError, match="SA setup_spectrum failed"):
@@ -406,6 +456,7 @@ class TestPassthroughBPath:
                 sgh_gain_dbi=10.0,
                 probe_gain_dbi=8.0,
                 cable_sgh_to_sa_loss_db=1.5,
+                route_target="conn-1v",
             )
         sg.start_tx.assert_awaited_once()
         sg.stop_tx.assert_awaited_once()  # critical: RF off
@@ -580,7 +631,9 @@ class TestSwitchAutoRouting:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, sg=sg, rf_switch=_make_rf_switch()
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         await svc._real_path_loss_measurement_via_ce_sa(
@@ -592,6 +645,7 @@ class TestSwitchAutoRouting:
             probe_gain_dbi=8.0,
             cable_sgh_to_sa_loss_db=1.5,
             ce_port="B2.3",
+            route_target="conn-5v",
         )
         ce.set_passthrough_mode.assert_awaited_once()
         _, kwargs = ce.set_passthrough_mode.call_args
@@ -819,7 +873,9 @@ class TestMultiFrequencySweep:
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=sa, sg=sg, rf_switch=_make_rf_switch()
+        )
         lab = _seed_lab_with_one_chain(db, chamber_with_cable_loss)
 
         svc = MultiFrequencyPathLossService(db, use_mock=False)
@@ -861,9 +917,10 @@ class TestMultiFrequencySweep:
 
 
 class TestAcquireCleanupWarningHarvest:
-    """agent #206 F1/F2/F3: acquire 清理失败收集器的收割接线 — legacy
-    start_calibration 全出口 (成功/异常) 收割进证书 warnings, 入口清零防
-    跨轮残留, D 路 stop_calibration_tone 与 B 路对称进收集器。
+    """acquire 清理失败收集器与单点 primitive 的告警接线。
+
+    Real CE+SA 的证书出口由下方 TestForLabHarvestEndToEnd 覆盖；没有
+    topology 的 legacy start_calibration 已 fail-closed。
     """
 
     def _sa_ok(self):
@@ -873,74 +930,33 @@ class TestAcquireCleanupWarningHarvest:
         return sa
 
     @pytest.mark.asyncio
-    async def test_d_path_cleanup_failure_reaches_cert_warnings(
-        self, db, monkeypatch, chamber_with_cable_loss
-    ):
-        """F1 + D 路对称: stop_calibration_tone 被拒 → 校准照常成功, 但
-        清理失败带 probe/pol 标签进 CalibrationResult.warnings。"""
-        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
-        ce.stop_calibration_tone = AsyncMock(return_value=False)
-        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok())
-
-        svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
-        )
-        assert result.success, result.message
-        harvested = [w for w in result.warnings if "stop_calibration_tone 被拒" in w]
-        assert harvested and harvested[0].startswith("probe 0 pol V: "), result.warnings
-        assert svc._last_acquire_warnings == []  # 收割后清空
-
-    @pytest.mark.asyncio
     async def test_b_path_cleanup_failure_reaches_cert_warnings(
         self, db, monkeypatch, chamber_with_cable_loss
     ):
         """F1, B 路端到端: clear_passthrough_mode 被拒 → warnings 可见。"""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         ce.clear_passthrough_mode = AsyncMock(return_value=False)
-        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok(), sg=_make_sg())
+        _patched_hal(
+            monkeypatch, ce=ce, sa=self._sa_ok(), sg=_make_sg(),
+            rf_switch=_make_rf_switch(),
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
+        warnings: list[str] = []
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=0,
+            polarization=PolarizationType.V,
             frequency_mhz=3500.0,
-            sgh_model="SGH-01",
+            ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            ce_port="B1",
+            route_target="conn_p0v",
+            warning_sink=warnings,
+            warning_label="probe 0 pol V",
         )
-        assert result.success, result.message
-        assert any("clear_passthrough_mode 被拒" in w for w in result.warnings)
-
-    @pytest.mark.asyncio
-    async def test_cleanup_warning_survives_measure_failure(
-        self, db, monkeypatch, chamber_with_cable_loss
-    ):
-        """F3: 测量失败提前返回也不丢清理警告 — SA setup 失败让 acquire 抛
-        异常, 同时 finally 里 tone 停不掉; 失败 CalibrationResult 必须带出。"""
-        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
-        ce.stop_calibration_tone = AsyncMock(return_value=False)
-        sa = MagicMock()
-        sa.setup_spectrum = AsyncMock(return_value=False)  # → acquire raises
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
-
-        svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
-        )
-        assert result.success is False
-        assert "Measurement failed" in result.message
-        assert any("stop_calibration_tone 被拒" in w for w in result.warnings)
+        assert any("clear_passthrough_mode 被拒" in w for w in warnings)
 
     @pytest.mark.asyncio
     async def test_stale_collector_cleared_at_entry(
@@ -981,19 +997,27 @@ class TestAcquireCleanupWarningHarvest:
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         sg = _make_sg()
         sg.stop_tx = AsyncMock(return_value=False)
-        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok(), sg=sg)
+        _patched_hal(
+            monkeypatch, ce=ce, sa=self._sa_ok(), sg=sg,
+            rf_switch=_make_rf_switch(),
+        )
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
+        warnings: list[str] = []
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=0,
+            polarization=PolarizationType.V,
             frequency_mhz=3500.0,
-            sgh_model="SGH-01",
+            ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            ce_port="B1",
+            route_target="conn_p0v",
+            warning_sink=warnings,
+            warning_label="probe 0 pol V",
         )
-        assert result.success, result.message
-        rejected = [w for w in result.warnings if "stop_tx 被拒" in w]
+        rejected = [w for w in warnings if "stop_tx 被拒" in w]
         assert rejected and "MagicMock" in rejected[0]  # 消息含源类型名
 
 

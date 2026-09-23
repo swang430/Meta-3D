@@ -106,10 +106,15 @@ class RealKeysightXSeriesSaDriver(SignalAnalyzerDriver):
             # Fetch generic power reading - normally requires setting up CHP mode
             # But we fallback to trace average for basic abstraction
             data = await self.get_trace()
+            if not data:
+                raise RuntimeError("signal analyzer returned no trace samples")
             self._set_status(InstrumentStatus.READY)
-            return sum(data) / len(data) if data else -100.0
-        except Exception:
-            return -100.0
+            return sum(data) / len(data)
+        except Exception as e:
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            raise RuntimeError(
+                f"X-Series SA channel power measurement failed: {e}"
+            ) from e
 
     async def get_trace(self) -> List[float]:
         try:

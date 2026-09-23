@@ -119,6 +119,11 @@ def _multi_frequency_validation_pass(
     return None
 
 
+def _probe_pattern_validation_pass(calibration: ProbePattern) -> Optional[bool]:
+    """方向图采集尚无权威验收阈值，只可披露来源与冻结路线，不可判绿。"""
+    return None
+
+
 def _link_validation_pass(calibration: LinkCalibration) -> Optional[bool]:
     """Only an explicit-real, unexpired global link check has a verdict."""
     if calibration.use_mock is not False:
@@ -685,11 +690,13 @@ class CalibrationReportGenerator:
 
             pattern_data = []
             for pat in patterns:
-                is_valid = _probe_validation_pass(pat)
+                is_valid = _probe_pattern_validation_pass(pat)
                 if is_valid is not None:
                     total += 1
                     if is_valid:
                         passed += 1
+                else:
+                    undetermined += 1
                 pattern_data.append({
                     'id': str(pat.id),
                     'chamber_id': str(pat.chamber_id),
@@ -697,6 +704,14 @@ class CalibrationReportGenerator:
                     'frequency_mhz': pat.frequency_mhz,
                     'validation_pass': is_valid,
                     'use_mock': pat.use_mock,
+                    'source': pat.source,
+                    'warnings': pat.warnings,
+                    'lab_profile_id': str(pat.lab_profile_id) if pat.lab_profile_id else None,
+                    'operating_mode': pat.operating_mode,
+                    'topology_id': pat.topology_id,
+                    'chain_id': pat.chain_id,
+                    'ce_port': pat.ce_port,
+                    'chain_correction_db': pat.chain_correction_db,
                     'calibrated_at': str(pat.measured_at) if pat.measured_at else None,
                     'calibrated_by': pat.measured_by,
                     'beamwidth_3db_deg': pat.hpbw_azimuth_deg,
@@ -1396,8 +1411,14 @@ class CalibrationReportGenerator:
                         pass
         
         # 统计
-        total = len(filtered_calibrations)
-        passed = sum(1 for c in filtered_calibrations if c.get('validation_pass'))
+        determinate = [
+            calibration
+            for calibration in filtered_calibrations
+            if calibration.get('validation_pass') is not None
+        ]
+        total = len(determinate)
+        passed = sum(1 for calibration in determinate if calibration.get('validation_pass'))
+        undetermined = len(filtered_calibrations) - total
         
         audit_data = {
             'title': '校准审计报告 / Calibration Audit Report',
@@ -1408,10 +1429,11 @@ class CalibrationReportGenerator:
                 'end': end_date.strftime('%Y-%m-%d'),
             },
             'summary': {
-                'total_calibrations': total,
+                'total_calibrations': len(filtered_calibrations),
                 'passed': passed,
                 'failed': total - passed,
-                'pass_rate': (passed / total * 100) if total > 0 else 0,
+                'undetermined': undetermined,
+                'pass_rate': (passed / total * 100) if total > 0 else None,
             },
             'calibrations': filtered_calibrations,
         }
