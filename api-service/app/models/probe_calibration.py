@@ -618,6 +618,11 @@ class MultiFrequencyPathLoss(Base):
         JSON,
         comment="多项式插值系数，用于频率插值"
     )
+    warnings = Column(
+        JSON,
+        nullable=True,
+        comment="校准期间产生的警告列表；NULL=迁移前未记录",
+    )
 
     # 元数据
     calibrated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
