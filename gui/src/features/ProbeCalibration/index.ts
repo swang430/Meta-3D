@@ -13,4 +13,5 @@ export {
   ProbeCalibrationGrid,
   ProbeCalibrationDashboard,
   ProbeCalibrationDetail,
+  PatternMeasurementPanel,
 } from './components'
