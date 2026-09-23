@@ -352,41 +352,29 @@ class ProbePathLossCalibrationService:
         # acquire 残留被本轮第一个探头错误吸收
         self._last_acquire_warnings = []
 
-        import contextlib
-        from app.services.instrument_test_lease import instrument_test_lease
-
-        # P2-32B: pure validation must precede the remote-control lease.  An
-        # invalid output/route must not acquire F64 Remote only to reject the
-        # request afterwards.  The inner acquisition repeats this check to
-        # catch a HAL reload between preflight and first hardware I/O.
+        # This chamber-keyed entry has no LabProfile/SwitchTopology identity,
+        # so it cannot select a distinct CE output or switch route for each
+        # probe/polarization.  Real CE+SA would otherwise measure output 1 for
+        # every loop item and persist those readings under different probes.
+        # Keep the legacy entry only for mock and the original VNA path; real
+        # CE+SA must use start_calibration_for_lab_profile().
         if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
-            try:
-                self.preflight_sa_power_via_ce_tone(
-                    route_target=None,
-                    ce_port=None,
-                )
-            except Exception as exc:  # noqa: BLE001 - public result contract
-                return CalibrationResult(
-                    success=False,
-                    message=f"Instrument preflight failed for path-loss calibration: {exc}",
-                    warnings=warnings,
-                )
-
-        # P2-30: 作业级租约（条件 = 会走 CE+SA 路径）—— 整个 probe×pol 循环
-        # 只真取/放一次 F64 控制权；循环内单点测量自带的租约圈在嵌套下自动
-        # no-op（hold() 引用计数），此前 32 探头 × 2 极化 = 64 次 socket 建拆。
-        # mock 与 legacy VNA 分支拿 nullcontext，行为零变化；条件错配的最坏
-        # 后果只是退化回逐点取放（内层 wrapper 自己的租约圈保持不动）。
-        job_lease = (
-            instrument_test_lease(
-                f"path-loss-calibration:{frequency_mhz:g}MHz",
-                control_f64=True,
-                control_uxm=False,
-                enable_monitoring=False,
+            return CalibrationResult(
+                success=False,
+                message=(
+                    "Real CE+SA path-loss calibration requires a LabProfile + "
+                    "SwitchTopology route for every probe/polarization; use "
+                    "start_calibration_for_lab_profile (/start-for-lab)."
+                ),
+                warnings=warnings,
             )
-            if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None
-            else contextlib.nullcontext()
-        )
+
+        import contextlib
+
+        # Real CE+SA has already failed closed above, so this legacy path has
+        # no remote-control lease to acquire: mock is local and VNA retains its
+        # original driver-level ownership semantics.
+        job_lease = contextlib.nullcontext()
         try:
             async with job_lease:
                 # 遍历每个探头
@@ -405,20 +393,6 @@ class ProbePathLossCalibrationService:
                                     probe_id, pol, frequency_mhz,
                                     chamber.chamber_radius_m, sgh_gain_dbi,
                                     chamber.probe_gain_dbi
-                                )
-                            elif chamber.cable_sgh_to_sa_loss_db is not None:
-                                # CE+SA primary path (no VNA, no relay swaps).
-                                # cable_loss_db comes from chamber, ce_tx_power_dbm uses
-                                # a sensible default (-20 dBm) which sits comfortably
-                                # above SA noise floor and below CE OTA-port saturation.
-                                measurement = await self._real_path_loss_measurement_via_ce_sa(
-                                    probe_id=probe_id,
-                                    polarization=pol,
-                                    frequency_mhz=frequency_mhz,
-                                    ce_tx_power_dbm=-20.0,
-                                    sgh_gain_dbi=sgh_gain_dbi,
-                                    probe_gain_dbi=chamber.probe_gain_dbi,
-                                    cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
                                 )
                             else:
                                 # Legacy VNA + manual cable_loss path. Kept for chambers

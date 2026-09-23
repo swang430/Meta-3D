@@ -917,9 +917,10 @@ class TestMultiFrequencySweep:
 
 
 class TestAcquireCleanupWarningHarvest:
-    """agent #206 F1/F2/F3: acquire 清理失败收集器的收割接线 — legacy
-    start_calibration 全出口 (成功/异常) 收割进证书 warnings, 入口清零防
-    跨轮残留, D 路 stop_calibration_tone 与 B 路对称进收集器。
+    """acquire 清理失败收集器与单点 primitive 的告警接线。
+
+    Real CE+SA 的证书出口由下方 TestForLabHarvestEndToEnd 覆盖；没有
+    topology 的 legacy start_calibration 已 fail-closed。
     """
 
     def _sa_ok(self):
@@ -927,30 +928,6 @@ class TestAcquireCleanupWarningHarvest:
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
         return sa
-
-    @pytest.mark.asyncio
-    async def test_d_path_cleanup_failure_reaches_cert_warnings(
-        self, db, monkeypatch, chamber_with_cable_loss
-    ):
-        """F1 + D 路对称: stop_calibration_tone 被拒 → 校准照常成功, 但
-        清理失败带 probe/pol 标签进 CalibrationResult.warnings。"""
-        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
-        ce.stop_calibration_tone = AsyncMock(return_value=False)
-        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok())
-
-        svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
-        )
-        assert result.success, result.message
-        harvested = [w for w in result.warnings if "stop_calibration_tone 被拒" in w]
-        assert harvested and harvested[0].startswith("probe 0 pol V: "), result.warnings
-        assert svc._last_acquire_warnings == []  # 收割后清空
 
     @pytest.mark.asyncio
     async def test_b_path_cleanup_failure_reaches_cert_warnings(
@@ -980,31 +957,6 @@ class TestAcquireCleanupWarningHarvest:
             warning_label="probe 0 pol V",
         )
         assert any("clear_passthrough_mode 被拒" in w for w in warnings)
-
-    @pytest.mark.asyncio
-    async def test_cleanup_warning_survives_measure_failure(
-        self, db, monkeypatch, chamber_with_cable_loss
-    ):
-        """F3: 测量失败提前返回也不丢清理警告 — SA setup 失败让 acquire 抛
-        异常, 同时 finally 里 tone 停不掉; 失败 CalibrationResult 必须带出。"""
-        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
-        ce.stop_calibration_tone = AsyncMock(return_value=False)
-        sa = MagicMock()
-        sa.setup_spectrum = AsyncMock(return_value=False)  # → acquire raises
-        _patched_hal(monkeypatch, ce=ce, sa=sa)
-
-        svc = ProbePathLossCalibrationService(db, use_mock=False)
-        result = await svc.start_calibration(
-            chamber_id=chamber_with_cable_loss.id,
-            frequency_mhz=3500.0,
-            sgh_model="SGH-01",
-            sgh_gain_dbi=10.0,
-            probe_ids=[0],
-            polarizations=[PolarizationType.V],
-        )
-        assert result.success is False
-        assert "Measurement failed" in result.message
-        assert any("stop_calibration_tone 被拒" in w for w in result.warnings)
 
     @pytest.mark.asyncio
     async def test_stale_collector_cleared_at_entry(
