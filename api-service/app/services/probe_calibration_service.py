@@ -1573,6 +1573,9 @@ class PatternCalibrationService:
                 )
             try:
                 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+                from app.services.probe_pattern.consumer import (
+                    infer_rf_chain_probe_id_base,
+                )
 
                 resolution = resolve_rf_chains(db, lab_profile_id, operating_mode)
             except ValueError as exc:
@@ -1599,6 +1602,26 @@ class PatternCalibrationService:
 
             topology_id = str(resolution.topology_id)
             warnings.extend(resolution.warnings)
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            if chamber is None:
+                return CalibrationResult(
+                    success=False,
+                    message="Pattern calibration chamber does not exist",
+                    warnings=warnings,
+                )
+            probe_id_base = infer_rf_chain_probe_id_base(
+                chamber.num_probes,
+                [chain.probe_id for chain in resolution.chains],
+            )
+            if probe_id_base is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Pattern calibration cannot establish the RF-chain probe ID "
+                        "namespace from the resolved topology"
+                    ),
+                    warnings=warnings,
+                )
             for requested_probe_id in probe_ids:
                 for requested_polarization in polarizations:
                     polarization_value = (
@@ -1609,7 +1632,7 @@ class PatternCalibrationService:
                     matching = [
                         chain
                         for chain in resolution.chains
-                        if chain.probe_id == requested_probe_id
+                        if chain.probe_id == requested_probe_id + probe_id_base
                         and chain.polarization.upper() == polarization_value
                     ]
                     if len(matching) != 1:

@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import PolarizationType
 from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
@@ -58,7 +59,7 @@ def _setup_db(monkeypatch):
                     probe_id=probe_id,
                     polarization=polarization,
                 )
-                for probe_id in range(65)
+                for probe_id in range(64)
                 for polarization in ("V", "H")
             ],
         ),
@@ -73,6 +74,16 @@ def _setup_db(monkeypatch):
 def db():
     s = TestingSessionLocal()
     try:
+        s.add(
+            ChamberConfiguration(
+                id=TEST_CHAMBER_ID,
+                name="Pattern real test chamber",
+                chamber_type="custom",
+                chamber_radius_m=3.0,
+                num_probes=64,
+            )
+        )
+        s.commit()
         yield s
     finally:
         s.close()

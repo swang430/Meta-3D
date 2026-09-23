@@ -623,18 +623,12 @@ def _rf_chain_probe_id_base(
     chain_pl_by_probe_pol: Dict[tuple, float],
 ) -> Optional[int]:
     """Recognize a zero/one-based namespace only when its edge proves the base."""
-    probe_ids = {probe_id for probe_id, _ in chain_pl_by_probe_pol}
-    zero_based = set(range(num_probes))
-    one_based = set(range(1, num_probes + 1))
-    if probe_ids == zero_based or (
-        probe_ids and probe_ids <= zero_based and 0 in probe_ids
-    ):
-        return 0
-    if probe_ids == one_based or (
-        probe_ids and probe_ids <= one_based and num_probes in probe_ids
-    ):
-        return 1
-    return None
+    from app.services.probe_pattern.consumer import infer_rf_chain_probe_id_base
+
+    return infer_rf_chain_probe_id_base(
+        num_probes,
+        [probe_id for probe_id, _ in chain_pl_by_probe_pol],
+    )
 
 
 def _describe_f64_frequency_verification_gap(

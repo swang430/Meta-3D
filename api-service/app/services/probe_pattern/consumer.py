@@ -31,6 +31,21 @@ from app.models.probe_calibration import CalibrationStatus, ProbePattern
 logger = logging.getLogger(__name__)
 
 
+def infer_rf_chain_probe_id_base(
+    num_probes: int,
+    probe_ids: List[int],
+) -> Optional[int]:
+    """Infer a zero/one-based RF-chain namespace only from a proven edge."""
+    ids = set(probe_ids)
+    zero_based = set(range(num_probes))
+    one_based = set(range(1, num_probes + 1))
+    if ids == zero_based or (ids and ids <= zero_based and 0 in ids):
+        return 0
+    if ids == one_based or (ids and ids <= one_based and num_probes in ids):
+        return 1
+    return None
+
+
 def _query_valid_pattern(
     db: Session,
     probe_id: int,
@@ -39,6 +54,7 @@ def _query_valid_pattern(
     freq_tolerance_pct: float = 5.0,
     *,
     chamber_id: UUID,
+    num_probes: int,
     lab_profile_id: Optional[UUID] = None,
     operating_mode: str = "mimo_ota",
     route_cache: Optional[Dict[str, Any]] = None,
@@ -107,10 +123,16 @@ def _query_valid_pattern(
             or pattern.topology_id != str(resolution.topology_id)
         ):
             continue
+        probe_id_base = infer_rf_chain_probe_id_base(
+            num_probes,
+            [candidate.probe_id for candidate in resolution.chains],
+        )
+        if probe_id_base is None:
+            continue
         matching = [
             chain
             for chain in resolution.chains
-            if chain.probe_id == probe_id
+            if chain.probe_id == probe_id + probe_id_base
             and chain.polarization.upper() == polarization.upper()
         ]
         if len(matching) != 1:
@@ -188,6 +210,7 @@ def get_probe_gain_at_azimuth(
         polarization,
         frequency_mhz,
         chamber_id=chamber_id,
+        num_probes=num_probes,
         lab_profile_id=lab_profile_id,
         operating_mode=operating_mode,
         route_cache={},
@@ -230,6 +253,7 @@ def estimate_quiet_zone_ripple_db(
             polarization,
             frequency_mhz,
             chamber_id=chamber_id,
+            num_probes=num_probes,
             lab_profile_id=lab_profile_id,
             operating_mode=operating_mode,
             route_cache=route_cache,

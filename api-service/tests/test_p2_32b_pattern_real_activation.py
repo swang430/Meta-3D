@@ -163,6 +163,19 @@ def _resolution(lab_profile_id, chamber_id, chains, *, warnings=None):
     )
 
 
+def _add_chamber(db, chamber_id, *, num_probes):
+    db.add(
+        ChamberConfiguration(
+            id=chamber_id,
+            name="Pattern chamber",
+            chamber_type="custom",
+            chamber_radius_m=3.0,
+            num_probes=num_probes,
+        )
+    )
+    db.commit()
+
+
 @pytest.mark.asyncio
 async def test_real_pattern_requires_lab_profile_before_measurement(monkeypatch):
     db = _session()
@@ -186,12 +199,58 @@ async def test_real_pattern_requires_lab_profile_before_measurement(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_real_pattern_maps_zero_based_pattern_id_to_one_based_rf_chain(
+    monkeypatch,
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=2)
+    chains = [
+        RFChainSpec(f"chain-{probe_id}", f"B{probe_id}.1", probe_id, "V")
+        for probe_id in (1, 2)
+    ]
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(lab_profile_id, chamber_id, chains),
+    )
+    service = PatternCalibrationService()
+
+    async def _measure(**kwargs):
+        assert kwargs["probe_id"] == 0
+        assert kwargs["route_target"] == "chain-1"
+        assert kwargs["ce_port"] == "B1.1"
+        return [PatternMeasurement(0.0, 0.0, 5.0)]
+
+    service._real_pattern_measurements = AsyncMock(side_effect=_measure)
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=3500.0,
+        azimuth_step_deg=360.0,
+        elevation_step_deg=181.0,
+        calibrated_by="operator",
+        use_mock=False,
+    )
+
+    assert result.success is True
+    row = db.query(ProbePattern).one()
+    assert row.probe_id == 0
+    assert row.chain_id == "chain-1"
+    db.close()
+
+
+@pytest.mark.asyncio
 async def test_real_pattern_freezes_unique_resolved_chain_and_routes_measurement(
     monkeypatch,
 ):
     db = _session()
     lab_profile_id = uuid4()
     chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
     chain = RFChainSpec(
         chain_id="chain-1",
         ce_port="B1.1",
@@ -222,7 +281,7 @@ async def test_real_pattern_freezes_unique_resolved_chain_and_routes_measurement
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
         chamber_id=chamber_id,
-        probe_ids=[1],
+        probe_ids=[0],
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         azimuth_step_deg=360.0,
@@ -248,6 +307,7 @@ async def test_real_pattern_rejects_ambiguous_chain_before_measurement(monkeypat
     db = _session()
     lab_profile_id = uuid4()
     chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
     chains = [
         RFChainSpec(
             chain_id=f"chain-{suffix}",
@@ -268,7 +328,7 @@ async def test_real_pattern_rejects_ambiguous_chain_before_measurement(monkeypat
         db=db,
         lab_profile_id=lab_profile_id,
         chamber_id=chamber_id,
-        probe_ids=[1],
+        probe_ids=[0],
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         calibrated_by="operator",
@@ -287,6 +347,7 @@ async def test_real_pattern_keeps_cleanup_warnings_on_their_own_row(monkeypatch)
     db = _session()
     lab_profile_id = uuid4()
     chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=2)
     chains = [
         RFChainSpec(
             chain_id=f"chain-{probe_id}",
@@ -311,7 +372,7 @@ async def test_real_pattern_keeps_cleanup_warnings_on_their_own_row(monkeypatch)
         db=db,
         lab_profile_id=lab_profile_id,
         chamber_id=chamber_id,
-        probe_ids=[1, 2],
+        probe_ids=[0, 1],
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         azimuth_step_deg=360.0,
@@ -322,9 +383,9 @@ async def test_real_pattern_keeps_cleanup_warnings_on_their_own_row(monkeypatch)
 
     assert result.success is True
     rows = db.query(ProbePattern).order_by(ProbePattern.probe_id).all()
-    assert rows[0].warnings == ["cleanup 1"]
-    assert rows[1].warnings == ["cleanup 2"]
-    assert result.warnings == ["cleanup 1", "cleanup 2"]
+    assert rows[0].warnings == ["cleanup 0"]
+    assert rows[1].warnings == ["cleanup 1"]
+    assert result.warnings == ["cleanup 0", "cleanup 1"]
     db.close()
 
 
@@ -333,6 +394,7 @@ async def test_real_pattern_rolls_back_all_rows_when_later_route_fails(monkeypat
     db = _session()
     lab_profile_id = uuid4()
     chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=2)
     chains = [
         RFChainSpec(
             chain_id=f"chain-{probe_id}",
@@ -349,7 +411,7 @@ async def test_real_pattern_rolls_back_all_rows_when_later_route_fails(monkeypat
     service = PatternCalibrationService()
 
     async def _measure(**kwargs):
-        if kwargs["probe_id"] == 2:
+        if kwargs["probe_id"] == 1:
             raise RuntimeError("second route failed")
         return [PatternMeasurement(0.0, 0.0, 5.0)]
 
@@ -358,7 +420,7 @@ async def test_real_pattern_rolls_back_all_rows_when_later_route_fails(monkeypat
         db=db,
         lab_profile_id=lab_profile_id,
         chamber_id=chamber_id,
-        probe_ids=[1, 2],
+        probe_ids=[0, 1],
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         azimuth_step_deg=360.0,
@@ -424,6 +486,46 @@ def test_measured_pattern_requires_current_frozen_route(monkeypatch):
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
     ) is None
+    db.close()
+
+
+def test_measured_pattern_maps_zero_based_pattern_id_to_one_based_current_route(
+    monkeypatch,
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    current_chain = RFChainSpec("chain-current", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [current_chain]
+        ),
+    )
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            source="in_chamber_measured",
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="chain-current",
+            ce_port="B1.1",
+            peak_gain_dbi=6.0,
+        )
+    )
+    db.commit()
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) == 6.0
     db.close()
 
 
