@@ -333,24 +333,19 @@ class StartPatternCalibrationRequest(BaseModel):
         default=None,
         allow_inf_nan=False,
         description=(
-            "绝对增益反算使用的链路修正 (dB)；真实测量必须从有效链路/路损校准显式提供，"
-            "不得默认补 0"
+            "兼容字段；真实测量不信任操作员标量，服务器会从匹配当前 "
+            "LabProfile/Topology 的有效逐链路损证书解析并冻结修正"
         ),
     )
     use_mock: bool = Field(default=True, description="是否仅生成模拟方向图；正式校准必须显式为 false")
     calibrated_by: str = Field(..., description="校准人员")
 
     @model_validator(mode="after")
-    def require_real_chain_correction(self):
+    def validate_pattern_axes(self):
         if len(set(self.probe_ids)) != len(self.probe_ids):
             raise ValueError("probe_ids must be unique")
         if len(set(self.polarizations)) != len(self.polarizations):
             raise ValueError("polarizations must be unique")
-        if not self.use_mock and self.chain_correction_db is None:
-            raise ValueError(
-                "真实方向图校准必须显式提供 chain_correction_db；"
-                "该值应来自有效链路/路损校准，不得默认补 0"
-            )
         return self
 
 

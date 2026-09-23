@@ -27,8 +27,9 @@ Probe Calibration Dashboard 的“开始校准”动作却仍是 `TODO`，当前
 
 - 不实现 P2-32C 静区多点场扫描；它继续由厘米级 XY 扫描平台阻塞。
 - 不改变 CE、SA、RF Switch 或转台的任何命令、参数域或正式 provenance 白名单。
-- Real 必须显式冻结来自有效链路/路损校准的 `chain_correction_db`；缺失时在首次硬件 I/O 前
-  fail-closed，不能让相对方向图峰值进入正式增益补偿。
+- Real 必须由服务端为每条冻结 RF chain 从匹配当前 LabProfile/Topology 的有效真实路损证书
+  解析并冻结 `chain_correction_db`；缺证书或身份漂移时在首次硬件 I/O 前 fail-closed，不能让
+  操作员统一标量或相对方向图峰值进入正式增益补偿。
 - 不引入新的方向图认证阈值；完成真实采集不等于“校准合格”。
 - 不修改厂商方向图导入格式与解析器；`vendor_datasheet` 方向图不绑定现场 RF 路由。
 - 不把真实硬件现场验收替换成本地测试；本片只交付软件可达性和 fail-closed 证据。
@@ -82,8 +83,8 @@ OperationalLab.id + OperationalLab.chamberId
 - `use_mock`：保留 API 历史兼容默认 `true`；GUI 必须显式发送布尔值。
 - `ce_tx_power_dbm`、`sgh_gain_dbi`：只作为既有真实测量公式的显式输入，不扩大现有参数域；
   CE 功率沿用 HAL 的 `-50..20 dBm` 边界。
-- `chain_correction_db`：真实测量必须从有效 RF 链路/路损校准显式提供；不得隐式补 `0 dB`。
-  缺少该值时只能得到相对方向图，其峰值不能作为正式绝对增益补偿。
+- `chain_correction_db`：仅保留为兼容输入；真实测量忽略操作员标量。服务端按冻结 RF chain
+  从同一 LabProfile/Topology 的有效真实路损证书逐链解析修正，不得隐式补 `0 dB`。
 
 不让 GUI 直接选择 `ce_port` 或 `chain_id`。Real 只从服务器权威 LabProfile/Topology 解析；
 手填端口会创造第二份硬件真值。
@@ -109,7 +110,7 @@ OperationalLab.id + OperationalLab.chamberId
 - `topology_id`；
 - `chain_id`；
 - `ce_port`。
-- `chain_correction_db`（绝对增益反算使用的冻结链路修正）。
+- `chain_correction_db`（服务端从匹配证书解析并冻结的逐链路修正）。
 
 语义：
 
@@ -142,8 +143,8 @@ PASS/FAIL 阈值：
 开始按钮打开同一个测量表单，不复制第二套请求逻辑。
 
 表单字段：探头 ID、极化、频率、方位/俯仰步进、测量距离、参考天线、转台标识、CE 功率、
-SGH 增益、链路修正、校准人员和执行模式。LabProfile 与 chamber 只读显示当前 OperationalLab 真值。
-真实模式下链路修正必填，并明确提示只能取自有效 RF 链路/路损校准，不能猜测。
+SGH 增益、校准人员和执行模式。LabProfile 与 chamber 只读显示当前 OperationalLab 真值。
+真实模式不接收链路修正输入，页面说明服务端只使用匹配冻结路由的逐链真实路损证书。
 
 行为：
 

@@ -278,7 +278,7 @@ class ProbePattern(Base):
     chain_correction_db = Column(
         Float,
         nullable=True,
-        comment="绝对增益反算使用的显式链路修正 (dB)；NULL=未冻结/仅相对方向图",
+        comment="绝对增益反算使用的逐链路证书修正 (dB)；NULL=未冻结/仅相对方向图",
     )
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")

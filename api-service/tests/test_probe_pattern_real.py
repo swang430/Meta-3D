@@ -67,6 +67,15 @@ def _setup_db(monkeypatch):
             ],
         ),
     )
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_pattern_chain_corrections",
+        staticmethod(
+            lambda _db, **kwargs: {
+                pair: 0.0 for pair in kwargs["route_by_pair"]
+            }
+        ),
+    )
     try:
         yield
     finally:
@@ -413,12 +422,20 @@ class TestRealPatternMeasurement:
 
     @pytest.mark.asyncio
     async def test_chain_correction_subtracts_from_gain(self, db, monkeypatch):
-        """chain_correction_db should subtract: caller passes 60 dB chain gain
-        (PA + switch + cable end-to-end) → gain comes out 60 dB lower."""
+        """The server-resolved 60 dB chain correction lowers gain by 60 dB."""
         ce = _make_ce_d_path()
         sa = _make_sa_constant(power_dbm=-85.0)
         pos = _make_positioner()
         _patched_hal(monkeypatch, ce=ce, sa=sa, positioner=pos)
+        monkeypatch.setattr(
+            PatternCalibrationService,
+            "_resolve_pattern_chain_corrections",
+            staticmethod(
+                lambda _db, **kwargs: {
+                    pair: 60.0 for pair in kwargs["route_by_pair"]
+                }
+            ),
+        )
 
         svc = PatternCalibrationService()
         await svc.execute_pattern_calibration(
@@ -433,7 +450,7 @@ class TestRealPatternMeasurement:
             measurement_distance_m=3.0,
             ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
-            chain_correction_db=60.0,  # ← pretend chain has 60 dB end-to-end gain
+            chain_correction_db=None,
             calibrated_by="test",
             use_mock=False,
         )
@@ -597,4 +614,22 @@ async def test_real_sa_channel_power_failure_never_returns_numeric_sentinel(
         )
 
     with pytest.raises(RuntimeError, match="channel power measurement failed"):
+        await driver.measure_channel_power(1e6)
+
+
+@pytest.mark.parametrize(
+    "driver_cls",
+    [RealKeysightXSeriesSaDriver, RealRsFswDriver],
+)
+@pytest.mark.asyncio
+async def test_real_sa_trace_bins_are_not_treated_as_channel_power(
+    monkeypatch, driver_cls
+):
+    """A dBm-bin arithmetic mean is not an authoritative scalar power readback."""
+    driver = driver_cls("sa-real", {"ip": "192.0.2.10"})
+    monkeypatch.setattr(driver, "_query", MagicMock(return_value="1"))
+    trace = AsyncMock(return_value=[-20.0, -100.0, -100.0])
+    monkeypatch.setattr(driver, "get_trace", trace)
+
+    with pytest.raises(RuntimeError, match="authoritative channel-power"):
         await driver.measure_channel_power(1e6)

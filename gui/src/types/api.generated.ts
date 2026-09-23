@@ -3091,7 +3091,7 @@ export interface components {
             ce_tx_power_dbm: number;
             /** @default 10 */
             sgh_gain_dbi: number;
-            /** @description 真实测量必须从有效链路/路损校准显式提供；不得默认补 0 */
+            /** @description 兼容字段；真实测量忽略操作员标量，由服务端从匹配当前 LabProfile/Topology 的有效逐链路损证书解析并冻结 */
             chain_correction_db?: number | null;
             /**
              * @description True=模拟诊断；False=真实硬件校准

@@ -98,6 +98,30 @@ def _query_valid_pattern(
             return pattern
         if pattern.source != "in_chamber_measured":
             continue
+        distance_m = pattern.measurement_distance_m
+        try:
+            distance_value = float(distance_m)
+            pattern_frequency_mhz = float(pattern.frequency_mhz)
+        except (TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(distance_value)
+            or distance_value <= 0
+            or not math.isfinite(pattern_frequency_mhz)
+            or pattern_frequency_mhz <= 0
+        ):
+            continue
+        from app.services.probe_calibration_service import (
+            validate_far_field_condition,
+        )
+
+        is_far_field, _ = validate_far_field_condition(
+            distance_value,
+            0.1,
+            pattern_frequency_mhz,
+        )
+        if not is_far_field:
+            continue
         if (
             pattern.chain_correction_db is None
             or not math.isfinite(float(pattern.chain_correction_db))

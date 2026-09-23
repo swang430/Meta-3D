@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.chamber import ChamberConfiguration
-from app.models.probe_calibration import ProbePattern
+from app.models.probe_calibration import ProbePathLossCalibration, ProbePattern
 from app.schemas.probe_calibration import (
     PatternCalibrationResponse,
     PolarizationType,
@@ -30,8 +30,32 @@ from app.services.probe_calibration_service import (
     PatternCalibrationService,
     PatternMeasurement,
 )
+from app.services.path_loss_calibration_service import calculate_fspl
 from app.services.mimo_ota.switch_orchestrator import _build_probe_binding
 from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
+
+
+_REAL_CHAIN_CORRECTION_RESOLVER = (
+    PatternCalibrationService._resolve_pattern_chain_corrections
+)
+
+
+@pytest.fixture(autouse=True)
+def _default_pattern_chain_corrections(monkeypatch):
+    """Keep unrelated service tests focused on their existing boundary.
+
+    The dedicated per-chain certificate test below restores the production
+    resolver and covers its database contract end to end.
+    """
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_pattern_chain_corrections",
+        staticmethod(
+            lambda _db, **kwargs: {
+                pair: 0.0 for pair in kwargs["route_by_pair"]
+            }
+        ),
+    )
 
 
 def _session():
@@ -205,16 +229,17 @@ def test_pattern_start_request_carries_explicit_execution_context():
     assert request.use_mock is False
 
 
-def test_real_pattern_request_requires_explicit_chain_correction():
-    with pytest.raises(ValidationError, match="chain_correction_db"):
-        StartPatternCalibrationRequest(
-            lab_profile_id=uuid4(),
-            chamber_id=uuid4(),
-            probe_ids=[0],
-            frequency_mhz=3500.0,
-            use_mock=False,
-            calibrated_by="operator",
-        )
+def test_real_pattern_request_does_not_trust_operator_chain_correction():
+    request = StartPatternCalibrationRequest(
+        lab_profile_id=uuid4(),
+        chamber_id=uuid4(),
+        probe_ids=[0],
+        frequency_mhz=3500.0,
+        use_mock=False,
+        calibrated_by="operator",
+    )
+
+    assert request.chain_correction_db is None
 
 
 @pytest.mark.parametrize(
@@ -282,11 +307,18 @@ def test_pattern_start_request_preserves_mock_compatibility_default():
     assert request.operating_mode == "mimo_ota"
 
 
-def _resolution(lab_profile_id, chamber_id, chains, *, warnings=None):
+def _resolution(
+    lab_profile_id,
+    chamber_id,
+    chains,
+    *,
+    warnings=None,
+    topology_id="topology-1",
+):
     return RFChainResolution(
         lab_profile_id=lab_profile_id,
         chamber_id=chamber_id,
-        topology_id="topology-1",
+        topology_id=str(topology_id),
         topology_name="Production topology",
         operating_mode="mimo_ota",
         chains=chains,
@@ -302,6 +334,42 @@ def _add_chamber(db, chamber_id, *, num_probes):
             chamber_type="custom",
             chamber_radius_m=3.0,
             num_probes=num_probes,
+        )
+    )
+    db.commit()
+
+
+def _add_real_path_loss_certificate(
+    db,
+    *,
+    chamber_id,
+    lab_profile_id,
+    chain_entries,
+    topology_id,
+    frequency_mhz=3500.0,
+    measurement_distance_m=3.0,
+):
+    now = datetime.utcnow()
+    db.add(
+        ProbePathLossCalibration(
+            chamber_id=chamber_id,
+            frequency_mhz=frequency_mhz,
+            probe_path_losses={},
+            path_loss_db_by_rf_chain=chain_entries,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id=topology_id,
+            sgh_model="SGH",
+            sgh_gain_dbi=10.0,
+            use_mock=False,
+            measurement_distance_m=measurement_distance_m,
+            avg_path_loss_db=0.0,
+            max_path_loss_db=0.0,
+            min_path_loss_db=0.0,
+            std_dev_db=0.0,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status="valid",
         )
     )
     db.commit()
@@ -460,6 +528,228 @@ async def test_real_pattern_freezes_unique_resolved_chain_and_routes_measurement
     assert row.chain_correction_db == 0.0
     assert row.warnings == ["topology diagnostic", "cleanup diagnostic"]
     assert result.warnings == ["topology diagnostic", "cleanup diagnostic"]
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_real_pattern_uses_each_frozen_chain_certificate_correction(
+    monkeypatch,
+):
+    """Operator scalar cannot wash two different physical chains into one truth."""
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    topology_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=2)
+    chains = [
+        RFChainSpec("chain-1", "B1.1", 1, "V"),
+        RFChainSpec("chain-2", "B2.1", 2, "V"),
+    ]
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id,
+            chamber_id,
+            chains,
+            topology_id=topology_id,
+        ),
+    )
+    fspl = calculate_fspl(3500.0, 3.0)
+    _add_real_path_loss_certificate(
+        db,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        topology_id=topology_id,
+        chain_entries={
+            "chain-1": {
+                "probe_id": 1,
+                "polarization": "V",
+                "ce_port": "B1.1",
+                "total_insertion_loss_db": fspl + 1.25,
+            },
+            "chain-2": {
+                "probe_id": 2,
+                "polarization": "V",
+                "ce_port": "B2.1",
+                "total_insertion_loss_db": fspl + 3.5,
+            },
+        },
+    )
+    observed = {}
+    service = PatternCalibrationService()
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_pattern_chain_corrections",
+        staticmethod(_REAL_CHAIN_CORRECTION_RESOLVER),
+    )
+
+    async def _measure(**kwargs):
+        observed[kwargs["route_target"]] = kwargs["chain_correction_db"]
+        return [PatternMeasurement(0.0, 0.0, 5.0)]
+
+    service._real_pattern_measurements = AsyncMock(side_effect=_measure)
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0, 1],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=3500.0,
+        azimuth_step_deg=360.0,
+        elevation_step_deg=181.0,
+        calibrated_by="operator",
+        chain_correction_db=99.0,
+        use_mock=False,
+    )
+
+    assert result.success is True
+    assert observed == pytest.approx({"chain-1": 1.25, "chain-2": 3.5})
+    rows = db.query(ProbePattern).order_by(ProbePattern.probe_id).all()
+    assert [row.chain_correction_db for row in rows] == pytest.approx([1.25, 3.5])
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_real_pattern_rejects_missing_chain_certificate_before_measurement(
+    monkeypatch,
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    topology_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id,
+            chamber_id,
+            [chain],
+            topology_id=topology_id,
+        ),
+    )
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_pattern_chain_corrections",
+        staticmethod(_REAL_CHAIN_CORRECTION_RESOLVER),
+    )
+    service = PatternCalibrationService()
+    service._real_pattern_measurements = AsyncMock()
+
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=3500.0,
+        azimuth_step_deg=360.0,
+        elevation_step_deg=181.0,
+        calibrated_by="operator",
+        use_mock=False,
+    )
+
+    assert result.success is False
+    assert "requires a valid real per-chain path-loss certificate" in result.message
+    service._real_pattern_measurements.assert_not_awaited()
+    assert db.query(ProbePattern).count() == 0
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_real_pattern_rejects_near_field_before_measurement(monkeypatch):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [chain]
+        ),
+    )
+    service = PatternCalibrationService()
+    service._real_pattern_measurements = AsyncMock()
+
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=100000.0,
+        measurement_distance_m=0.5,
+        calibrated_by="operator",
+        chain_correction_db=0.0,
+        use_mock=False,
+    )
+
+    assert result.success is False
+    assert "far-field" in result.message
+    service._real_pattern_measurements.assert_not_awaited()
+    assert db.query(ProbePattern).count() == 0
+    db.close()
+
+
+def test_consumer_rejects_historical_near_field_measured_pattern(monkeypatch):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [chain]
+        ),
+    )
+    db.add_all(
+        [
+            _pattern(
+                probe_id=0,
+                chamber_id=chamber_id,
+                lab_profile_id=lab_profile_id,
+                operating_mode="mimo_ota",
+                topology_id="topology-1",
+                chain_id="chain-1",
+                ce_port="B1.1",
+                frequency_mhz=3500.0,
+                measurement_distance_m=3.0,
+            ),
+            _pattern(
+                probe_id=0,
+                chamber_id=chamber_id,
+                lab_profile_id=lab_profile_id,
+                operating_mode="mimo_ota",
+                topology_id="topology-1",
+                chain_id="chain-1",
+                ce_port="B1.1",
+                frequency_mhz=100000.0,
+                measurement_distance_m=0.5,
+            ),
+        ]
+    )
+    db.commit()
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) == pytest.approx(5.0)
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        100000.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) is None
     db.close()
 
 
@@ -665,6 +955,7 @@ def test_measured_pattern_requires_current_frozen_route(monkeypatch):
         chain_id="chain-current",
         ce_port="B1.1",
         peak_gain_dbi=6.0,
+        measurement_distance_m=3.0,
     )
     db.add(matching)
     db.commit()
@@ -827,6 +1118,7 @@ def test_measured_pattern_maps_zero_based_pattern_id_to_one_based_current_route(
             chain_id="chain-current",
             ce_port="B1.1",
             peak_gain_dbi=6.0,
+            measurement_distance_m=3.0,
         )
     )
     db.commit()

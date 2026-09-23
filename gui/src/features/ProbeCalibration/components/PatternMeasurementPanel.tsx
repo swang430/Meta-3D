@@ -63,7 +63,6 @@ export function PatternMeasurementPanel({
   const [measurementDistanceM, setMeasurementDistanceM] = useState(3)
   const [ceTxPowerDbm, setCeTxPowerDbm] = useState(-20)
   const [sghGainDbi, setSghGainDbi] = useState(10)
-  const [chainCorrectionDb, setChainCorrectionDb] = useState<number | string>('')
   const [calibratedBy, setCalibratedBy] = useState('')
   const [result, setResult] = useState<CalibrationJobResponse | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -86,7 +85,6 @@ export function PatternMeasurementPanel({
         measurementDistanceM,
         ceTxPowerDbm,
         sghGainDbi,
-        chainCorrectionDb: typeof chainCorrectionDb === 'number' ? chainCorrectionDb : null,
         calibratedBy,
         mode,
       })
@@ -185,15 +183,6 @@ export function PatternMeasurementPanel({
             <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
               <NumberInput required label="标准增益喇叭增益 (dBi)" value={sghGainDbi} onChange={(value) => setSghGainDbi(Number(value))} />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
-              <NumberInput
-                required={mode === 'real'}
-                label="链路修正 (dB)"
-                description="真实测量必填：取自有效 RF 链路/路损校准；不要猜测或默认填 0"
-                value={chainCorrectionDb}
-                onChange={setChainCorrectionDb}
-              />
-            </Grid.Col>
             <Grid.Col span={12}>
               <TextInput required label="操作员" value={calibratedBy} onChange={(event) => setCalibratedBy(event.currentTarget.value)} />
             </Grid.Col>
@@ -201,7 +190,7 @@ export function PatternMeasurementPanel({
 
           {mode === 'real' ? (
             <Alert icon={<IconAlertTriangle size={18} />} color="orange" title="真实硬件动作">
-              将按服务端冻结的链路依次控制信道仿真器、转台和信号分析仪。请确认暗室清场、仪器连通和射频安全状态。
+              将按服务端冻结的链路依次控制信道仿真器、转台和信号分析仪；每条链路修正只取自同一 LabProfile/拓扑的有效真实路损证书。请确认暗室清场、仪器连通和射频安全状态。
             </Alert>
           ) : null}
           {mode === 'mock' ? (

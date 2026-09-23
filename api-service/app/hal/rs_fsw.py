@@ -103,19 +103,13 @@ class RealRsFswDriver(SignalAnalyzerDriver):
             return False
 
     async def measure_channel_power(self, bandwidth_hz: float) -> float:
-        try:
-            self._set_status(InstrumentStatus.BUSY)
-            self._query(FswScpi.TRIG)
-            data = await self.get_trace()
-            if not data:
-                raise RuntimeError("signal analyzer returned no trace samples")
-            self._set_status(InstrumentStatus.READY)
-            return sum(data) / len(data)
-        except Exception as e:
-            self._set_status(InstrumentStatus.ERROR, str(e))
-            raise RuntimeError(
-                f"FSW channel power measurement failed: {e}"
-            ) from e
+        message = (
+            "FSW channel power measurement failed: no authoritative "
+            "channel-power scalar readback is implemented; dBm trace bins are "
+            "diagnostic only"
+        )
+        self._set_status(InstrumentStatus.ERROR, message)
+        raise RuntimeError(message)
 
     async def get_trace(self) -> List[float]:
         try:

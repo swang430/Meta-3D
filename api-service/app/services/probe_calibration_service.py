@@ -1489,6 +1489,113 @@ class PatternCalibrationService:
     def __init__(self, instruments=None):
         self.instruments = instruments
 
+    @staticmethod
+    def _resolve_pattern_chain_corrections(
+        db: Session,
+        *,
+        chamber_id: UUID,
+        lab_profile_id: UUID,
+        operating_mode: str,
+        frequency_mhz: float,
+        topology_id: str,
+        route_by_pair: Dict[Tuple[int, str], Any],
+    ) -> Dict[Tuple[int, str], float]:
+        """Resolve a distinct hardware correction for every frozen RF chain.
+
+        The path-loss certificate stores the measured total insertion loss for
+        each topology connection.  Removing the free-space component measured
+        at that certificate's own distance leaves the upstream chain loss used
+        by the probe-gain equation.  Operator-entered scalar values are not an
+        authority for a multi-chain fixture and are deliberately not read.
+        """
+        from app.services.calibration.rf_chain_resolver import (
+            normalize_rf_chain_identity,
+        )
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
+            calculate_fspl,
+        )
+
+        selection = ProbePathLossCalibrationService(
+            db, use_mock=False
+        ).resolve_latest_calibration(
+            chamber_id,
+            frequency_mhz,
+            operating_mode=operating_mode,
+            require_real=True,
+        )
+        certificate = selection.certificate
+        if certificate is None:
+            raise ValueError(
+                "Real pattern calibration requires a valid real per-chain "
+                f"path-loss certificate ({selection.reason})"
+            )
+        if (
+            certificate.lab_profile_id != lab_profile_id
+            or str(certificate.topology_id) != str(topology_id)
+        ):
+            raise ValueError(
+                "Path-loss certificate LabProfile/topology does not match the "
+                "frozen pattern route"
+            )
+        entries = certificate.path_loss_db_by_rf_chain
+        if not isinstance(entries, dict):
+            raise ValueError(
+                "Path-loss certificate has no per-chain correction evidence"
+            )
+        cert_distance = certificate.measurement_distance_m
+        cert_frequency = certificate.frequency_mhz
+        if (
+            cert_distance is None
+            or not np.isfinite(float(cert_distance))
+            or float(cert_distance) <= 0
+            or not np.isfinite(float(cert_frequency))
+            or float(cert_frequency) <= 0
+        ):
+            raise ValueError(
+                "Path-loss certificate has invalid distance/frequency evidence"
+            )
+        free_space_db = calculate_fspl(
+            float(cert_frequency), float(cert_distance)
+        )
+        corrections: Dict[Tuple[int, str], float] = {}
+        for pair, chain in route_by_pair.items():
+            chain_id = normalize_rf_chain_identity(chain.chain_id)
+            ce_port = normalize_rf_chain_identity(chain.ce_port)
+            entry = entries.get(chain_id) if chain_id is not None else None
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Path-loss certificate lacks RF chain {chain.chain_id}"
+                )
+            entry_chain_port = normalize_rf_chain_identity(entry.get("ce_port"))
+            total_loss = entry.get("total_insertion_loss_db")
+            try:
+                total_loss_value = float(total_loss)
+                entry_probe_id = int(entry.get("probe_id"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} is malformed"
+                ) from exc
+            if (
+                entry_chain_port != ce_port
+                or entry_probe_id != int(chain.probe_id)
+                or str(entry.get("polarization", "")).upper()
+                != str(chain.polarization).upper()
+                or not np.isfinite(total_loss_value)
+            ):
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} identity/value "
+                    "does not match the frozen pattern route"
+                )
+            correction = total_loss_value - free_space_db
+            if not np.isfinite(correction):
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} correction "
+                    "is not finite"
+                )
+            corrections[pair] = float(correction)
+        return corrections
+
     async def execute_pattern_calibration(
         self,
         db: Session,
@@ -1578,24 +1685,25 @@ class PatternCalibrationService:
                 f"Measurement distance {measurement_distance_m}m may not satisfy "
                 f"far-field condition (min: {min_distance:.2f}m)"
             )
+            if not use_mock:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires the far-field condition; "
+                        f"measurement_distance_m={measurement_distance_m:g} is below "
+                        f"the {min_distance:.2f} m minimum"
+                    ),
+                    warnings=warnings,
+                )
 
         # 生成角度网格
         azimuth_deg = list(np.arange(0, 360, azimuth_step_deg))
         elevation_deg = list(np.arange(0, 181, elevation_step_deg))
 
         route_by_pair = {}
+        correction_by_pair: Dict[Tuple[int, str], float] = {}
         topology_id: Optional[str] = None
         if not use_mock:
-            if chain_correction_db is None or not np.isfinite(chain_correction_db):
-                return CalibrationResult(
-                    success=False,
-                    message=(
-                        "Real pattern calibration requires an explicit finite "
-                        "chain_correction_db from valid path-loss calibration; "
-                        "it cannot default to zero"
-                    ),
-                    warnings=warnings,
-                )
             if lab_profile_id is None:
                 return CalibrationResult(
                     success=False,
@@ -1693,6 +1801,30 @@ class PatternCalibrationService:
                             warnings=warnings,
                         )
                     route_by_pair[(requested_probe_id, polarization_value)] = chain
+            try:
+                correction_by_pair = self._resolve_pattern_chain_corrections(
+                    db,
+                    chamber_id=chamber_id,
+                    lab_profile_id=lab_profile_id,
+                    operating_mode=operating_mode,
+                    frequency_mhz=frequency_mhz,
+                    topology_id=topology_id,
+                    route_by_pair=route_by_pair,
+                )
+            except ValueError as exc:
+                return CalibrationResult(
+                    success=False,
+                    message=str(exc),
+                    warnings=warnings,
+                )
+            if (
+                chain_correction_db is not None
+                and abs(float(chain_correction_db)) > 1e-12
+            ):
+                warnings.append(
+                    "Operator chain_correction_db ignored; authoritative per-chain "
+                    "path-loss certificate corrections were frozen"
+                )
 
         common_warnings = list(warnings)
         calibration_ids = []
@@ -1707,6 +1839,9 @@ class PatternCalibrationService:
                         else str(polarization)
                     )
                     chain = route_by_pair.get((probe_id, polarization_value.upper()))
+                    resolved_chain_correction = correction_by_pair.get(
+                        (probe_id, polarization_value.upper())
+                    )
                     if use_mock:
                         measurements = self._mock_pattern_measurements(
                             probe_id, polarization, azimuth_deg, elevation_deg, frequency_mhz
@@ -1723,7 +1858,7 @@ class PatternCalibrationService:
                             route_target=chain.chain_id,
                             ce_tx_power_dbm=ce_tx_power_dbm,
                             sgh_gain_dbi=sgh_gain_dbi,
-                            chain_correction_db=float(chain_correction_db),
+                            chain_correction_db=float(resolved_chain_correction),
                             measurement_distance_m=measurement_distance_m,
                             reference_antenna_id=reference_antenna_id,
                             turntable_id=turntable_id,
@@ -1782,8 +1917,8 @@ class PatternCalibrationService:
                         chain_id=str(chain.chain_id) if chain is not None else None,
                         ce_port=str(chain.ce_port) if chain is not None else None,
                         chain_correction_db=(
-                            float(chain_correction_db)
-                            if chain_correction_db is not None
+                            float(resolved_chain_correction)
+                            if resolved_chain_correction is not None
                             else None
                         ),
                         source="simulated" if use_mock else "in_chamber_measured",
