@@ -146,3 +146,12 @@ def test_calibration_job_response_carries_requested_mode():
     )
 
     assert response.model_dump()["use_mock"] is False
+
+
+def test_legacy_synthetic_multi_frequency_route_is_not_published():
+    """旧随机 TRP/TIS 入口不得继续伪装成校准生产路径。"""
+    from app.main import app
+
+    paths = app.openapi()["paths"]
+    assert "/api/v1/calibration/multi-frequency" not in paths
+    assert "/api/v1/calibration/path-loss/multi-frequency/start" in paths
