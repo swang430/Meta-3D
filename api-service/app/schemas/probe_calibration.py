@@ -73,6 +73,10 @@ class CalibrationJobResponse(BaseModel):
     """校准任务响应"""
     calibration_job_id: UUID
     status: CalibrationJobStatus
+    use_mock: Optional[bool] = Field(
+        None,
+        description="False=真实仪表校准；True=模拟诊断；NULL=旧入口未声明",
+    )
     estimated_duration_minutes: Optional[float] = None
     message: Optional[str] = None
     # agent 复审 F2: 校准 warnings (含 acquire 清理失败) 透出 wire — 两个

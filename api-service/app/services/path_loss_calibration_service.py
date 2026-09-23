@@ -2018,6 +2018,7 @@ class MultiFrequencyPathLossService:
         try:
             async with job_lease:
                 for probe_id in probe_ids:
+                    probe_warnings: List[str] = []
                     try:
                         if self.use_mock:
                             path_losses, uncertainties = self._mock_frequency_sweep(
@@ -2036,7 +2037,7 @@ class MultiFrequencyPathLossService:
                                 sgh_gain_dbi=sgh_gain_dbi,
                                 probe_gain_dbi=chamber.probe_gain_dbi,
                                 cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
-                                warnings=warnings,
+                                warnings=probe_warnings,
                             )
                         else:
                             return CalibrationResult(
@@ -2060,6 +2061,7 @@ class MultiFrequencyPathLossService:
                             frequency_points_mhz=frequency_points,
                             path_loss_db=path_losses,
                             uncertainty_db=uncertainties,
+                            warnings=list(probe_warnings),
                             calibrated_at=datetime.utcnow(),
                             calibrated_by=calibrated_by,
                             valid_until=datetime.utcnow() + timedelta(days=MULTI_FREQ_VALIDITY_DAYS),
@@ -2069,8 +2071,10 @@ class MultiFrequencyPathLossService:
                         self.db.add(calibration)
                         self.db.flush()
                         calibration_ids.append(str(calibration.id))
+                        warnings.extend(probe_warnings)
 
                     except Exception as e:
+                        warnings.extend(probe_warnings)
                         logger.error(f"Multi-freq calibration failed for probe {probe_id}: {e}")
                         return CalibrationResult(
                             success=False,

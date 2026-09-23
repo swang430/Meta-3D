@@ -399,6 +399,7 @@ async def start_multi_frequency_calibration(
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_ids"][0]) if result.data.get("calibration_ids") else UUID(int=0),
         status=CalibrationJobStatus.COMPLETED,
+        use_mock=request.use_mock,
         message=result.message,
         warnings=result.warnings,
     )
