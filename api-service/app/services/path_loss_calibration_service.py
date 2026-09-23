@@ -1956,6 +1956,31 @@ class MultiFrequencyPathLossService:
         self.db = db
         self.use_mock = use_mock
 
+    @staticmethod
+    def _frequency_points(
+        freq_start_mhz: float,
+        freq_stop_mhz: float,
+        freq_step_mhz: float,
+    ) -> List[float]:
+        """Build an inclusive sweep whose declared stop is actually sampled."""
+        if freq_step_mhz <= 0 or freq_stop_mhz < freq_start_mhz:
+            raise ValueError("invalid frequency sweep range")
+        intervals = (freq_stop_mhz - freq_start_mhz) / freq_step_mhz
+        rounded = round(intervals)
+        if not math.isclose(intervals, rounded, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError(
+                "freq_stop_mhz must be sampled exactly by freq_step_mhz"
+            )
+        points = [
+            freq_start_mhz + index * freq_step_mhz
+            for index in range(int(rounded) + 1)
+        ]
+        # Remove accumulated binary floating-point drift from the persisted
+        # coverage boundary. The integer-grid check above proves this point was
+        # measured rather than extending coverage after the fact.
+        points[-1] = freq_stop_mhz
+        return points
+
     async def calibrate_frequency_sweep(
         self,
         chamber_id: UUID,
@@ -1988,6 +2013,13 @@ class MultiFrequencyPathLossService:
             calibrated_by: 校准人员
             operating_mode: 活动 SwitchTopology 运行模式
         """
+        try:
+            frequency_points = self._frequency_points(
+                freq_start_mhz, freq_stop_mhz, freq_step_mhz,
+            )
+        except ValueError as exc:
+            return CalibrationResult(success=False, message=str(exc))
+
         chamber = self.db.query(ChamberConfiguration).filter(
             ChamberConfiguration.id == chamber_id
         ).first()
@@ -1999,6 +2031,7 @@ class MultiFrequencyPathLossService:
             )
 
         requested_chains: Dict[int, Any] = {}
+        resolved_topology_id: Optional[str] = None
         topology_warnings: List[str] = []
         if not self.use_mock:
             from app.services.calibration.rf_chain_resolver import resolve_rf_chains
@@ -2028,6 +2061,16 @@ class MultiFrequencyPathLossService:
                     ),
                     warnings=list(resolution.warnings),
                 )
+            if resolution.topology_id is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        f"LabProfile {lab_profile_id} resolved RF chains without "
+                        "a SwitchTopology identity"
+                    ),
+                    warnings=list(resolution.warnings),
+                )
+            resolved_topology_id = str(resolution.topology_id)
             for probe_id in probe_ids:
                 matching_chains = [
                     chain
@@ -2059,9 +2102,7 @@ class MultiFrequencyPathLossService:
                 requested_chains[probe_id] = chain
             topology_warnings = list(resolution.warnings)
 
-        # 生成频率点
-        num_points = int((freq_stop_mhz - freq_start_mhz) / freq_step_mhz) + 1
-        frequency_points = [freq_start_mhz + i * freq_step_mhz for i in range(num_points)]
+        num_points = len(frequency_points)
 
         calibration_ids = []
         warnings: List[str] = topology_warnings
@@ -2117,9 +2158,15 @@ class MultiFrequencyPathLossService:
                                 ),
                             )
 
+                        chain = requested_chains.get(probe_id)
                         calibration = MultiFrequencyPathLoss(
                             chamber_id=chamber_id,
                             use_mock=self.use_mock,
+                            lab_profile_id=lab_profile_id,
+                            operating_mode=operating_mode,
+                            topology_id=resolved_topology_id,
+                            chain_id=chain.chain_id if chain is not None else None,
+                            ce_port=chain.ce_port if chain is not None else None,
                             probe_id=probe_id,
                             polarization=polarization.value,
                             freq_start_mhz=freq_start_mhz,
@@ -2286,7 +2333,10 @@ class MultiFrequencyPathLossService:
         chamber_id: UUID,
         probe_id: int,
         polarization: str,
-        frequency_mhz: float
+        frequency_mhz: float,
+        *,
+        lab_profile_id: Optional[UUID] = None,
+        operating_mode: str = "mimo_ota",
     ) -> Optional[float]:
         """
         获取指定频率的路损 (支持插值)
@@ -2300,19 +2350,49 @@ class MultiFrequencyPathLossService:
         Returns:
             插值后的路损值
         """
+        if self.use_mock or lab_profile_id is None:
+            return None
+
+        from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+        try:
+            resolution = resolve_rf_chains(
+                self.db, lab_profile_id, operating_mode,
+            )
+        except ValueError:
+            return None
+        if (
+            resolution.chamber_id != chamber_id
+            or resolution.topology_id is None
+        ):
+            return None
+        matching_chains = [
+            chain
+            for chain in resolution.chains
+            if chain.probe_id == probe_id
+            and chain.polarization.upper() == polarization.upper()
+        ]
+        if len(matching_chains) != 1:
+            return None
+        chain = matching_chains[0]
+        if not chain.ce_port.strip() or chain.ce_port == "?":
+            return None
+
         calibration = self.db.query(MultiFrequencyPathLoss).filter(
             MultiFrequencyPathLoss.chamber_id == chamber_id,
+            MultiFrequencyPathLoss.lab_profile_id == lab_profile_id,
+            MultiFrequencyPathLoss.operating_mode == operating_mode,
+            MultiFrequencyPathLoss.topology_id == str(resolution.topology_id),
+            MultiFrequencyPathLoss.chain_id == chain.chain_id,
+            MultiFrequencyPathLoss.ce_port == chain.ce_port,
             MultiFrequencyPathLoss.probe_id == probe_id,
             MultiFrequencyPathLoss.polarization == polarization,
             MultiFrequencyPathLoss.status == CalibrationStatus.VALID.value,
             MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
-            MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz
+            MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz,
+            MultiFrequencyPathLoss.use_mock.is_(False),
+            MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
         )
-        if not self.use_mock:
-            calibration = calibration.filter(
-                MultiFrequencyPathLoss.use_mock.is_(False),
-                MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
-            )
         calibration = calibration.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
 
         if not calibration:

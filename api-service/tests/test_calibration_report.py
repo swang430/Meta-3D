@@ -186,6 +186,7 @@ class TestPDFGeneratorCalibrationSections:
                     "freq_start_mhz": 3400.0,
                     "freq_stop_mhz": 3600.0,
                     "validation_pass": None,
+                    "provenance": "simulated",
                     "calibrated_at": "2026-09-23 17:00:00",
                     "warnings": ["SA cleanup failed <probe-2>"],
                 }],
@@ -194,7 +195,8 @@ class TestPDFGeneratorCalibrationSections:
                 "total_executions": 0,
                 "passed": 0,
                 "failed": 0,
-                "pass_rate": 0.0,
+                "undetermined": 1,
+                "pass_rate": None,
             },
         }
 
@@ -209,6 +211,8 @@ class TestPDFGeneratorCalibrationSections:
 
         assert "Multi-Frequency Warning Audit" in rendered_text
         assert "SA cleanup failed &lt;probe-2&gt;" in rendered_text
+        assert "SIMULATED" in rendered_text
+        assert "未判定" in rendered_text
 
     @pytest.mark.asyncio
     async def test_legacy_calibration_pdf_without_provenance_manifest_is_blocked(

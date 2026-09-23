@@ -22,6 +22,7 @@ from app.schemas.probe_calibration import (
     CalibrationJobStatus,
     MultiFrequencyPathLossResponse,
     PolarizationType,
+    StartMultiFrequencyPathLossRequest,
 )
 from app.services.path_loss_calibration_service import MultiFrequencyPathLossService
 from app.services.calibration.rf_chain_resolver import (
@@ -239,6 +240,22 @@ async def test_real_multi_frequency_routes_each_probe_through_resolved_chain(mon
             (call["probe_id"], call["ce_port"], call["route_target"])
             for call in calls
         ] == [(1, "B1.1", "chain-1"), (2, "B2.1", "chain-2")]
+        rows = db.query(MultiFrequencyPathLoss).order_by(
+            MultiFrequencyPathLoss.probe_id
+        ).all()
+        assert [
+            (
+                row.lab_profile_id,
+                row.operating_mode,
+                row.topology_id,
+                row.chain_id,
+                row.ce_port,
+            )
+            for row in rows
+        ] == [
+            (lab_profile_id, "mimo_ota", "topology-routed", "chain-1", "B1.1"),
+            (lab_profile_id, "mimo_ota", "topology-routed", "chain-2", "B2.1"),
+        ]
 
 
 @pytest.mark.asyncio
@@ -424,6 +441,103 @@ def test_calibration_job_response_carries_requested_mode():
 def test_multi_frequency_row_response_exposes_persisted_warnings():
     """读取 schema 不能丢掉数据库行的告警留痕。"""
     assert "warnings" in MultiFrequencyPathLossResponse.model_fields
+
+
+def test_multi_frequency_row_response_exposes_frozen_route_identity():
+    """审计 API 不能丢掉决定证书适用物理链路的冻结身份。"""
+    assert {
+        "lab_profile_id",
+        "operating_mode",
+        "topology_id",
+        "chain_id",
+        "ce_port",
+    }.issubset(MultiFrequencyPathLossResponse.model_fields)
+
+
+def test_multi_frequency_request_rejects_unsampled_stop_frequency():
+    """请求终点必须落在采样网格上，不能把未测区间声明为已覆盖。"""
+    with pytest.raises(ValueError, match="freq_stop_mhz must be sampled"):
+        StartMultiFrequencyPathLossRequest(
+            lab_profile_id=uuid4(),
+            chamber_id=uuid4(),
+            probe_ids=[1],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3550.0,
+            freq_step_mhz=100.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+            calibrated_by="p2-32a",
+        )
+
+
+def test_multi_frequency_service_rejects_unsampled_stop_frequency():
+    """内部调用绕过 API schema 时也必须拒绝未采样终点。"""
+    with pytest.raises(ValueError, match="freq_stop_mhz must be sampled"):
+        MultiFrequencyPathLossService._frequency_points(3400.0, 3550.0, 100.0)
+
+
+def test_formal_interpolation_requires_exact_current_frozen_route(monkeypatch):
+    """拓扑换线后旧扫频行不得继续为新物理链路提供补偿。"""
+    engine = create_engine("sqlite:///:memory:")
+    MultiFrequencyPathLoss.__table__.create(engine)
+    chamber_id = uuid4()
+    lab_profile_id = uuid4()
+    now = datetime.utcnow()
+
+    with Session(engine) as db:
+        db.add(MultiFrequencyPathLoss(
+            chamber_id=chamber_id,
+            use_mock=False,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="chain-1",
+            ce_port="B1.1",
+            probe_id=1,
+            polarization="V",
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3600.0,
+            freq_step_mhz=100.0,
+            num_points=3,
+            frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+            path_loss_db=[50.0, 51.0, 52.0],
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status="valid",
+            warnings=[],
+        ))
+        db.commit()
+
+        current = RFChainResolution(
+            lab_profile_id=lab_profile_id,
+            chamber_id=chamber_id,
+            topology_id="topology-1",
+            topology_name="current",
+            operating_mode="mimo_ota",
+            chains=[RFChainSpec("chain-1", "B1.1", 1, "V")],
+        )
+        monkeypatch.setattr(
+            "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+            lambda *_args, **_kwargs: current,
+        )
+        service = MultiFrequencyPathLossService(db, use_mock=False)
+        assert service.get_path_loss_at_frequency(
+            chamber_id,
+            1,
+            "V",
+            3500.0,
+            lab_profile_id=lab_profile_id,
+        ) == 51.0
+
+        current.chains = [RFChainSpec("chain-2", "B2.1", 1, "V")]
+        assert service.get_path_loss_at_frequency(
+            chamber_id,
+            1,
+            "V",
+            3500.0,
+            lab_profile_id=lab_profile_id,
+        ) is None
 
 
 def test_legacy_synthetic_multi_frequency_route_is_not_published():

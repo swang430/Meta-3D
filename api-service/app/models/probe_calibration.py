@@ -599,6 +599,29 @@ class MultiFrequencyPathLoss(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chamber_id = Column(UUID(as_uuid=True), nullable=False, index=True, comment="暗室配置 ID")
     use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
+    # A real sweep is valid only for the exact physical route used during
+    # acquisition. Nullable is intentional: pre-P2-32 rows and mock rows do
+    # not carry enough evidence to enter formal compensation.
+    lab_profile_id = Column(
+        UUID(as_uuid=True), nullable=True, index=True,
+        comment="本次扫频冻结的 LabProfile ID；NULL=历史/模拟未冻结",
+    )
+    operating_mode = Column(
+        String(50), nullable=True,
+        comment="本次扫频冻结的 SwitchTopology 运行模式",
+    )
+    topology_id = Column(
+        String(255), nullable=True,
+        comment="本次扫频解析到的 SwitchTopology ID",
+    )
+    chain_id = Column(
+        String(255), nullable=True,
+        comment="本行探头/极化对应的冻结 RF chain ID",
+    )
+    ce_port = Column(
+        String(255), nullable=True,
+        comment="本行扫频实际路由到的冻结信道仿真器端口",
+    )
     probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID")
     polarization = Column(String(10), nullable=False, comment="极化类型: V, H")
 

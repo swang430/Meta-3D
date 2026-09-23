@@ -55,6 +55,7 @@ test('multi-frequency request builder rejects ambiguous or invalid execution inp
     { ...validInput, probeIds: '1, -2' },
     { ...validInput, frequencyStopMhz: 3400 },
     { ...validInput, frequencyStepMhz: 0 },
+    { ...validInput, frequencyStopMhz: 3550, frequencyStepMhz: 100 },
   ]
 
   for (const input of invalidInputs) {

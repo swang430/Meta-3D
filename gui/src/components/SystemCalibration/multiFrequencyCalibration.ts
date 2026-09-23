@@ -60,6 +60,12 @@ export function buildMultiFrequencyPathLossRequest(
   ) {
     throw new Error('频率步进必须在 1–1000 MHz')
   }
+  const intervals = (
+    input.frequencyStopMhz - input.frequencyStartMhz
+  ) / input.frequencyStepMhz
+  if (Math.abs(intervals - Math.round(intervals)) > 1e-9) {
+    throw new Error('终止频率必须精确落在频率步进的采样点上')
+  }
 
   const sghModel = input.sghModel.trim()
   const calibratedBy = input.calibratedBy.trim()

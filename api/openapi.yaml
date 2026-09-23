@@ -1116,6 +1116,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalibrationJobResponse'
+  /api/v1/calibration/path-loss/multi-frequency/{chamber_id}/{probe_id}:
+    get:
+      summary: Read route-scoped multi-frequency path-loss compensation
+      parameters:
+        - name: chamber_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: probe_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: frequency_mhz
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: polarization
+          in: query
+          required: false
+          schema:
+            type: string
+            default: V
+        - name: lab_profile_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: operating_mode
+          in: query
+          required: false
+          schema:
+            type: string
+            default: mimo_ota
+      responses:
+        '200':
+          description: Compensation from an exact current frozen route match
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [probe_id, polarization, frequency_mhz, path_loss_db, interpolated]
+                properties:
+                  probe_id:
+                    type: integer
+                  polarization:
+                    type: string
+                  frequency_mhz:
+                    type: number
+                  path_loss_db:
+                    type: number
+                  interpolated:
+                    type: boolean
   /api/v1/calibration/phase/calibrate:
     post:
       summary: Phase calibration entry (fail-loud closed since P1-68)
@@ -1881,6 +1938,7 @@ components:
           type: number
         freq_step_mhz:
           type: number
+          description: 步进必须使终止频率精确落在采样网格上
         sgh_model:
           type: string
         sgh_gain_dbi:

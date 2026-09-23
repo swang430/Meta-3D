@@ -348,6 +348,7 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        undetermined = 0
 
         # Path loss calibrations
         query = self.db.query(ProbePathLossCalibration).filter(
@@ -463,12 +464,20 @@ class CalibrationReportGenerator:
                 total += 1
                 if is_valid:
                     passed += 1
+            else:
+                undetermined += 1
             multi_freq_data.append({
                 'id': str(cal.id),
                 'probe_id': cal.probe_id,
                 'polarization': cal.polarization,
                 'validation_pass': is_valid,
                 'use_mock': cal.use_mock,
+                'provenance': _path_loss_provenance(cal),
+                'lab_profile_id': str(cal.lab_profile_id) if cal.lab_profile_id else None,
+                'operating_mode': cal.operating_mode,
+                'topology_id': cal.topology_id,
+                'chain_id': cal.chain_id,
+                'ce_port': cal.ce_port,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
                 'freq_start_mhz': cal.freq_start_mhz,
@@ -480,12 +489,14 @@ class CalibrationReportGenerator:
 
         # Summary
         data['execution_summary'] = {
-            'total_executions': total,
+            'total_executions': total + undetermined,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
         }
+        if undetermined:
+            data['execution_summary']['undetermined'] = undetermined
 
         return data
 
@@ -563,6 +574,7 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        undetermined = 0
 
         # Amplitude calibrations
         if not calibration_type or calibration_type == 'amplitude':
@@ -824,6 +836,8 @@ class CalibrationReportGenerator:
                     total += 1
                     if is_valid:
                         passed += 1
+                else:
+                    undetermined += 1
 
                 multi_freq_data.append({
                     'id': str(cal.id),
@@ -832,6 +846,12 @@ class CalibrationReportGenerator:
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
                     'use_mock': cal.use_mock,
+                    'provenance': _path_loss_provenance(cal),
+                    'lab_profile_id': str(cal.lab_profile_id) if cal.lab_profile_id else None,
+                    'operating_mode': cal.operating_mode,
+                    'topology_id': cal.topology_id,
+                    'chain_id': cal.chain_id,
+                    'ce_port': cal.ce_port,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -846,12 +866,14 @@ class CalibrationReportGenerator:
 
         # Summary
         data['execution_summary'] = {
-            'total_executions': total,
+            'total_executions': total + undetermined,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
         }
+        if undetermined:
+            data['execution_summary']['undetermined'] = undetermined
 
         return data
 

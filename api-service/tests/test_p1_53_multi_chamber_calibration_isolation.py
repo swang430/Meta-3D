@@ -589,7 +589,9 @@ def test_mock_rf_multi_and_link_rows_are_unverified_and_excluded_from_summary(se
     assert data["probe_calibration"]["rf_chain"][0]["validation_pass"] is None
     assert data["probe_calibration"]["multi_freq_path_loss"][0]["validation_pass"] is None
     assert data["probe_calibration"]["link"][0]["validation_pass"] is None
-    assert data["execution_summary"]["total_executions"] == 0
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
 
 
 def test_real_multi_frequency_without_threshold_is_unverified_and_excluded(session):
@@ -620,7 +622,10 @@ def test_real_multi_frequency_without_threshold_is_unverified_and_excluded(sessi
     )
 
     assert data["probe_calibration"]["multi_freq_path_loss"][0]["validation_pass"] is None
-    assert data["execution_summary"]["total_executions"] == 0
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["provenance"] == "real"
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
 
 
 def test_global_link_never_makes_an_uncalibrated_probe_valid(session):
@@ -705,7 +710,9 @@ def test_chamber_report_excludes_untrusted_rf_and_multi_from_formal_kpi(session)
     assert data["chamber_calibration"]["multi_frequency"][0]["validation_pass"] is None
     assert data["chamber_calibration"]["multi_frequency"][0]["use_mock"] is None
     assert data["chamber_calibration"]["multi_frequency"][0]["warnings"] is None
-    assert data["execution_summary"]["total_executions"] == 0
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
 
 
 def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
@@ -754,6 +761,8 @@ def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
             probe_id=0,
             frequency_mhz=3500.0,
             polarization="V",
+            lab_profile_id=uuid.uuid4(),
+            operating_mode="mimo_ota",
             db=session,
         )
     assert exc_info.value.status_code == 404

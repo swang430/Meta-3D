@@ -459,7 +459,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **~~P2-29~~** | ASC/B2 正式模型加载证据 hook | ✅ PR #354（内审 F1 P1 已修；Gemini R1 已修 / R2 两条 medium 报备不修） |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ✅ PR #359 |
 | **P2-31** | P2-18 剩余交付片：SMB `.smu` 工程真值扫描（EMQuest 10-band 表已交付） | ✅ PR #368；merge `2c9d5ff` |
-| **P2-32** | 校准真实启用拆片 | **A 多频路径损耗**：✅ 本片完成 CE+SA real 入口、显式 Real/Mock、逐探头 warning 持久化与报告投影，并移除随机旧入口；**B 方向图**：待独立软件片补 production caller；**C 静区**：仍需厘米级 XY 扫描平台，Hardware Blocked |
+| **P2-32** | 校准真实启用拆片 | **A 多频路径损耗**：✅ 本片完成 CE+SA real 入口、显式 Real/Mock、逐探头 warning 持久化与报告投影，并移除随机旧入口；真实结果冻结 LabProfile/拓扑/RF chain/CE port，路由漂移后 fail-closed，扫频终点必须实际落在采样网格；PDF 显式标来源且零判决摘要保持未判定。**B 方向图**：待独立软件片补 production caller；**C 静区**：仍需厘米级 XY 扫描平台，Hardware Blocked |
 | **P2-33** | 日志体验包：CRITICAL、traceback 搜索、级别多选、重复请求抑制 | ✅ PR #360 |
 | **P2-34** | 正式执行失败告警的发布结果契约 | ✅ PR #361 |
 | **P3-20** | 删除或重写失效的校准导入/导出链 | ↪ 非阻塞维护池；无 live caller |

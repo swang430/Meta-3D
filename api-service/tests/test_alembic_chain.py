@@ -77,7 +77,10 @@ _EXPECTED_COLUMNS: dict[str, list[str]] = {
     "probe_polarization_calibrations": ["use_mock"],
     "link_calibrations": ["use_mock"],
     "rf_chain_calibrations": ["use_mock"],
-    "multi_frequency_path_losses": ["use_mock", "warnings"],
+    "multi_frequency_path_losses": [
+        "use_mock", "warnings", "lab_profile_id", "operating_mode",
+        "topology_id", "chain_id", "ce_port",
+    ],
     "diagnostic_runs": ["result_extra", "sequence_evidence"],
     "bootstrap_history": ["seeder_name", "seeder_version"],
 }
@@ -88,6 +91,9 @@ _EXPECTED_INDEXES: dict[str, list[str]] = {
         "ix_probe_path_loss_calibrations_lab_profile_id",
     ],
     "probe_patterns": ["ix_probe_patterns_source"],
+    "multi_frequency_path_losses": [
+        "ix_multi_frequency_path_losses_lab_profile_id",
+    ],
 }
 
 

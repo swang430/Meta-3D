@@ -39,7 +39,8 @@ Active LabProfile.id + LabProfile.chamber_config_id
                  每个 probe/polarization 必须唯一解析到 RF chain/CE port
                  vectorSignalGenerator + CE + SA + instrument_test_lease
            Mock: 诊断数据，use_mock=true
-        -> MultiFrequencyPathLoss(use_mock, warnings, sweep data)
+        -> MultiFrequencyPathLoss(use_mock, warnings, sweep data,
+                                  lab_profile/topology/chain/CE-port identity)
         -> CalibrationJobResponse(use_mock, warnings)
         -> GUI 只按服务器返回的 use_mock 分类结果
         -> CalibrationReportGenerator 逐行输出 warnings/provenance
@@ -51,6 +52,11 @@ Active LabProfile.id + LabProfile.chamber_config_id
 - `CalibrationJobResponse` 增加可空 `use_mock`；本入口始终回填布尔值，其他既有入口可保持
   `null`，避免伪造其 provenance。
 - 真实服务缺 CE+SA 接线、租约失败、测量异常时保持现有非 2xx 失败，不回退 Mock。
+- 扫频终点必须精确落在 `start + n * step` 的采样网格上；服务内部调用与 API 请求共同
+  fail-loud，不能把最后一个实测点之后的未测区间声明成可插值覆盖范围。
+- 真实扫频结果只对采集时冻结的 LabProfile、运行模式、SwitchTopology、RF chain 与 CE port
+  有效。正式插值和校准状态读取必须重新解析当前路由并逐项精确匹配；历史未冻结路由的行、
+  拓扑换线或端口漂移均不得继续提供补偿。
 - 旧 `/calibration/multi-frequency` 路由和只服务于它的 schema 删除；不存在自动 fallback。
 - GUI 不把“真实采集完成”显示成“校准通过”；Mock 显示黄色诊断完成。
 
@@ -60,6 +66,8 @@ Active LabProfile.id + LabProfile.chamber_config_id
 - `NULL` 表示迁移前未记录；新写入用列表，空列表表示本次明确无 warning。
 - 每个 probe 使用独立 `probe_warnings`，写入该 probe 行；作业响应汇总所有 probe warnings。
 - 报告输出 `warnings` 原值，不按 warning 文本推导正式判决。
+- 多频行在 JSON/PDF 中显式输出 REAL/SIMULATED/UNKNOWN provenance；由于本片没有认证阈值，
+  仅含多频行的报告摘要使用 `pass_rate=null` 与 `undetermined` 计数，不显示伪造的 `0%`。
 
 ## GUI
 
@@ -88,3 +96,6 @@ Active LabProfile.id + LabProfile.chamber_config_id
 5. Mock 与 Real 多频行在报告中均保持 `validation_pass=null`；本片没有认证阈值，任何完成行
    都只作可审计测量证据，不进入正式 PASS/FAIL 分母。
 6. 旧随机端点从 live OpenAPI 消失，四份契约镜像一致。
+7. 拓扑/链/CE 端口任一漂移后，旧真实扫频行不再可用于正式插值或有效状态。
+8. 非整步扫频范围在 GUI、API 与服务内部入口均被拒绝，报告 PDF 显式显示来源，零判决摘要
+   保持未判定。

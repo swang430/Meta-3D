@@ -5,6 +5,8 @@ Probe Calibration Pydantic Schemas
 
 参考设计: docs/features/calibration/probe-calibration.md
 """
+import math
+
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
@@ -833,12 +835,32 @@ class StartMultiFrequencyPathLossRequest(BaseModel):
             raise ValueError('freq_stop_mhz must be greater than freq_start_mhz')
         return v
 
+    @field_validator('freq_step_mhz')
+    @classmethod
+    def validate_stop_is_sampled(cls, v, info):
+        start = info.data.get('freq_start_mhz')
+        stop = info.data.get('freq_stop_mhz')
+        if start is not None and stop is not None:
+            intervals = (stop - start) / v
+            if not math.isclose(
+                intervals, round(intervals), rel_tol=0.0, abs_tol=1e-9,
+            ):
+                raise ValueError(
+                    'freq_stop_mhz must be sampled exactly by freq_step_mhz'
+                )
+        return v
+
 
 class MultiFrequencyPathLossResponse(BaseModel):
     """多频点路损校准响应"""
     id: UUID
     chamber_id: UUID
     use_mock: Optional[bool] = None
+    lab_profile_id: Optional[UUID] = None
+    operating_mode: Optional[str] = None
+    topology_id: Optional[str] = None
+    chain_id: Optional[str] = None
+    ce_port: Optional[str] = None
     probe_id: int
     polarization: str
 
