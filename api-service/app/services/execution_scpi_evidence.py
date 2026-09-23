@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 import json
+import math
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -1883,6 +1884,242 @@ def _find_exchange(
     )
 
 
+def _base_station_projection_environment(
+    evidence: BaseStationExecutionEvidence,
+    *,
+    expected_instrument_id: str,
+    exchange_ids: list[str],
+    exchanges: list[ScpiExchangeRef],
+) -> InstrumentEnvironment:
+    """Build a live identity view from the frozen execution and its capture.
+
+    The instrument id is deliberately taken from the referenced exchanges: the
+    execution envelope owns adapter/model/firmware/options, while the capture
+    owns the concrete HAL category identity.  A mixed or missing instrument id
+    therefore becomes a non-live environment and is rejected by the common
+    provenance gate.
+    """
+
+    referenced_ids = set(exchange_ids)
+    referenced = {
+        exchange.instrument_id
+        for exchange in exchanges
+        if exchange.exchange_id in referenced_ids
+    }
+    return InstrumentEnvironment(
+        instrument_id=expected_instrument_id,
+        instrument=evidence.adapter,
+        adapter_id=evidence.adapter,
+        options=tuple(evidence.identity.options),
+        model=evidence.identity.model,
+        firmware_version=evidence.identity.firmware_version,
+        captured_from_live_connection=(
+            evidence.execution_mode == "real"
+            and referenced == {expected_instrument_id}
+        ),
+    )
+
+
+def _unknown_base_station_item(
+    *,
+    adapter: str,
+    evidence_key: str,
+    requested: Any,
+    reason: str,
+    exchange_ids: list[str] | None = None,
+    source_reference: str | None = None,
+) -> InstrumentEvidenceItem:
+    return InstrumentEvidenceItem(
+        instrument=adapter,
+        evidence_key=evidence_key,
+        requested=requested,
+        command_sent=None,
+        readback=None,
+        exchange_ids=list(exchange_ids or ()),
+        evidence_level=EvidenceLevel.TRANSPORT,
+        source_reference=source_reference,
+        verdict=EvidenceVerdict.UNKNOWN,
+        reason=reason,
+    )
+
+
+def _load_base_station_projection(
+    execution,
+) -> BaseStationExecutionEvidence | None:
+    raw = load_base_station_execution_evidence(execution)
+    if raw is None:
+        return None
+    try:
+        return BaseStationExecutionEvidence.model_validate(raw)
+    except Exception:
+        return None
+
+
+def _project_base_station_config_evidence(
+    execution,
+    *,
+    requested: Any,
+    manifest: BaseStationAdapterManifest | None,
+    attempt_id: str | None,
+    lease_identity: ActiveBaseStationLeaseIdentity | None,
+    exchanges: list[ScpiExchangeRef],
+    evidence_key: str,
+) -> tuple[InstrumentEvidenceItem, InstrumentEnvironment | None] | None:
+    """Project one vendor-neutral config/attach receipt pair into E3."""
+
+    evidence = _load_base_station_projection(execution)
+    if evidence is None:
+        return None
+    if (
+        not isinstance(manifest, BaseStationAdapterManifest)
+        or manifest.adapter_id != evidence.adapter
+        or attempt_id is None
+        or not isinstance(lease_identity, ActiveBaseStationLeaseIdentity)
+        or lease_identity.measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_state != "running"
+    ):
+        return (
+            _unknown_base_station_item(
+                adapter=evidence.adapter,
+                evidence_key=evidence_key,
+                requested=requested,
+                reason="base_station_config_projection_scope_missing",
+            ),
+            None,
+        )
+    scope = (
+        attempt_id,
+        lease_identity.lease_id,
+        lease_identity.session_token,
+        lease_identity.adapter_id,
+    )
+    operations = [
+        row
+        for row in evidence.adapter_operations
+        if (
+            row.measurement_attempt_id,
+            row.lease_id,
+            row.session_token,
+            row.adapter,
+        )
+        == scope
+        and row.operation == "config"
+    ]
+    attaches = [
+        row
+        for row in (evidence.attach_operations or ())
+        if (
+            row.measurement_attempt_id,
+            row.lease_id,
+            row.session_token,
+            row.adapter,
+        )
+        == scope
+    ]
+    relevant_ids = list(
+        dict.fromkeys(
+            exchange_id
+            for row in (*operations, *attaches)
+            for exchange_id in row.exchange_ids
+        )
+    )
+    source_candidates = [
+        item.source_reference
+        for item in manifest.config_fields
+        if item.source_reference is not None
+    ] + [
+        item.source_reference
+        for item in manifest.attach_stages
+        if item.source_reference is not None
+    ]
+    source_reference = " | ".join(dict.fromkeys(source_candidates)) or None
+    environment = _base_station_projection_environment(
+        evidence,
+        expected_instrument_id=lease_identity.instrument_id,
+        exchange_ids=relevant_ids,
+        exchanges=exchanges,
+    )
+    if len(operations) != 1 or len(attaches) != 1:
+        return (
+            _unknown_base_station_item(
+                adapter=evidence.adapter,
+                evidence_key=evidence_key,
+                requested=requested,
+                reason="base_station_config_receipt_pair_not_unique",
+                exchange_ids=relevant_ids,
+                source_reference=source_reference,
+            ),
+            environment,
+        )
+    operation = operations[0]
+    attach = attaches[0]
+    payload = evidence.requested_config.payload
+    channel = (
+        payload.get("nr_arfcn")
+        if payload.get("radio_technology") == "nr5g"
+        else payload.get("lte_dl_earfcn")
+    )
+    capabilities = {item.field: item for item in manifest.config_fields}
+    operation_exchange_ids = set(operation.exchange_ids)
+    fields_authoritative = bool(operation.fields) and all(
+        field.status == "confirmed"
+        and bool(field.exchange_ids)
+        and set(field.exchange_ids).issubset(operation_exchange_ids)
+        and capabilities.get(field.field) is not None
+        and capabilities[field.field].support == "authoritative"
+        and capabilities[field.field].readback == "authoritative"
+        and capabilities[field.field].source_reference is not None
+        for field in operation.fields
+        if field.status != "not_applicable"
+    )
+    passed = (
+        evidence.execution_mode == "real"
+        and evidence.config_confirmed is True
+        and operation.confirmed is True
+        and operation.simulated is False
+        and operation.frozen_request_digest == evidence.requested_config.digest
+        and attach.formally_confirmed is True
+        and attach.simulated is False
+        and channel == requested
+        and fields_authoritative
+        and bool(relevant_ids)
+        and set(relevant_ids).issubset(set(evidence.exchange_ids))
+        and source_reference is not None
+    )
+    if not passed:
+        return (
+            _unknown_base_station_item(
+                adapter=evidence.adapter,
+                evidence_key=evidence_key,
+                requested=requested,
+                reason="base_station_config_receipt_not_formally_confirmed",
+                exchange_ids=relevant_ids,
+                source_reference=source_reference,
+            ),
+            environment,
+        )
+    return (
+        InstrumentEvidenceItem(
+            instrument=evidence.adapter,
+            evidence_key=evidence_key,
+            requested=requested,
+            command_sent=None,
+            readback={
+                field.field: field.applied
+                for field in operation.fields
+                if field.status == "confirmed"
+            },
+            exchange_ids=relevant_ids,
+            evidence_level=EvidenceLevel.APPLIED,
+            source_reference=source_reference,
+            verdict=EvidenceVerdict.PASSED,
+            reason="base_station_config_and_attach_receipts_confirmed",
+        ),
+        environment,
+    )
+
+
 def record_base_station_config_capture(
     execution,
     *,
@@ -1890,9 +2127,73 @@ def record_base_station_config_capture(
     requested: Any,
     driver,
     exchanges: list[ScpiExchangeRef],
+    manifest: BaseStationAdapterManifest | None = None,
+    attempt_id: str | None = None,
+    lease_identity: ActiveBaseStationLeaseIdentity | None = None,
     _stored_evidence_key: str = "base_station.config_apply",
 ) -> None:
     """绑定 PCell 写→回读→（APPLY 或 CELL ON）→协议状态事务。"""
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    current_evidence_present = (
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD in execution_config
+    )
+    projected = _project_base_station_config_evidence(
+        execution,
+        requested=requested,
+        manifest=manifest,
+        attempt_id=attempt_id,
+        lease_identity=lease_identity,
+        exchanges=exchanges,
+        evidence_key=_stored_evidence_key,
+    )
+    if projected is not None and projected[0].verdict is EvidenceVerdict.PASSED:
+        item, environment = projected
+        record_execution_scpi_evidence(
+            execution,
+            requirement_id=requirement_id,
+            item=item,
+            environment=environment,
+            exchanges=exchanges,
+        )
+        return
+    frozen = _load_base_station_projection(execution)
+    # UXM's already-audited catalog proof remains a scoped compatibility
+    # provider when its common receipt cannot reach E3.  Never generalize it
+    # to CMW500 or use it to rescue malformed CMW evidence.
+    current_uxm_fallback_allowed = (
+        frozen is not None
+        and frozen.adapter == "uxm"
+        and projected is not None
+        and projected[0].reason
+        == "base_station_config_receipt_not_formally_confirmed"
+        and isinstance(manifest, BaseStationAdapterManifest)
+        and manifest.adapter_id == "uxm"
+        and attempt_id is not None
+        and isinstance(lease_identity, ActiveBaseStationLeaseIdentity)
+    )
+    legacy_fallback_allowed = not current_evidence_present
+    if driver is None or not (
+        current_uxm_fallback_allowed or legacy_fallback_allowed
+    ):
+        if projected is None:
+            adapter = frozen.adapter if frozen is not None else "uxm"
+            item = _unknown_base_station_item(
+                adapter=adapter,
+                evidence_key=_stored_evidence_key,
+                requested=requested,
+                reason="base_station_execution_evidence_missing",
+            )
+            environment = None
+        else:
+            item, environment = projected
+        record_execution_scpi_evidence(
+            execution,
+            requirement_id=requirement_id,
+            item=item,
+            environment=environment,
+            exchanges=exchanges,
+        )
+        return
     from app.hal.scpi_evidence import exchange_matches_uxm_cell_activation
 
     command = next(
@@ -2049,6 +2350,211 @@ def record_positioner_capture(
     )
 
 
+def _project_base_station_throughput_evidence(
+    execution,
+    *,
+    requested: Any,
+    attempt_id: str | None,
+    lease_identity: ActiveBaseStationLeaseIdentity | None,
+    window_id: str | None,
+    exchanges: list[ScpiExchangeRef],
+    evidence_key: str,
+) -> tuple[InstrumentEvidenceItem, InstrumentEnvironment | None] | None:
+    """Project one persisted native measurement window into common E4."""
+
+    evidence = _load_base_station_projection(execution)
+    if evidence is None:
+        return None
+    if (
+        attempt_id is None
+        or window_id is None
+        or not isinstance(lease_identity, ActiveBaseStationLeaseIdentity)
+        or lease_identity.measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_id != attempt_id
+        or evidence.current_measurement_attempt_state != "running"
+    ):
+        return (
+            _unknown_base_station_item(
+                adapter=evidence.adapter,
+                evidence_key=evidence_key,
+                requested=requested,
+                reason="base_station_throughput_projection_scope_missing",
+            ),
+            None,
+        )
+    windows = [
+        row
+        for row in evidence.measurement_windows
+        if row.window_id == window_id
+        and row.measurement_attempt_id == attempt_id
+        and row.lease_id == lease_identity.lease_id
+        and row.session_token == lease_identity.session_token
+        and row.adapter == lease_identity.adapter_id == evidence.adapter
+    ]
+    metric = windows[0].metrics.get("dl_throughput_mbps") if len(windows) == 1 else None
+    exchange_ids = list(metric.exchange_ids) if metric is not None else []
+    source_reference = metric.source_reference if metric is not None else None
+    environment = _base_station_projection_environment(
+        evidence,
+        expected_instrument_id=lease_identity.instrument_id,
+        exchange_ids=exchange_ids,
+        exchanges=exchanges,
+    )
+    requested_azimuth = None
+    if isinstance(requested, dict):
+        requested_azimuth = requested.get(
+            "azimuth_deg", requested.get("direction_deg")
+        )
+    window = windows[0] if len(windows) == 1 else None
+    trust = window.trust if window is not None else None
+    value = metric.value if metric is not None else None
+    requested_position_confirmed = (
+        requested_azimuth is not None
+        and type(requested_azimuth) in {int, float}
+        and math.isfinite(float(requested_azimuth))
+        and window is not None
+        and math.isclose(
+            float(window.position.azimuth_deg),
+            float(requested_azimuth),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    )
+    metric_confirmed = (
+        metric is not None
+        and trust is not None
+        and metric.measurement_attempt_id == attempt_id
+        and metric.session_token == lease_identity.session_token
+        and evidence.metric_registry is not None
+        and metric.registry_digest == evidence.metric_registry.digest
+        and metric.scope == trust.request.scope
+        and metric.direction == "downlink"
+        and str(metric.unit).lower() == "mbps"
+        and metric.evidence == "authoritative"
+        and metric.simulated is False
+        and source_reference is not None
+        and type(value) in {int, float}
+        and math.isfinite(float(value))
+        and float(value) >= 0.0
+        and bool(exchange_ids)
+    )
+    window_scope_confirmed = (
+        window is not None
+        and trust is not None
+        and evidence.execution_mode == "real"
+        and window.cleanup.stop_signaling_confirmed is True
+        and window.cleanup.safe_idle_confirmed is True
+        and window.config_digest == evidence.requested_config.digest
+        and (
+            evidence.requested_route is None
+            or window.route_digest == evidence.requested_route.digest
+        )
+        and requested_position_confirmed
+        and metric_confirmed
+        and set(exchange_ids).issubset(set(window.lifecycle_exchange_ids))
+        and set(window.lifecycle_exchange_ids).issubset(set(evidence.exchange_ids))
+        and trust.exchange_ids == window.lifecycle_exchange_ids
+        and environment.captured_from_live_connection is True
+    )
+    passed = (
+        window_scope_confirmed
+        and trust.formally_confirmed
+        and window.preclear_off_confirmed is True
+        and window.running_confirmed is True
+        and window.ready_confirmed is True
+        and window.closed_off_confirmed is True
+    )
+    if not passed:
+        stage_statuses = (
+            {stage.stage: stage.status for stage in trust.stages}
+            if trust is not None
+            else {}
+        )
+        captured_by_id = {exchange.exchange_id: exchange for exchange in exchanges}
+        lifecycle_capture = (
+            [
+                captured_by_id.get(exchange_id)
+                for exchange_id in window.lifecycle_exchange_ids
+            ]
+            if window is not None
+            else []
+        )
+        uxm_clear_read_only_catalog_candidate = (
+            evidence.adapter == "uxm"
+            and window_scope_confirmed
+            and trust.request.lifecycle == "clear_read_only"
+            and trust.simulated is False
+            and trust.diagnostic_execution_allowed is True
+            and stage_statuses
+            == {
+                "clear": "confirmed",
+                "run": "unavailable",
+                "ready": "unavailable",
+                "closed": "unavailable",
+            }
+            and window.preclear_off_confirmed is True
+            and window.running_confirmed is False
+            and window.ready_confirmed is False
+            and window.closed_off_confirmed is False
+            and bool(lifecycle_capture)
+            and all(exchange is not None for exchange in lifecycle_capture)
+            and {
+                exchange.instrument_id
+                for exchange in lifecycle_capture
+                if exchange is not None
+            }
+            == {lease_identity.instrument_id}
+            and {
+                exchange.execution_id
+                for exchange in lifecycle_capture
+                if exchange is not None
+            }
+            == {str(execution.id)}
+            and len(
+                {
+                    exchange.capture_id
+                    for exchange in lifecycle_capture
+                    if exchange is not None
+                }
+            )
+            == 1
+            and all(
+                exchange is not None and exchange.simulated is False
+                for exchange in lifecycle_capture
+            )
+        )
+        return (
+            _unknown_base_station_item(
+                adapter=evidence.adapter,
+                evidence_key=evidence_key,
+                requested=requested,
+                reason=(
+                    "base_station_throughput_requires_uxm_catalog_proof"
+                    if uxm_clear_read_only_catalog_candidate
+                    else "base_station_throughput_window_not_formally_confirmed"
+                ),
+                exchange_ids=exchange_ids,
+                source_reference=source_reference,
+            ),
+            environment,
+        )
+    return (
+        InstrumentEvidenceItem(
+            instrument=evidence.adapter,
+            evidence_key=evidence_key,
+            requested=requested,
+            command_sent=None,
+            readback=float(value),
+            exchange_ids=exchange_ids,
+            evidence_level=EvidenceLevel.OUTCOME,
+            source_reference=source_reference,
+            verdict=EvidenceVerdict.PASSED,
+            reason="base_station_authoritative_throughput_window_confirmed",
+        ),
+        environment,
+    )
+
+
 def record_base_station_throughput_capture(
     execution,
     *,
@@ -2056,8 +2562,106 @@ def record_base_station_throughput_capture(
     requested: Any,
     driver,
     exchanges: list[ScpiExchangeRef],
+    attempt_id: str | None = None,
+    lease_identity: ActiveBaseStationLeaseIdentity | None = None,
+    window_id: str | None = None,
     _stored_evidence_key: str = "base_station.dl_throughput",
 ) -> None:
+    execution_config = execution.config if isinstance(execution.config, dict) else {}
+    current_evidence_present = (
+        BASE_STATION_EXECUTION_EVIDENCE_FIELD in execution_config
+    )
+    projected = _project_base_station_throughput_evidence(
+        execution,
+        requested=requested,
+        attempt_id=attempt_id,
+        lease_identity=lease_identity,
+        window_id=window_id,
+        exchanges=exchanges,
+        evidence_key=_stored_evidence_key,
+    )
+    if projected is not None and projected[0].verdict is EvidenceVerdict.PASSED:
+        item, environment = projected
+        record_execution_scpi_evidence(
+            execution,
+            requirement_id=requirement_id,
+            item=item,
+            environment=environment,
+            exchanges=exchanges,
+        )
+        return
+    frozen = _load_base_station_projection(execution)
+    current_uxm_fallback_allowed = (
+        frozen is not None
+        and frozen.adapter == "uxm"
+        and projected is not None
+        and projected[0].reason
+        == "base_station_throughput_requires_uxm_catalog_proof"
+    )
+    legacy_fallback_allowed = not current_evidence_present
+    if driver is None or not (
+        current_uxm_fallback_allowed or legacy_fallback_allowed
+    ):
+        if projected is not None:
+            item, environment = projected
+        else:
+            item = _unknown_base_station_item(
+                adapter=frozen.adapter if frozen is not None else "base_station",
+                evidence_key=_stored_evidence_key,
+                requested=requested,
+                reason="base_station_execution_evidence_missing",
+            )
+            environment = None
+        record_execution_scpi_evidence(
+            execution,
+            requirement_id=requirement_id,
+            item=item,
+            environment=environment,
+            exchanges=exchanges,
+        )
+        return
+    if current_uxm_fallback_allowed:
+        from app.hal.uxm_base_station import RealUxmDriver
+
+        try:
+            live_registry = (
+                driver.resolve_metric_registry()
+                if isinstance(driver, RealUxmDriver)
+                else None
+            )
+            current_uxm_environment = (
+                driver.capture_evidence_environment()
+                if isinstance(driver, RealUxmDriver)
+                else None
+            )
+        except (TypeError, ValueError):
+            live_registry = None
+            current_uxm_environment = None
+        if (
+            live_registry is None
+            or frozen.metric_registry is None
+            or live_registry.digest != frozen.metric_registry.digest
+            or current_uxm_environment is None
+            or current_uxm_environment.captured_from_live_connection is not True
+            or current_uxm_environment.adapter_id != "uxm"
+            or current_uxm_environment.instrument != "uxm"
+            or current_uxm_environment.instrument_id
+            != lease_identity.instrument_id
+            or current_uxm_environment.model != frozen.identity.model
+            or current_uxm_environment.firmware_version
+            != frozen.identity.firmware_version
+            or sorted(current_uxm_environment.options)
+            != sorted(frozen.identity.options)
+        ):
+            item, environment = projected
+            record_execution_scpi_evidence(
+                execution,
+                requirement_id=requirement_id,
+                item=item,
+                environment=environment,
+                exchanges=exchanges,
+            )
+            return
     item = driver.build_p0_5_throughput_evidence(
         requested=requested,
         throughput_exchange=_find_exchange(
@@ -2069,7 +2673,11 @@ def record_base_station_throughput_capture(
         execution,
         requirement_id=requirement_id,
         item=item,
-        environment=driver.capture_evidence_environment(),
+        environment=(
+            current_uxm_environment
+            if current_uxm_fallback_allowed
+            else driver.capture_evidence_environment()
+        ),
         exchanges=exchanges,
     )
 
