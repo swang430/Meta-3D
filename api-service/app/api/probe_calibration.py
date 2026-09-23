@@ -828,117 +828,54 @@ async def start_pattern_calibration(
 
     **验收标准**:
     - 远场条件: d > 2D²/λ
-    - 峰值增益 > 0 dBi
+    - 当前阶段只记录测量与路线证据；尚无权威 PASS/FAIL 阈值
     """
     _require_chamber_probe_ids(db, request.chamber_id, request.probe_ids)
-    job_id = uuid4()
+    from app.services.probe_calibration_service import PatternCalibrationService
 
-    # 计算预估时间
-    num_probes = len(request.probe_ids)
-    num_polarizations = len(request.polarizations)
     num_az = int(360 / request.azimuth_step_deg)
     num_el = int(180 / request.elevation_step_deg) + 1
     num_points = num_az * num_el
-
-    # 约 0.5 秒/测量点
-    estimated_minutes = (num_probes * num_polarizations * num_points * 0.5) / 60
-
-    # 生成角度网格
-    azimuth_deg = list(np.arange(0, 360, request.azimuth_step_deg))
-    elevation_deg = list(np.arange(0, 181, request.elevation_step_deg))
-
-    # 远场条件验证
-    antenna_diameter_m = 0.1  # 假设探头口径约 0.1m
-    wavelength_m = 299792458.0 / (request.frequency_mhz * 1e6)
-    min_far_field_distance = 2 * (antenna_diameter_m ** 2) / wavelength_m
-
-    warnings = []
-    if request.measurement_distance_m < min_far_field_distance:
-        warnings.append(
-            f"Measurement distance {request.measurement_distance_m}m may not satisfy "
-            f"far-field condition (min: {min_far_field_distance:.2f}m)"
+    estimated_minutes = (
+        len(request.probe_ids)
+        * len(request.polarizations)
+        * num_points
+        * 0.5
+    ) / 60
+    result = await PatternCalibrationService().execute_pattern_calibration(
+        db=db,
+        lab_profile_id=request.lab_profile_id,
+        chamber_id=request.chamber_id,
+        operating_mode=request.operating_mode,
+        probe_ids=request.probe_ids,
+        polarizations=request.polarizations,
+        frequency_mhz=request.frequency_mhz,
+        azimuth_step_deg=request.azimuth_step_deg,
+        elevation_step_deg=request.elevation_step_deg,
+        measurement_distance_m=request.measurement_distance_m,
+        reference_antenna_id=request.reference_antenna_id,
+        turntable_id=request.turntable_id,
+        ce_tx_power_dbm=request.ce_tx_power_dbm,
+        sgh_gain_dbi=request.sgh_gain_dbi,
+        calibrated_by=request.calibrated_by,
+        use_mock=request.use_mock,
+    )
+    if not result.success:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": result.message, "warnings": result.warnings},
         )
 
-    # 为每个探头和极化创建校准记录 (mock 数据)
-    for probe_id in request.probe_ids:
-        for polarization in request.polarizations:
-            import random
-
-            # 探头间的变异
-            probe_variation = (probe_id % 10 - 5) * 0.2
-
-            # 基础增益
-            base_gain = 5.0 + probe_variation
-
-            # 方向图参数
-            hpbw_target = 60.0
-            sigma = hpbw_target / (2 * np.sqrt(2 * np.log(2)))
-
-            # 生成方向图数据
-            gain_pattern = []
-            for elev in elevation_deg:
-                for az in azimuth_deg:
-                    az_diff = min(abs(az), 360 - abs(az))
-                    el_diff = abs(elev - 90)
-
-                    az_factor = np.exp(-(az_diff ** 2) / (2 * sigma ** 2))
-                    el_factor = np.exp(-(el_diff ** 2) / (2 * sigma ** 2))
-
-                    gain = base_gain + 10 * np.log10(az_factor * el_factor + 0.001)
-                    gain += random.gauss(0, 0.3)
-                    gain_pattern.append(round(gain, 2))
-
-            # 计算参数
-            peak_gain = max(gain_pattern)
-            peak_idx = gain_pattern.index(peak_gain)
-            peak_elev_idx = peak_idx // len(azimuth_deg)
-            peak_az_idx = peak_idx % len(azimuth_deg)
-
-            # HPBW 计算 (简化: 使用目标值 + 随机偏差)
-            hpbw_azimuth = hpbw_target + random.gauss(0, 5)
-            hpbw_elevation = hpbw_target + random.gauss(0, 5)
-
-            # 前后比 (典型值约 15-20 dB)
-            ftb_ratio = 15.0 + random.gauss(0, 2)
-
-            calibration = ProbePattern(
-                chamber_id=request.chamber_id,
-                use_mock=True,
-                source="simulated",
-                probe_id=probe_id,
-                polarization=polarization.value,
-                frequency_mhz=request.frequency_mhz,
-                azimuth_deg=azimuth_deg,
-                elevation_deg=elevation_deg,
-                gain_pattern_dbi=gain_pattern,
-                peak_gain_dbi=round(peak_gain, 2),
-                peak_azimuth_deg=azimuth_deg[peak_az_idx],
-                peak_elevation_deg=elevation_deg[peak_elev_idx],
-                hpbw_azimuth_deg=round(hpbw_azimuth, 1),
-                hpbw_elevation_deg=round(hpbw_elevation, 1),
-                front_to_back_ratio_db=round(ftb_ratio, 1),
-                reference_antenna=request.reference_antenna_id,
-                turntable=request.turntable_id,
-                measurement_distance_m=request.measurement_distance_m,
-                measured_at=datetime.utcnow(),
-                measured_by=request.calibrated_by,
-                valid_until=datetime.utcnow() + timedelta(days=365),
-                status=CalibrationStatus.VALID
-            )
-
-            db.add(calibration)
-
-    db.commit()
-
-    message = f"Pattern calibration completed for {num_probes} probes, {num_polarizations} polarizations"
-    if warnings:
-        message += f" (warnings: {len(warnings)})"
+    calibration_ids = result.data.get("calibration_ids") or []
+    job_id = UUID(calibration_ids[0]) if calibration_ids else uuid4()
 
     return CalibrationJobResponse(
         calibration_job_id=job_id,
         status=CalibrationJobStatus.COMPLETED,
+        use_mock=request.use_mock,
         estimated_duration_minutes=estimated_minutes,
-        message=message
+        message=result.message,
+        warnings=result.warnings,
     )
 
 

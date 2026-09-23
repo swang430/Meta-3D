@@ -27,6 +27,7 @@ from app.models.chamber import ChamberConfiguration
 
 
 TEST_CHAMBER_ID = UUID("aaaaaaaa-0000-0000-0000-000000000053")
+TEST_LAB_PROFILE_ID = UUID("aaaaaaaa-0000-0000-0000-000000000054")
 
 
 # 由模块级 pytest 临时目录持有；导入测试模块不得在调用目录创建 SQLite。
@@ -381,6 +382,7 @@ class TestPatternCalibration:
         response = client.post(
             f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "lab_profile_id": str(TEST_LAB_PROFILE_ID),
                 "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 2],
                 "polarizations": ["V"],
@@ -401,6 +403,7 @@ class TestPatternCalibration:
         response = client.post(
             f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "lab_profile_id": str(TEST_LAB_PROFILE_ID),
                 "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [3],
                 "frequency_mhz": 3700,
@@ -422,6 +425,7 @@ class TestPatternCalibration:
         client.post(
             f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "lab_profile_id": str(TEST_LAB_PROFILE_ID),
                 "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [5],
                 "polarizations": ["V"],
