@@ -375,7 +375,7 @@ async def start_multi_frequency_calibration(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
-    # 现有生产入口仍是模拟校准；正式实测入口需另行完成硬件授权与接线。
+    # 模式由调用方显式声明；False 复用既有 CE+SA 真实扫频路径，True 仅作诊断。
     service = MultiFrequencyPathLossService(db, use_mock=request.use_mock)
     result = await service.calibrate_frequency_sweep(
         chamber_id=request.chamber_id,

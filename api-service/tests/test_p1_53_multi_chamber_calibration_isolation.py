@@ -386,6 +386,7 @@ def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
             num_points=3,
             frequency_points_mhz=[3400.0, 3500.0, 3600.0],
             path_loss_db=[50.0, 51.0, 52.0],
+            warnings=[f"probe {probe_id} cleanup warning"],
             calibrated_at=now,
             valid_until=now + timedelta(days=30),
             status=CalibrationStatus.VALID.value,
@@ -411,6 +412,9 @@ def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
         own,
     ):
         assert [row["id"] for row in data["probe_calibration"][section]] == [str(expected.id)]
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["warnings"] == [
+        "probe 1 cleanup warning"
+    ]
 
 
 def test_probe_report_keeps_mock_unknown_and_expired_out_of_formal_kpi(session):
@@ -669,6 +673,7 @@ def test_chamber_report_excludes_untrusted_rf_and_multi_from_formal_kpi(session)
     assert data["chamber_calibration"]["uplink"][0]["use_mock"] is True
     assert data["chamber_calibration"]["multi_frequency"][0]["validation_pass"] is None
     assert data["chamber_calibration"]["multi_frequency"][0]["use_mock"] is None
+    assert data["chamber_calibration"]["multi_frequency"][0]["warnings"] is None
     assert data["execution_summary"]["total_executions"] == 0
 
 

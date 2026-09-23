@@ -2912,6 +2912,8 @@ export interface components {
             /** Format: uuid */
             calibration_job_id: string;
             status: string;
+            /** @description False=真实仪表校准；True=模拟诊断；NULL=旧入口未声明 */
+            use_mock?: boolean | null;
             estimated_duration_minutes?: number | null;
             message?: string | null;
             warnings?: string[];

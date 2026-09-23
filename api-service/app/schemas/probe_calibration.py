@@ -849,6 +849,10 @@ class MultiFrequencyPathLossResponse(BaseModel):
 
     # 插值系数
     interpolation_coefficients: Optional[Dict[str, Any]] = None
+    warnings: Optional[List[str]] = Field(
+        None,
+        description="本行采集/清理告警；NULL 表示历史记录未留痕",
+    )
 
     # 元数据
     calibrated_at: UTCDateTime

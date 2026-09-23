@@ -554,33 +554,6 @@ Request to execute quiet zone validation
 | `probe_ids` | list[int | No | - | - |
 | `duration_sec` | float | No | 60.0 | - |
 
-### MultiFrequencyCalibrationRequest
-
-Multi-frequency calibration request
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `calibration_type` | str | Yes | - | Type: TRP | TIS |
-| `frequency_list_mhz` | list[float | Yes | - | List of frequencies (MHz) |
-| `dut_model` | str | Yes | - | - |
-| `dut_serial` | str | Yes | - | - |
-| `reference_trp_dbm` | float | No | - | Reference TRP for TRP calibration |
-| `reference_tis_dbm` | float | No | - | Reference TIS for TIS calibration |
-| `tested_by` | str | Yes | - | - |
-
-### FrequencyCalibrationResult
-
-Single frequency result
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `frequency_mhz` | float | Yes | - | - |
-| `measured_value_dbm` | float | Yes | - | - |
-| `error_db` | float | Yes | - | - |
-| `validation_pass` | bool | Yes | - | - |
-
 ---
 
 ## Instrument

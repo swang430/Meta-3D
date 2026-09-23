@@ -17,6 +17,7 @@ from app.models.probe_calibration import MultiFrequencyPathLoss
 from app.schemas.probe_calibration import (
     CalibrationJobResponse,
     CalibrationJobStatus,
+    MultiFrequencyPathLossResponse,
     PolarizationType,
 )
 from app.services.path_loss_calibration_service import MultiFrequencyPathLossService
@@ -146,6 +147,11 @@ def test_calibration_job_response_carries_requested_mode():
     )
 
     assert response.model_dump()["use_mock"] is False
+
+
+def test_multi_frequency_row_response_exposes_persisted_warnings():
+    """读取 schema 不能丢掉数据库行的告警留痕。"""
+    assert "warnings" in MultiFrequencyPathLossResponse.model_fields
 
 
 def test_legacy_synthetic_multi_frequency_route_is_not_published():

@@ -467,6 +467,7 @@ class CalibrationReportGenerator:
                 'freq_start_mhz': cal.freq_start_mhz,
                 'freq_stop_mhz': cal.freq_stop_mhz,
                 'num_points': cal.num_points,
+                'warnings': cal.warnings,
             })
         data['chamber_calibration']['multi_frequency'] = multi_freq_data
 
@@ -832,6 +833,7 @@ class CalibrationReportGenerator:
                     'freq_stop_mhz': cal.freq_stop_mhz,
                     'freq_step_mhz': cal.freq_step_mhz,
                     'num_points': cal.num_points,
+                    'warnings': cal.warnings,
                 })
             data['probe_calibration']['multi_freq_path_loss'] = multi_freq_data
 

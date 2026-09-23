@@ -1896,6 +1896,10 @@ components:
           format: uuid
         status:
           type: string
+        use_mock:
+          type: boolean
+          nullable: true
+          description: False=真实仪表校准；True=模拟诊断；NULL=旧入口未声明
         estimated_duration_minutes:
           type: number
           nullable: true
