@@ -264,6 +264,17 @@ class ProbePattern(Base):
     # consumer 正式查询只接受 exact chamber，不回退 NULL/legacy。见 chamber_id 综述。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     use_mock = Column(Boolean, nullable=True, comment="False=真实/厂商数据；True=模拟；NULL=历史来源未知")
+    warnings = Column(JSON, nullable=True, comment="本行校准过程告警；NULL=历史记录未持久化告警")
+    lab_profile_id = Column(
+        UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+        comment="本次校准冻结的 LabProfile ID；NULL=历史/导入/模拟未冻结",
+    )
+    operating_mode = Column(String(50), nullable=True, comment="本次校准冻结的运行模式")
+    topology_id = Column(String(255), nullable=True, comment="本次校准解析到的 SwitchTopology ID")
+    chain_id = Column(String(255), nullable=True, comment="本行冻结的 RF chain ID")
+    ce_port = Column(String(255), nullable=True, comment="本行校准使用的信道仿真器端口")
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")
 

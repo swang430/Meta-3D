@@ -290,7 +290,9 @@ class PolarizationCalibrationResponse(BaseModel):
 
 class StartPatternCalibrationRequest(BaseModel):
     """启动方向图校准请求"""
+    lab_profile_id: UUID = Field(..., description="本次校准使用的 LabProfile ID")
     chamber_id: UUID = Field(..., description="校准所属暗室 ID")
+    operating_mode: str = Field(default="mimo_ota", min_length=1, description="本次校准运行模式")
     probe_ids: List[int] = Field(..., min_length=1)
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H]
@@ -306,6 +308,9 @@ class StartPatternCalibrationRequest(BaseModel):
     )
     reference_antenna_id: Optional[str] = None
     turntable_id: Optional[str] = None
+    ce_tx_power_dbm: float = Field(default=-20.0, description="信道仿真器校准音输出功率 (dBm)")
+    sgh_gain_dbi: float = Field(default=10.0, description="标准增益喇叭天线增益 (dBi)")
+    use_mock: bool = Field(default=True, description="是否仅生成模拟方向图；正式校准必须显式为 false")
     calibrated_by: str = Field(..., description="校准人员")
 
 
@@ -314,6 +319,12 @@ class PatternCalibrationResponse(BaseModel):
     id: UUID
     chamber_id: UUID
     use_mock: Optional[bool] = None
+    warnings: Optional[List[str]] = None
+    lab_profile_id: Optional[UUID] = None
+    operating_mode: Optional[str] = None
+    topology_id: Optional[str] = None
+    chain_id: Optional[str] = None
+    ce_port: Optional[str] = None
     probe_id: int
     polarization: str
     frequency_mhz: float
