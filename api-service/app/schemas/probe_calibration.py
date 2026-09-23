@@ -297,7 +297,12 @@ class StartPatternCalibrationRequest(BaseModel):
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H]
     )
-    frequency_mhz: float = Field(..., description="测量频率 (MHz)")
+    frequency_mhz: float = Field(
+        ...,
+        ge=100,
+        le=100000,
+        description="测量频率 (MHz)",
+    )
     azimuth_step_deg: float = Field(default=5.0, ge=1, le=30, description="方位角步进 (度)")
     elevation_step_deg: float = Field(default=5.0, ge=1, le=30, description="俯仰角步进 (度)")
     measurement_distance_m: float = Field(

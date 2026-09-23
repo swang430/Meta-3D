@@ -2031,6 +2031,8 @@ components:
             enum: [V, H, LHCP, RHCP]
         frequency_mhz:
           type: number
+          minimum: 100
+          maximum: 100000
         azimuth_step_deg:
           type: number
           minimum: 1

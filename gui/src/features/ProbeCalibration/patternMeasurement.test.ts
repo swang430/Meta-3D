@@ -70,6 +70,8 @@ test('pattern request rejects missing context, mode, and invalid probe lists', (
 test('pattern request validates physical inputs before any request', () => {
   const invalidCases: Array<Partial<PatternMeasurementInput>> = [
     { frequencyMhz: 0 },
+    { frequencyMhz: 99.9 },
+    { frequencyMhz: 100_000.1 },
     { azimuthStepDeg: 0 },
     { azimuthStepDeg: 31 },
     { elevationStepDeg: 31 },

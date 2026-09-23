@@ -502,6 +502,46 @@ def test_pattern_report_discloses_route_but_never_invents_pass_verdict():
     db.close()
 
 
+def test_pattern_only_audit_report_keeps_pass_rate_undetermined(monkeypatch, tmp_path):
+    db = _session()
+    chamber_id = uuid4()
+    db.add(
+        ChamberConfiguration(
+            id=chamber_id,
+            name="Pattern chamber",
+            chamber_type="custom",
+            chamber_radius_m=3.0,
+            num_probes=32,
+        )
+    )
+    db.add(_pattern(chamber_id=chamber_id, source="in_chamber_measured"))
+    db.commit()
+
+    generator = CalibrationReportGenerator(db)
+    captured = {}
+
+    def _capture(data, _template, output_path):
+        captured.update(data)
+        return str(output_path)
+
+    monkeypatch.setattr(generator.pdf_generator, "generate_report", _capture)
+    generator.generate_audit_report(
+        chamber_id,
+        start_date=datetime.utcnow() - timedelta(days=1),
+        end_date=datetime.utcnow() + timedelta(days=1),
+        output_path=str(tmp_path / "audit.pdf"),
+    )
+
+    assert captured["summary"] == {
+        "total_calibrations": 1,
+        "passed": 0,
+        "failed": 0,
+        "undetermined": 1,
+        "pass_rate": None,
+    }
+    db.close()
+
+
 def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types():
     import yaml
 
@@ -542,6 +582,10 @@ def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types(
     }
     assert set(live["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]) == expected_request
     assert set(checked["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]) == expected_request
+    for document in (live, checked):
+        frequency = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["frequency_mhz"]
+        assert frequency["minimum"] == 100
+        assert frequency["maximum"] == 100000
     assert expected_response_route <= set(
         live["components"]["schemas"]["PatternCalibrationResponse"]["properties"]
     )

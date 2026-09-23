@@ -1432,7 +1432,7 @@ class CalibrationReportGenerator:
                 'passed': passed,
                 'failed': total - passed,
                 'undetermined': undetermined,
-                'pass_rate': (passed / total * 100) if total > 0 else 0,
+                'pass_rate': (passed / total * 100) if total > 0 else None,
             },
             'calibrations': filtered_calibrations,
         }

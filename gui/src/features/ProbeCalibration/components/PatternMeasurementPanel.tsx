@@ -166,7 +166,7 @@ export function PatternMeasurementPanel({
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
-              <NumberInput required label="频率 (MHz)" min={0.001} value={frequencyMhz} onChange={(value) => setFrequencyMhz(Number(value))} />
+              <NumberInput required label="频率 (MHz)" min={100} max={100000} value={frequencyMhz} onChange={(value) => setFrequencyMhz(Number(value))} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
               <NumberInput required label="方位步进 (°)" min={1} max={30} value={azimuthStepDeg} onChange={(value) => setAzimuthStepDeg(Number(value))} />

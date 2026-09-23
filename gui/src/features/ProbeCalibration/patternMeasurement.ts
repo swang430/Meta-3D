@@ -68,7 +68,7 @@ export function buildPatternMeasurementRequest(
     operating_mode: operatingMode,
     probe_ids: parseProbeIds(input.probeIds, input.probeCount),
     polarizations: input.polarizations,
-    frequency_mhz: requireFiniteRange(input.frequencyMhz, '频率', 0.001, 100_000),
+    frequency_mhz: requireFiniteRange(input.frequencyMhz, '频率', 100, 100_000),
     azimuth_step_deg: requireFiniteRange(input.azimuthStepDeg, '方位角步进', 1, 30),
     elevation_step_deg: requireFiniteRange(input.elevationStepDeg, '俯仰角步进', 1, 30),
     measurement_distance_m: requireFiniteRange(input.measurementDistanceM, '测量距离', 0.5, 10),
