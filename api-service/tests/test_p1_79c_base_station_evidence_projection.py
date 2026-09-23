@@ -5,9 +5,20 @@ from copy import deepcopy
 from dataclasses import replace
 
 from app.core.logging_config import current_execution_id
-from app.hal.base_station import BaseStationCleanupResult
+from app.hal.base import InstrumentStatus
+from app.hal.base_station import (
+    BASE_STATION_MEASUREMENT_WINDOW_STAGES,
+    BaseStationCleanupResult,
+    BaseStationMeasurementStageReceipt,
+    BaseStationMeasurementWindow,
+    BaseStationMeasurementWindowRequest,
+    BaseStationMeasurementWindowTrust,
+    BaseStationMetricObservation,
+    ThroughputMetrics,
+)
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.uxm_base_station import RealUxmDriver
+from app.hal.uxm_command_profiles import UxmLteNrIratProfile
 from app.hal.scpi_evidence import EvidenceLevel, ScpiExchangeRef
 from app.services import execution_scpi_evidence as evidence_service
 from app.services.execution_scpi_evidence import (
@@ -116,6 +127,162 @@ def _current_cmw_execution(monkeypatch):
         cleanup=BaseStationCleanupResult(True, True, ()),
     )
     return execution, lease, window.window_id
+
+
+def _current_uxm_execution(*, clear_confirmed: bool = True):
+    execution = _execution()
+    raw = execution.config["base_station_execution_evidence"]
+    registry_driver = RealUxmDriver("baseStation", {"ip_address": "192.0.2.1"})
+    registry_driver._cmds = UxmLteNrIratProfile
+    registry = registry_driver.resolve_metric_registry()
+    raw.update(
+        adapter="uxm",
+        identity={
+            **raw["identity"],
+            "adapter": "uxm",
+            "model": "E7515B",
+            "firmware_version": "28.21.0.32",
+            "options": [],
+            "adapter_profile_digest": None,
+        },
+        formal_capability_approval={
+            "schema_version": 1,
+            "status": "not_applicable",
+            "instrument_connection_id": None,
+            "capability": None,
+            "enabled": None,
+            "updated_at": None,
+        },
+        route_confirmed=None,
+        requested_route=None,
+        applied_route=None,
+        measurement_window_contract_version=1,
+        metric_registry_contract_version=1,
+        metric_registry={
+            "schema_version": 1,
+            "adapter_id": registry.adapter_id,
+            "profile_id": registry.profile_id,
+            "metrics": [
+                metric.model_dump(mode="json") for metric in registry.metrics
+            ],
+            "digest": registry.digest,
+        },
+    )
+    lease = ActiveBaseStationLeaseIdentity(
+        lease_id="lease-uxm",
+        measurement_attempt_id="attempt-new",
+        adapter_id="uxm",
+        session_token="session-uxm",
+        instrument_id="baseStation",
+    )
+    request = BaseStationMeasurementWindowRequest(
+        schema_version=1,
+        scope="pcell",
+        lifecycle="clear_read_only",
+        cardinality="requested",
+        requested_window_count=1,
+        expected_window_count=1,
+        window_index=0,
+    )
+    clear = BaseStationMeasurementStageReceipt(
+        stage="clear",
+        status="confirmed" if clear_confirmed else "unavailable",
+        reason="clear completed" if clear_confirmed else "clear unavailable",
+        exchange_ids=("uxm-clear",) if clear_confirmed else (),
+    )
+    stages = (
+        clear,
+        *(
+            BaseStationMeasurementStageReceipt(
+                stage=stage,
+                status="unavailable",
+                reason=f"{stage} is outside clear-read-only authority",
+            )
+            for stage in BASE_STATION_MEASUREMENT_WINDOW_STAGES[1:]
+        ),
+    )
+    lifecycle_ids = (
+        *(("uxm-clear",) if clear_confirmed else ()),
+        "metric-throughput",
+    )
+    trust = BaseStationMeasurementWindowTrust(
+        schema_version=1,
+        request=request,
+        request_digest=request.digest,
+        stages=stages,
+        simulated=False,
+        exchange_ids=lifecycle_ids,
+        reason="UXM clear/read-only window",
+        context_confirmed=False,
+    )
+    observations = tuple(
+        BaseStationMetricObservation(
+            schema_version=1,
+            registry=registry,
+            registry_digest=registry.digest,
+            key=metric.key,
+            scope="pcell",
+            value=96.5 if metric.key == "dl_throughput_mbps" else None,
+            simulated=False,
+            exchange_ids=("metric-throughput",)
+            if metric.key == "dl_throughput_mbps"
+            else (),
+            reason="same-window instrument readback"
+            if metric.key == "dl_throughput_mbps"
+            else "not observed in this window",
+        )
+        for metric in registry.metrics
+    )
+    window = BaseStationMeasurementWindow(
+        window_id="window-uxm",
+        started_at=_registered_window().started_at,
+        completed_at=_registered_window().completed_at,
+        metrics=ThroughputMetrics(
+            dl_throughput_mbps=96.5,
+            throughput_scope=ThroughputMetrics.SCOPE_PCELL,
+            kpi_valid={"dl_throughput": True},
+        ),
+        preclear_off_confirmed=clear_confirmed,
+        running_confirmed=False,
+        ready_confirmed=False,
+        closed_off_confirmed=False,
+        evidence=(
+            _registered_window().evidence[0].model_copy(
+                update={
+                    "instrument": "uxm",
+                    "evidence_key": "uxm.throughput.window",
+                    "exchange_ids": list(lifecycle_ids),
+                }
+            ),
+        ),
+        confirmed=False,
+        reason="UXM clear/read-only window",
+        trust=trust,
+        metric_registry=registry,
+        metric_observations=observations,
+    )
+    append_base_station_measurement_window(
+        _Db(execution),
+        execution.id,
+        attempt_id="attempt-new",
+        lease_identity=lease,
+        position=POSITION,
+        ue_link_state="connected",
+        window=window,
+        cleanup=BaseStationCleanupResult(True, True, ()),
+    )
+    return execution, lease, window.window_id
+
+
+def _live_uxm_driver() -> RealUxmDriver:
+    driver = RealUxmDriver("baseStation", {"ip_address": "192.0.2.1"})
+    driver._cmds = UxmLteNrIratProfile
+    driver._visa_session = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Keysight,LTE_NR_IRAT,SN-APP,28.21.0.32"
+    driver._platform_identity_response = "Keysight,E7515B,SN-UXM,3.39.0.2"
+    driver.detected_test_app = "LTE_NR_IRAT"
+    return driver
 
 
 def test_measure_no_longer_dispatches_base_station_evidence_by_hasattr():
@@ -543,3 +710,97 @@ def test_authoritative_zero_throughput_is_an_outcome_not_missing(monkeypatch):
     assert item["verdict"] == "passed"
     assert item["evidence_level"] == "E4"
     assert item["readback"] == 0.0
+
+
+def test_current_uxm_clear_read_only_window_uses_audited_catalog_outcome():
+    execution, lease, window_id = _current_uxm_execution()
+    current_execution_id.set(str(execution.id))
+    register_required_scpi_evidence(
+        execution,
+        requirement_id="base_station.throughput.azimuth.000",
+        evidence_key="base_station.dl_throughput",
+        requested={"azimuth_deg": 0.0, "window_s": 1.0},
+        required_evidence_level=EvidenceLevel.OUTCOME,
+    )
+    throughput = ScpiExchangeRef(
+        exchange_id="metric-throughput",
+        instrument_id="baseStation",
+        operation="query",
+        command=UxmLteNrIratProfile.MEAS_TPUT_DL_OTA.format(cell="CELL1"),
+        execution_id=str(execution.id),
+        capture_id="capture-uxm",
+        sequence=1,
+        result_type="response",
+        response="1000,1200000,1100000,1300000,1200000,1200000",
+    )
+    clear = ScpiExchangeRef(
+        exchange_id="uxm-clear",
+        instrument_id="baseStation",
+        operation="command",
+        command=UxmLteNrIratProfile.MEAS_BTHROUGHPUT_CLEAR,
+        execution_id=str(execution.id),
+        capture_id="capture-uxm",
+        sequence=0,
+        result_type="ok",
+    )
+
+    record_base_station_throughput_capture(
+        execution,
+        requirement_id="base_station.throughput.azimuth.000",
+        requested={"azimuth_deg": 0.0, "window_s": 1.0},
+        driver=_live_uxm_driver(),
+        exchanges=[clear, throughput],
+        attempt_id="attempt-new",
+        lease_identity=lease,
+        window_id=window_id,
+    )
+
+    item = execution.config["scpi_evidence"]["items"][0]
+    assert item["instrument"] == "uxm"
+    assert item["evidence_key"] == "base_station.dl_throughput"
+    assert item["evidence_level"] == "E4"
+    assert item["verdict"] == "unknown"
+    assert "test_application_out_of_scope:LTE_NR_IRAT" in item["reason"]
+    assert item["readback"] == {
+        "throughput_bps": 1200000.0,
+        "measurement_valid": True,
+        "progress": 1000.0,
+    }
+
+
+def test_current_uxm_catalog_outcome_does_not_rescue_missing_clear_boundary():
+    execution, lease, window_id = _current_uxm_execution(clear_confirmed=False)
+    current_execution_id.set(str(execution.id))
+    register_required_scpi_evidence(
+        execution,
+        requirement_id="base_station.throughput.azimuth.000",
+        evidence_key="base_station.dl_throughput",
+        requested={"azimuth_deg": 0.0, "window_s": 1.0},
+        required_evidence_level=EvidenceLevel.OUTCOME,
+    )
+    throughput = ScpiExchangeRef(
+        exchange_id="metric-throughput",
+        instrument_id="baseStation",
+        operation="query",
+        command=UxmLteNrIratProfile.MEAS_TPUT_DL_OTA.format(cell="CELL1"),
+        execution_id=str(execution.id),
+        capture_id="capture-uxm",
+        sequence=1,
+        result_type="response",
+        response="1000,1200000,1100000,1300000,1200000,1200000",
+    )
+
+    record_base_station_throughput_capture(
+        execution,
+        requirement_id="base_station.throughput.azimuth.000",
+        requested={"azimuth_deg": 0.0, "window_s": 1.0},
+        driver=_live_uxm_driver(),
+        exchanges=[throughput],
+        attempt_id="attempt-new",
+        lease_identity=lease,
+        window_id=window_id,
+    )
+
+    item = execution.config["scpi_evidence"]["items"][0]
+    assert item["verdict"] == "unknown"
+    assert item["evidence_level"] != "E4"

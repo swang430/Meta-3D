@@ -2408,34 +2408,24 @@ def _project_base_station_throughput_evidence(
     window = windows[0] if len(windows) == 1 else None
     trust = window.trust if window is not None else None
     value = metric.value if metric is not None else None
-    passed = (
-        window is not None
-        and trust is not None
-        and trust.formally_confirmed
-        and window.preclear_off_confirmed is True
-        and window.running_confirmed is True
-        and window.ready_confirmed is True
-        and window.closed_off_confirmed is True
-        and window.cleanup.stop_signaling_confirmed is True
-        and window.cleanup.safe_idle_confirmed is True
-        and window.config_digest == evidence.requested_config.digest
-        and evidence.metric_registry is not None
-        and (
-            evidence.requested_route is None
-            or window.route_digest == evidence.requested_route.digest
-        )
-        and requested_azimuth is not None
+    requested_position_confirmed = (
+        requested_azimuth is not None
         and type(requested_azimuth) in {int, float}
         and math.isfinite(float(requested_azimuth))
+        and window is not None
         and math.isclose(
             float(window.position.azimuth_deg),
             float(requested_azimuth),
             rel_tol=0.0,
             abs_tol=1e-9,
         )
-        and metric is not None
+    )
+    metric_confirmed = (
+        metric is not None
+        and trust is not None
         and metric.measurement_attempt_id == attempt_id
         and metric.session_token == lease_identity.session_token
+        and evidence.metric_registry is not None
         and metric.registry_digest == evidence.metric_registry.digest
         and metric.scope == trust.request.scope
         and metric.direction == "downlink"
@@ -2447,16 +2437,102 @@ def _project_base_station_throughput_evidence(
         and math.isfinite(float(value))
         and float(value) >= 0.0
         and bool(exchange_ids)
+    )
+    window_scope_confirmed = (
+        window is not None
+        and trust is not None
+        and evidence.execution_mode == "real"
+        and window.cleanup.stop_signaling_confirmed is True
+        and window.cleanup.safe_idle_confirmed is True
+        and window.config_digest == evidence.requested_config.digest
+        and (
+            evidence.requested_route is None
+            or window.route_digest == evidence.requested_route.digest
+        )
+        and requested_position_confirmed
+        and metric_confirmed
         and set(exchange_ids).issubset(set(window.lifecycle_exchange_ids))
         and set(window.lifecycle_exchange_ids).issubset(set(evidence.exchange_ids))
+        and trust.exchange_ids == window.lifecycle_exchange_ids
+        and environment.captured_from_live_connection is True
+    )
+    passed = (
+        window_scope_confirmed
+        and trust.formally_confirmed
+        and window.preclear_off_confirmed is True
+        and window.running_confirmed is True
+        and window.ready_confirmed is True
+        and window.closed_off_confirmed is True
     )
     if not passed:
+        stage_statuses = (
+            {stage.stage: stage.status for stage in trust.stages}
+            if trust is not None
+            else {}
+        )
+        captured_by_id = {exchange.exchange_id: exchange for exchange in exchanges}
+        lifecycle_capture = (
+            [
+                captured_by_id.get(exchange_id)
+                for exchange_id in window.lifecycle_exchange_ids
+            ]
+            if window is not None
+            else []
+        )
+        uxm_clear_read_only_catalog_candidate = (
+            evidence.adapter == "uxm"
+            and window_scope_confirmed
+            and trust.request.lifecycle == "clear_read_only"
+            and trust.simulated is False
+            and trust.diagnostic_execution_allowed is True
+            and stage_statuses
+            == {
+                "clear": "confirmed",
+                "run": "unavailable",
+                "ready": "unavailable",
+                "closed": "unavailable",
+            }
+            and window.preclear_off_confirmed is True
+            and window.running_confirmed is False
+            and window.ready_confirmed is False
+            and window.closed_off_confirmed is False
+            and bool(lifecycle_capture)
+            and all(exchange is not None for exchange in lifecycle_capture)
+            and {
+                exchange.instrument_id
+                for exchange in lifecycle_capture
+                if exchange is not None
+            }
+            == {lease_identity.instrument_id}
+            and {
+                exchange.execution_id
+                for exchange in lifecycle_capture
+                if exchange is not None
+            }
+            == {str(execution.id)}
+            and len(
+                {
+                    exchange.capture_id
+                    for exchange in lifecycle_capture
+                    if exchange is not None
+                }
+            )
+            == 1
+            and all(
+                exchange is not None and exchange.simulated is False
+                for exchange in lifecycle_capture
+            )
+        )
         return (
             _unknown_base_station_item(
                 adapter=evidence.adapter,
                 evidence_key=evidence_key,
                 requested=requested,
-                reason="base_station_throughput_window_not_formally_confirmed",
+                reason=(
+                    "base_station_throughput_requires_uxm_catalog_proof"
+                    if uxm_clear_read_only_catalog_candidate
+                    else "base_station_throughput_window_not_formally_confirmed"
+                ),
                 exchange_ids=exchange_ids,
                 source_reference=source_reference,
             ),
@@ -2504,7 +2580,7 @@ def record_base_station_throughput_capture(
         exchanges=exchanges,
         evidence_key=_stored_evidence_key,
     )
-    if projected is not None:
+    if projected is not None and projected[0].verdict is EvidenceVerdict.PASSED:
         item, environment = projected
         record_execution_scpi_evidence(
             execution,
@@ -2514,21 +2590,78 @@ def record_base_station_throughput_capture(
             exchanges=exchanges,
         )
         return
-    if driver is None or current_evidence_present:
-        item = _unknown_base_station_item(
-            adapter="base_station",
-            evidence_key=_stored_evidence_key,
-            requested=requested,
-            reason="base_station_execution_evidence_missing",
-        )
+    frozen = _load_base_station_projection(execution)
+    current_uxm_fallback_allowed = (
+        frozen is not None
+        and frozen.adapter == "uxm"
+        and projected is not None
+        and projected[0].reason
+        == "base_station_throughput_requires_uxm_catalog_proof"
+    )
+    legacy_fallback_allowed = not current_evidence_present
+    if driver is None or not (
+        current_uxm_fallback_allowed or legacy_fallback_allowed
+    ):
+        if projected is not None:
+            item, environment = projected
+        else:
+            item = _unknown_base_station_item(
+                adapter=frozen.adapter if frozen is not None else "base_station",
+                evidence_key=_stored_evidence_key,
+                requested=requested,
+                reason="base_station_execution_evidence_missing",
+            )
+            environment = None
         record_execution_scpi_evidence(
             execution,
             requirement_id=requirement_id,
             item=item,
-            environment=None,
+            environment=environment,
             exchanges=exchanges,
         )
         return
+    if current_uxm_fallback_allowed:
+        from app.hal.uxm_base_station import RealUxmDriver
+
+        try:
+            live_registry = (
+                driver.resolve_metric_registry()
+                if isinstance(driver, RealUxmDriver)
+                else None
+            )
+            current_uxm_environment = (
+                driver.capture_evidence_environment()
+                if isinstance(driver, RealUxmDriver)
+                else None
+            )
+        except (TypeError, ValueError):
+            live_registry = None
+            current_uxm_environment = None
+        if (
+            live_registry is None
+            or frozen.metric_registry is None
+            or live_registry.digest != frozen.metric_registry.digest
+            or current_uxm_environment is None
+            or current_uxm_environment.captured_from_live_connection is not True
+            or current_uxm_environment.adapter_id != "uxm"
+            or current_uxm_environment.instrument != "uxm"
+            or current_uxm_environment.instrument_id
+            != lease_identity.instrument_id
+            or current_uxm_environment.model != frozen.identity.model
+            or current_uxm_environment.firmware_version
+            != frozen.identity.firmware_version
+            or sorted(current_uxm_environment.options)
+            != sorted(frozen.identity.options)
+        ):
+            item, environment = projected
+            record_execution_scpi_evidence(
+                execution,
+                requirement_id=requirement_id,
+                item=item,
+                environment=environment,
+                exchanges=exchanges,
+            )
+            return
     item = driver.build_p0_5_throughput_evidence(
         requested=requested,
         throughput_exchange=_find_exchange(
@@ -2540,7 +2673,11 @@ def record_base_station_throughput_capture(
         execution,
         requirement_id=requirement_id,
         item=item,
-        environment=driver.capture_evidence_environment(),
+        environment=(
+            current_uxm_environment
+            if current_uxm_fallback_allowed
+            else driver.capture_evidence_environment()
+        ),
         exchanges=exchanges,
     )
 
