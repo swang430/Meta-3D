@@ -279,37 +279,3 @@ class QuietZoneCalibrationResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# ==================== Multi-Frequency Calibration Schemas ====================
-
-class MultiFrequencyCalibrationRequest(BaseModel):
-    """Multi-frequency calibration request"""
-    calibration_type: str = Field(..., description="Type: TRP | TIS")
-    frequency_list_mhz: List[float] = Field(..., min_length=1, max_length=10, description="List of frequencies (MHz)")
-    dut_model: str
-    dut_serial: str
-    reference_trp_dbm: Optional[float] = Field(None, description="Reference TRP for TRP calibration")
-    reference_tis_dbm: Optional[float] = Field(None, description="Reference TIS for TIS calibration")
-    tested_by: str
-
-
-class FrequencyCalibrationResult(BaseModel):
-    """Single frequency result"""
-    frequency_mhz: float
-    measured_value_dbm: float
-    error_db: float
-    validation_pass: bool
-
-
-class MultiFrequencyCalibrationResponse(BaseModel):
-    """Multi-frequency calibration response"""
-    id: UUID
-    calibration_type: str
-    results: List[FrequencyCalibrationResult]
-    overall_pass: bool
-    tested_at: UTCDateTime
-    tested_by: str
-
-    class Config:
-        from_attributes = True

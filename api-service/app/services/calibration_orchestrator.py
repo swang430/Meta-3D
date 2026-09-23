@@ -274,7 +274,9 @@ class CalibrationOrchestrator:
     def check_calibration_status(
         self,
         chamber_id: UUID,
-        frequency_mhz: float = 3500.0
+        frequency_mhz: float = 3500.0,
+        lab_profile_id: Optional[UUID] = None,
+        operating_mode: str = "mimo_ota",
     ) -> Dict[CalibrationItem, CalibrationItemStatus]:
         """
         检查暗室的校准状态
@@ -360,19 +362,65 @@ class CalibrationOrchestrator:
                     message = "No downlink calibration found"
 
             elif item == CalibrationItem.MULTI_FREQUENCY:
-                # 检查是否有多频点校准覆盖目标频率
-                query = self.db.query(MultiFrequencyPathLoss).filter(
-                    MultiFrequencyPathLoss.chamber_id == chamber_id,
-                    MultiFrequencyPathLoss.status == "valid",
-                    MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
-                    MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz
-                )
-                if not self.use_mock:
-                    query = query.filter(
-                        MultiFrequencyPathLoss.use_mock.is_(False),
-                        MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
+                # A sweep cert is physical-route scoped. Generic chamber-only
+                # status calls lack enough identity and therefore stay invalid.
+                # When a LabProfile is supplied, reuse the same exact current
+                # route comparison as the interpolation consumer.
+                cal = None
+                if lab_profile_id is not None:
+                    from app.services.calibration.rf_chain_resolver import (
+                        resolve_rf_chains,
                     )
-                cal = query.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
+
+                    try:
+                        resolution = resolve_rf_chains(
+                            self.db, lab_profile_id, operating_mode,
+                        )
+                    except ValueError:
+                        resolution = None
+                    if (
+                        resolution is not None
+                        and resolution.chamber_id == chamber_id
+                        and resolution.topology_id is not None
+                    ):
+                        route_keys = {
+                            (
+                                chain.probe_id,
+                                chain.polarization.upper(),
+                                chain.chain_id,
+                                chain.ce_port,
+                            )
+                            for chain in resolution.chains
+                            if chain.ce_port.strip() and chain.ce_port != "?"
+                        }
+                        query = self.db.query(MultiFrequencyPathLoss).filter(
+                            MultiFrequencyPathLoss.chamber_id == chamber_id,
+                            MultiFrequencyPathLoss.lab_profile_id == lab_profile_id,
+                            MultiFrequencyPathLoss.operating_mode == operating_mode,
+                            MultiFrequencyPathLoss.topology_id
+                            == str(resolution.topology_id),
+                            MultiFrequencyPathLoss.status == "valid",
+                            MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
+                            MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz,
+                            MultiFrequencyPathLoss.use_mock.is_(False),
+                            MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
+                        )
+                        candidates = query.order_by(
+                            desc(MultiFrequencyPathLoss.calibrated_at)
+                        ).all()
+                        cal = next(
+                            (
+                                candidate
+                                for candidate in candidates
+                                if (
+                                    candidate.probe_id,
+                                    candidate.polarization.upper(),
+                                    candidate.chain_id,
+                                    candidate.ce_port,
+                                ) in route_keys
+                            ),
+                            None,
+                        )
 
                 if cal:
                     is_valid = True
@@ -1166,6 +1214,12 @@ class CalibrationOrchestrator:
         ).all()
         package["calibrations"]["multi_frequency"] = [
             {
+                "lab_profile_id": str(r.lab_profile_id) if r.lab_profile_id else None,
+                "operating_mode": r.operating_mode,
+                "topology_id": r.topology_id,
+                "chain_id": r.chain_id,
+                "ce_port": r.ce_port,
+                "use_mock": r.use_mock,
                 "probe_id": r.probe_id,
                 "polarization": r.polarization,
                 "freq_start_mhz": r.freq_start_mhz,

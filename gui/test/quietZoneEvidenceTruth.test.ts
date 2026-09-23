@@ -202,7 +202,7 @@ test('legacy quiet-zone calibration cannot fall back to mock PASS or green resul
   )
   assert.match(
     wizardSource,
-    /\{results && !calibrationType\.startsWith\('quiet_zone_'\) && \(/,
+    /\{results && !calibrationType\.startsWith\('quiet_zone_'\) && calibrationType !== 'multi_frequency' && \(/,
   )
 })
 

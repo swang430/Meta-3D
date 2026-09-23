@@ -5,6 +5,8 @@ Probe Calibration Pydantic Schemas
 
 参考设计: docs/features/calibration/probe-calibration.md
 """
+import math
+
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
@@ -73,6 +75,10 @@ class CalibrationJobResponse(BaseModel):
     """校准任务响应"""
     calibration_job_id: UUID
     status: CalibrationJobStatus
+    use_mock: Optional[bool] = Field(
+        None,
+        description="False=真实仪表校准；True=模拟诊断；NULL=旧入口未声明",
+    )
     estimated_duration_minutes: Optional[float] = None
     message: Optional[str] = None
     # agent 复审 F2: 校准 warnings (含 acquire 清理失败) 透出 wire — 两个
@@ -789,7 +795,13 @@ class RFChainCalibrationResponse(BaseModel):
 
 class StartMultiFrequencyPathLossRequest(BaseModel):
     """启动多频点路损校准请求"""
+    lab_profile_id: UUID = Field(..., description="本次校准使用的 LabProfile ID")
     chamber_id: UUID = Field(..., description="暗室配置 ID")
+    operating_mode: str = Field(
+        default="mimo_ota",
+        min_length=1,
+        description="用于解析活动 RF 拓扑链的运行模式",
+    )
     probe_ids: List[int] = Field(..., min_length=1, max_length=64, description="探头 ID 列表")
     polarization: PolarizationType = Field(..., description="极化类型")
 
@@ -823,12 +835,32 @@ class StartMultiFrequencyPathLossRequest(BaseModel):
             raise ValueError('freq_stop_mhz must be greater than freq_start_mhz')
         return v
 
+    @field_validator('freq_step_mhz')
+    @classmethod
+    def validate_stop_is_sampled(cls, v, info):
+        start = info.data.get('freq_start_mhz')
+        stop = info.data.get('freq_stop_mhz')
+        if start is not None and stop is not None:
+            intervals = (stop - start) / v
+            if not math.isclose(
+                intervals, round(intervals), rel_tol=0.0, abs_tol=1e-9,
+            ):
+                raise ValueError(
+                    'freq_stop_mhz must be sampled exactly by freq_step_mhz'
+                )
+        return v
+
 
 class MultiFrequencyPathLossResponse(BaseModel):
     """多频点路损校准响应"""
     id: UUID
     chamber_id: UUID
     use_mock: Optional[bool] = None
+    lab_profile_id: Optional[UUID] = None
+    operating_mode: Optional[str] = None
+    topology_id: Optional[str] = None
+    chain_id: Optional[str] = None
+    ce_port: Optional[str] = None
     probe_id: int
     polarization: str
 
@@ -845,6 +877,10 @@ class MultiFrequencyPathLossResponse(BaseModel):
 
     # 插值系数
     interpolation_coefficients: Optional[Dict[str, Any]] = None
+    warnings: Optional[List[str]] = Field(
+        None,
+        description="本行采集/清理告警；NULL 表示历史记录未留痕",
+    )
 
     # 元数据
     calibrated_at: UTCDateTime

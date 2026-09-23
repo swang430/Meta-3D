@@ -2172,6 +2172,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calibration/path-loss/multi-frequency/{chamber_id}/{probe_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read route-scoped multi-frequency path-loss compensation */
+        get: {
+            parameters: {
+                query: {
+                    frequency_mhz: number;
+                    polarization?: string;
+                    lab_profile_id: string;
+                    operating_mode?: string;
+                };
+                header?: never;
+                path: {
+                    chamber_id: string;
+                    probe_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Compensation from an exact current frozen route match */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            probe_id: number;
+                            polarization: string;
+                            frequency_mhz: number;
+                            path_loss_db: number;
+                            interpolated: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calibration/phase/calibrate": {
         parameters: {
             query?: never;
@@ -2891,12 +2941,23 @@ export interface components {
             use_mock: boolean;
         };
         StartMultiFrequencyPathLossRequest: {
+            /**
+             * Format: uuid
+             * @description 本次校准使用的 LabProfile ID
+             */
+            lab_profile_id: string;
             /** Format: uuid */
             chamber_id: string;
+            /**
+             * @description 用于解析活动 RF 拓扑链的运行模式
+             * @default mimo_ota
+             */
+            operating_mode: string;
             probe_ids: number[];
             polarization: string;
             freq_start_mhz: number;
             freq_stop_mhz: number;
+            /** @description 步进必须使终止频率精确落在采样网格上 */
             freq_step_mhz: number;
             sgh_model: string;
             sgh_gain_dbi: number;
@@ -2912,6 +2973,8 @@ export interface components {
             /** Format: uuid */
             calibration_job_id: string;
             status: string;
+            /** @description False=真实仪表校准；True=模拟诊断；NULL=旧入口未声明 */
+            use_mock?: boolean | null;
             estimated_duration_minutes?: number | null;
             message?: string | null;
             warnings?: string[];

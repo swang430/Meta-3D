@@ -112,6 +112,13 @@ def _probe_validation_pass(calibration: Any) -> Optional[bool]:
     )
 
 
+def _multi_frequency_validation_pass(
+    calibration: MultiFrequencyPathLoss,
+) -> Optional[bool]:
+    """扫频采集尚无权威 PASS/FAIL 阈值，完成真实采集也只可审计不可判绿。"""
+    return None
+
+
 def _link_validation_pass(calibration: LinkCalibration) -> Optional[bool]:
     """Only an explicit-real, unexpired global link check has a verdict."""
     if calibration.use_mock is not False:
@@ -341,6 +348,7 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        undetermined = 0
 
         # Path loss calibrations
         query = self.db.query(ProbePathLossCalibration).filter(
@@ -451,33 +459,44 @@ class CalibrationReportGenerator:
 
         multi_freq_data = []
         for cal in multi_freq_cals:
-            is_valid = _probe_validation_pass(cal)
+            is_valid = _multi_frequency_validation_pass(cal)
             if is_valid is not None:
                 total += 1
                 if is_valid:
                     passed += 1
+            else:
+                undetermined += 1
             multi_freq_data.append({
                 'id': str(cal.id),
                 'probe_id': cal.probe_id,
                 'polarization': cal.polarization,
                 'validation_pass': is_valid,
                 'use_mock': cal.use_mock,
+                'provenance': _path_loss_provenance(cal),
+                'lab_profile_id': str(cal.lab_profile_id) if cal.lab_profile_id else None,
+                'operating_mode': cal.operating_mode,
+                'topology_id': cal.topology_id,
+                'chain_id': cal.chain_id,
+                'ce_port': cal.ce_port,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
                 'freq_start_mhz': cal.freq_start_mhz,
                 'freq_stop_mhz': cal.freq_stop_mhz,
                 'num_points': cal.num_points,
+                'warnings': cal.warnings,
             })
         data['chamber_calibration']['multi_frequency'] = multi_freq_data
 
         # Summary
         data['execution_summary'] = {
-            'total_executions': total,
+            'total_executions': total + undetermined,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
         }
+        if undetermined:
+            data['execution_summary']['undetermined'] = undetermined
 
         return data
 
@@ -555,6 +574,7 @@ class CalibrationReportGenerator:
 
         total = 0
         passed = 0
+        undetermined = 0
 
         # Amplitude calibrations
         if not calibration_type or calibration_type == 'amplitude':
@@ -811,11 +831,13 @@ class CalibrationReportGenerator:
 
             multi_freq_data = []
             for cal in calibrations:
-                is_valid = _probe_validation_pass(cal)
+                is_valid = _multi_frequency_validation_pass(cal)
                 if is_valid is not None:
                     total += 1
                     if is_valid:
                         passed += 1
+                else:
+                    undetermined += 1
 
                 multi_freq_data.append({
                     'id': str(cal.id),
@@ -824,6 +846,12 @@ class CalibrationReportGenerator:
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
                     'use_mock': cal.use_mock,
+                    'provenance': _path_loss_provenance(cal),
+                    'lab_profile_id': str(cal.lab_profile_id) if cal.lab_profile_id else None,
+                    'operating_mode': cal.operating_mode,
+                    'topology_id': cal.topology_id,
+                    'chain_id': cal.chain_id,
+                    'ce_port': cal.ce_port,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -832,17 +860,20 @@ class CalibrationReportGenerator:
                     'freq_stop_mhz': cal.freq_stop_mhz,
                     'freq_step_mhz': cal.freq_step_mhz,
                     'num_points': cal.num_points,
+                    'warnings': cal.warnings,
                 })
             data['probe_calibration']['multi_freq_path_loss'] = multi_freq_data
 
         # Summary
         data['execution_summary'] = {
-            'total_executions': total,
+            'total_executions': total + undetermined,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
-            'pass_rate': (passed / total * 100) if total > 0 else 0,
+            'pass_rate': (passed / total * 100) if total > 0 else None,
         }
+        if undetermined:
+            data['execution_summary']['undetermined'] = undetermined
 
         return data
 

@@ -22,7 +22,6 @@ import {
   Badge,
   Divider,
   MultiSelect,
-  Textarea,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -35,13 +34,16 @@ import {
   executeTISCalibration,
   executeRepeatabilityTest,
   executeQuietZoneCalibration,
-  executeMultiFrequencyCalibration,
+  startMultiFrequencyPathLoss,
   type TRPCalibrationRequest,
   type TISCalibrationRequest,
   type RepeatabilityTestRequest,
   type QuietZoneCalibrationRequest,
-  type MultiFrequencyCalibrationRequest,
 } from '../../api/calibrationService';
+import {
+  assertMultiFrequencyPathLossJobResponse,
+  buildMultiFrequencyPathLossRequest,
+} from './multiFrequencyCalibration';
 
 interface CalibrationWizardProps {
   opened: boolean;
@@ -52,7 +54,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
   // P1-57（外审 R3）：暗室由全局 LabProfile 派生 —— 原来这里写死
   // 'b7cd8de0-…'，那是 P1-28 审计里**已经不存在的孤儿暗室**，
   // 路损/链路/基线校准一直写进一个被删掉的暗室 id。
-  const { chamberId: operationalChamberId, beginWork } = useOperationalLab();
+  const {
+    chamberId: operationalChamberId,
+    selectedLabProfileId,
+    beginWork,
+  } = useOperationalLab();
   const [active, setActive] = useState(0);
   const [calibrationType, setCalibrationType] = useState<string>('trp');
   const [isExecuting, setIsExecuting] = useState(false);
@@ -71,6 +77,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     referenceLab: 'NIM (National Institute of Metrology)',
     refCertNumber: '',
     repeatabilityTestType: 'TRP' as 'TRP' | 'TIS' | 'EIS',
+    frequencyStart: 700,
+    frequencyStop: 5200,
+    frequencyStep: 100,
+    sghModel: 'Standard Gain Horn',
+    sghGainDbi: 10,
   });
 
   // 探头选择配置
@@ -78,8 +89,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
   const [selectedRings, setSelectedRings] = useState<string[]>([]);
   const [selectedPolarizations, setSelectedPolarizations] = useState<string[]>([]);
 
-  // 多频点校准配置
-  const [frequencyList, setFrequencyList] = useState<string>('700, 1800, 2600, 3500, 5200');
+  // 多频点路损校准必须由操作员显式声明真实/模拟来源；不从环境变量推断。
+  const [multiFrequencyMode, setMultiFrequencyMode] = useState<'real' | 'mock' | null>(null);
+  const [multiFrequencyProbeIds, setMultiFrequencyProbeIds] = useState('1');
+  const [multiFrequencyPolarization, setMultiFrequencyPolarization] = useState<'V' | 'H'>('V');
 
   const nextStep = () => setActive((current) => (current < 4 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -162,27 +175,25 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         result = await executeTISCalibration(request);
 
       } else if (calibrationType === 'multi_frequency') {
-        // 解析频率列表
-        const frequencies = frequencyList
-          .split(',')
-          .map(f => parseFloat(f.trim()))
-          .filter(f => !isNaN(f) && f > 0);
-
-        if (frequencies.length === 0) {
-          throw new Error('请输入有效的频率列表');
-        }
-
-        const request: MultiFrequencyCalibrationRequest = {
-          calibration_type: 'TRP', // 默认使用 TRP
-          frequency_list_mhz: frequencies,
-          dut_model: formData.dutModel,
-          dut_serial: formData.dutSerial,
-          reference_trp_dbm: formData.referenceTRP,
-          tested_by: formData.testedBy,
-        };
+        const request = buildMultiFrequencyPathLossRequest({
+          labProfileId: selectedLabProfileId || '',
+          chamberId: operationalChamberId || '',
+          probeIds: multiFrequencyProbeIds,
+          polarization: multiFrequencyPolarization,
+          frequencyStartMhz: formData.frequencyStart,
+          frequencyStopMhz: formData.frequencyStop,
+          frequencyStepMhz: formData.frequencyStep,
+          sghModel: formData.sghModel,
+          sghGainDbi: formData.sghGainDbi,
+          calibratedBy: formData.testedBy,
+          mode: multiFrequencyMode,
+        });
 
         setExecutionProgress(60);
-        result = await executeMultiFrequencyCalibration(request);
+        result = assertMultiFrequencyPathLossJobResponse(
+          await startMultiFrequencyPathLoss(request),
+          request.use_mock,
+        );
 
       } else if (calibrationType.startsWith('quiet_zone_')) {
         // Determine validation type from calibrationType
@@ -315,12 +326,24 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
       setIsExecuting(false);
       nextStep();
 
-      notifications.show({
-        title: '校准完成',
-        message: `${calibrationType.toUpperCase()} 校准成功完成`,
-        color: 'green',
-        icon: <IconCheck size={16} />,
-      });
+      if (calibrationType === 'multi_frequency') {
+        const diagnostic = result.use_mock === true;
+        notifications.show({
+          title: diagnostic ? '模拟诊断完成' : '真实扫频完成',
+          message: diagnostic
+            ? '模拟结果只用于流程诊断，不进入正式校准判定或补偿。'
+            : '真实扫频记录已保存；本入口不生成额外的合格/不合格判决。',
+          color: diagnostic ? 'yellow' : 'blue',
+          icon: diagnostic ? <IconInfoCircle size={16} /> : <IconCheck size={16} />,
+        });
+      } else {
+        notifications.show({
+          title: '校准完成',
+          message: `${calibrationType.toUpperCase()} 校准成功完成`,
+          color: 'green',
+          icon: <IconCheck size={16} />,
+        });
+      }
 
     } catch (error) {
       setIsExecuting(false);
@@ -341,6 +364,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     setActive(0);
     setResults(null);
     setExecutionProgress(0);
+    setMultiFrequencyMode(null);
     onClose();
   };
 
@@ -368,6 +392,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 setCalibrationType(value || 'trp');
                 setResults(null);
                 setExecutionProgress(0);
+                setMultiFrequencyMode(null);
               }}
               data={[
                 {
@@ -520,15 +545,75 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 required
               />
             ) : (
-              <Textarea
-                label="频率列表 (MHz，逗号分隔)"
-                placeholder="700, 1800, 2600, 3500, 5200"
-                value={frequencyList}
-                onChange={(e) => setFrequencyList(e.target.value)}
-                description="输入要测试的频率点，例如：700, 1800, 2600, 3500"
-                required
-                minRows={3}
-              />
+              <Stack gap="sm">
+                <Select
+                  label="执行模式"
+                  description="真实仪表会写入可用于补偿的测量记录；模拟诊断只验证流程，不进入正式校准判定。"
+                  placeholder="请选择执行来源"
+                  value={multiFrequencyMode}
+                  onChange={(value) => setMultiFrequencyMode(value as 'real' | 'mock' | null)}
+                  data={[
+                    { value: 'real', label: '真实仪表（正式测量）' },
+                    { value: 'mock', label: '模拟诊断（不进入正式校准）' },
+                  ]}
+                  required
+                />
+                <Group grow align="flex-start">
+                  <NumberInput
+                    label="起始频率 (MHz)"
+                    value={formData.frequencyStart}
+                    onChange={(value) => setFormData({ ...formData, frequencyStart: typeof value === 'number' ? value : 0 })}
+                    min={1}
+                    required
+                  />
+                  <NumberInput
+                    label="终止频率 (MHz)"
+                    value={formData.frequencyStop}
+                    onChange={(value) => setFormData({ ...formData, frequencyStop: typeof value === 'number' ? value : 0 })}
+                    min={1}
+                    required
+                  />
+                  <NumberInput
+                    label="步进 (MHz)"
+                    value={formData.frequencyStep}
+                    onChange={(value) => setFormData({ ...formData, frequencyStep: typeof value === 'number' ? value : 0 })}
+                    min={1}
+                    required
+                  />
+                </Group>
+                <TextInput
+                  label="探头 ID"
+                  description="多个探头用逗号分隔，例如：1, 2, 3"
+                  value={multiFrequencyProbeIds}
+                  onChange={(event) => setMultiFrequencyProbeIds(event.currentTarget.value)}
+                  required
+                />
+                <Select
+                  label="极化"
+                  value={multiFrequencyPolarization}
+                  onChange={(value) => setMultiFrequencyPolarization((value || 'V') as 'V' | 'H')}
+                  data={[
+                    { value: 'V', label: '垂直极化（V）' },
+                    { value: 'H', label: '水平极化（H）' },
+                  ]}
+                  required
+                />
+                <Group grow align="flex-start">
+                  <TextInput
+                    label="标准增益喇叭型号"
+                    value={formData.sghModel}
+                    onChange={(event) => setFormData({ ...formData, sghModel: event.currentTarget.value })}
+                    required
+                  />
+                  <NumberInput
+                    label="标准增益喇叭增益 (dBi)"
+                    value={formData.sghGainDbi}
+                    onChange={(value) => setFormData({ ...formData, sghGainDbi: typeof value === 'number' ? value : 0 })}
+                    decimalScale={2}
+                    required
+                  />
+                </Group>
+              </Stack>
             )}
 
             {calibrationType === 'trp' && (
@@ -606,10 +691,35 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                   <Text size="xs" color="dimmed">DUT:</Text>
                   <Text size="xs">{formData.dutModel}</Text>
                 </Group>
-                <Group justify="apart">
-                  <Text size="xs" color="dimmed">频率:</Text>
-                  <Text size="xs">{formData.frequency} MHz</Text>
-                </Group>
+                {calibrationType === 'multi_frequency' ? (
+                  <>
+                    <Group justify="apart">
+                      <Text size="xs" color="dimmed">扫频:</Text>
+                      <Text size="xs">
+                        {formData.frequencyStart}–{formData.frequencyStop} MHz / {formData.frequencyStep} MHz
+                      </Text>
+                    </Group>
+                    <Group justify="apart">
+                      <Text size="xs" color="dimmed">探头 / 极化:</Text>
+                      <Text size="xs">{multiFrequencyProbeIds} / {multiFrequencyPolarization}</Text>
+                    </Group>
+                    <Group justify="apart">
+                      <Text size="xs" color="dimmed">执行来源:</Text>
+                      <Text size="xs">
+                        {multiFrequencyMode === 'real'
+                          ? '真实仪表'
+                          : multiFrequencyMode === 'mock'
+                            ? '模拟诊断'
+                            : '尚未选择'}
+                      </Text>
+                    </Group>
+                  </>
+                ) : (
+                  <Group justify="apart">
+                    <Text size="xs" color="dimmed">频率:</Text>
+                    <Text size="xs">{formData.frequency} MHz</Text>
+                  </Group>
+                )}
                 {calibrationType === 'trp' && (
                   <>
                     <Group justify="apart">
@@ -661,7 +771,47 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               </Stack>
             )}
 
-            {results && !calibrationType.startsWith('quiet_zone_') && (
+            {results && calibrationType === 'multi_frequency' && (
+              <Stack gap="md">
+                <Alert
+                  icon={<IconInfoCircle size={16} />}
+                  title={results.use_mock === true ? '模拟诊断完成' : '真实扫频完成'}
+                  color={results.use_mock === true ? 'yellow' : 'blue'}
+                >
+                  {results.use_mock === true
+                    ? '该结果只验证流程，不进入正式校准判定或测量补偿。'
+                    : '真实仪表扫频任务已完成并保存测量记录；本入口不生成额外的合格/不合格判决。'}
+                </Alert>
+                <Paper p="md" withBorder>
+                  <Stack gap="xs">
+                    <Group justify="apart">
+                      <Text size="sm" color="dimmed">任务 ID:</Text>
+                      <Code>{String(results.calibration_job_id)}</Code>
+                    </Group>
+                    <Group justify="apart">
+                      <Text size="sm" color="dimmed">状态:</Text>
+                      <Badge color={results.status === 'completed' ? 'blue' : 'gray'}>
+                        {String(results.status)}
+                      </Badge>
+                    </Group>
+                    <Group justify="apart">
+                      <Text size="sm" color="dimmed">执行来源:</Text>
+                      <Text size="sm">{results.use_mock === true ? '模拟诊断' : '真实仪表'}</Text>
+                    </Group>
+                    {Array.isArray(results.warnings) && results.warnings.length > 0 && (
+                      <Alert color="yellow" title={`运行告警（${results.warnings.length}）`}>
+                        {results.warnings.map((warning: string, index: number) => (
+                          <Text key={`${index}-${warning}`} size="xs">{warning}</Text>
+                        ))}
+                      </Alert>
+                    )}
+                  </Stack>
+                </Paper>
+                <Code block>{JSON.stringify(results, null, 2)}</Code>
+              </Stack>
+            )}
+
+            {results && !calibrationType.startsWith('quiet_zone_') && calibrationType !== 'multi_frequency' && (
               <Stack gap="md">
                 <Alert
                   icon={results.validation_pass || results.overall_pass ? <IconCheck size={16} /> : <IconAlertCircle size={16} />}
@@ -673,24 +823,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                     : '校准结果超出允许误差范围'}
                 </Alert>
 
-                {calibrationType === 'multi_frequency' && results.results ? (
-                  <Paper p="md" withBorder>
-                    <Text size="sm" fw={600} mb="xs">多频点校准结果</Text>
-                    <Stack gap="xs">
-                      {results.results.map((r: any, idx: number) => (
-                        <Group key={idx} justify="apart">
-                          <Text size="xs" color="dimmed">{r.frequency_mhz} MHz:</Text>
-                          <Group gap="xs">
-                            <Text size="xs">{r.measured_value_dbm.toFixed(2)} dBm</Text>
-                            <Badge size="xs" color={r.validation_pass ? 'green' : 'red'}>
-                              {r.error_db > 0 ? '+' : ''}{r.error_db.toFixed(2)} dB
-                            </Badge>
-                          </Group>
-                        </Group>
-                      ))}
-                    </Stack>
-                  </Paper>
-                ) : calibrationType.startsWith('quiet_zone_') ? (
+                {calibrationType.startsWith('quiet_zone_') ? (
                   <Paper p="md" withBorder>
                     <Stack gap="xs">
                       <Group justify="apart">
@@ -842,9 +975,21 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         {/* Completion Step */}
         <Stepper.Completed>
           <Stack gap="md" mt="xl">
-            <Alert icon={<IconCheck size={16} />} title="校准完成" color="green">
-              系统校准已成功完成并保存到数据库
-            </Alert>
+            {calibrationType === 'multi_frequency' ? (
+              <Alert
+                icon={<IconInfoCircle size={16} />}
+                title={results?.use_mock === true ? '模拟诊断完成' : '真实扫频完成'}
+                color={results?.use_mock === true ? 'yellow' : 'blue'}
+              >
+                {results?.use_mock === true
+                  ? '模拟诊断结果已保存，但不进入正式校准判定或测量补偿。'
+                  : '真实扫频记录已保存；请在校准记录中查看逐频点证据与告警。'}
+              </Alert>
+            ) : (
+              <Alert icon={<IconCheck size={16} />} title="校准完成" color="green">
+                系统校准已成功完成并保存到数据库
+              </Alert>
+            )}
             {results?.id && (
               <Text size="sm">
                 校准 ID: <Code>{String(results.id)}</Code>

@@ -459,7 +459,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **~~P2-29~~** | ASC/B2 正式模型加载证据 hook | ✅ PR #354（内审 F1 P1 已修；Gemini R1 已修 / R2 两条 medium 报备不修） |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ✅ PR #359 |
 | **P2-31** | P2-18 剩余交付片：SMB `.smu` 工程真值扫描（EMQuest 10-band 表已交付） | ✅ PR #368；merge `2c9d5ff` |
-| **P2-32** | QZ/方向图/多频 warning 的 real API、GUI、DB、报告闭环 | ↪ 功能启用池；当前无完整 real 入口/production caller |
+| **P2-32** | 校准真实启用拆片 | **A 多频路径损耗**：✅ 本片完成 CE+SA real 入口、显式 Real/Mock、逐探头 warning 持久化与报告投影，并移除随机旧入口；真实结果冻结 LabProfile/拓扑/RF chain/CE port，路由漂移后 fail-closed，扫频终点必须实际落在采样网格；PDF 显式标来源且零判决摘要保持未判定。**B 方向图**：待独立软件片补 production caller；**C 静区**：仍需厘米级 XY 扫描平台，Hardware Blocked |
 | **P2-33** | 日志体验包：CRITICAL、traceback 搜索、级别多选、重复请求抑制 | ✅ PR #360 |
 | **P2-34** | 正式执行失败告警的发布结果契约 | ✅ PR #361 |
 | **P3-20** | 删除或重写失效的校准导入/导出链 | ↪ 非阻塞维护池；无 live caller |
@@ -723,7 +723,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准；合并后本地自动可执行队列为空。P1-79A/B/C 已由 PR #491/#493/#494 合并。P1-79E 的厂商取证已完成，但当前取得的 Ensemble 3.04 资料不足以覆盖现场未知型号/固件，转 Hardware/Vendor-Protocol Blocked，不以 Automation1/Windows SDK 或配置声明补真。P2-73 / P2-75 / P2-76 / P2-77 / P2-78 已由 PR #485 / #486 / #487 / #488 / #489 合并；P2-74 本地半已由 PR #482 合并，P1-80 软件半已完成，P1-2 仍在 ON-SITE-BLOCKED。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 设备侧发布/验约仍 Hardware Blocked。P2-77 只关闭软件半，真实 F8800A 有界调频矩阵仍在 ON-SITE-BLOCKED。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32 位于功能启用池，P3-20/P3-21 位于非阻塞维护池，均不得自动启动。现场静区线性 XY 扫描平台仍保持 Hardware Blocked。 |
+| **LOCAL-OPEN (roadmap 内)** | P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准；P1-79A/B/C 已由 PR #491/#493/#494 合并。P1-79E 的厂商取证已完成，但当前取得的 Ensemble 3.04 资料不足以覆盖现场未知型号/固件，转 Hardware/Vendor-Protocol Blocked，不以 Automation1/Windows SDK 或配置声明补真。P2-73 / P2-75 / P2-76 / P2-77 / P2-78 已由 PR #485 / #486 / #487 / #488 / #489 合并；P2-74 本地半已由 PR #482 合并，P1-80 软件半已完成，P1-2 仍在 ON-SITE-BLOCKED。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 设备侧发布/验约仍 Hardware Blocked。P2-77 只关闭软件半，真实 F8800A 有界调频矩阵仍在 ON-SITE-BLOCKED。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32A 多频路径损耗真实启用已由本片交付；P2-32B 方向图真实启用为下一独立软件片；P2-32C 静区仍由厘米级 XY 扫描平台阻塞。P3-20/P3-21 保持非阻塞维护池，不自动启动。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** / **P2-74** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5608,7 +5608,9 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | P1-55 顶层与 PCell 真值分叉 | ✅ **P1-55 / PR #349** |
 | 执行历史一键跳日志 | ✅ **P1-39 / PR #292** 已交付；P2-36 重复项已关闭 |
 | SMB / EMQuest 自动化 | 保留并收窄 **P2-31 = 开发/调试用 SMB `.smu` 工程扫描**；不得作为正式运行前置，EMQuest 10-band 表已交付 |
-| QZ / Pattern / Multi real warning 闭环 | → 功能启用池（原 P2-32，不进当前执行队列） |
+| Multi-frequency real warning 闭环 | ✅ P2-32A 本片：CE+SA real 入口、显式 Real/Mock、DB/报告 warning 闭环；未新增或修改 SCPI |
+| Pattern real activation | → P2-32B：独立软件片补 production caller，不与 A 混做 |
+| Quiet-zone real activation | → P2-32C：厘米级 XY 扫描平台 Hardware Blocked |
 | 失效校准导入/导出、两套 UXM 诊断 error reader | → 非阻塞维护池（原 P3-20/P3-21） |
 | G11/p08/G20/变异保护等纯测试门精化、默认关闭 mock、已执行计划文字镜像 | → 非阻塞测试/文档维护池，不再编号 |
 | 无 live caller 的 helper、无害 orphan/stale 常量、单次重复请求、纯 UI 微调 | → 非阻塞维护池，等待独立可观察价值再评估 |

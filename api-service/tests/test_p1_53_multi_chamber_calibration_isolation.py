@@ -386,6 +386,7 @@ def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
             num_points=3,
             frequency_points_mhz=[3400.0, 3500.0, 3600.0],
             path_loss_db=[50.0, 51.0, 52.0],
+            warnings=[f"probe {probe_id} cleanup warning"],
             calibrated_at=now,
             valid_until=now + timedelta(days=30),
             status=CalibrationStatus.VALID.value,
@@ -411,6 +412,9 @@ def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
         own,
     ):
         assert [row["id"] for row in data["probe_calibration"][section]] == [str(expected.id)]
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["warnings"] == [
+        "probe 1 cleanup warning"
+    ]
 
 
 def test_probe_report_keeps_mock_unknown_and_expired_out_of_formal_kpi(session):
@@ -585,7 +589,43 @@ def test_mock_rf_multi_and_link_rows_are_unverified_and_excluded_from_summary(se
     assert data["probe_calibration"]["rf_chain"][0]["validation_pass"] is None
     assert data["probe_calibration"]["multi_freq_path_loss"][0]["validation_pass"] is None
     assert data["probe_calibration"]["link"][0]["validation_pass"] is None
-    assert data["execution_summary"]["total_executions"] == 0
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
+
+
+def test_real_multi_frequency_without_threshold_is_unverified_and_excluded(session):
+    """完成真实扫频不等于通过：尚无权威阈值时不得进入 PASS 分母。"""
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Thresholdless Multi-Frequency Chamber")
+    now = datetime.utcnow()
+    session.add(MultiFrequencyPathLoss(
+        chamber_id=chamber_id,
+        use_mock=False,
+        probe_id=1,
+        polarization="V",
+        freq_start_mhz=3400.0,
+        freq_stop_mhz=3600.0,
+        freq_step_mhz=100.0,
+        num_points=3,
+        frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+        path_loss_db=[50.0, 51.0, 52.0],
+        calibrated_at=now,
+        valid_until=now + timedelta(days=30),
+        status=CalibrationStatus.VALID.value,
+        warnings=[],
+    ))
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_probe_data(
+        chamber_id=chamber_id,
+    )
+
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["validation_pass"] is None
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["provenance"] == "real"
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
 
 
 def test_global_link_never_makes_an_uncalibrated_probe_valid(session):
@@ -669,7 +709,10 @@ def test_chamber_report_excludes_untrusted_rf_and_multi_from_formal_kpi(session)
     assert data["chamber_calibration"]["uplink"][0]["use_mock"] is True
     assert data["chamber_calibration"]["multi_frequency"][0]["validation_pass"] is None
     assert data["chamber_calibration"]["multi_frequency"][0]["use_mock"] is None
-    assert data["execution_summary"]["total_executions"] == 0
+    assert data["chamber_calibration"]["multi_frequency"][0]["warnings"] is None
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["undetermined"] == 1
+    assert data["execution_summary"]["pass_rate"] is None
 
 
 def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
@@ -718,6 +761,8 @@ def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
             probe_id=0,
             frequency_mhz=3500.0,
             polarization="V",
+            lab_profile_id=uuid.uuid4(),
+            operating_mode="mimo_ota",
             db=session,
         )
     assert exc_info.value.status_code == 404
@@ -745,6 +790,7 @@ async def test_multi_frequency_start_remains_explicitly_mock(session, monkeypatc
         fake_sweep,
     )
     request = StartMultiFrequencyPathLossRequest(
+        lab_profile_id=uuid.uuid4(),
         chamber_id=chamber_id,
         probe_ids=[0],
         polarization="V",

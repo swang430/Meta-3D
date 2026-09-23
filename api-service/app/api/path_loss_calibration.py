@@ -375,10 +375,12 @@ async def start_multi_frequency_calibration(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
-    # 现有生产入口仍是模拟校准；正式实测入口需另行完成硬件授权与接线。
+    # 模式由调用方显式声明；False 复用既有 CE+SA 真实扫频路径，True 仅作诊断。
     service = MultiFrequencyPathLossService(db, use_mock=request.use_mock)
     result = await service.calibrate_frequency_sweep(
         chamber_id=request.chamber_id,
+        lab_profile_id=request.lab_profile_id,
+        operating_mode=request.operating_mode,
         probe_ids=request.probe_ids,
         polarization=request.polarization,
         freq_start_mhz=request.freq_start_mhz,
@@ -399,6 +401,7 @@ async def start_multi_frequency_calibration(
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_ids"][0]) if result.data.get("calibration_ids") else UUID(int=0),
         status=CalibrationJobStatus.COMPLETED,
+        use_mock=request.use_mock,
         message=result.message,
         warnings=result.warnings,
     )
@@ -410,6 +413,8 @@ def get_path_loss_at_frequency(
     probe_id: int,
     frequency_mhz: float = Query(..., description="目标频率 (MHz)"),
     polarization: str = Query("V", description="极化类型"),
+    lab_profile_id: UUID = Query(..., description="当前执行使用的 LabProfile ID"),
+    operating_mode: str = Query("mimo_ota", description="当前 RF 拓扑运行模式"),
     db: Session = Depends(get_db)
 ):
     """
@@ -419,7 +424,12 @@ def get_path_loss_at_frequency(
     # explicitly real, unexpired calibration may supply that value.
     service = MultiFrequencyPathLossService(db, use_mock=False)
     path_loss = service.get_path_loss_at_frequency(
-        chamber_id, probe_id, polarization, frequency_mhz
+        chamber_id,
+        probe_id,
+        polarization,
+        frequency_mhz,
+        lab_profile_id=lab_profile_id,
+        operating_mode=operating_mode,
     )
 
     if path_loss is None:

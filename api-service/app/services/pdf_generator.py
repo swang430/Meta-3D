@@ -1532,12 +1532,17 @@ class PDFGenerator:
             elements.append(Paragraph('<b>Probe Calibration Overview</b>', self.styles['SubsectionTitle']))
             elements.append(Spacer(1, 8))
 
+            pass_rate = probe_summary.get('pass_rate')
+            pass_rate_text = (
+                f"{pass_rate:.1f}%" if pass_rate is not None else '未判定'
+            )
             summary_data = [
                 ['Metric', 'Value'],
                 ['Total Calibrations', str(probe_summary.get('total_executions', 0))],
                 ['Passed', Paragraph(f'<font color="green">{probe_summary.get("passed", 0)}</font>', self.styles['BodyText'])],
                 ['Failed', Paragraph(f'<font color="red">{probe_summary.get("failed", 0)}</font>', self.styles['BodyText'])],
-                ['Pass Rate', f"{probe_summary.get('pass_rate', 0):.1f}%"],
+                ['Undetermined', str(probe_summary.get('undetermined', 0))],
+                ['Pass Rate', pass_rate_text],
             ]
 
             table = Table(summary_data, colWidths=[150, 150])
@@ -1647,14 +1652,40 @@ class PDFGenerator:
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
                 elif cal_type == 'multi_freq_path_loss':
-                    headers = ['Probe ID', 'Frequency Range (MHz)', 'Status', 'Calibrated At']
+                    headers = [
+                        'Probe ID', 'Frequency Range (MHz)', 'Provenance',
+                        'Status', 'Calibrated At',
+                    ]
                     rows = [headers]
+                    warning_rows = [['Calibration', 'Warnings']]
                     for cal in cal_data[:20]:
                         rows.append([
                             str(cal.get('probe_id', '-')),
                             f"{cal.get('freq_start_mhz', '-')} - {cal.get('freq_stop_mhz', '-')}",
+                            str(cal.get('provenance', 'unknown')).upper(),
                             verdict_cell(cal.get('validation_pass')),
                             str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                        warnings = cal.get('warnings')
+                        if warnings is None:
+                            warning_text = '? NOT RECORDED (legacy certificate)'
+                        elif warnings:
+                            warning_text = '<br/>'.join(
+                                escape(str(warning)) for warning in warnings
+                            )
+                        else:
+                            warning_text = 'None'
+                        warning_rows.append([
+                            Paragraph(
+                                escape(
+                                    f"Probe {cal.get('probe_id', '-')} / "
+                                    f"{cal.get('freq_start_mhz', '-')} - "
+                                    f"{cal.get('freq_stop_mhz', '-')} MHz / "
+                                    f"{str(cal.get('calibrated_at', '-'))[:19]}"
+                                ),
+                                self.styles['BodyText'],
+                            ),
+                            Paragraph(warning_text, self.styles['BodyText']),
                         ])
                 else:
                     headers = ['Probe ID', 'Status', 'Calibrated At']
@@ -1677,10 +1708,14 @@ class PDFGenerator:
                     ]))
                     elements.append(table)
 
-                    if cal_type == 'path_loss':
+                    if cal_type in ('path_loss', 'multi_freq_path_loss'):
                         elements.append(Spacer(1, 6))
                         elements.append(Paragraph(
-                            '<b>Path Loss Warning Audit</b>',
+                            (
+                                '<b>Path Loss Warning Audit</b>'
+                                if cal_type == 'path_loss'
+                                else '<b>Multi-Frequency Warning Audit</b>'
+                            ),
                             self.styles['BodyText'],
                         ))
                         warning_table = Table(

@@ -6,7 +6,7 @@ Path Loss Calibration Tests
 import pytest
 import json
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -956,6 +956,7 @@ class TestPathLossCalibrationAPI:
         multi = client.post(
             "/api/v1/calibration/path-loss/multi-frequency/start",
             json={
+                "lab_profile_id": str(uuid4()),
                 "chamber_id": chamber_id,
                 "probe_ids": [0],
                 "polarization": "V",

@@ -159,30 +159,29 @@ export interface CertificateListResponse {
   total: number
 }
 
-export interface MultiFrequencyCalibrationRequest {
-  calibration_type: 'TRP' | 'TIS'
-  frequency_list_mhz: number[]
-  dut_model: string
-  dut_serial: string
-  reference_trp_dbm?: number
-  reference_tis_dbm?: number
-  tested_by: string
+export interface MultiFrequencyPathLossRequest {
+  lab_profile_id: string
+  chamber_id: string
+  operating_mode: string
+  probe_ids: number[]
+  polarization: 'V' | 'H'
+  freq_start_mhz: number
+  freq_stop_mhz: number
+  freq_step_mhz: number
+  sgh_model: string
+  sgh_gain_dbi: number
+  vna_id?: string
+  calibrated_by: string
+  use_mock: boolean
 }
 
-export interface FrequencyResult {
-  frequency_mhz: number
-  measured_value_dbm: number
-  error_db: number
-  validation_pass: boolean
-}
-
-export interface MultiFrequencyCalibrationResponse {
-  id: string
-  calibration_type: string
-  results: FrequencyResult[]
-  overall_pass: boolean
-  tested_at: string
-  tested_by: string
+export interface MultiFrequencyPathLossJobResponse {
+  calibration_job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  use_mock: boolean | null
+  estimated_duration_minutes?: number | null
+  message?: string | null
+  warnings: string[]
 }
 
 // ==================== API 调用函数 ====================
@@ -401,28 +400,14 @@ export async function fetchCalibrationStats(): Promise<{
 /**
  * 执行多频点校准
  */
-export async function executeMultiFrequencyCalibration(
-  request: MultiFrequencyCalibrationRequest
-): Promise<MultiFrequencyCalibrationResponse> {
-  if (USE_MOCK) {
-    console.log('[Mock] executeMultiFrequencyCalibration');
-    await new Promise(r => setTimeout(r, 2500));
-    return generateMockMultiFrequencyResult(request);
-  }
-
-  try {
-    const response = await calibrationClient.post<MultiFrequencyCalibrationResponse>(
-      '/calibration/multi-frequency',
-      request
-    );
-    return response.data;
-  } catch (error) {
-    if (ALLOW_FALLBACK) {
-      console.warn('[Mock Fallback] executeMultiFrequencyCalibration:', error);
-      return generateMockMultiFrequencyResult(request);
-    }
-    throw error;
-  }
+export async function startMultiFrequencyPathLoss(
+  request: MultiFrequencyPathLossRequest
+): Promise<MultiFrequencyPathLossJobResponse> {
+  const response = await calibrationClient.post<MultiFrequencyPathLossJobResponse>(
+    '/calibration/path-loss/multi-frequency/start',
+    request,
+  )
+  return response.data
 }
 
 // ==================== Mock 数据生成函数 ====================
@@ -630,36 +615,5 @@ function generateMockStats() {
     expired_certificates: 1,
     average_trp_error: 0.12,
     average_tis_error: 0.28,
-  };
-}
-
-/**
- * 生成 Mock 多频点校准结果
- */
-function generateMockMultiFrequencyResult(
-  request: MultiFrequencyCalibrationRequest
-): MultiFrequencyCalibrationResponse {
-  const results = request.frequency_list_mhz.map(freq => {
-    const freq_factor = 1.0 - Math.abs(freq - 3500) / 10000;
-    const error = (Math.random() - 0.5) * 0.4 * (2 - freq_factor);
-    const ref_value = request.calibration_type === 'TRP'
-      ? (request.reference_trp_dbm || 10.0)
-      : (request.reference_tis_dbm || -90.0);
-
-    return {
-      frequency_mhz: freq,
-      measured_value_dbm: ref_value + error,
-      error_db: error,
-      validation_pass: Math.abs(error) < (request.calibration_type === 'TRP' ? 0.5 : 1.0),
-    };
-  });
-
-  return {
-    id: crypto.randomUUID(),
-    calibration_type: request.calibration_type,
-    results,
-    overall_pass: results.every(r => r.validation_pass),
-    tested_at: new Date().toISOString(),
-    tested_by: request.tested_by,
   };
 }

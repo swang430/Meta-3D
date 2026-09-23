@@ -30,6 +30,7 @@ path-loss 三入口桩在 `_real_path_loss_measurement_via_ce_sa`（内层 wrapp
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,6 +41,10 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.schemas.probe_calibration import PolarizationType
+from app.services.calibration.rf_chain_resolver import (
+    RFChainResolution,
+    RFChainSpec,
+)
 
 # ---------------------------------------------------------------------------
 # sqlite 内存库（同 tests/test_quiet_zone_validation.py 形态）
@@ -181,6 +186,30 @@ def _stub_single_point_measurement(monkeypatch, lease: _CountingLease) -> list[i
     return depths
 
 
+def _stub_multi_frequency_routes(monkeypatch, chamber, probe_ids):
+    lab_profile_id = uuid.uuid4()
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: RFChainResolution(
+            lab_profile_id=lab_profile_id,
+            chamber_id=chamber.id,
+            topology_id="p2-30-topology",
+            topology_name="P2-30",
+            operating_mode="mimo_ota",
+            chains=[
+                RFChainSpec(
+                    chain_id=f"chain-{probe_id}",
+                    ce_port=f"B{probe_id + 1}.1",
+                    probe_id=probe_id,
+                    polarization="V",
+                )
+                for probe_id in probe_ids
+            ],
+        ),
+    )
+    return lab_profile_id
+
+
 # ---------------------------------------------------------------------------
 # 1. 方向图扫描：el × az 双重循环 = 一次作业
 # ---------------------------------------------------------------------------
@@ -282,7 +311,6 @@ async def test_lab_profile_path_loss_job_holds_one_task_level_lease(
     )
 
     depths = _stub_single_point_measurement(monkeypatch, lease)
-
     lab = LabProfile(name="P2-30 Lab Profile", chamber_config_id=chamber.id)
     db.add(lab)
     db.commit()
@@ -336,10 +364,12 @@ async def test_frequency_sweep_holds_one_task_level_lease(
     from app.services import path_loss_calibration_service as pl_mod
 
     depths = _stub_single_point_measurement(monkeypatch, lease)
+    lab_profile_id = _stub_multi_frequency_routes(monkeypatch, chamber, [0, 1])
 
     svc = pl_mod.MultiFrequencyPathLossService(db, use_mock=False)
     result = await svc.calibrate_frequency_sweep(
         chamber_id=chamber.id,
+        lab_profile_id=lab_profile_id,
         probe_ids=[0, 1],
         polarization=PolarizationType.V,
         freq_start_mhz=3400.0,
@@ -545,10 +575,12 @@ async def test_frequency_sweep_lease_acquire_failure_returns_result(db, chamber,
 
     lease = _failing_lease(monkeypatch, "acquire")
     depths = _stub_single_point_measurement(monkeypatch, lease)
+    lab_profile_id = _stub_multi_frequency_routes(monkeypatch, chamber, [0])
 
     svc = pl_mod.MultiFrequencyPathLossService(db, use_mock=False)
     result = await svc.calibrate_frequency_sweep(
         chamber_id=chamber.id,
+        lab_profile_id=lab_profile_id,
         probe_ids=[0],
         polarization=PolarizationType.V,
         freq_start_mhz=3400.0,

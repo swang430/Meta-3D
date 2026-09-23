@@ -34,8 +34,10 @@ export interface FrequencyRange {
 export interface CalibrationJobResponse {
   calibration_job_id: string
   status: CalibrationJobStatus
+  use_mock?: boolean | null
   estimated_duration_minutes?: number
   message?: string
+  warnings?: string[]
 }
 
 export interface CalibrationProgress {
