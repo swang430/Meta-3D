@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  assertMultiFrequencyPathLossJobResponse,
   buildMultiFrequencyPathLossRequest,
 } from '../src/components/SystemCalibration/multiFrequencyCalibration.ts'
 
@@ -59,6 +60,42 @@ test('multi-frequency request builder rejects ambiguous or invalid execution inp
       JSON.stringify(input),
     )
   }
+})
+
+
+test('multi-frequency response provenance must exactly match the explicit request', () => {
+  const completedReal = {
+    calibration_job_id: '09fbdf36-ce6c-46d8-a8e8-b636f87f5b21',
+    status: 'completed' as const,
+    use_mock: false,
+    warnings: [],
+  }
+
+  assert.equal(
+    assertMultiFrequencyPathLossJobResponse(completedReal, false),
+    completedReal,
+  )
+  assert.throws(
+    () => assertMultiFrequencyPathLossJobResponse(
+      { ...completedReal, use_mock: null },
+      false,
+    ),
+    /执行来源缺失/,
+  )
+  assert.throws(
+    () => assertMultiFrequencyPathLossJobResponse(
+      { ...completedReal, use_mock: true },
+      false,
+    ),
+    /执行来源与请求不一致/,
+  )
+  assert.throws(
+    () => assertMultiFrequencyPathLossJobResponse(
+      { ...completedReal, status: 'failed' },
+      false,
+    ),
+    /任务未完成/,
+  )
 })
 
 

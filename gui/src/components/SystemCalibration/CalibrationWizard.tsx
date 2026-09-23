@@ -40,7 +40,10 @@ import {
   type RepeatabilityTestRequest,
   type QuietZoneCalibrationRequest,
 } from '../../api/calibrationService';
-import { buildMultiFrequencyPathLossRequest } from './multiFrequencyCalibration';
+import {
+  assertMultiFrequencyPathLossJobResponse,
+  buildMultiFrequencyPathLossRequest,
+} from './multiFrequencyCalibration';
 
 interface CalibrationWizardProps {
   opened: boolean;
@@ -182,7 +185,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         });
 
         setExecutionProgress(60);
-        result = await startMultiFrequencyPathLoss(request);
+        result = assertMultiFrequencyPathLossJobResponse(
+          await startMultiFrequencyPathLoss(request),
+          request.use_mock,
+        );
 
       } else if (calibrationType.startsWith('quiet_zone_')) {
         // Determine validation type from calibrationType

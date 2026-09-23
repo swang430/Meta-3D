@@ -1,4 +1,7 @@
-import type { MultiFrequencyPathLossRequest } from '../../api/calibrationService'
+import type {
+  MultiFrequencyPathLossJobResponse,
+  MultiFrequencyPathLossRequest,
+} from '../../api/calibrationService'
 
 
 export interface MultiFrequencyPathLossInput {
@@ -72,4 +75,21 @@ export function buildMultiFrequencyPathLossRequest(
     calibrated_by: calibratedBy,
     use_mock: input.mode === 'mock',
   }
+}
+
+
+export function assertMultiFrequencyPathLossJobResponse(
+  response: MultiFrequencyPathLossJobResponse,
+  expectedUseMock: boolean,
+): MultiFrequencyPathLossJobResponse {
+  if (typeof response.use_mock !== 'boolean') {
+    throw new Error('多频校准响应的执行来源缺失，不能判定为真实仪表结果')
+  }
+  if (response.use_mock !== expectedUseMock) {
+    throw new Error('多频校准响应的执行来源与请求不一致')
+  }
+  if (response.status !== 'completed') {
+    throw new Error(`多频校准任务未完成：${response.status}`)
+  }
+  return response
 }
