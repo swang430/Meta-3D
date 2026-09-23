@@ -61,6 +61,7 @@ def _pattern(
         probe_id=probe_id,
         chamber_id=chamber_id,
         use_mock=False,
+        source="vendor_datasheet",
         polarization=pol,
         frequency_mhz=freq,
         azimuth_deg=[0.0],
@@ -122,10 +123,12 @@ class TestPatternConsumerChamberScoping:
         _pattern(session, probe_id=0, chamber_id=a, peak_gain_dbi=15.0)
         _pattern(session, probe_id=0, chamber_id=b, peak_gain_dbi=99.0)
         assert get_probe_gain_at_azimuth(
-            session, 4, 0.0, 3500.0, "V", chamber_id=a
+            session, 4, 0.0, 3500.0, "V", chamber_id=a,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
         ) == 15.0
         assert get_probe_gain_at_azimuth(
-            session, 4, 0.0, 3500.0, "V", chamber_id=b
+            session, 4, 0.0, 3500.0, "V", chamber_id=b,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
         ) == 99.0
 
     def test_quiet_zone_ripple_excludes_other_chamber(self, session):
@@ -137,7 +140,10 @@ class TestPatternConsumerChamberScoping:
         # 其它暗室 B: 宽 spread, 必须被排除
         _pattern(session, probe_id=0, chamber_id=b, peak_gain_dbi=50.0)
         _pattern(session, probe_id=1, chamber_id=b, peak_gain_dbi=99.0)
-        ripple = estimate_quiet_zone_ripple_db(session, 4, 3500.0, "V", chamber_id=a)
+        ripple = estimate_quiet_zone_ripple_db(
+            session, 4, 3500.0, "V", chamber_id=a,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
+        )
         assert ripple == pytest.approx(2.0)
 
 

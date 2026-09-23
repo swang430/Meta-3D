@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import (
     PatternCalibrationResponse,
@@ -20,10 +21,12 @@ from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
     RFChainSpec,
 )
+from app.services.calibration_report_generator import CalibrationReportGenerator
 from app.services.probe_calibration_service import (
     PatternCalibrationService,
     PatternMeasurement,
 )
+from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
 
 
 def _session():
@@ -366,4 +369,133 @@ async def test_real_pattern_rolls_back_all_rows_when_later_route_fails(monkeypat
     assert result.success is False
     assert "second route failed" in result.message
     assert db.query(ProbePattern).count() == 0
+    db.close()
+
+
+def test_measured_pattern_requires_current_frozen_route(monkeypatch):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    current_chain = RFChainSpec(
+        chain_id="chain-current",
+        ce_port="B1.1",
+        probe_id=0,
+        polarization="V",
+    )
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [current_chain]
+        ),
+    )
+    matching = _pattern(
+        probe_id=0,
+        chamber_id=chamber_id,
+        source="in_chamber_measured",
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+        topology_id="topology-1",
+        chain_id="chain-current",
+        ce_port="B1.1",
+        peak_gain_dbi=6.0,
+    )
+    db.add(matching)
+    db.commit()
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) == 6.0
+
+    matching.ce_port = "B9.9"
+    db.commit()
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) is None
+    db.close()
+
+
+def test_vendor_pattern_is_route_independent(monkeypatch):
+    db = _session()
+    chamber_id = uuid4()
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            source="vendor_datasheet",
+            peak_gain_dbi=7.0,
+        )
+    )
+    db.commit()
+
+    def _must_not_resolve(*_args, **_kwargs):
+        raise AssertionError("vendor data must not depend on current topology")
+
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        _must_not_resolve,
+    )
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=uuid4(),
+        operating_mode="mimo_ota",
+    ) == 7.0
+    db.close()
+
+
+def test_pattern_report_discloses_route_but_never_invents_pass_verdict():
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    db.add(
+        ChamberConfiguration(
+            id=chamber_id,
+            name="Pattern chamber",
+            chamber_type="custom",
+            chamber_radius_m=3.0,
+            num_probes=32,
+        )
+    )
+    db.add(
+        _pattern(
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="chain-1",
+            ce_port="B1.1",
+            warnings=["cleanup diagnostic"],
+            source="in_chamber_measured",
+        )
+    )
+    db.commit()
+
+    report = CalibrationReportGenerator(db)._collect_probe_data(
+        chamber_id=chamber_id,
+        calibration_type="pattern",
+    )
+    row = report["probe_calibration"]["pattern"][0]
+    assert row["validation_pass"] is None
+    assert row["source"] == "in_chamber_measured"
+    assert row["warnings"] == ["cleanup diagnostic"]
+    assert row["lab_profile_id"] == str(lab_profile_id)
+    assert row["topology_id"] == "topology-1"
+    assert row["chain_id"] == "chain-1"
+    assert row["ce_port"] == "B1.1"
+    assert report["execution_summary"]["undetermined"] == 1
     db.close()

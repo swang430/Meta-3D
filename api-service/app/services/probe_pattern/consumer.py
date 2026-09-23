@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import desc
@@ -39,6 +39,9 @@ def _query_valid_pattern(
     freq_tolerance_pct: float = 5.0,
     *,
     chamber_id: UUID,
+    lab_profile_id: Optional[UUID] = None,
+    operating_mode: str = "mimo_ota",
+    route_cache: Optional[Dict[str, Any]] = None,
 ) -> Optional[ProbePattern]:
     """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq.
 
@@ -49,6 +52,8 @@ def _query_valid_pattern(
         raise ValueError("chamber_id is required for formal ProbePattern consumption")
     f_min = frequency_mhz * (1.0 - freq_tolerance_pct / 100.0)
     f_max = frequency_mhz * (1.0 + freq_tolerance_pct / 100.0)
+    if route_cache is None:
+        route_cache = {}
 
     def _base():
         return db.query(ProbePattern).filter(
@@ -61,13 +66,63 @@ def _query_valid_pattern(
             ProbePattern.valid_until > datetime.utcnow(),
         )
 
-    exact = (
+    candidates = (
         _base()
         .filter(ProbePattern.chamber_id == chamber_id)
         .order_by(desc(ProbePattern.measured_at))
-        .first()
+        .all()
     )
-    return exact
+    for pattern in candidates:
+        if pattern.source == "vendor_datasheet":
+            return pattern
+        if pattern.source != "in_chamber_measured":
+            continue
+        if (
+            pattern.lab_profile_id != lab_profile_id
+            or pattern.operating_mode != operating_mode
+        ):
+            continue
+
+        if "resolution" not in route_cache:
+            try:
+                from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+                route_cache["resolution"] = resolve_rf_chains(
+                    db, lab_profile_id, operating_mode
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "[ProbePattern] current route resolution failed for lab=%s "
+                    "mode=%s: %s",
+                    lab_profile_id,
+                    operating_mode,
+                    exc,
+                )
+                route_cache["resolution"] = None
+        resolution = route_cache["resolution"]
+        if (
+            resolution is None
+            or resolution.chamber_id != chamber_id
+            or not resolution.topology_id
+            or pattern.topology_id != str(resolution.topology_id)
+        ):
+            continue
+        matching = [
+            chain
+            for chain in resolution.chains
+            if chain.probe_id == probe_id
+            and chain.polarization.upper() == polarization.upper()
+        ]
+        if len(matching) != 1:
+            continue
+        chain = matching[0]
+        if (
+            pattern.chain_id != str(chain.chain_id)
+            or pattern.ce_port != str(chain.ce_port)
+        ):
+            continue
+        return pattern
+    return None
 
 
 def select_active_probe_id(num_probes: int, azimuth_deg: float) -> Optional[int]:
@@ -110,6 +165,8 @@ def get_probe_gain_at_azimuth(
     polarization: str = "V",
     *,
     chamber_id: UUID,
+    lab_profile_id: UUID,
+    operating_mode: str,
 ) -> Optional[float]:
     """Return peak gain (dBi) of the probe closest to `azimuth_deg`.
 
@@ -126,7 +183,14 @@ def get_probe_gain_at_azimuth(
     if probe_id is None:
         return None
     pattern = _query_valid_pattern(
-        db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+        db,
+        probe_id,
+        polarization,
+        frequency_mhz,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode=operating_mode,
+        route_cache={},
     )
     if pattern is None or pattern.peak_gain_dbi is None:
         return None
@@ -140,6 +204,8 @@ def estimate_quiet_zone_ripple_db(
     polarization: str = "V",
     *,
     chamber_id: UUID,
+    lab_profile_id: UUID,
+    operating_mode: str,
 ) -> Optional[float]:
     """Estimate QZ ripple from cross-probe peak-gain spread.
 
@@ -156,9 +222,17 @@ def estimate_quiet_zone_ripple_db(
     Returns None if fewer than 2 probes have data (insufficient sample).
     """
     patterns: List[ProbePattern] = []
+    route_cache: Dict[str, Any] = {}
     for probe_id in range(num_probes):
         p = _query_valid_pattern(
-            db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+            db,
+            probe_id,
+            polarization,
+            frequency_mhz,
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode=operating_mode,
+            route_cache=route_cache,
         )
         if p is not None and p.peak_gain_dbi is not None:
             patterns.append(p)

@@ -3663,6 +3663,8 @@ class MeasureExecutor(IStepExecutor):
                 pattern_gain_v = get_probe_gain_at_azimuth(
                     context.db, chamber.num_probes, az_target, pcell.frequency_hz / 1e6, "V",
                     chamber_id=chamber.id,
+                    lab_profile_id=lab.id,
+                    operating_mode=config.switch_mode_id,
                 )
                 chain_pl_db = chain_pl_by_probe_pol.get((rf_chain_probe_id, "V"))
                 azimuth_probe_gains[az_target] = {
