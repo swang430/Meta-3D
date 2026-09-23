@@ -9,6 +9,7 @@ import {
 
 const validInput = {
   chamberId: '09fbdf36-ce6c-46d8-a8e8-b636f87f5b21',
+  labProfileId: '6eeb4d25-90b6-462c-9001-29b4d2f11d9d',
   probeIds: '1, 2',
   polarization: 'V' as const,
   frequencyStartMhz: 3400,
@@ -24,6 +25,8 @@ const validInput = {
 test('multi-frequency request builder preserves explicit real and mock provenance', () => {
   assert.deepEqual(buildMultiFrequencyPathLossRequest(validInput), {
     chamber_id: validInput.chamberId,
+    lab_profile_id: validInput.labProfileId,
+    operating_mode: 'mimo_ota',
     probe_ids: [1, 2],
     polarization: 'V',
     freq_start_mhz: 3400,
@@ -44,6 +47,7 @@ test('multi-frequency request builder preserves explicit real and mock provenanc
 test('multi-frequency request builder rejects ambiguous or invalid execution inputs', () => {
   const invalidInputs = [
     { ...validInput, chamberId: '' },
+    { ...validInput, labProfileId: '' },
     { ...validInput, mode: null },
     { ...validInput, probeIds: '' },
     { ...validInput, probeIds: '1, 1' },

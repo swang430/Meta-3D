@@ -8,7 +8,7 @@ set_passthrough_mode / clear_passthrough_mode + upstream SG.set_cw / start_tx
 / SA, tone setup fail, finally-stop, missing upstream source on B path), and
 the chamber-flag dispatch (cable_sgh_to_sa_loss_db = None → legacy VNA fallback).
 
-The two CE-side paths (D = CE-internal CW gen, B = SG/BSE upstream + CE
+The two CE-side paths (D = CE-internal CW gen, B = vector signal generator + CE
 passthrough) are dispatched by ChannelEmulatorDriver.get_calibration_tone_capabilities():
 PROPSIM with Internal Interference Generator option goes D, anything else
 falls back to B.
@@ -77,9 +77,9 @@ def chamber_with_cable_loss(db):
 def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None, rf_switch=None):
     """Replace path_loss_service's HAL lookup with stubbed drivers.
 
-    sg / bse are the optional upstream sources for the B (passthrough) path —
-    omit them to test the failure mode where a PASSTHROUGH_ONLY CE has nothing
-    to drive it.
+    sg is the registered vectorSignalGenerator source for the B path. bse is
+    retained only to prove that a baseStation binding cannot impersonate this
+    SPI.
 
     rf_switch optional: omit to simulate fixed-cabling sites (CAICT-Lab-1
     style) where no relay matrix exists — service must skip routing silently.
@@ -91,7 +91,7 @@ def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None, rf_switch=Non
     if sa is not None:
         fake_hal.drivers["signalAnalyzer"] = sa
     if sg is not None:
-        fake_hal.drivers["signalGenerator"] = sg
+        fake_hal.drivers["vectorSignalGenerator"] = sg
     if bse is not None:
         fake_hal.drivers["baseStation"] = bse
     if rf_switch is not None:
@@ -305,9 +305,8 @@ class TestPassthroughBPath:
         ce.clear_passthrough_mode.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_passthrough_uses_bse_when_only_bse_present(self, db, monkeypatch):
-        """B path with only baseStation bound: BSE drives CW (it implements
-        set_cw / start_tx / stop_tx for testmode CW emission)."""
+    async def test_passthrough_rejects_base_station_as_signal_source(self, db, monkeypatch):
+        """baseStation adapter cannot impersonate the vector-signal-generator SPI."""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         bse = _make_sg()  # same shape as SG — set_cw/start_tx/stop_tx
         sa = MagicMock()
@@ -316,26 +315,26 @@ class TestPassthroughBPath:
         _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
-        m = await svc._real_path_loss_measurement_via_ce_sa(
-            probe_id=1,
-            polarization=PolarizationType.V,
-            frequency_mhz=3500.0,
-            ce_tx_power_dbm=-20.0,
-            sgh_gain_dbi=10.0,
-            probe_gain_dbi=8.0,
-            cable_sgh_to_sa_loss_db=1.5,
-        )
-        assert isinstance(m, PathLossMeasurement)
-        bse.set_cw.assert_awaited_once()
-        bse.stop_tx.assert_awaited_once()
+        with pytest.raises(RuntimeError, match="vectorSignalGenerator"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=1,
+                polarization=PolarizationType.V,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+            )
+        bse.set_cw.assert_not_awaited()
+        bse.start_tx.assert_not_awaited()
+        bse.stop_tx.assert_not_awaited()
+        ce.set_passthrough_mode.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_passthrough_prefers_bse_over_sg_when_both_present(
+    async def test_passthrough_uses_vector_signal_generator_when_base_station_present(
         self, db, monkeypatch
     ):
-        """When both BSE and SG bound: must pick BSE (it's the production-time
-        upstream source, so calibration path stays identical to test path).
-        SG must NOT be touched."""
+        """只有注册的 vectorSignalGenerator 可驱动 B 路，baseStation 不参与。"""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         bse = _make_sg()
         sg = _make_sg()
@@ -354,26 +353,25 @@ class TestPassthroughBPath:
             probe_gain_dbi=8.0,
             cable_sgh_to_sa_loss_db=1.5,
         )
-        bse.set_cw.assert_awaited_once()
-        bse.start_tx.assert_awaited_once()
-        bse.stop_tx.assert_awaited_once()
-        # SG present but unused — keeps cal/test path identical
-        sg.set_cw.assert_not_awaited()
-        sg.start_tx.assert_not_awaited()
-        sg.stop_tx.assert_not_awaited()
+        sg.set_cw.assert_awaited_once()
+        sg.start_tx.assert_awaited_once()
+        sg.stop_tx.assert_awaited_once()
+        bse.set_cw.assert_not_awaited()
+        bse.start_tx.assert_not_awaited()
+        bse.stop_tx.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_passthrough_without_upstream_source_raises(self, db, monkeypatch):
-        """PASSTHROUGH_ONLY CE with no SG and no BSE → must fail loudly with
+        """PASSTHROUGH_ONLY CE with no vectorSignalGenerator → must fail loudly with
         actionable error, never silently proceed."""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa)  # no sg, no bse
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
-        with pytest.raises(RuntimeError, match="PASSTHROUGH_ONLY"):
+        with pytest.raises(RuntimeError, match="vectorSignalGenerator"):
             await svc._real_path_loss_measurement_via_ce_sa(
                 probe_id=1,
                 polarization=PolarizationType.V,
@@ -578,11 +576,11 @@ class TestSwitchAutoRouting:
         """B path: ce_port must thread to set_passthrough_mode so the right
         OTA output port is the passthrough sink."""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
-        bse = _make_sg()
+        sg = _make_sg()
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         await svc._real_path_loss_measurement_via_ce_sa(
@@ -704,7 +702,7 @@ class TestChamberFlagDispatch:
 class TestMultiFrequencySweep:
     """A3: MultiFrequencyPathLossService._real_frequency_sweep used to throw
     NotImplementedError. Now it delegates per-frequency to single-freq CE+SA,
-    so we get D/B capability dispatch + BSE preference + finally-stop +
+    so we get D/B capability dispatch + source validation + finally-stop +
     rfSwitch routing for free.
     """
 
@@ -719,10 +717,12 @@ class TestMultiFrequencySweep:
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
         _patched_hal(monkeypatch, ce=ce, sa=sa)
+        lab = _seed_lab_with_one_chain(db, chamber_with_cable_loss, probe_ids=(0, 1))
 
         svc = MultiFrequencyPathLossService(db, use_mock=False)
         result = await svc.calibrate_frequency_sweep(
             chamber_id=chamber_with_cable_loss.id,
+            lab_profile_id=lab.id,
             probe_ids=[0, 1],
             polarization=PolarizationType.V,
             freq_start_mhz=3400.0,
@@ -752,11 +752,13 @@ class TestMultiFrequencySweep:
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
         _patched_hal(monkeypatch, ce=ce, sa=sa)
+        lab = _seed_lab_with_one_chain(db, chamber_with_cable_loss)
 
         result = await MultiFrequencyPathLossService(
             db, use_mock=False
         ).calibrate_frequency_sweep(
             chamber_id=chamber_with_cable_loss.id,
+            lab_profile_id=lab.id,
             probe_ids=[0],
             polarization=PolarizationType.V,
             freq_start_mhz=3500.0,
@@ -786,10 +788,12 @@ class TestMultiFrequencySweep:
         ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
         sa = MagicMock()
         _patched_hal(monkeypatch, ce=ce, sa=sa)
+        lab = _seed_lab_with_one_chain(db, c)
 
         svc = MultiFrequencyPathLossService(db, use_mock=False)
         result = await svc.calibrate_frequency_sweep(
             chamber_id=c.id,
+            lab_profile_id=lab.id,
             probe_ids=[0],
             polarization=PolarizationType.V,
             freq_start_mhz=3400.0,
@@ -808,18 +812,20 @@ class TestMultiFrequencySweep:
         self, db, monkeypatch, chamber_with_cable_loss
     ):
         """Sweep must inherit single-freq's D/B dispatch — verify by giving it
-        a PASSTHROUGH_ONLY CE + BSE: every freq must drive BSE.set_cw, never
+        a PASSTHROUGH_ONLY CE + vector signal generator: every freq must drive set_cw, never
         ce.set_calibration_tone."""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
-        bse = _make_sg()
+        sg = _make_sg()
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
-        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+        lab = _seed_lab_with_one_chain(db, chamber_with_cable_loss)
 
         svc = MultiFrequencyPathLossService(db, use_mock=False)
         result = await svc.calibrate_frequency_sweep(
             chamber_id=chamber_with_cable_loss.id,
+            lab_profile_id=lab.id,
             probe_ids=[0],
             polarization=PolarizationType.V,
             freq_start_mhz=3400.0,
@@ -830,7 +836,7 @@ class TestMultiFrequencySweep:
         )
         assert result.success
         # B path used 3 times (one per freq), D path never touched.
-        assert bse.set_cw.await_count == 3
+        assert sg.set_cw.await_count == 3
         ce.set_calibration_tone.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -838,8 +844,10 @@ class TestMultiFrequencySweep:
         """use_mock=True must keep working as before — synthetic data only,
         no driver calls."""
         svc = MultiFrequencyPathLossService(db, use_mock=True)
+        lab = _seed_lab_with_one_chain(db, chamber_with_cable_loss)
         result = await svc.calibrate_frequency_sweep(
             chamber_id=chamber_with_cable_loss.id,
+            lab_profile_id=lab.id,
             probe_ids=[0],
             polarization=PolarizationType.V,
             freq_start_mhz=3400.0,
@@ -895,7 +903,7 @@ class TestAcquireCleanupWarningHarvest:
         """F1, B 路端到端: clear_passthrough_mode 被拒 → warnings 可见。"""
         ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
         ce.clear_passthrough_mode = AsyncMock(return_value=False)
-        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok(), bse=_make_sg())
+        _patched_hal(monkeypatch, ce=ce, sa=self._sa_ok(), sg=_make_sg())
 
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         result = await svc.start_calibration(
@@ -989,25 +997,36 @@ class TestAcquireCleanupWarningHarvest:
         assert rejected and "MagicMock" in rejected[0]  # 消息含源类型名
 
 
-def _seed_lab_with_one_chain(db, chamber):
-    """最小 lab+topology: 单链 conn_p0v (probe 0 V, mimo_ota 模式)。"""
+def _seed_lab_with_one_chain(db, chamber, probe_ids=(0,)):
+    """最小 lab+topology: requested probe V chains in mimo_ota mode."""
+    active_connections = [f"conn_p{probe_id}v" for probe_id in probe_ids]
     topo = SwitchTopology(
         switch_category_id=uuid.uuid4(),  # SQLite 测试不校验 FK
         chamber_id=chamber.id,
         name="harvest-topo",
         version="1.0",
-        nodes=[
-            {"id": "ce_b1", "type": "ce_port", "label": "B1.1", "params": {}},
-            {"id": "probe_0_v", "type": "probe", "label": "P0V",
-             "params": {"probe_id": 0, "polarization": "V"}},
-        ],
+        nodes=(
+            [
+                {"id": f"ce_b{index + 1}", "type": "ce_port",
+                 "label": f"B{index + 1}.1", "params": {}}
+                for index, _probe_id in enumerate(probe_ids)
+            ]
+            + [
+                {"id": f"probe_{probe_id}_v", "type": "probe",
+                 "label": f"P{probe_id}V",
+                 "params": {"probe_id": probe_id, "polarization": "V"}}
+                for probe_id in probe_ids
+            ]
+        ),
         connections=[
-            {"id": "conn_p0v", "source": "ce_b1", "target": "probe_0_v",
-             "calibrated_loss_db": 0.5, "modes": ["mimo_ota"]},
+            {"id": f"conn_p{probe_id}v", "source": f"ce_b{index + 1}",
+             "target": f"probe_{probe_id}_v", "calibrated_loss_db": 0.5,
+             "modes": ["mimo_ota"]}
+            for index, probe_id in enumerate(probe_ids)
         ],
         operating_modes=[
             {"id": "mimo_ota", "name": "MIMO OTA",
-             "active_connections": ["conn_p0v"]},
+             "active_connections": active_connections},
         ],
         is_active=True,
     )

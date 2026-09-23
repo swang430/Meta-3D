@@ -379,6 +379,8 @@ async def start_multi_frequency_calibration(
     service = MultiFrequencyPathLossService(db, use_mock=request.use_mock)
     result = await service.calibrate_frequency_sweep(
         chamber_id=request.chamber_id,
+        lab_profile_id=request.lab_profile_id,
+        operating_mode=request.operating_mode,
         probe_ids=request.probe_ids,
         polarization=request.polarization,
         freq_start_mhz=request.freq_start_mhz,

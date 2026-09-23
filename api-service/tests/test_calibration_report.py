@@ -177,6 +177,39 @@ class TestPDFGeneratorCalibrationSections:
         assert "Path Loss Warning Audit" in rendered_text
         assert "RF switch cleanup failed &lt;prototype&gt;" in rendered_text
 
+    def test_probe_report_renders_multi_frequency_warning_audit(self):
+        generator = PDFGenerator()
+        data = {
+            "probe_calibration": {
+                "multi_freq_path_loss": [{
+                    "probe_id": 2,
+                    "freq_start_mhz": 3400.0,
+                    "freq_stop_mhz": 3600.0,
+                    "validation_pass": None,
+                    "calibrated_at": "2026-09-23 17:00:00",
+                    "warnings": ["SA cleanup failed <probe-2>"],
+                }],
+            },
+            "probe_summary": {
+                "total_executions": 0,
+                "passed": 0,
+                "failed": 0,
+                "pass_rate": 0.0,
+            },
+        }
+
+        elements = generator._generate_calibration_probe_section(data)
+        rendered_parts = []
+        for element in elements:
+            rendered_parts.append(str(getattr(element, "text", "")))
+            for row in getattr(element, "_cellvalues", []):
+                for cell in row:
+                    rendered_parts.append(str(getattr(cell, "text", cell)))
+        rendered_text = " ".join(rendered_parts)
+
+        assert "Multi-Frequency Warning Audit" in rendered_text
+        assert "SA cleanup failed &lt;probe-2&gt;" in rendered_text
+
     @pytest.mark.asyncio
     async def test_legacy_calibration_pdf_without_provenance_manifest_is_blocked(
         self, monkeypatch, tmp_path,

@@ -160,7 +160,9 @@ export interface CertificateListResponse {
 }
 
 export interface MultiFrequencyPathLossRequest {
+  lab_profile_id: string
   chamber_id: string
+  operating_mode: string
   probe_ids: number[]
   polarization: 'V' | 'H'
   freq_start_mhz: number

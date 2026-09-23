@@ -31,11 +31,13 @@ provenance。操作员会把随机结果误认为完成了多频路损校准。
 ## 权威数据流
 
 ```text
-Active LabProfile.chamber_config_id
+Active LabProfile.id + LabProfile.chamber_config_id
         + 操作员输入的 probe / polarization / sweep / SGH / mode
         -> POST /calibration/path-loss/multi-frequency/start
         -> MultiFrequencyPathLossService(use_mock=显式值)
-        -> Real: CE+SA + instrument_test_lease
+        -> Real: 按 LabProfile + chamber + operating_mode 解析活动 SwitchTopology
+                 每个 probe/polarization 必须唯一解析到 RF chain/CE port
+                 vectorSignalGenerator + CE + SA + instrument_test_lease
            Mock: 诊断数据，use_mock=true
         -> MultiFrequencyPathLoss(use_mock, warnings, sweep data)
         -> CalibrationJobResponse(use_mock, warnings)
@@ -72,7 +74,8 @@ Active LabProfile.chamber_config_id
 
 - Real 仍由既有 `instrument_test_lease(control_f64=True, control_uxm=False)` 包住整次扫频。
 - 请求没有明确模式或当前 LabProfile 未绑定暗室时，GUI 在发请求前 fail-loud。
-- 后端仍校验暗室存在；本片不把配置声明当实际硬件状态。
+- 后端校验暗室存在、LabProfile 精确绑定该暗室，并在首次仪器 I/O 前解析所有请求探头的
+  活动 RF chain；缺链、重链或跨暗室均 fail-loud，不把配置声明当实际硬件状态。
 - 历史 `warnings=NULL`、`use_mock=NULL` 继续可读，但不进入正式报告分母。
 - checked-in OpenAPI、generated TypeScript 和手写 GUI 类型同步更新。
 
@@ -82,5 +85,6 @@ Active LabProfile.chamber_config_id
 2. 未选择模式、无暗室、非法 probe CSV 均不产生请求。
 3. `use_mock=false` 精确到达真实 service；失败不回退模拟。
 4. acquire warning 按 probe 落库，并在 start 响应与两条校准报告收集路径中可见。
-5. Mock 行在报告中保持 `validation_pass=null`；真实、有效且未过期行才可进入现有正式分母。
+5. Mock 与 Real 多频行在报告中均保持 `validation_pass=null`；本片没有认证阈值，任何完成行
+   都只作可审计测量证据，不进入正式 PASS/FAIL 分母。
 6. 旧随机端点从 live OpenAPI 消失，四份契约镜像一致。

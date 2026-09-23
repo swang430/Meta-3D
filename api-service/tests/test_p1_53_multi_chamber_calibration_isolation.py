@@ -592,6 +592,37 @@ def test_mock_rf_multi_and_link_rows_are_unverified_and_excluded_from_summary(se
     assert data["execution_summary"]["total_executions"] == 0
 
 
+def test_real_multi_frequency_without_threshold_is_unverified_and_excluded(session):
+    """完成真实扫频不等于通过：尚无权威阈值时不得进入 PASS 分母。"""
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Thresholdless Multi-Frequency Chamber")
+    now = datetime.utcnow()
+    session.add(MultiFrequencyPathLoss(
+        chamber_id=chamber_id,
+        use_mock=False,
+        probe_id=1,
+        polarization="V",
+        freq_start_mhz=3400.0,
+        freq_stop_mhz=3600.0,
+        freq_step_mhz=100.0,
+        num_points=3,
+        frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+        path_loss_db=[50.0, 51.0, 52.0],
+        calibrated_at=now,
+        valid_until=now + timedelta(days=30),
+        status=CalibrationStatus.VALID.value,
+        warnings=[],
+    ))
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_probe_data(
+        chamber_id=chamber_id,
+    )
+
+    assert data["probe_calibration"]["multi_freq_path_loss"][0]["validation_pass"] is None
+    assert data["execution_summary"]["total_executions"] == 0
+
+
 def test_global_link_never_makes_an_uncalibrated_probe_valid(session):
     chamber_id = uuid.uuid4()
     _chamber(session, chamber_id, "Link Only Chamber")
@@ -750,6 +781,7 @@ async def test_multi_frequency_start_remains_explicitly_mock(session, monkeypatc
         fake_sweep,
     )
     request = StartMultiFrequencyPathLossRequest(
+        lab_profile_id=uuid.uuid4(),
         chamber_id=chamber_id,
         probe_ids=[0],
         polarization="V",

@@ -1853,11 +1853,20 @@ components:
             decision (CE+SA policy).
     StartMultiFrequencyPathLossRequest:
       type: object
-      required: [chamber_id, probe_ids, polarization, freq_start_mhz, freq_stop_mhz, freq_step_mhz, sgh_model, sgh_gain_dbi, calibrated_by]
+      required: [lab_profile_id, chamber_id, probe_ids, polarization, freq_start_mhz, freq_stop_mhz, freq_step_mhz, sgh_model, sgh_gain_dbi, calibrated_by]
       properties:
+        lab_profile_id:
+          type: string
+          format: uuid
+          description: 本次校准使用的 LabProfile ID
         chamber_id:
           type: string
           format: uuid
+        operating_mode:
+          type: string
+          minLength: 1
+          default: mimo_ota
+          description: 用于解析活动 RF 拓扑链的运行模式
         probe_ids:
           type: array
           items:

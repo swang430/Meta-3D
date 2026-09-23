@@ -54,7 +54,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
   // P1-57（外审 R3）：暗室由全局 LabProfile 派生 —— 原来这里写死
   // 'b7cd8de0-…'，那是 P1-28 审计里**已经不存在的孤儿暗室**，
   // 路损/链路/基线校准一直写进一个被删掉的暗室 id。
-  const { chamberId: operationalChamberId, beginWork } = useOperationalLab();
+  const {
+    chamberId: operationalChamberId,
+    selectedLabProfileId,
+    beginWork,
+  } = useOperationalLab();
   const [active, setActive] = useState(0);
   const [calibrationType, setCalibrationType] = useState<string>('trp');
   const [isExecuting, setIsExecuting] = useState(false);
@@ -172,6 +176,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
       } else if (calibrationType === 'multi_frequency') {
         const request = buildMultiFrequencyPathLossRequest({
+          labProfileId: selectedLabProfileId || '',
           chamberId: operationalChamberId || '',
           probeIds: multiFrequencyProbeIds,
           polarization: multiFrequencyPolarization,

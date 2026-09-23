@@ -5,6 +5,7 @@ import type {
 
 
 export interface MultiFrequencyPathLossInput {
+  labProfileId: string
   chamberId: string
   probeIds: string
   polarization: 'V' | 'H'
@@ -25,6 +26,10 @@ export function buildMultiFrequencyPathLossRequest(
   const chamberId = input.chamberId.trim()
   if (!chamberId) {
     throw new Error('当前 LabProfile 未绑定暗室 —— 请先选择绑定暗室的 LabProfile')
+  }
+  const labProfileId = input.labProfileId.trim()
+  if (!labProfileId) {
+    throw new Error('请先选择用于冻结 RF 拓扑链的 LabProfile')
   }
   if (input.mode === null) {
     throw new Error('请选择真实仪表或模拟诊断模式')
@@ -63,7 +68,9 @@ export function buildMultiFrequencyPathLossRequest(
   }
 
   return {
+    lab_profile_id: labProfileId,
     chamber_id: chamberId,
+    operating_mode: 'mimo_ota',
     probe_ids: probeIds,
     polarization: input.polarization,
     freq_start_mhz: input.frequencyStartMhz,

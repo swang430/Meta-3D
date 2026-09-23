@@ -793,7 +793,13 @@ class RFChainCalibrationResponse(BaseModel):
 
 class StartMultiFrequencyPathLossRequest(BaseModel):
     """启动多频点路损校准请求"""
+    lab_profile_id: UUID = Field(..., description="本次校准使用的 LabProfile ID")
     chamber_id: UUID = Field(..., description="暗室配置 ID")
+    operating_mode: str = Field(
+        default="mimo_ota",
+        min_length=1,
+        description="用于解析活动 RF 拓扑链的运行模式",
+    )
     probe_ids: List[int] = Field(..., min_length=1, max_length=64, description="探头 ID 列表")
     polarization: PolarizationType = Field(..., description="极化类型")
 

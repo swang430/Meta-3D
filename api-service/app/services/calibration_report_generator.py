@@ -112,6 +112,13 @@ def _probe_validation_pass(calibration: Any) -> Optional[bool]:
     )
 
 
+def _multi_frequency_validation_pass(
+    calibration: MultiFrequencyPathLoss,
+) -> Optional[bool]:
+    """扫频采集尚无权威 PASS/FAIL 阈值，完成真实采集也只可审计不可判绿。"""
+    return None
+
+
 def _link_validation_pass(calibration: LinkCalibration) -> Optional[bool]:
     """Only an explicit-real, unexpired global link check has a verdict."""
     if calibration.use_mock is not False:
@@ -451,7 +458,7 @@ class CalibrationReportGenerator:
 
         multi_freq_data = []
         for cal in multi_freq_cals:
-            is_valid = _probe_validation_pass(cal)
+            is_valid = _multi_frequency_validation_pass(cal)
             if is_valid is not None:
                 total += 1
                 if is_valid:
@@ -812,7 +819,7 @@ class CalibrationReportGenerator:
 
             multi_freq_data = []
             for cal in calibrations:
-                is_valid = _probe_validation_pass(cal)
+                is_valid = _multi_frequency_validation_pass(cal)
                 if is_valid is not None:
                     total += 1
                     if is_valid:

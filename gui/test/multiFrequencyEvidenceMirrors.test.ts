@@ -53,3 +53,29 @@ test('checked OpenAPI, generated TypeScript and handwritten types preserve job p
   assert.doesNotMatch(generatedParameterReference, /MultiFrequencyCalibrationRequest/)
   assert.doesNotMatch(generatedParameterReference, /FrequencyCalibrationResult/)
 })
+
+
+test('multi-frequency request mirrors preserve the required LabProfile topology scope', () => {
+  const yaml = readFileSync(new URL('../../api/openapi.yaml', import.meta.url), 'utf8')
+  const generated = readFileSync(
+    new URL('../src/types/api.generated.ts', import.meta.url),
+    'utf8',
+  )
+
+  const yamlRequest = section(
+    yaml,
+    /^    StartMultiFrequencyPathLossRequest:/m,
+    /^    CalibrationJobResponse:/m,
+  )
+  assert.match(yamlRequest, /required: \[lab_profile_id, chamber_id,/)
+  assert.match(yamlRequest, /lab_profile_id:/)
+  assert.match(yamlRequest, /operating_mode:/)
+
+  const generatedRequest = section(
+    generated,
+    /^        StartMultiFrequencyPathLossRequest: \{/m,
+    /^        CalibrationJobResponse: \{/m,
+  )
+  assert.match(generatedRequest, /lab_profile_id: string;/)
+  assert.match(generatedRequest, /operating_mode: string;/)
+})

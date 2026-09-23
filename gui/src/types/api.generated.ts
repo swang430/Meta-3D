@@ -2891,8 +2891,18 @@ export interface components {
             use_mock: boolean;
         };
         StartMultiFrequencyPathLossRequest: {
+            /**
+             * Format: uuid
+             * @description 本次校准使用的 LabProfile ID
+             */
+            lab_profile_id: string;
             /** Format: uuid */
             chamber_id: string;
+            /**
+             * @description 用于解析活动 RF 拓扑链的运行模式
+             * @default mimo_ota
+             */
+            operating_mode: string;
             probe_ids: number[];
             polarization: string;
             freq_start_mhz: number;

@@ -172,6 +172,7 @@ class TestUseMockReachesService:
         r = client.post(
             "/api/v1/calibration/path-loss/multi-frequency/start",
             json={
+                "lab_profile_id": str(uuid.uuid4()),
                 "chamber_id": chamber_id, "probe_ids": [0],
                 "polarization": "V",
                 "freq_start_mhz": 3400.0, "freq_stop_mhz": 3500.0,
@@ -192,6 +193,7 @@ class TestUseMockReachesService:
         client.post(
             "/api/v1/calibration/path-loss/multi-frequency/start",
             json={
+                "lab_profile_id": str(uuid.uuid4()),
                 "chamber_id": chamber_id, "probe_ids": [0],
                 "polarization": "V",
                 "freq_start_mhz": 3400.0, "freq_stop_mhz": 3500.0,

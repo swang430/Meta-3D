@@ -826,9 +826,9 @@ class ProbePathLossCalibrationService:
 
         - **D 路径 (INTERNAL_CW_GENERATOR)**: CE 自己出 CW (PROPSIM Internal
           Interference Generator option 等). 单仪器, 最干净。
-        - **B 路径 (PASSTHROUGH_ONLY)**: 上游 SG/BSE 出 CW + CE 透传。需要
-          LabProfile 上额外绑 SG 或 BSE driver, 也是 fallback 给没买
-          interference generator option 的 PROPSIM。
+        - **B 路径 (PASSTHROUGH_ONLY)**: 上游 vectorSignalGenerator 出 CW +
+          CE 透传。需要 LabProfile 绑定实现 set_cw / start_tx / stop_tx 的
+          矢量信号源，是未配置 CE 内置干扰源时的显式硬件路径。
 
         信号路径 (两条共同 — 跟生产测试链路完全一致, 不动任何东西):
             [tone source] → CE_OUT → switch → PA → probe → 自由空间 → SGH → SA_IN
@@ -839,8 +839,8 @@ class ProbePathLossCalibrationService:
         前置条件:
           - chamber.cable_sgh_to_sa_loss_db 已 commissioning 标定 (一次性)
           - SGH 永久挂在 SA 一个输入端口 (零接触)
-          - rf_switch 已路由到 (probe_id, polarization) — 当前需要外部编排,
-            topology-derived 自动路由是 follow-up
+          - 现代调用方从 LabProfile/SwitchTopology 传入 ce_port 与 chain_id，
+            有 rfSwitch 时自动切到该链；无 route_target 的旧调用仍需人工预路由
 
         Args:
             probe_id, polarization: 当前测的探头 + 极化
@@ -906,7 +906,7 @@ class ProbePathLossCalibrationService:
 
         Returns (sa_mean_dbm, sa_std_db, tone_source_label).
 
-        通用 measurement primitive — 把 D/B capability dispatch + BSE 优先 +
+        通用 measurement primitive — 把 D/B capability dispatch + 信号源校验 +
         finally-stop + auto-routing 集中在一处. 给 path_loss 的算式步骤,
         和 QZ field uniformity / XPD / 任何"已知 CE tone, 测 SA 功率"流程
         共用. probe_id / polarization 仅用于 log + 错误信息, 不参与算式.
@@ -943,7 +943,7 @@ class ProbePathLossCalibrationService:
             async with instrument_test_lease(
                 f"path-loss-tone:probe{probe_id}:{polarization.value}",
                 control_f64=True,
-                control_uxm=False,   # B 路会用 BSE 出 tone，但那是 SG 角色不是 UXM 小区
+                control_uxm=False,
                 enable_monitoring=False,
             ):
                 return await self._acquire_sa_power_via_ce_tone_inner(
@@ -1004,7 +1004,7 @@ class ProbePathLossCalibrationService:
         _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
 
         # Capability-based dispatch: prefer D (single-instrument) when CE
-        # supports it, else fall through to B (needs upstream SG/BSE).
+        # supports it, else fall through to B (needs vectorSignalGenerator).
         caps = ce.get_calibration_tone_capabilities()
         if not caps:
             raise RuntimeError(
@@ -1045,28 +1045,29 @@ class ProbePathLossCalibrationService:
             return sa_rx_mean_dbm, sa_rx_std_db, "CE-internal"
 
         if CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
-            # Prefer BSE over a standalone SG: every chamber has a BSE
-            # (it's the throughput-test master), most chambers don't have
-            # a separate SG. Using BSE also keeps the signal path 100%
-            # identical between calibration (BSE in CW testmode) and
-            # production (BSE in LTE/5G mode) — that's the whole point of
-            # B path vs VNA. SG is only used as fallback for benches that
-            # actually have one but no BSE driver bound (rare).
-            source = hal.drivers.get("baseStation") or hal.drivers.get("signalGenerator")
+            # HAL registry's authoritative signal-source category is
+            # vectorSignalGenerator. Base-station adapters do not implement
+            # this SPI and must never be selected by a same-shape guess.
+            source = hal.drivers.get("vectorSignalGenerator")
             if source is None:
                 raise RuntimeError(
                     f"CE {type(ce).__name__} only supports PASSTHROUGH_ONLY for "
-                    "calibration tone, but no upstream baseStation / "
-                    "signalGenerator driver is bound on this LabProfile. Bind "
-                    "the BSE (preferred — keeps cal/test path identical) or "
-                    "an SG, both must implement set_cw / start_tx / stop_tx, "
+                    "calibration tone, but no vectorSignalGenerator driver is "
+                    "bound on this LabProfile. Bind a real vector signal "
+                    "generator implementing set_cw / start_tx / stop_tx, "
                     "or use a CE with INTERNAL_CW_GENERATOR capability."
                 )
-            # ⚠️ 上游信号源同样只判了 None（外审 P1）：CE/SA 是真机、
-            #    但 BSE/SG 绑的是模拟驱动时，它的 set_cw / start_tx 会「成功」，
-            #    SA 读数照样算成 VALID 证书。
+            missing_spi = [
+                name for name in ("set_cw", "start_tx", "stop_tx")
+                if not callable(getattr(source, name, None))
+            ]
+            if missing_spi:
+                raise RuntimeError(
+                    "vectorSignalGenerator driver does not implement required "
+                    f"calibration-tone SPI: {missing_spi}"
+                )
             _reject_simulated_instrument(
-                source, "baseStation/signalGenerator", "CE+SA 真测路损（B 路径）")
+                source, "vectorSignalGenerator", "CE+SA 真测路损（B 路径）")
 
             sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
                 ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
@@ -1186,7 +1187,7 @@ class ProbePathLossCalibrationService:
         ce_tx_power_dbm: float,
         ce_port: Optional[str] = None,
     ) -> Tuple[float, float]:
-        """[B 路径] 上游 SG/BSE 出 CW → CE 透传 → SA. returns (mean_dbm, std_db).
+        """[B 路径] 上游 VSG 出 CW → CE 透传 → SA. returns (mean_dbm, std_db).
 
         约定: CE 透传按 0 dB 增益, 所以 SG 输出功率 = CE 输出功率 = ce_tx_power_dbm.
         如果未来要用非零透传 attenuation, 由 driver 内部补偿后再 expose 给上层.
@@ -1958,6 +1959,7 @@ class MultiFrequencyPathLossService:
     async def calibrate_frequency_sweep(
         self,
         chamber_id: UUID,
+        lab_profile_id: UUID,
         probe_ids: List[int],
         polarization: PolarizationType,
         freq_start_mhz: float,
@@ -1966,13 +1968,15 @@ class MultiFrequencyPathLossService:
         sgh_model: str,
         sgh_gain_dbi: float,
         vna_id: Optional[str] = None,
-        calibrated_by: str = "System"
+        calibrated_by: str = "System",
+        operating_mode: str = "mimo_ota",
     ) -> CalibrationResult:
         """
         执行多频点扫频校准
 
         Args:
             chamber_id: 暗室配置 ID
+            lab_profile_id: 冻结本次探头物理链路的 LabProfile ID
             probe_ids: 探头 ID 列表
             polarization: 极化类型
             freq_start_mhz: 起始频率
@@ -1982,6 +1986,7 @@ class MultiFrequencyPathLossService:
             sgh_gain_dbi: SGH 增益
             vna_id: VNA 设备 ID
             calibrated_by: 校准人员
+            operating_mode: 活动 SwitchTopology 运行模式
         """
         chamber = self.db.query(ChamberConfiguration).filter(
             ChamberConfiguration.id == chamber_id
@@ -1993,12 +1998,73 @@ class MultiFrequencyPathLossService:
                 message=f"Chamber configuration {chamber_id} not found"
             )
 
+        requested_chains: Dict[int, Any] = {}
+        topology_warnings: List[str] = []
+        if not self.use_mock:
+            from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+            try:
+                resolution = resolve_rf_chains(
+                    self.db,
+                    lab_profile_id,
+                    operating_mode,
+                )
+            except ValueError as exc:
+                return CalibrationResult(success=False, message=str(exc))
+            if resolution.chamber_id != chamber_id:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "LabProfile RF topology chamber does not match requested "
+                        f"chamber: {resolution.chamber_id} != {chamber_id}"
+                    ),
+                )
+            if not resolution.success:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        f"No active RF chains resolved for LabProfile {lab_profile_id} "
+                        f"in operating mode {operating_mode}"
+                    ),
+                    warnings=list(resolution.warnings),
+                )
+            for probe_id in probe_ids:
+                matching_chains = [
+                    chain
+                    for chain in resolution.chains
+                    if chain.probe_id == probe_id
+                    and chain.polarization.upper() == polarization.value.upper()
+                ]
+                if len(matching_chains) != 1:
+                    return CalibrationResult(
+                        success=False,
+                        message=(
+                            "Expected exactly one active RF chain for probe "
+                            f"{probe_id} polarization {polarization.value} in "
+                            f"operating mode {operating_mode}; found "
+                            f"{len(matching_chains)}"
+                        ),
+                        warnings=list(resolution.warnings),
+                    )
+                chain = matching_chains[0]
+                if not chain.ce_port.strip() or chain.ce_port == "?":
+                    return CalibrationResult(
+                        success=False,
+                        message=(
+                            f"Active RF chain {chain.chain_id} for probe {probe_id} "
+                            f"polarization {polarization.value} has no resolved CE port"
+                        ),
+                        warnings=list(resolution.warnings),
+                    )
+                requested_chains[probe_id] = chain
+            topology_warnings = list(resolution.warnings)
+
         # 生成频率点
         num_points = int((freq_stop_mhz - freq_start_mhz) / freq_step_mhz) + 1
         frequency_points = [freq_start_mhz + i * freq_step_mhz for i in range(num_points)]
 
         calibration_ids = []
-        warnings: List[str] = []
+        warnings: List[str] = topology_warnings
 
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
@@ -2028,7 +2094,7 @@ class MultiFrequencyPathLossService:
                         elif chamber.cable_sgh_to_sa_loss_db is not None:
                             # CE+SA real sweep — delegates each frequency point to
                             # ProbePathLossCalibrationService._real_path_loss_measurement
-                            # _via_ce_sa, so D/B capability dispatch, BSE preference,
+                            # _via_ce_sa, so D/B capability dispatch, source validation,
                             # finally-stop, etc., are handled identically to single-freq.
                             path_losses, uncertainties = await self._real_frequency_sweep_via_ce_sa(
                                 probe_id=probe_id,
@@ -2037,6 +2103,8 @@ class MultiFrequencyPathLossService:
                                 sgh_gain_dbi=sgh_gain_dbi,
                                 probe_gain_dbi=chamber.probe_gain_dbi,
                                 cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                                ce_port=requested_chains[probe_id].ce_port,
+                                route_target=requested_chains[probe_id].chain_id,
                                 warnings=probe_warnings,
                             )
                         else:
@@ -2148,21 +2216,21 @@ class MultiFrequencyPathLossService:
         sgh_gain_dbi: float,
         probe_gain_dbi: float,
         cable_sgh_to_sa_loss_db: float,
+        ce_port: str,
+        route_target: str,
         warnings: List[str],
     ) -> Tuple[List[float], List[float]]:
         """[A3] CE+SA 真测多频点扫频 — delegates each freq to single-freq path.
 
         Reuses ProbePathLossCalibrationService._real_path_loss_measurement_via
         _ce_sa per-frequency, so we inherit the full D/B capability dispatch
-        (CE-internal CW gen vs BSE+passthrough), the BSE-over-SG preference,
+        (CE-internal CW gen vs vector-signal-generator passthrough),
         the finally-stop guarantees, and the rfSwitch auto-routing logic for
         free. Total operator action: 0 (same as single-freq).
 
-        ce_port + route_target left None: this entry point is chamber-keyed
-        (no RFChainSpec available). Multi-freq + topology-derived auto-routing
-        is a follow-up — would route once per (probe, pol) and sweep all freqs
-        on the same routed chain (more efficient than re-routing per freq, but
-        also more code).
+        ce_port + route_target come from the same LabProfile topology resolution
+        used to authorize the requested probe/polarization. A missing chain is
+        rejected before the first hardware I/O.
         """
         # In-file delegation; both services live in this module so no import.
         pl_service = ProbePathLossCalibrationService(self.db, use_mock=False)
@@ -2183,6 +2251,8 @@ class MultiFrequencyPathLossService:
                     f"sweep probe {probe_id} {polarization.value} "
                     f"{freq_mhz:.1f} MHz"
                 ),
+                ce_port=ce_port,
+                route_target=route_target,
             )
             path_losses.append(m.path_loss_db)
             uncertainties.append(m.uncertainty_db)
