@@ -1507,7 +1507,7 @@ class PatternCalibrationService:
         turntable_id: Optional[str] = None,
         ce_tx_power_dbm: float = -20.0,
         sgh_gain_dbi: float = 10.0,
-        chain_correction_db: float = 0.0,
+        chain_correction_db: Optional[float] = None,
         use_mock: bool = True,
     ) -> CalibrationResult:
         """
@@ -1562,6 +1562,16 @@ class PatternCalibrationService:
         route_by_pair = {}
         topology_id: Optional[str] = None
         if not use_mock:
+            if chain_correction_db is None or not np.isfinite(chain_correction_db):
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires an explicit finite "
+                        "chain_correction_db from valid path-loss calibration; "
+                        "it cannot default to zero"
+                    ),
+                    warnings=warnings,
+                )
             if lab_profile_id is None:
                 return CalibrationResult(
                     success=False,
@@ -1687,7 +1697,7 @@ class PatternCalibrationService:
                             route_target=chain.chain_id,
                             ce_tx_power_dbm=ce_tx_power_dbm,
                             sgh_gain_dbi=sgh_gain_dbi,
-                            chain_correction_db=chain_correction_db,
+                            chain_correction_db=float(chain_correction_db),
                             measurement_distance_m=measurement_distance_m,
                             reference_antenna_id=reference_antenna_id,
                             turntable_id=turntable_id,
@@ -1745,6 +1755,11 @@ class PatternCalibrationService:
                         topology_id=topology_id,
                         chain_id=str(chain.chain_id) if chain is not None else None,
                         ce_port=str(chain.ce_port) if chain is not None else None,
+                        chain_correction_db=(
+                            float(chain_correction_db)
+                            if chain_correction_db is not None
+                            else None
+                        ),
                         source="simulated" if use_mock else "in_chamber_measured",
                         polarization=polarization_value,
                         frequency_mhz=frequency_mhz,
@@ -1878,10 +1893,8 @@ class PatternCalibrationService:
             - FSPL(d, f): 自由空间路损 @ 测量距离 d 频率 f
             - G_sgh: SGH 标定增益 (dBi)
             - chain_correction: PA 增益 + switch 插损 + cable 损耗的端到端
-              修正 (dB). 通常由前置 path-loss 校准给出 (CE+SA 测的 path_loss
-              其实就是 -G_chain + FSPL_chamber - G_sgh - G_probe + cable, 拆出来
-              就是 chain_correction). 不传 → 0, 此时 gain_dbi 是"相对方向图"
-              而非绝对增益, peak 值无意义但 HPBW / 前后比 / 主瓣方向都正确.
+              修正 (dB). 必须由调用方从有效 path-loss/链路校准显式冻结；
+              省略时真实测量在首次硬件 I/O 前拒绝，不能把相对方向图峰值当绝对增益.
 
         前置: HAL 必须绑 positioner + channelEmulator + signalAnalyzer.
         positioner 的 (azimuth, elevation) 在 cert 部署里是 DUT 转台 (探头不动,

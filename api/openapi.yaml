@@ -2056,10 +2056,16 @@ components:
           nullable: true
         ce_tx_power_dbm:
           type: number
+          minimum: -50
+          maximum: 20
           default: -20
         sgh_gain_dbi:
           type: number
           default: 10
+        chain_correction_db:
+          type: number
+          nullable: true
+          description: 真实测量必须从有效链路/路损校准显式提供；不得默认补 0
         use_mock:
           type: boolean
           default: true
@@ -2082,6 +2088,7 @@ components:
         topology_id: { type: string, nullable: true }
         chain_id: { type: string, nullable: true }
         ce_port: { type: string, nullable: true }
+        chain_correction_db: { type: number, nullable: true }
         probe_id: { type: integer }
         polarization: { type: string }
         frequency_mhz: { type: number }

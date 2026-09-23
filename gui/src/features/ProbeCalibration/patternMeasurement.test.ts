@@ -20,6 +20,7 @@ const validInput: PatternMeasurementInput = {
   measurementDistanceM: 3,
   ceTxPowerDbm: -20,
   sghGainDbi: 10,
+  chainCorrectionDb: 1.25,
   calibratedBy: 'operator',
   mode: 'real',
 }
@@ -38,6 +39,7 @@ test('pattern request carries explicit lab context but no client route truth', (
     measurement_distance_m: 3,
     ce_tx_power_dbm: -20,
     sgh_gain_dbi: 10,
+    chain_correction_db: 1.25,
     calibrated_by: 'operator',
     use_mock: false,
   })
@@ -76,12 +78,32 @@ test('pattern request validates physical inputs before any request', () => {
     { azimuthStepDeg: 31 },
     { elevationStepDeg: 31 },
     { measurementDistanceM: 0.4 },
+    { ceTxPowerDbm: -50.1 },
+    { ceTxPowerDbm: 20.1 },
+    { chainCorrectionDb: Number.NaN },
     { polarizations: [] },
     { calibratedBy: ' ' },
   ]
   for (const override of invalidCases) {
     assert.throws(() => buildPatternMeasurementRequest({ ...validInput, ...override }))
   }
+})
+
+test('real pattern request requires an explicit absolute-gain chain correction', () => {
+  assert.throws(
+    () => buildPatternMeasurementRequest({ ...validInput, chainCorrectionDb: null }),
+    /链路修正/,
+  )
+})
+
+test('mock pattern request may omit absolute-gain chain correction', () => {
+  const request = buildPatternMeasurementRequest({
+    ...validInput,
+    mode: 'mock',
+    chainCorrectionDb: null,
+  })
+  assert.equal(request.use_mock, true)
+  assert.equal('chain_correction_db' in request, false)
 })
 
 test('pattern response must disclose matching source and completed status', () => {

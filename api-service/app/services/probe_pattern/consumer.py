@@ -19,6 +19,7 @@ is good enough.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -92,6 +93,11 @@ def _query_valid_pattern(
         if pattern.source == "vendor_datasheet":
             return pattern
         if pattern.source != "in_chamber_measured":
+            continue
+        if (
+            pattern.chain_correction_db is None
+            or not math.isfinite(float(pattern.chain_correction_db))
+        ):
             continue
         if (
             pattern.lab_profile_id != lab_profile_id

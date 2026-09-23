@@ -7,7 +7,7 @@ Probe Calibration Pydantic Schemas
 """
 import math
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from ._datetime import UTCDateTime
@@ -313,10 +313,37 @@ class StartPatternCalibrationRequest(BaseModel):
     )
     reference_antenna_id: Optional[str] = None
     turntable_id: Optional[str] = None
-    ce_tx_power_dbm: float = Field(default=-20.0, description="信道仿真器校准音输出功率 (dBm)")
-    sgh_gain_dbi: float = Field(default=10.0, description="标准增益喇叭天线增益 (dBi)")
+    ce_tx_power_dbm: float = Field(
+        default=-20.0,
+        ge=-50.0,
+        le=20.0,
+        allow_inf_nan=False,
+        description="信道仿真器校准音输出功率 (dBm)，沿用现有 HAL -50..20 dBm 域",
+    )
+    sgh_gain_dbi: float = Field(
+        default=10.0,
+        allow_inf_nan=False,
+        description="标准增益喇叭天线增益 (dBi)",
+    )
+    chain_correction_db: Optional[float] = Field(
+        default=None,
+        allow_inf_nan=False,
+        description=(
+            "绝对增益反算使用的链路修正 (dB)；真实测量必须从有效链路/路损校准显式提供，"
+            "不得默认补 0"
+        ),
+    )
     use_mock: bool = Field(default=True, description="是否仅生成模拟方向图；正式校准必须显式为 false")
     calibrated_by: str = Field(..., description="校准人员")
+
+    @model_validator(mode="after")
+    def require_real_chain_correction(self):
+        if not self.use_mock and self.chain_correction_db is None:
+            raise ValueError(
+                "真实方向图校准必须显式提供 chain_correction_db；"
+                "该值应来自有效链路/路损校准，不得默认补 0"
+            )
+        return self
 
 
 class PatternCalibrationResponse(BaseModel):
@@ -330,6 +357,7 @@ class PatternCalibrationResponse(BaseModel):
     topology_id: Optional[str] = None
     chain_id: Optional[str] = None
     ce_port: Optional[str] = None
+    chain_correction_db: Optional[float] = None
     probe_id: int
     polarization: str
     frequency_mhz: float

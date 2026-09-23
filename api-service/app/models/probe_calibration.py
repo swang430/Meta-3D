@@ -275,6 +275,11 @@ class ProbePattern(Base):
     topology_id = Column(String(255), nullable=True, comment="本次校准解析到的 SwitchTopology ID")
     chain_id = Column(String(255), nullable=True, comment="本行冻结的 RF chain ID")
     ce_port = Column(String(255), nullable=True, comment="本行校准使用的信道仿真器端口")
+    chain_correction_db = Column(
+        Float,
+        nullable=True,
+        comment="绝对增益反算使用的显式链路修正 (dB)；NULL=未冻结/仅相对方向图",
+    )
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")
 

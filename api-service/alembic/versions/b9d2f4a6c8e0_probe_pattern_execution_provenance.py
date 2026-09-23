@@ -35,6 +35,11 @@ _COLUMNS = (
     ("topology_id", sa.String(length=255), "本次校准解析到的 SwitchTopology ID"),
     ("chain_id", sa.String(length=255), "本行冻结 RF chain ID"),
     ("ce_port", sa.String(length=255), "本行校准使用的信道仿真器端口"),
+    (
+        "chain_correction_db",
+        sa.Float(),
+        "绝对增益反算使用的显式链路修正 (dB)；NULL=未冻结/仅相对方向图",
+    ),
 )
 
 

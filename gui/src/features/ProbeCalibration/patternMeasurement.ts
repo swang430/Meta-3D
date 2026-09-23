@@ -17,6 +17,7 @@ export interface PatternMeasurementInput {
   measurementDistanceM: number
   ceTxPowerDbm: number
   sghGainDbi: number
+  chainCorrectionDb: number | null
   calibratedBy: string
   mode: 'real' | 'mock' | null
 }
@@ -25,6 +26,11 @@ function requireFiniteRange(value: number, label: string, minimum: number, maxim
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
     throw new Error(`${label}必须在 ${minimum} 到 ${maximum} 之间`)
   }
+  return value
+}
+
+function requireFinite(value: number, label: string): number {
+  if (!Number.isFinite(value)) throw new Error(`${label}必须是有限数值`)
   return value
 }
 
@@ -58,11 +64,14 @@ export function buildPatternMeasurementRequest(
   const operatingMode = input.operatingMode?.trim()
   if (!operatingMode) throw new Error('必须选择运行模式')
   if (input.mode === null) throw new Error('必须显式选择真实或 Mock 模式')
+  if (input.mode === 'real' && input.chainCorrectionDb === null) {
+    throw new Error('真实方向图测量必须填写来自有效链路/路损校准的链路修正，不能默认补 0')
+  }
   if (input.polarizations.length === 0) throw new Error('至少选择一种极化')
   const calibratedBy = input.calibratedBy.trim()
   if (!calibratedBy) throw new Error('必须填写操作员')
 
-  return {
+  const request: StartPatternCalibrationRequest = {
     lab_profile_id: labProfileId,
     chamber_id: chamberId,
     operating_mode: operatingMode,
@@ -72,11 +81,15 @@ export function buildPatternMeasurementRequest(
     azimuth_step_deg: requireFiniteRange(input.azimuthStepDeg, '方位角步进', 1, 30),
     elevation_step_deg: requireFiniteRange(input.elevationStepDeg, '俯仰角步进', 1, 30),
     measurement_distance_m: requireFiniteRange(input.measurementDistanceM, '测量距离', 0.5, 10),
-    ce_tx_power_dbm: requireFiniteRange(input.ceTxPowerDbm, '信道仿真器功率', -200, 100),
+    ce_tx_power_dbm: requireFiniteRange(input.ceTxPowerDbm, '信道仿真器功率', -50, 20),
     sgh_gain_dbi: requireFiniteRange(input.sghGainDbi, '标准增益喇叭增益', -100, 100),
     calibrated_by: calibratedBy,
     use_mock: input.mode === 'mock',
   }
+  if (input.chainCorrectionDb !== null) {
+    request.chain_correction_db = requireFinite(input.chainCorrectionDb, '链路修正')
+  }
+  return request
 }
 
 export function assertPatternCalibrationJobResponse(

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -53,6 +54,7 @@ def _pattern(**overrides):
         "elevation_deg": [90.0],
         "gain_pattern_dbi": [5.0],
         "peak_gain_dbi": 5.0,
+        "chain_correction_db": 0.0,
         "measured_at": now,
         "valid_until": now + timedelta(days=365),
         "status": "valid",
@@ -70,6 +72,7 @@ def test_probe_pattern_persists_execution_provenance_and_warnings():
         "topology_id",
         "chain_id",
         "ce_port",
+        "chain_correction_db",
     } <= columns
 
     db = _session()
@@ -81,6 +84,7 @@ def test_probe_pattern_persists_execution_provenance_and_warnings():
         topology_id="topology-1",
         chain_id="chain-1",
         ce_port="B1.1",
+        chain_correction_db=1.25,
     )
     db.add(pattern)
     db.commit()
@@ -92,6 +96,7 @@ def test_probe_pattern_persists_execution_provenance_and_warnings():
     assert pattern.topology_id == "topology-1"
     assert pattern.chain_id == "chain-1"
     assert pattern.ce_port == "B1.1"
+    assert pattern.chain_correction_db == 1.25
 
     response = PatternCalibrationResponse.model_validate(pattern)
     assert response.warnings == ["tone cleanup rejected"]
@@ -99,6 +104,7 @@ def test_probe_pattern_persists_execution_provenance_and_warnings():
     assert response.topology_id == "topology-1"
     assert response.chain_id == "chain-1"
     assert response.ce_port == "B1.1"
+    assert response.chain_correction_db == 1.25
     db.close()
 
 
@@ -126,6 +132,7 @@ def test_pattern_start_request_carries_explicit_execution_context():
         frequency_mhz=3500.0,
         ce_tx_power_dbm=-20.0,
         sgh_gain_dbi=10.0,
+        chain_correction_db=1.25,
         use_mock=False,
         calibrated_by="operator",
     )
@@ -135,7 +142,54 @@ def test_pattern_start_request_carries_explicit_execution_context():
     assert request.operating_mode == "mimo_ota"
     assert request.ce_tx_power_dbm == -20.0
     assert request.sgh_gain_dbi == 10.0
+    assert request.chain_correction_db == 1.25
     assert request.use_mock is False
+
+
+def test_real_pattern_request_requires_explicit_chain_correction():
+    with pytest.raises(ValidationError, match="chain_correction_db"):
+        StartPatternCalibrationRequest(
+            lab_profile_id=uuid4(),
+            chamber_id=uuid4(),
+            probe_ids=[0],
+            frequency_mhz=3500.0,
+            use_mock=False,
+            calibrated_by="operator",
+        )
+
+
+@pytest.mark.parametrize("ce_tx_power_dbm", [-50.1, 20.1])
+def test_pattern_request_rejects_ce_power_outside_existing_hal_domain(
+    ce_tx_power_dbm,
+):
+    with pytest.raises(ValidationError, match="ce_tx_power_dbm"):
+        StartPatternCalibrationRequest(
+            lab_profile_id=uuid4(),
+            chamber_id=uuid4(),
+            probe_ids=[0],
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=ce_tx_power_dbm,
+            calibrated_by="operator",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("sgh_gain_dbi", float("nan")), ("chain_correction_db", float("inf"))],
+)
+def test_pattern_request_rejects_non_finite_gain_inputs(field, value):
+    values = {
+        "lab_profile_id": uuid4(),
+        "chamber_id": uuid4(),
+        "probe_ids": [0],
+        "frequency_mhz": 3500.0,
+        "use_mock": False,
+        "chain_correction_db": 0.0,
+        "calibrated_by": "operator",
+    }
+    values[field] = value
+    with pytest.raises(ValidationError, match=field):
+        StartPatternCalibrationRequest(**values)
 
 
 def test_pattern_start_request_preserves_mock_compatibility_default():
@@ -189,6 +243,7 @@ async def test_real_pattern_requires_lab_profile_before_measurement(monkeypatch)
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -233,6 +288,7 @@ async def test_real_pattern_maps_zero_based_pattern_id_to_one_based_rf_chain(
         azimuth_step_deg=360.0,
         elevation_step_deg=181.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -287,6 +343,7 @@ async def test_real_pattern_freezes_unique_resolved_chain_and_routes_measurement
         azimuth_step_deg=360.0,
         elevation_step_deg=181.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -297,6 +354,7 @@ async def test_real_pattern_freezes_unique_resolved_chain_and_routes_measurement
     assert row.topology_id == "topology-1"
     assert row.chain_id == "chain-1"
     assert row.ce_port == "B1.1"
+    assert row.chain_correction_db == 0.0
     assert row.warnings == ["topology diagnostic", "cleanup diagnostic"]
     assert result.warnings == ["topology diagnostic", "cleanup diagnostic"]
     db.close()
@@ -332,6 +390,7 @@ async def test_real_pattern_rejects_ambiguous_chain_before_measurement(monkeypat
         polarizations=[PolarizationType.V],
         frequency_mhz=3500.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -378,6 +437,7 @@ async def test_real_pattern_keeps_cleanup_warnings_on_their_own_row(monkeypatch)
         azimuth_step_deg=360.0,
         elevation_step_deg=181.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -426,6 +486,7 @@ async def test_real_pattern_rolls_back_all_rows_when_later_route_fails(monkeypat
         azimuth_step_deg=360.0,
         elevation_step_deg=181.0,
         calibrated_by="operator",
+        chain_correction_db=0.0,
         use_mock=False,
     )
 
@@ -477,6 +538,43 @@ def test_measured_pattern_requires_current_frozen_route(monkeypatch):
 
     matching.ce_port = "B9.9"
     db.commit()
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) is None
+    db.close()
+
+
+def test_measured_pattern_requires_explicit_chain_correction(monkeypatch):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    current_chain = RFChainSpec("chain-current", "B1.1", 0, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [current_chain]
+        ),
+    )
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="chain-current",
+            ce_port="B1.1",
+            chain_correction_db=None,
+        )
+    )
+    db.commit()
+
     assert get_probe_gain_at_azimuth(
         db,
         1,
@@ -600,6 +698,7 @@ def test_pattern_report_discloses_route_but_never_invents_pass_verdict():
     assert row["topology_id"] == "topology-1"
     assert row["chain_id"] == "chain-1"
     assert row["ce_port"] == "B1.1"
+    assert row["chain_correction_db"] == 0.0
     assert report["execution_summary"]["undetermined"] == 1
     db.close()
 
@@ -670,6 +769,7 @@ def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types(
         "turntable_id",
         "ce_tx_power_dbm",
         "sgh_gain_dbi",
+        "chain_correction_db",
         "use_mock",
         "calibrated_by",
     }
@@ -680,6 +780,7 @@ def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types(
         "topology_id",
         "chain_id",
         "ce_port",
+        "chain_correction_db",
         "source",
     }
     assert set(live["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]) == expected_request
@@ -688,6 +789,9 @@ def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types(
         frequency = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["frequency_mhz"]
         assert frequency["minimum"] == 100
         assert frequency["maximum"] == 100000
+        ce_power = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["ce_tx_power_dbm"]
+        assert ce_power["minimum"] == -50
+        assert ce_power["maximum"] == 20
     assert expected_response_route <= set(
         live["components"]["schemas"]["PatternCalibrationResponse"]["properties"]
     )

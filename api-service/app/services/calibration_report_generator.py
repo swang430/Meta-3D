@@ -711,6 +711,7 @@ class CalibrationReportGenerator:
                     'topology_id': pat.topology_id,
                     'chain_id': pat.chain_id,
                     'ce_port': pat.ce_port,
+                    'chain_correction_db': pat.chain_correction_db,
                     'calibrated_at': str(pat.measured_at) if pat.measured_at else None,
                     'calibrated_by': pat.measured_by,
                     'beamwidth_3db_deg': pat.hpbw_azimuth_deg,

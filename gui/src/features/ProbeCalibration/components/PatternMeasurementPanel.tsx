@@ -63,6 +63,7 @@ export function PatternMeasurementPanel({
   const [measurementDistanceM, setMeasurementDistanceM] = useState(3)
   const [ceTxPowerDbm, setCeTxPowerDbm] = useState(-20)
   const [sghGainDbi, setSghGainDbi] = useState(10)
+  const [chainCorrectionDb, setChainCorrectionDb] = useState<number | string>('')
   const [calibratedBy, setCalibratedBy] = useState('')
   const [result, setResult] = useState<CalibrationJobResponse | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -85,6 +86,7 @@ export function PatternMeasurementPanel({
         measurementDistanceM,
         ceTxPowerDbm,
         sghGainDbi,
+        chainCorrectionDb: typeof chainCorrectionDb === 'number' ? chainCorrectionDb : null,
         calibratedBy,
         mode,
       })
@@ -178,10 +180,19 @@ export function PatternMeasurementPanel({
               <NumberInput required label="测量距离 (m)" min={0.5} max={10} decimalScale={2} value={measurementDistanceM} onChange={(value) => setMeasurementDistanceM(Number(value))} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
-              <NumberInput required label="CE 校准音功率 (dBm)" value={ceTxPowerDbm} onChange={(value) => setCeTxPowerDbm(Number(value))} />
+              <NumberInput required label="CE 校准音功率 (dBm)" min={-50} max={20} value={ceTxPowerDbm} onChange={(value) => setCeTxPowerDbm(Number(value))} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
               <NumberInput required label="标准增益喇叭增益 (dBi)" value={sghGainDbi} onChange={(value) => setSghGainDbi(Number(value))} />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 6, md: 4 }}>
+              <NumberInput
+                required={mode === 'real'}
+                label="链路修正 (dB)"
+                description="真实测量必填：取自有效 RF 链路/路损校准；不要猜测或默认填 0"
+                value={chainCorrectionDb}
+                onChange={setChainCorrectionDb}
+              />
             </Grid.Col>
             <Grid.Col span={12}>
               <TextInput required label="操作员" value={calibratedBy} onChange={(event) => setCalibratedBy(event.currentTarget.value)} />

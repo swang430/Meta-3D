@@ -857,6 +857,7 @@ async def start_pattern_calibration(
         turntable_id=request.turntable_id,
         ce_tx_power_dbm=request.ce_tx_power_dbm,
         sgh_gain_dbi=request.sgh_gain_dbi,
+        chain_correction_db=request.chain_correction_db,
         calibrated_by=request.calibrated_by,
         use_mock=request.use_mock,
     )

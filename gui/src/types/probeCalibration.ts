@@ -170,6 +170,7 @@ export interface StartPatternCalibrationRequest {
   turntable_id?: string
   ce_tx_power_dbm: number
   sgh_gain_dbi: number
+  chain_correction_db?: number | null
   use_mock: boolean
   calibrated_by: string
 }
@@ -184,6 +185,7 @@ export interface PatternCalibrationResponse {
   topology_id?: string | null
   chain_id?: string | null
   ce_port?: string | null
+  chain_correction_db?: number | null
   source?: string | null
   probe_id: number
   polarization: string

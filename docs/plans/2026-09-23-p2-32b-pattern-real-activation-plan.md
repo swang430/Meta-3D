@@ -17,6 +17,8 @@ LabProfile/Topology/chain/CE-port 与冻结值一致时才可被正式执行消�
 ## 全局约束
 
 - 不新增、修改或盲试任何 SCPI。
+- Real 必须显式冻结来自有效链路/路损校准的 `chain_correction_db`；缺失时在首次硬件 I/O 前
+  fail-closed，不能让相对方向图峰值进入正式增益补偿。
 - 模拟、历史未知和 route drift 结果不得进入正式 KPI、补偿或报告 PASS 分母。
 - `vendor_datasheet` 方向图不绑定现场路由，不能因新增字段被误拒。
 - API 省略 `use_mock` 的兼容默认值保持 `true`；GUI 必须显式发送。
@@ -42,7 +44,8 @@ LabProfile/Topology/chain/CE-port 与冻结值一致时才可被正式执行消�
 
 - `ProbePattern` 可持久化 `warnings/lab_profile_id/operating_mode/topology_id/chain_id/ce_port`；
 - `PatternCalibrationResponse` 原样投影这些字段；
-- `StartPatternCalibrationRequest` 接收 `lab_profile_id/operating_mode/use_mock/ce_tx_power_dbm/sgh_gain_dbi`；
+- `StartPatternCalibrationRequest` 接收
+  `lab_profile_id/operating_mode/use_mock/ce_tx_power_dbm/sgh_gain_dbi/chain_correction_db`；
 - `use_mock` 省略时仍为 `true`；
 - warnings 历史 NULL 与新空列表语义可区分。
 
@@ -206,8 +209,9 @@ Commit message: `fix: route pattern start through authoritative service`
 
 **Step 1: 写纯请求构造 RED**
 
-覆盖：无 OperationalLab/chamber、mode=null、空/重复/负数/非整数/out-of-range probe、非法频率
-或扫描步进不发请求；合法输入只写服务器契约字段，绝不包含 `ce_port/chain_id`。
+覆盖：无 OperationalLab/chamber、mode=null、Real 缺链路修正、空/重复/负数/非整数/out-of-range
+probe、非法频率或扫描步进不发请求；合法输入只写服务器契约字段，绝不包含
+`ce_port/chain_id`。
 
 响应断言必须拒绝 `use_mock` 缺失、与请求不一致或非 completed 状态。
 

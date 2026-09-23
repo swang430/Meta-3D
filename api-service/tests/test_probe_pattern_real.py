@@ -200,6 +200,7 @@ class TestRealPatternMeasurement:
             elevation_step_deg=180.0,  # 2 points: 0, 180
             measurement_distance_m=3.0,
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
         assert result.success, result.message
@@ -233,6 +234,7 @@ class TestRealPatternMeasurement:
             azimuth_step_deg=360.0,
             elevation_step_deg=181.0,
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
 
@@ -324,6 +326,7 @@ class TestRealPatternMeasurement:
             azimuth_step_deg=180.0,
             elevation_step_deg=180.0,
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
         assert result.success is False
@@ -347,6 +350,7 @@ class TestRealPatternMeasurement:
             azimuth_step_deg=180.0,
             elevation_step_deg=180.0,
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
         assert result.success is False
@@ -377,6 +381,7 @@ class TestRealPatternMeasurement:
             azimuth_step_deg=90.0,    # 4 points
             elevation_step_deg=90.0,   # 3 points: 0, 90, 180
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
         # First 4 calls share elevation=0, az walks 0/90/180/270
@@ -426,6 +431,7 @@ class TestRealPatternMeasurement:
             ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
             calibrated_by="test",
+            chain_correction_db=0.0,
             use_mock=False,
         )
         assert result.success

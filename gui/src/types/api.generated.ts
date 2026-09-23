@@ -3091,6 +3091,8 @@ export interface components {
             ce_tx_power_dbm: number;
             /** @default 10 */
             sgh_gain_dbi: number;
+            /** @description 真实测量必须从有效链路/路损校准显式提供；不得默认补 0 */
+            chain_correction_db?: number | null;
             /**
              * @description True=模拟诊断；False=真实硬件校准
              * @default true
@@ -3111,6 +3113,7 @@ export interface components {
             topology_id?: string | null;
             chain_id?: string | null;
             ce_port?: string | null;
+            chain_correction_db?: number | null;
             probe_id: number;
             polarization: string;
             frequency_mhz: number;
