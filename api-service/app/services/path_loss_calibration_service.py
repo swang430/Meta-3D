@@ -977,41 +977,11 @@ class ProbePathLossCalibrationService:
         # warning_sink 会立即 drain，否则由 path-loss 证书外层循环收割。
         self._last_acquire_warnings = []
 
-        # Lazy import — avoid circular and SQLite-test-killing pulls.
         from app.hal.channel_emulator import CalibrationToneCapability
-        from app.services.instrument_hal_service import get_hal_service
 
-        hal = get_hal_service()
-        ce = hal.drivers.get("channelEmulator")
-        sa = hal.drivers.get("signalAnalyzer")
-        if ce is None or sa is None:
-            missing = []
-            if ce is None:
-                missing.append("channelEmulator")
-            if sa is None:
-                missing.append("signalAnalyzer")
-            raise RuntimeError(
-                f"CE+SA tone acquisition requires HAL drivers: {missing}. "
-                "Bind both on the active LabProfile."
-            )
-
-        # ⚠️ 这条 CE+SA 才是**主路径**（暗室配了 cable_sgh_to_sa_loss_db 就走它），
-        #    我上一版只拦了那条 DEPRECATED 的 VNA 旧路径，主路径完全绕过去了（外审 P1）。
-        #    MockSignalAnalyzer 的 measure_channel_power() 返回随机值，
-        #    MockChannelEmulator 也不发真的 tone —— 两者都会被当成真机，
-        #    结果照样以 valid 证书落库。
-        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
-        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
-
-        # Capability-based dispatch: prefer D (single-instrument) when CE
-        # supports it, else fall through to B (needs vectorSignalGenerator).
-        caps = ce.get_calibration_tone_capabilities()
-        if not caps:
-            raise RuntimeError(
-                f"CE driver {type(ce).__name__} declares no calibration-tone "
-                "capabilities. Override get_calibration_tone_capabilities() "
-                "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
-            )
+        hal, ce, sa, caps, source = self.preflight_sa_power_via_ce_tone(
+            route_target=route_target
+        )
 
         # Switch routing — drive rfSwitch to (probe, pol) when caller gave us
         # a route_target (typically the SwitchTopology chain_id). Three cases:
@@ -1045,9 +1015,72 @@ class ProbePathLossCalibrationService:
             return sa_rx_mean_dbm, sa_rx_std_db, "CE-internal"
 
         if CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
-            # HAL registry's authoritative signal-source category is
-            # vectorSignalGenerator. Base-station adapters do not implement
-            # this SPI and must never be selected by a same-shape guess.
+            assert source is not None  # preflight validated the selected B path
+
+            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
+                ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
+                ce_port=ce_port,
+            )
+            return sa_rx_mean_dbm, sa_rx_std_db, f"passthrough({type(source).__name__})"
+
+        raise RuntimeError(
+            f"CE driver {type(ce).__name__} declared capabilities {caps} "
+            "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
+        )
+
+    def preflight_sa_power_via_ce_tone(
+        self,
+        *,
+        route_target: Optional[str],
+    ) -> Tuple[Any, Any, Any, Any, Optional[Any]]:
+        """Validate the exact CE+SA hardware path without performing I/O.
+
+        Pattern calibration calls this before moving the positioner.  The
+        acquisition primitive calls it again immediately before routing/tone
+        output so a HAL reload between those points still fails closed.
+        """
+        from app.hal.channel_emulator import CalibrationToneCapability
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        ce = hal.drivers.get("channelEmulator")
+        sa = hal.drivers.get("signalAnalyzer")
+        if ce is None or sa is None:
+            missing = []
+            if ce is None:
+                missing.append("channelEmulator")
+            if sa is None:
+                missing.append("signalAnalyzer")
+            raise RuntimeError(
+                f"CE+SA tone acquisition requires HAL drivers: {missing}. "
+                "Bind both on the active LabProfile."
+            )
+
+        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
+        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
+
+        caps = ce.get_calibration_tone_capabilities()
+        if not caps:
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} declares no calibration-tone "
+                "capabilities. Override get_calibration_tone_capabilities() "
+                "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
+            )
+
+        if route_target is not None:
+            rf_switch = hal.drivers.get("rfSwitch")
+            if rf_switch is not None:
+                _reject_simulated_instrument(
+                    rf_switch, "rfSwitch", "真测路损的通道切换"
+                )
+
+        source = None
+        if CalibrationToneCapability.INTERNAL_CW_GENERATOR not in caps:
+            if CalibrationToneCapability.PASSTHROUGH_ONLY not in caps:
+                raise RuntimeError(
+                    f"CE driver {type(ce).__name__} declared capabilities {caps} "
+                    "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
+                )
             source = hal.drivers.get("vectorSignalGenerator")
             if source is None:
                 raise RuntimeError(
@@ -1067,18 +1100,12 @@ class ProbePathLossCalibrationService:
                     f"calibration-tone SPI: {missing_spi}"
                 )
             _reject_simulated_instrument(
-                source, "vectorSignalGenerator", "CE+SA 真测路损（B 路径）")
-
-            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
-                ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
-                ce_port=ce_port,
+                source,
+                "vectorSignalGenerator",
+                "CE+SA 真测路损（B 路径）",
             )
-            return sa_rx_mean_dbm, sa_rx_std_db, f"passthrough({type(source).__name__})"
 
-        raise RuntimeError(
-            f"CE driver {type(ce).__name__} declared capabilities {caps} "
-            "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
-        )
+        return hal, ce, sa, caps, source
 
     async def _route_switch_to_chain(
         self,

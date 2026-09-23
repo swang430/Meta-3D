@@ -157,6 +157,13 @@ def _stub_inner_tone(monkeypatch, lease: _CountingLease) -> list[int]:
         "_acquire_sa_power_via_ce_tone_inner",
         _inner,
     )
+    # P2-32B 的作业级硬件预检与本测试的租约计数无关；
+    # 隔离它，不为租约单测伪造一组 CE/SA 驱动。
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target: None,
+    )
     return depths
 
 

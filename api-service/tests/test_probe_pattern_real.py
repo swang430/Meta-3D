@@ -21,7 +21,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
+from app.hal.keysight_x_series_sa import RealKeysightXSeriesSaDriver
 from app.hal.positioner import MockPositioner
+from app.hal.rs_fsw import RealRsFswDriver
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import PolarizationType
@@ -161,7 +163,9 @@ def _make_positioner(*, move_ok=True, log=None):
     return pos
 
 
-def _patched_hal(monkeypatch, *, ce=None, sa=None, positioner=None):
+def _patched_hal(
+    monkeypatch, *, ce=None, sa=None, positioner=None, extra_drivers=None
+):
     fake_hal = MagicMock()
     fake_hal.drivers = {}
     if ce is not None:
@@ -170,6 +174,8 @@ def _patched_hal(monkeypatch, *, ce=None, sa=None, positioner=None):
         fake_hal.drivers["signalAnalyzer"] = sa
     if positioner is not None:
         fake_hal.drivers["positioner"] = positioner
+    if extra_drivers:
+        fake_hal.drivers.update(extra_drivers)
     monkeypatch.setattr(
         "app.services.instrument_hal_service.get_hal_service", lambda: fake_hal
     )
@@ -180,6 +186,74 @@ def _patched_hal(monkeypatch, *, ce=None, sa=None, positioner=None):
 # ============================================================================
 
 class TestRealPatternMeasurement:
+
+    @pytest.mark.parametrize(
+        "mock_category",
+        [
+            "channelEmulator",
+            "signalAnalyzer",
+            "rfSwitch",
+            "vectorSignalGenerator",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_rejects_every_required_mock_driver_before_positioner_motion(
+        self, db, monkeypatch, mock_category
+    ):
+        ce = _make_ce_d_path()
+        sa = _make_sa_constant(power_dbm=-85.0)
+        positioner = _make_positioner()
+        rf_switch = MagicMock()
+        rf_switch.set_mapped_path = AsyncMock(return_value=True)
+        source = MagicMock()
+        source.set_cw = AsyncMock(return_value=True)
+        source.start_tx = AsyncMock(return_value=True)
+        source.stop_tx = AsyncMock(return_value=True)
+
+        extra_drivers = {"rfSwitch": rf_switch}
+        if mock_category == "vectorSignalGenerator":
+            ce.get_calibration_tone_capabilities.return_value = [
+                CalibrationToneCapability.PASSTHROUGH_ONLY
+            ]
+            extra_drivers["vectorSignalGenerator"] = source
+
+        target = {
+            "channelEmulator": ce,
+            "signalAnalyzer": sa,
+            "rfSwitch": rf_switch,
+            "vectorSignalGenerator": source,
+        }[mock_category]
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.is_mock_driver",
+            lambda driver: driver is target,
+        )
+        _patched_hal(
+            monkeypatch,
+            ce=ce,
+            sa=sa,
+            positioner=positioner,
+            extra_drivers=extra_drivers,
+        )
+
+        result = await PatternCalibrationService().execute_pattern_calibration(
+            db=db,
+            chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            frequency_mhz=3500.0,
+            azimuth_step_deg=360.0,
+            elevation_step_deg=181.0,
+            calibrated_by="test",
+            chain_correction_db=0.0,
+            use_mock=False,
+        )
+
+        assert result.success is False
+        assert mock_category in result.message
+        positioner.move_to.assert_not_awaited()
+        rf_switch.set_mapped_path.assert_not_awaited()
+        ce.set_calibration_tone.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_rejects_mock_positioner_before_motion_or_tone(
@@ -500,3 +574,27 @@ class TestRealPatternMeasurement:
         # HPBW close to 60° (interpolated -3 dB search, tolerance ±15°)
         assert cal.hpbw_azimuth_deg is not None
         assert 45.0 <= cal.hpbw_azimuth_deg <= 75.0
+
+
+@pytest.mark.parametrize(
+    "driver_cls",
+    [RealKeysightXSeriesSaDriver, RealRsFswDriver],
+)
+@pytest.mark.parametrize("failure_kind", ["empty_trace", "trigger_error"])
+@pytest.mark.asyncio
+async def test_real_sa_channel_power_failure_never_returns_numeric_sentinel(
+    monkeypatch, driver_cls, failure_kind
+):
+    driver = driver_cls("sa-real", {"ip": "192.0.2.10"})
+    if failure_kind == "empty_trace":
+        monkeypatch.setattr(driver, "_query", MagicMock(return_value="1"))
+        monkeypatch.setattr(driver, "get_trace", AsyncMock(return_value=[]))
+    else:
+        monkeypatch.setattr(
+            driver,
+            "_query",
+            MagicMock(side_effect=RuntimeError("instrument read failed")),
+        )
+
+    with pytest.raises(RuntimeError, match="channel power measurement failed"):
+        await driver.measure_channel_power(1e6)

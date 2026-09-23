@@ -67,7 +67,8 @@ def test_ce_sa_primary_path_also_rejects_simulated():
     暗室配了 `cable_sgh_to_sa_loss_db` 就走 CE+SA —— 那条路完全绕过 VNA 那道门。
     而 `MockSignalAnalyzer.measure_channel_power()` 返回随机值。
 
-    让它报错的改法：把 CE+SA 那条路上的两句 `_reject_simulated_instrument` 删掉。
+    让它报错的改法：把 CE+SA 共同预检里的两句
+    `_reject_simulated_instrument` 删掉。
     """
     import ast
     import pathlib
@@ -81,21 +82,22 @@ def test_ce_sa_primary_path_also_rejects_simulated():
     assert "模拟驱动" in str(e.value)
 
     # 主路径上真的接了这道关（不是只有函数存在）。
-    # 拦截放在**实际取驱动并采集**的那个内层函数里 —— 比拦在外层更靠近生效端。
+    # 拦截收敛在共同预检：方向图扫描在第一次物理移动前调用，
+    # 实际采集内层在 RF 路由/输出前再调用一次。
     # 调用链：_real_path_loss_measurement_via_ce_sa → acquire_sa_power_via_ce_tone
-    #        → _acquire_sa_power_via_ce_tone_inner（拦在这）
+    #        → _acquire_sa_power_via_ce_tone_inner → preflight_sa_power_via_ce_tone
     src = (pathlib.Path(__file__).resolve().parents[1]
            / "app/services/path_loss_calibration_service.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     fn = next((n for n in ast.walk(tree)
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and n.name == "_acquire_sa_power_via_ce_tone_inner"), None)
-    assert fn, "找不到实际取 CE/SA 驱动的那个函数 —— 改名了？请更新本门"
+               and n.name == "preflight_sa_power_via_ce_tone"), None)
+    assert fn, "找不到 CE/SA 共同预检函数 —— 改名了？请更新本门"
     guards = [n for n in ast.walk(fn)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
               and n.func.id == "_reject_simulated_instrument"]
     assert len(guards) >= 2, (
-        f"取 CE/SA 驱动的地方只有 {len(guards)} 处拦截，应至少 2 处（CE 与 SA 各一）"
+        f"CE/SA 共同预检只有 {len(guards)} 处拦截，应至少 2 处（CE 与 SA 各一）"
     )
 
     # 而且主路径确实会走到那里（链路不能断）
@@ -139,7 +141,8 @@ def test_b_path_upstream_source_and_rf_switch_also_rejected():
     - 模拟开关 `set_mapped_path()` 返回 True 但**物理矩阵根本没切** →
       测的是当前那条错通路，结果却签成目标 chain/probe 的证书。
 
-    让它报错的改法：把这两处的 `_reject_simulated_instrument` 删掉。
+    让它报错的改法：把共同预检或开关路由中的
+    `_reject_simulated_instrument` 删掉。
     """
     import ast
     import pathlib
@@ -149,7 +152,7 @@ def test_b_path_upstream_source_and_rf_switch_also_rejected():
     tree = ast.parse(src)
 
     for fn_name, expect in [
-        ("_acquire_sa_power_via_ce_tone_inner", 3),   # CE + SA + 上游源
+        ("preflight_sa_power_via_ce_tone", 3),       # CE + SA + 上游源
         ("_route_switch_to_chain", 1),                # 射频开关
     ]:
         fn = next((n for n in ast.walk(tree)

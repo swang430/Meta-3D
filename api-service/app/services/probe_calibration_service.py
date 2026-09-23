@@ -1950,6 +1950,10 @@ class PatternCalibrationService:
             )
         fspl_db = calculate_fspl(frequency_mhz, measurement_distance_m)
         pl_service = ProbePathLossCalibrationService(db, use_mock=False)
+        # Validate every driver selected by the exact CE capability path before
+        # the first physical move.  The shared acquisition primitive repeats
+        # this check immediately before RF routing/output to catch HAL reloads.
+        pl_service.preflight_sa_power_via_ce_tone(route_target=route_target)
 
         measurements: List[PatternMeasurement] = []
         stop_generation_reader = getattr(positioner, "operator_stop_generation", None)
