@@ -1173,6 +1173,54 @@ paths:
                     type: number
                   interpolated:
                     type: boolean
+  /api/v1/calibration/probe/pattern/start:
+    post:
+      summary: Start probe-pattern calibration through the authoritative service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartPatternCalibrationRequest'
+      responses:
+        '202':
+          description: Completed pattern calibration job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrationJobResponse'
+        '422':
+          description: Invalid context, unresolved route, or calibration failure
+  /api/v1/calibration/probe/pattern/{probe_id}:
+    get:
+      summary: Read persisted probe-pattern calibration rows
+      parameters:
+        - name: probe_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: chamber_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: frequency_mhz
+          in: query
+          required: false
+          schema:
+            type: number
+            nullable: true
+      responses:
+        '200':
+          description: Persisted pattern rows including frozen route provenance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PatternCalibrationResponse'
   /api/v1/calibration/phase/calibrate:
     post:
       summary: Phase calibration entry (fail-loud closed since P1-68)
@@ -1954,6 +2002,115 @@ components:
           description: >-
             True = simulated (default); False = real CE+SA frequency sweep
             (_real_frequency_sweep_via_ce_sa). P1-68 restored reachability.
+    StartPatternCalibrationRequest:
+      type: object
+      required: [lab_profile_id, chamber_id, probe_ids, frequency_mhz, calibrated_by]
+      properties:
+        lab_profile_id:
+          type: string
+          format: uuid
+          description: 本次校准使用的 LabProfile ID
+        chamber_id:
+          type: string
+          format: uuid
+          description: 校准所属暗室 ID
+        operating_mode:
+          type: string
+          minLength: 1
+          default: mimo_ota
+        probe_ids:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+        polarizations:
+          type: array
+          default: [V, H]
+          items:
+            type: string
+            enum: [V, H, LHCP, RHCP]
+        frequency_mhz:
+          type: number
+        azimuth_step_deg:
+          type: number
+          minimum: 1
+          maximum: 30
+          default: 5
+        elevation_step_deg:
+          type: number
+          minimum: 1
+          maximum: 30
+          default: 5
+        measurement_distance_m:
+          type: number
+          minimum: 0.5
+          maximum: 10
+          default: 3
+        reference_antenna_id:
+          type: string
+          nullable: true
+        turntable_id:
+          type: string
+          nullable: true
+        ce_tx_power_dbm:
+          type: number
+          default: -20
+        sgh_gain_dbi:
+          type: number
+          default: 10
+        use_mock:
+          type: boolean
+          default: true
+          description: True=模拟诊断；False=真实硬件校准
+        calibrated_by:
+          type: string
+    PatternCalibrationResponse:
+      type: object
+      required: [id, chamber_id, probe_id, polarization, frequency_mhz, azimuth_deg, elevation_deg, gain_pattern_dbi, measured_at, valid_until, status]
+      properties:
+        id: { type: string, format: uuid }
+        chamber_id: { type: string, format: uuid }
+        use_mock: { type: boolean, nullable: true }
+        warnings:
+          type: array
+          nullable: true
+          items: { type: string }
+        lab_profile_id: { type: string, format: uuid, nullable: true }
+        operating_mode: { type: string, nullable: true }
+        topology_id: { type: string, nullable: true }
+        chain_id: { type: string, nullable: true }
+        ce_port: { type: string, nullable: true }
+        probe_id: { type: integer }
+        polarization: { type: string }
+        frequency_mhz: { type: number }
+        azimuth_deg:
+          type: array
+          items: { type: number }
+        elevation_deg:
+          type: array
+          items: { type: number }
+        gain_pattern_dbi:
+          type: array
+          items: { type: number }
+        peak_gain_dbi: { type: number, nullable: true }
+        peak_azimuth_deg: { type: number, nullable: true }
+        peak_elevation_deg: { type: number, nullable: true }
+        hpbw_azimuth_deg: { type: number, nullable: true }
+        hpbw_elevation_deg: { type: number, nullable: true }
+        front_to_back_ratio_db: { type: number, nullable: true }
+        reference_antenna: { type: string, nullable: true }
+        turntable: { type: string, nullable: true }
+        measurement_distance_m: { type: number, nullable: true }
+        measured_at: { type: string }
+        measured_by: { type: string, nullable: true }
+        valid_until: { type: string }
+        status: { type: string }
+        source: { type: string, nullable: true }
+        probe_model: { type: string, nullable: true }
+        probe_vendor: { type: string, nullable: true }
+        probe_serial: { type: string, nullable: true }
+        imported_file_format: { type: string, nullable: true }
+        coordinate_system: { type: string, nullable: true }
     CalibrationJobResponse:
       type: object
       required: [calibration_job_id, status]

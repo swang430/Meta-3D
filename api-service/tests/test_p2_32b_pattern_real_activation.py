@@ -1,6 +1,7 @@
 """P2-32B probe-pattern production activation contracts."""
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -499,3 +500,76 @@ def test_pattern_report_discloses_route_but_never_invents_pass_verdict():
     assert row["ce_port"] == "B1.1"
     assert report["execution_summary"]["undetermined"] == 1
     db.close()
+
+
+def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types():
+    import yaml
+
+    from app.main import app
+
+    repo_root = Path(__file__).resolve().parents[2]
+    live = app.openapi()
+    checked = yaml.safe_load((repo_root / "api/openapi.yaml").read_text())
+    route = "/api/v1/calibration/probe/pattern/start"
+    assert route in live["paths"]
+    assert route in checked["paths"]
+
+    expected_request = {
+        "lab_profile_id",
+        "chamber_id",
+        "operating_mode",
+        "probe_ids",
+        "polarizations",
+        "frequency_mhz",
+        "azimuth_step_deg",
+        "elevation_step_deg",
+        "measurement_distance_m",
+        "reference_antenna_id",
+        "turntable_id",
+        "ce_tx_power_dbm",
+        "sgh_gain_dbi",
+        "use_mock",
+        "calibrated_by",
+    }
+    expected_response_route = {
+        "warnings",
+        "lab_profile_id",
+        "operating_mode",
+        "topology_id",
+        "chain_id",
+        "ce_port",
+        "source",
+    }
+    assert set(live["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]) == expected_request
+    assert set(checked["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]) == expected_request
+    assert expected_response_route <= set(
+        live["components"]["schemas"]["PatternCalibrationResponse"]["properties"]
+    )
+    assert expected_response_route <= set(
+        checked["components"]["schemas"]["PatternCalibrationResponse"]["properties"]
+    )
+
+    generated = (repo_root / "gui/src/types/api.generated.ts").read_text()
+    manual = (repo_root / "gui/src/types/probeCalibration.ts").read_text()
+    for token in (route, "StartPatternCalibrationRequest", "PatternCalibrationResponse"):
+        assert token in generated
+    for field in expected_request | expected_response_route:
+        assert field in generated
+        assert field in manual
+
+
+def test_pattern_gui_has_one_live_start_workflow():
+    repo_root = Path(__file__).resolve().parents[2]
+    app_source = (repo_root / "gui/src/App.tsx").read_text()
+    page_source = (
+        repo_root / "gui/src/features/ProbeCalibration/ProbeCalibrationPage.tsx"
+    ).read_text()
+    panel_source = (
+        repo_root
+        / "gui/src/features/ProbeCalibration/components/PatternMeasurementPanel.tsx"
+    ).read_text()
+
+    assert app_source.count("<ProbeCalibrationPage") == 1
+    assert page_source.count("<PatternMeasurementPanel") == 1
+    assert panel_source.count("useStartPatternCalibration()") == 1
+    assert "ce_port" not in panel_source

@@ -2222,6 +2222,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calibration/probe/pattern/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start probe-pattern calibration through the authoritative service */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartPatternCalibrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Completed pattern calibration job */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalibrationJobResponse"];
+                    };
+                };
+                /** @description Invalid context, unresolved route, or calibration failure */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/probe/pattern/{probe_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read persisted probe-pattern calibration rows */
+        get: {
+            parameters: {
+                query: {
+                    chamber_id: string;
+                    frequency_mhz?: number | null;
+                };
+                header?: never;
+                path: {
+                    probe_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Persisted pattern rows including frozen route provenance */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PatternCalibrationResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calibration/phase/calibrate": {
         parameters: {
             query?: never;
@@ -2968,6 +3056,86 @@ export interface components {
              * @default true
              */
             use_mock: boolean;
+        };
+        StartPatternCalibrationRequest: {
+            /**
+             * Format: uuid
+             * @description 本次校准使用的 LabProfile ID
+             */
+            lab_profile_id: string;
+            /**
+             * Format: uuid
+             * @description 校准所属暗室 ID
+             */
+            chamber_id: string;
+            /** @default mimo_ota */
+            operating_mode: string;
+            probe_ids: number[];
+            /**
+             * @default [
+             *       "V",
+             *       "H"
+             *     ]
+             */
+            polarizations: ("V" | "H" | "LHCP" | "RHCP")[];
+            frequency_mhz: number;
+            /** @default 5 */
+            azimuth_step_deg: number;
+            /** @default 5 */
+            elevation_step_deg: number;
+            /** @default 3 */
+            measurement_distance_m: number;
+            reference_antenna_id?: string | null;
+            turntable_id?: string | null;
+            /** @default -20 */
+            ce_tx_power_dbm: number;
+            /** @default 10 */
+            sgh_gain_dbi: number;
+            /**
+             * @description True=模拟诊断；False=真实硬件校准
+             * @default true
+             */
+            use_mock: boolean;
+            calibrated_by: string;
+        };
+        PatternCalibrationResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            chamber_id: string;
+            use_mock?: boolean | null;
+            warnings?: string[] | null;
+            /** Format: uuid */
+            lab_profile_id?: string | null;
+            operating_mode?: string | null;
+            topology_id?: string | null;
+            chain_id?: string | null;
+            ce_port?: string | null;
+            probe_id: number;
+            polarization: string;
+            frequency_mhz: number;
+            azimuth_deg: number[];
+            elevation_deg: number[];
+            gain_pattern_dbi: number[];
+            peak_gain_dbi?: number | null;
+            peak_azimuth_deg?: number | null;
+            peak_elevation_deg?: number | null;
+            hpbw_azimuth_deg?: number | null;
+            hpbw_elevation_deg?: number | null;
+            front_to_back_ratio_db?: number | null;
+            reference_antenna?: string | null;
+            turntable?: string | null;
+            measurement_distance_m?: number | null;
+            measured_at: string;
+            measured_by?: string | null;
+            valid_until: string;
+            status: string;
+            source?: string | null;
+            probe_model?: string | null;
+            probe_vendor?: string | null;
+            probe_serial?: string | null;
+            imported_file_format?: string | null;
+            coordinate_system?: string | null;
         };
         CalibrationJobResponse: {
             /** Format: uuid */
