@@ -190,6 +190,12 @@ def _stub_single_point_measurement(monkeypatch, lease: _CountingLease) -> list[i
         "_real_path_loss_measurement_via_ce_sa",
         _measure,
     )
+    # 本文件验证租约引用计数，不为作业级预检伪造 CE/SA 驱动。
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target, ce_port=None: None,
+    )
     return depths
 
 
@@ -465,6 +471,11 @@ def _stub_noisy_single_point(monkeypatch, lease: _CountingLease) -> list[int]:
         "_real_path_loss_measurement_via_ce_sa",
         _measure,
     )
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target, ce_port=None: None,
+    )
     return depths
 
 
@@ -600,3 +611,141 @@ async def test_frequency_sweep_lease_acquire_failure_returns_result(db, chamber,
     assert isinstance(result, pl_mod.CalibrationResult) and result.success is False
     assert "lease" in result.message.lower()
     assert depths == []
+
+
+# ---------------------------------------------------------------------------
+# 7. P2-32B: 纯硬件路由预检必须发生在任何远程租约之前
+# ---------------------------------------------------------------------------
+
+
+def _reject_route_before_lease(monkeypatch, pl_mod):
+    """让纯预检稳定拒绝，并把任何租约构造都视为越界硬件触碰。"""
+    preflight = MagicMock(side_effect=RuntimeError("invalid calibration route B33"))
+    lease_factory = MagicMock(side_effect=AssertionError("remote lease touched"))
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        preflight,
+    )
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease",
+        lease_factory,
+    )
+    return preflight, lease_factory
+
+
+@pytest.mark.asyncio
+async def test_public_tone_acquire_rejects_route_before_remote_lease(db, monkeypatch):
+    from app.services import path_loss_calibration_service as pl_mod
+
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    with pytest.raises(RuntimeError, match="invalid calibration route B33"):
+        await svc.acquire_sa_power_via_ce_tone(
+            frequency_mhz=3500.0,
+            ce_port="B33",
+            route_target="chain-b33",
+        )
+
+    preflight.assert_called_once_with(route_target="chain-b33", ce_port="B33")
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_loss_rejects_route_before_job_lease(
+    db, chamber, monkeypatch
+):
+    from app.services import path_loss_calibration_service as pl_mod
+
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    result = await svc.start_calibration(
+        chamber_id=chamber.id,
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+    )
+
+    assert result.success is False
+    assert "invalid calibration route B33" in result.message
+    preflight.assert_called_once_with(route_target=None, ce_port=None)
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lab_profile_path_loss_rejects_all_routes_before_job_lease(
+    db, chamber, monkeypatch
+):
+    from app.models.lab_profile import LabProfile
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lab = LabProfile(name="P2-32B preflight lab", chamber_config_id=chamber.id)
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    resolution = RFChainResolution(
+        lab_profile_id=lab.id,
+        chamber_id=chamber.id,
+        topology_id="p2-32b-preflight-topology",
+        topology_name="P2-32B preflight",
+        operating_mode="mimo_ota",
+        chains=[
+            RFChainSpec(
+                chain_id="chain-b33",
+                ce_port="B33",
+                probe_id=0,
+                polarization="V",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: resolution,
+    )
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    result = await svc.start_calibration_for_lab_profile(
+        lab_profile_id=lab.id,
+        operating_mode="mimo_ota",
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert result.success is False
+    assert "invalid calibration route B33" in result.message
+    preflight.assert_called_once_with(route_target="chain-b33", ce_port="B33")
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_frequency_sweep_rejects_all_routes_before_job_lease(
+    db, chamber, monkeypatch
+):
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lab_profile_id = _stub_multi_frequency_routes(monkeypatch, chamber, [0])
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.MultiFrequencyPathLossService(db, use_mock=False)
+
+    result = await svc.calibrate_frequency_sweep(
+        chamber_id=chamber.id,
+        lab_profile_id=lab_profile_id,
+        probe_ids=[0],
+        polarization=PolarizationType.V,
+        freq_start_mhz=3500.0,
+        freq_stop_mhz=3500.0,
+        freq_step_mhz=100.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert result.success is False
+    assert "invalid calibration route B33" in result.message
+    preflight.assert_called_once_with(route_target="chain-0", ce_port="B1.1")
+    lease_factory.assert_not_called()

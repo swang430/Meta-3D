@@ -355,6 +355,23 @@ class ProbePathLossCalibrationService:
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
 
+        # P2-32B: pure validation must precede the remote-control lease.  An
+        # invalid output/route must not acquire F64 Remote only to reject the
+        # request afterwards.  The inner acquisition repeats this check to
+        # catch a HAL reload between preflight and first hardware I/O.
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            try:
+                self.preflight_sa_power_via_ce_tone(
+                    route_target=None,
+                    ce_port=None,
+                )
+            except Exception as exc:  # noqa: BLE001 - public result contract
+                return CalibrationResult(
+                    success=False,
+                    message=f"Instrument preflight failed for path-loss calibration: {exc}",
+                    warnings=warnings,
+                )
+
         # P2-30: 作业级租约（条件 = 会走 CE+SA 路径）—— 整个 probe×pol 循环
         # 只真取/放一次 F64 控制权；循环内单点测量自带的租约圈在嵌套下自动
         # no-op（hold() 引用计数），此前 32 探头 × 2 极化 = 64 次 socket 建拆。
@@ -588,6 +605,23 @@ class ProbePathLossCalibrationService:
 
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
+
+        # Validate every frozen chain before the job-level lease.  Failing on
+        # the second chain after acquiring Remote would still touch hardware
+        # for an execution that can never start safely.
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            try:
+                for chain in resolution.chains:
+                    self.preflight_sa_power_via_ce_tone(
+                        route_target=chain.chain_id,
+                        ce_port=chain.ce_port,
+                    )
+            except Exception as exc:  # noqa: BLE001 - public result contract
+                return CalibrationResult(
+                    success=False,
+                    message=f"Instrument preflight failed for path-loss calibration: {exc}",
+                    warnings=warnings,
+                )
 
         # P2-30: 作业级租约（同 start_calibration，条件 = 会走 CE+SA 路径）——
         # 整个 chain 循环只真取/放一次 F64 控制权。
@@ -940,6 +974,10 @@ class ProbePathLossCalibrationService:
             # inner reset 前失败，也不能把同一 service 上的陈旧值错标到本次。
             self._last_acquire_warnings = []
         try:
+            self.preflight_sa_power_via_ce_tone(
+                route_target=route_target,
+                ce_port=ce_port,
+            )
             async with instrument_test_lease(
                 f"path-loss-tone:probe{probe_id}:{polarization.value}",
                 control_f64=True,
@@ -1036,9 +1074,10 @@ class ProbePathLossCalibrationService:
     ) -> Tuple[Any, Any, Any, Any, Optional[Any]]:
         """Validate the exact CE+SA hardware path without performing I/O.
 
-        Pattern calibration calls this before moving the positioner.  The
-        acquisition primitive calls it again immediately before routing/tone
-        output so a HAL reload between those points still fails closed.
+        Job entrypoints call this before taking remote-control leases (and
+        pattern calibration before moving the positioner).  The acquisition
+        primitive calls it again immediately before routing/tone output so a
+        HAL reload between those points still fails closed.
         """
         from app.hal.channel_emulator import CalibrationToneCapability
         from app.services.instrument_hal_service import get_hal_service
@@ -2161,6 +2200,29 @@ class MultiFrequencyPathLossService:
 
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
+
+        # Resolve and validate the complete chain set before touching F64
+        # Remote.  Per-point acquisition retains its own recheck for HAL drift.
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            preflight_service = ProbePathLossCalibrationService(
+                self.db,
+                use_mock=False,
+            )
+            try:
+                for chain in requested_chains.values():
+                    preflight_service.preflight_sa_power_via_ce_tone(
+                        route_target=chain.chain_id,
+                        ce_port=chain.ce_port,
+                    )
+            except Exception as exc:  # noqa: BLE001 - public result contract
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Instrument preflight failed for multi-frequency "
+                        f"calibration: {exc}"
+                    ),
+                    warnings=warnings,
+                )
 
         # P2-30: 作业级租约（同上，条件 = 会走 CE+SA 路径）—— 整个
         # probe × 频点扫频只真取/放一次 F64 控制权。
