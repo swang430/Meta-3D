@@ -30,6 +30,7 @@ from app.services.probe_calibration_service import (
     PatternCalibrationService,
     PatternMeasurement,
 )
+from app.services.mimo_ota.switch_orchestrator import _build_probe_binding
 from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
 
 
@@ -63,6 +64,62 @@ def _pattern(**overrides):
     }
     values.update(overrides)
     return ProbePattern(**values)
+
+
+def test_probe_binding_uses_connection_ce_port_not_shared_instrument_label():
+    """The physical output identity lives on the topology connection.
+
+    A shared channel-emulator node labels the instrument, not one of its 32
+    output connectors.  Using that label makes every connection indistinct.
+    """
+    binding = _build_probe_binding(
+        {
+            "id": "conn_ce_b17_to_probe_5v",
+            "source": "ce_f64",
+            "target": "probe_5v",
+            "ce_port": "B17",
+        },
+        {
+            "ce_f64": {
+                "id": "ce_f64",
+                "type": "channel_emulator",
+                "label": "PROPSIM F64",
+            },
+            "probe_5v": {
+                "id": "probe_5v",
+                "type": "probe",
+                "label": "Probe 5 V",
+                "params": {"probe_id": 5, "polarization": "V"},
+            },
+        },
+    )
+
+    assert binding is not None
+    assert binding.ce_port == "B17"
+
+    blank = _build_probe_binding(
+        {
+            "id": "conn_blank",
+            "source": "ce_f64",
+            "target": "probe_5v",
+            "ce_port": "",
+        },
+        {
+            "ce_f64": {
+                "id": "ce_f64",
+                "type": "channel_emulator",
+                "label": "PROPSIM F64",
+            },
+            "probe_5v": {
+                "id": "probe_5v",
+                "type": "probe",
+                "label": "Probe 5 V",
+                "params": {"probe_id": 5, "polarization": "V"},
+            },
+        },
+    )
+    assert blank is not None
+    assert blank.ce_port == "", "explicit blank must remain invalid, not fall back"
 
 
 def test_probe_pattern_persists_execution_provenance_and_warnings():

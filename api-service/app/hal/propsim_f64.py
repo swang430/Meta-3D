@@ -4302,27 +4302,35 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         - None → "1" (主端口默认)
         - 纯数字 ("1", "12") → 直接用
+        - "B1" .. "B32" → 对应的数字 output。这是 CAICT 拓扑模板
+          `CAICT_CHANNEL_MAP` 明确声明的现场映射（F64 Port 1-32），
+          不是从其他仪器方言推断。
         - "B1.1" / "B1.2" 等 ETSL 风格 connector 表示法 → 取小数点后部分
           作为 output index (这是 CAICT 现场约定; 跨实验室部署在
           InstrumentCategory.config 里另写映射表覆盖)
-        - 解析失败 → "1" + warn (生产部署应在 LabProfile 显式声明 ce_port)
+        - 显式值无法解析 → fail-loud，绝不静默回退 output 1。
         """
         if ce_port is None:
             return "1"
         s = str(ce_port).strip()
-        if s.isdigit():
-            return s
+        if s.isdigit() and int(s) > 0:
+            return str(int(s))
+        # CAICT dev-fixture 的权威连线表明确声明 B1..B32 对应
+        # F64 physical output 1..32。这里只解析该已声明表示法。
+        if len(s) > 1 and s[0].upper() == "B" and s[1:].isdigit():
+            output_num = int(s[1:])
+            if 1 <= output_num <= 32:
+                return str(output_num)
         # "B1.1" / "A2.3" → 小数点后的数字
         if "." in s:
             tail = s.rsplit(".", 1)[-1]
-            if tail.isdigit():
-                return tail
-        logger.warning(
-            "[F64] ce_port=%r unrecognized format, defaulting to output 1; "
-            "configure LabProfile.ce_port explicitly for production",
-            ce_port,
+            if tail.isdigit() and int(tail) > 0:
+                return str(int(tail))
+        raise ValueError(
+            f"unrecognized ce_port {ce_port!r}; expected a positive output "
+            "number, CAICT B<number>, or dotted connector ending in a "
+            "positive output number"
         )
-        return "1"
 
     def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
         """声明本 PROPSIM 的 CE+SA tone 能力.
