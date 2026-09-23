@@ -4332,6 +4332,10 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def reset(self) -> bool:
         """复位仪器"""
+        # Reset changes the active cell configuration.  Invalidate the prior
+        # receipt proof before stop_signaling performs its first instrument I/O,
+        # including cancellation and reset-failure paths.
+        self._confirmed_frequency_controls = None
         try:
             await self.stop_signaling()
             self._write(CmwScpiCommands.PRESET)

@@ -384,6 +384,24 @@ async def test_cmw_failed_new_connect_clears_frequency_identity():
 
 
 @pytest.mark.asyncio
+async def test_cmw_reset_clears_frequency_identity_before_first_io_on_cancellation():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    assert driver.get_frequency_identity() is not None
+
+    async def cancel_before_stop_write() -> bool:
+        assert driver.get_frequency_identity() is None
+        raise asyncio.CancelledError
+
+    driver.stop_signaling = cancel_before_stop_write  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await driver.reset()
+
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
 async def test_each_real_connect_creates_a_new_opaque_session_token():
     driver = RealCmw500Driver("cmw", {"ip_address": "192.0.2.10"})
     first = _Session(_identity_responses())
