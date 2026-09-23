@@ -162,7 +162,7 @@ def _stub_inner_tone(monkeypatch, lease: _CountingLease) -> list[int]:
     monkeypatch.setattr(
         pl_mod.ProbePathLossCalibrationService,
         "preflight_sa_power_via_ce_tone",
-        lambda self, *, route_target: None,
+        lambda self, *, route_target, ce_port=None: None,
     )
     return depths
 
