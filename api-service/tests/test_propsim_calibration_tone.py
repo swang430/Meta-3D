@@ -325,6 +325,14 @@ class TestCalibrationToneFailLoud:
 class TestPassthroughMode:
 
     @pytest.mark.asyncio
+    async def test_explicit_unknown_output_is_rejected_before_bypass_scpi(self):
+        drv, visa = _make_driver(has_interference_generator=False)
+        for ce_port in ("PROPSIM F64", "B33", ""):
+            with pytest.raises(ValueError, match="unrecognized ce_port"):
+                await drv.set_passthrough_mode(ce_port=ce_port)
+        assert not _writes(visa)
+
+    @pytest.mark.asyncio
     async def test_set_passthrough_drives_calibration_bypass(self):
         """B path = DIAG:SIMU:MODEL:STATIC 3 (calibration bypass: equal gain,
         equal delay, zero phase across all channels)."""

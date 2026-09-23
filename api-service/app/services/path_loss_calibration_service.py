@@ -980,7 +980,8 @@ class ProbePathLossCalibrationService:
         from app.hal.channel_emulator import CalibrationToneCapability
 
         hal, ce, sa, caps, source = self.preflight_sa_power_via_ce_tone(
-            route_target=route_target
+            route_target=route_target,
+            ce_port=ce_port,
         )
 
         # Switch routing — drive rfSwitch to (probe, pol) when caller gave us
@@ -988,10 +989,9 @@ class ProbePathLossCalibrationService:
         #   1. route_target + rfSwitch driver bound → set_mapped_path(chain_id),
         #      driver looks up port_maps to translate to (switch_id, output_port).
         #      Failure → loud RuntimeError, can't measure on the wrong probe.
-        #   2. route_target without rfSwitch driver → fixed-cabling site
-        #      (CAICT-Lab-1 style: every CE port is permanently wired to one
-        #      probe, no relays). Skip silently with debug log; CE port
-        #      selection alone determines which probe is energized.
+        #   2. route_target without rfSwitch driver → only D/internal-CW may
+        #      use fixed cabling because it selects one physical CE output.
+        #      B/global passthrough was rejected in preflight.
         #   3. No route_target → legacy chamber-keyed entry point with no
         #      topology info. Operator pre-routed manually; warn so it doesn't
         #      get missed in production.
@@ -1032,6 +1032,7 @@ class ProbePathLossCalibrationService:
         self,
         *,
         route_target: Optional[str],
+        ce_port: Optional[str] = None,
     ) -> Tuple[Any, Any, Any, Any, Optional[Any]]:
         """Validate the exact CE+SA hardware path without performing I/O.
 
@@ -1067,6 +1068,19 @@ class ProbePathLossCalibrationService:
                 "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
             )
 
+        validate_output = getattr(ce, "validate_calibration_output_port", None)
+        if not callable(validate_output):
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} cannot validate calibration "
+                "output ports before hardware I/O."
+            )
+        try:
+            validate_output(ce_port)
+        except (NotImplementedError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"CE calibration output {ce_port!r} is not resolver-valid: {exc}"
+            ) from exc
+
         if route_target is not None:
             rf_switch = hal.drivers.get("rfSwitch")
             if rf_switch is not None:
@@ -1081,6 +1095,17 @@ class ProbePathLossCalibrationService:
                     f"CE driver {type(ce).__name__} declared capabilities {caps} "
                     "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
                 )
+            rf_switch = hal.drivers.get("rfSwitch")
+            if route_target is None or rf_switch is None:
+                raise RuntimeError(
+                    "PASSTHROUGH_ONLY calibration is global and cannot isolate "
+                    "one fixed-wired CE output; a route_target and real "
+                    "rfSwitch are required. Use INTERNAL_CW_GENERATOR for "
+                    "fixed cabling."
+                )
+            _reject_simulated_instrument(
+                rf_switch, "rfSwitch", "PASSTHROUGH_ONLY 真测链路隔离"
+            )
             source = hal.drivers.get("vectorSignalGenerator")
             if source is None:
                 raise RuntimeError(

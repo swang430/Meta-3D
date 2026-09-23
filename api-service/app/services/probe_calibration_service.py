@@ -1953,7 +1953,10 @@ class PatternCalibrationService:
         # Validate every driver selected by the exact CE capability path before
         # the first physical move.  The shared acquisition primitive repeats
         # this check immediately before RF routing/output to catch HAL reloads.
-        pl_service.preflight_sa_power_via_ce_tone(route_target=route_target)
+        pl_service.preflight_sa_power_via_ce_tone(
+            route_target=route_target,
+            ce_port=ce_port,
+        )
 
         measurements: List[PatternMeasurement] = []
         stop_generation_reader = getattr(positioner, "operator_stop_generation", None)

@@ -4332,6 +4332,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             "positive output number"
         )
 
+    def validate_calibration_output_port(
+        self, ce_port: Optional[str]
+    ) -> Optional[str]:
+        """Validate and normalize an F64 calibration output without I/O."""
+        if ce_port is None:
+            return None
+        return self._ce_port_to_output_num(ce_port)
+
     def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
         """声明本 PROPSIM 的 CE+SA tone 能力.
 
@@ -4525,6 +4533,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         路由到指定 probe. ce_port / ce_input_port 在静态旁路下不需要
         per-port 配置 (全局透传), 仅记录到状态用于 trace.
         """
+        # Although STATIC bypass is global, an explicit topology output is
+        # still evidence carried into the formal chain result.  Validate it
+        # before the first SCPI so an instrument label or stale port cannot be
+        # laundered as a physical output identity.
+        self.validate_calibration_output_port(ce_port)
         if mode is None:
             resolved = F64BypassMode.CALIBRATION
         else:
