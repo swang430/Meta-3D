@@ -235,4 +235,3 @@ latest-head review has no P1 and required checks pass (or none are required).
 
 Fetch origin/main, fast-forward the main checkout without touching untracked instrument files, remove the
 worktree/local branch, then begin the separately planned P2-32B slice.
-

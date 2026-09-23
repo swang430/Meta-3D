@@ -84,4 +84,3 @@ Active LabProfile.chamber_config_id
 4. acquire warning 按 probe 落库，并在 start 响应与两条校准报告收集路径中可见。
 5. Mock 行在报告中保持 `validation_pass=null`；真实、有效且未过期行才可进入现有正式分母。
 6. 旧随机端点从 live OpenAPI 消失，四份契约镜像一致。
-
