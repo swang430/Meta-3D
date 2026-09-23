@@ -1498,12 +1498,13 @@ class PatternCalibrationService:
         calibrated_by: str,
         *,
         chamber_id: UUID,
+        lab_profile_id: Optional[UUID] = None,
+        operating_mode: str = "mimo_ota",
         azimuth_step_deg: float = DEFAULT_AZIMUTH_STEP_DEG,
         elevation_step_deg: float = DEFAULT_ELEVATION_STEP_DEG,
         measurement_distance_m: float = 3.0,
         reference_antenna_id: Optional[str] = None,
         turntable_id: Optional[str] = None,
-        ce_port: Optional[str] = None,
         ce_tx_power_dbm: float = -20.0,
         sgh_gain_dbi: float = 10.0,
         chain_correction_db: float = 0.0,
@@ -1547,7 +1548,7 @@ class PatternCalibrationService:
             measurement_distance_m, antenna_diameter_m, frequency_mhz
         )
 
-        warnings = []
+        warnings: List[str] = []
         if not is_far_field:
             warnings.append(
                 f"Measurement distance {measurement_distance_m}m may not satisfy "
@@ -1558,11 +1559,95 @@ class PatternCalibrationService:
         azimuth_deg = list(np.arange(0, 360, azimuth_step_deg))
         elevation_deg = list(np.arange(0, 181, elevation_step_deg))
 
+        route_by_pair = {}
+        topology_id: Optional[str] = None
+        if not use_mock:
+            if lab_profile_id is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires an explicit LabProfile "
+                        "so every probe route can be frozen before hardware I/O"
+                    ),
+                    warnings=warnings,
+                )
+            try:
+                from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+                resolution = resolve_rf_chains(db, lab_profile_id, operating_mode)
+            except ValueError as exc:
+                return CalibrationResult(
+                    success=False,
+                    message=str(exc),
+                    warnings=warnings,
+                )
+            if resolution.chamber_id != chamber_id:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "LabProfile chamber does not match the requested pattern "
+                        "calibration chamber"
+                    ),
+                    warnings=list(resolution.warnings),
+                )
+            if not resolution.topology_id:
+                return CalibrationResult(
+                    success=False,
+                    message="Pattern calibration requires a resolved SwitchTopology",
+                    warnings=list(resolution.warnings),
+                )
+
+            topology_id = str(resolution.topology_id)
+            warnings.extend(resolution.warnings)
+            for requested_probe_id in probe_ids:
+                for requested_polarization in polarizations:
+                    polarization_value = (
+                        requested_polarization.value
+                        if hasattr(requested_polarization, "value")
+                        else str(requested_polarization)
+                    ).upper()
+                    matching = [
+                        chain
+                        for chain in resolution.chains
+                        if chain.probe_id == requested_probe_id
+                        and chain.polarization.upper() == polarization_value
+                    ]
+                    if len(matching) != 1:
+                        return CalibrationResult(
+                            success=False,
+                            message=(
+                                "Real pattern calibration requires exactly one RF chain "
+                                f"for probe {requested_probe_id} polarization "
+                                f"{polarization_value}; resolved {len(matching)}"
+                            ),
+                            warnings=warnings,
+                        )
+                    chain = matching[0]
+                    if not str(chain.chain_id).strip() or not str(chain.ce_port).strip() \
+                            or str(chain.ce_port).strip() == "?":
+                        return CalibrationResult(
+                            success=False,
+                            message=(
+                                "Resolved pattern calibration RF chain is incomplete for "
+                                f"probe {requested_probe_id} polarization {polarization_value}"
+                            ),
+                            warnings=warnings,
+                        )
+                    route_by_pair[(requested_probe_id, polarization_value)] = chain
+
+        common_warnings = list(warnings)
         calibration_ids = []
 
         for probe_id in probe_ids:
             for polarization in polarizations:
                 try:
+                    polarization_value = (
+                        polarization.value
+                        if hasattr(polarization, "value")
+                        else str(polarization)
+                    )
+                    row_warnings = list(common_warnings)
+                    chain = route_by_pair.get((probe_id, polarization_value.upper()))
                     if use_mock:
                         measurements = self._mock_pattern_measurements(
                             probe_id, polarization, azimuth_deg, elevation_deg, frequency_mhz
@@ -1575,15 +1660,19 @@ class PatternCalibrationService:
                             azimuth_deg=azimuth_deg,
                             elevation_deg=elevation_deg,
                             frequency_mhz=frequency_mhz,
-                            ce_port=ce_port,
+                            ce_port=chain.ce_port,
+                            route_target=chain.chain_id,
                             ce_tx_power_dbm=ce_tx_power_dbm,
                             sgh_gain_dbi=sgh_gain_dbi,
                             chain_correction_db=chain_correction_db,
                             measurement_distance_m=measurement_distance_m,
                             reference_antenna_id=reference_antenna_id,
                             turntable_id=turntable_id,
-                            warnings=warnings,
+                            warnings=row_warnings,
                         )
+                        for warning in row_warnings:
+                            if warning not in warnings:
+                                warnings.append(warning)
 
                     # 提取增益数据 (行优先存储: elevation 外循环, azimuth 内循环)
                     gain_pattern = []
@@ -1627,8 +1716,14 @@ class PatternCalibrationService:
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         use_mock=use_mock,
+                        warnings=row_warnings,
+                        lab_profile_id=lab_profile_id,
+                        operating_mode=operating_mode,
+                        topology_id=topology_id,
+                        chain_id=str(chain.chain_id) if chain is not None else None,
+                        ce_port=str(chain.ce_port) if chain is not None else None,
                         source="simulated" if use_mock else "in_chamber_measured",
-                        polarization=polarization.value if hasattr(polarization, 'value') else str(polarization),
+                        polarization=polarization_value,
                         frequency_mhz=frequency_mhz,
                         azimuth_deg=azimuth_deg_native,
                         elevation_deg=elevation_deg_native,
@@ -1653,6 +1748,7 @@ class PatternCalibrationService:
                     calibration_ids.append(str(calibration.id))
 
                 except Exception as e:
+                    db.rollback()
                     logger.error(f"Pattern calibration failed for probe {probe_id}: {e}")
                     return CalibrationResult(
                         success=False,
@@ -1742,6 +1838,7 @@ class PatternCalibrationService:
         reference_antenna_id: Optional[str],
         turntable_id: Optional[str],
         warnings: List[str],
+        route_target: Optional[str] = None,
     ) -> List[PatternMeasurement]:
         """执行实际方向图测量 — CE+SA + positioner.
 
@@ -1824,6 +1921,7 @@ class PatternCalibrationService:
                         frequency_mhz=frequency_mhz,
                         ce_tx_power_dbm=ce_tx_power_dbm,
                         ce_port=ce_port,
+                        route_target=route_target,
                         probe_id=probe_id,
                         polarization=polarization,
                         warning_sink=warnings,

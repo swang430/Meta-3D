@@ -23,10 +23,12 @@ from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import PolarizationType
+from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
 from app.services.probe_calibration_service import PatternCalibrationService
 
 
 TEST_CHAMBER_ID = UUID("cccccccc-0000-0000-0000-000000000053")
+TEST_LAB_PROFILE_ID = UUID("dddddddd-0000-0000-0000-000000000053")
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -39,8 +41,28 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 
 @pytest.fixture(autouse=True)
-def _setup_db():
+def _setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: RFChainResolution(
+            lab_profile_id=TEST_LAB_PROFILE_ID,
+            chamber_id=TEST_CHAMBER_ID,
+            topology_id="pattern-real-topology",
+            topology_name="Pattern real test topology",
+            operating_mode="mimo_ota",
+            chains=[
+                RFChainSpec(
+                    chain_id=f"chain-{probe_id}-{polarization}",
+                    ce_port="B1.1",
+                    probe_id=probe_id,
+                    polarization=polarization,
+                )
+                for probe_id in range(65)
+                for polarization in ("V", "H")
+            ],
+        ),
+    )
     try:
         yield
     finally:
@@ -159,13 +181,13 @@ class TestRealPatternMeasurement:
         result = await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
             azimuth_step_deg=90.0,    # 4 points: 0, 90, 180, 270
             elevation_step_deg=180.0,  # 2 points: 0, 180
             measurement_distance_m=3.0,
-            ce_port="B1.1",
             calibrated_by="test",
             use_mock=False,
         )
@@ -193,6 +215,7 @@ class TestRealPatternMeasurement:
         result = await PatternCalibrationService().execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -222,6 +245,7 @@ class TestRealPatternMeasurement:
         result = await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -231,7 +255,6 @@ class TestRealPatternMeasurement:
             ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
             chain_correction_db=0.0,
-            ce_port="B1.1",
             calibrated_by="test",
             use_mock=False,
         )
@@ -255,6 +278,7 @@ class TestRealPatternMeasurement:
         await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -264,7 +288,6 @@ class TestRealPatternMeasurement:
             ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
             chain_correction_db=60.0,  # ← pretend chain has 60 dB end-to-end gain
-            ce_port="B1.1",
             calibrated_by="test",
             use_mock=False,
         )
@@ -283,6 +306,7 @@ class TestRealPatternMeasurement:
         result = await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -305,6 +329,7 @@ class TestRealPatternMeasurement:
         result = await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -334,6 +359,7 @@ class TestRealPatternMeasurement:
         await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -379,6 +405,7 @@ class TestRealPatternMeasurement:
         result = await svc.execute_pattern_calibration(
             db=db,
             chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -387,7 +414,6 @@ class TestRealPatternMeasurement:
             measurement_distance_m=3.0,
             ce_tx_power_dbm=-20.0,
             sgh_gain_dbi=10.0,
-            ce_port="B1.1",
             calibrated_by="test",
             use_mock=False,
         )
