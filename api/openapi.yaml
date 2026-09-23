@@ -2021,10 +2021,13 @@ components:
         probe_ids:
           type: array
           minItems: 1
+          uniqueItems: true
           items:
             type: integer
         polarizations:
           type: array
+          minItems: 1
+          uniqueItems: true
           default: [V, H]
           items:
             type: string

@@ -293,9 +293,13 @@ class StartPatternCalibrationRequest(BaseModel):
     lab_profile_id: UUID = Field(..., description="本次校准使用的 LabProfile ID")
     chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     operating_mode: str = Field(default="mimo_ota", min_length=1, description="本次校准运行模式")
-    probe_ids: List[int] = Field(..., min_length=1)
+    probe_ids: List[int] = Field(
+        ..., min_length=1, json_schema_extra={"uniqueItems": True}
+    )
     polarizations: List[PolarizationType] = Field(
-        default=[PolarizationType.V, PolarizationType.H]
+        default=[PolarizationType.V, PolarizationType.H],
+        min_length=1,
+        json_schema_extra={"uniqueItems": True},
     )
     frequency_mhz: float = Field(
         ...,
@@ -338,6 +342,10 @@ class StartPatternCalibrationRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_real_chain_correction(self):
+        if len(set(self.probe_ids)) != len(self.probe_ids):
+            raise ValueError("probe_ids must be unique")
+        if len(set(self.polarizations)) != len(self.polarizations):
+            raise ValueError("polarizations must be unique")
         if not self.use_mock and self.chain_correction_db is None:
             raise ValueError(
                 "真实方向图校准必须显式提供 chain_correction_db；"

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
@@ -25,6 +26,7 @@ from app.services.calibration.rf_chain_resolver import (
 )
 from app.services.calibration_report_generator import CalibrationReportGenerator
 from app.services.probe_calibration_service import (
+    CalibrationResult,
     PatternCalibrationService,
     PatternMeasurement,
 )
@@ -158,6 +160,24 @@ def test_real_pattern_request_requires_explicit_chain_correction():
         )
 
 
+@pytest.mark.parametrize(
+    ("probe_ids", "polarizations"),
+    [([], ["V"]), ([0], []), ([0, 0], ["V"]), ([0], ["V", "V"])],
+)
+def test_pattern_request_rejects_empty_or_duplicate_measurement_axes(
+    probe_ids, polarizations
+):
+    with pytest.raises(ValidationError):
+        StartPatternCalibrationRequest(
+            lab_profile_id=uuid4(),
+            chamber_id=uuid4(),
+            probe_ids=probe_ids,
+            polarizations=polarizations,
+            frequency_mhz=3500.0,
+            calibrated_by="operator",
+        )
+
+
 @pytest.mark.parametrize("ce_tx_power_dbm", [-50.1, 20.1])
 def test_pattern_request_rejects_ce_power_outside_existing_hal_domain(
     ce_tx_power_dbm,
@@ -250,6 +270,32 @@ async def test_real_pattern_requires_lab_profile_before_measurement(monkeypatch)
     assert result.success is False
     assert "LabProfile" in result.message
     service._real_pattern_measurements.assert_not_awaited()
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("probe_ids", "polarizations"),
+    [([], [PolarizationType.V]), ([0], []), ([0, 0], [PolarizationType.V])],
+)
+async def test_pattern_service_rejects_empty_or_duplicate_axes_before_measurement(
+    probe_ids, polarizations
+):
+    db = _session()
+    service = PatternCalibrationService()
+
+    result = await service.execute_pattern_calibration(
+        db=db,
+        chamber_id=uuid4(),
+        probe_ids=probe_ids,
+        polarizations=polarizations,
+        frequency_mhz=3500.0,
+        calibrated_by="operator",
+        use_mock=True,
+    )
+
+    assert result.success is False
+    assert "non-empty and unique" in result.message
     db.close()
 
 
@@ -398,6 +444,46 @@ async def test_real_pattern_rejects_ambiguous_chain_before_measurement(monkeypat
     assert "exactly one RF chain" in result.message
     service._real_pattern_measurements.assert_not_awaited()
     assert db.query(ProbePattern).count() == 0
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chain_id", "ce_port"),
+    [("?", "B1.1"), ("chain-1", "?"), (" ", "B1.1"), ("chain-1", " ")],
+)
+async def test_real_pattern_rejects_placeholder_route_identity_before_measurement(
+    monkeypatch, chain_id, ce_port
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    chain = RFChainSpec(chain_id, ce_port, 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [chain]
+        ),
+    )
+    service = PatternCalibrationService()
+    service._real_pattern_measurements = AsyncMock()
+
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=3500.0,
+        calibrated_by="operator",
+        chain_correction_db=0.0,
+        use_mock=False,
+    )
+
+    assert result.success is False
+    assert "incomplete" in result.message
+    service._real_pattern_measurements.assert_not_awaited()
     db.close()
 
 
@@ -584,6 +670,79 @@ def test_measured_pattern_requires_explicit_chain_correction(monkeypatch):
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
     ) is None
+    db.close()
+
+
+def test_measured_pattern_rejects_placeholder_current_route_identity(monkeypatch):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    placeholder_chain = RFChainSpec("?", "B1.1", 0, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [placeholder_chain]
+        ),
+    )
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="?",
+            ce_port="B1.1",
+        )
+    )
+    db.commit()
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) is None
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_pattern_api_rejects_success_without_persisted_calibration(
+    monkeypatch
+):
+    from app.api.probe_calibration import start_pattern_calibration
+
+    db = _session()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    request = StartPatternCalibrationRequest(
+        lab_profile_id=uuid4(),
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=["V"],
+        frequency_mhz=3500.0,
+        calibrated_by="operator",
+    )
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "execute_pattern_calibration",
+        AsyncMock(
+            return_value=CalibrationResult(
+                success=True,
+                message="completed without rows",
+                data={"calibration_ids": []},
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await start_pattern_calibration(request=request, db=db)
+
+    assert exc_info.value.status_code == 500
+    assert "calibration" in str(exc_info.value.detail).lower()
     db.close()
 
 
@@ -792,6 +951,12 @@ def test_pattern_api_contract_is_mirrored_to_checked_schema_and_generated_types(
         ce_power = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["ce_tx_power_dbm"]
         assert ce_power["minimum"] == -50
         assert ce_power["maximum"] == 20
+        probe_ids = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["probe_ids"]
+        polarizations = document["components"]["schemas"]["StartPatternCalibrationRequest"]["properties"]["polarizations"]
+        assert probe_ids["minItems"] == 1
+        assert probe_ids["uniqueItems"] is True
+        assert polarizations["minItems"] == 1
+        assert polarizations["uniqueItems"] is True
     assert expected_response_route <= set(
         live["components"]["schemas"]["PatternCalibrationResponse"]["properties"]
     )

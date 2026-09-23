@@ -23,6 +23,7 @@ LabProfile/Topology/chain/CE-port 与冻结值一致时才可被正式执行消�
 - `vendor_datasheet` 方向图不绑定现场路由，不能因新增字段被误拒。
 - API 省略 `use_mock` 的兼容默认值保持 `true`；GUI 必须显式发送。
 - 真实失败不得 fallback Mock；cleanup warning 不得只沉日志。
+- Real 的 CE、SA、positioner、switch 与 signal source 任一为 Mock 时，必须在首次硬件动作前拒绝。
 - P2-32C 静区保持 Hardware Blocked。
 
 ---

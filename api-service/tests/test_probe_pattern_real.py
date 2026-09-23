@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
+from app.hal.positioner import MockPositioner
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import PolarizationType
@@ -181,6 +182,35 @@ def _patched_hal(monkeypatch, *, ce=None, sa=None, positioner=None):
 class TestRealPatternMeasurement:
 
     @pytest.mark.asyncio
+    async def test_rejects_mock_positioner_before_motion_or_tone(
+        self, db, monkeypatch
+    ):
+        ce = _make_ce_d_path()
+        sa = _make_sa_constant(power_dbm=-85.0)
+        positioner = MockPositioner("mock-positioner", {})
+        _patched_hal(monkeypatch, ce=ce, sa=sa, positioner=positioner)
+
+        result = await PatternCalibrationService().execute_pattern_calibration(
+            db=db,
+            chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            frequency_mhz=3500.0,
+            azimuth_step_deg=360.0,
+            elevation_step_deg=181.0,
+            calibrated_by="test",
+            chain_correction_db=0.0,
+            use_mock=False,
+        )
+
+        assert result.success is False
+        assert "positioner" in result.message
+        assert "模拟驱动" in result.message
+        ce.set_calibration_tone.assert_not_awaited()
+
+
+    @pytest.mark.asyncio
     async def test_drives_positioner_per_grid_point(self, db, monkeypatch):
         """4 az × 2 el = 8 grid points → 8 positioner moves + 8 CE bursts."""
         ce = _make_ce_d_path()
@@ -240,6 +270,35 @@ class TestRealPatternMeasurement:
 
         assert result.success
         assert any("pattern probe 0 V" in warning for warning in result.warnings)
+        assert any("stop_calibration_tone" in warning for warning in result.warnings)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_warning_survives_measurement_failure(
+        self, db, monkeypatch
+    ):
+        ce = _make_ce_d_path()
+        ce.stop_calibration_tone = AsyncMock(return_value=False)
+        sa = _make_sa_constant(power_dbm=-85.0)
+        sa.measure_channel_power = AsyncMock(side_effect=RuntimeError("SA read failed"))
+        pos = _make_positioner()
+        _patched_hal(monkeypatch, ce=ce, sa=sa, positioner=pos)
+
+        result = await PatternCalibrationService().execute_pattern_calibration(
+            db=db,
+            chamber_id=TEST_CHAMBER_ID,
+            lab_profile_id=TEST_LAB_PROFILE_ID,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            frequency_mhz=3500.0,
+            azimuth_step_deg=360.0,
+            elevation_step_deg=181.0,
+            calibrated_by="test",
+            chain_correction_db=0.0,
+            use_mock=False,
+        )
+
+        assert result.success is False
+        assert "SA read failed" in result.message
         assert any("stop_calibration_tone" in warning for warning in result.warnings)
 
     @pytest.mark.asyncio

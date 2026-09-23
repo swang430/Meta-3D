@@ -1534,6 +1534,30 @@ class PatternCalibrationService:
             f"frequency={frequency_mhz} MHz"
         )
 
+        polarization_values = [
+            (
+                polarization.value
+                if hasattr(polarization, "value")
+                else str(polarization)
+            ).upper()
+            for polarization in polarizations
+        ]
+        if not probe_ids or len(set(probe_ids)) != len(probe_ids):
+            return CalibrationResult(
+                success=False,
+                message="Pattern calibration probe_ids must be non-empty and unique",
+            )
+        if (
+            not polarization_values
+            or len(set(polarization_values)) != len(polarization_values)
+        ):
+            return CalibrationResult(
+                success=False,
+                message=(
+                    "Pattern calibration polarizations must be non-empty and unique"
+                ),
+            )
+
         # 验证探头 ID
         for probe_id in probe_ids:
             if probe_id < PROBE_ID_MIN or probe_id > PROBE_ID_MAX:
@@ -1582,7 +1606,10 @@ class PatternCalibrationService:
                     warnings=warnings,
                 )
             try:
-                from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+                from app.services.calibration.rf_chain_resolver import (
+                    resolve_rf_chains,
+                    rf_chain_identity_is_complete,
+                )
                 from app.services.probe_pattern.consumer import (
                     infer_rf_chain_probe_id_base,
                 )
@@ -1656,8 +1683,7 @@ class PatternCalibrationService:
                             warnings=warnings,
                         )
                     chain = matching[0]
-                    if not str(chain.chain_id).strip() or not str(chain.ce_port).strip() \
-                            or str(chain.ce_port).strip() == "?":
+                    if not rf_chain_identity_is_complete(chain):
                         return CalibrationResult(
                             success=False,
                             message=(
@@ -1673,13 +1699,13 @@ class PatternCalibrationService:
 
         for probe_id in probe_ids:
             for polarization in polarizations:
+                row_warnings = list(common_warnings)
                 try:
                     polarization_value = (
                         polarization.value
                         if hasattr(polarization, "value")
                         else str(polarization)
                     )
-                    row_warnings = list(common_warnings)
                     chain = route_by_pair.get((probe_id, polarization_value.upper()))
                     if use_mock:
                         measurements = self._mock_pattern_measurements(
@@ -1786,6 +1812,9 @@ class PatternCalibrationService:
                     calibration_ids.append(str(calibration.id))
 
                 except Exception as e:
+                    for warning in row_warnings:
+                        if warning not in warnings:
+                            warnings.append(warning)
                     db.rollback()
                     logger.error(f"Pattern calibration failed for probe {probe_id}: {e}")
                     return CalibrationResult(
@@ -1900,7 +1929,7 @@ class PatternCalibrationService:
         positioner 的 (azimuth, elevation) 在 cert 部署里是 DUT 转台 (探头不动,
         SGH 跟着 DUT 一起转 — 等效于探头相对 SGH 转), 或专门的 SGH 反向定位台.
         """
-        from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
         from app.services.instrument_test_lease import instrument_test_lease
         from app.services.path_loss_calibration_service import (
             ProbePathLossCalibrationService,
@@ -1914,7 +1943,11 @@ class PatternCalibrationService:
                 "Pattern calibration needs positioner driver (DUT/SGH turntable). "
                 "Bind a PositionerDriver on the active LabProfile."
             )
-
+        if is_mock_driver(positioner):
+            raise RuntimeError(
+                "HAL 里的 positioner 是模拟驱动 — 拒绝执行真实方向图校准；"
+                "模拟转台不会改变物理角度，不能把采样结果保存为正式方向图。"
+            )
         fspl_db = calculate_fspl(frequency_mhz, measurement_distance_m)
         pl_service = ProbePathLossCalibrationService(db, use_mock=False)
 

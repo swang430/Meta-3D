@@ -868,7 +868,15 @@ async def start_pattern_calibration(
         )
 
     calibration_ids = result.data.get("calibration_ids") or []
-    job_id = UUID(calibration_ids[0]) if calibration_ids else uuid4()
+    if not calibration_ids:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Pattern calibration reported success without a persisted "
+                "calibration row"
+            ),
+        )
+    job_id = UUID(calibration_ids[0])
 
     return CalibrationJobResponse(
         calibration_job_id=job_id,

@@ -28,6 +28,10 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.probe_calibration import CalibrationStatus, ProbePattern
+from app.services.calibration.rf_chain_resolver import (
+    normalize_rf_chain_identity,
+    rf_chain_identity_is_complete,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,9 +148,17 @@ def _query_valid_pattern(
         if len(matching) != 1:
             continue
         chain = matching[0]
+        if not rf_chain_identity_is_complete(chain):
+            continue
+        frozen_chain_id = normalize_rf_chain_identity(pattern.chain_id)
+        frozen_ce_port = normalize_rf_chain_identity(pattern.ce_port)
+        current_chain_id = normalize_rf_chain_identity(chain.chain_id)
+        current_ce_port = normalize_rf_chain_identity(chain.ce_port)
+        if frozen_chain_id is None or frozen_ce_port is None:
+            continue
         if (
-            pattern.chain_id != str(chain.chain_id)
-            or pattern.ce_port != str(chain.ce_port)
+            frozen_chain_id != current_chain_id
+            or frozen_ce_port != current_ce_port
         ):
             continue
         return pattern

@@ -166,7 +166,7 @@ SGH 增益、链路修正、校准人员和执行模式。LabProfile 与 chamber
 - route/CE tone/SA/positioner 任一失败都中止当前作业，不创建“成功”记录。
 - CE tone 的 finally-stop warning 必须进入作业响应与记录；不因 cleanup warning 把失败改成功。
 - positioner 失败沿用既有 fail-loud；本片不放宽断链或停止判据。
-- Real 不允许 Mock CE、SA、switch 或 signal source；复用现有 `_reject_simulated_instrument` 门。
+- Real 不允许 Mock CE、SA、positioner、switch 或 signal source；所有模拟硬件都在首次动作前拒绝。
 
 ## 验收
 
@@ -174,7 +174,7 @@ SGH 增益、链路修正、校准人员和执行模式。LabProfile 与 chamber
 2. GUI 无模式、无 OperationalLab、非法 probe 输入均不发送请求。
 3. Real 的 LabProfile/chamber/topology/chain/CE port 在首次仪器 I/O 前完整解析；任一缺失失败。
 4. 每个扫描点使用目标 probe/polarization 的冻结 route 与 CE port；错误链不会落库。
-5. 仪器/转台/lease 失败不回退 Mock；cleanup warning 进入响应、DB 和报告。
+5. 仪器/转台/lease 失败不回退 Mock；失败时 cleanup warning 进入响应，成功行同时进入 DB 和报告。
 6. Mock 与历史 unknown 可审计但不进入正式消费、KPI 或报告分母。
 7. 厂商导入方向图继续可正式消费，且不被错误要求具有现场路由身份。
 8. 当前路由漂移后，旧 `in_chamber_measured` 方向图不再供正式执行使用。
