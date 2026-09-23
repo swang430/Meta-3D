@@ -2483,8 +2483,6 @@ class MeasureExecutor(IStepExecutor):
             if base_station_inherit:
                 base_station_identity = (
                     await base_station.read_live_frequency_identity()
-                    if hasattr(base_station, "read_live_frequency_identity")
-                    else None
                 )
                 if base_station_identity is None:
                     logger.warning(
@@ -2512,10 +2510,7 @@ class MeasureExecutor(IStepExecutor):
                             context.test_execution.id, _cs_txt,
                         )
             else:
-                base_station_identity = (
-                    base_station.get_frequency_identity()
-                    if hasattr(base_station, "get_frequency_identity") else None
-                )
+                base_station_identity = base_station.get_frequency_identity()
 
             # CE 运行时中心频率只通过当前 adapter 已声明的共同能力读取；场景
             # 带宽仍只取 ChannelAsset/SCD 声明。F64 保留旧镜像与原出处文案，

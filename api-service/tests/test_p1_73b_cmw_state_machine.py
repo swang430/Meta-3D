@@ -10,11 +10,16 @@ import pytest
 from app.hal.base_station import (
     BaseStationApplyReceipt,
     BaseStationControlReleaseResult,
+    BaseStationDriver,
     BaseStationRemoteSessionResult,
     BaseStationRequestedConfig,
     CellState,
 )
 from app.hal.cmw500_base_station import RealCmw500Driver
+from app.services.mimo_ota.frequency_consistency import (
+    ChannelFrequencyIdentity,
+    check_frequency_consistency,
+)
 
 
 class _Session:
@@ -58,6 +63,30 @@ class _StateDriver(RealCmw500Driver):
     def _do_query(self, command: str) -> str:
         self.queries.append(command)
         return self.responses[command]
+
+
+class _DefaultFrequencyDriver(BaseStationDriver):
+    """Concrete test double that inherits the HAL's fail-closed defaults."""
+
+    adapter_id = "default"
+
+    async def connect(self) -> bool:
+        return True
+
+    async def disconnect(self) -> bool:
+        return True
+
+    async def configure(self, config: dict) -> bool:
+        return True
+
+    async def get_capabilities(self) -> list:
+        return []
+
+    async def get_metrics(self):
+        return None
+
+    async def reset(self) -> bool:
+        return True
 
 
 def _identity_responses() -> dict[str, str]:
@@ -200,6 +229,158 @@ async def test_common_config_receipt_never_backfills_request_after_error_queue_r
     assert receipt.confirmed is False
     assert all(field.status == "unknown" for field in receipt.fields)
     assert all(field.applied is None for field in receipt.fields)
+
+
+def test_common_hal_frequency_identity_defaults_to_unreported():
+    """Adapters without an authoritative implementation must fail closed."""
+
+    driver = _DefaultFrequencyDriver("base", {})
+
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_common_hal_live_frequency_identity_defaults_to_unreported():
+    driver = _DefaultFrequencyDriver("base", {})
+
+    assert await driver.read_live_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_frequency_identity_uses_same_receipt_confirmed_controls():
+    driver = _StateDriver(_complete_config_responses())
+    # Constructor caches are compatibility state, not formal evidence.
+    driver._band = "OB20"
+    driver._earfcn = 6300
+    driver._bandwidth_mhz = 1.4
+
+    assert driver.get_frequency_identity() is None
+
+    receipt = await driver.apply_config(_requested_config())
+    identity = driver.get_frequency_identity()
+
+    assert receipt.operation_succeeded is True
+    assert isinstance(identity, ChannelFrequencyIdentity)
+    assert identity.radio_technology == "lte"
+    assert identity.channel_kind == "lte_dl_earfcn"
+    assert identity.band == "B3"
+    assert identity.lte_dl_earfcn == 1300
+    assert identity.bandwidth_mhz == 20.0
+    assert identity.center_freq_mhz == 1815.0
+    consistency = check_frequency_consistency(
+        ChannelFrequencyIdentity.from_lte_earfcn(
+            band="B3", dl_earfcn=1300, bandwidth_mhz=20.0
+        ),
+        {"BaseStation": identity},
+    )
+    assert consistency.consistent is True
+    assert consistency.fully_verified is True
+
+
+@pytest.mark.asyncio
+async def test_cmw_direct_legacy_config_does_not_create_formal_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    assert driver.get_frequency_identity() is not None
+
+    assert await driver.set_cell_config(_requested_config().to_driver_payload()) is True
+
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_rejected_apply_clears_previous_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    assert driver.get_frequency_identity() is not None
+
+    errors = iter(['0,"No error"', '-221,"Settings conflict"'])
+
+    def rejected_query(command: str) -> str:
+        driver.queries.append(command)
+        if command == "SYSTem:ERRor:ALL?":
+            return next(errors)
+        return driver.responses[command]
+
+    driver._do_query = rejected_query  # type: ignore[method-assign]
+    receipt = await driver.apply_config(_requested_config())
+
+    assert receipt.operation_succeeded is False
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_mismatched_frequency_readback_does_not_create_identity():
+    driver = _StateDriver(
+        _complete_config_responses(
+            **{"CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL?": "1301"}
+        )
+    )
+
+    receipt = await driver.apply_config(_requested_config())
+
+    assert receipt.operation_succeeded is False
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_cancelled_apply_clears_previous_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    assert driver.get_frequency_identity() is not None
+
+    async def cancel_apply(_requested: BaseStationRequestedConfig) -> bool:
+        raise asyncio.CancelledError
+
+    driver.apply_requested_config = cancel_apply  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await driver.apply_config(_requested_config())
+
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_disconnect_clears_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    assert driver.get_frequency_identity() is not None
+    driver._visa_session = None
+    driver._session_token = None
+
+    assert await driver.disconnect() is True
+
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_confirmed_transport_release_clears_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    driver._session_token = "session-1"
+
+    async def safe_idle() -> bool:
+        return True
+
+    driver.ensure_safe_idle = safe_idle  # type: ignore[method-assign]
+
+    result = await driver.release_remote_session("session-1")
+
+    assert result.transport_session_released_confirmed is True
+    assert driver.get_frequency_identity() is None
+
+
+@pytest.mark.asyncio
+async def test_cmw_failed_new_connect_clears_frequency_identity():
+    driver = _StateDriver(_complete_config_responses())
+    assert (await driver.apply_config(_requested_config())).operation_succeeded is True
+    driver._visa_session = None
+    driver._session_token = None
+
+    with patch("pyvisa.ResourceManager", side_effect=RuntimeError("offline")):
+        assert await driver.connect() is False
+
+    assert driver.get_frequency_identity() is None
 
 
 @pytest.mark.asyncio

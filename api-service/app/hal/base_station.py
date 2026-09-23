@@ -1597,6 +1597,21 @@ class BaseStationDriver(InstrumentDriver):
             operation_succeeded=operation_succeeded is True,
         )
 
+    def get_frequency_identity(self) -> Any | None:
+        """Return an adapter-confirmed frequency identity, or fail closed.
+
+        The common HAL deliberately provides no fallback from requested values,
+        configured endpoints, or driver caches.  Concrete adapters may override
+        this only when they own authoritative evidence for the active config.
+        """
+
+        return None
+
+    async def read_live_frequency_identity(self) -> Any | None:
+        """Read an inherited live identity when the adapter can prove one."""
+
+        return None
+
     async def apply_route(
         self,
         frozen_adapter: dict[str, Any],

@@ -1301,6 +1301,10 @@ class RealCmw500Driver(BaseStationDriver):
         self._firmware_version: str | None = None
         self._identity_model_verified = False
         self._options_snapshot_verified = False
+        # P1-79D: compatibility caches above are not formal frequency truth.
+        # This proof is promoted only by apply_config after the same receipt
+        # confirms band + EARFCN + bandwidth from instrument readback.
+        self._confirmed_frequency_controls: tuple[str, int, float] | None = None
 
     @property
     def _i(self) -> str:
@@ -1796,6 +1800,9 @@ class RealCmw500Driver(BaseStationDriver):
 
         if not isinstance(requested, BaseStationRequestedConfig):
             raise TypeError("requested must be BaseStationRequestedConfig")
+        # A new formal application invalidates the preceding proof before its
+        # first await, including cancellation and device-rejection paths.
+        self._confirmed_frequency_controls = None
         self._last_common_config_readback = None
         with capture_scpi_exchanges() as exchanges:
             operation_succeeded = await self.apply_requested_config(requested)
@@ -1841,7 +1848,56 @@ class RealCmw500Driver(BaseStationDriver):
             simulated=False,
             operation_succeeded=operation_succeeded is True,
         )
+        if receipt.operation_succeeded is True:
+            by_name = {field.field: field for field in receipt.fields}
+            frequency_fields = tuple(
+                by_name.get(name)
+                for name in ("band", "lte_dl_earfcn", "bandwidth_mhz")
+            )
+            if all(
+                field is not None
+                and field.status == "confirmed"
+                and field.applied is not None
+                for field in frequency_fields
+            ):
+                band_field, earfcn_field, bandwidth_field = frequency_fields
+                assert band_field is not None
+                assert earfcn_field is not None
+                assert bandwidth_field is not None
+                from app.services.mimo_ota.frequency_consistency import (
+                    ChannelFrequencyIdentity,
+                )
+
+                identity = ChannelFrequencyIdentity.from_lte_earfcn(
+                    band=str(band_field.applied),
+                    dl_earfcn=int(earfcn_field.applied),
+                    bandwidth_mhz=float(bandwidth_field.applied),
+                )
+                if identity.band is None:
+                    raise ValueError("confirmed LTE frequency identity has no band")
+                self._confirmed_frequency_controls = (
+                    identity.band,
+                    identity.lte_dl_earfcn,
+                    identity.bandwidth_mhz,
+                )
         return receipt
+
+    def get_frequency_identity(self):
+        """Return only the frequency identity promoted by a confirmed receipt."""
+
+        controls = self._confirmed_frequency_controls
+        if controls is None:
+            return None
+        band, dl_earfcn, bandwidth_mhz = controls
+        from app.services.mimo_ota.frequency_consistency import (
+            ChannelFrequencyIdentity,
+        )
+
+        return ChannelFrequencyIdentity.from_lte_earfcn(
+            band=band,
+            dl_earfcn=dl_earfcn,
+            bandwidth_mhz=bandwidth_mhz,
+        )
 
     # ===================================================================
     # 1. 连接生命周期
@@ -1909,6 +1965,7 @@ class RealCmw500Driver(BaseStationDriver):
     def _close_failed_connect_session(self) -> None:
         """Close only this driver's session after a failed connection attempt."""
 
+        self._confirmed_frequency_controls = None
         if self._visa_session is not None:
             try:
                 self._visa_session.close()
@@ -1923,6 +1980,7 @@ class RealCmw500Driver(BaseStationDriver):
         token_present = self._session_token is not None
         if session_present and token_present:
             return True
+        self._confirmed_frequency_controls = None
         if session_present != token_present:
             logger.error(
                 "[CMW500] Refusing connect with incomplete transport/session identity"
@@ -2023,6 +2081,7 @@ class RealCmw500Driver(BaseStationDriver):
         """Safely release an idle transport without claiming front-panel Local."""
 
         if self._visa_session is None and self._session_token is None:
+            self._confirmed_frequency_controls = None
             return True
         released = await self.release_remote_session(self._session_token or "")
         return released.transport_session_released_confirmed is True
@@ -2048,6 +2107,7 @@ class RealCmw500Driver(BaseStationDriver):
         if not token_matches:
             warnings.append("CMW500 session token missing or mismatched")
         if current_session is None:
+            self._confirmed_frequency_controls = None
             warnings.append("CMW500 transport session is missing")
         else:
             try:
@@ -2075,6 +2135,7 @@ class RealCmw500Driver(BaseStationDriver):
                 self._visa_session = None
                 self._visa_rm = None
                 self._session_token = None
+                self._confirmed_frequency_controls = None
                 self._set_status(InstrumentStatus.DISCONNECTED)
             except Exception as exc:
                 warnings.append(f"CMW500 transport close failed: {exc}")
@@ -2108,6 +2169,7 @@ class RealCmw500Driver(BaseStationDriver):
                 self._visa_session.close()
                 self._visa_session = None
             self._session_token = None
+            self._confirmed_frequency_controls = None
             # ⚠ **不调** `self._visa_rm.close()`: RM 是**进程级共享单例**, 关它会连带
             # 关掉其它仪表的会话 (权威说明见 `app/hal/_visa_reconnect.py` 的
             # 「ResourceManager 所有权」一节)。自己的 session 上面已经关了, 这里只丢引用。
@@ -2117,6 +2179,7 @@ class RealCmw500Driver(BaseStationDriver):
             logger.info("[CMW500] Disconnected")
             return True
         except Exception as e:
+            self._confirmed_frequency_controls = None
             logger.error(f"[CMW500] Disconnect error: {e}")
             return False
 
@@ -2138,6 +2201,10 @@ class RealCmw500Driver(BaseStationDriver):
           CONFigure:LTE:SIGN1:RFSettings:CHANnel:DL 1575
           CONFigure:LTE:SIGN1:DL:RSEPre:LEVel -65.25
         """
+        # This primitive can be called outside apply_config.  Any such write
+        # invalidates the previous formal receipt proof before the first I/O;
+        # apply_config will promote a new proof after its own receipt matches.
+        self._confirmed_frequency_controls = None
         try:
             band = self._band
             if "band" in config:
