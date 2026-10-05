@@ -48,6 +48,7 @@ _MUTABLE_FIELDS = (
     "name", "description", "canonical_name", "derived_from",
     "center_frequency_hz", "bandwidth_mhz", "is_los", "k_factor_db",
     "ue_velocity_mps", "payload", "instrument_connection_id", "associated_file_path",
+    "instrument_model_id",
     "is_active",
 )
 
@@ -537,6 +538,12 @@ def create_channel_asset(
     _validate_top_physical(fields)
     _validate_source_fields(source_type, fields)
     if source_type == "vendor_file":
+        from app.services.channel_asset_ownership import validate_channel_asset_owner
+        try:
+            validate_channel_asset_owner(db, fields.get("instrument_connection_id"),
+                                         fields.get("instrument_model_id"))
+        except ValueError as exc:
+            raise ChannelAssetError(str(exc)) from exc
         _check_vendor_filename_freq(payload.get("scd_config"), fields.get("associated_file_path"))
         _check_vendor_declared_freq(
             payload.get("scd_config"),
@@ -584,6 +591,38 @@ def get_channel_asset(db: Session, asset_id: UUID) -> ChannelAsset:
     return asset
 
 
+def confirm_channel_asset_ownership(
+    db: Session, asset_ids: list[UUID], connection_id: UUID, model_id: UUID,
+) -> List[ChannelAsset]:
+    """操作员显式确认；全部校验完成后才写入，一次事务，不授予任何证据资格。"""
+    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    if not asset_ids or len(asset_ids) > 100 or len(set(asset_ids)) != len(asset_ids):
+        raise ChannelAssetError("归属确认需要 1..100 个不重复资产")
+    try:
+        validate_channel_asset_owner(db, connection_id, model_id)
+    except ValueError as exc:
+        raise ChannelAssetError(str(exc)) from exc
+    assets = [get_channel_asset(db, asset_id) for asset_id in asset_ids]
+    for asset in assets:
+        if asset.source_type != "vendor_file" or asset.is_active is not True:
+            raise ChannelAssetError("只可确认活动 vendor_file 资产的归属")
+        if asset.instrument_model_id is not None and (
+            asset.instrument_connection_id != connection_id or asset.instrument_model_id != model_id
+        ):
+            raise ChannelAssetError("已知型号归属不能通过历史确认操作覆盖")
+    try:
+        for asset in assets:
+            asset.instrument_connection_id = connection_id
+            asset.instrument_model_id = model_id
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for asset in assets:
+        db.refresh(asset)
+    return assets
+
+
 def find_custom_static_asset(db: Session, asset_id: UUID) -> Optional[ChannelAsset]:
     """P2-16 deprecate-legacy (消费收敛): 按 id 查 custom_static ChannelAsset, 不存在 / 非
     custom_static 返回 None (不 raise)。供 cdl_profile_id 消费重定向 —— S2 迁移复用源 id, 故
@@ -608,6 +647,17 @@ def find_vendor_file_asset(db: Session, asset_id: UUID) -> Optional[ChannelAsset
 
 def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     asset = get_channel_asset(db, asset_id)
+    if asset.source_type == "vendor_file" and (
+        "instrument_connection_id" in fields or "instrument_model_id" in fields
+    ):
+        from app.services.channel_asset_ownership import validate_channel_asset_owner
+        try:
+            validate_channel_asset_owner(
+                db, fields.get("instrument_connection_id", asset.instrument_connection_id),
+                fields.get("instrument_model_id", asset.instrument_model_id),
+            )
+        except ValueError as exc:
+            raise ChannelAssetError(str(exc)) from exc
     # source_type 是判别键, 建后不可改 (改了 payload 形态 + allowed_targets 全变)
     new_src = fields.get("source_type")
     if new_src is not None and new_src != asset.source_type:

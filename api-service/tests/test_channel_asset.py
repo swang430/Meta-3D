@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base, get_db
 from app.main import app
 from app.models.channel_asset import ChannelAsset  # noqa: F401  确保表在 metadata
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services.channel_asset_service import (
     ChannelAssetError,
     ChannelAssetNotFound,
@@ -46,6 +47,11 @@ _LTE_SCD = {
 }
 
 
+def _owner(db):
+    """新建文件 fixture 明确提供预先保存的连接和型号。"""
+    return db.info["vendor_owner"]
+
+
 @pytest.fixture
 def db():
     engine = create_engine(
@@ -54,6 +60,17 @@ def db():
     )
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    category = InstrumentCategory(category_key="channelEmulator", category_name="CE")
+    session.add(category)
+    session.flush()
+    model = InstrumentModel(category_id=category.id, vendor="test", model="F64", capabilities={})
+    session.add(model)
+    session.flush()
+    category.selected_model_id = model.id
+    connection = InstrumentConnection(category_id=category.id, endpoint="test:3334", protocol="SOCKET")
+    session.add(connection)
+    session.commit()
+    session.info["vendor_owner"] = {"instrument_connection_id": connection.id, "instrument_model_id": model.id}
     try:
         yield session
     finally:
@@ -94,7 +111,7 @@ class TestCreateEachSourceTypeAndAllowedTargets:
         assert "gcm_native" not in a.allowed_targets
 
     def test_vendor_file(self, db):
-        a = create_channel_asset(db, name="ven-1", source_type="vendor_file",
+        a = create_channel_asset(db, name="ven-1", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD,
                                  associated_file_path="/smu/MF_N78.smu")
         assert a.allowed_targets == ["gcm_native"]
@@ -175,7 +192,7 @@ class TestPolymorphicPayloadValidation:
 
     def test_vendor_empty_scd_config(self, db):
         with pytest.raises(ChannelAssetError, match="scd_config 须非空"):
-            create_channel_asset(db, name="x", source_type="vendor_file",
+            create_channel_asset(db, name="x", source_type="vendor_file", **_owner(db),
                                  payload={"scd_config": {}})
 
     def test_vendor_top_freq_mismatch_rejected(self, db):
@@ -184,18 +201,18 @@ class TestPolymorphicPayloadValidation:
         两边不同 = 显示误导现场。顶层给了就必须与 SCD 一致。"""
         from app.services.channel_asset_service import update_channel_asset
         with pytest.raises(ChannelAssetError, match="center_frequency_hz.*不一致"):
-            create_channel_asset(db, name="ven-drift", source_type="vendor_file",
+            create_channel_asset(db, name="ven-drift", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD,
                                  center_frequency_hz=3.5e9, bandwidth_mhz=100)
         with pytest.raises(ChannelAssetError, match="bandwidth_mhz.*不一致"):
-            create_channel_asset(db, name="ven-drift2", source_type="vendor_file",
+            create_channel_asset(db, name="ven-drift2", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD,
                                  center_frequency_hz=3600.0e6, bandwidth_mhz=40)
         # 一致 / 顶层留空 → 放行
-        ok = create_channel_asset(db, name="ven-ok", source_type="vendor_file",
+        ok = create_channel_asset(db, name="ven-ok", source_type="vendor_file", **_owner(db),
                                   payload=_VENDOR_PAYLOAD,
                                   center_frequency_hz=3600.0e6, bandwidth_mhz=100)
-        create_channel_asset(db, name="ven-blank", source_type="vendor_file",
+        create_channel_asset(db, name="ven-blank", source_type="vendor_file", **_owner(db),
                              payload={"scd_config": {**_SCD, "version": 2}})
         # update 只改顶层也撞 scd 现值 (最终状态判, 不然 PATCH 绕过)
         with pytest.raises(ChannelAssetError, match="center_frequency_hz.*不一致"):
@@ -216,7 +233,7 @@ class TestPolymorphicPayloadValidation:
         # S2: vendor scd_config 须完整 SCD schema (缺 mimo → 400, Codex #173 第5轮纳入 S2)
         incomplete = {k: v for k, v in _SCD.items() if k != "mimo"}
         with pytest.raises(ChannelAssetError, match=r"scd_config\.mimo 必填"):
-            create_channel_asset(db, name="x", source_type="vendor_file",
+            create_channel_asset(db, name="x", source_type="vendor_file", **_owner(db),
                                  payload={"scd_config": incomplete})
 
     def test_vendor_scd_fractional_arfcn(self, db):
@@ -224,19 +241,19 @@ class TestPolymorphicPayloadValidation:
         # 否则静默 coerce 640000.7→640000)
         bad_scd = dict(_SCD, arfcn=640000.7)
         with pytest.raises(ChannelAssetError, match="arfcn 须整数"):
-            create_channel_asset(db, name="x", source_type="vendor_file",
+            create_channel_asset(db, name="x", source_type="vendor_file", **_owner(db),
                                  payload={"scd_config": bad_scd})
 
     def test_vendor_invalid_scd_naming(self, db):
         # model 含连字符 → 命名契约 (alnum) 拒 (format_standard_channel_filename ValueError)
         bad_scd = dict(_SCD, model="CDL-C")
         with pytest.raises(ChannelAssetError, match="命名契约非法"):
-            create_channel_asset(db, name="x", source_type="vendor_file",
+            create_channel_asset(db, name="x", source_type="vendor_file", **_owner(db),
                                  payload={"scd_config": bad_scd})
 
     def test_vendor_canonical_derived(self, db):
         # S2: vendor 不传 canonical → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
-        a = create_channel_asset(db, name="vc", source_type="vendor_file",
+        a = create_channel_asset(db, name="vc", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD)
         assert a.canonical_name == "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
 
@@ -245,7 +262,7 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(
                 db,
                 name="lte-wrong-file",
-                source_type="vendor_file",
+                source_type="vendor_file", **_owner(db),
                 payload={"scd_config": _LTE_SCD},
                 associated_file_path=(
                     "/smu/MF_LTE_B3_EARFCN1600_BW20_TDLA_Urban_2x2_DP_v1.smu"
@@ -257,7 +274,7 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(
                 db,
                 name="lte-wrong-bandwidth-file",
-                source_type="vendor_file",
+                source_type="vendor_file", **_owner(db),
                 payload={"scd_config": _LTE_SCD},
                 associated_file_path=(
                     "/smu/MF_LTE_B3_EARFCN1575_BW10_TDLA_Urban_2x2_DP_v1.smu"
@@ -269,7 +286,7 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(
                 db,
                 name="lte-wrong-band-file",
-                source_type="vendor_file",
+                source_type="vendor_file", **_owner(db),
                 payload={"scd_config": _LTE_SCD},
                 associated_file_path=(
                     "/smu/MF_LTE_B7_EARFCN1575_BW20_TDLA_Urban_2x2_DP_v1.smu"
@@ -285,12 +302,12 @@ class TestPolymorphicPayloadValidation:
     def test_vendor_non_smu_path(self, db):
         # 给了 associated_file_path 须 .smu 后缀 (Codex #173 复查 P2)
         with pytest.raises(ChannelAssetError, match="smu 后缀"):
-            create_channel_asset(db, name="x", source_type="vendor_file",
+            create_channel_asset(db, name="x", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD, associated_file_path="/x/chan.asc")
 
     def test_vendor_declared_only_ok(self, db):
         # vendor_file 无 associated_file_path = declared_only (SCD 合法中间态), 允许建
-        a = create_channel_asset(db, name="vd", source_type="vendor_file", payload=_VENDOR_PAYLOAD)
+        a = create_channel_asset(db, name="vd", source_type="vendor_file", **_owner(db), payload=_VENDOR_PAYLOAD)
         assert a.associated_file_path is None and a.allowed_targets == ["gcm_native"]
 
     def test_vendor_project_truth_is_server_managed(self, db):
@@ -309,7 +326,7 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(
                 db,
                 name="forged-truth",
-                source_type="vendor_file",
+                source_type="vendor_file", **_owner(db),
                 payload=forged,
                 associated_file_path=r"D:\forged.smu",
             )
@@ -318,7 +335,7 @@ class TestPolymorphicPayloadValidation:
         asset = create_channel_asset(
             db,
             name="server-truth",
-            source_type="vendor_file",
+            source_type="vendor_file", **_owner(db),
             payload=_VENDOR_PAYLOAD,
             associated_file_path=(
                 r"D:\MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
@@ -366,10 +383,10 @@ class TestTopPhysicalAndUniqueness:
             create_channel_asset(db, name="dup", source_type="rt_dynamic", payload=_RT_PAYLOAD)
 
     def test_canonical_name_unique(self, db):
-        create_channel_asset(db, name="a1", source_type="vendor_file", payload=_VENDOR_PAYLOAD,
+        create_channel_asset(db, name="a1", source_type="vendor_file", **_owner(db), payload=_VENDOR_PAYLOAD,
                              canonical_name="MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu")
         with pytest.raises(ChannelAssetError, match="canonical_name .* 已存在"):
-            create_channel_asset(db, name="a2", source_type="vendor_file",
+            create_channel_asset(db, name="a2", source_type="vendor_file", **_owner(db),
                                  payload=_VENDOR_PAYLOAD,
                                  canonical_name="MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu")
 
@@ -550,7 +567,7 @@ class TestAPI:
         assert client.delete(f"/api/v1/channel-assets/{aid}").status_code == 204
         assert client.get("/api/v1/channel-assets").json() == []
 
-    def test_create_each_type_api(self, client):
+    def test_create_each_type_api(self, client, db):
         cases = [
             ("standard_3gpp", _STD_PAYLOAD, ["asc_baked"]),
             ("rt_dynamic", _RT_PAYLOAD, ["asc_baked", "b2_parametric"]),
@@ -558,7 +575,8 @@ class TestAPI:
         ]
         for i, (st, pl, allowed) in enumerate(cases):
             r = client.post("/api/v1/channel-assets", json={
-                "name": f"api-{i}", "source_type": st, "payload": pl})
+                "name": f"api-{i}", "source_type": st, "payload": pl,
+                **({key: str(value) for key, value in _owner(db).items()} if st == "vendor_file" else {})})
             assert r.status_code == 201, r.text
             assert r.json()["allowed_targets"] == allowed
 

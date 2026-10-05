@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.hal.channel_emulator import normalize_channel_model_entries
-from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services import standard_channel_service as svc
 
 _STD_NAME = "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v3.smu"  # 默认 _create 配置的标准名
@@ -62,6 +62,10 @@ def _make_binding(db, *, category_key: str) -> UUID:
     )
     db.add(cat)
     db.flush()
+    model = InstrumentModel(category_id=cat.id, vendor="test", model="test-CE", capabilities={})
+    db.add(model)
+    db.flush()
+    cat.selected_model_id = model.id
     conn = InstrumentConnection(
         category_id=cat.id,
         endpoint="TCPIP0::192.168.0.132::inst0::INSTR",
@@ -85,6 +89,8 @@ def ce_binding(db) -> UUID:
 def _create(db, conn_id, **over):
     base = dict(
         instrument_connection_id=conn_id, radio_technology="nr5g",
+        instrument_model_id=(db.get(InstrumentConnection, conn_id).category.selected_model_id
+                             if db.get(InstrumentConnection, conn_id) else uuid4()),
         channel_kind="nr_arfcn", band="N78", arfcn=640000,
         lte_dl_earfcn=None,
         bandwidth_mhz=100, model="CDLC", scenario="UMa", mimo="4x4",
@@ -97,6 +103,8 @@ def _create(db, conn_id, **over):
 def _create_lte(db, conn_id, **over):
     base = dict(
         instrument_connection_id=conn_id, radio_technology="lte",
+        instrument_model_id=(db.get(InstrumentConnection, conn_id).category.selected_model_id
+                             if db.get(InstrumentConnection, conn_id) else uuid4()),
         channel_kind="lte_dl_earfcn", band="B3", arfcn=None,
         lte_dl_earfcn=1575, bandwidth_mhz=20, model="TDLA",
         scenario="Urban", mimo="2x2", polarization="DP", version=1,

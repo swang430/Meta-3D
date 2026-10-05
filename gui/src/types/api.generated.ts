@@ -1738,6 +1738,8 @@ export interface paths {
             parameters: {
                 query?: {
                     instrument_connection_id?: string | null;
+                    instrument_model_id?: string | null;
+                    include_unknown?: boolean;
                 };
                 header?: never;
                 path?: never;
@@ -1779,6 +1781,62 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["SCDResponse"];
                     };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/standard-channels/{scd_id}/associate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Associate legacy-only standard-channel file with explicitly confirmed model ownership */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    scd_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SCDAssociateRequest"];
+                };
+            };
+            responses: {
+                /** @description Standard channel associated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SCDResponse"];
+                    };
+                };
+                /** @description Invalid file or model ownership */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Standard channel not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -1955,6 +2013,60 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/vendor-files/confirm-ownership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 操作员原子确认文件资产归属 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelAssetOwnershipConfirmation"];
+                };
+            };
+            responses: {
+                /** @description 全部已确认的资产 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelAssetResponse"][];
+                    };
+                };
+                /** @description 整批归属校验失败，没有部分写入 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 资产不存在 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3214,6 +3326,8 @@ export interface components {
         SCDCreateRequest: {
             /** Format: uuid */
             instrument_connection_id: string;
+            /** Format: uuid */
+            instrument_model_id: string;
             /** @enum {string} */
             radio_technology: "nr5g" | "lte";
             /** @enum {string} */
@@ -3230,9 +3344,25 @@ export interface components {
             version: number;
             description?: string | null;
         };
-        SCDResponse: components["schemas"]["SCDCreateRequest"] & {
+        SCDResponse: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            instrument_connection_id: string;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
+            radio_technology: string;
+            channel_kind: string;
+            band: string;
+            arfcn: number | null;
+            lte_dl_earfcn: number | null;
+            bandwidth_mhz: number;
+            model: string;
+            scenario: string;
+            mimo: string;
+            polarization: string;
+            version: number;
+            description?: string | null;
             standard_name: string;
             associated_file_path?: string | null;
             association_source: string;
@@ -3240,6 +3370,20 @@ export interface components {
             created_at?: string | null;
             /** Format: date-time */
             updated_at?: string | null;
+        };
+        SCDAssociateRequest: {
+            file_path: string;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
+            /** @default vendor_associated */
+            association_source: string;
+        };
+        ChannelAssetOwnershipConfirmation: {
+            asset_ids: string[];
+            /** Format: uuid */
+            instrument_connection_id: string;
+            /** Format: uuid */
+            instrument_model_id: string;
         };
         ChannelAssetCreate: {
             name: string;
@@ -3259,6 +3403,8 @@ export interface components {
             ue_velocity_mps?: number[] | null;
             /** Format: uuid */
             instrument_connection_id?: string | null;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
             associated_file_path?: string | null;
             created_by?: string | null;
         };
@@ -3278,6 +3424,8 @@ export interface components {
             ue_velocity_mps?: number[] | null;
             /** Format: uuid */
             instrument_connection_id?: string | null;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
             associated_file_path?: string | null;
             is_active?: boolean | null;
         };
@@ -3304,6 +3452,8 @@ export interface components {
             /** Format: uuid */
             instrument_connection_id?: string | null;
             associated_file_path?: string | null;
+            /** Format: uuid */
+            instrument_model_id?: string | null;
         };
         SMUProjectSyncItemResponse: {
             relative_path: string;

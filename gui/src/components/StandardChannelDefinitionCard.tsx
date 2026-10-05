@@ -74,13 +74,15 @@ const EMPTY_CREATE = {
   description: '',
 }
 
-export function StandardChannelDefinitionCard({ connectionId }: { connectionId: string }) {
+export function StandardChannelDefinitionCard({ connectionId, modelId, ownerLabel, endpoint }: {
+  connectionId: string; modelId: string; ownerLabel: string; endpoint: string
+}) {
   const queryClient = useQueryClient()
-  const scdQueryKey = ['standardChannels', connectionId]
+  const scdQueryKey = ['standardChannels', connectionId, modelId]
 
   const { data, isLoading, isError } = useQuery({
     queryKey: scdQueryKey,
-    queryFn: () => fetchStandardChannels(connectionId),
+    queryFn: () => fetchStandardChannels(connectionId, modelId),
     refetchOnWindowFocus: false,
   })
   const scds = data ?? []
@@ -100,6 +102,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
     mutationFn: () =>
       createStandardChannel({
         instrument_connection_id: connectionId,
+        instrument_model_id: modelId,
         radio_technology: form.radio_technology,
         channel_kind: form.radio_technology === 'lte' ? 'lte_dl_earfcn' : 'nr_arfcn',
         band: form.band.trim(),
@@ -141,6 +144,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
     mutationFn: () =>
       associateStandardChannelFile(associateTarget!.id, {
         file_path: filePath.trim(),
+        instrument_model_id: modelId,
         association_source: associationSource,
       }),
     onSuccess: () => {
@@ -222,6 +226,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
                   <Group gap="xs">
                     <Code>{scd.standard_name}</Code>
                     <Badge size="xs" color={meta.color} variant="light">{meta.label}</Badge>
+                    {!scd.instrument_model_id && <Badge size="xs" color="yellow">型号归属待确认</Badge>}
                   </Group>
                   <Text size="xs" c="dimmed">
                     {scd.radio_technology === 'lte' ? 'LTE' : 'NR'} · {scd.band} · {scd.channel_kind === 'lte_dl_earfcn' ? `DL EARFCN ${scd.lte_dl_earfcn}` : `NR-ARFCN ${scd.arfcn}`} · BW{scd.bandwidth_mhz} · {scd.model}/{scd.scenario} · {scd.mimo} · {scd.polarization} · v{scd.version}
@@ -299,6 +304,10 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
 
       {/* 关联文件 */}
       <Modal opened={associateTarget !== null} onClose={() => setAssociateTarget(null)} title="关联 .smu 文件" size="md">
+        <Text size="sm">确认归属：{ownerLabel} · {endpoint}（仅使用已保存型号）</Text>
+        {associateTarget && !associateTarget.instrument_model_id && <Alert color="yellow">
+          历史归属待确认。点击关联将明确认领到上述型号，不自动重载 HAL 或同步 LabProfile。
+        </Alert>}
         <Stack gap="sm">
           {associateTarget && (
             <Text size="xs" c="dimmed">为 <Code>{associateTarget.standard_name}</Code> 绑定实际文件. 频率 cross-check 不一致会被后端拒绝.</Text>
@@ -320,7 +329,7 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
           {associateError && <Alert color="red" variant="light">{associateError}</Alert>}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAssociateTarget(null)}>取消</Button>
-            <Button loading={associateMutation.isPending} disabled={!filePath.trim()} onClick={() => associateMutation.mutate()}>关联</Button>
+            <Button loading={associateMutation.isPending} disabled={!filePath.trim() || !modelId} onClick={() => associateMutation.mutate()}>确认归属并关联</Button>
           </Group>
         </Stack>
       </Modal>

@@ -10,11 +10,11 @@
 
 **2026-10-05 P2-32B 收尾完成（PR #497）**：软件安全片已合并（`6a460170`），main 已同步，运行库 migration 已到唯一 head `b9d2f4a6c8e0`。当前 WIP=0；不启动 P2-32C。Real 仍受权威天线最大口径来源（无近远场转换）与 X-Series/FSW 权威标量功率回读阻塞：缺口径在首个硬件 I/O 前拒绝，历史现场实测仅审计可见、不进入正式消费；厂商方向图资格独立评估，Mock 仅诊断。软件合并与迁移完成不表示真机校准验收完成。
 
-**2026-10-05 用户批准的新非现场排期**：按下表顺序推进；这次批准的是排期，不代表已经开工或自动连续执行。每个子片独立闭环，严格 WIP=1；当前全部未开工，下一片为 P2-79A。既有现场/硬件阻塞与 HOLD 队列保持原顺序，不因软件排期自动解除。
+**2026-10-05 用户批准的新非现场排期**：用户随后授权完整实现 P2-79，A→B 不再逐步请求批准；其余条目仍仅排期。每个子片独立闭环，严格 WIP=1；当前唯一 WIP 为 P2-79A。既有现场/硬件阻塞与 HOLD 队列保持原顺序，不因软件排期自动解除。
 
 | 顺序 | 条目 | 子片顺序 | 状态 |
 |---|---|---|---|
-| 1 | P2-79 信道模型型号归属与并发保存完整性 | A 型号归属 → B 同序锁与并发完整性 | 已排期，未开工 |
+| 1 | P2-79 信道模型型号归属与并发保存完整性 | A 型号归属 → B 同序锁与并发完整性 | A 实现验证完成，待 Codex R1→R2；B 待 A 合并清理 |
 | 2 | P2-80 仪器配置故障可见、可恢复 | A 目录错误态 → B 坏认证状态 → C 显式合法替代值恢复 | 已排期，未开工 |
 | 3 | P2-81 统计窗口保存前校验 | 所选 adapter 域的统一前置校验 | 已排期，未开工 |
 | 4 | P2-82 成功轮询 INFO 降噪 | 仅成功只读轮询，不降级异常/硬件日志 | 已排期，未开工 |
@@ -5371,7 +5371,7 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 
 ### P2-79 — 信道模型型号归属与并发保存完整性
 
-**状态**：2026-10-05 用户批准排期，未开工；非现场队列第 1 项。按 **A→B** 两个独立子片交付。
+**状态**：2026-10-05 用户授权完整实现；非现场队列第 1 项。按 **A→B** 两个独立子片交付。A 实现验证完成，待 Codex R1→R2，设计见 [P2-79A](design/2026-10-05-p2-79a-channel-model-ownership-design.md)。受影响链 418 passed；新装迁移故障最小修复后全后端 6804 passed/6 skipped，最终 NULL owner 收窄复跑目录归属链 143 passed；隔离 PostgreSQL migration 2 passed、GUI 2 passed/build、compileall、单一 head、diff-check 通过，fresh 尾审 P1/P2/P3=0。B 等待 A 合并同步清理，不宣称已完成并发验收。
 
 - **A 型号归属**：修复 `standard_channel_service._sync_projection_for_binding` 按 connection 聚合 SCD、把 F64 派生资产写进其他活动型号清单/preset 的问题。先盘点真实 SCD 归属分布及 GUI/API 关联入口，再设计显式型号归属或分桶；无法唯一归属的历史项显式待确认，不按型号名推断，不静默迁移。
 - **B 并发完整性**：枚举 SCD 投影、模型增删、型号切换/保存及 preset 镜像写入路径，按现有 category→connection 同序锁定并重读，避免丢更新与旧 ORM 缓存覆盖。原并发反例先在 PostgreSQL 重跑；SQLite 不作为行锁验证替代。
@@ -5562,7 +5562,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
 | P2-57 静态声明残项 / `.smu` 拓扑 | → **P2-57 残项交付状态见 PR；拓扑另片待评估** | 静态 source-type 四格与注册对账见 2026-09-13 设计；P2-59～62 逐次证据机制不重复建设。按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest；当前 parser 只解析中心频率，拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
-| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **→ P2-79A / P2-79B** | 2026-10-05 获批按型号归属→同序锁拆片，未开工；原并发反例需在 PostgreSQL 定点重跑，不宣称本次已复现 |
+| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **→ P2-79A / P2-79B** | 2026-10-05 获批完整实现 A→B，A 验证中；原并发反例需在 B 的 PostgreSQL 定点重跑，不宣称本次已复现 |
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
 | 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
 | #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |

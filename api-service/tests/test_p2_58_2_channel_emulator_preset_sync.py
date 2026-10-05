@@ -226,6 +226,8 @@ def _write_smu(path: Path, text: str) -> None:
 def _register_vendor_asset(db):
     """一条 vendor_file 资产，完整 F64 路径精确等于扫描到的工程（smu-sync 唯一会写的形态）。"""
 
+    conn = db.query(InstrumentConnection).join(InstrumentCategory).filter(
+        InstrumentCategory.category_key == "channelEmulator").one()
     return create_channel_asset(
         db,
         name="truth",
@@ -234,7 +236,8 @@ def _register_vendor_asset(db):
         associated_file_path=SMU_WINDOWS_PATH,
         center_frequency_hz=3_600_000_000,
         bandwidth_mhz=100,
-        instrument_connection_id=None,
+        instrument_connection_id=conn.id,
+        instrument_model_id=conn.category.selected_model_id,
     )
 
 
@@ -242,6 +245,7 @@ def _create_scd(db, connection_id):
     return scd_svc.create_scd(
         db,
         instrument_connection_id=connection_id,
+        instrument_model_id=db.get(InstrumentConnection, connection_id).category.selected_model_id,
         radio_technology="nr5g",
         channel_kind="nr_arfcn",
         band="N78",
@@ -353,6 +357,7 @@ def test_smu_sync_mirrors_into_saved_active_preset(db, ce):
         e for e in active if isinstance(e, dict) and e.get("filename") == SMU_WINDOWS_PATH
     )
     assert synced["channel_asset_id"] == str(asset.id)
+    assert synced["instrument_model_id"] == str(ce.f64_id)
     preset = _saved_preset(connection, ce.f64_id)
     assert preset is not None
     assert _canonical(preset["connection_params"]) == _canonical(connection.connection_params)

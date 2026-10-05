@@ -8,10 +8,10 @@
  * source_type payload 编辑器) 是 S4-2~S4-4; 旧编辑器 (AssetProfiles CDL tab / 仪器抽屉 SCD
  * 卡片) deprecate + 浏览器闭环是 S4-5/S4-6。
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ActionIcon, Alert, Badge, Box, Button, Code, Group, LoadingOverlay, Modal, Paper,
-  ScrollArea, SegmentedControl, Stack, Switch, Table, Text, Title, Tooltip,
+  ScrollArea, SegmentedControl, Stack, Switch, Table, Text, Title, Tooltip, Checkbox,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   deleteChannelAsset,
+  confirmChannelAssetOwnership,
   fetchChannelAssets,
   scanSMUProjects,
   syncSMUProjects,
@@ -28,6 +29,8 @@ import {
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
 import { ChannelAssetForm } from './ChannelAssetForm'
+import { fetchInstrumentCatalog } from '../../api/service'
+import { savedChannelAssetOwner, ownershipConfirmationPayload, type SavedChannelAssetOwner } from './channelAssetOwnership'
 
 const SOURCE_LABEL: Record<ChannelSourceType, string> = {
   standard_3gpp: '标准 3GPP',
@@ -58,11 +61,16 @@ export function ChannelWorkbench() {
   const [editingAsset, setEditingAsset] = useState<ChannelAsset | null>(null)
   const [smuOpen, setSMUOpen] = useState(false)
   const [smuPreview, setSMUPreview] = useState<SMUProjectSyncPreview | null>(null)
+  const [selectedUnknown, setSelectedUnknown] = useState<string[]>([])
+  const catalog = useQuery({ queryKey: ['instruments', 'catalog'], queryFn: fetchInstrumentCatalog })
+  const owner = savedChannelAssetOwner(catalog.data?.categories.find((c) => c.key === 'channelEmulator'))
+  const ownerKey = `${owner?.instrument_connection_id}:${owner?.instrument_model_id}`
+  useEffect(() => { setSelectedUnknown([]) }, [ownerKey, filter, includeInactive])
   const openCreate = () => { setEditingAsset(null); setFormOpen(true) }
   const openEdit = (a: ChannelAsset) => { setEditingAsset(a); setFormOpen(true) }
 
   const assetsQuery = useQuery({
-    queryKey: ['channel-assets', filter, includeInactive],
+    queryKey: ['channel-assets', filter, includeInactive, ownerKey],
     queryFn: () =>
       fetchChannelAssets({
         sourceType: filter === 'all' ? undefined : filter,
@@ -71,6 +79,29 @@ export function ChannelWorkbench() {
   })
   // 前缀失效 (covers ['channel-assets', filter, includeInactive] 各变体)
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['channel-assets'] })
+  const ownershipMutation = useMutation({
+    mutationFn: confirmChannelAssetOwnership,
+    onSuccess: () => {
+      setSelectedUnknown([])
+      invalidate()
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
+      notifications.show({ title: '归属已确认', message: '只更新所选资产归属，未修改 HAL 或 LabProfile', color: 'blue' })
+    },
+    onError: (e: unknown) => notifyError('归属确认失败，请刷新已保存配置', e),
+  })
+  const confirmOwnership = (rows: ChannelAsset[], target: SavedChannelAssetOwner) => {
+    const payload = ownershipConfirmationPayload(rows.map((a) => a.id), target)
+    modals.openConfirmModal({
+      title: '确认文件资产归属',
+      children: <Stack gap="xs">
+        <Text>目标：{target.label} · {target.endpoint}</Text>
+        {rows.map((a) => <Text key={a.id} size="sm">{a.name} · {a.associated_file_path ?? '未关联文件'}</Text>)}
+        <Text size="sm" c="dimmed">请核对实际仪器。此操作不授予正式资格，不自动同步 LabProfile。</Text>
+      </Stack>,
+      labels: { confirm: '确认归属', cancel: '取消' },
+      onConfirm: () => ownershipMutation.mutate(payload),
+    })
+  }
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteChannelAsset(id, false),
@@ -131,6 +162,10 @@ export function ChannelWorkbench() {
           </Text>
         </div>
         <Group gap="sm">
+          <Button variant="light" disabled={!owner || !selectedUnknown.length} loading={ownershipMutation.isPending}
+            onClick={() => owner && confirmOwnership(assets.filter((a) => selectedUnknown.includes(a.id)), owner)}>
+            批量确认归属（{selectedUnknown.length}）
+          </Button>
           <Button
             variant="light"
             leftSection={<IconFileSearch size={16} />}
@@ -187,8 +222,16 @@ export function ChannelWorkbench() {
             <Table.Tbody>
               {assets.map((a) => (
                 <Table.Tr key={a.id} opacity={a.is_active ? 1 : 0.5}>
-                  <Table.Td><Text fw={500}>{a.name}</Text></Table.Td>
+                  <Table.Td><Group gap="xs">
+                    {a.source_type === 'vendor_file' && !a.instrument_model_id && a.is_active &&
+                      <Checkbox aria-label={`选择待确认资产 ${a.name}`} checked={selectedUnknown.includes(a.id)}
+                        onChange={(e) => { const checked = e.currentTarget.checked; setSelectedUnknown((ids) => checked ? [...ids, a.id] : ids.filter((id) => id !== a.id)) }} />}
+                    <Text fw={500}>{a.name}</Text>
+                  </Group></Table.Td>
                   <Table.Td>
+                    {a.source_type === 'vendor_file' && <Badge color={a.instrument_model_id ? 'blue' : 'yellow'}>
+                      {a.instrument_model_id ? `型号 ${a.instrument_model_id}` : '归属待确认（不可新执行）'}
+                    </Badge>}
                     <Badge color={SOURCE_COLOR[a.source_type]} variant="light">
                       {SOURCE_LABEL[a.source_type]}
                     </Badge>
@@ -215,6 +258,10 @@ export function ChannelWorkbench() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap={4} justify="flex-end">
+                      {a.source_type === 'vendor_file' && !a.instrument_model_id && a.is_active &&
+                        <Button size="xs" variant="light" disabled={!owner} onClick={() => owner && confirmOwnership([a], owner)}>
+                          确认归属
+                        </Button>}
                       <Tooltip label="编辑">
                         <ActionIcon variant="subtle" color="blue" onClick={() => openEdit(a)}>
                           <IconEdit size={18} />

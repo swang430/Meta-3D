@@ -655,18 +655,30 @@ def test_frozen_channel_asset_rejects_executable_content_drift_before_remote(
         module.validate_resolved_channel_asset_against_freeze(resolved, frozen)
 
 
-def test_vendor_file_runtime_validation_never_depends_on_smb(monkeypatch):
+def test_vendor_file_runtime_validation_never_depends_on_smb(monkeypatch, db):
     """A frozen F64 instrument path must reach SCPI without a local SMB mount."""
     from app.services import channel_emulator_execution_plan as plan_service
     from app.services import smu_project_inventory as inventory_service
     from app.services.mimo_ota import channel_asset_resolver
 
     instrument_path = r"D:\SMU\scenario.smu"
-    connection_id = uuid4()
+    from app.models.instrument import InstrumentCategory, InstrumentModel, InstrumentConnection
+    category = InstrumentCategory(category_key="channelEmulator", category_name="CE")
+    db.add(category)
+    db.flush()
+    model = InstrumentModel(category_id=category.id, vendor="test", model="F64", capabilities={})
+    db.add(model)
+    db.flush()
+    category.selected_model_id = model.id
+    connection = InstrumentConnection(category_id=category.id, endpoint="test:3334", protocol="SOCKET")
+    db.add(connection)
+    db.commit()
+    connection_id = connection.id
     asset_id = uuid4()
     asset = SimpleNamespace(
         id=asset_id,
         name="scenario",
+        instrument_model_id=model.id,
         source_type="vendor_file",
         instrument_connection_id=connection_id,
         associated_file_path=instrument_path,
@@ -708,7 +720,7 @@ def test_vendor_file_runtime_validation_never_depends_on_smb(monkeypatch):
         lambda *_args, **_kwargs: resolved,
     )
     frozen = plan_service.freeze_channel_asset_resolution(
-        object(), SimpleNamespace(channel_asset_id=asset_id)
+        db, SimpleNamespace(channel_asset_id=asset_id)
     )
     assert plan_service.validate_resolved_channel_asset_against_freeze(
         resolved, frozen

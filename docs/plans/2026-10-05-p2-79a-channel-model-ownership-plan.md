@@ -54,7 +54,7 @@
 文件：api/standard_channel.py、api/channel_asset.py、gui/src/api/standardChannelService.ts、channelAssetService.ts、StandardChannelDefinitionCard.tsx、ChannelWorkbench/ChannelWorkbench.tsx、ChannelAssetForm.tsx、App.tsx、api/openapi.yaml、api.generated.ts、手写类型。
 
 - [ ] RED：真实序列化响应含 nullable owner；列表按 saved connection/model 隔离；批量确认任一错误全部不写；GUI 请求带 saved model，NULL显示待确认，确认对话框逐项列名/路径/目标地址。
-- [ ] GREEN：CRUD字段/过滤，增加受控批量归属确认操作（不能客户端循环 PUT 冒充原子批量）；单项复用既有 PUT。GUI 新建/关联与未知项确认使用 saved 型号；query key 含型号，切换清掉旧确认选择；完成四镜像生成。
+- [x] GREEN：CRUD字段/过滤，增加受控批量归属确认操作（不能客户端循环 PUT 冒充原子批量）；GUI 单项也复用同一原子确认端点（单元素数组），既有 PUT 保留显式更新。新建/关联与未知项确认使用 saved 型号；query key 含型号，切换清掉旧确认选择；完成四镜像生成。
 - [ ] 跑后端 API/OpenAPI 与 GUI 契约，再 production build；提交。
 
 ## Task 5：稳定版本验证与交付
@@ -66,4 +66,6 @@
 
 ## 执行记录
 
-2026-10-05：设计批准；基线 45 passed。方案收口：批量需要一个原子事务，不能使用多次独立 PUT 造成部分确认；此操作只改归属，不是 DB 修复或认证端点。尚未实现功能。
+2026-10-05：设计批准；基线 45 passed。批量一个原子事务，此操作只改归属，不是 DB 修复或认证端点。Task 1–4 已实现并逐机制 RED→GREEN，功能提交统一在稳定验证/审查后进行（不机械按任务提交暂态）。412 passed/3 旧扫描 fixture 未提供 owner 的扩大回归后补齐 fixture；33 passed 复验通过。隔离 PostgreSQL `p279a_owner_20261005` 复制运行库验证 migration 到 `c1e3f5a7b9d2`，20 vendor_file 的 owner 仍全部 NULL，运行库未迁移。独立内审 P1=0，指出同 ID 旧副本投影、坏派生 ID、同名归属确认与 GUI 过滤选择问题，均最小收口；等待尾审及最终完整验证，不将中间结果冒充交付。
+
+最终交付前验证：受影响链 418 passed（29.58s）；全量首次 6799 passed/5 failed/5 skipped（156.40s），5 个失败均为 migration 在新装 metadata 上重复加字段。修复并核对命名 FK/index 后新装/升级/降级链 6 passed/1 skipped（0.93s），全量复跑 6804 passed/6 skipped（151.78s）。之后仅收窄 NULL owner 不能与空 selected 相等、GUI 共同 catalog key/地址确认清除和 YAML associate 镜像，复跑全部目录/归属消费者 143 passed（12.51s）与 GUI 2 passed/production build（12.14s），复用未受影响全量结果，不称最后微调版本逐项重跑了全量。隔离 PostgreSQL online downgrade→upgrade 与约束/保留历史测试 2 passed（0.11s）；compileall、单一 Alembic head `c1e3f5a7b9d2`、diff-check 通过。fresh 独立功能尾审 P1/P2/P3=0。尚待 Ready PR 外审、合并/main 同步/运行库迁移/清理；B 未开工。

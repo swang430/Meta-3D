@@ -10,10 +10,10 @@
 import { useEffect, useState } from 'react'
 import {
   Alert, Button, Divider, Group, Modal, NumberInput, Select, SimpleGrid, Stack,
-  Text, Textarea, TextInput,
+  Text, Textarea, TextInput, Checkbox,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   createChannelAsset,
@@ -24,6 +24,8 @@ import {
   type ChannelSourceType,
 } from '../../api/channelAssetService'
 import { CDLClusterEditor } from './CDLClusterEditor'
+import { fetchInstrumentCatalog } from '../../api/service'
+import { savedChannelAssetOwner } from './channelAssetOwnership'
 import { RTRayEditor, type RtSnapshot } from './RTRayEditor'
 import {
   buildVendorSCDConfig,
@@ -53,6 +55,10 @@ interface Props {
 export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   const queryClient = useQueryClient()
   const isEdit = asset != null
+  const catalog = useQuery({ queryKey: ['instruments', 'catalog'], queryFn: fetchInstrumentCatalog, enabled: opened })
+  const owner = savedChannelAssetOwner(catalog.data?.categories.find((c) => c.key === 'channelEmulator'))
+  const [ownerConfirmed, setOwnerConfirmed] = useState(false)
+  useEffect(() => { setOwnerConfirmed(false) }, [opened, owner?.instrument_model_id, owner?.instrument_connection_id, owner?.endpoint])
 
   const [sourceType, setSourceType] = useState<ChannelSourceType>('standard_3gpp')
   const [name, setName] = useState('')
@@ -191,6 +197,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
 
   function handleSubmit() {
     setFormError(null)
+    if (!isEdit && sourceType === 'vendor_file' && (!owner || !ownerConfirmed)) {
+      setFormError('新建厂商文件必须显式确认已保存仪器的型号与地址'); return
+    }
     if (name.trim() === '') { setFormError('名称必填'); return }
     if (sourceType === 'custom_static' && clusters.length === 0) {
       setFormError('自定义 CDL 至少需 1 个簇'); return
@@ -223,6 +232,10 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         description: common.description, center_frequency_hz: common.center_frequency_hz,
         bandwidth_mhz: common.bandwidth_mhz, is_los: common.is_los, k_factor_db: common.k_factor_db,
         associated_file_path: blankNull(filePath),
+        ...(sourceType === 'vendor_file' && owner ? {
+          instrument_connection_id: owner.instrument_connection_id,
+          instrument_model_id: owner.instrument_model_id,
+        } : {}),
       }
       createMutation.mutate(create)
     }
@@ -238,6 +251,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       size="lg"
     >
       <Stack gap="sm">
+        {!isEdit && sourceType === 'vendor_file' && <Checkbox checked={ownerConfirmed}
+          disabled={!owner} onChange={(e) => setOwnerConfirmed(e.currentTarget.checked)}
+          label={owner ? `确认文件归属：${owner.label} · ${owner.endpoint}` : '请先保存信道仿真器型号与连接配置'} />}
         {isEdit ? (
           <Text size="sm" c="dimmed">来源 source_type: <b>{labelOf(sourceType)}</b>（建后不可改）</Text>
         ) : (

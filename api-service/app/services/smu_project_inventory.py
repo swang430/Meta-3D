@@ -621,6 +621,12 @@ def _preview_with_plans(
             elif asset.instrument_connection_id not in (None, connection.id):
                 sync_status = "binding_conflict"
                 detail = "命中资产已绑定另一仪器连接；拒绝跨绑定改写"
+            elif asset.instrument_model_id is None:
+                sync_status = "ownership_unknown"
+                detail = "历史文件归属待操作员显式确认；扫描内容不能证明仪器型号"
+            elif asset.instrument_model_id != connection.category.selected_model_id:
+                sync_status = "model_conflict"
+                detail = "文件属于另一仪器型号；拒绝跨型号扫描发布"
             else:
                 plan, sync_status, detail, target_identity = _candidate_plan(
                     db, connection, item, asset, projection_indexes,
@@ -715,6 +721,7 @@ def _upsert_projection(
         "description": plan.asset.description or f"SMU project truth: {plan.item.instrument_path}",
         "center_frequency_mhz": plan.item.primary_center_frequency_hz / 1e6,
         "channel_asset_id": str(plan.asset.id),
+        "instrument_model_id": str(plan.asset.instrument_model_id),
         **_projection_frequency_fields(
             plan.target_identity,
             declared_band=plan.payload["scd_config"]["band"],

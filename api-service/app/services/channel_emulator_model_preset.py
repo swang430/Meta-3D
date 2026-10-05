@@ -30,6 +30,7 @@ from pydantic import (
     field_validator,
 )
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm import object_session
 
 from app.models.instrument import InstrumentConnection, InstrumentModel
 
@@ -44,6 +45,16 @@ def persistent_channel_emulator_connection_params(raw: Any) -> dict[str, Any]:
     params = dict(raw or {})
     for key in CHANNEL_EMULATOR_RUNTIME_CONNECTION_PARAM_KEYS:
         params.pop(key, None)
+    return params
+
+
+def model_owned_channel_emulator_params(raw: Any, model_id: UUID) -> dict[str, Any]:
+    """派生清单只恢复明确同型号的项；未知项仍在源资产表供操作员确认。"""
+    params = persistent_channel_emulator_connection_params(raw)
+    if "available_channel_models" in params:
+        params["available_channel_models"] = [entry for entry in (params["available_channel_models"] or [])
+            if not isinstance(entry, dict) or not (entry.get("scd_id") or entry.get("channel_asset_id"))
+            or entry.get("instrument_model_id") == str(model_id)]
     return params
 
 
@@ -99,6 +110,14 @@ def parse_channel_emulator_model_presets(
     return parsed
 
 
+def _owned_params(connection, model_id, raw):
+    db = object_session(connection) if isinstance(connection, InstrumentConnection) else None
+    if db is not None:
+        from app.services.channel_asset_ownership import owned_channel_model_params
+        return owned_channel_model_params(db, connection.id, model_id, raw)
+    return model_owned_channel_emulator_params(raw, model_id)
+
+
 def _snapshot_active_connection(
     model: InstrumentModel, connection: InstrumentConnection
 ) -> ChannelEmulatorModelPreset | None:
@@ -107,7 +126,7 @@ def _snapshot_active_connection(
     endpoint = (connection.endpoint or "").strip()
     if not endpoint:
         return None
-    params = persistent_channel_emulator_connection_params(connection.connection_params)
+    params = _owned_params(connection, model.id, connection.connection_params)
     return ChannelEmulatorModelPreset(
         model_id=model.id,
         endpoint=endpoint,
@@ -152,9 +171,7 @@ def save_channel_emulator_model_preset(
         endpoint=endpoint,
         controller=controller,
         notes=notes,
-        connection_params=persistent_channel_emulator_connection_params(
-            connection_params
-        ),
+        connection_params=_owned_params(connection, target_model.id, connection_params),
     )
     presets[str(target.model_id)] = target
     connection.channel_emulator_model_presets = {
@@ -200,9 +217,7 @@ def synchronize_saved_active_channel_emulator_preset_params(
         return False
     presets[key] = preset.model_copy(
         update={
-            "connection_params": persistent_channel_emulator_connection_params(
-                connection.connection_params
-            )
+            "connection_params": _owned_params(connection, selected_model_id, connection.connection_params)
         }
     )
     connection.channel_emulator_model_presets = {

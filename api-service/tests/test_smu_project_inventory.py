@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.channel_asset import ChannelAsset
-from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services.channel_asset_service import create_channel_asset
 
 
@@ -213,6 +213,10 @@ def inventory_db(tmp_path: Path):
     )
     db.add(category)
     db.flush()
+    model = InstrumentModel(category_id=category.id, vendor="test", model="F64", capabilities={})
+    db.add(model)
+    db.flush()
+    category.selected_model_id = model.id
     connection = InstrumentConnection(
         category_id=category.id,
         connection_params={
@@ -251,6 +255,8 @@ def _create_vendor_asset(
     # valid and the scanner, not the CRUD uniqueness guard, decides the path status.
     scd["version"] = sum(ord(char) for char in name) + 1
     payload = {"scd_config": scd, **(payload_extra or {})}
+    connection = db.query(InstrumentConnection).join(InstrumentCategory).filter(
+        InstrumentCategory.category_key == "channelEmulator").one()
     asset = create_channel_asset(
         db,
         name=name,
@@ -259,8 +265,12 @@ def _create_vendor_asset(
         associated_file_path=path,
         center_frequency_hz=center_frequency_hz,
         bandwidth_mhz=bandwidth_mhz,
-        instrument_connection_id=binding_id,
+        instrument_connection_id=connection.id,
+        instrument_model_id=connection.category.selected_model_id,
     )
+    # 旧绑定形态由直接构造历史行模拟，不让现代 CRUD 隐式接受缺失归属。
+    asset.instrument_connection_id = binding_id
+    db.commit()
     if not active:
         asset.is_active = False
         db.commit()

@@ -1239,6 +1239,11 @@ class MeasureExecutor(IStepExecutor):
             if isinstance(context.test_execution.config, dict)
             else {}
         )
+        from app.services.channel_emulator_execution_plan import _validate_execution_asset_owner
+        try:
+            _validate_execution_asset_owner(execution_config, getattr(context, "db", None))
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
         frozen_plan = execution_config.get(CE_PLAN_FREEZE_CONFIG_KEY)
         if not isinstance(frozen_plan, dict):
             raise RuntimeError(
@@ -1678,11 +1683,17 @@ class MeasureExecutor(IStepExecutor):
             if isinstance(context.test_execution.config, dict)
             else {}
         )
+        from app.services.channel_emulator_execution_plan import _validate_execution_asset_owner
+        try:
+            _validate_execution_asset_owner(execution_config, context.db)
+        except ValueError as exc:
+            return StepExecutionResult(status=StepExecutionStatus.FAILED, error_message=str(exc))
         if resolved_asset is not None:
             from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
             from app.services.channel_emulator_execution_plan import (
                 CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
                 validate_resolved_channel_asset_against_freeze,
+                validate_channel_asset_frozen_owner,
             )
 
             base_station_freeze = execution_config.get(FREEZE_CONFIG_KEY)
@@ -1696,6 +1707,7 @@ class MeasureExecutor(IStepExecutor):
                     resolved_asset,
                     frozen_asset,
                 )
+                validate_channel_asset_frozen_owner(frozen_asset, execution_config)
             except ValueError as exc:
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,

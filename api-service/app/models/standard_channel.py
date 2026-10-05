@@ -10,7 +10,7 @@ Schema 选 flat columns (非单个 JSON blob), 跟 InstrumentTopologyProfile / C
 字段分两组:
 - **规范配置** (真值, 进标准名): band / arfcn / bandwidth_mhz / model / scenario /
   mimo / polarization / version。
-- **关联** (synced projection): instrument_connection_id (所属 F64 绑定) +
+- **关联** (synced projection): instrument_connection_id + instrument_model_id (明确仪器归属) +
   associated_file_path (实际 .smu, CALC:FILT:FILE 加载这个; declared_only 时 NULL) +
   association_source。
 """
@@ -35,10 +35,8 @@ from app.db.database import Base
 class StandardChannelDefinition(Base):
     """一个标准信道定义 = 规范配置 + 标准名 + (可选) 关联的实际 .smu 文件。
 
-    唯一性: (instrument_connection_id, standard_name)。生产 schema 里 InstrumentCategory
-    .category_key 全局 unique + InstrumentConnection.category_id unique → 一套系统只有一台
-    信道仿真器 (channelEmulator) 连接, 故此约束实际等价于"标准名在该 F64 上唯一";
-    composite 形式是防御性通用写法 (将来若放开多信道仿真器仍正确)。
+    唯一性: (instrument_connection_id, instrument_model_id, standard_name)。
+    同一类别连接可保存多个型号的文件定义；NULL 是尚未确认归属的历史数据。
     "一个规范配置的多个物理文件" 由版本号承载 (重标/重生成时 version 递增 → 不同标准名 =
     不同 SCD), 不是靠多绑定。
     """
@@ -99,6 +97,10 @@ class StandardChannelDefinition(Base):
 
     description = Column(Text, nullable=True)
 
+    instrument_model_id = Column(
+        UUID(as_uuid=True), ForeignKey("instrument_models.id", name="fk_standard_channel_definitions_instrument_model"), nullable=True, index=True,
+        comment="显式仪器型号归属；NULL=历史待确认，不参与活动投影")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -111,7 +113,7 @@ class StandardChannelDefinition(Base):
             name="ck_scd_rat_channel_identity",
         ),
         UniqueConstraint(
-            "instrument_connection_id", "standard_name",
-            name="uq_scd_binding_standard_name",
+            "instrument_connection_id", "instrument_model_id", "standard_name",
+            name="uq_scd_binding_model_standard_name",
         ),
     )
