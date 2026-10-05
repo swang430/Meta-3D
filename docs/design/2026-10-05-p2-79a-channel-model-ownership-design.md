@@ -75,4 +75,4 @@
 
 本片属共享契约/冻结/迁移档：逐功能 RED→GREEN、受影响生产链正反例与回归，稳定版本最终后端全量一次，GUI 契约/build、compileall、隔离 PostgreSQL migration、单一 Alembic head、diff-check。按已批准流程 fresh 功能审查、Ready PR、Codex R1→R2，覆盖最新 HEAD 无 P1 后合并同步清理。
 
-实现与隔离验证进行中，无运行库写入、无仪器 I/O。P2-79B 在 A 闭环后开始。
+实现与隔离验证已完成，PR #498 外审中；无运行库写入、无仪器 I/O。P2-79B 在 A 合并同步清理后开始。

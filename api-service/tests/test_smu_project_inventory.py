@@ -277,6 +277,32 @@ def _create_vendor_asset(
     return asset
 
 
+@pytest.mark.parametrize("other_kind", ["other_model", "inactive", "other_connection"])
+def test_preview_chooses_active_saved_owner_before_path_ambiguity(inventory_db, other_kind):
+    from app.services.smu_project_inventory import preview_smu_project_sync
+
+    db, connection, root = inventory_db
+    _write_smu(root / "truth.smu", "[Channel Group 0]\nCenterFrequency=3549990000 Hz\n")
+    path = r"D:\Scenario Packs\truth.smu"
+    chosen = _create_vendor_asset(db, name="chosen", path=path, binding_id=connection.id)
+    other = _create_vendor_asset(db, name="historical", path=path, binding_id=connection.id)
+    if other_kind == "other_model":
+        model = InstrumentModel(category_id=connection.category_id, vendor="test", model="FS16", capabilities={})
+        db.add(model)
+        db.flush()
+        other.instrument_model_id = model.id
+    elif other_kind == "inactive":
+        other.is_active = False
+    else:
+        other.instrument_connection_id = uuid.uuid4()
+    db.commit()
+
+    row = preview_smu_project_sync(db).items[0]
+    assert row.sync_status == "syncable"
+    assert row.asset_id == chosen.id
+    assert other.payload.get("smu_project_truth") is None
+
+
 def test_preview_matches_only_the_complete_windows_path_and_migrates_null_binding(
     inventory_db,
 ):

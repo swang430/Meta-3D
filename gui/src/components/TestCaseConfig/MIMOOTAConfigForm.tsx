@@ -35,6 +35,7 @@ import { fetchDUTProfiles } from '../../api/dutProfileService'
 import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
+import { selectEmulationFile, selectedEmulationFilename } from './emulationSelectionTruth'
 import {
   LTE_TRANSMISSION_MODES,
   type LteTransmissionMode,
@@ -382,14 +383,9 @@ export function MIMOOTAConfigForm({
   // DIAG:SIMU:GO) 只播 .smu; .rtc 是 Runtime 管线 (CH:MOD:CONT:ENV)、.asc 是 ASC 引擎产物 ——
   // 选进 emulation_file 会在 F64 信道加载时才失败, 在表单这里就挡掉无效原生 GCM 文件。
   const smuItems = (channelModelsQuery.data?.items ?? []).filter((e) => e.type === 'smu')
-  // slice 4: filename → scd_id 查找。SCD 派生 entry 有 scd_id → 选中存 scd_id (measure 查
-  // SCD + 频率 cross-check); 手敲 entry 无 scd_id → 选中存裸 emulation_file (legacy, 无 cross-check)。
-  const scdIdByFilename = new Map(smuItems.map((e) => [e.filename, e.scd_id ?? null]))
+  // 现代扫描投影保留 channel_asset_id，legacy-only 保留 scd_id；不得降级成手工路径。
   const fetchedEmulationOptions = smuItems.map((e) => ({ value: e.filename, label: e.label }))
-  // Select 以 filename 为统一 value: scd_id 引用 → 反查它的 filename; 否则用裸 emulation_file。
-  const selectedFilename = value.scd_id
-    ? (smuItems.find((e) => e.scd_id === value.scd_id)?.filename ?? null)
-    : (value.emulation_file ?? null)
+  const selectedFilename = selectedEmulationFilename(value, smuItems)
   // 当前选中若不在清单 (别处设的/清单外), 也列出来避免静默丢显示。
   const emulationFileOptions =
     selectedFilename && !fetchedEmulationOptions.some((o) => o.value === selectedFilename)
@@ -663,13 +659,7 @@ export function MIMOOTAConfigForm({
               }
               data={emulationFileOptions}
               value={selectedFilename}
-              onChange={(v) => {
-                // slice 4: 选 SCD 派生项 (有 scd_id) → 存 scd_id 走 cross-check; 选手敲项 →
-                // 存裸 emulation_file (legacy); 二者互斥, 清掉另一个。
-                const scd = v ? scdIdByFilename.get(v) : null
-                if (scd) onChange({ ...value, scd_id: scd, emulation_file: undefined })
-                else onChange({ ...value, scd_id: undefined, emulation_file: v ?? undefined })
-              }}
+              onChange={(v) => onChange(selectEmulationFile(value, smuItems, v))}
               disabled={readOnly || isAscEngine || hasChannelAsset}
               placeholder={
                 emulationFileOptions.length === 0

@@ -601,6 +601,17 @@ def _preview_with_plans(
     for item in inventory.items:
         path_key = _normalise_windows_path(item.instrument_path)
         matches = assets_by_path.get(path_key or "", [])
+        # 先按已保存 owner 收窄；其他型号/停用历史的同路径不是当前资产歧义。
+        # 无权威候选时仍保留原冲突/未知诊断，不能由扫描认领历史归属。
+        owned_matches = [
+            candidate for candidate in matches
+            if candidate.is_active is True
+            and candidate.instrument_connection_id in (None, connection.id)
+            and candidate.instrument_model_id is not None
+            and candidate.instrument_model_id == connection.category.selected_model_id
+        ]
+        if owned_matches:
+            matches = owned_matches
         asset: ChannelAsset | None = None
         plan: _SyncPlan | None = None
         target_identity: ChannelFrequencyIdentity | None = None
