@@ -1641,6 +1641,47 @@ class PDFGenerator:
                             verdict_cell(cal.get('validation_pass')),
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
+                elif cal_type == 'pattern':
+                    headers = [
+                        'Probe ID', 'Source', 'Frozen Route',
+                        'Formal Eligibility', 'Measured At',
+                    ]
+                    rows = [headers]
+                    warning_rows = [['Calibration', 'Warnings']]
+                    for cal in cal_data[:20]:
+                        route_text = (
+                            f"{cal.get('topology_id') or '-'} / "
+                            f"{cal.get('chain_id') or '-'} / "
+                            f"{cal.get('ce_port') or '-'}"
+                        )
+                        eligible = cal.get('formal_eligible') is True
+                        reasons = cal.get('eligibility_reasons') or []
+                        eligibility_text = (
+                            'FORMAL'
+                            if eligible
+                            else 'UNVERIFIED: ' + ', '.join(
+                                escape(str(reason)) for reason in reasons
+                            )
+                        )
+                        rows.append([
+                            str(cal.get('probe_id', '-')),
+                            escape(str(cal.get('source', 'unknown'))),
+                            Paragraph(escape(route_text), self.styles['BodyText']),
+                            Paragraph(eligibility_text, self.styles['BodyText']),
+                            str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                        warnings = cal.get('warnings')
+                        warning_text = (
+                            '? NOT RECORDED (legacy certificate)'
+                            if warnings is None
+                            else '<br/>'.join(escape(str(item)) for item in warnings)
+                            if warnings else 'None'
+                        )
+                        warning_rows.append([
+                            Paragraph(escape(f"Probe {cal.get('probe_id', '-')}"),
+                                      self.styles['BodyText']),
+                            Paragraph(warning_text, self.styles['BodyText']),
+                        ])
                 elif cal_type == 'rf_chain':
                     headers = ['Chain', 'Frequency (MHz)', 'Status', 'Calibrated At']
                     rows = [headers]
@@ -1708,12 +1749,14 @@ class PDFGenerator:
                     ]))
                     elements.append(table)
 
-                    if cal_type in ('path_loss', 'multi_freq_path_loss'):
+                    if cal_type in ('path_loss', 'multi_freq_path_loss', 'pattern'):
                         elements.append(Spacer(1, 6))
                         elements.append(Paragraph(
                             (
                                 '<b>Path Loss Warning Audit</b>'
                                 if cal_type == 'path_loss'
+                                else '<b>Pattern Warning Audit</b>'
+                                if cal_type == 'pattern'
                                 else '<b>Multi-Frequency Warning Audit</b>'
                             ),
                             self.styles['BodyText'],

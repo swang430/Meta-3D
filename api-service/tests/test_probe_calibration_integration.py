@@ -33,6 +33,7 @@ from app.models.probe_calibration import (
 engine = None
 TestingSessionLocal = None
 CHAMBER_ID = uuid.UUID("b2222222-2222-2222-2222-222222222153")
+LAB_PROFILE_ID = uuid.UUID("b2222222-2222-2222-2222-222222222154")
 
 
 def override_get_db():
@@ -108,10 +109,13 @@ def _scoped_post(path: str, **kwargs):
             params["chamber_id"] = str(CHAMBER_ID)
             kwargs["params"] = params
         elif "json" in kwargs:
-            kwargs["json"] = {
+            payload = {
                 "chamber_id": str(CHAMBER_ID),
                 **kwargs["json"],
             }
+            if path.endswith("/pattern/start"):
+                payload["lab_profile_id"] = str(LAB_PROFILE_ID)
+            kwargs["json"] = payload
     return client.post(path, **kwargs)
 
 

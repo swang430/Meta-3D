@@ -5,12 +5,14 @@
 真建拆一次 F64 socket 并跑一遍 `_apply_session_reset`（清 6 个缓存字段）。
 一次 32 探头 × 2 极化的 path-loss 作业 = 64 次建拆；方向图按角度点计更甚。
 
-本文件的 4 条正向测试对应 4 个作业入口（两类作业）：
+本文件的 3 条正向测试对应 3 个可执行的 CE+SA 作业入口：
 
 1. 方向图  `PatternCalibrationService._real_pattern_measurements`
-2. path-loss `ProbePathLossCalibrationService.start_calibration`
-3. path-loss `ProbePathLossCalibrationService.start_calibration_for_lab_profile`
-4. path-loss `MultiFrequencyPathLossService.calibrate_frequency_sweep`
+2. path-loss `ProbePathLossCalibrationService.start_calibration_for_lab_profile`
+3. path-loss `MultiFrequencyPathLossService.calibrate_frequency_sweep`
+
+chamber-keyed legacy `start_calibration` 没有 LabProfile/SwitchTopology 路由真值，
+Real CE+SA 已 fail-closed；只保留 mock 与原有 VNA 语义。
 
 （原第 2 条 QZ XPD 载体随 P1-71 的 run_xpd_validation 移除而删；
 租约嵌套性质由其余 4 个入口继续钉着。）
@@ -157,6 +159,13 @@ def _stub_inner_tone(monkeypatch, lease: _CountingLease) -> list[int]:
         "_acquire_sa_power_via_ce_tone_inner",
         _inner,
     )
+    # P2-32B 的作业级硬件预检与本测试的租约计数无关；
+    # 隔离它，不为租约单测伪造一组 CE/SA 驱动。
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target, ce_port=None: None,
+    )
     return depths
 
 
@@ -182,6 +191,12 @@ def _stub_single_point_measurement(monkeypatch, lease: _CountingLease) -> list[i
         pl_mod.ProbePathLossCalibrationService,
         "_real_path_loss_measurement_via_ce_sa",
         _measure,
+    )
+    # 本文件验证租约引用计数，不为作业级预检伪造 CE/SA 驱动。
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target, ce_port=None: None,
     )
     return depths
 
@@ -256,41 +271,6 @@ async def test_pattern_scan_holds_one_task_level_lease(lease, monkeypatch):
     )
     assert all(d >= 1 for d in depths), (
         f"有角度点的测量发生在作业级租约之外: depths={depths}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. path-loss 作业（chamber-keyed 旧门）：probe × pol 逐组 = 一次作业
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_path_loss_job_holds_one_task_level_lease(
-    lease, db, chamber, monkeypatch
-):
-    from app.services import path_loss_calibration_service as pl_mod
-
-    depths = _stub_single_point_measurement(monkeypatch, lease)
-
-    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
-    result = await svc.start_calibration(
-        chamber_id=chamber.id,
-        frequency_mhz=3500.0,
-        sgh_model="SGH-01",
-        sgh_gain_dbi=10.0,
-        probe_ids=[0, 1],
-        polarizations=[PolarizationType.V, PolarizationType.H],
-    )
-
-    assert result.success
-    assert len(depths) == 4  # 2 probes × 2 pols
-    assert lease.acquires == 1 and lease.releases == 1, (
-        "一次 path-loss 作业（2 探头 × 2 极化）必须只真取/放一次仪表控制权 —— "
-        f"实际 acquires={lease.acquires} releases={lease.releases}；"
-        "32×2 的真实作业就是 64 次 socket 建拆"
-    )
-    assert all(d >= 1 for d in depths), (
-        f"有测量发生在作业级租约之外: depths={depths}"
     )
 
 
@@ -458,71 +438,12 @@ def _stub_noisy_single_point(monkeypatch, lease: _CountingLease) -> list[int]:
         "_real_path_loss_measurement_via_ce_sa",
         _measure,
     )
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        lambda self, *, route_target, ce_port=None: None,
+    )
     return depths
-
-
-@pytest.mark.asyncio
-async def test_path_loss_job_lease_acquire_failure_returns_result(db, chamber, monkeypatch):
-    """行为门：外层租约取不到 → 返回 `CalibrationResult(success=False)`，不抛。
-
-    此前（本片初版）异常从 `async with` 进入处直接冒出 → 全局 handler 409
-    `{"detail"}`，与 `/start` 既定的 `{message, warnings}` 形状不一致。
-    变异：去掉外层 try/except → 本门抛 `InstrumentTestLeaseError` 红。
-    """
-    from app.services import path_loss_calibration_service as pl_mod
-
-    lease = _failing_lease(monkeypatch, "acquire")
-    depths = _stub_single_point_measurement(monkeypatch, lease)
-
-    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
-    result = await svc.start_calibration(
-        chamber_id=chamber.id,
-        frequency_mhz=3500.0,
-        sgh_model="SGH-01",
-        sgh_gain_dbi=10.0,
-        probe_ids=[0, 1],
-        polarizations=[PolarizationType.V, PolarizationType.H],
-    )
-
-    assert isinstance(result, pl_mod.CalibrationResult)
-    assert result.success is False
-    assert "lease" in result.message.lower() and "Remote" in result.message
-    assert depths == [], "取不到租约就不许开始任何点级测量"
-    assert db.query(pl_mod.ProbePathLossCalibration).count() == 0
-
-
-@pytest.mark.asyncio
-async def test_path_loss_job_release_failure_keeps_accumulated_warnings(
-    db, chamber, monkeypatch
-):
-    """行为门：作业全部测完后释放失败 → 仍走结果路径，且**已累计的 warnings 随结果上 wire**
-    （agent #206 / Codex #206 R3：清理失败不许只沉日志）。
-
-    变异：外层 except 里不带 `warnings=warnings` → 本门红。
-    """
-    from app.services import path_loss_calibration_service as pl_mod
-
-    lease = _failing_lease(monkeypatch, "release")
-    depths = _stub_noisy_single_point(monkeypatch, lease)
-
-    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
-    result = await svc.start_calibration(
-        chamber_id=chamber.id,
-        frequency_mhz=3500.0,
-        sgh_model="SGH-01",
-        sgh_gain_dbi=10.0,
-        probe_ids=[0],
-        polarizations=[PolarizationType.V, PolarizationType.H],
-    )
-
-    assert len(depths) == 2, "测量本身应全部完成，失败发生在释放时"
-    assert result.success is False
-    assert "释放" in result.message or "lease" in result.message.lower()
-    uncertainty_warnings = [w for w in result.warnings if "uncertainty" in w]
-    assert len(uncertainty_warnings) == 2, (
-        f"作业期间累计的不确定度告警必须随失败结果返回，实际 warnings={result.warnings}"
-    )
-    assert db.query(pl_mod.ProbePathLossCalibration).count() == 0, "释放失败不落证书（与旧行为一致）"
 
 
 @pytest.mark.asyncio
@@ -593,3 +514,152 @@ async def test_frequency_sweep_lease_acquire_failure_returns_result(db, chamber,
     assert isinstance(result, pl_mod.CalibrationResult) and result.success is False
     assert "lease" in result.message.lower()
     assert depths == []
+
+
+# ---------------------------------------------------------------------------
+# 7. P2-32B: 纯硬件路由预检必须发生在任何远程租约之前
+# ---------------------------------------------------------------------------
+
+
+def _reject_route_before_lease(monkeypatch, pl_mod):
+    """让纯预检稳定拒绝，并把任何租约构造都视为越界硬件触碰。"""
+    preflight = MagicMock(side_effect=RuntimeError("invalid calibration route B33"))
+    lease_factory = MagicMock(side_effect=AssertionError("remote lease touched"))
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        preflight,
+    )
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease",
+        lease_factory,
+    )
+    return preflight, lease_factory
+
+
+@pytest.mark.asyncio
+async def test_legacy_real_ce_sa_requires_lab_profile_before_hardware_touch(
+    db, chamber, monkeypatch
+):
+    """无 topology 的 legacy 批量入口不能把固定 output 1 签成多个 probe。"""
+    from app.services import path_loss_calibration_service as pl_mod
+
+    preflight = MagicMock(return_value=None)
+    lease_factory = MagicMock(side_effect=AssertionError("remote lease touched"))
+    monkeypatch.setattr(
+        pl_mod.ProbePathLossCalibrationService,
+        "preflight_sa_power_via_ce_tone",
+        preflight,
+    )
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease",
+        lease_factory,
+    )
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    result = await svc.start_calibration(
+        chamber_id=chamber.id,
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+        probe_ids=[0, 1],
+        polarizations=[PolarizationType.V, PolarizationType.H],
+    )
+
+    assert result.success is False
+    assert "LabProfile" in result.message and "Topology" in result.message
+    preflight.assert_not_called()
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_public_tone_acquire_rejects_route_before_remote_lease(db, monkeypatch):
+    from app.services import path_loss_calibration_service as pl_mod
+
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    with pytest.raises(RuntimeError, match="invalid calibration route B33"):
+        await svc.acquire_sa_power_via_ce_tone(
+            frequency_mhz=3500.0,
+            ce_port="B33",
+            route_target="chain-b33",
+        )
+
+    preflight.assert_called_once_with(route_target="chain-b33", ce_port="B33")
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lab_profile_path_loss_rejects_all_routes_before_job_lease(
+    db, chamber, monkeypatch
+):
+    from app.models.lab_profile import LabProfile
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lab = LabProfile(name="P2-32B preflight lab", chamber_config_id=chamber.id)
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    resolution = RFChainResolution(
+        lab_profile_id=lab.id,
+        chamber_id=chamber.id,
+        topology_id="p2-32b-preflight-topology",
+        topology_name="P2-32B preflight",
+        operating_mode="mimo_ota",
+        chains=[
+            RFChainSpec(
+                chain_id="chain-b33",
+                ce_port="B33",
+                probe_id=0,
+                polarization="V",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: resolution,
+    )
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.ProbePathLossCalibrationService(db, use_mock=False)
+
+    result = await svc.start_calibration_for_lab_profile(
+        lab_profile_id=lab.id,
+        operating_mode="mimo_ota",
+        frequency_mhz=3500.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert result.success is False
+    assert "invalid calibration route B33" in result.message
+    preflight.assert_called_once_with(route_target="chain-b33", ce_port="B33")
+    lease_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_frequency_sweep_rejects_all_routes_before_job_lease(
+    db, chamber, monkeypatch
+):
+    from app.services import path_loss_calibration_service as pl_mod
+
+    lab_profile_id = _stub_multi_frequency_routes(monkeypatch, chamber, [0])
+    preflight, lease_factory = _reject_route_before_lease(monkeypatch, pl_mod)
+    svc = pl_mod.MultiFrequencyPathLossService(db, use_mock=False)
+
+    result = await svc.calibrate_frequency_sweep(
+        chamber_id=chamber.id,
+        lab_profile_id=lab_profile_id,
+        probe_ids=[0],
+        polarization=PolarizationType.V,
+        freq_start_mhz=3500.0,
+        freq_stop_mhz=3500.0,
+        freq_step_mhz=100.0,
+        sgh_model="SGH-01",
+        sgh_gain_dbi=10.0,
+    )
+
+    assert result.success is False
+    assert "invalid calibration route B33" in result.message
+    preflight.assert_called_once_with(route_target="chain-0", ce_port="B1.1")
+    lease_factory.assert_not_called()

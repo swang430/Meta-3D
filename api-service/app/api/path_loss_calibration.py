@@ -142,8 +142,9 @@ async def start_path_loss_calibration_for_lab(
     cable loss) on the resulting cert. measure.py looks up compensation by
     chain id rather than averaging across the whole chamber.
 
-    Use the legacy `/start` endpoint when no LabProfile + topology exist yet
-    (early-stage labs without seeded topology rows).
+    Real CE+SA calibration must use this LabProfile-aware endpoint. The legacy
+    `/start` endpoint remains available only for mock calibration and the
+    original VNA path because it has no authoritative per-chain route.
     """
     service = ProbePathLossCalibrationService(db, use_mock=request.use_mock)
     result = await service.start_calibration_for_lab_profile(

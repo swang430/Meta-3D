@@ -185,11 +185,16 @@ def _build_probe_binding(
 
     source_id = connection.get("source")
     source = nodes_by_id.get(source_id) if source_id else None
+    declared_ce_port = connection.get("ce_port")
     ce_port_label = (
-        (source.get("label") if source else None)
-        or connection.get("source_pin")
-        or source_id
-        or "?"
+        declared_ce_port
+        if declared_ce_port is not None
+        else (
+            (source.get("label") if source else None)
+            or connection.get("source_pin")
+            or source_id
+            or "?"
+        )
     )
 
     # Probe binding params (id, polarization) — convention is they live on the

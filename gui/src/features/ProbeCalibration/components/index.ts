@@ -17,3 +17,5 @@ export { ProbeCalibrationDetail } from './ProbeCalibrationDetail'
 export { PatternImportPanel } from './PatternImportPanel'
 
 export { RFChainDiagramPanel } from './RFChainDiagramPanel'
+
+export { PatternMeasurementPanel } from './PatternMeasurementPanel'

@@ -100,16 +100,13 @@ class RealKeysightXSeriesSaDriver(SignalAnalyzerDriver):
             return False
 
     async def measure_channel_power(self, bandwidth_hz: float) -> float:
-        try:
-            self._set_status(InstrumentStatus.BUSY)
-            self._query(XSaScpi.TRIG)
-            # Fetch generic power reading - normally requires setting up CHP mode
-            # But we fallback to trace average for basic abstraction
-            data = await self.get_trace()
-            self._set_status(InstrumentStatus.READY)
-            return sum(data) / len(data) if data else -100.0
-        except Exception:
-            return -100.0
+        message = (
+            "X-Series SA channel power measurement failed: no authoritative "
+            "channel-power scalar readback is implemented; dBm trace bins are "
+            "diagnostic only"
+        )
+        self._set_status(InstrumentStatus.ERROR, message)
+        raise RuntimeError(message)
 
     async def get_trace(self) -> List[float]:
         try:

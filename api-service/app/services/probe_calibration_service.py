@@ -24,6 +24,7 @@ from app.models.probe_calibration import (
     ProbePhaseCalibration,
     ProbePolarizationCalibration,
     ProbePattern,
+    ProbePathLossCalibration,
     LinkCalibration,
     ProbeCalibrationValidity,
     CalibrationStatus,
@@ -1489,6 +1490,135 @@ class PatternCalibrationService:
     def __init__(self, instruments=None):
         self.instruments = instruments
 
+    @staticmethod
+    def _resolve_authoritative_antenna_aperture_m(
+        db: Session,
+        *,
+        reference_antenna_id: Optional[str],
+    ) -> Optional[float]:
+        """Return a configured, auditable aperture when a truth source exists.
+
+        No current model binds ``reference_antenna_id`` to a certified maximum
+        antenna dimension.  Returning ``None`` is deliberate: real measured
+        patterns must stay blocked rather than proving far field with a guessed
+        0.1 m diameter.  A separately scoped follow-up must introduce that
+        configuration and freeze it before real acquisition can be activated.
+        """
+        _ = (db, reference_antenna_id)
+        return None
+
+    @staticmethod
+    def _resolve_pattern_chain_corrections(
+        db: Session,
+        *,
+        chamber_id: UUID,
+        lab_profile_id: UUID,
+        operating_mode: str,
+        frequency_mhz: float,
+        topology_id: str,
+        route_by_pair: Dict[Tuple[int, str], Any],
+    ) -> Dict[Tuple[int, str], float]:
+        """Resolve a distinct hardware correction for every frozen RF chain.
+
+        The path-loss certificate stores the measured total insertion loss for
+        each topology connection.  Removing the free-space component measured
+        at that certificate's own distance leaves the upstream chain loss used
+        by the probe-gain equation.  Operator-entered scalar values are not an
+        authority for a multi-chain fixture and are deliberately not read.
+        """
+        from app.services.calibration.rf_chain_resolver import (
+            normalize_rf_chain_identity,
+        )
+        from app.services.path_loss_calibration_service import (
+            calculate_fspl,
+            select_latest_path_loss_by_mode,
+        )
+
+        # Identity is part of candidate selection, not a post-selection check.
+        # Otherwise a newer certificate for another LabProfile/topology masks
+        # an older still-valid exact certificate.
+        try:
+            certificate_topology_id = UUID(str(topology_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Frozen pattern topology id is not a canonical UUID"
+            ) from exc
+        now = datetime.utcnow()
+        query = db.query(ProbePathLossCalibration).filter(
+            ProbePathLossCalibration.chamber_id == chamber_id,
+            ProbePathLossCalibration.lab_profile_id == lab_profile_id,
+            ProbePathLossCalibration.topology_id == certificate_topology_id,
+            ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+            ProbePathLossCalibration.valid_until > now,
+            ProbePathLossCalibration.use_mock.is_(False),
+            ProbePathLossCalibration.frequency_mhz.between(
+                frequency_mhz * 0.95, frequency_mhz * 1.05
+            ),
+        )
+        certificate = select_latest_path_loss_by_mode(query, operating_mode)
+        if certificate is None:
+            raise ValueError(
+                "Real pattern calibration requires a valid real per-chain "
+                "path-loss certificate for the frozen LabProfile/topology"
+            )
+        entries = certificate.path_loss_db_by_rf_chain
+        if not isinstance(entries, dict):
+            raise ValueError(
+                "Path-loss certificate has no per-chain correction evidence"
+            )
+        cert_distance = certificate.measurement_distance_m
+        cert_frequency = certificate.frequency_mhz
+        if (
+            cert_distance is None
+            or not np.isfinite(float(cert_distance))
+            or float(cert_distance) <= 0
+            or not np.isfinite(float(cert_frequency))
+            or float(cert_frequency) <= 0
+        ):
+            raise ValueError(
+                "Path-loss certificate has invalid distance/frequency evidence"
+            )
+        free_space_db = calculate_fspl(
+            float(cert_frequency), float(cert_distance)
+        )
+        corrections: Dict[Tuple[int, str], float] = {}
+        for pair, chain in route_by_pair.items():
+            chain_id = normalize_rf_chain_identity(chain.chain_id)
+            ce_port = normalize_rf_chain_identity(chain.ce_port)
+            entry = entries.get(chain_id) if chain_id is not None else None
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Path-loss certificate lacks RF chain {chain.chain_id}"
+                )
+            entry_chain_port = normalize_rf_chain_identity(entry.get("ce_port"))
+            total_loss = entry.get("total_insertion_loss_db")
+            try:
+                total_loss_value = float(total_loss)
+                entry_probe_id = int(entry.get("probe_id"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} is malformed"
+                ) from exc
+            if (
+                entry_chain_port != ce_port
+                or entry_probe_id != int(chain.probe_id)
+                or str(entry.get("polarization", "")).upper()
+                != str(chain.polarization).upper()
+                or not np.isfinite(total_loss_value)
+            ):
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} identity/value "
+                    "does not match the frozen pattern route"
+                )
+            correction = total_loss_value - free_space_db
+            if not np.isfinite(correction):
+                raise ValueError(
+                    f"Path-loss certificate RF chain {chain.chain_id} correction "
+                    "is not finite"
+                )
+            corrections[pair] = float(correction)
+        return corrections
+
     async def execute_pattern_calibration(
         self,
         db: Session,
@@ -1498,15 +1628,16 @@ class PatternCalibrationService:
         calibrated_by: str,
         *,
         chamber_id: UUID,
+        lab_profile_id: Optional[UUID] = None,
+        operating_mode: str = "mimo_ota",
         azimuth_step_deg: float = DEFAULT_AZIMUTH_STEP_DEG,
         elevation_step_deg: float = DEFAULT_ELEVATION_STEP_DEG,
         measurement_distance_m: float = 3.0,
         reference_antenna_id: Optional[str] = None,
         turntable_id: Optional[str] = None,
-        ce_port: Optional[str] = None,
         ce_tx_power_dbm: float = -20.0,
         sgh_gain_dbi: float = 10.0,
-        chain_correction_db: float = 0.0,
+        chain_correction_db: Optional[float] = None,
         use_mock: bool = True,
     ) -> CalibrationResult:
         """
@@ -1533,6 +1664,30 @@ class PatternCalibrationService:
             f"frequency={frequency_mhz} MHz"
         )
 
+        polarization_values = [
+            (
+                polarization.value
+                if hasattr(polarization, "value")
+                else str(polarization)
+            ).upper()
+            for polarization in polarizations
+        ]
+        if not probe_ids or len(set(probe_ids)) != len(probe_ids):
+            return CalibrationResult(
+                success=False,
+                message="Pattern calibration probe_ids must be non-empty and unique",
+            )
+        if (
+            not polarization_values
+            or len(set(polarization_values)) != len(polarization_values)
+        ):
+            return CalibrationResult(
+                success=False,
+                message=(
+                    "Pattern calibration polarizations must be non-empty and unique"
+                ),
+            )
+
         # 验证探头 ID
         for probe_id in probe_ids:
             if probe_id < PROBE_ID_MIN or probe_id > PROBE_ID_MAX:
@@ -1541,28 +1696,188 @@ class PatternCalibrationService:
                     message=f"Invalid probe_id {probe_id}"
                 )
 
-        # 验证远场条件 (假设探头口径约 0.1m)
-        antenna_diameter_m = 0.1
-        is_far_field, min_distance = validate_far_field_condition(
-            measurement_distance_m, antenna_diameter_m, frequency_mhz
-        )
-
-        warnings = []
-        if not is_far_field:
-            warnings.append(
-                f"Measurement distance {measurement_distance_m}m may not satisfy "
-                f"far-field condition (min: {min_distance:.2f}m)"
+        warnings: List[str] = []
+        if not use_mock:
+            antenna_diameter_m = self._resolve_authoritative_antenna_aperture_m(
+                db,
+                reference_antenna_id=reference_antenna_id,
             )
+            if antenna_diameter_m is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires an authoritative antenna "
+                        "aperture frozen from reference/probe configuration; no such "
+                        "truth source exists and NF-to-FF conversion is not implemented"
+                    ),
+                    warnings=warnings,
+                )
+            is_far_field, min_distance = validate_far_field_condition(
+                measurement_distance_m,
+                antenna_diameter_m,
+                frequency_mhz,
+            )
+            if not is_far_field:
+                warnings.append(
+                    f"Measurement distance {measurement_distance_m}m does not satisfy "
+                    f"far-field condition (min: {min_distance:.2f}m)"
+                )
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires the far-field condition; "
+                        f"measurement_distance_m={measurement_distance_m:g} is below "
+                        f"the {min_distance:.2f} m minimum"
+                    ),
+                    warnings=warnings,
+                )
 
         # 生成角度网格
         azimuth_deg = list(np.arange(0, 360, azimuth_step_deg))
         elevation_deg = list(np.arange(0, 181, elevation_step_deg))
 
+        route_by_pair = {}
+        correction_by_pair: Dict[Tuple[int, str], float] = {}
+        topology_id: Optional[str] = None
+        if not use_mock:
+            if lab_profile_id is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires an explicit LabProfile "
+                        "so every probe route can be frozen before hardware I/O"
+                    ),
+                    warnings=warnings,
+                )
+            try:
+                from app.services.calibration.rf_chain_resolver import (
+                    resolve_rf_chains,
+                    rf_chain_identity_is_complete,
+                )
+                from app.services.probe_pattern.consumer import (
+                    infer_rf_chain_probe_id_base,
+                )
+
+                resolution = resolve_rf_chains(db, lab_profile_id, operating_mode)
+            except ValueError as exc:
+                return CalibrationResult(
+                    success=False,
+                    message=str(exc),
+                    warnings=warnings,
+                )
+            if resolution.chamber_id != chamber_id:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "LabProfile chamber does not match the requested pattern "
+                        "calibration chamber"
+                    ),
+                    warnings=list(resolution.warnings),
+                )
+            if not resolution.topology_id:
+                return CalibrationResult(
+                    success=False,
+                    message="Pattern calibration requires a resolved SwitchTopology",
+                    warnings=list(resolution.warnings),
+                )
+
+            topology_id = str(resolution.topology_id)
+            warnings.extend(resolution.warnings)
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            if chamber is None:
+                return CalibrationResult(
+                    success=False,
+                    message="Pattern calibration chamber does not exist",
+                    warnings=warnings,
+                )
+            probe_id_base = infer_rf_chain_probe_id_base(
+                chamber.num_probes,
+                [chain.probe_id for chain in resolution.chains],
+            )
+            if probe_id_base is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Pattern calibration cannot establish the RF-chain probe ID "
+                        "namespace from the resolved topology"
+                    ),
+                    warnings=warnings,
+                )
+            for requested_probe_id in probe_ids:
+                for requested_polarization in polarizations:
+                    polarization_value = (
+                        requested_polarization.value
+                        if hasattr(requested_polarization, "value")
+                        else str(requested_polarization)
+                    ).upper()
+                    matching = [
+                        chain
+                        for chain in resolution.chains
+                        if chain.probe_id == requested_probe_id + probe_id_base
+                        and chain.polarization.upper() == polarization_value
+                    ]
+                    if len(matching) != 1:
+                        return CalibrationResult(
+                            success=False,
+                            message=(
+                                "Real pattern calibration requires exactly one RF chain "
+                                f"for probe {requested_probe_id} polarization "
+                                f"{polarization_value}; resolved {len(matching)}"
+                            ),
+                            warnings=warnings,
+                        )
+                    chain = matching[0]
+                    if not rf_chain_identity_is_complete(chain):
+                        return CalibrationResult(
+                            success=False,
+                            message=(
+                                "Resolved pattern calibration RF chain is incomplete for "
+                                f"probe {requested_probe_id} polarization {polarization_value}"
+                            ),
+                            warnings=warnings,
+                        )
+                    route_by_pair[(requested_probe_id, polarization_value)] = chain
+            try:
+                correction_by_pair = self._resolve_pattern_chain_corrections(
+                    db,
+                    chamber_id=chamber_id,
+                    lab_profile_id=lab_profile_id,
+                    operating_mode=operating_mode,
+                    frequency_mhz=frequency_mhz,
+                    topology_id=topology_id,
+                    route_by_pair=route_by_pair,
+                )
+            except ValueError as exc:
+                return CalibrationResult(
+                    success=False,
+                    message=str(exc),
+                    warnings=warnings,
+                )
+            if (
+                chain_correction_db is not None
+                and abs(float(chain_correction_db)) > 1e-12
+            ):
+                warnings.append(
+                    "Operator chain_correction_db ignored; authoritative per-chain "
+                    "path-loss certificate corrections were frozen"
+                )
+
+        common_warnings = list(warnings)
         calibration_ids = []
 
         for probe_id in probe_ids:
             for polarization in polarizations:
+                row_warnings = list(common_warnings)
                 try:
+                    polarization_value = (
+                        polarization.value
+                        if hasattr(polarization, "value")
+                        else str(polarization)
+                    )
+                    chain = route_by_pair.get((probe_id, polarization_value.upper()))
+                    resolved_chain_correction = correction_by_pair.get(
+                        (probe_id, polarization_value.upper())
+                    )
                     if use_mock:
                         measurements = self._mock_pattern_measurements(
                             probe_id, polarization, azimuth_deg, elevation_deg, frequency_mhz
@@ -1575,15 +1890,19 @@ class PatternCalibrationService:
                             azimuth_deg=azimuth_deg,
                             elevation_deg=elevation_deg,
                             frequency_mhz=frequency_mhz,
-                            ce_port=ce_port,
+                            ce_port=chain.ce_port,
+                            route_target=chain.chain_id,
                             ce_tx_power_dbm=ce_tx_power_dbm,
                             sgh_gain_dbi=sgh_gain_dbi,
-                            chain_correction_db=chain_correction_db,
+                            chain_correction_db=float(resolved_chain_correction),
                             measurement_distance_m=measurement_distance_m,
                             reference_antenna_id=reference_antenna_id,
                             turntable_id=turntable_id,
-                            warnings=warnings,
+                            warnings=row_warnings,
                         )
+                        for warning in row_warnings:
+                            if warning not in warnings:
+                                warnings.append(warning)
 
                     # 提取增益数据 (行优先存储: elevation 外循环, azimuth 内循环)
                     gain_pattern = []
@@ -1627,8 +1946,19 @@ class PatternCalibrationService:
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         use_mock=use_mock,
+                        warnings=row_warnings,
+                        lab_profile_id=lab_profile_id,
+                        operating_mode=operating_mode,
+                        topology_id=topology_id,
+                        chain_id=str(chain.chain_id) if chain is not None else None,
+                        ce_port=str(chain.ce_port) if chain is not None else None,
+                        chain_correction_db=(
+                            float(resolved_chain_correction)
+                            if resolved_chain_correction is not None
+                            else None
+                        ),
                         source="simulated" if use_mock else "in_chamber_measured",
-                        polarization=polarization.value if hasattr(polarization, 'value') else str(polarization),
+                        polarization=polarization_value,
                         frequency_mhz=frequency_mhz,
                         azimuth_deg=azimuth_deg_native,
                         elevation_deg=elevation_deg_native,
@@ -1653,6 +1983,10 @@ class PatternCalibrationService:
                     calibration_ids.append(str(calibration.id))
 
                 except Exception as e:
+                    for warning in row_warnings:
+                        if warning not in warnings:
+                            warnings.append(warning)
+                    db.rollback()
                     logger.error(f"Pattern calibration failed for probe {probe_id}: {e}")
                     return CalibrationResult(
                         success=False,
@@ -1742,6 +2076,7 @@ class PatternCalibrationService:
         reference_antenna_id: Optional[str],
         turntable_id: Optional[str],
         warnings: List[str],
+        route_target: Optional[str] = None,
     ) -> List[PatternMeasurement]:
         """执行实际方向图测量 — CE+SA + positioner.
 
@@ -1758,16 +2093,14 @@ class PatternCalibrationService:
             - FSPL(d, f): 自由空间路损 @ 测量距离 d 频率 f
             - G_sgh: SGH 标定增益 (dBi)
             - chain_correction: PA 增益 + switch 插损 + cable 损耗的端到端
-              修正 (dB). 通常由前置 path-loss 校准给出 (CE+SA 测的 path_loss
-              其实就是 -G_chain + FSPL_chamber - G_sgh - G_probe + cable, 拆出来
-              就是 chain_correction). 不传 → 0, 此时 gain_dbi 是"相对方向图"
-              而非绝对增益, peak 值无意义但 HPBW / 前后比 / 主瓣方向都正确.
+              修正 (dB). 必须由调用方从有效 path-loss/链路校准显式冻结；
+              省略时真实测量在首次硬件 I/O 前拒绝，不能把相对方向图峰值当绝对增益.
 
         前置: HAL 必须绑 positioner + channelEmulator + signalAnalyzer.
         positioner 的 (azimuth, elevation) 在 cert 部署里是 DUT 转台 (探头不动,
         SGH 跟着 DUT 一起转 — 等效于探头相对 SGH 转), 或专门的 SGH 反向定位台.
         """
-        from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
         from app.services.instrument_test_lease import instrument_test_lease
         from app.services.path_loss_calibration_service import (
             ProbePathLossCalibrationService,
@@ -1781,9 +2114,20 @@ class PatternCalibrationService:
                 "Pattern calibration needs positioner driver (DUT/SGH turntable). "
                 "Bind a PositionerDriver on the active LabProfile."
             )
-
+        if is_mock_driver(positioner):
+            raise RuntimeError(
+                "HAL 里的 positioner 是模拟驱动 — 拒绝执行真实方向图校准；"
+                "模拟转台不会改变物理角度，不能把采样结果保存为正式方向图。"
+            )
         fspl_db = calculate_fspl(frequency_mhz, measurement_distance_m)
         pl_service = ProbePathLossCalibrationService(db, use_mock=False)
+        # Validate every driver selected by the exact CE capability path before
+        # the first physical move.  The shared acquisition primitive repeats
+        # this check immediately before RF routing/output to catch HAL reloads.
+        pl_service.preflight_sa_power_via_ce_tone(
+            route_target=route_target,
+            ce_port=ce_port,
+        )
 
         measurements: List[PatternMeasurement] = []
         stop_generation_reader = getattr(positioner, "operator_stop_generation", None)
@@ -1824,6 +2168,7 @@ class PatternCalibrationService:
                         frequency_mhz=frequency_mhz,
                         ce_tx_power_dbm=ce_tx_power_dbm,
                         ce_port=ce_port,
+                        route_target=route_target,
                         probe_id=probe_id,
                         polarization=polarization,
                         warning_sink=warnings,
@@ -2361,15 +2706,65 @@ class CalibrationValidityService:
             result["polarization"] = self._get_calibration_status(polarization, now, expiring_threshold)
 
         # 检查方向图校准
-        pattern = db.query(ProbePattern).filter(
+        patterns = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
             ProbePattern.chamber_id == chamber_id,
             ProbePattern.status != CalibrationStatus.INVALIDATED.value,
             ProbePattern.use_mock.is_(False),
-        ).order_by(desc(ProbePattern.measured_at)).first()
+        ).order_by(desc(ProbePattern.measured_at)).all()
 
-        if pattern:
-            result["pattern"] = self._get_calibration_status(pattern, now, expiring_threshold)
+        if patterns:
+            from app.services.probe_pattern.consumer import (
+                evaluate_probe_pattern_formal_eligibility,
+            )
+
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            num_probes = chamber.num_probes if chamber is not None else 0
+            route_cache: Dict[Any, Any] = {}
+            assessments = [
+                (
+                    pattern,
+                    evaluate_probe_pattern_formal_eligibility(
+                        db,
+                        pattern,
+                        num_probes=num_probes,
+                        route_cache=route_cache,
+                        now=now,
+                    ),
+                )
+                for pattern in patterns
+            ]
+            eligible = next(
+                (item for item in assessments if item[1].formal_eligible),
+                None,
+            )
+            if eligible is not None:
+                pattern, assessment = eligible
+                result["pattern"] = self._get_calibration_status(
+                    pattern, now, expiring_threshold
+                )
+                result["pattern"]["formal_eligible"] = True
+                result["pattern"]["eligibility_reasons"] = []
+            else:
+                pattern, assessment = assessments[0]
+                result["pattern"] = {
+                    "calibration_id": str(pattern.id),
+                    "valid_until": (
+                        pattern.valid_until.isoformat()
+                        if pattern.valid_until is not None
+                        else None
+                    ),
+                    "status": "unknown",
+                    "formal_eligible": False,
+                    "eligibility_reasons": list(assessment.reasons),
+                }
+                # 厂商来源的明确过期状态不能折叠成现场证据缺失的 unknown。
+                if (pattern.source == "vendor_datasheet"
+                        and pattern.use_mock is False
+                        and pattern.valid_until is not None
+                        and pattern.valid_until < now):
+                    result["pattern"].update(self._get_calibration_status(
+                        pattern, now, expiring_threshold))
 
         # 检查链路校准 (链路校准是全局的，不是按探头分的)
         # 这里返回最新的链路校准状态

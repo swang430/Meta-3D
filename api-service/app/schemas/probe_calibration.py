@@ -7,7 +7,7 @@ Probe Calibration Pydantic Schemas
 """
 import math
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from ._datetime import UTCDateTime
@@ -290,12 +290,23 @@ class PolarizationCalibrationResponse(BaseModel):
 
 class StartPatternCalibrationRequest(BaseModel):
     """启动方向图校准请求"""
+    lab_profile_id: UUID = Field(..., description="本次校准使用的 LabProfile ID")
     chamber_id: UUID = Field(..., description="校准所属暗室 ID")
-    probe_ids: List[int] = Field(..., min_length=1)
-    polarizations: List[PolarizationType] = Field(
-        default=[PolarizationType.V, PolarizationType.H]
+    operating_mode: str = Field(default="mimo_ota", min_length=1, description="本次校准运行模式")
+    probe_ids: List[int] = Field(
+        ..., min_length=1, json_schema_extra={"uniqueItems": True}
     )
-    frequency_mhz: float = Field(..., description="测量频率 (MHz)")
+    polarizations: List[PolarizationType] = Field(
+        default=[PolarizationType.V, PolarizationType.H],
+        min_length=1,
+        json_schema_extra={"uniqueItems": True},
+    )
+    frequency_mhz: float = Field(
+        ...,
+        ge=100,
+        le=100000,
+        description="测量频率 (MHz)",
+    )
     azimuth_step_deg: float = Field(default=5.0, ge=1, le=30, description="方位角步进 (度)")
     elevation_step_deg: float = Field(default=5.0, ge=1, le=30, description="俯仰角步进 (度)")
     measurement_distance_m: float = Field(
@@ -306,7 +317,36 @@ class StartPatternCalibrationRequest(BaseModel):
     )
     reference_antenna_id: Optional[str] = None
     turntable_id: Optional[str] = None
+    ce_tx_power_dbm: float = Field(
+        default=-20.0,
+        ge=-50.0,
+        le=20.0,
+        allow_inf_nan=False,
+        description="信道仿真器校准音输出功率 (dBm)，沿用现有 HAL -50..20 dBm 域",
+    )
+    sgh_gain_dbi: float = Field(
+        default=10.0,
+        allow_inf_nan=False,
+        description="标准增益喇叭天线增益 (dBi)",
+    )
+    chain_correction_db: Optional[float] = Field(
+        default=None,
+        allow_inf_nan=False,
+        description=(
+            "兼容字段；真实测量不信任操作员标量，服务器会从匹配当前 "
+            "LabProfile/Topology 的有效逐链路损证书解析并冻结修正"
+        ),
+    )
+    use_mock: bool = Field(default=True, description="是否仅生成模拟方向图；正式校准必须显式为 false")
     calibrated_by: str = Field(..., description="校准人员")
+
+    @model_validator(mode="after")
+    def validate_pattern_axes(self):
+        if len(set(self.probe_ids)) != len(self.probe_ids):
+            raise ValueError("probe_ids must be unique")
+        if len(set(self.polarizations)) != len(self.polarizations):
+            raise ValueError("polarizations must be unique")
+        return self
 
 
 class PatternCalibrationResponse(BaseModel):
@@ -314,6 +354,13 @@ class PatternCalibrationResponse(BaseModel):
     id: UUID
     chamber_id: UUID
     use_mock: Optional[bool] = None
+    warnings: Optional[List[str]] = None
+    lab_profile_id: Optional[UUID] = None
+    operating_mode: Optional[str] = None
+    topology_id: Optional[str] = None
+    chain_id: Optional[str] = None
+    ce_port: Optional[str] = None
+    chain_correction_db: Optional[float] = None
     probe_id: int
     polarization: str
     frequency_mhz: float

@@ -573,6 +573,8 @@ class PrecheckExecutor(IStepExecutor):
             frequency_mhz=primary_carrier.frequency_hz / 1e6,
             polarization="V",
             chamber_id=chamber.id,
+            lab_profile_id=lab.id,
+            operating_mode=config.switch_mode_id,
         )
         quiet_zone_evidence = build_quiet_zone_evidence(ripple_db)
         result_payload["quiet_zone_evidence"] = quiet_zone_evidence

@@ -586,6 +586,22 @@ class ChannelEmulatorDriver(InstrumentDriver):
         """
         return []
 
+    def validate_calibration_output_port(
+        self, ce_port: Optional[str]
+    ) -> Optional[str]:
+        """Pure validation for a requested calibration output.
+
+        This hook must not perform instrument I/O.  Real drivers that declare
+        a calibration-tone capability must override it so services can reject
+        stale/unknown topology ports before moving a positioner or routing RF.
+        The returned string is the driver's normalized output identity.
+        """
+        if ce_port is None:
+            return None
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot validate calibration output ports"
+        )
+
     async def set_calibration_tone(
         self,
         frequency_hz: float,
@@ -1053,6 +1069,17 @@ class MockChannelEmulator(ChannelEmulatorDriver):
             CalibrationToneCapability.INTERNAL_CW_GENERATOR,
             CalibrationToneCapability.PASSTHROUGH_ONLY,
         ]
+
+    def validate_calibration_output_port(
+        self, ce_port: Optional[str]
+    ) -> Optional[str]:
+        """Mock-only shape validation; never grants formal provenance."""
+        if ce_port is None:
+            return None
+        value = str(ce_port).strip()
+        if not value:
+            raise ValueError("calibration output port must not be blank")
+        return value
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
         """Return supported capabilities"""

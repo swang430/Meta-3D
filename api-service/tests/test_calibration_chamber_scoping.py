@@ -61,6 +61,7 @@ def _pattern(
         probe_id=probe_id,
         chamber_id=chamber_id,
         use_mock=False,
+        source="vendor_datasheet",
         polarization=pol,
         frequency_mhz=freq,
         azimuth_deg=[0.0],
@@ -90,7 +91,9 @@ class TestPatternConsumerChamberScoping:
             session, probe_id=0, chamber_id=cid, peak_gain_dbi=20.0,
             measured_at=now - timedelta(days=10),
         )
-        hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=cid)
+        hit = _query_valid_pattern(
+            session, 0, "V", 3500.0, chamber_id=cid, num_probes=32
+        )
         assert hit is not None
         assert hit.peak_gain_dbi == 20.0  # 本暗室, 非更新的 NULL 行
 
@@ -98,7 +101,9 @@ class TestPatternConsumerChamberScoping:
         """多暗室正式消费不能把来源未知的 NULL/legacy 当成本暗室校准。"""
         cid = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=None, peak_gain_dbi=11.0)
-        hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=cid)
+        hit = _query_valid_pattern(
+            session, 0, "V", 3500.0, chamber_id=cid, num_probes=32
+        )
         assert hit is None
 
     def test_never_returns_other_chamber(self, session):
@@ -106,7 +111,9 @@ class TestPatternConsumerChamberScoping:
         other = uuid.uuid4()
         target = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=other, peak_gain_dbi=99.0)
-        hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=target)
+        hit = _query_valid_pattern(
+            session, 0, "V", 3500.0, chamber_id=target, num_probes=32
+        )
         assert hit is None
 
     def test_chamber_none_is_rejected_for_formal_consumption(self, session):
@@ -114,7 +121,9 @@ class TestPatternConsumerChamberScoping:
         other = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=other, peak_gain_dbi=42.0)
         with pytest.raises(ValueError, match="chamber_id is required"):
-            _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=None)
+            _query_valid_pattern(
+                session, 0, "V", 3500.0, chamber_id=None, num_probes=32
+            )
 
     def test_get_probe_gain_at_azimuth_is_chamber_scoped(self, session):
         """同一 probe 在两暗室有不同 peak gain, 取值随 chamber_id 切换。"""
@@ -122,10 +131,12 @@ class TestPatternConsumerChamberScoping:
         _pattern(session, probe_id=0, chamber_id=a, peak_gain_dbi=15.0)
         _pattern(session, probe_id=0, chamber_id=b, peak_gain_dbi=99.0)
         assert get_probe_gain_at_azimuth(
-            session, 4, 0.0, 3500.0, "V", chamber_id=a
+            session, 4, 0.0, 3500.0, "V", chamber_id=a,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
         ) == 15.0
         assert get_probe_gain_at_azimuth(
-            session, 4, 0.0, 3500.0, "V", chamber_id=b
+            session, 4, 0.0, 3500.0, "V", chamber_id=b,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
         ) == 99.0
 
     def test_quiet_zone_ripple_excludes_other_chamber(self, session):
@@ -137,7 +148,10 @@ class TestPatternConsumerChamberScoping:
         # 其它暗室 B: 宽 spread, 必须被排除
         _pattern(session, probe_id=0, chamber_id=b, peak_gain_dbi=50.0)
         _pattern(session, probe_id=1, chamber_id=b, peak_gain_dbi=99.0)
-        ripple = estimate_quiet_zone_ripple_db(session, 4, 3500.0, "V", chamber_id=a)
+        ripple = estimate_quiet_zone_ripple_db(
+            session, 4, 3500.0, "V", chamber_id=a,
+            lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
+        )
         assert ripple == pytest.approx(2.0)
 
 

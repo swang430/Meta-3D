@@ -24,7 +24,10 @@ from app.schemas.probe_calibration import (
     PolarizationType,
     StartMultiFrequencyPathLossRequest,
 )
-from app.services.path_loss_calibration_service import MultiFrequencyPathLossService
+from app.services.path_loss_calibration_service import (
+    MultiFrequencyPathLossService,
+    ProbePathLossCalibrationService,
+)
 from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
     RFChainSpec,
@@ -135,6 +138,11 @@ async def test_multi_frequency_persists_warnings_per_probe(monkeypatch):
                 ],
             ),
         )
+        monkeypatch.setattr(
+            ProbePathLossCalibrationService,
+            "preflight_sa_power_via_ce_tone",
+            lambda self, *, route_target, ce_port=None: None,
+        )
 
         result = await MultiFrequencyPathLossService(
             db,
@@ -218,6 +226,11 @@ async def test_real_multi_frequency_routes_each_probe_through_resolved_chain(mon
                     RFChainSpec("chain-2", "B2.1", 2, "V"),
                 ],
             ),
+        )
+        monkeypatch.setattr(
+            ProbePathLossCalibrationService,
+            "preflight_sa_power_via_ce_tone",
+            lambda self, *, route_target, ce_port=None: None,
         )
 
         result = await MultiFrequencyPathLossService(

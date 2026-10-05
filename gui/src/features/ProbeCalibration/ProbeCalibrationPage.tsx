@@ -17,6 +17,7 @@ import {
   IconGridDots,
   IconFileImport,
   IconLink,
+  IconAntenna,
 } from '@tabler/icons-react'
 import {
   ProbeCalibrationDashboard,
@@ -24,17 +25,19 @@ import {
   ProbeCalibrationDetail,
   PatternImportPanel,
   RFChainDiagramPanel,
+  PatternMeasurementPanel,
 } from './components'
 import type { CalibrationType } from '../../types/probeCalibration'
 
 interface ProbeCalibrationPageProps {
-  defaultTab?: 'dashboard' | 'probes'
+  defaultTab?: 'dashboard' | 'probes' | 'pattern_measurement' | 'pattern_import' | 'rf_chain_diagram'
+  labProfileId: string
   chamberId: string
   chamberName?: string
   probeCount: number
 }
 
-export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, chamberName, probeCount }: ProbeCalibrationPageProps) {
+export function ProbeCalibrationPage({ defaultTab = 'dashboard', labProfileId, chamberId, chamberName, probeCount }: ProbeCalibrationPageProps) {
   const [activeTab, setActiveTab] = useState<string | null>(defaultTab)
   const [selectedProbeId, setSelectedProbeId] = useState<number | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
@@ -45,7 +48,11 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, cham
   }
 
   const handleStartCalibration = (type: CalibrationType) => {
-    // TODO: Open calibration wizard for the specific type
+    if (type === 'pattern') {
+      setActiveTab('pattern_measurement')
+      return
+    }
+    // The other calibration workflows remain outside P2-32B.
     console.log('Start calibration:', type)
   }
 
@@ -75,6 +82,9 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, cham
             <Tabs.Tab value="probes" leftSection={<IconGridDots size={14} />}>
               Probe Grid
             </Tabs.Tab>
+            <Tabs.Tab value="pattern_measurement" leftSection={<IconAntenna size={14} />}>
+              方向图测量
+            </Tabs.Tab>
             <Tabs.Tab value="pattern_import" leftSection={<IconFileImport size={14} />}>
               Pattern 导入
             </Tabs.Tab>
@@ -97,6 +107,14 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, cham
               chamberId={chamberId}
               onProbeSelect={handleProbeSelect}
               selectedProbeId={selectedProbeId ?? undefined}
+              probeCount={probeCount}
+            />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="pattern_measurement" pt="md">
+            <PatternMeasurementPanel
+              labProfileId={labProfileId}
+              chamberId={chamberId}
               probeCount={probeCount}
             />
           </Tabs.Panel>

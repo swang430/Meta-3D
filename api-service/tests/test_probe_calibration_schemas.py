@@ -248,6 +248,7 @@ class TestPatternCalibrationRequest:
     def test_valid_pattern_request(self):
         """验证有效的方向图校准请求"""
         request = StartPatternCalibrationRequest(
+            lab_profile_id=uuid4(),
             chamber_id=uuid4(),
             probe_ids=[1],
             frequency_mhz=3500,
@@ -258,6 +259,21 @@ class TestPatternCalibrationRequest:
         )
         assert request.frequency_mhz == 3500
         assert request.azimuth_step_deg == 5.0
+
+    @pytest.mark.parametrize("frequency_mhz", [0, 99.9, 100000.1])
+    def test_pattern_request_rejects_frequency_outside_calibration_domain(
+        self,
+        frequency_mhz,
+    ):
+        """方向图实测入口不得绕过共同校准频率域。"""
+        with pytest.raises(ValidationError):
+            StartPatternCalibrationRequest(
+                lab_profile_id=uuid4(),
+                chamber_id=uuid4(),
+                probe_ids=[1],
+                frequency_mhz=frequency_mhz,
+                calibrated_by="Test User",
+            )
 
     def test_pattern_request_step_boundaries(self):
         """验证步进角度边界"""

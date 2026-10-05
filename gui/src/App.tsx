@@ -65,6 +65,7 @@ import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { OperationalLabSelector, useOperationalLab } from './features/OperationalLab'
+import { ProbeCalibrationPage } from './features/ProbeCalibration'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
 import {
@@ -3993,6 +3994,16 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
           </Card>
         </Grid.Col>
       </Grid>
+
+      {activeChamber && selectedLabProfileId ? (
+        <ProbeCalibrationPage
+          defaultTab="pattern_measurement"
+          labProfileId={selectedLabProfileId}
+          chamberId={activeChamber.id}
+          chamberName={activeChamber.name}
+          probeCount={activeChamber.num_probes}
+        />
+      ) : null}
     </Stack>
   )
 }

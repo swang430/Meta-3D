@@ -145,6 +145,7 @@ def _chamber(db, chamber_id, name):
         (
             StartPatternCalibrationRequest,
             {
+                "lab_profile_id": str(uuid.uuid4()),
                 "probe_ids": [1],
                 "polarizations": ["V"],
                 "frequency_mhz": 3500,
@@ -500,7 +501,7 @@ def test_pattern_consumer_rejects_mock_and_expired_rows(session):
         return ProbePattern(
             chamber_id=chamber_id,
             use_mock=use_mock,
-            source="simulated" if use_mock else "in_chamber_measured",
+            source="simulated" if use_mock else "vendor_datasheet",
             probe_id=0,
             polarization="V",
             frequency_mhz=3500.0,
@@ -516,11 +517,17 @@ def test_pattern_consumer_rejects_mock_and_expired_rows(session):
     session.add(pattern(use_mock=True, valid_until=now + timedelta(days=30), gain=99.0))
     session.add(pattern(use_mock=False, valid_until=now - timedelta(days=1), gain=77.0))
     session.commit()
-    assert get_probe_gain_at_azimuth(session, 1, 0, 3500, chamber_id=chamber_id) is None
+    assert get_probe_gain_at_azimuth(
+        session, 1, 0, 3500, chamber_id=chamber_id,
+        lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
+    ) is None
 
     session.add(pattern(use_mock=False, valid_until=now + timedelta(days=30), gain=5.5))
     session.commit()
-    assert get_probe_gain_at_azimuth(session, 1, 0, 3500, chamber_id=chamber_id) == 5.5
+    assert get_probe_gain_at_azimuth(
+        session, 1, 0, 3500, chamber_id=chamber_id,
+        lab_profile_id=uuid.uuid4(), operating_mode="mimo_ota",
+    ) == 5.5
 
 
 def test_probe_pdf_renders_every_family_counted_in_summary():

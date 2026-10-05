@@ -1821,6 +1821,9 @@ class TestCalibrationToneHoldsLease:
             return (-42.0, 0.1, "CE-D")
 
         svc._acquire_sa_power_via_ce_tone_inner = _inner  # type: ignore[assignment]
+        svc.preflight_sa_power_via_ce_tone = (  # type: ignore[assignment]
+            lambda *, route_target, ce_port=None: None
+        )
 
         result = await pl_mod.ProbePathLossCalibrationService.\
             acquire_sa_power_via_ce_tone(

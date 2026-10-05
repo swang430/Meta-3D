@@ -352,24 +352,29 @@ class ProbePathLossCalibrationService:
         # acquire 残留被本轮第一个探头错误吸收
         self._last_acquire_warnings = []
 
-        import contextlib
-        from app.services.instrument_test_lease import instrument_test_lease
-
-        # P2-30: 作业级租约（条件 = 会走 CE+SA 路径）—— 整个 probe×pol 循环
-        # 只真取/放一次 F64 控制权；循环内单点测量自带的租约圈在嵌套下自动
-        # no-op（hold() 引用计数），此前 32 探头 × 2 极化 = 64 次 socket 建拆。
-        # mock 与 legacy VNA 分支拿 nullcontext，行为零变化；条件错配的最坏
-        # 后果只是退化回逐点取放（内层 wrapper 自己的租约圈保持不动）。
-        job_lease = (
-            instrument_test_lease(
-                f"path-loss-calibration:{frequency_mhz:g}MHz",
-                control_f64=True,
-                control_uxm=False,
-                enable_monitoring=False,
+        # This chamber-keyed entry has no LabProfile/SwitchTopology identity,
+        # so it cannot select a distinct CE output or switch route for each
+        # probe/polarization.  Real CE+SA would otherwise measure output 1 for
+        # every loop item and persist those readings under different probes.
+        # Keep the legacy entry only for mock and the original VNA path; real
+        # CE+SA must use start_calibration_for_lab_profile().
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            return CalibrationResult(
+                success=False,
+                message=(
+                    "Real CE+SA path-loss calibration requires a LabProfile + "
+                    "SwitchTopology route for every probe/polarization; use "
+                    "start_calibration_for_lab_profile (/start-for-lab)."
+                ),
+                warnings=warnings,
             )
-            if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None
-            else contextlib.nullcontext()
-        )
+
+        import contextlib
+
+        # Real CE+SA has already failed closed above, so this legacy path has
+        # no remote-control lease to acquire: mock is local and VNA retains its
+        # original driver-level ownership semantics.
+        job_lease = contextlib.nullcontext()
         try:
             async with job_lease:
                 # 遍历每个探头
@@ -388,20 +393,6 @@ class ProbePathLossCalibrationService:
                                     probe_id, pol, frequency_mhz,
                                     chamber.chamber_radius_m, sgh_gain_dbi,
                                     chamber.probe_gain_dbi
-                                )
-                            elif chamber.cable_sgh_to_sa_loss_db is not None:
-                                # CE+SA primary path (no VNA, no relay swaps).
-                                # cable_loss_db comes from chamber, ce_tx_power_dbm uses
-                                # a sensible default (-20 dBm) which sits comfortably
-                                # above SA noise floor and below CE OTA-port saturation.
-                                measurement = await self._real_path_loss_measurement_via_ce_sa(
-                                    probe_id=probe_id,
-                                    polarization=pol,
-                                    frequency_mhz=frequency_mhz,
-                                    ce_tx_power_dbm=-20.0,
-                                    sgh_gain_dbi=sgh_gain_dbi,
-                                    probe_gain_dbi=chamber.probe_gain_dbi,
-                                    cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
                                 )
                             else:
                                 # Legacy VNA + manual cable_loss path. Kept for chambers
@@ -588,6 +579,23 @@ class ProbePathLossCalibrationService:
 
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
+
+        # Validate every frozen chain before the job-level lease.  Failing on
+        # the second chain after acquiring Remote would still touch hardware
+        # for an execution that can never start safely.
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            try:
+                for chain in resolution.chains:
+                    self.preflight_sa_power_via_ce_tone(
+                        route_target=chain.chain_id,
+                        ce_port=chain.ce_port,
+                    )
+            except Exception as exc:  # noqa: BLE001 - public result contract
+                return CalibrationResult(
+                    success=False,
+                    message=f"Instrument preflight failed for path-loss calibration: {exc}",
+                    warnings=warnings,
+                )
 
         # P2-30: 作业级租约（同 start_calibration，条件 = 会走 CE+SA 路径）——
         # 整个 chain 循环只真取/放一次 F64 控制权。
@@ -940,6 +948,10 @@ class ProbePathLossCalibrationService:
             # inner reset 前失败，也不能把同一 service 上的陈旧值错标到本次。
             self._last_acquire_warnings = []
         try:
+            self.preflight_sa_power_via_ce_tone(
+                route_target=route_target,
+                ce_port=ce_port,
+            )
             async with instrument_test_lease(
                 f"path-loss-tone:probe{probe_id}:{polarization.value}",
                 control_f64=True,
@@ -977,51 +989,21 @@ class ProbePathLossCalibrationService:
         # warning_sink 会立即 drain，否则由 path-loss 证书外层循环收割。
         self._last_acquire_warnings = []
 
-        # Lazy import — avoid circular and SQLite-test-killing pulls.
         from app.hal.channel_emulator import CalibrationToneCapability
-        from app.services.instrument_hal_service import get_hal_service
 
-        hal = get_hal_service()
-        ce = hal.drivers.get("channelEmulator")
-        sa = hal.drivers.get("signalAnalyzer")
-        if ce is None or sa is None:
-            missing = []
-            if ce is None:
-                missing.append("channelEmulator")
-            if sa is None:
-                missing.append("signalAnalyzer")
-            raise RuntimeError(
-                f"CE+SA tone acquisition requires HAL drivers: {missing}. "
-                "Bind both on the active LabProfile."
-            )
-
-        # ⚠️ 这条 CE+SA 才是**主路径**（暗室配了 cable_sgh_to_sa_loss_db 就走它），
-        #    我上一版只拦了那条 DEPRECATED 的 VNA 旧路径，主路径完全绕过去了（外审 P1）。
-        #    MockSignalAnalyzer 的 measure_channel_power() 返回随机值，
-        #    MockChannelEmulator 也不发真的 tone —— 两者都会被当成真机，
-        #    结果照样以 valid 证书落库。
-        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
-        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
-
-        # Capability-based dispatch: prefer D (single-instrument) when CE
-        # supports it, else fall through to B (needs vectorSignalGenerator).
-        caps = ce.get_calibration_tone_capabilities()
-        if not caps:
-            raise RuntimeError(
-                f"CE driver {type(ce).__name__} declares no calibration-tone "
-                "capabilities. Override get_calibration_tone_capabilities() "
-                "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
-            )
+        hal, ce, sa, caps, source = self.preflight_sa_power_via_ce_tone(
+            route_target=route_target,
+            ce_port=ce_port,
+        )
 
         # Switch routing — drive rfSwitch to (probe, pol) when caller gave us
         # a route_target (typically the SwitchTopology chain_id). Three cases:
         #   1. route_target + rfSwitch driver bound → set_mapped_path(chain_id),
         #      driver looks up port_maps to translate to (switch_id, output_port).
         #      Failure → loud RuntimeError, can't measure on the wrong probe.
-        #   2. route_target without rfSwitch driver → fixed-cabling site
-        #      (CAICT-Lab-1 style: every CE port is permanently wired to one
-        #      probe, no relays). Skip silently with debug log; CE port
-        #      selection alone determines which probe is energized.
+        #   2. route_target without rfSwitch driver → only D/internal-CW may
+        #      use fixed cabling because it selects one physical CE output.
+        #      B/global passthrough was rejected in preflight.
         #   3. No route_target → legacy chamber-keyed entry point with no
         #      topology info. Operator pre-routed manually; warn so it doesn't
         #      get missed in production.
@@ -1045,9 +1027,98 @@ class ProbePathLossCalibrationService:
             return sa_rx_mean_dbm, sa_rx_std_db, "CE-internal"
 
         if CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
-            # HAL registry's authoritative signal-source category is
-            # vectorSignalGenerator. Base-station adapters do not implement
-            # this SPI and must never be selected by a same-shape guess.
+            assert source is not None  # preflight validated the selected B path
+
+            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
+                ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
+                ce_port=ce_port,
+            )
+            return sa_rx_mean_dbm, sa_rx_std_db, f"passthrough({type(source).__name__})"
+
+        raise RuntimeError(
+            f"CE driver {type(ce).__name__} declared capabilities {caps} "
+            "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
+        )
+
+    def preflight_sa_power_via_ce_tone(
+        self,
+        *,
+        route_target: Optional[str],
+        ce_port: Optional[str] = None,
+    ) -> Tuple[Any, Any, Any, Any, Optional[Any]]:
+        """Validate the exact CE+SA hardware path without performing I/O.
+
+        Job entrypoints call this before taking remote-control leases (and
+        pattern calibration before moving the positioner).  The acquisition
+        primitive calls it again immediately before routing/tone output so a
+        HAL reload between those points still fails closed.
+        """
+        from app.hal.channel_emulator import CalibrationToneCapability
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        ce = hal.drivers.get("channelEmulator")
+        sa = hal.drivers.get("signalAnalyzer")
+        if ce is None or sa is None:
+            missing = []
+            if ce is None:
+                missing.append("channelEmulator")
+            if sa is None:
+                missing.append("signalAnalyzer")
+            raise RuntimeError(
+                f"CE+SA tone acquisition requires HAL drivers: {missing}. "
+                "Bind both on the active LabProfile."
+            )
+
+        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
+        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
+
+        caps = ce.get_calibration_tone_capabilities()
+        if not caps:
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} declares no calibration-tone "
+                "capabilities. Override get_calibration_tone_capabilities() "
+                "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
+            )
+
+        validate_output = getattr(ce, "validate_calibration_output_port", None)
+        if not callable(validate_output):
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} cannot validate calibration "
+                "output ports before hardware I/O."
+            )
+        try:
+            validate_output(ce_port)
+        except (NotImplementedError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"CE calibration output {ce_port!r} is not resolver-valid: {exc}"
+            ) from exc
+
+        if route_target is not None:
+            rf_switch = hal.drivers.get("rfSwitch")
+            if rf_switch is not None:
+                _reject_simulated_instrument(
+                    rf_switch, "rfSwitch", "真测路损的通道切换"
+                )
+
+        source = None
+        if CalibrationToneCapability.INTERNAL_CW_GENERATOR not in caps:
+            if CalibrationToneCapability.PASSTHROUGH_ONLY not in caps:
+                raise RuntimeError(
+                    f"CE driver {type(ce).__name__} declared capabilities {caps} "
+                    "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
+                )
+            rf_switch = hal.drivers.get("rfSwitch")
+            if route_target is None or rf_switch is None:
+                raise RuntimeError(
+                    "PASSTHROUGH_ONLY calibration is global and cannot isolate "
+                    "one fixed-wired CE output; a route_target and real "
+                    "rfSwitch are required. Use INTERNAL_CW_GENERATOR for "
+                    "fixed cabling."
+                )
+            _reject_simulated_instrument(
+                rf_switch, "rfSwitch", "PASSTHROUGH_ONLY 真测链路隔离"
+            )
             source = hal.drivers.get("vectorSignalGenerator")
             if source is None:
                 raise RuntimeError(
@@ -1067,18 +1138,12 @@ class ProbePathLossCalibrationService:
                     f"calibration-tone SPI: {missing_spi}"
                 )
             _reject_simulated_instrument(
-                source, "vectorSignalGenerator", "CE+SA 真测路损（B 路径）")
-
-            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
-                ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
-                ce_port=ce_port,
+                source,
+                "vectorSignalGenerator",
+                "CE+SA 真测路损（B 路径）",
             )
-            return sa_rx_mean_dbm, sa_rx_std_db, f"passthrough({type(source).__name__})"
 
-        raise RuntimeError(
-            f"CE driver {type(ce).__name__} declared capabilities {caps} "
-            "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
-        )
+        return hal, ce, sa, caps, source
 
     async def _route_switch_to_chain(
         self,
@@ -2109,6 +2174,29 @@ class MultiFrequencyPathLossService:
 
         import contextlib
         from app.services.instrument_test_lease import instrument_test_lease
+
+        # Resolve and validate the complete chain set before touching F64
+        # Remote.  Per-point acquisition retains its own recheck for HAL drift.
+        if not self.use_mock and chamber.cable_sgh_to_sa_loss_db is not None:
+            preflight_service = ProbePathLossCalibrationService(
+                self.db,
+                use_mock=False,
+            )
+            try:
+                for chain in requested_chains.values():
+                    preflight_service.preflight_sa_power_via_ce_tone(
+                        route_target=chain.chain_id,
+                        ce_port=chain.ce_port,
+                    )
+            except Exception as exc:  # noqa: BLE001 - public result contract
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Instrument preflight failed for multi-frequency "
+                        f"calibration: {exc}"
+                    ),
+                    warnings=warnings,
+                )
 
         # P2-30: 作业级租约（同上，条件 = 会走 CE+SA 路径）—— 整个
         # probe × 频点扫频只真取/放一次 F64 控制权。
