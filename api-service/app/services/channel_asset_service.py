@@ -538,8 +538,9 @@ def create_channel_asset(
     _validate_top_physical(fields)
     _validate_source_fields(source_type, fields)
     if source_type == "vendor_file":
-        from app.services.channel_asset_ownership import validate_channel_asset_owner
+        from app.services.channel_asset_ownership import validate_channel_asset_owner, lock_channel_emulator_rows
         try:
+            lock_channel_emulator_rows(db, fields.get("instrument_connection_id"))
             validate_channel_asset_owner(db, fields.get("instrument_connection_id"),
                                          fields.get("instrument_model_id"))
         except ValueError as exc:
@@ -595,14 +596,20 @@ def confirm_channel_asset_ownership(
     db: Session, asset_ids: list[UUID], connection_id: UUID, model_id: UUID,
 ) -> List[ChannelAsset]:
     """操作员显式确认；全部校验完成后才写入，一次事务，不授予任何证据资格。"""
-    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    from app.services.channel_asset_ownership import validate_channel_asset_owner, lock_channel_emulator_rows
     if not asset_ids or len(asset_ids) > 100 or len(set(asset_ids)) != len(asset_ids):
         raise ChannelAssetError("归属确认需要 1..100 个不重复资产")
     try:
+        lock_channel_emulator_rows(db, connection_id)
         validate_channel_asset_owner(db, connection_id, model_id)
     except ValueError as exc:
         raise ChannelAssetError(str(exc)) from exc
-    assets = [get_channel_asset(db, asset_id) for asset_id in asset_ids]
+    assets = []
+    for asset_id in asset_ids:
+        asset = db.get(ChannelAsset, asset_id, populate_existing=True)
+        if asset is None:
+            raise ChannelAssetNotFound(f"ChannelAsset {asset_id} 不存在")
+        assets.append(asset)
     for asset in assets:
         if asset.source_type != "vendor_file" or asset.is_active is not True:
             raise ChannelAssetError("只可确认活动 vendor_file 资产的归属")
@@ -645,8 +652,24 @@ def find_vendor_file_asset(db: Session, asset_id: UUID) -> Optional[ChannelAsset
     return None
 
 
+def _locked_vendor_asset(db: Session, asset: ChannelAsset) -> ChannelAsset:
+    """仅 vendor 写方：先锁配置，再重读 source；调用必须在 source mutation 前。"""
+    if asset.source_type != "vendor_file":
+        return asset
+    from app.services.channel_asset_ownership import lock_channel_emulator_rows
+    try:
+        lock_channel_emulator_rows(db, asset.instrument_connection_id)
+    except ValueError as exc:
+        raise ChannelAssetError(str(exc)) from exc
+    current = db.get(ChannelAsset, asset.id, populate_existing=True)
+    if current is None:
+        raise ChannelAssetNotFound(f"ChannelAsset {asset.id} 不存在")
+    return current
+
+
 def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     asset = get_channel_asset(db, asset_id)
+    asset = _locked_vendor_asset(db, asset)
     if asset.source_type == "vendor_file" and (
         "instrument_connection_id" in fields or "instrument_model_id" in fields
     ):
@@ -766,6 +789,7 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
 def delete_channel_asset(db: Session, asset_id: UUID, *, soft: bool = True) -> None:
     """默认软删；历史记录仍可读，但该资产不可再用于新会话/MEASURE；soft=False 物理删。"""
     asset = get_channel_asset(db, asset_id)
+    asset = _locked_vendor_asset(db, asset)
     if soft:
         asset.is_active = False
     else:

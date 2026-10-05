@@ -2177,6 +2177,12 @@ def add_channel_model_entry(
         .filter(InstrumentConnectionDB.category_id == cat.id)
         .first()
     )
+    if category_key == "channelEmulator":
+        from app.services.channel_asset_ownership import lock_channel_emulator_rows
+        try:
+            cat, conn = lock_channel_emulator_rows(db)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if conn is None:
         # The category exists but the operator hasn't created an
         # InstrumentConnection record yet — happens when they're seeding
@@ -2269,6 +2275,12 @@ def remove_channel_model_entry(
         .filter(InstrumentConnectionDB.category_id == cat.id)
         .first()
     )
+    if category_key == "channelEmulator":
+        from app.services.channel_asset_ownership import lock_channel_emulator_rows
+        try:
+            cat, conn = lock_channel_emulator_rows(db)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if conn is None or not conn.connection_params:
         raise HTTPException(status_code=404, detail=f"no curated list configured for '{category_key}'")
 
@@ -2330,9 +2342,12 @@ def update_instrument_category(
 
     返回格式严格对齐前端 InstrumentCategory 类型。
     """
-    category = db.query(InstrumentCategoryModel).filter(
+    category_query = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
-    ).with_for_update().first()
+    )
+    if category_key == "channelEmulator":
+        category_query = category_query.populate_existing()
+    category = category_query.with_for_update().first()
 
     if not category:
         raise HTTPException(404, f"Category '{category_key}' not found")
@@ -2502,7 +2517,7 @@ def update_instrument_category(
             ).one_or_none()
         connection = db.query(InstrumentConnectionDB).filter(
             InstrumentConnectionDB.category_id == category.id
-        ).with_for_update().one_or_none()
+        ).populate_existing().with_for_update().one_or_none()
         if connection is None:
             connection = InstrumentConnectionDB(
                 category_id=category.id,

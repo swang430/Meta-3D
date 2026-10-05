@@ -752,6 +752,12 @@ def _lock_sync_truth_rows(db: Session, connection_id: UUID) -> InstrumentConnect
     connection, a vendor binding, or a canonical-name owner in the meantime.  The second preview
     below runs only after these rows are refreshed and locked.
     """
+    # 与 PUT/SCD/目录/owner 写方同序：category→namespace→connection→source。
+    from app.services.channel_asset_ownership import lock_channel_emulator_category
+    try:
+        lock_channel_emulator_category(db, connection_id)
+    except ValueError as exc:
+        raise SMUProjectSyncError(str(exc)) from exc
     bind = db.get_bind()
     if bind.dialect.name == "postgresql":
         # Row locks cannot stop a phantom vendor_file insert after classification.  This mode

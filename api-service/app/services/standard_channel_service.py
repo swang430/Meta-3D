@@ -134,8 +134,9 @@ def create_scd(
     """
     # 先校验 binding: 最根本的前置条件 (挂到哪台 F64), 失败比字段非法 / 重复更基础。
     _resolve_channel_emulator_binding(db, instrument_connection_id)
-    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    from app.services.channel_asset_ownership import validate_channel_asset_owner, lock_channel_emulator_rows
     try:
+        lock_channel_emulator_rows(db, instrument_connection_id)
         validate_channel_asset_owner(db, instrument_connection_id, instrument_model_id)
     except ValueError as exc:
         raise StandardChannelError(str(exc)) from exc
@@ -288,6 +289,14 @@ def resolve_emulation_for_measure(
 
 def delete_scd(db: Session, scd_id: UUID) -> None:
     scd = get_scd(db, scd_id)
+    from app.services.channel_asset_ownership import lock_channel_emulator_rows
+    try:
+        lock_channel_emulator_rows(db, scd.instrument_connection_id)
+    except ValueError as exc:
+        raise StandardChannelError(str(exc)) from exc
+    scd = db.get(StandardChannelDefinition, scd_id, populate_existing=True)
+    if scd is None:
+        raise StandardChannelNotFound(f"SCD {scd_id} 不存在")
     binding_id = scd.instrument_connection_id
     owner_id = scd.instrument_model_id
     had_file = scd.associated_file_path is not None
@@ -392,6 +401,8 @@ def _sync_projection_for_binding(
             StandardChannelDefinition.associated_file_path.isnot(None),
         )
         .order_by(StandardChannelDefinition.standard_name)
+        # 调用方已在锁内 flush 本次修改；重建全集不能借既有投影决定哪些 source 要刷新。
+        .populate_existing()
         .all()
     )
     derived = [_scd_to_projection_entry(s) for s in associated
@@ -427,6 +438,14 @@ def associate_file(
       (否则是把别的文件误标成 standard; 抓 mislabel)。
     """
     scd = get_scd(db, scd_id)
+    from app.services.channel_asset_ownership import lock_channel_emulator_rows
+    try:
+        lock_channel_emulator_rows(db, scd.instrument_connection_id)
+    except ValueError as exc:
+        raise StandardChannelError(str(exc)) from exc
+    scd = db.get(StandardChannelDefinition, scd_id, populate_existing=True)
+    if scd is None:
+        raise StandardChannelNotFound(f"SCD {scd_id} 不存在")
     from app.models.channel_asset import ChannelAsset
     if db.get(ChannelAsset, scd_id) is not None:
         raise StandardChannelError("该 SCD 已迁移为现代资产，请在信道工作台编辑，不再写旧副本")

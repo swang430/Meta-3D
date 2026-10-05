@@ -6,6 +6,37 @@ from sqlalchemy.orm import Session
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 
 
+def lock_channel_emulator_category(db: Session, connection_id=None) -> InstrumentCategory:
+    """写前同序锁；导航不 flush，不消费请求早期缓存的 selected model。"""
+    with db.no_autoflush:
+        query = db.query(InstrumentCategory).filter(
+            InstrumentCategory.category_key == "channelEmulator")
+        if connection_id is not None:
+            category_id = db.query(InstrumentConnection.category_id).filter(
+                InstrumentConnection.id == connection_id).scalar()
+            if category_id is None:
+                raise ValueError("信道仿真器连接不存在")
+            query = query.filter(InstrumentCategory.id == category_id)
+        category = query.populate_existing().with_for_update().one_or_none()
+    if category is None:
+        raise ValueError("信道仿真器类别不存在或连接不属于该类别")
+    return category
+
+
+def lock_channel_emulator_rows(db: Session, connection_id=None):
+    """category→connection，同一事务内重读；不 commit、不创建连接、不猜 owner。"""
+    category = lock_channel_emulator_category(db, connection_id)
+    with db.no_autoflush:
+        query = db.query(InstrumentConnection).filter(
+            InstrumentConnection.category_id == category.id)
+        if connection_id is not None:
+            query = query.filter(InstrumentConnection.id == connection_id)
+        connection = query.populate_existing().with_for_update().one_or_none()
+    if connection_id is not None and connection is None:
+        raise ValueError("信道仿真器连接在写入前消失")
+    return category, connection
+
+
 def validate_channel_asset_owner(
     db: Session, connection_id, model_id, *, require_selected: bool = True,
 ) -> InstrumentConnection:
@@ -42,7 +73,14 @@ def owned_channel_model_params(db: Session, connection_id, model_id, raw) -> dic
         except (ValueError, TypeError):
             continue
         # 现代 ChannelAsset 同 ID 优先，不能退回旧 SCD twin 补另一份归属。
-        source = db.get(ChannelAsset, source_id) or db.get(StandardChannelDefinition, source_id)
+        source = db.get(ChannelAsset, source_id)
+        source_type = ChannelAsset
+        if source is None:
+            source_type = StandardChannelDefinition
+            source = db.get(source_type, source_id)
+        # 已在同序锁事务内修改的 source 必须保留本次写入；其余刷新旧 identity map。
+        if source is not None and source not in db.dirty and source not in db.new:
+            source = db.get(source_type, source_id, populate_existing=True)
         if (source is None or model_id is None or source.instrument_model_id is None
                 or not getattr(source, "is_active", True)
                 or str(source.instrument_connection_id) != str(connection_id)
