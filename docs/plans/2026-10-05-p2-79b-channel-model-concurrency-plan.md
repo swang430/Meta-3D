@@ -55,9 +55,13 @@ WIP=1；base e2dee1a8；不新增/猜测 SCPI，不操作硬件，不改正式 p
 
 ## Task 7：完整交付
 
-- [ ] 提交/推送 Ready PR；记录 request、HEAD、reviewid/结果；R1处理本片 P1/P2，最新 HEAD R2 无 P1 合并，仍有 P1 则续审。
+- [ ] Ready PR #499 已提交/推送；R1 已核实并修复，待最新 HEAD R2 无 P1 后合并，仍有 P1 则续审。完整 request、HEAD、reviewid/结果原地记入 PR 正文台账。
 - [ ] fetch/main ff-only、核单一迁移 head/运行库未改归属、保留仪器资料；清理本片工作树/分支。P2-79 完成后汇总，不启动 P2-80+。
 
 ## 最终验证记录（本次稳定功能输入）
 
 Task 1–4 的同根写方合并为一个功能提交，避免中间锁序版本独立发布。旧实现 PostgreSQL 反例先后 2+2+2+1+1+1 项 RED；最终 9 passed（0.75s，exit 0）。相关命令按 Task 6 列出的 8 个文件执行，200 passed（14.56s，exit 0）；全后端使用 Task 6 的独立 SQLite URL，6807 passed/15 skipped（154.07s，exit 0），其中 9 个 opt-in PostgreSQL 项已单独执行。`npm run build` 11.37s，exit 0；`python -m compileall -q app`、`alembic heads`（c1e3f5a7b9d2 单一 head）与 base-to-working diff-check 通过。以上生产代码输入一致，文档记账不触发无意义全量复跑。fresh 独立累计功能审查未发现 P1/P2；审查者未另跑全量，测试结论由主代理核验日志。未调用仪器；API shape 不变，未生成无差异镜像。
+
+### R1 功能 P1 收口
+
+R1 review 5417303564 覆盖 ff337fbc，inline 4186034582：兄弟 SCD 缓存可能使有效目录项在重建时丢失。真实入口反例：session 缓存兄弟旧路径，另一 session `associate_file` 新路径并由 W3 移除目录项（源关联仍在），原 session associate/delete 另一 SCD 时旧实现丢兄弟条目；两项 RED。最小修复是在 `_sync_projection_for_binding` 的关联全集 query 增加 `populate_existing()`，两调用方先 flush，避免覆盖当次修改。相同 Task 6 PG 命令最终 11 passed（0.92s）；相关 200 passed（14.86s）；全量命令仅将 URL 改为 sqlite:////tmp/p2-79b-r1-final.db，6807 passed/17 skipped（155.49s），exit 0；compileall、单一 head、diff-check 通过。GUI 输入未变化，复用既有 build。独立增量尾审 P1/P2=0，未重复全量；完整外审闭环以 PR 台账为准。

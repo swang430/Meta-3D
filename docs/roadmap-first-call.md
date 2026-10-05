@@ -5371,7 +5371,7 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 
 ### P2-79 — 信道模型型号归属与并发保存完整性
 
-**状态**：2026-10-05 用户授权完整实现；非现场队列第 1 项，按 **A→B** 两个独立子片交付。A 已由 PR #498 合并（e2dee1a8），main/运行库迁移已同步，20 个历史 vendor_file 的 NULL owner 保持未知；最终全后端 6807 passed/6 skipped，最新 HEAD R2 无 P1。B 实现验证完成待外审：隔离 PostgreSQL 9 passed（实际增删 API、SCD 关联/删除、归属确认、源缓存、PUT 与扫描锁序），全后端 6807 passed/15 skipped（含默认跳过的 9 个隔离 PG 项，已单独执行），GUI build、compileall、单一 head、diff-check 通过，fresh 功能内审 P1/P2=0。设计见 [P2-79A](design/2026-10-05-p2-79a-channel-model-ownership-design.md)与 [P2-79B](design/2026-10-05-p2-79b-channel-model-concurrency-design.md)；本地验证不替代现场验收。
+**状态**：2026-10-05 用户授权完整实现；非现场队列第 1 项，按 **A→B** 两个独立子片交付。A 已由 PR #498 合并（e2dee1a8），main/运行库迁移已同步，20 个历史 vendor_file 的 NULL owner 保持未知；最终全后端 6807 passed/6 skipped，最新 HEAD R2 无 P1。B 实现验证完成待外审：隔离 PostgreSQL 11 passed（实际增删 API、SCD 关联/删除、归属确认、源缓存、PUT 与扫描锁序），全后端 6807 passed/17 skipped（含默认跳过的 11 个隔离 PG 项，已单独执行），GUI build、compileall、单一 head、diff-check 通过，fresh 功能内审 P1/P2=0；R1 的兄弟 SCD 缓存 P1 已以两条实际入口反例 RED→GREEN 收口，关联全集锁后刷新，相关 200 passed，待最新 HEAD R2。设计见 [P2-79A](design/2026-10-05-p2-79a-channel-model-ownership-design.md)与 [P2-79B](design/2026-10-05-p2-79b-channel-model-concurrency-design.md)；本地验证不替代现场验收。
 
 - **A 型号归属**：修复 `standard_channel_service._sync_projection_for_binding` 按 connection 聚合 SCD、把 F64 派生资产写进其他活动型号清单/preset 的问题。先盘点真实 SCD 归属分布及 GUI/API 关联入口，再设计显式型号归属或分桶；无法唯一归属的历史项显式待确认，不按型号名推断，不静默迁移。
 - **B 并发完整性**：枚举 SCD 投影、模型增删、型号切换/保存及 preset 镜像写入路径，按现有 category→connection 同序锁定并重读，避免丢更新与旧 ORM 缓存覆盖。原并发反例先在 PostgreSQL 重跑；SQLite 不作为行锁验证替代。
@@ -5562,7 +5562,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
 | P2-57 静态声明残项 / `.smu` 拓扑 | → **P2-57 残项交付状态见 PR；拓扑另片待评估** | 静态 source-type 四格与注册对账见 2026-09-13 设计；P2-59～62 逐次证据机制不重复建设。按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest；当前 parser 只解析中心频率，拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
-| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **→ P2-79A / P2-79B** | A 已由 PR #498 合并；B 隔离 PostgreSQL 定点 9 passed，原丢更新/缓存反例 RED→GREEN，待外审闭环 |
+| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **→ P2-79A / P2-79B** | A 已由 PR #498 合并；B 隔离 PostgreSQL 定点 11 passed，原丢更新/缓存及 R1 兄弟条目反例 RED→GREEN，待最新 HEAD R2 |
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
 | 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
 | #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |

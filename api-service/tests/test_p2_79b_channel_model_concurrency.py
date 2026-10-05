@@ -167,6 +167,40 @@ def test_scd_writer_reloads_owner_before_updating_projection(pg_owner, operation
             assert conn.channel_emulator_model_presets[str(b_id)]["connection_params"] == conn.connection_params
 
 
+@pytest.mark.parametrize("operation", ["associate", "delete"])
+def test_scd_rebuild_reads_fresh_sibling_even_if_not_in_published_list(pg_owner, operation):
+    from app.models.standard_channel import StandardChannelDefinition
+    from app.services.standard_channel_service import create_scd, associate_file, delete_scd
+    from app.api.instrument import remove_channel_model_entry
+
+    engine, (_category_id, connection_id, a_id, _b_id) = pg_owner
+    with Session(engine, autoflush=False) as seed:
+        rows = [create_scd(seed, instrument_connection_id=connection_id, instrument_model_id=a_id,
+            radio_technology="nr5g", channel_kind="nr_arfcn", band="N78", arfcn=arfcn,
+            lte_dl_earfcn=None, bandwidth_mhz=100, model="CDLC", scenario="UMa",
+            mimo="2x2", polarization="DP") for arfcn in (640000, 640001)]
+        ids = [row.id for row in rows]
+        associate_file(seed, ids[0], file_path="target.smu")
+        associate_file(seed, ids[1], file_path="sibling-old.smu")
+    with Session(engine, autoflush=False) as stale:
+        sibling = stale.get(StandardChannelDefinition, ids[1])
+        assert sibling.associated_file_path == "sibling-old.smu"
+        with Session(engine, autoflush=False) as other:
+            associate_file(other, ids[1], file_path="sibling-new.smu")
+            # 实际 W3 可移除目录项但不取消 SCD 文件关联；重建不能依赖旧投影来刷新 source。
+            remove_channel_model_entry("channelEmulator", "sibling-new.smu", other)
+        if operation == "associate":
+            associate_file(stale, ids[0], file_path="target-new.smu")
+        else:
+            delete_scd(stale, ids[0])
+    with Session(engine) as verify:
+        conn = verify.get(InstrumentConnection, connection_id)
+        expected = {"sibling-new.smu", "target-new.smu"} if operation == "associate" else {"sibling-new.smu"}
+        expected.add("common.smu")
+        assert {entry["filename"] for entry in conn.connection_params["available_channel_models"]} == expected
+        assert conn.channel_emulator_model_presets[str(a_id)]["connection_params"] == conn.connection_params
+
+
 @pytest.mark.parametrize("drift", ["selected_model", "source_owner"])
 def test_confirmation_rechecks_saved_model_and_source_after_old_cache(pg_owner, drift):
     from app.models.channel_asset import ChannelAsset

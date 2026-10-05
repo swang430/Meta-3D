@@ -401,6 +401,8 @@ def _sync_projection_for_binding(
             StandardChannelDefinition.associated_file_path.isnot(None),
         )
         .order_by(StandardChannelDefinition.standard_name)
+        # 调用方已在锁内 flush 本次修改；重建全集不能借既有投影决定哪些 source 要刷新。
+        .populate_existing()
         .all()
     )
     derived = [_scd_to_projection_entry(s) for s in associated
