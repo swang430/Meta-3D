@@ -214,12 +214,15 @@ def freeze_base_station_adapter_profile(
     from app.services.channel_emulator_execution_plan import (
         CHANNEL_ASSET_RESOLUTION_FREEZE_KEY,
         freeze_channel_asset_resolution,
+        LEGACY_CHANNEL_FILE_RESOLUTION_FREEZE_KEY,
+        freeze_legacy_channel_file_resolution,
     )
 
     configuration_model = MIMOOTAConfiguration.model_validate(frozen_configuration)
     frozen_asset_resolution = freeze_channel_asset_resolution(
         db, configuration_model
     )
+    frozen_legacy_file = freeze_legacy_channel_file_resolution(db, configuration_model)
     requirements = build_measure_execution_requirements_from_configuration(
         frozen_configuration
     )
@@ -269,6 +272,8 @@ def freeze_base_station_adapter_profile(
     }
     if frozen_asset_resolution is not None:
         identity[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = frozen_asset_resolution
+    if frozen_legacy_file is not None:
+        identity[LEGACY_CHANNEL_FILE_RESOLUTION_FREEZE_KEY] = frozen_legacy_file
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(
             mode="json"

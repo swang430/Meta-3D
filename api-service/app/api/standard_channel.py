@@ -22,7 +22,8 @@ router = APIRouter(prefix="/standard-channels", tags=["Standard Channels"])
 class SCDCreateRequest(BaseModel):
     """定义一个标准信道的规范配置 (标准名由后端从这些字段算, 不接受前端传名)。"""
 
-    instrument_connection_id: UUID = Field(..., description="所属 F64 绑定")
+    instrument_connection_id: UUID = Field(..., description="所属信道仿真器连接")
+    instrument_model_id: UUID = Field(..., description="操作员明确选择的已保存仪器型号")
     radio_technology: str = Field(..., description="nr5g | lte")
     channel_kind: str = Field(..., description="nr_arfcn | lte_dl_earfcn")
     band: str = Field(..., examples=["N78"])
@@ -56,6 +57,7 @@ class SCDResponse(BaseModel):
     version: int
     standard_name: str
     instrument_connection_id: UUID
+    instrument_model_id: Optional[UUID] = None
     associated_file_path: Optional[str] = None
     association_source: str
     description: Optional[str] = None
@@ -65,6 +67,8 @@ class SCDResponse(BaseModel):
 
 class SCDAssociateRequest(BaseModel):
     """把一个实际 .smu 文件关联到 SCD (slice 2b)。"""
+
+    instrument_model_id: Optional[UUID] = None
 
     file_path: str = Field(
         ..., description="实际 .smu 文件 (CALC:FILT:FILE 加载这个; 路径 c 是厂商真文件)"
@@ -82,6 +86,7 @@ def create_standard_channel(req: SCDCreateRequest, db: Session = Depends(get_db)
         return svc.create_scd(
             db,
             instrument_connection_id=req.instrument_connection_id,
+            instrument_model_id=req.instrument_model_id,
             radio_technology=req.radio_technology,
             channel_kind=req.channel_kind,
             band=req.band, arfcn=req.arfcn,
@@ -99,11 +104,17 @@ def create_standard_channel(req: SCDCreateRequest, db: Session = Depends(get_db)
 @router.get("", response_model=List[SCDResponse])
 def list_standard_channels(
     instrument_connection_id: Optional[UUID] = Query(
-        None, description="只列该 F64 绑定的标准信道"
+        None, description="只列该信道仿真器连接的标准信道"
     ),
+    instrument_model_id: Optional[UUID] = Query(None, description="只列该仪器型号的标准信道"),
+    include_unknown: bool = Query(False, description="同时列出待操作员确认的历史归属"),
     db: Session = Depends(get_db),
 ):
-    return svc.list_scds(db, instrument_connection_id=instrument_connection_id)
+    return svc.list_scds(
+        db, instrument_connection_id=instrument_connection_id,
+        instrument_model_id=instrument_model_id,
+        include_unknown=include_unknown,
+    )
 
 
 @router.get("/{scd_id}", response_model=SCDResponse)
@@ -127,6 +138,7 @@ def associate_standard_channel_file(
             db, scd_id,
             file_path=req.file_path,
             association_source=req.association_source,
+            instrument_model_id=req.instrument_model_id,
         )
     except svc.StandardChannelNotFound as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

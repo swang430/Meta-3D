@@ -935,6 +935,8 @@ async def list_channel_models_endpoint(
         .first()
     )
     raw_params = (conn.connection_params if conn else None) or {}
+    from app.services.channel_asset_ownership import owned_channel_model_params
+    raw_params = owned_channel_model_params(db, conn.id if conn else None, cat.selected_model_id, raw_params)
     raw_entries = raw_params.get("available_channel_models") or []
     normalised = normalize_channel_model_entries(raw_entries)
     items = [ChannelModelEntry(**entry) for entry in normalised]
@@ -2188,7 +2190,8 @@ def add_channel_model_entry(
         db.add(conn)
         db.flush()
 
-    params = dict(conn.connection_params or {})
+    from app.services.channel_asset_ownership import owned_channel_model_params
+    params = owned_channel_model_params(db, conn.id, cat.selected_model_id, conn.connection_params)
     existing = list(params.get("available_channel_models") or [])
     # Check duplicates using the normaliser output so the comparison is
     # against canonical filenames — protects against "EPA_5Hz.smu" added
@@ -2269,7 +2272,8 @@ def remove_channel_model_entry(
     if conn is None or not conn.connection_params:
         raise HTTPException(status_code=404, detail=f"no curated list configured for '{category_key}'")
 
-    params = dict(conn.connection_params)
+    from app.services.channel_asset_ownership import owned_channel_model_params
+    params = owned_channel_model_params(db, conn.id, cat.selected_model_id, conn.connection_params)
     existing = list(params.get("available_channel_models") or [])
     if not existing:
         raise HTTPException(status_code=404, detail=f"curated list for '{category_key}' is empty")

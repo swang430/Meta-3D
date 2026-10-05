@@ -43,6 +43,7 @@ from app.services.channel_emulator_binding import (
 CE_PLAN_FREEZE_CONFIG_KEY = "channel_emulator_execution_plan_freeze"
 CE_LOAD_REQUEST_FREEZE_CONFIG_KEY = "channel_emulator_load_request_freeze"
 CHANNEL_ASSET_RESOLUTION_FREEZE_KEY = "channel_asset_resolution"
+LEGACY_CHANNEL_FILE_RESOLUTION_FREEZE_KEY = "legacy_channel_file_resolution"
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -60,11 +61,27 @@ class FrozenChannelAssetResolution(BaseModel):
     digest: NonEmptyString
 
 
-def _channel_asset_executable_content(asset: Any) -> dict[str, Any]:
+class FrozenChannelAssetResolutionV2(FrozenChannelAssetResolution):
+    """新执行明确冻结资产归属，历史 v1 不回填任何当前状态。"""
+
+    schema_version: Literal[2]
+    instrument_connection_id: NonEmptyString | None
+    instrument_model_id: NonEmptyString | None
+
+    @model_validator(mode="after")
+    def require_vendor_owner(self):
+        if self.source_type == "vendor_file" and (
+            self.instrument_connection_id is None or self.instrument_model_id is None
+        ):
+            raise ValueError("vendor_file 冻结资产缺少明确归属")
+        return self
+
+
+def _channel_asset_executable_content(asset: Any, *, schema_version: int = 2) -> dict[str, Any]:
     """Project every mutable ChannelAsset field consumed by the resolver."""
 
     instrument_connection_id = getattr(asset, "instrument_connection_id", None)
-    return {
+    content = {
         "source_type": getattr(asset, "source_type", None),
         "payload": getattr(asset, "payload", None),
         "associated_file_path": getattr(asset, "associated_file_path", None),
@@ -78,13 +95,19 @@ def _channel_asset_executable_content(asset: Any) -> dict[str, Any]:
         ),
         "is_active": getattr(asset, "is_active", None),
     }
+    if schema_version == 2:
+        model_id = getattr(asset, "instrument_model_id", None)
+        content["instrument_model_id"] = str(model_id) if model_id is not None else None
+    return content
 
 
 def validate_frozen_channel_asset_resolution(frozen: Any) -> dict[str, Any]:
     if not isinstance(frozen, Mapping):
         raise ValueError("已冻结的 channel asset resolution 不是对象（冻结件损坏）")
     try:
-        FrozenChannelAssetResolution.model_validate(dict(frozen))
+        schema = (FrozenChannelAssetResolutionV2 if frozen.get("schema_version") == 2
+                  else FrozenChannelAssetResolution)
+        schema.model_validate(dict(frozen))
     except (ValidationError, ValueError, TypeError) as exc:
         raise ValueError(
             f"已冻结的 channel asset resolution 结构不合法（冻结件损坏）: {exc}"
@@ -113,13 +136,21 @@ def freeze_channel_asset_resolution(db: Any, configuration: Any) -> dict[str, An
         raise ValueError(str(exc)) from exc
     if resolved is None:
         raise ValueError("channel_asset_id 已指定但 resolver 未返回资产")
+    if resolved.asset.source_type == "vendor_file":
+        from app.services.channel_asset_ownership import validate_channel_asset_owner
+        validate_channel_asset_owner(
+            db, resolved.asset.instrument_connection_id, resolved.asset.instrument_model_id,
+        )
+    content = _channel_asset_executable_content(resolved.asset)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "channel_asset_id": str(resolved.asset.id),
         "source_type": resolved.asset.source_type,
         "executable_content_digest": canonical_payload_digest(
-            _channel_asset_executable_content(resolved.asset)
+            content
         ),
+        "instrument_connection_id": content["instrument_connection_id"],
+        "instrument_model_id": content["instrument_model_id"],
     }
     frozen = {**payload, "digest": canonical_payload_digest(payload)}
     return validate_frozen_channel_asset_resolution(frozen)
@@ -146,11 +177,65 @@ def validate_resolved_channel_asset_against_freeze(
     ):
         raise ValueError("frozen channel asset identity drifted")
     current_digest = canonical_payload_digest(
-        _channel_asset_executable_content(asset)
+        _channel_asset_executable_content(asset, schema_version=identity["schema_version"])
     )
     if current_digest != identity["executable_content_digest"]:
         raise ValueError("frozen channel asset executable content drifted")
     return identity
+
+
+def validate_channel_asset_frozen_owner(identity: Any, execution_config: Mapping[str, Any]) -> None:
+    """文件归属只能对账同次执行冻结的 CE binding，不查询当前选择。"""
+    identity = validate_frozen_channel_asset_resolution(identity)
+    if identity["source_type"] != "vendor_file":
+        return
+    if identity["schema_version"] != 2:
+        raise ValueError("历史文件资产尚未冻结明确归属，请重新创建执行")
+    binding = execution_config.get(CE_FREEZE_CONFIG_KEY)
+    resolved = binding.get("resolved_binding") if isinstance(binding, Mapping) else None
+    if not isinstance(resolved, Mapping) or any(
+        identity[key] != resolved.get(key)
+        for key in ("instrument_connection_id", "instrument_model_id")
+    ):
+        raise ValueError("文件资产归属与同次冻结 channelEmulator binding 不一致")
+
+
+def _legacy_channel_file_source(db: Any, scd_id: Any):
+    from uuid import UUID
+    from app.models.standard_channel import StandardChannelDefinition
+    from app.services.channel_asset_service import find_vendor_file_asset
+    identity = UUID(str(scd_id))
+    asset = find_vendor_file_asset(db, identity)
+    if asset is not None:
+        if asset.is_active is not True:
+            raise ValueError("legacy scd 引用的 ChannelAsset 已退役")
+        return asset, _channel_asset_executable_content(asset)
+    scd = db.get(StandardChannelDefinition, identity)
+    if scd is None:
+        raise ValueError("legacy scd 文件资产不存在")
+    fields = ("radio_technology", "channel_kind", "band", "arfcn", "lte_dl_earfcn",
+              "bandwidth_mhz", "model", "scenario", "mimo", "polarization", "version",
+              "associated_file_path", "association_source")
+    content = {key: getattr(scd, key) for key in fields}
+    content.update(instrument_connection_id=str(scd.instrument_connection_id),
+                   instrument_model_id=str(scd.instrument_model_id) if scd.instrument_model_id else None)
+    return scd, content
+
+
+def freeze_legacy_channel_file_resolution(db: Any, configuration: Any) -> dict[str, Any] | None:
+    """仅 GCM 的 legacy 引用走文件门，迁移后的同 id ChannelAsset 优先。"""
+    if (getattr(configuration, "channel_asset_id", None) is not None
+            or getattr(configuration, "engine_mode", None) != "keysight_gcm"
+            or not getattr(configuration, "scd_id", None)):
+        return None
+    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    source, content = _legacy_channel_file_source(db, configuration.scd_id)
+    validate_channel_asset_owner(db, source.instrument_connection_id, source.instrument_model_id)
+    payload = {"schema_version": 2, "channel_asset_id": str(source.id), "source_type": "vendor_file",
+        "executable_content_digest": canonical_payload_digest(content),
+        "instrument_connection_id": str(source.instrument_connection_id),
+        "instrument_model_id": str(source.instrument_model_id)}
+    return {**payload, "digest": canonical_payload_digest(payload)}
 
 
 class FrozenChannelEmulatorLoadRequest(BaseModel):
@@ -421,6 +506,8 @@ def validate_frozen_channel_emulator_load_context(
             raise ValueError("channelEmulator load request 与冻结 MIMO 来源矛盾")
     else:
         identity = validate_frozen_channel_asset_resolution(frozen_asset)
+        if identity["schema_version"] == 2:
+            validate_channel_asset_frozen_owner(identity, execution_config)
         if identity["channel_asset_id"] != asset_id:
             raise ValueError("冻结 channel asset resolution 身份漂移")
         if (
@@ -603,6 +690,7 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
         load_request, _configuration = validate_frozen_channel_emulator_load_context(
             execution_config, frozen_plan
         )
+        _validate_execution_asset_owner(execution_config, db)
         if load_request["source"] == "channel_asset":
             live_driver, _source = channel_emulator_for_execution_plan(hal)
             live_manifest = channel_emulator_manifest_of(live_driver)
@@ -616,6 +704,7 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
             )
         return frozen_plan
     load_request = _resolve_channel_emulator_load_request(db, execution)
+    _validate_execution_asset_owner(execution_config, db)
     plan = resolve_live_channel_emulator_execution_plan(
         hal,
         engine_mode=load_request["effective_engine_mode"],
@@ -658,6 +747,24 @@ def freeze_channel_emulator_execution_plan(db, hal, execution) -> dict[str, Any]
     flag_modified(execution, "config")
     db.flush()
     return frozen
+
+
+def _validate_execution_asset_owner(execution_config: Mapping[str, Any], db: Any = None) -> None:
+    from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY, MIMO_OTA_CONFIGURATION_FREEZE_KEY
+    base = execution_config.get(FREEZE_CONFIG_KEY)
+    identity = base.get(CHANNEL_ASSET_RESOLUTION_FREEZE_KEY) if isinstance(base, Mapping) else None
+    if identity is not None:
+        validate_channel_asset_frozen_owner(identity, execution_config)
+    configuration = base.get(MIMO_OTA_CONFIGURATION_FREEZE_KEY) if isinstance(base, Mapping) else None
+    if (isinstance(configuration, Mapping) and not configuration.get("channel_asset_id")
+            and configuration.get("engine_mode") == "keysight_gcm" and configuration.get("scd_id")):
+        legacy = base.get(LEGACY_CHANNEL_FILE_RESOLUTION_FREEZE_KEY)
+        validate_channel_asset_frozen_owner(legacy, execution_config)
+        if db is None:
+            raise ValueError("legacy scd 执行缺少文件归属读取上下文")
+        source, content = _legacy_channel_file_source(db, configuration["scd_id"])
+        if str(source.id) != legacy["channel_asset_id"] or canonical_payload_digest(content) != legacy["executable_content_digest"]:
+            raise ValueError("legacy scd 冻结文件内容或归属发生漂移")
 
 
 def freeze_execution_channel_emulator_plan(db, hal, execution) -> dict[str, Any]:

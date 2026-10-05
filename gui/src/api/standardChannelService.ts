@@ -26,6 +26,7 @@ export interface StandardChannel {
   version: number
   standard_name: string
   instrument_connection_id: string
+  instrument_model_id: string | null
   associated_file_path: string | null
   association_source: string // declared_only | standard_generated | vendor_associated
   description: string | null
@@ -36,6 +37,7 @@ export interface StandardChannel {
 /** 镜像后端 SCDCreateRequest。 */
 export interface StandardChannelCreatePayload {
   instrument_connection_id: string
+  instrument_model_id: string
   radio_technology: 'nr5g' | 'lte'
   channel_kind: 'nr_arfcn' | 'lte_dl_earfcn'
   band: string
@@ -52,6 +54,7 @@ export interface StandardChannelCreatePayload {
 
 /** 镜像后端 SCDAssociateRequest。 */
 export interface StandardChannelAssociatePayload {
+  instrument_model_id?: string
   file_path: string
   /**
    * standard_generated (路径 a/b: 文件按标准名生成, basename 须 == 标准名) |
@@ -63,9 +66,10 @@ export interface StandardChannelAssociatePayload {
 /** 列某台 F64 (channelEmulator connection) 的标准信道定义。 */
 export const fetchStandardChannels = async (
   instrumentConnectionId: string,
+  instrumentModelId?: string,
 ): Promise<StandardChannel[]> => {
   const response = await client.get<StandardChannel[]>('/standard-channels', {
-    params: { instrument_connection_id: instrumentConnectionId },
+    params: { instrument_connection_id: instrumentConnectionId, instrument_model_id: instrumentModelId, include_unknown: true },
   })
   return response.data
 }

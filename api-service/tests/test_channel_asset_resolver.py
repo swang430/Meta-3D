@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.channel_asset import ChannelAsset  # noqa: F401  确保表在 metadata
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services.channel_asset_service import ChannelAssetError, create_channel_asset
 from app.services.mimo_ota.channel_asset_resolver import (
     ChannelAssetResolveError,
@@ -40,6 +41,17 @@ def db():
     )
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    category = InstrumentCategory(category_key="channelEmulator", category_name="CE")
+    session.add(category)
+    session.flush()
+    model = InstrumentModel(category_id=category.id, vendor="test", model="F64", capabilities={})
+    session.add(model)
+    session.flush()
+    category.selected_model_id = model.id
+    connection = InstrumentConnection(category_id=category.id, endpoint="test:3334", protocol="SOCKET")
+    session.add(connection)
+    session.commit()
+    session.info["vendor_owner"] = {"instrument_connection_id": connection.id, "instrument_model_id": model.id}
     try:
         yield session
     finally:
@@ -74,7 +86,7 @@ class TestResolver:
     def test_vendor_file(self, db):
         # vendor_file 直接给 .smu (associated_file_path), 不依赖 SCD twin (Codex #174 P2:
         # 新建的 vendor_file 没同 id SCD 行)
-        a = create_channel_asset(db, name="v", source_type="vendor_file",
+        a = create_channel_asset(db, name="v", source_type="vendor_file", **db.info["vendor_owner"],
                                  payload={"scd_config": _SCD},
                                  associated_file_path="/smu/x.smu")
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
@@ -93,7 +105,7 @@ class TestResolver:
         asset = create_channel_asset(
             db,
             name="lte-vendor",
-            source_type="vendor_file",
+            source_type="vendor_file", **db.info["vendor_owner"],
             payload={"scd_config": _LTE_SCD},
             associated_file_path="/smu/vendor_lte.smu",
         )
@@ -111,7 +123,7 @@ class TestResolver:
     def test_legacy_nr_asset_is_translated_only_on_read(self, db):
         legacy = ChannelAsset(
             name="legacy-nr",
-            source_type="vendor_file",
+            source_type="vendor_file", **db.info["vendor_owner"],
             payload={
                 "scd_config": {
                     key: value
@@ -141,7 +153,7 @@ class TestResolver:
             create_channel_asset(
                 db,
                 name="new-untyped",
-                source_type="vendor_file",
+                source_type="vendor_file", **db.info["vendor_owner"],
                 payload={"scd_config": legacy_shape},
             )
 
@@ -151,7 +163,7 @@ class TestResolver:
         a = create_channel_asset(
             db,
             name="project-truth",
-            source_type="vendor_file",
+            source_type="vendor_file", **db.info["vendor_owner"],
             payload={"scd_config": _SCD},
             associated_file_path=path,
         )
@@ -188,7 +200,7 @@ class TestResolver:
     def test_vendor_declared_only_no_file(self, db):
         # declared_only (无 associated_file_path) → emulation_file None (GCM gate fail-loud),
         # 不查 SCD 表 (resolver 纯从 ChannelAsset)
-        a = create_channel_asset(db, name="vd", source_type="vendor_file",
+        a = create_channel_asset(db, name="vd", source_type="vendor_file", **db.info["vendor_owner"],
                                  payload={"scd_config": _SCD})
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
         assert r.engine_mode == "keysight_gcm" and r.emulation_file is None

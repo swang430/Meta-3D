@@ -16,7 +16,7 @@
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Float, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -69,6 +69,10 @@ class ChannelAsset(Base):
     associated_file_path = Column(
         String(1024), nullable=True,
         comment="vendor_file .smu / 未来 b2 现场 .tap 关联路径")
+
+    instrument_model_id = Column(
+        UUID(as_uuid=True), ForeignKey("instrument_models.id", name="fk_channel_assets_instrument_model"), nullable=True, index=True,
+        comment="vendor_file 显式型号归属；NULL=历史待确认/非仪器文件，不由当前型号回填")
 
     is_active = Column(Boolean, default=True, nullable=False, index=True,
                        comment="软停用标志; 历史记录仍可读，但不得用于新会话或新的 MEASURE 执行")

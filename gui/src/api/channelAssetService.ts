@@ -91,6 +91,7 @@ export interface ChannelAsset {
   k_factor_db?: number | null
   ue_velocity_mps?: number[] | null
   instrument_connection_id?: string | null
+  instrument_model_id?: string | null
   associated_file_path?: string | null
 }
 
@@ -141,6 +142,7 @@ export interface ChannelAssetCreatePayload {
   k_factor_db?: number | null
   ue_velocity_mps?: number[] | null
   instrument_connection_id?: string | null
+  instrument_model_id?: string | null
   associated_file_path?: string | null
   created_by?: string | null
 }
@@ -178,6 +180,13 @@ export async function updateChannelAsset(
   payload: ChannelAssetUpdatePayload,
 ): Promise<ChannelAsset> {
   const res = await apiClient.put<ChannelAsset>(`/channel-assets/${id}`, payload)
+  return res.data
+}
+
+export async function confirmChannelAssetOwnership(payload: {
+  asset_ids: string[]; instrument_connection_id: string; instrument_model_id: string
+}): Promise<ChannelAsset[]> {
+  const res = await apiClient.post<ChannelAsset[]>('/channel-assets/vendor-files/confirm-ownership', payload)
   return res.data
 }
 

@@ -8,7 +8,20 @@
 
 ## 🎯 Current Focus
 
-**2026-10-05 P2-32B 收尾状态（PR #497）**：当前唯一 WIP 是方向图软件安全片，完成最新 HEAD 外审、合并、main 同步及 migration 后暂停，不启动 P2-32C。Real 当前同时受权威天线最大口径来源（无近远场转换）与 X-Series/FSW 权威标量功率回读阻塞：缺口径在首个硬件 I/O 前拒绝，历史现场实测仅审计可见、不进入正式消费；厂商方向图资格独立评估，Mock 仅诊断。本片软件合并不表示真机校准验收完成。
+**2026-10-05 P2-32B 收尾完成（PR #497）**：软件安全片已合并（`6a460170`），main 已同步，运行库 migration 已到唯一 head `b9d2f4a6c8e0`。当前 WIP=0；不启动 P2-32C。Real 仍受权威天线最大口径来源（无近远场转换）与 X-Series/FSW 权威标量功率回读阻塞：缺口径在首个硬件 I/O 前拒绝，历史现场实测仅审计可见、不进入正式消费；厂商方向图资格独立评估，Mock 仅诊断。软件合并与迁移完成不表示真机校准验收完成。
+
+**2026-10-05 用户批准的新非现场排期**：用户随后授权完整实现 P2-79，A→B 不再逐步请求批准；其余条目仍仅排期。每个子片独立闭环，严格 WIP=1；当前唯一 WIP 为 P2-79A。既有现场/硬件阻塞与 HOLD 队列保持原顺序，不因软件排期自动解除。
+
+| 顺序 | 条目 | 子片顺序 | 状态 |
+|---|---|---|---|
+| 1 | P2-79 信道模型型号归属与并发保存完整性 | A 型号归属 → B 同序锁与并发完整性 | A 实现验证完成，待 Codex R1→R2；B 待 A 合并清理 |
+| 2 | P2-80 仪器配置故障可见、可恢复 | A 目录错误态 → B 坏认证状态 → C 显式合法替代值恢复 | 已排期，未开工 |
+| 3 | P2-81 统计窗口保存前校验 | 所选 adapter 域的统一前置校验 | 已排期，未开工 |
+| 4 | P2-82 成功轮询 INFO 降噪 | 仅成功只读轮询，不降级异常/硬件日志 | 已排期，未开工 |
+| 5 | P2-83 LabProfile 统一工作单元 | 先设计 → 共同上下文与状态展示 → 受控保存/同步编排 | 已排期，未开工 |
+| 6 | P2-84 F64 运行态诊断快照 | 先盘点已有权威快照，再提供只读展示 | 已排期，未开工 |
+
+**执行规则沿用既往流程**：设计/计划 → 严格 TDD → 按风险分档验证 → fresh 功能内审 → Ready PR → Codex R1→R2 → 合并、main 同步、清理；前片闭环后才能开下一片。R2 无 P1 立即收口；有 P1 仅修 P1 并续审至覆盖最新 HEAD 无 P1，后续 P2/P3 不自动沉淀积压。完整范围与验收见下方 P2-79～P2-84。
 
 **2026-09-16 现场结果与 2026-09-17 triage**：CMW500 + F64 + 真实 DUT 链首次跑到真实吞吐 —— 执行 `dbd53e6f`
 （LTE B2 FDD 20 MHz TM3 2×2，SCME UMa 衰落）单发 5000 子帧窗口读到 **45.82 Mbps / ACK 100 % / BLER 0 %**，
@@ -70,7 +83,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= 无进行中的 P0：P0-9 已于 2026-09-17 由用户裁决关闭，开放的 P0 只剩 P0-5（UXM 5G NR，等 UXM 在场）。下文凡写「P0-9 待关闭」「P2-55 / P2-56 现场半待真机」的段落均为 2026-09-17 之前的表述，原文保留审计，现状以本行与「Blocked on hardware」表为准；
-Current Focus（非现场）= **P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。P1-79D 合并后，本地自动可执行队列为空；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
+Current Focus（非现场）= **P2-79A 实现验证完成，PR #498 待 Codex R1→R2；当前 WIP=1，B 待 A 合并同步清理。** 下段保留前序交付背景，不再作为当前开工顺序：**P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。前序队列收尾后，新的非现场排期由 2026-10-05 用户批准（见顶部）；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -461,7 +474,7 @@ P2-28 → ~~P1-57~~ ✅ → ~~P2-29~~ ✅ → ~~P2-30~~ ✅ → ~~P2-33~~ ✅ �
 | **~~P2-29~~** | ASC/B2 正式模型加载证据 hook | ✅ PR #354（内审 F1 P1 已修；Gemini R1 已修 / R2 两条 medium 报备不修） |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ✅ PR #359 |
 | **P2-31** | P2-18 剩余交付片：SMB `.smu` 工程真值扫描（EMQuest 10-band 表已交付） | ✅ PR #368；merge `2c9d5ff` |
-| **P2-32** | 校准真实启用拆片 | **A 多频路径损耗**：✅ 完成 CE+SA real 入口、显式 Real/Mock、逐探头 warning 持久化与报告投影，并移除随机旧入口；真实结果冻结 LabProfile/拓扑/RF chain/CE port，路由漂移后 fail-closed。**B 方向图**：软件安全片已实现，交付以 PR #497 合并为准；完成唯一 production caller、真实/Mock 显式授权、逐探头冻结路由与 warning、正式消费/报告 fail-closed；⚠️ 权威天线最大口径来源缺失，Real 在首个 I/O 前拒绝，历史实测不进入正式消费；当前 X-Series/FSW 只有 trace bins、没有带手册出处的权威 channel-power 标量回读，故 Real 会 fail-closed，取得并实现权威标量前仍是 Hardware/Manual-Source Blocked，本地软件验证不替代 F64+转台+SA 真机验收。**C 静区**：仍需厘米级 XY 扫描平台，Hardware Blocked |
+| **P2-32** | 校准真实启用拆片 | **A 多频路径损耗**：✅ 完成 CE+SA real 入口、显式 Real/Mock、逐探头 warning 持久化与报告投影，并移除随机旧入口；真实结果冻结 LabProfile/拓扑/RF chain/CE port，路由漂移后 fail-closed。**B 方向图**：软件安全片已由 PR #497 合并，main 已同步、运行库 migration 已完成；完成唯一 production caller、真实/Mock 显式授权、逐探头冻结路由与 warning、正式消费/报告 fail-closed；⚠️ 权威天线最大口径来源缺失，Real 在首个 I/O 前拒绝，历史实测不进入正式消费；当前 X-Series/FSW 只有 trace bins、没有带手册出处的权威 channel-power 标量回读，故 Real 会 fail-closed，取得并实现权威标量前仍是 Hardware/Manual-Source Blocked，本地软件验证不替代 F64+转台+SA 真机验收。**C 静区**：仍需厘米级 XY 扫描平台，Hardware Blocked |
 | **P2-33** | 日志体验包：CRITICAL、traceback 搜索、级别多选、重复请求抑制 | ✅ PR #360 |
 | **P2-34** | 正式执行失败告警的发布结果契约 | ✅ PR #361 |
 | **P3-20** | 删除或重写失效的校准导入/导出链 | ↪ 非阻塞维护池；无 live caller |
@@ -725,7 +738,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准；P1-79A/B/C 已由 PR #491/#493/#494 合并。P1-79E 的厂商取证已完成，但当前取得的 Ensemble 3.04 资料不足以覆盖现场未知型号/固件，转 Hardware/Vendor-Protocol Blocked，不以 Automation1/Windows SDK 或配置声明补真。P2-73 / P2-75 / P2-76 / P2-77 / P2-78 已由 PR #485 / #486 / #487 / #488 / #489 合并；P2-74 本地半已由 PR #482 合并，P1-80 软件半已完成，P1-2 仍在 ON-SITE-BLOCKED。P2-68 / P2-69 / P2-70 已由 PR #471 / #473 / #475 合并；P2-57 静态资产来源声明和注册对账由 PR #476 合并，`.smu` 拓扑仍归 ChannelAsset 独立待评估。P2-71 设备侧发布/验约仍 Hardware Blocked。P2-77 只关闭软件半，真实 F8800A 有界调频矩阵仍在 ON-SITE-BLOCKED。P1-77 / P1-76 已按 P3-23 记录试行数据。P2-32A 多频路径损耗已交付；P2-32B 方向图软件安全片正在 PR #497 收尾，合并同步后暂停，权威口径与 SA 标量功率来源仍阻塞真机启用；其本地验证不替代真机验收。P2-32C 静区仍由厘米级 XY 扫描平台阻塞。P3-20/P3-21 保持非阻塞维护池，不自动启动。 |
+| **LOCAL-OPEN (roadmap 内)** | 2026-10-05 已批准排期：**P2-79A→P2-79B→P2-80A→P2-80B→P2-80C→P2-81→P2-82→P2-83→P2-84**，P2-79A 实现验证完成、PR #498 外审中，当前 WIP=1，其余未开工；详见顶部与各条目的范围/验收。P2-32B 软件安全片已由 PR #497 合并并完成运行库 migration，真机口径/SA 标量功率来源仍阻塞；不启动 P2-32C。既有硬件/现场项、HOLD 与 P3-20/P3-21 非阻塞维护池保持原位置，不自动启动。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** / **P2-74** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5356,6 +5369,55 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 （2026-09-19 更正：原句写「用 `aerotech_positioner_motion_truth` 的原始时间序列记录三个未知」，而该序列单步最多 30°，
 按现场批准的 5°/s 最多阻塞 6 s、够不到 10 s 超时，也不含 `WAIT MODE`，答不了其中任何一个。）`HOME` 同样是阻塞命令、同样受这 10 s 限制，本片未改。
 
+### P2-79 — 信道模型型号归属与并发保存完整性
+
+**状态**：2026-10-05 用户授权完整实现；非现场队列第 1 项。按 **A→B** 两个独立子片交付。A 实现验证完成，待 Codex R1→R2，设计见 [P2-79A](design/2026-10-05-p2-79a-channel-model-ownership-design.md)。受影响链 418 passed；新装迁移故障最小修复后全后端 6804 passed/6 skipped，最终 NULL owner 收窄复跑目录归属链 143 passed；隔离 PostgreSQL migration 2 passed、GUI 2 passed/build、compileall、单一 head、diff-check 通过，fresh 尾审 P1/P2/P3=0。B 等待 A 合并同步清理，不宣称已完成并发验收。
+
+- **A 型号归属**：修复 `standard_channel_service._sync_projection_for_binding` 按 connection 聚合 SCD、把 F64 派生资产写进其他活动型号清单/preset 的问题。先盘点真实 SCD 归属分布及 GUI/API 关联入口，再设计显式型号归属或分桶；无法唯一归属的历史项显式待确认，不按型号名推断，不静默迁移。
+- **B 并发完整性**：枚举 SCD 投影、模型增删、型号切换/保存及 preset 镜像写入路径，按现有 category→connection 同序锁定并重读，避免丢更新与旧 ORM 缓存覆盖。原并发反例先在 PostgreSQL 重跑；SQLite 不作为行锁验证替代。
+- **验收**：F64/FS16 切换与关联不会跨型号污染；各型号已保存资产可恢复；并发增删/切换不会丢掉无关型号 preset 或条目；失败全回滚。A 的归属契约完成后再开 B，每片独立 PR，不混入目录错误态修复。
+
+### P2-80 — 仪器配置故障可见、可恢复
+
+**状态**：已排期，未开工；第 2 项，P2-79 全部闭环后按 **A→B→C** 独立交付。
+
+- **A 目录错误态**：`gui/src/App.tsx::EquipmentManager` 区分请求失败与成功空目录，5xx 不再显示“暂无仪器信息”；提供明确错误与重试，不覆盖用户草稿。
+- **B 认证错误态**：readiness 复用 BaseStation 认证权威 parser，区分缺失、invalid 与有效认证，不把畸形存值静默当作未认证。所有 API/OpenAPI/GUI 消费镜像同步；不放宽正式资格。
+- **C 受控恢复**：修复 `PUT /instruments/{category_key}` 因旧 preset/params 坏值在处理显式合法替代请求前就 500 的路径。仅在替代范围明确、能保留无关型号配置时收窄旧值读取；无法安全修复时返回受控错误，不吞错丢整张 map，不新增修复端点，不自动授予现场认证。
+- **验收**：DB 故障与零仪器显示不同；坏认证显式 invalid；显式合法替代可修复授权范围内坏值，失败不部分写入，无关型号配置保持。枚举 BaseStation/ChannelEmulator、保存/读取/readiness 的对称路径。
+
+### P2-81 — 统计窗口在保存/冻结前校验
+
+**状态**：已排期，未开工；第 3 项，依赖 P2-80 闭环。
+
+**故障与范围**：CMW `stat_count` 域外值目前可能到首个窗口 I/O 才被拒绝，此时 UE 已 attach、转台已移动。复用现有手册审计域和 requirements/manifest/evaluator，将所选 adapter 的约束前移到保存预览、readiness 与执行冻结；不得把 CMW 的 100..400000 范围硬写成所有 NR/Mock 的共同范围。
+
+**验收**：按所选 adapter 拒绝域外统计窗口，GUI 呈现服务器同源约束；TestCase、topology、preview/sync/readiness/freeze 同判据、同 digest。合法 NR/Mock 场景不被错误收窄；当前不确定的域显式 unknown，不猜 SCPI 或参数域。
+
+### P2-82 — 成功轮询 INFO 降噪
+
+**状态**：已排期，未开工；第 4 项，依赖 P2-81 闭环。
+
+**范围**：先重新采样当前日志与活跃轮询入口，不把 2026-09-09 的历史统计当当前数据。优先复用 `api-service/app/core/audit_middleware.py` 的既有机制，只对明确方法/路径的成功 2xx 只读轮询去掉重复审计噪声。
+
+**验收**：成功轮询噪声减少；4xx/5xx、异常、配置写入、下载审计、SCPI、租约与 HAL 生命周期保留。禁止全局 INFO→DEBUG 或宽路径静音；不为降噪默认新增定时器/计数器，确有可观察性缺口才另作设计。
+
+### P2-83 — LabProfile 统一工作单元
+
+**状态**：已排期，未开工；第 5 项，依赖 P2-82 闭环。先设计，设计完成后拆实施子片并写回本条，不预先承诺跨 HAL/DB 的单事务。
+
+**范围**：把仪器资源、探头/暗室、射频拓扑作为同一 LabProfile 上下文的子视图。顺序为共同上下文与只读总览→草稿/已保存/runtime 激活/执行 binding 状态展示→复用既有端点的受控保存与同步编排；复用 resolver/readiness，不重建第二份配置真值。
+
+**验收**：操作员能通盘确认最终生效态与失败阶段；GUI 草稿永不进入执行 binding，保存与 HAL 激活结果分别可见。完成受控编排设计前，“同步到 LabProfile”仍为显式独立操作；历史执行冻结证据不受当前配置修改影响。不顺带补 LTE 暗室首测或改正式 provenance 白名单。
+
+### P2-84 — F64 运行态只读诊断快照
+
+**状态**：已排期，未开工；第 6 项，依赖 P2-83 闭环。
+
+**范围**：先盘点已有运行状态、输出/功率、当前工程及 `capture_evidence_environment` 等缓存/回执的权威来源，裁决能展示的字段与缺项。仅展示已有证据，并带来源、时间及 execution/session 归属；没有可信值时 unknown。需要新仪器查询的字段单独进入手册/现场评估，不在本片盲试。
+
+**验收**：操作员能查看已有快照及过期/未知状态，不新增后台轮询、硬件 I/O 或猜测 SCPI；current 快照与 frozen execution 明确分开，缓存不得升级为正式 KPI、现场认证或冻结执行证据。D13 fake transport、第三 adapter 泛化、批量改名与纯测试门增强不随本条提升。
+
 ## 🟢 P3 — Polish / tooling
 
 **P3-23 — 回归与审查流程去重（用户批准；规则固化于本 PR，试行待验）**：消除同测试输入
@@ -5415,6 +5477,19 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 ## 🗂️ Discovered during X — 待评估发现池（不是正式 backlog）
 
+**2026-10-05 排期出口（当前裁决）**：以下发现已获用户批准提升为正式待开发项，尚未实现；旧日期段保留发现当时的证据与状态，不代表仍待用户决定。未列入者仍按原状态，不批量提升。
+
+| 发现 | 当前出口 |
+|---|---|
+| SCD connection-only 归属；W2/W3/W4 与型号切换并发 | P2-79A → P2-79B |
+| GUI 5xx 误作空目录；坏认证被吞成未认证；坏 preset/params 无法覆盖恢复 | P2-80A → P2-80B → P2-80C |
+| 统计窗口参数域只在窗口 I/O 校验 | P2-81 |
+| 成功轮询占据 INFO 主体 | P2-82 |
+| LabProfile 配置三个独立入口，缺共同工作上下文 | P2-83 |
+| D14 F64 运行态只读快照 | P2-84 |
+
+`.smu` 拓扑仍待 OTA 样本与 Direction 手册依据；硬件阻塞、P2-63 HOLD 和其它未提升发现维持原顺序/状态。
+
 > 开发中途发现的事实先进入本区，**尚不代表已经决定要做**。每周 triage 后必须走一个
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
@@ -5439,7 +5514,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | D7 B41 TDD attach 4/4 超时 | **resolved（用户 2026-09-17 确认）** | 原因：被测手机不支持 B41 频段，不是系统缺陷；P2-56 现场半随之关闭 |
 | D15 信号分析仪当日连不上 | **不再是前置（用户 2026-09-17 定）** | 信号分析仪只用于路损 / 探头校准与参考 TRP，吞吐测试链不用它；校准未正式启动前不需要它到场，校准启动时再处理 |
 | D16 调试机开着代理 / VPN | → **下次现场 checklist** | 代理替不存在的地址应答 TCP，HAL 连接前的「子网通不通」预检因此整天作废（×21）；不影响测量，代价是连不上的仪器要等 10 s 超时才报错。到场先关代理 |
-| D13 CMW fake transport 不校验枚举 / 顺序；D14 缺 F64 运行态只读快照 | **保留候选** | 有具体用户故障再立片 |
+| D13 CMW fake transport 不校验枚举 / 顺序；D14 缺 F64 运行态只读快照 | **D13 保留候选；D14 → P2-84** | D14 于 2026-10-05 获批排期，未开工；先盘点已有权威快照，不新增硬件查询 |
 
 **P1-79 拆分（2026-09-17）→ P1-79A/B/C 已由 PR #491/#493/#494 合并；P1-79D 软件完成、交付状态以本片 PR 为准；P1-79E Hardware/Vendor-Protocol Blocked**
 
@@ -5487,7 +5562,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 矩阵选件/固件只是声明 | **拆分裁决** | “TDD 缺 KS510 仍获正式准入”已由 #446 单一 `cmw500_lte_formal_options` 及两消费方覆盖；逐值 firmware/options 通用求值仍未接入，作为 P2-70/未来正式扩域的前置，不再声称当前所有硬件门都缺失 |
 | P2-57 静态声明残项 / `.smu` 拓扑 | → **P2-57 残项交付状态见 PR；拓扑另片待评估** | 静态 source-type 四格与注册对账见 2026-09-13 设计；P2-59～62 逐次证据机制不重复建设。按 2026-09-03 拍板，活动端口拓扑归 ChannelAsset、不进 manifest；当前 parser 只解析中心频率，拓扑另片欠 OTA 样本与 Direction 手册依据，不自动启动 |
 | P2-58 ① 旧冻结件复用未核 loaded driver | **正式 session 路径已覆盖** | 当前 `channel_emulator_execution_session` 调用 `validate_frozen_channel_emulator_before_remote`；手工端点/诊断仍单列边界，不声称全仓统一 |
-| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **保留待评估，配置完整性下一批候选** | 当前 `_sync_projection_for_binding` 仍按 connection 聚合，增删模型入口与该投影仍有未加行锁读写。原反例未在本次 PG 重跑，不宣称并发复现；应分别设计型号归属与同序锁，不塞入 P2-68 目录读取修复 |
+| SCD 投影只按 connection、不按型号 / W2-W4 与切型号并发 | **→ P2-79A / P2-79B** | 2026-10-05 获批完整实现 A→B，A 验证中；原并发反例需在 B 的 PostgreSQL 定点重跑，不宣称本次已复现 |
 | 手工 CE 六端点/诊断生命周期、`f64_*` 命名与双问法 | **延后评估** | 不在原 P2-59 四类正式入口范围内；先证明现有用户故障再立片，不为统一命名重写契约；两个同源访问器不等于已经发生数据分叉 |
 | 直通态未清理（#448 记录） | **正式 session 路径已覆盖** | `channel_emulator_execution_session` 已按 action 调用 clear；不把旧“全仓只有一个 caller”继续当现状；真机释放仍需现场验 |
 | #458 acquire 前 identity 未初始化 / GUI 读 raw active certification | **resolved** | 当前 session 在进入租约前初始化 identity；CE drawer 使用 `channelEmulatorCertificationPreview` |
@@ -5611,7 +5686,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | 执行历史一键跳日志 | ✅ **P1-39 / PR #292** 已交付；P2-36 重复项已关闭 |
 | SMB / EMQuest 自动化 | 保留并收窄 **P2-31 = 开发/调试用 SMB `.smu` 工程扫描**；不得作为正式运行前置，EMQuest 10-band 表已交付 |
 | Multi-frequency real warning 闭环 | ✅ P2-32A 本片：CE+SA real 入口、显式 Real/Mock、DB/报告 warning 闭环；未新增或修改 SCPI |
-| Pattern real activation | P2-32B 软件安全片已实现，交付以 PR #497 合并为准：唯一 production caller、显式 Real/Mock、冻结路由/warning、共同正式资格评估及 JSON/PDF 审计；缺权威天线口径时首个 I/O 前拒绝，历史实测不进入正式消费；X-Series/FSW 权威 channel-power 标量亦未取得，真机交付保持 Hardware/Manual-Source Blocked |
+| Pattern real activation | P2-32B 软件安全片已由 PR #497 合并，main 同步与运行库 migration 已完成：唯一 production caller、显式 Real/Mock、冻结路由/warning、共同正式资格评估及 JSON/PDF 审计；缺权威天线口径时首个 I/O 前拒绝，历史实测不进入正式消费；X-Series/FSW 权威 channel-power 标量亦未取得，真机交付保持 Hardware/Manual-Source Blocked |
 | Quiet-zone real activation | → P2-32C：厘米级 XY 扫描平台 Hardware Blocked |
 | 失效校准导入/导出、两套 UXM 诊断 error reader | → 非阻塞维护池（原 P3-20/P3-21） |
 | G11/p08/G20/变异保护等纯测试门精化、默认关闭 mock、已执行计划文字镜像 | → 非阻塞测试/文档维护池，不再编号 |

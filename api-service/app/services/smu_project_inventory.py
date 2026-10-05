@@ -601,6 +601,17 @@ def _preview_with_plans(
     for item in inventory.items:
         path_key = _normalise_windows_path(item.instrument_path)
         matches = assets_by_path.get(path_key or "", [])
+        # 先按已保存 owner 收窄；其他型号/停用历史的同路径不是当前资产歧义。
+        # 无权威候选时仍保留原冲突/未知诊断，不能由扫描认领历史归属。
+        owned_matches = [
+            candidate for candidate in matches
+            if candidate.is_active is True
+            and candidate.instrument_connection_id in (None, connection.id)
+            and candidate.instrument_model_id is not None
+            and candidate.instrument_model_id == connection.category.selected_model_id
+        ]
+        if owned_matches:
+            matches = owned_matches
         asset: ChannelAsset | None = None
         plan: _SyncPlan | None = None
         target_identity: ChannelFrequencyIdentity | None = None
@@ -621,6 +632,12 @@ def _preview_with_plans(
             elif asset.instrument_connection_id not in (None, connection.id):
                 sync_status = "binding_conflict"
                 detail = "命中资产已绑定另一仪器连接；拒绝跨绑定改写"
+            elif asset.instrument_model_id is None:
+                sync_status = "ownership_unknown"
+                detail = "历史文件归属待操作员显式确认；扫描内容不能证明仪器型号"
+            elif asset.instrument_model_id != connection.category.selected_model_id:
+                sync_status = "model_conflict"
+                detail = "文件属于另一仪器型号；拒绝跨型号扫描发布"
             else:
                 plan, sync_status, detail, target_identity = _candidate_plan(
                     db, connection, item, asset, projection_indexes,
@@ -715,6 +732,7 @@ def _upsert_projection(
         "description": plan.asset.description or f"SMU project truth: {plan.item.instrument_path}",
         "center_frequency_mhz": plan.item.primary_center_frequency_hz / 1e6,
         "channel_asset_id": str(plan.asset.id),
+        "instrument_model_id": str(plan.asset.instrument_model_id),
         **_projection_frequency_fields(
             plan.target_identity,
             declared_band=plan.payload["scd_config"]["band"],

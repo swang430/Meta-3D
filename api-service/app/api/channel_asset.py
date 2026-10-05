@@ -21,6 +21,7 @@ from app.services.channel_asset_service import (
     ChannelAssetError,
     ChannelAssetNotFound,
     create_channel_asset,
+    confirm_channel_asset_ownership,
     delete_channel_asset,
     get_channel_asset,
     list_channel_assets,
@@ -54,6 +55,7 @@ class ChannelAssetBase(BaseModel):
     k_factor_db: Optional[float] = None
     ue_velocity_mps: Optional[List[float]] = None
     instrument_connection_id: Optional[UUID] = None
+    instrument_model_id: Optional[UUID] = None
     associated_file_path: Optional[str] = None
 
 
@@ -81,6 +83,15 @@ class ChannelAssetResponse(ChannelAssetBase):
     payload: Dict[str, Any]
     allowed_targets: List[str]  # 派生只读 (源自 source_type)
     is_active: bool
+
+
+class ChannelAssetOwnershipConfirmation(BaseModel):
+    """操作员明确确认的同一批文件归属；服务端整批原子校验。"""
+
+    model_config = ConfigDict(extra="forbid")
+    asset_ids: List[UUID] = Field(..., min_length=1, max_length=100)
+    instrument_connection_id: UUID
+    instrument_model_id: UUID
 
 
 class SMUProjectSyncItemResponse(BaseModel):
@@ -148,6 +159,20 @@ def create_asset(req: ChannelAssetCreate, db: Session = Depends(get_db)):
 
 # Static routes must be registered before /{asset_id}; otherwise FastAPI/Starlette can route
 # "vendor-files" into the dynamic UUID sibling and return a misleading 422/404.
+@router.post("/vendor-files/confirm-ownership", response_model=List[ChannelAssetResponse])
+def confirm_vendor_file_ownership(
+    req: ChannelAssetOwnershipConfirmation, db: Session = Depends(get_db),
+):
+    try:
+        return confirm_channel_asset_ownership(
+            db, req.asset_ids, req.instrument_connection_id, req.instrument_model_id,
+        )
+    except ChannelAssetNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ChannelAssetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post(
     "/vendor-files/smu-scan",
     response_model=SMUProjectSyncPreviewResponse,

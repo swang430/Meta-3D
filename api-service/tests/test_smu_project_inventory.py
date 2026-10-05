@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.models.channel_asset import ChannelAsset
-from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services.channel_asset_service import create_channel_asset
 
 
@@ -213,6 +213,10 @@ def inventory_db(tmp_path: Path):
     )
     db.add(category)
     db.flush()
+    model = InstrumentModel(category_id=category.id, vendor="test", model="F64", capabilities={})
+    db.add(model)
+    db.flush()
+    category.selected_model_id = model.id
     connection = InstrumentConnection(
         category_id=category.id,
         connection_params={
@@ -251,6 +255,8 @@ def _create_vendor_asset(
     # valid and the scanner, not the CRUD uniqueness guard, decides the path status.
     scd["version"] = sum(ord(char) for char in name) + 1
     payload = {"scd_config": scd, **(payload_extra or {})}
+    connection = db.query(InstrumentConnection).join(InstrumentCategory).filter(
+        InstrumentCategory.category_key == "channelEmulator").one()
     asset = create_channel_asset(
         db,
         name=name,
@@ -259,12 +265,42 @@ def _create_vendor_asset(
         associated_file_path=path,
         center_frequency_hz=center_frequency_hz,
         bandwidth_mhz=bandwidth_mhz,
-        instrument_connection_id=binding_id,
+        instrument_connection_id=connection.id,
+        instrument_model_id=connection.category.selected_model_id,
     )
+    # 旧绑定形态由直接构造历史行模拟，不让现代 CRUD 隐式接受缺失归属。
+    asset.instrument_connection_id = binding_id
+    db.commit()
     if not active:
         asset.is_active = False
         db.commit()
     return asset
+
+
+@pytest.mark.parametrize("other_kind", ["other_model", "inactive", "other_connection"])
+def test_preview_chooses_active_saved_owner_before_path_ambiguity(inventory_db, other_kind):
+    from app.services.smu_project_inventory import preview_smu_project_sync
+
+    db, connection, root = inventory_db
+    _write_smu(root / "truth.smu", "[Channel Group 0]\nCenterFrequency=3549990000 Hz\n")
+    path = r"D:\Scenario Packs\truth.smu"
+    chosen = _create_vendor_asset(db, name="chosen", path=path, binding_id=connection.id)
+    other = _create_vendor_asset(db, name="historical", path=path, binding_id=connection.id)
+    if other_kind == "other_model":
+        model = InstrumentModel(category_id=connection.category_id, vendor="test", model="FS16", capabilities={})
+        db.add(model)
+        db.flush()
+        other.instrument_model_id = model.id
+    elif other_kind == "inactive":
+        other.is_active = False
+    else:
+        other.instrument_connection_id = uuid.uuid4()
+    db.commit()
+
+    row = preview_smu_project_sync(db).items[0]
+    assert row.sync_status == "syncable"
+    assert row.asset_id == chosen.id
+    assert other.payload.get("smu_project_truth") is None
 
 
 def test_preview_matches_only_the_complete_windows_path_and_migrates_null_binding(

@@ -15,9 +15,6 @@ from app.hal.lte_earfcn import lte_dl_earfcn_to_frequency_mhz, normalize_lte_ban
 from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
-from app.services.channel_emulator_model_preset import (
-    synchronize_saved_active_channel_emulator_preset_params,
-)
 from app.services.mimo_ota.channel_naming import (
     StandardChannelName,
     check_channel_filename_freq,
@@ -127,6 +124,7 @@ def create_scd(
     polarization: str,
     version: int = 1,
     description: Optional[str] = None,
+    instrument_model_id: Optional[UUID] = None,
 ) -> StandardChannelDefinition:
     """定义一个标准信道 (declared_only, 未关联文件)。标准名从规范配置算 (单一真值)。
 
@@ -136,6 +134,11 @@ def create_scd(
     """
     # 先校验 binding: 最根本的前置条件 (挂到哪台 F64), 失败比字段非法 / 重复更基础。
     _resolve_channel_emulator_binding(db, instrument_connection_id)
+    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    try:
+        validate_channel_asset_owner(db, instrument_connection_id, instrument_model_id)
+    except ValueError as exc:
+        raise StandardChannelError(str(exc)) from exc
     if radio_technology == "nr5g":
         if channel_kind != "nr_arfcn":
             raise StandardChannelError("NR SCD channel_kind 必须为 nr_arfcn")
@@ -172,6 +175,7 @@ def create_scd(
         db.query(StandardChannelDefinition)
         .filter(
             StandardChannelDefinition.instrument_connection_id == instrument_connection_id,
+            StandardChannelDefinition.instrument_model_id == instrument_model_id,
             StandardChannelDefinition.standard_name == standard_name,
         )
         .first()
@@ -183,6 +187,7 @@ def create_scd(
         )
     scd = StandardChannelDefinition(
         instrument_connection_id=instrument_connection_id,
+        instrument_model_id=instrument_model_id,
         radio_technology=radio_technology, channel_kind=channel_kind,
         band=band, arfcn=arfcn, lte_dl_earfcn=lte_dl_earfcn,
         bandwidth_mhz=bandwidth_mhz, model=model,
@@ -199,6 +204,8 @@ def create_scd(
 
 def list_scds(
     db: Session, *, instrument_connection_id: Optional[UUID] = None,
+    instrument_model_id: Optional[UUID] = None,
+    include_unknown: bool = False,
 ) -> List[StandardChannelDefinition]:
     """列标准信道; 给 instrument_connection_id 时只列该绑定的。"""
     q = db.query(StandardChannelDefinition)
@@ -206,6 +213,12 @@ def list_scds(
         q = q.filter(
             StandardChannelDefinition.instrument_connection_id == instrument_connection_id
         )
+    if instrument_model_id is not None:
+        condition = StandardChannelDefinition.instrument_model_id == instrument_model_id
+        if include_unknown:
+            from sqlalchemy import or_
+            condition = or_(condition, StandardChannelDefinition.instrument_model_id.is_(None))
+        q = q.filter(condition)
     return q.order_by(StandardChannelDefinition.standard_name).all()
 
 
@@ -276,12 +289,13 @@ def resolve_emulation_for_measure(
 def delete_scd(db: Session, scd_id: UUID) -> None:
     scd = get_scd(db, scd_id)
     binding_id = scd.instrument_connection_id
+    owner_id = scd.instrument_model_id
     had_file = scd.associated_file_path is not None
     db.delete(scd)
     db.flush()  # 让后续 projection 重建 query 看不到它
     if had_file:
         # 删掉的是已关联 SCD → synced projection 同步移除它的派生条目
-        _sync_projection_for_binding(db, binding_id)
+        _sync_projection_for_binding(db, binding_id, owner_id)
     db.commit()
 
 
@@ -333,11 +347,14 @@ def _scd_to_projection_entry(scd: StandardChannelDefinition) -> dict:
         "band": scd.band,
         **channel_identity,
         "scd_id": str(scd.id),
+        "instrument_model_id": str(scd.instrument_model_id),
     }
 
 
-def _sync_projection_for_binding(db: Session, instrument_connection_id: UUID) -> None:
-    """重建 F64 绑定的 available_channel_models = 该绑定所有"已关联文件"SCD 的派生条目
+def _sync_projection_for_binding(
+    db: Session, instrument_connection_id: UUID, instrument_model_id: Optional[UUID],
+) -> None:
+    """重建明确 owner 的 available_channel_models = 该连接/型号已关联 SCD 的派生条目
     + **保留**非 SCD 派生的存量手敲条目 (§9: 逐步收敛, 不 nuke)。
 
     SCD 派生条目按 ``scd_id`` 标记识别并整体重建 (天然处理新增/改关联/删除 —— 改关联时旧
@@ -346,35 +363,50 @@ def _sync_projection_for_binding(db: Session, instrument_connection_id: UUID) ->
     conn = db.get(InstrumentConnection, instrument_connection_id)
     if conn is None:
         return  # SCD 的 FK 保证存在; 防御性早返回
-    params = dict(conn.connection_params or {})
+    category = conn.category or db.get(InstrumentCategory, conn.category_id)
+    if category is None or instrument_model_id is None:
+        return  # 未知历史只读审计，不借活动型号补归属。
+    from app.services.channel_emulator_model_preset import parse_channel_emulator_model_presets
+    presets = parse_channel_emulator_model_presets(conn.channel_emulator_model_presets)
+    owner_key = str(instrument_model_id)
+    preset = presets.get(owner_key)
+    is_active = category.selected_model_id == instrument_model_id
+    if not is_active and preset is None:
+        raise StandardChannelError("非活动型号缺少已保存 preset，不能发布其信道资产")
+    params = dict(conn.connection_params or {}) if is_active else dict(preset.connection_params)
     existing = params.get("available_channel_models") or []
     # 保留非 SCD 派生条目 (没有 scd_id 标记的 = 存量手敲 / 别处来源)
-    preserved = [
-        e for e in existing
+    from app.models.channel_asset import ChannelAsset
+    from app.services.channel_asset_ownership import owned_channel_model_params
+    validated = owned_channel_model_params(db, instrument_connection_id, instrument_model_id,
+                                          {"available_channel_models": existing})
+    modern_ids = {str(row[0]) for row in db.query(ChannelAsset.id).all()}
+    preserved = [e for e in validated["available_channel_models"]
         if not (isinstance(e, dict) and e.get("scd_id"))
-    ]
+        or str(e.get("scd_id")) in modern_ids]
     associated = (
         db.query(StandardChannelDefinition)
         .filter(
             StandardChannelDefinition.instrument_connection_id == instrument_connection_id,
+            StandardChannelDefinition.instrument_model_id == instrument_model_id,
             StandardChannelDefinition.associated_file_path.isnot(None),
         )
         .order_by(StandardChannelDefinition.standard_name)
         .all()
     )
-    derived = [_scd_to_projection_entry(s) for s in associated]
+    derived = [_scd_to_projection_entry(s) for s in associated
+               if db.get(ChannelAsset, s.id) is None]
     params["available_channel_models"] = preserved + derived
+    params = owned_channel_model_params(db, instrument_connection_id, instrument_model_id, params)
     # 整体重新赋值 dict 触发 SQLAlchemy JSON 变更检测 (in-place mutate 不会被 track)
-    conn.connection_params = params
-    # P2-58 ②（W4）：这里是活动 connection_params 在 PUT 之外的写点之一 —— 同步进当前型号的
-    # saved preset，否则切型号再切回时 preset 会把这次 SCD 关联投影还原掉；没有 preset 则 no-op
-    # （镜像 api/instrument.py channel-models 增删端点的接法）。SCD 只能挂 channelEmulator 连接
-    # （create_scd 的 _resolve_channel_emulator_binding 已校验），这里不再判品类。
-    category = conn.category or db.get(InstrumentCategory, conn.category_id)
-    synchronize_saved_active_channel_emulator_preset_params(
-        selected_model_id=category.selected_model_id if category is not None else None,
-        connection=conn,
-    )
+    if preset is not None:
+        presets[owner_key] = preset.model_copy(update={"connection_params": params})
+        conn.channel_emulator_model_presets = {
+            key: value.model_dump(mode="json") for key, value in presets.items()
+        }
+    if is_active:
+        conn.connection_params = params
+    # 非活动型号仅发布到自己的 preset，活动镜像不得混入其他型号文件。
 
 
 def associate_file(
@@ -383,6 +415,7 @@ def associate_file(
     *,
     file_path: str,
     association_source: str = _ASSOCIATION_SOURCE_VENDOR,
+    instrument_model_id: Optional[UUID] = None,
 ) -> StandardChannelDefinition:
     """把一个实际 .smu 文件关联到 SCD, 并更新 synced projection。
 
@@ -394,6 +427,26 @@ def associate_file(
       (否则是把别的文件误标成 standard; 抓 mislabel)。
     """
     scd = get_scd(db, scd_id)
+    from app.models.channel_asset import ChannelAsset
+    if db.get(ChannelAsset, scd_id) is not None:
+        raise StandardChannelError("该 SCD 已迁移为现代资产，请在信道工作台编辑，不再写旧副本")
+    from app.services.channel_asset_ownership import validate_channel_asset_owner
+    owner = instrument_model_id if instrument_model_id is not None else scd.instrument_model_id
+    if scd.instrument_model_id is not None and owner != scd.instrument_model_id:
+        raise StandardChannelError("已知资产型号归属不能由文件关联隐式变更")
+    try:
+        validate_channel_asset_owner(db, scd.instrument_connection_id, owner,
+                                     require_selected=instrument_model_id is not None)
+    except ValueError as exc:
+        raise StandardChannelError(str(exc)) from exc
+    duplicate = db.query(StandardChannelDefinition).filter(
+        StandardChannelDefinition.id != scd.id,
+        StandardChannelDefinition.instrument_connection_id == scd.instrument_connection_id,
+        StandardChannelDefinition.instrument_model_id == owner,
+        StandardChannelDefinition.standard_name == scd.standard_name,
+    ).first()
+    if duplicate is not None:
+        raise StandardChannelError("目标连接/型号已有同名标准信道，不能确认归属")
     if not file_path or not isinstance(file_path, str):
         raise StandardChannelError("file_path 必须为非空字符串")
     if association_source not in _VALID_ASSOCIATION_SOURCES:
@@ -431,7 +484,9 @@ def associate_file(
     scd.associated_file_path = file_path
     scd.association_source = association_source
     db.flush()  # 让 projection 重建 query 看到本次关联 (不赌 session autoflush)
-    _sync_projection_for_binding(db, scd.instrument_connection_id)
+    scd.instrument_model_id = owner
+    db.flush()
+    _sync_projection_for_binding(db, scd.instrument_connection_id, owner)
     db.commit()
     db.refresh(scd)
     return scd

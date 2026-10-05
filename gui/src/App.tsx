@@ -2586,8 +2586,11 @@ function EquipmentManager() {
                         }}
                       />
                       <ChannelModelsCard categoryKey={category.key} />
-                      {category.connection?.id && (
-                        <StandardChannelDefinitionCard connectionId={category.connection.id} />
+                      {category.connection?.id && category.selectedModelId ? (
+                        <StandardChannelDefinitionCard key={`${category.connection.id}:${category.selectedModelId}`} connectionId={category.connection.id} modelId={category.selectedModelId}
+                          ownerLabel={category.models.find((model) => model.id === category.selectedModelId)?.model ?? '未保存型号'} endpoint={category.connection.endpoint ?? ''} />
+                      ) : (
+                        <Text size="sm" c="dimmed">请先保存信道仿真器型号，再管理标准信道。</Text>
                       )}
                       <Card withBorder padding="md" radius="md">
                         <Stack gap="xs">

@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.database import Base, get_db
 from app.main import app
 from app.models.channel_asset import ChannelAsset
-from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.services.channel_asset_service import create_channel_asset
 
 
@@ -46,6 +46,10 @@ def scan_api(tmp_path: Path):
     )
     db.add(category)
     db.flush()
+    model = InstrumentModel(category_id=category.id, vendor="Keysight", model="F64", capabilities={})
+    db.add(model)
+    db.flush()
+    category.selected_model_id = model.id
     connection = InstrumentConnection(
         category_id=category.id,
         connection_params={
@@ -58,6 +62,7 @@ def scan_api(tmp_path: Path):
     )
     db.add(connection)
     db.commit()
+    db.info["vendor_owner"] = {"instrument_connection_id": connection.id, "instrument_model_id": model.id}
 
     def override_db():
         yield db
@@ -85,6 +90,7 @@ def _seed_syncable(db, root: Path) -> ChannelAsset:
         db,
         name="api-truth",
         source_type="vendor_file",
+        **db.info["vendor_owner"],
         payload={"scd_config": dict(_SCD)},
         associated_file_path=r"D:\Scenario Packs\pack\truth.smu",
         center_frequency_hz=3_600_000_000,
