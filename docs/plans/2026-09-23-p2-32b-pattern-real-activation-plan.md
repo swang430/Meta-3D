@@ -1,5 +1,10 @@
 # P2-32B 探头方向图真实入口闭环实施计划
 
+> 2026-10-05 最终收口边界：用户批准先交付安全软件片。当前无权威天线口径冻结源，
+> Real 必须在首次 I/O 前拒绝；历史实测行可审计但不可正式消费。扫描、路由和清理路径以
+> 明确注入的受控口径测试验证，不声称真实采集已开放。厂商导入继续正式消费。
+> X-Series/FSW 标量功率手册来源与权威口径分别作为后续阻塞项，不能靠测试 fixture 解除。
+
 > **For Codex:** 按 `executing-plans` 与 `test-driven-development` 逐任务执行；每个生产改动必须先有
 > 能在旧实现上失败的行为测试。严格 WIP=1，不启动 P2-32C 或其他 feature。
 
@@ -8,11 +13,21 @@
 
 **Architecture:** API 只调用 `PatternCalibrationService`。Real 由服务在首次 I/O 前通过
 `resolve_rf_chains` 一次性解析全部 requested `(probe, polarization)`，并把冻结身份与 warning
-写入每条 `ProbePattern`。厂商导入方向图保持 route-independent；现场实测方向图只有在当前
-LabProfile/Topology/chain/CE-port 与冻结值一致时才可被正式执行消费。GUI 只提交显式模式和
+写入每条 `ProbePattern`。厂商导入方向图保持 route-independent；现场实测方向图必须证明
+权威口径与当前 LabProfile/Topology/chain/CE-port 一致，当前缺口径冻结源时仅审计、不正式消费。GUI 只提交显式模式和
 操作员参数，不允许手填硬件端口，也不重算服务器 verdict。
 
 **Spec:** `docs/plans/2026-09-23-p2-32b-pattern-real-activation-design.md`
+
+## 2026-10-05 收尾验收与七步闭环
+
+1. R1 三条功能缺陷：逐链真实路损证书换源；去掉猜测口径，缺权威口径首个 I/O 前拒绝；X-Series/FSW 不再把 trace dBm 算术平均当标量功率。
+2. 共同正式资格：consumer、validity、JSON/PDF 同源；历史实测仅审计，厂商来源独立判断；缺测不补零。
+3. 对称路径：路由证书先按 LabProfile/topology 筛选再取 latest；warnings 进入 PDF；厂商过期状态保留 expired 且 formal_eligible=false。
+4. 回归：受影响链命令为 `python -m pytest tests/test_p2_32b_pattern_real_activation.py tests/test_probe_pattern_real.py tests/test_probe_calibration_service.py tests/test_p1_60_execution_truth_alignment.py tests/test_calibration_report.py tests/test_probe_calibration_api.py tests/test_probe_calibration_integration.py tests/test_probe_calibration_models.py tests/test_probe_calibration_schemas.py tests/test_p2_30_task_level_lease.py tests/test_path_loss_ce_sa.py tests/test_propsim_calibration_tone.py tests/test_rule_gates.py -q --tb=short --color=no -o log_cli=false`，最终受控工作树 `481 passed`。GUI `node --experimental-strip-types --test src/features/ProbeCalibration/patternMeasurement.test.ts` 为 5 passed；`npm run build` 通过；compileall、diff-check 通过，单一 Alembic head `b9d2f4a6c8e0`，临时 SQLite upgrade head 通过。
+5. 全量隔离：默认环境全量 6 failed/6774 passed/5 skipped，6 条均在旧 F64 端点测试访问未启动的 localhost:5432 时失败；不改生产代码或跳过测试。临时 SQLite 完整模型库下该文件 45 passed；最终完整全量使用同一隔离库，`DATABASE_URL=sqlite:////tmp/p2-32b-validation.1iwfus/test.db .venv/bin/python -m pytest -q --tb=short --color=no -o log_cli=false`，最终工作树输出 `6780 passed, 5 skipped, 5383 warnings in 150.22s`。重复运行原因是这项数据库环境缺口和尾审 PDF/validity 修复，不隐去失败记录。
+6. 独立功能尾审无 P1，两处本片 P2 已 RED→GREEN 并复核关闭；R1 回复后只对已确认最新 PR HEAD 请求一次 R2，最新 HEAD 无 P1 才合并，台账以 PR 评论记录。
+7. 合并后 main ff-only 同步、运行库 migration 和仅本片 worktree/分支清理；实际 PostgreSQL 未启动时迁移显式待办，不把临时库通过冒充运行库升级。随后暂停，不启动 P2-32C。
 
 ## 全局约束
 
@@ -133,7 +148,7 @@ Commit message: `feat: freeze RF routes for real pattern scans`
 
 - `vendor_datasheet + use_mock=false` 在 chamber/frequency/source/有效期合法时继续可用；
 - `simulated`、`use_mock=true`、`use_mock=NULL` 不可正式消费；
-- 新 `in_chamber_measured` 完整路由且与当前解析一致时可用；
+- 新 `in_chamber_measured` 即使完整路由匹配，缺冻结权威口径仍不可正式消费；
 - 缺任一冻结字段、LabProfile/topology/chain/CE-port 漂移时不可用；
 - MIMO MEASURE 与 PRECHECK 都传同一 execution LabProfile/operating mode；
 - 报告方向图行 `validation_pass=null`，不进入 passed/failed 分母；

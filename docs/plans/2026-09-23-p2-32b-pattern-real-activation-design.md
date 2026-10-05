@@ -1,5 +1,15 @@
 # P2-32B 探头方向图真实入口闭环设计
 
+## 最终交付边界（2026-10-05，用户批准安全收口）
+
+本片交付生产入口、显式模式、冻结路由及统一正式资格门，PR #497 合并前仍为唯一 WIP。
+当前模型没有把参考/探头天线的权威最大口径绑定并冻结；NF-to-FF 未实现，因此 Real 在首次
+硬件 I/O 前拒绝，不能用固定 0.1 m 口径判远场。历史现场实测方向图保留审计展示，consumer、
+validity、JSON/PDF 共同判定 formal_eligible=false；厂商方向图保持独立正式消费。
+X-Series/FSW 的频谱 dBm bin 平均值已移除，取得可核对手册出处的标量 channel-power 读取前
+拒绝 CE+SA 实测。解除这两项阻塞须另片设计；P2-32C 仍只记录 XY 扫描平台阻塞。
+下文描述冻结扫描机制的部分以受控测试验证，下述安全边界决定当前生产可达性。
+
 ## 可观察故障
 
 系统已经有 `PatternCalibrationService` 的 CE+SA+转台真实测量实现和定点测试，但生产入口
@@ -122,8 +132,9 @@ OperationalLab.id + OperationalLab.chamberId
   报告 PASS 分母。
 - `source=simulated` / `use_mock=true`：仅诊断展示。
 
-正式消费现场实测方向图时，重新解析当前 LabProfile/Topology，并要求
+现场实测方向图的审计资格评估重新解析当前 LabProfile/Topology，并要求
 `lab_profile_id + operating_mode + topology_id + chain_id + ce_port` 与冻结值精确匹配。
+即使路由一致，缺少冻结权威口径的现场实测方向图仍不可正式消费。
 厂商导入方向图只按 chamber/probe/polarization/frequency/source/有效期校验，不伪造路由绑定。
 
 ## 测量值与判决语义

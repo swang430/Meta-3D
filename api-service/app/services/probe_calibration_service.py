@@ -24,6 +24,7 @@ from app.models.probe_calibration import (
     ProbePhaseCalibration,
     ProbePolarizationCalibration,
     ProbePattern,
+    ProbePathLossCalibration,
     LinkCalibration,
     ProbeCalibrationValidity,
     CalibrationStatus,
@@ -1490,6 +1491,23 @@ class PatternCalibrationService:
         self.instruments = instruments
 
     @staticmethod
+    def _resolve_authoritative_antenna_aperture_m(
+        db: Session,
+        *,
+        reference_antenna_id: Optional[str],
+    ) -> Optional[float]:
+        """Return a configured, auditable aperture when a truth source exists.
+
+        No current model binds ``reference_antenna_id`` to a certified maximum
+        antenna dimension.  Returning ``None`` is deliberate: real measured
+        patterns must stay blocked rather than proving far field with a guessed
+        0.1 m diameter.  A separately scoped follow-up must introduce that
+        configuration and freeze it before real acquisition can be activated.
+        """
+        _ = (db, reference_antenna_id)
+        return None
+
+    @staticmethod
     def _resolve_pattern_chain_corrections(
         db: Session,
         *,
@@ -1512,31 +1530,36 @@ class PatternCalibrationService:
             normalize_rf_chain_identity,
         )
         from app.services.path_loss_calibration_service import (
-            ProbePathLossCalibrationService,
             calculate_fspl,
+            select_latest_path_loss_by_mode,
         )
 
-        selection = ProbePathLossCalibrationService(
-            db, use_mock=False
-        ).resolve_latest_calibration(
-            chamber_id,
-            frequency_mhz,
-            operating_mode=operating_mode,
-            require_real=True,
+        # Identity is part of candidate selection, not a post-selection check.
+        # Otherwise a newer certificate for another LabProfile/topology masks
+        # an older still-valid exact certificate.
+        try:
+            certificate_topology_id = UUID(str(topology_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Frozen pattern topology id is not a canonical UUID"
+            ) from exc
+        now = datetime.utcnow()
+        query = db.query(ProbePathLossCalibration).filter(
+            ProbePathLossCalibration.chamber_id == chamber_id,
+            ProbePathLossCalibration.lab_profile_id == lab_profile_id,
+            ProbePathLossCalibration.topology_id == certificate_topology_id,
+            ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+            ProbePathLossCalibration.valid_until > now,
+            ProbePathLossCalibration.use_mock.is_(False),
+            ProbePathLossCalibration.frequency_mhz.between(
+                frequency_mhz * 0.95, frequency_mhz * 1.05
+            ),
         )
-        certificate = selection.certificate
+        certificate = select_latest_path_loss_by_mode(query, operating_mode)
         if certificate is None:
             raise ValueError(
                 "Real pattern calibration requires a valid real per-chain "
-                f"path-loss certificate ({selection.reason})"
-            )
-        if (
-            certificate.lab_profile_id != lab_profile_id
-            or str(certificate.topology_id) != str(topology_id)
-        ):
-            raise ValueError(
-                "Path-loss certificate LabProfile/topology does not match the "
-                "frozen pattern route"
+                "path-loss certificate for the frozen LabProfile/topology"
             )
         entries = certificate.path_loss_db_by_rf_chain
         if not isinstance(entries, dict):
@@ -1673,19 +1696,32 @@ class PatternCalibrationService:
                     message=f"Invalid probe_id {probe_id}"
                 )
 
-        # 验证远场条件 (假设探头口径约 0.1m)
-        antenna_diameter_m = 0.1
-        is_far_field, min_distance = validate_far_field_condition(
-            measurement_distance_m, antenna_diameter_m, frequency_mhz
-        )
-
         warnings: List[str] = []
-        if not is_far_field:
-            warnings.append(
-                f"Measurement distance {measurement_distance_m}m may not satisfy "
-                f"far-field condition (min: {min_distance:.2f}m)"
+        if not use_mock:
+            antenna_diameter_m = self._resolve_authoritative_antenna_aperture_m(
+                db,
+                reference_antenna_id=reference_antenna_id,
             )
-            if not use_mock:
+            if antenna_diameter_m is None:
+                return CalibrationResult(
+                    success=False,
+                    message=(
+                        "Real pattern calibration requires an authoritative antenna "
+                        "aperture frozen from reference/probe configuration; no such "
+                        "truth source exists and NF-to-FF conversion is not implemented"
+                    ),
+                    warnings=warnings,
+                )
+            is_far_field, min_distance = validate_far_field_condition(
+                measurement_distance_m,
+                antenna_diameter_m,
+                frequency_mhz,
+            )
+            if not is_far_field:
+                warnings.append(
+                    f"Measurement distance {measurement_distance_m}m does not satisfy "
+                    f"far-field condition (min: {min_distance:.2f}m)"
+                )
                 return CalibrationResult(
                     success=False,
                     message=(
@@ -2670,15 +2706,65 @@ class CalibrationValidityService:
             result["polarization"] = self._get_calibration_status(polarization, now, expiring_threshold)
 
         # 检查方向图校准
-        pattern = db.query(ProbePattern).filter(
+        patterns = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
             ProbePattern.chamber_id == chamber_id,
             ProbePattern.status != CalibrationStatus.INVALIDATED.value,
             ProbePattern.use_mock.is_(False),
-        ).order_by(desc(ProbePattern.measured_at)).first()
+        ).order_by(desc(ProbePattern.measured_at)).all()
 
-        if pattern:
-            result["pattern"] = self._get_calibration_status(pattern, now, expiring_threshold)
+        if patterns:
+            from app.services.probe_pattern.consumer import (
+                evaluate_probe_pattern_formal_eligibility,
+            )
+
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            num_probes = chamber.num_probes if chamber is not None else 0
+            route_cache: Dict[Any, Any] = {}
+            assessments = [
+                (
+                    pattern,
+                    evaluate_probe_pattern_formal_eligibility(
+                        db,
+                        pattern,
+                        num_probes=num_probes,
+                        route_cache=route_cache,
+                        now=now,
+                    ),
+                )
+                for pattern in patterns
+            ]
+            eligible = next(
+                (item for item in assessments if item[1].formal_eligible),
+                None,
+            )
+            if eligible is not None:
+                pattern, assessment = eligible
+                result["pattern"] = self._get_calibration_status(
+                    pattern, now, expiring_threshold
+                )
+                result["pattern"]["formal_eligible"] = True
+                result["pattern"]["eligibility_reasons"] = []
+            else:
+                pattern, assessment = assessments[0]
+                result["pattern"] = {
+                    "calibration_id": str(pattern.id),
+                    "valid_until": (
+                        pattern.valid_until.isoformat()
+                        if pattern.valid_until is not None
+                        else None
+                    ),
+                    "status": "unknown",
+                    "formal_eligible": False,
+                    "eligibility_reasons": list(assessment.reasons),
+                }
+                # 厂商来源的明确过期状态不能折叠成现场证据缺失的 unknown。
+                if (pattern.source == "vendor_datasheet"
+                        and pattern.use_mock is False
+                        and pattern.valid_until is not None
+                        and pattern.valid_until < now):
+                    result["pattern"].update(self._get_calibration_status(
+                        pattern, now, expiring_threshold))
 
         # 检查链路校准 (链路校准是全局的，不是按探头分的)
         # 这里返回最新的链路校准状态

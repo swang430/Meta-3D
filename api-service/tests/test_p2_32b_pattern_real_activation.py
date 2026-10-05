@@ -27,16 +27,24 @@ from app.services.calibration.rf_chain_resolver import (
 from app.services.calibration_report_generator import CalibrationReportGenerator
 from app.services.probe_calibration_service import (
     CalibrationResult,
+    CalibrationValidityService,
     PatternCalibrationService,
     PatternMeasurement,
 )
 from app.services.path_loss_calibration_service import calculate_fspl
 from app.services.mimo_ota.switch_orchestrator import _build_probe_binding
-from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
+from app.services.probe_pattern.consumer import (
+    evaluate_probe_pattern_formal_eligibility,
+    get_probe_gain_at_azimuth,
+)
+from app.services.pdf_generator import PDFGenerator
 
 
 _REAL_CHAIN_CORRECTION_RESOLVER = (
     PatternCalibrationService._resolve_pattern_chain_corrections
+)
+_REAL_ANTENNA_APERTURE_RESOLVER = (
+    PatternCalibrationService._resolve_authoritative_antenna_aperture_m
 )
 
 
@@ -55,6 +63,11 @@ def _default_pattern_chain_corrections(monkeypatch):
                 pair: 0.0 for pair in kwargs["route_by_pair"]
             }
         ),
+    )
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_authoritative_antenna_aperture_m",
+        staticmethod(lambda _db, **_kwargs: 0.1),
     )
 
 
@@ -696,6 +709,7 @@ def test_consumer_rejects_historical_near_field_measured_pattern(monkeypatch):
     db = _session()
     lab_profile_id = uuid4()
     chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
     chain = RFChainSpec("chain-1", "B1.1", 1, "V")
     monkeypatch.setattr(
         "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
@@ -739,8 +753,17 @@ def test_consumer_rejects_historical_near_field_measured_pattern(monkeypatch):
         chamber_id=chamber_id,
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
-    ) == pytest.approx(5.0)
+    ) is None
 
+    assessment = evaluate_probe_pattern_formal_eligibility(
+        db,
+        db.query(ProbePattern).filter(ProbePattern.frequency_mhz == 3500.0).one(),
+        num_probes=1,
+        expected_lab_profile_id=lab_profile_id,
+        expected_operating_mode="mimo_ota",
+    )
+    assert assessment.formal_eligible is False
+    assert assessment.reasons == ("authoritative_antenna_aperture_missing",)
     assert get_probe_gain_at_azimuth(
         db,
         1,
@@ -968,10 +991,28 @@ def test_measured_pattern_requires_current_frozen_route(monkeypatch):
         chamber_id=chamber_id,
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
-    ) == 6.0
+    ) is None
 
+    pattern = db.query(ProbePattern).one()
+    assessment = evaluate_probe_pattern_formal_eligibility(
+        db,
+        pattern,
+        num_probes=1,
+        expected_lab_profile_id=lab_profile_id,
+        expected_operating_mode="mimo_ota",
+    )
+    assert assessment.formal_eligible is False
+    assert "probe_id_namespace_ambiguous" not in assessment.reasons
+    assert "current_chain_missing_or_ambiguous" not in assessment.reasons
+    assert "current_chain_identity_mismatch" not in assessment.reasons
     matching.ce_port = "B9.9"
     db.commit()
+    assessment = evaluate_probe_pattern_formal_eligibility(
+        db, matching, num_probes=1,
+        expected_lab_profile_id=lab_profile_id,
+        expected_operating_mode="mimo_ota",
+    )
+    assert "current_chain_identity_mismatch" in assessment.reasons
     assert get_probe_gain_at_azimuth(
         db,
         1,
@@ -1131,7 +1172,7 @@ def test_measured_pattern_maps_zero_based_pattern_id_to_one_based_current_route(
         chamber_id=chamber_id,
         lab_profile_id=lab_profile_id,
         operating_mode="mimo_ota",
-    ) == 6.0
+    ) is None
     db.close()
 
 
@@ -1248,6 +1289,252 @@ def test_pattern_only_audit_report_keeps_pass_rate_undetermined(monkeypatch, tmp
         "undetermined": 1,
         "pass_rate": None,
     }
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_real_pattern_rejects_missing_authoritative_antenna_aperture_before_io(
+    monkeypatch,
+):
+    """A guessed 0.1 m aperture cannot prove that a real sweep is far-field."""
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [chain]
+        ),
+    )
+    service = PatternCalibrationService()
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_authoritative_antenna_aperture_m",
+        staticmethod(_REAL_ANTENNA_APERTURE_RESOLVER),
+    )
+    service._real_pattern_measurements = AsyncMock()
+
+    result = await service.execute_pattern_calibration(
+        db=db,
+        lab_profile_id=lab_profile_id,
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarizations=[PolarizationType.V],
+        frequency_mhz=3500.0,
+        measurement_distance_m=3.0,
+        calibrated_by="operator",
+        use_mock=False,
+    )
+
+    assert result.success is False
+    assert "antenna aperture" in result.message
+    service._real_pattern_measurements.assert_not_awaited()
+    assert db.query(ProbePattern).count() == 0
+    db.close()
+
+
+def test_measured_pattern_without_frozen_aperture_is_not_formally_consumed(
+    monkeypatch,
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    monkeypatch.setattr(
+        "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
+        lambda *_args, **_kwargs: _resolution(
+            lab_profile_id, chamber_id, [chain]
+        ),
+    )
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="topology-1",
+            chain_id="chain-1",
+            ce_port="B1.1",
+            measurement_distance_m=3.0,
+        )
+    )
+    db.commit()
+
+    assert get_probe_gain_at_azimuth(
+        db,
+        1,
+        0.0,
+        3500.0,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+    ) is None
+    db.close()
+
+
+def test_validity_and_report_share_measured_pattern_ineligibility():
+    db = _session()
+    lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    db.add(
+        _pattern(
+            probe_id=0,
+            chamber_id=chamber_id,
+            lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota",
+            topology_id="stale-topology",
+            chain_id="stale-chain",
+            ce_port="stale-port",
+            measurement_distance_m=3.0,
+        )
+    )
+    db.commit()
+
+    validity = CalibrationValidityService().check_validity(
+        db, probe_id=0, chamber_id=chamber_id
+    )
+    assert validity["pattern"]["status"] == "unknown"
+    assert validity["overall_status"] != "valid"
+
+    report = CalibrationReportGenerator(db)._collect_probe_data(
+        chamber_id=chamber_id,
+        calibration_type="pattern",
+    )
+    row = report["probe_calibration"]["pattern"][0]
+    assert row["formal_eligible"] is False
+    assert "authoritative_antenna_aperture_missing" in row["eligibility_reasons"]
+    db.close()
+
+
+def test_expired_vendor_pattern_remains_expired_without_formal_eligibility():
+    db = _session()
+    chamber_id = uuid4()
+    _add_chamber(db, chamber_id, num_probes=1)
+    db.add(_pattern(probe_id=0, chamber_id=chamber_id,
+                    source="vendor_datasheet", use_mock=False,
+                    valid_until=datetime.now() - timedelta(days=1)))
+    db.commit()
+    state = CalibrationValidityService().check_validity(
+        db, probe_id=0, chamber_id=chamber_id)["pattern"]
+    assert state["status"] == "expired"
+    assert state["formal_eligible"] is False
+    db.close()
+
+
+def test_pattern_pdf_renders_source_route_and_formal_eligibility():
+    elements = PDFGenerator()._generate_calibration_probe_section({
+        "probe_calibration": {
+            "pattern": [{
+                "probe_id": 0,
+                "source": "in_chamber_measured",
+                "lab_profile_id": "lab-1",
+                "topology_id": "topology-1",
+                "chain_id": "chain-1",
+                "ce_port": "B1.1",
+                "formal_eligible": False,
+                "eligibility_reasons": [
+                    "authoritative_antenna_aperture_missing"
+                ],
+                "validation_pass": None,
+                "calibrated_at": "2026-09-23 12:00:00",
+                "warnings": ["CE stop not confirmed <raw>"],
+            }],
+        },
+    })
+    rendered_parts = []
+    for element in elements:
+        rendered_parts.append(str(getattr(element, "text", "")))
+        for row in getattr(element, "_cellvalues", []):
+            for cell in row:
+                rendered_parts.append(str(getattr(cell, "text", cell)))
+    rendered = " ".join(rendered_parts)
+
+    assert "in_chamber_measured" in rendered
+    assert "topology-1 / chain-1 / B1.1" in rendered
+    assert "authoritative_antenna_aperture_missing" in rendered
+    assert "CE stop not confirmed &lt;raw&gt;" in rendered
+
+
+def test_chain_correction_selects_matching_certificate_before_newer_other_route(
+    monkeypatch,
+):
+    db = _session()
+    lab_profile_id = uuid4()
+    other_lab_profile_id = uuid4()
+    chamber_id = uuid4()
+    topology_id = uuid4()
+    other_topology_id = uuid4()
+    chain = RFChainSpec("chain-1", "B1.1", 1, "V")
+    fspl = calculate_fspl(3500.0, 3.0)
+    now = datetime.utcnow()
+    common = {
+        "chamber_id": chamber_id,
+        "frequency_mhz": 3500.0,
+        "probe_path_losses": {},
+        "sgh_model": "SGH",
+        "sgh_gain_dbi": 10.0,
+        "use_mock": False,
+        "measurement_distance_m": 3.0,
+        "avg_path_loss_db": 0.0,
+        "max_path_loss_db": 0.0,
+        "min_path_loss_db": 0.0,
+        "std_dev_db": 0.0,
+        "valid_until": now + timedelta(days=30),
+        "status": "valid",
+        "operating_mode": "mimo_ota",
+    }
+    db.add_all([
+        ProbePathLossCalibration(
+            **common,
+            lab_profile_id=lab_profile_id,
+            topology_id=topology_id,
+            calibrated_at=now - timedelta(minutes=1),
+            path_loss_db_by_rf_chain={
+                "chain-1": {
+                    "probe_id": 1,
+                    "polarization": "V",
+                    "ce_port": "B1.1",
+                    "total_insertion_loss_db": fspl + 1.25,
+                }
+            },
+        ),
+        ProbePathLossCalibration(
+            **common,
+            lab_profile_id=other_lab_profile_id,
+            topology_id=other_topology_id,
+            calibrated_at=now,
+            path_loss_db_by_rf_chain={
+                "chain-1": {
+                    "probe_id": 1,
+                    "polarization": "V",
+                    "ce_port": "B1.1",
+                    "total_insertion_loss_db": fspl + 9.0,
+                }
+            },
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_pattern_chain_corrections",
+        staticmethod(_REAL_CHAIN_CORRECTION_RESOLVER),
+    )
+
+    corrections = PatternCalibrationService._resolve_pattern_chain_corrections(
+        db,
+        chamber_id=chamber_id,
+        lab_profile_id=lab_profile_id,
+        operating_mode="mimo_ota",
+        frequency_mhz=3500.0,
+        topology_id=str(topology_id),
+        route_by_pair={(0, "V"): chain},
+    )
+
+    assert corrections == pytest.approx({(0, "V"): 1.25})
     db.close()
 
 

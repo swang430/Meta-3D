@@ -1347,8 +1347,8 @@ class TestPatternCalibrationService:
         assert result.success is False
 
     @pytest.mark.asyncio
-    async def test_execute_pattern_calibration_far_field_warning(self, db_session):
-        """测试远场条件警告"""
+    async def test_mock_pattern_does_not_claim_physical_far_field(self, db_session):
+        """Mock scans stay simulated without assuming a physical aperture."""
         service = PatternCalibrationService()
 
         result = await service.execute_pattern_calibration(
@@ -1364,10 +1364,13 @@ class TestPatternCalibrationService:
             use_mock=True
         )
 
-        # 应该成功但有警告
         assert result.success is True
-        assert len(result.warnings) > 0
-        assert "far-field" in result.warnings[0].lower()
+        pattern = db_session.query(ProbePattern).filter_by(
+            chamber_id=TEST_CHAMBER_ID, probe_id=1
+        ).order_by(ProbePattern.measured_at.desc()).first()
+        assert pattern.use_mock is True
+        assert pattern.source == "simulated"
+        assert not any("far-field" in warning.lower() for warning in result.warnings)
 
     def test_mock_pattern_measurements(self):
         """测试 mock 方向图测量数据"""
@@ -1962,6 +1965,7 @@ class TestCalibrationValidityService:
         pattern_cal = ProbePattern(
             chamber_id=TEST_CHAMBER_ID,
             use_mock=False,
+            source="vendor_datasheet",
             probe_id=probe_id,
             polarization="V",
             frequency_mhz=3500,

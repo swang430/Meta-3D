@@ -35,7 +35,11 @@ from app.models.channel_calibration import (
     ChannelQuietZoneCalibration,
     EISValidation,
 )
+from app.models.chamber import ChamberConfiguration
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_report
+from app.services.probe_pattern.consumer import (
+    evaluate_probe_pattern_formal_eligibility,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -689,8 +693,17 @@ class CalibrationReportGenerator:
             patterns = query.order_by(desc(ProbePattern.measured_at)).limit(100).all()
 
             pattern_data = []
+            chamber = self.db.get(ChamberConfiguration, chamber_id)
+            num_probes = chamber.num_probes if chamber is not None else 0
+            route_cache: Dict[Any, Any] = {}
             for pat in patterns:
                 is_valid = _probe_pattern_validation_pass(pat)
+                eligibility = evaluate_probe_pattern_formal_eligibility(
+                    self.db,
+                    pat,
+                    num_probes=num_probes,
+                    route_cache=route_cache,
+                )
                 if is_valid is not None:
                     total += 1
                     if is_valid:
@@ -703,6 +716,8 @@ class CalibrationReportGenerator:
                     'probe_id': pat.probe_id,
                     'frequency_mhz': pat.frequency_mhz,
                     'validation_pass': is_valid,
+                    'formal_eligible': eligibility.formal_eligible,
+                    'eligibility_reasons': list(eligibility.reasons),
                     'use_mock': pat.use_mock,
                     'source': pat.source,
                     'warnings': pat.warnings,

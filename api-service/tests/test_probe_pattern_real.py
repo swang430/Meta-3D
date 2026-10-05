@@ -47,6 +47,13 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(autouse=True)
 def _setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
+    # A controlled aperture isolates downstream routing/acquisition behavior.
+    # The production missing-source rejection is covered in P2-32B tests.
+    monkeypatch.setattr(
+        PatternCalibrationService,
+        "_resolve_authoritative_antenna_aperture_m",
+        staticmethod(lambda _db, **_kwargs: 0.1),
+    )
     monkeypatch.setattr(
         "app.services.calibration.rf_chain_resolver.resolve_rf_chains",
         lambda *_args, **_kwargs: RFChainResolution(
