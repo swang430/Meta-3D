@@ -5,6 +5,7 @@ API 请求审计中间件
 用于联调期间快速定位 "前端发了什么、后端怎么回的" 问题。
 
 排除高频轮询路径（health, monitoring/metrics）以避免日志洪泛。
+P2-82 另对三个精确 GET 轮询路径仅省略 2xx 审计汇总行。
 """
 
 import time
@@ -45,6 +46,15 @@ EXCLUDED_PATHS = (
     "/api/v1/system-logs/tail",
     "/api/v1/system-logs/frontend",
 )
+
+# P2-82：主控台最近执行、系统就绪、告警计数的只读轮询。
+# 精确匹配方法/路径/2xx；不把详情、导出、写入或重定向一起静音。
+# 旧 EXCLUDED_PATHS 的排除语义保持不变，下游日志和请求上下文均照常。
+SUCCESSFUL_GET_POLL_PATHS = frozenset({
+    "/api/v1/test-executions",
+    "/api/v1/instruments/hal/readiness",
+    "/api/v1/dashboard/alerts/summary",
+})
 
 
 class AuditMiddleware:
@@ -169,6 +179,8 @@ class AuditMiddleware:
 
             duration_ms = (time.perf_counter() - start_time) * 1000
             if excluded and status < 400:
+                return
+            if method == "GET" and path in SUCCESSFUL_GET_POLL_PATHS and 200 <= status < 300:
                 return
 
             log_msg = f"{method} {path} → {status} ({duration_ms:.0f}ms) [{client_ip}]"
