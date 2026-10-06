@@ -31,6 +31,7 @@ import {
   projectBaseStationBindingTruth,
   projectBaseStationCompatibilityTruth,
   projectReadinessVerdict,
+  projectBaseStationCertificationTruth,
 } from './baseStationBindingTruth'
 import { projectChannelEmulatorBindingTruth } from './channelEmulatorBindingTruth'
 import type {
@@ -166,26 +167,11 @@ function buildCells(report: HALReadinessResponse): Cell[] {
             valueText: '仅诊断 · UNKNOWN/N/A',
             detail: channelCertification?.detail ?? '服务器未返回信道仿真器现场认证投影',
           }
-  const certification = report.base_station_site_certification
-  const certificationMatches = certification?.status === 'active'
-    && certification.binding_digest === report.base_station_binding?.binding_digest
-  const baseStationBinding = rawBaseStationBinding.light !== 'green'
-    ? rawBaseStationBinding
-    : certificationMatches
-      ? {
-          ...rawBaseStationBinding,
-          valueText: `${rawBaseStationBinding.valueText} · 已现场认证`,
-          detail: `${rawBaseStationBinding.detail} · 现场认证 ${certification.certified_at}`,
-        }
-      : {
-          light: 'yellow' as const,
-          valueText: '仅诊断 · 未取得匹配现场认证',
-          detail: certification?.status === 'revoked'
-            ? `${rawBaseStationBinding.detail} · 现场认证已撤销`
-            : certification
-              ? `${rawBaseStationBinding.detail} · 现场认证与当前 binding 不匹配`
-              : `${rawBaseStationBinding.detail} · 当前 connection 尚无现场认证`,
-        }
+  const baseStationBinding = projectBaseStationCertificationTruth(
+    rawBaseStationBinding, report.base_station_site_certification,
+    report.base_station_site_certification_status, report.base_station_site_certification_error,
+    report.base_station_binding?.binding_digest,
+  )
   const calValue =
     cal.status === 'valid'
       ? typeof cal.days_remaining === 'number'

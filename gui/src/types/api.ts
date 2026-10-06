@@ -543,6 +543,9 @@ export type HALReadinessResponse = {
   channel_emulator_binding: ChannelEmulatorBindingPreviewResponse | null
   base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
   base_station_site_certification: BaseStationSiteCertification | null
+  /** 权威存值解析状态；valid 不代表已获得当前执行的正式资格。 */
+  base_station_site_certification_status: 'missing' | 'invalid' | 'valid'
+  base_station_site_certification_error: string | null
   channel_emulator_site_certification_preview: ChannelEmulatorCertificationPreview | null
   cmw500_lte_2x2: Cmw500Lte2x2Readiness | null
   generated_at_iso: string

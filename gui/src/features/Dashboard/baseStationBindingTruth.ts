@@ -1,6 +1,8 @@
 import type {
   BaseStationBindingPreviewResponse,
   BaseStationCompatibilityPreviewResponse,
+  BaseStationSiteCertification,
+  HALReadinessResponse,
 } from '../../types/api'
 
 export type BaseStationBindingLight = 'green' | 'yellow' | 'red'
@@ -27,6 +29,30 @@ export type BaseStationBindingTruth = {
 
 const shortDigest = (digest: string | null): string =>
   digest ? digest.slice(0, 12) : '无 digest'
+
+export const projectBaseStationCertificationTruth = (
+  binding: BaseStationBindingTruth,
+  certification: BaseStationSiteCertification | null,
+  status: HALReadinessResponse['base_station_site_certification_status'],
+  error: string | null,
+  bindingDigest: string | null | undefined,
+): BaseStationBindingTruth => {
+  if (status === 'invalid') return {
+    light: 'red', valueText: '现场认证数据损坏',
+    detail: `${binding.detail} · ${error ?? '认证解析失败'}；不能获得正式资格`,
+  }
+  if (binding.light !== 'green') return binding
+  if (status === 'valid' && certification?.status === 'active'
+    && certification.binding_digest === bindingDigest) return {
+    ...binding, valueText: `${binding.valueText} · 已现场认证`,
+    detail: `${binding.detail} · 现场认证 ${certification.certified_at}`,
+  }
+  return {
+    light: 'yellow', valueText: '仅诊断 · 未取得匹配现场认证',
+    detail: `${binding.detail} · ${certification?.status === 'revoked'
+      ? '现场认证已撤销' : certification ? '现场认证与当前 binding 不匹配' : '当前 connection 尚无现场认证'}`,
+  }
+}
 
 export const formatBaseStationSyncTruth = (
   binding: BaseStationBindingPreviewResponse | null | undefined,

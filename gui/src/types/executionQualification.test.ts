@@ -54,6 +54,6 @@ test('GUI visibly distinguishes diagnostic snapshots from formal results', () =>
   assert.match(selector, /execution_evidence_outcome/)
   assert.match(selector, /仅诊断/)
   assert.match(readiness, /base_station_site_certification/)
-  assert.match(readiness, /未取得匹配现场认证/)
+  assert.match(readiness, /projectBaseStationCertificationTruth/)
   assert.match(mimoConfig, /历史兼容快照，不授予本次执行正式资格/)
 })

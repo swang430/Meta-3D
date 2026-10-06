@@ -1,11 +1,12 @@
 import type {
   BaseStationSiteCertification,
   Cmw500Lte2x2Readiness,
+  HALReadinessResponse,
 } from '../../types/api.ts'
 
 export type Cmw500ReadinessView = {
   status: Cmw500Lte2x2Readiness['status']
-  color: 'green' | 'yellow' | 'gray'
+  color: 'green' | 'yellow' | 'gray' | 'red'
   title: string
   message: string
   blocksDevelopment: false
@@ -22,7 +23,14 @@ export function describeCmw500Readiness(
   duplex: string | null | undefined,
   configMode: string | null | undefined,
   certification?: BaseStationSiteCertification | null,
+  certificationStatus?: HALReadinessResponse['base_station_site_certification_status'],
+  certificationError?: string | null,
 ): Cmw500ReadinessView {
+  if (certificationStatus === 'invalid') return {
+    status: 'warning', color: 'red', title: '基站现场认证数据损坏',
+    message: `${certificationError ?? '认证解析失败'}；认证数据损坏，不能获得正式资格。`,
+    blocksDevelopment: false,
+  }
   if (!readiness) {
     return {
       status: 'warning',
