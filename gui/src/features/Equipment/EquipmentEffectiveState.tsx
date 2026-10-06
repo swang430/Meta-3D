@@ -42,7 +42,7 @@ export function EquipmentEffectiveState({ category, dirty, savedAvailable, recei
       <Text size="sm">最近操作回执仅属于本页、本类别，不等于当前HAL快照或正式执行资格。</Text>
       <Text>HAL当前快照：{driver ? `${driver.status} · ${driver.endpoint} · ${driver.detail}` : '未取得'}</Text>
       <Text>LabProfile绑定：{!labId ? '未选择LabProfile' : sameLab && binding?.lab_profile_id === labId
-        ? `${binding.status} · ${binding.detail}` : '未取得该类别权威投影'}</Text>
+        ? `${binding.status} · ${binding.execution_mode ?? '未知模式'}${binding.execution_mode === 'simulated' ? ' · 仅诊断' : ''} · ${binding.detail}` : '未取得该类别权威投影'}</Text>
       <Text size="sm">LabProfile未自动同步；用例兼容性与正式资格仍需服务器独立评估。</Text>
     </Stack>
   </Card>
