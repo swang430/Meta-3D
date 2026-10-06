@@ -10,12 +10,12 @@
 
 **2026-10-05 P2-32B 收尾完成（PR #497）**：软件安全片已合并（`6a460170`），main 已同步，运行库 migration 已到唯一 head `b9d2f4a6c8e0`。当前 WIP=0；不启动 P2-32C。Real 仍受权威天线最大口径来源（无近远场转换）与 X-Series/FSW 权威标量功率回读阻塞：缺口径在首个硬件 I/O 前拒绝，历史现场实测仅审计可见、不进入正式消费；厂商方向图资格独立评估，Mock 仅诊断。软件合并与迁移完成不表示真机校准验收完成。
 
-**2026-10-05 用户批准的新非现场排期**：P2-79 A/B 已分别由 PR #498/#499 合并并同步清理。2026-10-06 用户批准 P2-80A 局部目录错误态修复，当前唯一 WIP 为 P2-80A；B/C 与后续项仍仅排期，不自动启动。每个子片独立闭环，严格 WIP=1。既有现场/硬件阻塞与 HOLD 队列保持原顺序，不因软件排期自动解除。
+**2026-10-05 用户批准的新非现场排期**：P2-79 A/B 已分别由 PR #498/#499 合并并同步清理。P2-80A 已由 PR #500 合并（`8dd7ecbe`）；2026-10-06 用户确认完成 B/C，当前唯一 WIP 为 P2-80B，合并同步清理后继续 C；后续项不自动启动。每个子片独立闭环，严格 WIP=1。既有现场/硬件阻塞与 HOLD 队列保持原顺序，不因软件排期自动解除。
 
 | 顺序 | 条目 | 子片顺序 | 状态 |
 |---|---|---|---|
 | 1 | P2-79 信道模型型号归属与并发保存完整性 | A 型号归属 → B 同序锁与并发完整性 | ✅ PR #498（e2dee1a8）/#499（4606c7a7），main 已同步 |
-| 2 | P2-80 仪器配置故障可见、可恢复 | A 目录错误态 → B 坏认证状态 → C 显式合法替代值恢复 | A 开发中；B/C 未开工 |
+| 2 | P2-80 仪器配置故障可见、可恢复 | A 目录错误态 → B 坏认证状态 → C 显式合法替代值恢复 | A 已合并 #500；B 开发中；C 待 B 闭环 |
 | 3 | P2-81 统计窗口保存前校验 | 所选 adapter 域的统一前置校验 | 已排期，未开工 |
 | 4 | P2-82 成功轮询 INFO 降噪 | 仅成功只读轮询，不降级异常/硬件日志 | 已排期，未开工 |
 | 5 | P2-83 LabProfile 统一工作单元 | 先设计 → 共同上下文与状态展示 → 受控保存/同步编排 | 已排期，未开工 |
@@ -83,7 +83,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= 无进行中的 P0：P0-9 已于 2026-09-17 由用户裁决关闭，开放的 P0 只剩 P0-5（UXM 5G NR，等 UXM 在场）。下文凡写「P0-9 待关闭」「P2-55 / P2-56 现场半待真机」的段落均为 2026-09-17 之前的表述，原文保留审计，现状以本行与「Blocked on hardware」表为准；
-Current Focus（非现场）= **P2-79A/B 已由 PR #498/#499 合并并同步清理；当前唯一 WIP 为 P2-80A 目录错误态，其余新排期未开工。** 下段保留前序交付背景，不再作为当前开工顺序：**P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。前序队列收尾后，新的非现场排期由 2026-10-05 用户批准（见顶部）；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
+Current Focus（非现场）= **P2-79A/B 已由 PR #498/#499 合并并同步清理；P2-80A 已由 PR #500 合并；当前唯一 WIP 为 P2-80B，随后连续完成 C，其他项不自动启动。** 下段保留前序交付背景，不再作为当前开工顺序：**P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。前序队列收尾后，新的非现场排期由 2026-10-05 用户批准（见顶部）；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -738,7 +738,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | 2026-10-05 已批准排期：**P2-79A→P2-79B→P2-80A→P2-80B→P2-80C→P2-81→P2-82→P2-83→P2-84**，P2-79A/B 已由 PR #498/#499 合并，当前唯一 WIP 为 P2-80A，其余未开工；详见顶部与各条目的范围/验收。P2-32B 软件安全片已由 PR #497 合并并完成运行库 migration，真机口径/SA 标量功率来源仍阻塞；不启动 P2-32C。既有硬件/现场项、HOLD 与 P3-20/P3-21 非阻塞维护池保持原位置，不自动启动。 |
+| **LOCAL-OPEN (roadmap 内)** | 2026-10-05 已批准排期：**P2-79A→P2-79B→P2-80A→P2-80B→P2-80C→P2-81→P2-82→P2-83→P2-84**，P2-79A/B 已由 PR #498/#499 合并，P2-80A 已由 PR #500 合并，当前唯一 WIP 为 P2-80B，随后完成 C，其他项未开工；详见顶部与各条目的范围/验收。P2-32B 软件安全片已由 PR #497 合并并完成运行库 migration，真机口径/SA 标量功率来源仍阻塞；不启动 P2-32C。既有硬件/现场项、HOLD 与 P3-20/P3-21 非阻塞维护池保持原位置，不自动启动。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** / **P2-74** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5379,7 +5379,9 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 
 ### P2-80 — 仪器配置故障可见、可恢复
 
-**状态**：2026-10-06 用户批准 A，当前唯一 WIP 为 P2-80A；第 2 项，P2-79 已全部闭环。B/C 尚未授权开工，按 **A→B→C** 独立交付。
+**状态**：A 已由 PR #500 合并（`8dd7ecbe`），第 2 项，P2-79 已全部闭环。2026-10-06 用户确认 B/C 设计，当前唯一 WIP 为 P2-80B；B 合并同步清理后继续 C，按 **A→B→C** 独立交付。
+
+**B 实施与全集**：Readiness 经 `execution_qualification.parse_base_station_site_certification` 解析同一 connection 的存值；只有 null 是 missing，畸形值为 invalid，有效结构（含 revoked）为 valid。保留认证对象，增加 required 的 `base_station_site_certification_status` 与可空 `base_station_site_certification_error`；valid 不代表当前执行正式资格。HAL 可用/不可用两条响应路径一致；主控台与用例配置页显示损坏原因，目录沿用既有 invalid_fields，认证写方及正式冻结门不改。同步 live OpenAPI、YAML、generated TS、手写类型与 mock 快照；局部 API/GUI 契约档，真实 HTTP 序列化正反例、相关认证/Readiness 回归、规则门和 production build；NotebookLM 不适用。实施顺序为接口 RED→GREEN、GUI RED→GREEN、镜像/回归、只读独立内审、Ready PR、Codex R1→R2、merge/sync/cleanup；验证输出与外审时间记录在 PR 台账，不另提交完成时间。
 
 **A 内嵌方案与验收关系**：`EquipmentManager` 的 catalog 查询 → TanStack Query 成功/失败状态 → 错误 Alert、成功空目录提示与草稿 hydration。失败显示错误并保留缓存目录和草稿；重试只调用同一目录 GET，不保存、不激活 HAL、不同步 LabProfile。只有成功响应可更新草稿，成功刷新仍保留 operator 编辑。浏览器回归运行真实 App，仅替换 HTTP transport，覆盖初次 503、重试成功空目录、缓存刷新失败与重试恢复后草稿保持。局部验证档，不改 API 契约；NotebookLM 不适用。基线 Equipment 测试 31 passed/1 failed：旧型号切换源码断言未覆盖现有 operator 来源标记，用户批准保留该已知失败、不在本片顺带清理；扩大回归另有旧 `equipmentDiagnosticTarget.test.ts` 仍匹配整体 reload 提示、与现有类别激活提示不符；同样作为既有失败披露，不在本片改功能或断言。不得宣称基线全绿。
 

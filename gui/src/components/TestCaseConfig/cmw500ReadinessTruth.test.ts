@@ -46,6 +46,13 @@ const certification = {
   reason: 'site verification',
 }
 
+test('认证存值损坏不能显示成普通未认证或已就绪', () => {
+  const view = describeCmw500Readiness(readiness, 'fdd', 'dispatch', certification, 'invalid', '认证数据损坏')
+  assert.equal(view.color, 'red')
+  assert.match(view.message, /损坏/)
+  assert.equal(view.status, 'warning')
+})
+
 test('duplex readiness stays specific and inherit is diagnostic only', () => {
   assert.equal(describeCmw500Readiness(readiness, 'fdd', 'dispatch', certification).status, 'ready')
   assert.equal(describeCmw500Readiness(readiness, 'tdd', 'dispatch', certification).status, 'warning')

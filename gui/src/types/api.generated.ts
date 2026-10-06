@@ -3963,6 +3963,14 @@ export interface components {
             channel_emulator_binding: components["schemas"]["ChannelEmulatorBindingPreviewResponse"] | null;
             base_station_testcase_compatibility: components["schemas"]["BaseStationCompatibilityPreviewResponse"];
             base_station_site_certification: components["schemas"]["BaseStationSiteCertification"] | null;
+            /**
+             * @description 权威解析状态；valid 仅表示结构有效，不授予正式资格，已撤销认证仍为 valid。
+             * @default missing
+             * @enum {string}
+             */
+            base_station_site_certification_status: "missing" | "invalid" | "valid";
+            /** @description 存量认证解析失败原因；invalid 时非空，缺失与有效认证时为 null。 */
+            base_station_site_certification_error: string | null;
             channel_emulator_site_certification_preview: components["schemas"]["ChannelEmulatorCertificationPreview"] | null;
             cmw500_lte_2x2: components["schemas"]["Cmw500Lte2x2Readiness"] | null;
             generated_at_iso: string;

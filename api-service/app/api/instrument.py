@@ -52,6 +52,7 @@ from app.services.execution_qualification import (
     BaseStationSiteCertification,
     activate_base_station_site_certification,
     revoke_base_station_site_certification,
+    parse_base_station_site_certification,
 )
 from app.services.base_station_model_preset import BaseStationModelPreset
 from app.services.channel_emulator_model_preset import ChannelEmulatorModelPreset
@@ -4223,6 +4224,12 @@ class HALReadinessResponse(BaseModel):
     channel_emulator_binding: Optional[ChannelEmulatorBindingPreviewResponse] = None
     base_station_testcase_compatibility: BaseStationCompatibilityPreviewResponse
     base_station_site_certification: Optional[BaseStationSiteCertification] = None
+    base_station_site_certification_status: Literal["missing", "invalid", "valid"] = Field(
+        default="missing", description="权威解析状态；valid 仅表示结构有效，不授予正式资格，已撤销认证仍为 valid。"
+    )
+    base_station_site_certification_error: Optional[str] = Field(
+        default=None, description="存量认证解析失败原因；invalid 时非空，缺失与有效认证时为 null。"
+    )
     channel_emulator_site_certification_preview: Optional[
         ChannelEmulatorCertificationPreview
     ] = None
@@ -4339,21 +4346,38 @@ def get_hal_readiness(
         else None
     )
     site_certification = None
+    site_certification_status = "missing"
+    site_certification_error = None
     ce_certification_preview = build_channel_emulator_certification_preview(
         ce_preview if lab_section.profile_id is not None else None,
         None,
     )
-    if binding_preview is not None and binding_preview.instrument_connection_id:
-        connection = db.query(InstrumentConnectionDB).filter(
-            InstrumentConnectionDB.id == UUID(binding_preview.instrument_connection_id)
+    # 存量认证属于所选 Lab 的持久连接，不依赖 HAL driver/binding 已成功解析。
+    # 这里只报告解析状态；binding 不匹配仍由原正式门拒绝，不回退其他 Lab。
+    certification_category = None
+    if lab_section.profile_id is not None:
+        category = db.query(InstrumentCategoryModel).filter(
+            InstrumentCategoryModel.category_key == "baseStation"
         ).one_or_none()
-        if connection is not None and connection.base_station_site_certification:
+        bindings = selected_lab.instrument_bindings
+        if category is not None and isinstance(bindings, list):
+            matches = [item for item in bindings if isinstance(item, dict)
+                       and str(item.get("category_id")) == str(category.id)]
+            if len(matches) == 1:
+                certification_category = category.id
+    if certification_category is not None:
+        connection = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == certification_category
+        ).one_or_none()
+        if connection is not None:
             try:
-                site_certification = BaseStationSiteCertification.model_validate(
+                site_certification = parse_base_station_site_certification(
                     connection.base_station_site_certification
                 )
-            except ValidationError:
-                site_certification = None
+                site_certification_status = "valid" if site_certification is not None else "missing"
+            except ValueError as exc:
+                site_certification_status = "invalid"
+                site_certification_error = _invalid_reason(exc)
     if ce_preview is not None and ce_preview.instrument_connection_id:
         ce_connection = db.query(InstrumentConnectionDB).filter(
             InstrumentConnectionDB.id == UUID(ce_preview.instrument_connection_id)
@@ -4419,6 +4443,8 @@ def get_hal_readiness(
             channel_emulator_binding=ce_response,
             base_station_testcase_compatibility=compatibility_response,
             base_station_site_certification=site_certification,
+            base_station_site_certification_status=site_certification_status,
+            base_station_site_certification_error=site_certification_error,
             channel_emulator_site_certification_preview=ce_certification_preview,
             cmw500_lte_2x2=cmw_response,
             generated_at_iso=_dt.utcnow().isoformat(),
@@ -4461,6 +4487,8 @@ def get_hal_readiness(
         channel_emulator_binding=ce_response,
         base_station_testcase_compatibility=compatibility_response,
         base_station_site_certification=site_certification,
+        base_station_site_certification_status=site_certification_status,
+        base_station_site_certification_error=site_certification_error,
         channel_emulator_site_certification_preview=ce_certification_preview,
         cmw500_lte_2x2=cmw_response,
         generated_at_iso=report.generated_at_iso,

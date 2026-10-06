@@ -3379,6 +3379,15 @@ components:
           allOf:
             - $ref: '#/components/schemas/BaseStationSiteCertification'
           nullable: true
+        base_station_site_certification_status:
+          type: string
+          enum: [missing, invalid, valid]
+          description: 权威解析状态；valid 仅表示结构有效，不授予正式资格，已撤销认证仍为 valid。
+          default: missing
+        base_station_site_certification_error:
+          type: string
+          nullable: true
+          description: 存量认证解析失败原因；invalid 时非空，缺失与有效认证时为 null。
         channel_emulator_site_certification_preview:
           allOf:
             - $ref: '#/components/schemas/ChannelEmulatorCertificationPreview'
@@ -3398,7 +3407,7 @@ components:
           items:
             $ref: '#/components/schemas/SubnetReachability'
           default: []
-      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, channel_emulator_binding, base_station_testcase_compatibility, base_station_site_certification, channel_emulator_site_certification_preview, cmw500_lte_2x2, generated_at_iso, subnets]
+      required: [available, drivers, lab_profile, calibration, dut_attach, base_station_binding, channel_emulator_binding, base_station_testcase_compatibility, base_station_site_certification, base_station_site_certification_status, base_station_site_certification_error, channel_emulator_site_certification_preview, cmw500_lte_2x2, generated_at_iso, subnets]
     DriverReadinessRow:
       type: object
       properties:

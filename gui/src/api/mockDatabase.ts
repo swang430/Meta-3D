@@ -133,6 +133,8 @@ const readinessSnapshot: HALReadinessResponse = {
   channel_emulator_binding: channelEmulatorBindingPreview,
   base_station_testcase_compatibility: notEvaluatedCompatibility,
   base_station_site_certification: null,
+  base_station_site_certification_status: 'missing',
+  base_station_site_certification_error: null,
   channel_emulator_site_certification_preview: {
     status: 'diagnostic',
     binding_digest: null,

@@ -262,6 +262,8 @@ export function MIMOOTAConfigForm({
     rawPCell?.duplex,
     baseStationConfigMode.mode,
     siteCertification,
+    cmwReadinessQuery.data?.base_station_site_certification_status,
+    cmwReadinessQuery.data?.base_station_site_certification_error,
   )
   const compatibilityView = !compatibilityContextSaved
     ? {
@@ -1344,7 +1346,7 @@ export function MIMOOTAConfigForm({
                   ? channelEmulatorCertification.detail
                   : `${channelEmulatorCertification?.detail ?? '尚未取得服务器认证投影'}；仅诊断，正式判定保持 UNKNOWN/N/A`}
               </Alert>
-              {showCmwReadiness && (
+              {(showCmwReadiness || cmwReadinessQuery.data?.base_station_site_certification_status === 'invalid') && (
                 <Alert
                   color={cmwReadinessView.color}
                   variant="light"
@@ -1367,7 +1369,9 @@ export function MIMOOTAConfigForm({
                       </Text>
                     )}
                     <Text size="xs">
-                      当前现场认证：{siteCertification?.status === 'active'
+                      当前现场认证：{cmwReadinessQuery.data?.base_station_site_certification_status === 'invalid'
+                        ? '认证数据损坏，不能获得正式资格'
+                        : siteCertification?.status === 'active'
                         && siteCertification.binding_digest === cmwReadiness?.binding_digest
                         ? `有效 · ${siteCertification.certified_at}`
                         : siteCertification?.status === 'revoked'
