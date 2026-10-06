@@ -115,6 +115,15 @@ test('diagnostic-only and unavailable declarations never project as formal green
 
 test('production UI consumes the generic projection without adapter-name branches', () => {
   const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
-  assert.match(appSource, /projectBaseStationCapabilities/)
-  assert.doesNotMatch(appSource, /adapter_id\s*={2,3}\s*['"](?:cmw500|uxm)['"]/i)
+  const start = appSource.indexOf('const baseStationCapabilityProjection =')
+  const end = appSource.indexOf('const hasUnsavedSyncDraft', start)
+  const renderStart = appSource.indexOf('{baseStationCapabilityProjection && (')
+  const renderEnd = appSource.indexOf('</Stack>', renderStart)
+  assert.ok(start >= 0 && end > start && renderStart > end && renderEnd > renderStart)
+  // UXM专属 topology 编辑器不是静态能力投影；限定真实投影产生/消费边界。
+  const projection = appSource.slice(start, end) + appSource.slice(renderStart, renderEnd)
+  assert.match(projection, /projectBaseStationCapabilities\(drawerSelectedModel\.base_station_manifest\)/)
+  assert.match(projection, /color=\{item\.tone\}/)
+  assert.match(projection, /baseStationCapabilityProjection\.measurementWindow\.tone/)
+  assert.doesNotMatch(projection, /adapter_id\s*={2,3}\s*['"](?:cmw500|uxm)['"]/i)
 })

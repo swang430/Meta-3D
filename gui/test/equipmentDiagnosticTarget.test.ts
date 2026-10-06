@@ -16,14 +16,11 @@ test('single-session categories use saved HAL session without address override',
 })
 
 test('single-session categories block unsaved endpoint edits', () => {
-  const result = buildDiagnosticTarget(
-    'baseStation',
-    '10.20.30.99:5025',
-    '10.20.30.40:5025',
-  )
-
-  assert.equal(result.payload, undefined)
-  assert.match(result.error ?? '', /先保存配置并重新加载 HAL/)
+  for (const categoryKey of ['baseStation', 'channelEmulator']) {
+    assert.deepEqual(buildDiagnosticTarget(
+      categoryKey, '10.20.30.99:5025', '10.20.30.40:5025',
+    ), { error: '单会话仪表地址已修改；请先保存配置并确认对应类别 HAL 激活成功' })
+  }
 })
 
 test('other categories keep one-time endpoint override', () => {

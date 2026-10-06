@@ -240,7 +240,7 @@ test('the confirm is the Mantine confirm modal and only its confirm button appli
   assert.match(branch, /confirmDiscard: \(apply\) => modals\.openConfirmModal\(\{/)
   assert.match(branch, /onConfirm: apply,/)
   assert.match(branch, /labels: \{ confirm: '丢弃并切换', cancel: '取消' \}/)
-  assert.match(branch, /applyDraft: \(next\) => setDrafts\(\(prev\) => \(\{ \.\.\.prev, \[categoryKey\]: next \}\)\)/)
+  assert.match(branch, /applyDraft: \(next\) => setDrafts\(\(prev\) => \(\{ \.\.\.prev, \[categoryKey\]: \{ \.\.\.next, connection_params_origin: 'operator' \} \}\)\)/)
 })
 
 test('channelEmulator save carries modelId together with the explicit connection draft', () => {

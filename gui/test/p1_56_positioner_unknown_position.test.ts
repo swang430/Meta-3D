@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const serviceSource = readFileSync('src/api/service.ts', 'utf8')
+const serviceSource = readFileSync(new URL('../src/api/service.ts', import.meta.url), 'utf8')
 const panelSource = readFileSync(
-  'src/features/Diagnostics/PositionerControlPanel.tsx',
+  new URL('../src/features/Diagnostics/PositionerControlPanel.tsx', import.meta.url),
   'utf8',
 )
 

@@ -55,6 +55,7 @@ test('equipment editor keeps the drawer open so save feedback remains visible', 
     manager,
     /handleSaveConnection\(category\.key\);\s*setEditingCategoryKey\(null\)/,
   )
-  assert.match(manager, /placeholder=\{CMW500_ROUTE_EXAMPLES\[field\]\}/)
+  assert.match(manager, /drawerSelectedModel\.base_station_manifest\.profile_fields\.map\(\(field\) =>/)
+  assert.match(manager, /placeholder=\{field\.placeholder\}/)
   assert.match(manager, /保存失败: \$\{diagnosticErrorMessage\(error\)\}/)
 })

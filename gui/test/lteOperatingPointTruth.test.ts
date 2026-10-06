@@ -29,6 +29,7 @@ test('LTE PCell replaces NR-only fields without inheriting the NR peak', () => {
       band: 'B3',
       duplex: 'fdd',
       lte_dl_earfcn: 1575,
+      lte_transmission_mode: 'TM3',
       role: 'pcell',
     },
   )
@@ -42,8 +43,13 @@ test('LTE PCell replaces NR-only fields without inheriting the NR peak', () => {
     band: 'B3',
     duplex: 'fdd',
     lte_dl_earfcn: 1575,
+    lte_transmission_mode: 'TM3',
     role: 'pcell',
   })
+  const incomplete = { ...next, component_carriers: next.component_carriers?.map(
+    ({ lte_transmission_mode: _removed, ...carrier }) => carrier,
+  ) }
+  assert.equal(primaryCarrierIdentity(incomplete), null)
 })
 
 test('legacy complete PCell remains an exact NR read translation', () => {
@@ -77,7 +83,7 @@ test('commissioning LTE request sends one explicit LTE identity and no NR fields
     uxmDlPowerDbmPerBw: -15,
   }), {
     radio_technology: 'lte',
-    engine_mode: 'mimo_first_asc',
+    engine_mode: 'keysight_gcm',
     frequency_hz: 1_842_500_000,
     bandwidth_mhz: 20,
     band: 'B3',

@@ -31,11 +31,16 @@ test('saved TestCase editor supplies context while unsaved drafts fail closed lo
 
 test('an unbound saved TestCase still requests the server unique-active LabProfile resolution', () => {
   const form = read('src/components/TestCaseConfig/MIMOOTAConfigForm.tsx')
-
-  assert.match(form, /fetchReadiness\(compatibilityLabProfileId\s*\?\?\s*undefined,\s*testCaseId!\)/)
+  // 不把旁边独立的 windowBindingQuery.enabled 当作 compatibility 门。
+  const start = form.indexOf('const cmwReadinessQuery = useQuery(')
+  const end = form.indexOf('const cmwReadiness =', start)
+  assert.ok(start >= 0 && end > start, '没有定位到用例 readiness query')
+  const query = form.slice(start, end)
+  assert.match(query, /fetchReadiness\(compatibilityLabProfileId\s*\?\?\s*undefined,\s*testCaseId!\)/)
+  assert.match(query, /enabled:\s*compatibilityContextSaved\s*&& Boolean\(testCaseId\)/)
   assert.doesNotMatch(
-    form,
-    /enabled:[\s\S]{0,180}Boolean\(compatibilityLabProfileId\)/,
+    query,
+    /enabled:[\s\S]*Boolean\(compatibilityLabProfileId\)/,
   )
 })
 
