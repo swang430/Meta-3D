@@ -127,6 +127,7 @@ import {
   withoutSynthesizedConnectionParams,
 } from './features/Equipment/invalidStoredFields'
 import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
+import { EquipmentEffectiveState, type EquipmentOperationReceipt } from './features/Equipment/EquipmentEffectiveState'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1743,7 +1744,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
-  const { data, isLoading, isSuccess, isError, error, isFetching, refetch } = useQuery({
+  const { data, isLoading, isSuccess, isError, error, isFetching, isPaused, refetch } = useQuery({
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
   })
@@ -1759,6 +1760,9 @@ function EquipmentManager() {
 
     const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
   const [editingCategoryKey, setEditingCategoryKey] = useState<string | null>(null)
+  const [operationReceipts, setOperationReceipts] = useState<Record<string, EquipmentOperationReceipt>>({})
+  const recordOperation = (key: string, receipt: EquipmentOperationReceipt) =>
+    setOperationReceipts(previous => ({ ...previous, [key]: receipt }))
   const [feedback, setFeedback] = useState<Record<string, EquipmentFeedback>>({})
   const [certificationExecutionId, setCertificationExecutionId] = useState('')
   const [certificationOperator, setCertificationOperator] = useState('')
@@ -1862,13 +1866,22 @@ function EquipmentManager() {
   }, [showFeedback])
 
   const instrumentMutation = useMutation({
+    onMutate: ({ categoryKey }: EquipmentMutationVariables) => {
+      recordOperation(categoryKey, { phase: 'saving' })
+    },
     mutationFn: ({ categoryKey, payload }: EquipmentMutationVariables) =>
       commitThenActivateCategory(
         categoryKey,
         () => updateInstrumentCategory(categoryKey, payload),
         activateInstrumentCategoryHAL,
+        () => {
+          recordOperation(categoryKey, { phase: 'activating' })
+          void queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+        },
       ),
     onSuccess: ({ committed: updatedCategory, activation, activationError }, variables) => {
+      recordOperation(variables.categoryKey, { phase: 'finished', activation,
+        error: activationError ? diagnosticErrorMessage(activationError) : undefined })
       queryClient.setQueryData(
         ['instruments', 'catalog'],
         (previous: InstrumentsResponse | undefined): InstrumentsResponse => {
@@ -1935,6 +1948,7 @@ function EquipmentManager() {
       )
     },
     onError: (error: unknown, variables) => {
+      recordOperation(variables.categoryKey, { phase: 'save_failed', error: diagnosticErrorMessage(error) })
       showFeedback(
         variables.categoryKey,
         'error',
@@ -2236,12 +2250,13 @@ function EquipmentManager() {
         showFeedback('__hal__', 'error', `❌ ${result.message}`)
       }
       refetchHAL()
+      void queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
     } catch (err: any) {
       showFeedback('__hal__', 'error', `切换失败: ${err.message}`)
     } finally {
       setHalSwitching(false)
     }
-  }, [refetchHAL, showFeedback])
+  }, [queryClient, refetchHAL, showFeedback])
 
   const [halReloading, setHalReloading] = useState(false)
   // P3-1: two-stage confirm flow. Reload tears down every VISA/SOCKET
@@ -2270,6 +2285,7 @@ function EquipmentManager() {
           `${prefix} ${result.drivers_loaded} 个驱动 (${result.duration_ms}ms): ${result.drivers.join(', ')}`,
         )
         refetchHAL()
+        void queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
         // Channel-models endpoint is driver-bound; invalidate the cache so
         // any open dropdown refetches against the freshly-loaded driver.
         queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
@@ -2378,6 +2394,11 @@ function EquipmentManager() {
               <Group gap="sm" align="center">
                 <Title order={3}>{category.label}</Title>
               </Group>
+              <EquipmentEffectiveState category={category} dirty={hasUnsavedSyncDraft}
+                savedAvailable={isSuccess && !isError && !isFetching && !isPaused}
+                receipt={operationReceipts[category.key]} labId={selectedLabProfileId}
+                readiness={channelEmulatorReadinessQuery.isSuccess && !channelEmulatorReadinessQuery.isFetching
+                  && !channelEmulatorReadinessQuery.isPaused ? channelEmulatorReadinessQuery.data : undefined} />
 
               <Stack gap="md">
                 <Select
@@ -3157,6 +3178,7 @@ function EquipmentManager() {
                       size="xs"
                       value={(category as any).driverMode || 'auto'}
                       onChange={async (val) => {
+                        recordOperation(category.key, { phase: 'saving' })
                         try {
                           const { activation, activationError } = await commitThenActivateCategory(
                             category.key,
@@ -3165,7 +3187,13 @@ function EquipmentManager() {
                               return val
                             },
                             activateInstrumentCategoryHAL,
+                            () => {
+                              recordOperation(category.key, { phase: 'activating' })
+                              void queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+                            },
                           )
+                          recordOperation(category.key, { phase: 'finished', activation,
+                            error: activationError ? diagnosticErrorMessage(activationError) : undefined })
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
                           queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
@@ -3185,6 +3213,7 @@ function EquipmentManager() {
                             )
                           }
                         } catch (err: any) {
+                          recordOperation(category.key, { phase: 'save_failed', error: diagnosticErrorMessage(err) })
                           showFeedback(category.key, 'error', `切换失败: ${err.message}`)
                         }
                       }}

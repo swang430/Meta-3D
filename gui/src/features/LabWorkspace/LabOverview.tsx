@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core'
-import { fetchReadiness } from '../../api/service'
+import { fetchInstrumentCatalog, fetchReadiness } from '../../api/service'
 import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
@@ -27,6 +27,12 @@ function BindingCard({ title, binding }: {
 export function LabOverview() {
   const { selectedLabProfileId: labId, selectedLabProfile: lab, chamberId, chamberName, loading, error } = useOperationalLab()
   const enabled = Boolean(labId) && !loading && !error
+  const catalog = useQuery({
+    queryKey: ['instruments', 'catalog'],
+    queryFn: fetchInstrumentCatalog,
+    enabled,
+    retry: false,
+  })
   const readiness = useQuery({
     queryKey: ['cockpit', 'readiness', labId ?? 'unselected'],
     queryFn: () => fetchReadiness(labId!),
@@ -55,8 +61,8 @@ export function LabOverview() {
   return <Stack gap="md">
     <Group justify="space-between">
       <Title order={3}>实验室总览：{lab.name}</Title>
-      <Button onClick={() => { void readiness.refetch(); void chains.refetch() }}
-        loading={readiness.isFetching || chains.isFetching || readiness.isPaused || chains.isPaused}>刷新总览</Button>
+      <Button onClick={() => { void catalog.refetch(); void readiness.refetch(); void chains.refetch() }}
+        loading={catalog.isFetching || readiness.isFetching || chains.isFetching || catalog.isPaused || readiness.isPaused || chains.isPaused}>刷新总览</Button>
     </Group>
     <Alert color="blue">只读总览不保存、不加载仪器、不同步LabProfile。用例兼容性未评估；此处不表示正式测试资格。</Alert>
     <Card withBorder>
@@ -64,6 +70,18 @@ export function LabOverview() {
       <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{labId}</Text>
       <Text>绑定暗室：{chamberName ?? '未绑定暗室'}</Text>
       {!chamberId && <Alert color="yellow">未绑定暗室，暗室相关配置尚不可解析。</Alert>}
+    </Card>
+    <Card withBorder data-testid="lab-saved-resources">
+      <Title order={4}>当前保存资源（全局目录）</Title>
+      <Text size="sm">保存值不是本LabProfile执行绑定，也不证明HAL已激活。</Text>
+      {catalog.isError ? <Alert color="red">保存资源读取失败：{catalog.error.message}</Alert>
+        : catalog.isPaused ? <Alert color="yellow">保存资源读取暂停；旧目录不作为刷新成功结果。</Alert>
+        : catalog.isFetching ? <Text>保存资源读取中…</Text>
+        : catalog.data ? catalog.data.categories.length ? catalog.data.categories.map(category => <Text key={category.key}
+          size="sm" style={{ overflowWrap: 'anywhere' }}>
+          {category.label}：{category.models.find(model => model.id === category.selectedModelId)?.model ?? '未选择型号'}
+          {' · '}{category.connection.endpoint || '未设置端点'}{' · '}{category.driverMode}
+        </Text>) : <Text>当前目录无保存资源。</Text> : <Text>尚未取得保存资源。</Text>}
     </Card>
     {readiness.isError ? <Alert color="red">配置快照读取失败：{readiness.error.message}</Alert>
       : readiness.isPaused ? <Alert color="yellow">配置快照读取暂停，等待网络恢复；旧快照不作为刷新成功结果。</Alert>

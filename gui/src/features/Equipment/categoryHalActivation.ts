@@ -15,8 +15,10 @@ export async function commitThenActivateCategory<T>(
   categoryKey: string,
   commit: () => Promise<T>,
   activate: (categoryKey: string) => Promise<HALCategoryActivationResult>,
+  onCommitted?: (committed: T) => void,
 ): Promise<CategoryActivationCommit<T>> {
   const committed = await commit()
+  onCommitted?.(committed)
   try {
     return {
       committed,
