@@ -30,7 +30,7 @@
 
 接口：`LabWorkspace({view,onNavigate,children})`；view为`labWorkspace|equipment|probeManager|topologyEditor`，onNavigate保持原SectionKey setter；总览仅在labWorkspace挂载。
 
-- [ ] 写浏览器RED：真实App左栏只出现一个“实验室配置”，点击进入总览，再切换三个编辑子视图。
+- [x] 写浏览器RED：真实App左栏只出现一个“实验室配置”，点击进入总览，再切换三个编辑子视图。
 
 ```js
 await page.getByRole('tab', {name:'实验室配置',exact:true}).click();
@@ -38,8 +38,8 @@ await page.getByRole('tab', {name:'仪器资源',exact:true}).click();
 await page.getByRole('button', {name:'替换 / 配置实装',exact:true}).waitFor();
 ```
 
-- [ ] 运行RED：独立Vite端口5198，无生产API重启；`playwright_cli.sh -s=p283a run-code --filename gui/test/labWorkspace.browser.js`。旧版缺统一入口必须失败。
-- [ ] 最小实现：左栏三个记录替换为labWorkspace；sectionDescriptor/sidebar active把旧三个key映射到labWorkspace；renderSection四个case统一包壳后按key挂原编辑器。
+- [x] 运行RED：独立Vite端口5198，无生产API重启；`playwright_cli.sh -s=p283a run-code --filename gui/test/labWorkspace.browser.js`。旧版缺统一入口必须失败。
+- [x] 最小实现：左栏三个记录替换为labWorkspace；sectionDescriptor/sidebar active把旧三个key映射到labWorkspace；renderSection四个case统一包壳后按key挂原编辑器。
 
 ```tsx
 case 'labWorkspace':
@@ -53,13 +53,13 @@ case 'topologyEditor':
   </LabWorkspace>
 ```
 
-- [ ] GREEN后执行上下文与同步契约回归，并提交本Task。
+- [x] GREEN后执行上下文与同步契约回归；壳与总览耦合交互，Task1/2功能统一提交，设计与计划已分别提交。
 
 ## Task 2：同Lab只读总览与完整验证
 
 接口：LabOverview无外部配置props；useOperationalLab获取唯一选择；fetchReadiness与fetchRFChains接收显式lab id。
 
-- [ ] 扩展浏览器RED：lab A/B返回不同绑定；A刷新503时不得继续展示A成功数据；B响应冒用A时显示冲突；无选择不发总览请求；HAL unavailable仍展示DB Lab；Mock标诊断；未评估兼容性不是通过；手动刷新只GET。
+- [x] 扩展浏览器RED：lab A/B返回不同绑定；A刷新503时不得继续展示A成功数据；B响应冒用A时显示冲突；无选择不发总览请求；HAL unavailable仍展示DB Lab；Mock标诊断；未评估兼容性不是通过；手动刷新只GET。
 
 ```js
 await page.getByRole('button',{name:'刷新总览',exact:true}).click();
@@ -69,13 +69,23 @@ if (await page.getByText('adapter-lab-a',{exact:true}).count()) {
 }
 ```
 
-- [ ] 最小实现：两个query绑定lab（readiness复用cockpit键，rf-chains新局部键），enabled要求已选lab；不设refetchInterval；isError/isFetching先于data分支；同时核对response lab身份与nested binding身份；只展示服务器字段和原status，不生成正式通过总判。
-- [ ] 总览含Lab/暗室、基站binding、信道仿真器binding、HAL快照与RF链路，明确“当前快照、不是执行冻结证据”；空值标未解析，不填默认实测值。
-- [ ] 实跑浏览器正反例及核心变异（去掉lab归属校验、错误时继续用缓存），恢复后核对diff；1280与窄屏截图检查无内容遮挡。
-- [ ] GUI相关Node契约、完整GUI Node测试、`npm run build --prefix gui`；后端只执行rule gates及OpenAPI受影响门，契约四镜像未改以diff核实；不重复全后端。
+- [x] 最小实现：两个query绑定lab（readiness复用cockpit键，rf-chains新局部键），enabled要求已选lab；不设refetchInterval；isError/isPaused/isFetching先于data分支；同时核对response lab身份与nested binding身份；只展示服务器字段和原status，不生成正式通过总判。
+- [x] 总览含Lab/暗室、基站binding、信道仿真器binding、HAL快照与RF链路，明确“当前快照、不是执行冻结证据”；空值标未解析，不填默认实测值。
+- [x] 实跑浏览器正反例及核心变异（去掉lab归属校验、错误时继续用缓存），恢复后核对diff；1280与390窄屏截图检查无内容遮挡。窄屏主导航按原折叠行为关闭，主内容clientWidth/scrollWidth均380。
+- [x] GUI相关Node契约、完整GUI Node测试、`npm run build --prefix gui`；后端只执行rule gates及OpenAPI受影响门，契约四镜像未改以diff核实；不重复全后端。
 - [ ] 独立只读内审；功能P1及本片可执行P2最小修复并必要回归。提交、推送、Ready PR；核对最新SHA触发Codex R1→R2，完成结果到达即读取，不再额外等一轮。
 - [ ] R2覆盖最新HEAD无P1且合并条件通过时merge commit；fetch、主目录ff-only同步、保留用户资料、清理仅本片worktree/branch。
 
 ## 检查记录
 
 设计各项均由Task1/2覆盖；范围仅A片，B/C未实现。不将本地Mock交互称为现场验证。最终PR记录实际命令、输出、测试输入版本、审查HEAD及时间；文档更新不触发重复全量。
+
+### 本地软件验证台账（2026-10-06）
+
+基准`3a908cdc`，实现基于`620b94a4`加本片工作区受控增量；依赖复用主目录本地依赖链接，未修改依赖。最终命令与输出见本片PR，以下不是现场验收：
+
+- 真实App浏览器回归14组通过、配置写请求0；原目录加载错误浏览器回归3组通过。
+- 相关GUI Node契约56 passed；完整GUI Node为275 passed/9 failed，main基准同命令也是275/9，归一化失败名称差异为空。9项既有失败不宣称全绿，不扩大本片修复范围。
+- production build成功；rule gates 70 passed。没有后端行为/schema变化，未重复后端全量。
+- 去掉Lab身份校验、刷新失败仍展示缓存两项变异各exit 1；恢复后总览文件SHA256为`1b22d95a1871041fd94517bc6884a2445a0cc2e026335a2b1985e983bc685f03`，与变异前一致。
+- 独立只读内审发现离线paused仍展示缓存P2，RED后最小收窄分支；复审P1/P2=0。桌面与窄屏只读快照已检查，不写生产配置。
