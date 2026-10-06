@@ -2059,12 +2059,15 @@ function EquipmentManager() {
     },
     onSuccess: (activation, { categoryKey, session }) => {
       recordOperation(categoryKey, { phase: 'finished', activation }, session)
-      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
-      queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
-      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
     },
     onError: (error: unknown, { categoryKey, session }) => {
       recordOperation(categoryKey, { phase: 'finished', error: diagnosticErrorMessage(error) }, session)
+    },
+    onSettled: (_activation, _error, { categoryKey }) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels', categoryKey] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'topologyProfiles', categoryKey] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
     },
   })

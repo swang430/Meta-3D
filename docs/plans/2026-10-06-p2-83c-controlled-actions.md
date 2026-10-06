@@ -49,3 +49,7 @@ memory已轻量查询并以现代码复核；NotebookLM不适用（无仪器命�
 - 内审：先0 P1、1功能P2（子视图旧回执串目标），删除错误提示逻辑后增量复审CLEAN。该收口旧实现2 RED；没有增加全局回执机制。
 - compileall通过；单一Alembic head实际为`c1e3f5a7b9d2`，本片无migration。完整命令/末尾输出与build结果随PR台账保留，不以历史head编号代替当前输出。
 - 最终production build通过（12.35s）；内审提示收口后的真实App重新运行14场景通过。源码层阶段测试只保护接线；不冒充现场或完整子视图浏览器验收。
+
+## Codex R1收口
+
+PR #507 R1覆盖`d1c82c8d`，无P1、1条功能P2（inline4195770469）：分类激活重试未刷新同抽屉的channelModels/topologyProfiles缓存。最小修复将目录/HAL/readiness失效统一至onSettled，并按请求捕获类别补齐两卡真实queryKey，成功和失败均刷新；没有新状态机制、PUT或sync。旧实现接线断言RED；修复定点14 passed，真实App14场景通过，production build11.83s，增量只读复审CLEAN。后端与OpenAPI输入未变，复用同输入的全后端结果；完整GUI292 tests/283 pass/9既有失败。R2实际覆盖/结论和合并记录在PR台账维护，不为填审查时间新增提交。
