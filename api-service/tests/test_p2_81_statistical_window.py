@@ -123,6 +123,19 @@ def test_inactive_bound_lab_remains_editable_and_range_checked(db):
         TestCaseService().update_test_case(db, case.id, configuration={**_lte_configuration(), "stat_count": 99})
 
 
+@pytest.mark.parametrize("action", ["create", "unbind"])
+def test_unbound_library_draft_does_not_borrow_active_lab_domain(db, action):
+    case, lab, _ = _saved_case_and_binding(db, model_name="CMW500", requested_rat="lte")
+    assert lab.is_active
+    config = {**_lte_configuration(), "stat_count": 99}
+    if action == "create":
+        result = TestCaseService().create_test_case(db, name="portable draft", test_type="MIMO_OTA", configuration=config, created_by="test", lab_profile_id=None)
+    else:
+        result = TestCaseService().update_test_case(db, case.id, configuration=config, lab_profile_id=None)
+    assert result.lab_profile_id is None
+    assert result.configuration["mac_profile"]["profile"]["statistical_window"]["count"] == 99
+
+
 def test_core_openapi_and_checked_contract_expose_statistical_constraint():
     from app.main import app
     from pathlib import Path

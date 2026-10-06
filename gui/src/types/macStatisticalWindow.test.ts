@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { projectMacStatisticalWindow } from './macStatisticalWindow.ts'
+
+test('successful binding sync invalidates the server statistical window declaration', () => {
+  const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+  const sync = app.slice(app.indexOf('const syncLabBindingMutation'), app.indexOf('const handleModelChange'))
+  assert.match(sync, /invalidateQueries\(\{ queryKey: \['base-station-window-binding'\]/)
+})
 
 test('GUI uses the server supplied range rather than CMW constants', () => {
   const view = projectMacStatisticalWindow({ mac_profiles: [{

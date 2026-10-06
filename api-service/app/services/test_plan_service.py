@@ -49,17 +49,13 @@ def saved_target_mac_manifest(db: Session, lab_profile_id):
     from app.models.lab_profile import LabProfile
     from app.services.base_station_binding import _single_binding
     from app.services.instrument_hal_service import get_base_station_adapter_registration
-    from app.services.lab_resolution import resolve_lab_profile, LabResolutionError
-
-    if lab_profile_id is not None:
-        lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).one_or_none()
-        if lab is None:
-            raise MIMOOTACarrierTruthError("LabProfile not found")
-    else:
-        try:
-            lab = resolve_lab_profile(db, None)
-        except LabResolutionError:
-            return None
+    if lab_profile_id is None:
+        # Library drafts have no deployment target. The execution resolver owns
+        # active-lab fallback; it must not impose its domain on portable editing.
+        return None
+    lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).one_or_none()
+    if lab is None:
+        raise MIMOOTACarrierTruthError("LabProfile not found")
     category = db.query(InstrumentCategory).filter(
         InstrumentCategory.category_key == "baseStation",
     ).one_or_none()
