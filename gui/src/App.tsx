@@ -1746,7 +1746,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isSuccess, isError, error, isFetching, refetch } = useQuery({
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
   })
@@ -1776,6 +1776,8 @@ function EquipmentManager() {
   const [scpiLoading, setScpiLoading] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
+    // Only successful catalog responses may hydrate drafts; outages are not empty catalogs.
+    if (!isSuccess) return
     if (categories.length === 0) {
       setDrafts({})
       return
@@ -1821,7 +1823,7 @@ function EquipmentManager() {
       })
       return next
     })
-  }, [categories])
+  }, [categories, isSuccess])
 
   useEffect(() => {
     return () => {
@@ -3103,7 +3105,20 @@ function EquipmentManager() {
           </Text>
         </Card>
       ) : null}
-      {!isLoading && categories.length === 0 ? (
+      {isError ? (
+        <Alert color="red" title="仪器目录加载失败" role="alert">
+          <Stack gap="sm">
+            <Text size="sm">{diagnosticErrorMessage(error)}</Text>
+            <Text size="sm">
+              {data ? '保留上次读取的目录与未保存草稿；当前目录未刷新。' : '未能读取仪器目录，不代表目录为空。'}
+            </Text>
+            <Button variant="light" loading={isFetching} onClick={() => void refetch()}>
+              重试加载目录
+            </Button>
+          </Stack>
+        </Alert>
+      ) : null}
+      {isSuccess && categories.length === 0 ? (
         <Card withBorder radius="md" padding="xl">
           <Text size="sm" c="gray.6">
             暂无仪器信息，请在后端添加型号。
