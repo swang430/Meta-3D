@@ -5,6 +5,16 @@ info:
 servers:
   - url: http://localhost:3000
 paths:
+  /api/v1/instruments/channelEmulator/runtime-snapshot:
+    get:
+      summary: F64 应用内存只读诊断快照（不触发硬件 I/O）
+      responses:
+        '200':
+          description: 当前应用缓存；非实时采样、非执行冻结证据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/F64RuntimeSnapshot'
   /api/v1/test-plans/cases/{test_case_id}/execution-policy:
     put:
       summary: Update TestCase Diagnostic/Formal policy
@@ -1389,6 +1399,56 @@ paths:
           description: Execution result
 components:
   schemas:
+    F64RuntimeSnapshot:
+      type: object
+      required: [generated_at, availability]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        diagnostic_only:
+          type: boolean
+          const: true
+          default: true
+        availability:
+          type: string
+          enum: [available, driver_not_loaded, unsupported_adapter, simulated]
+        instrument_id:
+          type: string
+          nullable: true
+        driver_status:
+          type: string
+          nullable: true
+        local_control_reserved:
+          type: boolean
+          nullable: true
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeDiagnosticField'
+    RuntimeDiagnosticField:
+      type: object
+      required: [key, source]
+      properties:
+        key:
+          type: string
+        value: {}
+        source:
+          type: string
+        freshness:
+          type: string
+          enum: [unknown]
+          default: unknown
+        observed_at:
+          type: string
+          format: date-time
+          nullable: true
+        execution_id:
+          type: string
+          nullable: true
+        session_id:
+          type: string
+          nullable: true
     TestCaseExecutionPolicy:
       type: object
       additionalProperties: false

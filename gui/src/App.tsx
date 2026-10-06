@@ -77,6 +77,7 @@ import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
 import { StandardChannelDefinitionCard } from './components/StandardChannelDefinitionCard'
+import { F64RuntimeSnapshotCard } from './components/F64RuntimeSnapshotCard'
 import {
   createProbe,
   deleteProbe,
@@ -1743,6 +1744,12 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 
 function EquipmentManager() {
   const queryClient = useQueryClient()
+  const refreshRuntimeSnapshot = useCallback(async () => {
+    // HAL 已变更：连尚无 data 的首次请求也必须作废，不能让迟到响应补回旧驱动。
+    const queryKey = ['instruments', 'f64RuntimeSnapshot']
+    await queryClient.cancelQueries({ queryKey })
+    await queryClient.invalidateQueries({ queryKey })
+  }, [queryClient])
   const { selectedLabProfileId, selectedLabProfile, beginWork } = useOperationalLab()
   const { data, isLoading, isSuccess, isError, error, isFetching, isPaused, refetch } = useQuery({
     queryKey: ['instruments', 'catalog'],
@@ -1952,6 +1959,7 @@ function EquipmentManager() {
       // Refetch instead of letting the earlier response remain a second truth.
       queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
       queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+      void refreshRuntimeSnapshot()
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       if (updatedCategory.key === 'baseStation') {
         queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
@@ -2064,6 +2072,7 @@ function EquipmentManager() {
       recordOperation(categoryKey, { phase: 'finished', error: diagnosticErrorMessage(error) }, session)
     },
     onSettled: (_activation, _error, { categoryKey }) => {
+      void refreshRuntimeSnapshot()
       queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
       queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
       queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels', categoryKey] })
@@ -2306,8 +2315,9 @@ function EquipmentManager() {
       showFeedback('__hal__', 'error', `切换失败: ${err.message}`)
     } finally {
       setHalSwitching(false)
+      void refreshRuntimeSnapshot()
     }
-  }, [queryClient, refetchHAL, showFeedback])
+  }, [queryClient, refetchHAL, refreshRuntimeSnapshot, showFeedback])
 
   const [halReloading, setHalReloading] = useState(false)
   // P3-1: two-stage confirm flow. Reload tears down every VISA/SOCKET
@@ -2378,9 +2388,10 @@ function EquipmentManager() {
         }
       } finally {
         setHalReloading(false)
+        void refreshRuntimeSnapshot()
       }
     },
-    [queryClient, refetchHAL, showFeedback],
+    [queryClient, refetchHAL, refreshRuntimeSnapshot, showFeedback],
   )
   const handleHALReload = useCallback(() => {
     // POST /instruments/hal/reload is the whole-HAL recovery fallback.
@@ -2662,6 +2673,9 @@ function EquipmentManager() {
                         }}
                       />
                       <ChannelModelsCard categoryKey={category.key} />
+                      <F64RuntimeSnapshotCard halChanging={halSwitching || halReloading
+                        || operationReceipts[category.key]?.phase === 'saving'
+                        || operationReceipts[category.key]?.phase === 'activating'} />
                       {category.connection?.id && category.selectedModelId ? (
                         <StandardChannelDefinitionCard key={`${category.connection.id}:${category.selectedModelId}`} connectionId={category.connection.id} modelId={category.selectedModelId}
                           ownerLabel={category.models.find((model) => model.id === category.selectedModelId)?.model ?? '未保存型号'} endpoint={category.connection.endpoint ?? ''} />
@@ -3276,6 +3290,7 @@ function EquipmentManager() {
                             error: activationError ? diagnosticErrorMessage(activationError) : undefined }, receiptSession)
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+                          void refreshRuntimeSnapshot()
                           queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
                           if (receiptSession !== editorSession.current) return
                           const modeLabels: Record<string, string> = { auto: 'Auto', mock: 'Mock', real: 'Real' }

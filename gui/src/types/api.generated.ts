@@ -4,6 +4,42 @@
  */
 
 export interface paths {
+    "/api/v1/instruments/channelEmulator/runtime-snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** F64 应用内存只读诊断快照（不触发硬件 I/O） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 当前应用缓存；非实时采样、非执行冻结证据 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["F64RuntimeSnapshot"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/test-plans/cases/{test_case_id}/execution-policy": {
         parameters: {
             query?: never;
@@ -2666,6 +2702,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        F64RuntimeSnapshot: {
+            /** Format: date-time */
+            generated_at: string;
+            /**
+             * @default true
+             * @constant
+             */
+            diagnostic_only: true;
+            /** @enum {string} */
+            availability: "available" | "driver_not_loaded" | "unsupported_adapter" | "simulated";
+            instrument_id?: string | null;
+            driver_status?: string | null;
+            local_control_reserved?: boolean | null;
+            fields?: components["schemas"]["RuntimeDiagnosticField"][];
+        };
+        RuntimeDiagnosticField: {
+            key: string;
+            value?: unknown;
+            source: string;
+            /**
+             * @default unknown
+             * @enum {string}
+             */
+            freshness: "unknown";
+            /** Format: date-time */
+            observed_at?: string | null;
+            execution_id?: string | null;
+            session_id?: string | null;
+        };
         TestCaseExecutionPolicy: {
             /** @enum {integer} */
             schema_version: 1;
