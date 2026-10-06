@@ -120,6 +120,7 @@ async (page) => {
   await page.getByRole('tab', { name: '探头与暗室', exact: true }).click();
   await page.getByRole('tab', { name: '射频拓扑', exact: true }).click();
   await page.getByRole('heading', { name: '射频开关矩阵拓扑', exact: true }).waitFor();
+  await page.getByText('或在「实验室配置 → 仪器资源」中添加 RF Switch 类别。', { exact: false }).waitFor();
   await page.getByRole('tab', { name: '总览', exact: true }).click();
   await page.getByText(`adapter-${labB}-baseStation`, { exact: true }).waitFor();
   if (writes.length) throw new Error(`工作台产生非预期写入: ${writes}`);

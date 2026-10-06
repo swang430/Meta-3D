@@ -85,7 +85,7 @@
 CAICT-FS 已通过 `api-service/scripts/dev-fixtures/seed_caict_fs_chamber.py` 落库
 （chamber 行 + 62 探头行，幂等）。
 
-- **查看探头布局**：GUI「探头与暗室配置」选 CAICT-FS → ProbeLayoutView 3D/2D 渲染满天星。
+- **查看探头布局**：GUI「实验室配置 → 探头与暗室」选 CAICT-FS → ProbeLayoutView 3D/2D 渲染满天星。
 - **绑定为当前暗室**（可选）：`POST /api/v1/chambers/{id}/activate?lab_profile_id={lab_id}`
   （或 GUI 先选 LabProfile 再切换）；该接口更新 `LabProfile.chamber_config_id`，不写兼容列
   （会把其它暗室置非激活）。
