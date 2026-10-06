@@ -5,6 +5,7 @@ info:
 servers:
   - url: http://localhost:3000
 paths:
+  /api/v1/instruments/{category_key}/emulation-control: {"post":{"tags":["Instruments"],"summary":"Emulation Control","description":"F64 启动/停止目标控制；stop 的 ok 只确认停止目标，不确认 GOS 应用、倒回或 RF 输出关闭。\n\n2026-09-16 固件8.0记录（p0_5_commands.json:f64.simulation_stop_state）：\n运行中7次 GOS 后净队列+STOPPED；已STOPPED/已CLOSED时3+2次拒绝。\nSTATE 依据 User Reference Rev10.2 §20.4.3.14（p244），不能据此证明倒回。\n不把旧风险推广为当前结论；仍避免盲目重试 start 或具有副作用的命令。","operationId":"emulation_control_api_v1_instruments__category_key__emulation_control_post","parameters":[{"name":"category_key","in":"path","required":true,"schema":{"type":"string","title":"Category Key"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EmulationControlRequest"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EmulationControlResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}}
   /api/v1/instruments/channelEmulator/runtime-snapshot:
     get:
       summary: F64 应用内存只读诊断快照（不触发硬件 I/O）
@@ -1399,6 +1400,10 @@ paths:
           description: Execution result
 components:
   schemas:
+    EmulationControlRequest: {"properties":{"action":{"type":"string","title":"Action"}},"type":"object","required":["action"],"title":"EmulationControlRequest"}
+    EmulationControlResponse: {"properties":{"ok":{"type":"boolean","title":"Ok","description":"仅确认 action 目标；stop 成功不确认 GOS 应用、倒回或 RF 输出关闭"},"action":{"type":"string","title":"Action"},"emulation_running":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Emulation Running"},"last_error":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Last Error"},"detail":{"type":"string","title":"Detail"}},"type":"object","required":["ok","action","detail"],"title":"EmulationControlResponse"}
+    HTTPValidationError: {"properties":{"detail":{"items":{"$ref":"#/components/schemas/ValidationError"},"type":"array","title":"Detail"}},"type":"object","title":"HTTPValidationError"}
+    ValidationError: {"properties":{"loc":{"items":{"anyOf":[{"type":"string"},{"type":"integer"}]},"type":"array","title":"Location"},"msg":{"type":"string","title":"Message"},"type":{"type":"string","title":"Error Type"},"input":{"title":"Input"},"ctx":{"type":"object","title":"Context"}},"type":"object","required":["loc","msg","type"],"title":"ValidationError"}
     F64RuntimeSnapshot:
       type: object
       required: [generated_at, availability]

@@ -5471,7 +5471,7 @@ B/C批准设计见[生效状态与受控操作](design/2026-10-06-p2-83bc-effect
 
 **实施与验收出口**：依据充分且当前功能反例成立时，先提出最小换源/收窄设计，再按 TDD 修同根消费者；RUNNING、瞬态、空/矛盾回读、错误仪器、模拟与旧 attempt 仍 fail-closed。安全停止目标与操作应用证明分开，不让 unsafe cleanup/release 或未证明的 rewind 获得正式资格。软件验证和设备复验独立记账；若故障已不存在则记 resolved，不为了排期另造机制。
 
-**软件实现边界**：真实 F64 stop 回执要求同 execution/capture/instrument 的完整终态交换、两次一致 STOPPED/CLOSED 和查询后的干净错误队列；仅将实际状态确认为 `runtime_state`。原始 GOS 拒绝保留，共享 GOS 应用 recipe 仍 rejected，不宣称 rewind 或 RF 输出关闭。正式执行最后 CLOSED 仍 invalid；P08 调试文案不再把停止目标升级为倒回证明。Mock/其他 adapter、正式 provenance 白名单与公共 API/schema 均不变。NotebookLM 对应原件裁决见设计：User Reference Rev10.2 §20.4.3.10–14（印刷 p243–244）与 §20.5.2（p326）；现场重复 GOS 的设备行为不能由软件 fake 验证替代。
+**软件实现边界**：真实 F64 stop 回执要求同 execution/capture/instrument 的完整终态交换、两次一致 STOPPED/CLOSED 和查询后的干净错误队列；仅将实际状态确认为 `runtime_state`。原始 GOS 拒绝保留，共享 GOS 应用 recipe 仍 rejected，不宣称 rewind 或 RF 输出关闭。正式执行最后 CLOSED 仍 invalid；P08 和手工 API 不再把停止目标升级为倒回证明。手工 API 的 typed 响应以 detail 明确该边界并同步四镜像；Mock/其他 adapter、正式 provenance 白名单与冻结回执 schema 不变。NotebookLM 对应原件裁决见设计：User Reference Rev10.2 §20.4.3.10–14（印刷 p243–244）与 §20.5.2（p326）；现场重复 GOS 的设备行为不能由软件 fake 验证替代。
 
 ### P2-86 — 功率观察的缺路信号判定调研
 

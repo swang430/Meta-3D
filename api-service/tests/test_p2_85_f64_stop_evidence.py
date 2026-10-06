@@ -1,8 +1,10 @@
 """P2-85：停止目标可以确认，拒绝的 GOS 不能洗成应用/rewind。"""
 
 from uuid import uuid4
+from pathlib import Path
 
 import pytest
+import yaml
 
 from app.core.logging_config import current_execution_id
 from app.hal.propsim_f64 import RealPropsimF64Driver
@@ -14,6 +16,21 @@ from app.hal.scpi_evidence import (
 
 CLEAN = '0,"No error"'
 REJECTED = '-200,"Execution error;Wrong device state for command"'
+
+
+def test_manual_stop_goal_response_contract_mirrors():
+    from app.main import app
+    root = Path(__file__).resolve().parents[2]
+    live = app.openapi()
+    checked = yaml.safe_load((root / "api/openapi.yaml").read_text())
+    route = "/api/v1/instruments/{category_key}/emulation-control"
+    assert checked["paths"][route] == live["paths"][route]
+    assert checked["components"]["schemas"]["EmulationControlResponse"] == live["components"]["schemas"]["EmulationControlResponse"]
+    generated = (root / "gui/src/types/api.generated.ts").read_text()
+    handwritten = (root / "gui/src/types/api.ts").read_text()
+    assert route in generated and "EmulationControlResponse" in generated
+    assert "export interface EmulationControlResponse" in handwritten
+    assert "detail: string" in handwritten
 
 
 def _driver():

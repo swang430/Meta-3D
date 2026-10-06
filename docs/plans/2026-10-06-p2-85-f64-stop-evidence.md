@@ -9,7 +9,7 @@
 
 ## Global Constraints
 
-- 不连接硬件，不新增 SCPI，不改正式 provenance 白名单，无数据库迁移/公共 schema 变化。
+- 不连接硬件，不新增 SCPI，不改正式 provenance 白名单，无数据库迁移/冻结回执 schema 变化；手工 API 的目标语义与 typed 响应同步四镜像。
 - 当前 main 基线 b3f06500，独立 worktree，严格 WIP=1；依赖链接不得提交。
 - 共享证据/安全生命周期档：最后稳定输入必须后端全量；无 GUI 输入变化则不重复 build。
 
@@ -47,4 +47,4 @@ Files: `docs/roadmap-first-call.md` 与本计划。
 - 完整后端：`python -m pytest -q --color=no -o log_cli=false --tb=short`，退出码0；`6952 passed, 17 skipped, 5304 warnings in 246.12s (0:04:06)`，原输出 `/tmp/p2-85-backend-final.log`。此前运行因内审发现P08文案遗漏而新增输入，被主动中断，不算通过；同输入重复全量0次。
 - `python -m compileall -q app`、base-to-working `git diff --check` 退出码0；`alembic heads` 单一 `c1e3f5a7b9d2 (head)`，无迁移。
 - 独立只读内审：初审P1=0，P08文案P2严格TDD收口，增量复审CLEAN。reviewer只读内存恢复旧projection的两正例RED，旧stop矛盾状态返回True/当前False；尾查询错误与取消安全路径已核对。没有硬件连接或软件结果冒充现场验收。
-- 公共schema/API/GUI与构建依赖无变化，四镜像/build不适用。本片外审、合并与同步时间/HEAD在PR台账记录，不为完成时间创建额外待审HEAD。
+- 上述首轮验证输入无公共schema/API/GUI变化；R1发现手工API契约仍把停止目标描述成倒回，后续收口新增明确detail与typed响应，同步四镜像并执行production build。外审、合并与同步时间/HEAD在PR台账记录，不为完成时间创建额外待审HEAD。

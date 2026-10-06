@@ -13,7 +13,7 @@ NotebookLM PROPSIM资料（982222b7-4953-46cd-9949-00fa97882353），2026-10-06 
 
 ## 最小换源设计
 
-不改公共 schema、不增加操作、不新增 SCPI，不修改共享 GOS 应用判据。F64 的 stop receipt 现有 `state` 字段改为证明停止目标的 `runtime_state`，来源为 §20.4.3.14；`operation_succeeded` 沿用 stop 方法的“确保不运行”布尔契约，不能解释为 GOS 被接受。
+不改冻结回执 schema、不增加操作、不新增 SCPI，不修改共享 GOS 应用判据。F64 的 stop receipt 现有 `state` 字段改为证明停止目标的 `runtime_state`，来源为 §20.4.3.14；`operation_succeeded` 沿用 stop 方法的“确保不运行”布尔契约，不能解释为 GOS 被接受。手工 emulation-control 也必须明确同一目标语义：响应 `ok` 只确认 action 目标，停止时的 `detail` 明写未确认 GOS 应用/倒回/RF输出关闭；typed响应同步 live/checked OpenAPI、generated TS、手写GUI类型。不增加另一条仪器判据。
 
 同一锁事务保留前清队列、GOS、OPC、写后错误、两次 STATE 及最后错误队列查询。GOS 错误原样保留在 capture/日志；只有同 execution/capture/instrument 的非模拟终态交换，两次 STATE 完全一致且为 STOPPED/CLOSED、状态查询之后队列明确干净，才确认实际回读状态。错误文本、OPC、缓存单独均不放行。矛盾状态的驱动布尔也拒绝，不仅靠回执补挡。
 

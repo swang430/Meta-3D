@@ -4,6 +4,31 @@
  */
 
 export interface paths {
+    "/api/v1/instruments/{category_key}/emulation-control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Emulation Control
+         * @description F64 启动/停止目标控制；stop 的 ok 只确认停止目标，不确认 GOS 应用、倒回或 RF 输出关闭。
+         *
+         *     2026-09-16 固件8.0记录（p0_5_commands.json:f64.simulation_stop_state）：
+         *     运行中7次 GOS 后净队列+STOPPED；已STOPPED/已CLOSED时3+2次拒绝。
+         *     STATE 依据 User Reference Rev10.2 §20.4.3.14（p244），不能据此证明倒回。
+         *     不把旧风险推广为当前结论；仍避免盲目重试 start 或具有副作用的命令。
+         */
+        post: operations["emulation_control_api_v1_instruments__category_key__emulation_control_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/channelEmulator/runtime-snapshot": {
         parameters: {
             query?: never;
@@ -2702,6 +2727,45 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** EmulationControlRequest */
+        EmulationControlRequest: {
+            /** Action */
+            action: string;
+        };
+        /** EmulationControlResponse */
+        EmulationControlResponse: {
+            /**
+             * Ok
+             * @description 仅确认 action 目标；stop 成功不确认 GOS 应用、倒回或 RF 输出关闭
+             */
+            ok: boolean;
+            /** Action */
+            action: string;
+            /** Emulation Running */
+            emulation_running?: boolean | null;
+            /** Last Error */
+            last_error?: string | null;
+            /** Detail */
+            detail: string;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
+        };
         F64RuntimeSnapshot: {
             /** Format: date-time */
             generated_at: string;
@@ -4509,4 +4573,40 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    emulation_control_api_v1_instruments__category_key__emulation_control_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmulationControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmulationControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+}

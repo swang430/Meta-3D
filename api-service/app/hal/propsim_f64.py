@@ -3858,11 +3858,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             # 门判定+状态更新一并在锁内 (agent F4: 锁外 check-then-act 会与
             # 并发 start_emulation 交错致驱动状态漂移一拍)。
-            # ⚠ agent F1 (未实证风险): "已 STOPPED 态重复 GOS" / "无 sim open
-            # 态 GOS" 的 SYST:ERR? 行为无 3334 干净会话实证 — 若 F64 报 benign
-            # 错, 本门会假失败卡 attach 预备第一步 (现场收工态恰是 STOPPED+
-            # STATIC3)。下次现场 SCPI 冒烟先验证 (onsite-tasks 清单有条目);
-            # 撞上时逃生门 = attach 序列 establish_f64_passthrough=False。
+            # 2026-09-16 固件8.0现场分布见目录 f64.simulation_stop_state：
+            # 运行中7次净队列+STOPPED，已STOPPED/CLOSED时3+2次拒绝。
+            # 不把任一拒绝叫 benign，也不从 STATE 推断 GOS 应用/倒回。
             async with self._scpi_lock:
                 await self._drain_errors()
                 await self._write("DIAG:SIMU:GOS")
