@@ -118,6 +118,13 @@ def _owned_params(connection, model_id, raw):
     return model_owned_channel_emulator_params(raw, model_id)
 
 
+def parse_channel_emulator_model_presets_for_save(raw, target_model_id, *, replace_target=False):
+    """完整显式替代只允许绕过目标旧项；非目标与整张 map 仍严格校验。"""
+    if replace_target and isinstance(raw, dict):
+        raw = {key: value for key, value in raw.items() if key != str(target_model_id)}
+    return parse_channel_emulator_model_presets(raw)
+
+
 def _snapshot_active_connection(
     model: InstrumentModel, connection: InstrumentConnection
 ) -> ChannelEmulatorModelPreset | None:
@@ -126,6 +133,8 @@ def _snapshot_active_connection(
     endpoint = (connection.endpoint or "").strip()
     if not endpoint:
         return None
+    if connection.connection_params is not None and not isinstance(connection.connection_params, dict):
+        raise ValueError("信道仿真器活动 connection_params 必须是对象")
     params = _owned_params(connection, model.id, connection.connection_params)
     return ChannelEmulatorModelPreset(
         model_id=model.id,
@@ -148,14 +157,15 @@ def save_channel_emulator_model_preset(
     connection_params: dict[str, Any] | None,
     parsed_controller_ip: str | None,
     parsed_port: int | None,
+    replace_target: bool = False,
 ) -> None:
     """原子地：旧活动型号未存过则先快照 → 只改 map 里 target 键 → 目标投影成活动真值。
 
     「不覆盖其他型号」只靠一条：除 ``target`` 键外，map 里其余键原样回写。
     """
 
-    presets = parse_channel_emulator_model_presets(
-        connection.channel_emulator_model_presets
+    presets = parse_channel_emulator_model_presets_for_save(
+        connection.channel_emulator_model_presets, target_model.id, replace_target=replace_target
     )
     if (
         current_model is not None
@@ -174,8 +184,10 @@ def save_channel_emulator_model_preset(
         connection_params=_owned_params(connection, target_model.id, connection_params),
     )
     presets[str(target.model_id)] = target
+    original = connection.channel_emulator_model_presets or {}
     connection.channel_emulator_model_presets = {
-        key: value.model_dump(mode="json") for key, value in presets.items()
+        key: (original[key] if key in original and key != str(target.model_id)
+              else value.model_dump(mode="json")) for key, value in presets.items()
     }
     flag_modified(connection, "channel_emulator_model_presets")
 

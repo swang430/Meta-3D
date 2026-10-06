@@ -2402,18 +2402,30 @@ def update_instrument_category(
             db.add(connection)
         conn_data = request.connection.model_dump(exclude_unset=True)
         from app.services.base_station_model_preset import (
-            parse_base_station_model_presets,
+            parse_base_station_model_presets_for_save,
             save_base_station_model_preset,
         )
 
-        presets = parse_base_station_model_presets(
-            connection.base_station_model_presets
-        )
+        replace_target = {"endpoint", "controller", "notes", "connection_params",
+                          "base_station_adapter_profile"}.issubset(conn_data)
+        try:
+            presets = parse_base_station_model_presets_for_save(
+                connection.base_station_model_presets, target_model.id, replace_target=replace_target
+            )
+        except (ValidationError, ValueError, TypeError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         target_preset = presets.get(str(target_model.id))
         target_is_active = (
             current_model is not None and current_model.id == target_model.id
         )
-        active_params = dict(connection.connection_params or {})
+        needs_active_params = target_preset is None and target_is_active and (
+            "connection_params" not in conn_data or "base_station_adapter_profile" not in conn_data
+        )
+        if needs_active_params and connection.connection_params is not None and not isinstance(connection.connection_params, dict):
+            db.rollback()
+            raise HTTPException(status_code=422, detail="BaseStation active connection_params must be an object")
+        active_params = dict(connection.connection_params or {}) if needs_active_params else {}
         active_profile = active_params.pop("base_station_adapter_profile", None)
 
         if "connection_params" in conn_data:
@@ -2476,6 +2488,7 @@ def update_instrument_category(
                 base_station_adapter_profile=adapter_profile,
                 parsed_controller_ip=parsed_ip,
                 parsed_port=parsed_port,
+                replace_target=replace_target,
             )
         except (ValidationError, ValueError, TypeError) as exc:
             db.rollback()
@@ -2534,18 +2547,27 @@ def update_instrument_category(
                 detail="channelEmulator connection does not accept base_station_adapter_profile",
             )
         from app.services.channel_emulator_model_preset import (
-            parse_channel_emulator_model_presets,
+            parse_channel_emulator_model_presets_for_save,
             save_channel_emulator_model_preset,
         )
 
-        presets = parse_channel_emulator_model_presets(
-            connection.channel_emulator_model_presets
-        )
+        replace_target = {"endpoint", "controller", "notes", "connection_params"}.issubset(conn_data)
+        try:
+            presets = parse_channel_emulator_model_presets_for_save(
+                connection.channel_emulator_model_presets, target_model.id, replace_target=replace_target
+            )
+        except (ValidationError, ValueError, TypeError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         target_preset = presets.get(str(target_model.id))
         target_is_active = (
             current_model is not None and current_model.id == target_model.id
         )
-        active_params = dict(connection.connection_params or {})
+        needs_active_params = target_preset is None and target_is_active and "connection_params" not in conn_data
+        if needs_active_params and connection.connection_params is not None and not isinstance(connection.connection_params, dict):
+            db.rollback()
+            raise HTTPException(status_code=422, detail="信道仿真器活动 connection_params 必须是对象")
+        active_params = dict(connection.connection_params or {}) if needs_active_params else {}
 
         if "connection_params" in conn_data:
             raw_params = conn_data["connection_params"] or {}
@@ -2597,6 +2619,7 @@ def update_instrument_category(
                 connection_params=raw_params,
                 parsed_controller_ip=parsed_ip,
                 parsed_port=parsed_port,
+                replace_target=replace_target,
             )
         except (ValidationError, ValueError, TypeError) as exc:
             db.rollback()
