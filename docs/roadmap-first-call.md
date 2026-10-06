@@ -21,15 +21,15 @@
 | 5 | P2-83 LabProfile 统一工作单元 | A统一工作台/只读总览 → B生效状态展示 → C受控保存/同步编排 | A/B/C已由PR #505/#506/#507合并 |
 | 6 | P2-84 F64 运行态诊断快照 | 先盘点已有权威快照，再提供只读展示 | ✅ PR #508，merge `0a439c50` |
 
-**2026-10-06 用户批准的新增 todo（只排期，本次不实现）**：
+**2026-10-06 用户批准的新增 todo（P2-85 已另获实施批准，其余按前置排期）**：
 
 | 顺序 | 条目 | 可开工范围 / 前置 | 状态 |
 |---|---|---|---|
-| 1 | P2-85 F64 STOP 幂等语义与终态证据 | 先做 NotebookLM/对应手册取证及当前生产链盘点；是否实施由取证裁决决定 | 待取证，禁止直接放宽确认门 |
+| 1 | P2-85 F64 STOP 幂等语义与终态证据 | 取证和 A 方案已批准；停止目标换源至同事务权威 STATE，GOS 应用与倒回不补真 | 软件收口与外审中，现场复验未完成 |
 | 2 | P3-24 GUI 回归基线治理 | 对既有9项失败按过时预期、测试运行问题、真实产品缺陷分类；最小修复测试与复用浏览器载体 | 待开发，不是产品重构 |
 | 条件项 | P2-86 功率观察的缺路信号判定调研 | 先取得对应 F64 的信号存在性语义、单位/前置条件与安全读取依据；依据齐备后再设计 | 取证阻塞，不自动开始硬件查询或阈值判定 |
 
-CMW fake transport 的枚举/顺序校验（D13）仍在候选池，不随本次排期自动提升；P2-63、P1-6 HOLD 与全部现场项不变。排入 todo 不代表功能已开工，也不授权本次文档片连接硬件。
+CMW fake transport 的枚举/顺序校验（D13）仍在候选池，不随本次排期自动提升；P2-63、P1-6 HOLD 与全部现场项不变。除 P2-85 已批准的软件实施外，排入 todo 不代表功能已开工；本片未连接硬件。
 
 **执行规则沿用既往流程**：设计/计划 → 严格 TDD → 按风险分档验证 → fresh 功能内审 → Ready PR → Codex R1→R2 → 合并、main 同步、清理；前片闭环后才能开下一片。R2 无 P1 立即收口；有 P1 仅修 P1 并续审至覆盖最新 HEAD 无 P1，后续 P2/P3 不自动沉淀积压。完整范围与验收见下方 P2-79～P2-84。
 
@@ -93,7 +93,7 @@ Codex R1 的两条 P1 已按 TDD 收口：RF KPI 缺证据不再顺带清空独�
 判据；当前来源不可信时吞吐同样保持 N/A。
 
 **Current Focus（现场）= 无进行中的 P0：P0-9 已于 2026-09-17 由用户裁决关闭，开放的 P0 只剩 P0-5（UXM 5G NR，等 UXM 在场）。下文凡写「P0-9 待关闭」「P2-55 / P2-56 现场半待真机」的段落均为 2026-09-17 之前的表述，原文保留审计，现状以本行与「Blocked on hardware」表为准；
-Current Focus（非现场）= **P2-79～P2-84 软件队列已全部合并（#498～#508）。新增排期为 P2-85 先取证 → P3-24 测试基线治理；P2-86 取证阻塞，依据齐备后再设计。当前仅整理 roadmap，不启动功能开发；具体边界见顶部与新条目。** 下段保留前序交付背景，不再作为当前开工顺序：**P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。前序队列收尾后，新的非现场排期由 2026-10-05 用户批准（见顶部）；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
+Current Focus（非现场）= **P2-79～P2-84 软件队列已全部合并（#498～#508）。P2-85 取证与 A 方案已批准，当前软件收口/外审交付中；后续 P3-24 测试基线治理尚未开工。P2-86 取证阻塞，依据齐备后再设计；具体边界见顶部与新条目。** 下段保留前序交付背景，不再作为当前开工顺序：**P1-79D 软件实现与本地验证已完成，交付状态以本片 PR 为准：CMW500 只从同次正式配置回执已确认的 Band / DL EARFCN / bandwidth 形成 RAT-aware 频率身份；请求描述、构造默认缓存、失败/取消/断连旧状态均不得补真。共同 HAL 默认 fail-closed，执行器不再用 `hasattr` 猜频率身份能力。P1-79C 已由 PR #494 合并。P1-79E 已形成[Aerotech 活跃身份查询裁决](plans/2026-09-22-p1-79e-aerotech-identity-research.md)，当前资料不足，转 Hardware/Vendor-Protocol Blocked。** 设计与实施边界见[P1-79D 设计](plans/2026-09-23-p1-79d-cmw-frequency-identity-design.md)和[计划](plans/2026-09-23-p1-79d-cmw-frequency-identity-plan.md)。前序队列收尾后，新的非现场排期由 2026-10-05 用户批准（见顶部）；P2-78 已由 PR #489 合并（merge `bd14901c`）：GCM/local、B2 与 ASC 三条成功工程替换路径都在 FILE 紧邻错误门确认干净后、首次后续 `await` 前清除旧 bounded-frequency proof；FTP 失败或 CLOSE 未确认时保留旧工程证明，FILE 被拒沿用既有 unload/failure reset；未新增/修改 SCPI。R2 无 P1，按规则立即收口；R2 报告的「FILE 已发出但 `*OPC?` / 错误门尚未完成时取消」P2 只报告、不阻塞、未自动进入 Discovered/backlog，若要做须独立 triage。P2-77 软件验证仍不替代同一真实 F8800A 上的多频点/越界/逐组回读现场验收。P2-71 调研已形成[证据裁决](plans/2026-09-13-p2-71-f64-file-provisioning-research.md)，设备侧仍待现场。
 P1-75 已由 PR #431 合并（`cd427f78`）：执行兼容性硬门两站点落地（freeze 拒入口 + measure 锁内防漂移），外审 Gemini R1→R5 走到 clean。P1-74 非现场半已由 PR #429 合并（`150f96eb`）：统计基下发 + 回读 + 全域 fail-closed，外审 Gemini R1→R4 走到 clean；**其现场半（真机两个不同统计长度、证明不继承旧状态）仍未完成**，在此之前 CMW Extended BLER 的窗口 outcome 未经真机确认。P2-53 已由 PR #424 合并；随后 PR #425 修复
 Diagnostic/Simulated BaseStation 完整生命周期仍被误判 incomplete，PR #426 完成分型号已保存 preset、
 原子保存与只消费 resolver-valid 已保存配置的 LabProfile 同步，PR #427 收口 HAL reload 后旧 Mock
@@ -748,7 +748,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | P2-79～P2-84 已全部合并（#498～#508）；新排期：**P2-85 取证 → P3-24 GUI 回归基线治理**，当前尚未开工。P2-86 仅入调研 todo，依据未齐，不列可实施功能。P2-32B 软件安全片 #497 已完成，真机口径/SA 标量功率来源仍阻塞；不启动 P2-32C。现场/HOLD 与 P3-20/P3-21 非阻塞维护池保持原位置。 |
+| **LOCAL-OPEN (roadmap 内)** | P2-79～P2-84 已全部合并（#498～#508）；当前 **P2-85 软件收口/外审交付中 → P3-24 GUI 回归基线治理**；后者尚未开工。P2-86 仅入调研 todo，依据未齐，不列可实施功能。P2-32B 软件安全片 #497 已完成，真机口径/SA 标量功率来源仍阻塞；不启动 P2-32C。现场/HOLD 与 P3-20/P3-21 非阻塞维护池保持原位置。 |
 | **ON-SITE-BLOCKED** | P0-5 UXM 5G NR 正式复验 + P1-2 + P1-4 + P2-4，以及 P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 / **P1-74** / **P2-52** / **P2-74** 的现场半；另记 **P2-61/62 平台的真实 CE 认证验收**。**2026-09-17 出列**：P0-9（整项，用户裁决）、P0-8b、P2-51 / P2-55 / P2-56 现场半 —— 依据见下表各行与[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §4。载体与解除证据见下表。UXM 方言来源缺口先查手册，取得出处前不能靠现场盲试。P2-70 已提供 TM1/1 TX 与 TM3/2 TX 本地诊断载体，本地验证完成，交付状态见 PR；P2-55 真机抽样已按 2026-09-17 改后的验收收口（TM3+2TX 由 `dbd53e6f` 同次回执签收，TM1+1TX 降为扩域前置）。P1-33 已完成，不再列开放项。 |
 | **HOLD** | P1-6 现场半（真 idle-close 复现）；P2-63（下一真实 CE 型号/协议/手册及现场窗口待确定） |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -5463,13 +5463,15 @@ B/C批准设计见[生效状态与受控操作](design/2026-10-06-p2-83bc-effect
 
 ### P2-85 — F64 STOP 幂等语义与终态证据
 
-**状态与顺序**：2026-10-06 用户批准排入 todo；新增队列第 1 项，先取证，不直接实施驱动修改。
+**状态与顺序**：2026-10-06 用户批准取证后的 A 方案实施，当前唯一 WIP；软件实现及独立只读内审已完成，最终验证/外审交付以本片 PR 台账为准，现场复验未完成。[设计](design/2026-10-06-p2-85-f64-stop-evidence.md)与[实施计划](plans/2026-10-06-p2-85-f64-stop-evidence.md)保存取证与验证边界。
 
 **故障与全集**：已有现场发现记录表明，STOPPED/CLOSED 下再次 GOS 的设备拒绝可使 stop operation receipt 保持 unknown，进而使直通执行的 CE 终态证据链 invalid。当前 `RealPropsimF64Driver.stop_emulation` 会依据同次 STATE 回读接受“确保停止”目标，但布尔成功不等于整条错误队列/operation receipt 已确认；开工时必须重新核实这个分歧仍可在当前版本复现。枚举 stop 方法、disconnect、直通预备、cleanup、安全释放、operation receipt、执行终态与正式读取方，不只改布尔返回。
 
 **取证边界**：NotebookLM 查对应 PROPSIM 手册，保留版本、章节/页码及原文，分别裁决“已停止”“已关闭”“倒回起点”的不同语义，以及 GOS 被拒时哪些目标仍可由权威状态确认。不得因 STOPPED 就声称已 rewind，不以错误文本、缓存或 `*OPC?` 单独判成功，不泛化到其他 adapter。资料不足则给出阻塞结论，保留 unknown；本片取证不发硬件命令。
 
 **实施与验收出口**：依据充分且当前功能反例成立时，先提出最小换源/收窄设计，再按 TDD 修同根消费者；RUNNING、瞬态、空/矛盾回读、错误仪器、模拟与旧 attempt 仍 fail-closed。安全停止目标与操作应用证明分开，不让 unsafe cleanup/release 或未证明的 rewind 获得正式资格。软件验证和设备复验独立记账；若故障已不存在则记 resolved，不为了排期另造机制。
+
+**软件实现边界**：真实 F64 stop 回执要求同 execution/capture/instrument 的完整终态交换、两次一致 STOPPED/CLOSED 和查询后的干净错误队列；仅将实际状态确认为 `runtime_state`。原始 GOS 拒绝保留，共享 GOS 应用 recipe 仍 rejected，不宣称 rewind 或 RF 输出关闭。正式执行最后 CLOSED 仍 invalid；P08 调试文案不再把停止目标升级为倒回证明。Mock/其他 adapter、正式 provenance 白名单与公共 API/schema 均不变。NotebookLM 对应原件裁决见设计：User Reference Rev10.2 §20.4.3.10–14（印刷 p243–244）与 §20.5.2（p326）；现场重复 GOS 的设备行为不能由软件 fake 验证替代。
 
 ### P2-86 — 功率观察的缺路信号判定调研
 
@@ -5574,7 +5576,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 
 | 发现 | 出口 | 当前边界 |
 |---|---|---|
-| STOPPED/CLOSED 下 GOS 布尔成功与 stop receipt/CE 终态判定分歧 | P2-85，先取证 | 先复核当前反例与手册，禁止直接忽略错误队列或声称 rewind 已确认 |
+| STOPPED/CLOSED 下 GOS 布尔成功与 stop receipt/CE 终态判定分歧 | P2-85，软件收口/外审中 | 同事务权威 STATE 只确认停止目标，保留 GOS 拒绝与最终 CLOSED 正式拒绝；现场复验独立记账 |
 | Cell-ready 功率观察不能权威区分缺一路信号 | P2-86，取证阻塞 | 不从有限低功率推断通用阈值，不新增盲试查询 |
 | 既有9项 GUI 回归失败持续混入功能片验证 | P3-24，独立测试维护 | 重新分类；真实产品缺陷独立 triage，不以删除/放宽断言凑绿 |
 | CMW fake transport 不校验枚举/顺序（D13） | 候选，不提升 | 测试完善不等于新的产品功能，也不替代真机证明 |

@@ -250,6 +250,14 @@ def _labels(result, *, only_failed=False):
 
 
 class TestHappyPath:
+    async def test_stop_goal_does_not_claim_verified_rewind(self):
+        drv, _ = _make()
+        result, _ = await _run(drv)
+        step = next(s for s in result.steps if s.label == "收尾 GOS (stop_emulation)")
+        assert step.success
+        assert "停止目标已确认" in step.detail
+        assert "倒回未由状态回读证明" in step.detail
+
     async def test_full_gate_passes_and_archives(self):
         drv, fake = _make()
         result, _ = await _run(drv)
