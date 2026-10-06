@@ -5,6 +5,28 @@ import test from 'node:test'
 import { commitThenActivateCategory } from './categoryHalActivation.ts'
 import { diagnosticErrorMessage } from './diagnosticTarget.ts'
 
+test('保存完成阶段在同类别激活之前发布，激活失败仍保留已保存', async () => {
+  const events: string[] = []
+  const result = await commitThenActivateCategory(
+    'baseStation', async () => { events.push('save'); return { endpoint: 'saved-endpoint' } },
+    async () => { events.push('activate'); throw new Error('busy') },
+    committed => { events.push(`committed:${committed.endpoint}`) },
+  )
+  assert.deepEqual(events, ['save', 'committed:saved-endpoint', 'activate'])
+  assert.equal(result.committed.endpoint, 'saved-endpoint')
+  assert.ok(result.activationError)
+})
+
+test('保存被拒绝时不能发布已保存阶段或尝试激活', async () => {
+  const events: string[] = []
+  await assert.rejects(commitThenActivateCategory('vna',
+    async () => { throw new Error('save failed') },
+    async () => { events.push('activate'); throw new Error('unexpected') },
+    () => { events.push('committed') },
+  ), /save failed/)
+  assert.deepEqual(events, [])
+})
+
 test('committed instrument write is followed by activation for the same category', async () => {
   const calls: string[] = []
 

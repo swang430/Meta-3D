@@ -127,6 +127,7 @@ import {
   withoutSynthesizedConnectionParams,
 } from './features/Equipment/invalidStoredFields'
 import { commitThenActivateCategory } from './features/Equipment/categoryHalActivation'
+import { EquipmentEffectiveState, type EquipmentOperationReceipt } from './features/Equipment/EquipmentEffectiveState'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -1743,7 +1744,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
-  const { data, isLoading, isSuccess, isError, error, isFetching, refetch } = useQuery({
+  const { data, isLoading, isSuccess, isError, error, isFetching, isPaused, refetch } = useQuery({
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
   })
@@ -1759,6 +1760,18 @@ function EquipmentManager() {
 
     const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
   const [editingCategoryKey, setEditingCategoryKey] = useState<string | null>(null)
+  const [operationReceipts, setOperationReceipts] = useState<Record<string, EquipmentOperationReceipt>>({})
+  // Presentation scope only: leaving an editor invalidates late receipt publishers.
+  const editorSession = useRef(0)
+  const recordOperation = (key: string, receipt: EquipmentOperationReceipt, session = editorSession.current) => {
+    if (session !== editorSession.current) return
+    setOperationReceipts(previous => ({ ...previous, [key]: receipt }))
+  }
+  const clearOperationReceipt = (key: string) => setOperationReceipts(previous => {
+    const next = { ...previous }
+    delete next[key]
+    return next
+  })
   const [feedback, setFeedback] = useState<Record<string, EquipmentFeedback>>({})
   const [certificationExecutionId, setCertificationExecutionId] = useState('')
   const [certificationOperator, setCertificationOperator] = useState('')
@@ -1861,14 +1874,8 @@ function EquipmentManager() {
     return target.payload ?? {}
   }, [showFeedback])
 
-  const instrumentMutation = useMutation({
-    mutationFn: ({ categoryKey, payload }: EquipmentMutationVariables) =>
-      commitThenActivateCategory(
-        categoryKey,
-        () => updateInstrumentCategory(categoryKey, payload),
-        activateInstrumentCategoryHAL,
-      ),
-    onSuccess: ({ committed: updatedCategory, activation, activationError }, variables) => {
+  // Publish the server-committed draft baseline before activation can wait/refuse.
+  const publishCommittedCategory = (updatedCategory: InstrumentsResponse['categories'][number], session: number) => {
       queryClient.setQueryData(
         ['instruments', 'catalog'],
         (previous: InstrumentsResponse | undefined): InstrumentsResponse => {
@@ -1880,6 +1887,7 @@ function EquipmentManager() {
           }
         },
       )
+      if (session !== editorSession.current) return
       setDrafts((prev) => {
         const selectedModel = updatedCategory.models.find(
           (model) => model.id === updatedCategory.selectedModelId,
@@ -1910,6 +1918,30 @@ function EquipmentManager() {
           },
         }
       })
+  }
+
+  const instrumentMutation = useMutation({
+    onMutate: ({ categoryKey }: EquipmentMutationVariables) => {
+      recordOperation(categoryKey, { phase: 'saving' })
+      return editorSession.current
+    },
+    mutationFn: async ({ categoryKey, payload }: EquipmentMutationVariables) => {
+      const receiptSession = editorSession.current
+      const result = await commitThenActivateCategory(
+        categoryKey,
+        () => updateInstrumentCategory(categoryKey, payload),
+        activateInstrumentCategoryHAL,
+        committed => {
+          publishCommittedCategory(committed, receiptSession)
+          recordOperation(categoryKey, { phase: 'activating' }, receiptSession)
+          void queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+        },
+      )
+      return { ...result, receiptSession }
+    },
+    onSuccess: ({ committed: updatedCategory, activation, activationError, receiptSession }, variables) => {
+      recordOperation(variables.categoryKey, { phase: 'finished', activation,
+        error: activationError ? diagnosticErrorMessage(activationError) : undefined }, receiptSession)
       // The activation endpoint resolves the latest committed row, which may
       // already be newer than this mutation's response when two saves race.
       // Refetch instead of letting the earlier response remain a second truth.
@@ -1919,6 +1951,7 @@ function EquipmentManager() {
       if (updatedCategory.key === 'baseStation') {
         queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       }
+      if (receiptSession !== editorSession.current) return
       if (activationError) {
         showFeedback(
           variables.categoryKey,
@@ -1934,7 +1967,9 @@ function EquipmentManager() {
         `配置已保存；${activation?.message ?? '该类别 HAL 已激活'}。LabProfile 同步仍需单独执行。`,
       )
     },
-    onError: (error: unknown, variables) => {
+    onError: (error: unknown, variables, receiptSession) => {
+      if (receiptSession !== editorSession.current) return
+      recordOperation(variables.categoryKey, { phase: 'save_failed', error: diagnosticErrorMessage(error) })
       showFeedback(
         variables.categoryKey,
         'error',
@@ -2236,12 +2271,13 @@ function EquipmentManager() {
         showFeedback('__hal__', 'error', `❌ ${result.message}`)
       }
       refetchHAL()
+      void queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
     } catch (err: any) {
       showFeedback('__hal__', 'error', `切换失败: ${err.message}`)
     } finally {
       setHalSwitching(false)
     }
-  }, [refetchHAL, showFeedback])
+  }, [queryClient, refetchHAL, showFeedback])
 
   const [halReloading, setHalReloading] = useState(false)
   // P3-1: two-stage confirm flow. Reload tears down every VISA/SOCKET
@@ -2270,6 +2306,7 @@ function EquipmentManager() {
           `${prefix} ${result.drivers_loaded} 个驱动 (${result.duration_ms}ms): ${result.drivers.join(', ')}`,
         )
         refetchHAL()
+        void queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
         // Channel-models endpoint is driver-bound; invalidate the cache so
         // any open dropdown refetches against the freshly-loaded driver.
         queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
@@ -2352,7 +2389,11 @@ function EquipmentManager() {
     <Stack gap="xl">
       <Drawer
         opened={!!editingCategoryKey}
-        onClose={() => setEditingCategoryKey(null)}
+        onClose={() => {
+          editorSession.current++
+          if (editingCategoryKey) clearOperationReceipt(editingCategoryKey)
+          setEditingCategoryKey(null)
+        }}
         title={<Title order={4}>参数配置</Title>}
         position="right"
         size="min(900px, 100vw)"
@@ -2378,6 +2419,11 @@ function EquipmentManager() {
               <Group gap="sm" align="center">
                 <Title order={3}>{category.label}</Title>
               </Group>
+              <EquipmentEffectiveState category={category} dirty={hasUnsavedSyncDraft}
+                savedAvailable={isSuccess && !isError && !isFetching && !isPaused}
+                receipt={operationReceipts[category.key]} labId={selectedLabProfileId}
+                readiness={channelEmulatorReadinessQuery.isSuccess && !channelEmulatorReadinessQuery.isFetching
+                  && !channelEmulatorReadinessQuery.isPaused ? channelEmulatorReadinessQuery.data : undefined} />
 
               <Stack gap="md">
                 <Select
@@ -3157,6 +3203,8 @@ function EquipmentManager() {
                       size="xs"
                       value={(category as any).driverMode || 'auto'}
                       onChange={async (val) => {
+                        const receiptSession = editorSession.current
+                        recordOperation(category.key, { phase: 'saving' })
                         try {
                           const { activation, activationError } = await commitThenActivateCategory(
                             category.key,
@@ -3165,10 +3213,17 @@ function EquipmentManager() {
                               return val
                             },
                             activateInstrumentCategoryHAL,
+                            () => {
+                              recordOperation(category.key, { phase: 'activating' }, receiptSession)
+                              void queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+                            },
                           )
+                          recordOperation(category.key, { phase: 'finished', activation,
+                            error: activationError ? diagnosticErrorMessage(activationError) : undefined }, receiptSession)
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
                           queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
                           queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+                          if (receiptSession !== editorSession.current) return
                           const modeLabels: Record<string, string> = { auto: 'Auto', mock: 'Mock', real: 'Real' }
                           if (activationError) {
                             showFeedback(
@@ -3185,6 +3240,8 @@ function EquipmentManager() {
                             )
                           }
                         } catch (err: any) {
+                          if (receiptSession !== editorSession.current) return
+                          recordOperation(category.key, { phase: 'save_failed', error: diagnosticErrorMessage(err) })
                           showFeedback(category.key, 'error', `切换失败: ${err.message}`)
                         }
                       }}
@@ -3215,7 +3272,11 @@ function EquipmentManager() {
                       }
                     }}
                   />
-                  <Button variant="light" size="sm" onClick={() => setEditingCategoryKey(category.key)}>
+                  <Button variant="light" size="sm" onClick={() => {
+                    editorSession.current++
+                    clearOperationReceipt(category.key)
+                    setEditingCategoryKey(category.key)
+                  }}>
                     替换 / 配置实装
                   </Button>
                 </Group>
