@@ -34,7 +34,17 @@ Files: 同一 receipt 测试文件；只在必要同根缺口时改生产消费�
 
 Files: `docs/roadmap-first-call.md` 与本计划。
 
-- [ ] 相关回归、rule gates、完整后端、compileall、Alembic heads、diff-check；记录实际退出码/结尾/输入版本。
+- [x] 相关回归、rule gates、完整后端、compileall、Alembic heads、diff-check；记录实际退出码/结尾/输入版本。
 - [x] 一次独立只读功能内审；有 P1 最小 TDD 收口，不让 reviewer 重跑同输入全量。
 - [ ] 更新当前条目与镜像状态，提交推送，Ready PR，确认远端/PR HEAD 后去重请求 Codex R1→R2；只在最新 HEAD 无 P1 且 checks/mergeable 满足时合并。
 - [ ] fetch、主目录 ff-only 同步、清理本片链接/worktree/本地分支，保留未跟踪仪器资料，汇报软件完成与现场未验边界。
+
+## 本地验证台账（2026-10-06）
+
+- RED：新增 P2-85 定点在旧实现上 4 failed /15 passed，均为真实断言失败；旧诊断文案另 1 failed。
+- GREEN：P2-85 专项21 passed；相关 P2-85/P2-60/F64状态/rule gates 269 passed；P08 文案修复后 P08+P2-85 58 passed，退出码均0。
+- 最终测试输入：`1ac6d8be479f62aa3f313e1df94073272b20ec3e` 的生产/测试/目录文件，无未提交受控代码、fixture或依赖变化；仅本计划的非测试输入台账后补。依赖链接不提交。
+- 完整后端：`python -m pytest -q --color=no -o log_cli=false --tb=short`，退出码0；`6952 passed, 17 skipped, 5304 warnings in 246.12s (0:04:06)`，原输出 `/tmp/p2-85-backend-final.log`。此前运行因内审发现P08文案遗漏而新增输入，被主动中断，不算通过；同输入重复全量0次。
+- `python -m compileall -q app`、base-to-working `git diff --check` 退出码0；`alembic heads` 单一 `c1e3f5a7b9d2 (head)`，无迁移。
+- 独立只读内审：初审P1=0，P08文案P2严格TDD收口，增量复审CLEAN。reviewer只读内存恢复旧projection的两正例RED，旧stop矛盾状态返回True/当前False；尾查询错误与取消安全路径已核对。没有硬件连接或软件结果冒充现场验收。
+- 公共schema/API/GUI与构建依赖无变化，四镜像/build不适用。本片外审、合并与同步时间/HEAD在PR台账记录，不为完成时间创建额外待审HEAD。
