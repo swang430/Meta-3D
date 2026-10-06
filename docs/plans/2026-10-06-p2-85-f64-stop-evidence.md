@@ -48,3 +48,10 @@ Files: `docs/roadmap-first-call.md` 与本计划。
 - `python -m compileall -q app`、base-to-working `git diff --check` 退出码0；`alembic heads` 单一 `c1e3f5a7b9d2 (head)`，无迁移。
 - 独立只读内审：初审P1=0，P08文案P2严格TDD收口，增量复审CLEAN。reviewer只读内存恢复旧projection的两正例RED，旧stop矛盾状态返回True/当前False；尾查询错误与取消安全路径已核对。没有硬件连接或软件结果冒充现场验收。
 - 上述首轮验证输入无公共schema/API/GUI变化；R1发现手工API契约仍把停止目标描述成倒回，后续收口新增明确detail与typed响应，同步四镜像并执行production build。外审、合并与同步时间/HEAD在PR台账记录，不为完成时间创建额外待审HEAD。
+
+## R1 收口验证
+
+- review5430351339 覆盖 `8ff457f1`：功能P1（手工API目标语义）与本片P2（现行说明）均核实。真实F64+fake传输通过TestClient验证拒绝GOS仍仅确认停止目标、失败不确认目标；2条RED为旧响应缺detail。四镜像RED为checked路由缺失。
+- 修复输入 `96b4ab99`：API+P2-85+P08+状态机+rule gates 297 passed；最后说明注释修正后API/P2-85/rule gates 139 passed；退出码0。运行态功能/类型/fixture输入不再变化；全量启动后仅修两处非执行说明注释，同根门已重跑。
+- 最终全量 `python -m pytest -q --color=no -o log_cli=false --tb=short`：退出码0，`6955 passed, 17 skipped, 5304 warnings in 246.65s (0:04:06)`，原输出 `/tmp/p2-85-r1-backend-final.log`。不同功能输入各跑一次，无同输入重复全量。
+- `npm run openapi:generate`、`npm run build`（built in12.10s）、compileall、diff-check退出码0；原build输出 `/tmp/p2-85-r1-build.log`。独立只读增量复审功能CLEAN，两处非阻塞说明已收口。
