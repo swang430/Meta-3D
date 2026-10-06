@@ -255,6 +255,10 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         <>
             <Card withBorder radius="md" padding="xl">
                 <Stack gap="md">
+                    <Text size="sm" data-testid="chamber-save-stage">
+                        当前暗室来自服务器LabProfile绑定；创建草稿不是执行真值。
+                        创建与绑定结果以对应操作反馈为准，仪器绑定仍需单独同步。
+                    </Text>
                     {/* 标题和操作按钮 */}
                     <Group justify="space-between">
                         <Group gap="sm" align="center">

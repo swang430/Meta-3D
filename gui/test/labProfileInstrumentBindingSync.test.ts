@@ -13,6 +13,7 @@ test('syncs the current instrument configuration into the selected LabProfile', 
   const syncCurrentInstrumentBinding = service.syncCurrentInstrumentBinding as (
     labProfileId: string,
     categoryKey: string,
+    expectedSavedConfigurationDigest: string,
   ) => Promise<Record<string, unknown>>
   const binding = {
     category_id: 'category-id',
@@ -28,7 +29,7 @@ test('syncs the current instrument configuration into the selected LabProfile', 
 
   try {
     assert.deepEqual(
-      await syncCurrentInstrumentBinding('lab-id', 'baseStation'),
+      await syncCurrentInstrumentBinding('lab-id', 'baseStation', 'a'.repeat(64)),
       binding,
     )
   } finally {
@@ -41,8 +42,8 @@ test('equipment editor exposes explicit sync for the selected LabProfile', () =>
   const manager = app.slice(app.indexOf('function EquipmentManager()'))
 
   assert.match(manager, /selectedLabProfileId/)
-  assert.match(manager, /syncCurrentInstrumentBinding\(selectedLabProfileId,\s*categoryKey\)/)
-  assert.match(manager, /syncLabBindingMutation\.mutate\(category\.key\)/)
+  assert.match(manager, /syncCurrentInstrumentBinding\(labId,\s*categoryKey,\s*digest\)/)
+  assert.match(manager, /onConfirm: \(\) => syncLabBindingMutation\.mutate\(confirmation\)/)
   assert.match(manager, /同步已保存配置到.*selectedLabProfile\?\.name/)
 })
 

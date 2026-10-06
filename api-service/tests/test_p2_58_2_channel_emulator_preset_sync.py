@@ -19,6 +19,7 @@ teardown 事务快照）与 ``tests/test_smu_project_inventory.py``（tmp_path �
 """
 
 from __future__ import annotations
+from tests.instrument_sync_confirmation import saved_confirmation
 
 import json
 import uuid
@@ -488,7 +489,7 @@ def test_sync_current_channel_emulator_requires_saved_preset_and_detects_out_of_
     _patch_mock_hal(monkeypatch)
 
     # (1)
-    response = client.put(_sync_url(ce.lab_id))
+    response = client.put(_sync_url(ce.lab_id), json=saved_confirmation(db, "channelEmulator"))
     assert response.status_code == 422, response.text
     assert "没有已保存配置" in response.json()["detail"]
     assert _REQUEST_SESSION_OPEN_TX_AT_TEARDOWN == [False]
@@ -498,7 +499,7 @@ def test_sync_current_channel_emulator_requires_saved_preset_and_detects_out_of_
     # (2)
     _save_active_as_preset()
     _REQUEST_SESSION_OPEN_TX_AT_TEARDOWN.clear()
-    response = client.put(_sync_url(ce.lab_id))
+    response = client.put(_sync_url(ce.lab_id), json=saved_confirmation(db, "channelEmulator"))
     assert response.status_code == 200, response.text
     binding = response.json()["binding"]
     assert binding["instrument_model_id"] == str(ce.f64_id)
@@ -518,7 +519,7 @@ def test_sync_current_channel_emulator_requires_saved_preset_and_detects_out_of_
     db.expire_all()
     assert db.get(LabProfile, ce.lab_id).instrument_bindings == []  # 前置：清空确实落库了
     _REQUEST_SESSION_OPEN_TX_AT_TEARDOWN.clear()
-    response = client.put(_sync_url(ce.lab_id))
+    response = client.put(_sync_url(ce.lab_id), json=saved_confirmation(db, "channelEmulator"))
     assert response.status_code == 422, response.text
     detail = response.json()["detail"]
     assert "不一致" in detail and "connection_params" in detail and "请重新保存后再同步" in detail

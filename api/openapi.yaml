@@ -191,6 +191,13 @@ paths:
       description: >-
         Explicitly replaces one category binding with the catalog's saved selected
         model, connection endpoint, and driver mode while preserving other bindings.
+        Requires the operator-confirmed savedConfigurationDigest from catalog;
+        the server checks it under locks before modifying the binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InstrumentBindingSyncRequest'}
       parameters:
         - name: lab_profile_id
           in: path
@@ -211,6 +218,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/InstrumentBindingSyncResponse'}
+        '409': {description: Saved configuration differs from operator confirmation; binding unchanged}
         '404': {description: LabProfile or instrument category not found}
         '422': {description: Current instrument model or endpoint is incomplete}
   /api/v1/lab-profiles/{lab_profile_id}/instrument-bindings/baseStation/preview:
@@ -1887,6 +1895,15 @@ components:
         detail: {type: string}
         selected_asset_id: {type: string, nullable: true}
       required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, selected_asset_id]
+    InstrumentBindingSyncRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_saved_configuration_digest:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Server catalog savedConfigurationDigest captured by operator confirmation; not HAL status or qualification.
+      required: [expected_saved_configuration_digest]
     InstrumentBindingSyncResponse:
       type: object
       properties:
@@ -2948,6 +2965,10 @@ components:
         selectedModelId:
           type: string
           nullable: true
+        savedConfigurationDigest:
+          type: string
+          nullable: true
+          description: Server saved-configuration confirmation digest; null when no valid snapshot. Not HAL state or execution qualification.
         connection:
           $ref: '#/components/schemas/InstrumentConnection'
         models:
@@ -2965,7 +2986,7 @@ components:
         driverMode:
           type: string
           default: auto
-      required: [categoryId, key, label, description, tags, selectedModelId, connection, models, isActive, usagePhase, driverMode]
+      required: [categoryId, key, label, description, tags, selectedModelId, savedConfigurationDigest, connection, models, isActive, usagePhase, driverMode]
     InstrumentModel:
       type: object
       properties:

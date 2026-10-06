@@ -12,6 +12,7 @@ TestClient / `get_db` 覆盖写法复用 `tests/test_lab_profile_api.py`。
 """
 
 from __future__ import annotations
+from tests.instrument_sync_confirmation import saved_confirmation
 
 import uuid
 from types import SimpleNamespace
@@ -342,7 +343,7 @@ def test_sync_current_rejects_unresolvable_channel_emulator_binding_and_rolls_ba
     _patch_hal(monkeypatch, _mock())
 
     _save_active_channel_emulator_preset()
-    response = client.put(_sync_url(lab.id))
+    response = client.put(_sync_url(lab.id), json=saved_confirmation(db, "channelEmulator"))
 
     assert response.status_code == 422, response.text
     assert response.json()["detail"] == (
@@ -369,7 +370,7 @@ def test_sync_current_persists_channel_emulator_binding_and_keeps_resolved_null(
     _patch_hal(monkeypatch, _f64())
 
     _save_active_channel_emulator_preset()
-    response = client.put(_sync_url(lab.id))
+    response = client.put(_sync_url(lab.id), json=saved_confirmation(db, "channelEmulator"))
 
     assert response.status_code == 200, response.text
     body = response.json()

@@ -485,7 +485,7 @@ export interface paths {
         get?: never;
         /**
          * Sync one current instrument configuration into an existing LabProfile
-         * @description Explicitly replaces one category binding with the catalog's saved selected model, connection endpoint, and driver mode while preserving other bindings.
+         * @description Explicitly replaces one category binding with the catalog's saved selected model, connection endpoint, and driver mode while preserving other bindings. Requires the operator-confirmed savedConfigurationDigest from catalog; the server checks it under locks before modifying the binding.
          */
         put: {
             parameters: {
@@ -500,7 +500,11 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["InstrumentBindingSyncRequest"];
+                };
+            };
             responses: {
                 /** @description Persisted binding and vendor-neutral BaseStation resolution */
                 200: {
@@ -513,6 +517,13 @@ export interface paths {
                 };
                 /** @description LabProfile or instrument category not found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved configuration differs from operator confirmation; binding unchanged */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3082,6 +3093,10 @@ export interface components {
             detail: string;
             selected_asset_id: string | null;
         };
+        InstrumentBindingSyncRequest: {
+            /** @description Server catalog savedConfigurationDigest captured by operator confirmation; not HAL status or qualification. */
+            expected_saved_configuration_digest: string;
+        };
         InstrumentBindingSyncResponse: {
             binding: components["schemas"]["InstrumentBinding"];
             resolved?: components["schemas"]["BaseStationBindingPreviewResponse"] | null;
@@ -3725,6 +3740,8 @@ export interface components {
             description: string;
             tags: string[];
             selectedModelId: string | null;
+            /** @description Server saved-configuration confirmation digest; null when no valid snapshot. Not HAL state or execution qualification. */
+            savedConfigurationDigest: string | null;
             connection: components["schemas"]["InstrumentConnection"];
             models: components["schemas"]["InstrumentModel"][];
             /** @default true */

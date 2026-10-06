@@ -79,6 +79,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   );
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<'idle' | 'saved' | 'failed'>('idle');
+  const { beginWork } = useOperationalLab();
   const [selectedEdge, setSelectedEdge] = useState<TopologyConnection | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -91,6 +93,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     connectionsRef.current = [...topology.connections];
     nodesDataRef.current = topology.nodes.map(n => ({ ...n }));
     setDirty(false);
+    setSaveResult('idle');
   }, [topology.id]);
 
   // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
@@ -235,6 +238,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const handleSave = useCallback(async () => {
     if (!topology.id) return;
     setSaving(true);
+    const release = beginWork('topology-save', '拓扑保存尚未结束');
 
     try {
       // 1. Validate first
@@ -243,6 +247,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       const warnings = (validation.issues || []).filter((i: any) => i.severity === 'warning');
 
       if (errors.length > 0) {
+        setSaveResult('failed');
         notifications.show({
           title: '拓扑验证失败',
           message: `${errors.length} 个错误需要修复`,
@@ -284,6 +289,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       const updated = await switchTopologyService.updateTopology(topology.id, labProfileId, payload);
 
       setDirty(false);
+      setSaveResult('saved');
       onTopologyUpdated(updated);
 
       notifications.show({
@@ -299,6 +305,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         message: `topology=${topology.id} lab=${labProfileId} nodes=${updatedNodes.length} conns=${connectionsRef.current.length}`,
       });
     } catch (err: any) {
+      setSaveResult('failed');
       const detail = err.response?.data?.detail || err.message;
       notifications.show({
         title: '保存失败',
@@ -315,8 +322,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       });
     } finally {
       setSaving(false);
+      release();
     }
-  }, [topology, nodes, onTopologyUpdated, labProfileId]);
+  }, [topology, nodes, onTopologyUpdated, labProfileId, beginWork]);
 
   const activeModeObj = topology.operating_modes.find(m => m.id === activeMode);
 
@@ -324,6 +332,11 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
       <Paper p="sm" withBorder style={{ borderBottom: 'none', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}>
+        <Text size="sm" data-testid="topology-save-stage">
+          {saving ? '正在校验并保存拓扑' : saveResult === 'failed' ? '拓扑保存失败；草稿未保存'
+            : dirty ? '拓扑草稿未保存' : saveResult === 'saved' ? '拓扑已保存到服务器；不自动同步仪器绑定'
+            : '拓扑编辑器无未保存改动'}
+        </Text>
         <Group justify="space-between">
           <Group>
             <Text fw={600}>{topology.name}</Text>

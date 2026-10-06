@@ -98,11 +98,12 @@ export async function createLabProfile(
 export async function syncCurrentInstrumentBinding(
   labProfileId: string,
   categoryKey: string,
+  expectedSavedConfigurationDigest: string,
   testCaseId?: string,
 ): Promise<InstrumentBindingSyncResponse> {
   const res = await apiClient.put<InstrumentBindingSyncResponse>(
     `/lab-profiles/${labProfileId}/instrument-bindings/${categoryKey}/sync-current`,
-    undefined,
+    { expected_saved_configuration_digest: expectedSavedConfigurationDigest },
     { params: testCaseId ? { test_case_id: testCaseId } : undefined },
   )
   return res.data

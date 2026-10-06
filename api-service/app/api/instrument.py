@@ -55,6 +55,7 @@ from app.services.execution_qualification import (
     parse_base_station_site_certification,
 )
 from app.services.base_station_model_preset import BaseStationModelPreset
+from app.services.instrument_saved_configuration import saved_configuration_digest
 from app.services.channel_emulator_model_preset import ChannelEmulatorModelPreset
 from app.services.channel_emulator_certification import (
     ChannelEmulatorCertificationPreview,
@@ -167,6 +168,9 @@ class FEInstrumentCategory(BaseModel):
     description: str
     tags: List[str] = []
     selectedModelId: Optional[str] = None
+    savedConfigurationDigest: Optional[str] = Field(
+        None, description="服务器保存配置的确认摘要；不是HAL状态或执行资格。无有效保存快照时为null。"
+    )
     connection: FEInstrumentConnection
     models: List[FEInstrumentModel]
     isActive: bool = True
@@ -493,6 +497,9 @@ def _convert_category(
         description=cat.description or "",
         tags=_category_tags(cat),
         selectedModelId=str(cat.selected_model_id) if cat.selected_model_id else None,
+        savedConfigurationDigest=saved_configuration_digest(
+            cat, next((model for model in models if model.id == cat.selected_model_id), None), conn
+        ),
         connection=_convert_connection(conn),
         models=[_convert_model(m, cat.category_key) for m in models],
         isActive=cat.is_active if cat.is_active is not None else True,
