@@ -222,6 +222,24 @@ def test_emulation_control_stop_ok(client, fake_driver):
     assert ("stop_emulation",) in fake_driver.calls
 
 
+def test_emulation_control_rejected_gos_only_confirms_stop_goal(client, monkeypatch):
+    from tests.test_f64_state_truth_source_f64r1 import _drv
+    driver, _ = _drv(state="STOPPED", err_on={"DIAG:SIMU:GOS": '-200,"Wrong device state"'})
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda key: driver)
+    data = client.post(BASE + "/emulation-control", json={"action": "stop"}).json()
+    assert data["ok"] is True
+    assert data["detail"] == "停止目标已确认；未确认 GOS 应用、倒回或 RF 输出关闭"
+
+
+def test_emulation_control_stop_failure_does_not_claim_goal(client, monkeypatch):
+    driver = _FakeF64Driver(ok=False)
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda key: driver)
+    data = client.post(BASE + "/emulation-control", json={"action": "stop"}).json()
+    assert data["ok"] is False
+    assert data["detail"] == "停止目标未确认"
+    assert data["last_error"] == "驱动失败(测试注入)"
+
+
 def test_emulation_control_action_normalized(client, fake_driver):
     """action 大小写/空白容忍 ('  Start ' → start)。"""
     resp = client.post(BASE + "/emulation-control", json={"action": "  Start "})

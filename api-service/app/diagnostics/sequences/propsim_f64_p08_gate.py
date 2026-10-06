@@ -604,7 +604,7 @@ async def run(
         now = await g.read_state("收尾前 STATE?")
         if now == "RUNNING":
             if await g.run_atom("收尾 GOS (stop_emulation)", lambda: ce.stop_emulation(),
-                                "已停住并倒回 (场景包留驻)"):
+                                "停止目标已确认；倒回未由状态回读证明"):
                 await g.read_state("收尾后 STATE?", expect="STOPPED")
         elif now in ("STOPPED", "CLOSED"):
             # CLOSED = 未加载 (如加载失败中止), 是最干净的稳态 —— 别喊人工核对

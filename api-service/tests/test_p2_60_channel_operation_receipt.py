@@ -862,16 +862,16 @@ def test_f64_receipt_strengthens_only_same_invocation_authoritative_state():
     [
         # 2026-09-16 真机 12 次 GOS 的三种形态（scpi.log）：7 / 3 / 2 次。
         ('0,"No error"', "STOPPED", "confirmed", "STOPPED"),
-        ('-200,"Execution error;Wrong device state for command"', "STOPPED", "unknown", None),
-        ('-200,"Execution error;Wrong device state for command"', "CLOSED", "unknown", None),
-        # 真机从未出现「队列干净 + CLOSED」；回读 CLOSED ≠ 请求的 STOPPED，同样不得确认。
-        ('0,"No error"', "CLOSED", "unknown", None),
+        ('-200,"Execution error;Wrong device state for command"', "STOPPED", "confirmed", "STOPPED"),
+        ('-200,"Execution error;Wrong device state for command"', "CLOSED", "confirmed", "CLOSED"),
+        # P2-85：停止目标与 GOS 应用分开；CLOSED 只证未加载，最终正式 CLOSED 仍拒绝。
+        ('0,"No error"', "CLOSED", "confirmed", "CLOSED"),
     ],
 )
-def test_f64_stop_receipt_confirms_only_clean_gos_that_reads_back_stopped(
+def test_f64_stop_receipt_confirms_observed_idle_without_claiming_gos_application(
     error_reply, terminal_state, expected_status, expected_applied
 ):
-    """只有「GOS + 干净错误队列 + STATE?=STOPPED」才产出可用的 safe-idle 回执。"""
+    """同事务一致 STATE 与查询后净队列证明停止目标，不证明 GOS/rewind。"""
 
     from app.core.logging_config import current_execution_id
     from app.hal.propsim_f64 import RealPropsimF64Driver
@@ -927,6 +927,14 @@ def test_f64_stop_receipt_confirms_only_clean_gos_that_reads_back_stopped(
             "state", 4, "DIAG:SIMU:STATE?", operation="query",
             result_type="response", response=terminal_state,
         ),
+        exchange(
+            "state-confirm", 5, "DIAG:SIMU:STATE?", operation="query",
+            result_type="response", response=terminal_state,
+        ),
+        exchange(
+            "query-error", 6, "SYST:ERR?", operation="query",
+            result_type="response", response='0,"No error"',
+        ),
     )
     token = current_execution_id.set("execution-1")
     try:
@@ -948,11 +956,11 @@ def test_f64_stop_receipt_confirms_only_clean_gos_that_reads_back_stopped(
     assert field.get("applied") == expected_applied
     if expected_status == "confirmed":
         assert field["applied_present"] is True
-        assert field["provenance"] == "authoritative_readback"
-        assert field["exchange_ids"] == ["preclear", "gos", "opc", "error", "state"]
+        assert field["provenance"] == "runtime_state"
+        assert field["exchange_ids"] == ["preclear", "gos", "opc", "error", "state", "state-confirm", "query-error"]
         assert field["source_reference"] == (
             "notebooklm:982222b7-4953-46cd-9949-00fa97882353:"
-            "Propsim User Reference#20.4.3.11"
+            "Propsim User Reference#20.4.3.14"
         )
 
 
@@ -1298,6 +1306,7 @@ def _v2_terminal_projection_fixture(
     *,
     execution_mode: str = "real",
     safe_idle_applied: str = "STOPPED",
+    driver_override=None,
 ):
     from app.services.channel_emulator_execution_session import (
         CE_TERMINAL_EVIDENCE_CONFIG_KEY,
@@ -1314,7 +1323,7 @@ def _v2_terminal_projection_fixture(
         _frozen_plan,
     )
 
-    driver = (
+    driver = driver_override or (
         MockChannelEmulator("ce-runtime", {"model": "Mock Channel Emulator"})
         if execution_mode == "simulated"
         else _RealCe()

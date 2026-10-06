@@ -976,6 +976,15 @@ export type LinkBudgetResponse = {
   dl_feasible: boolean
   recommendations: string[]
 }
+/** stop 的 ok 仅确认停止目标；GOS 应用、倒回和 RF 输出关闭不由此响应证明。 */
+export interface EmulationControlResponse {
+  ok: boolean;
+  action: string;
+  emulation_running?: boolean | null;
+  last_error?: string | null;
+  detail: string;
+}
+
 /** P2-84：仅应用内存诊断，不供正式判定使用。 */
 export interface F64RuntimeSnapshot {
   generated_at: string

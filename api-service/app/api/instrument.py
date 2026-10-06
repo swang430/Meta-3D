@@ -4746,8 +4746,8 @@ def set_instrument_driver_mode(
 # (线损/路损标定) 计算得出, 或由测试例显式覆盖 (设计见 onsite-20260721-todo P0-2/P2-3);
 # 端点内不得固化任何经验值。
 #
-# 遵循 hal/reload·scpi-command·positioner 先例 (HAL 操作端点不进 checked-in
-# openapi.yaml, D19); 现场脚本经 curl 消费。
+# 现场脚本经 curl 消费；P2-85 的 emulation-control 已有 typed 响应和
+# checked-in OpenAPI 镜像，避免把停止目标混称为 GOS/倒回应用证明。
 # ============================================================
 
 async def _call_f64_method(method, *args):
@@ -4761,7 +4761,15 @@ async def _call_f64_method(method, *args):
 
 
 class EmulationControlRequest(BaseModel):
-    action: str  # "start" (DIAG:SIMU:GO) | "stop" (DIAG:SIMU:GOS 停并倒回)
+    action: str  # start：启动目标；stop：停止目标，不确认 GOS 应用/倒回。
+
+
+class EmulationControlResponse(BaseModel):
+    ok: bool = Field(description="仅确认 action 目标；stop 成功不确认 GOS 应用、倒回或 RF 输出关闭")
+    action: str
+    emulation_running: Optional[bool] = None
+    last_error: Optional[str] = None
+    detail: str
 
 
 class F64ControlOwnershipRequest(BaseModel):
@@ -4960,14 +4968,14 @@ async def load_smu_endpoint(
             }
 
 
-@router.post("/instruments/{category_key}/emulation-control")
+@router.post("/instruments/{category_key}/emulation-control", response_model=EmulationControlResponse)
 async def emulation_control(category_key: str, request: EmulationControlRequest):
-    """F64 仿真启停 (走驱动 start/stop_emulation, 含幂等热修 + 锁事务 + 错误门)。
+    """F64 启动/停止目标控制；stop 的 ok 只确认停止目标，不确认 GOS 应用、倒回或 RF 输出关闭。
 
-    ⚠ 2026-07-21 真机实证的状态机风险 (P1-2 待对齐): 本固件下 GOS 在运行态未观察到
-    真停 (数据流不断); 对已运行态反复 GO 会持续 -200 累积, 极端情况把 PropSim 业务层
-    搞卡死 (仅剩 SYST:INFO? 应答, *RST 救不回, 只能重启 PropSim)。调用方应先查状态、
-    避免盲目重试 start。
+    2026-09-16 固件8.0记录（p0_5_commands.json:f64.simulation_stop_state）：
+    运行中7次 GOS 后净队列+STOPPED；已STOPPED/已CLOSED时3+2次拒绝。
+    STATE 依据 User Reference Rev10.2 §20.4.3.14（p244），不能据此证明倒回。
+    不把旧风险推广为当前结论；仍避免盲目重试 start 或具有副作用的命令。
     """
     async with instrument_test_lease(
         f"f64-emulation-control:{category_key}",
@@ -5003,6 +5011,9 @@ async def emulation_control(category_key: str, request: EmulationControlRequest)
             "action": action,
             "emulation_running": getattr(driver, "_emulation_running", None),
             "last_error": None if ok else getattr(driver, "_last_error", None),
+            "detail": (
+                "停止目标已确认；未确认 GOS 应用、倒回或 RF 输出关闭" if ok else "停止目标未确认"
+            ) if action == "stop" else ("启动目标已确认" if ok else "启动目标未确认"),
         }
 
 
