@@ -46,6 +46,7 @@ MAC_CAPABILITY_SHAPES = {
             "rat",
             "application_evidence",
             "source_reference",
+            "statistical_window",
             "dimensions",
         },
         {

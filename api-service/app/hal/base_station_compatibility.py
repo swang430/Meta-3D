@@ -227,7 +227,9 @@ def digest_safe_manifest_payload(
 ) -> dict:
     """manifest 的 digest 投影：剔除不该影响任何 digest 的纯声明性内容。
 
-    目前只剔 MAC profile 的 `dimensions` 矩阵。**凡是拿 manifest 算 digest 的
+    剔除 MAC profile 的 `dimensions` 和 `statistical_window` 约束声明。
+    两者都由冻结/实时 verifier 重算 verdict，不借身份摘要授予正式资格。
+    **凡是拿 manifest 算 digest 的
     地方都要用这一个投影** —— 否则两处会各按一套规则算，同一次「只改一句
     reason 文案」在一处无事、在另一处却把已认证的连接踢出正式路径。
 
@@ -244,8 +246,35 @@ def digest_safe_manifest_payload(
     return manifest.model_dump(
         mode="json",
         exclude_none=exclude_none,
-        exclude={"mac_profiles": {"__all__": {"dimensions"}}},
+        exclude={"mac_profiles": {"__all__": {"dimensions", "statistical_window"}}},
     )
+
+
+def mac_statistical_window_rejections(
+    profile: MacTestProfile, manifest: BaseStationAdapterManifest,
+) -> list[str]:
+    """Check only a matching adapter's audited range; never borrow another RAT's range.
+
+    Unknown constraints do not invent incompatibility or confer formal evidence.
+    Frozen verdict verification re-evaluates these declarations just like dimensions.
+    """
+    reasons = []
+    for accepted in manifest.mac_profiles:
+        if (accepted.kind, accepted.profile_version, accepted.rat, accepted.source_reference) != (
+            profile.kind, profile.profile_version, profile.rat, profile.source_reference,
+        ):
+            continue
+        constraint = accepted.statistical_window
+        if constraint is None:
+            continue
+        window = profile.statistical_window
+        if window.unit != constraint.unit or not constraint.minimum <= window.count <= constraint.maximum:
+            reasons.append(
+                f"adapter {manifest.adapter_id!r} statistical_window.count={window.count} "
+                f"is outside {constraint.minimum}..{constraint.maximum} {constraint.unit} "
+                f"({constraint.source_reference})"
+            )
+    return reasons
 
 
 def _mac_dimension_rejections(
@@ -384,6 +413,7 @@ def evaluate_base_station_compatibility(
                 "MAC profile kind/version/RAT/source"
             )
         else:
+            reasons.extend(mac_statistical_window_rejections(profile, manifest))
             reasons.extend(
                 _mac_dimension_rejections(profile=profile, manifest=manifest)
             )

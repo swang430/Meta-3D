@@ -3036,6 +3036,8 @@ export interface components {
             detail: string;
         };
         BaseStationBindingPreviewResponse: {
+            /** Declared Mac Manifest */
+            declared_mac_manifest: components["schemas"]["BaseStationAdapterManifest"] | null;
             /** @enum {string} */
             status: "configured" | "not_applicable" | "diagnostic_unbound" | "invalid";
             binding_digest: string | null;
@@ -3806,6 +3808,16 @@ export interface components {
             source_reference: string;
             /** @default [] */
             dimensions: components["schemas"]["BaseStationMacDimensionCapability"][];
+            /** @default null */
+            statistical_window: components["schemas"]["BaseStationStatisticalWindowConstraint"] | null;
+        };
+        /** @description Audited adapter-specific count range; absence means unknown, not CMW defaults. */
+        BaseStationStatisticalWindowConstraint: {
+            /** @constant */
+            unit: "subframes";
+            minimum: number;
+            maximum: number;
+            source_reference: string;
         };
         BaseStationConfigFieldCapability: {
             field: string;

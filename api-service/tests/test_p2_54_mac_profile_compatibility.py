@@ -44,7 +44,7 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
     会从这道门底下漏过去。
     """
     assert [
-        item.model_dump(mode="json", exclude={"dimensions"})
+        item.model_dump(mode="json", exclude={"dimensions", "statistical_window"})
         for item in RealUxmDriver.adapter_manifest.mac_profiles
     ] == [
         {
@@ -65,7 +65,7 @@ def test_registered_manifests_declare_one_exact_mac_profile_acceptance():
     )
 
     assert [
-        item.model_dump(mode="json", exclude={"dimensions"})
+        item.model_dump(mode="json", exclude={"dimensions", "statistical_window"})
         for item in RealCmw500Driver.adapter_manifest.mac_profiles
     ] == [
         {

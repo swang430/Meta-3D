@@ -1825,6 +1825,11 @@ components:
       type: object
       additionalProperties: false
       properties:
+        declared_mac_manifest:
+          anyOf:
+          - $ref: '#/components/schemas/BaseStationAdapterManifest'
+          - type: 'null'
+          title: Declared Mac Manifest
         status:
           type: string
           enum: [configured, not_applicable, diagnostic_unbound, invalid]
@@ -1851,7 +1856,7 @@ components:
         testcase_compatibility:
           allOf: [{$ref: '#/components/schemas/BaseStationCompatibilityPreviewResponse'}]
           nullable: true
-      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, testcase_compatibility]
+      required: [status, binding_digest, execution_mode, adapter_id, model_name, category_id, instrument_model_id, instrument_connection_id, lab_profile_id, resolved_binding, runtime_driver, detail, testcase_compatibility, declared_mac_manifest]
     ChannelEmulatorBindingPreviewResponse:
       type: object
       additionalProperties: false
@@ -3091,7 +3096,22 @@ components:
           items:
             $ref: '#/components/schemas/BaseStationMacDimensionCapability'
           default: []
+        statistical_window:
+          anyOf:
+            - $ref: '#/components/schemas/BaseStationStatisticalWindowConstraint'
+            - type: 'null'
+          default: null
       required: [kind, profile_version, rat, application_evidence, source_reference]
+    BaseStationStatisticalWindowConstraint:
+      type: object
+      additionalProperties: false
+      description: Audited adapter-specific count range; absence means unknown, not CMW defaults.
+      properties:
+        unit: {type: string, const: subframes}
+        minimum: {type: integer, exclusiveMinimum: 0}
+        maximum: {type: integer, exclusiveMinimum: 0}
+        source_reference: {type: string, minLength: 1}
+      required: [unit, minimum, maximum, source_reference]
     BaseStationConfigFieldCapability:
       type: object
       additionalProperties: false

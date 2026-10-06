@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
+from app.hal.base_station_manifest import BaseStationAdapterManifest
 
 from app.hal.base_station_compatibility import (
     BaseStationCompatibilityVerdict,
@@ -58,3 +59,4 @@ class BaseStationBindingPreviewResponse(BaseModel):
     runtime_driver: dict[str, Any] | None
     detail: str
     testcase_compatibility: BaseStationCompatibilityPreviewResponse | None = None
+    declared_mac_manifest: BaseStationAdapterManifest | None = None

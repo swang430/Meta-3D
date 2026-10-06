@@ -33,6 +33,8 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchChannelModels, fetchReadiness } from '../../api/service'
 import { fetchDUTProfiles } from '../../api/dutProfileService'
 import { fetchSIMProfiles } from '../../api/simProfileService'
+import { fetchBaseStationBindingPreview } from '../../api/labProfileService'
+import { projectMacStatisticalWindow } from '../../types/macStatisticalWindow'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
 import { fetchChannelAssets } from '../../api/channelAssetService'
 import { selectEmulationFile, selectedEmulationFilename } from './emulationSelectionTruth'
@@ -254,6 +256,15 @@ export function MIMOOTAConfigForm({
       && Boolean(testCaseId),
   })
   const cmwReadiness = cmwReadinessQuery.data?.cmw500_lte_2x2
+  const windowBindingQuery = useQuery({
+    queryKey: ['base-station-window-binding', compatibilityLabProfileId ?? 'unselected'],
+    queryFn: () => fetchBaseStationBindingPreview(compatibilityLabProfileId!),
+    enabled: Boolean(compatibilityLabProfileId),
+  })
+  const windowConstraint = projectMacStatisticalWindow(
+    windowBindingQuery.isError ? undefined : windowBindingQuery.data?.declared_mac_manifest,
+    macProfileDraft.kind,
+  )
   const siteCertification = cmwReadinessQuery.data?.base_station_site_certification
   const channelEmulatorCertification =
     cmwReadinessQuery.data?.channel_emulator_site_certification_preview
@@ -1239,14 +1250,21 @@ export function MIMOOTAConfigForm({
                 )}
                 <NumberInput
                   label="统计窗口"
-                  description="单位：subframes"
+                  description={windowConstraint.description}
                   value={macProfileDraft.statistical_window.count}
                   onChange={(v) => {
                     if (typeof v === 'number') {
                       updateMacDraft({ statistical_window_count: v })
                     }
                   }}
-                  min={100}
+                  min={windowConstraint.minimum}
+                  max={windowConstraint.maximum}
+                  allowDecimal={false}
+                  clampBehavior="none"
+                  error={windowConstraint.status === 'known' && (
+                    macProfileDraft.statistical_window.count < windowConstraint.minimum
+                    || macProfileDraft.statistical_window.count > windowConstraint.maximum!
+                  ) ? '统计窗口超出所选 adapter 的服务器约束；保存会被拒绝' : undefined}
                   disabled={readOnly}
                 />
               </SimpleGrid>

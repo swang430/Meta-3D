@@ -73,6 +73,7 @@ from app.hal.cmw500_command_profile import (
 from app.hal.base_station_adapter_profile import BaseStationAdapterProfile
 from app.hal.base_station_manifest import (
     BaseStationAdapterManifest,
+    BaseStationStatisticalWindowConstraint,
     BaseStationAttachStageCapability,
     BaseStationConfigFieldCapability,
     BaseStationMeasurementCapability,
@@ -320,6 +321,16 @@ class RealCmw500Driver(BaseStationDriver):
                 rat="lte",
                 application_evidence="authoritative_readback",
                 source_reference=CMW500_LTE_PROFILE_SOURCE,
+                statistical_window=BaseStationStatisticalWindowConstraint(
+                    unit="subframes",
+                    minimum=EBLER_SUBFRAMES_MIN,
+                    maximum=EBLER_SUBFRAMES_MAX,
+                    source_reference=(
+                        "R&S CMW LTE UE User Manual 1173.9628.02-41 "
+                        "§3.4.3 printed p.953, EBLer:SFRames integer Range "
+                        "100 to 400E+3; §3.2.4 p.938, subframes per measurement cycle"
+                    ),
+                ),
                 # P2-55：逐维度取值域。每格出处经本地 PDF 页面目视核对
                 # （命令属性块 p.752 / p.753 / p.762 / p.766；
                 #  DL RMC 表 §2.2.19.3-.7 = pp.75-82；天线配置表 2-32 = pp.65-67）。

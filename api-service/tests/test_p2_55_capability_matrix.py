@@ -416,6 +416,8 @@ def _lte_requirements(**profile_overrides):
         # 绕过 profile schema 自己的 Literal，直接构造一个"矩阵该拦住"的取值：
         # 本片要证明的正是**矩阵**在拦，不是 schema 在拦。
         payload = frozen.profile.model_dump(mode="json")
+        # Only bypass the dimension under test, not unrelated nested contracts.
+        payload["statistical_window"] = frozen.profile.statistical_window
         payload.update(profile_overrides)
         frozen = FrozenMacTestProfile.model_construct(
             profile=frozen.profile.model_construct(**payload),

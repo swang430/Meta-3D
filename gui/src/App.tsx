@@ -2022,6 +2022,7 @@ function EquipmentManager() {
     },
     onSuccess: (syncResult, categoryKey) => {
       queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
+      queryClient.invalidateQueries({ queryKey: ['base-station-window-binding'] })
       queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
       showFeedback(

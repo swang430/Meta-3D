@@ -33,14 +33,16 @@ import {
   Textarea,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createTopologyProfile,
   updateTopologyProfile,
+  fetchInstrumentCatalog,
   type TopologyProfileDetail,
   type CreateTopologyProfilePayload,
   type UpdateTopologyProfilePayload,
 } from '../../api/service'
+import { projectMacStatisticalWindow } from '../../types/macStatisticalWindow'
 
 interface TopologyProfileEditorProps {
   opened: boolean
@@ -132,6 +134,17 @@ export function TopologyProfileEditor({
   onSaved,
 }: TopologyProfileEditorProps) {
   const queryClient = useQueryClient()
+  const windowCatalog = useQuery({
+    queryKey: ['topology-profile-window-catalog'],
+    queryFn: fetchInstrumentCatalog,
+    enabled: opened,
+  })
+  const selectedCategory = windowCatalog.data?.categories.find((item) => item.key === categoryKey)
+  const selectedManifest = selectedCategory?.models.find(
+    (item) => item.id === selectedCategory.selectedModelId,
+  )?.base_station_manifest
+  // This editor is the existing NR topology profile path, not a second LTE MAC editor.
+  const windowConstraint = projectMacStatisticalWindow(selectedManifest, 'nr_throughput')
   // Form state — one big object so reset on initialData change is a
   // single setForm call rather than 25 setX calls.
   const [form, setForm] = useState(BLANK)
@@ -601,12 +614,15 @@ export function TopologyProfileEditor({
           </Group>
           <NumberInput
             label="统计窗口 (子帧)"
-            description="3GPP 建议 ≥ 5000（= 5 秒）"
+            description={windowConstraint.description}
             value={form.stat_count}
             onChange={(v) =>
               setForm({ ...form, stat_count: typeof v === 'number' ? v : 5000 })
             }
-            min={100}
+            min={windowConstraint.minimum}
+            max={windowConstraint.maximum}
+            allowDecimal={false}
+            clampBehavior="none"
             disabled={readOnly}
             mt="sm"
           />

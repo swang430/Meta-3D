@@ -38,6 +38,66 @@ def _canonicalize_test_case_configuration(
         raise MIMOOTACarrierTruthError(str(exc)) from exc
 
 
+def saved_target_mac_manifest(db: Session, lab_profile_id):
+    """Read the persistent target's declared domain, never its HAL readiness.
+
+    Unbound library cases/absent lab context remain editable; execution's existing
+    resolver still fails closed. Never substitute the global selected model for a
+    LabProfile's bound model or grant formal qualification here.
+    """
+    from app.models.instrument import InstrumentCategory, InstrumentModel
+    from app.models.lab_profile import LabProfile
+    from app.services.base_station_binding import _single_binding
+    from app.services.instrument_hal_service import get_base_station_adapter_registration
+    if lab_profile_id is None:
+        # Library drafts have no deployment target. The execution resolver owns
+        # active-lab fallback; it must not impose its domain on portable editing.
+        return None
+    lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).one_or_none()
+    if lab is None:
+        raise MIMOOTACarrierTruthError("LabProfile not found")
+    category = db.query(InstrumentCategory).filter(
+        InstrumentCategory.category_key == "baseStation",
+    ).one_or_none()
+    if category is None:
+        return
+    try:
+        binding = _single_binding(lab, str(category.id))
+    except ValueError:
+        return
+    bound_id = binding.get("instrument_model_id")
+    if bound_id is None:
+        return
+    try:
+        model_id = UUID(str(bound_id))
+    except (ValueError, TypeError):
+        return
+    model = db.query(InstrumentModel).filter(
+        InstrumentModel.id == model_id,
+        InstrumentModel.category_id == category.id,
+    ).one_or_none()
+    if model is None:
+        return
+    try:
+        return get_base_station_adapter_registration(model.model).manifest
+    except KeyError:
+        return
+
+
+def _validate_saved_statistical_window(db: Session, configuration: dict, lab_profile_id) -> None:
+    from app.hal.base_station_compatibility import (
+        build_measure_execution_requirements_from_configuration,
+        mac_statistical_window_rejections,
+    )
+    manifest = saved_target_mac_manifest(db, lab_profile_id)
+    if manifest is None:
+        return
+    requirements = build_measure_execution_requirements_from_configuration(configuration)
+    reasons = mac_statistical_window_rejections(requirements.mac_profile.profile, manifest)
+    if reasons:
+        raise MIMOOTACarrierTruthError("; ".join(reasons))
+
+
 # ARCH-1 S4b: 计划链拆除。原有 7 个 Service 类只留 TestCaseService ——
 #   TestPlanService(700) / TestStepService(210) / TestQueueService(391) /
 #   TestExecutionService(529) / TestSequenceService(57) 随各自的路由删;
@@ -62,6 +122,8 @@ class TestCaseService:
             test_type,
             configuration,
         )
+        if _is_mimo_ota_test_type(test_type):
+            _validate_saved_statistical_window(db, configuration, kwargs.get("lab_profile_id"))
         test_case = TestCase(
             name=name,
             test_type=test_type,
@@ -131,6 +193,15 @@ class TestCaseService:
             kwargs["configuration"] = _canonicalize_test_case_configuration(
                 final_test_type,
                 candidate_configuration,
+            )
+
+        if _is_mimo_ota_test_type(final_test_type) and (
+            configuration_supplied or retyped_to_mimo_ota or "lab_profile_id" in kwargs
+        ):
+            _validate_saved_statistical_window(
+                db,
+                kwargs["configuration"] if configuration_supplied or retyped_to_mimo_ota else test_case.configuration,
+                kwargs.get("lab_profile_id", test_case.lab_profile_id),
             )
 
         for key, value in kwargs.items():
