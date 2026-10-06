@@ -2474,7 +2474,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         recipe = {
             "load_channel": ("f64.model_load", "emulation_file"),
             "start_emulation": ("f64.simulation_state", "state"),
-            "stop_emulation": ("f64.simulation_stop_state", "state"),
             "set_passthrough_mode": ("f64.bypass_mode", "mode"),
             "clear_passthrough_mode": ("f64.bypass_mode", "mode"),
             "set_output_gain": ("f64.output_gain", "gain_db"),
@@ -2549,6 +2548,58 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             ):
                 return None
             return values[:count]
+
+        if operation == "stop_emulation":
+            # P2-85：User Reference Rev10.2 §20.4.3.14，p244：STOPPED
+            # 仅证明未运行，CLOSED 仅证明未加载；不证明 GOS 接受/rewind/RF关闭。
+            # GOS 的应用证据仍由 simulation_stop_state recipe 单独拒绝/确认。
+            from app.core.logging_config import current_execution_id
+
+            scope = scope_for_evidence("f64.simulation_state", environment)
+            gos = [i for i, item in enumerate(exchanges) if
+                   exchange_matches_catalog_role(item, "f64.simulation_stop_state", "command")]
+            if requested != {"state": "STOPPED"} or not scope.eligible or len(gos) != 1:
+                return projected
+            command_index = gos[0]
+            if command_index < 1 or len(exchanges) != command_index + 6:
+                return projected
+            if (
+                environment.instrument_id != self.instrument_id
+                or not current_execution_id.get()
+                or len({item.capture_id for item in exchanges}) != 1
+                or not exchanges[0].capture_id
+                or [item.sequence for item in exchanges] != sorted({item.sequence for item in exchanges})
+                or len({item.exchange_id for item in exchanges}) != len(exchanges)
+                or any(item.simulated or item.instrument_id != self.instrument_id
+                       or item.execution_id != current_execution_id.get() for item in exchanges)
+            ):
+                return projected
+            preclear = exchanges[:command_index]
+            command = exchanges[command_index]
+            after = exchanges[command_index + 1:]
+            roles = ("f64.operation_complete", "f64.error_queue", "f64.simulation_state",
+                     "f64.simulation_state", "f64.error_queue")
+            if (
+                command.result_type != "ok"
+                or any(not exchange_matches_catalog_role(item, "f64.error_queue", "query")
+                       or item.result_type != "response" or item.response is None for item in preclear)
+                or any(not exchange_matches_catalog_role(item, role, "query")
+                       or item.result_type != "response" or item.response is None
+                       for item, role in zip(after, roles))
+                or preclear[-1].response.strip().split(",", 1)[0] != "0"
+                or after[0].response.strip() != "1"
+                or after[-1].response.strip().split(",", 1)[0] != "0"
+            ):
+                return projected
+            state = after[2].response.strip().upper()
+            if state not in {"STOPPED", "CLOSED"} or after[3].response.strip().upper() != state:
+                return projected
+            replace_confirmed_field(
+                field_name="state", applied=state, selected_exchanges=list(exchanges),
+                source_references=[scope.source_reference],
+            )
+            projected["fields"][0]["provenance"] = "runtime_state"
+            return projected
 
         if operation == "measure_input":
             selector = requested.get("measurement")
@@ -3795,16 +3846,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         停止仿真。
 
-        User Reference §20.4.6.2:
+        User Reference Rev10.2 §20.4.3.10/11，p243：
           DIAG:SIMU:STOP — 暂停仿真 (可通过 GO 从当前位置继续)
           DIAG:SIMU:GOS — 停止并倒回起点 (下次 GO 从头开始)
 
-        本方法使用 GOS (Stop & Rewind), 确保下次启动从干净状态开始。
-
-        Codex #202 R5: GOS 失败只经 SYST:ERR? 报 — 写后错误门 fail-loud
-        (同 GO 门), 否则 attach 直通预备 (stop → STATIC 3) 假成功, 直通
-        没建立照样配小区, attach 失败又被误诊成 DUT/RF 问题。事务持锁
-        (drain → GOS → 错误门), 被拒时驱动状态不动 (仪器实际仍在跑)。
+        返回 True 只表示同事务两次 STATE 确认“不运行/未加载”，且查询后队列干净。
+        GOS 被拒时保留错误，不承诺 rewind，更不承诺 RF 输出关闭。
         """
         if not self._visa_resource:
             return False
@@ -3835,19 +3882,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 仍在播**的状态下写 STATIC 建直通, 正是这道门存在的理由。
                 # agent F7: 失败分支同样要落真值 (瞬态 STOPPING/CLOSING 读到了也得记)。
                 _, eff = await self._apply_state_truth_confirmed(state, always_confirm=True)
-                if eff not in ("STOPPED", "CLOSED"):
+                # §20.6.1.1/2：查询复核实际状态，错误队列消费查询失败信号。
+                # 只增加既有 SYST:ERR? 的尾查，不增加命令或后台轮询。
+                query_error = (await self._query("SYST:ERR?", note_success=False)).strip()
+                if (eff not in ("STOPPED", "CLOSED") or state != eff
+                        or query_error.split(",", 1)[0] != "0"):
                     self._last_error = (
-                        f"stop_emulation 未确认停止: STATE?={eff} (期望 STOPPED/CLOSED)"
+                        f"stop_emulation 未确认停止: STATE?={state}/{eff} (期望一致 STOPPED/CLOSED)"
                         + (f"; SYST:ERR?={stop_err}" if stop_err else "")
+                        + f"; 查询后错误队列={query_error}"
                     )
                     logger.error(f"[F64] {self._last_error}")
                     return False
                 if stop_err is not None:
                     logger.info(
-                        f"[F64] GOS 报错但 STATE?={eff} (幂等/无害): {stop_err} — 判为已停止"
+                        f"[F64] GOS 被拒: {stop_err}; STATE?={eff} — 仅确认停止目标，未确认 GOS 应用/rewind"
                     )
                 self._status = InstrumentStatus.READY
-            logger.info("[F64] Emulation stopped and rewound")
+            logger.info("[F64] 停止目标已确认: STATE?=%s；RF 输出关闭与 rewind 不由此状态证明", eff)
             return True
         except Exception as e:
             logger.error(f"[F64] stop_emulation failed: {e}")

@@ -32,7 +32,7 @@
       "id": "f64.simulation_stop_state", "instrument": "f64", "mandatory": true,
       "command": "DIAGnostic:SIMUlation:GOS", "query": "DIAGnostic:SIMUlation:STATE?", "status": "confirmed", "max_evidence_level": "E2",
       "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3.11"},
-      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "手册：GOS 停止并倒回起点（§20.4.3.11），其后仿真为 stopped（ATE environment AN §2.5），期望 STATE?=STOPPED；CLOSED = 未加载仿真（§20.4.3.14），无仿真可停，驱动 stop_emulation 同样视为已停止。回执只在「OPC + 干净错误队列 + STATE?=STOPPED」时确认。真机实测（固件 8.0，2026-09-16 共 12 次 GOS）：RUNNING 下 GOS 队列干净并回 STOPPED（7 次）；已 STOPPED 或 CLOSED 时 GOS 恒报 -200 \"Wrong device state for command\"（3 + 2 次），与 §20.5.2 对 -200 的说明一致 —— 这两种形态回执保持 unknown。CLOSED 下 RF 输出状态手册未说明。"
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "GOS 应用证明：User Reference Rev10.2 §20.4.3.11（p243）停止并倒回起点，ATE AN Rev2.2 §2.5（pp14–15）成功后为 stopped；本 recipe 仍要求 OPC、干净错误队列与 STATE?=STOPPED，被拒的 GOS 不确认应用/rewind。停止目标回执另从 §20.4.3.14（p244）的同事务两次一致 STATE 与查询后净队列确认 runtime_state，不复用本 recipe 给拒绝命令盖章。2026-09-16 固件8.0历史12次 GOS：运行中7次净队列+STOPPED，已STOPPED/已CLOSED时3+2次 -200 Wrong device state；历史回执为 unknown，不回填升级。CLOSED只证明未加载，RF输出状态未说明；正式执行最终CLOSED仍拒绝。"
     },
     {
       "id": "f64.model_state", "instrument": "f64", "mandatory": true,
