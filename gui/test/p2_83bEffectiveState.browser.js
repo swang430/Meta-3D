@@ -9,6 +9,9 @@ async (page) => {
   let holdActivation = false;
   let releaseActivation;
   let runtimeMode = 'real';
+  let syncCalls = 0;
+  let saveCalls = 0;
+  let syncUsedConfirmedTarget = false;
   const reviewFailures = [];
   const reviewCheck = async (name, check) => {
     try { await check(); } catch (error) { reviewFailures.push(`${name}: ${error.message}`); }
@@ -16,8 +19,8 @@ async (page) => {
   const labId = '11111111-1111-4111-8111-111111111111';
   const category = {
     categoryId: '22222222-2222-4222-8222-222222222222', key: 'vna', label: '阶段测试仪器',
-    description: '', tags: [], isActive: true, selectedModelId: null,
-    usagePhase: [], driverMode: 'real', models: [],
+    description: '', tags: [], isActive: true, selectedModelId: 'model-id', savedConfigurationDigest: 'a'.repeat(64),
+    usagePhase: [], driverMode: 'real', models: [{ id: 'model-id', model: '测试仪器', vendor: 'vendor', status: 'available', interfaces: [], capabilities: [] }],
     connection: { id: '33333333-3333-4333-8333-333333333333', endpoint: 'saved-endpoint',
       controller: 'LAN', notes: '', connection_params: {}, invalid_fields: {},
       cmw500_lte_2x2_formal_enabled: false, base_station_site_certification: null,
@@ -55,10 +58,16 @@ async (page) => {
     if (path.endsWith('/instruments/catalog')) return route.fulfill(catalogFails
       ? { status: 503, json: { detail: '保存目录刷新失败' } } : { json: { categories: [category, simulatedCategory] } });
     if (path.endsWith('/instruments/vna') && request.method() === 'PUT') {
+      saveCalls++;
       if (saveFails) return route.fulfill({ status: 422, json: { detail: '保存拒绝' } });
       Object.assign(category.connection, request.postDataJSON().connection);
       category.connection.controller = category.connection.controller.trim();
       return route.fulfill({ json: category });
+    }
+    if (path.endsWith('/instrument-bindings/vna/sync-current') && request.method() === 'PUT') {
+      syncCalls++;
+      syncUsedConfirmedTarget = path.includes(labId) && request.postDataJSON()?.expected_saved_configuration_digest === 'a'.repeat(64);
+      return route.fulfill({ status: 409, json: { detail: '确认版本漂移，LabProfile未修改' } });
     }
     if (path.includes('/activate') && request.method() === 'POST') {
       activations++;
@@ -77,13 +86,30 @@ async (page) => {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '替换 / 配置实装', exact: true }).first().click();
   await panel.getByText('已保存端点：saved-endpoint', { exact: true }).waitFor();
+  await reviewCheck('retry activation without save or sync', async () => {
+    await page.getByRole('button', { name: '仅重试该类别 HAL 激活', exact: true }).click({ timeout: 3000 });
+    await panel.getByText('已保存，但HAL激活失败', { exact: true }).waitFor();
+    if (saveCalls || syncCalls || activations !== 1) throw new Error('激活重试写了保存/同步或没有分类激活');
+  });
+  await reviewCheck('explicit confirmation cancel and drift refusal', async () => {
+    const trigger = page.getByRole('button', { name: '同步已保存配置到 阶段测试实验室', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog').filter({ hasText: '确认同步已保存配置' });
+    await dialog.getByText('a'.repeat(64), { exact: false }).waitFor({ timeout: 3000 });
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    if (syncCalls) throw new Error('取消仍同步');
+    await trigger.click();
+    await dialog.getByRole('button', { name: '确认同步', exact: true }).click();
+    await page.getByText('同步 LabProfile 失败: 确认版本漂移，LabProfile未修改', { exact: true }).waitFor();
+    if (syncCalls !== 1 || !syncUsedConfirmedTarget) throw new Error('漂移拒绝后暗中重试或未使用确认目标/服务器摘要');
+  });
   await page.getByRole('textbox', { name: '控制端点', exact: true }).fill('new-endpoint');
   await page.getByRole('textbox', { name: '控制方式', exact: true }).fill(' LAN ');
   await panel.getByText('草稿尚未保存', { exact: true }).waitFor();
   await panel.getByText('已保存端点：saved-endpoint', { exact: true }).waitFor();
   await page.getByRole('button', { name: '保存配置', exact: true }).click();
   await panel.getByText('保存失败；未尝试HAL激活', { exact: true }).waitFor();
-  if (activations) throw new Error('保存失败仍激活');
+  if (activations !== 1) throw new Error('保存失败仍激活');
   saveFails = false;
   holdActivation = true;
   await page.getByRole('button', { name: '保存配置', exact: true }).click();
@@ -133,5 +159,5 @@ async (page) => {
   await page.getByRole('button', { name: '刷新总览', exact: true }).click();
   await resources.getByText('new-endpoint', { exact: false }).waitFor();
   if (reviewFailures.length) throw new Error(reviewFailures.join('\n'));
-  return { passed: 12, activations, scenarios: ['simulated binding disclosure', 'dirty versus saved', 'save refused', 'saved while activating', 'canonical draft at commit boundary', 'activation refused', 'inactive receipt', 'receipt cleared on editor exit', 'old request cannot revive receipt in new editor', 'global HAL change refreshes snapshot', 'overview saved resources', 'catalog failure and recovery'] };
+  return { passed: 14, activations, scenarios: ['retry activation without save or sync', 'explicit confirmation cancel and drift refusal', 'simulated binding disclosure', 'dirty versus saved', 'save refused', 'saved while activating', 'canonical draft at commit boundary', 'activation refused', 'inactive receipt', 'receipt cleared on editor exit', 'old request cannot revive receipt in new editor', 'global HAL change refreshes snapshot', 'overview saved resources', 'catalog failure and recovery'] };
 }

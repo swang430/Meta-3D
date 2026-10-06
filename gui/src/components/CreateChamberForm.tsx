@@ -62,6 +62,7 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
 
     return (
         <Stack gap="md">
+            <Text size="sm">{isLoading ? '正在创建暗室配置' : '暗室草稿尚未创建；创建与LabProfile暗室绑定是独立阶段'}</Text>
             <Select
                 label="选择预设模板"
                 description="选择一个预定义的暗室配置模板"

@@ -311,6 +311,8 @@ export type InstrumentCategory = {
   tags?: string[]
   isActive?: boolean
   selectedModelId: string | null
+  /** 服务器保存快照确认摘要，不是HAL状态或执行资格。 */
+  savedConfigurationDigest?: string | null
   connection: InstrumentConnection
   models: InstrumentModel[]
   usagePhase: string[]
@@ -520,6 +522,10 @@ export type BaseStationCompatibilityPreviewResponse = {
   } | null
   reasons: string[]
   detail: string
+}
+
+export type InstrumentBindingSyncRequest = {
+  expected_saved_configuration_digest: string
 }
 
 export type InstrumentBindingSyncResponse = {

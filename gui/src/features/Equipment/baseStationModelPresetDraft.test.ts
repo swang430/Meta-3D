@@ -217,7 +217,7 @@ test('the equipment drawer makes Save precede Sync and disables Sync for every u
 
   const saveLabel = drawer.indexOf('保存配置')
   const saveButton = drawer.slice(drawer.lastIndexOf('<Button', saveLabel), saveLabel)
-  assert.match(saveButton, /disabled=\{syncLabBindingMutation\.isPending\}/)
+  assert.match(saveButton, /disabled=\{syncLabBindingMutation\.isPending \|\| activationRetryMutation\.isPending\}/)
 })
 
 test('every syncable instrument category blocks stale saved-state sync', () => {

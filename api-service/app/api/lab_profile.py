@@ -11,7 +11,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -108,6 +108,14 @@ class InstrumentBinding(BaseModel):
     role: Optional[str] = Field(
         None,
         description="Human-readable role for this binding, e.g. 'primary_channel_emulator'",
+    )
+
+
+class InstrumentBindingSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_saved_configuration_digest: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="操作员确认窗口捕获的目录保存摘要；服务器锁内校验，不匹配409且不修改binding。",
     )
 
 
@@ -284,10 +292,12 @@ def list_lab_profiles(
 @router.put(
     "/{lab_profile_id}/instrument-bindings/{category_key}/sync-current",
     response_model=InstrumentBindingSyncResponse,
+    responses={409: {"description": "Saved configuration differs from operator confirmation; binding unchanged"}},
 )
 def sync_current_instrument_binding(
     lab_profile_id: UUID,
     category_key: str,
+    request: InstrumentBindingSyncRequest,
     test_case_id: Optional[UUID] = Query(
         None,
         description="已保存 MIMO_OTA TestCase；省略时兼容性明确为未评估",
@@ -303,6 +313,7 @@ def sync_current_instrument_binding(
     category = (
         db.query(InstrumentCategory)
         .filter(InstrumentCategory.category_key == category_key)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )
@@ -313,6 +324,7 @@ def sync_current_instrument_binding(
     profile = (
         db.query(LabProfile)
         .filter(LabProfile.id == lab_profile_id)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )
@@ -331,6 +343,8 @@ def sync_current_instrument_binding(
             InstrumentModel.id == category.selected_model_id,
             InstrumentModel.category_id == category.id,
         )
+        .populate_existing()
+        .with_for_update()
         .one_or_none()
     )
     if model is None:
@@ -342,9 +356,12 @@ def sync_current_instrument_binding(
     connection = (
         db.query(InstrumentConnection)
         .filter(InstrumentConnection.category_id == category.id)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )
+    from app.services.instrument_saved_configuration import saved_configuration_digest
+
     endpoint = (connection.endpoint if connection else "") or ""
     endpoint = endpoint.strip()
     if not endpoint:
@@ -392,6 +409,14 @@ def sync_current_instrument_binding(
         except (TypeError, ValueError) as error:
             db.rollback()
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+    actual_digest = saved_configuration_digest(category, model, connection)
+    if actual_digest is None or actual_digest != request.expected_saved_configuration_digest:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="已保存仪器配置与确认版本不一致或无法核验；请刷新目录并重新确认，LabProfile未修改",
+        )
 
     driver_mode = category.driver_mode or "auto"
     if driver_mode not in {"auto", "mock", "real"}:

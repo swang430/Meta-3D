@@ -65,7 +65,7 @@ import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { LabWorkspace } from './features/LabWorkspace/LabWorkspace'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
-import { OperationalLabSelector, useOperationalLab } from './features/OperationalLab'
+import { OperationalLabSelector, useOperationalLab, useOperationalLabSwitchGuard } from './features/OperationalLab'
 import { ProbeCalibrationPage } from './features/ProbeCalibration'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
@@ -1743,7 +1743,7 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
 
 function EquipmentManager() {
   const queryClient = useQueryClient()
-  const { selectedLabProfileId, selectedLabProfile } = useOperationalLab()
+  const { selectedLabProfileId, selectedLabProfile, beginWork } = useOperationalLab()
   const { data, isLoading, isSuccess, isError, error, isFetching, isPaused, refetch } = useQuery({
     queryKey: ['instruments', 'catalog'],
     queryFn: fetchInstrumentCatalog,
@@ -1760,6 +1760,11 @@ function EquipmentManager() {
 
     const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
   const [editingCategoryKey, setEditingCategoryKey] = useState<string | null>(null)
+  const editingCategory = categories.find(category => category.key === editingCategoryKey)
+  const editingDraft = editingCategoryKey ? drafts[editingCategoryKey] : undefined
+  useOperationalLabSwitchGuard('equipment-config-draft',
+    editingCategory && editingDraft && hasUnsavedInstrumentSyncDraft(editingCategory, editingDraft)
+      ? '仪器配置存在未保存草稿，请先保存或退出编辑器' : null)
   const [operationReceipts, setOperationReceipts] = useState<Record<string, EquipmentOperationReceipt>>({})
   // Presentation scope only: leaving an editor invalidates late receipt publishers.
   const editorSession = useRef(0)
@@ -1956,7 +1961,7 @@ function EquipmentManager() {
         showFeedback(
           variables.categoryKey,
           'error',
-          `配置已保存，但 HAL 尚未激活: ${diagnosticErrorMessage(activationError)}。请重试保存，必要时使用全局重新加载驱动。LabProfile 未自动同步。`,
+          `配置已保存，但 HAL 尚未激活: ${diagnosticErrorMessage(activationError)}。可仅重试该类别 HAL 激活。LabProfile 未自动同步。`,
           12000,
         )
         return
@@ -2045,27 +2050,52 @@ function EquipmentManager() {
     },
   })
 
-  const syncLabBindingMutation = useMutation({
-    mutationFn: (categoryKey: string) => {
-      if (!selectedLabProfileId) {
-        throw new Error('请先在顶部选择 LabProfile')
-      }
-      return syncCurrentInstrumentBinding(selectedLabProfileId, categoryKey)
+  const activationRetryMutation = useMutation({
+    mutationFn: async ({ categoryKey, session }: { categoryKey: string; session: number }) => {
+      const release = beginWork('equipment-activation-retry', '分类HAL激活尚未结束')
+      recordOperation(categoryKey, { phase: 'activating' }, session)
+      try { return await activateInstrumentCategoryHAL(categoryKey) }
+      finally { release() }
     },
-    onSuccess: (syncResult, categoryKey) => {
+    onSuccess: (activation, { categoryKey, session }) => {
+      recordOperation(categoryKey, { phase: 'finished', activation }, session)
+    },
+    onError: (error: unknown, { categoryKey, session }) => {
+      recordOperation(categoryKey, { phase: 'finished', error: diagnosticErrorMessage(error) }, session)
+    },
+    onSettled: (_activation, _error, { categoryKey }) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'hal', 'status'] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels', categoryKey] })
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'topologyProfiles', categoryKey] })
+      queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+    },
+  })
+
+  type SyncConfirmation = { labId: string; labName: string; categoryKey: string; digest: string; session: number }
+  const syncLabBindingMutation = useMutation({
+    mutationFn: async ({ labId, categoryKey, digest }: SyncConfirmation) => {
+      const release = beginWork('equipment-binding-sync', 'LabProfile同步尚未结束')
+      try { return await syncCurrentInstrumentBinding(labId, categoryKey, digest) }
+      finally { release() }
+    },
+    onSuccess: (syncResult, { categoryKey, labName, session }) => {
       queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
       queryClient.invalidateQueries({ queryKey: ['base-station-window-binding'] })
       queryClient.invalidateQueries({ queryKey: ['cmw500-lte-2x2-readiness'] })
       queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+      if (session !== editorSession.current) return
       showFeedback(
         categoryKey,
         'success',
         categoryKey === 'baseStation'
-          ? `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}：${formatBaseStationSyncTruth(syncResult.resolved)}`
-          : `已同步到 ${selectedLabProfile?.name ?? '当前 LabProfile'}。`,
+          ? `已同步到 ${labName}：${formatBaseStationSyncTruth(syncResult.resolved)}`
+          : `已同步到 ${labName}。`,
       )
     },
-    onError: (error: unknown, categoryKey) => {
+    onError: (error: unknown, { categoryKey, session }) => {
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+      if (session !== editorSession.current) return
       showFeedback(
         categoryKey,
         'error',
@@ -2834,10 +2864,19 @@ function EquipmentManager() {
                   <Button
                     color="brand"
                     onClick={() => handleSaveConnection(category.key)}
-                    disabled={syncLabBindingMutation.isPending}
+                    disabled={syncLabBindingMutation.isPending || activationRetryMutation.isPending}
                     loading={instrumentMutation.isPending}
                   >
                     保存配置
+                  </Button>
+                  <Button variant="outline"
+                    disabled={!isSuccess || isError || isFetching || isPaused || !category.savedConfigurationDigest
+                      || hasUnsavedSyncDraft || instrumentMutation.isPending || syncLabBindingMutation.isPending
+                      || operationReceipts[category.key]?.phase === 'saving'
+                      || operationReceipts[category.key]?.phase === 'activating'}
+                    loading={activationRetryMutation.isPending}
+                    onClick={() => activationRetryMutation.mutate({ categoryKey: category.key, session: editorSession.current })}>
+                    仅重试该类别 HAL 激活
                   </Button>
                   <Button
                     variant="light"
@@ -2847,12 +2886,27 @@ function EquipmentManager() {
                       || !category.selectedModelId
                       || !category.connection.endpoint
                       || instrumentMutation.isPending
+                      || activationRetryMutation.isPending
+                      || !isSuccess || isError || isFetching || isPaused || !category.savedConfigurationDigest
                       || hasUnsavedSyncDraft
                     }
                     loading={syncLabBindingMutation.isPending}
                     onClick={() => {
                       if (!selectedLabProfileId) return
-                      syncLabBindingMutation.mutate(category.key)
+                      const digest = category.savedConfigurationDigest
+                      if (!digest) return
+                      const confirmation = { labId: selectedLabProfileId, labName: selectedLabProfile?.name ?? selectedLabProfileId,
+                        categoryKey: category.key, digest, session: editorSession.current }
+                      modals.openConfirmModal({ title: '确认同步已保存配置',
+                        children: <Stack gap="xs">
+                          <Text>目标LabProfile：{confirmation.labName}（{confirmation.labId}）</Text>
+                          <Text>型号：{category.models.find(model => model.id === category.selectedModelId)?.model ?? category.selectedModelId}</Text>
+                          <Text>端点：{category.connection.endpoint} · 驱动模式：{category.driverMode}</Text>
+                          <Text size="xs" style={{ overflowWrap: 'anywhere' }}>确认保存摘要：{digest}</Text>
+                          <Text>仅修改该实验室的当前执行绑定；不保存草稿、不激活HAL、不授予正式资格，也不修改历史执行。</Text>
+                        </Stack>, labels: { confirm: '确认同步', cancel: '取消' },
+                        onConfirm: () => syncLabBindingMutation.mutate(confirmation),
+                      })
                     }}
                     title={hasUnsavedSyncDraft
                       ? '当前型号或连接参数尚未保存；请先保存配置，再同步 LabProfile'
@@ -3433,6 +3487,12 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   }, [displayedProbes, selectedId])
 
   const selectedProbe = displayedProbes.find((probe) => probe.id === selectedId) ?? null
+  const probeDraftDirty = Boolean(selectedProbe && (
+    formState.polarization !== selectedProbe.polarization
+    || formState.is_active !== selectedProbe.is_active
+    || JSON.stringify(formState.position) !== JSON.stringify(selectedProbe.position)
+  ))
+  useOperationalLabSwitchGuard('probe-config-draft', probeDraftDirty ? '探头草稿未保存' : null)
 
   useEffect(() => {
     if (selectedProbe) {
@@ -3476,7 +3536,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
           }
         },
       )
-      setFeedback('变更已保存至本地状态。')
+      setFeedback('探头配置已保存到服务器；LabProfile仪器绑定未修改。')
       if (feedbackTimerRef.current !== null) {
         window.clearTimeout(feedbackTimerRef.current)
       }
@@ -3731,6 +3791,10 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     <Stack gap="xl">
       {/* 暗室配置卡片 - CAL-00.1 新增 */}
       <ChamberConfigCard onNavigate={(s) => onNavigate(s as SectionKey)} />
+      <Text data-testid="probe-save-stage" size="sm">
+        {probeDraftDirty ? '探头草稿未保存'
+          : '探头编辑器无未保存改动；保存结果以对应操作反馈为准'}
+      </Text>
 
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">

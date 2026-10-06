@@ -32,6 +32,7 @@ from app.models.test_plan import TestCase, TestExecution
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.services import instrument_hal_service
 from app.services.base_station_adapter_profile import freeze_base_station_adapter_profile
+from tests.instrument_sync_confirmation import saved_confirmation
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -312,6 +313,7 @@ class TestSyncInstrumentBinding:
         response = client.put(
             f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current",
             params={"test_case_id": str(case.id)},
+            json=saved_confirmation(db, "baseStation"),
         )
 
         assert response.status_code == 200, response.text
@@ -425,7 +427,8 @@ class TestSyncInstrumentBinding:
         db.commit()
 
         response = client.put(
-            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current",
+            json=saved_confirmation(db, "baseStation"),
         )
 
         assert response.status_code == 422
@@ -478,7 +481,8 @@ class TestSyncInstrumentBinding:
         db.commit()
 
         response = client.put(
-            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current",
+            json=saved_confirmation(db, "baseStation"),
         )
         assert response.status_code == 422
         assert "保存配置" in response.json()["detail"]
@@ -498,7 +502,8 @@ class TestSyncInstrumentBinding:
         }
         db.commit()
         response = client.put(
-            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current"
+            f"/api/v1/lab-profiles/{lab.id}/instrument-bindings/baseStation/sync-current",
+            json=saved_confirmation(db, "baseStation"),
         )
         assert response.status_code == 422
         assert "已保存 preset 不一致" in response.json()["detail"]
