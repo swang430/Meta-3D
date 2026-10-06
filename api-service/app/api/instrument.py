@@ -636,6 +636,49 @@ class ChannelModelsListResult(BaseModel):
     reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
 
 
+class RuntimeDiagnosticField(BaseModel):
+    key: str
+    value: Any = None
+    source: str
+    freshness: Literal["unknown"] = "unknown"
+    observed_at: Optional[datetime] = None
+    execution_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class F64RuntimeSnapshot(BaseModel):
+    """应用内存诊断，不是实时采样或执行冻结证据。"""
+    generated_at: datetime
+    diagnostic_only: Literal[True] = True
+    availability: Literal["available", "driver_not_loaded", "unsupported_adapter", "simulated"]
+    instrument_id: Optional[str] = None
+    driver_status: Optional[str] = None
+    local_control_reserved: Optional[bool] = None
+    fields: List[RuntimeDiagnosticField] = Field(default_factory=list)
+
+
+@router.get("/instruments/channelEmulator/runtime-snapshot", response_model=F64RuntimeSnapshot)
+async def f64_runtime_snapshot_endpoint():
+    """仅刷新服务器内存投影；不调用仪器查询、聚合 metrics 或数据库。"""
+    from app.services.instrument_hal_service import get_hal_service, is_mock_driver
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+
+    driver = get_hal_service().drivers.get("channelEmulator")
+    result = dict(generated_at=datetime.now(timezone.utc))
+    if driver is None:
+        return F64RuntimeSnapshot(**result, availability="driver_not_loaded")
+    if is_mock_driver(driver):
+        return F64RuntimeSnapshot(**result, availability="simulated")
+    if not isinstance(driver, RealPropsimF64Driver):
+        return F64RuntimeSnapshot(**result, availability="unsupported_adapter")
+    return F64RuntimeSnapshot(
+        **result, availability="available", instrument_id=driver.instrument_id,
+        driver_status=driver.status.value,
+        local_control_reserved=driver._local_control_reserved,
+        fields=driver.capture_runtime_diagnostic_cache(),
+    )
+
+
 class _UnverifiedScpiAdapter(logging.LoggerAdapter):
     """给手敲 SCPI / 连通性探测那几条路的日志自动打上「来源不确定」。
 

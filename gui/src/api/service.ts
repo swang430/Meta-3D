@@ -1,4 +1,9 @@
 import client from './client'
+import type { F64RuntimeSnapshot } from '../types/api'
+
+export const fetchF64RuntimeSnapshot = async (): Promise<F64RuntimeSnapshot> => {
+  return (await client.get<F64RuntimeSnapshot>('/instruments/channelEmulator/runtime-snapshot')).data
+}
 import type {
   InstrumentCategory,
   CreateProbePayload,

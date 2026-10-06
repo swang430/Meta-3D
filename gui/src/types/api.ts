@@ -976,3 +976,21 @@ export type LinkBudgetResponse = {
   dl_feasible: boolean
   recommendations: string[]
 }
+/** P2-84：仅应用内存诊断，不供正式判定使用。 */
+export interface F64RuntimeSnapshot {
+  generated_at: string
+  diagnostic_only: true
+  availability: 'available' | 'driver_not_loaded' | 'unsupported_adapter' | 'simulated'
+  instrument_id: string | null
+  driver_status: string | null
+  local_control_reserved: boolean | null
+  fields: Array<{
+    key: string
+    value: unknown
+    source: string
+    freshness: 'unknown'
+    observed_at: string | null
+    execution_id: string | null
+    session_id: string | null
+  }>
+}

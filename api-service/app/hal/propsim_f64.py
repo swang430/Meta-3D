@@ -2329,6 +2329,30 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
 
+    def capture_runtime_diagnostic_cache(self) -> List[Dict[str, Any]]:
+        """只读现有内存；绝不补读、重连或把响应生成时间当成采样时间。
+
+        没有逐字段时间/执行/会话记录，故时效与归属均未知。运行布尔是
+        命令/回读混合缓存，不等价于 STATE?；工程名是请求缓存，功率未缓存。
+        此投影不供正式证据消费者使用。
+        """
+        environment = self.capture_evidence_environment()
+        connected = environment.captured_from_live_connection
+        topology_source = self._topology_source()
+        entries = [
+            ("identity", environment.model_dump() if connected else None, "connection_identity_cache"),
+            ("loaded_emulation_file", self._loaded_emulation_file if connected else None, "requested_project_cache"),
+            ("emulation_running", self._emulation_running if connected and self._has_load_state() else None, "driver_state_cache"),
+            ("input_ports", list(self._active_input_ports) if connected and self._active_input_ports else None, "declared" if topology_source == "declared" else "readback_cache"),
+            ("output_ports", list(self._active_output_ports) if connected and self._active_output_ports else None, "declared" if topology_source == "declared" else "readback_cache"),
+            ("center_frequency_mhz", self._readback_center_freq_mhz if connected else None, "readback_cache"),
+            ("input_power", None, "unknown"),
+            ("output_power", None, "unknown"),
+        ]
+        return [dict(key=key, value=value, source=source if value is not None else "unknown",
+                     observed_at=None, execution_id=None, session_id=None, freshness="unknown")
+                for key, value, source in entries]
+
     def capture_evidence_environment(self):
         """从本次真实连接的 *IDN?/SYST:INFO? 生成 P1-47B 环境快照。"""
         from app.hal.scpi_evidence import (
