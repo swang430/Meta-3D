@@ -99,12 +99,21 @@ def _validated_profile_for_model(
     return None
 
 
+def parse_base_station_model_presets_for_save(raw, target_model_id, *, replace_target=False):
+    """完整显式替代只允许绕过目标旧项；非目标与整张 map 仍严格校验。"""
+    if replace_target and isinstance(raw, dict):
+        raw = {key: value for key, value in raw.items() if key != str(target_model_id)}
+    return parse_base_station_model_presets(raw)
+
+
 def _snapshot_active_connection(
     model: InstrumentModel, connection: InstrumentConnection
 ) -> BaseStationModelPreset | None:
     endpoint = (connection.endpoint or "").strip()
     if not endpoint:
         return None
+    if connection.connection_params is not None and not isinstance(connection.connection_params, dict):
+        raise ValueError("BaseStation active connection_params must be an object")
     raw_params = dict(connection.connection_params or {})
     raw_profile = raw_params.pop("base_station_adapter_profile", None)
     params = persistent_base_station_connection_params(raw_params)
@@ -132,10 +141,13 @@ def save_base_station_model_preset(
     base_station_adapter_profile: dict[str, Any] | None,
     parsed_controller_ip: str | None,
     parsed_port: int | None,
+    replace_target: bool = False,
 ) -> None:
     """Atomically stage old+target presets and project target as active truth."""
 
-    presets = parse_base_station_model_presets(connection.base_station_model_presets)
+    presets = parse_base_station_model_presets_for_save(
+        connection.base_station_model_presets, target_model.id, replace_target=replace_target
+    )
     if (
         current_model is not None
         and current_model.id != target_model.id
@@ -163,8 +175,10 @@ def save_base_station_model_preset(
         base_station_adapter_profile=profile,
     )
     presets[str(target.model_id)] = target
+    original = connection.base_station_model_presets or {}
     connection.base_station_model_presets = {
-        key: value.model_dump(mode="json") for key, value in presets.items()
+        key: (original[key] if key in original and key != str(target.model_id)
+              else value.model_dump(mode="json")) for key, value in presets.items()
     }
     flag_modified(connection, "base_station_model_presets")
 
