@@ -518,9 +518,12 @@ def preview_base_station_binding(
         profile,
         test_case_id=test_case_id,
     )
+    from app.services.test_plan_service import saved_target_mac_manifest
+    declared_manifest = saved_target_mac_manifest(db, profile.id)
     return BaseStationBindingPreviewResponse.model_validate(
         {
             **preview.model_dump(mode="json"),
+            "declared_mac_manifest": declared_manifest.model_dump(mode="json") if declared_manifest else None,
             "testcase_compatibility": compatibility.model_dump(mode="json"),
         }
     )

@@ -16,7 +16,7 @@
 |---|---|---|---|
 | 1 | P2-79 信道模型型号归属与并发保存完整性 | A 型号归属 → B 同序锁与并发完整性 | ✅ PR #498（e2dee1a8）/#499（4606c7a7），main 已同步 |
 | 2 | P2-80 仪器配置故障可见、可恢复 | A 目录错误态 → B 坏认证状态 → C 显式合法替代值恢复 | A 已合并 #500；B 已合并 #501；C 已实现，交付见本片 PR |
-| 3 | P2-81 统计窗口保存前校验 | 所选 adapter 域的统一前置校验 | 已排期，未开工 |
+| 3 | P2-81 统计窗口保存前校验 | 所选 adapter 域的统一前置校验 | 软件实现已完成，验证和交付见本片 PR |
 | 4 | P2-82 成功轮询 INFO 降噪 | 仅成功只读轮询，不降级异常/硬件日志 | 已排期，未开工 |
 | 5 | P2-83 LabProfile 统一工作单元 | 先设计 → 共同上下文与状态展示 → 受控保存/同步编排 | 已排期，未开工 |
 | 6 | P2-84 F64 运行态诊断快照 | 先盘点已有权威快照，再提供只读展示 | 已排期，未开工 |
@@ -5394,11 +5394,19 @@ Codex R12 继续核出浏览器可能仍保存 pre-PR v1 草稿，其中 `driver
 
 ### P2-81 — 统计窗口在保存/冻结前校验
 
-**状态**：已排期，未开工；第 3 项，依赖 P2-80 闭环。
+**状态**：软件实现已完成；第 3 项，P2-80 A/B/C 已闭环。用户批准 A，验证和交付见本片 PR 台账。
 
 **故障与范围**：CMW `stat_count` 域外值目前可能到首个窗口 I/O 才被拒绝，此时 UE 已 attach、转台已移动。复用现有手册审计域和 requirements/manifest/evaluator，将所选 adapter 的约束前移到保存预览、readiness 与执行冻结；不得把 CMW 的 100..400000 范围硬写成所有 NR/Mock 的共同范围。
 
 **验收**：按所选 adapter 拒绝域外统计窗口，GUI 呈现服务器同源约束；TestCase、topology、preview/sync/readiness/freeze 同判据、同 digest。合法 NR/Mock 场景不被错误收窄；当前不确定的域显式 unknown，不猜 SCPI 或参数域。
+
+**A 内嵌设计与实施计划（用户批准）**：扩展已有 `BaseStationMacProfileCapability`，用可空 `statistical_window` 声明该 adapter/profile 的统计基范围与手册出处。CMW500 复用 `cmw500_command_profile` 现有整数域常量；UXM 没有本片可确认的已实现控制域，声明保持空，GUI 明示 unknown，不借用 CMW 范围。通用 `MacStatisticalWindow` 保持正整数；共同 evaluator 在 preview/readiness/sync/freeze 首次远程动作前拒绝 CMW 越界。TestCase create/update/rebind 保存时按目标 LabProfile 的持久绑定读取注册 manifest，仅复用统计基判据，不连接/激活 HAL、不修改 LabProfile、不授予资格；无唯一目标的用例库草稿仍可保存，但不得据此宣称兼容或绕过执行 resolver。现有 topology 编辑器是 NR 路径，只校验共同正整数并展示对应服务器声明，不变成 LTE 编辑器。
+
+**摘要与历史边界**：范围声明与现有 dimensions 一样不进入 binding/manifest 身份摘要；范围调整仍由实时 verifier 重算整个 verdict 检出。完整 manifest 和需求随新执行冻结；历史原始 manifest 未含新字段时保持自身证据与摘要，不向历史补入当前范围、不批量重写数据或撤销认证。
+
+**实证与查证**：memory 索引已查询，旧现场/资格结论不替代本片现状。NotebookLM CMW notebook `256076ee-5bd9-4f45-85f6-d7318e7556d0`、conversation `d772d5d5-ffeb-474c-99fb-d71987ddd6f9` 返回原文引用：`R&S CMW LTE UE User Manual 1173.9628.02-41` §3.4.3 printed p.953，`EBLer:SFRames` integer Range 100 to 400E+3；§3.2.4 p.938 是每 measurement cycle 统计子帧数，不应许诺等于实际等待毫秒。UXM notebook `236d9621-e3ce-4ed1-a8e1-7819b674dbcd`、conversation `adfb5e02-4f11-450b-a91d-801d22667604` 指向本地分卷 NR BLER/Tput Measurement Length，但回答没有 source citations，分卷 Range/Notes 的下限不一致且现有 driver 未接入该命令；不将该回答当成可实施参数域，不新增/猜测 SCPI。
+
+**实施顺序与验证档**：核心范围 RED→共同 evaluator/manifest GREEN→持久保存与失败不部分写入→GUI 同源显示、live/checked OpenAPI/generated TS/手写类型→真实 HTTP、Mock/real freeze 与历史摘要回归→最终共享契约档后端全量一次、GUI 契约/build、compileall/Alembic/diff-check→只读独立功能内审→Ready PR、Codex R1/R2（功能 P1 续审）→merge/sync/cleanup。R1/R2 请求与结果时间记 PR 台账，不为填时间戳再新增需审 HEAD。本片不自动启动 P2-82。
 
 ### P2-82 — 成功轮询 INFO 降噪
 

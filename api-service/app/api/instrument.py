@@ -2076,6 +2076,8 @@ def duplicate_topology_profile_endpoint(
             status_code=404,
             detail=f"Topology profile {profile_id!r} not found",
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return _row_to_detail(row)
 

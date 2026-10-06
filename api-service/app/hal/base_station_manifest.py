@@ -13,6 +13,7 @@ from typing import Any, Literal, Mapping, get_args
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -227,6 +228,25 @@ class BaseStationMacDimensionCapability(BaseModel):
         return value
 
 
+class BaseStationStatisticalWindowConstraint(BaseModel):
+    """Audited adapter-specific count range; absence means unknown, not CMW defaults."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    unit: Literal["subframes"]
+    minimum: StrictInt = Field(gt=0)
+    maximum: StrictInt = Field(gt=0)
+    source_reference: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _ordered_range(self):
+        if self.minimum > self.maximum:
+            raise ValueError("statistical window minimum exceeds maximum")
+        if not self.source_reference.strip():
+            raise ValueError("statistical window requires an auditable source")
+        return self
+
+
 class BaseStationMacProfileCapability(BaseModel):
     """One execution MAC profile shape accepted by an adapter."""
 
@@ -241,6 +261,7 @@ class BaseStationMacProfileCapability(BaseModel):
     ]
     source_reference: str
     dimensions: tuple[BaseStationMacDimensionCapability, ...] = ()
+    statistical_window: BaseStationStatisticalWindowConstraint | None = None
 
     @field_validator("kind")
     @classmethod

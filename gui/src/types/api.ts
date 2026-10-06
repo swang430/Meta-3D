@@ -460,6 +460,8 @@ export type Cmw500Lte2x2Readiness = {
 }
 
 export type BaseStationBindingPreviewResponse = {
+  /** Persistent target's declared domain; does not assert runtime readiness. */
+  declared_mac_manifest?: Record<string, unknown> | null
   status: 'configured' | 'not_applicable' | 'diagnostic_unbound' | 'invalid'
   binding_digest: string | null
   execution_mode: 'real' | 'simulated' | null

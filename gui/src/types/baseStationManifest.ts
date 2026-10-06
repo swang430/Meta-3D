@@ -40,6 +40,12 @@ export type BaseStationMacProfileCapability = {
   application_evidence: 'authoritative_readback' | 'command_error_queue'
   source_reference: string
   dimensions: BaseStationMacDimensionCapability[]
+  statistical_window?: {
+    unit: 'subframes'
+    minimum: number
+    maximum: number
+    source_reference: string
+  } | null
 }
 
 export type BaseStationConfigFieldCapability = {

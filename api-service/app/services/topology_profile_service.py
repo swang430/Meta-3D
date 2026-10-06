@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.hal.uxm_test_profiles import UxmTopologyProfile
+from app.hal.base_station_mac_profile import MacStatisticalWindow
 from app.models.instrument_topology_profile import InstrumentTopologyProfile
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,9 @@ def create(
             f"Allowed: {sorted(_MUTABLE_FIELDS)}"
         )
 
+    if fields.get("stat_count") is not None:
+        MacStatisticalWindow(unit="subframes", count=fields["stat_count"])
+
     profile_id = _allocate_custom_profile_id(db, name)
     row = InstrumentTopologyProfile(
         profile_id=profile_id,
@@ -272,6 +276,9 @@ def update(
             f"cannot be modified. Duplicate it first to create an "
             f"editable copy."
         )
+
+    if fields.get("stat_count") is not None:
+        MacStatisticalWindow(unit="subframes", count=fields["stat_count"])
 
     unknown = set(fields.keys()) - _MUTABLE_FIELDS
     if unknown:
@@ -348,6 +355,7 @@ def duplicate(
     - ``is_system_preset=False`` (always — operator owns the copy)
     """
     source = get_row(db, profile_id)
+    MacStatisticalWindow(unit="subframes", count=source.stat_count)
     new_name = f"{source.name} (副本)"
     new_profile_id = _allocate_custom_profile_id(db, new_name)
 
