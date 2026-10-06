@@ -62,6 +62,7 @@ import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { DashboardCockpit } from './features/Dashboard'
 import { formatBaseStationSyncTruth } from './features/Dashboard/baseStationBindingTruth'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
+import { LabWorkspace } from './features/LabWorkspace/LabWorkspace'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { OperationalLabSelector, useOperationalLab } from './features/OperationalLab'
@@ -160,7 +161,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'assetProfiles' | 'channelWorkbench' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'labWorkspace' | 'equipment' | 'probeManager' | 'topologyEditor' | 'assetProfiles' | 'channelWorkbench' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -277,19 +278,9 @@ const sections: Array<{
     description: '系统就绪、最近执行与实时日志——一站式操作中心。',
   },
   {
-    key: 'equipment',
-    label: '仪器资源配置',
-    description: '统一管理基站仿真器、信道仿真器、VNA等仪表选型与连接参数。',
-  },
-  {
-    key: 'probeManager',
-    label: '探头与暗室配置',
-    description: '维护探头阵列、暗室几何与校准基线，支撑软件定义静区。',
-  },
-  {
-    key: 'topologyEditor',
-    label: '射频拓扑编辑器',
-    description: '通过拖拽设计和查看基于 RF Switch 的端到端信号物理链路与校准路径。',
+    key: 'labWorkspace',
+    label: '实验室配置',
+    description: '在同一LabProfile上下文查看总览、仪器资源、探头与暗室和射频拓扑。',
   },
   {
     key: 'assetProfiles',
@@ -437,7 +428,9 @@ function App() {
   const [executingRunMeta, setExecutingRunMeta] = useState<RunMetadata | null>(null)
   const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
   const sectionDescriptor = useMemo(
-    () => sections.find((item) => item.key === activeSection),
+    () => sections.find((item) => item.key === (
+      activeSection === 'equipment' || activeSection === 'probeManager' || activeSection === 'topologyEditor'
+        ? 'labWorkspace' : activeSection)),
     [activeSection],
   )
 
@@ -765,7 +758,7 @@ function App() {
                   // the existing nav looks unchanged for the main sections.
                   const prevGroup = idx > 0 ? sections[idx - 1].group : undefined
                   const showGroupHeader = item.group !== undefined && item.group !== prevGroup
-                  const active = item.key === activeSection
+                  const active = item.key === sectionDescriptor?.key
                   const cardBg = active
                     ? `linear-gradient(135deg, ${theme.colors.brand[5]} 0%, ${theme.colors.brand[7]} 100%)`
                     : hexToRgba(isDark ? theme.colors.dark[6] : theme.white, isDark ? 0.5 : 0.85)
@@ -803,6 +796,7 @@ function App() {
                         }
                       }}
                       role="tab"
+                      aria-label={item.label}
                       aria-selected={active}
                       style={{
                         borderRadius: theme.radius.lg,
@@ -943,12 +937,15 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
           onNavigateTestManagement={() => payload.setActiveSection('testManagement')}
         />
       )
+    case 'labWorkspace':
     case 'equipment':
-      return <EquipmentManager />
     case 'probeManager':
-      return <ProbeManager onNavigate={payload.setActiveSection} />
     case 'topologyEditor':
-      return <TopologyEditor />
+      return <LabWorkspace view={section} onNavigate={payload.setActiveSection}>
+        {section === 'equipment' ? <EquipmentManager />
+          : section === 'probeManager' ? <ProbeManager onNavigate={payload.setActiveSection} />
+          : section === 'topologyEditor' ? <TopologyEditor /> : null}
+      </LabWorkspace>
     case 'assetProfiles':
       return <AssetProfilesPanel />
     case 'channelWorkbench':

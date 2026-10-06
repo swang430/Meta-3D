@@ -786,7 +786,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
               <IconTopologyRing size={48} color="var(--mantine-color-gray-4)" />
               <Text c="dimmed" ta="center">
                 请先在上方选择一个射频开关设备，<br />
-                或在「仪器资源配置」中添加 RF Switch 类别。
+                或在「实验室配置 → 仪器资源」中添加 RF Switch 类别。
               </Text>
             </Stack>
           </Center>

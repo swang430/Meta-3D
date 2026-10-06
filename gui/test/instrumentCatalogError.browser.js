@@ -32,7 +32,8 @@ async (page) => {
     }
   });
   await page.goto('http://127.0.0.1:5198');
-  await page.getByRole('tab').filter({ hasText: '仪器资源配置' }).click();
+  await page.getByRole('tab', { name: '实验室配置', exact: true }).click();
+  await page.getByRole('tab', { name: '仪器资源', exact: true }).click();
   await page.getByText('目录服务暂不可用', { exact: false }).waitFor({ timeout: 15000 });
   if (await page.getByText('暂无仪器信息，请在后端添加型号。').count()) {
     throw new Error('请求失败被误报为成功空目录');
@@ -42,7 +43,7 @@ async (page) => {
   mode = 'empty';
   await page.getByRole('button', { name: '重试加载目录', exact: true }).click();
   await page.getByText('暂无仪器信息，请在后端添加型号。').waitFor();
-  if (await page.getByRole('alert').count()) throw new Error('成功空目录仍显示失败');
+  if (await page.getByRole('alert', { name: '仪器目录加载失败', exact: true }).count()) throw new Error('成功空目录仍显示失败');
   console.log('PASS: successful empty catalog has the empty state');
 
   mode = 'catalog';
@@ -60,7 +61,7 @@ async (page) => {
   await page.keyboard.press('Escape');
   mode = 'catalog';
   await page.getByRole('button', { name: '重试加载目录', exact: true }).click();
-  await page.getByRole('alert').waitFor({ state: 'hidden' });
+  await page.getByRole('alert', { name: '仪器目录加载失败', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '替换 / 配置实装', exact: true }).click();
   if (await page.getByRole('textbox', { name: '控制端点', exact: true }).inputValue() !== 'operator-unsaved-endpoint') {
     throw new Error('重试成功覆盖了用户草稿');
