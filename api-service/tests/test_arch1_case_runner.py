@@ -226,6 +226,29 @@ async def _launch_and_wait(db, case_id):
 
 class TestExecuteHappyPath:
     @pytest.mark.asyncio
+    async def test_report_sources_frozen_at_launch_not_inferred_from_current_case(self, db, lab):
+        source = _make_case(db, lab, name="名字自由：LTE但实际NR")
+        source.configuration = {"frequency_hz": 3_549_990_000, "bandwidth_mhz": 40, "mcs": 20}
+        db.commit()
+        with patch.object(tcr, "dispatch_step", new=AsyncMock(return_value=_ok())):
+            ex = await _launch_and_wait(db, source.id)
+        from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+
+        source.configuration = {"frequency_hz": 1_960_000_000}
+        source.name = "后来编辑"
+        db.commit()
+        content = _build_mimo_ota_content_data(ex, datetime.utcnow(), "后来编辑")
+        audit = content["execution_traceability"]
+        assert audit["case_name"] == "名字自由：LTE但实际NR"
+        assert audit["parameters"]["component_carriers.0.frequency_hz"] == {
+            "requested": 3_549_990_000, "source": "saved_configuration",
+        }
+        assert audit["parameters"]["azimuths_deg"]["source"] == "launch_default"
+        assert audit["parameters"]["mac_profile.profile.csi_rs_ports"]["source"] == "derived"
+        assert audit["parameters"]["mac_profile.profile.mcs"] == {"requested": 20, "source": "saved_configuration"}
+        assert audit["parameters"]["component_carriers.0.radio_technology"]["requested"] == "nr5g"
+
+    @pytest.mark.asyncio
     async def test_five_phases_and_snapshot(self, db, lab):
         source = _make_case(db, lab, name="正式-4方位吞吐")
         with patch.object(tcr, "dispatch_step",

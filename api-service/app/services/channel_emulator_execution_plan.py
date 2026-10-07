@@ -67,6 +67,11 @@ class FrozenChannelAssetResolutionV2(FrozenChannelAssetResolution):
     schema_version: Literal[2]
     instrument_connection_id: NonEmptyString | None
     instrument_model_id: NonEmptyString | None
+    # P2-88：同次 resolver 只读描述；不参与可执行内容/硬件能力判断。
+    # 历史 v2 无这些字段时保持 None，报告不得查询当前资产补真。
+    name: str | None = None
+    canonical_name: str | None = None
+    associated_file_path: str | None = None
 
     @model_validator(mode="after")
     def require_vendor_owner(self):
@@ -151,6 +156,9 @@ def freeze_channel_asset_resolution(db: Any, configuration: Any) -> dict[str, An
         ),
         "instrument_connection_id": content["instrument_connection_id"],
         "instrument_model_id": content["instrument_model_id"],
+        "name": getattr(resolved.asset, "name", None),
+        "canonical_name": getattr(resolved.asset, "canonical_name", None),
+        "associated_file_path": content["associated_file_path"],
     }
     frozen = {**payload, "digest": canonical_payload_digest(payload)}
     return validate_frozen_channel_asset_resolution(frozen)
@@ -234,7 +242,10 @@ def freeze_legacy_channel_file_resolution(db: Any, configuration: Any) -> dict[s
     payload = {"schema_version": 2, "channel_asset_id": str(source.id), "source_type": "vendor_file",
         "executable_content_digest": canonical_payload_digest(content),
         "instrument_connection_id": str(source.instrument_connection_id),
-        "instrument_model_id": str(source.instrument_model_id)}
+        "instrument_model_id": str(source.instrument_model_id),
+        "name": getattr(source, "name", None) or getattr(source, "standard_name", None),
+        "canonical_name": getattr(source, "canonical_name", None),
+        "associated_file_path": content.get("associated_file_path")}
     return {**payload, "digest": canonical_payload_digest(payload)}
 
 

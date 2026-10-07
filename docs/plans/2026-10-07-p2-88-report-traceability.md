@@ -26,4 +26,14 @@ NotebookLM 不适用：本片不改仪器命令、单位解析或厂商取值域
 ## 实施台账
 
 - 已建立独立工作树；基线 36 passed（6.60s）。
-- 设计范围沿用用户已过目的三片拆分；未实施、未推送前不得称已交付。
+- 设计范围沿用用户已过目的三片拆分；未合并前不得称已交付。
+- 来源捕获与冻结后改源用例的生产入口反例先 RED；公共报告投影 GREEN 后覆盖 PDF parameters 与 GUI `step_configs`，不创建另一套客户端参数真值。
+- 窗口与应用证据：同 execution/adapter/connection/current attempt/request digest，窗口按同 lease/session 对账；实际记录数不借旧 sampling 计划数补真。窗口来源读取各 window `trust.simulated`，混合为 `mixed`；全局应用值要求全部窗口租约一致确认，Mock/缺失/冲突保持 unknown/null。
+- modern ChannelAsset 与 legacy SCD 两路径都在原 freeze 中捕获 name/path，只展示冻结描述，不查询当前数据库；有效引擎请求来自通过独立 scope/digest 校验的 CE load request，与配置 engine 分开。
+- 历史 null/missing 只展示冻结 raw，parser 仅校验、不把其默认值写到报告。已按当前保存入口补齐 LTE frame/carrier 与派生 TDD period 的来源映射。
+- 实际 PDF 生成反例检出 361 方位整块 JSON 的 LayoutError；改为长数组 16 项分块、窗口/资产/应用逐项展示，未修改 PDF 机制。
+- 严格 RED→GREEN：应用/资产 3 RED；历史 null 与 F64 请求 2 RED；内审三条功能 P1 3 RED；361 方位实际 PDF 1 RED；LTE 来源映射 1 RED，均已 GREEN。全新只读增量及同根复审 P1/P2/P3=0。
+- 最终相关链及正式消费者合并命令（在 `api-service`）：`.venv/bin/python -m pytest tests/test_p2_88_report_traceability.py tests/test_arch1_case_runner.py tests/test_p2_21_report_flags_cert_cjk.py tests/test_p2_66_execution_evidence_outcome.py tests/test_p2_59_channel_emulator_execution_plan.py tests/test_p2_79a_channel_model_ownership.py tests/test_rule_gates.py tests/test_p1_73c_formal_consumers.py tests/test_p2_45_diagnostic_formal_consumers.py tests/test_p2_66_formal_consumers.py tests/test_p1_61_report_final_state_truth.py tests/test_p1_48_report_provenance.py tests/test_p1_22_report_trustworthy.py tests/test_mimo_ota_report_verified_backcompat.py tests/test_arch1_history_resource.py -q --color=no -o log_cli=false -o addopts='' --tb=short --show-capture=no --disable-warnings` → exit 0，355 passed / 239 warnings，13.08s。
+- `gui`：`node --experimental-strip-types --test test/reportRecovery.test.ts test/reportLifecycleTruth.test.ts src/types/executionEvidenceOutcome.test.ts` → exit 0，10 passed，70.9ms；`npm run build` → exit 0（11.58s，已有 chunk/import 警告）。本片仅填充既有 `content_data`/`step_configs.parameters` 自由结构，未增 API 路由/response 字段/客户端类型，因此 OpenAPI/generated TS/手写类型均不改。
+- `api-service`：`python -m compileall -q app` exit 0；`alembic heads` 单 head `c1e3f5a7b9d2`；base-to-working diff-check exit 0。
+- 全量第一次因收到可执行 P1 主动中断（4842 passed / 5 skipped，203.91s），不冒充完整全量。稳定最终版本在 `api-service` 执行 `.venv/bin/python -m pytest -q --color=no -o log_cli=false -o addopts='' --tb=short --show-capture=no --disable-warnings` → exit 0，6982 passed / 17 skipped / 5325 warnings，246.78s；结束后核对生产/测试 diff 摘要未变，未按 push 次数重复全量。

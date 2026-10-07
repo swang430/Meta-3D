@@ -256,6 +256,8 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         db.rollback()
         raise CaseNotExecutable(f"用例参数无法构成有效执行配置: {e}") from e
 
+    from app.services.mimo_ota.report_traceability import capture_report_sources
+
     execution = TestExecution(
         test_case_id=snapshot.id,
         status="running",
@@ -266,6 +268,9 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
                 for d in descriptors
             ],
             "source_test_case_id": str(source.id),
+            "report_parameter_sources": capture_report_sources(
+                source.name, dict(source.configuration or {})
+            ),
             # 所有正式 MIMO OTA 吞吐量执行都由 MEASURE 按本次 TestCase 建立
             # UXM/F64/开关矩阵工作态并受控 attach。PRECHECK 只做无需 attach
             # 的静态门，不能再要求操作员提前借用仪表遗留状态登记 DUT。
