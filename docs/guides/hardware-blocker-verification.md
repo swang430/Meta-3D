@@ -1,6 +1,6 @@
 # 现场 hardware blocker 验证清单
 
-适用基线：2026-10-07，P2-86 / PR #512 已合并。当前分类/排期唯一源为 [roadmap](../roadmap-first-call.md#现场验证分类与执行顺序)；本文整理现有入口的使用边界，不新增硬件命令、脚本、阈值或正式资格。历史现场记录保留原样。
+P2-87 文档交付：PR #513。适用基线：2026-10-07，P2-86 / PR #512 已合并。当前分类/排期唯一源为 [roadmap](../roadmap-first-call.md#现场验证分类与执行顺序)；本文整理现有入口的使用边界，不新增硬件命令、脚本、阈值或正式资格。历史现场记录保留原样。
 
 ## 1. 出发前与现场共同约束
 
@@ -36,8 +36,8 @@ GUI：调试维护 → 调试序列 / 单阶段 ad-hoc / 转台控制。调试�
 | precheck | 定位配置、绑定、校准前置失败 | 只证明该独立诊断检查；模板里的 skip 参数不代表服务器必然接受，更不授予正式资格 |
 | reference | 单独定位参考配置链故障 | 未测到真实量值不能当校准完成；不自动生成合法校准来源 |
 | mimo_test | 定位 measure 阶段问题；会操作信号链与转台 | 必须先有合法完整执行配置及安全前置；不假定已跑 precheck/reference，更不能拼接不同执行证据 |
-| analysis | 定位已有可用诊断输入的计算问题 | 无同次真实测量不证明吞吐，更不补为 0 或 PASS |
-| report | 定位报告生成问题 | PDF 生成成功不证明真实完成/正式合格；受现有 source execution/outcome 门约束 |
+| analysis | 不纳入现场验证：该入口新建 execution，无法选择或消费既有执行的测量输入 | 没有 measure 的 azimuth_results 会失败；不从另一单阶段复制/拼接结果，不补为 0 或 PASS。分析验证用完整 TestCase 的同次执行链 |
+| report | 不纳入已有执行报告的现场验证：独立新建 execution，不绑定此前 analysis/measure | 如需报告验证，使用完整 TestCase 的报告链；PDF 存在不证明真实完成/正式合格，现有 source execution/outcome 门不变 |
 
 “mimo_test 成功”不得解除统计窗口、完整 cleanup、重复运行或正式资格项。需要这些事实时使用同一保存 TestCase 的完整执行与执行过滤日志导出，保留 App/DB 证据，不用泛化 HAL trace 替代归属。
 
