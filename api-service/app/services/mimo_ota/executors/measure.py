@@ -563,7 +563,11 @@ def _finalize_manual_input_reference(
         )
         return result
 
-    if sample.get("input_measurement_confirmed") is not True:
+    if any(
+        not isinstance(item, dict)
+        or item.get("input_measurement_confirmed") is not True
+        for item in samples
+    ):
         result["failure_reason"] = "Cell ON 后受控输入测量未确认，手动输入工作点未验证"
         return result
 

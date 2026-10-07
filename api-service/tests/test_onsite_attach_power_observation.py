@@ -153,6 +153,20 @@ async def test_non_strict_window_samples_again_after_full_observation_delay():
         sleep=_sleep,
     )
 
+    from app.services.mimo_ota.executors.measure import _finalize_manual_input_reference
+
+    finalized = _finalize_manual_input_reference(
+        {
+            "mode": "manual", "skipped": False, "success": False,
+            "application_succeeded": True, "input_ports": [1, 2],
+            "verification_status": "pending_cell_ready", "readback": [],
+        },
+        result,
+    )
+    assert finalized["success"] is False
+    assert finalized["verification_status"] == "failed"
+    assert finalized["readback"] == []
+
     assert result["accepted"] is True
     assert result["status"] == "warning"
     assert [sample["phase"] for sample in result["samples"]] == [

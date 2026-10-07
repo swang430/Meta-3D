@@ -52,3 +52,14 @@ R1 覆盖 `f7c4ae81`：无 P1，一条本片 P2。控制器将所有测量失败
 首次内存 SQLite 启动因连接池参数不兼容失败，改为独立临时文件数据库后才取得 RED/GREEN。
 本增量仅局部错误文案与保护断言，不重复全后端；6959 passed 是 `f7c4ae81` 基准结果，
 不声称新版本全量。无仪器语义、共享证据、契约或依赖变更。
+
+## R2 功能 P1 收口
+
+R2 覆盖 `6c7484fb`，发现非 strict 首采失败而末采成功时只验证末采，错误升级手动输入。
+复用真实观察服务两采样结果接入唯一 `_finalize_manual_input_reference` 写入口，旧实现
+1 failed；最小收窄为本窗口全部采样均为对象且测量确认，任一缺失/未确认不得升级。
+非 strict 观察仍 accepted/warning；不改变 SCPI、阈值、正式白名单或历史执行。
+相关链 192 passed（4.20s）；独立增量与同根全集复审 P1=0。证据判据改变按共享档重新全量，
+由主代理负责，不让 reviewer 重复运行。最终隔离全后端 exit0：6959 passed/17 skipped/
+5484 warnings（241.27s），输出 `/tmp/p286-r3-full.log`，命令与前次全量相同但使用新的独立
+临时 SQLite 目录，显式 Mock；compileall/diff-check exit0，Alembic 唯一 head 未变。
