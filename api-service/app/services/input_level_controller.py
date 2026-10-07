@@ -368,7 +368,7 @@ class InputLevelController:
                 invoke=lambda in_num=in_num: self._ce.measure_input(in_num, 1.0),
             )
             if meas is None:
-                return op_point, out_lo, out_hi, f"measure_input({in_num}) 失败 (无信号)"
+                return op_point, out_lo, out_hi, f"measure_input({in_num}) 失败 (测量未确认)"
             avg, crest = meas
             op_point.append(InputOperatingPoint(in_num, avg, crest))
             limits = await self._observe_channel_operation(

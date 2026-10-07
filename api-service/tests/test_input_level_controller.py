@@ -255,6 +255,8 @@ class TestFailFastPaths:
         result = await InputLevelController(ce, bs).establish()
         assert result.success is False
         assert "measure_input" in (result.failure_reason or "")
+        assert "测量未确认" in (result.failure_reason or "")
+        assert "无信号" not in (result.failure_reason or "")
 
 
 class TestSystemWarningsAndCutoff:
