@@ -388,6 +388,7 @@ async def _observe_cell_ready_power(
     channel_emulator: Any,
     config: Any,
     holder: Dict[str, Dict[str, Any]],
+    operation_recorder: Any = None,
 ) -> bool:
     """Cell-ready 回调本体：采样、落到本次执行的 measurements，返回是否允许继续 attach。"""
 
@@ -399,6 +400,13 @@ async def _observe_cell_ready_power(
         context.db.refresh(context.test_execution)
         return context.test_execution.status != "running"
 
+    async def _measure_input(port: int):
+        return await _observe_channel_emulator_operation(
+            operation_recorder, phase="adjust", operation="measure_input",
+            requested={"measurement": {"input_port": port, "measurement_time_s": 1.0}},
+            invoke=lambda: channel_emulator.measure_input(port, 1.0),
+        )
+
     observation = await run_attach_power_observation(
         base_station=base_station,
         channel_emulator=channel_emulator,
@@ -406,6 +414,7 @@ async def _observe_cell_ready_power(
         strict_input_level=config.precheck_strict_input_level,
         execution_id=str(context.test_execution.id),
         is_cancelled=_observation_cancelled,
+        measure_input=_measure_input,
     )
     holder["result"] = observation
     measurements = dict(context.test_execution.measurements or {})
@@ -552,6 +561,14 @@ def _finalize_manual_input_reference(
         result["failure_reason"] = (
             f"F64 活动输入口缺少有效实测功率: {missing_ports}"
         )
+        return result
+
+    if any(
+        not isinstance(item, dict)
+        or item.get("input_measurement_confirmed") is not True
+        for item in samples
+    ):
+        result["failure_reason"] = "Cell ON 后受控输入测量未确认，手动输入工作点未验证"
         return result
 
     result.update(
@@ -2941,6 +2958,7 @@ class MeasureExecutor(IStepExecutor):
                         channel_emulator=emulator,
                         config=config,
                         holder=observation_holder,
+                        operation_recorder=record_channel_emulator_operation,
                     )
 
                 attach_receipt = await base_station.attach(

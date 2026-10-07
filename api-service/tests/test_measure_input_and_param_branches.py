@@ -173,6 +173,7 @@ class TestManualInputReference:
             "failure_reason": None,
             "samples": [{
                 "phase": "cell_ready",
+                "input_measurement_confirmed": True,
                 "input_topology_known": True,
                 "invalid_input_ports": [],
                 "topology": {"active_input_ports": [1, 2]},
@@ -195,6 +196,12 @@ class TestManualInputReference:
             {"input_num": 1, "avg_dbm": -29.0, "crest_db": None},
             {"input_num": 2, "avg_dbm": -28.0, "crest_db": None},
         ]
+
+        # 非严格观察可以继续 attach，但旧 GET 数值不能确认手动工作点。
+        observation["samples"][0]["input_measurement_confirmed"] = False
+        unconfirmed = measure_module._finalize_manual_input_reference(pending, observation)
+        assert unconfirmed["success"] is False
+        assert unconfirmed["readback"] == []
 
     def test_verified_pre_cell_truth_survives_when_no_callback_is_wired(self):
         """UXM 无 Cell-ready 功率回调时，不得抹掉完整的机会式预读真值。"""

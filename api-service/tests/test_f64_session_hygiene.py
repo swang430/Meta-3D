@@ -197,6 +197,8 @@ class TestInpDeferredTimeout:
         seen: List[Optional[int]] = []
 
         async def _fake_query(cmd, timeout=None, **_kw):
+            if cmd == "SYST:ERR?":
+                return '0,"No error"'
             seen.append(timeout)
             return "-10.5,8.2"
 
