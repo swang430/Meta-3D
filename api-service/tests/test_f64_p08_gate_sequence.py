@@ -366,17 +366,15 @@ class TestFailClosed:
         assert not any(w.startswith("OUTP:GAIN:CH ") for w in fake.writes)
 
     async def test_stray_error_after_measure_is_caught(self):
-        """测量成功但队列里混进无主告警 → 零残留检查抓住 (下一个生产原子的
-        drain 会把它静默吞掉 — 这正是测量后补 residue 的理由)。
-        变异 (删衰落态测量后的 residue) → 本测试红。"""
+        """有限测量回复伴设备错误，驱动消费错误后仍须在步骤中归档并拒绝。"""
         drv, fake = _make(leak_error_on_meas=True)
         result, _ = await _run(drv)
         assert not result.success
-        assert any(s.label == "衰落态测量后错误队列" and not s.success
+        assert any(s.label == "衰落态 INP:LEV:MEAS?" and not s.success and s.raw
                    for s in result.steps)
         # 中止发生在**首个**泄漏站点 — 旁路态那次根本没走到 (F4 收窄)
         assert not any(s.label == "旁路态测量后错误队列" for s in result.steps)
-        # 队列被 residue 排干归档, 不是被下一个原子的 drain 静默吞掉
+        # 错误已由测量认领并归档，不被后续还原原子的 drain 静默吞掉。
         assert fake.errors == []
 
     async def test_go_rejected_aborts_with_tidy_instrument(self):
@@ -390,13 +388,12 @@ class TestFailClosed:
     async def test_abort_archives_queue_before_restore(self):
         """内审 F1: AUTOSET 成功但衰落测量设备错误 (现场最可能的失败形态) →
         -300 字面值必须出现在归档里, 且不被还原原子的 drain 静默吞掉 —— 归档
-        末尾写假"零残留"正是本序列存在理由的反面。
-        变异 (删收尾段的"中止后错误队列"residue) → 本测试红。"""
+        错误在失败测量步骤保留；中止后队列为空不抹掉此前已认领错误。"""
         drv, fake = _make(signal_lost_after_autoset=True)
         result, _ = await _run(drv)
         assert not result.success
         step = next(s for s in result.steps
-                    if s.label == "中止后错误队列 (先归档再还原)")
+                    if s.label == "衰落态 INP:LEV:MEAS?")
         assert not step.success and "-300" in (step.raw or "")
         assert fake.errors == []          # 队列被归档排干
         assert fake.gains[1] == 0.0       # 还原段照常走完 (增益放回原值)

@@ -12,6 +12,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable
 from typing import Any
+from app.services.instrument_hal_service import is_mock_driver
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ async def _collect_sample(
     channel_emulator: Any,
     phase: str,
     execution_id: str,
+    measure_input: Callable[[int], Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
     cmw_power = await base_station.read_configured_downlink_power_dbm()
     instrument_metrics = await channel_emulator.get_metrics()
@@ -73,7 +75,20 @@ async def _collect_sample(
     )
     input_ports = _ports(metrics.get("active_input_ports"))
     output_ports = _ports(metrics.get("active_output_ports"))
-    input_powers = _power_rows(metrics.get("input_powers_dbm"), input_ports)
+    measured: dict[int, float | None] = {}
+    # §20.4.4.6 p250：主动测量的设备错误，不是 latest result 的有限数值，
+    # 才能说明本窗口测量是否完成；不据此判 LTE 有效或人为设功率阈值。
+    if metrics.get("topology_source") == "readback" and not is_mock_driver(channel_emulator):
+        for port in input_ports:
+            result = (
+                await measure_input(port) if measure_input is not None
+                else await channel_emulator.measure_input(port, 1.0)
+            )
+            if isinstance(result, (tuple, list)) and len(result) == 2:
+                avg, crest = (_finite_float(item) for item in result)
+                if avg is not None and crest is not None:
+                    measured[port] = avg
+    input_powers = _power_rows(measured, input_ports)
     output_powers = _power_rows(metrics.get("output_powers_dbm"), output_ports)
     invalid_input_ports = [
         item["port"] for item in input_powers if item["value_dbm"] is None
@@ -95,6 +110,8 @@ async def _collect_sample(
             "active_output_ports": output_ports,
         },
         "input_powers_dbm": input_powers,
+        "input_measurement_confirmed": bool(input_ports) and len(measured) == len(input_ports),
+        "input_measurement_source": "measure_input",
         "output_powers_dbm": output_powers,
         "output_powers_frozen": metrics.get("output_powers_frozen"),
         "query_errors": list(metrics.get("query_errors") or []),
@@ -136,13 +153,13 @@ async def run_attach_power_observation(
     execution_id: str,
     is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    measure_input: Callable[[int], Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
     """Collect Cell-ready power truth and optionally hold before attach polling.
 
-    ``accepted=True`` 只表示「活动输入口都读到了有限数值、允许继续 attach」，**不判断功率是否存在**：
-    真机上「无输入信号」在 F64 的实测读数里是一个很低的有限值（2026-09-16 执行 ``f8f5fd90`` 输入口 2
-    两次采样均为 -108.0 dBm），不是空值，所以严格门拦不住缺一路 TX。要判有无信号须换到带该语义的
-    查询并有 PROPSIM 手册出处；不凭一次观察值加阈值。状态用 ``recorded`` 而不是「通过」，读数请看 samples。
+    strict 下仅在活动口受控测量均确认后允许 attach；非 strict 的未确认保留警告。
+    测量失败可能无输入或输出过强 (§20.4.4.6 p250)，不等同缺路结论。
+    成功也不证明 LTE 有效，不设噪声阈值，状态仍为 recorded 而不是通过。
     """
 
     samples = [
@@ -151,6 +168,7 @@ async def run_attach_power_observation(
             channel_emulator=channel_emulator,
             phase="cell_ready",
             execution_id=execution_id,
+            measure_input=measure_input,
         )
     ]
     invalid_ports, failure = _input_failure(samples[0])
@@ -191,6 +209,7 @@ async def run_attach_power_observation(
                 channel_emulator=channel_emulator,
                 phase="observation_complete",
                 execution_id=execution_id,
+                measure_input=measure_input,
             )
         )
         final_invalid, final_failure = _input_failure(samples[-1])

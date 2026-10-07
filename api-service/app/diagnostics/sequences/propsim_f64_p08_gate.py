@@ -493,14 +493,14 @@ async def run(
         fading = await _maybe_await(ce.measure_input(input_num, _MEAS_TIME_S))
         if fading is None:
             g.add("衰落态 INP:LEV:MEAS?", False,
-                  "测量失败 (设备错误: 无信号/过强)", None, started)
+                  "测量未确认（可能无输入/过强/回复缺损）",
+                  getattr(ce, "_last_error", None), started)
             raise _Abort("衰落态输入电平读不出")
         g.add("衰落态 INP:LEV:MEAS?", True,
               f"avg={fading[0]} dBm, crest={fading[1]} dB (t={_MEAS_TIME_S}s)",
               None, started)
         findings["fading_level"] = {"avg_dbm": fading[0], "crest_db": fading[1]}
-        # measure_input 没有自带错误门, 且下一个生产原子的事务会先 drain ——
-        # 不在这里核, 无主错误会被静默吞掉, "每步后零残留"就成了假声明。
+        # measure_input 已认领同事务错误；此处继续检查随后出现的无主错误。
         if not await g.residue("衰落态测量后错误队列"):
             raise _Abort("衰落态测量后错误队列有残留/未知")
 
@@ -522,7 +522,8 @@ async def run(
         bypass_lv = await _maybe_await(ce.measure_input(input_num, _MEAS_TIME_S))
         if bypass_lv is None:
             g.add("旁路态 INP:LEV:MEAS?", False,
-                  "测量失败 — 旁路态读不出输入电平 (归档: 手册未涵盖此态)", None, started)
+                  "测量失败 — 旁路态读不出输入电平 (归档: 手册未涵盖此态)",
+                  getattr(ce, "_last_error", None), started)
             raise _Abort("旁路态输入电平读不出 (P0-8a 判据之一)")
         g.add("旁路态 INP:LEV:MEAS?", True,
               f"avg={bypass_lv[0]} dBm, crest={bypass_lv[1]} dB (与衰落态同窗口)",

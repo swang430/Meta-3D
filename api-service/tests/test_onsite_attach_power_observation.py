@@ -22,7 +22,26 @@ class _ChannelEmulator:
         self._snapshots = iter(snapshots)
 
     async def get_metrics(self):
-        return InstrumentMetrics.model_validate(next(self._snapshots))
+        self.current = next(self._snapshots)
+        return InstrumentMetrics.model_validate(self.current)
+
+    async def measure_input(self, port, measurement_time_s):
+        value = self.current["metrics"]["input_powers_dbm"].get(port)
+        return None if value is None else (value, 4.0)
+
+
+@pytest.mark.asyncio
+async def test_latest_finite_value_does_not_override_failed_new_measurement():
+    class Rejected(_ChannelEmulator):
+        async def measure_input(self, port, measurement_time_s):
+            return None
+
+    result = await run_attach_power_observation(
+        base_station=_BaseStation(), channel_emulator=Rejected([_metrics()]),
+        observation_s=0, strict_input_level=True, execution_id="new-measurement",
+    )
+    assert result["accepted"] is False
+    assert result["samples"][0]["input_powers_dbm"][0]["value_dbm"] is None
 
 
 def _metrics(*, input_1=-17.2, input_2=-17.4, output_1=-50.5):

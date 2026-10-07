@@ -64,9 +64,27 @@ class TestMeasureInput:
         drv, _ = _make_driver({"INP:LEV:MEAS? 1,3.0": '-300,"No input signal"'})
         assert await drv.measure_input(1, 3.0) is None
 
-    async def test_avg_only_defaults_crest_zero(self):
+    async def test_avg_only_is_unconfirmed(self):
         drv, _ = _make_driver({"INP:LEV:MEAS? 1,1.0": "-15.0"})
-        assert await drv.measure_input(1, 1.0) == (-15.0, 0.0)
+        assert await drv.measure_input(1, 1.0) is None
+
+    async def test_numeric_result_with_device_error_is_unconfirmed(self):
+        drv, _ = _make_driver(
+            {"INP:LEV:MEAS? 1,1.0": "-108,4"},
+            ['0,"No error"', '-300,"Measurement failed"'],
+        )
+        assert await drv.measure_input(1, 1.0) is None
+
+    async def test_nonfinite_result_is_unconfirmed(self):
+        drv, _ = _make_driver({"INP:LEV:MEAS? 1,1.0": "nan,4"})
+        assert await drv.measure_input(1, 1.0) is None
+
+    async def test_error_text_cannot_override_nonzero_error_code(self):
+        drv, _ = _make_driver(
+            {"INP:LEV:MEAS? 1,1.0": "-21,4"},
+            ['0,"No error"', '-300,"No error text is not a zero code"'],
+        )
+        assert await drv.measure_input(1, 1.0) is None
 
 
 class TestAutosetAllInputs:

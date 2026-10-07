@@ -4974,7 +4974,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     ) -> Optional[Tuple[float, float]]:
         """测量 (不设) 输入的平均电平 + crest factor。
 
-        INP:LEV:MEAS? <in>,<t> → "<avg_dBm>,<crest_dB>" (User Reference §20.4.4.6)。
+        INP:LEV:MEAS? <in>,<t> → "<avg_dBm>,<crest_dB>" (User Reference §20.4.4.6 p250)。
         <t> = 0.5/1/3/5/10 秒。无信号/输出过强 → device error → 返回 None。
         返回 (avg_dbm, crest_db) 或 None。
         """
@@ -4982,18 +4982,40 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return None
         resp = ""
         try:
-            resp = (await self._query(
-                f"INP:LEV:MEAS? {input_num},{measurement_time_s}",
-                timeout=self._inp_meas_timeout_ms(measurement_time_s),
-            )).strip()
+            async with self._scpi_lock:
+                self._last_error = None
+                # 既有错误队列查询 (User Reference §20.4.2.1)：先确认旧队列排空，
+                # 再测量并消费本次设备拒绝；不能用回复文案代替零错误码。
+                for _ in range(64):
+                    stale = await self._query("SYST:ERR?", note_success=False)
+                    if int(stale.strip().split(",", 1)[0]) == 0:
+                        break
+                    logger.warning("[F64] before measure_input stale error: %s", stale)
+                else:
+                    return None
+                resp = (await self._query(
+                    f"INP:LEV:MEAS? {input_num},{measurement_time_s}",
+                    timeout=self._inp_meas_timeout_ms(measurement_time_s),
+                )).strip()
+                error = await self._query("SYST:ERR?", note_success=False)
+                if int(error.strip().split(",", 1)[0]) != 0:
+                    self._last_error = f"measure_input({input_num}) unconfirmed: {error}"
+                    logger.warning("[F64] measure_input(%s) unconfirmed: %s", input_num, error)
+                    return None
             parts = resp.split(",")
+            if len(parts) != 2:
+                return None
             avg = float(parts[0])
-            crest = float(parts[1]) if len(parts) > 1 else 0.0
+            crest = float(parts[1])
+            if not math.isfinite(avg) or not math.isfinite(crest):
+                return None
             return (avg, crest)
         except (ValueError, IndexError) as e:
+            self._last_error = f"measure_input({input_num}) parse failed: {resp!r} ({e})"
             logger.warning(f"[F64] measure_input({input_num}) parse failed: {resp!r} ({e})")
             return None
         except Exception as e:
+            self._last_error = f"measure_input({input_num}) failed: {e}"
             logger.error(f"[F64] measure_input({input_num}) failed: {e}")
             return None
 
