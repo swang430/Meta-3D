@@ -1,5 +1,12 @@
 # 现场首测调试协议 (On-Site First-Call Protocol)
 
+> **2026-10-07 当前操作入口变更**：下一轮现场执行使用
+> [hardware blocker 验证清单](hardware-blocker-verification.md) 与
+> [roadmap 现场分类](../roadmap-first-call.md#现场验证分类与执行顺序)。
+> 本文下方保留早期 Phase 0–5 协议作为历史参考，不再作为当前逐步操作命令或解除依据。
+> 其中 plan-level preflight、已关闭 P0-8/P0-9、全绿校准前置及泛化 IDN/保活建议均不能照搬；
+> 不运行已删除计划链、不猜替代 SCPI、不重开已关闭项。CMW500 不使用 UXM-only P08 序列。
+
 > **Governance 文档**：规范下一次现场调试流程，把 CAICT 2026-05-12/13 的教训固化成
 > 可执行纪律。配套 [`docs/roadmap-first-call.md`](../roadmap-first-call.md) 的
 > **「🚧 Blocked on hardware」表**使用 —— 当天的 P0 队列以那张表为准
