@@ -226,6 +226,13 @@ class PDFGenerator:
 
             # Sort sections by order
             sections = sorted(sections, key=lambda x: x.get('order', 999))
+            # 强制章节相对于模板实际封面定位，不假定它使用何种 order。
+            mandatory = [section for kind in ('instrument_configuration', 'parameter_groups')
+                         for section in sections if section.get('type') == kind]
+            if mandatory:
+                sections = [section for section in sections if section not in mandatory]
+                covers = [section for section in sections if section.get('type') == 'cover']
+                sections = covers + mandatory + [section for section in sections if section not in covers]
 
             for section in sections:
                 section_elements = self._generate_section(section, report_data, template)

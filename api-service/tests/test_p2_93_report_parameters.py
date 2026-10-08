@@ -55,6 +55,24 @@ def test_applied_value_requires_existing_confirmed_non_simulated_matching_receip
                  'status': 'confirmed' if kind != 'unknown' else 'unknown', 'simulated': kind == 'simulated', 'reason': 'fixture'}}}
     row = report_parameter_groups(audit)[0]['rows'][0]
     assert row['applied'] == ('-19' if kind == 'confirmed' else '未确认')
+    if kind != 'confirmed':
+        assert 'fixture' in row['note']
+
+
+@pytest.mark.parametrize('ordered', [True, False, 'mixed'])
+def test_custom_template_keeps_cover_then_parameters_before_results(ordered, tmp_path):
+    from app.services.pdf_generator import PDFGenerator
+    from pypdf import PdfReader
+    sections = [{'type': 'cover'}, {'type': 'text', 'title': 'RESULT-MARKER', 'content_template': 'RESULT-MARKER'}]
+    if ordered is True:
+        for index, section in enumerate(sections):
+            section['order'] = index
+    elif ordered == 'mixed':
+        sections[1]['order'] = 1
+    path = tmp_path / 'order.pdf'
+    PDFGenerator().generate_report({'title': 'COVER-MARKER', 'parameter_groups': []}, {'sections': sections}, str(path))
+    text = '\n'.join(p.extract_text() for p in PdfReader(path).pages)
+    assert text.index('COVER-MARKER') < text.index('测试参数与生效值') < text.index('RESULT-MARKER')
 
 
 def test_historical_missing_parameters_have_no_new_defaults():

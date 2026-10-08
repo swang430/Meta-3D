@@ -109,6 +109,14 @@ def report_parameter_groups(audit: dict) -> list[dict]:
         confirmed = (receipt.get('status') == 'confirmed' and receipt.get('simulated') is False
                      and receipt.get('requested') == requested and receipt.get('applied') is not None)
         note = '同次逐字段回执确认' if confirmed else '无匹配的同次确认回执'
+        if receipt and not confirmed:
+            note = '已有回执但未获确认：' + (receipt.get('reason') or '未记录具体原因')
+            if receipt.get('simulated') is not False:
+                note += '；模拟或来源未确认'
+            if receipt.get('requested') != requested:
+                note += '；回执请求与冻结值不一致'
+            if receipt.get('applied') is None:
+                note += '；未记录确认值'
         if path in ('measurement_duration_s', 'sample_interval_ms'):
             note = '历史兼容字段，不控制本次测量'
         elif path in ('theoretical_peak_throughput_mbps', 'pass_criteria.min_throughput_ratio'):
