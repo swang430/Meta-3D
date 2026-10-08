@@ -13,3 +13,5 @@
 最终版本相关链178 passed84warnings4.23s；完整后端7042 passed17skipped5403warnings265.20s，exit0。全量命令：`.venv/bin/python -m pytest -q --color=no -o log_cli=false --show-capture=no --tb=short`；主代理唯一执行、输出 `/tmp/mimo-p2-92-full.log`。compileall、单一Alembic head c1e3f5a7b9d2与diff-check通过。GUI/schema未变，不触发无关build/镜像生成。
 
 R1覆盖56603174，两条功能P1：裸TCP遗漏port、转台已冻结身份误报未记录。增量修复先3 RED再GREEN，endpoint共同消费VISA或host:port（IPv6加括号）；转台校验同次摘要/坐标结构后只读resolution adapter/mode与real expected_driver_connection，mock保留simulated、不暴露real transport；型号名缺失仍不猜。相关217 passed126warnings5.68s，compileall/diff-check通过，增量独立内审CLEAN。全量7042统计对应56603174，不冒充此增量全量；增量影响面以217条验证收口。
+
+R2覆盖3f50707b，新增P1：已经带括号的IPv6 host被重复包裹。原实现精确1 RED/13 GREEN；formatter只收窄已存在括号对，IPv4/裸IPv6/已有括号IPv6共同回归后相关219 passed126warnings5.65s。后续外审只以功能P1阻塞，不机械积压P2/P3。

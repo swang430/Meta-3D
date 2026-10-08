@@ -114,13 +114,15 @@ def test_historical_scalar_fields_cannot_export_nested_credentials():
     assert result['instruments'][0]['model'] is None
 
 
-def test_raw_tcp_endpoint_includes_frozen_port():
+@pytest.mark.parametrize('host,expected', [('192.168.1.132', '192.168.1.132:5025'),
+                                         ('::1', '[::1]:5025'), ('[::1]', '[::1]:5025')])
+def test_raw_tcp_endpoint_includes_frozen_port(host, expected):
     from app.services.mimo_ota.report_traceability import report_instrument_configuration
     ex = _execution()
     frozen = ex.config[FREEZE_CONFIG_KEY]
-    frozen['resolved_binding']['expected_transport'] = {'host': '192.168.1.132', 'port': 5025, 'resource': None}
+    frozen['resolved_binding']['expected_transport'] = {'host': host, 'port': 5025, 'resource': None}
     frozen['digest'] = canonical_payload_digest({k: v for k, v in frozen.items() if k != 'digest'})
-    assert report_instrument_configuration(ex, {})['instruments'][0]['endpoint'] == '192.168.1.132:5025'
+    assert report_instrument_configuration(ex, {})['instruments'][0]['endpoint'] == expected
 
 
 @pytest.mark.parametrize('mode', ['real', 'simulated'])

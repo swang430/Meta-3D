@@ -75,7 +75,7 @@ def report_instrument_configuration(execution: Any, audit: dict) -> dict:
         if resource:
             return resource
         if host and type(port) is int and 0 < port <= 65535:
-            return f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
+            return f'[{host}]:{port}' if ':' in host and not (host.startswith('[') and host.endswith(']')) else f'{host}:{port}'
         return host
     rows = []
     for category, key in (('baseStation', FREEZE_CONFIG_KEY), ('channelEmulator', CE_FREEZE_CONFIG_KEY)):
