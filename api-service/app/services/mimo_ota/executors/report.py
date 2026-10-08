@@ -994,9 +994,13 @@ def _build_mimo_ota_content_data(
             },
             "dl_throughput_mbps": _serialized_base_station_metric(
                 row["dl_throughput_mbps"]
+            ) if "dl_throughput_mbps" in row["metrics"] else (
+                row["dl_throughput_mbps"].model_dump(mode="json")
             ),
             "dl_bler_percent": _serialized_base_station_metric(
                 row["dl_bler_percent"]
+            ) if "dl_bler_percent" in row["metrics"] else (
+                row["dl_bler_percent"].model_dump(mode="json")
             ),
         }
         for row in base_station_projection
