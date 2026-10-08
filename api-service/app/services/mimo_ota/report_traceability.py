@@ -58,6 +58,94 @@ def capture_report_sources(name: str, configuration: dict) -> dict:
             "saved_paths": sorted(p for p, v in _leaves(configuration).items() if v is not None)}
 
 
+def report_instrument_configuration(execution: Any, audit: dict) -> dict:
+    """同次冻结请求的白名单展示，不查询当前目录/HAL，不推断实测身份。"""
+    from app.services.channel_emulator_binding import (
+        CE_FREEZE_CONFIG_KEY, validate_frozen_channel_emulator_binding,
+    )
+    config = execution.config if isinstance(getattr(execution, 'config', None), dict) else {}
+    def scalar(mapping, key):
+        value = mapping.get(key)
+        return value if isinstance(value, str) else None
+    def endpoint(transport):
+        if not isinstance(transport, dict):
+            return None
+        resource = scalar(transport, 'resource')
+        host, port = scalar(transport, 'host'), transport.get('port')
+        if resource:
+            return resource
+        if host and type(port) is int and 0 < port <= 65535:
+            return f'[{host}]:{port}' if ':' in host and not (host.startswith('[') and host.endswith(']')) else f'{host}:{port}'
+        return host
+    rows = []
+    for category, key in (('baseStation', FREEZE_CONFIG_KEY), ('channelEmulator', CE_FREEZE_CONFIG_KEY)):
+        row = {'category': category, 'model': None, 'endpoint': None, 'adapter': None,
+               'execution_mode': 'unknown', 'provenance': 'unavailable',
+               'reason': '历史未记录或冻结配置无效；不查询当前配置补真', 'route': None}
+        frozen = config.get(key)
+        valid = isinstance(frozen, dict)
+        if valid and category == 'baseStation':
+            valid = validate_frozen_compatibility_snapshot(frozen) is None
+        elif valid:
+            try:
+                validate_frozen_channel_emulator_binding(frozen)
+            except ValueError:
+                valid = False
+        if valid:
+            binding = frozen.get('resolved_binding') or {}
+            if not isinstance(binding, dict):
+                rows.append(row)
+                continue
+            manifest = binding.get('manifest') or {}
+            transport = binding.get('expected_transport') or {}
+            resolution = frozen.get('resolution') or {}
+            if isinstance(resolution, dict) and isinstance(manifest, dict) and isinstance(transport, dict):
+                mode = resolution.get('execution_mode', frozen.get('execution_mode', 'unknown'))
+                row.update(model=scalar(manifest, 'model_name'), adapter=scalar(manifest, 'adapter_id'),
+                           endpoint=endpoint(transport),
+                           execution_mode=mode if mode in ('real', 'simulated') else 'unknown',
+                           provenance='frozen_request', reason='冻结配置请求，不代表实测确认')
+                profile = resolution.get('profile')
+                if isinstance(profile, dict):
+                    profile = profile.get('lte_2x2_internal_route') or {}
+                    route_keys = ('pcc_bb_board', 'rx_connector', 'rx_converter',
+                                  'tx1_connector', 'tx1_converter', 'tx2_connector', 'tx2_converter')
+                    if isinstance(profile, dict):
+                        row['route'] = {k: profile[k] for k in route_keys if isinstance(profile.get(k), str)} or None
+        rows.append(row)
+    # 目前该冻结件只含坐标 profile 与构造身份，不含型号名；不从类名猜硬件。
+    from app.services.positioner_coordinate_profile import FREEZE_CONFIG_KEY as POSITIONER_KEY, _canonical_digest
+    positioner = config.get(POSITIONER_KEY)
+    positioner_row = {'category': 'positioner', 'model': None, 'endpoint': None, 'adapter': None,
+                      'execution_mode': 'unknown', 'provenance': 'unavailable',
+                      'reason': '历史未记录可展示仪器配置；不根据驱动类名猜型号', 'route': None}
+    if isinstance(positioner, dict) and positioner.get('digest') == _canonical_digest({k: v for k, v in positioner.items() if k != 'digest'}):
+        from app.services.positioner_coordinate_profile import PositionerCoordinateProfile
+        resolution = positioner.get('resolution')
+        valid = isinstance(resolution, dict) and resolution.get('execution_mode') in ('real', 'simulated')
+        profile = positioner.get('profile')
+        if profile is not None:
+            try:
+                PositionerCoordinateProfile.model_validate(profile)
+            except ValueError:
+                valid = False
+        elif valid and resolution.get('status') == 'verified':
+            valid = False
+        if valid:
+            mode = resolution['execution_mode']
+            positioner_row.update(adapter=scalar(resolution, 'adapter'), execution_mode=mode,
+                                  endpoint=endpoint(positioner.get('expected_driver_connection')) if mode == 'real' else None,
+                                  provenance='frozen_request',
+                                  reason='冻结配置请求，不代表实测确认；型号名未记录，不补当前值')
+    rows.append(positioner_row)
+    rows.append({'category': 'rfSwitch', 'model': None, 'endpoint': None, 'adapter': None,
+                 'execution_mode': 'unknown', 'provenance': 'unavailable',
+                 'reason': '同次执行未记录统一射频开关配置；不能补当前值', 'route': None})
+    return {'schema_version': 1, 'instruments': rows,
+            'channel_asset': deepcopy(audit.get('channel_asset')),
+            'notice': '冻结配置请求不代表实测确认；模拟执行不证明真实仪器已连接或已生效'}
+
+
 def _source(path: str, paths: set[str]) -> str:
     if path in paths:
         return "saved_configuration"
