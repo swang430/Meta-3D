@@ -47,7 +47,10 @@ logger = logging.getLogger(__name__)
 class PDFGenerator:
     """Service for generating PDF reports"""
 
-    def __init__(self):
+    def __init__(self, *, certificate: bool = False):
+        # 校准证书仍采用原 CID 策略；普通测试/校准报告使用嵌入字体。
+        self.font_name = CJK_FONT if certificate else REPORT_FONT
+        self.bold_font_name = CJK_FONT if certificate else REPORT_BOLD_FONT
         self.chart_generator = ChartGenerator()
         self.template_renderer = TemplateRenderer()
         self.styles = getSampleStyleSheet()
@@ -85,7 +88,7 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#1f77b4'),
-            fontName=REPORT_FONT
+            fontName=self.font_name
         ))
 
         self.styles.add(ParagraphStyle(
@@ -93,7 +96,7 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#2ca02c'),  # Green
-            fontName=REPORT_FONT
+            fontName=self.font_name
         ))
 
         self.styles.add(ParagraphStyle(
@@ -101,16 +104,16 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#d62728'),  # Red
-            fontName=REPORT_FONT
+            fontName=self.font_name
         ))
 
         # 覆盖默认与自定义样式；标题使用独立粗体，正文/表格保持嵌入的 regular。
         for style in self.styles.byName.values():
             if hasattr(style, 'fontName'):
-                style.fontName = (REPORT_BOLD_FONT if
+                style.fontName = (self.bold_font_name if
                                   style.name.startswith('Heading') or style.name in
                                   {'Title', 'ReportTitle', 'SectionTitle', 'SubsectionTitle'}
-                                  else REPORT_FONT)
+                                  else self.font_name)
         self.styles['BodyText'].fontSize = 9
         self.styles['BodyText'].leading = 14
 
@@ -449,7 +452,7 @@ class PDFGenerator:
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
+            ('FONTNAME', (0, 0), (-1, -1), self.font_name),
             ('FONTSIZE', (0, 0), (-1, -1), 8),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -559,7 +562,7 @@ class PDFGenerator:
 
         table = Table(metadata, colWidths=[140, 300])
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
+            ('FONTNAME', (0, 0), (-1, -1), self.font_name),
             ('FONTSIZE', (0, 0), (-1, -1), 12),
             ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
             ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
@@ -631,7 +634,7 @@ class PDFGenerator:
             style = [
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -840,8 +843,8 @@ class PDFGenerator:
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
-            ('FONTNAME', (0, 1), (0, -1), REPORT_FONT),
+            ('FONTNAME', (0, 0), (-1, -1), self.font_name),
+            ('FONTNAME', (0, 1), (0, -1), self.font_name),
             ('FONTSIZE', (0, 0), (-1, -1), 11),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -958,7 +961,7 @@ class PDFGenerator:
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                 ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
@@ -1088,7 +1091,7 @@ class PDFGenerator:
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#666666')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -1144,6 +1147,7 @@ class PDFGenerator:
                 if len(param_rows) > 1:
                     table = Table(param_rows, colWidths=[150, 300])
                     table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                         ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                         ('BACKGROUND', (0, 0), (0, -1), colors.whitesmoke),
                         ('FONTSIZE', (0, 0), (-1, -1), 9),
@@ -1556,6 +1560,7 @@ class PDFGenerator:
 
             table = Table(summary_data, colWidths=[150, 150])
             table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4caf50')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -1750,6 +1755,7 @@ class PDFGenerator:
                 if len(rows) > 1:
                     table = Table(rows, repeatRows=1)
                     table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                         ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#81c784')),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -1822,6 +1828,7 @@ class PDFGenerator:
             table.setStyle(TableStyle([
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1976d2')),
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('PADDING', (0, 0), (-1, -1), 6),
@@ -1941,6 +1948,7 @@ class PDFGenerator:
                     table.setStyle(TableStyle([
                         ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#64b5f6')),
+                        ('FONTNAME', (0, 0), (-1, -1), self.font_name),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                         ('FONTSIZE', (0, 0), (-1, -1), 9),
                         ('PADDING', (0, 0), (-1, -1), 4),

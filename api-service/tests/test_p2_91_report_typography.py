@@ -41,3 +41,22 @@ def test_failed_marker_is_readable_in_embedded_font(tmp_path, section, data):
     text = "\n".join(p.extract_text() for p in PdfReader(output).pages)
     assert "\x00" not in text
     assert "failed" in text or "FAIL" in text
+
+
+def test_all_calibration_plain_cells_use_report_font():
+    generator = PDFGenerator()
+    for elements in (
+        generator._generate_calibration_probe_section({"probe_calibration": {"polarization": [{"probe_id": "探头甲", "polarization": "垂直", "validation_pass": True}]}}),
+        generator._generate_calibration_channel_section({"channel_summary": {"total_executions": 1}, "channel_calibration": {"temporal": [{"validation_pass": True}]}}),
+    ):
+        from reportlab.platypus import Table
+        tables = [element for element in elements if isinstance(element, Table)]
+        assert tables
+        assert all(cell.fontname == "NotoSansSC-Regular" for table in tables for row in table._cellStyles for cell in row)
+
+
+def test_certificate_generator_retains_cid_policy(tmp_path):
+    output = tmp_path / "certificate.pdf"
+    PDFGenerator(certificate=True).generate_report({"title": "校准证书"}, None, str(output))
+    assert b"STSong-Light" in output.read_bytes()
+    assert b"NotoSans" not in output.read_bytes()

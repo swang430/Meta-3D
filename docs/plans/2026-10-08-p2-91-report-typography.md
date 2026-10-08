@@ -30,3 +30,6 @@
 - compileall、单 Alembic head `c1e3f5a7b9d2`、diff-check 通过。GUI/API schema 无改动，不重复 build/四镜像。
 - 独立内审首次P2符号缺字，经同根修正增量复审 CLEAN；核心保护由 RED 证实，不为审查身份重复造变异。
 - 全量由主代理唯一执行；两次中间版本在发现输入改变后主动 SIGINT，exit2，不计通过。最终稳定输入 `.venv/bin/python -m pytest -q --color=no -o log_cli=false --show-capture=no --tb=short` → `7031 passed, 17 skipped, 5397 warnings in 263.27s (0:04:23)`，exit0，日志 `/tmp/mimo-p2-91-stable-full.log`；此后仅本记录变化，不掩盖重复运行成本。
+# R1 增量收口
+
+R1 覆盖 876fbfe20b61d15de4d010353718a5c431bcf1d2，无 P1，两条本片 P2：校准原始字符串表格遗漏字体、CalibrationReportGenerator 的证书入口未保留 CID。新增两条回归先得到正确 2 failed / 3 passed；补齐所有表格整列字体，并让证书使用 PDFGenerator(certificate=True) 独立实例，避免污染普通报告。相关报告/证书/P2-88/rule gates 127 passed, 74 warnings in 3.93s。原全量 7031 passed 对应 876fbfe2；本次仅字体增量，不重复声称全量跑在增量版本。
