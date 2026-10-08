@@ -107,10 +107,9 @@ def build_mimo_ota_test_case(
         frequency_mhz=primary_carrier.frequency_hz / 1e6,
         bandwidth_mhz=primary_carrier.bandwidth_mhz,
         tx_power_dbm=config.target_tx_power_dbm,
-        test_duration_sec=(
-            (config.measurement_duration_s + config.settling_time_s)
-            * len(config.azimuths_deg)
-        ),
+        # 无厂商统计计数→墙钟换算依据；旧 duration 字段不控制测量。
+        # 不用未生效参数制造预计总耗时。
+        test_duration_sec=None,
         is_template=is_template,
         template_category=template_category or "MIMO OTA 吞吐量",
         created_by=created_by,

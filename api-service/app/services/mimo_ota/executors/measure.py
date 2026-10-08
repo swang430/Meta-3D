@@ -100,10 +100,6 @@ from app.services.execution_evidence_outcome import (
 
 logger = logging.getLogger(__name__)
 
-# Phase 2d: each "sample" is now an independent UXM stat window (≈ stat_count
-# subframes ≈ stat_count ms), not a 20ms poll. Production wants ≥ 5-12 windows
-# per azimuth for stable std; dev caps at 3 to keep smoke tests fast.
-_DEV_SAMPLE_WINDOWS = 3
 # Floor for window duration so mock paths still take a perceptible amount of
 # time (helps surface ordering bugs) but don't actually wait 5s in unit tests.
 _MOCK_WINDOW_FLOOR_S = 0.05
@@ -3641,9 +3637,9 @@ class MeasureExecutor(IStepExecutor):
             mcs_samples: List[Any] = []
             # P0: ce_base_rsrp is now per-azimuth (computed inside loop) since
             # path-loss varies by chain. avg_path_loss_db is the fallback.
-            # One sample per stat window (≈ stat_count subframes × 1ms);
-            # cap aggressively in dev so smoke tests don't wait minutes.
-            num_windows = min(config.num_samples_per_azimuth, _DEV_SAMPLE_WINDOWS)
+            # 请求数量不按开发环境截断；实际计划由冻结 manifest 的
+            # single/requested 规则决定，统计长度不是墙钟耗时。
+            num_windows = config.num_samples_per_azimuth
             frozen_mac_profile = base_station_attempt.mac_profile
             if frozen_mac_profile is None:
                 raise RuntimeError(
@@ -3791,11 +3787,11 @@ class MeasureExecutor(IStepExecutor):
                         )
 
                 logger.info(
-                    "[%s] Phase 3: positioner -> azimuth %.1f° (%d windows × %.2fs)",
+                    "[%s] Phase 3: positioner -> azimuth %.1f° (requested windows=%d, statistical count=%d; elapsed time unknown)",
                     context.test_execution.id,
                     azimuth,
                     num_windows,
-                    window_s,
+                    frozen_stat_count,
                 )
                 with capture_scpi_exchanges() as position_exchanges:
                     moved = await positioner.move_to(
@@ -4164,8 +4160,10 @@ class MeasureExecutor(IStepExecutor):
                 "switch_topology": topology_result.to_payload(),
                 "mcs_consistency": mcs_result.to_payload(),
                 "sampling": {
-                    "num_windows_per_azimuth": num_windows,
-                    "window_duration_s": window_s,
+                    "requested_windows_per_azimuth": num_windows,
+                    "window_wait_parameter_s": window_s,
+                    "estimated_total_time_s": None,
+                    "timing_note": "统计计数不是实际墙钟时长；实际窗口数量和耗时以同次窗口回执为准。",
                     "stat_count_subframes": frozen_stat_count,
                     "mac_profile_digest": frozen_mac_profile.profile_digest,
                 },

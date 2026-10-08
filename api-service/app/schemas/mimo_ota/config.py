@@ -322,12 +322,23 @@ class MIMOOTAConfiguration(BaseModel):
         min_length=1,
         max_length=361,
     )
-    measurement_duration_s: float = 10.0
-    settling_time_s: float = 2.0
+    measurement_duration_s: float = Field(
+        default=10.0,
+        deprecated=True,
+        description="历史兼容字段，不控制测量时长；测量由冻结 MAC 统计长度与适配器窗口计划控制。",
+    )
+    settling_time_s: float = Field(default=2.0, ge=0, allow_inf_nan=False)
 
     # === Sampling ===
-    num_samples_per_azimuth: int = 100
-    sample_interval_ms: float = 100.0
+    num_samples_per_azimuth: int = Field(
+        default=3, ge=1, le=10000, strict=True,
+        description="每方位请求窗口数；single 适配器计划一个窗口，requested 适配器按请求数量执行，不隐式截断。",
+    )
+    sample_interval_ms: float = Field(
+        default=100.0,
+        deprecated=True,
+        description="历史兼容字段，不控制测量采样间隔。",
+    )
 
     # === Power ===
     # ⚠️ **口径陷阱**：本字段最终写到 `BSE:CONFig:NR5G:<cell>:DL:POWer`，

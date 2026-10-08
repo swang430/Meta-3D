@@ -556,7 +556,8 @@ export function TestCaseLibrary({
                               </Text>
                             </Tooltip>
                           )}
-                          {tc.test_duration_sec && (
+                          {/* MIMO 历史列来自未生效的 duration 公式，不作为有效预计时长。 */}
+                          {tc.test_type !== 'MIMO_OTA' && tc.test_duration_sec && (
                             <Tooltip label="预计时长">
                               <Text size="xs" c="dimmed">
                                 ⏱ {formatDuration(tc.test_duration_sec)}

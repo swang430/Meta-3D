@@ -1330,12 +1330,14 @@ async def test_ce_plan_drift_rejects_before_any_instrument_connection_or_write(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("requested_windows", [1, 5])
 async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
     db,
     lab,
     chamber,
     hal_with_full_mock_chain,
     monkeypatch,
+    requested_windows,
 ):
     """P1-74: TestCase 的 stat_count 必须真的驱动窗口请求的统计基。
 
@@ -1364,7 +1366,7 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
         "azimuths_deg": [0.0],
         "stat_count": 3000,
         "settling_time_s": 0.0,
-        "num_samples_per_azimuth": 1,
+        "num_samples_per_azimuth": requested_windows,
         "precheck_strict_dut": False,
     }
     db.commit()
@@ -1393,6 +1395,7 @@ async def test_testcase_stat_count_drives_the_frozen_statistical_basis(
     assert result.status == StepExecutionStatus.SUCCESS, result.error_message
     assert captured, "measure 从未走到 BaseStation 窗口采样"
     assert captured["statistical_basis_subframes"] == 3000
+    assert captured["requested_sample_count"] == requested_windows
 
 
 @pytest.mark.asyncio

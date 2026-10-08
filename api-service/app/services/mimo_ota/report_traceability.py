@@ -299,6 +299,10 @@ def report_traceability_parameters(audit: dict) -> dict:
                     "冻结请求": requested[start:start + 16], "来源": _SOURCE_LABELS[value["source"]]}
         else:
             rows[path] = {"冻结请求": requested, "来源": _SOURCE_LABELS[value["source"]]}
+            if path in {"measurement_duration_s", "sample_interval_ms"}:
+                rows[path]["生效说明"] = "历史兼容字段，不控制本次测量"
+    if audit["status"] == "frozen_request":
+        rows["预计总耗时"] = "未知：统计计数无墙钟换算承诺，另含初始化、attach、移动与清理开销"
     if "binding" in audit:
         rows["冻结仪器绑定"] = {**audit["binding"], "adapter": audit["adapter"]}
     if "window_plan" in audit:

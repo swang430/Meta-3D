@@ -332,7 +332,10 @@ class CreateSessionRequest(BaseModel):
     theoretical_peak_throughput_mbps: Optional[float] = None
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
-    measurement_duration_s: float = 10.0
+    measurement_duration_s: float = Field(
+        default=10.0, deprecated=True,
+        description="历史兼容字段，不控制测量时长；测量由冻结 MAC 统计长度与适配器窗口计划控制。",
+    )
     # ⚠ 与 MIMOOTAConfiguration.engine_mode 保持一致（G16 门守着）。
     #   一度双双改成 keysight_gcm（2026-08-07 现场），外审 #304 P1 指出：
     #   GCM 路必须配 `.smu`，而 emulation_file / channel_asset_id 都是 None，
@@ -823,11 +826,9 @@ def _execution_to_session_response(
         "bandwidth_mhz": cfg.get("bandwidth_mhz"),
         "mimo_config": f"{cfg.get('mimo_layers', 2)}x{cfg.get('mimo_layers', 2)}",
         "azimuths_deg": cfg.get("azimuths_deg"),
-        "measurement_duration_s": cfg.get("measurement_duration_s"),
-        "total_estimated_time_s": (
-            (cfg.get("measurement_duration_s", 0) + cfg.get("settling_time_s", 0))
-            * len(cfg.get("azimuths_deg", []) or [])
-        ),
+        "measurement_duration_s": None,  # 兼容键，不以旧配置冒充有效时长。
+        "total_estimated_time_s": None,
+        "timing_note": "统计长度不是实际墙钟时间；总耗时含仪器、attach、移动与清理开销，当前未知。",
         "engine_mode": cfg.get("engine_mode"),
     }
 
