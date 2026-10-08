@@ -3410,6 +3410,12 @@ export interface components {
         };
         CreateSessionRequest: {
             /**
+             * @deprecated
+             * @description 历史兼容字段，不控制测量时长；测量由冻结 MAC 统计长度与适配器窗口计划控制。
+             * @default 10
+             */
+            measurement_duration_s: number;
+            /**
              * @default nr5g
              * @enum {string}
              */

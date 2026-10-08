@@ -74,6 +74,7 @@ def _windows_execution():
     f = _freeze()
     cfg = MIMOOTAConfiguration.model_validate(f["mimo_ota_configuration"])
     cfg.azimuths_deg = [0]
+    cfg.num_samples_per_azimuth = 100  # 历史显式请求，不随新建默认值变化。
     f["mimo_ota_configuration"] = dump_canonical_mimo_ota_configuration(cfg)
     f["digest"] = canonical_payload_digest({k: v for k, v in f.items() if k != "digest"})
     ex = _execution(f)

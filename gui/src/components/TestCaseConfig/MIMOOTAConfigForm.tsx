@@ -114,9 +114,11 @@ export interface MIMOOTAConfiguration {
   modulation?: string
   subcarrier_spacing_khz?: number
   azimuths_deg?: number[]
+  /** 历史兼容；不控制测量时长。 */
   measurement_duration_s?: number
   settling_time_s?: number
   num_samples_per_azimuth?: number
+  /** 历史兼容；不控制测量间隔。 */
   sample_interval_ms?: number
   target_tx_power_dbm?: number
   target_rsrp_dbm?: number
@@ -869,18 +871,6 @@ export function MIMOOTAConfigForm({
           />
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
             <NumberInput
-              label="单方位测量时长"
-              suffix=" s"
-              value={value.measurement_duration_s}
-              onChange={(v) =>
-                update('measurement_duration_s', typeof v === 'number' ? v : undefined)
-              }
-              min={0}
-              decimalScale={1}
-              step={0.5}
-              disabled={readOnly}
-            />
-            <NumberInput
               label="转台稳定等待"
               suffix=" s"
               value={value.settling_time_s}
@@ -893,27 +883,22 @@ export function MIMOOTAConfigForm({
               disabled={readOnly}
             />
             <NumberInput
-              label="每方位采样数"
+              label="每方位请求窗口数"
+              description="实际窗口计划由服务器冻结的适配器规则决定：single 为一个，requested 按请求数；不隐式截断。"
               value={value.num_samples_per_azimuth}
               onChange={(v) =>
                 update('num_samples_per_azimuth', typeof v === 'number' ? v : undefined)
               }
               min={1}
               max={10000}
-              disabled={readOnly}
-            />
-            <NumberInput
-              label="采样间隔"
-              suffix=" ms"
-              value={value.sample_interval_ms}
-              onChange={(v) =>
-                update('sample_interval_ms', typeof v === 'number' ? v : undefined)
-              }
-              min={1}
-              decimalScale={1}
+              allowDecimal={false}
               disabled={readOnly}
             />
           </SimpleGrid>
+          <Text size="xs" c="dimmed">
+            统计长度不是实际墙钟时间；测量由冻结 MAC 统计长度与窗口计划控制。
+            旧时长/采样间隔保留为历史兼容，不控制本次测量。实际数量与耗时在报告中查看。
+          </Text>
         </Stack>
       </Paper>
 
