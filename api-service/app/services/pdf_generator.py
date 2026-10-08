@@ -24,16 +24,22 @@ from reportlab.pdfgen import canvas
 
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
+from pathlib import Path
 
 from app.services.chart_generator import ChartGenerator
 from app.services.template_renderer import TemplateRenderer
 
-# P1-22: 中文可读 — 注册 reportlab 内置 CJK CID 字体, 全部字体位点收敛到
-# 单一常量 (三族: 自定义样式 / Table FONTNAME / stylesheet 默认样式) —
-# 逐点替换必漏 (内审 F2)。CID 字体无粗体变体, 原 Bold 位同字体
-# (中文可读 > 粗体效果)。
+# 证书保持既有字体；报告使用随应用打包的 OFL 字体，不依赖阅读器替代字体。
 CJK_FONT = 'STSong-Light'
 pdfmetrics.registerFont(UnicodeCIDFont(CJK_FONT))
+REPORT_FONT = 'NotoSansSC-Regular'
+REPORT_BOLD_FONT = 'NotoSansSC-Bold'
+_FONT_DIR = Path(__file__).resolve().parents[1] / 'assets' / 'fonts'
+for _name in (REPORT_FONT, REPORT_BOLD_FONT):
+    pdfmetrics.registerFont(TTFont(_name, str(_FONT_DIR / f'{_name}.ttf')))
+pdfmetrics.registerFontFamily(REPORT_FONT, normal=REPORT_FONT, bold=REPORT_BOLD_FONT,
+                            italic=REPORT_FONT, boldItalic=REPORT_BOLD_FONT)
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +85,7 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#1f77b4'),
-            fontName=CJK_FONT
+            fontName=REPORT_FONT
         ))
 
         self.styles.add(ParagraphStyle(
@@ -87,7 +93,7 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#2ca02c'),  # Green
-            fontName=CJK_FONT
+            fontName=REPORT_FONT
         ))
 
         self.styles.add(ParagraphStyle(
@@ -95,15 +101,18 @@ class PDFGenerator:
             parent=self.styles['BodyText'],
             fontSize=11,
             textColor=colors.HexColor('#d62728'),  # Red
-            fontName=CJK_FONT
+            fontName=REPORT_FONT
         ))
 
-        # P1-22 字体收敛第三族: sample stylesheet 的默认样式 (BodyText/Normal/
-        # Heading* 等默认西文字体) 全部换 CJK 字体 — 正文与表格单元格里的
-        # 中文最常落在这些样式上, 只换显式位点会漏 (内审 F2)。
+        # 覆盖默认与自定义样式；标题使用独立粗体，正文/表格保持嵌入的 regular。
         for style in self.styles.byName.values():
             if hasattr(style, 'fontName'):
-                style.fontName = CJK_FONT
+                style.fontName = (REPORT_BOLD_FONT if
+                                  style.name.startswith('Heading') or style.name in
+                                  {'Title', 'ReportTitle', 'SectionTitle', 'SubsectionTitle'}
+                                  else REPORT_FONT)
+        self.styles['BodyText'].fontSize = 9
+        self.styles['BodyText'].leading = 14
 
     def generate_report(
         self,
@@ -440,7 +449,7 @@ class PDFGenerator:
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
+            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 8),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -550,7 +559,7 @@ class PDFGenerator:
 
         table = Table(metadata, colWidths=[140, 300])
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
+            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 12),
             ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
             ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
@@ -622,7 +631,7 @@ class PDFGenerator:
             style = [
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), CJK_FONT),
+                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -831,8 +840,8 @@ class PDFGenerator:
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('FONTNAME', (0, 0), (-1, 0), CJK_FONT),
-            ('FONTNAME', (0, 1), (0, -1), CJK_FONT),
+            ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
+            ('FONTNAME', (0, 1), (0, -1), REPORT_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 11),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -949,7 +958,7 @@ class PDFGenerator:
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), CJK_FONT),
+                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
                 ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
@@ -1079,7 +1088,7 @@ class PDFGenerator:
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#666666')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), CJK_FONT),
+                ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -1257,7 +1266,7 @@ class PDFGenerator:
                 result_text = '✓ PASS'
                 result_color = colors.HexColor('#43a047')
             elif passed is False:
-                result_text = '✗ FAIL'
+                result_text = '× FAIL'
                 result_color = colors.HexColor('#e53935')
             else:
                 result_text = '- N/A'
@@ -1332,7 +1341,7 @@ class PDFGenerator:
             if status in ['passed', 'pass', 'success']:
                 status_text = f'<font color="#43a047">✓ {status}</font>'
             elif status in ['failed', 'fail', 'error']:
-                status_text = f'<font color="#e53935">✗ {status}</font>'
+                status_text = f'<font color="#e53935">× {status}</font>'
             else:
                 status_text = str(status)
 
@@ -1561,7 +1570,7 @@ class PDFGenerator:
             if verdict is True:
                 status, color = '✓ PASS', '#43a047'
             elif verdict is False:
-                status, color = '✗ FAIL', '#e53935'
+                status, color = '× FAIL', '#e53935'
             else:
                 status, color = '? UNVERIFIED', '#f9a825'
             return Paragraph(
@@ -1842,7 +1851,7 @@ class PDFGenerator:
                     headers = ['Scenario', 'Condition', 'Freq (GHz)', 'RMS Delay Error', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
+                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
                         status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         error = cal.get('rms_delay_spread_error_percent', 0)
                         rows.append([
@@ -1856,7 +1865,7 @@ class PDFGenerator:
                     headers = ['Velocity (km/h)', 'Freq (GHz)', 'Doppler (Hz)', 'Target (Hz)', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
+                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
                         status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             str(cal.get('velocity_kmh', '-')),
@@ -1869,7 +1878,7 @@ class PDFGenerator:
                     headers = ['Scenario', 'Condition', 'Spacing (λ)', 'Correlation', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
+                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
                         status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             cal.get('scenario_type', '-'),
@@ -1882,7 +1891,7 @@ class PDFGenerator:
                     headers = ['Scenario', 'Condition', 'Measured (°)', 'Target (°)', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
+                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
                         status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             cal.get('scenario_type', '-'),
@@ -1899,7 +1908,7 @@ class PDFGenerator:
                         if verdict is True:
                             status, status_color = '✓ PASS', '#43a047'
                         elif verdict is False:
-                            status, status_color = '✗ FAIL', '#e53935'
+                            status, status_color = '× FAIL', '#e53935'
                         else:
                             status, status_color = 'UNKNOWN', '#f9a825'
                         amplitude = cal.get('amplitude_uniformity_db')
@@ -1915,7 +1924,7 @@ class PDFGenerator:
                     headers = ['DUT Model', 'Type', 'Measured (dBm)', 'Error (dB)', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
+                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
                         status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             cal.get('dut_model', '-')[:20],

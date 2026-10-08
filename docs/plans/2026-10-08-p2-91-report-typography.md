@@ -20,3 +20,13 @@
 5. 独立只读内审 → Ready PR → R1/R2 最新 HEAD → merge/main 同步/清理 → P2-92。
 
 验证执行者为主代理，不为审查身份重复全量。字体为生成资产，使用上游资源及机械转换，不手写二进制。
+
+## 已验记录
+
+- RED：真实 PDF 新测试旧实现 `1 failed`（0个嵌入字体）；静态字体首次生成未更新内部 name table，字体混为 Thin，测试检出；追加 `--update-name-table` 后常规与粗体独立。
+- 内审发现 FAIL 标记 `✗` 缺字；真实 phase/KPI PDF RED 提取含 `\x00`。所有九处同根字面量换 `×`，不改判词/颜色/分支。
+- GREEN：`.venv/bin/python -m pytest -q tests/test_p2_91_report_typography.py tests/test_p1_22_report_trustworthy.py tests/test_p2_21_report_flags_cert_cjk.py tests/test_p2_88_report_traceability.py tests/test_rule_gates.py --color=no -o log_cli=false --show-capture=no --tb=short` → `125 passed, 74 warnings in 4.03s`。
+- DB `SET TRANSACTION READ ONLY` 读取报告 `3eaa811a` 内存重渲染到 `/tmp/mimo-p2-91-preview.pdf`，未改生产 DB/PDF。`pdffonts` regular/bold 均 TrueType，emb/sub/uni=yes；渲染第4页检查中英文、标题、表格无遮挡。
+- compileall、单 Alembic head `c1e3f5a7b9d2`、diff-check 通过。GUI/API schema 无改动，不重复 build/四镜像。
+- 独立内审首次P2符号缺字，经同根修正增量复审 CLEAN；核心保护由 RED 证实，不为审查身份重复造变异。
+- 全量由主代理唯一执行；两次中间版本在发现输入改变后主动 SIGINT，exit2，不计通过。最终稳定输入 `.venv/bin/python -m pytest -q --color=no -o log_cli=false --show-capture=no --tb=short` → `7031 passed, 17 skipped, 5397 warnings in 263.27s (0:04:23)`，exit0，日志 `/tmp/mimo-p2-91-stable-full.log`；此后仅本记录变化，不掩盖重复运行成本。
