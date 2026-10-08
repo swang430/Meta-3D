@@ -64,6 +64,19 @@ def report_instrument_configuration(execution: Any, audit: dict) -> dict:
         CE_FREEZE_CONFIG_KEY, validate_frozen_channel_emulator_binding,
     )
     config = execution.config if isinstance(getattr(execution, 'config', None), dict) else {}
+    def scalar(mapping, key):
+        value = mapping.get(key)
+        return value if isinstance(value, str) else None
+    def endpoint(transport):
+        if not isinstance(transport, dict):
+            return None
+        resource = scalar(transport, 'resource')
+        host, port = scalar(transport, 'host'), transport.get('port')
+        if resource:
+            return resource
+        if host and type(port) is int and 0 < port <= 65535:
+            return f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
+        return host
     rows = []
     for category, key in (('baseStation', FREEZE_CONFIG_KEY), ('channelEmulator', CE_FREEZE_CONFIG_KEY)):
         row = {'category': category, 'model': None, 'endpoint': None, 'adapter': None,
@@ -87,12 +100,9 @@ def report_instrument_configuration(execution: Any, audit: dict) -> dict:
             transport = binding.get('expected_transport') or {}
             resolution = frozen.get('resolution') or {}
             if isinstance(resolution, dict) and isinstance(manifest, dict) and isinstance(transport, dict):
-                def scalar(mapping, key):
-                    value = mapping.get(key)
-                    return value if isinstance(value, str) else None
                 mode = resolution.get('execution_mode', frozen.get('execution_mode', 'unknown'))
                 row.update(model=scalar(manifest, 'model_name'), adapter=scalar(manifest, 'adapter_id'),
-                           endpoint=scalar(transport, 'resource') or scalar(transport, 'host'),
+                           endpoint=endpoint(transport),
                            execution_mode=mode if mode in ('real', 'simulated') else 'unknown',
                            provenance='frozen_request', reason='冻结配置请求，不代表实测确认')
                 profile = resolution.get('profile')
@@ -111,13 +121,22 @@ def report_instrument_configuration(execution: Any, audit: dict) -> dict:
                       'reason': '历史未记录可展示仪器配置；不根据驱动类名猜型号', 'route': None}
     if isinstance(positioner, dict) and positioner.get('digest') == _canonical_digest({k: v for k, v in positioner.items() if k != 'digest'}):
         from app.services.positioner_coordinate_profile import PositionerCoordinateProfile
-        try:
-            profile = PositionerCoordinateProfile.model_validate(positioner.get('profile'))
-        except ValueError:
-            pass
-        else:
-            positioner_row['coordinate_profile'] = profile.model_dump(mode='json')
-            positioner_row['reason'] = '已冻结坐标配置；型号和地址未记录，不能补当前值'
+        resolution = positioner.get('resolution')
+        valid = isinstance(resolution, dict) and resolution.get('execution_mode') in ('real', 'simulated')
+        profile = positioner.get('profile')
+        if profile is not None:
+            try:
+                PositionerCoordinateProfile.model_validate(profile)
+            except ValueError:
+                valid = False
+        elif valid and resolution.get('status') == 'verified':
+            valid = False
+        if valid:
+            mode = resolution['execution_mode']
+            positioner_row.update(adapter=scalar(resolution, 'adapter'), execution_mode=mode,
+                                  endpoint=endpoint(positioner.get('expected_driver_connection')) if mode == 'real' else None,
+                                  provenance='frozen_request',
+                                  reason='冻结配置请求，不代表实测确认；型号名未记录，不补当前值')
     rows.append(positioner_row)
     rows.append({'category': 'rfSwitch', 'model': None, 'endpoint': None, 'adapter': None,
                  'execution_mode': 'unknown', 'provenance': 'unavailable',

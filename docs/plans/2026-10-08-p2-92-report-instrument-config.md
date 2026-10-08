@@ -11,3 +11,5 @@
 验证记录：旧实现专项5条均因缺instrument_configuration RED；最小实现5 GREEN，补CE地址漂移/损坏为6 GREEN。历史binding字符串与嵌套route字符串各精确RED崩溃，收窄类型后GREEN；内审发现嵌套凭据对象可能输出，补精确RED并限制所有展示标量类型后专项9 passed。最终增量独立内审 CLEAN。中间相关177 passed，最后敏感值修复后需在最终版本复跑；全量由主代理单次执行。只读生产执行内存重建临时PDF，图像检查型号/地址/模拟模式清晰且无截断；未修改数据库或历史PDF。
 
 最终版本相关链178 passed84warnings4.23s；完整后端7042 passed17skipped5403warnings265.20s，exit0。全量命令：`.venv/bin/python -m pytest -q --color=no -o log_cli=false --show-capture=no --tb=short`；主代理唯一执行、输出 `/tmp/mimo-p2-92-full.log`。compileall、单一Alembic head c1e3f5a7b9d2与diff-check通过。GUI/schema未变，不触发无关build/镜像生成。
+
+R1覆盖56603174，两条功能P1：裸TCP遗漏port、转台已冻结身份误报未记录。增量修复先3 RED再GREEN，endpoint共同消费VISA或host:port（IPv6加括号）；转台校验同次摘要/坐标结构后只读resolution adapter/mode与real expected_driver_connection，mock保留simulated、不暴露real transport；型号名缺失仍不猜。相关217 passed126warnings5.68s，compileall/diff-check通过，增量独立内审CLEAN。全量7042统计对应56603174，不冒充此增量全量；增量影响面以217条验证收口。

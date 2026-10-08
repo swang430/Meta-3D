@@ -112,3 +112,34 @@ def test_historical_scalar_fields_cannot_export_nested_credentials():
     result = report_instrument_configuration(SimpleNamespace(config={FREEZE_CONFIG_KEY: frozen}), {})
     assert 'SHOULD-NOT-BE-EXPORTED' not in str(result)
     assert result['instruments'][0]['model'] is None
+
+
+def test_raw_tcp_endpoint_includes_frozen_port():
+    from app.services.mimo_ota.report_traceability import report_instrument_configuration
+    ex = _execution()
+    frozen = ex.config[FREEZE_CONFIG_KEY]
+    frozen['resolved_binding']['expected_transport'] = {'host': '192.168.1.132', 'port': 5025, 'resource': None}
+    frozen['digest'] = canonical_payload_digest({k: v for k, v in frozen.items() if k != 'digest'})
+    assert report_instrument_configuration(ex, {})['instruments'][0]['endpoint'] == '192.168.1.132:5025'
+
+
+@pytest.mark.parametrize('mode', ['real', 'simulated'])
+def test_positioner_frozen_adapter_mode_and_endpoint_are_displayed(mode):
+    from app.services.mimo_ota.report_traceability import report_instrument_configuration
+    from app.services.positioner_coordinate_profile import FREEZE_CONFIG_KEY as KEY, _canonical_digest
+    payload = {'schema_version': 1, 'resolution': {'schema_version': 1, 'adapter': 'aerotech',
+               'execution_mode': mode, 'status': 'verified' if mode == 'real' else 'diagnostic'},
+               'expected_driver_connection': {'host': '192.168.0.16', 'port': 8000, 'resource': None} if mode == 'real' else None,
+               'profile': {'schema_version': 1, 'user_units': 'degree', 'units_verified': True,
+                           'coordinate_offset_deg': 0, 'coordinate_offset_verified': True,
+                           'coordinate_offset_verification_source': 'site verification',
+                           'coordinate_offset_verified_at': '2026-10-08T00:00:00Z',
+                           'minimum_deg': -360, 'maximum_deg': 360, 'xf_speed': 10,
+                           'position_tolerance_deg': .5, 'azimuth_axis': 'X'} if mode == 'real' else None}
+    freeze = {**payload, 'digest': _canonical_digest(payload)}
+    ex = SimpleNamespace(config={KEY: freeze})
+    row = report_instrument_configuration(ex, {})['instruments'][2]
+    assert row['adapter'] == 'aerotech' and row['execution_mode'] == mode
+    assert row['endpoint'] == ('192.168.0.16:8000' if mode == 'real' else None)
+    freeze['digest'] = 'broken'
+    assert report_instrument_configuration(ex, {})['instruments'][2]['adapter'] is None
