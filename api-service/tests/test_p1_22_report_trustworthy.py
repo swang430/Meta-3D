@@ -6,7 +6,7 @@
     红线: 禁 status=='completed' 判通过 / 禁 bool(verdict)。
   ② step_results 的 analysis 项: verdict 放渲染器可达位置 (parameters 下),
     overall_pass / pass_criteria_summary 死键站点删除。
-  ③ CJK 字体三族收敛到 CJK_FONT 常量; 生成的 PDF 字节含 CID 字体引用。
+  ③ 报告字体三族使用嵌入中文字体；证书仍保留既有 CID 字体。
   ④ 封面 Test Plan 行按报告类型分流: execution 类显示「来源」。
 
 变异自验对应表 (⓪-④):
@@ -24,7 +24,7 @@ import pytest
 
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.mimo_ota.rf_kpi_trust import build_rf_kpi_trust
-from app.services.pdf_generator import CJK_FONT, PDFGenerator
+from app.services.pdf_generator import REPORT_FONT, REPORT_BOLD_FONT, PDFGenerator
 
 
 def _exec(phases, validation_pass=None, status="completed"):
@@ -165,15 +165,14 @@ class TestAnalysisStepShape:
 
 class TestCJKFont:
     def test_all_styles_use_cjk_font(self):
-        """不变量: stylesheet 全部样式 (默认族 + 自定义族) fontName 均为
-        CJK_FONT — 删掉收敛遍历或漏改任一族即红。"""
+        """报告样式均使用嵌入中文字体的正文/粗体族，不回退系统字体。"""
         gen = PDFGenerator()
         wrong = {
             name: style.fontName
             for name, style in gen.styles.byName.items()
-            if hasattr(style, "fontName") and style.fontName != CJK_FONT
+            if hasattr(style, "fontName") and style.fontName not in (REPORT_FONT, REPORT_BOLD_FONT)
         }
-        assert wrong == {}, f"未收敛到 {CJK_FONT} 的样式: {wrong}"
+        assert wrong == {}, f"未使用报告中文字体的样式: {wrong}"
 
     def test_no_helvetica_left_in_module(self):
         """存在性粗筛: 源码里不许再出现 Helvetica 字面量 (Table FONTNAME 族
@@ -183,8 +182,7 @@ class TestCJKFont:
         assert "Helvetica" not in inspect.getsource(m)
 
     def test_generated_pdf_embeds_cid_font_and_chinese_title(self, tmp_path):
-        """行为门: 真生成一份中文标题+中文表格值的 PDF, 字节里必须有
-        CID 字体引用 (STSong)。"""
+        """行为门: 真生成中文 PDF，必须包含嵌入 TrueType 字体。"""
         gen = PDFGenerator()
         out = str(tmp_path / "p1_22_cjk.pdf")
         data = {
@@ -202,7 +200,7 @@ class TestCJKFont:
         }
         gen.generate_report(data, template=None, output_path=out)
         pdf = open(out, "rb").read()
-        assert b"STSong" in pdf
+        assert b"/FontFile2" in pdf
 
 
 # ─────────────────────────────────────────────────────────────────────

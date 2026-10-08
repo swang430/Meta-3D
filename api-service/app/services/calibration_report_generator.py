@@ -1381,7 +1381,7 @@ class CalibrationReportGenerator:
         template = self._create_certificate_template()
         
         # 生成 PDF
-        return self.pdf_generator.generate_report(certificate_data, template, output_path)
+        return PDFGenerator(certificate=True).generate_report(certificate_data, template, output_path)
 
     def generate_audit_report(
         self,
