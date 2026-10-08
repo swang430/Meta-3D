@@ -19,3 +19,11 @@ NotebookLM不新增查询：本片改变应用层操作员判据，不解释新�
 - 生产ANALYSIS反例覆盖无理论但可信96.5Mbps达到50阈值、低于100阈值、无阈值UNKNOWN、Mock/缺证据UNKNOWN；冻结后改源用例不影响本次判据。
 - 比较读取/重建、报告/PDF、create-session与GUI契约同步RED→GREEN。
 - 相关消费者+规则门；稳定最终全后端一次，GUI契约/build、compileall、Alembic head、diff-check。独立只读功能内审；Ready PR Codex R1→R2，最新HEAD R2无P1才merge/main同步/清理。
+
+## 实施记录
+
+已完成上述范围。RED→GREEN覆盖schema/legacy、可信吞吐96.5Mbps对50/100/空阈值、commissioning/OpenAPI、GUI显式null及报告说明。全量发现比较formal门仍依赖ratio，补闭环RED后从当前指标集移除，原真实证据门不变。历史说明收窄为当前规则已弃用/历史原落库判决，不改旧结论。
+
+最终相关187 passed（4.84s）；GUI契约24 passed（115.86ms）及production build（11.72s）；全后端7021 passed/17 skipped（263.22s、exit0）。全量命令在api-service运行：`.venv/bin/python -m pytest -q --color=no -o log_cli=false -o addopts='' --tb=short --show-capture=no --disable-warnings`。compileall、单一Alembic head `c1e3f5a7b9d2`、diff-check通过，独立只读尾审P1/P2=0。
+
+交付状态以本片PR为准；PR合并后本批准三片队列无剩余软件WIP，不自动开始现场/HOLD项。

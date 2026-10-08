@@ -301,6 +301,10 @@ def report_traceability_parameters(audit: dict) -> dict:
             rows[path] = {"冻结请求": requested, "来源": _SOURCE_LABELS[value["source"]]}
             if path in {"measurement_duration_s", "sample_interval_ms"}:
                 rows[path]["生效说明"] = "历史兼容字段，不控制本次测量"
+            elif path in {"pass_criteria.min_throughput_ratio", "theoretical_peak_throughput_mbps"}:
+                rows[path]["生效说明"] = "当前判据已弃用此字段；历史判据以原落库判决为准，不重写历史结论"
+            elif path == "pass_criteria.min_throughput_mbps":
+                rows[path]["生效说明"] = "当前规则：操作员绝对 Mbps 阈值；可信实测均值不低于此值才通过，未配置则 UNKNOWN；历史判据以原落库判决为准"
     if audit["status"] == "frozen_request":
         rows["预计总耗时"] = "未知：统计计数无墙钟换算承诺，另含初始化、attach、移动与清理开销"
     if "binding" in audit:

@@ -261,12 +261,12 @@ class ComponentCarrierConfig(BaseModel):
 
 
 class MIMOOTAPassCriteria(BaseModel):
-    """CTIA OTA pass/fail thresholds. Defaults are the historical Commissioning
-    values; can be tightened via TestCase.pass_criteria override.
-    """
+    """操作员判据；绝对吞吐阈值可空，不从理论值或通用默认推导。"""
 
-    min_throughput_ratio: float = 0.70
-    min_throughput_mbps: float = 300.0
+    min_throughput_ratio: float = Field(default=0.70, deprecated=True,
+        description="历史兼容字段，不参与当前吞吐判决。")
+    min_throughput_mbps: Optional[float] = Field(default=None, strict=True,
+        allow_inf_nan=False, description="操作员绝对 Mbps PASS 阈值；留空时吞吐判决 UNKNOWN，不隐式补300。")
     max_rsrp_variance_db: float = 3.0
     rsrp_range_dbm: tuple = (-95.0, -75.0)
     min_sinr_db: float = 10.0
@@ -454,8 +454,11 @@ class MIMOOTAConfiguration(BaseModel):
     # model_validator below to fail-fast on misconfiguration before measure
     # phase touches HAL.
 
-    # === Theoretical reference for ratio calculations (3GPP 2x2 256QAM 100MHz ≈ 450 Mbps) ===
-    theoretical_peak_throughput_mbps: Optional[float] = 450.0
+    # 历史兼容，不构成本次测量或 PASS 判据。
+    theoretical_peak_throughput_mbps: Optional[float] = Field(
+        default=None, gt=0, allow_inf_nan=False, deprecated=True,
+        description="历史理论参考字段，不参与当前吞吐判决。",
+    )
 
     # === Precheck behavior (P1-8 / P1-9, 2026-05-19) ===
     precheck_strict_cal: bool = True
@@ -1140,13 +1143,6 @@ class MIMOOTAConfiguration(BaseModel):
         primary = self.primary_carrier
         if primary.radio_technology == "lte" and len(self.component_carriers or []) != 1:
             raise ValueError("LTE MIMO OTA requires a single PCell and no SCell")
-        peak = self.theoretical_peak_throughput_mbps
-        if peak is not None and (not math.isfinite(peak) or peak <= 0):
-            raise ValueError(
-                "theoretical_peak_throughput_mbps must be finite and positive"
-            )
-        if primary.radio_technology == "nr5g" and peak is None:
-            raise ValueError("NR requires theoretical_peak_throughput_mbps")
         return self
 
     @model_validator(mode="after")

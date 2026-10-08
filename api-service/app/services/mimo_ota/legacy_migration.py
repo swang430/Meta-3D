@@ -104,17 +104,12 @@ def legacy_to_mimo_ota_config(legacy_case: Dict[str, Any]) -> Dict[str, Any]:
 
     freq_hz = float(legacy_case.get("frequency_mhz", 3500)) * 1e6
     layers = _extract_mimo_layers(chan_params)
-    target = float(
-        legacy_cfg.get("target_throughput_mbps")
-        or legacy_pass.get("min_throughput_mbps", 0) * 2  # if no target, infer from min*2
-        or 450.0
-    )
+    target = legacy_cfg.get("target_throughput_mbps")
     cdl_name = _resolve_cdl_name(legacy_case.get("channel_model"))
 
     # Build pass_criteria respecting legacy values where present
-    min_tput = float(legacy_pass.get("min_throughput_mbps", target * 0.5))
+    min_tput = legacy_pass.get("min_throughput_mbps")
     pass_criteria: Dict[str, Any] = {
-        "min_throughput_ratio": (min_tput / target) if target > 0 else 0.50,
         "min_throughput_mbps": min_tput,
         "max_rsrp_variance_db": 3.0,
         "rsrp_range_dbm": [-95.0, -75.0],

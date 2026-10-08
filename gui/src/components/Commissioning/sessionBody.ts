@@ -15,6 +15,7 @@ export interface CreateSessionParams {
   lteDlEarfcn?: number
   lteTransmissionMode?: LteTransmissionMode
   theoreticalPeakThroughputMbps?: number
+  minThroughputMbps?: number
   uxmDlPowerDbmPerBw?: number
   f64InputRefDbm?: number
   f64CrestDb?: number
@@ -48,6 +49,7 @@ export interface CreateSessionBody {
   lte_dl_earfcn?: number
   lte_transmission_mode?: LteTransmissionMode
   theoretical_peak_throughput_mbps?: number
+  min_throughput_mbps?: number
   uxm_dl_power_dbm_per_bw?: number
   f64_input_ref_dbm?: number
   f64_crest_db?: number
@@ -86,6 +88,7 @@ export const buildCreateSessionBody = (
     lteDlEarfcn,
     lteTransmissionMode,
     theoreticalPeakThroughputMbps,
+    minThroughputMbps,
     uxmDlPowerDbmPerBw,
     f64InputRefDbm,
     f64CrestDb,
@@ -112,6 +115,9 @@ export const buildCreateSessionBody = (
   if (frequencyHz !== undefined) body.frequency_hz = frequencyHz
   if (bandwidthMhz !== undefined) body.bandwidth_mhz = bandwidthMhz
   if (band) body.band = band
+  if (minThroughputMbps !== undefined) {
+    body.min_throughput_mbps = minThroughputMbps
+  }
   if (radioTechnology === 'lte') {
     if (duplex) body.duplex = duplex
     if (lteDlEarfcn !== undefined) body.lte_dl_earfcn = lteDlEarfcn

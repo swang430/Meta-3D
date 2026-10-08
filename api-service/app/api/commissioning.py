@@ -329,7 +329,8 @@ class CreateSessionRequest(BaseModel):
     nr_arfcn: Optional[int] = None
     lte_dl_earfcn: Optional[int] = None
     lte_transmission_mode: Optional[LteTransmissionMode] = None
-    theoretical_peak_throughput_mbps: Optional[float] = None
+    theoretical_peak_throughput_mbps: Optional[float] = Field(default=None,
+        deprecated=True, description="历史理论参考字段，不参与当前吞吐判决。")
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = Field(
@@ -345,7 +346,10 @@ class CreateSessionRequest(BaseModel):
     # 2026-05-18 P0-7: engine_mode='external_asc' 时必填 (本机绝对路径,
     # 操作员手工产 .asc 的目录). 其他 engine_mode 该字段被忽略.
     asc_source_path: Optional[str] = None
-    min_throughput_ratio: float = 0.70
+    min_throughput_ratio: float = Field(default=0.70, deprecated=True,
+        description="历史兼容字段，不参与当前吞吐判决。")
+    min_throughput_mbps: Optional[float] = Field(default=None, strict=True,
+        allow_inf_nan=False, description="操作员绝对 Mbps PASS 阈值；留空时吞吐判决 UNKNOWN，不隐式补300。")
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
     lab_profile_id: Optional[UUID] = None
@@ -537,7 +541,7 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         "engine_mode": req.engine_mode,
         "asc_source_path": req.asc_source_path,
         "pass_criteria": {
-            "min_throughput_ratio": req.min_throughput_ratio,
+            "min_throughput_mbps": req.min_throughput_mbps,
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }

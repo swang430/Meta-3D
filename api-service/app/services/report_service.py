@@ -40,7 +40,6 @@ from app.services.mimo_ota.quiet_zone_evidence import (
 )
 from app.services.mimo_ota.base_station_execution_evidence import (
     BASE_STATION_EXECUTION_EVIDENCE_FIELD,
-    MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
     _LEGACY_METRIC_UNITS,
     BaseStationExecutionEvidence,
     FormalMetricTrust,
@@ -1323,11 +1322,9 @@ class ReportTemplateService:
         return True
 
 
-# P1-72 对比指标集：取自 execution.measurements.phases.analysis 的真实落库键
-# （2026-08-25 生产库 45 条 completed 行实查所得，不是设计臆断）
+# 当前对比指标集：只比较真实落库测量，不将已弃用的理论比例作为正式门。
 COMPARISON_METRIC_KEYS = (
     "avg_throughput_mbps",
-    "throughput_ratio",
     "rsrp_variance_db",
     "avg_sinr_db",
 )
@@ -1428,7 +1425,7 @@ class ReportComparisonService:
         evidence_required = base_station_metric_projection_required(
             execution_config
         )
-        # 内审 F5：analysis 存在但 4 个对比指标键全缺 → 同样无可比数据，
+        # analysis 存在但当前对比指标键全缺 → 同样无可比数据，
         # 不产出"formal 却零指标"的空壳对比
         if not evidence_required and (not analysis or all(
             analysis.get(k) is None for k in COMPARISON_METRIC_KEYS
@@ -1471,19 +1468,8 @@ class ReportComparisonService:
                 if throughput_trusted
                 else None
             )
-            peak = execution_config.get(MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD)
-            peak_trusted = (
-                not isinstance(peak, bool)
-                and isinstance(peak, (int, float))
-                and math.isfinite(float(peak))
-                and float(peak) > 0.0
-            )
             metrics["avg_throughput_mbps"] = avg_throughput
-            metrics["throughput_ratio"] = (
-                avg_throughput / float(peak)
-                if avg_throughput is not None and peak_trusted
-                else None
-            )
+            metrics["throughput_ratio"] = None  # 已弃用；不重算正式理论比值。
             rsrp_values = trusted_rf_kpi_values(measure, "rsrp_dbm")
             sinr_values = trusted_rf_kpi_values(measure, "sinr_db")
             metrics["rsrp_variance_db"] = (
@@ -1494,7 +1480,7 @@ class ReportComparisonService:
             )
             metric_trust = {
                 "avg_throughput_mbps": throughput_trusted,
-                "throughput_ratio": throughput_trusted and peak_trusted,
+                "throughput_ratio": False,
                 "rsrp_variance_db": rsrp_values is not None,
                 "avg_sinr_db": sinr_values is not None,
             }
@@ -1503,13 +1489,13 @@ class ReportComparisonService:
             metric_trust = {
                 "avg_throughput_mbps": measurement_trusted
                 and analysis.get("throughput_verified") is True,
-                "throughput_ratio": measurement_trusted
-                and analysis.get("throughput_verified") is True,
+                "throughput_ratio": False,
                 "rsrp_variance_db": measurement_trusted
                 and analysis.get("rf_kpi_verified") is True,
                 "avg_sinr_db": measurement_trusted
                 and analysis.get("rf_kpi_verified") is True,
             }
+        metrics["throughput_ratio"] = None
         return {
             "execution_id": str(execution.id),
             "test_case_id": (

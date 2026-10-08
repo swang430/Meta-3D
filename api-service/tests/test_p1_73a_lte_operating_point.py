@@ -145,7 +145,7 @@ def test_legacy_nr_payload_keeps_existing_defaults():
     assert config.primary_carrier.radio_technology == "nr5g"
     assert config.primary_carrier.subcarrier_spacing_khz == 30
     assert config.primary_carrier.lte_dl_earfcn is None
-    assert config.theoretical_peak_throughput_mbps == 450.0
+    assert config.theoretical_peak_throughput_mbps is None
 
 
 def test_legacy_nr_payload_rejects_explicit_null_subcarrier_spacing():
@@ -485,7 +485,7 @@ async def test_cmw500_connect_populates_valid_option_snapshot_before_band_gate(
 
 
 @pytest.mark.asyncio
-async def test_analysis_keeps_lte_ratio_and_verdict_unknown_without_peak(monkeypatch):
+async def test_analysis_uses_lte_absolute_threshold_without_theoretical_peak(monkeypatch):
     from app.services.mimo_ota.executors import analysis as analysis_module
 
     config = SimpleNamespace(
@@ -541,7 +541,7 @@ async def test_analysis_keeps_lte_ratio_and_verdict_unknown_without_peak(monkeyp
     assert result.status == StepExecutionStatus.SUCCESS
     assert result.measurements["avg_throughput_mbps"] == 100.0
     assert result.measurements["throughput_ratio"] is None
-    assert result.measurements["throughput_pass"] is None
-    assert result.measurements["verdict"] == "UNKNOWN"
-    assert result.measurements["margin_db"] is None
-    assert execution.validation_pass is None
+    assert result.measurements["throughput_pass"] is True
+    assert result.measurements["verdict"] in {"PASS", "MARGINAL"}
+    assert result.measurements["throughput_threshold_mbps"] == 50.0
+    assert execution.validation_pass is True

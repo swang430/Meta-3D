@@ -57,7 +57,7 @@ export function CommissioningSandbox() {
     useState<api.LteTransmissionMode>('TM3')
   )
   const [subcarrierSpacingKhz, setSubcarrierSpacingKhz] = useState(30)
-  const [theoreticalPeakMbps, setTheoreticalPeakMbps] = useState<number | string>('')
+  const [minThroughputMbps, setMinThroughputMbps] = useState<number | string>('')
   const [uxmPowerDbmPerBw, setUxmPowerDbmPerBw] = useState(-15)
   const [f64InputRefDbm, setF64InputRefDbm] = useState(-17)
   const [f64CrestDb, setF64CrestDb] = useState(15)
@@ -166,7 +166,7 @@ export function CommissioningSandbox() {
         nrArfcn: radioTechnology === 'nr5g' && typeof nrArfcn === 'number' ? nrArfcn : undefined,
         lteDlEarfcn: radioTechnology === 'lte' && typeof lteDlEarfcn === 'number' ? lteDlEarfcn : undefined,
         lteTransmissionMode: radioTechnology === 'lte' ? lteTransmissionMode : undefined,
-        theoreticalPeakThroughputMbps: radioTechnology === 'lte' && typeof theoreticalPeakMbps === 'number' ? theoreticalPeakMbps : undefined,
+        minThroughputMbps: typeof minThroughputMbps === 'number' ? minThroughputMbps : undefined,
         uxmDlPowerDbmPerBw: radioTechnology === 'nr5g' ? uxmPowerDbmPerBw : undefined,
         f64InputRefDbm,
         f64CrestDb,
@@ -424,6 +424,9 @@ export function CommissioningSandbox() {
               />
 
               <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
+                <NumberInput label="吞吐量 PASS 阈值（可选）" suffix=" Mbps"
+                  value={minThroughputMbps} onChange={setMinThroughputMbps}
+                  description="操作员绝对阈值；未设置时吞吐判决 UNKNOWN，不补默认值。" />
                 <Select
                   label="无线制式"
                   data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
@@ -434,7 +437,6 @@ export function CommissioningSandbox() {
                     setBand(rat === 'lte' ? '' : 'N78')
                     setNrArfcn(rat === 'nr5g' ? 636666 : '')
                     setLteDlEarfcn('')
-                    setTheoreticalPeakMbps('')
                   }}
                   allowDeselect={false}
                 />
@@ -454,9 +456,6 @@ export function CommissioningSandbox() {
                       )}
                       allowDeselect={false}
                       required />
-                    <NumberInput label="LTE 理论峰值（可选）" suffix=" Mbps" value={theoreticalPeakMbps}
-                      description="留空时绝对吞吐仍可用，ratio 与相关判决为 N/A"
-                      onChange={setTheoreticalPeakMbps} min={0} />
                   </>
                 ) : (
                   <>

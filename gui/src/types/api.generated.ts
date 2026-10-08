@@ -3430,7 +3430,15 @@ export interface components {
             lte_dl_earfcn?: number | null;
             /** @enum {string|null} */
             lte_transmission_mode?: "TM1" | "TM2" | "TM3" | "TM4" | "TM6" | "TM7" | "TM8" | "TM9" | null;
+            /** @deprecated */
             theoretical_peak_throughput_mbps?: number | null;
+            /**
+             * @deprecated
+             * @default 0.7
+             */
+            min_throughput_ratio: number;
+            /** @description 操作员绝对 Mbps 阈值；留空为 UNKNOWN，不补默认值或判断合理性。 */
+            min_throughput_mbps?: number | null;
             /** @default mimo_first_asc */
             engine_mode: string;
             /** Format: uuid */

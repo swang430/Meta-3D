@@ -2300,7 +2300,12 @@ components:
           type: string
           enum: [TM1, TM2, TM3, TM4, TM6, TM7, TM8, TM9]
           nullable: true
-        theoretical_peak_throughput_mbps: { type: number, nullable: true }
+        theoretical_peak_throughput_mbps: { type: number, nullable: true, deprecated: true }
+        min_throughput_ratio: { type: number, default: 0.7, deprecated: true }
+        min_throughput_mbps:
+          type: number
+          nullable: true
+          description: 操作员绝对 Mbps 阈值；留空为 UNKNOWN，不补默认值或判断合理性。
         engine_mode: { type: string, default: mimo_first_asc }
         lab_profile_id: { type: string, format: uuid, nullable: true }
         channel_asset_id: { type: string, format: uuid, nullable: true }
