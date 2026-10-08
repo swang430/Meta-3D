@@ -183,6 +183,12 @@ class PDFGenerator:
             # P1-47C：自定义模板不能删掉正式证据。只要报告数据含服务端证据摘要，
             # 就强制保留一节；位置优先紧跟执行摘要，避免模板选择造成“证据缺席”。
             sections = list(sections)
+            # 独立仪器配置是报告内容，不受自定义模板删节影响。
+            if report_data.get('instrument_configuration') and not any(
+                section.get('type') == 'instrument_configuration' for section in sections
+            ):
+                sections.append({'type': 'instrument_configuration', 'order': 1.1,
+                                 'title': '测试仪器配置'})
             if report_data.get('scpi_evidence') and not any(
                 section.get('type') == 'scpi_evidence' for section in sections
             ):
@@ -271,6 +277,8 @@ class PDFGenerator:
             elements.extend(self._generate_logs_section(data))
         elif section_type == 'step_details':
             elements.extend(self._generate_step_details_section(data))
+        elif section_type == 'instrument_configuration':
+            elements.extend(self._generate_instrument_configuration_section(data))
         elif section_type == 'scpi_evidence':
             elements.extend(self._generate_scpi_evidence_section(data))
         # VRT specific section types
@@ -294,6 +302,34 @@ class PDFGenerator:
 
         elements.append(Spacer(1, 20))
 
+        return elements
+
+    def _generate_instrument_configuration_section(self, data: Dict[str, Any]) -> List:
+        from xml.sax.saxutils import escape
+        inventory = data.get('instrument_configuration') or {}
+        elements = [Paragraph(escape(inventory.get('notice', '')), self.styles['BodyText']), Spacer(1, 8)]
+        labels = {'baseStation': '基站仿真器', 'channelEmulator': '信道仿真器',
+                  'positioner': '转台', 'rfSwitch': '射频开关'}
+        for row in inventory.get('instruments', []):
+            elements.append(Paragraph(labels.get(row.get('category'), '仪器'), self.styles['SubsectionTitle']))
+            fields = [('型号', row.get('model')), ('连接地址', row.get('endpoint')),
+                      ('Adapter', row.get('adapter')), ('执行模式', '模拟' if row.get('execution_mode') == 'simulated' else row.get('execution_mode')),
+                      ('证据说明', row.get('reason'))]
+            if row.get('route'):
+                fields.extend((key, value) for key, value in row['route'].items())
+            rows = [[Paragraph(escape(str(key)), self.styles['BodyText']),
+                     Paragraph(escape(str(value)) if value is not None else '未记录 / 不可追溯', self.styles['BodyText'])]
+                    for key, value in fields]
+            table = Table(rows, colWidths=[100, 340])
+            table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .3, colors.lightgrey),
+                                      ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            elements.extend([table, Spacer(1, 10)])
+        asset = inventory.get('channel_asset') or {}
+        if asset:
+            elements.append(Paragraph('冻结信道文件', self.styles['SubsectionTitle']))
+            for key in ('name', 'canonical_name', 'source_type', 'associated_file_path'):
+                if asset.get(key) is not None:
+                    elements.append(Paragraph(escape(f'{key}: {asset[key]}'), self.styles['BodyText']))
         return elements
 
     def _auto_generate_sections(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:

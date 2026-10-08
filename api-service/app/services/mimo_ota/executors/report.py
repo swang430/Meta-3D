@@ -975,7 +975,7 @@ def _build_mimo_ota_content_data(
     ]
 
     from app.services.mimo_ota.report_traceability import (
-        report_traceability, report_traceability_parameters,
+        report_traceability, report_traceability_parameters, report_instrument_configuration,
     )
 
     traceability = report_traceability(execution, duration_sec)
@@ -1060,6 +1060,7 @@ def _build_mimo_ota_content_data(
         "table_data": table_data,
         "step_results": step_results,
         "execution_traceability": traceability,
+        "instrument_configuration": report_instrument_configuration(execution, traceability),
         "step_configs": [{"step_name": "冻结请求参数与执行事实", "enabled": True,
                           "parameters": trace_parameters}],
         "scpi_evidence": _public_scpi_evidence(execution),
