@@ -1264,9 +1264,6 @@ def begin_execution_base_station_measurement(
     unbound diagnostic has no adapter-owned measurement evidence.
     """
 
-    from app.services.mimo_ota.base_station_execution_evidence import (
-        MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
-    )
     from app.services.base_station_adapter_profile import (
         FREEZE_CONFIG_KEY,
         frozen_mac_profile_from_adapter_freeze,
@@ -1302,17 +1299,6 @@ def begin_execution_base_station_measurement(
         # MAC-profile freeze.
         config = MIMOOTAConfiguration.model_validate(test_case.configuration)
     frozen_mac_profile = frozen_mac_profile_from_adapter_freeze(frozen)
-    execution_config = dict(execution.config or {})
-    frozen_peak = config.theoretical_peak_throughput_mbps
-    if MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD in execution_config:
-        if (
-            execution_config[MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD]
-            != frozen_peak
-        ):
-            raise ValueError("frozen theoretical peak changed within execution")
-    else:
-        execution_config[MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD] = frozen_peak
-        execution.config = execution_config
     initialize_base_station_execution_evidence(
         execution,
         frozen_adapter=frozen,

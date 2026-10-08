@@ -125,6 +125,9 @@ class TestExecutionComparisonLoop:
         # G-B：两个都 verified → formal
         assert results["formal"] is True
         assert results["formal_note"] is None
+        assert "throughput_ratio" not in summary
+        assert "throughput_ratio" not in deltas
+        assert results["baseline"]["metrics"]["throughput_ratio"] is None
         # G-F：不造显著性
         assert analyzed.significant_differences is None
         # 封存 plan 列恒空数组

@@ -1,10 +1,9 @@
-"""Phase 4: CTIA pass/fail analysis.
+"""Phase 4: frozen operator-criteria pass/fail analysis.
 
 Replaces commissioning_service.phase4_analysis. Pure compute over the data
 already in TestExecution.measurements — no instruments touched.
 """
 import logging
-import math
 from typing import Any, Dict, List
 
 from app.services.mimo_ota.executors._helpers import (
@@ -25,7 +24,6 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     base_station_expected_scope_from_evidence,
     base_station_metric_projection_required,
     project_base_station_metrics_by_position,
-    MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD,
 )
 from app.services.test_execution import (
     IStepExecutor,
@@ -45,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 @register_executor(MIMOOTAStepType.ANALYSIS.value)
 class AnalysisExecutor(IStepExecutor):
-    """CTIA pass/fail verdict over Phase 3 azimuth data + Phase 1 QZ result."""
+    """Frozen operator verdict over Phase 3 azimuth data + Phase 1 QZ result."""
 
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         config = load_mimo_ota_config(context.test_execution)
@@ -218,6 +216,7 @@ class AnalysisExecutor(IStepExecutor):
                 "avg_throughput_mbps": None,
                 "throughput_ratio": None,
                 "throughput_pass": None,
+                "throughput_threshold_mbps": criteria.min_throughput_mbps,
                 "rsrp_variance_db": None,
                 "rsrp_pass": None,
                 "avg_sinr_db": None,
@@ -253,36 +252,24 @@ class AnalysisExecutor(IStepExecutor):
             else [az["throughput_mbps"] for az in azimuth_results]
         )
         avg_tput = sum(tputs) / len(tputs)
-        peak = (
-            execution_config.get(MIMO_OTA_FROZEN_THEORETICAL_PEAK_FIELD)
-            if base_station_evidence_required
-            else config.theoretical_peak_throughput_mbps
-        )
-        peak_is_usable = (
-            not isinstance(peak, bool)
-            and isinstance(peak, (int, float))
-            and math.isfinite(float(peak))
-            and float(peak) > 0.0
-        )
-        ratio = avg_tput / float(peak) if peak_is_usable else None
+        threshold = criteria.min_throughput_mbps
         tput_pass = (
-            ratio >= criteria.min_throughput_ratio
-            and avg_tput >= criteria.min_throughput_mbps
-            if ratio is not None
+            avg_tput >= threshold
+            if threshold is not None
             else None
         )
         result["avg_throughput_mbps"] = avg_tput
-        result["throughput_ratio"] = ratio
+        result["throughput_ratio"] = None  # 历史兼容键，不再产生正式 ratio。
         result["throughput_pass"] = tput_pass
+        result["throughput_threshold_mbps"] = threshold
         result["base_station_metric_projection"] = serialized_base_station_projection
-        if ratio is None:
+        if threshold is None:
             details.append(
-                f"Throughput: {avg_tput:.0f} Mbps; ratio N/A "
-                "(theoretical peak not provided), UNKNOWN"
+                f"Throughput: {avg_tput:g} Mbps; absolute PASS threshold not configured, UNKNOWN"
             )
         else:
             details.append(
-                f"Throughput: {avg_tput:.0f} Mbps ({ratio:.0%} of {peak:.0f}), "
+                f"Throughput: {avg_tput:g} Mbps (operator threshold {threshold:g} Mbps), "
                 f"{'PASS' if tput_pass else 'FAIL'}"
             )
 
@@ -333,7 +320,6 @@ class AnalysisExecutor(IStepExecutor):
             result["margin_db"] = None
         elif all_pass:
             margins = [
-                ratio - criteria.min_throughput_ratio,
                 criteria.max_rsrp_variance_db - rsrp_variance,
                 avg_sinr - criteria.min_sinr_db,
                 avg_ri - criteria.min_avg_rank_indicator,

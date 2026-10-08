@@ -100,14 +100,16 @@ def test_rf_metric_scope_is_independent_per_metric():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("current_peak", "frozen_peak", "expected_ratio"),
-    [(100.0, 200.0, 0.4825), (100.0, None, None)],
+    ("current_peak", "frozen_peak", "threshold", "expected_pass"),
+    [(100.0, 2000.0, 50.0, True), (100.0, None, 50.0, True),
+     (100.0, 200.0, 100.0, False), (100.0, 200.0, None, None)],
 )
 async def test_analysis_recomputes_throughput_from_window_trust_not_raw_flags(
     monkeypatch,
     current_peak,
     frozen_peak,
-    expected_ratio,
+    threshold,
+    expected_pass,
 ):
     from app.services.mimo_ota.executors import analysis as analysis_module
 
@@ -116,7 +118,7 @@ async def test_analysis_recomputes_throughput_from_window_trust_not_raw_flags(
         theoretical_peak_throughput_mbps=current_peak,
         pass_criteria=SimpleNamespace(
             min_throughput_ratio=0.5,
-            min_throughput_mbps=50.0,
+            min_throughput_mbps=threshold,
             max_rsrp_variance_db=8.0,
             min_sinr_db=10.0,
             min_avg_rank_indicator=1.5,
@@ -181,11 +183,9 @@ async def test_analysis_recomputes_throughput_from_window_trust_not_raw_flags(
 
     assert result.status == StepExecutionStatus.SUCCESS
     assert result.measurements["avg_throughput_mbps"] == pytest.approx(96.5)
-    if expected_ratio is None:
-        assert result.measurements["throughput_ratio"] is None
-        assert result.measurements["throughput_pass"] is None
-    else:
-        assert result.measurements["throughput_ratio"] == pytest.approx(expected_ratio)
+    assert result.measurements["throughput_ratio"] is None
+    assert result.measurements["throughput_pass"] is expected_pass
+    assert result.measurements["throughput_threshold_mbps"] == threshold
 
 
 def test_commissioning_response_uses_server_metric_projection(monkeypatch):
@@ -486,9 +486,7 @@ def test_comparison_rebuilds_throughput_from_current_window_truth(
     entry = ReportComparisonService._extract_execution_metrics(execution)
 
     assert entry["metrics"]["avg_throughput_mbps"] == expected_throughput
-    assert entry["metrics"]["throughput_ratio"] == (
-        pytest.approx(0.965) if release_confirmed else None
-    )
+    assert entry["metrics"]["throughput_ratio"] is None
 
 
 def test_comparison_cmw_missing_evidence_cannot_fall_back_to_raw_flags():

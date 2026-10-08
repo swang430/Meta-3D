@@ -71,8 +71,9 @@ import {
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
 interface PassCriteria {
+  /** @deprecated 历史兼容，不参与当前吞吐判决。 */
   min_throughput_ratio?: number
-  min_throughput_mbps?: number
+  min_throughput_mbps?: number | null
   max_rsrp_variance_db?: number
   rsrp_range_dbm?: [number, number] | number[]
   min_sinr_db?: number
@@ -947,30 +948,17 @@ export function MIMOOTAConfigForm({
       <Paper p="md" withBorder>
         <Stack gap="md">
           <Text size="sm" fw={600}>
-            CTIA 判定门限
+            判定门限
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
             <NumberInput
-              label="吞吐量比例下限"
-              description="实测 / 理论峰值"
-              value={pass.min_throughput_ratio}
-              onChange={(v) =>
-                updatePass('min_throughput_ratio', typeof v === 'number' ? v : undefined)
-              }
-              min={0}
-              max={1}
-              step={0.05}
-              decimalScale={2}
-              disabled={readOnly}
-            />
-            <NumberInput
               label="吞吐量绝对下限"
+              description="操作员绝对 Mbps 阈值；未设置时吞吐判决 UNKNOWN，不补默认值。"
               suffix=" Mbps"
-              value={pass.min_throughput_mbps}
+              value={pass.min_throughput_mbps ?? ''}
               onChange={(v) =>
-                updatePass('min_throughput_mbps', typeof v === 'number' ? v : undefined)
+                updatePass('min_throughput_mbps', typeof v === 'number' ? v : null)
               }
-              min={0}
               decimalScale={1}
               disabled={readOnly}
             />
@@ -1281,24 +1269,6 @@ export function MIMOOTAConfigForm({
                 }}
                 disabled={readOnly}
                 allowDeselect={false}
-              />
-              <NumberInput
-                label="理论峰值吞吐量"
-                suffix=" Mbps"
-                description={
-                  radioTechnology === 'lte'
-                    ? 'LTE 只接受本次显式值；留空时绝对吞吐可用，ratio 与相关判决显示 N/A'
-                    : '用于 ratio 判定基准'
-                }
-                value={value.theoretical_peak_throughput_mbps}
-                onChange={(v) =>
-                  update(
-                    'theoretical_peak_throughput_mbps',
-                    typeof v === 'number' ? v : undefined,
-                  )
-                }
-                min={0}
-                disabled={readOnly}
               />
             </SimpleGrid>
           </Accordion.Panel>

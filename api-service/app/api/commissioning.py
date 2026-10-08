@@ -329,7 +329,8 @@ class CreateSessionRequest(BaseModel):
     nr_arfcn: Optional[int] = None
     lte_dl_earfcn: Optional[int] = None
     lte_transmission_mode: Optional[LteTransmissionMode] = None
-    theoretical_peak_throughput_mbps: Optional[float] = None
+    theoretical_peak_throughput_mbps: Optional[float] = Field(default=None,
+        deprecated=True, description="历史理论参考字段，不参与当前吞吐判决。")
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = Field(
@@ -345,7 +346,10 @@ class CreateSessionRequest(BaseModel):
     # 2026-05-18 P0-7: engine_mode='external_asc' 时必填 (本机绝对路径,
     # 操作员手工产 .asc 的目录). 其他 engine_mode 该字段被忽略.
     asc_source_path: Optional[str] = None
-    min_throughput_ratio: float = 0.70
+    min_throughput_ratio: float = Field(default=0.70, deprecated=True,
+        description="历史兼容字段，不参与当前吞吐判决。")
+    min_throughput_mbps: Optional[float] = Field(default=None, strict=True,
+        allow_inf_nan=False, description="操作员绝对 Mbps PASS 阈值；留空时吞吐判决 UNKNOWN，不隐式补300。")
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
     lab_profile_id: Optional[UUID] = None
@@ -537,7 +541,7 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         "engine_mode": req.engine_mode,
         "asc_source_path": req.asc_source_path,
         "pass_criteria": {
-            "min_throughput_ratio": req.min_throughput_ratio,
+            "min_throughput_mbps": req.min_throughput_mbps,
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
@@ -870,7 +874,7 @@ def _execution_to_session_response(
 
 
 def _resolve_execution(
-    db: Session, session_id: str
+    db: Session, session_id: str, *, for_execution: bool = False
 ) -> tuple[TestExecution, TestCase, list[StepDescriptor]]:
     """Look up TestExecution + TestCase by session_id (= execution UUID).
 
@@ -897,6 +901,11 @@ def _resolve_execution(
                 f"(executed_by={execution.executed_by!r})"
             ),
         )
+
+    # 已完成执行是历史事实；重测创建新会话，不能用当前规则改写旧判决。
+    # 在 freeze/marked_running/dispatch 前拒绝；只读详情仍可访问。
+    if for_execution and execution.status == "completed":
+        raise HTTPException(status_code=409, detail="已完成会话不可重跑相位；请创建新会话，保留原执行判决。")
 
     # P1-36（内审 F1）：**这里**才是暗室首测的执行身份落点。
     #
@@ -1148,7 +1157,7 @@ async def run_phase(
             ),
         )
     target_step_type = _PHASE_NAME_TO_STEP_TYPE[phase_name]
-    execution, test_case, descriptors = _resolve_execution(db, session_id)
+    execution, test_case, descriptors = _resolve_execution(db, session_id, for_execution=True)
 
     # Find the descriptor for this step type
     step = next((d for d in descriptors if d.type == target_step_type), None)
@@ -1527,7 +1536,7 @@ async def hal_trace_tail(lines: int = 200):
 @router.post("/sessions/{session_id}/run-all", response_model=SessionResponse)
 async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     """Sequentially dispatch all 5 phases. Aborts early if a phase fails."""
-    execution, test_case, descriptors = _resolve_execution(db, session_id)
+    execution, test_case, descriptors = _resolve_execution(db, session_id, for_execution=True)
     try:
         validate_adapter = _freeze_instrument_lease(
             db, execution, test_case, include_positioner=True
