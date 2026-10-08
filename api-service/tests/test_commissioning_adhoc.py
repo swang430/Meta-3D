@@ -1144,6 +1144,40 @@ class TestExecutionStatusVisibleToReloadGate:
             )
             assert "已有相位在执行中" in resp.json()["detail"]
 
+    @pytest.mark.parametrize("path", ["/phase/analysis", "/run-all"])
+    def test_completed_session_preserves_historical_verdict_before_any_dispatch(self, lab, db, monkeypatch, path):
+        from copy import deepcopy
+        from app.api import commissioning as api
+        from app.services.test_execution import StepExecutionResult, StepExecutionStatus
+
+        sess = client.post("/api/v1/commissioning/sessions", json={"lab_profile_id": str(lab.id)})
+        sid = sess.json()["session_id"]
+        row = db.query(TestExecution).filter(TestExecution.id == uuid.UUID(sid)).first()
+        row.status = "completed"
+        row.measurements = {"phases": {"analysis": {"verdict": "FAIL", "throughput_ratio": 100 / 450}}}
+        row.validation_pass = False
+        row.validation_details = {"verdict": "FAIL"}
+        db.commit()
+        original = deepcopy((row.config, row.measurements, row.validation_details))
+        calls = []
+
+        async def dispatch(ctx):
+            calls.append("dispatch")
+            ctx.test_execution.validation_pass = True
+            ctx.test_execution.validation_details = {"verdict": "PASS"}
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(api, "dispatch_step", dispatch)
+        monkeypatch.setattr(api, "_freeze_instrument_lease", lambda *_a, **_k: calls.append("freeze"))
+        response = client.post(f"/api/v1/commissioning/sessions/{sid}{path}")
+        assert response.status_code == 409
+        assert "新会话" in response.json()["detail"]
+        db.refresh(row)
+        assert row.status == "completed" and row.validation_pass is False
+        assert (row.config, row.measurements, row.validation_details) == original
+        assert calls == []
+        assert client.get(f"/api/v1/commissioning/sessions/{sid}").status_code == 200
+
     def test_list_sessions_matches_addressable_routes(self, lab, db):
         """Codex #242 C3: 列表与详情/执行路由必须同源 —— 否则 case-runner
         的行列得出来、点进去却 404 ("列得出、点不动")。

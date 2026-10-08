@@ -874,7 +874,7 @@ def _execution_to_session_response(
 
 
 def _resolve_execution(
-    db: Session, session_id: str
+    db: Session, session_id: str, *, for_execution: bool = False
 ) -> tuple[TestExecution, TestCase, list[StepDescriptor]]:
     """Look up TestExecution + TestCase by session_id (= execution UUID).
 
@@ -901,6 +901,11 @@ def _resolve_execution(
                 f"(executed_by={execution.executed_by!r})"
             ),
         )
+
+    # 已完成执行是历史事实；重测创建新会话，不能用当前规则改写旧判决。
+    # 在 freeze/marked_running/dispatch 前拒绝；只读详情仍可访问。
+    if for_execution and execution.status == "completed":
+        raise HTTPException(status_code=409, detail="已完成会话不可重跑相位；请创建新会话，保留原执行判决。")
 
     # P1-36（内审 F1）：**这里**才是暗室首测的执行身份落点。
     #
@@ -1152,7 +1157,7 @@ async def run_phase(
             ),
         )
     target_step_type = _PHASE_NAME_TO_STEP_TYPE[phase_name]
-    execution, test_case, descriptors = _resolve_execution(db, session_id)
+    execution, test_case, descriptors = _resolve_execution(db, session_id, for_execution=True)
 
     # Find the descriptor for this step type
     step = next((d for d in descriptors if d.type == target_step_type), None)
@@ -1531,7 +1536,7 @@ async def hal_trace_tail(lines: int = 200):
 @router.post("/sessions/{session_id}/run-all", response_model=SessionResponse)
 async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     """Sequentially dispatch all 5 phases. Aborts early if a phase fails."""
-    execution, test_case, descriptors = _resolve_execution(db, session_id)
+    execution, test_case, descriptors = _resolve_execution(db, session_id, for_execution=True)
     try:
         validate_adapter = _freeze_instrument_lease(
             db, execution, test_case, include_positioner=True

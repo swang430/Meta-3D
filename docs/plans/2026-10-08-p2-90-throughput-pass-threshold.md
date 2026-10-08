@@ -27,3 +27,5 @@ NotebookLM不新增查询：本片改变应用层操作员判据，不解释新�
 最终相关187 passed（4.84s）；GUI契约24 passed（115.86ms）及production build（11.72s）；全后端7021 passed/17 skipped（263.22s、exit0）。全量命令在api-service运行：`.venv/bin/python -m pytest -q --color=no -o log_cli=false -o addopts='' --tb=short --show-capture=no --disable-warnings`。compileall、单一Alembic head `c1e3f5a7b9d2`、diff-check通过，独立只读尾审P1/P2=0。
 
 交付状态以本片PR为准；PR合并后本批准三片队列无剩余软件WIP，不自动开始现场/HOLD项。
+
+PR #516 R2 功能P1（inline4214167333）发现已completed首测仍可通过单相位/整链重跑改写历史判决。严格两条API RED（旧200）→GREEN：共同解析器只在执行调用启用completed拒绝，freeze/running/dispatch前409要求新会话；GET/list仍可读，不重算历史。受影响首测/API/analysis/comparison/rule gates165 passed（108.81s），独立增量尾审P1/P2=0；compileall/head/diff-check通过。上一稳定判据版本全量7021 passed/17 skipped保留，此窄入口修复已重跑所有受影响链，不按push重复无关全量。
