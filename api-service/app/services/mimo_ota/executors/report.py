@@ -979,11 +979,21 @@ def _build_mimo_ota_content_data(
     )
 
     traceability = report_traceability(execution, duration_sec)
+    from app.services.mimo_ota.report_parameter_presentation import report_parameter_groups
+    parameter_groups = report_parameter_groups(traceability)
     trace_parameters = report_traceability_parameters(traceability)
     step_results.insert(0, {
         "phase": "execution_traceability", "name": "冻结请求参数与执行事实",
         "parameters": trace_parameters,
     })
+    parameter_steps = [
+        {"phase": "parameter_groups", "name": group["title"], "parameters": {
+            row["label"] + (f' ({row["unit"]})' if row["unit"] else ''):
+            f'冻结请求：{row["requested"]}；来源：{row["source"]}；确认生效：{row["applied"]}；{row["note"]}'
+            for row in group["rows"]
+        }} for group in parameter_groups
+    ]
+    step_results[1:1] = parameter_steps
 
     serialized_base_station_projection = [
         {
@@ -1061,8 +1071,11 @@ def _build_mimo_ota_content_data(
         "step_results": step_results,
         "execution_traceability": traceability,
         "instrument_configuration": report_instrument_configuration(execution, traceability),
+        "parameter_groups": parameter_groups,
         "step_configs": [{"step_name": "冻结请求参数与执行事实", "enabled": True,
-                          "parameters": trace_parameters}],
+                          "parameters": trace_parameters}] + [
+                              {"step_name": step["name"], "enabled": True,
+                               "parameters": step["parameters"]} for step in parameter_steps],
         "scpi_evidence": _public_scpi_evidence(execution),
     }
 

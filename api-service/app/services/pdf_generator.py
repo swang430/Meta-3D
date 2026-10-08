@@ -183,6 +183,11 @@ class PDFGenerator:
             # P1-47C：自定义模板不能删掉正式证据。只要报告数据含服务端证据摘要，
             # 就强制保留一节；位置优先紧跟执行摘要，避免模板选择造成“证据缺席”。
             sections = list(sections)
+            if 'parameter_groups' in report_data and not any(
+                section.get('type') == 'parameter_groups' for section in sections
+            ):
+                sections.append({'type': 'parameter_groups', 'order': 1.2,
+                                 'title': '测试参数与生效值'})
             # 独立仪器配置是报告内容，不受自定义模板删节影响。
             if report_data.get('instrument_configuration') and not any(
                 section.get('type') == 'instrument_configuration' for section in sections
@@ -221,6 +226,13 @@ class PDFGenerator:
 
             # Sort sections by order
             sections = sorted(sections, key=lambda x: x.get('order', 999))
+            # 强制章节相对于模板实际封面定位，不假定它使用何种 order。
+            mandatory = [section for kind in ('instrument_configuration', 'parameter_groups')
+                         for section in sections if section.get('type') == kind]
+            if mandatory:
+                sections = [section for section in sections if section not in mandatory]
+                covers = [section for section in sections if section.get('type') == 'cover']
+                sections = covers + mandatory + [section for section in sections if section not in covers]
 
             for section in sections:
                 section_elements = self._generate_section(section, report_data, template)
@@ -276,9 +288,11 @@ class PDFGenerator:
         elif section_type == 'logs':
             elements.extend(self._generate_logs_section(data))
         elif section_type == 'step_details':
-            elements.extend(self._generate_step_details_section(data))
+            elements.extend(self._generate_step_details_section(data, separate_parameters=True))
         elif section_type == 'instrument_configuration':
             elements.extend(self._generate_instrument_configuration_section(data))
+        elif section_type == 'parameter_groups':
+            elements.extend(self._generate_parameter_groups_section(data))
         elif section_type == 'scpi_evidence':
             elements.extend(self._generate_scpi_evidence_section(data))
         # VRT specific section types
@@ -330,6 +344,45 @@ class PDFGenerator:
             for key in ('name', 'canonical_name', 'source_type', 'associated_file_path'):
                 if asset.get(key) is not None:
                     elements.append(Paragraph(escape(f'{key}: {asset[key]}'), self.styles['BodyText']))
+        return elements
+
+    def _generate_parameter_groups_section(self, data: Dict[str, Any]) -> List:
+        from xml.sax.saxutils import escape
+        elements = [Paragraph('冻结请求与系统补齐值不代表仪器已生效；已保存配置不证明人工填入；确认生效值只来自同次、非模拟的逐字段确认回执。', self.styles['BodyText']), Spacer(1, 8)]
+        cell_style = ParagraphStyle('ParameterCell', parent=self.styles['BodyText'], fontSize=8, leading=11)
+        audit = data.get('execution_traceability') or {}
+        if audit:
+            elements.append(Paragraph('执行事实（不是参数请求）', self.styles['SubsectionTitle']))
+            for label, key in (('实际总耗时 (s)', 'duration_s'), ('记录窗口数', 'recorded_window_count'),
+                               ('窗口累计实际耗时 (s)', 'window_elapsed_s'), ('窗口来源', 'window_provenance')):
+                value = audit.get(key)
+                elements.append(Paragraph(escape(f'{label}：{value if value is not None else "未知（不以请求或计划数补真）"}'), self.styles['BodyText']))
+            for window in audit.get('window_plan', []):
+                elements.append(Paragraph(escape(
+                    f"方位 {window['azimuth_deg']}°：请求 {window['requested']} / 计划 {window['planned']} / 记录 {window['recorded']} 个窗口"), self.styles['BodyText']))
+            request = audit.get('channel_load_request')
+            elements.append(Paragraph('冻结有效信道加载请求（不代表已加载）', self.styles['SubsectionTitle']))
+            if request:
+                for label, key in (('有效引擎请求', 'effective_engine_mode'), ('加载模式请求', 'requested_load_mode')):
+                    elements.append(Paragraph(escape(f'{label}：{request.get(key) or "未冻结或不可核验"}'), self.styles['BodyText']))
+            else:
+                elements.append(Paragraph('未冻结或不可核验；不由原始引擎字段补真。', self.styles['BodyText']))
+        groups = data.get('parameter_groups') or []
+        if not groups:
+            elements.append(Paragraph('历史未记录有效冻结参数；不从当前配置补真。', self.styles['BodyText']))
+        for group in groups:
+            elements.append(Paragraph(escape(group['title']), self.styles['SubsectionTitle']))
+            rows = [[Paragraph(f'<b>{name}</b>', self.styles['BodyText']) for name in
+                     ('参数（单位）', '冻结请求', '来源', '确认生效', '说明')]]
+            for row in group['rows']:
+                label = row['label'] + (f" ({row['unit']})" if row['unit'] else '')
+                rows.append([Paragraph(escape(str(value)), cell_style) for value in
+                             (label, row['requested'], row['source'], row['applied'], row['note'])])
+            table = Table(rows, colWidths=[90, 85, 75, 60, 130], repeatRows=1)
+            table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .3, colors.lightgrey),
+                                      ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#edf2f7')),
+                                      ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            elements.extend([table, Spacer(1, 10)])
         return elements
 
     def _auto_generate_sections(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1137,7 +1190,7 @@ class PDFGenerator:
 
         return elements
 
-    def _generate_step_details_section(self, data: Dict[str, Any]) -> List:
+    def _generate_step_details_section(self, data: Dict[str, Any], *, separate_parameters=False) -> List:
         """Generate detailed step configuration section"""
         elements = []
         
@@ -1149,6 +1202,8 @@ class PDFGenerator:
             return elements
 
         for i, step in enumerate(steps):
+            if separate_parameters and 'parameter_groups' in data and step.get('phase') in ('execution_traceability', 'parameter_groups'):
+                continue
             # Step Header
             step_name = step.get('name') or step.get('step_name') or f"Step {i+1}"
             elements.append(Paragraph(
