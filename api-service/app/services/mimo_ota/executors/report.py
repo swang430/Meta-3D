@@ -49,6 +49,7 @@ from app.services.mimo_ota.base_station_execution_evidence import (
     base_station_expected_scope_from_evidence,
     base_station_metric_projection_required,
     project_base_station_metrics_by_position,
+    parse_base_station_execution_evidence,
 )
 from app.services.report_service import (
     ReportService,
@@ -973,6 +974,17 @@ def _build_mimo_ota_content_data(
          "parameters": {"verdict": reported_verdict}},
     ]
 
+    from app.services.mimo_ota.report_traceability import (
+        report_traceability, report_traceability_parameters,
+    )
+
+    traceability = report_traceability(execution, duration_sec)
+    trace_parameters = report_traceability_parameters(traceability)
+    step_results.insert(0, {
+        "phase": "execution_traceability", "name": "冻结请求参数与执行事实",
+        "parameters": trace_parameters,
+    })
+
     serialized_base_station_projection = [
         {
             "position": row["position"],
@@ -991,7 +1003,7 @@ def _build_mimo_ota_content_data(
     ]
     base_station_metric_projection_attestation = (
         build_base_station_metric_projection_attestation(
-            base_station_evidence,
+            parse_base_station_execution_evidence(base_station_evidence),
             serialized_base_station_projection,
         )
     )
@@ -1043,6 +1055,9 @@ def _build_mimo_ota_content_data(
         "statistics": statistics,
         "table_data": table_data,
         "step_results": step_results,
+        "execution_traceability": traceability,
+        "step_configs": [{"step_name": "冻结请求参数与执行事实", "enabled": True,
+                          "parameters": trace_parameters}],
         "scpi_evidence": _public_scpi_evidence(execution),
     }
 

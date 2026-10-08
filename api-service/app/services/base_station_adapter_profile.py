@@ -274,6 +274,8 @@ def freeze_base_station_adapter_profile(
         identity[CHANNEL_ASSET_RESOLUTION_FREEZE_KEY] = frozen_asset_resolution
     if frozen_legacy_file is not None:
         identity[LEGACY_CHANNEL_FILE_RESOLUTION_FREEZE_KEY] = frozen_legacy_file
+    if "report_parameter_sources" in execution_config:
+        identity["report_parameter_sources"] = execution_config["report_parameter_sources"]
     if resolved.formal_capability is not None:
         identity[CMW_FORMAL_CAPABILITY_KEY] = resolved.formal_capability.model_dump(
             mode="json"

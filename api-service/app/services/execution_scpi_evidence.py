@@ -1955,6 +1955,30 @@ def _load_base_station_projection(
         return None
 
 
+def base_station_config_receipts_confirmed(evidence, manifest, operation, attach) -> bool:
+    """共同配置生效边界；报告不可把激活前的缓存回读升级为生效。"""
+    capabilities = {item.field: item for item in manifest.config_fields}
+    return bool(
+        evidence.execution_mode == "real"
+        and evidence.config_confirmed is True
+        and operation.confirmed is True and operation.simulated is False
+        and operation.frozen_request_digest == evidence.requested_config.digest
+        and attach.formally_confirmed is True and attach.simulated is False
+        and operation.fields
+        and all(
+            field.status == "confirmed" and field.exchange_ids
+            and set(field.exchange_ids).issubset(set(operation.exchange_ids))
+            and capabilities.get(field.field) is not None
+            and capabilities[field.field].support == "authoritative"
+            and capabilities[field.field].readback == "authoritative"
+            and capabilities[field.field].source_reference is not None
+            for field in operation.fields if field.status != "not_applicable"
+        )
+        and (operation.exchange_ids or attach.exchange_ids)
+        and set(operation.exchange_ids + attach.exchange_ids).issubset(set(evidence.exchange_ids))
+    )
+
+
 def _project_base_station_config_evidence(
     execution,
     *,
@@ -2060,29 +2084,9 @@ def _project_base_station_config_evidence(
         if payload.get("radio_technology") == "nr5g"
         else payload.get("lte_dl_earfcn")
     )
-    capabilities = {item.field: item for item in manifest.config_fields}
-    operation_exchange_ids = set(operation.exchange_ids)
-    fields_authoritative = bool(operation.fields) and all(
-        field.status == "confirmed"
-        and bool(field.exchange_ids)
-        and set(field.exchange_ids).issubset(operation_exchange_ids)
-        and capabilities.get(field.field) is not None
-        and capabilities[field.field].support == "authoritative"
-        and capabilities[field.field].readback == "authoritative"
-        and capabilities[field.field].source_reference is not None
-        for field in operation.fields
-        if field.status != "not_applicable"
-    )
     passed = (
-        evidence.execution_mode == "real"
-        and evidence.config_confirmed is True
-        and operation.confirmed is True
-        and operation.simulated is False
-        and operation.frozen_request_digest == evidence.requested_config.digest
-        and attach.formally_confirmed is True
-        and attach.simulated is False
+        base_station_config_receipts_confirmed(evidence, manifest, operation, attach)
         and channel == requested
-        and fields_authoritative
         and bool(relevant_ids)
         and set(relevant_ids).issubset(set(evidence.exchange_ids))
         and source_reference is not None
