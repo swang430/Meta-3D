@@ -99,6 +99,21 @@ def test_scheduler_reads_config_receipt_not_nonexistent_mac_control():
     assert report_parameter_groups(audit)[0]['rows'][0]['applied'] == 'fixed'
 
 
+@pytest.mark.parametrize('field,requested,key,receipt_value', [
+    ('rb_allocation', 'all', 'mac.rb_alloc', 'ALL'),
+    ('resource_allocation', 'full', 'mac.rb_alloc', 'ALL'),
+    ('transmission_mode', 'TM3', 'config.lte_transmission_mode', 'TM3'),
+])
+def test_normalized_mac_controls_read_actual_receipt_projection(field, requested, key, receipt_value):
+    from app.services.mimo_ota.report_parameter_presentation import report_parameter_groups
+    audit = {'status': 'frozen_request', 'parameters': {f'mac_profile.profile.{field}': {
+        'requested': requested, 'source': 'saved_configuration'}}, 'application_fields': {
+            key: {'requested': receipt_value, 'applied': receipt_value, 'status': 'confirmed', 'simulated': False}}}
+    row = report_parameter_groups(audit)[0]['rows'][0]
+    assert row['requested'] == requested
+    assert row['applied'] == receipt_value
+
+
 @pytest.mark.parametrize('field', ['bandwidth_mhz', 'band', 'lte_dl_earfcn', 'nr_arfcn', 'duplex', 'lte_transmission_mode', 'subcarrier_spacing_khz'])
 def test_pcell_controls_consume_matching_receipts_without_borrowing_for_scell(field):
     from app.services.mimo_ota.report_parameter_presentation import report_parameter_groups

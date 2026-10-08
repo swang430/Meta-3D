@@ -90,6 +90,7 @@ def report_parameter_groups(audit: dict) -> list[dict]:
                 '°' if leaf.endswith('_deg') else 'dBi' if leaf.endswith('_dbi') else
                 'Mbps' if leaf.endswith('_mbps') else '')
         requested = item['requested']
+        receipt_request = requested
         receipt_key = _RECEIPTS.get(path)
         # 以 BaseStationRequestedConfig.receipt_payload 的控制项为准；
         # RAT/channel_kind/frequency_mhz 描述项与 SCell 不借用 PCell 回执。
@@ -105,15 +106,22 @@ def report_parameter_groups(audit: dict) -> list[dict]:
             # 应用阶段，不借较早 config 的同名字段冒充后续 MAC 确认。
             if field == 'scheduler_algorithm':
                 receipt_key = 'config.scheduler_algorithm'
+            elif field == 'transmission_mode':
+                receipt_key = 'config.lte_transmission_mode'
+            elif field in ('rb_allocation', 'resource_allocation'):
+                # build_mac_throughput_command_inputs 将合法 all/full 投影为 ALL；
+                # 原冻结请求仍原样展示，不用规范化值重写历史参数。
+                receipt_key = 'mac.rb_alloc'
+                receipt_request = 'ALL' if requested == ('all' if field == 'rb_allocation' else 'full') else ''
         receipt = audit.get('application_fields', {}).get(receipt_key, {})
         confirmed = (receipt.get('status') == 'confirmed' and receipt.get('simulated') is False
-                     and receipt.get('requested') == requested and receipt.get('applied') is not None)
+                     and receipt.get('requested') == receipt_request and receipt.get('applied') is not None)
         note = '同次逐字段回执确认' if confirmed else '无匹配的同次确认回执'
         if receipt and not confirmed:
             note = '已有回执但未获确认：' + (receipt.get('reason') or '未记录具体原因')
             if receipt.get('simulated') is not False:
                 note += '；模拟或来源未确认'
-            if receipt.get('requested') != requested:
+            if receipt.get('requested') != receipt_request:
                 note += '；回执请求与冻结值不一致'
             if receipt.get('applied') is None:
                 note += '；未记录确认值'
