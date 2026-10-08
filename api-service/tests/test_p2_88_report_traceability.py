@@ -149,9 +149,41 @@ def test_asset_label_and_path_are_captured_once_not_looked_up_by_report(monkeypa
     assert "后来修改" not in str(audit)
 
 
+def _refresh_manifest_freeze(f):
+    from app.hal.base_station_manifest import BaseStationAdapterManifest
+    from app.hal.base_station_compatibility import (
+        BaseStationExecutionRequirements, evaluate_base_station_compatibility, build_frozen_compatibility_payload,
+    )
+    requirements = BaseStationExecutionRequirements.model_validate(f["compatibility"]["requirements"])
+    manifest = BaseStationAdapterManifest.model_validate(f["resolved_binding"]["manifest"])
+    f["compatibility"] = build_frozen_compatibility_payload(requirements, evaluate_base_station_compatibility(requirements, manifest))
+    f["digest"] = canonical_payload_digest({k: v for k, v in f.items() if k != "digest"})
+
+
+def _confirmed_activation(ex):
+    """受控证据 fixture：声明本字段的权威回读域并提供同租约激活；不涉及真机。"""
+    f = ex.config[FREEZE_CONFIG_KEY]
+    for field in f["resolved_binding"]["manifest"]["config_fields"]:
+        if field["field"] == "bandwidth_mhz":
+            field.update(support="authoritative", readback="authoritative", source_reference="fixture audited readback")
+    _refresh_manifest_freeze(f)
+    e = ex.config["base_station_execution_evidence"]
+    e["attach_operations"] = [{
+        "schema_version": 1, "measurement_attempt_id": "attempt-1", "lease_id": "lease-1",
+        "adapter": "uxm", "session_token": "session-1", "terminal_stage": "data_bearer_established",
+        "formally_confirmed": True, "simulated": False, "reason": "activated",
+        "exchange_ids": ["attach-1"],
+        "stages": [{"stage": s, "requested": True, "applied": True, "status": "confirmed",
+                    "evidence": "authoritative", "reason": "activated", "exchange_ids": ["attach-1"]}
+                   for s in ("cell_ready", "ue_registered", "rrc_connected", "data_bearer_established")],
+    }]
+    e["exchange_ids"].append("attach-1")
+
+
 @pytest.mark.parametrize("simulated", [False, True])
 def test_applied_field_is_separate_from_request_and_mock_never_confirmed(simulated):
     ex = _windows_execution()
+    _confirmed_activation(ex)
     e = ex.config["base_station_execution_evidence"]
     w = e["measurement_windows"][0]
     e["adapter_operations"] = [{
@@ -295,3 +327,46 @@ def test_sources_follow_carrier_and_lte_frame_authoring_not_invented_defaults():
     for field in ("duplex", "transmission_mode", "subcarrier_spacing_khz", "uldl_configuration", "special_subframe", "rmc_version"):
         assert _source(f"mac_profile.profile.{field}", paths) == "saved_configuration"
     assert _source("mac_profile.profile.tdd_period", {"tdd_pattern"}) == "derived"
+
+
+@pytest.mark.parametrize("missing", ["activation", "manifest_readback", "wrong_lease", "config_confirmation"])
+def test_cached_config_readback_without_activation_is_not_reported_as_applied(missing):
+    from app.services.mimo_ota.report_traceability import report_traceability
+    ex = _windows_execution()
+    _confirmed_activation(ex)
+    if missing == "activation":
+        ex.config["base_station_execution_evidence"]["attach_operations"] = []
+    elif missing == "wrong_lease":
+        ex.config["base_station_execution_evidence"]["attach_operations"][0]["lease_id"] = "another-lease"
+    elif missing == "config_confirmation":
+        ex.config["base_station_execution_evidence"]["config_confirmed"] = False
+    else:
+        f = ex.config[FREEZE_CONFIG_KEY]
+        for field in f["resolved_binding"]["manifest"]["config_fields"]:
+            if field["field"] == "bandwidth_mhz":
+                field.update(support="diagnostic_only", readback="unavailable")
+        _refresh_manifest_freeze(f)
+    e = ex.config["base_station_execution_evidence"]
+    e["adapter_operations"] = [{
+        "schema_version": 1, "measurement_attempt_id": "attempt-1", "lease_id": "lease-1",
+        "adapter": "uxm", "session_token": "session-1", "operation": "config",
+        "frozen_request_digest": e["requested_config"]["digest"],
+        "fields": [{"field": "bandwidth_mhz", "requested": 100.0, "applied": 100.0,
+                    "status": "confirmed", "reason": "cached readback", "exchange_ids": ["config-1"]}],
+        "confirmed": True, "simulated": False, "reason": "cached readback", "exchange_ids": ["config-1"],
+    }]
+    e["exchange_ids"].append("config-1")
+    row = report_traceability(ex, 90)["application_fields"]["config.bandwidth_mhz"]
+    assert row["requested"] == 100.0
+    assert row["status"] == "unknown"
+    assert row["applied"] is None
+
+
+def test_legacy_config_mode_keeps_saved_source_after_canonicalization():
+    from app.services.mimo_ota.report_traceability import capture_report_sources, report_traceability, SOURCE_KEY
+    f = _windows_execution().config[FREEZE_CONFIG_KEY]
+    f["mimo_ota_configuration"]["base_station_config_mode"] = "inherit"
+    f[SOURCE_KEY] = capture_report_sources("legacy", {"uxm_config_mode": "inherit"})
+    f["digest"] = canonical_payload_digest({k: v for k, v in f.items() if k != "digest"})
+    row = report_traceability(_execution(f), None)["parameters"]["base_station_config_mode"]
+    assert row == {"requested": "inherit", "source": "saved_configuration"}

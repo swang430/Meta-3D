@@ -37,3 +37,11 @@ NotebookLM 不适用：本片不改仪器命令、单位解析或厂商取值域
 - `gui`：`node --experimental-strip-types --test test/reportRecovery.test.ts test/reportLifecycleTruth.test.ts src/types/executionEvidenceOutcome.test.ts` → exit 0，10 passed，70.9ms；`npm run build` → exit 0（11.58s，已有 chunk/import 警告）。本片仅填充既有 `content_data`/`step_configs.parameters` 自由结构，未增 API 路由/response 字段/客户端类型，因此 OpenAPI/generated TS/手写类型均不改。
 - `api-service`：`python -m compileall -q app` exit 0；`alembic heads` 单 head `c1e3f5a7b9d2`；base-to-working diff-check exit 0。
 - 全量第一次因收到可执行 P1 主动中断（4842 passed / 5 skipped，203.91s），不冒充完整全量。稳定最终版本在 `api-service` 执行 `.venv/bin/python -m pytest -q --color=no -o log_cli=false -o addopts='' --tb=short --show-capture=no --disable-warnings` → exit 0，6982 passed / 17 skipped / 5325 warnings，246.78s；结束后核对生产/测试 diff 摘要未变，未按 push 次数重复全量。
+
+### R1 收口（2026-10-08）
+
+- GitHub PR #514 R1 覆盖 `3679435e973f90a580675458415405535139439f`，review `5449491454`，inline P1 `4212937100` / P2 `4212937108`。
+- 两条反例先 RED：缓存配置回读无激活被误标 confirmed；旧 `uxm_config_mode=inherit` 来源误标 launch_default。命令：`.venv/bin/python -m pytest tests/test_p2_88_report_traceability.py -k 'cached_config or legacy_config_mode' -q -o log_cli=false -o addopts='' --tb=short --disable-warnings` → exit 1，2 failed。
+- 最小 GREEN：抽取原正式配置 projector 的 receipt 判据供报告共用，唯一同 attempt/lease/session 的 config+attach、冻结 manifest 权威回读域与 exchange 范围同时成立才确认；MAC command_error_queue 不升级字段确认。旧模式键映射到保存输入来源。合法确认 fixture 补齐完整权威 manifest 摘要与激活证据，未改生产 provenance 白名单。
+- 只读独立增量及同根内审 P1/P2/P3=0。此前完整相关链同一命令重跑 → exit 0，360 passed / 239 warnings，13.35s；compileall、diff-check、单一 Alembic head `c1e3f5a7b9d2` 通过。
+- 因共享 projector 判据抽取，最终全量按上述全量命令重跑 → exit 0，6987 passed / 17 skipped / 5325 warnings，249.66s；输入 diff SHA256 `de00858373b96c38bf70306bf839e4b30eb8293b7a1fcf4f8f1f592da2306180` 结束后核对一致。GUI/自由结构未变，复用此前 GUI 契约与 build；不重复同输入全量。

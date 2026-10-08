@@ -61,6 +61,8 @@ def capture_report_sources(name: str, configuration: dict) -> dict:
 def _source(path: str, paths: set[str]) -> str:
     if path in paths:
         return "saved_configuration"
+    if path == "base_station_config_mode" and "uxm_config_mode" in paths:
+        return "saved_configuration"
     if path.startswith("component_carriers.0."):
         alias = path.removeprefix("component_carriers.0.")
         if alias in paths:
@@ -204,16 +206,22 @@ def _window_summary(result: dict, execution: Any, config: dict, frozen: dict, mo
                   window_elapsed_s=sum((w.completed_at - w.started_at).total_seconds() for w in windows),
                   window_provenance=provenance,
                   application_confirmation="本段只读请求及窗口记录，逐字段生效以同次 SCPI/receipt 证据为准")
-    _application_summary(result, evidence, windows, model)
+    _application_summary(result, evidence, windows, model, frozen)
 
 
-def _application_summary(result: dict, evidence: Any, windows: list, model: MIMOOTAConfiguration) -> None:
+def _application_summary(result: dict, evidence: Any, windows: list, model: MIMOOTAConfiguration, frozen: dict) -> None:
     from app.hal.base_station_mac_profile import build_mac_throughput_command_inputs
+    from app.hal.base_station_manifest import BaseStationAdapterManifest
+    from app.services.execution_scpi_evidence import base_station_config_receipts_confirmed
     from app.services.mimo_ota.executors.measure import _build_pcell_requested_config
 
     config_fields = _build_pcell_requested_config(model).receipt_payload()
     mac_fields = build_mac_throughput_command_inputs(model.mac_profile)
     mac_fields["mac_profile"] = model.mac_profile.profile.model_dump(mode="json")
+    try:
+        manifest = BaseStationAdapterManifest.model_validate(frozen["resolved_binding"]["manifest"])
+    except (KeyError, TypeError, ValueError):
+        manifest = None
     scoped_rows = {}
     required_scopes = {(w.lease_id, w.session_token) for w in windows}
     receipts = [("config", row, config_fields) for row in evidence.adapter_operations if row.operation == "config"]
@@ -226,10 +234,27 @@ def _application_summary(result: dict, evidence: Any, windows: list, model: MIMO
             continue
         if prefix == "config" and receipt.frozen_request_digest != evidence.requested_config.digest:
             continue
+        attaches = [a for a in (evidence.attach_operations or [])
+                    if (a.measurement_attempt_id, a.lease_id, a.session_token, a.adapter)
+                    == (receipt.measurement_attempt_id, receipt.lease_id, receipt.session_token, receipt.adapter)]
+        if prefix == "config":
+            operations = [o for o in evidence.adapter_operations if o.operation == "config"
+                          and (o.measurement_attempt_id, o.lease_id, o.session_token, o.adapter)
+                          == (receipt.measurement_attempt_id, receipt.lease_id, receipt.session_token, receipt.adapter)]
+            activation_confirmed = bool(manifest and len(operations) == 1 and len(attaches) == 1
+                                        and base_station_config_receipts_confirmed(evidence, manifest, receipt, attaches[0]))
+        else:
+            activation_confirmed = bool(manifest and len(attaches) == 1 and attaches[0].formally_confirmed
+                                        and not attaches[0].simulated
+                                        and set(attaches[0].exchange_ids).issubset(set(evidence.exchange_ids))
+                                        and any(p.kind == model.mac_profile.profile.kind
+                                                and p.profile_version == model.mac_profile.profile.profile_version
+                                                and p.application_evidence == "authoritative_readback"
+                                                for p in manifest.mac_profiles))
         for field in receipt.fields:
             if field.field not in expected or field.requested != expected[field.field]:
                 continue
-            confirmed = (evidence.execution_mode == "real" and not receipt.simulated
+            confirmed = (activation_confirmed and evidence.execution_mode == "real" and not receipt.simulated
                          and field.status == "confirmed" and bool(field.exchange_ids)
                          and set(field.exchange_ids).issubset(set(receipt.exchange_ids))
                          and set(field.exchange_ids).issubset(set(evidence.exchange_ids)))
