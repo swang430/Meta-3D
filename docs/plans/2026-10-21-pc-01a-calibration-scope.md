@@ -5,7 +5,7 @@
 
 1. 服务/API RED：真实 SQLite LabProfile+拓扑，经 HTTP 取范围；缺失输入、逐链口变化、改名/顺序不变化、跨 lab、损坏 baseline、未知实物身份和无写入。
 2. 最小 GREEN：新增白名单只读快照服务、schema 和两个路由；不改原 resolver/校准执行链。
-3. GUI：原总览新增范围卡、逐链表、保留与比较；服务端摘要/影响清单；切 lab、错误/暂停、过期响应保护。
+3. GUI：原总览新增配置盘点卡、逐链表、保留与比较；服务端摘要/影响清单；切 lab、错误/暂停、过期响应保护。
 4. 同步 live OpenAPI、checked YAML、generated TS、手写类型；GUI 契约与 production build。
 5. 比例验证：本片与 LabProfile/resolver 相关测试；共享 API 契约最终后端全量，由主代理执行。compileall、单 Alembic head、diff-check。独立 reviewer 只读检查，不重复同输入全量。
 6. 独立内审后 Ready PR，核 HEAD 走 Codex R1→R2；R2 无 P1 收口，否则仅修 P1 续审。合并后 ff-only main、清理本片工作树/分支。
@@ -25,3 +25,9 @@
 - 最终默认全后端：7083 passed /17 skipped /1 failed（177.65s）。唯一失败为原有 `test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown`：固定 valid_until=2026-10-23，当前进入 expiring_soon 窗口，却断言 valid。原main cac09bfa同一测试独立复现相同失败；该测试与生产状态判据本片均零diff。按测试意见P2上限记录，不把结果称为全绿，不为日期夹具更改正式校准状态。
 - PR #522 的 Codex R1 覆盖 ecc99436：P1（inline4337106141）单链变化被拓扑镜像扩大成全链、P2（inline4337106151）器件声明只有hash不可读，均已核实并严格TDD修复。旧版5 RED；本片20项及相关链105 passed，新增共享器件/删除连接对称验证；独立增量复审CLEAN。
 - R1修复后的最终全后端：7089 passed /17 skipped /1 failed（174.48s），仅上述已在原main复现的日期夹具失败。GUI/schema没有变化，其有效构建、交互和镜像验证按输入一致复用；compileall/diff-check通过。后续R2结果在PR原地台账维护，不为完成时间新增提交。
+
+## 操作术语修正
+
+用户确认将保存配置语境的“范围”统一改为“配置”：配置盘点、重新读取配置、保留配置快照、比较配置变化。内部接口标识与专业频率/校准适用范围不改，不改硬件或比较行为。
+
+验证按局部文案档：既有浏览器用例使用新操作名，在旧UI因“保留配置快照”不存在而RED；文案更新后8 passed，服务契约1 passed，production build通过（12.45s，原有bundle大小告警保留），diff-check通过。最终改动未涉及后端/契约，不重复全后端。日志为本机 `/tmp/pc01a-wording-{red,green,unit,build}.log`，外审状态在本片PR原地维护。
