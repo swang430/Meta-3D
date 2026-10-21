@@ -4,7 +4,7 @@ import MockAdapter from 'axios-mock-adapter'
 import apiClient from '../src/api/client.ts'
 import { fetchCalibrationScope, compareCalibrationScope } from '../src/api/labProfileService.ts'
 
-test('配置范围与只读比较固定到显式实验室，快照原样发送给服务器', async () => {
+test('配置盘点与只读比较固定到显式实验室，快照原样发送给服务器', async () => {
   const mock = new MockAdapter(apiClient)
   const baseline = { digest: 'a'.repeat(64), payload: { lab_profile_id: 'lab-a' } } as any
   mock.onGet('/lab-profiles/lab-a/calibration-scope').reply(200, baseline)

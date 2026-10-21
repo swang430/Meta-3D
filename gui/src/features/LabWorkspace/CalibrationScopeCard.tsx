@@ -27,23 +27,24 @@ export function CalibrationScopeCard({ labId, chamberId }: { labId: string; cham
   const result = !blocked && !compare.isPending && !compare.isError && compare.data?.current.digest === value?.digest ? compare.data : null
   return <Card withBorder data-testid="calibration-scope">
     <Stack gap="xs">
-      <Title order={4}>校准配置范围（PC-01A）</Title>
+      <Title order={4}>校准配置盘点（PC-01A）</Title>
       <Alert color="yellow">仅盘点保存声明，不是实物确认或校准证明。序列号、真实接线与参考位置仍需现场核验；没有配置差异也不表示旧校准可复用。</Alert>
       <Group>
-        <Button size="xs" disabled={compare.isPending} onClick={() => { compare.reset(); void scope.refetch() }} loading={scope.isFetching}>刷新范围</Button>
+        <Button size="xs" disabled={compare.isPending} onClick={() => { compare.reset(); void scope.refetch() }} loading={scope.isFetching}>重新读取配置</Button>
         <Button size="xs" variant="light" disabled={Boolean(blocked) || compare.isPending}
-          onClick={() => { setBaseline(value!); compare.reset() }}>保留当前范围快照</Button>
+          onClick={() => { setBaseline(value!); compare.reset() }}>保留配置快照</Button>
         <Button size="xs" variant="light" disabled={!baseline || Boolean(blocked)} loading={compare.isPending}
-          onClick={() => compare.mutate()}>与保留快照比较</Button>
+          onClick={() => compare.mutate()}>比较配置变化</Button>
       </Group>
-      {baseline && <Text size="xs" style={{ overflowWrap: 'anywhere' }}>保留摘要：{baseline.digest}</Text>}
-      {scope.isError ? <Alert color="red">范围读取失败：{scope.error.message}</Alert>
-        : scope.isPaused ? <Alert color="yellow">范围读取暂停；旧范围不作为新结果。</Alert>
-        : scope.isFetching ? <Text>范围读取中…</Text>
-        : mismatch ? <Alert color="red">范围响应实验室或暗室不一致，拒绝展示。</Alert>
+      <Text size="xs">重新读取仅更新页面中的保存配置，不连接仪器、不验证实际接线。</Text>
+      {baseline && <Text size="xs" style={{ overflowWrap: 'anywhere' }}>快照摘要：{baseline.digest}</Text>}
+      {scope.isError ? <Alert color="red">配置读取失败：{scope.error.message}</Alert>
+        : scope.isPaused ? <Alert color="yellow">配置读取暂停；旧配置不作为新结果。</Alert>
+        : scope.isFetching ? <Text>配置读取中…</Text>
+        : mismatch ? <Alert color="red">配置响应实验室或暗室不一致，拒绝展示。</Alert>
         : value ? <>
           <Badge color="yellow">实物身份未核验 · 无正式资格</Badge>
-          <Text size="sm" style={{ overflowWrap: 'anywhere' }}>当前摘要：{value.digest}</Text>
+          <Text size="sm" style={{ overflowWrap: 'anywhere' }}>当前配置摘要：{value.digest}</Text>
           <Text>模式：{value.payload.operating_mode} · {value.payload.chains.length} 条解析链</Text>
           {value.warnings.map((warning, index) => <Text size="sm" c="orange" key={index}>{warning}</Text>)}
           <Table.ScrollContainer minWidth={520}>
@@ -52,14 +53,14 @@ export function CalibrationScopeCard({ labId, chamberId }: { labId: string; cham
                 <Table.Td>{chain.chain_id}</Table.Td><Table.Td>{chain.ce_port}</Table.Td><Table.Td>{chain.probe_id}</Table.Td><Table.Td>{chain.polarization}</Table.Td><Table.Td>{chain.cable_loss_db}</Table.Td>
               </Table.Tr>)}</Table.Tbody></Table>
           </Table.ScrollContainer>
-          <details><summary>查看服务器范围声明（几何、器件、保存资源与绑定、探头、拓扑）</summary>
+          <details><summary>查看配置明细（几何、器件、保存资源与绑定、探头、拓扑）</summary>
             <Code block style={{ maxHeight: 360, overflow: 'auto' }}>{JSON.stringify(value.payload, null, 2)}</Code>
           </details>
-        </> : <Text>尚未取得范围。</Text>}
+        </> : <Text>尚未取得配置。</Text>}
       {compare.isError && <Alert color="red">比较失败：{compare.error.message}</Alert>}
       {result && <Alert color={result.requires_review ? 'yellow' : 'blue'}>
         {result.requires_review ? `配置变化，需复核：${result.changed_sections.join('、')}；受影响链：${result.affected_chain_ids.join('、') || '无已解析链'}`
-          : '配置范围无差异；未证明校准有效、适用或已应用。'}
+          : '配置无差异；未证明校准有效、适用或已应用。'}
       </Alert>}
     </Stack>
   </Card>
