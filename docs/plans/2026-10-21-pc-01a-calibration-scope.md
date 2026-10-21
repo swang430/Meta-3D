@@ -23,3 +23,5 @@
 - API→浏览器整数值浮点往返补充1 RED→GREEN：规范化 JSON number 后，本片14项及相关链共99 passed。实际CAICT只读快照经 Node JSON.parse/stringify 再交服务器比较也无差异。
 - GUI服务契约3 passed；真实App本片8 passed（含延迟比较/失败/切Lab），原LabWorkspace14 passed、零配置写入；production build通过。最终后端输出及外审台账随PR记录。
 - 最终默认全后端：7083 passed /17 skipped /1 failed（177.65s）。唯一失败为原有 `test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown`：固定 valid_until=2026-10-23，当前进入 expiring_soon 窗口，却断言 valid。原main cac09bfa同一测试独立复现相同失败；该测试与生产状态判据本片均零diff。按测试意见P2上限记录，不把结果称为全绿，不为日期夹具更改正式校准状态。
+- PR #522 的 Codex R1 覆盖 ecc99436：P1（inline4337106141）单链变化被拓扑镜像扩大成全链、P2（inline4337106151）器件声明只有hash不可读，均已核实并严格TDD修复。旧版5 RED；本片20项及相关链105 passed，新增共享器件/删除连接对称验证；独立增量复审CLEAN。
+- R1修复后的最终全后端：7089 passed /17 skipped /1 failed（174.48s），仅上述已在原main复现的日期夹具失败。GUI/schema没有变化，其有效构建、交互和镜像验证按输入一致复用；compileall/diff-check通过。后续R2结果在PR原地台账维护，不为完成时间新增提交。

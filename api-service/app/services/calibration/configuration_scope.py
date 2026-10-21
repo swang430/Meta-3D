@@ -111,6 +111,11 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota') -
         # label 是 CE 端口解析输入，而非纯显示名称；因此保留。
         graph['nodes'] = _ordered([{
             **{k: n.get(k) for k in ('id', 'type', 'label')},
+            'parameters': {k: v for k, v in (n.get('params') or {}).items() if k in (
+                'model', 'vendor', 'hardware_id', 'inputs', 'outputs', 'ports', 'roles', 'slots',
+                'function', 'num_ports', 'port_roles', 'physical_port_display', 'probe_id', 'polarization',
+                'ce_port', 'switch_pin', 'switch_slot', 'ring', 'elevation_deg', 'gain_db', 'gain_dbi',
+                'loss_db', 'attenuation_db', 'frequency_range_mhz', 'max_power_dbm')},
             'parameters_digest': hashlib.sha256(_canonical(n.get('params') or {}).encode()).hexdigest(),
         } for n in topology.nodes or [] if n.get('id') in node_ids])
         graph['active_connections'] = sorted(active)
@@ -143,6 +148,51 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota') -
                                     configuration_complete=bool(chains) and not warnings, warnings=warnings)
 
 
+def _topology_affected(before: dict, after: dict, chain_ids: set[str]) -> set[str]:
+    """按已有有向连接定位下游链；全局声明或无法关联的差异保守复核全部链。"""
+    local = {'nodes', 'connections', 'active_connections'}
+    if any(before.get(k) != after.get(k) for k in (set(before) | set(after)) - local):
+        return chain_ids
+
+    def index(graph, key):
+        rows = graph.get(key, [])
+        if not isinstance(rows, list) or any(not isinstance(r, dict) or not isinstance(r.get('id'), str) for r in rows):
+            raise ValueError('保留快照拓扑结构无效')
+        if key == 'connections' and any(r.get(k) is not None and not isinstance(r.get(k), str)
+                                        for r in rows for k in ('source', 'target')):
+            raise ValueError('保留快照连接身份无效')
+        result = {r['id']: r for r in rows}
+        if len(result) != len(rows):
+            raise ValueError('保留快照拓扑身份重复')
+        return result
+
+    old_nodes, new_nodes = index(before, 'nodes'), index(after, 'nodes')
+    old_edges, new_edges = index(before, 'connections'), index(after, 'connections')
+    changed_nodes = {k for k in set(old_nodes) | set(new_nodes) if old_nodes.get(k) != new_nodes.get(k)}
+    changed_edges = {k for k in set(old_edges) | set(new_edges) if old_edges.get(k) != new_edges.get(k)}
+    # 活动列表若出现无法还原的边，不将缺失路径解释为无影响。
+    active = []
+    for graph in (before, after):
+        rows = graph.get('active_connections', [])
+        if not isinstance(rows, list) or any(not isinstance(k, str) for k in rows):
+            raise ValueError('保留快照活动连接结构无效')
+        active.extend(rows)
+    if set(active) - (set(old_edges) | set(new_edges)):
+        return chain_ids
+    affected = changed_edges & chain_ids
+    for edges in (old_edges, new_edges):
+        downstream = set(changed_nodes)
+        downstream.update(edges[k].get('target') for k in changed_edges if k in edges)
+        while True:
+            targets = {e.get('target') for e in edges.values() if e.get('source') in downstream}
+            if targets <= downstream:
+                break
+            downstream.update(targets)
+        affected.update(k for k, e in edges.items() if k in chain_ids
+                        and (e.get('source') in downstream or e.get('target') in downstream))
+    return affected or chain_ids
+
+
 def compare_calibration_scope(current: CalibrationScopeSnapshot, baseline: CalibrationScopeSnapshot):
     if scope_digest(baseline.payload) != baseline.digest:
         raise ValueError('保留快照摘要不匹配，请重新保留快照')
@@ -150,7 +200,11 @@ def compare_calibration_scope(current: CalibrationScopeSnapshot, baseline: Calib
     changed = sorted(k for k in after if before[k] != after[k])
     old = {c.chain_id: c.model_dump() for c in baseline.payload.chains}
     new = {c.chain_id: c.model_dump() for c in current.payload.chains}
-    affected = sorted(set(old) | set(new)) if set(changed) - {'chains'} else sorted(
-        key for key in set(old) | set(new) if old.get(key) != new.get(key))
-    return CalibrationScopeComparison(current=current, changed_sections=changed, affected_chain_ids=affected,
+    all_chains = set(old) | set(new)
+    affected = {key for key in all_chains if old.get(key) != new.get(key)}
+    if set(changed) - {'chains', 'topology'}:
+        affected = all_chains
+    elif 'topology' in changed:
+        affected.update(_topology_affected(before['topology'], after['topology'], all_chains))
+    return CalibrationScopeComparison(current=current, changed_sections=changed, affected_chain_ids=sorted(affected),
                                       requires_review=bool(changed))

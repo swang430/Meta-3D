@@ -69,7 +69,7 @@ def test_changed_port_identifies_affected_chain(client, lab_profile, topology_tw
     result = compare(client, lab_profile, baseline).json()
     assert result['requires_review'] is True
     assert 'chains' in result['changed_sections']
-    assert 'conn_p0v' in result['affected_chain_ids']
+    assert result['affected_chain_ids'] == ['conn_p0v']
 
 
 def test_geometry_and_cross_lab_require_all_chains_review(client, lab_profile, chamber, db_session):
@@ -155,6 +155,40 @@ def test_in_path_device_parameters_and_cable_changes_are_detected(client, lab_pr
     assert 'topology' in compare(client, lab_profile, baseline).json()['changed_sections']
 
 
+def test_topology_device_declarations_are_visible_without_secrets(client, lab_profile, topology_two_chains, db_session):
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    nodes[0]['params'].update({'model': 'F64', 'vendor': 'Keysight', 'inputs': 2, 'outputs': 32,
+                               'password': 'node-secret'})
+    topology_two_chains.nodes = nodes
+    db_session.commit()
+    value = snapshot(client, lab_profile)
+    node = next(n for n in value['payload']['topology']['nodes'] if n['id'] == 'ce_b1')
+    assert node['parameters'] == {'model': 'F64', 'vendor': 'Keysight', 'inputs': 2, 'outputs': 32}
+    assert 'node-secret' not in str(value)
+
+
+@pytest.mark.parametrize('change', ['loss', 'polarization', 'source_label'])
+def test_only_dependent_chain_is_affected_by_local_topology_change(client, lab_profile, topology_two_chains, db_session, change):
+    # 让另一条链属于另一个探头，避免“改极化”同时引入重复目的地。
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    nodes[3]['params']['probe_id'] = 1
+    topology_two_chains.nodes = nodes
+    db_session.commit()
+    baseline = snapshot(client, lab_profile)
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    if change == 'loss':
+        connections = copy.deepcopy(topology_two_chains.connections)
+        connections[0]['calibrated_loss_db'] = 1.5
+        topology_two_chains.connections = connections
+    elif change == 'polarization':
+        nodes[2]['params']['polarization'] = 'H'
+    else:
+        nodes[0]['label'] = 'B9'
+    topology_two_chains.nodes = nodes
+    db_session.commit()
+    assert compare(client, lab_profile, baseline).json()['affected_chain_ids'] == ['conn_p0v']
+
+
 @pytest.mark.parametrize('field,value', [('controller_ip', '192.0.2.1'), ('port', 5050)])
 def test_transport_columns_change_scope(client, lab_profile, db_session, field, value):
     category = InstrumentCategory(category_key='channelEmulator', category_name='CE', is_active=True)
@@ -180,3 +214,26 @@ def test_probe_physical_declarations_change_scope(client, lab_profile, chamber, 
     setattr(probe, field, value)
     db_session.commit()
     assert 'probes' in compare(client, lab_profile, baseline).json()['changed_sections']
+
+
+def test_shared_device_change_affects_both_downstream_chains(client, lab_profile, topology_two_chains, db_session):
+    edges = copy.deepcopy(topology_two_chains.connections)
+    edges[1]['source'] = 'ce_b1'
+    topology_two_chains.connections = edges
+    db_session.commit()
+    baseline = snapshot(client, lab_profile)
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    nodes[0]['params']['model'] = 'changed-shared-device'
+    topology_two_chains.nodes = nodes
+    db_session.commit()
+    assert compare(client, lab_profile, baseline).json()['affected_chain_ids'] == ['conn_p0h', 'conn_p0v']
+
+
+def test_removed_chain_is_included_without_affecting_unchanged_chain(client, lab_profile, topology_two_chains, db_session):
+    baseline = snapshot(client, lab_profile)
+    topology_two_chains.connections = topology_two_chains.connections[1:]
+    modes = copy.deepcopy(topology_two_chains.operating_modes)
+    modes[0]['active_connections'] = ['conn_p0h']
+    topology_two_chains.operating_modes = modes
+    db_session.commit()
+    assert compare(client, lab_profile, baseline).json()['affected_chain_ids'] == ['conn_p0v']

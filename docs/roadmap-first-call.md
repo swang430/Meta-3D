@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**当前：PC-01A 为唯一开发片（2026-10-21 用户批准开工，WIP=1）**。本片交付 CAICT 最小配置范围盘点、逐链声明和只读差异复核，详见[设计](design/2026-10-21-pc-01a-calibration-scope.md)与[实施计划](plans/2026-10-21-pc-01a-calibration-scope.md)；外审/合并状态以本片 PR 为准。PC-01B 实物确认仍未完成。本片合并同步清理后，下一片才是 PC-02A。版本基线 `v0.9.2` 已归档未完成 todo/hardware/discovered，见[发布记录](releases/2026-10-21-v0.9.2-baseline.md)。原报告队列 P2-91～93 / #518～520 已闭环；不重开现场/HOLD 项。每片须完成开发/验证/内审/外审/合并/安全同步/清理，不能以触发外审作为结束点。
+**当前交付：PC-01A（[PR #522](https://github.com/swang430/Meta-3D/pull/522)）；下一非现场片：PC-02A，须在 #522 合并/同步/清理后才开工，始终 WIP=1**（2026-10-21 用户批准开工）。本片交付 CAICT 最小配置范围盘点、逐链声明和只读差异复核，详见[设计](design/2026-10-21-pc-01a-calibration-scope.md)与[实施计划](plans/2026-10-21-pc-01a-calibration-scope.md)；外审/合并状态以 PR 为准。PC-01B 实物确认仍未完成。版本基线 `v0.9.2` 已归档未完成 todo/hardware/discovered，见[发布记录](releases/2026-10-21-v0.9.2-baseline.md)。原报告队列 P2-91～93 / #518～520 已闭环；不重开现场/HOLD 项。每片须完成开发/验证/内审/外审/合并/安全同步/清理，不能以触发外审作为结束点。
 
 <a id="pc-roadmap"></a>
 
