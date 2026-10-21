@@ -1,5 +1,9 @@
 export type MetricTrend = '↑' | '↓' | '→' | string
 
+// PC-01A：同源生成契约，配置盘点不代表正式校准资格。
+export type CalibrationScopeSnapshot = import('./api.generated').components['schemas']['CalibrationScopeSnapshot']
+export type CalibrationScopeComparison = import('./api.generated').components['schemas']['CalibrationScopeComparison']
+
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }
 import type { FrozenMacTestProfile } from './macTestProfile'

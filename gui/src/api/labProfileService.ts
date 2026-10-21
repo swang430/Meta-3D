@@ -11,7 +11,18 @@ import type {
   BaseStationBindingPreviewResponse,
   ChannelEmulatorBindingPreviewResponse,
   InstrumentBindingSyncResponse,
+  CalibrationScopeSnapshot,
+  CalibrationScopeComparison,
 } from '../types/api'
+
+export async function fetchCalibrationScope(labId: string): Promise<CalibrationScopeSnapshot> {
+  return (await apiClient.get<CalibrationScopeSnapshot>(`/lab-profiles/${labId}/calibration-scope`)).data
+}
+
+/** POST 只读比较，不保存、不加载、不授予校准复用资格。 */
+export async function compareCalibrationScope(labId: string, baseline: CalibrationScopeSnapshot): Promise<CalibrationScopeComparison> {
+  return (await apiClient.post<CalibrationScopeComparison>(`/lab-profiles/${labId}/calibration-scope/compare`, { baseline })).data
+}
 
 export interface LabProfileSummary {
   id: string

@@ -25,6 +25,10 @@ from app.models.instrument import (
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+from app.schemas.calibration_scope import (
+    CalibrationScopeSnapshot, CalibrationScopeCompareRequest, CalibrationScopeComparison,
+)
+from app.services.calibration.configuration_scope import build_calibration_scope, compare_calibration_scope
 from app.schemas.base_station_binding import (
     BaseStationBindingPreviewResponse,
     BaseStationCompatibilityPreviewResponse,
@@ -43,6 +47,26 @@ from app.services.channel_emulator_binding import (
 )
 
 router = APIRouter(prefix="/lab-profiles", tags=["Lab Profiles"])
+
+
+@router.get('/{lab_profile_id}/calibration-scope', response_model=CalibrationScopeSnapshot)
+def get_calibration_scope(lab_profile_id: UUID, operating_mode: str = 'mimo_ota', db: Session = Depends(get_db)):
+    """只读配置盘点：不访问仪器、不证明校准资格或实物身份。"""
+    try:
+        return build_calibration_scope(db, lab_profile_id, operating_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post('/{lab_profile_id}/calibration-scope/compare', response_model=CalibrationScopeComparison)
+def compare_scope(lab_profile_id: UUID, request: CalibrationScopeCompareRequest,
+                  operating_mode: str = 'mimo_ota', db: Session = Depends(get_db)):
+    """只读比较；baseline 仅用于差异展示，不写库、不授予复用资格。"""
+    try:
+        current = build_calibration_scope(db, lab_profile_id, operating_mode)
+        return compare_calibration_scope(current, request.baseline)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class LabProfileSummary(BaseModel):

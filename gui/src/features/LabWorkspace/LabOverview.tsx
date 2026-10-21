@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } fro
 import { fetchInstrumentCatalog, fetchReadiness } from '../../api/service'
 import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
+import { CalibrationScopeCard } from './CalibrationScopeCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
 function BindingCard({ title, binding }: {
@@ -65,6 +66,7 @@ export function LabOverview() {
         loading={catalog.isFetching || readiness.isFetching || chains.isFetching || catalog.isPaused || readiness.isPaused || chains.isPaused}>刷新总览</Button>
     </Group>
     <Alert color="blue">只读总览不保存、不加载仪器、不同步LabProfile。用例兼容性未评估；此处不表示正式测试资格。</Alert>
+    <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
     <Card withBorder>
       <Text>LabProfile：{lab.name}</Text>
       <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{labId}</Text>
