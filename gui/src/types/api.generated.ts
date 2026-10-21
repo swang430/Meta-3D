@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v1/lab-profiles/{lab_profile_id}/calibration-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Calibration Scope
+         * @description 只读配置盘点：不访问仪器、不证明校准资格或实物身份。
+         */
+        get: operations["get_calibration_scope_api_v1_lab_profiles__lab_profile_id__calibration_scope_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/calibration-scope/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compare Scope
+         * @description 只读比较；baseline 仅用于差异展示，不写库、不授予复用资格。
+         */
+        post: operations["compare_scope_api_v1_lab_profiles__lab_profile_id__calibration_scope_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/{category_key}/emulation-control": {
         parameters: {
             query?: never;
@@ -2727,6 +2767,106 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CalibrationScopePayload */
+        CalibrationScopePayload: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Chamber Id
+             * Format: uuid
+             */
+            chamber_id: string;
+            /** Operating Mode */
+            operating_mode: string;
+            /** Lab Active */
+            lab_active: boolean;
+            /** Chamber */
+            chamber: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Resources */
+            resources: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Topology */
+            topology: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Probes */
+            probes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Chains */
+            chains: components["schemas"]["ScopeChain"][];
+        };
+        /** CalibrationScopeSnapshot */
+        CalibrationScopeSnapshot: {
+            payload: components["schemas"]["CalibrationScopePayload"];
+            /** Digest */
+            digest: string;
+            /**
+             * Physical Identity
+             * @default unverified
+             * @constant
+             */
+            physical_identity: "unverified";
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+            /** Configuration Complete */
+            configuration_complete: boolean;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** CalibrationScopeCompareRequest */
+        CalibrationScopeCompareRequest: {
+            baseline: components["schemas"]["CalibrationScopeSnapshot"];
+        };
+        /** CalibrationScopeComparison */
+        CalibrationScopeComparison: {
+            current: components["schemas"]["CalibrationScopeSnapshot"];
+            /** Changed Sections */
+            changed_sections: string[];
+            /** Affected Chain Ids */
+            affected_chain_ids: string[];
+            /** Requires Review */
+            requires_review: boolean;
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+        };
+        /** ScopeChain */
+        ScopeChain: {
+            /** Chain Id */
+            chain_id: string;
+            /** Ce Port */
+            ce_port: string;
+            /** Probe Id */
+            probe_id: number;
+            /** Polarization */
+            polarization: string;
+            /**
+             * Cable Loss Db
+             * @description 既有拓扑声明，不是本片实测
+             */
+            cable_loss_db: number;
+        };
+        JsonValue: unknown;
         /** EmulationControlRequest */
         EmulationControlRequest: {
             /** Action */
@@ -4588,6 +4728,76 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_calibration_scope_api_v1_lab_profiles__lab_profile_id__calibration_scope_get: {
+        parameters: {
+            query?: {
+                operating_mode?: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationScopeSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_scope_api_v1_lab_profiles__lab_profile_id__calibration_scope_compare_post: {
+        parameters: {
+            query?: {
+                operating_mode?: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CalibrationScopeCompareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationScopeComparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     emulation_control_api_v1_instruments__category_key__emulation_control_post: {
         parameters: {
             query?: never;
