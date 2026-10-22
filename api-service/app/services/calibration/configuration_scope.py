@@ -87,8 +87,10 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota') -
                 if connection and isinstance(connection.connection_params, dict) else {},
         }
         resources.append(row)
-        if category is None or not category.is_active:
-            warnings.append(f'绑定资源未启用或已不存在：{raw_id}')
+        if category is None:
+            warnings.append(f'绑定仪器类别已不存在：{raw_id}')
+        elif not category.is_active:
+            warnings.append(f'绑定仪器已停用：{category.category_name}（{category.category_key}，{raw_id}）')
         elif (not connection or str(category.selected_model_id) != str(binding.get('instrument_model_id'))
               or connection.endpoint != binding.get('connection_endpoint')
               or category.driver_mode != binding.get('driver_mode')):
