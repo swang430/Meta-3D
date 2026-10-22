@@ -140,6 +140,25 @@ def test_resources_show_saved_binding_drift_without_credentials(client, lab_prof
     assert result['affected_chain_ids'] == ['conn_p0h', 'conn_p0v']
 
 
+@pytest.mark.parametrize('exists', [True, False])
+def test_binding_warning_distinguishes_disabled_from_missing(client, lab_profile, db_session, exists):
+    category_id = uuid.uuid4()
+    if exists:
+        db_session.add(InstrumentCategory(id=category_id, category_key='vna',
+                                         category_name='矢量网络分析仪', is_active=False))
+    lab_profile.instrument_bindings = [{'category_id': str(category_id)}]
+    db_session.commit()
+    value = snapshot(client, lab_profile)
+    if exists:
+        assert f'绑定仪器已停用：矢量网络分析仪（vna，{category_id}）' in value['warnings']
+        assert not any('不存在' in warning for warning in value['warnings'])
+    else:
+        assert f'绑定仪器类别已不存在：{category_id}' in value['warnings']
+        assert not any('停用' in warning for warning in value['warnings'])
+    assert value['configuration_complete'] is False
+    assert value['formal_eligible'] is False
+
+
 def test_in_path_device_parameters_and_cable_changes_are_detected(client, lab_profile, topology_two_chains, db_session):
     baseline = snapshot(client, lab_profile)
     nodes = copy.deepcopy(topology_two_chains.nodes)
