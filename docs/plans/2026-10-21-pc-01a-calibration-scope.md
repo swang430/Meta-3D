@@ -37,3 +37,5 @@
 用户批准：配置变化只提醒复核，重校准由操作员判断；不因配置差异自动改变就绪/资格。同步本片设计、整体设计§5.4和PC roadmap，保留独立安全/兼容/证书与必要数据规则。盘点结果仍只由GUI消费，不接readiness或执行门。
 
 局部修复只拆分告警：类别查不到显示已不存在；类别存在但is_active=false显示仪器名称/类别/ID及已停用。保持原配置盘点完整性、正式资格和漂移提示，不写数据库、不启用仪器。真实HTTP入口两例在旧实现2 RED，最小修复后本片+RF resolver+rule gates共99 passed（5.43s）；compileall、diff-check通过。无schema/GUI/依赖或共享执行行为改变，不重跑全后端/GUI构建。证据 `/tmp/pc01-review-warnings-{red,green}.log`，外审台账在PR维护。
+
+PR #524 R1指出endpoint变化与身份未知的边界有歧义：现明确IP差异仅提醒；实物身份未知仍按§5.3独立证据规则保持unknown，不放行旧设备校准复用。确认同一实物和原记录满足独立适用条件后可复用，不因IP变化要求重校准。本轮只改两处文档，原代码/测试输入不变，复用99passed与compileall；diff-check重新通过。
