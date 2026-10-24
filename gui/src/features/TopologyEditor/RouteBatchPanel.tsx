@@ -5,7 +5,7 @@ import type { BatchJobRecord, BatchPlan, BatchPlanRequest, FixedRouteRecord, Rou
 import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCalibrationBatches, fetchRouteCalibrationBatch,
   continueRouteCalibrationBatch, cancelRouteCalibrationBatch, fetchFixedRouteAcquisition } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
-import { batchCanRelease, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
+import { batchCanRelease, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
 // 未知启动身份与全局工作锁一起跨卸载保存；只读空历史不能删除它。
@@ -78,7 +78,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
         await new Promise(resolve=>setTimeout(resolve,700))
         try{
           latest=await fetchRouteCalibrationBatch(scope.labId,row.job_id);cache.setQueryData(['route-batch',scope.labId,row.job_id],latest)
-          if(latest.finalization_committed&&latest.f64_control_released===true&&!batchCanRelease(latest)){
+          if(latest.finalization_committed&&!batchCanRelease(latest)){
             settled=await Promise.all(latest.items.flatMap(i=>i.run_id?[fetchFixedRouteAcquisition(scope.labId,i.run_id)]:[]))
             for(const record of settled)cache.setQueryData(['fixed-route-acquisition',scope.labId,record.run_id],record)
           }
@@ -138,11 +138,17 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   const waiting=Boolean(current&&['waiting_manual','paused_failure'].includes(current.status))
   const renderJob=(row:BatchJobRecord,readonly:boolean)=>{
     const count=batchCounts(row)
+    const savedChildren=row.items.flatMap(item=>{
+      const record=item.run_id?cache.getQueryData<FixedRouteRecord>(['fixed-route-acquisition',scope.labId,item.run_id]):undefined
+      return record?[record]:[]
+    })
+    const simulationEnded=batchPureSimulationEnded(row,savedChildren)
     return <Card withBorder data-testid={readonly?'batch-history-detail':'batch-active-detail'}><Stack gap="xs">
       <Text fw={600}>{readonly?'只读批历史':'活动批'}：{row.job_id}</Text>
       <Badge color={row.items.some(i=>i.status==='simulated')?'yellow':'blue'}>{statusLabels[row.status]??'未知'}</Badge>
       <Text>共{count.total}项 · 实测完成{count.completed} · 模拟{count.simulated} · 失败{count.failed}；单项完成不等于整套成功。</Text>
       <Text>外层控制释放：{row.f64_control_released===true?'服务器确认': '未确认'}；父子最终提交：{row.finalization_committed===true&&row.finalization_id?'服务器确认':'未确认'}</Text>
+      {simulationEnded&&<Alert color="yellow">纯模拟软件任务已结束；未取得真实控制，未证明实物停发或真实控制释放。模拟结果不可采用。</Alert>}
       {row.error&&<Alert color="red">{row.error}</Alert>}
       {row.items.map((item,index)=><Card key={item.item_id} withBorder padding="xs"><Stack gap={3}>
         <Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>

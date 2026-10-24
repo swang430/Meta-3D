@@ -102,9 +102,13 @@ export function buildBatchRequest(scope:RouteScope,paths:RouteSelection[],ids:st
 export function batchStartRequest(scope:RouteScope,request:BatchPlanRequest,plan:BatchPlan):BatchPlanRequest {
   if(scope.dirty||scope.mode!=='mimo_ota'||plan.lab_profile_id!==scope.labId||plan.topology_id!==scope.topologyId||
     plan.operating_mode!==scope.mode||!plan.preview_digest)throw new Error('请保存当前图并重新预览。')
-  if(plan.switch_scope_digest&&(!request.switch_wiring_confirmation||
-    request.switch_wiring_confirmation.switch_scope_digest!==plan.switch_scope_digest||
-    JSON.stringify(request.switch_wiring_confirmation)!==JSON.stringify(plan.switch_wiring_confirmation)))
+  const sent=request.switch_wiring_confirmation,echo=plan.switch_wiring_confirmation
+  // JSON键序与服务器ISO补零不是声明差异；微秒非零仍保留，避免Date毫秒截断洗掉真实差异。
+  const subMillisecond=(value:string)=>value.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/)?.[1].slice(3).replace(/0+$/,'')??''
+  const sameTime=Boolean(sent&&echo&&Number.isFinite(Date.parse(sent.confirmed_at))&&Date.parse(sent.confirmed_at)===Date.parse(echo.confirmed_at)&&
+    subMillisecond(sent.confirmed_at)===subMillisecond(echo.confirmed_at))
+  if(plan.switch_scope_digest&&(!sent||!echo||sent.switch_scope_digest!==plan.switch_scope_digest||echo.switch_scope_digest!==plan.switch_scope_digest||
+    sent.operator!==echo.operator||sent.note!==echo.note||!sameTime))
     throw new Error('须先核对具体开关绑定及映射，提交接线声明后重新预览；旧摘要不能启动。')
   return {...request,preview_digest:plan.preview_digest}
 }
@@ -124,7 +128,18 @@ export function batchCanRelease(job:BatchJobRecord|undefined,records:FixedRouteR
   const eachStartedSettled=started.length>0&&started.every(i=>i.status==='simulated'||records.some(r=>
     r.run_id===i.run_id&&r.status!=='running'&&r.result?.status!=='running'&&r.result?.cleanup_confirmed===true))
   return Boolean(job&&['completed','failed','cancelled'].includes(job.status)&&job.finalization_committed===true&&
-    job.finalization_id&&job.f64_control_released===true&&(job.all_started_cleanup_confirmed===true||eachStartedSettled))
+    job.finalization_id&&(job.f64_control_released===true&&(job.all_started_cleanup_confirmed===true||eachStartedSettled)||batchPureSimulationEnded(job,records)))
+}
+export function batchPureSimulationEnded(job:BatchJobRecord|undefined,records:FixedRouteRecord[]=[]) {
+  // 仅结束纯模拟软件锁；不补写真实lease释放，不授予采用资格。缺损/混合/取消未知不走此例外。
+  return Boolean(job&&job.status==='completed'&&job.f64_control_released===null&&job.finalization_committed===true&&job.finalization_id&&job.lease_id&&
+    job.items.length>0&&job.items.every(item=>item.status==='simulated'&&Boolean(item.run_id)&&records.some(record=>{
+      const result=record.result,states=result?.states
+      const binding=result?.configuration.binding as {execution_mode?:unknown;runtime_driver?:{simulated?:unknown}}|undefined
+      return record.run_id===item.run_id&&record.lab_profile_id===job.lab_id&&record.status==='simulated'&&result?.status==='simulated'&&
+        result.run_id===item.run_id&&result.lab_profile_id===job.lab_id&&binding?.execution_mode==='simulated'&&binding.runtime_driver?.simulated===true&&
+        states?.batch_job_id===job.job_id&&states.batch_item_id===item.item_id&&states.lease_id===job.lease_id&&states.batch_finalization_id===job.finalization_id
+    })))
 }
 export function findUnsettledBatch(history:BatchJobRecord[]|undefined,records:FixedRouteRecord[]=[]) {
   // 恢复与运行中释放读同一个服务器安全结束判据；中断或缺损不是已停发。

@@ -145,3 +145,33 @@ test('人工等待不得把completed等缺run身份的已启动项过滤成空�
     assert.throws(()=>state.buildBatchContinue(corrupt,[],'next','t1','中心-p1',true),status)
   }
 })
+test('服务器声明字段排序及等价时区/尾零不拒绝开始，实际内容/摘要/时刻差异仍拒绝',()=>{
+  const confirmation={operator:'现场操作员',confirmed_at:'2026-10-25T01:00:00.490Z',note:'已核对具体接线',switch_scope_digest:'scope'}
+  const body={...request(),switch_wiring_confirmation:confirmation}
+  const echoed={switch_scope_digest:'scope',note:'已核对具体接线',confirmed_at:'2026-10-25T09:00:00.490000+08:00',operator:'现场操作员'}
+  const plan={lab_profile_id:'lab',topology_id:'topo',operating_mode:'mimo_ota',preview_digest:'new-preview',switch_scope_digest:'scope',switch_wiring_confirmation:echoed}
+  assert.equal(state.batchStartRequest(scope as never,body,plan as never).preview_digest,'new-preview')
+  for(const changed of [{operator:'其他人'},{note:'不同接线说明'},{switch_scope_digest:'other'},
+    {confirmed_at:'2026-10-25T01:00:00.491Z'},{confirmed_at:'2026-10-25T01:00:00.490001Z'},{confirmed_at:'invalid'}]){
+    assert.throws(()=>state.batchStartRequest(scope as never,body,{...plan,switch_wiring_confirmation:{...echoed,...changed}} as never))
+  }
+})
+test('真实lease的null不伪造释放：仅完整服务器纯模拟来源与父子最终身份可结束软件锁',()=>{
+  const simulated=job({status:'completed',f64_control_released:null,finalization_committed:true,finalization_id:'final',all_started_cleanup_confirmed:false,
+    items:[{...item,status:'simulated'}]})
+  const recorded=child({lab_profile_id:'lab',status:'simulated',result:{run_id:'r1',lab_profile_id:'lab',status:'simulated',configuration:{
+    binding:{execution_mode:'simulated',runtime_driver:{simulated:true}}},states:{batch_job_id:'job',batch_item_id:'i1',lease_id:'lease',batch_finalization_id:'final'}}})
+  assert.equal(state.batchCanRelease(simulated,[recorded]),true)
+  assert.equal(state.batchPureSimulationEnded(simulated,[recorded]),true)
+  assert.equal((simulated as any).f64_control_released,null)
+  assert.equal(state.batchChildReady(recorded),false)
+  assert.equal(state.batchCanRelease(simulated,[]),false)
+  assert.equal(state.batchCanRelease(job({...simulated,f64_control_released:false}),[recorded]),false)
+  assert.equal(state.batchCanRelease(job({...simulated,f64_control_released:undefined}),[recorded]),false)
+  for(const patch of [{status:'completed'},{result:{...recorded.result,configuration:{binding:{execution_mode:'real',runtime_driver:{simulated:false}}}}},
+    {result:{...recorded.result,states:{...recorded.result!.states,batch_finalization_id:'old'}}},
+    {result:{...recorded.result,configuration:{}}}])assert.equal(state.batchCanRelease(simulated,[{...recorded,...patch}] as never),false)
+  assert.equal(state.batchCanRelease(job({...simulated,finalization_committed:false}),[recorded]),false)
+  assert.equal(state.batchCanRelease(job({...simulated,items:[]}),[]),false)
+  assert.equal(state.batchCanRelease(job({...simulated,items:[{...item,status:'simulated'}, {...item,item_id:'i2',run_id:'real',status:'completed'}]}),[recorded]),false)
+})
