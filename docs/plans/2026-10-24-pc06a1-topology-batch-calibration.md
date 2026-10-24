@@ -198,4 +198,3 @@ GUI新增`gui/test/pc06a1Batch.test.ts`由Task5创建；package.json没有test�
 ## 单进程、人工等待与重启裁定
 
 沿现有单API进程部署，不新增分布式锁。人工等待、失败暂停和跨项间隙由同一批task持有既有互斥与外层租约；本作业tone必须已经确认停止，Remote释放不冒充停发。服务重启不自动重发，历史活动作业显示interrupted、安全unknown；不宣称跨重启硬件隔离。仅F64/BS存在专门Remote生命周期，不能据此声称FSVA/rfSwitch已确认归还Local。
-
