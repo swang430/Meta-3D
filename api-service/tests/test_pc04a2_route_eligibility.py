@@ -1,5 +1,6 @@
 """只读采用预览；真实驱动类仅替换外部VISA，不模拟评估结论。"""
 import copy
+import json
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -42,7 +43,15 @@ def real_capture(client, configured, db_session, monkeypatch):
         response=start(client,configured)
         assert response.status_code==202,response.text
         value=finish(client,configured,response.json()['run_id'])
-        assert value['status']=='completed',value
+        # 用显式字符串保留失败原因，避免pytest把整个封套dict的关键error截断。
+        # 只输出本fixture脚本化交换，不输出绑定/连接配置或请求参考件原文。
+        assert value['status']=='completed',json.dumps({
+            'run_id':value.get('run_id'),'status':value.get('status'),
+            'error':(value.get('result') or {}).get('error'),
+            'cleanup_confirmed':(value.get('result') or {}).get('cleanup_confirmed'),
+            'failed_exchanges':[event for event in (value.get('result') or {}).get('exchanges',[]) if event.get('error')],
+            'recent_exchanges':(value.get('result') or {}).get('exchanges',[])[-8:],
+        },ensure_ascii=False)
         return db_session.get(DiagnosticRun,UUID(value['run_id']))
     return capture
 
