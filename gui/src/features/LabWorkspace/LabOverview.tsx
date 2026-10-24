@@ -3,6 +3,10 @@ import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } fro
 import { fetchInstrumentCatalog, fetchReadiness } from '../../api/service'
 import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
+import { CalibrationScopeCard } from './CalibrationScopeCard'
+import { FixedRouteCalibrationCard } from './FixedRouteCalibrationCard'
+import { F64CalibrationStateCard } from './F64CalibrationStateCard'
+import { FixedRouteAcquisitionCard } from './FixedRouteAcquisitionCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
 function BindingCard({ title, binding }: {
@@ -64,7 +68,11 @@ export function LabOverview() {
       <Button onClick={() => { void catalog.refetch(); void readiness.refetch(); void chains.refetch() }}
         loading={catalog.isFetching || readiness.isFetching || chains.isFetching || catalog.isPaused || readiness.isPaused || chains.isPaused}>刷新总览</Button>
     </Group>
-    <Alert color="blue">总览不连接仪器、不同步实验室绑定。校准请进入上方“射频拓扑”，在图中选择通路后测量；配置复核和F64状态也在该处查看。</Alert>
+    <Alert color="blue">默认总览不连接仪器、不同步LabProfile。主动点击“读取 F64 状态”会连接本实验室绑定的 F64 并保存诊断记录；不自动校准，不表示正式测试资格。</Alert>
+    <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
+    <FixedRouteAcquisitionCard key={`fixed-route-acquisition:${labId}:${chamberId}`} labId={labId} />
+    <FixedRouteCalibrationCard key={`fixed-route:${labId}:${chamberId}`} labId={labId} />
+    <F64CalibrationStateCard key={`f64-state:${labId}`} labId={labId} />
     <Card withBorder>
       <Text>LabProfile：{lab.name}</Text>
       <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{labId}</Text>

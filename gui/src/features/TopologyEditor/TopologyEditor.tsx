@@ -50,7 +50,6 @@ import { switchTopologyService } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection } from '../../api/switchTopologyService';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
-import { TopologyCalibrationWorkspace } from './TopologyCalibrationWorkspace';
 
 
 // ── Types ──────────────────────────────────────────────────────
@@ -72,12 +71,9 @@ interface TopologyFlowProps {
   onTopologyUpdated: (t: SwitchTopology) => void;
   /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
   onDirtyChange: (dirty: boolean) => void;
-  measuring: boolean;
-  onMeasuringChange: (busy: boolean) => void;
 }
 
-const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange, measuring, onMeasuringChange }: TopologyFlowProps) => {
-  const [calibrationView, setCalibrationView] = useState(true);
+const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange }: TopologyFlowProps) => {
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
   );
@@ -332,14 +328,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   const activeModeObj = topology.operating_modes.find(m => m.id === activeMode);
 
-  if (calibrationView) return <Stack gap="sm">
-    <Group justify="space-between"><Text fw={600}>{topology.name}</Text>
-      <Button variant="light" disabled={measuring} onClick={()=>setCalibrationView(false)}>连接编辑</Button></Group>
-    <TopologyCalibrationWorkspace key={`${labProfileId}:${topology.id}`} topology={topology} labId={labProfileId} onBusy={onMeasuringChange}/>
-  </Stack>;
-
   return (
-    <div style={{ height: 'max(560px, calc(100vh - 360px))', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
       <Paper p="sm" withBorder style={{ borderBottom: 'none', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}>
         <Text size="sm" data-testid="topology-save-stage">
@@ -349,8 +339,6 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         </Text>
         <Group justify="space-between">
           <Group>
-            <Button variant="light" disabled={dirty || saving || measuring} onClick={()=>setCalibrationView(true)}
-              title={dirty?'请先保存接线草稿，再使用已保存通路测量':undefined}>通路校准</Button>
             <Text fw={600}>{topology.name}</Text>
             <Badge color="blue" variant="light">{topology.total_channels ?? 0} Channels</Badge>
             <Badge color={topology.is_active ? 'green' : 'gray'} variant="light">
@@ -534,11 +522,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
 
   // dirty 时阻断 LabProfile 切换（未保存的接线不能静默丢，也绝不自动改绑）
   const [flowDirty, setFlowDirty] = useState(false);
-  const [flowMeasuring, setFlowMeasuring] = useState(false);
   useOperationalLabSwitchGuard(
     'topology-editor',
-    flowMeasuring ? '通路正在测量或停发尚未确认，请先取消并等待结束，再切换实验室'
-      : flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
+    flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
   );
 
   const [topology, setTopology] = useState<SwitchTopology | null>(null);
@@ -738,7 +724,6 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
             ) : availableSwitches.length > 0 ? (
               <Select
                 label="射频开关设备"
-                disabled={flowMeasuring || flowDirty}
                 value={selectedSwitchId}
                 onChange={(val) => val && setSelectedSwitchId(val)}
                 data={availableSwitches}
@@ -760,7 +745,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 leftSection={<IconRefresh size={14} />}
                 loading={reimporting}
                 onClick={handleReimport}
-                disabled={!chamberId || flowMeasuring || flowDirty}
+                disabled={!chamberId}
                 title={!chamberId ? '当前 LabProfile 未绑定暗室' : undefined}
               >
                 重导入默认拓扑
@@ -787,7 +772,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       </Card>
 
       {/* Topology Canvas Area */}
-      <div style={{ minHeight: 500, minWidth: 0 }}>
+      <div style={{ height: 'calc(100vh - 250px)', minHeight: 500 }}>
         {!labProfileId ? (
           <Center h="100%">
             <Stack align="center" gap="sm">
@@ -843,8 +828,6 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
               topology={topology}
               labProfileId={labProfileId}
               onTopologyUpdated={(updated) => setTopology(updated)}
-              measuring={flowMeasuring}
-              onMeasuringChange={setFlowMeasuring}
               onDirtyChange={setFlowDirty}
             />
           </ReactFlowProvider>

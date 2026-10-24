@@ -1,7 +1,7 @@
 """PC-04A单条链采集作业；复用单进程执行互斥与DiagnosticRun，不自动续跑。"""
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import timezone
 from time import perf_counter
 from uuid import UUID, uuid4
 
@@ -15,7 +15,7 @@ from app.hal.rs_fsva import RealRsFsvaDriver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
 from app.models.diagnostic_run import DiagnosticRun
-from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord, FixedRouteReferenceRequest
+from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord
 from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.services.calibration.configuration_scope import build_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
@@ -124,56 +124,7 @@ def record(row: DiagnosticRun) -> FixedRouteRecord:
         value = value.model_copy(update={'status': status, 'cleanup_confirmed': None,
             'net_loss_db': None, 'error': '服务已中断本次采集，未自动续跑；仪器停发状态需现场确认'})
     stamp = row.run_at if row.run_at.tzinfo is not None else row.run_at.replace(tzinfo=timezone.utc)
-    metadata = row.result_extra if isinstance(row.result_extra, dict) else {}
-    try:
-        selected_at = datetime.fromisoformat(metadata.get('reference_selected_at', ''))
-        if selected_at.tzinfo is None:
-            selected_at = None
-    except (ValueError, TypeError):
-        selected_at = None
-    selected = metadata.get('selected_as_reference') is True and selected_at is not None and status == 'completed'
-    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status, result=value,
-        selected_as_reference=selected, reference_selected_at=selected_at if selected else None)
-
-
-def select_reference(db: Session, row: DiagnosticRun, request: FixedRouteReferenceRequest):
-    """只保存操作员选择的参考记录；不修改冻结读数、拓扑损耗或正式补偿。"""
-    db.query(LabProfile).filter_by(id=row.lab_profile_id).with_for_update().one()
-    value = record(row).result
-    binding = value.configuration.get('binding') if value else None
-    if (not value or value.status != 'completed' or value.cleanup_confirmed is not True
-        or value.net_loss_db is None or not value.samples or not isinstance(binding, dict)
-        or binding.get('execution_mode') != 'real' or not value.exchanges
-        or any(exchange.simulated for exchange in value.exchanges)):
-        raise ValueError('只能采用已停发确认、有真实功率及计算结果的实测记录；模拟、失败和缺损记录不能采用')
-    current = build_calibration_scope(db, row.lab_profile_id)
-    if current.digest != request.expected_configuration_digest:
-        raise AcquisitionBusy('配置已经更新，请重新读取图并复核后再确认采用')
-    snapshot = value.configuration.get('snapshot')
-    frozen_payload = snapshot.get('payload') if isinstance(snapshot, dict) else None
-    frozen_topology = frozen_payload.get('topology') if isinstance(frozen_payload, dict) else None
-    if not isinstance(frozen_topology, dict) or frozen_topology.get('id') != current.payload.topology.get('id'):
-        raise ValueError('实测记录与当前接线图不是同一份拓扑，不能关联为本通路参考')
-    chains = [c for c in current.payload.chains if c.chain_id == value.request.chain_id]
-    frozen = value.configuration.get('chain')
-    if len(chains) != 1 or not isinstance(frozen, dict) or any(
-        getattr(chains[0], key) != frozen.get(key) for key in ('chain_id', 'ce_port', 'probe_id', 'polarization')):
-        raise ValueError('实测记录与当前所选通路的端口、探头或极化不一致，不能关联为本通路参考')
-    # 同一实验室/通路只选一条参考；行锁顺序固定，不触碰采集证据。
-    rows = db.query(DiagnosticRun).filter_by(lab_profile_id=row.lab_profile_id, target_name=TARGET,
-        kind='scpi_sequence').filter(DiagnosticRun.params['chain_id'].as_string() == value.request.chain_id
-        ).order_by(DiagnosticRun.id).populate_existing().with_for_update().all()
-    now = datetime.now(timezone.utc).isoformat()
-    for item in rows:
-        metadata = dict(item.result_extra) if isinstance(item.result_extra, dict) else {}
-        if item.id == row.id:
-            metadata.update(selected_as_reference=True, reference_selected_at=now)
-            item.result_extra = metadata
-        elif metadata.get('selected_as_reference') is True:
-            item.result_extra = {**metadata, 'selected_as_reference': False}
-    db.commit()
-    db.refresh(row)
-    return record(row)
+    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status, result=value)
 
 
 async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
