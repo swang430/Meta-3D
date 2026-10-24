@@ -75,3 +75,17 @@ test('明确改端口仍须检查历史全部关联连接，省略端口按既�
   assert.deepEqual(changed.nodes[0].params.ports,['out','extra']);
   assert.throws(()=>updateDraftNode(draft,draft.nodes[0],['in','extra']),/端口/);
 });
+test('删除最后连线仍保留历史节点在原模式的编辑入口，不扩大到其他模式',()=>{
+  const draft=fixture();
+  draft.nodes.forEach(n=>{delete n.params.visible_modes});
+  const changed=removeDraftConnections(draft,['ab','bc']);
+  assert.deepEqual(changed.nodes.find(n=>n.id==='a')?.params.visible_modes,['mimo_ota','calibration']);
+  assert.deepEqual(changed.nodes.find(n=>n.id==='c')?.params.visible_modes,['mimo_ota']);
+  assert.deepEqual(changed.connections,[]);
+});
+test('删除连接不会放宽校准器件已有或隐含的模式隔离',()=>{
+  const draft=fixture();
+  draft.nodes[0].params={ports:['in','out'],connection_scope:'calibration',visible_modes:['calibration']};
+  const changed=removeDraftConnections(draft,['ab']);
+  assert.deepEqual(changed.nodes[0].params.visible_modes,['calibration']);
+});

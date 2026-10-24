@@ -58,7 +58,11 @@ def _validate_structure(nodes, connections, modes) -> None:
             if ports is not None and conn.get(f"{end}_pin") not in ports:
                 raise HTTPException(422, detail=f"连线 {conn['id']} 引用了未声明的端口")
     for mode in mode_index.values():
-        for ident in mode.get("active_connections", []):
+        # 与 TopologyService.resolve_paths 的实际消费一致：空活动列表会回退到连线自身的模式声明。
+        effective_ids = mode.get("active_connections", []) or [
+            conn['id'] for conn in connections if mode['id'] in conn.get('modes', [])
+        ]
+        for ident in effective_ids:
             conn = conn_index.get(ident)
             if conn is None:
                 raise HTTPException(422, detail=f"模式 {mode['id']} 引用了不存在的连线")

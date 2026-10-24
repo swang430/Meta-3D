@@ -80,3 +80,42 @@ def test_historical_invalid_graph_still_readable(world, saved):
     response = client.get(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)})
     assert response.status_code == 200, response.text
     assert response.json()['connections'][0]['id'] == 'ab'
+
+
+def test_calibration_scope_rejected_in_effective_connection_mode_fallback(world, saved):
+    nodes = graph()['nodes']
+    nodes[0]['type'] = 'ce_port'
+    nodes[1]['type'] = 'probe'
+    nodes[1]['params']['connection_scope'] = 'calibration'
+    connections = [{**graph()['connections'][0], 'modes': ['mimo_ota']}]
+    modes = [{'id': 'mimo_ota', 'name': '正常测试', 'active_connections': []}]
+    # 此输入在原解析器确实会成为路径和矩阵，不是仅检查字段存在。
+    from app.services.topology_service import TopologyService
+    service = TopologyService({'nodes': nodes, 'connections': connections, 'operating_modes': modes})
+    assert len(service.resolve_paths('mimo_ota')) == 1
+    assert service.get_calibration_matrix('mimo_ota')
+    before = copy.deepcopy(saved.nodes), copy.deepcopy(saved.connections), copy.deepcopy(saved.operating_modes)
+    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={'nodes': nodes, 'connections': connections, 'operating_modes': modes})
+    assert response.status_code == 422, response.text
+    world['db'].refresh(saved)
+    assert (saved.nodes, saved.connections, saved.operating_modes) == before
+
+
+def test_calibration_only_fallback_remains_available_without_normal_paths(world, saved):
+    nodes = graph()['nodes']
+    nodes[0]['type'] = 'ce_port'
+    nodes[1]['type'] = 'probe'
+    nodes[1]['params']['connection_scope'] = 'calibration'
+    connections = [{**graph()['connections'][0], 'modes': ['calibration']}]
+    modes = [{'id': ident, 'name': ident, 'active_connections': []} for ident in ('mimo_ota', 'calibration')]
+    url = f'/api/v1/switch-topologies/{saved.id}'
+    params = {'lab_profile_id': str(world['lab_a'].id)}
+    response = client.patch(url, params=params, json={'nodes': nodes, 'connections': connections, 'operating_modes': modes})
+    assert response.status_code == 200, response.text
+    normal_paths = client.get(f'{url}/paths/mimo_ota', params=params)
+    normal_matrix = client.get(f'{url}/calibration-matrix/mimo_ota', params=params)
+    calibration_paths = client.get(f'{url}/paths/calibration', params=params)
+    assert normal_paths.status_code == normal_matrix.status_code == calibration_paths.status_code == 200
+    assert normal_paths.json() == []
+    assert normal_matrix.json()['matrix'] == {}
+    assert len(calibration_paths.json()) == 1

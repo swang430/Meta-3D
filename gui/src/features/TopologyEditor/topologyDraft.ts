@@ -16,7 +16,18 @@ export function addDraftConnection(draft: SwitchTopology, connection: TopologyCo
 }
 export function removeDraftConnections(draft: SwitchTopology, ids: string[]): SwitchTopology {
   const removed = new Set(ids);
-  return {...draft,connections:draft.connections.filter(c=>!removed.has(c.id)),operating_modes:draft.operating_modes.map(m=>({...m,active_connections:(m.active_connections||[]).filter(id=>!removed.has(id))}))};
+  const affected = new Set(draft.connections.filter(c=>removed.has(c.id)).flatMap(c=>[c.source,c.target]));
+  const nodes = draft.nodes.map(node=>{
+    if (!affected.has(node.id) || Array.isArray(node.params.visible_modes)) return node;
+    // 删除接线只删接线，不撤掉历史器件在原模式中的唯一编辑入口。
+    const incident = new Set(draft.connections.filter(c=>c.source===node.id||c.target===node.id).map(c=>c.id));
+    const visible_modes = draft.operating_modes.filter(mode=>
+      (node.params.connection_scope!=='calibration' || mode.id===CALIBRATION_MODE) &&
+      (mode.active_connections||[]).some(id=>incident.has(id))
+    ).map(mode=>mode.id);
+    return {...node,params:{...node.params,visible_modes}};
+  });
+  return {...draft,nodes,connections:draft.connections.filter(c=>!removed.has(c.id)),operating_modes:draft.operating_modes.map(m=>({...m,active_connections:(m.active_connections||[]).filter(id=>!removed.has(id))}))};
 }
 export function removeDraftNodes(draft: SwitchTopology, ids: string[]): SwitchTopology {
   const removed = new Set(ids);
