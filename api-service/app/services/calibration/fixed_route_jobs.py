@@ -15,7 +15,7 @@ from app.hal.rs_fsva import RealRsFsvaDriver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
 from app.models.diagnostic_run import DiagnosticRun
-from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord
+from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord, FixedRouteBatchContext
 from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.services.calibration.configuration_scope import build_calibration_scope, build_selected_route_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
@@ -159,6 +159,12 @@ def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
         pass  # 缺损历史返回incomplete；不从当前配置或仪器回填。
     status = value.status if value else 'incomplete'
     batch_id = value.states.get('batch_job_id') if value else None
+    if batch_id and batch_context is not None:
+        try:
+            batch_context = FixedRouteBatchContext.model_validate(batch_context).model_dump(mode='json')
+        except ValidationError:
+            # 仅收窄读取边界；损坏元数据不转字符串、不补身份，也不能证明父批释放。
+            batch_context = dict(active=False, finalized=False)
     active = (batch_context or {}).get('active') is True if batch_id else row.id in _running
     if batch_id and (batch_context or {}).get('finalized') is not True:
         value = value.model_copy(deep=True)

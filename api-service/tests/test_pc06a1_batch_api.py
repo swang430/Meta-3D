@@ -363,3 +363,46 @@ async def test_damaged_parent_http_history_remains_incomplete(api,configured,sha
         record=response.json() if url.endswith(ident) else response.json()[0]
         assert record['status']=='incomplete' and record['f64_control_released'] is None
         assert record['finalization_committed'] is False and record['items']==[]
+
+
+@pytest.mark.parametrize('endpoint',['detail','history','application-preview'])
+@pytest.mark.parametrize('field',['finalization_id','lease_id'])
+async def test_damaged_batch_context_stays_readable_unknown(api,configured,topology_two_chains,runtime,db_session,endpoint,field):
+    jobs,_=runtime
+    body,_=await previewed(api,configured,topology_two_chains,chains=('conn_p0v',))
+    value=await start(api,configured,body);ident=value['job_id']
+    waiting=await state(api,configured,ident,'waiting_manual')
+    assert (await api.post(root(configured)+'/'+ident+'/continue',json=continuation(waiting))).status_code==200
+    final=await state(api,configured,ident,'completed')
+    parent=db_session.get(DiagnosticRun,UUID(ident))
+    saved=jobs._payload(parent);saved[field]={'damaged':True}
+    jobs._save_parent(parent,saved)
+    child=db_session.get(DiagnosticRun,UUID(final['items'][0]['run_id']))
+    if field=='lease_id':
+        # 保持父子lease关系一致，证明元数据损坏即使未被旧关系检查挡住也不能透传或授权。
+        evidence=copy.deepcopy(child.sequence_evidence)
+        evidence['extra']['fixed_route_acquisition']['states']['lease_id']={'damaged':True}
+        child.sequence_evidence=evidence
+    db_session.commit()
+    original_parent=copy.deepcopy(parent.sequence_evidence)
+    original_child=copy.deepcopy(child.sequence_evidence)
+    assert (await api.get(root(configured)+'/'+ident)).json()['status']=='incomplete'
+    base=f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions'
+    url=base if endpoint=='history' else base+'/'+str(child.id)+('/application-preview' if endpoint=='application-preview' else '')
+    response=await api.get(url)
+    assert response.status_code==200,response.text
+    result=response.json()
+    if endpoint=='application-preview':
+        assert result['eligibility']['measurement_provenance']=='unknown'
+        assert result['eligibility']['eligible_for_adoption'] is False and result['new_net_loss_db'] is None
+    else:
+        record=result[0] if endpoint=='history' else result
+        assert record['batch_context']['active'] is False and record['batch_context']['finalized'] is False
+        assert record['batch_context']['finalization_id'] is None and record['batch_context']['lease_id'] is None
+        assert record['result']['states']['f64_control_released'] is None
+    request=dict(acquisition_run_id=str(child.id),route_digest=final['plan']['items'][0]['request']['route_digest'],
+        expected_current_application_id=None,idempotency_key=str(uuid4()),confirmed=True,
+        adoption_valid_until=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat())
+    assert (await api.post(f'/api/v1/lab-profiles/{configured.id}/route-calibration-applications',json=request)).status_code==422
+    db_session.refresh(parent);db_session.refresh(child)
+    assert parent.sequence_evidence==original_parent and child.sequence_evidence==original_child
