@@ -8,6 +8,38 @@ from app.services.mimo_ota.route_calibration_freeze import frozen_route_identity
 from app.services.mimo_ota.switch_orchestrator import orchestrate_switch_topology
 
 
+@pytest.mark.parametrize('declaration',['connection','params','missing'])
+@pytest.mark.parametrize('multihop',[False,True])
+def test_incomplete_ce_binding_stays_unknown_and_outside_formal_chains(declaration,multihop):
+    from app.services.mimo_ota.switch_orchestrator import _build_probe_binding
+    from app.services.calibration.rf_chain_resolver import _binding_to_spec,resolve_declared_calibration_ce_port
+    ce={'id':'ce','type':'channel_emulator','label':'Display F64','params':{}}
+    probe={'id':'probe','type':'probe','params':{'probe_id':0,'polarization':'V'}}
+    pad={'id':'pad','type':'pad','label':'显示名','params':{}}
+    edge={'id':'last','source':'pad' if multihop else 'ce','target':'probe'}
+    if declaration=='connection':edge['ce_port']=''
+    if declaration=='params':ce['params']['ce_port']=''
+    nodes=[ce,pad,probe] if multihop else [ce,probe]
+    edges=[{'id':'first','source':'ce','target':'pad'},edge] if multihop else [edge]
+    binding=_build_probe_binding(edge,{node['id']:node for node in nodes},edges)
+    assert binding is not None and binding.ce_port==''
+    assert _binding_to_spec(binding) is None  # 配置可读，不等于具备正式物理身份
+    with pytest.raises(ValueError,match='缺少明确'):
+        resolve_declared_calibration_ce_port(nodes,edges)  # 采集入口仍严格
+
+
+@pytest.mark.parametrize('declarations',[['B1.1','B1.2'],['not-a-port','not-a-port']])
+def test_incomplete_binding_compatibility_does_not_hide_conflicting_or_invalid_ports(declarations):
+    from app.services.mimo_ota.switch_orchestrator import _build_probe_binding
+    nodes={'ce':{'id':'ce','type':'channel_emulator','params':{}},
+        'pad':{'id':'pad','type':'pad','params':{}},
+        'probe':{'id':'probe','type':'probe','params':{'probe_id':0,'polarization':'V'}}}
+    edges=[{'id':'first','source':'ce','target':'pad','ce_port':declarations[0]},
+        {'id':'last','source':'pad','target':'probe','ce_port':declarations[1]}]
+    with pytest.raises(ValueError,match='矛盾|unrecognized'):
+        _build_probe_binding(edges[-1],nodes,edges)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('source_kind',['confirmed','legacy'])
 @pytest.mark.parametrize('consumer',['entries','preflight'])

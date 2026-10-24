@@ -61,8 +61,8 @@ def normalize_rf_chain_identity(value: object) -> Optional[str]:
     return normalized if normalized and normalized != "?" else None
 
 
-def resolve_declared_calibration_ce_port(nodes: list[dict], connections: list[dict]) -> str:
-    """采集只消费明确的CE口声明；不把中间器件名称猜成F64口。零硬件I/O。"""
+def resolve_declared_calibration_ce_port(nodes: list[dict], connections: list[dict], *, allow_incomplete: bool = False) -> str:
+    """采集默认严格；配置读取可保留空身份，由正式链消费者排除。零硬件I/O。"""
     from app.hal.propsim_f64 import RealPropsimF64Driver
 
     declared = {str(c['ce_port']).strip() for c in connections if c.get('ce_port') is not None}
@@ -74,6 +74,8 @@ def resolve_declared_calibration_ce_port(nodes: list[dict], connections: list[di
     if value is None and root.get('type') == 'ce_port':
         value = root.get('label')
     if normalize_rf_chain_identity(value) is None:
+        if allow_incomplete:
+            return str(value) if value is not None else ''
         raise ValueError('完整通路缺少明确的F64输出口')
     output = int(RealPropsimF64Driver._ce_port_to_output_num(str(value)))
     if not 1 <= output <= 32:

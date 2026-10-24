@@ -217,9 +217,9 @@ def _build_probe_binding(
         if current['id'] in seen or any(edge.get('target')==current['id'] for edge in active_connections or []):
             raise ValueError('正常测试CE源端存在回接')
         path_nodes.insert(0,current)
-        ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges)
+        ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges,allow_incomplete=True)
     elif source is not None:
-        ce_port_label=resolve_declared_calibration_ce_port([source,target],[connection])
+        ce_port_label=resolve_declared_calibration_ce_port([source,target],[connection],allow_incomplete=True)
 
     # Probe binding params (id, polarization) — convention is they live on the
     # probe node's params dict; fall back to parsing the label.
