@@ -27,6 +27,48 @@ router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
 
 
+def _validate_structure(nodes, connections, modes) -> None:
+    """只校验操作员声明的接线结构，不代表硬件能力、接通或校准资格。"""
+    def index(items, name):
+        if not isinstance(items, list):
+            raise HTTPException(422, detail=f"{name} 必须是列表，不能置空")
+        result = {}
+        for item in items:
+            ident = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(ident, str) or not ident.strip() or ident in result:
+                raise HTTPException(422, detail=f"{name} 编号为空或重复：{ident}")
+            result[ident] = item
+        return result
+
+    node_index = index(nodes, "器件")
+    conn_index = index(connections, "连线")
+    mode_index = index(modes, "模式")
+    for node in nodes:
+        ports = node.get("params", {}).get("ports")
+        if ports is not None and (not isinstance(ports, list) or not ports or
+                                  any(not isinstance(p, str) or not p.strip() for p in ports) or
+                                  len(ports) != len(set(ports))):
+            raise HTTPException(422, detail=f"器件 {node['id']} 的声明端口必须非空且不重复")
+    for conn in connections:
+        for end in ("source", "target"):
+            node = node_index.get(conn.get(end))
+            if node is None:
+                raise HTTPException(422, detail=f"连线 {conn['id']} 引用了不存在的器件")
+            ports = node.get("params", {}).get("ports")
+            if ports is not None and conn.get(f"{end}_pin") not in ports:
+                raise HTTPException(422, detail=f"连线 {conn['id']} 引用了未声明的端口")
+    for mode in mode_index.values():
+        for ident in mode.get("active_connections", []):
+            conn = conn_index.get(ident)
+            if conn is None:
+                raise HTTPException(422, detail=f"模式 {mode['id']} 引用了不存在的连线")
+            if mode['id'] != 'calibration' and any(
+                node_index[conn[end]].get('params', {}).get('connection_scope') == 'calibration'
+                for end in ('source', 'target')
+            ):
+                raise HTTPException(422, detail="校准器件不能加入正常测试模式")
+
+
 # ---------------------------------------------------------------------------
 # P1-57：除 /templates 外，所有端点的暗室真值 = lab_profile_id →
 # resolve_current_chamber()。后端不再相信客户端自由提交的 chamber_id ——
@@ -195,6 +237,10 @@ def create_switch_topology(
     chamber = _resolve_scope(db, request.lab_profile_id)
     _assert_chamber_consistent(request.chamber_id, chamber.id)
 
+    _validate_structure([n.model_dump() for n in request.nodes],
+                        [c.model_dump() for c in request.connections],
+                        [m.model_dump() for m in request.operating_modes])
+
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
     if request.is_default:
@@ -296,6 +342,8 @@ def import_topology_from_template(
 
     generate = _load_template(template_id)
     topo_data = generate()
+    _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
+                        topo_data.get('operating_modes', []))
 
     if replace_existing:
         # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
@@ -349,6 +397,11 @@ def update_switch_topology(
     chamber = _resolve_scope(db, lab_profile_id)
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
+    update_data = request.model_dump(exclude_unset=True)
+    _validate_structure(update_data.get('nodes', topology.nodes),
+                        update_data.get('connections', topology.connections),
+                        update_data.get('operating_modes', topology.operating_modes))
+
     if request.is_default and not topology.is_default:
         # 默认位让位只在本暗室内 —— 不从 lab A 顺手改 chamber B 的行
         db.query(SwitchTopology).filter(
@@ -356,8 +409,6 @@ def update_switch_topology(
             SwitchTopology.chamber_id == chamber.id,
             SwitchTopology.is_default == True
         ).update({"is_default": False})
-
-    update_data = request.model_dump(exclude_unset=True)
 
     # Process Pydantic models if they are in the update
     if "nodes" in update_data:
