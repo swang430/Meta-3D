@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/calibration/path-loss/fixed-route/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Fixed Route Calibration
+         * @description 固定开关通路的方法计算预览；不访问仪器、不写校准、不授予正式资格。
+         */
+        post: operations["preview_fixed_route_calibration_api_v1_calibration_path_loss_fixed_route_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lab-profiles/{lab_profile_id}/calibration-scope": {
         parameters: {
             query?: never;
@@ -2767,6 +2787,101 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** FixedRouteCalibrationDeclaration */
+        FixedRouteCalibrationDeclaration: {
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             * @description 操作员指定实验室；本接口不核验保存配置或实物身份
+             */
+            lab_profile_id: string;
+            /** Chain Id */
+            chain_id: string;
+            /**
+             * Ce Port
+             * @description F64物理输出连接器
+             */
+            ce_port: string;
+            /**
+             * Switch Identity
+             * @description 固定通路中射频开关的身份记录
+             */
+            switch_identity: string;
+            /**
+             * Fixed Route
+             * @description 开关固定的输入到输出通路；不发切换命令
+             */
+            fixed_route: string;
+            /**
+             * Switch Mode
+             * @default fixed
+             * @constant
+             */
+            switch_mode: "fixed";
+            /**
+             * Reference Antenna
+             * @description 终点参考天线身份及参考位置记录
+             */
+            reference_antenna: string;
+            /**
+             * Frequency Mhz
+             * @description 三项参考值适用的同一工作频率（MHz）
+             */
+            frequency_mhz: number;
+            /**
+             * Ce Output Power Dbm
+             * @description F64物理输出口功率（dBm），不得用设定值代替
+             */
+            ce_output_power_dbm: number;
+            /**
+             * Ce Power Source
+             * @description 输出口功率记录来源，不是自动核验结果
+             */
+            ce_power_source: string;
+            /**
+             * Sa Input Power Dbm
+             * @description 分析仪输入口绝对功率（dBm），不是功率密度
+             */
+            sa_input_power_dbm: number;
+            /** Sa Power Source */
+            sa_power_source: string;
+            /**
+             * Receive Cable Loss Db
+             * @description 参考天线到分析仪接收线缆损耗（dB）；衰减为正，增益为负
+             */
+            receive_cable_loss_db: number;
+            /** Receive Cable Source */
+            receive_cable_source: string;
+        };
+        /** FixedRouteCalibrationPreview */
+        FixedRouteCalibrationPreview: {
+            /**
+             * Method
+             * @default fixed_route_port_to_reference_v1
+             * @constant
+             */
+            method: "fixed_route_port_to_reference_v1";
+            declaration: components["schemas"]["FixedRouteCalibrationDeclaration"];
+            /**
+             * Net Loss Db
+             * @description F64输出口功率 -（分析仪输入口功率 + 接收线缆损耗）；负值为整路增益
+             */
+            net_loss_db: number;
+            /**
+             * Input Provenance
+             * @default operator_entered
+             * @constant
+             */
+            input_provenance: "operator_entered";
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+            /** Warning */
+            warning: string;
+        };
         /** CalibrationScopePayload */
         CalibrationScopePayload: {
             /**
@@ -4728,6 +4843,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    preview_fixed_route_calibration_api_v1_calibration_path_loss_fixed_route_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixedRouteCalibrationDeclaration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedRouteCalibrationPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_calibration_scope_api_v1_lab_profiles__lab_profile_id__calibration_scope_get: {
         parameters: {
             query?: {
