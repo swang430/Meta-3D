@@ -194,6 +194,22 @@ def test_graceful_shutdown_waits_for_acquisition_cleanup_and_saved_terminal(clie
     assert not jobs._running
 
 
+def test_history_filters_selected_chain_before_limit(client, configured, db_session):
+    from app.services.calibration.fixed_route_jobs import TARGET
+    from datetime import datetime
+    ids=[]
+    for chain_id in ['fixed-v','fixed-h']:
+        row=DiagnosticRun(kind='scpi_sequence',lab_profile_id=configured.id,target_name=TARGET,
+            run_at=datetime(2026,10,24,0,0,len(ids)),
+            params={'chain_id':chain_id},success=False)
+        db_session.add(row); db_session.flush(); ids.append(str(row.id))
+    db_session.commit()
+    response=client.get(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions',
+        params={'chain_id':'fixed-v','limit':1})
+    assert response.status_code == 200
+    assert [value['run_id'] for value in response.json()] == [ids[0]]
+
+
 def test_acquisition_running_and_terminal_are_readable_in_shared_diagnostic_history(client, configured):
     response = start(client, configured)
     run_id = response.json()['run_id']
@@ -256,6 +272,41 @@ def test_real_http_lease_and_real_driver_transport_keeps_measured_source_not_set
     assert 'OUTPut:MEASure:RESult:GET? 1,1' in ce_resource.commands
     assert any(command.endswith(',0') and ':STatus ' in command for command in ce_resource.commands)
     assert ce_resource.closed and not lease.is_active
+    # 图上“采用为参考”只关联本条实测记录，不改接线损耗、不写证书或发仪器命令。
+    endpoint=f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions/{value["run_id"]}/reference'
+    digest=client.get(f'/api/v1/lab-profiles/{configured.id}/calibration-scope').json()['digest']
+    from app.models.switch_topology import SwitchTopology
+    import copy
+    topology_before=copy.deepcopy(db_session.query(SwitchTopology).one().connections)
+    command_count=len(ce_resource.commands)
+    payload={'expected_configuration_digest':digest,'operator_confirmed':True}
+    assert client.post(endpoint,json={**payload,'operator_confirmed':1}).status_code == 422
+    assert client.post(endpoint,json={**payload,'expected_configuration_digest':'0'*64}).status_code == 409
+    current=jobs.build_calibration_scope(db_session,configured.id)
+    other=current.model_copy(update={'payload':current.payload.model_copy(update={
+        'topology':{**current.payload.topology,'id':str(uuid4())}})})
+    with monkeypatch.context() as changed:
+        changed.setattr(jobs,'build_calibration_scope',lambda *_:other)
+        assert client.post(endpoint,json=payload).status_code == 422
+    adopted=client.post(endpoint,json=payload)
+    assert adopted.status_code == 200, adopted.text
+    assert adopted.json()['selected_as_reference'] is True
+    assert adopted.json()['result']['formal_eligible'] is False
+    assert client.get(endpoint.removesuffix('/reference')).json()['selected_as_reference'] is True
+    db_session.expire_all()
+    assert db_session.query(SwitchTopology).one().connections == topology_before
+    assert db_session.query(ProbePathLossCalibration).count() == 0
+    assert len(ce_resource.commands) == command_count
+
+
+def test_mock_record_cannot_be_selected_as_real_reference(client,configured):
+    response=start(client,configured)
+    run_id=response.json()['run_id']
+    finish(client,configured,run_id)
+    digest=client.get(f'/api/v1/lab-profiles/{configured.id}/calibration-scope').json()['digest']
+    selected=client.post(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions/{run_id}/reference',
+        json={'expected_configuration_digest':digest,'operator_confirmed':True})
+    assert selected.status_code == 422
 
 
 def test_live_checked_openapi_and_generated_types_cover_all_pc04_routes():
@@ -268,6 +319,9 @@ def test_live_checked_openapi_and_generated_types_cover_all_pc04_routes():
         assert {'get', 'post'} <= doc['paths'][base].keys()
         assert 'get' in doc['paths'][base + '/{run_id}']
         assert 'post' in doc['paths'][base + '/{run_id}/cancel']
+        assert 'post' in doc['paths'][base + '/{run_id}/reference']
+        assert any(p['name']=='chain_id' for p in doc['paths'][base]['get']['parameters'])
+        assert 'selected_as_reference' in doc['components']['schemas']['FixedRouteRecord']['properties']
         assert 'ce_output_power_dbm' not in doc['components']['schemas']['FixedRouteRequest']['properties']
         assert doc['components']['schemas']['FixedRouteResult']['properties']['formal_eligible']['const'] is False
     generated = (root / 'gui/src/types/api.generated.ts').read_text()

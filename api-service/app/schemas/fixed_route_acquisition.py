@@ -75,3 +75,18 @@ class FixedRouteRecord(BaseModel):
     status: str
     result: FixedRouteResult | None = None
     formal_eligible: Literal[False] = False
+    selected_as_reference: bool = False
+    reference_selected_at: datetime | None = None
+
+
+class FixedRouteReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_configuration_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
+    operator_confirmed: Literal[True]
+
+    @field_validator('operator_confirmed', mode='before')
+    @classmethod
+    def require_operator_confirmation(cls, value):
+        if value is not True:
+            raise ValueError('请明确确认采用这条实测记录，不能用数字代替确认')
+        return value

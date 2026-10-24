@@ -1,0 +1,12 @@
+.topology-calibration-workspace { min-width: 0; }
+.topology-calibration-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 16px; align-items: start; min-width: 0; }
+.topology-calibration-canvas { height: 560px; min-width: 0; overflow: hidden; background: var(--mantine-color-body); }
+.topology-calibration-sidebar { min-width: 0; }
+.topology-calibration-sidebar input { min-width: 0; }
+.calibration-node { width: 190px; display: flex; flex-direction: column; gap: 6px; border-top: 3px solid #2563eb; }
+.calibration-node-air, .calibration-node-reference, .calibration-node-receive_cable { border-top-color: #0f766e; }
+.calibration-node-total { width: 540px; border-top-color: #0f766e; background: var(--mantine-color-teal-light); }
+@media (max-width: 1450px) {
+  .topology-calibration-layout { grid-template-columns: minmax(0, 1fr); }
+  .topology-calibration-canvas { height: 460px; }
+}

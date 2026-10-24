@@ -38,8 +38,15 @@ export async function cancelFixedRouteAcquisition(labId: string, runId: string):
   return checkedAcquisition(labId, (await apiClient.post<FixedRouteRecord>(`/lab-profiles/${labId}/fixed-route-acquisitions/${runId}/cancel`)).data, runId)
 }
 
-export async function fetchFixedRouteAcquisitions(labId: string): Promise<FixedRouteRecord[]> {
-  return (await apiClient.get<FixedRouteRecord[]>(`/lab-profiles/${labId}/fixed-route-acquisitions`)).data.map(value => checkedAcquisition(labId, value))
+export async function selectFixedRouteReference(labId:string,runId:string,digest:string):Promise<FixedRouteRecord>{
+  return checkedAcquisition(labId,(await apiClient.post<FixedRouteRecord>(
+    `/lab-profiles/${labId}/fixed-route-acquisitions/${runId}/reference`,
+    {expected_configuration_digest:digest,operator_confirmed:true})).data,runId)
+}
+
+export async function fetchFixedRouteAcquisitions(labId: string, chainId?: string): Promise<FixedRouteRecord[]> {
+  return (await apiClient.get<FixedRouteRecord[]>(`/lab-profiles/${labId}/fixed-route-acquisitions`,
+    {params:chainId ? {chain_id:chainId} : undefined})).data.map(value => checkedAcquisition(labId, value))
 }
 
 export async function readF64CalibrationState(labId: string, request: F64StateRequest): Promise<F64StateRecord> {
