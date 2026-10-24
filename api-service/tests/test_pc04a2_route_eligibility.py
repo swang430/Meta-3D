@@ -13,7 +13,7 @@ from app.models.instrument import InstrumentCategory
 
 @pytest.fixture
 def real_capture(client, configured, db_session, monkeypatch):
-    def capture(source='-30',received='-60'):
+    def capture(source='-30',received='-60',catalog='0,10000'):
         from app.services.calibration import fixed_route_jobs as jobs
         from app.hal.propsim_f64 import RealPropsimF64Driver
         from app.hal.rs_fsva import RealRsFsvaDriver
@@ -28,7 +28,8 @@ def real_capture(client, configured, db_session, monkeypatch):
             'OUTPut:MEASure:RESult:GET? 1,1':source,'SYSTem:CALIBration:VALid?':'1,1',
             'SYSTem:CALIBration:USER:GET?':'','OUTPut:GAIN:CH? 1':'0'})
         sa_resource=_ScriptedVisaResource({'*IDN?':'Rohde&Schwarz,FSVA3044,SN-SA,1.0',
-            'SENSe:CORRection:TRANsducer:CATalog?':'0,10000','INITiate:IMMediate; *OPC?':'1',
+            'SENSe:CORRection:TRANsducer:CATalog?':catalog,
+            'SENSe:CORRection:TRANsducer:STATe?':'0','INITiate:IMMediate; *OPC?':'1',
             'CALCulate:MARKer:FUNCtion:POWer:RESult? CPOWer':received})
         ce._visa_resource,sa._visa_session=ce_resource,sa_resource
         ce._status=InstrumentStatus.READY;ce._local_control_reserved=False;ce.has_interference_generator=True
@@ -131,3 +132,54 @@ def test_mock_and_legacy_captures_are_not_eligible_and_other_lab_cannot_read_pre
     assert result['selection'] is None and result['new_net_loss_db'] is None
     other=LabProfile(name='另一实验室');db_session.add(other);db_session.commit()
     assert preview(client,other,row).status_code==404
+
+
+@pytest.mark.parametrize('side',['source','receiver'])
+def test_pollution_preconditions_require_original_evidence(client,configured,real_capture,db_session,side):
+    row=real_capture();original=copy.deepcopy(row.sequence_evidence)
+    command=('OUTPut:INTERFerence:GET?' if side=='source' else
+        'SENSe:CORRection:TRANsducer:CATalog?')
+    responses=(['1','unknown','',None] if side=='source' else
+        ["0,10000,123,'RX-correction'",'0,10000,123','unknown','',None])
+    for response in responses:
+        envelope=copy.deepcopy(original)
+        events=envelope['extra']['fixed_route_acquisition']['exchanges']
+        for event in events:
+            if event['command']==command:
+                event['response']=response
+        row.sequence_evidence=envelope;db_session.commit()
+        value=preview(client,configured,row).json()
+        assert value['eligibility']['eligible_for_adoption'] is False,value
+        assert value['eligibility']['blockers']
+        assert value['new_net_loss_db'] is None
+    envelope=copy.deepcopy(original)
+    result=envelope['extra']['fixed_route_acquisition']
+    result['exchanges']=[event for event in result['exchanges'] if event['command']!=command]
+    row.sequence_evidence=envelope;db_session.commit()
+    value=preview(client,configured,row).json()
+    assert value['eligibility']['eligible_for_adoption'] is False,value
+    assert value['new_net_loss_db'] is None
+
+
+def test_stored_transducers_require_each_disabled_state(client,configured,real_capture,db_session):
+    row=real_capture(catalog="0,10000,123,'RX-correction',456,'Other correction'")
+    original=copy.deepcopy(row.sequence_evidence)
+    assert preview(client,configured,row).json()['eligibility']['eligible_for_adoption'] is True
+    for response in ['1','unknown',None]:
+        envelope=copy.deepcopy(original)
+        for event in envelope['extra']['fixed_route_acquisition']['exchanges']:
+            if event['command']=='SENSe:CORRection:TRANsducer:STATe?':
+                event['response']=response
+        row.sequence_evidence=envelope;db_session.commit()
+        value=preview(client,configured,row).json()
+        assert value['eligibility']['eligible_for_adoption'] is False,value
+        assert value['new_net_loss_db'] is None
+    for command in ["SENSe:CORRection:TRANsducer:SELect 'Other correction'",
+            'SENSe:CORRection:TRANsducer:STATe?']:
+        envelope=copy.deepcopy(original)
+        result=envelope['extra']['fixed_route_acquisition']
+        result['exchanges']=[event for event in result['exchanges'] if event['command']!=command]
+        row.sequence_evidence=envelope;db_session.commit()
+        value=preview(client,configured,row).json()
+        assert value['eligibility']['eligible_for_adoption'] is False,value
+        assert value['new_net_loss_db'] is None

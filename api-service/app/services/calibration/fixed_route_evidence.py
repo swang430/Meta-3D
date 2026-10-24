@@ -1,4 +1,5 @@
 """只核对既有固定通路采集的完整证据，不发仪器指令、不签认证。"""
+import csv
 import math
 import statistics
 
@@ -85,6 +86,12 @@ def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]
             losses[0][0]<powers[0][0] and losses[-1][0]>powers[-1][0],'unverified_output_loss')
         tone_id='pc04_'+result.run_id.hex
         tone=RealPropsimF64Driver.calibration_tone_commands(str(output),tone_id,result.request.frequency_mhz*1e6,result.request.requested_power_dbm)
+        # 原collect_fixed_route：User Reference §20.4.9.5，创建本run单音前必须无其它源。
+        interference=[(i,e) for i,e in ce if e.command=='OUTPut:INTERFerence:GET?']
+        tone_start=next(i for i,e in ce if e.command==tone[0])
+        require(len(interference)==1 and interference[0][0]<tone_start and
+            isinstance(interference[0][1].response,str) and interference[0][1].response.strip()=='0',
+            'unverified_interference_free_source')
         def ordered_commands(rows,expected):
             cursor=iter(rows)
             for command in expected:
@@ -97,7 +104,25 @@ def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]
             before,after=powers[index*2],powers[index*2+1]
             require(equal(before[1].response,sample.source_before_dbm) and equal(after[1].response,sample.source_after_dbm),'source_sample_mismatch')
             window=[(i,e) for i,e in sa if before[0]<i<after[0]]
-            ordered_commands(window,fixed_route_spectrum_commands(result.request.frequency_mhz*1e6))
+            spectrum=fixed_route_spectrum_commands(result.request.frequency_mhz*1e6)
+            # 复用capture_fixed_route_power的目录语义：FSV/A3000手册p1339～1341。
+            # 前两项为存储量，后续大小/文件名成对；每个文件均需选择及关闭回复。
+            catalog_command='SENSe:CORRection:TRANsducer:CATalog?'
+            catalogs=[e for _,e in window if e.command==catalog_command]
+            require(len(catalogs)==1 and isinstance(catalogs[0].response,str),'missing_transducer_catalog')
+            parts=next(csv.reader([catalogs[0].response.strip()],quotechar="'",skipinitialspace=True))
+            require(len(parts)>=2 and len(parts)%2==0,'invalid_transducer_catalog')
+            expected=[FsvaScpi.IDN,spectrum[0],catalog_command]
+            for name in parts[3::2]:
+                require(bool(name) and "'" not in name and '\n' not in name,'invalid_transducer_name')
+                expected.extend([f"SENSe:CORRection:TRANsducer:SELect '{name}'",
+                    'SENSe:CORRection:TRANsducer:STATe?'])
+            expected.extend(spectrum[1:])
+            # 同原事务的实际顺序，不能用其它文件/其它采样窗口的关闭证据替代。
+            actual=[e for _,e in window if e.command!=FsvaScpi.ERR]
+            require([e.command for e in actual]==expected,'missing_transducer_verification')
+            require(all(isinstance(e.response,str) and e.response.strip()=='0' for e in actual
+                if e.command=='SENSe:CORRection:TRANsducer:STATe?'),'external_transducer_correction')
             received=[e for _,e in window if e.command==FsvaScpi.READ_CHP]
             completed=[e for _,e in window if e.command==FsvaScpi.TRIG]
             require(len(received)==1 and equal(received[0].response,sample.received_dbm) and
@@ -106,6 +131,6 @@ def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]
         losses=[(s.source_before_dbm+s.source_after_dbm)/2-(s.received_dbm+result.request.receive_cable_loss_db) for s in result.samples]
         require(equal(statistics.mean(losses),result.net_loss_db) and equal(statistics.stdev(losses),result.sample_std_db),'calculation_mismatch')
         return 'real',[]
-    except (ValueError,TypeError,KeyError,IndexError,AttributeError) as exc:
+    except (ValueError,TypeError,KeyError,IndexError,AttributeError,StopIteration,csv.Error) as exc:
         # 不以读取失败补默认值；具体拒绝码由被触发的原始检查提供。
         return 'unknown',[str(exc) or 'incomplete_measurement_evidence']
