@@ -123,7 +123,7 @@ async def run_base_station_execution_session(
     # 已经 acquire 两台仪器后的迟到检查。它在租约协调锁内执行，但只读冻结配置
     # 与数据库证书，绝不访问传入 HAL；随后才轮到 CE binding/plan 与 BS 对账。
     def _path_loss_preflight(_locked_hal) -> str | None:
-        from app.models.lab_profile import LabProfile
+        from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation
         from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
         from app.services.mimo_ota.path_loss_preflight import (
             evaluate_path_loss_preflight,
@@ -132,21 +132,11 @@ async def run_base_station_execution_session(
         if not isinstance(binding, Mapping):
             return None  # CE strict parser owns this malformed-freeze error.
         config = load_mimo_ota_config(execution)
-        lab_profile_id = binding.get("lab_profile_id") or test_case.lab_profile_id
-        try:
-            lab_profile_pk = (
-                UUID(str(lab_profile_id)) if lab_profile_id is not None else None
-            )
-        except (TypeError, ValueError, AttributeError):
-            return "path-loss preflight has an invalid frozen LabProfile identity"
-        lab = db.get(LabProfile, lab_profile_pk) if lab_profile_pk is not None else None
-        chamber = lab.chamber_config if lab is not None else None
-        if chamber is None:
-            return "path-loss preflight requires a frozen LabProfile chamber"
+        route_freeze=read_execution_route_compensation(execution)
         verdict = evaluate_path_loss_preflight(
             db,
             execution,
-            chamber_id=chamber.id,
+            chamber_id=route_freeze.get('chamber_id'),
             frequency_mhz=config.primary_carrier.frequency_hz / 1e6,
             operating_mode=config.switch_mode_id,
             precheck_strict_cal=config.precheck_strict_cal,

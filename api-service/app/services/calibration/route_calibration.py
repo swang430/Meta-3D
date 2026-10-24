@@ -333,3 +333,9 @@ def assert_route_topologies_deletable(db,topology_ids):
     for model in (RouteCalibrationApplication,RouteCalibrationSelection):
         if db.query(model.id).filter(model.topology_id.in_(topology_ids)).first() is not None:
             raise RouteApplicationConflict('拓扑已有校准采用记录；为保留测量追溯历史，不允许删除或替换该拓扑')
+
+
+def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
+    """统一查询接口；执行创建时冻结返回值，执行消费不得再次调用当前解析。"""
+    from app.services.mimo_ota.route_calibration_freeze import resolve_effective_route_compensation as resolve
+    return resolve(db,lab_id,mode,frequency_mhz)

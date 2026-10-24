@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.services.execution_evidence_outcome import project_execution_evidence_outcome
-from app.services.mimo_ota.path_loss_application import build_path_loss_application
-from app.services.path_loss_calibration_service import ProbePathLossCalibrationService
+from types import SimpleNamespace
+from app.services.mimo_ota.path_loss_application import build_frozen_path_loss_application,build_path_loss_application
+from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,frozen_legacy_certificate,frozen_selected_legacy_certificate,frozen_route_identity_error
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class PathLossPreflight:
     applied_certificate: Any | None
     application: dict[str, Any]
     blocker: str | None
+    route_compensation: dict[str,Any] | None = None
 
 
 def _evaluate_path_loss_provenance_for_measure(
@@ -56,37 +58,30 @@ def evaluate_path_loss_preflight(
     channel_emulator_execution_mode: str,
     execution_evidence_outcome: Any | None = None,
 ) -> PathLossPreflight:
-    """Resolve the existing calibration gate without touching any HAL driver."""
-
+    """只读本执行冻结。历史缺失明确未知，不从当前证书/图补填。"""
     channel_emulator_is_real = channel_emulator_execution_mode == "real"
-    service = ProbePathLossCalibrationService(db, use_mock=False)
-    selection = service.resolve_latest_calibration(
-        chamber_id,
-        frequency_mhz,
-        operating_mode=operating_mode,
-        require_real=channel_emulator_is_real,
-    )
-    if selection.certificate is None and channel_emulator_is_real:
-        selection = service.resolve_latest_calibration(
-            chamber_id,
-            frequency_mhz,
-            operating_mode=operating_mode,
-        )
-    selected = selection.certificate
+    frozen=read_execution_route_compensation(execution)
+    if frozen.get('version')==1 and (frozen['frequency_mhz']!=frequency_mhz or frozen['operating_mode']!=operating_mode):
+        raise ValueError('执行频率/模式与路损冻结身份不一致')
+    legacy_adapter=frozen_legacy_certificate(frozen)
+    selected=legacy_adapter or frozen_selected_legacy_certificate(frozen)
+    selection=SimpleNamespace(certificate=selected,reason=frozen.get('legacy_selection_reason','legacy_unclassified'),
+        coverage_complete=legacy_adapter is not None)
     outcome = (
         execution_evidence_outcome
         if execution_evidence_outcome is not None
         else project_execution_evidence_outcome(execution)
     )
-    if selected is None:
-        usable = False
-        blocker = (
-            "path-loss calibration is missing or expired; real measurement "
-            "strict mode requires a currently valid explicit-real certificate"
-            if channel_emulator_is_real and precheck_strict_cal
-            else None
-        )
-    else:
+    reason='incomplete_coverage'
+    if frozen.get('version')!=1:
+        reason='legacy_unclassified'
+    elif any(row['source_kind']=='confirmed_route' for row in frozen['route_entries']):
+        reason='pending_compensation_wiring'
+    elif frozen['route_entries'] and all(row['source_kind']=='legacy_certificate' for row in frozen['route_entries']) and legacy_adapter is None:
+        reason='pending_compensation_wiring'
+    usable=False
+    blocker=None
+    if selected is not None:
         usable, blocker = _evaluate_path_loss_provenance_for_measure(
             selected.use_mock,
             channel_emulator_is_real=channel_emulator_is_real,
@@ -95,6 +90,18 @@ def evaluate_path_loss_preflight(
         )
         if outcome.compatibility_classification in {"diagnostic", "invalid"}:
             usable = False
+        if not usable:
+            reason='diagnostic'
+    if legacy_adapter is None:
+        usable=False
+    if not usable and blocker is None and channel_emulator_is_real and precheck_strict_cal:
+        blocker=(f'path-loss calibration is missing or expired (frozen selection: {selection.reason})'
+            if selection.reason in ('missing','expired') else f'path-loss frozen source unavailable: {reason}')
+    route_error=frozen_route_identity_error(db,frozen)
+    if route_error is not None:
+        usable=False
+        blocker=route_error
+        reason='route_identity_mismatch'
     applied = selected if usable else None
     gate_mode = (
         "mock_not_applicable"
@@ -103,15 +110,21 @@ def evaluate_path_loss_preflight(
         if precheck_strict_cal
         else "operator_bypass"
     )
+    application=build_frozen_path_loss_application(frozen,gate_mode=gate_mode,applied=applied is not None,reason=reason)
+    # 单份拒绝旧候选/旧缺失原因仍沿v1表达；从冻结读取，不借此给未知链赋值。
+    if reason!='route_identity_mismatch' and frozen.get('version')==1 and not any(
+        row['source_kind']=='confirmed_route' for row in frozen['route_entries']):
+        if selected is not None and selected.use_mock is not False:
+            application=build_path_loss_application(selected_certificate=selected,applied_certificate=None,
+                selection_reason='selected',gate_mode='strict' if gate_mode=='mock_not_applicable' else gate_mode)
+        elif selected is None and selection.reason in ('missing','expired','frequency_mismatch','operating_mode_mismatch'):
+            application=build_path_loss_application(selected_certificate=None,applied_certificate=None,
+                selection_reason=selection.reason,gate_mode=gate_mode)
     return PathLossPreflight(
         selection=selection,
         selected_certificate=selected,
         applied_certificate=applied,
-        application=build_path_loss_application(
-            selected_certificate=selected,
-            applied_certificate=applied,
-            selection_reason=selection.reason,
-            gate_mode=gate_mode,
-        ),
+        application=application,
         blocker=blocker,
+        route_compensation=frozen,
     )

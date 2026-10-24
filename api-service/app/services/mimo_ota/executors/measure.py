@@ -1782,7 +1782,7 @@ class MeasureExecutor(IStepExecutor):
                     f"connect: {provenance_blocker}"
                 ),
             )
-        if selected_path_loss_cert is not None and path_loss_cert is None:
+        if selected_path_loss_cert is not None and path_loss_cert is None and selected_path_loss_use_mock is not False:
             logger.warning(
                 "[%s] P1-27: ignoring untrusted path-loss certificate %s "
                 "(use_mock=%r) for real measurement; strict gate was explicitly "
@@ -2126,6 +2126,15 @@ class MeasureExecutor(IStepExecutor):
                 mode_id=config.switch_mode_id,
                 base_station_port_mapping=base_station_port_mapping,
             )
+            from app.services.mimo_ota.route_calibration_freeze import frozen_route_identity_error
+            from app.services.mimo_ota.path_loss_application import build_frozen_path_loss_application
+            route_error=frozen_route_identity_error(context.db,path_loss_preflight.route_compensation or {},
+                resolved_topology=topology_result)
+            if route_error is not None:
+                return StepExecutionResult(status=StepExecutionStatus.FAILED,error_message=route_error,
+                    measurements={'path_loss_application':build_frozen_path_loss_application(
+                        path_loss_preflight.route_compensation or {},gate_mode=path_loss_application['gate_mode'],
+                        reason='route_identity_mismatch')})
             if topology_result.success:
                 logger.info(
                     "[%s] Phase 2c: switch topology '%s' v%s mode=%s, %d probe bindings",
