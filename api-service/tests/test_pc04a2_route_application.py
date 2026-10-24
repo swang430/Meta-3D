@@ -180,3 +180,80 @@ def test_confirmation_write_failure_rolls_back_and_old_history_does_not_drift(cl
         db_session.commit()
     db_session.rollback()
     assert counts(db_session)==(1,1)
+
+
+@pytest.mark.parametrize('operation',['delete','replace','chamber'])
+def test_topology_with_adoption_history_cannot_be_hard_deleted(client,configured,real_capture,db_session,
+        topology_two_chains,operation):
+    from fastapi.testclient import TestClient
+    row=real_capture()
+    saved=confirm(client,configured,payload(client,configured,row)).json()
+    topology_id=topology_two_chains.id
+    category_id=topology_two_chains.switch_category_id
+    lab_id=configured.id
+    old_chamber_id=topology_two_chains.chamber_id
+    if operation=='chamber':
+        from app.models.chamber import ChamberConfiguration,create_chamber_from_preset
+        db_session.get(ChamberConfiguration,old_chamber_id).is_system_preset=False
+        replacement=create_chamber_from_preset('type_c',name='改绑后的暗室')
+        db_session.add(replacement);db_session.flush()
+        configured.chamber_config_id=replacement.id
+    db_session.commit()
+    db_session.execute(text('PRAGMA foreign_keys=ON'))
+    assert db_session.execute(text('PRAGMA foreign_keys')).scalar()==1
+    # 外部故障也以HTTP响应观察，避免客户端重抛异常掩盖实际500。
+    http=TestClient(app,raise_server_exceptions=False)
+    try:
+        if operation=='delete':
+            response=http.delete(f'/api/v1/switch-topologies/{topology_id}',params={'lab_profile_id':str(lab_id)})
+        elif operation=='replace':
+            response=http.post('/api/v1/switch-topologies/import/from-template',params={
+                'lab_profile_id':str(lab_id),'switch_category_id':str(category_id),
+                'template_id':'caict_v4','replace_existing':True})
+        else:
+            response=http.delete(f'/api/v1/chambers/{old_chamber_id}')
+        assert response.status_code==409,response.text
+        assert '采用' in response.json()['detail']
+    finally:
+        http.close()
+        db_session.rollback()
+    assert counts(db_session)==(1,1)
+    from app.models.switch_topology import SwitchTopology
+    assert db_session.get(SwitchTopology,topology_id) is not None
+    history=client.get(f'/api/v1/lab-profiles/{lab_id}/route-calibration-applications',
+        params={'topology_id':str(topology_id),'chain_id':'conn_p0v'})
+    assert history.json()==[saved]
+
+
+@pytest.mark.parametrize('winner_kind',['same','other_key','other_payload'])
+def test_interleaved_idempotent_confirmation_rechecks_after_business_conflict(client,configured,real_capture,
+        db_session,monkeypatch,winner_kind):
+    from app.services.calibration import route_calibration as service
+    from app.schemas.route_calibration import ConfirmRouteApplication
+    row=real_capture();request=payload(client,configured,row)
+    original=service._replay
+    factory=sessionmaker(bind=db_session.get_bind(),expire_on_commit=False)
+    winner=[]
+    def interleave(db,lab_id,body):
+        value=original(db,lab_id,body)
+        if db is db_session and value is None and not winner:
+            # A读到无幂等记录后，B用独立会话完整确认。只控制交错，不mock评估。
+            other=dict(request)
+            if winner_kind=='other_key':
+                other['idempotency_key']=str(uuid4())
+            elif winner_kind=='other_payload':
+                other['adoption_valid_until']=(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()
+            with factory() as second:
+                record,created=service.confirm_route_application(second,lab_id,
+                    ConfirmRouteApplication.model_validate(other),actor=None)
+                assert created is True
+                winner.append(record.model_dump(mode='json'))
+        return value
+    monkeypatch.setattr(service,'_replay',interleave)
+    response=confirm(client,configured,request)
+    if winner_kind=='same':
+        assert response.status_code==200,response.text
+        assert response.json()==winner[0]
+    else:
+        assert response.status_code==409,response.text
+    assert counts(db_session)==(1,1)

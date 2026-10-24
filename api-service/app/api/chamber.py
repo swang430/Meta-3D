@@ -37,6 +37,7 @@ from app.services.chamber_resolution import (
     resolve_current_chamber,
 )
 from app.services.lab_resolution import LabResolutionError, resolve_lab_profile
+from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
 router = APIRouter(prefix="/chambers", tags=["Chamber Configuration"])
 
@@ -364,6 +365,7 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     守门:
     - 系统预设 → 409 (不可删)
     - 被 lab profile 引用 → 409 (先改指向/删除该 lab, 避免 orphan 掉 lab 的暗室关联)
+    - 所含拓扑已被校准采用历史引用 → 409 (不可随配置删除历史)
 
     依赖清理 (避免 orphan / FK 报错):
     - switch_topologies.chamber_id 是 RESTRICT 外键 → 必须先删该暗室的拓扑, 否则 500
@@ -406,6 +408,14 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
                 "为保留测量追溯性不允许删除。"
             ),
         )
+
+    # lab改绑后仍须保留旧拓扑的采用历史，不能让下面的bulk delete撞外键。
+    topology_ids=[row.id for row in db.query(SwitchTopology).filter(
+        SwitchTopology.chamber_id==chamber_id).all()]
+    try:
+        assert_route_topologies_deletable(db,topology_ids)
+    except RouteApplicationConflict as exc:
+        raise HTTPException(409,detail=str(exc)) from exc
 
     # 清理依赖后删暗室 (单事务)
     deleted_topos = db.query(SwitchTopology).filter(

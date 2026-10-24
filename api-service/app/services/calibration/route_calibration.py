@@ -297,6 +297,13 @@ def confirm_route_application(db,lab_id: UUID,request: ConfirmRouteApplication,a
                 raise RouteApplicationConflict('当前选择已被另一确认推进')
         db.commit()  # 提交失败不能向HTTP返回已应用。
         return record,True
+    except RouteApplicationConflict:
+        db.rollback()
+        # 另一会话可能已完成同一操作；先读已提交同键同载荷真值，而非把成功误报为CAS失败。
+        existing=_replay(db,lab_id,request)
+        if existing is not None:
+            return existing,False
+        raise
     except (IntegrityError,OperationalError) as exc:
         db.rollback()
         if isinstance(exc,OperationalError) and not (
@@ -319,3 +326,10 @@ def list_route_applications(db,lab_id: UUID,topology_id: UUID,chain_id: str):
     # 只反序列化不可变记录；不以当前图、run或当前期限重算历史。
     return sorted((RouteApplicationRecord.model_validate(row.record) for row in rows),
         key=lambda record:record.confirmed_at,reverse=True)
+
+
+def assert_route_topologies_deletable(db,topology_ids):
+    """采用历史不能随配置硬删除；不解除外键、不级联、不重写旧记录。"""
+    for model in (RouteCalibrationApplication,RouteCalibrationSelection):
+        if db.query(model.id).filter(model.topology_id.in_(topology_ids)).first() is not None:
+            raise RouteApplicationConflict('拓扑已有校准采用记录；为保留测量追溯历史，不允许删除或替换该拓扑')
