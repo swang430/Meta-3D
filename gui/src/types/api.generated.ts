@@ -4,6 +4,24 @@
  */
 
 export interface paths {
+    "/api/v1/lab-profiles/{lab_profile_id}/f64-calibration-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** History */
+        get: operations["history_api_v1_lab_profiles__lab_profile_id__f64_calibration_state_get"];
+        put?: never;
+        /** Capture */
+        post: operations["capture_api_v1_lab_profiles__lab_profile_id__f64_calibration_state_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calibration/path-loss/fixed-route/preview": {
         parameters: {
             query?: never;
@@ -2787,6 +2805,128 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** F64StateRecord */
+        F64StateRecord: {
+            /**
+             * Diagnostic Run Id
+             * Format: uuid
+             */
+            diagnostic_run_id: string;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Run At
+             * Format: date-time
+             */
+            run_at: string;
+            /** Success */
+            success: boolean;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Record Status
+             * @enum {string}
+             */
+            record_status: "complete" | "incomplete";
+            state?: components["schemas"]["F64CalibrationState"] | null;
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+        };
+        /** F64CalibrationState */
+        F64CalibrationState: {
+            requested: components["schemas"]["F64StateRequest"];
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /** Binding Digest */
+            binding_digest: string;
+            /** Instrument Id */
+            instrument_id: string;
+            /**
+             * Acquisition Status
+             * @enum {string}
+             */
+            acquisition_status: "recorded" | "simulated";
+            /** Fields */
+            fields: components["schemas"]["F64StateField"][];
+            /**
+             * Diagnostic Only
+             * @default true
+             * @constant
+             */
+            diagnostic_only: true;
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+            /** Warnings */
+            warnings?: string[];
+            /** Query Evidence */
+            query_evidence?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Steps */
+            steps?: components["schemas"]["SequenceStepEvidence"][];
+        };
+        /** F64StateRequest */
+        F64StateRequest: {
+            /** Group Id */
+            group_id: number;
+            /** Input Port */
+            input_port: number;
+            /** Output Port */
+            output_port: number;
+        };
+        /** F64StateField */
+        F64StateField: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @default unknown
+             * @enum {string}
+             */
+            status: "confirmed" | "unknown" | "simulated";
+            value?: components["schemas"]["JsonValue"];
+            /** Raw */
+            raw?: string | null;
+            /** Source Reference */
+            source_reference: string;
+            /**
+             * Detail
+             * @default 尚未读取
+             */
+            detail: string;
+        };
+        /** SequenceStepEvidence */
+        SequenceStepEvidence: {
+            /** Label */
+            label: string;
+            /** Success */
+            success: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Raw */
+            raw?: string | null;
+        };
         /** FixedRouteCalibrationDeclaration */
         FixedRouteCalibrationDeclaration: {
             /**
@@ -4843,6 +4983,74 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    history_api_v1_lab_profiles__lab_profile_id__f64_calibration_state_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["F64StateRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_api_v1_lab_profiles__lab_profile_id__f64_calibration_state_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["F64StateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["F64StateRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     preview_fixed_route_calibration_api_v1_calibration_path_loss_fixed_route_preview_post: {
         parameters: {
             query?: never;

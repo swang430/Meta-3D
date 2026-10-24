@@ -280,6 +280,8 @@ app.include_router(diagnostic_run.router, prefix=settings.api_v1_prefix)
 
 # Diagnostic sequences (P3 Phase 2) — list + run sequence modules
 app.include_router(diagnostic_sequence.router, prefix=settings.api_v1_prefix)
+from app.api import f64_calibration_state
+app.include_router(f64_calibration_state.router, prefix=settings.api_v1_prefix)
 
 # Path loss calibration
 app.include_router(path_loss_router, prefix=settings.api_v1_prefix)
