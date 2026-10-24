@@ -1,5 +1,6 @@
 """保存拓扑的完整固定通路声明；不是实物接通或正式校准资格。"""
 from uuid import UUID
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 
@@ -65,3 +66,27 @@ class RouteSelection(BaseModel):
         check_sequence([self.node_ids[-1],*self.calibration_node_ids],
             [self.nodes[-1],*self.calibration_nodes],self.calibration_connection_ids,self.calibration_connections)
         return self
+
+
+class RouteEligibility(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    eligible_for_adoption: bool
+    blockers: list[str]
+    warnings: list[str]
+    acquisition_run_id: UUID
+    route_digest: str | None = None
+    method: str | None = None
+    frequency_mhz: float | None = Field(default=None,allow_inf_nan=False)
+    measurement_provenance: Literal['real','simulated','unknown']
+    certification_status: Literal['unknown'] = 'unknown'
+
+
+class RouteApplicationPreview(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    selection: RouteSelection | None
+    acquisition_run_id: UUID
+    expected_current_application_id: UUID | None = None
+    old_value_db: float | None = Field(default=None,allow_inf_nan=False)
+    new_net_loss_db: float | None = Field(default=None,allow_inf_nan=False)
+    delta_db: float | None = Field(default=None,allow_inf_nan=False)
+    eligibility: RouteEligibility

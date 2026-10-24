@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.models.lab_profile import LabProfile
 from app.models.switch_topology import SwitchTopology
-from app.schemas.route_calibration import RouteSelection
+from app.schemas.route_calibration import RouteSelection, RouteEligibility, RouteApplicationPreview
 from app.services.calibration.rf_chain_resolver import resolve_declared_calibration_ce_port
 
 
@@ -141,3 +141,47 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
     if len(physical_outputs) != len(set(physical_outputs)):
         raise ValueError('同一F64输出口存在多个可达通路，不能确定单条固定接线')
     return sorted(selections,key=lambda r:r.chain_id)
+
+
+def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicationPreview:
+    """只读采用准备状态；不签认证、不创建应用记录、不补历史或制造截止状态。"""
+    from app.models.diagnostic_run import DiagnosticRun
+    from app.services.calibration import fixed_route_jobs as jobs
+    from app.services.calibration.fixed_route_evidence import check_fixed_route_evidence
+
+    row=db.query(DiagnosticRun).filter_by(id=run_id,lab_profile_id=lab_id,
+        target_name=jobs.TARGET,kind='scpi_sequence').one_or_none()
+    if row is None:
+        raise LookupError('本实验室中没有这条采集记录')
+    record=jobs.record(row)
+    result=record.result
+    selection=None
+    warnings=['尚未创建选用记录；选用截止时间由后续确认操作明确填写并校验，不是证书期限']
+    blockers=[]
+    provenance='unknown'
+    measured_value=None
+    if result is None:
+        blockers.append('incomplete_capture_record')
+    else:
+        warnings.extend(result.missing_items)
+        provenance,blockers=check_fixed_route_evidence(result)
+        if result.version==2:
+            selection=RouteSelection.model_validate(result.configuration['route_selection'])
+        if provenance=='real' and not blockers:
+            measured_value=result.net_loss_db
+        if selection is not None:
+            try:
+                current=list_route_selections(db,lab_id,selection.topology_id,selection.operating_mode)
+                matching=[route for route in current if route.chain_id==selection.chain_id]
+                if len(matching)!=1 or matching[0].route_digest!=selection.route_digest:
+                    blockers.append('route_mismatch')
+                elif matching[0].nodes!=selection.nodes or matching[0].calibration_nodes!=selection.calibration_nodes:
+                    warnings.append('保存图的显示或其他声明有变化，请复核；未据此要求重新校准')
+            except (LookupError,ValueError):
+                blockers.append('route_unavailable')
+    eligibility=RouteEligibility(eligible_for_adoption=not blockers,blockers=blockers,warnings=warnings,
+        acquisition_run_id=run_id,route_digest=selection.route_digest if selection else None,
+        method=result.method if result else None,frequency_mhz=result.request.frequency_mhz if result else None,
+        measurement_provenance=provenance)
+    return RouteApplicationPreview(selection=selection,acquisition_run_id=run_id,
+        new_net_loss_db=measured_value,eligibility=eligibility)
