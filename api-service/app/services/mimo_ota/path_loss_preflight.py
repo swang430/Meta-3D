@@ -7,8 +7,9 @@ from typing import Any, Optional
 
 from app.services.execution_evidence_outcome import project_execution_evidence_outcome
 from types import SimpleNamespace
+from uuid import UUID
 from app.services.mimo_ota.path_loss_application import build_frozen_path_loss_application,build_path_loss_application
-from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,frozen_legacy_certificate,frozen_selected_legacy_certificate,frozen_route_identity_error
+from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,frozen_legacy_certificate,frozen_selected_legacy_certificate,frozen_route_identity_error,frozen_route_output_ports
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,17 @@ def evaluate_path_loss_preflight(
         reason='unsupported_compensation_mode'
         blocker=('该信道生成路径没有整条参考面补偿消费者，未应用冻结值'
             if channel_emulator_is_real and precheck_strict_cal else None)
+    elif usable and frozen.get('route_entries'):
+        from app.models.chamber import ChamberConfiguration
+        try:
+            chamber=db.get(ChamberConfiguration,UUID(str(chamber_id))) if chamber_id is not None else None
+            if chamber is None:
+                raise ValueError('缺少实际暗室配置，无法核对ASC端口映射')
+            frozen_route_output_ports(frozen,chamber.num_probes,chamber.num_polarizations)
+        except ValueError as exc:
+            usable=False
+            reason='unsupported_compensation_mode'
+            blocker=str(exc) if channel_emulator_is_real and precheck_strict_cal else None
     applied = legacy_adapter if usable else None
     gate_mode = (
         "mock_not_applicable"

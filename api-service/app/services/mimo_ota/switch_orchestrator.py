@@ -199,9 +199,9 @@ def _build_probe_binding(
             or "?"
         )
     )
+    from app.services.calibration.rf_chain_resolver import resolve_declared_calibration_ce_port
     if source is not None and source.get('type') not in ('ce_port','channel_emulator'):
         # 当前保存图的完整正常接线，而非执行冻结副本；复用采集端的CE端口解释。
-        from app.services.calibration.rf_chain_resolver import resolve_declared_calibration_ce_port
         path_nodes,path_edges,seen=[target],[connection],{target_id}
         current=source
         while current.get('type') not in ('ce_port','channel_emulator'):
@@ -218,6 +218,8 @@ def _build_probe_binding(
             raise ValueError('正常测试CE源端存在回接')
         path_nodes.insert(0,current)
         ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges)
+    elif source is not None:
+        ce_port_label=resolve_declared_calibration_ce_port([source,target],[connection])
 
     # Probe binding params (id, polarization) — convention is they live on the
     # probe node's params dict; fall back to parsing the label.

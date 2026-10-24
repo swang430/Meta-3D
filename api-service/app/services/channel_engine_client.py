@@ -557,21 +557,15 @@ class ChannelEngineClient:
 
         if route_compensation is not None:
             from types import SimpleNamespace
-            from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,FREEZE_KEY
+            from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,FREEZE_KEY,frozen_route_output_ports
             frozen=read_execution_route_compensation(SimpleNamespace(id=route_compensation['execution_id'],
                 config={FREEZE_KEY:route_compensation}))
             rows=frozen['route_entries']
-            from app.services.probe_pattern.consumer import infer_rf_chain_probe_id_base
-            base=infer_rf_chain_probe_id_base(chamber.num_probes,[row['probe_id'] for row in rows])
-            if base is None:
-                raise ValueError('冻结探头编号不能明确映射到物理端口，禁止猜测0/1基编号')
-            for row in rows:
+            ports=frozen_route_output_ports(frozen,chamber.num_probes,chamber.num_polarizations)
+            for row,port_id in zip(rows,ports):
                 if row['source_kind']=='unavailable' or row['measurement_provenance']!='real':
                     continue
                 new=row['source_kind']=='confirmed_route'
-                port_id=(row['probe_id']-base)*chamber.num_polarizations+(1 if row['polarization']=='V' else 2)
-                if row['polarization']=='H' and chamber.num_polarizations<2 or not 1<=port_id<=num_ports:
-                    raise ValueError('冻结探头编号/极化不属于当前物理端口范围')
                 entries.append(dict(port_id=port_id,
                     cable_loss_db=row['value_db'],probe_gain_dbi=0.0 if new else float(chamber.probe_gain_dbi),
                     cable_phase_deg=0.0,method=row['method'],reference_plane=row['reference_plane'],

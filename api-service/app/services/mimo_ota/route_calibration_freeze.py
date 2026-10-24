@@ -222,6 +222,29 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
     return None
 
 
+def frozen_route_output_ports(frozen,num_probes,num_polarizations):
+    """现有ASC不重排输出；只允许冻结CE实际口与默认ASC端口一致。零仪器I/O。"""
+    from app.services.probe_pattern.consumer import infer_rf_chain_probe_id_base
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    rows=frozen['route_entries']
+    base=infer_rf_chain_probe_id_base(num_probes,[row['probe_id'] for row in rows])
+    if base is None:
+        raise ValueError('冻结探头编号不能明确映射到物理端口，禁止猜测0/1基编号')
+    ports=[]
+    for row in rows:
+        port=(row['probe_id']-base)*num_polarizations+(1 if row['polarization']=='V' else 2)
+        if row['polarization']=='H' and num_polarizations<2 or not 1<=port<=num_probes*num_polarizations:
+            raise ValueError('冻结探头编号/极化不属于当前物理端口范围')
+        try:
+            output=int(RealPropsimF64Driver._ce_port_to_output_num(row['ce_port']))
+        except (ValueError,TypeError) as exc:
+            raise ValueError('冻结CE输出口无法核对ASC端口映射') from exc
+        if output!=port:
+            raise ValueError('冻结CE输出口与ASC默认端口映射不一致；尚不支持非默认输出接线补偿')
+        ports.append(port)
+    return ports
+
+
 def read_execution_route_compensation(execution):
     config=execution.config if isinstance(execution.config,dict) else {}
     if FREEZE_KEY not in config:

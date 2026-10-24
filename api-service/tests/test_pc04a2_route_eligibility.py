@@ -13,7 +13,7 @@ from app.models.instrument import InstrumentCategory
 
 @pytest.fixture
 def real_capture(client, configured, db_session, monkeypatch):
-    def capture(source='-30',received='-60',catalog='0,10000'):
+    def capture(source='-30',received='-60',catalog='0,10000',output=1):
         from app.services.calibration import fixed_route_jobs as jobs
         from app.hal.propsim_f64 import RealPropsimF64Driver
         from app.hal.rs_fsva import RealRsFsvaDriver
@@ -24,8 +24,8 @@ def real_capture(client, configured, db_session, monkeypatch):
         sa=RealRsFsvaDriver('sa-real-script',{'ip':'192.0.2.10'})
         ce_resource=_ScriptedVisaResource({'*IDN?':'Keysight Technologies,F8800A,SN-CE,8.0',
             'SYSTem:ERRor?':'0,"No error"','DIAG:SIMU:STATE?':'RUNNING',
-            'OUTPut:INTERFerence:GET?':'0','OUTPut:LOSS:GET? 1':'0',
-            'OUTPut:MEASure:RESult:GET? 1,1':source,'SYSTem:CALIBration:VALid?':'1,1',
+            'OUTPut:INTERFerence:GET?':'0',f'OUTPut:LOSS:GET? {output}':'0',
+            f'OUTPut:MEASure:RESult:GET? {output},1':source,'SYSTem:CALIBration:VALid?':'1,1',
             'SYSTem:CALIBration:USER:GET?':'','OUTPut:GAIN:CH? 1':'0'})
         sa_resource=_ScriptedVisaResource({'*IDN?':'Rohde&Schwarz,FSVA3044,SN-SA,1.0',
             'SENSe:CORRection:TRANsducer:CATalog?':catalog,

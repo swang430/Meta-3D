@@ -9,6 +9,69 @@ from app.services.mimo_ota.switch_orchestrator import orchestrate_switch_topolog
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('source_kind',['confirmed','legacy'])
+@pytest.mark.parametrize('consumer',['entries','preflight'])
+async def test_crossed_ce_outputs_cannot_claim_or_build_waveform_compensation(client,configured,
+        real_capture,legacy,launch,db_session,topology_two_chains,chamber,source_kind,consumer):
+    # 实际接线B1.2→0V/B1.1→0H；没有输出重排消费者，不能仍向ASC 1/2写V/H值。
+    topology_two_chains.nodes=[{**n,'label':{'ce_b1':'B1.2','ce_b2':'B1.1'}.get(n['id'],n['label'])}
+        for n in topology_two_chains.nodes]
+    legacy.path_loss_db_by_rf_chain={key:{**row,'ce_port':'B1.2' if key=='conn_p0v' else 'B1.1'}
+        for key,row in legacy.path_loss_db_by_rf_chain.items()}
+    db_session.commit()
+    if source_kind=='confirmed':
+        run=real_capture(output=2)
+        response=confirm(client,configured,payload(client,configured,run))
+        assert response.status_code==201,response.text
+    execution=await launch()
+    if consumer=='entries':
+        with pytest.raises(ValueError,match='映射'):
+            ChannelEngineClient(db_session)._query_calibration_entries(chamber.id,2595e6,chamber,
+                path_loss_calibration=None,route_compensation=execution.config['route_calibration_freeze'])
+    else:
+        from app.services.mimo_ota.path_loss_application import applied_route_by_probe_pol,path_loss_measurement_is_verified
+        # 托管会话读JSON冻结ID（str），MEASURE传ORM UUID；两入口同一拒绝判据。
+        for strict,mode,chamber_value in ((True,'real',chamber.id),(True,'real',str(chamber.id)),
+                (False,'real',chamber.id),(True,'mock',chamber.id)):
+            verdict=evaluate_path_loss_preflight(db_session,execution,chamber_id=chamber_value,frequency_mhz=2595,
+                operating_mode='mimo_ota',precheck_strict_cal=strict,channel_emulator_execution_mode=mode)
+            assert verdict.application['status']=='not_applied'
+            assert verdict.application['reason']=='unsupported_compensation_mode'
+            assert verdict.applied_certificate is None and applied_route_by_probe_pol(verdict.application)=={}
+            assert not path_loss_measurement_is_verified({'path_loss_application':verdict.application})
+            assert (verdict.blocker is not None)==(strict and mode=='real')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('node_type',['ce_port','channel_emulator'])
+@pytest.mark.parametrize('multihop',[False,True])
+async def test_declared_ce_port_not_display_label_drives_actual_target(client,configured,real_capture,
+        legacy,launch,db_session,topology_two_chains,chamber,node_type,multihop):
+    topology_two_chains.nodes=[{**n,'type':node_type,'label':'Display F64',
+        'params':{**n.get('params',{}),'ce_port':'B1.1'}} if n['id']=='ce_b1' else n
+        for n in topology_two_chains.nodes]
+    if multihop:
+        topology_two_chains.nodes=[*topology_two_chains.nodes,{'id':'pad','type':'pad','label':'显示衰减器','params':{'ports':['in','out']}}]
+        topology_two_chains.connections=[{**edge,'source':'pad'} if edge['id']=='conn_p0v' else edge
+            for edge in topology_two_chains.connections]+[{'id':'feed-pad','source':'ce_b1','target':'pad','source_pin':'out','target_pin':'in','modes':['mimo_ota']}]
+        topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal','active_connections':['feed-pad','conn_p0v','conn_p0h']}]
+    db_session.commit()
+    run=real_capture()
+    response=confirm(client,configured,payload(client,configured,run))
+    assert response.status_code==201,response.text
+    execution=await launch()
+    actual=orchestrate_switch_topology(db_session,chamber.id,'mimo_ota')
+    assert next(row.ce_port for row in actual.probe_bindings if row.connection_id=='conn_p0v')=='B1.1'
+    assert frozen_route_identity_error(db_session,execution.config['route_calibration_freeze'],resolved_topology=actual) is None
+    verdict=evaluate_path_loss_preflight(db_session,execution,chamber_id=chamber.id,frequency_mhz=2595,
+        operating_mode='mimo_ota',precheck_strict_cal=True,channel_emulator_execution_mode='real')
+    assert verdict.blocker is None and verdict.application['status']=='applied'
+    entries=ChannelEngineClient(db_session)._query_calibration_entries(chamber.id,2595e6,chamber,
+        path_loss_calibration=None,route_compensation=verdict.route_compensation)
+    assert [(row['port_id'],row['cable_loss_db']) for row in entries]==[(1,28),(2,30)]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('source,received,want',[('-30','-60',28),('-20','-10',-12)])
 @pytest.mark.parametrize('tag_fallback',[False,True])
 async def test_real_multihop_mixed_freeze_reaches_compensation_once(client,configured,real_capture,legacy,
