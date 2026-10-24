@@ -221,4 +221,10 @@ test('正式集合无候选时批child仍以冻结保存路径进入原采用门
   assert.equal(state.routeForAdoption(scope as never,{...record,batch_context:{active:true,finalized:false}} as never,undefined),undefined)
   assert.equal(state.canAdoptRoute(scope as never,frozen,{...preview,eligibility:{eligible_for_adoption:false,measurement_provenance:'simulated'}} as never),false)
   assert.equal(state.canAdoptRoute(scope as never,frozen,preview,'other-run'),false)
+  for(const snapshot of [{},{digest:'c'.repeat(64),configuration_complete:true},{digest:'c'.repeat(64),configuration_complete:true,payload:{}},
+    {digest:'c'.repeat(64),configuration_complete:true,payload:{lab_profile_id:'lab',chamber_id:'chamber',operating_mode:'mimo_ota'}},
+    null,[],{payload:[]},{payload:{topology:null}},{payload:{topology:[]}}]){
+    const historical={...record,result:{...record.result,configuration:{...record.result!.configuration,snapshot}}}
+    assert.equal(state.routeForAdoption(scope as never,historical as never,undefined),undefined)
+  }
 })

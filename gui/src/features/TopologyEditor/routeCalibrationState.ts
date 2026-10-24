@@ -100,7 +100,13 @@ export function batchItemRoute(item:Pick<BatchPlan['items'][number],'route_selec
 export function routeForAdoption(scope:RouteScope,record:FixedRouteRecord|undefined,singleRoute:RouteSelection|undefined):RouteSelection|undefined {
   if(!record?.batch_context&&!record?.result?.states?.batch_job_id)return routeMatchesSaved(scope,singleRoute)?singleRoute:undefined
   if(!batchChildReady(record)||!record?.result)return undefined
-  const frozen=runningRouteIdentity(record),snapshot=record.result.configuration.snapshot as BatchPlan['items'][number]['configuration_scope']|undefined
+  const raw=record.result.configuration.snapshot
+  // 历史configuration是不透明JSON；缺损snapshot保持未知，不从当前配置补齐，也不让显示读取抛错。
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return undefined
+  if(!('configuration_complete' in raw)||raw.configuration_complete!==true||!('digest' in raw)||typeof raw.digest!=='string'||!('payload' in raw))return undefined
+  const payload=raw.payload
+  if(!payload||typeof payload!=='object'||Array.isArray(payload)||!('topology' in payload)||!payload.topology||typeof payload.topology!=='object'||Array.isArray(payload.topology))return undefined
+  const frozen=runningRouteIdentity(record),snapshot=raw as BatchPlan['items'][number]['configuration_scope']
   const selected=frozen&&snapshot?batchItemRoute({route_selection:frozen,configuration_scope:snapshot,request:record.result.request}):undefined
   return routeMatchesSaved(scope,selected)?selected:undefined
 }
