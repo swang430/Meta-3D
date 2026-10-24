@@ -11,10 +11,21 @@ from app.schemas.route_batch import BatchPlanRequest,BatchPlan,BatchPlanItem
 from app.services.calibration.configuration_scope import build_selected_route_calibration_scope
 from app.services.calibration.route_calibration import resolve_explicit_route_selection,route_switch_steps,RouteScopeConflict
 from app.services.declared_rf_routes import resolve_saved_rf_path
+from app.models.instrument import InstrumentConnection
 
 
 def _digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+
+
+def snapshot_switch_connection(connection):
+    """只留影响实际地址/指令封装的白名单，不含凭据。"""
+    config=dict(endpoint=connection.endpoint,ip=connection.controller_ip,
+        port=connection.port,protocol=connection.protocol)
+    config.update({key:value for key,value in (connection.connection_params or {}).items() if key in (
+        'ip','controller_ip','ip_address','endpoint','visa_resource','port','protocol',
+        'transport','command_style','line_terminator')})
+    return config
 
 
 def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> BatchPlan:
@@ -44,6 +55,10 @@ def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> 
         if not scope.configuration_complete:
             raise ValueError('当前单项配置不完整：'+'；'.join(scope.warnings))
         steps=route_switch_steps(db,topology,route.nodes,route.connections,lab)
+        # 仅冻结生效地址和命令封装白名单；不复制连接凭据或其它任意参数。
+        for step in steps:
+            connection=db.get(InstrumentConnection,UUID(step['connection_id']))
+            step['connection_config']=snapshot_switch_connection(connection)
         selected.append((route,steps))
         for frequency in sorted(request.frequencies_mhz):
             ref=references[(chain,frequency)]
@@ -69,9 +84,18 @@ def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> 
                 for a in steps for b in other_steps)
             if not exclusive:
                 raise ValueError('批复用CE输出必须保存互斥开关映射')
+    # 声明绑定本次具体绑定/映射集合；不让一次确认自动覆盖以后新增或改动的通路。
+    switch_scope=sorted({_digest(s.model_dump(mode='json')):s.model_dump(mode='json')
+        for item in items for s in item.switch_steps}.values(),key=lambda s:(s['category_id'],s['node_id'],s['path_name']))
+    scope_digest=_digest(switch_scope) if switch_scope else None
+    confirmation=request.switch_wiring_confirmation
+    if confirmation is not None and confirmation.switch_scope_digest!=scope_digest:
+        raise ValueError('操作员接线声明范围与本次冻结开关映射不一致，请重新预览并确认')
     payload=dict(version=1,lab_profile_id=str(lab_id),topology_id=str(topology.id),operating_mode=request.operating_mode,
-        items=[i.model_dump(mode='json') for i in items])
+        items=[i.model_dump(mode='json') for i in items],switch_scope_digest=scope_digest,
+        switch_wiring_confirmation=confirmation.model_dump(mode='json') if confirmation else None)
     digest=_digest(payload)
     if request.preview_digest is not None and request.preview_digest!=digest:
         raise ValueError('预览摘要已变化，请重新预览')
-    return BatchPlan(lab_profile_id=lab_id,topology_id=topology.id,items=items,preview_digest=digest)
+    return BatchPlan(lab_profile_id=lab_id,topology_id=topology.id,items=items,preview_digest=digest,
+        switch_scope_digest=scope_digest,switch_wiring_confirmation=confirmation)

@@ -3,7 +3,7 @@ import copy
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel,ConfigDict,Field,model_validator,field_validator
+from pydantic import AwareDatetime,BaseModel,ConfigDict,Field,model_validator,field_validator
 from app.schemas.fixed_route_acquisition import FixedRouteRequest,Text,Number
 from app.schemas.route_calibration import RouteSelection
 from app.schemas.calibration_scope import CalibrationScopeSnapshot
@@ -18,6 +18,15 @@ class BatchReference(BaseModel):
     receive_cable_source: Text
 
 
+class BatchSwitchWiringConfirmation(BaseModel):
+    """人工接线声明，不是SCPI验证或RF验收；operator是自述，不能冒称认证身份。"""
+    model_config=ConfigDict(extra='forbid',frozen=True)
+    operator: Text
+    confirmed_at: AwareDatetime
+    note: Text
+    switch_scope_digest: str=Field(pattern=r'^[a-f0-9]{64}$')
+
+
 class BatchPlanRequest(BaseModel):
     model_config=ConfigDict(extra='forbid',frozen=True)
     topology_id: UUID
@@ -30,6 +39,7 @@ class BatchPlanRequest(BaseModel):
     fixed_route_confirmed: Literal[True]
     safety_confirmed: Literal[True]
     preview_digest: str | None=Field(default=None,pattern=r'^[a-f0-9]{64}$')
+    switch_wiring_confirmation: BatchSwitchWiringConfirmation | None=None
 
     @field_validator('fixed_route_confirmed','safety_confirmed',mode='before')
     @classmethod
@@ -63,15 +73,16 @@ class BatchSwitchStep(BaseModel):
     instrument_model_id: UUID
     driver_mode: str
     mapping: dict
+    connection_config: dict=Field(default_factory=dict)
 
-    @field_validator('mapping')
+    @field_validator('mapping','connection_config')
     @classmethod
     def detach_mapping(cls,value):
         return copy.deepcopy(value)
 
     def __getattribute__(self,name):
         value=super().__getattribute__(name)
-        return copy.deepcopy(value) if name=='mapping' else value
+        return copy.deepcopy(value) if name in ('mapping','connection_config') else value
 
 
 class BatchPlanItem(BaseModel):
@@ -108,5 +119,7 @@ class BatchPlan(BaseModel):
     topology_id: UUID
     operating_mode: Literal['mimo_ota']='mimo_ota'
     items: tuple[BatchPlanItem,...]
+    switch_scope_digest: str | None=Field(default=None,pattern=r'^[a-f0-9]{64}$')
+    switch_wiring_confirmation: BatchSwitchWiringConfirmation | None=None
     preview_digest: str=Field(pattern=r'^[a-f0-9]{64}$')
     formal_eligible: Literal[False]=False

@@ -297,7 +297,8 @@ def test_batch_output_nested_working_copies_cannot_rewrite_frozen_plan(db_sessio
     assert restored.model_dump(mode='json')==original
     assert restored.preview_digest==plan.preview_digest
     import hashlib,json
-    body={key:original[key] for key in ('version','lab_profile_id','topology_id','operating_mode','items')}
+    body={key:original[key] for key in ('version','lab_profile_id','topology_id','operating_mode','items',
+        'switch_scope_digest','switch_wiring_confirmation')}
     encoded=json.dumps(body,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
     assert hashlib.sha256(encoded.encode()).hexdigest()==restored.preview_digest
     restored.items[0].configuration_scope.payload.chains[0].ce_port='B9'

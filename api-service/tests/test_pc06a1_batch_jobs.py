@@ -312,16 +312,20 @@ async def test_start_commit_failure_never_spawns_task_or_holds_guard(db_session,
     assert not jobs._running and active_unsafe_diagnostic() is None
 
 
-async def test_missing_switch_module_refuses_emission_not_manual_bypass(db_session,configured,shared_switch,runtime,monkeypatch):
+async def test_unqualified_switch_refuses_emission_not_manual_bypass(db_session,configured,shared_switch,runtime,monkeypatch):
     jobs,hal=runtime;topo,_=shared_switch
     monkeypatch.setattr(jobs,'_prepare_item',hal.batch_prepare)
-    async def forbidden(*args,**kwargs): pytest.fail('未接Task3不能对开关路径发射')
+    async def forbidden(*args,**kwargs): pytest.fail('未确认具体映射接线不能对开关路径发射')
     monkeypatch.setattr(jobs,'collect_fixed_route',forbidden)
     value=await start_previewed(jobs,db_session,configured.id,request_for(topo,frequencies=(2595.,)),idempotency_key=uuid4())
-    ident=UUID(value['job_id']);await jobs._running[ident].task
-    db_session.expire_all();value=jobs.record(db_session,db_session.get(DiagnosticRun,ident))
-    assert value['status']=='failed' and '尚未接入' in value['error']
-    assert all(i['run_id'] is None for i in value['items'])
+    ident=UUID(value['job_id']);task=jobs._running[ident].task
+    try:
+        await advance(jobs,db_session,configured,ident)
+        value=await wait_state(jobs,db_session,ident,'paused_failure')
+        assert '声明' in value['error']
+        assert all(i['run_id'] is None for i in value['items'])
+    finally:
+        jobs.request_cancel(ident);await task
 
 
 def test_batch_context_cannot_be_boolean_or_foreign_job(db_session,configured,shared_switch,runtime):

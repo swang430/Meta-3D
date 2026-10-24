@@ -15,12 +15,15 @@ from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.schemas.fixed_route_acquisition import FixedRouteResult
 from app.schemas.route_batch import BatchPlan
 from app.services.calibration import fixed_route_jobs as single
-from app.services.calibration.route_batch_plan import build_batch_plan
+from app.services.calibration.route_batch_plan import build_batch_plan, snapshot_switch_connection
+from app.models.instrument import InstrumentConnection
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
 from app.services.instrument_hal_service import get_hal_service
 from app.services.instrument_test_lease import instrument_test_lease, await_completion_despite_cancellation
 from app.services.execution_exclusion_guard import try_acquire_unsafe_diagnostic, release_unsafe_diagnostic
 from app.services.test_case_runner import has_active_case_run, has_running_case_run_row
+from app.services.calibration.route_batch_switch import apply_batch_switch_steps
+from app.services.instrument_hal_service import is_mock_driver
 
 logger=logging.getLogger(__name__)
 TARGET='route_calibration_batch'
@@ -43,6 +46,10 @@ class RunningBatch:
     task: asyncio.Task | None = None
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     resume: asyncio.Event = field(default_factory=asyncio.Event)
+    hal: object = None
+    last_prepared: object = None
+    switch_identities: dict = field(default_factory=dict)
+    switch_driver: object = None
 
 
 _running: dict[UUID,RunningBatch]={}
@@ -190,7 +197,7 @@ def _commit_progress(ident,value,result=None):
 
 
 async def _wait_manual(ident,value,item,active):
-    """Task3接入真实切换前保持人工确认，不假称自动切换已实现。"""
+    """等待只消费当前transition；取消唤醒不等于确认。"""
     value.update(status='waiting_manual',transition_id=uuid4().hex)
     value['items'][value['current_index']]['status']='waiting_manual'
     active.resume.clear()
@@ -201,10 +208,71 @@ async def _wait_manual(ident,value,item,active):
 
 
 async def _prepare_item(ident,value,item,active):
-    """Task3替换的安全边界；缺少真实切换模块时不能用人工勾选冒充换路。"""
-    if item.switch_steps:
-        raise ValueError('批开关切换与严格回读模块尚未接入，未开始发射')
-    await _wait_manual(ident,value,item,active)
+    """无活动tone的边界才可换线；固定直连完全不碰开关。"""
+    simulated=is_mock_driver(active.hal.drivers.get('channelEmulator'))
+    previous=active.last_prepared
+    # 参考位置变化或固定直连换路要人工；同位置由开关换路不需要人工换线。
+    manual=(previous is None or previous.request.reference_antenna!=item.request.reference_antenna
+        or (previous.request.chain_id!=item.request.chain_id and
+            not (previous.switch_steps and item.switch_steps)))
+    value['manual_notice']=('模拟人工步骤；未确认任何实物停发或接线安全' if simulated
+        else '请核对本项参考天线位置及接线；之前已启动tone均已确认清理')
+    if manual:
+        await _wait_manual(ident,value,item,active)
+    if active.cancel.is_set():
+        return
+    # 人工等待期间保存图/绑定仍可能变化：必须在首个开关I/O之前重读冻结scope。
+    with SessionLocal() as db:
+        single.resolve_configuration(db,UUID(value['lab_id']),item.request,active.hal,
+            batch_item_context=BatchItemContext(ident,item.item_id))
+        for step in item.switch_steps:
+            connection=db.get(InstrumentConnection,step.connection_id)
+            if connection is None or snapshot_switch_connection(connection)!=step.connection_config:
+                raise ValueError('保存开关连接/封装配置已变化，请重新预览并确认；未操作旧连接')
+    if item.switch_steps and not simulated:
+        if value['plan'].get('switch_wiring_confirmation') is None:
+            raise ValueError('自动切换缺少本清单范围的操作员接线声明，未开始测量')
+        driver=active.hal.drivers.get('rfSwitch')
+        if active.switch_driver is not None and active.switch_driver is not driver:
+            raise ValueError('本作业开关驱动身份已变化')
+        active.switch_driver=driver
+        progress=value['items'][value['current_index']]
+        def sink(receipt):
+            receipt.update(job_id=str(ident),item_id=item.item_id,attempt=1)
+            if receipt.get('kind')=='identity' and not receipt.get('error'):
+                key=(receipt['driver_id'],receipt['command'])
+                expected=active.switch_identities.get(key)
+                if expected is not None and expected!=receipt['raw']:
+                    receipt['error']='本作业开关机箱/卡身份已变化'
+                else:
+                    active.switch_identities[key]=receipt['raw']
+            progress.setdefault('switch_receipts',[]).append(receipt)
+            _commit_progress(ident,value)
+            if receipt.get('error')=='本作业开关机箱/卡身份已变化':
+                raise ValueError(receipt['error'])
+            if active.cancel.is_set():
+                raise asyncio.CancelledError()
+        # VXI-11可能正在线程里写：外层task取消也必须等在途操作落定，不能提前放lease/guard。
+        outcome=await await_completion_despite_cancellation(apply_batch_switch_steps(active.hal,item.switch_steps,sink))
+        if outcome.error:
+            raise outcome.error
+        if outcome.delayed_cancellation:
+            raise outcome.delayed_cancellation
+        if outcome.value is not True:
+            raise ValueError('开关资格或本次严格写读失败，未开始测量；请查看逐项receipt')
+    active.last_prepared=item
+
+
+async def _pause_failure(ident,value,item,active,error):
+    """保留失败项；继续只跳过，绝不自动重试。"""
+    progress=value['items'][value['current_index']]
+    progress.update(status='failed',error=str(error))
+    value.update(status='paused_failure',error=str(error),transition_id=uuid4().hex)
+    active.resume.clear()
+    _commit_progress(ident,value)
+    if not active.cancel.is_set():
+        await active.resume.wait()
+    value.update(status='running',transition_id=None)
 
 
 async def _execute(ident,token,active):
@@ -235,11 +303,18 @@ async def _execute(ident,token,active):
                 enable_monitoring=False,restore_f64_alignment=False,validate_before_remote=validate) as lease:
                 value['lease_id']=lease.lease_id
                 if selected_hal is None: raise ValueError('未核对批仪器身份，不能开始发射')
+                active.hal=selected_hal
                 _commit_progress(ident,value)
                 for index,item in enumerate(plan.items):
                     value['current_index']=index
                     if active.cancel.is_set(): break
-                    await _prepare_item(ident,value,item,active)
+                    try:
+                        await _prepare_item(ident,value,item,active)
+                    except BatchPersistenceError:
+                        raise
+                    except Exception as exc:
+                        await _pause_failure(ident,value,item,active,exc)
+                        continue
                     if active.cancel.is_set(): break
                     with SessionLocal() as db:
                         config,output,ce,sa=single.resolve_configuration(db,lab_id,item.request,selected_hal,
@@ -254,16 +329,22 @@ async def _execute(ident,token,active):
                     await collect_fixed_route(ce,sa,result,output_port=output,cancel=active.cancel)
                     # collect的tone收尾不构成外层Remote释放。
                     result.states['f64_control_released']=None
+                    if result.status=='cancelled': active.cancel.set()
                     progress.update(status=result.status,error=result.error)
                     _commit_progress(ident,value,result)
                     if result.status=='cleanup_unconfirmed' or (result.status!='simulated' and result.cleanup_confirmed is not True):
-                        value['status']='cleanup_unconfirmed';break
+                        value.update(status='cleanup_unconfirmed',error=result.error or '可能仍在发射；本项tone停止未确认，禁止换线或继续')
+                        break
                     if result.status not in ('completed','simulated'):
-                        value['status']='cancelled' if result.status=='cancelled' else 'failed';break
+                        if result.status=='cancelled' or active.cancel.is_set():
+                            value['status']='cancelled';break
+                        await _pause_failure(ident,value,item,active,result.error or '本项采集失败')
                 if value['status'] not in ('cleanup_unconfirmed','failed','cancelled'):
-                    value['status']='cancelled' if active.cancel.is_set() else 'completed'
+                    value['status']=('cancelled' if active.cancel.is_set() else
+                        'failed' if any(i['status']=='failed' for i in value['items']) else 'completed')
     except (Exception,asyncio.CancelledError) as exc:
         if value is not None:
+            if isinstance(exc,asyncio.CancelledError): active.cancel.set()
             if isinstance(exc,BatchPersistenceError): value['persistence_failed']=True
             value['status']='cleanup_unconfirmed' if any(r.cleanup_confirmed is False or r.status=='cleanup_unconfirmed' for r in results) else ('cancelled' if isinstance(exc,asyncio.CancelledError) else 'failed')
             value['error']=str(exc) or '服务取消批采集'
@@ -282,6 +363,8 @@ async def _execute(ident,token,active):
                 if (lease is not None and (released is False or (results and any(r.status!='simulated' for r in results) and released is not True))
                     and value['status']!='cleanup_unconfirmed'):
                     value['status']='cleanup_unconfirmed'
+                if value['status']=='cleanup_unconfirmed':
+                    value['error']='可能仍在发射或控制释放未确认；禁止换线或继续，请现场核验。'+(value.get('error') or '')
                 value.update(finalization_id=uuid4().hex,finalization_committed=True,transition_id=None,
                     cancel_requested=active.cancel.is_set())
                 for item in value['items']:
@@ -322,10 +405,10 @@ def continue_job(db,lab_id,job_id,*,item_id,transition_id,reference_antenna,manu
     if row is None or row.lab_profile_id!=lab_id or row.target_name!=TARGET:
         raise LookupError('本实验室中没有此批记录')
     value=_payload(row)
-    if active is None or active.cancel.is_set() or active.resume.is_set() or value['status']!='waiting_manual':
+    if active is None or active.cancel.is_set() or active.resume.is_set() or value['status'] not in ('waiting_manual','paused_failure'):
         raise single.AcquisitionBusy('批不在可继续的人工等待状态')
     item=value['items'][value['current_index']]
-    if (manual_confirmed is not True or skip_failed or value['transition_id']!=transition_id or
+    if (manual_confirmed is not True or skip_failed is not (value['status']=='paused_failure') or value['transition_id']!=transition_id or
         item['item_id']!=item_id or item['request']['reference_antenna']!=reference_antenna):
         raise ValueError('人工确认与当前冻结步骤或参考位置不一致')
     active.resume.set()
