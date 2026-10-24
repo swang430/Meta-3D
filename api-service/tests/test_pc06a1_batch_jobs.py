@@ -358,3 +358,58 @@ async def test_start_requires_matching_preview_before_any_task(db_session,config
         assert active_unsafe_diagnostic() is None
     finally:
         await jobs.shutdown_route_batch_jobs()
+
+
+@pytest.mark.parametrize('matching_key',[False,True,None])
+async def test_corrupt_history_only_blocks_its_own_idempotency_key(db_session,configured,shared_switch,runtime,matching_key):
+    from app.schemas.diagnostic_evidence import SequenceEvidence
+    from app.services.calibration.route_batch_plan import build_batch_plan
+    jobs,hal=runtime;topo,_=shared_switch
+    key=uuid4();ident=uuid4()
+    row=DiagnosticRun(id=ident,lab_profile_id=configured.id,target_name=jobs.TARGET,kind='scpi_sequence',success=False,
+        sequence_evidence=SequenceEvidence(summary='损坏旧批',duration_ms=0,steps=[],log=[],extra={jobs.TARGET:{
+            'job_id':str(ident),'lab_id':str(configured.id),
+            **({'idempotency_key':str(key if matching_key else uuid4())} if matching_key is not None else {})}}).model_dump(mode='json'))
+    db_session.add(row);db_session.commit()
+    frozen=copy.deepcopy(row.sequence_evidence)
+    request=request_for(topo,frequencies=(2595.,))
+    plan=build_batch_plan(db_session,configured.id,request,hal)
+    request=request.model_copy(update={'preview_digest':plan.preview_digest})
+    try:
+        if matching_key:
+            with pytest.raises(ValueError,match='缺损'):
+                await jobs.start(db_session,configured.id,request,idempotency_key=key)
+            assert not jobs._running and active_unsafe_diagnostic() is None
+            assert db_session.query(DiagnosticRun).count()==1
+        else:
+            value=await jobs.start(db_session,configured.id,request,idempotency_key=key)
+            assert value['job_id']!=str(ident) and len(jobs._running)==1
+            assert active_unsafe_diagnostic()==jobs.TARGET
+            from app.services.calibration.fixed_route_jobs import AcquisitionBusy
+            with pytest.raises(AcquisitionBusy,match='占用仪器'):
+                await jobs.start(db_session,configured.id,request,idempotency_key=uuid4())
+            assert db_session.query(DiagnosticRun).count()==2
+        assert jobs.record(db_session,row)['status']=='incomplete'
+        assert row.sequence_evidence==frozen
+    finally:
+        await jobs.shutdown_route_batch_jobs()
+
+
+async def test_matching_valid_idempotency_replays_without_new_task(db_session,configured,shared_switch,runtime):
+    from app.services.calibration.route_batch_plan import build_batch_plan
+    from app.services.calibration import fixed_route_jobs as single
+    jobs,hal=runtime;topo,_=shared_switch
+    request=request_for(topo,frequencies=(2595.,));key=uuid4()
+    plan=build_batch_plan(db_session,configured.id,request,hal)
+    request=request.model_copy(update={'preview_digest':plan.preview_digest})
+    try:
+        first=await jobs.start(db_session,configured.id,request,idempotency_key=key)
+        ident=UUID(first['job_id']);task=jobs._running[ident].task
+        replay=await jobs.start(db_session,configured.id,request,idempotency_key=key)
+        assert replay['job_id']==first['job_id'] and jobs._running[ident].task is task
+        assert db_session.query(DiagnosticRun).count()==1
+        with pytest.raises(single.AcquisitionBusy,match='不同批请求'):
+            await jobs.start(db_session,configured.id,request.model_copy(update={'requested_power_dbm':-25.}),idempotency_key=key)
+        assert len(jobs._running)==1 and active_unsafe_diagnostic()==jobs.TARGET
+    finally:
+        await jobs.shutdown_route_batch_jobs()

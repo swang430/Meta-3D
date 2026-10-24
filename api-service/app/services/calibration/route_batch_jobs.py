@@ -134,11 +134,15 @@ async def start(db,lab_id,request,*,idempotency_key):
         raise ValueError('批启动需要幂等UUID')
     # 先重读保存计划，幂等重放不派第二个task。
     for row in db.query(DiagnosticRun).filter_by(lab_profile_id=lab_id,target_name=TARGET).all():
+        evidence=row.sequence_evidence
+        extra=evidence.get('extra') if isinstance(evidence,dict) else None
+        candidate=extra.get(TARGET) if isinstance(extra,dict) else None
+        if not isinstance(candidate,dict) or candidate.get('idempotency_key')!=str(idempotency_key):
+            continue  # 无关历史缺损只影响其读取，不作为新批启动前置。
         value=_payload(row)
-        if value.get('idempotency_key')==str(idempotency_key):
-            if value.get('request')!=request.model_dump(mode='json'):
-                raise single.AcquisitionBusy('幂等键已用于不同批请求')
-            return record(db,row)
+        if value.get('request')!=request.model_dump(mode='json'):
+            raise single.AcquisitionBusy('幂等键已用于不同批请求')
+        return record(db,row)
     if has_active_case_run() or has_running_case_run_row(db):
         raise single.AcquisitionBusy('已有测试执行在运行，不能开始批采集')
     token=try_acquire_unsafe_diagnostic(TARGET)
