@@ -2,11 +2,16 @@
 import copy
 import hashlib
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.models.lab_profile import LabProfile
 from app.models.switch_topology import SwitchTopology
-from app.schemas.route_calibration import RouteSelection, RouteEligibility, RouteApplicationPreview
+from app.schemas.route_calibration import (RouteSelection, RouteEligibility, RouteApplicationPreview,
+    ConfirmRouteApplication, RouteApplicationRecord)
+from app.models.route_calibration import RouteCalibrationApplication, RouteCalibrationSelection
 from app.services.calibration.rf_chain_resolver import resolve_declared_calibration_ce_port
 
 
@@ -156,7 +161,7 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
     record=jobs.record(row)
     result=record.result
     selection=None
-    warnings=['尚未创建选用记录；选用截止时间由后续确认操作明确填写并校验，不是证书期限']
+    warnings=['选用截止时间由确认操作明确填写并校验，不是证书期限']
     blockers=[]
     provenance='unknown'
     measured_value=None
@@ -183,5 +188,134 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
         acquisition_run_id=run_id,route_digest=selection.route_digest if selection else None,
         method=result.method if result else None,frequency_mhz=result.request.frequency_mhz if result else None,
         measurement_provenance=provenance)
+    current=None
+    old_value=None
+    if selection is not None:
+        scope,_=_application_scope(result,selection)
+        pointer=db.query(RouteCalibrationSelection).filter_by(**scope).one_or_none()
+        if pointer is not None:
+            current=pointer.application_id
+            saved=db.get(RouteCalibrationApplication,current)
+            if saved is not None:
+                previous=RouteApplicationRecord.model_validate(saved.record)
+                if datetime.fromisoformat(previous.coverage_snapshot['adoption_valid_until'].replace('Z','+00:00'))>datetime.now(timezone.utc):
+                    old_value=previous.net_loss_db
+                else:
+                    warnings.append('当前选择的操作员选用窗口已过期，不作为有效旧量值')
     return RouteApplicationPreview(selection=selection,acquisition_run_id=run_id,
-        new_net_loss_db=measured_value,eligibility=eligibility)
+        expected_current_application_id=current,old_value_db=old_value,new_net_loss_db=measured_value,
+        delta_db=measured_value-old_value if measured_value is not None and old_value is not None else None,
+        eligibility=eligibility)
+
+
+class RouteApplicationConflict(ValueError):
+    """当前选择已改变或幂等键载荷矛盾；不得写入部分确认。"""
+
+
+def _application_scope(result,selection):
+    """身份来自冻结原文，不把拓扑UUID冒充实物序列号，不猜证书期限。"""
+    reference=dict(reference_antenna_id=selection.reference_antenna_id,
+        identity_description=result.request.reference_antenna,
+        position_description=result.request.reference_antenna,polarization=selection.polarization,
+        # 保存声明原文，不从自由文本猜序列号，更不把画布节点号当实物身份。
+        receive_cable_identity=result.request.receive_cable_source,
+        receive_cable_loss_db=result.request.receive_cable_loss_db,
+        receive_cable_source=result.request.receive_cable_source,
+        analyzer_binding_snapshot=copy.deepcopy(result.configuration.get('analyzer_binding',{})))
+    # 数值变化不是参考件换身份，避免通过换线损数值绕过同一选择的CAS。
+    identity={key:value for key,value in reference.items() if key!='receive_cable_loss_db'}
+    digest=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+    scope=dict(lab_profile_id=selection.lab_profile_id,topology_id=selection.topology_id,
+        operating_mode=selection.operating_mode,chain_id=selection.chain_id,
+        frequency_mhz=result.request.frequency_mhz,reference_identity_digest=digest)
+    return scope,reference
+
+
+def _replay(db,lab_id,request):
+    existing=db.query(RouteCalibrationApplication).filter_by(lab_profile_id=lab_id,
+        idempotency_key=request.idempotency_key).one_or_none()
+    if existing is None:
+        return None
+    if existing.request_payload!=request.model_dump(mode='json'):
+        raise RouteApplicationConflict('幂等键已用于不同确认载荷')
+    return RouteApplicationRecord.model_validate(existing.record)
+
+
+def confirm_route_application(db,lab_id: UUID,request: ConfirmRouteApplication,actor: str | None):
+    """事务内复核后追加记录，以唯一约束和条件UPDATE推进选择；返回(record,created)。"""
+    from app.models.diagnostic_run import DiagnosticRun
+    from app.services.calibration import fixed_route_jobs as jobs
+    try:
+        db.expire_all()  # 不使用同Session先前预览的身份映射缓存作为确认真值。
+        existing=_replay(db,lab_id,request)
+        if existing is not None:
+            return existing,False
+        row=db.query(DiagnosticRun).filter_by(id=request.acquisition_run_id,lab_profile_id=lab_id,
+            target_name=jobs.TARGET,kind='scpi_sequence').with_for_update().one_or_none()
+        if row is None:
+            raise LookupError('本实验室中没有这条采集记录')
+        candidate=evaluate_route_application(db,lab_id,request.acquisition_run_id)
+        now=datetime.now(timezone.utc)
+        if request.adoption_valid_until<=now:
+            raise ValueError('操作员选用截止必须晚于本次确认时间')
+        if (not candidate.eligibility.eligible_for_adoption or candidate.selection is None or
+            candidate.new_net_loss_db is None or request.route_digest!=candidate.selection.route_digest):
+            raise ValueError('采集证据或当前通路不适用于本次采用')
+        result=jobs.record(row).result
+        selection=candidate.selection
+        scope,reference=_application_scope(result,selection)
+        pointer=db.query(RouteCalibrationSelection).filter_by(**scope).one_or_none()
+        previous_id=pointer.application_id if pointer else None
+        if previous_id!=request.expected_current_application_id:
+            raise RouteApplicationConflict('当前选择已变化，请重新预览')
+        ident=uuid4()
+        record=RouteApplicationRecord(id=ident,predecessor_id=previous_id,acquisition_run_id=row.id,
+            selection_snapshot=selection,method=result.method,frequency_mhz=result.request.frequency_mhz,
+            coverage_snapshot=dict(frequency_mhz=result.request.frequency_mhz,polarization=selection.polarization,
+                reference_identity_digest=scope['reference_identity_digest'],adopted_at=now.isoformat(),
+                adoption_valid_until=request.adoption_valid_until.isoformat(),
+                validity_source='operator_declared_adoption_window'),reference_snapshot=reference,
+            net_loss_db=candidate.new_net_loss_db,adoption_evidence_snapshot=dict(acquisition_run_id=str(row.id),
+                checked_exchange_indices=list(range(len(result.exchanges))),
+                checked_state_keys=['f64_identity','output_loss_db','f64_control_released'],
+                evaluated_at=now.isoformat(),method=result.method,blockers=[],
+                warnings=candidate.eligibility.warnings,measurement_provenance='real',certification_status='unknown'),
+            operator_confirmed=True,confirmed_at=now,confirmed_by=actor)
+        db.add(RouteCalibrationApplication(id=ident,lab_profile_id=lab_id,acquisition_run_id=row.id,
+            topology_id=selection.topology_id,chain_id=selection.chain_id,idempotency_key=request.idempotency_key,
+            request_payload=request.model_dump(mode='json'),record=record.model_dump(mode='json')))
+        db.flush()
+        if pointer is None:
+            db.add(RouteCalibrationSelection(**scope,application_id=ident,version=1))
+            db.flush()  # 并发首选由scope唯一约束裁决。
+        else:
+            changed=db.execute(update(RouteCalibrationSelection).where(
+                RouteCalibrationSelection.id==pointer.id,RouteCalibrationSelection.version==pointer.version,
+                RouteCalibrationSelection.application_id==previous_id).values(
+                application_id=ident,version=pointer.version+1).execution_options(synchronize_session=False))
+            if changed.rowcount!=1:
+                raise RouteApplicationConflict('当前选择已被另一确认推进')
+        db.commit()  # 提交失败不能向HTTP返回已应用。
+        return record,True
+    except (IntegrityError,OperationalError) as exc:
+        db.rollback()
+        if isinstance(exc,OperationalError) and not (
+            db.get_bind().dialect.name=='sqlite' and 'locked' in str(exc).lower()):
+            raise
+        existing=_replay(db,lab_id,request)
+        if existing is not None:
+            return existing,False
+        raise RouteApplicationConflict('当前选择发生并发冲突，请重新预览') from exc
+    except Exception:
+        db.rollback()
+        raise
+
+
+def list_route_applications(db,lab_id: UUID,topology_id: UUID,chain_id: str):
+    if db.get(LabProfile,lab_id) is None:
+        raise LookupError('实验室不存在')
+    rows=db.query(RouteCalibrationApplication).filter_by(lab_profile_id=lab_id,
+        topology_id=topology_id,chain_id=chain_id).all()
+    # 只反序列化不可变记录；不以当前图、run或当前期限重算历史。
+    return sorted((RouteApplicationRecord.model_validate(row.record) for row in rows),
+        key=lambda record:record.confirmed_at,reverse=True)

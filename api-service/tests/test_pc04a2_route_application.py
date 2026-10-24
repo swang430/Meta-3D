@@ -1,0 +1,182 @@
+"""确认采用的真实API/数据库行为；仅外部VISA transport使用合成脚本。"""
+import copy
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from threading import Barrier
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import create_engine, inspect, text, event
+from sqlalchemy.orm import sessionmaker
+
+from app.db.database import Base, get_db
+from app.main import app
+from tests.test_rf_chain_resolver import chamber, topology_two_chains, lab_profile
+from tests.test_pc_04a_fixed_route_api import client, configured, start, finish
+from tests.test_pc04a2_route_eligibility import real_capture, preview
+
+
+@pytest.fixture
+def db_session(tmp_path):
+    engine=create_engine(f'sqlite:///{tmp_path / "application.db"}',connect_args={'check_same_thread':False})
+    Base.metadata.create_all(engine)
+    factory=sessionmaker(bind=engine,expire_on_commit=False)
+    with factory() as session:
+        yield session
+    engine.dispose()
+
+
+def payload(client,lab,row,**changes):
+    candidate=preview(client,lab,row).json()
+    value=dict(acquisition_run_id=str(row.id),route_digest=candidate['selection']['route_digest'],
+        expected_current_application_id=candidate['expected_current_application_id'],
+        idempotency_key=str(uuid4()),confirmed=True,
+        adoption_valid_until=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat())
+    value.update(changes)
+    return value
+
+
+def confirm(client,lab,value):
+    return client.post(f'/api/v1/lab-profiles/{lab.id}/route-calibration-applications',json=value)
+
+
+def counts(db):
+    # RED阶段表尚未出现时也能证明无写入，不以缺模型import替代行为测试。
+    names=inspect(db.get_bind()).get_table_names()
+    return tuple(db.execute(text(f'SELECT count(*) FROM {table}')).scalar() if table in names else 0
+        for table in ('route_calibration_applications','route_calibration_selections'))
+
+
+def test_real_confirmation_freezes_server_value_and_preserves_history(client,configured,real_capture,db_session):
+    row=real_capture();original=copy.deepcopy(row.sequence_evidence)
+    assert counts(db_session)==(0,0)
+    request=payload(client,configured,row)
+    assert counts(db_session)==(0,0)  # preview不写入
+    response=confirm(client,configured,request)
+    assert response.status_code==201,response.text
+    first=response.json()
+    assert first['net_loss_db']==28 and first['predecessor_id'] is None
+    assert first['certification_status']=='unknown' and first['operator_confirmed'] is True
+    assert first['confirmed_by'] is None  # API没有可验证的登录身份，不造姓名
+    assert first['coverage_snapshot']['validity_source']=='operator_declared_adoption_window'
+    assert first['coverage_snapshot']['frequency_mhz']==2595
+    assert first['reference_snapshot']['identity_description']=='SN-REF 静区中心V'
+    assert first['reference_snapshot']['receive_cable_source']=='SN-CABLE 2595MHz记录'
+    assert first['reference_snapshot']['receive_cable_identity']=='SN-CABLE 2595MHz记录'
+    assert first['adoption_evidence_snapshot']['measurement_provenance']=='real'
+    assert first['adoption_evidence_snapshot']['checked_exchange_indices']
+    assert row.sequence_evidence==original
+    assert original['extra']['fixed_route_acquisition']['formal_eligible'] is False
+    assert counts(db_session)==(1,1)
+    state=preview(client,configured,row).json()
+    assert state['expected_current_application_id']==first['id']
+    assert state['old_value_db']==28 and state['delta_db']==0
+    second_row=real_capture('-20','-10')
+    second=confirm(client,configured,payload(client,configured,second_row))
+    assert second.status_code==201,second.text
+    assert second.json()['predecessor_id']==first['id'] and second.json()['net_loss_db']==-12
+    history=client.get(f'/api/v1/lab-profiles/{configured.id}/route-calibration-applications',
+        params={'topology_id':first['selection_snapshot']['topology_id'],'chain_id':'conn_p0v'})
+    assert history.status_code==200,history.text
+    assert len(history.json())==2 and first in history.json()
+    assert counts(db_session)==(2,1)
+
+
+def test_idempotency_and_stale_current_are_conflicts(client,configured,real_capture,db_session):
+    row=real_capture();request=payload(client,configured,row)
+    first=confirm(client,configured,request)
+    assert first.status_code==201,first.text
+    replay=confirm(client,configured,request)
+    assert replay.status_code==200 and replay.json()==first.json()
+    assert confirm(client,configured,{**request,'adoption_valid_until':
+        (datetime.now(timezone.utc)+timedelta(days=2)).isoformat()}).status_code==409
+    assert confirm(client,configured,{**request,'idempotency_key':str(uuid4())}).status_code==409
+    assert counts(db_session)==(1,1)
+
+
+def test_rejected_confirmation_has_no_writes(client,configured,real_capture,db_session,topology_two_chains):
+    row=real_capture();request=payload(client,configured,row)
+    invalid=[{**request,'confirmed':1},{**request,'net_loss_db':0},
+        {k:v for k,v in request.items() if k!='adoption_valid_until'},
+        {**request,'adoption_valid_until':'2026-01-01T00:00:00Z'},
+        {**request,'adoption_valid_until':'2030-01-01T00:00:00'},
+        {**request,'route_digest':'0'*64}]
+    for value in invalid:
+        response=confirm(client,configured,value)
+        assert response.status_code==422,response.text
+        assert counts(db_session)==(0,0)
+    wrong=confirm(client,type('Lab',(),{'id':uuid4()})(),request)
+    assert wrong.status_code==404,wrong.text
+    assert confirm(client,configured,{**request,'expected_current_application_id':str(uuid4())}).status_code==409
+    topology_two_chains.connections=[{**edge,**({'ce_port':'B3'} if edge['id']=='conn_p0v' else {})}
+        for edge in topology_two_chains.connections]
+    db_session.commit()
+    assert confirm(client,configured,request).status_code==422
+    assert counts(db_session)==(0,0)
+
+
+def test_mock_capture_cannot_be_confirmed(client,configured,db_session):
+    from app.models.diagnostic_run import DiagnosticRun
+    from uuid import UUID
+    response=start(client,configured);value=finish(client,configured,response.json()['run_id'])
+    row=db_session.get(DiagnosticRun,UUID(value['run_id']))
+    response=confirm(client,configured,payload(client,configured,row))
+    assert response.status_code==422,response.text
+    assert counts(db_session)==(0,0)
+
+
+@pytest.mark.parametrize('seeded',[False,True])
+def test_parallel_confirmation_has_one_winner(client,configured,real_capture,db_session,seeded):
+    row=real_capture();request=payload(client,configured,row)
+    if seeded:
+        assert confirm(client,configured,request).status_code==201
+        request=payload(client,configured,row)
+    factory=sessionmaker(bind=db_session.get_bind(),expire_on_commit=False)
+    def independent_db():
+        with factory() as db:
+            yield db
+    previous=app.dependency_overrides[get_db]
+    app.dependency_overrides[get_db]=independent_db
+    barrier=Barrier(2)
+    def send():
+        barrier.wait(timeout=10)
+        return confirm(client,configured,{**request,'idempotency_key':str(uuid4())})
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses=list(pool.map(lambda _:send(),range(2)))
+    finally:
+        app.dependency_overrides[get_db]=previous
+    assert sorted(response.status_code for response in responses)==[201,409],[r.text for r in responses]
+    assert counts(db_session)==(2 if seeded else 1,1)
+
+
+def test_confirmation_write_failure_rolls_back_and_old_history_does_not_drift(client,configured,real_capture,db_session):
+    row=real_capture();request=payload(client,configured,row)
+    engine=db_session.get_bind()
+    def fail_pointer(connection,cursor,statement,parameters,context,executemany):
+        if statement.startswith('INSERT INTO route_calibration_selections'):
+            raise RuntimeError('test storage failure')
+    event.listen(engine,'before_cursor_execute',fail_pointer)
+    try:
+        with pytest.raises(RuntimeError,match='test storage failure'):
+            confirm(client,configured,request)
+    finally:
+        event.remove(engine,'before_cursor_execute',fail_pointer)
+    assert counts(db_session)==(0,0)
+    response=confirm(client,configured,request)
+    assert response.status_code==201,response.text
+    saved=response.json()
+    changed=copy.deepcopy(row.sequence_evidence)
+    changed['extra']['fixed_route_acquisition']['status']='simulated'
+    row.sequence_evidence=changed;db_session.commit()
+    history=client.get(f'/api/v1/lab-profiles/{configured.id}/route-calibration-applications',
+        params={'topology_id':saved['selection_snapshot']['topology_id'],'chain_id':'conn_p0v'})
+    assert history.json()==[saved]
+    # 确认记录是追加式审计记录，不能原位改值。
+    from app.models.route_calibration import RouteCalibrationApplication
+    stored=db_session.query(RouteCalibrationApplication).one()
+    stored.record={**stored.record,'net_loss_db':999}
+    with pytest.raises(ValueError,match='不可修改'):
+        db_session.commit()
+    db_session.rollback()
+    assert counts(db_session)==(1,1)

@@ -1,7 +1,9 @@
 """保存拓扑的完整固定通路声明；不是实物接通或正式校准资格。"""
 from uuid import UUID
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from datetime import datetime, timezone
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator, field_validator
+from app.schemas._datetime import UTCDateTime
 
 
 class RoutePort(BaseModel):
@@ -90,3 +92,45 @@ class RouteApplicationPreview(BaseModel):
     new_net_loss_db: float | None = Field(default=None,allow_inf_nan=False)
     delta_db: float | None = Field(default=None,allow_inf_nan=False)
     eligibility: RouteEligibility
+
+
+class ConfirmRouteApplication(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    acquisition_run_id: UUID
+    route_digest: str=Field(pattern=r'^[a-f0-9]{64}$')
+    expected_current_application_id: UUID | None
+    idempotency_key: UUID
+    confirmed: Literal[True]
+    adoption_valid_until: UTCDateTime
+
+    @field_validator('confirmed',mode='before')
+    @classmethod
+    def explicit_confirmation(cls,value):
+        if value is not True:
+            raise ValueError('必须明确确认采用')
+        return value
+
+    @field_validator('adoption_valid_until')
+    @classmethod
+    def aware_deadline(cls,value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError('选用截止必须包含时区')
+        return value.astimezone(timezone.utc)
+
+
+class RouteApplicationRecord(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    id: UUID
+    predecessor_id: UUID | None
+    acquisition_run_id: UUID
+    selection_snapshot: RouteSelection
+    method: str
+    frequency_mhz: float=Field(allow_inf_nan=False)
+    coverage_snapshot: dict[str,JsonValue]
+    reference_snapshot: dict[str,JsonValue]
+    net_loss_db: float=Field(allow_inf_nan=False)
+    adoption_evidence_snapshot: dict[str,JsonValue]
+    operator_confirmed: Literal[True]
+    certification_status: Literal['unknown']='unknown'
+    confirmed_at: UTCDateTime
+    confirmed_by: str | None
