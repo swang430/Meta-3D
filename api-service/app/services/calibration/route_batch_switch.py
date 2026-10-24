@@ -57,6 +57,11 @@ async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink):
             or not valid_target or type(mapping.get('input_port')) is not int):
             emit(error='开关绑定、驱动、连接或完整映射资格不一致')
             return False
+        # Part #1801188 Rev A p11只把互锁查询列在Relay SP6T Card Commands。
+        # 未证明SPDT适用性；不能用裸查询0或SP6T卡的许可推广到SPDT。
+        if kind != 'sp6t':
+            emit(error='该卡型的目标槽位互锁适用性未经手册证明，auto资格保持unknown')
+            return False
         try:
             # Part #1801188 Rev A p6 Common General：*IDN?及<slot>:*IDN?。
             for command, product in (('*IDN?', 'EMCenter'), (f'{relay[0]}:*IDN?', 'EMSwitch')):
@@ -65,8 +70,16 @@ async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink):
                 emit(kind='identity', command=command, raw=raw, error=error)
                 if error:
                     return False
-            # 同原health序列裸查询；Part #1801188 Rev A p11：仅0/1，ERROR不当0。
-            command = 'INTLK? SAFETYRELAY'
+            # p12：实际目标继电器先报告SP6T严格域；不从7001-xxx型号推断卡型。
+            before = await driver.read_mapped_path_receipt(step.path_name)
+            emit(**before, kind='position_before')
+            if before['error']:
+                return False
+            # Part #1801188 Rev A p5：“all commands for plug-in cards must be
+            # preceded by the numbered slot where the card is installed”。
+            # p11：SP6T插件卡前面板互锁，0=No interlock/1=Interlock active。
+            # 这是通用寻址语法应用于该卡命令，不是从其它方言类比；不发送裸查询。
+            command = f'{relay[0]}:INTLK? SAFETYRELAY'
             raw = await driver._send_command(command)
             emit(kind='interlock', command=command, raw=raw, error=None if raw == '0' else '互锁激活或未知')
             if raw != '0':

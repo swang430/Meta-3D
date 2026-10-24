@@ -27,7 +27,7 @@ async def start_confirmed(jobs,db,lab_id,request,*,idempotency_key):
     return await start_previewed(jobs,db,lab_id,request,idempotency_key=idempotency_key)
 
 
-def switch_runtime(monkeypatch, *, relay_type='spdt', target='NC', reply='NC'):
+def switch_runtime(monkeypatch, *, relay_type='sp6t', target=1, reply='1'):
     mapping=dict(switch_id='1:INT_RELAY_A',relay_type=relay_type,input_port=0,output_port=target,
         topology_input_pin='in1',topology_output_pin='out1')
     driver=EtslSwitchDriver('switch-1',dict(ip='192.0.2.20',port_maps={'v':mapping}))
@@ -36,7 +36,7 @@ def switch_runtime(monkeypatch, *, relay_type='spdt', target='NC', reply='NC'):
         calls.append(command)
         if command=='*IDN?': return 'ETS-Lindgren EMCenter version 4.3.4'
         if command=='1:*IDN?': return 'ETS-Lindgren, EMSwitch 7001-003, 4.3.3'
-        if command=='INTLK? SAFETYRELAY': return '0'
+        if command in ('INTLK? SAFETYRELAY','1:INTLK? SAFETYRELAY'): return '0'
         if command.endswith('?'): return reply
         return 'OK'
     monkeypatch.setattr(driver,'_send_command',transport)
@@ -80,8 +80,8 @@ async def test_real_auto_uses_existing_builder_then_matching_raw_receipt(monkeyp
     driver,step,calls=switch_runtime(monkeypatch)
     receipts=[]
     assert await apply(SimpleNamespace(drivers={'rfSwitch':driver}),[step],receipts.append) is True
-    assert calls==['*IDN?','1:*IDN?','INTLK? SAFETYRELAY','1:INT_RELAY_A_NC','1:INT_RELAY_A?']
-    assert receipts[-1]['position']=='NC' and receipts[-1]['raw']=='NC'
+    assert calls==['*IDN?','1:*IDN?','1:INT_RELAY_A?','1:INTLK? SAFETYRELAY','1:INT_RELAY_A_1','1:INT_RELAY_A?']
+    assert receipts[-1]['position']==1 and receipts[-1]['raw']=='1'
 
 
 @pytest.mark.parametrize('fault',['write_false','unknown','wrong','timeout','interlock','identity','mapping','identity_timeout'])
@@ -90,15 +90,15 @@ async def test_auto_refuses_unqualified_write_or_raw(monkeypatch,fault):
     original=driver._send_command
     async def transport(command):
         if fault=='identity_timeout' and command=='*IDN?': raise TimeoutError('identity timeout')
-        if fault=='write_false' and command.endswith('_NC'): return None
+        if fault=='write_false' and command.endswith('_1'): return None
         if fault=='unknown' and command=='1:INT_RELAY_A?': return 'ERROR NC'
-        if fault=='wrong' and command=='1:INT_RELAY_A?': return 'NO'
+        if fault=='wrong' and command=='1:INT_RELAY_A?': return '2'
         if fault=='timeout' and command=='1:INT_RELAY_A?': raise TimeoutError('test timeout')
-        if fault=='interlock' and command=='INTLK? SAFETYRELAY': return 'ERROR 3'
+        if fault=='interlock' and command=='1:INTLK? SAFETYRELAY': return 'ERROR 3'
         if fault=='identity' and command=='*IDN?': return ''
         return await original(command)
     monkeypatch.setattr(driver,'_send_command',transport)
-    if fault=='mapping': driver._mappings['v']={**step.mapping,'output_port':'NO'}
+    if fault=='mapping': driver._mappings['v']={**step.mapping,'output_port':2}
     receipts=[]
     assert await apply(SimpleNamespace(drivers={'rfSwitch':driver}),[step],receipts.append) is False
     assert receipts and receipts[-1]['error']
@@ -112,13 +112,17 @@ async def test_fixed_direct_does_not_touch_switch(monkeypatch):
 
 
 @pytest.fixture
-def safety_runtime(runtime,shared_switch,monkeypatch):
+def safety_runtime(runtime,shared_switch,db_session,monkeypatch):
     jobs,hal=runtime
     monkeypatch.setattr(jobs,'_prepare_item',hal.batch_prepare)
     _,conn=shared_switch
+    # 自动正例只覆盖本次手册已证明互锁适用性的SP6T，绝不把型号字符串当卡型证明。
+    conn.connection_params={**conn.connection_params,'port_maps':{name:{**mapping,'relay_type':'sp6t',
+        'output_port':1 if name=='v' else 2} for name,mapping in conn.connection_params['port_maps'].items()}}
+    db_session.commit()
     driver,_,calls=switch_runtime(monkeypatch)
     driver._mappings=conn.connection_params['port_maps']
-    positions={'1:INT_RELAY_A':'NC','1:INT_RELAY_B':'NO'}
+    positions={'1:INT_RELAY_A':'1','1:INT_RELAY_B':'2'}
     original=driver._send_command
     async def transport(command):
         if command in ('1:INT_RELAY_A?','1:INT_RELAY_B?'):
@@ -151,7 +155,7 @@ async def test_switch_failure_pauses_without_collect_and_continue_explicitly_ski
     jobs,hal,calls=safety_runtime
     driver=hal.drivers['rfSwitch'];original=driver._send_command
     async def transport(command):
-        if command=='1:INT_RELAY_B?': return 'NC'
+        if command=='1:INT_RELAY_B?': return '1'
         return await original(command)
     monkeypatch.setattr(driver,'_send_command',transport)
     topo,_=shared_switch
@@ -186,9 +190,9 @@ async def test_cancel_each_stage_never_starts_next_item(db_session,configured,sh
     entered=asyncio.Event();release=asyncio.Event()
     driver=hal.drivers['rfSwitch'];original=driver._send_command
     async def transport(command):
-        if stage=='switching' and command.endswith('_NO'):
+        if stage=='switching' and command.endswith('_2'):
             entered.set();await release.wait()
-        if stage=='failure' and command=='1:INT_RELAY_B?': return 'NC'
+        if stage=='failure' and command=='1:INT_RELAY_B?': return '1'
         return await original(command)
     monkeypatch.setattr(driver,'_send_command',transport)
     original_collect=jobs.collect_fixed_route
@@ -419,7 +423,7 @@ async def test_task_cancel_during_switch_waits_for_inflight_transport(db_session
     driver=hal.drivers['rfSwitch'];original=driver._send_command
     entered=asyncio.Event();release=asyncio.Event();finished=asyncio.Event()
     async def transport(command):
-        if command.endswith('_NO'):
+        if command.endswith('_2'):
             entered.set();await release.wait();finished.set()
         return await original(command)
     monkeypatch.setattr(driver,'_send_command',transport)
@@ -435,3 +439,70 @@ async def test_task_cancel_during_switch_waits_for_inflight_transport(db_session
     assert finished.is_set()
     db_session.expire_all();final=jobs.record(db_session,db_session.get(DiagnosticRun,ident))
     assert final['status']=='cancelled' and all(i['run_id'] is None for i in final['items'])
+
+
+async def test_failed_prepare_after_move_requires_confirmation_when_returning_to_old_reference(db_session,configured,shared_switch,safety_runtime,monkeypatch):
+    jobs,hal,_=safety_runtime
+    topo,_=shared_switch
+    driver=hal.drivers['rfSwitch'];original=driver._send_command;reads=0
+    async def transport(command):
+        nonlocal reads
+        if command=='1:INT_RELAY_A?':
+            reads+=1
+            if reads==4: return '2'
+        return await original(command)
+    monkeypatch.setattr(driver,'_send_command',transport)
+    request=request_for(topo,chains=('ov',),frequencies=(2000.,2595.,3500.))
+    request=request.model_copy(update={'references':tuple(r.model_copy(update={
+        'reference_antenna':'位置B' if r.frequency_mhz==2595. else '位置A'}) for r in request.references)})
+    value=await start_confirmed(jobs,db_session,configured.id,request,idempotency_key=uuid4())
+    ident=UUID(value['job_id']);task=jobs._running[ident].task
+    try:
+        await advance(jobs,db_session,configured,ident)  # A成功
+        await advance(jobs,db_session,configured,ident)  # 已明确移到B，此后切换失败
+        value=await wait_state(jobs,db_session,ident,'paused_failure')
+        failed=value['items'][1]
+        jobs.continue_job(db_session,configured.id,ident,item_id=failed['item_id'],transition_id=value['transition_id'],
+            reference_antenna='位置B',manual_confirmed=True,skip_failed=True)
+        await asyncio.sleep(.05)
+        db_session.expire_all();value=jobs.record(db_session,db_session.get(DiagnosticRun,ident))
+        assert value['status']=='waiting_manual' and value['current_index']==2
+        assert value['items'][2]['run_id'] is None, '参考件仍在B，返回A必须重新确认后才能采集'
+    finally:
+        if not task.done(): jobs.request_cancel(ident)
+        await task
+
+
+async def test_spdt_bare_interlock_zero_never_qualifies_auto(monkeypatch):
+    driver,step,calls=switch_runtime(monkeypatch,relay_type='spdt',target='NC',reply='NC')
+    receipts=[]
+    assert await apply(SimpleNamespace(drivers={'rfSwitch':driver}),[step],receipts.append) is False
+    assert not any(command.endswith('_NC') for command in calls)
+    assert receipts[-1]['error']
+
+
+async def test_sp6t_interlock_is_addressed_to_target_slot(monkeypatch):
+    driver,step,calls=switch_runtime(monkeypatch,relay_type='sp6t',target=1,reply='1')
+    original=driver._send_command
+    async def transport(command):
+        if command=='1:INTLK? SAFETYRELAY':
+            calls.append(command);return '0'
+        return await original(command)
+    monkeypatch.setattr(driver,'_send_command',transport)
+    receipts=[]
+    assert await apply(SimpleNamespace(drivers={'rfSwitch':driver}),[step],receipts.append) is True
+    assert 'INTLK? SAFETYRELAY' not in calls
+    assert calls.index('1:INTLK? SAFETYRELAY')<calls.index('1:INT_RELAY_A_1')
+
+
+async def test_other_slot_or_unaddressed_zero_cannot_allow_unknown_target_interlock(monkeypatch):
+    driver,step,calls=switch_runtime(monkeypatch,relay_type='sp6t',target=1,reply='1')
+    original=driver._send_command
+    async def transport(command):
+        if command=='1:INTLK? SAFETYRELAY':
+            calls.append(command);return None
+        return await original(command)  # 裸查询0不得授权slot1。
+    monkeypatch.setattr(driver,'_send_command',transport)
+    receipts=[]
+    assert await apply(SimpleNamespace(drivers={'rfSwitch':driver}),[step],receipts.append) is False
+    assert '1:INT_RELAY_A_1' not in calls and receipts[-1]['error']

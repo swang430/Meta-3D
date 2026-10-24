@@ -265,6 +265,7 @@ async def _prepare_item(ident,value,item,active):
 
 async def _pause_failure(ident,value,item,active,error):
     """保留失败项；继续只跳过，绝不自动重试。"""
+    active.last_prepared=None  # 人工可能已移位但准备未成功；下项必须重新确认，不能沿用旧摆位。
     progress=value['items'][value['current_index']]
     progress.update(status='failed',error=str(error))
     value.update(status='paused_failure',error=str(error),transition_id=uuid4().hex)
