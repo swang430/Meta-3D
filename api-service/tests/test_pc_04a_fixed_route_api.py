@@ -156,7 +156,7 @@ async def test_stop_failure_survives_subsequent_lease_release_failure(db_session
     db_session.commit()
     await jobs._execute(result, 'unused', asyncio.Event())
     db_session.expire_all()
-    saved = db_session.get(DiagnosticRun, result.run_id).sequence_evidence
+    saved = db_session.get(DiagnosticRun, result.run_id).sequence_evidence['extra']['fixed_route_acquisition']
     assert saved['status'] == 'cleanup_unconfirmed'
     assert '可能仍在发射' in saved['error'] and 'ATE socket close failed' in saved['error']
 
@@ -192,6 +192,28 @@ def test_graceful_shutdown_waits_for_acquisition_cleanup_and_saved_terminal(clie
     value = finish(client, configured, run_id)
     assert value['status'] == 'cancelled'
     assert not jobs._running
+
+
+def test_acquisition_running_and_terminal_are_readable_in_shared_diagnostic_history(client, configured):
+    response = start(client, configured)
+    run_id = response.json()['run_id']
+    for terminal in (False, True):
+        if terminal:
+            finish(client, configured, run_id)
+        listing = client.get('/api/v1/diagnostic-runs', params={'kind':'scpi_sequence'}).json()
+        listed = next(item for item in listing['items'] if item['id'] == run_id)
+        detail = client.get(f'/api/v1/diagnostic-runs/{run_id}')
+        assert detail.status_code == 200, detail.text
+        assert listed['sequence_verdict'] == 'UNDETERMINED'
+        envelope = detail.json()['sequence_evidence']
+        assert envelope['summary'] and isinstance(envelope['log'], list) and isinstance(envelope['steps'], list)
+        result = envelope['extra']['fixed_route_acquisition']
+        assert result['run_id'] == run_id and result['formal_eligible'] is False
+        assert result['net_loss_db'] is None and result['samples'] == []
+        if terminal:
+            assert result['status'] == 'simulated'
+            assert '模拟' in envelope['summary']
+            assert envelope['duration_ms'] > 0
 
 
 def test_real_http_lease_and_real_driver_transport_keeps_measured_source_not_setting(client, configured, db_session, monkeypatch):

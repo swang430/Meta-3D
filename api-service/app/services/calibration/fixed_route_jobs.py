@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from datetime import timezone
+from time import perf_counter
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from app.models.instrument import InstrumentCategory, InstrumentConnection, Inst
 from app.models.lab_profile import LabProfile
 from app.models.diagnostic_run import DiagnosticRun
 from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord
+from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.services.calibration.configuration_scope import build_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
@@ -93,11 +95,25 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
         analyzer_connection_id=str(connection.id), analyzer_instrument_id=sa.instrument_id), output, ce, sa
 
 
+def _sequence_evidence(result: FixedRouteResult, duration_ms: int = 0):
+    """遵守共享诊断详情契约；完整采集载荷只存于既有extra，不另造读取入口。"""
+    verdict = ('ABORTED' if result.status == 'cancelled' else 'BLOCKER'
+        if result.status in ('failed', 'cleanup_unconfirmed', 'interrupted', 'incomplete') else 'UNDETERMINED')
+    summary = '固定通路自动采集记录（未签发校准资格）'
+    if result.status == 'simulated':
+        summary = '模拟流程完成（无实测功率、无校准资格）'
+    elif result.status == 'cleanup_unconfirmed':
+        summary = '可能仍在发射：停止未确认'
+    return SequenceEvidence(summary=summary, duration_ms=duration_ms,
+        log=([result.error] if result.error else []) + result.missing_items, steps=[],
+        extra={'verdict': verdict, 'fixed_route_acquisition': result.model_dump(mode='json')}).model_dump(mode='json')
+
+
 def record(row: DiagnosticRun) -> FixedRouteRecord:
-    payload = row.sequence_evidence
     value = None
     try:
-        value = FixedRouteResult.model_validate(payload)
+        envelope = SequenceEvidence.model_validate(row.sequence_evidence)
+        value = FixedRouteResult.model_validate(envelope.extra.get('fixed_route_acquisition'))
         if value.run_id != row.id or value.lab_profile_id != row.lab_profile_id:
             value = None
     except (ValidationError, TypeError):
@@ -122,7 +138,7 @@ async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
         run_id = uuid4()
         result = FixedRouteResult(run_id=run_id, lab_profile_id=lab_id, request=request, configuration=config)
         row = DiagnosticRun(id=run_id, kind='scpi_sequence', lab_profile_id=lab_id, target_name=TARGET,
-            params=request.model_dump(mode='json'), success=False, sequence_evidence=result.model_dump(mode='json'))
+            params=request.model_dump(mode='json'), success=False, sequence_evidence=_sequence_evidence(result))
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -137,6 +153,7 @@ async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
 
 async def _execute(result, token, cancel):
     """独立DB session，只在进入控制权前读配置；采集中不补当前值。"""
+    started_at = perf_counter()
     try:
         if cancel.is_set():
             result.status, result.error = 'cancelled', '采集开始前已取消，未操作仪器'
@@ -175,7 +192,8 @@ async def _execute(result, token, cancel):
                 row = db.get(DiagnosticRun, result.run_id)
                 if row is None:
                     raise RuntimeError('采集审计记录丢失')
-                row.sequence_evidence = result.model_dump(mode='json')
+                row.duration_ms = int((perf_counter() - started_at) * 1000)
+                row.sequence_evidence = _sequence_evidence(result, row.duration_ms)
                 row.success = result.status in ('completed', 'simulated')
                 row.error_message = result.error
                 db.commit()

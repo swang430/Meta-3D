@@ -30,12 +30,22 @@
 api-service实跑：`.venv/bin/python -m pytest -q --tb=short --show-capture=no -o log_cli=false`，最终输出：
 `1 failed, 7176 passed, 17 skipped in 281.70s (0:04:41)`，退出1。
 唯一失败为下面独立在main复现的过期fixture；没有本片新增失败。证据 `backend-final-stable.log`。
-最终生产输入包含全部安全修复及严格输入校验；之后仅文档记录和前端对象属性类型收窄，没有再次修改后端输入。
+本次全量对应R1提交 `052bb900`，包含全部安全修复及严格输入校验。R1后的局部修复及实际复用边界见下节，不把该全量称为R1修复后完整重跑。
 此前全量在发现功能缺陷后主动中止，不能当作完整通过；最终回归不复用那些中止输出。
 
 主目录main独立实跑：
 `.venv/bin/python -m pytest -q tests/test_p1_64_quiet_zone_evidence_truth.py::test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown --tb=short --show-capture=no -o log_cli=false`
 结果 `1 failed in 0.06s`，断言 `expired != valid`；旧fixture在当前日期已过期。证据 `main-date-baseline.log`。不得为使旧测试通过而改变生产有效期策略，也不把该既有失败宣称为本片新增回归。
+
+## R1共享历史契约修复
+
+外审唯一功能P1 `inline4365940061`：采集记录直接保存原始载荷，遗漏共享诊断详情必须的SequenceEvidence字段，打开旧入口会500。新增真实HTTP反例先复现4项必填字段缺失，再将创建/终态写方统一为既有格式，完整采集数据放在 `extra.fixed_route_acquisition`，专用读取仅取同一份数据。共享API、GUI类型及OpenAPI响应形状未改，不增加新历史机制。
+
+实跑api-service：`.venv/bin/python -m pytest -q tests/test_pc_04a_fixed_route_acquisition.py tests/test_pc_04a_fixed_route_api.py tests/test_p2_28_diagnostic_sequence_evidence.py tests/test_rule_gates.py --tb=short --show-capture=no -o log_cli=false`，**107 passed in 23.46s**；含running和终态的共享列表、共享详情与专用读取。`r1-red.log`、`r1-green.log`保留实际输出。独立增量内审功能P1=0。
+
+本轮仅修改局部保存/读取封套与真实耗时，不改驱动命令、功率计算、安全清理、共享schema或正式执行策略；执行相关契约回归和增量浏览器验证，不为一次推送重复整套后端。全量证据仅复用未改影响面，不冒充相同完整输入。
+
+修复后用新独立临时DB `test-r1.db` 重跑同一真实浏览器脚本，**8项通过**，新增从“调试序列 + 单阶段”最近运行中实际点击“查看完整证据”，真实GET返回200，完整载荷可显示且模拟不是正式成功。`browser-r1.log`，运行编号 `9aeabc85-c153-4460-92b1-42b9a4bdc6c8` / `0eb04185-c7d2-4c9f-af2b-0a0bc90b0e60`；新增截图 `output/playwright/pc04-shared-diagnostic-evidence.png` 已查看。compileall及唯一Alembic head再次通过，GUI生产代码未改，复用已通过的182项/build。
 
 ## 尚未完成的现场工作
 

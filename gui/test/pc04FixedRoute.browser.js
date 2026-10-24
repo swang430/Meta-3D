@@ -71,5 +71,15 @@ async (page) => {
   await card.getByText('暂无自动采集记录。',{exact:true}).waitFor();
   if (await card.getByLabel('采集频率',{exact:false}).inputValue()) throw new Error('跨实验室沿用输入');
   checks.push('切换实验室清空输入，历史不串用');
+  await page.getByRole('tab',{name:'调试序列 + 单阶段',exact:true}).click();
+  const evidenceResponse = page.waitForResponse(r=>r.url().includes('/diagnostic-runs/') && r.request().method()==='GET');
+  await page.locator('code').filter({hasText:/^fixed_route_power_acquisition$/}).first().locator('..').getByRole('button',{name:'查看完整证据'}).click();
+  const detail = await evidenceResponse;
+  if (!detail.ok()) throw new Error(await detail.text());
+  const shared = (await detail.json()).sequence_evidence;
+  if (!shared?.extra?.fixed_route_acquisition || !['UNDETERMINED','ABORTED'].includes(shared.extra.verdict)) throw new Error(JSON.stringify(shared));
+  await page.getByRole('heading',{name:'历史完整证据',exact:true}).waitFor();
+  await page.screenshot({path:'output/playwright/pc04-shared-diagnostic-evidence.png',fullPage:true});
+  checks.push('共享调试序列历史可打开采集完整证据，不报500且不显示模拟正式通过');
   return {passed:checks.length,checks,run_ids:[created.run_id,created2.run_id],lab_ids:[labA.id,labB.id]};
 }

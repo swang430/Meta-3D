@@ -53,7 +53,7 @@ NotebookLM 已交叉核对：notebook `982222b7-4953-46cd-9949-00fa97882353`，q
 
 ## 4. 保存什么、如何判断结果
 
-复用 `DiagnosticRun.sequence_evidence` 保存独立的版本化采集记录，不写旧 `ProbePathLossCalibration.path_loss_db`，不创建第二套校准引擎。
+复用 `DiagnosticRun.sequence_evidence` 的既有 `SequenceEvidence` 格式，完整版本化采集记录保存在 `extra.fixed_route_acquisition`，同时支持专用采集历史及共享诊断列表/详情。共享列表中未获校准资格保持未判定，模拟不显示正式通过。不写旧 `ProbePathLossCalibration.path_loss_db`，不创建第二套校准引擎。
 
 记录至少包含：
 
