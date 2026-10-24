@@ -1,7 +1,24 @@
 // 独立临时数据库/全HAL Mock，真实前后端；不拦截响应，不操作现场仪器。
 async page=>{
+  await page.evaluate(()=>{window.__topologyEditingResult=null});
   const api='http://127.0.0.1:18080/api/v1',checks=[];
   page.setDefaultTimeout(12000);
+  const clickCurve=async(id)=>{
+    await page.getByRole('button',{name:'Fit View',exact:true}).click();
+    const located=await page.waitForFunction(id=>{
+      const el=document.querySelector(`.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`);
+      if(!el)return null;
+      const transform=el.getScreenCTM();
+      for(const fraction of [.2,.3,.1,.4,.6,.7,.8,.9]){
+        const p=el.getPointAtLength(el.getTotalLength()*fraction);
+        const x=transform.a*p.x+transform.c*p.y+transform.e,y=transform.b*p.x+transform.d*p.y+transform.f;
+        if(document.elementFromPoint(x,y)?.closest('.react-flow__edge')===el.closest('.react-flow__edge'))return{x,y};
+      }
+      return null;
+    },id);
+    const point=await located.jsonValue();
+    await page.mouse.click(point.x,point.y);
+  };
   await page.setViewportSize({width:1600,height:1100});
   const status=await(await page.request.get(`${api}/instruments/hal/status`)).json();
   if(status.mode!=='mock')throw new Error('仅允许独立全Mock环境');
@@ -40,9 +57,7 @@ async page=>{
   await page.getByText('拓扑草稿未保存',{exact:true}).waitFor();
   checks.push('真实鼠标拖动节点并标记未保存');
   // 原版连线编辑由单击触发；在标签之外的真实线段操作，不force或派发事件。
-  const edge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
-  const point=await edge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
-  await edge.click({position:point});
+  await clickCurve('fixed-v');
   await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).fill('1.25');
   await page.getByRole('button',{name:'应用修改',exact:true}).click();
   checks.push('连线可打开原编辑面板并应用参数修改');
@@ -59,13 +74,79 @@ async page=>{
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
   await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
   await page.locator('.react-flow__node[data-id="ce1"]').waitFor();
-  const oldEdge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
-  const reloaded=await oldEdge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
-  await oldEdge.click({position:reloaded});
+  await clickCurve('fixed-v');
   if(Number(await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).inputValue())!==1.25)throw new Error('刷新后参数丢失');
   await page.getByRole('button',{name:'取消',exact:true}).click();
   await page.getByRole('dialog').waitFor({state:'hidden'});
   checks.push('刷新后仍可编辑且持久化参数保持');
+  // 新增器件、端口声明和原生连线，全程真实画布操作与服务器回读。
+  const addPassive=async(label,dx)=>{
+    await page.getByRole('button',{name:'添加器件',exact:true}).click();
+    await page.getByLabel('器件名称',{exact:true}).fill(label);
+    await page.getByLabel('声明端口',{exact:true}).fill('in, out');
+    await page.getByRole('button',{name:'应用器件修改',exact:true}).click();
+    await page.getByRole('dialog').waitFor({state:'hidden'});
+    const item=page.locator('.react-flow__node').filter({has:page.getByText(label,{exact:true})});
+    const box=await item.boundingBox();
+    if(!box)throw new Error('新增器件没有出现在当前画布');
+    await page.mouse.move(box.x+box.width/2,box.y+20);
+    await page.mouse.down();
+    await page.mouse.move(box.x+box.width/2+dx,box.y+30,{steps:10});
+    await page.mouse.up();
+    return item;
+  };
+  const source=await addPassive('编辑验收源',-260);
+  const target=await addPassive('编辑验收目标',230);
+  const sourceId=await source.getAttribute('data-id'),targetId=await target.getAttribute('data-id');
+  const sourceHandle=source.locator('.react-flow__handle.source[data-handleid="out"]');
+  const targetHandle=target.locator('.react-flow__handle.target[data-handleid="in"]');
+  const s=await sourceHandle.boundingBox(),t=await targetHandle.boundingBox();
+  if(!s||!t)throw new Error('已声明端口未形成真实连接端点');
+  await page.mouse.move(s.x+s.width/2,s.y+s.height/2);
+  await page.mouse.down();
+  await page.mouse.move(t.x+t.width/2,t.y+t.height/2,{steps:20});
+  await page.mouse.up();
+  await page.getByRole('button',{name:'保存拓扑',exact:true}).click();
+  await page.getByText('拓扑已保存到服务器；不自动同步仪器绑定',{exact:true}).waitFor();
+  let edited=await(await page.request.get(endpoint)).json();
+  const nativeEdge=edited.connections.find(c=>c.source===sourceId&&c.target===targetId);
+  if(!nativeEdge||nativeEdge.source_pin!=='out'||nativeEdge.target_pin!=='in')throw new Error('原生连线未真实保存');
+  if(!edited.operating_modes.some(m=>(m.active_connections||[]).includes(nativeEdge.id)))throw new Error('保存连接未加入当前模式');
+  checks.push('新增器件、声明端口、拖动及原生连线真实保存');
+  // 独立校准模式不篡改正常测试模式的活动连接。
+  const normal=edited.operating_modes.find(m=>m.id==='mimo_ota');
+  const normalConnections=JSON.stringify(normal?.active_connections||[]);
+  await page.getByRole('button',{name:'校准接线',exact:true}).click();
+  await page.getByRole('textbox',{name:'新增器件类型',exact:true}).click();
+  await page.getByRole('option',{name:'校准接收线缆',exact:true}).click();
+  await page.getByRole('button',{name:'添加器件',exact:true}).click();
+  await page.getByLabel('器件名称',{exact:true}).fill('编辑验收校准线');
+  await page.getByLabel('声明端口',{exact:true}).fill('接收端, 分析仪端');
+  await page.getByRole('button',{name:'应用器件修改',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  await page.getByRole('button',{name:'保存拓扑',exact:true}).click();
+  await page.getByText('拓扑已保存到服务器；不自动同步仪器绑定',{exact:true}).waitFor();
+  edited=await(await page.request.get(endpoint)).json();
+  if(JSON.stringify(edited.operating_modes.find(m=>m.id==='mimo_ota')?.active_connections||[])!==normalConnections)throw new Error('校准接线污染正常模式');
+  const calibration=edited.nodes.find(n=>n.label==='编辑验收校准线');
+  if(calibration?.params.connection_scope!=='calibration'||JSON.stringify(calibration.params.visible_modes)!=='["calibration"]')throw new Error('校准器件没有独立模式标记');
+  checks.push('校准接线独立保存且不污染正常模式');
+  // 切回原模式，删除器件必须一并清理真实保存的连接及所有模式引用。
+  await page.getByRole('textbox',{name:'操作模式',exact:true}).click();
+  await page.getByRole('option',{name:normal?.name||edited.operating_modes[0].name,exact:true}).click();
+  const deleting=page.locator(`.react-flow__node[data-id="${targetId}"]`);
+  await page.locator('.react-flow__controls-fitview').click();
+  await deleting.dblclick();
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'删除器件',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  await page.getByRole('button',{name:'保存拓扑',exact:true}).click();
+  await page.getByText('拓扑已保存到服务器；不自动同步仪器绑定',{exact:true}).waitFor();
+  edited=await(await page.request.get(endpoint)).json();
+  if(edited.nodes.some(n=>n.id===targetId)||edited.connections.some(c=>c.id===nativeEdge.id)||edited.operating_modes.some(m=>(m.active_connections||[]).includes(nativeEdge.id)))throw new Error('删除没有完整清理保存结构');
+  checks.push('删除器件清理关联连线与所有模式引用并真实保存');
   await page.locator('.react-flow').first().screenshot({path:'output/playwright/restored-topology.png'});
-  return{passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
+  const result={passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
+  await page.evaluate(result=>{window.__topologyEditingResult=result},result);
+  return result;
 }

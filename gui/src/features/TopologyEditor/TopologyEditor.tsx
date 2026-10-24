@@ -6,11 +6,11 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
-  addEdge,
   ReactFlowProvider,
   MarkerType,
+  useReactFlow,
 } from '@xyflow/react';
-import type { Connection, Edge, Node, NodeChange } from '@xyflow/react';
+import type { Connection, Edge, Node, NodeChange, EdgeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { 
   Group, 
@@ -29,6 +29,7 @@ import {
   TextInput,
   NumberInput,
   Divider,
+  MultiSelect,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { 
@@ -45,9 +46,10 @@ import {
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalLab';
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
-import { nodePortsToSelectOptions } from './nodePortHelpers';
+import { getNodePorts, nodePortsToSelectOptions } from './nodePortHelpers';
+import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService } from '../../api/switchTopologyService';
-import type { SwitchTopology, TopologyConnection } from '../../api/switchTopologyService';
+import type { SwitchTopology, TopologyConnection, TopologyNode } from '../../api/switchTopologyService';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
 
@@ -63,6 +65,12 @@ interface TopologyEditorProps {
   switchCategoryId?: string;
 }
 
+const nodeTypeOptions = [
+  ['channel_emulator','信道仿真器'],['communication_tester','基站仿真器'],['emcenter','射频开关及功放'],
+  ['probe','测试探头'],['reference_antenna','校准参考天线'],['signal_analyzer','校准分析仪'],['vna','矢量网络分析仪'],
+  ['pad','衰减器'],['amplifier','功放'],['combiner','合路器'],['cable','线缆'],['receive_cable','校准接收线缆'],['air_path','校准空气传播段'],['termination','负载'],
+].map(([value,label])=>({value,label}));
+
 // ── Inner: ReactFlow canvas with editing ────────────────────────
 
 interface TopologyFlowProps {
@@ -74,6 +82,7 @@ interface TopologyFlowProps {
 }
 
 const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange }: TopologyFlowProps) => {
+  const { screenToFlowPosition, setCenter } = useReactFlow();
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
   );
@@ -83,15 +92,23 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const { beginWork } = useOperationalLab();
   const [selectedEdge, setSelectedEdge] = useState<TopologyConnection | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [draft, setDraft] = useState(topology);
+  const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
+  const [nodeDrawerOpen, setNodeDrawerOpen] = useState(false);
+  const [newNodeType, setNewNodeType] = useState<string>('pad');
+  const [portText, setPortText] = useState('');
+  const [catalog, setCatalog] = useState<{value:string;label:string}[]>([]);
+  const savingRef = useRef(false);
 
-  // Track local edits to connections
-  const connectionsRef = useRef<TopologyConnection[]>([...topology.connections]);
-  const nodesDataRef = useRef(topology.nodes.map(n => ({ ...n })));
+  useEffect(() => {
+    apiClient.get('/instruments/catalog').then(response => {
+      setCatalog((response.data.categories || []).map((item: any) => ({value:item.categoryId || item.key,label:item.label})));
+    }).catch(() => setCatalog([]));
+  }, []);
 
   // Reset refs when topology prop changes (e.g. after save refresh)
   useEffect(() => {
-    connectionsRef.current = [...topology.connections];
-    nodesDataRef.current = topology.nodes.map(n => ({ ...n }));
+    setDraft(topology);
     setDirty(false);
     setSaveResult('idle');
   }, [topology.id]);
@@ -103,19 +120,18 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [dirty, onDirtyChange]);
 
   const initialNodes: Node[] = React.useMemo(() => {
-    const currentMode = topology.operating_modes.find(m => m.id === activeMode);
-    const activeConnectionIds = new Set(currentMode?.active_connections || []);
+    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
 
     // Collect node IDs that have at least one active connection
     const activeNodeIds = new Set<string>();
-    for (const c of connectionsRef.current) {
+    for (const c of draft.connections) {
       if (activeConnectionIds.has(c.id)) {
         activeNodeIds.add(c.source);
         activeNodeIds.add(c.target);
       }
     }
 
-    return topology.nodes
+    return draft.nodes
       .filter((n) => {
         // If node has visible_modes restriction, check if current mode is in the list
         const visibleModes = n.params?.visible_modes;
@@ -131,13 +147,12 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         position: n.position || { x: 0, y: 0 },
         data: { label: n.label, params: n.params },
       }));
-  }, [topology.nodes, topology.operating_modes, activeMode]);
+  }, [draft, activeMode]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
-    const currentMode = topology.operating_modes.find(m => m.id === activeMode);
-    const activeConnectionIds = new Set(currentMode?.active_connections || []);
+    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
 
-    return connectionsRef.current
+    return draft.connections
       .filter((c) => activeConnectionIds.has(c.id))
       .map((c) => {
       return {
@@ -160,7 +175,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         },
       };
     });
-  }, [topology.connections, topology.operating_modes, activeMode]);
+  }, [draft, activeMode]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -170,34 +185,63 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     setEdges(initialEdges);
   }, [initialNodes, initialEdges, setNodes, setEdges]);
 
-  const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, type: 'signal' }, eds)),
-    [setEdges],
-  );
+  const changeDraft = useCallback((change: (current: SwitchTopology) => SwitchTopology) => {
+    if (savingRef.current) return;
+    setDraft(current => change(current));
+    setDirty(true);
+    setSaveResult('idle');
+  }, []);
+  const onConnect = useCallback((params: Connection) => {
+    if (savingRef.current) return;
+    try {
+      const next = addDraftConnection(draft, {id:crypto.randomUUID(),source:params.source,target:params.target,
+        source_pin:params.sourceHandle || undefined,target_pin:params.targetHandle || undefined}, activeMode);
+      changeDraft(() => next);
+    } catch (error) {
+      notifications.show({color:'red',message:String(error)});
+    }
+  }, [draft, activeMode, changeDraft]);
+
+  const deleteNodes = useCallback((ids: string[]) => {
+    if (savingRef.current) return;
+    const count = draft.connections.filter(c=>ids.includes(c.source)||ids.includes(c.target)).length;
+    if (window.confirm(`删除 ${ids.length} 个拓扑器件及 ${count} 条关联连线？不会删除仪器资源或历史记录。`)) {
+      changeDraft(current=>removeDraftNodes(current,ids));
+      setNodeDrawerOpen(false);
+    }
+  }, [draft, changeDraft]);
 
   // ── Node drag → update position in ref, mark dirty ──
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    onNodesChange(changes);
+    if (savingRef.current) return;
+    const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
+    if (removed.length) deleteNodes(removed);
+    onNodesChange(changes.filter(c=>c.type!=='remove'));
     // Track position changes
     for (const change of changes) {
       if (change.type === 'position' && change.position && !change.dragging) {
-        const nodeData = nodesDataRef.current.find(n => n.id === change.id);
-        if (nodeData) {
-          nodeData.position = { x: change.position.x, y: change.position.y };
-          setDirty(true);
-        }
+        const position = {...change.position};
+        changeDraft(current=>({...current,nodes:current.nodes.map(n=>n.id===change.id?{...n,position}:n)}));
       }
     }
-  }, [onNodesChange]);
+  }, [onNodesChange, deleteNodes, changeDraft]);
+
+  const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
+    if (savingRef.current) return;
+    const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
+    if (removed.length) changeDraft(current=>removeDraftConnections(current,removed));
+    onEdgesChange(changes.filter(c=>c.type!=='remove'));
+  }, [onEdgesChange, changeDraft]);
 
   // ── Edge click → open parameter drawer ──
   const handleEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    const conn = connectionsRef.current.find(c => c.id === edge.id);
+    if (savingRef.current) return;
+    const conn = draft.connections.find(c => c.id === edge.id);
     if (conn) {
       setSelectedEdge({ ...conn });
       setDrawerOpen(true);
     }
-  }, []);
+  }, [draft]);
 
   // ── Update connection parameter ──
   const updateConnectionParam = useCallback((field: keyof TopologyConnection, value: any) => {
@@ -207,10 +251,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   const applyConnectionEdit = useCallback(() => {
     if (!selectedEdge) return;
-    const idx = connectionsRef.current.findIndex(c => c.id === selectedEdge.id);
+    const idx = draft.connections.findIndex(c => c.id === selectedEdge.id);
     if (idx >= 0) {
-      connectionsRef.current[idx] = { ...selectedEdge };
-      setDirty(true);
+      changeDraft(current=>({...current,connections:current.connections.map(c=>c.id===selectedEdge.id?{...selectedEdge}:c)}));
       // Update edge data in ReactFlow
       setEdges(eds => eds.map(e => {
         if (e.id === selectedEdge.id) {
@@ -232,47 +275,20 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         autoClose: 2000,
       });
     }
-  }, [selectedEdge, setEdges]);
+  }, [selectedEdge, setEdges, draft, changeDraft]);
 
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
-    if (!topology.id) return;
+    if (!topology.id || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     const release = beginWork('topology-save', '拓扑保存尚未结束');
 
     try {
-      // 1. Validate first
-      const validation = await switchTopologyService.validateTopology(topology.id, labProfileId);
-      const errors = (validation.issues || []).filter((i: any) => i.severity === 'error');
-      const warnings = (validation.issues || []).filter((i: any) => i.severity === 'warning');
-
-      if (errors.length > 0) {
-        setSaveResult('failed');
-        notifications.show({
-          title: '拓扑验证失败',
-          message: `${errors.length} 个错误需要修复`,
-          color: 'red',
-          icon: <IconX size={16} />,
-          autoClose: 5000,
-        });
-        setSaving(false);
-        return;
-      }
-
-      if (warnings.length > 0) {
-        notifications.show({
-          title: '拓扑验证警告',
-          message: `${warnings.length} 个警告（不影响保存）`,
-          color: 'yellow',
-          icon: <IconAlertTriangle size={16} />,
-          autoClose: 3000,
-        });
-      }
-
       // 2. Build update payload with current positions + edited connections.
       // P1-57：不再提交 chamber_id —— 暗室由后端从 lab_profile_id 派生，
       // 客户端提交只会造出"写进错暗室"的口子。
-      const updatedNodes = nodesDataRef.current.map(n => {
+      const updatedNodes = draft.nodes.map(n => {
         const rfNode = nodes.find(rn => rn.id === n.id);
         return {
           ...n,
@@ -282,12 +298,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
       const payload = {
         nodes: updatedNodes,
-        connections: connectionsRef.current,
+        connections: draft.connections,
+        operating_modes: draft.operating_modes,
       };
 
       // 3. PATCH to backend
       const updated = await switchTopologyService.updateTopology(topology.id, labProfileId, payload);
-
+      setDraft(updated);
       setDirty(false);
       setSaveResult('saved');
       onTopologyUpdated(updated);
@@ -302,14 +319,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       logFrontendEvent({
         action: 'switch_topology.saved',
         component: 'TopologyEditor',
-        message: `topology=${topology.id} lab=${labProfileId} nodes=${updatedNodes.length} conns=${connectionsRef.current.length}`,
+        message: `topology=${topology.id} lab=${labProfileId} nodes=${updatedNodes.length} conns=${draft.connections.length}`,
       });
     } catch (err: any) {
       setSaveResult('failed');
       const detail = err.response?.data?.detail || err.message;
       notifications.show({
         title: '保存失败',
-        message: detail,
+        message: typeof detail === 'string' ? detail : JSON.stringify(detail),
         color: 'red',
         icon: <IconX size={16} />,
         autoClose: 5000,
@@ -322,11 +339,41 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       });
     } finally {
       setSaving(false);
+      savingRef.current = false;
       release();
     }
-  }, [topology, nodes, onTopologyUpdated, labProfileId, beginWork]);
+  }, [topology, draft, nodes, onTopologyUpdated, labProfileId, beginWork]);
 
-  const activeModeObj = topology.operating_modes.find(m => m.id === activeMode);
+  const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
+  const addNode = () => {
+    if (savingRef.current) return;
+    const calibrationOnly = ['reference_antenna','signal_analyzer','air_path','receive_cable'].includes(newNodeType);
+    const mode = calibrationOnly ? CALIBRATION_MODE : activeMode || 'mimo_ota';
+    let current = draft;
+    if (!current.operating_modes.some(m=>m.id===mode)) current = {...current,operating_modes:[...current.operating_modes,{id:mode,name:mode===CALIBRATION_MODE?'校准接线':'MIMO OTA 测试',active_connections:[]}]};
+    const node: TopologyNode = {id:crypto.randomUUID(),type:newNodeType,label:nodeTypeOptions.find(o=>o.value===newNodeType)?.label || '器件',
+      position:screenToFlowPosition({x:window.innerWidth/2,y:window.innerHeight/2}),
+      params:{ports:[],...(calibrationOnly?{connection_scope:'calibration'}:{})}};
+    const next = addDraftNode(current,node,mode);
+    changeDraft(()=>next);
+    setActiveMode(mode);
+    setSelectedNode(next.nodes[next.nodes.length-1]);
+    setPortText('');
+    setNodeDrawerOpen(true);
+    void setCenter(node.position.x+90,node.position.y+40,{zoom:1,duration:200});
+  };
+  const applyNodeEdit = () => {
+    if (!selectedNode || savingRef.current) return;
+    const ports = portText.split(/[,，\n]/).map(p=>p.trim()).filter(Boolean);
+    if (!selectedNode.label.trim() || !ports.length || new Set(ports).size!==ports.length) {
+      notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
+    }
+    try {
+      const next=updateDraftNode(draft,selectedNode,ports);
+      changeDraft(()=>next);
+      setNodeDrawerOpen(false);
+    } catch(error) { notifications.show({color:'red',message:String(error)}); }
+  };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -349,10 +396,18 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             )}
           </Group>
           <Group>
+            <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={saving} w={150} />
+            <Button onClick={addNode} disabled={saving}>添加器件</Button>
+            <Button variant="light" disabled={saving} onClick={()=>{
+              if (!draft.operating_modes.some(m=>m.id===CALIBRATION_MODE)) changeDraft(current=>({...current,operating_modes:[...current.operating_modes,{id:CALIBRATION_MODE,name:'校准接线',active_connections:[]}]}));
+              setActiveMode(CALIBRATION_MODE);
+            }}>校准接线</Button>
             <Select 
+              aria-label="操作模式"
               value={activeMode} 
               onChange={(v) => v && setActiveMode(v)}
-              data={topology.operating_modes.map(m => ({ value: m.id, label: m.name }))}
+              data={draft.operating_modes.map(m => ({ value: m.id, label: m.name }))}
+              disabled={saving}
               placeholder="操作模式"
               w={200}
             />
@@ -374,9 +429,17 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           nodes={nodes}
           edges={edges}
           onNodesChange={handleNodesChange}
-          onEdgesChange={onEdgesChange}
+          onEdgesChange={handleEdgesChange}
           onConnect={onConnect}
           onEdgeClick={handleEdgeClick}
+          onNodeDoubleClick={(_,node)=>{
+            if (savingRef.current) return;
+            const item=draft.nodes.find(n=>n.id===node.id);
+            if (item) {setSelectedNode({...item,params:{...item.params}});setPortText(getNodePorts(item).join(', '));setNodeDrawerOpen(true);}
+          }}
+          nodesDraggable={!saving}
+          nodesConnectable={!saving}
+          deleteKeyCode={null}
           nodeTypes={customNodeTypes}
           edgeTypes={customEdgeTypes}
           fitView
@@ -394,12 +457,24 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           <Text size="sm" c="dimmed">{activeModeObj?.description || '—'}</Text>
           <Group gap="md">
             <Text size="xs" c="dimmed">
-              节点: {topology.total_nodes ?? topology.nodes.length} · 连接: {topology.total_connections ?? topology.connections.length}
+              节点: {draft.nodes.length} · 连接: {draft.connections.length}
             </Text>
-            <Text size="xs" c="dimmed">点击连线可编辑参数</Text>
+            <Text size="xs" c="dimmed">双击器件编辑属性；点击连线编辑或删除。声明接线不代表硬件已连接或支持自动控制。</Text>
           </Group>
         </Group>
       </Paper>
+
+      <Drawer opened={nodeDrawerOpen} onClose={()=>!saving&&setNodeDrawerOpen(false)} title="器件属性" position="right">
+        {selectedNode && <Stack>
+          <Text size="xs" c="dimmed">{selectedNode.id}</Text>
+          <TextInput label="器件名称" value={selectedNode.label} disabled={saving} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
+          <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={saving} onChange={event=>setPortText(event.currentTarget.value)} />
+          <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={saving || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
+          {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={saving} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
+          <Alert color="blue">此处只声明拓扑接线。自动控制和正式校准资格由采集入口另行核验。</Alert>
+          <Group><Button onClick={applyNodeEdit} disabled={saving}>应用器件修改</Button><Button color="red" variant="outline" disabled={saving} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
+        </Stack>}
+      </Drawer>
 
       {/* ── Edge Parameter Drawer ── */}
       <Drawer
@@ -411,8 +486,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         padding="lg"
       >
         {selectedEdge && (() => {
-          const sourceNode = topology.nodes.find((n) => n.id === selectedEdge.source);
-          const targetNode = topology.nodes.find((n) => n.id === selectedEdge.target);
+          const sourceNode = draft.nodes.find((n) => n.id === selectedEdge.source);
+          const targetNode = draft.nodes.find((n) => n.id === selectedEdge.target);
           const sourcePinOpts = nodePortsToSelectOptions(sourceNode);
           const targetPinOpts = nodePortsToSelectOptions(targetNode);
           return (
@@ -497,7 +572,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
             <Group justify="flex-end" mt="md">
               <Button variant="outline" onClick={() => setDrawerOpen(false)}>取消</Button>
-              <Button onClick={applyConnectionEdit}>应用修改</Button>
+              <Button color="red" variant="outline" disabled={saving} onClick={()=>{changeDraft(current=>removeDraftConnections(current,[selectedEdge.id]));setDrawerOpen(false);}}>删除连线</Button>
+              <Button onClick={applyConnectionEdit} disabled={saving}>应用修改</Button>
             </Group>
           </Stack>
           );

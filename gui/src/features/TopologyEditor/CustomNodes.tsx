@@ -1,4 +1,5 @@
-import { Handle, Position } from '@xyflow/react';
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { useEffect } from 'react';
 import { ThemeIcon, Group, Text, Stack, Badge, Box, Tooltip } from '@mantine/core';
 import { 
   IconServer, 
@@ -12,6 +13,7 @@ import {
   IconAntennaBars5,
 } from '@tabler/icons-react';
 import { formatPortLabel, resolvePortHandles } from './baseStationPorts';
+import { getNodePorts } from './nodePortHelpers';
 
 // ==========================================
 // Base Node Style
@@ -283,7 +285,7 @@ export const SwitchSlotNode = ({ data }: any) => {
 // ==========================================
 // Node Types Registry
 // ==========================================
-export const customNodeTypes = {
+const originalNodeTypes = {
   // V4.0 新节点类型
   channel_emulator: ChannelEmulatorNode,
   communication_tester: CommunicationTesterNode,
@@ -298,3 +300,37 @@ export const customNodeTypes = {
   bse_port: CommunicationTesterNode,
   switch_slot: SwitchSlotNode,
 };
+
+// 被动器件只是操作员声明，不据名称推断设备能力或参与正式校准。
+const PassiveNode = ({data}: any) => <Box style={baseNodeStyle}>
+  <Group gap="xs"><ThemeIcon variant="light" size="sm"><IconAntennaBars5 size={14}/></ThemeIcon><Text size="sm" fw={500}>{data.label}</Text></Group>
+  <Text size="xs" c="dimmed">接线声明，非设备能力验证</Text>
+</Box>;
+
+// 原节点视觉保持不变；仅在明确声明端口后，以同一声明绘制可连接端点。
+function withDeclaredPorts(Component: any) {
+  return function DeclaredPortNode(props: any) {
+    const updateInternals=useUpdateNodeInternals();
+    const ports=props.data.params?.ports;
+    const signature=JSON.stringify(ports);
+    useEffect(()=>updateInternals(props.id),[props.id,signature,updateInternals]);
+    if (!Array.isArray(ports)) return <Component {...props}/>;
+    return <div className="topology-declared-node" style={{position:'relative'}}>
+      <style>{'.topology-declared-node .react-flow__handle:not(.topology-declared-handle){display:none}'}</style>
+      <Component {...props}/>
+      {getNodePorts({id:props.id,type:props.type,label:'',position:{x:0,y:0},params:props.data.params}).flatMap((port,index,list)=>{
+        // 已有基站端口角色仍由原配置决定，不能把上行入口扩成下行出口。
+        const role = ['communication_tester','bse_port'].includes(props.type) ? props.data.params?.port_roles?.[port] : undefined;
+        return [
+          role !== 'dl' && <Handle key={`in-${port}`} className="topology-declared-handle" type="target" position={Position.Left} id={port} title={`${port}（声明端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
+          role !== 'ul' && <Handle key={`out-${port}`} className="topology-declared-handle" type="source" position={Position.Right} id={port} title={`${port}（声明端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
+        ];
+      })}
+    </div>;
+  };
+}
+
+export const customNodeTypes = Object.fromEntries(Object.entries({
+  ...originalNodeTypes,amplifier:PassiveNode,combiner:PassiveNode,pad:PassiveNode,antenna:PassiveNode,
+  termination:PassiveNode,cable:PassiveNode,receive_cable:PassiveNode,air_path:PassiveNode,sa_port:PassiveNode,
+}).map(([type,Component])=>[type,withDeclaredPorts(Component)]));

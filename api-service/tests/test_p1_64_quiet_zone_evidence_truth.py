@@ -493,6 +493,13 @@ def test_comprehensive_summary_keeps_zero_formal_denominator_undetermined():
 async def test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown(monkeypatch):
     from app.api import channel_calibration as api
 
+    class FixedDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return datetime(2026, 9, 23)
+
+    # 本例验证静区未知时的总状态；固定在证书样例有效期内，不依赖运行日期。
+    monkeypatch.setattr(api, "datetime", FixedDatetime)
     temporal = SimpleNamespace(
         calibrated_at=datetime(2026, 8, 23),
         valid_until=datetime(2026, 10, 23),
