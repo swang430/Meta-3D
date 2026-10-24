@@ -139,6 +139,47 @@ export async function assertBatchRouteHighlight(page, polarization) {
   },polarization)
 }
 
+// F1：正式同时集合仍422；独立候选与child冻结采用不借用正式集合。
+export async function serialCandidates(page,{base='http://127.0.0.1:5189',output='output/pc06a1-task6'}={}) {
+  page.setDefaultTimeout(8000)
+  await page.goto(base)
+  await page.getByRole('tab',{name:'实验室配置',exact:true}).click()
+  await page.getByRole('tab',{name:'射频拓扑',exact:true}).click()
+  const panel=page.getByTestId('route-batch-panel');await panel.waitFor()
+  const labs=await(await page.request.get(`${base}/api/v1/lab-profiles`)).json()
+  const lab=labs.find(l=>l.name==='PC06A1 隔离全Mock验收')
+  if(!lab)throw Error('仅允许隔离实验室')
+  const topologies=await(await page.request.get(`${base}/api/v1/switch-topologies?lab_profile_id=${lab.id}`)).json()
+  const topology=(topologies.items??topologies)[0]
+  const path=`${base}/api/v1/lab-profiles/${lab.id}/route-calibration-paths?topology_id=${topology.id}&operating_mode=mimo_ota`
+  const formal=await page.request.get(path)
+  const candidates=await(await page.request.get(`${path}&selection_scope=individual`)).json()
+  if(formal.status()!==422||candidates.length!==2||candidates.some(c=>c.ce_port!=='B1.1'))throw Error('正式门或串行候选不符')
+  await panel.locator('.mantine-MultiSelect-root').click()
+  for(const c of ['oh','ov'])await page.getByRole('option').filter({hasText:` · ${c}`}).click()
+  await page.keyboard.press('Escape')
+  await panel.getByLabel('批量频点（MHz，逗号分隔）',{exact:true}).fill('2595')
+  await panel.getByLabel('批量请求功率（dBm，不作实测值）',{exact:true}).fill('-30')
+  await panel.getByLabel('每项采样数（2–10）',{exact:true}).fill('2')
+  for(const c of ['oh','ov']){
+    await panel.getByLabel(`参考天线／位置 ${c} @2595`,{exact:true}).fill('REF 中心')
+    await panel.getByLabel(`接收线损（dB） ${c} @2595`,{exact:true}).fill('2')
+    await panel.getByLabel(`接收线依据 ${c} @2595`,{exact:true}).fill('隔离脚本transport非实物证据')
+  }
+  for(const name of ['已核对清单的固定接线条件','已确认请求功率及现场安全条件'])await panel.getByRole('checkbox',{name,exact:true}).check()
+  await panel.getByRole('button',{name:'预览完整批清单',exact:true}).click()
+  await panel.getByText('服务器完整清单：2项',{exact:true}).waitFor()
+  await page.screenshot({path:`${output}/f1-serial-preview.png`})
+  await panel.getByLabel('接线声明操作员（自述，非认证身份）',{exact:true}).fill('隔离软件验收')
+  await panel.getByLabel('接线核对说明',{exact:true}).fill('同CE互斥脚本transport，仅软件证据')
+  await panel.getByRole('button',{name:'确认本范围接线声明并重新预览',exact:true}).click()
+  const start=page.waitForResponse(r=>r.url().endsWith('/route-calibration-batches')&&r.request().method()==='POST')
+  await panel.getByRole('button',{name:'明确开始此批校准',exact:true}).click()
+  const response=await start;if(response.status()!==202)throw Error(await response.text())
+  const initial=await response.json()
+  return {lab,formal_status:formal.status(),formal_body:await formal.json(),candidates,initial}
+}
+
 // 独立测试进程已脚本化全部transport且禁止外连；不称全Mock或实物资格。
 export async function transportBatch(page,{base='http://127.0.0.1:5189',output='output/pc06a1-task6',wrong=false}={}) {
   page.setDefaultTimeout(8000)

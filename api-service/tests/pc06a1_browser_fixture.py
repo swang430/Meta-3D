@@ -25,6 +25,19 @@ def seed(*, include_switch=True):
         lab = lab_profile.__wrapped__(db, room, topo)
         configured.__wrapped__(db, lab)
         lab.name = 'PC06A1 隔离全Mock验收'
+        if os.environ.get('PC06A1_SERIAL') == 'true' and include_switch:
+            from tests.test_pc06a1_batch_plan import shared_switch
+            from tests.test_pc06a1_batch_jobs import serial_graph
+            serial_graph(db, shared_switch.__wrapped__(db, lab, topo))
+            for index, node in enumerate(topo.nodes):
+                node.setdefault('label', node['id'])
+                node['position'] = {'x': (index % 3) * 180, 'y': (index // 3) * 180}
+            for mode in topo.operating_modes:
+                mode.setdefault('name', mode['id'])
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(topo, 'nodes'); flag_modified(topo, 'operating_modes')
+            db.commit()
+            return
         if not include_switch:
             db.commit()
             return

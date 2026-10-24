@@ -38,6 +38,9 @@ async def isolated_lifespan(app):
         topo = db.query(SwitchTopology).one()
         category=db.query(InstrumentCategory).filter_by(category_key='rfSwitch').first()
         switch = (topo, db.query(InstrumentConnection).filter_by(category_id=category.id).one()) if category else shared_switch.__wrapped__(db, lab, topo)
+        if os.environ.get('PC06A1_SERIAL') == 'true':
+            from tests.test_pc06a1_batch_jobs import serial_graph
+            switch = serial_graph(db, switch)
         for index, node in enumerate(topo.nodes):
             node.setdefault('label', node['id'])
             node['position'] = {'x':(index%4)*180, 'y':(index//4)*180}
@@ -58,7 +61,7 @@ async def isolated_lifespan(app):
         original = driver._send_command
         positions = {'1:INT_RELAY_A':'1', '1:INT_RELAY_B':'2'}
         async def transport(command):
-            if command in ('1:INT_RELAY_A_1','1:INT_RELAY_B_2'):
+            if command in ('1:INT_RELAY_A_1','1:INT_RELAY_A_2','1:INT_RELAY_B_2'):
                 calls.append(command);positions[command[:-2]]=command[-1];return 'OK'
             if command in ('1:INT_RELAY_A?','1:INT_RELAY_B?'):
                 calls.append(command)
