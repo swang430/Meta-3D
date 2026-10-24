@@ -5,7 +5,7 @@ import type { BatchJobRecord, BatchPlan, BatchPlanRequest, FixedRouteRecord, Rou
 import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCalibrationBatches, fetchRouteCalibrationBatch,
   continueRouteCalibrationBatch, cancelRouteCalibrationBatch, fetchFixedRouteAcquisition } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
-import { batchCanRelease, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, buildBatchContinue,
+import { batchCanRelease, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
 // 未知启动身份与全局工作锁一起跨卸载保存；只读空历史不能删除它。
@@ -94,8 +94,12 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   }
   useEffect(()=>{
     const attempt=sessions.get(key)?.attempt
-    const running=history.data?.find(row=>['running','waiting_manual','paused_failure'].includes(row.status)||
-      attempt&&row.idempotency_key===attempt.key&&!batchCanRelease(row))
+    const knownChildren=history.data?.flatMap(row=>row.items.flatMap(item=>{
+      const record=item.run_id?cache.getQueryData<FixedRouteRecord>(['fixed-route-acquisition',scope.labId,item.run_id]):undefined
+      return record?[record]:[]
+    }))??[]
+    // 未知开始已有独立锁，不用另一份历史替换它的job/幂等身份。
+    const running=findUnsettledBatch(attempt?history.data?.filter(row=>row.idempotency_key===attempt.key):history.data,knownChildren)
     if(running&&!activeId)track(running)
     const session=sessions.get(key)
     if(session?.jobId&&!session.polling){

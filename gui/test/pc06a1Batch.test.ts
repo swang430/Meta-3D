@@ -117,3 +117,31 @@ test('既有仪器JSON保存链序列化保留操作员端口配对，不删掉�
       topology_input_pin:'physical-in',topology_output_pin:'physical-out',note:'现场声明'}}}}})
   }finally{adapter.restore()}
 })
+test('新页面恢复服务器未安全结束批，不只恢复运行三态，也不锁已安全真实或模拟历史',()=>{
+  const safe=job({job_id:'safe',status:'completed',f64_control_released:true,finalization_committed:true,finalization_id:'final',all_started_cleanup_confirmed:true})
+  const simulated=job({job_id:'safe-simulated',status:'completed',f64_control_released:true,finalization_committed:true,finalization_id:'final',
+    all_started_cleanup_confirmed:false,items:[{...item,status:'simulated'}]})
+  assert.equal(state.findUnsettledBatch([]),undefined)
+  assert.equal(state.findUnsettledBatch([safe,simulated]),undefined)
+  for(const status of ['running','waiting_manual','paused_failure','interrupted','cleanup_unconfirmed','incomplete','completed','failed','cancelled']){
+    const unsafe=job({job_id:`unsafe-${status}`,status,finalization_committed:false,f64_control_released:null})
+    assert.equal(state.findUnsettledBatch([safe,simulated,unsafe])?.job_id,`unsafe-${status}`)
+    assert.equal(state.batchRejectionCanRelease(422,[safe,unsafe],'new-key'),false)
+  }
+  assert.equal(state.findUnsettledBatch([job({status:'completed',finalization_committed:true,finalization_id:'final',f64_control_released:null})])?.job_id,'job')
+  const mixed=job({status:'completed',f64_control_released:true,finalization_committed:true,finalization_id:'final',all_started_cleanup_confirmed:false,
+    items:[{...item,status:'simulated'},{...item,item_id:'i2',run_id:'r2'}]})
+  assert.equal(state.findUnsettledBatch([mixed])?.job_id,'job')
+  assert.equal(state.findUnsettledBatch([mixed],[child({run_id:'r2'})]),undefined)
+})
+test('人工等待不得把completed等缺run身份的已启动项过滤成空；合法首次人工步骤仍可确认',()=>{
+  const waiting={...item,item_id:'next',status:'waiting_manual',run_id:null}
+  const first=job({items:[waiting]})
+  assert.equal(state.batchToneState(first,[]),'confirmed')
+  assert.equal(state.buildBatchContinue(first,[],'next','t1','中心-p1',true).item_id,'next')
+  for(const status of ['completed','simulated','measuring','running','cleanup_unconfirmed','interrupted','incomplete']){
+    const corrupt=job({current_index:1,items:[{...item,status,run_id:null},waiting]})
+    assert.equal(state.batchToneState(corrupt,[]),'unknown',status)
+    assert.throws(()=>state.buildBatchContinue(corrupt,[],'next','t1','中心-p1',true),status)
+  }
+})

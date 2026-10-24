@@ -116,7 +116,7 @@ export function batchStartAttempt(previous:BatchStartAttempt|null,request:BatchP
 }
 export function batchRejectionCanRelease(status:number|undefined,history:BatchJobRecord[]|undefined,key:string) {
   return (status===400||status===422)&&Array.isArray(history)&&
-    !history.some(row=>row.idempotency_key===key||['running','waiting_manual','paused_failure'].includes(row.status))
+    !history.some(row=>row.idempotency_key===key)&&!findUnsettledBatch(history)
 }
 export function batchCanRelease(job:BatchJobRecord|undefined,records:FixedRouteRecord[]=[]) {
   if(job?.items.some(i=>['running','measuring'].includes(i.status)||['completed','simulated'].includes(i.status)&&!i.run_id))return false
@@ -126,11 +126,17 @@ export function batchCanRelease(job:BatchJobRecord|undefined,records:FixedRouteR
   return Boolean(job&&['completed','failed','cancelled'].includes(job.status)&&job.finalization_committed===true&&
     job.finalization_id&&job.f64_control_released===true&&(job.all_started_cleanup_confirmed===true||eachStartedSettled))
 }
+export function findUnsettledBatch(history:BatchJobRecord[]|undefined,records:FixedRouteRecord[]=[]) {
+  // 恢复与运行中释放读同一个服务器安全结束判据；中断或缺损不是已停发。
+  return history?.find(row=>!batchCanRelease(row,records))
+}
 export function batchCounts(job:BatchJobRecord) {
   return {total:job.items.length,completed:job.items.filter(i=>i.status==='completed').length,
     simulated:job.items.filter(i=>i.status==='simulated').length,failed:job.items.filter(i=>i.status==='failed').length}
 }
 export function batchToneState(job:BatchJobRecord,records:FixedRouteRecord[]):'confirmed'|'simulated'|'unknown' {
+  // failed/cancelled可发生在启动前；其余已执行状态缺身份不能按“从未启动”跳过。
+  if(job.items.some(i=>['completed','simulated','measuring','running','cleanup_unconfirmed','interrupted','incomplete'].includes(i.status)&&!i.run_id))return 'unknown'
   const started=job.items.filter(i=>i.run_id)
   if(started.some(i=>!records.some(r=>r.run_id===i.run_id)))return 'unknown'
   const children=started.map(i=>records.find(r=>r.run_id===i.run_id)!)
