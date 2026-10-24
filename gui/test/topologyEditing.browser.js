@@ -3,6 +3,22 @@ async page=>{
   await page.evaluate(()=>{window.__topologyEditingResult=null});
   const api='http://127.0.0.1:18080/api/v1',checks=[];
   page.setDefaultTimeout(12000);
+  const clickCurve=async(id)=>{
+    await page.getByRole('button',{name:'Fit View',exact:true}).click();
+    const located=await page.waitForFunction(id=>{
+      const el=document.querySelector(`.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`);
+      if(!el)return null;
+      const transform=el.getScreenCTM();
+      for(const fraction of [.2,.3,.1,.4,.6,.7,.8,.9]){
+        const p=el.getPointAtLength(el.getTotalLength()*fraction);
+        const x=transform.a*p.x+transform.c*p.y+transform.e,y=transform.b*p.x+transform.d*p.y+transform.f;
+        if(document.elementFromPoint(x,y)?.closest('.react-flow__edge')===el.closest('.react-flow__edge'))return{x,y};
+      }
+      return null;
+    },id);
+    const point=await located.jsonValue();
+    await page.mouse.click(point.x,point.y);
+  };
   await page.setViewportSize({width:1600,height:1100});
   const status=await(await page.request.get(`${api}/instruments/hal/status`)).json();
   if(status.mode!=='mock')throw new Error('仅允许独立全Mock环境');
@@ -41,9 +57,7 @@ async page=>{
   await page.getByText('拓扑草稿未保存',{exact:true}).waitFor();
   checks.push('真实鼠标拖动节点并标记未保存');
   // 原版连线编辑由单击触发；在标签之外的真实线段操作，不force或派发事件。
-  const edge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
-  const point=await edge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
-  await edge.click({position:point});
+  await clickCurve('fixed-v');
   await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).fill('1.25');
   await page.getByRole('button',{name:'应用修改',exact:true}).click();
   checks.push('连线可打开原编辑面板并应用参数修改');
@@ -60,9 +74,7 @@ async page=>{
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
   await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
   await page.locator('.react-flow__node[data-id="ce1"]').waitFor();
-  const oldEdge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
-  const reloaded=await oldEdge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
-  await oldEdge.click({position:reloaded});
+  await clickCurve('fixed-v');
   if(Number(await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).inputValue())!==1.25)throw new Error('刷新后参数丢失');
   await page.getByRole('button',{name:'取消',exact:true}).click();
   await page.getByRole('dialog').waitFor({state:'hidden'});
