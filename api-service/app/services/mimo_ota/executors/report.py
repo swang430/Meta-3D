@@ -26,6 +26,7 @@ from app.services.mimo_ota.path_loss_application import (
     parse_path_loss_application,
     path_loss_application_is_formally_verified,
     path_loss_application_message,
+    path_loss_measurement_is_verified,
 )
 from app.services.mimo_ota.rf_kpi_trust import (
     RF_KPI_TRUST_SCHEMA_VERSION,
@@ -672,10 +673,7 @@ def _build_mimo_ota_content_data(
     _path_loss_application_text = path_loss_application_message(
         _path_loss_application
     )
-    _path_loss_formally_verified = (
-        _pl_verified is True
-        and path_loss_application_is_formally_verified(_path_loss_application)
-    )
+    _path_loss_formally_verified = path_loss_measurement_is_verified(measure)
     _path_loss_value_visible = _path_loss_formally_verified
 
     # P1-54: 吞吐的数值与“这次是否真的读到”必须同行。历史执行没有该字段，
@@ -935,6 +933,10 @@ def _build_mimo_ota_content_data(
                  else "—（补偿数值不展示）"
              ),
              "路损应用": _path_loss_application_text,
+             "逐链补偿": ('; '.join(
+                 f"{row['chain_id']}: {row['value_db']} dB ({row['source_kind']}, {row['method']}, {row['reference_plane']})"
+                 for row in _path_loss_application['route_compensation']['route_entries'])
+                 if _path_loss_value_visible and _path_loss_application.get('schema_version')==2 else '—'),
              "路损证书 ID": _cell(_path_loss_application["certificate_id"]),
              "路损来源": _path_loss_provenance_labels[
                  _path_loss_application["provenance"]

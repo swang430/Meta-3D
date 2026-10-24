@@ -127,6 +127,7 @@ async def run_base_station_execution_session(
         from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
         from app.services.mimo_ota.path_loss_preflight import (
             evaluate_path_loss_preflight,
+            compensation_engine_mode,
         )
 
         if not isinstance(binding, Mapping):
@@ -141,6 +142,7 @@ async def run_base_station_execution_session(
             operating_mode=config.switch_mode_id,
             precheck_strict_cal=config.precheck_strict_cal,
             channel_emulator_execution_mode=str(binding.get("execution_mode")),
+            engine_mode=compensation_engine_mode(execution,config),
         )
         if verdict.blocker is None:
             return None

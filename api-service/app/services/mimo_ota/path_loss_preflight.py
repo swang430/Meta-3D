@@ -23,6 +23,17 @@ class PathLossPreflight:
     route_compensation: dict[str,Any] | None = None
 
 
+def compensation_engine_mode(execution,configuration):
+    """硬件前纯门读已有CE加载请求冻结，防ChannelAsset模式被保存镜像遮住。"""
+    from app.services.channel_emulator_execution_plan import (
+        CE_LOAD_REQUEST_FREEZE_CONFIG_KEY,validate_frozen_channel_emulator_load_request)
+    config=execution.config if isinstance(execution.config,dict) else {}
+    request=config.get(CE_LOAD_REQUEST_FREEZE_CONFIG_KEY)
+    if request is not None:
+        return validate_frozen_channel_emulator_load_request(request)['effective_engine_mode']
+    return getattr(configuration,'engine_mode','mimo_first_asc')
+
+
 def _evaluate_path_loss_provenance_for_measure(
     use_mock: Optional[bool],
     *,
@@ -57,6 +68,7 @@ def evaluate_path_loss_preflight(
     precheck_strict_cal: bool,
     channel_emulator_execution_mode: str,
     execution_evidence_outcome: Any | None = None,
+    engine_mode: str = 'mimo_first_asc',
 ) -> PathLossPreflight:
     """只读本执行冻结。历史缺失明确未知，不从当前证书/图补填。"""
     channel_emulator_is_real = channel_emulator_execution_mode == "real"
@@ -75,10 +87,6 @@ def evaluate_path_loss_preflight(
     reason='incomplete_coverage'
     if frozen.get('version')!=1:
         reason='legacy_unclassified'
-    elif any(row['source_kind']=='confirmed_route' for row in frozen['route_entries']):
-        reason='pending_compensation_wiring'
-    elif frozen['route_entries'] and all(row['source_kind']=='legacy_certificate' for row in frozen['route_entries']) and legacy_adapter is None:
-        reason='pending_compensation_wiring'
     usable=False
     blocker=None
     if selected is not None:
@@ -92,8 +100,13 @@ def evaluate_path_loss_preflight(
             usable = False
         if not usable:
             reason='diagnostic'
+    complete_real=bool(frozen.get('route_entries')) and all(row['source_kind']!='unavailable' and
+        row['measurement_provenance']=='real' for row in frozen['route_entries'])
     if legacy_adapter is None:
-        usable=False
+        usable=(complete_real and outcome.qualification_classification!='diagnostic' and
+            outcome.compatibility_classification not in {'diagnostic','invalid'})
+        if usable:
+            blocker=None
     if not usable and blocker is None and channel_emulator_is_real and precheck_strict_cal:
         blocker=(f'path-loss calibration is missing or expired (frozen selection: {selection.reason})'
             if selection.reason in ('missing','expired') else f'path-loss frozen source unavailable: {reason}')
@@ -102,7 +115,12 @@ def evaluate_path_loss_preflight(
         usable=False
         blocker=route_error
         reason='route_identity_mismatch'
-    applied = selected if usable else None
+    elif frozen.get('route_entries') and engine_mode!='mimo_first_asc':
+        usable=False
+        reason='unsupported_compensation_mode'
+        blocker=('该信道生成路径没有整条参考面补偿消费者，未应用冻结值'
+            if channel_emulator_is_real and precheck_strict_cal else None)
+    applied = legacy_adapter if usable else None
     gate_mode = (
         "mock_not_applicable"
         if not channel_emulator_is_real
@@ -110,7 +128,7 @@ def evaluate_path_loss_preflight(
         if precheck_strict_cal
         else "operator_bypass"
     )
-    application=build_frozen_path_loss_application(frozen,gate_mode=gate_mode,applied=applied is not None,reason=reason)
+    application=build_frozen_path_loss_application(frozen,gate_mode=gate_mode,applied=usable,reason=reason)
     # 单份拒绝旧候选/旧缺失原因仍沿v1表达；从冻结读取，不借此给未知链赋值。
     if reason!='route_identity_mismatch' and frozen.get('version')==1 and not any(
         row['source_kind']=='confirmed_route' for row in frozen['route_entries']):

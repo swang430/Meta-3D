@@ -46,6 +46,8 @@ from app.services.mimo_ota.executors._helpers import (
 )
 from app.services.mimo_ota.path_loss_application import (
     path_loss_application_message,
+    applied_route_by_probe_pol,
+    path_loss_application_is_formally_verified,
 )
 from app.services.mimo_ota.path_loss_preflight import (
     _evaluate_path_loss_provenance_for_measure,
@@ -1759,6 +1761,7 @@ class MeasureExecutor(IStepExecutor):
             operating_mode=config.switch_mode_id,
             precheck_strict_cal=config.precheck_strict_cal,
             channel_emulator_execution_mode=ce_execution_mode,
+            engine_mode=config.engine_mode,
             execution_evidence_outcome=project_execution_evidence_outcome(
                 context.test_execution
             ),
@@ -1772,6 +1775,9 @@ class MeasureExecutor(IStepExecutor):
         )
         path_loss_cert = path_loss_preflight.applied_certificate
         path_loss_application = path_loss_preflight.application
+        applied_routes=applied_route_by_probe_pol(path_loss_application)
+        if applied_routes:
+            selected_path_loss_use_mock=False
         provenance_blocker = path_loss_preflight.blocker
         if provenance_blocker is not None:
             return StepExecutionResult(
@@ -2172,6 +2178,7 @@ class MeasureExecutor(IStepExecutor):
                 operating_mode=config.switch_mode_id,
                 path_loss_calibration=path_loss_cert,
                 phase_use_mock=not channel_emulator_is_real,
+                **({'route_compensation':path_loss_preflight.route_compensation} if applied_routes else {}),
             )
 
             # --- Phase 2a / P0: path-loss compensation ---
@@ -2179,8 +2186,9 @@ class MeasureExecutor(IStepExecutor):
             # New: per-RFChain `total_insertion_loss_db` looked up by
             #   (active_probe_id, polarization) → connection_id, populated
             #   when the cert was created via /calibration/path-loss/start-for-lab.
-            # Falls back to avg when the cert is legacy (no per-chain map) so
-            # existing chamber-keyed calibrations still work.
+            # Only old non-route callers retain their legacy average fallback.
+            # Frozen routes below override this map per chain; no average fills
+            # missing routes and no scalar is added to instrument KPI readbacks.
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
                 per_chain_pl: Dict[str, Any] = (
@@ -2219,6 +2227,10 @@ class MeasureExecutor(IStepExecutor):
                 total = entry.get("total_insertion_loss_db")
                 if pid is not None and pol and total is not None:
                     chain_pl_by_probe_pol[(int(pid), str(pol).upper())] = float(total)
+            if applied_routes:
+                # 只读执行冻结；不改任何真实单段/旧证书字段，不再累计PA/探头增益。
+                chain_pl_by_probe_pol={key:row['value_db'] for key,row in applied_routes.items()}
+                per_chain_pl={row['chain_id']:row for row in applied_routes.values()}
 
             # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。但 SCD/.smu **只 GCM 相关**
             # (ASC 按 frequency 生成 .asc 不用 .smu)。这里给 ASC / 非 GCM 路径的默认值: 裸
@@ -3696,6 +3708,7 @@ class MeasureExecutor(IStepExecutor):
                     operating_mode=config.switch_mode_id,
                 )
                 chain_pl_db = chain_pl_by_probe_pol.get((rf_chain_probe_id, "V"))
+                route_used=applied_routes.get((rf_chain_probe_id,'V'))
                 azimuth_probe_gains[az_target] = {
                     "probe_id": rf_chain_probe_id,
                     "probe_pattern_id": pattern_probe_id,
@@ -3706,6 +3719,7 @@ class MeasureExecutor(IStepExecutor):
                     ),
                     # Per-chain path-loss; None falls back to chamber avg in loop.
                     "path_loss_db": chain_pl_db,
+                    "route_compensation":route_used,
                 }
             patterns_used = sum(
                 1 for v in azimuth_probe_gains.values() if v["pattern_gain_dbi"] is not None
@@ -4012,8 +4026,10 @@ class MeasureExecutor(IStepExecutor):
                     "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
                     "path_loss_compensation_db": az_path_loss_db,
                     "path_loss_source": (
+                        az_meta['route_compensation']['source_kind'] if az_meta.get('route_compensation') else
                         "rf_chain" if az_meta.get("path_loss_db") is not None else "chamber_avg"
                     ),
+                    "route_compensation":az_meta.get('route_compensation'),
                 }
                 azimuth_results.append(az)
 
@@ -4140,7 +4156,7 @@ class MeasureExecutor(IStepExecutor):
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
                 "calibration_entries_used": len(calibration_entries) if calibration_entries else 0,
-                "path_loss_compensation_db": avg_path_loss_db,
+                "path_loss_compensation_db": None if applied_routes else avg_path_loss_db,
                 "path_loss_certificate_id": (
                     str(path_loss_cert.id) if path_loss_cert is not None else None
                 ),
@@ -4161,7 +4177,8 @@ class MeasureExecutor(IStepExecutor):
                 # calibrated. (Real mode is already gated by P1-8 precheck cal
                 # gate; this marks the mock/bypass path + carries provenance.)
                 "path_loss_verified": (
-                    path_loss_cert is not None
+                    path_loss_application_is_formally_verified(path_loss_application)
+                    or path_loss_cert is not None
                     and _is_path_loss_certificate_verified(
                         selected_path_loss_use_mock
                     )

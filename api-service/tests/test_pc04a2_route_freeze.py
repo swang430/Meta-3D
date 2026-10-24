@@ -78,10 +78,10 @@ async def test_new_confirmation_does_not_change_already_frozen_execution(client,
         frequency_mhz=2595,operating_mode='mimo_ota',precheck_strict_cal=True,channel_emulator_execution_mode='real')
     from app.services.mimo_ota.path_loss_application import parse_path_loss_application,path_loss_application_is_formally_verified
     application=verdict.application
-    assert application['schema_version']==2 and application['status']=='not_applied'
-    assert application['reason']=='pending_compensation_wiring' and application['certificate_id'] is None
+    assert application['schema_version']==2 and application['status']=='applied'
+    assert application['reason']=='selected' and application['certificate_id'] is None
     assert parse_path_loss_application(application)==application
-    assert not path_loss_application_is_formally_verified(application)
+    assert path_loss_application_is_formally_verified(application)
     partial={**application,'status':'applied','reason':'selected','value_disclosure':'verified','applied_chain_ids':['conn_p0v']}
     assert not path_loss_application_is_formally_verified(partial)
     from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation
@@ -304,8 +304,8 @@ async def test_multihop_freeze_uses_complete_route_without_relabelling_actual_ta
     if with_confirmation:
         verdict=evaluate_path_loss_preflight(db_session,execution,chamber_id=configured.chamber_config_id,
             frequency_mhz=2595,operating_mode='mimo_ota',precheck_strict_cal=True,channel_emulator_execution_mode='real')
-        assert verdict.application['status']=='not_applied' and verdict.application['reason']=='pending_compensation_wiring'
-        assert verdict.applied_certificate is None and verdict.blocker is not None
+        assert verdict.application['status']=='applied' and verdict.application['reason']=='selected'
+        assert verdict.applied_certificate is None and verdict.blocker is None
     actual=orchestrate_switch_topology(db_session,configured.chamber_config_id,'mimo_ota')
-    assert next(binding.ce_port for binding in actual.probe_bindings if binding.connection_id=='conn_p0v')==pad_label
-    assert frozen_route_identity_error(db_session,frozen,resolved_topology=actual) is not None
+    assert next(binding.ce_port for binding in actual.probe_bindings if binding.connection_id=='conn_p0v')=='B1.1'
+    assert frozen_route_identity_error(db_session,frozen,resolved_topology=actual) is None

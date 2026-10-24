@@ -183,12 +183,17 @@ def path_loss_application_message(value: Any) -> str:
     reason = application["reason"]
 
     if application.get('schema_version')==2 and status!='applied':
+        if reason=='unsupported_compensation_mode':
+            return '该信道生成路径未接通整条参考面补偿；本次未应用冻结值。'
         if reason=='route_identity_mismatch':
             return '当前通路与执行冻结身份不一致；请新建执行复核接线，未应用旧通路补偿。'
         if reason=='pending_compensation_wiring':
             return '已冻结逐链采用来源；新参考面数值消费尚未接通，本次未应用补偿。'
         return '逐链冻结来源尚未全部应用；缺失链或诊断来源不形成正式补偿。'
 
+    if (application.get('schema_version')==2 and status=='applied' and
+        any(row['source_kind']=='confirmed_route' for row in application['route_compensation']['route_entries'])):
+        return '已应用操作员确认采用的整条实测损耗（认证资格未知）；仅限所声明参考面，不代表DUT功率。'
     if status == "applied" and provenance == "real":
         return "已应用经验证的路损补偿。"
     if status == "applied" and provenance == "simulated":
@@ -209,7 +214,7 @@ def path_loss_application_message(value: Any) -> str:
 
 
 def build_frozen_path_loss_application(frozen,*,gate_mode,applied=False,reason='incomplete_coverage'):
-    """v2区分冻结选择与真实应用；Task4只有legacy-only适配可标已应用。"""
+    """v2区分冻结选择与真实应用；完整逐链真实来源才可标应用。"""
     if frozen.get('version')!=1:
         return _legacy_unknown()
     routes=frozen['route_entries']
@@ -242,8 +247,25 @@ def _parse_v2(value):
                 return _legacy_unknown()
         elif (value['applied_chain_ids']!=[] or value['value_disclosure']!='none' or
               value['provenance']!=('real' if complete else 'missing') or
-              value['reason'] not in ('pending_compensation_wiring','incomplete_coverage','diagnostic','rejected_untrusted','route_identity_mismatch')):
+              value['reason'] not in ('pending_compensation_wiring','incomplete_coverage','diagnostic','rejected_untrusted','route_identity_mismatch','unsupported_compensation_mode')):
             return _legacy_unknown()
         return deepcopy(dict(value))
     except (ValueError,KeyError,TypeError,AttributeError):
         return _legacy_unknown()
+
+
+def applied_route_by_probe_pol(application):
+    """供实际逐方位消费者读取同一冻结来源，不补平均值或当前配置。"""
+    parsed=parse_path_loss_application(application)
+    if parsed.get('schema_version')!=2 or parsed['status']!='applied':
+        return {}
+    return {(row['probe_id'],row['polarization']):row for row in parsed['route_compensation']['route_entries']}
+
+
+def path_loss_measurement_is_verified(measure):
+    application=parse_path_loss_application(measure.get('path_loss_application'))
+    if not path_loss_application_is_formally_verified(application):
+        return False
+    if application.get('schema_version')==2:
+        return True  # 来源已逐链核验；不要求伪造旧certificate/use_mock镜像。
+    return measure.get('path_loss_verified') is True and measure.get('path_loss_calibration_use_mock') is False

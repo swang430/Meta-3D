@@ -478,7 +478,7 @@ class PrecheckExecutor(IStepExecutor):
             warnings.append("No calibration_certificate bound to TestCase or LabProfile")
 
         # 与硬件前门和MEASURE读同一冻结，不再在各相位重新选择latest。
-        from app.services.mimo_ota.path_loss_preflight import evaluate_path_loss_preflight
+        from app.services.mimo_ota.path_loss_preflight import evaluate_path_loss_preflight,compensation_engine_mode
         from app.services.mimo_ota.path_loss_application import path_loss_application_message
         target_freq_mhz = primary_carrier.frequency_hz / 1e6
         path_loss_preflight=evaluate_path_loss_preflight(context.db,context.test_execution,
@@ -486,20 +486,22 @@ class PrecheckExecutor(IStepExecutor):
             operating_mode=config.switch_mode_id,
             precheck_strict_cal=config.precheck_strict_cal,
             channel_emulator_execution_mode='real' if ce_is_real else 'simulated',
+            engine_mode=compensation_engine_mode(context.test_execution,config),
         )
         latest_pl=path_loss_preflight.selected_certificate
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         result_payload["path_loss_calibration_reason"] = path_loss_preflight.selection.reason
         result_payload['path_loss_application']=path_loss_preflight.application
-        result_payload["path_loss_calibration_valid"] = latest_pl is not None and (
+        adopted=path_loss_preflight.application.get('status')=='applied' and path_loss_preflight.application.get('provenance')=='real'
+        result_payload["path_loss_calibration_valid"] = adopted or latest_pl is not None and (
             path_loss_preflight.selection.coverage_complete or latest_pl.use_mock is not False)
-        result_payload["path_loss_calibration_use_mock"] = latest_pl.use_mock if latest_pl is not None else None
+        result_payload["path_loss_calibration_use_mock"] = False if adopted else latest_pl.use_mock if latest_pl is not None else None
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
             result_payload["path_loss_calibration_age_hours"] = age_h
             result_payload["path_loss_calibration_frequency_mhz"] = latest_pl.frequency_mhz
             messages.append(path_loss_application_message(path_loss_preflight.application))
-        else:
+        elif not adopted:
             warnings.append(path_loss_application_message(path_loss_preflight.application))
             if ce_is_real:
                 warnings.append('strict calibration gate will block Phase 3 before hardware connection'

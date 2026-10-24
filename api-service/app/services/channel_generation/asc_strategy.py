@@ -157,6 +157,11 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 )
                 return False
 
+            if (any('chain_id' in row for row in self.calibration_entries) and
+                getattr(pipeline_result,'calibration_application',None)!='waveform'):
+                logger.error('冻结逐链补偿未确认烘入ASC；禁止把仅预算结果标为实际应用')
+                return False
+
             asc_zip_path = pipeline_result.asc_files_path
             if not asc_zip_path or not os.path.exists(asc_zip_path):
                 logger.error(

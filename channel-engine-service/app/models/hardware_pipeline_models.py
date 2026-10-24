@@ -118,6 +118,16 @@ class CalibrationEntry(BaseModel):
     cable_loss_db: float = Field(5.0, description="电缆损耗 (dB), 默认=5.0")
     cable_phase_deg: float = Field(0.0, description="电缆相位偏移 (deg), 默认=0.0")
     probe_gain_dbi: float = Field(8.0, description="探头增益 (dBi), 默认=8.0")
+    method: Optional[str] = None
+    reference_plane: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_net_reference(self):
+        # PC02 L_NET端口到参考天线端口已含探头关系；软件适配槽位，不是真实单段线损。
+        if self.method=='fixed_route_port_to_reference_v1' and (
+            self.reference_plane!='ce_output_to_reference_antenna_output' or self.probe_gain_dbi!=0):
+            raise ValueError('整条净损耗仅适用于CE输出至参考天线输出参考面，不能再次加入探头增益')
+        return self
 
 
 class CalibrationData(BaseModel):
@@ -326,6 +336,7 @@ class HardwarePipelineRequest(BaseModel):
     """
     chamber_config: ChamberConfig
     calibration_data: CalibrationData = Field(default_factory=CalibrationData)
+    calibration_application: Literal['control','waveform'] = 'control'
     simulation_rules: SimulationRules
     cdl_model_data: CDLModelData = Field(
         ..., description="CDL 模型数据（3GPP 标准或 Ray-Tracing 导出）"
@@ -425,6 +436,7 @@ class HardwarePipelineResponse(BaseModel):
 
     对应 Integration Spec v1.0 §2.2 + v2.0 (mock_mode 字段, 2026-05-18 P0-7)
     """
+    calibration_application: Literal['control','waveform'] = 'control'
     status: Literal["success", "error"] = Field(..., description="状态")
     computation_time_ms: float = Field(..., description="计算耗时 (ms)")
     hardware_artifacts: Optional[HardwareArtifacts] = None

@@ -120,6 +120,8 @@ def orchestrate_switch_topology(
     result.mode_name = mode.get("name") or mode_id
     active_conn_ids = set(mode.get("active_connections") or [])
     connections = topology.connections or []
+    if not active_conn_ids:
+        active_conn_ids={c.get('id') for c in connections if mode_id in c.get('modes',[])}
     active_conns = [c for c in connections if c.get("id") in active_conn_ids]
     if base_station_port_mapping is not None:
         active_ports = base_station_port_mapping.active_logical_ports
@@ -153,7 +155,7 @@ def orchestrate_switch_topology(
     nodes_by_id = {n.get("id"): n for n in nodes}
 
     for conn in active_conns:
-        binding = _build_probe_binding(conn, nodes_by_id)
+        binding = _build_probe_binding(conn, nodes_by_id,active_conns)
         if binding is not None:
             result.probe_bindings.append(binding)
 
@@ -170,13 +172,14 @@ def orchestrate_switch_topology(
 def _build_probe_binding(
     connection: Dict[str, Any],
     nodes_by_id: Dict[str, Dict[str, Any]],
+    active_connections=None,
 ) -> Optional[ProbePortBinding]:
     """Extract CE-port → probe info from a connection if its target is a probe.
 
     Topology convention: connections from `ce_port` (or `bse_port` / `switch_slot`)
-    to `probe` node type carry the routing info we need. Connections between
-    intermediates (combiners, pads) are skipped here — they're physical-layer
-    detail, not channel-mapping info.
+    to `probe` node type carry the terminal binding. For intermediate pads or
+    combiners, trace the current active unique path back to its declared CE
+    endpoint; an intermediate label is never a CE output identity.
     """
     target_id = connection.get("target")
     target = nodes_by_id.get(target_id) if target_id else None
@@ -196,6 +199,25 @@ def _build_probe_binding(
             or "?"
         )
     )
+    if source is not None and source.get('type') not in ('ce_port','channel_emulator'):
+        # 当前保存图的完整正常接线，而非执行冻结副本；复用采集端的CE端口解释。
+        from app.services.calibration.rf_chain_resolver import resolve_declared_calibration_ce_port
+        path_nodes,path_edges,seen=[target],[connection],{target_id}
+        current=source
+        while current.get('type') not in ('ce_port','channel_emulator'):
+            if current['id'] in seen:
+                raise ValueError('正常测试通路存在回路')
+            seen.add(current['id']);path_nodes.insert(0,current)
+            predecessors=[edge for edge in active_connections or [] if edge.get('target')==current['id']]
+            successors=[edge for edge in active_connections or [] if edge.get('source')==current['id']]
+            if len(predecessors)!=1 or len(successors)!=1:
+                raise ValueError('正常测试通路缺少唯一完整CE源端')
+            edge=predecessors[0];path_edges.insert(0,edge)
+            current=nodes_by_id[edge['source']]
+        if current['id'] in seen or any(edge.get('target')==current['id'] for edge in active_connections or []):
+            raise ValueError('正常测试CE源端存在回接')
+        path_nodes.insert(0,current)
+        ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges)
 
     # Probe binding params (id, polarization) — convention is they live on the
     # probe node's params dict; fall back to parsing the label.
