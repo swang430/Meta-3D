@@ -6,6 +6,7 @@ import { useOperationalLab } from '../OperationalLab'
 import { CalibrationScopeCard } from './CalibrationScopeCard'
 import { FixedRouteCalibrationCard } from './FixedRouteCalibrationCard'
 import { F64CalibrationStateCard } from './F64CalibrationStateCard'
+import { FixedRouteAcquisitionCard } from './FixedRouteAcquisitionCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
 function BindingCard({ title, binding }: {
@@ -69,6 +70,7 @@ export function LabOverview() {
     </Group>
     <Alert color="blue">默认总览不连接仪器、不同步LabProfile。主动点击“读取 F64 状态”会连接本实验室绑定的 F64 并保存诊断记录；不自动校准，不表示正式测试资格。</Alert>
     <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
+    <FixedRouteAcquisitionCard key={`fixed-route-acquisition:${labId}:${chamberId}`} labId={labId} />
     <FixedRouteCalibrationCard key={`fixed-route:${labId}:${chamberId}`} labId={labId} />
     <F64CalibrationStateCard key={`f64-state:${labId}`} labId={labId} />
     <Card withBorder>

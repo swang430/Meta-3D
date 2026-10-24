@@ -4435,6 +4435,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             caps.insert(0, CalibrationToneCapability.INTERNAL_CW_GENERATOR)
         return caps
 
+    @staticmethod
+    def calibration_tone_commands(output: str, tone_id: str, frequency_hz: float, power_dbm: float) -> list[str]:
+        """真驱动与PC-04模拟采集共用的纯命令拼装。
+
+        User Reference Rev10.2 §20.4.9.1：2=CW；.6：1=恒功率；
+        .26：频率MHz；.8：功率dBm；.3：1=启用。参数由调用入口预先校验。
+        """
+        return [f'OUTPut:INTERFerence:ADD {output},{tone_id},2',
+            f'OUTPut:INTERFerence:STRATegy:SET {tone_id},1',
+            f'OUTPut:INTERFerence:FREQuency:SET {tone_id},{frequency_hz / 1e6:.6f}',
+            f'OUTPut:INTERFerence:POWer:SET {tone_id},{power_dbm:.2f}',
+            f'OUTPut:INTERFerence:STatus {tone_id},1']
+
     async def set_calibration_tone(
         self,
         frequency_hz: float,
@@ -4481,23 +4494,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     pass  # 没有旧的就忽略
                 await self._drain_errors()  # 吃掉上行预期 -200 + stale
 
-                # 2. 加 CW 干扰源到指定 output (type=2 = CW)
-                await self._write(
-                    f"OUTPut:INTERFerence:ADD {out_num},{cal_id},2"
-                )
-                # 3. 恒定功率策略 (而非 C/I-ratio, 校准要绝对值)
-                await self._write(
-                    f"OUTPut:INTERFerence:STRATegy:SET {cal_id},1"
-                )
-                # 4. 频率 (MHz) 和功率 (dBm)
-                await self._write(
-                    f"OUTPut:INTERFerence:FREQuency:SET {cal_id},{freq_mhz:.6f}"
-                )
-                await self._write(
-                    f"OUTPut:INTERFerence:POWer:SET {cal_id},{power_dbm:.2f}"
-                )
-                # 5. 启用
-                await self._write(f"OUTPut:INTERFerence:STatus {cal_id},1")
+                for command in self.calibration_tone_commands(out_num, cal_id, frequency_hz, power_dbm):
+                    await self._write(command)
 
                 tone_err = await self._first_error()
                 if tone_err is not None:

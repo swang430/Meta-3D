@@ -17,7 +17,30 @@ import type {
   FixedRouteCalibrationPreview,
   F64StateRequest,
   F64StateRecord,
+  FixedRouteRequest,
+  FixedRouteRecord,
 } from '../types/api'
+
+function checkedAcquisition(labId: string, value: FixedRouteRecord, runId?: string): FixedRouteRecord {
+  if (value.lab_profile_id !== labId || (runId && value.run_id !== runId)) throw new Error('采集响应与所选实验室或记录不一致')
+  return value
+}
+
+export async function startFixedRouteAcquisition(labId: string, request: FixedRouteRequest): Promise<FixedRouteRecord> {
+  return checkedAcquisition(labId, (await apiClient.post<FixedRouteRecord>(`/lab-profiles/${labId}/fixed-route-acquisitions`, request)).data)
+}
+
+export async function fetchFixedRouteAcquisition(labId: string, runId: string): Promise<FixedRouteRecord> {
+  return checkedAcquisition(labId, (await apiClient.get<FixedRouteRecord>(`/lab-profiles/${labId}/fixed-route-acquisitions/${runId}`)).data, runId)
+}
+
+export async function cancelFixedRouteAcquisition(labId: string, runId: string): Promise<FixedRouteRecord> {
+  return checkedAcquisition(labId, (await apiClient.post<FixedRouteRecord>(`/lab-profiles/${labId}/fixed-route-acquisitions/${runId}/cancel`)).data, runId)
+}
+
+export async function fetchFixedRouteAcquisitions(labId: string): Promise<FixedRouteRecord[]> {
+  return (await apiClient.get<FixedRouteRecord[]>(`/lab-profiles/${labId}/fixed-route-acquisitions`)).data.map(value => checkedAcquisition(labId, value))
+}
 
 export async function readF64CalibrationState(labId: string, request: F64StateRequest): Promise<F64StateRecord> {
   return (await apiClient.post<F64StateRecord>(`/lab-profiles/${labId}/f64-calibration-state`, request)).data

@@ -7,6 +7,8 @@ export type FixedRouteCalibrationDeclaration = import('./api.generated').compone
 export type FixedRouteCalibrationPreview = import('./api.generated').components['schemas']['FixedRouteCalibrationPreview']
 export type F64StateRequest = import('./api.generated').components['schemas']['F64StateRequest']
 export type F64StateRecord = import('./api.generated').components['schemas']['F64StateRecord']
+export type FixedRouteRequest = import('./api.generated').components['schemas']['FixedRouteRequest']
+export type FixedRouteRecord = import('./api.generated').components['schemas']['FixedRouteRecord']
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }

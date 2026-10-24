@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/api/v1/lab-profiles/{lab_profile_id}/fixed-route-acquisitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** History */
+        get: operations["history_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions_get"];
+        put?: never;
+        /** Start */
+        post: operations["start_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/fixed-route-acquisitions/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress */
+        get: operations["progress_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/fixed-route-acquisitions/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel */
+        post: operations["cancel_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lab-profiles/{lab_profile_id}/f64-calibration-state": {
         parameters: {
             query?: never;
@@ -2805,6 +2857,164 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** FixedRouteRequest */
+        FixedRouteRequest: {
+            /** Chain Id */
+            chain_id: string;
+            /** Configuration Digest */
+            configuration_digest: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Requested Power Dbm */
+            requested_power_dbm: number;
+            /**
+             * Reference Antenna
+             * @description 参考天线身份、极化及位置，由操作员确认
+             */
+            reference_antenna: string;
+            /** Receive Cable Loss Db */
+            receive_cable_loss_db?: number | null;
+            /** Receive Cable Source */
+            receive_cable_source?: string | null;
+            /**
+             * Fixed Route Confirmed
+             * @constant
+             */
+            fixed_route_confirmed: true;
+            /**
+             * Safety Confirmed
+             * @description 操作员已确认专用校准仿真、固定接线、无其它混入信号及允许功率
+             * @constant
+             */
+            safety_confirmed: true;
+            /**
+             * Sample Count
+             * @default 5
+             */
+            sample_count: number;
+        };
+        /** FixedRouteResult */
+        FixedRouteResult: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            request: components["schemas"]["FixedRouteRequest"];
+            /** Configuration */
+            configuration: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Status
+             * @default running
+             * @enum {string}
+             */
+            status: "running" | "completed" | "simulated" | "failed" | "cancelled" | "cleanup_unconfirmed" | "interrupted" | "incomplete";
+            /** Samples */
+            samples?: components["schemas"]["FixedRouteSample"][];
+            /** Exchanges */
+            exchanges?: components["schemas"]["PowerExchange"][];
+            /** States */
+            states?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Net Loss Db */
+            net_loss_db?: number | null;
+            /** Sample Std Db */
+            sample_std_db?: number | null;
+            /** Cleanup Confirmed */
+            cleanup_confirmed?: boolean | null;
+            /** Error */
+            error?: string | null;
+            /** Missing Items */
+            missing_items?: string[];
+            /**
+             * Method
+             * @default fixed_route_port_to_reference_v1
+             * @constant
+             */
+            method: "fixed_route_port_to_reference_v1";
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+        };
+        /** FixedRouteSample */
+        FixedRouteSample: {
+            /** Source Before Dbm */
+            source_before_dbm: number;
+            /** Received Dbm */
+            received_dbm: number;
+            /** Source After Dbm */
+            source_after_dbm: number;
+            /**
+             * Host Time
+             * Format: date-time
+             */
+            host_time?: string;
+        };
+        /** FixedRouteRecord */
+        FixedRouteRecord: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Run At
+             * Format: date-time
+             */
+            run_at: string;
+            /** Status */
+            status: string;
+            result?: components["schemas"]["FixedRouteResult"] | null;
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+        };
+        /** PowerExchange */
+        PowerExchange: {
+            /** Instrument Id */
+            instrument_id: string;
+            /** Command */
+            command: string;
+            /** Response */
+            response?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Simulated
+             * @default false
+             */
+            simulated: boolean;
+            /**
+             * Host Time
+             * Format: date-time
+             */
+            host_time?: string;
+        };
         /** F64StateRecord */
         F64StateRecord: {
             /**
@@ -4983,6 +5193,138 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    history_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedRouteRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixedRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedRouteRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    progress_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedRouteRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedRouteRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     history_api_v1_lab_profiles__lab_profile_id__f64_calibration_state_get: {
         parameters: {
             query?: {
