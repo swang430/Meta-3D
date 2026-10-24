@@ -19,6 +19,7 @@
 - Mock只验证流程，`net_loss_db=None`、`cleanup_confirmed=None`、formal_eligible=False，采用仍拒绝；“全部模拟项走完”不显示“整套校准成功”。
 - 不向旧单段 `calibrated_loss_db` 写入整条损耗；采用/冻结/补偿继续PC04A2同源，旧执行不漂移。
 - `cleanup_unconfirmed`优先于取消/一般失败，任何安全停发未确认不能进入换线提示或继续测量；释放Remote不等于停发。
+- 批child测量完成不等于可采用：只有所属批外层lease真实释放确认且父子最终事务成功提交，才可进入原采用核验。批活动、释放未知/失败、最终落盘失败或崩溃时，child均不可采用；旧单项语义不变。
 - 不新增SCPI。自动切换只能调用已核验驱动操作；缺证据的通路明确不可自动切换，不能以任意拓扑开关节点或 capability.supported=True推定资格。
 
 ## 已核对的生产关系与缺口
@@ -52,6 +53,10 @@ API全部在 `/api/v1/lab-profiles/{lab_profile_id}`：
 不新增批量采用API：结果列表可多选，但逐条调用已有 application-preview/confirm（独立幂等键及 expected_current_application_id），显示每条成功/冲突/不符合；不声称跨条原子采用，不因其一成功勾选全批。首批默认单项确认也可满足“仅明确选择的结果”。
 
 父记录 `target_name=route_calibration_batch`，extra.route_calibration_batch包含版本、job_id/lab_id、预览digest、请求幂等键、冻结计划/绑定/路径/参考信息、顺序item_id、子run_id、当前索引、等待transition_id、cancel_requested、安全状态、逐项摘要与错误。每个状态切换及每项开始前/结束后提交；子记录仍 `target_name=fixed_route_power_acquisition`，完整v2 result可被PC04A2读取。
+
+父子最终交接：child的states保存`batch_job_id`、`batch_item_id`和实际`lease_id`，每项只写自身`cleanup_confirmed`，外层lease仍活动时`f64_control_released`保持None。父保存真实lease释放结果及其lease_id、finalization_id、最终提交状态。退出外层lease后，以同一数据库事务更新父终态及全部已存在child的真实释放结果和同一finalization_id；只在实际outcome确认为True时写True，不把本项tone停止冒充外层释放。采用资格必须数据库核对父子归属/lease/finalization一致及父最终事务已提交，随后仍过原真实测量证据门。
+
+最终写入窗口逐一封闭：逐项提交失败立即停止推进并做既有cleanup/lease退出；lease退出失败或unknown时，最终事务保存失败/未知释放事实，所有child不可采用；lease已经释放但最终事务失败时回滚全部父子最终更新，旧child仍缺释放证明且父仍未最终化；进程在退出lease前后任意位置崩溃且未最终提交时，重读为interrupted/unknown不可采用，不从当前HAL补证据。只有真实释放为True且最终事务成功，父/child才显示“批已结束且释放确认”；事务成功但真实释放False/unknown仍显示失败/未知，不能因提交成功升级。仅各自真实completed、所属批所有已启动tone收尾确认且满足原门的child可被明确选择采用；父failed/cancelled但正常收尾释放已确认时也不能把失败child升级，已经完成的合格child按实际覆盖显示。父cleanup_unconfirmed时全部child保持不可采用。
 
 状态分离：父 `running/waiting_manual/paused_failure/completed/cancelled/failed/cleanup_unconfirmed/interrupted/incomplete`；项 `pending/measuring/waiting_manual/completed/simulated/failed/cancelled/interrupted`。父completed表示所有计划项流程结束，不表示正式资格；展示真实completed数量、simulated数量、失败/取消/待测数量。失败后未测项仍pending；用户整批取消时未测项cancelled且无采集run。父终态不能只读“当前项终态”推定。
 
@@ -98,22 +103,23 @@ NotebookLM把SPDT写归p8、SP6T读写归p11，这两处与原件分页不符，
 最小改变不是改全仓DFS/执行器，而是为需要选择的保存图增加显式有序路径声明，并让校准完整路径的生产/采用/冻结共用该解析：
 
 1. 在探头节点现有`params`保存可选`rf_path_selection`：`{connection_ids:[按源到探头顺序], switch_mappings:[{node_id,path_name}]}`。该params已由原保存API持久化，不新增独立拓扑/表/地址；UI在原侧栏通过已保存连接候选选择，不让操作员写JSON/SCPI。无分叉旧图不要求新增字段。
-2. 在`api-service/app/services/calibration/route_calibration.py`新增 `resolve_explicit_route_selection(db,lab_id,topology_id,mode,terminal_connection_id,connection_ids)`。从保存对象重读每条ID，只允许当前模式有效边，严格校验连续、无环、唯一CE源和探头末端、probe/pol/真实CE口、完整端口、参考段仍独立；不是信任客户端上传快照。若同一terminal多候选，不默认第一条；要求保存声明明确选择一条。
+2. 新增零I/O纯解释模块`api-service/app/services/declared_rf_routes.py`，生产函数`resolve_saved_rf_path(nodes,active_connections,terminal_connection_id)`从保存节点的rf_path_selection取有序连接ID，返回严格正常路径节点/边。仅校验当前模式有效边、连续、无环、唯一CE源和探头末端、probe/pol、完整端口及开关明确配对；若同一terminal多候选且无保存声明，不默认第一条。`route_calibration.py::resolve_explicit_route_selection(db,lab_id,topology_id,mode,terminal_connection_id,connection_ids)`负责数据库lab/topology范围、与保存声明一致、校准参考段、真实CE口、digest等封套，复用该纯解释，不导入正常执行orchestrator，避免循环依赖。
 3. 只有switch_slot明确配对的分叉可由声明解释；非开关中间器件分叉仍拒绝，不把PA/分配器/未知节点推定为可切换。switch_mappings路径名必须在已绑定仪器port_maps中唯一，node对应同一类别/模块、输入输出端口匹配；不能根据P2/P4标签猜NC/NO或relay字母。
 4. `list_route_selections`保留无声明旧图严格模式，有声明的terminal只调用同一显式helper，批清单从已保存声明获取；多条校准项可共用CE物理输出但仅在本批串行且显式互斥开关映射下，不能因此允许正式MIMO同时复用一个物理输出。
 5. 子FixedRouteRequest不新增`connection_ids`字段；用保存声明重读，冻结原有request+route_digest。resolve_configuration按同一resolver重新核对route_digest，防预览后改声明。RouteSelection快照/digest包含实际有序连线/端口与switch映射引用，显示字段不参与身份，旧历史不能回填新声明。
-6. 所有消费者必须同改/逐项定界：`fixed_route_jobs.resolve_configuration`；`route_calibration.evaluate_route_application`中的当前路径重核；`route_calibration_freeze.resolve_effective_route_compensation`当前路线生成；其冻结后`frozen_route_identity_error`的当前拓扑比较；GUI routeGraphMatchesSaved/highlight。`rf_chain_resolver`、switch_orchestrator、setup/measure/analysis/channel-engine补偿接口不增自动切换机制，仍沿原链ID和端口契约；新完整路径只作为准确身份/整条采用来源，不冒充正式执行已具备自动切换。
+6. 所有消费者统一换源而非绕过：`switch_orchestrator._build_probe_binding`在存在保存显式路径时复用`declared_rf_routes.resolve_saved_rf_path`，不再对整个共享switch节点使用入出度=1代替端口配对；旧无声明唯一路线仍严格解析。`rf_chain_resolver.resolve_rf_chains`继续经该orchestrator消费同一声明，集合层保留正式重复CE拒绝；`route_calibration_freeze.resolve_effective_route_compensation`及`frozen_route_identity_error`由此拿到相同保存路线。最终MEASURE中独立调用的`orchestrate_switch_topology`也由同一只读解释生成实际target，保留`frozen_route_identity_error(...,resolved_topology=topology_result)`独立比较，不拿冻结对象直接冒充实际target。`fixed_route_jobs.resolve_configuration`、`evaluate_route_application`、GUI routeGraphMatchesSaved/highlight对应同一完整路径。全链只改变声明判据来源，不给正式setup/measure/analysis/channel-engine新增开关动作，不取消原补偿/实际target门。
 7. 正式冻结对同CE输出重复使用、当前mode无法确定可同时执行路线明确不采用/unsupported，strict硬件前拒绝；不拿批作业的串行能力默默扩张正式MIMO硬件能力。若现有目标拓扑只有端口独立共享节点，则验证每条CE端口唯一即可继续PC04A2既有实际应用。
 
 Task1对应新增RED：同switch节点两条独立输入输出路线显式选中可生成2项；无声明/交叉错配/伪造连接/非switch分叉/环路拒绝；两条指向同一terminal未明确选择拒绝；声明变化改digest。Task4/5追加：显式完整路径child可走原application-preview/confirm，执行冻结准确选择同route_digest；旧执行不漂移；同CE复用仅批串行允许而正式strict拒绝。先把这些关系测全再继续批编排。
 
 ## Task 1：清单与可控通路证据边界
 
-文件：新增`api-service/app/schemas/route_batch.py`与`api-service/app/services/calibration/route_batch_plan.py`；修改`api-service/app/services/calibration/route_calibration.py`实现局部显式路径解析及采用资格重核、`api-service/app/services/mimo_ota/route_calibration_freeze.py`复用同源完整路径及正式重复CE拒绝；测试新增`api-service/tests/test_pc06a1_batch_plan.py`。
+文件：新增`api-service/app/schemas/route_batch.py`、`api-service/app/services/calibration/route_batch_plan.py`及纯解释`api-service/app/services/declared_rf_routes.py`；修改`api-service/app/services/calibration/route_calibration.py`实现完整封套及采用路径重核、`api-service/app/services/mimo_ota/switch_orchestrator.py`将`_build_probe_binding`换源为保存显式路径、`api-service/app/services/calibration/rf_chain_resolver.py`落实正式集合重复CE拒绝、`api-service/app/services/mimo_ota/route_calibration_freeze.py`保持当前路线/冻结核对同源；测试新增`api-service/tests/test_pc06a1_batch_plan.py`。`executors/measure.py`现有独立actual-target比较不删除、不绕过，测试直接覆盖其传入resolved_topology的生产核对函数，不新增正式切换。
 
 接口：`schemas/route_batch.py`定义`BatchPlanRequest`、`BatchPlan`；生产函数固定为`route_batch_plan.py::build_batch_plan(db: Session, lab_id: UUID, request: BatchPlanRequest, hal) -> BatchPlan`。它零硬件I/O，供Task2启动重核、Task4 preview/start共用；Task3消费其冻结switch_steps，不再独立解析另一套映射。`route_calibration.py::resolve_explicit_route_selection`只接受已保存连接ID及严格校验后的路径声明，旧无声明唯一链行为保持。批内复用CE时逐条调用显式helper，不把全局`list_route_selections`的CE唯一门删除；单条配置重核与采用重核也针对同一保存显式路径调用helper。正式冻结仍调用全局唯一集合检查，不以批任务的串行声明绕过。
 
 - [ ] RED：2通路(V/H实际各一条)×2频点=4项，顺序稳定；重复chain/频点、NaN、缺参考来源、跨实验室、calibration模式、摘要漂移拒绝；固定直连计划无开关步骤。
+- [ ] RED：真实保存图CE1→switch.in1/out1→probeV与CE2→同switch.in2/out2→probeH，显式路线经过orchestrate_switch_topology→resolve_rf_chains→resolve_effective_route_compensation/冻结→独立实际orchestrator→frozen_route_identity_error(resolved_topology=...)，两条已确认整条校准保持准确映射并可继续本地ASC一次应用。换端口/错配配对、非switch分叉、重复CE、实际target遗漏/替换任一probe均拒绝；不能只测新helper绿而旧生产链仍报唯一源端错误。
 - [ ] 实跑上述测试，记录缺功能红灯；实现`build_batch_plan(db,lab_id,request,hal)`返回不可变快照、逐项请求和转换步骤，频率线缆资料按item绑定。
 - [ ] 自动切换依据采用已核验的ETS手册；按核验依据定义保存路径→port_maps→原始诊断→本次写读的证据关系。真实现场材料缺失不阻碍实现软件正反门，但该目标实物通路不得冒称已验收。
 - [ ] GREEN：按前述“显式路径选择”实现局部严格枚举，不全局放宽正常测试解析器，也不按当前relay位置猜通路。提交并审核此可独立交付的预览契约。
@@ -122,11 +128,14 @@ Task1对应新增RED：同switch节点两条独立输入输出路线显式选中
 
 ## Task 2：持久化整批生命周期与跨项独占
 
-文件：新增`services/calibration/route_batch_jobs.py`；修改`fixed_route_jobs.py`提取共享子记录构建/完成保存helper、`main.py`注册批shutdown；测试`test_pc06a1_batch_jobs.py`，回归PC04A单项API。
+文件：新增`api-service/app/services/calibration/route_batch_jobs.py`；修改`fixed_route_jobs.py`提取共享子记录构建/完成保存helper及父归属读取、`api-service/app/api/fixed_route_acquisition.py`全部record调用传入批归属上下文、`route_calibration.py`预览/确认同样核对父归属最终化、`main.py`注册批shutdown；测试`test_pc06a1_batch_jobs.py`，回归PC04A单项API。
+
+接口：`route_batch_jobs.batch_child_context(db,row)`返回由父记录及本批运行注册表推导的父活动/最终化/lease关联事实；`fixed_route_jobs.record(row, *, batch_context=None)`在有batch_job_id时消费该上下文，没有上下文则保守unknown，不假注册child进单项_running。原无batch关联记录继续用原单项判据。预览/确认通过同一上下文检查已提交的父子finalization，不能仅看child.states的True。所有既有record调用点（单条列表/详情/取消、采用预览、确认重读）均显式追全。
 
 - [ ] RED：真实临时DB建立父+子记录；两项间插入TestCase/单条采集/unsafe诊断均409；等待人工仍独占；连续两批终态后能重入；父/子落盘失败不得启动后续项；已完成child详情能走原preview。
 - [ ] 实跑RED；最小实现：启动先现有case检查+try_acquire token；只创建一个task，外层instrument_test_lease(control_f64=True,control_uxm=False,enable_monitoring=False,restore_f64_alignment=False)，逐项直接调用既有collect。批task持有token直至终态落盘尝试与cleanup，finally只释放自己的token。
-- [ ] 每项重新检查冻结身份与当前绑定，不重建历史；本项开始先提交measuring+child，收尾后先提交child再提交父进度。崩溃发生在任意提交点都只能重读为不完整/中断，不能跳到下一项。
+- [ ] 每项重新检查冻结身份与当前绑定，不重建历史；本项开始先提交measuring+child，收尾后提交child与父进度，但child仍标“所属批活动/外层释放未确认、不可采用”。本项cleanup与整批lease退出各自记录，不能写伪releaseTrue。最终按统一契约在退出真实lease后同一事务提交父终态及所有child释放来源；任意提交失败不推进后续项。
+- [ ] RED→GREEN：活动child从原history读取不误判独立interrupted；首child实测完成、后续人工等待时，预览/确认仍拒绝；本批真实外层释放成功并父子最终事务提交后，相同child才可通过原真实测量证据门。分别注入tone停止失败、lease释放失败、单项落盘失败、释放后最终事务失败、最终提交前崩溃，均无child假采用；重复读取不补真。旧单项释放/采用行为不变。
 - [ ] 重启：活动父/项读取为interrupted、安全unknown；不派任务、不发SCPI、不恢复continue。正常shutdown先cancel并await安全收尾，再HAL关闭。历史中断不等于已停发，界面要求现场核验。
 - [ ] GREEN及提交。沿用单API worker部署，不引入分布式锁；多worker需求明确不在本片。
 
@@ -148,10 +157,11 @@ Task1对应新增RED：同switch节点两条独立输入输出路线显式选中
 
 ## Task 4：API与历史/确认消费
 
-文件：新增`api/route_batch.py`；修改`main.py`、`api/openapi.yaml`、`gui/src/types/api.ts`、`gui/src/api/labProfileService.ts`；测试`test_pc06a1_batch_api.py`。
+文件：新增`api/route_batch.py`；修改`main.py`、`api/openapi.yaml`、`gui/src/types/api.ts`、`gui/src/api/labProfileService.ts`；复核Task2已修改的`api/fixed_route_acquisition.py`、`route_calibration.py`父关联上下文消费，不重造第二套判据；测试`test_pc06a1_batch_api.py`。
 
 - [ ] RED：真实FastAPI+临时DB，preview/start/GET/continue/cancel全链；跨lab/job伪造404；无效输入422；已有占用409；pending POST响应丢失重试同幂等key返回同job不新增tone；过期transition拒绝。
-- [ ] 最小实现全部上述接口，幂等身份限定lab+请求内容；原固定采集history可读取child；原application-preview/confirm仍验证真实来源/适用/cleanup，Mock child仍拒绝。
+- [ ] 最小实现全部上述接口，幂等身份限定lab+请求内容；原固定采集列表/详情/取消可识别child所属批且不假作独立任务，child取消导向所属批取消或明确409提示批入口，不报告已停止；application-preview/confirm在真实来源/适用/tone cleanup之外核对所属批真实外层lease释放及已提交finalization，Mock仍拒绝。跨lab父关联、孤儿child、lease_id或finalization不符、父活动/未最终化均拒绝。
+- [ ] RED→GREEN：真实API临时DB保存首child完成且父waiting_manual，原child history显示所属批活动/待释放而非interrupted；直接POST确认拒绝。真实lease退出+最终事务提交后重新预览/确认才可成功，落盘失败或崩溃后GET/preview/confirm一致显示unknown不可采用，父状态不显示“释放已确认”。
 - [ ] GREEN：模型/活OpenAPI/手写OpenAPI/GUI四镜像对齐；原PC04应用、冻结、ASC一次补偿回归保持。
 
 定点命令（测试文件由本任务创建后，先RED再GREEN）：`cd api-service && .venv/bin/python -m pytest tests/test_pc06a1_batch_api.py -q -o log_cli=false`。
@@ -162,7 +172,7 @@ Task1对应新增RED：同switch节点两条独立输入输出路线显式选中
 
 - [ ] RED：真实保存路径多选、频点/参考位置输入→预览完整清单；dirty阻止preview/start；当前项正常路径及参考段同图高亮；清单计数与结果逐项对应。
 - [ ] 实现预览→明确开始→逐项进度/等待人工/失败暂停→继续/取消→历史；活动身份存于服务器，前端beginWork跨卸载保留锁。网络失败、空历史、开始回执未知不提前解锁；只读历史不覆盖活动job。
-- [ ] RED→GREEN：人工continue必须针对当前transition；真实cleanup未知不显示可换线提示；模拟明确黄色且正式采用不可用；不把一项完成显示整套成功；选择一个合格child才显示原采用预览/期限确认，失败冲突保留其他结果。
+- [ ] RED→GREEN：人工continue必须针对当前transition；真实cleanup未知不显示可换线提示；模拟明确黄色且正式采用不可用；不把一项完成显示整套成功。首child测量完成但父活动/等待人工时，父面板与单项历史均显示所属批、tone状态、外层释放未确认、不可采用；仅所属批终止且真实lease释放及父子最终提交确认后，选择合格child才显示原采用预览/期限确认。释放/落盘未知不显示已释放，失败冲突保留其他结果。
 - [ ] 生产构建通过，原图编辑/保存、PC04单项采集与确认交互回归。
 
 ## Task 6：真实API临时DB全Mock浏览器、最终回归与收口
@@ -173,6 +183,7 @@ Task1对应新增RED：同switch节点两条独立输入输出路线显式选中
 - [ ] 浏览器验证：开始、首项人工摆位、逐项进度、跨通路人工暂停、continue、取消、已完成/未完成覆盖、离页返回锁、失败读取保持锁；API GET与DB持久化交叉核对。不得拦截响应伪造成功/结果。
 - [ ] 错误切换、cleanup未确认、取消竞态由真实服务API+仅替换外部transport的后端测试覆盖；若浏览器需要故障注入，仅隔离测试fixture注入驱动行为，不增加生产“模拟成功/故障”端点。浏览器必须包含Mock自动切换流程正例及拒绝错误回读反例，仍明确模拟不是真实资格；目标实物现场证据缺失显示不可用原因，不虚报已真机自动切换。
 - [ ] 真实重启后读同父job为interrupted、无新增child/动作；取消后刷新无自动续跑；单条/正式测试占用竞争与任务间独占后端证据归档。
+- [ ] 补充后端真实生产链正例：共享switch独立两CE端口经正常orchestrator、freeze及独立actual-target核对消费正确校准；无正式开关写。父活动child拒绝采用、真实lease退出且最终事务提交才开放；全部最终写入失败窗口仍unknown。全Mock浏览器核对父子待释放提示与采用禁用，不伪造真实采用成功。
 - [ ] 执行下列已核实运行入口；PC06文件由本计划指定任务先创建，再运行对应命令，缺文件/导入失败不算行为RED。相关回归的既有文件均已核对存在。记录HEAD、未提交测试输入、退出码、统计行；既有过期fixture单独披露，不改有效期规则。
 
 ```bash
