@@ -13,7 +13,13 @@ import type {
   InstrumentBindingSyncResponse,
   CalibrationScopeSnapshot,
   CalibrationScopeComparison,
+  FixedRouteCalibrationDeclaration,
+  FixedRouteCalibrationPreview,
 } from '../types/api'
+
+export async function previewFixedRouteCalibration(request: FixedRouteCalibrationDeclaration): Promise<FixedRouteCalibrationPreview> {
+  return (await apiClient.post<FixedRouteCalibrationPreview>('/calibration/path-loss/fixed-route/preview', request)).data
+}
 
 export async function fetchCalibrationScope(labId: string): Promise<CalibrationScopeSnapshot> {
   return (await apiClient.get<CalibrationScopeSnapshot>(`/lab-profiles/${labId}/calibration-scope`)).data

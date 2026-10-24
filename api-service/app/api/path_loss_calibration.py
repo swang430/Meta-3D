@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 
 from app.db.database import get_db
+from app.schemas.calibration_method import FixedRouteCalibrationDeclaration, FixedRouteCalibrationPreview
+from app.services.calibration.fixed_route_method import preview_fixed_route
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     ProbePathLossCalibration,
@@ -73,6 +75,15 @@ baseline_router = APIRouter(prefix="/calibration/baseline", tags=["Relative Cali
 
 
 # ==================== 探头路损校准 ====================
+
+@router.post('/fixed-route/preview', response_model=FixedRouteCalibrationPreview)
+def preview_fixed_route_calibration(request: FixedRouteCalibrationDeclaration):
+    """固定开关通路的方法计算预览；不访问仪器、不写校准、不授予正式资格。"""
+    try:
+        return preview_fixed_route(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
 
 @router.post("/start", response_model=CalibrationJobResponse)
 async def start_path_loss_calibration(
