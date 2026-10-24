@@ -19,6 +19,7 @@ from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteRes
 from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.services.calibration.configuration_scope import build_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
+from app.services.calibration.route_calibration import list_route_selections
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
 from app.services.instrument_hal_service import get_hal_service, get_real_driver_class, is_mock_driver
 from app.services.instrument_test_lease import instrument_test_lease
@@ -40,13 +41,25 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     lab = db.get(LabProfile, lab_id)
     if lab is None or not lab.is_active:
         raise ValueError('实验室配置不存在或已停用')
-    snapshot = build_calibration_scope(db, lab_id)
+    try:
+        snapshot = build_calibration_scope(db, lab_id, request.operating_mode, topology_id=request.topology_id)
+    except LookupError as exc:
+        raise ValueError(str(exc)) from exc
     if snapshot.digest != request.configuration_digest:
         raise ValueError('采集配置已变化，请重新读取并确认所选链；这不改变校准就绪状态')
-    matches = [c for c in snapshot.payload.chains if c.chain_id == request.chain_id]
+    topology_id = request.topology_id or snapshot.payload.topology.get('id')
+    if topology_id is None:
+        raise ValueError('没有可供采集的已保存拓扑')
+    try:
+        routes = list_route_selections(db,lab_id,UUID(str(topology_id)),request.operating_mode)
+    except LookupError as exc:
+        raise ValueError(str(exc)) from exc
+    matches = [r for r in routes if r.chain_id == request.chain_id]
     if len(matches) != 1:
         raise ValueError('所选链不存在或重复，不能确定采集通路')
     chain = matches[0]
+    if request.route_digest is not None and request.route_digest != chain.route_digest:
+        raise ValueError('所选完整通路已变化，请重新读取并确认接线；不会自动要求重新校准')
     ce_category = db.query(InstrumentCategory).filter_by(category_key='channelEmulator').one_or_none()
     if ce_category is None or not ce_category.is_active:
         raise ValueError('F64类别不存在或已停用；不会自动启用或控制残留驱动')
@@ -90,7 +103,8 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     # 是首批支持的F64物理口集合，不接受解析器的历史宽松正整数域。
     if not 1 <= output <= 32:
         raise ValueError('F64输出口必须为1到32')
-    return dict(snapshot=snapshot.model_dump(mode='json'), chain=chain.model_dump(mode='json'),
+    return dict(snapshot=snapshot.model_dump(mode='json'), chain=dict(chain_id=chain.chain_id,ce_port=chain.ce_port,
+        probe_id=chain.probe_id,polarization=chain.polarization), route_selection=chain.model_dump(mode='json'),
         binding=ce_binding.model_dump(mode='json'), analyzer_binding=binding,
         analyzer_connection_id=str(connection.id), analyzer_instrument_id=sa.instrument_id), output, ce, sa
 
@@ -136,7 +150,7 @@ async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
     try:
         config, _, _, _ = resolve_configuration(db, lab_id, request, get_hal_service())
         run_id = uuid4()
-        result = FixedRouteResult(run_id=run_id, lab_profile_id=lab_id, request=request, configuration=config)
+        result = FixedRouteResult(version=2, run_id=run_id, lab_profile_id=lab_id, request=request, configuration=config)
         row = DiagnosticRun(id=run_id, kind='scpi_sequence', lab_profile_id=lab_id, target_name=TARGET,
             params=request.model_dump(mode='json'), success=False, sequence_evidence=_sequence_evidence(result))
         db.add(row)
@@ -166,6 +180,9 @@ async def _execute(result, token, cancel):
                     if has_active_case_run() or has_running_case_run_row(db):
                         return '测试已开始，停止本次采集'
                     selected = resolve_configuration(db, result.lab_profile_id, result.request, hal)
+                    expected_route = result.configuration.get('route_selection')
+                    if expected_route and selected[0].get('route_selection', {}).get('route_digest') != expected_route.get('route_digest'):
+                        return '进入仪器控制前完整路径或参考接线变化，未开始采集；请重新读取并确认'
                 except ValueError as exc:
                     return str(exc)
             return None
