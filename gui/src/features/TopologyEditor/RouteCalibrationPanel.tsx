@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Code, Group, Select, Stack, Text, TextInput, Title } from '@mantine/core'
 import { useOperationalLab } from '../OperationalLab'
@@ -23,10 +23,12 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   onSelectRoute:(route:RouteSelection|null)=>void;onBusyChange:(busy:boolean)=>void
   onRunningRoute:(route:RouteSelection)=>void
 }) {
-  const {beginWork}=useOperationalLab(), cache=useQueryClient()
+  const {beginWork,activeWork}=useOperationalLab(), cache=useQueryClient()
   const scope={labId,topologyId,mode,dirty:dirty||saving,graph}
   const [chainId,setChainId]=useState<string|null>(null),[runId,setRunId]=useState<string|null>(null)
-  const [activeRunId,setActiveRunId]=useState<string|null>(null),[busy,setBusy]=useState(false)
+  const [activeRunId,setActiveRunId]=useState<string|null>(null),[trackingBusy,setBusy]=useState(false)
+  // Global unfinished work survives unmount; unreadable history cannot clear it.
+  const busy=trackingBusy||activeWork.length>0
   const [activeSelection,setActiveSelection]=useState<RouteSelection|undefined>(undefined)
   const [inputError,setInputError]=useState(''),[deadline,setDeadline]=useState('')
   const [values,setValues]=useState<RouteFields>({frequency:'',power:'',antenna:'',cable:'',cableSource:'',samples:'5',fixed:false,safe:false})
@@ -34,6 +36,8 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   const startPending=useRef(false),startFailureStatus=useRef<number|undefined>(undefined)
   const confirmAttempt=useRef<{signature:string;key:string}|null>(null)
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;onBusyChange(false)}},[onBusyChange])
+  // Restore the existing canvas/outer-device guards before the remounted page paints.
+  useLayoutEffect(()=>onBusyChange(busy),[busy,onBusyChange])
   const paths=useQuery({queryKey:['route-calibration-paths',labId,topologyId,mode,revision],
     queryFn:()=>fetchRouteCalibrationPaths(labId,topologyId,mode),enabled:!dirty&&!saving&&mode!=='calibration',retry:false})
   const history=useQuery({queryKey:['fixed-route-acquisitions',labId],queryFn:()=>fetchFixedRouteAcquisitions(labId),retry:false})
@@ -52,7 +56,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   },[route,activeRunId,activeSnapshot,dirty,saving,mode,labId,topologyId,graph,onSelectRoute])
   useEffect(()=>{setValues(old=>({...old,fixed:false,safe:false}));setDeadline('');confirmAttempt.current=null},[mode,route?.route_digest,runId])
 
-  const changeBusy=(value:boolean)=>{setBusy(value);onBusyChange(value)}
+  const changeBusy=(value:boolean)=>{setBusy(value);if(value)onBusyChange(true)}
   const track=(record:FixedRouteRecord)=>{
     setRunId(record.run_id);cache.setQueryData(['fixed-route-acquisition',labId,record.run_id],record)
     if(tracking.current===record.run_id)return
@@ -133,7 +137,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     </form>
     {busy&&<Alert color="yellow"><Text>采集状态未确认结束；图编辑、模式、设备及实验室切换已锁定。关闭页面不等于停止。</Text>
       {activeSnapshot&&!routeGraphMatchesSaved(graph,activeSnapshot)&&<Text size="sm">活动记录的冻结路径与当前保存画布不同，未拿任一端替另一端背书。请看本次记录原文核对，服务器取消仍可用。</Text>}
-      {!activeRunId&&start.isError&&<Text size="sm">开始回执未知时，空历史不能证明未启动。请继续读取服务器状态；发现活动记录后可在此取消，必要时结合现场核验。</Text>}
+      {!activeRunId&&<Text size="sm">开始回执未知时，空历史不能证明未启动。请继续读取服务器状态；发现活动记录后可在此取消，必要时结合现场核验。</Text>}
       <Button color="red" mt="xs" disabled={!activeRunId} loading={cancel.isPending} onClick={()=>cancel.mutate()}>取消采集并停止本次单音</Button></Alert>}
     <Button variant="light" size="xs" onClick={()=>{void recover();if(!dirty&&!saving&&mode!=='calibration')void paths.refetch()}} loading={history.isFetching}>读取历史／恢复采集状态</Button>
     {inputError&&<Alert color="red">{inputError}</Alert>}
