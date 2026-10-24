@@ -15,7 +15,17 @@ import type {
   CalibrationScopeComparison,
   FixedRouteCalibrationDeclaration,
   FixedRouteCalibrationPreview,
+  F64StateRequest,
+  F64StateRecord,
 } from '../types/api'
+
+export async function readF64CalibrationState(labId: string, request: F64StateRequest): Promise<F64StateRecord> {
+  return (await apiClient.post<F64StateRecord>(`/lab-profiles/${labId}/f64-calibration-state`, request)).data
+}
+
+export async function fetchF64CalibrationHistory(labId: string): Promise<F64StateRecord[]> {
+  return (await apiClient.get<F64StateRecord[]>(`/lab-profiles/${labId}/f64-calibration-state`)).data
+}
 
 export async function previewFixedRouteCalibration(request: FixedRouteCalibrationDeclaration): Promise<FixedRouteCalibrationPreview> {
   return (await apiClient.post<FixedRouteCalibrationPreview>('/calibration/path-loss/fixed-route/preview', request)).data

@@ -270,6 +270,7 @@ class InstrumentTestLease:
         *,
         instrument: str,
         outcome: InstrumentTestLeaseOutcome,
+        restore_f64_alignment: bool = True,
     ) -> None:
         if instrument == "F64":
             driver = self._f64_driver(hal)
@@ -279,7 +280,14 @@ class InstrumentTestLease:
             raise ValueError(f"未知仪表控制租约: {instrument}")
         if driver is None:
             return
-        acquired = await driver.acquire_remote_control()
+        if instrument == "F64" and not restore_f64_alignment:
+            # 仅F64只读采集收窄连接副作用，不能向其他CE推广未证实的参数契约。
+            from app.hal.propsim_f64 import RealPropsimF64Driver
+            if type(driver) is not RealPropsimF64Driver:
+                raise InstrumentTestLeaseError("禁止恢复对齐的只读连接仅适用于已核对的F64驱动")
+            acquired = await driver.acquire_remote_control(restore_user_alignment=False)
+        else:
+            acquired = await driver.acquire_remote_control()
         if instrument == "baseStation":
             if not isinstance(acquired, BaseStationRemoteSessionResult):
                 raise InstrumentTestLeaseError(
@@ -442,6 +450,7 @@ class InstrumentTestLease:
         control_f64: bool = True,
         control_uxm: bool = True,
         enable_monitoring: bool = True,
+        restore_f64_alignment: bool = True,
         validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
     ) -> AsyncIterator[InstrumentTestLeaseOutcome]:
         """在整个测试生命周期内持有 Remote，任何退出路径都归还 Local。
@@ -599,6 +608,7 @@ class InstrumentTestLease:
                             purpose,
                             instrument="F64",
                             outcome=outcome,
+                            restore_f64_alignment=restore_f64_alignment,
                         )
                     self._monitoring_enabled = enable_monitoring
                     logger.info(
@@ -803,6 +813,7 @@ async def instrument_test_lease(
     control_f64: bool = True,
     control_uxm: bool = True,
     enable_monitoring: bool = True,
+    restore_f64_alignment: bool = True,
     validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
 ) -> AsyncIterator[InstrumentTestLeaseOutcome]:
     async with _LEASE.hold(
@@ -811,6 +822,7 @@ async def instrument_test_lease(
         control_f64=control_f64,
         control_uxm=control_uxm,
         enable_monitoring=enable_monitoring,
+        restore_f64_alignment=restore_f64_alignment,
         validate_before_remote=validate_before_remote,
     ) as outcome:
         yield outcome

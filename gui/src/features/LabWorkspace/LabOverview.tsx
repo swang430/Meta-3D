@@ -5,6 +5,7 @@ import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
 import { CalibrationScopeCard } from './CalibrationScopeCard'
 import { FixedRouteCalibrationCard } from './FixedRouteCalibrationCard'
+import { F64CalibrationStateCard } from './F64CalibrationStateCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
 function BindingCard({ title, binding }: {
@@ -66,9 +67,10 @@ export function LabOverview() {
       <Button onClick={() => { void catalog.refetch(); void readiness.refetch(); void chains.refetch() }}
         loading={catalog.isFetching || readiness.isFetching || chains.isFetching || catalog.isPaused || readiness.isPaused || chains.isPaused}>刷新总览</Button>
     </Group>
-    <Alert color="blue">只读总览不保存、不加载仪器、不同步LabProfile。用例兼容性未评估；此处不表示正式测试资格。</Alert>
+    <Alert color="blue">默认总览不连接仪器、不同步LabProfile。主动点击“读取 F64 状态”会连接本实验室绑定的 F64 并保存诊断记录；不自动校准，不表示正式测试资格。</Alert>
     <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
     <FixedRouteCalibrationCard key={`fixed-route:${labId}:${chamberId}`} labId={labId} />
+    <F64CalibrationStateCard key={`f64-state:${labId}`} labId={labId} />
     <Card withBorder>
       <Text>LabProfile：{lab.name}</Text>
       <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{labId}</Text>

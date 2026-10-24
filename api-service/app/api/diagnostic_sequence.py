@@ -205,6 +205,7 @@ async def run_diagnostic_sequence(
     cancelled_exc: Optional[asyncio.CancelledError] = None
     is_cmw_probe = key == "cmw500_fdd_matrix_probe"
     is_f64_p08_gate = key == "propsim_f64_p08_gate"
+    is_f64_state = key == "propsim_f64_calibration_state"
     lease_outcome = None
     captured = []
     resolved_binding = None
@@ -240,6 +241,25 @@ async def run_diagnostic_sequence(
                 return str(exc)
             finally:
                 # Resolver is read-only; don't retain row locks across awaited I/O.
+                db.rollback()
+            return None
+    elif is_f64_state:
+        from app.models.lab_profile import LabProfile
+        from app.services.channel_emulator_binding import resolve_channel_emulator_binding
+
+        def validator(hal):
+            nonlocal resolved_binding
+            try:
+                lab = db.get(LabProfile, ctx.lab_profile_id)
+                if lab is None:
+                    return "F64 状态读取缺少所选实验室配置"
+                candidate = resolve_channel_emulator_binding(db, hal, lab, lock=True)
+                if candidate.manifest is None or candidate.manifest.adapter_id != "propsim_f64":
+                    return "只允许读取当前实验室明确绑定的 PROPSIM F64"
+                resolved_binding = candidate
+            except ValueError as exc:
+                return str(exc)
+            finally:
                 db.rollback()
             return None
     elif is_f64_p08_gate:
@@ -304,14 +324,16 @@ async def run_diagnostic_sequence(
             # P1-80：该序列用“业务 query 后立即排 SYSTem:ERRor?”做错误归属。
             # 1 Hz monitoring 的 get_metrics() 若插在两者之间，会把自己的错误
             # 错归给业务 query，或先排掉业务错误而重现空回复假绿。只收窄这一条
-            # 序列；其他诊断继续沿用租约默认的实时监控行为。
+            # 序列及 PC-03A 状态读取；其他诊断沿用租约默认监控行为。
             lease_options = (
                 {"enable_monitoring": False}
-                if key == "propsim_f64_license_truth"
+                if key in ("propsim_f64_license_truth", "propsim_f64_calibration_state")
                 else {}
             )
-            if is_f64_p08_gate:
+            if is_f64_p08_gate or is_f64_state:
                 lease_options["validate_before_remote"] = validator
+            if is_f64_state:
+                lease_options["restore_f64_alignment"] = False
             async with instrument_test_lease(
                 f"diagnostic-sequence:{key}",
                 control_f64="channelEmulator" in lease_categories,
@@ -322,7 +344,7 @@ async def run_diagnostic_sequence(
 
     @asynccontextmanager
     async def sequence_scpi_transaction(hal):
-        if key != "propsim_f64_license_truth":
+        if key not in ("propsim_f64_license_truth", "propsim_f64_calibration_state"):
             yield
             return
         driver = (getattr(hal, "drivers", {}) or {}).get("channelEmulator")
@@ -335,7 +357,7 @@ async def run_diagnostic_sequence(
         scpi_lock = getattr(driver, "_scpi_lock", None)
         if scpi_lock is None:
             raise RuntimeError(
-                "propsim_f64_license_truth 需要 F64 可重入 SCPI 事务锁；"
+                "F64 只读诊断需要可重入 SCPI 事务锁；"
                 "无法保证业务查询与错误队列排水的原子归属"
             )
         # 已经启动的 monitoring 轮可能越过 enable_monitoring=False 的门。
@@ -394,7 +416,7 @@ async def run_diagnostic_sequence(
                                 ctx, hal, request.params, log=_log,
                                 **(
                                     {"resolved_binding": resolved_binding}
-                                    if is_cmw_probe or is_f64_p08_gate
+                                    if is_cmw_probe or is_f64_p08_gate or is_f64_state
                                     else {}
                                 ),
                             )

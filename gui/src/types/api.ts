@@ -5,6 +5,8 @@ export type CalibrationScopeSnapshot = import('./api.generated').components['sch
 export type CalibrationScopeComparison = import('./api.generated').components['schemas']['CalibrationScopeComparison']
 export type FixedRouteCalibrationDeclaration = import('./api.generated').components['schemas']['FixedRouteCalibrationDeclaration']
 export type FixedRouteCalibrationPreview = import('./api.generated').components['schemas']['FixedRouteCalibrationPreview']
+export type F64StateRequest = import('./api.generated').components['schemas']['F64StateRequest']
+export type F64StateRecord = import('./api.generated').components['schemas']['F64StateRecord']
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }
