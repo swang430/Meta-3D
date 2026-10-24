@@ -20,6 +20,7 @@ from app.services.calibration.fixed_route_acquisition import collect_fixed_route
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
 from app.services.instrument_hal_service import get_hal_service, get_real_driver_class, is_mock_driver
 from app.services.instrument_test_lease import instrument_test_lease
+from app.services.instrument_test_lease import await_completion_despite_cancellation
 from app.services.execution_exclusion_guard import try_acquire_unsafe_diagnostic, release_unsafe_diagnostic
 from app.services.test_case_runner import has_active_case_run, has_running_case_run_row
 
@@ -44,6 +45,9 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     if len(matches) != 1:
         raise ValueError('所选链不存在或重复，不能确定采集通路')
     chain = matches[0]
+    ce_category = db.query(InstrumentCategory).filter_by(category_key='channelEmulator').one_or_none()
+    if ce_category is None or not ce_category.is_active:
+        raise ValueError('F64类别不存在或已停用；不会自动启用或控制残留驱动')
     chamber = snapshot.payload.chamber
     if not chamber['freq_min_mhz'] <= request.frequency_mhz <= chamber['freq_max_mhz']:
         raise ValueError('工作频率不在暗室已声明频段内')
@@ -134,6 +138,9 @@ async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
 async def _execute(result, token, cancel):
     """独立DB session，只在进入控制权前读配置；采集中不补当前值。"""
     try:
+        if cancel.is_set():
+            result.status, result.error = 'cancelled', '采集开始前已取消，未操作仪器'
+            return
         selected = None
         def validate(hal):
             nonlocal selected
@@ -156,8 +163,10 @@ async def _execute(result, token, cancel):
             await collect_fixed_route(ce, sa, result, output_port=output, cancel=cancel)
         result.states['f64_control_released'] = lease.channel_emulator_transport_released_confirmed
     except (Exception, asyncio.CancelledError) as exc:
-        result.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
-        result.error = str(exc) or '采集已被服务取消'
+        if result.status != 'cleanup_unconfirmed':
+            result.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
+        detail = str(exc) or '采集已被服务取消'
+        result.error = f'{result.error}；归还控制权或采集失败：{detail}' if result.error else detail
         result.net_loss_db = None
     finally:
         # 持有互斥直到最终记录保存，失败仍释放，日志不声称已持久化成功。
@@ -182,3 +191,15 @@ def request_cancel(run_id: UUID):
     if item is None:
         raise AcquisitionBusy('本次采集已结束或服务已重启，不能声称已停止仪器；请查看结果或现场确认')
     item[1].set()
+
+
+async def shutdown_fixed_route_jobs():
+    """正常服务退出先请求停止并等记录落盘，再允许HAL关闭连接。"""
+    tasks = []
+    for task, cancel in list(_running.values()):
+        cancel.set()
+        tasks.append(task)
+    if tasks:
+        outcome = await await_completion_despite_cancellation(asyncio.gather(*tasks, return_exceptions=True))
+        if outcome.error:
+            raise outcome.error

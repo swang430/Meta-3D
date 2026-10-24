@@ -161,12 +161,14 @@ _IQ_ERROR_DRAIN_CAP = 50
 def fixed_route_spectrum_commands(frequency_hz: float) -> list[str]:
     """FSVA3000手册1178.8520.02─16：完整单次绝对信道功率设置。
 
-    p874 SANALYZER；p881单次；p885选择CPOWer；p890信道带宽；
+    p874 SANALYZER；p881单次；p885选择CPOWer；p887选择功率曲线；
+    p1182～1183 WRITe每次扫描覆盖旧值；p890信道带宽；
     p1152 DBM、p1153零参考偏置/关闭噪声修正、p1161对数尺度；
     频率/跨度/RBW见p1137/1140/1143。1MHz/10kHz为本方法设置，不是厂商固定值。
     """
     return ['INSTrument:SELect SANALYZER', FsvaScpi.INIT_CONT_OFF,
         'CALCulate:MARKer:FUNCtion:POWer:SELect CPOWer',
+        'SENSe:POWer:TRACe 1', 'DISPlay:TRACe1:MODE WRITe',
         FsvaScpi.SET_FREQ.format(freq=frequency_hz), FsvaScpi.SET_SPAN.format(span=1e6),
         FsvaScpi.SET_RBW.format(rbw=10e3), FsvaScpi.SET_CHP_BW.format(bw=1e6),
         'CALCulate:UNIT:POWer DBM', 'DISPlay:TRACe:Y:SPACing LOGarithmic',

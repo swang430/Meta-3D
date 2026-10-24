@@ -154,6 +154,8 @@ async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: 
                     await _settle()
                 if await read('DIAG:SIMU:STATE?') != 'RUNNING':
                     raise ValueError('采集期间F64已停止，不能确认本次功率')
+                if _number(await read(f'OUTPut:LOSS:GET? {output_port}')) != loss:
+                    raise ValueError('采集期间F64输出损耗设置变化，不能确认同一功率参考位置')
                 check_cancel()
                 if request.receive_cable_loss_db is None or not request.receive_cable_source:
                     result.missing_items.append('缺少本频率的接收线缆损耗及来源，未计算整条路径损耗')

@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Checkbox, Code, Group, Select, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core'
 import { cancelFixedRouteAcquisition, fetchCalibrationScope, fetchFixedRouteAcquisition,
   fetchFixedRouteAcquisitions, startFixedRouteAcquisition } from '../../api/labProfileService'
-import { fixedRouteDisplay, acquisitionStatus } from './fixedRouteDisplay'
+import { fixedRouteDisplay, fixedRouteStillActive, acquisitionStatus } from './fixedRouteDisplay'
 import type { FixedRouteRequest } from '../../types/api'
 
 function failure(error: unknown) {
@@ -16,6 +16,7 @@ export function FixedRouteAcquisitionCard({ labId }: { labId: string }) {
   const scope = useQuery({ queryKey: ['lab-workspace', 'calibration-scope', labId], queryFn: () => fetchCalibrationScope(labId), retry: false })
   const history = useQuery({ queryKey: ['fixed-route-acquisitions', labId], queryFn: () => fetchFixedRouteAcquisitions(labId), retry: false })
   const [runId, setRunId] = useState<string | null>(null)
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [chainId, setChainId] = useState<string | null>(null)
   const [values, setValues] = useState({ frequency: '', power: '', antenna: '', cable: '', cableSource: '', samples: '5' })
   const [fixed, setFixed] = useState(false)
@@ -25,11 +26,18 @@ export function FixedRouteAcquisitionCard({ labId }: { labId: string }) {
     queryFn: () => fetchFixedRouteAcquisition(labId, runId!), enabled: Boolean(runId), retry: false,
     refetchInterval: query => query.state.data?.status === 'running' ? 300 : false })
   const start = useMutation({ mutationFn: (request: FixedRouteRequest) => startFixedRouteAcquisition(labId, request),
-    onSuccess: value => { setRunId(value.run_id); void history.refetch() } })
+    onSuccess: value => { setRunId(value.run_id); setActiveRunId(value.run_id); void history.refetch() } })
   const cancel = useMutation({ mutationFn: () => cancelFixedRouteAcquisition(labId, runId!),
     onSuccess: () => { void progress.refetch() } })
   const result = !progress.isError && !progress.isPaused ? progress.data : undefined
-  const running = start.isPending || result?.status === 'running'
+  const running = start.isPending || fixedRouteStillActive(activeRunId, result)
+  useEffect(() => {
+    if (activeRunId && !fixedRouteStillActive(activeRunId, result)) setActiveRunId(null)
+  }, [activeRunId, result])
+  useEffect(() => {
+    const pending = history.data?.find(value => value.status === 'running')
+    if (pending && !activeRunId) { setRunId(pending.run_id); setActiveRunId(pending.run_id) }
+  }, [history.data])
   useEffect(() => { if (result && result.status !== 'running') void history.refetch() }, [result?.status, result?.run_id])
   const snapshot = !scope.isError && !scope.isPaused && scope.data?.payload.lab_profile_id === labId ? scope.data : undefined
   const chain = snapshot?.payload.chains.find(value => value.chain_id === chainId)
@@ -79,7 +87,7 @@ export function FixedRouteAcquisitionCard({ labId }: { labId: string }) {
       <Text fw={600}>{shown.label}</Text>
       <Text>F64输出口实测功率：{shown.source}；分析仪输入口实测功率：{shown.received}</Text>
       <Text>整条路径损耗或增益：{shown.loss}</Text>
-      <Text>停发确认：{result.result?.cleanup_confirmed === true ? '已确认停止本次单音' : result.status === 'simulated' ? '模拟模式，未操作真实仪器' : '尚未确认；请结合现场状态处理'}</Text>
+      <Text>停发确认：{shown.cleanup}</Text>
       {result.result?.error && <Text>{result.result.error}</Text>}
       {result.result?.missing_items?.map((value, i) => <Text size="sm" key={i}>{value}</Text>)}
       <details><summary>查看本次配置、逐次读数、原始回复和计算结果</summary><Code block style={{ maxHeight: 400, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(result, null, 2)}</Code></details>

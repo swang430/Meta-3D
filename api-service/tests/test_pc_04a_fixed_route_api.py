@@ -66,7 +66,7 @@ def start(client, lab, **changes):
 
 
 def finish(client, lab, run_id):
-    for _ in range(100):
+    for _ in range(500):
         value = client.get(f'/api/v1/lab-profiles/{lab.id}/fixed-route-acquisitions/{run_id}').json()
         if value['status'] != 'running':
             return value
@@ -120,6 +120,47 @@ def test_saved_analyzer_drift_or_disabled_never_connects(client, configured, db_
     assert start(client, configured).status_code == 422
 
 
+def test_disabled_channel_emulator_is_rejected_even_when_stale_hal_still_loaded(client, configured, db_session):
+    cat = db_session.query(InstrumentCategory).filter_by(category_key='channelEmulator').one()
+    cat.is_active = False
+    db_session.commit()
+    # start会取得包含“已停用”事实的新摘要，不能用旧摘要拒绝冒充停用门。
+    assert start(client, configured).status_code == 422
+
+
+async def test_stop_failure_survives_subsequent_lease_release_failure(db_session, monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.services.calibration import fixed_route_jobs as jobs
+    from app.schemas.fixed_route_acquisition import FixedRouteResult
+    from tests.test_pc_04a_fixed_route_acquisition import request
+    import asyncio
+    result = FixedRouteResult(run_id=uuid4(), lab_profile_id=uuid4(), request=request(), configuration={})
+    async def collect(ce, sa, current, **options):
+        current.status, current.error = 'cleanup_unconfirmed', '可能仍在发射：stop rejected'
+        current.cleanup_confirmed = False
+    @asynccontextmanager
+    async def lease(*args, **kwargs):
+        # 这里只构造已经发生的双重失败，测试危险状态优先级，不验证绑定/采集。
+        kwargs['validate_before_remote'](None)
+        yield SimpleNamespace(lease_id='lease')
+        raise RuntimeError('ATE socket close failed')
+    monkeypatch.setattr(jobs, 'collect_fixed_route', collect)
+    monkeypatch.setattr(jobs, 'instrument_test_lease', lease)
+    monkeypatch.setattr(jobs, 'resolve_configuration', lambda *args: ({}, 1, None, None))
+    monkeypatch.setattr(jobs, 'has_active_case_run', lambda: None)
+    monkeypatch.setattr(jobs, 'has_running_case_run_row', lambda db: None)
+    monkeypatch.setattr(jobs, 'SessionLocal', sessionmaker(bind=db_session.get_bind(), expire_on_commit=False))
+    db_session.add(LabProfile(id=result.lab_profile_id, name='失败优先级'))
+    db_session.add(DiagnosticRun(id=result.run_id, lab_profile_id=result.lab_profile_id, target_name=jobs.TARGET,
+        kind='scpi_sequence', success=False, sequence_evidence=result.model_dump(mode='json')))
+    db_session.commit()
+    await jobs._execute(result, 'unused', asyncio.Event())
+    db_session.expire_all()
+    saved = db_session.get(DiagnosticRun, result.run_id).sequence_evidence
+    assert saved['status'] == 'cleanup_unconfirmed'
+    assert '可能仍在发射' in saved['error'] and 'ATE socket close failed' in saved['error']
+
+
 def test_history_cross_lab_and_process_restart_never_backfill_or_resume(client, configured, db_session):
     from app.services.calibration.fixed_route_jobs import TARGET
     run_id = uuid4()
@@ -141,6 +182,58 @@ def test_case_execution_blocks_calibration_before_remote(client, configured, mon
     from app.services.calibration import fixed_route_jobs as jobs
     monkeypatch.setattr(jobs, 'has_active_case_run', lambda: 'case-running')
     assert start(client, configured).status_code == 409
+
+
+def test_graceful_shutdown_waits_for_acquisition_cleanup_and_saved_terminal(client, configured):
+    from app.services.calibration import fixed_route_jobs as jobs
+    response = start(client, configured)
+    run_id = response.json()['run_id']
+    client.portal.call(jobs.shutdown_fixed_route_jobs)
+    value = finish(client, configured, run_id)
+    assert value['status'] == 'cancelled'
+    assert not jobs._running
+
+
+def test_real_http_lease_and_real_driver_transport_keeps_measured_source_not_setting(client, configured, db_session, monkeypatch):
+    from app.services.calibration import fixed_route_jobs as jobs
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.rs_fsva import RealRsFsvaDriver
+    from tests.test_p1_66_f64_probe_truth import _ScriptedVisaResource
+    ce = RealPropsimF64Driver('ce-real-script', {'ip':'192.0.2.10'})
+    sa = RealRsFsvaDriver('sa-real-script', {'ip':'192.0.2.10'})
+    ce_resource = _ScriptedVisaResource({'*IDN?':'Keysight Technologies,F8800A,SN-CE,8.0',
+        'SYSTem:ERRor?':'0,"No error"', 'DIAG:SIMU:STATE?':'RUNNING',
+        'OUTPut:INTERFerence:GET?':'0','OUTPut:LOSS:GET? 1':'0',
+        'OUTPut:MEASure:RESult:GET? 1,1':'-25','SYSTem:CALIBration:VALid?':'1,1',
+        'SYSTem:CALIBration:USER:GET?':'','OUTPut:GAIN:CH? 1':'0'})
+    sa_resource = _ScriptedVisaResource({'*IDN?':'Rohde&Schwarz,FSVA3044,SN-SA,1.0',
+        'SENSe:CORRection:TRANsducer:CATalog?':'0,10000','INITiate:IMMediate; *OPC?':'1',
+        'CALCulate:MARKer:FUNCtion:POWer:RESult? CPOWer':'-50'})
+    ce._visa_resource, sa._visa_session = ce_resource, sa_resource
+    from app.hal.base import InstrumentStatus
+    ce._status = InstrumentStatus.READY
+    ce._local_control_reserved = False
+    ce.has_interference_generator = True
+    # 保留真实_query/_write/_do_query/_do_write、SCPI锁及真实租约，仅替换VISA资源。
+    hal = SimpleNamespace(drivers={'channelEmulator':ce,'signalAnalyzer':sa})
+    lease = InstrumentTestLease(lambda:hal)
+    monkeypatch.setattr(jobs, 'get_hal_service', lambda:hal)
+    monkeypatch.setattr(jobs, 'instrument_test_lease', lease.hold)
+    bindings = []
+    for binding in configured.instrument_bindings:
+        bindings.append({**binding,'driver_mode':'real'})
+    configured.instrument_bindings = bindings
+    db_session.query(InstrumentCategory).update({'driver_mode':'real'})
+    db_session.commit()
+    response = start(client, configured)
+    assert response.status_code == 202, response.text
+    value = finish(client, configured, response.json()['run_id'])
+    assert value['status'] == 'completed', value
+    assert value['result']['net_loss_db'] == 23  # -25 - (-50+2)，不能用请求-20得到28。
+    assert value['result']['cleanup_confirmed'] is True
+    assert 'OUTPut:MEASure:RESult:GET? 1,1' in ce_resource.commands
+    assert any(command.endswith(',0') and ':STatus ' in command for command in ce_resource.commands)
+    assert ce_resource.closed and not lease.is_active
 
 
 def test_live_checked_openapi_and_generated_types_cover_all_pc04_routes():

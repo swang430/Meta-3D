@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, field_validator
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
-Number = Annotated[float, Field(allow_inf_nan=False)]
+Number = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 
 
 class FixedRouteRequest(BaseModel):
@@ -22,6 +22,13 @@ class FixedRouteRequest(BaseModel):
     fixed_route_confirmed: Literal[True]
     safety_confirmed: Literal[True] = Field(description='操作员已确认专用校准仿真、固定接线、无其它混入信号及允许功率')
     sample_count: int = Field(default=5, ge=2, le=10, strict=True)
+
+    @field_validator('fixed_route_confirmed', 'safety_confirmed', mode='before')
+    @classmethod
+    def require_explicit_confirmation(cls, value):
+        if value is not True:
+            raise ValueError('必须由操作员明确确认，不能以数字或文本代替')
+        return value
 
 
 class PowerExchange(BaseModel):

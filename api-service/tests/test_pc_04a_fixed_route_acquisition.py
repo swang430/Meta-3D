@@ -18,6 +18,18 @@ def request(**changes):
         fixed_route_confirmed=True, safety_confirmed=True, sample_count=2, **changes))
 
 
+@pytest.mark.parametrize('field,value', [('requested_power_dbm', False),
+    ('frequency_mhz', True), ('receive_cable_loss_db', False),
+    ('requested_power_dbm', '0'), ('fixed_route_confirmed', 1), ('safety_confirmed', 1)])
+def test_request_rejects_coerced_power_and_nonboolean_safety_confirmation(field, value):
+    from pydantic import ValidationError
+    from app.schemas.fixed_route_acquisition import FixedRouteRequest
+    payload = request().model_dump()
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        FixedRouteRequest.model_validate(payload)
+
+
 def instruments(*, receive='-50', state='RUNNING', loss='0', source='-20', stop_error=False):
     ce = RealPropsimF64Driver('ce-test', {'ip': '127.0.0.1'})
     ce.has_interference_generator = True
@@ -85,6 +97,8 @@ async def test_real_command_chain_computes_from_measured_power_not_requested_pow
     assert ('ce', 'OUTPut:MEASure:RESult:GET? 1,1') in queries
     assert ('ce', 'OUTPut:MEASure:RESult:GET? 1') not in queries
     assert ('sa', 'CALCulate:UNIT:POWer DBM') in writes
+    assert ('sa', 'SENSe:POWer:TRACe 1') in writes
+    assert ('sa', 'DISPlay:TRACe1:MODE WRITe') in writes
     assert value.cleanup_confirmed is True and value.formal_eligible is False
     assert any(event.response == receive for event in value.exchanges)
     assert writes[-1][1].startswith('OUTPut:INTERFerence:REMove ')
@@ -166,3 +180,16 @@ async def test_cleanup_can_reenter_real_driver_transaction_lock(monkeypatch):
     value = await collect(ce, sa, monkeypatch)
     assert value.status == 'completed', value.error
     assert value.cleanup_confirmed is True
+
+
+async def test_f64_state_drift_after_output_read_never_finishes_as_measured(monkeypatch):
+    ce, sa, _, _, replies = instruments()
+    raw_query = sa._query
+    def query(command):
+        value = raw_query(command)
+        if command.endswith('CPOWer'):
+            replies['OUTPut:LOSS:GET? 1'] = '5'
+        return value
+    sa._query = query
+    value = await collect(ce, sa, monkeypatch)
+    assert value.status == 'failed' and value.net_loss_db is None

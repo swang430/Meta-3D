@@ -2,9 +2,9 @@
 
 ## 状态
 
-设计已获用户确认，实施中。基于 main `a98736fa`（PC-03A / #526 已合并）。
+设计已获用户确认，软件实现及浏览器Mock验证已完成；完整回归结果见同日PC-04A验证记录，外审闭环由PR台账记录。基于 main `a98736fa`（PC-03A / #526 已合并）。
 用户已批准 PC-04A 开工，明确“开关保持固定”不等于人工抄录数据。
-本稿细化采集方法及安全边界；确认后按实施计划顺序开发，WIP=1。
+本稿记录采集方法及安全边界；按实施计划顺序开发，WIP=1。
 PC-01B～04B 的现场验收未由软件开发替代。
 
 ## 1. 用户实际怎么操作
@@ -84,8 +84,8 @@ PC-04A包含必要的“开始、进度、取消、历史”入口，复用既�
 | 配置选择/请求 | `services/calibration/configuration_scope.py`、`rf_chain_resolver`、CE binding resolver；补齐SA身份核对，不从客户端接受两端实测值 | 过期或不匹配请求在写仪器前拒绝；切实验室清除旧选择 |
 | F64源端 | `hal/propsim_f64.py` 的现有单音路径与结构化实测采集 | 真驱动经脚本化传输发参数1；参数0、not ready、STOPPED、未知参考面不产生有效结果 |
 | 分析仪接收端 | `hal/rs_fsva.py` 的适用功率路径 | 完整单次测量、单位及错误有证据；失败不转换成0；不改变IQ其它应用的语义 |
-| 单条链采集 | `services/path_loss_calibration_service.py`，局部方法复用PC-02公式 | 两端实测形成28dB损耗和负增益；切开关方法从未被调用；不走旧abs/标称增益公式 |
-| 作业/审计 | `api/path_loss_calibration.py`、`DiagnosticRun`及新的类型化采集契约 | 正常/失败/取消/清理未确认保存且可读；重启不伪恢复；第二次采集可重新获得控制权 |
+| 单条链采集 | `services/calibration/fixed_route_acquisition.py`，局部模块复用PC-02公式，不修改旧路损计算 | 两端实测形成28dB损耗和负增益；切开关方法从未被调用；不走旧abs/标称增益公式 |
+| 作业/审计 | `api/fixed_route_acquisition.py`、`services/calibration/fixed_route_jobs.py`、`DiagnosticRun`及新的类型化采集契约 | 正常/失败/取消/清理未确认保存且可读；正常退出先停发落盘再关闭HAL；强制终止后不伪恢复；第二次采集可重新获得控制权 |
 | GUI/镜像 | `LabWorkspace`、API服务、live OpenAPI、`api/openapi.yaml`、generated TS与手写别名 | 真实服务器返回数据，已有配置不重复填，两端功率只读；Mock浏览器验证完整流程 |
 | 历史/旧入口/正式消费者 | PC-02预览、PC-03状态、旧逐链/多频、`path_loss_preflight/application`及报告 | 新采集不写旧证书、不自动补偿、不改变旧历史；新记录缺损不补真；本片不顺带重构其它方法 |
 
