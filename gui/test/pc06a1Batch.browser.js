@@ -71,15 +71,23 @@ export default async function pc06a1Batch(page, {base='http://127.0.0.1:5188', o
   if(graph.nodes.filter(n=>n.params.connection_scope==='calibration').length!==8||graph.connections.length!==10)throw Error('正常/校准段保存不完整')
   await page.reload();await open()
   await prepare()
+  const highlight=panel.getByRole('button',{name:'原图高亮此项正常及参考段',exact:true}).first()
+  if(!await highlight.isEnabled())throw Error('服务器批预览通路缺少可用scope，高亮按钮不可用')
+  await highlight.click()
+  await assertBatchRouteHighlight(page, 'h')
+  await page.getByRole('button',{name:'Fit View',exact:true}).click()
+  await page.screenshot({path:`${output}/preview-normal-reference-highlight.png`})
   await page.screenshot({path:`${output}/four-item-preview.png`,fullPage:true})
   const first=await begin(), id=first.job_id
   let row=await waitState(id,r=>r.status==='waiting_manual')
   if(row.items.length!==4||row.current_index!==0)throw Error('清单或首项身份错误')
   await locked()
+  await assertBatchRouteHighlight(page, 'h')
   await page.screenshot({path:`${output}/first-manual.png`,fullPage:true})
   await continueUI(row)
   row=await waitState(id,r=>r.status==='waiting_manual'&&r.current_index===2)
   if(row.items.slice(0,2).some(i=>i.status!=='simulated'))throw Error('Mock前两项未真实持久化为simulated')
+  await assertBatchRouteHighlight(page, 'v')
   await panel.getByText('模拟人工步骤；未确认实物停发或换线安全',{exact:true}).waitFor()
   await page.screenshot({path:`${output}/cross-route-paused.png`,fullPage:true})
   await panel.getByRole('button',{name:'查看本项读数及原采用入口',exact:true}).first().click()
@@ -120,6 +128,15 @@ export default async function pc06a1Batch(page, {base='http://127.0.0.1:5188', o
   if(after.status!=='cancelled'||after.items.filter(i=>i.run_id).length!==2)throw Error('取消刷新自动续跑')
   await page.screenshot({path:`${output}/cancelled-refresh.png`,fullPage:true})
   return {hal:status,completed:row,cancelled,checks:['四项真实预览','首次与跨路人工','两项模拟后父子待释放','离页失败GET保持锁','继续真实完成','Mock采用拒绝','取消后刷新不续跑']}
+}
+
+export async function assertBatchRouteHighlight(page, polarization) {
+  await page.waitForFunction(pol=>{
+    const reference=[`${pol}_air`,`${pol}_ref`,`${pol}_rx`,`${pol}_sa`]
+    const nodes=[...document.querySelectorAll('.react-flow__node')]
+    return reference.every(id=>nodes.some(node=>node.dataset.id===id&&node.style.outline.includes('--mantine-color-orange-5')))&&
+      nodes.filter(node=>node.style.outline.includes('--mantine-color-blue-5')).length===2
+  },polarization)
 }
 
 // 独立测试进程已脚本化全部transport且禁止外连；不称全Mock或实物资格。
