@@ -97,19 +97,18 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
         seen = {probe['id']}
         while frontier:
             parent_id = frontier.pop(0)
-            for edge in calibration:
-                if edge['source'] != parent_id:
-                    continue
+            next_edges = [edge for edge in calibration if edge['source'] == parent_id]
+            if len(next_edges) > 1:
+                raise ValueError('参考测量段存在多个可达分支，不能确定唯一固定接线')
+            for edge in next_edges:
                 target = nodes[edge['target']]
-                if target['id'] in visited:
-                    continue
+                if target['id'] in visited or target['id'] in seen:
+                    raise ValueError('参考测量段存在回路或回接正常测试通路')
                 if not (target.get('params', {}).get('connection_scope') == 'calibration' or
                         target.get('type') in ('reference_antenna','receive_cable','signal_analyzer','air_path')):
-                    continue
-                if edge['id'] not in {e['id'] for e in ref_edges}:
-                    ref_edges.append(edge)
-                if target['id'] not in seen:
-                    seen.add(target['id']); refs.append(target); frontier.append(target['id'])
+                    raise ValueError('参考测量段接入了未声明为校准接线的器件')
+                ref_edges.append(edge)
+                seen.add(target['id']); refs.append(target); frontier.append(target['id'])
 
         def snapshot(values):
             return copy.deepcopy(values)

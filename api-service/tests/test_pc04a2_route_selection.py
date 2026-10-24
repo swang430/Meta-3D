@@ -192,3 +192,42 @@ def test_version1_history_remains_read_only_without_current_route_backfill(clien
     history=client.get(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions/{run_id}').json()
     assert history['result']['version']==1
     assert history['result']['configuration']=={'old_marker':'原始快照'}
+
+
+@pytest.mark.parametrize('failure',['cycle','branch','back_to_probe'])
+def test_reference_segment_rejects_cycles_and_nonunique_wiring(client, configured, graph, db_session, failure):
+    edge={'id':'bad-reference','source':'rx-cable1','target':'reference1'}
+    if failure=='branch':
+        edge={'id':'bad-reference','source':'reference1','target':'sa1'}
+    elif failure=='back_to_probe':
+        edge={'id':'bad-reference','source':'sa1','target':'probe1v'}
+    graph.connections=[*graph.connections,edge]
+    modes=copy.deepcopy(graph.operating_modes);modes[1]['active_connections'].append(edge['id'])
+    graph.operating_modes=modes;db_session.commit()
+    response=paths(client,configured,graph)
+    assert response.status_code==422,response.text
+    assert start(client,configured,chain_id='pad-probe').status_code==422
+    assert db_session.query(DiagnosticRun).count()==0
+
+
+@pytest.mark.parametrize('failure',['empty','node_order','port_endpoint','edge_endpoint'])
+def test_inconsistent_version2_history_is_incomplete_without_returning_loss(client, configured, graph, db_session, failure):
+    response=start(client,configured,chain_id='pad-probe')
+    value=finish(client,configured,response.json()['run_id'])
+    row=db_session.get(DiagnosticRun,UUID(value['run_id']))
+    envelope=copy.deepcopy(row.sequence_evidence)
+    result=envelope['extra']['fixed_route_acquisition']
+    result['status']='completed';result['net_loss_db']=23.0
+    route=result['configuration']['route_selection']
+    if failure=='empty':
+        for key in ('node_ids','connection_ids','ports','nodes','connections'):route[key]=[]
+    elif failure=='node_order':
+        route['node_ids']=list(reversed(route['node_ids']))
+    elif failure=='port_endpoint':
+        route['ports'][0]['target']='probe1v'
+    else:
+        route['connections'][0]['source']='pad1'
+    row.sequence_evidence=envelope;db_session.commit()
+    history=client.get(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions/{row.id}').json()
+    assert history['status']=='incomplete',history
+    assert history['result'] is None

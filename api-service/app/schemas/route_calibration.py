@@ -1,6 +1,6 @@
 """保存拓扑的完整固定通路声明；不是实物接通或正式校准资格。"""
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 
 class RoutePort(BaseModel):
@@ -22,11 +22,11 @@ class RouteSelection(BaseModel):
     ce_port: str
     probe_id: int
     polarization: str
-    node_ids: list[str]
-    connection_ids: list[str]
-    ports: list[RoutePort]
-    nodes: list[dict[str, JsonValue]]
-    connections: list[dict[str, JsonValue]]
+    node_ids: list[str] = Field(min_length=2)
+    connection_ids: list[str] = Field(min_length=1)
+    ports: list[RoutePort] = Field(min_length=1)
+    nodes: list[dict[str, JsonValue]] = Field(min_length=2)
+    connections: list[dict[str, JsonValue]] = Field(min_length=1)
     calibration_node_ids: list[str]
     calibration_connection_ids: list[str]
     calibration_nodes: list[dict[str, JsonValue]]
@@ -35,3 +35,33 @@ class RouteSelection(BaseModel):
     analyzer_category_id: str | None = None
     route_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
     configuration_digest: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+
+    @model_validator(mode='after')
+    def require_consistent_path_sequence(self):
+        def check_sequence(node_ids, nodes, edge_ids, edges):
+            if (any(not ident.strip() for ident in [*node_ids,*edge_ids]) or
+                len(node_ids) != len(set(node_ids)) or len(edge_ids) != len(set(edge_ids)) or
+                [n.get('id') for n in nodes] != node_ids or [e.get('id') for e in edges] != edge_ids or
+                len(edge_ids) != len(node_ids)-1):
+                raise ValueError('路径的节点和连接序列缺损或不一致')
+            for index, edge in enumerate(edges):
+                if edge.get('source') != node_ids[index] or edge.get('target') != node_ids[index+1]:
+                    raise ValueError('路径连接端点与节点顺序不一致')
+
+        check_sequence(self.node_ids,self.nodes,self.connection_ids,self.connections)
+        if self.chain_id != self.connection_ids[-1] or len(self.ports) != len(self.connections):
+            raise ValueError('路径终端编号或端口序列缺损')
+        for port, edge in zip(self.ports,self.connections):
+            if (port.connection_id != edge['id'] or port.source != edge['source'] or port.target != edge['target'] or
+                port.source_pin != edge.get('source_pin','out') or port.target_pin != edge.get('target_pin','in')):
+                raise ValueError('路径端口与连接声明不一致')
+        if self.nodes[0].get('type') not in ('ce_port','channel_emulator') or self.nodes[-1].get('type') != 'probe':
+            raise ValueError('路径缺少CE源端或探头终点')
+        params = self.nodes[-1].get('params') or {}
+        if not isinstance(params,dict) or params.get('probe_id') != self.probe_id or params.get('polarization') != self.polarization:
+            raise ValueError('路径探头身份与快照不一致')
+        if set(self.node_ids) & set(self.calibration_node_ids):
+            raise ValueError('校准参考接线与正常路径节点混合')
+        check_sequence([self.node_ids[-1],*self.calibration_node_ids],
+            [self.nodes[-1],*self.calibration_nodes],self.calibration_connection_ids,self.calibration_connections)
+        return self
