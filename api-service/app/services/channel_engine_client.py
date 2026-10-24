@@ -195,6 +195,7 @@ class HardwarePipelineResult:
     # 文件路径
     asc_files_path: Optional[str] = None
     total_files: int = 0
+    calibration_application: str = 'control'
     # 控制指令
     f64_baseband_power_dbm: float = 0.0
     external_attenuators_db: List[float] = field(default_factory=list)
@@ -410,6 +411,9 @@ class ChannelEngineClient:
                 message=result_data.get("error_message", "Unknown CE error"),
                 computation_time_ms=result_data.get("computation_time_ms", 0),
             )
+        if payload['calibration_application']=='waveform' and (
+            result_data.get('calibration_application')!='waveform' or result_data.get('mock_mode') is not False):
+            return HardwarePipelineResult(success=False,message='冻结逐链补偿需要真实ASC预失真回执，拒绝模拟/未知来源或仅control预算')
 
         # ----- Step 6: 解压 .asc ZIP 到本地 -----
         artifacts = result_data.get("hardware_artifacts", {})
@@ -424,7 +428,7 @@ class ChannelEngineClient:
             )
 
         # ----- Step 7: 提取控制指令 -----
-        control = result_data.get("control_instructions", {})
+        control = result_data.get("control_instructions") or {}
         diag = result_data.get("diagnostics", {})
 
         return HardwarePipelineResult(
@@ -433,6 +437,7 @@ class ChannelEngineClient:
             cdl_model_name=resp_cdl_name,
             asc_files_path=asc_path,
             total_files=total_files,
+            calibration_application=result_data.get('calibration_application','control'),
             f64_baseband_power_dbm=control.get("f64_baseband_power_dbm", 0.0),
             external_attenuators_db=control.get("external_attenuators_db", []),
             target_achieved_rsrp_dbm=control.get("target_achieved_rsrp_dbm", -85.0),
@@ -505,11 +510,13 @@ class ChannelEngineClient:
         operating_mode: Optional[str] = None,
         path_loss_calibration: Any = _AUTO_SELECT_PATH_LOSS,
         phase_use_mock: Optional[bool] = None,
+        route_compensation: Any = None,
     ) -> List[Dict[str, Any]]:
         """
-        从 PostgreSQL 查询校准数据，构造 calibration_data.entries[]。
+        构造 calibration_data.entries[]；route_compensation显式给定时只读已验证冻结。
+        新端口到参考面净损耗占软件loss槽位且gain=0，不改真实单段。
 
-        校准数据回退策略：
+        未给逐链冻结的旧调用回退策略：
         1. 首选：最新有效的探头路损校准记录（ProbePathLossCalibration, status=VALID）
         2. 回退：暗室配置中的默认值：
            - cable_loss_db  = ChamberConfiguration.typical_cable_loss_db
@@ -548,7 +555,22 @@ class ChannelEngineClient:
             fallback_loss += chamber.duplexer_insertion_loss_db
 
 
-        if latest_cal and latest_cal.probe_path_losses:
+        if route_compensation is not None:
+            from types import SimpleNamespace
+            from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation,FREEZE_KEY,frozen_route_output_ports
+            frozen=read_execution_route_compensation(SimpleNamespace(id=route_compensation['execution_id'],
+                config={FREEZE_KEY:route_compensation}))
+            rows=frozen['route_entries']
+            ports=frozen_route_output_ports(frozen,chamber.num_probes,chamber.num_polarizations)
+            for row,port_id in zip(rows,ports):
+                if row['source_kind']=='unavailable' or row['measurement_provenance']!='real':
+                    continue
+                new=row['source_kind']=='confirmed_route'
+                entries.append(dict(port_id=port_id,
+                    cable_loss_db=row['value_db'],probe_gain_dbi=0.0 if new else float(chamber.probe_gain_dbi),
+                    cable_phase_deg=0.0,method=row['method'],reference_plane=row['reference_plane'],
+                    chain_id=row['chain_id'],source_id=row['source_id']))
+        elif latest_cal and latest_cal.probe_path_losses:
             try:
                 probe_ids = {int(key) for key in latest_cal.probe_path_losses}
             except (TypeError, ValueError) as exc:
@@ -684,6 +706,8 @@ class ChannelEngineClient:
             chamber_config_payload["probe_positions"] = probe_positions
 
         payload: Dict[str, Any] = {
+            # 冻结逐链条目必须在实际加载的波形内修正；不依赖未消费的control预算。
+            "calibration_application":'waveform' if any('chain_id' in row for row in calibration_entries) else 'control',
             "chamber_config": chamber_config_payload,
             "calibration_data": {
                 "entries": calibration_entries,

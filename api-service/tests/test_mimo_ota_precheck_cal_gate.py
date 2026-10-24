@@ -505,6 +505,34 @@ def _build_context(
     db.commit()
     db.refresh(execution)
 
+    # 本helper创建的是新执行（不是历史读取）；与三个生产创建入口同刻冻结来源。
+    # 旧测试仅关心来源/频率门，补明确合成链身份，不能靠旧chamber平均数冒充缺链。
+    from app.models.switch_topology import SwitchTopology
+    from app.services.mimo_ota.route_calibration_freeze import freeze_execution_route_compensation
+    topology=db.query(SwitchTopology).filter_by(chamber_id=lab.chamber_config_id).first()
+    certificates=db.query(ProbePathLossCalibration).filter_by(chamber_id=lab.chamber_config_id).all()
+    probe_keys=sorted({key for cert in certificates for key in (cert.probe_path_losses or {})},key=int) or ['0','1']
+    if topology is None:
+        nodes=[];connections=[]
+        for index,key in enumerate(probe_keys):
+            nodes.extend([{'id':f'ce-{key}','type':'ce_port','label':f'B1.{index+1}','params':{}},
+                {'id':f'probe-{key}','type':'probe','label':f'Probe {key}',
+                 'params':{'probe_id':int(key),'polarization':'V'}}])
+            connections.append({'id':f'fixture-{key}-V','source':f'ce-{key}','target':f'probe-{key}'})
+        topology=SwitchTopology(name='synthetic cal-gate fixture',chamber_id=lab.chamber_config_id,
+            switch_category_id=uuid.uuid4(),is_active=True,nodes=nodes,connections=connections,
+            operating_modes=[{'id':'mimo_ota','active_connections':[edge['id'] for edge in connections]}])
+        db.add(topology);db.flush()
+    for cert in certificates:
+        if cert.use_mock is False and not cert.path_loss_db_by_rf_chain:
+            cert.lab_profile_id=lab.id;cert.topology_id=topology.id
+            cert.path_loss_db_by_rf_chain={f'fixture-{key}-V':dict(probe_id=int(key),polarization='V',
+                ce_port=f'B1.{probe_keys.index(key)+1}',total_insertion_loss_db=data['path_loss_db'])
+                for key,data in cert.probe_path_losses.items()}
+    db.flush()
+    freeze_execution_route_compensation(db,execution,test_case)
+    db.commit()
+
     step = StepDescriptor(
         id="precheck-step", type="MIMO_OTA_PRECHECK", parameters={},
     )

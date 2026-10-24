@@ -46,6 +46,9 @@ import {
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalLab';
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
+import { RouteCalibrationPanel } from './RouteCalibrationPanel';
+import { routeGraphMatchesSaved } from './routeCalibrationState';
+import type { RouteSelection } from '../../types/api';
 import { getNodePorts, nodePortsToSelectOptions } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService } from '../../api/switchTopologyService';
@@ -79,9 +82,10 @@ interface TopologyFlowProps {
   onTopologyUpdated: (t: SwitchTopology) => void;
   /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
   onDirtyChange: (dirty: boolean) => void;
+  onBusyChange: (busy:boolean)=>void;
 }
 
-const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange, onBusyChange }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
@@ -99,6 +103,17 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const [portText, setPortText] = useState('');
   const [catalog, setCatalog] = useState<{value:string;label:string}[]>([]);
   const savingRef = useRef(false);
+  const collectionBusyRef=useRef(false);
+  const [collectionBusy,setCollectionBusy]=useState(false);
+  const [highlightedRoute,setHighlightedRoute]=useState<RouteSelection|null>(null);
+  const editingBlocked=saving||collectionBusy;
+  const handleCollectionBusy=useCallback((busy:boolean)=>{
+    collectionBusyRef.current=busy;setCollectionBusy(busy);onBusyChange(busy);
+    if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);}
+  },[onBusyChange]);
+  const handleRunningRoute=useCallback((route:RouteSelection)=>{
+    if(route.lab_profile_id===labProfileId && route.topology_id===topology.id){setActiveMode(route.operating_mode);setHighlightedRoute(routeGraphMatchesSaved(topology,route)?route:null)}
+  },[labProfileId,topology]);
 
   useEffect(() => {
     apiClient.get('/instruments/catalog').then(response => {
@@ -146,8 +161,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         type: n.type,
         position: n.position || { x: 0, y: 0 },
         data: { label: n.label, params: n.params },
+        style:highlightedRoute?.node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-blue-5)',outlineOffset:3}:undefined,
       }));
-  }, [draft, activeMode]);
+  }, [draft, activeMode, highlightedRoute]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
     const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
@@ -169,13 +185,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           direction: c.direction,
         },
         animated: true,
+        style:highlightedRoute?.connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-blue-5))'}:undefined,
         markerEnd: { 
           type: MarkerType.ArrowClosed, 
           color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db ? '#10B981' : ((c as any).pa_gain_db ? '#F59E0B' : '#3B82F6')) 
         },
       };
     });
-  }, [draft, activeMode]);
+  }, [draft, activeMode, highlightedRoute]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -186,13 +203,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   const changeDraft = useCallback((change: (current: SwitchTopology) => SwitchTopology) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     setDraft(current => change(current));
     setDirty(true);
     setSaveResult('idle');
   }, []);
   const onConnect = useCallback((params: Connection) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     try {
       const next = addDraftConnection(draft, {id:crypto.randomUUID(),source:params.source,target:params.target,
         source_pin:params.sourceHandle || undefined,target_pin:params.targetHandle || undefined}, activeMode);
@@ -203,7 +220,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [draft, activeMode, changeDraft]);
 
   const deleteNodes = useCallback((ids: string[]) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     const count = draft.connections.filter(c=>ids.includes(c.source)||ids.includes(c.target)).length;
     if (window.confirm(`删除 ${ids.length} 个拓扑器件及 ${count} 条关联连线？不会删除仪器资源或历史记录。`)) {
       changeDraft(current=>removeDraftNodes(current,ids));
@@ -213,7 +230,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   // ── Node drag → update position in ref, mark dirty ──
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
     if (removed.length) deleteNodes(removed);
     onNodesChange(changes.filter(c=>c.type!=='remove'));
@@ -227,7 +244,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [onNodesChange, deleteNodes, changeDraft]);
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
     if (removed.length) changeDraft(current=>removeDraftConnections(current,removed));
     onEdgesChange(changes.filter(c=>c.type!=='remove'));
@@ -235,7 +252,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   // ── Edge click → open parameter drawer ──
   const handleEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     const conn = draft.connections.find(c => c.id === edge.id);
     if (conn) {
       setSelectedEdge({ ...conn });
@@ -279,7 +296,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
-    if (!topology.id || savingRef.current) return;
+    if (!topology.id || savingRef.current || collectionBusyRef.current) return;
     savingRef.current = true;
     setSaving(true);
     const release = beginWork('topology-save', '拓扑保存尚未结束');
@@ -346,7 +363,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
   const addNode = () => {
-    if (savingRef.current) return;
+    if (savingRef.current || collectionBusyRef.current) return;
     const calibrationOnly = ['reference_antenna','signal_analyzer','air_path','receive_cable'].includes(newNodeType);
     const mode = calibrationOnly ? CALIBRATION_MODE : activeMode || 'mimo_ota';
     let current = draft;
@@ -363,7 +380,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     void setCenter(node.position.x+90,node.position.y+40,{zoom:1,duration:200});
   };
   const applyNodeEdit = () => {
-    if (!selectedNode || savingRef.current) return;
+    if (!selectedNode || savingRef.current || collectionBusyRef.current) return;
     const ports = portText.split(/[,，\n]/).map(p=>p.trim()).filter(Boolean);
     if (!selectedNode.label.trim() || !ports.length || new Set(ports).size!==ports.length) {
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
@@ -396,9 +413,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             )}
           </Group>
           <Group>
-            <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={saving} w={150} />
-            <Button onClick={addNode} disabled={saving}>添加器件</Button>
-            <Button variant="light" disabled={saving} onClick={()=>{
+            <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={editingBlocked} w={150} />
+            <Button onClick={addNode} disabled={editingBlocked}>添加器件</Button>
+            <Button variant="light" disabled={editingBlocked} onClick={()=>{
               if (!draft.operating_modes.some(m=>m.id===CALIBRATION_MODE)) changeDraft(current=>({...current,operating_modes:[...current.operating_modes,{id:CALIBRATION_MODE,name:'校准接线',active_connections:[]}]}));
               setActiveMode(CALIBRATION_MODE);
             }}>校准接线</Button>
@@ -407,7 +424,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
               value={activeMode} 
               onChange={(v) => v && setActiveMode(v)}
               data={draft.operating_modes.map(m => ({ value: m.id, label: m.name }))}
-              disabled={saving}
+              disabled={editingBlocked}
               placeholder="操作模式"
               w={200}
             />
@@ -415,6 +432,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
               leftSection={<IconDeviceFloppy size={16} />} 
               onClick={handleSave}
               loading={saving}
+              disabled={collectionBusy}
               color={dirty ? 'yellow' : 'blue'}
             >
               保存拓扑
@@ -423,7 +441,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         </Group>
       </Paper>
 
-      {/* Canvas */}
+      <div style={{display:'flex',flex:1,minHeight:0}}>
+      {/* 原可编辑画布保留；侧栏只高亮同一节点/边，不生成替代只读图。 */}
       <div style={{ flex: 1, border: '1px solid var(--mantine-color-default-border)' }}>
         <ReactFlow
           nodes={nodes}
@@ -433,12 +452,12 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           onConnect={onConnect}
           onEdgeClick={handleEdgeClick}
           onNodeDoubleClick={(_,node)=>{
-            if (savingRef.current) return;
+            if (savingRef.current || collectionBusyRef.current) return;
             const item=draft.nodes.find(n=>n.id===node.id);
             if (item) {setSelectedNode({...item,params:{...item.params}});setPortText(getNodePorts(item).join(', '));setNodeDrawerOpen(true);}
           }}
-          nodesDraggable={!saving}
-          nodesConnectable={!saving}
+          nodesDraggable={!editingBlocked}
+          nodesConnectable={!editingBlocked}
           deleteKeyCode={null}
           nodeTypes={customNodeTypes}
           edgeTypes={customEdgeTypes}
@@ -449,6 +468,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           <Controls />
           <MiniMap nodeStrokeWidth={3} zoomable pannable />
         </ReactFlow>
+      </div>
+      <aside style={{width:410,maxWidth:'45%',minWidth:300,minHeight:0}}>
+        {topology.id?<RouteCalibrationPanel key={`${labProfileId}:${topology.id}`} labId={labProfileId} topologyId={topology.id}
+          mode={activeMode} dirty={dirty} saving={saving} revision={JSON.stringify([topology.nodes,topology.connections,topology.operating_modes])}
+          graph={topology}
+          onSelectRoute={setHighlightedRoute} onRunningRoute={handleRunningRoute} onBusyChange={handleCollectionBusy}/>:<Alert>请先保存拓扑再读取完整路径。</Alert>}
+      </aside>
       </div>
       
       {/* Status bar */}
@@ -467,12 +493,12 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       <Drawer opened={nodeDrawerOpen} onClose={()=>!saving&&setNodeDrawerOpen(false)} title="器件属性" position="right">
         {selectedNode && <Stack>
           <Text size="xs" c="dimmed">{selectedNode.id}</Text>
-          <TextInput label="器件名称" value={selectedNode.label} disabled={saving} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
-          <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={saving} onChange={event=>setPortText(event.currentTarget.value)} />
-          <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={saving || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
-          {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={saving} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
+          <TextInput label="器件名称" value={selectedNode.label} disabled={editingBlocked} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
+          <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={editingBlocked} onChange={event=>setPortText(event.currentTarget.value)} />
+          <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={editingBlocked || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
+          {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={editingBlocked} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
           <Alert color="blue">此处只声明拓扑接线。自动控制和正式校准资格由采集入口另行核验。</Alert>
-          <Group><Button onClick={applyNodeEdit} disabled={saving}>应用器件修改</Button><Button color="red" variant="outline" disabled={saving} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
+          <Group><Button onClick={applyNodeEdit} disabled={editingBlocked}>应用器件修改</Button><Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
         </Stack>}
       </Drawer>
 
@@ -572,8 +598,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
             <Group justify="flex-end" mt="md">
               <Button variant="outline" onClick={() => setDrawerOpen(false)}>取消</Button>
-              <Button color="red" variant="outline" disabled={saving} onClick={()=>{changeDraft(current=>removeDraftConnections(current,[selectedEdge.id]));setDrawerOpen(false);}}>删除连线</Button>
-              <Button onClick={applyConnectionEdit} disabled={saving}>应用修改</Button>
+              <Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>{changeDraft(current=>removeDraftConnections(current,[selectedEdge.id]));setDrawerOpen(false);}}>删除连线</Button>
+              <Button onClick={applyConnectionEdit} disabled={editingBlocked}>应用修改</Button>
             </Group>
           </Stack>
           );
@@ -598,9 +624,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
 
   // dirty 时阻断 LabProfile 切换（未保存的接线不能静默丢，也绝不自动改绑）
   const [flowDirty, setFlowDirty] = useState(false);
+  const [flowBusy,setFlowBusy]=useState(false);
   useOperationalLabSwitchGuard(
     'topology-editor',
-    flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
+    flowBusy?'拓扑通路采集尚未确认结束；请先查看或取消采集':flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
   );
 
   const [topology, setTopology] = useState<SwitchTopology | null>(null);
@@ -800,6 +827,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
             ) : availableSwitches.length > 0 ? (
               <Select
                 label="射频开关设备"
+                disabled={flowBusy}
                 value={selectedSwitchId}
                 onChange={(val) => val && setSelectedSwitchId(val)}
                 data={availableSwitches}
@@ -821,7 +849,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 leftSection={<IconRefresh size={14} />}
                 loading={reimporting}
                 onClick={handleReimport}
-                disabled={!chamberId}
+                disabled={!chamberId||flowBusy}
                 title={!chamberId ? '当前 LabProfile 未绑定暗室' : undefined}
               >
                 重导入默认拓扑
@@ -905,6 +933,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
               labProfileId={labProfileId}
               onTopologyUpdated={(updated) => setTopology(updated)}
               onDirtyChange={setFlowDirty}
+              onBusyChange={setFlowBusy}
             />
           </ReactFlowProvider>
         ) : (

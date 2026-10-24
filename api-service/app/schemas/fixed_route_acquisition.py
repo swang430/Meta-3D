@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, field_validator, model_validator
+from app.schemas.route_calibration import RouteSelection
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 Number = Annotated[float, Field(strict=True, allow_inf_nan=False)]
@@ -13,6 +14,9 @@ class FixedRouteRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     chain_id: Text
     configuration_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
+    topology_id: UUID | None = None
+    operating_mode: Text = 'mimo_ota'
+    route_digest: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     frequency_mhz: Number = Field(gt=0)
     # 应用首批安全边界，不是厂商承诺的整个功率域；操作员仍须核对放大器/接收端安全。
     requested_power_dbm: Number = Field(ge=-100, le=0)
@@ -50,7 +54,7 @@ class FixedRouteSample(BaseModel):
 
 class FixedRouteResult(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    version: Literal[1] = 1
+    version: Literal[1, 2] = 1
     run_id: UUID
     lab_profile_id: UUID
     request: FixedRouteRequest
@@ -66,6 +70,17 @@ class FixedRouteResult(BaseModel):
     missing_items: list[str] = Field(default_factory=lambda: ['仪器绝对准确度、参考件证书及完整不确定度预算仍需现场核验；本记录不签发校准资格'])
     method: Literal['fixed_route_port_to_reference_v1'] = 'fixed_route_port_to_reference_v1'
     formal_eligible: Literal[False] = False
+
+    @model_validator(mode='after')
+    def require_version2_route_snapshot(self):
+        if self.version == 2:
+            route = RouteSelection.model_validate(self.configuration.get('route_selection'))
+            if (route.lab_profile_id != self.lab_profile_id or route.chain_id != self.request.chain_id or
+                route.operating_mode != self.request.operating_mode or
+                (self.request.topology_id is not None and route.topology_id != self.request.topology_id) or
+                (self.request.route_digest is not None and route.route_digest != self.request.route_digest)):
+                raise ValueError('新版采集记录的完整路径与请求身份不一致')
+        return self
 
 
 class FixedRouteRecord(BaseModel):

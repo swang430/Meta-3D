@@ -477,92 +477,35 @@ class PrecheckExecutor(IStepExecutor):
         else:
             warnings.append("No calibration_certificate bound to TestCase or LabProfile")
 
-        # Path-loss calibration row (used by Phase 3 generation pipeline).
-        # 2026-05-19 P1-8 (Codex P1 on commit 42af8ca): use the same
-        # frequency-matched lookup that the measure phase uses, otherwise
-        # an old/different-band VALID cert could pass precheck but leave
-        # measure phase with no usable cert (silent fallback we're trying
-        # to prevent). The ProbePathLossCalibrationService applies a ±5%
-        # frequency window (e.g. 3500 MHz target matches 3325-3675 MHz certs)
-        # — same windowing measure.py uses at
-        # api-service/app/services/mimo_ota/executors/measure.py:254.
-        from app.services.path_loss_calibration_service import (
-            ProbePathLossCalibrationService,
-        )
-
+        # 与硬件前门和MEASURE读同一冻结，不再在各相位重新选择latest。
+        from app.services.mimo_ota.path_loss_preflight import evaluate_path_loss_preflight,compensation_engine_mode
+        from app.services.mimo_ota.path_loss_application import path_loss_application_message
         target_freq_mhz = primary_carrier.frequency_hz / 1e6
-        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-        # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤, 否则 cal
-        # gate 会拿别的 operating mode 的 cert 通过 precheck, 但 measure 用对的 mode 查
-        # 不到 → precheck 通过却 measure 静默退兜底 (P1-8 要防的正是这种 gate↔measure 漂移)。
-        path_loss_selection = pl_service.resolve_latest_calibration(
-            chamber.id,
-            target_freq_mhz,
+        path_loss_preflight=evaluate_path_loss_preflight(context.db,context.test_execution,
+            chamber_id=chamber.id,frequency_mhz=target_freq_mhz,
             operating_mode=config.switch_mode_id,
-            require_real=ce_is_real,
+            precheck_strict_cal=config.precheck_strict_cal,
+            channel_emulator_execution_mode='real' if ce_is_real else 'simulated',
+            engine_mode=compensation_engine_mode(context.test_execution,config),
         )
-        if path_loss_selection.certificate is None and ce_is_real:
-            # 保留“不可信证书存在”的诊断事实；正式执行先从 real 白名单选，
-            # 只有白名单为空才回读任意来源用于 fail-loud 原因，绝不应用其数值。
-            path_loss_selection = pl_service.resolve_latest_calibration(
-                chamber.id,
-                target_freq_mhz,
-                operating_mode=config.switch_mode_id,
-            )
-        latest_pl = path_loss_selection.certificate
-
+        latest_pl=path_loss_preflight.selected_certificate
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
-        result_payload["path_loss_calibration_reason"] = path_loss_selection.reason
+        result_payload["path_loss_calibration_reason"] = path_loss_preflight.selection.reason
+        result_payload['path_loss_application']=path_loss_preflight.application
+        adopted=path_loss_preflight.application.get('status')=='applied' and path_loss_preflight.application.get('provenance')=='real'
+        result_payload["path_loss_calibration_valid"] = adopted or latest_pl is not None and (
+            path_loss_preflight.selection.coverage_complete or latest_pl.use_mock is not False)
+        result_payload["path_loss_calibration_use_mock"] = False if adopted else latest_pl.use_mock if latest_pl is not None else None
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
-            path_loss_use_mock = latest_pl.use_mock
-            result_payload["path_loss_calibration_valid"] = True
             result_payload["path_loss_calibration_age_hours"] = age_h
             result_payload["path_loss_calibration_frequency_mhz"] = latest_pl.frequency_mhz
-            result_payload["path_loss_calibration_use_mock"] = path_loss_use_mock
-            provenance_label = (
-                "simulated" if path_loss_use_mock is True
-                else "real" if path_loss_use_mock is False
-                else "unknown"
-            )
-            messages.append(
-                f"Path-loss calibration: VALID (age {age_h:.1f}h, "
-                f"cert@{latest_pl.frequency_mhz:.0f} MHz matches target "
-                f"{target_freq_mhz:.0f} MHz within ±5% window, "
-                f"provenance={provenance_label})"
-            )
-        else:
-            result_payload["path_loss_calibration_valid"] = False
-            result_payload["path_loss_calibration_use_mock"] = None
-            reason_messages = {
-                "expired": "Matching ProbePathLossCalibration is expired",
-                "frequency_mismatch": (
-                    f"No ProbePathLossCalibration in ±5% window of "
-                    f"{target_freq_mhz:.0f} MHz for this chamber"
-                ),
-                "operating_mode_mismatch": (
-                    "No ProbePathLossCalibration matches the requested RF "
-                    f"operating mode {config.switch_mode_id!r}"
-                ),
-                "missing": "No valid ProbePathLossCalibration for this chamber",
-            }
-            if ce_is_real and config.precheck_strict_cal:
-                gate_outcome = (
-                    "strict calibration gate will block Phase 3 before "
-                    "hardware connection"
-                )
-            elif ce_is_real:
-                gate_outcome = (
-                    "operator bypass permits Phase 3 without path-loss compensation"
-                )
-            else:
-                gate_outcome = (
-                    "simulated rehearsal may continue without path-loss compensation; "
-                    "formal KPI remains UNKNOWN/N/A"
-                )
-            warnings.append(
-                reason_messages[path_loss_selection.reason] + f" — {gate_outcome}"
-            )
+            messages.append(path_loss_application_message(path_loss_preflight.application))
+        elif not adopted:
+            warnings.append(path_loss_application_message(path_loss_preflight.application))
+            if ce_is_real:
+                warnings.append('strict calibration gate will block Phase 3 before hardware connection'
+                    if config.precheck_strict_cal else 'operator bypass permits Phase 3 without path-loss compensation')
 
         # --- 4. Quiet zone ripple (Phase 2f: cross-probe pattern variation proxy) ---
         from app.services.probe_pattern.consumer import estimate_quiet_zone_ripple_db

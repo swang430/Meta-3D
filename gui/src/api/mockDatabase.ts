@@ -1254,6 +1254,10 @@ const bumpPlanTimestamp = (plan: TestPlanRecord) => {
 const clone = <T,>(data: T): T => JSON.parse(JSON.stringify(data))
 
 export const mockDatabase = {
+  // 页面演示不伪造真实采集或采用来源；自动流程须连接真实API（可用服务器全Mock仪器）。
+  getRouteCalibrationPaths(): import('../types/api').RouteSelection[] { return [] },
+  getRouteAcquisitions(): import('../types/api').FixedRouteRecord[] { return [] },
+  getRouteApplications(): import('../types/api').RouteApplicationRecord[] { return [] },
   getProbes(): ProbesResponse {
     return { total: probes.length, probes: clone(probes) }
   },

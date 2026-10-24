@@ -344,6 +344,12 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         raise CaseNotExecutable(
             f"转台坐标 profile 无法冻结: {e}"
         ) from e
+    try:
+        from app.services.mimo_ota.route_calibration_freeze import freeze_execution_route_compensation
+        freeze_execution_route_compensation(db,execution,snapshot)
+    except ValueError as e:
+        db.rollback()
+        raise CaseNotExecutable(f"路损来源无法冻结: {e}") from e
     db.commit()
     db.refresh(execution)
 

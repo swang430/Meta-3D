@@ -6,6 +6,7 @@ and advanced endpoints for path resolution and calibration matrix.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import Optional, List
 from uuid import UUID
 import logging
@@ -23,6 +24,7 @@ from app.schemas.switch_topology import (
 )
 from app.services.topology_service import TopologyService
 from app.services.chamber_resolution import resolve_current_chamber
+from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
@@ -118,6 +120,13 @@ def _load_scoped_topology(db: Session, topology_id: UUID, chamber_id: UUID) -> S
             ),
         )
     return topology
+
+
+def _assert_deletable(db: Session, topology_ids) -> None:
+    try:
+        assert_route_topologies_deletable(db,topology_ids)
+    except RouteApplicationConflict as exc:
+        raise HTTPException(409,detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +336,7 @@ def import_topology_from_template(
         False,
         description=(
             "重导入：先删除同一 (switch_category_id, 派生暗室) 的既有行再导入。"
+            "已有校准采用历史的拓扑拒绝替换（409），保留原图和历史。"
             "P1-57 之前这个删除在 GUI 客户端做（先删后验 —— lab/模板解析失败时"
             "行已经没了）；收进服务端后保证完整解析成功才动行。"
         ),
@@ -351,28 +361,40 @@ def import_topology_from_template(
     _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
                         topo_data.get('operating_modes', []))
 
+    replaced_ids=[]
     if replace_existing:
         # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
+        existing=db.query(SwitchTopology).filter(
+            SwitchTopology.switch_category_id == switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
+        )
+        replaced_ids=[row.id for row in existing.all()]
+        _assert_deletable(db,replaced_ids)
+
+    try:
+        if replace_existing:
+            existing.delete()
         db.query(SwitchTopology).filter(
             SwitchTopology.switch_category_id == switch_category_id,
             SwitchTopology.chamber_id == chamber.id,
-        ).delete()
+            SwitchTopology.is_default == True
+        ).update({"is_default": False})
 
-    db.query(SwitchTopology).filter(
-        SwitchTopology.switch_category_id == switch_category_id,
-        SwitchTopology.chamber_id == chamber.id,
-        SwitchTopology.is_default == True
-    ).update({"is_default": False})
+        topology = SwitchTopology(
+            switch_category_id=switch_category_id,
+            chamber_id=chamber.id,
+            **topo_data
+        )
+        topology.update_statistics()
 
-    topology = SwitchTopology(
-        switch_category_id=switch_category_id,
-        chamber_id=chamber.id,
-        **topo_data
-    )
-    topology.update_statistics()
-
-    db.add(topology)
-    db.commit()
+        db.add(topology)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # 预检后可能有另一会话确认采用；只据已提交的相关依赖转409。
+        if replace_existing:
+            _assert_deletable(db,replaced_ids)
+        raise
     db.refresh(topology)
     logger.info(
         "Imported topology from template '%s' for switch category %s into chamber %s (replace=%s)",
@@ -454,12 +476,19 @@ def delete_switch_topology(
     lab_profile_id: UUID = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Delete a switch topology (scoped to the current lab's chamber)"""
+    """删除本lab暗室内拓扑；已有校准采用历史时409，保留测量追溯。"""
     chamber = _resolve_scope(db, lab_profile_id)
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
-    db.delete(topology)
-    db.commit()
+    topology_ids=[topology.id]
+    _assert_deletable(db,topology_ids)
+    try:
+        db.delete(topology)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _assert_deletable(db,topology_ids)
+        raise
     return None
 
 

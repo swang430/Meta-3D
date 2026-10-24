@@ -40,6 +40,15 @@ export function setupMockServer() {
   if (mock) return
 
   mock = new MockAdapter(client, { delayResponse: DELAY_MS })
+  mock.onGet(/\/lab-profiles\/[^/]+\/route-calibration-paths$/).reply(()=>[200,mockDatabase.getRouteCalibrationPaths()])
+  mock.onGet(/\/lab-profiles\/[^/]+\/fixed-route-acquisitions$/).reply(()=>[200,mockDatabase.getRouteAcquisitions()])
+  mock.onGet(/\/lab-profiles\/[^/]+\/route-calibration-applications$/).reply(()=>[200,mockDatabase.getRouteApplications()])
+  mock.onPost(/\/lab-profiles\/[^/]+\/(?:fixed-route-acquisitions|route-calibration-applications)$/)
+    .reply(422,{detail:'页面演示不生成真实采集或确认采用；请连接服务器API。模拟来源不能采用为正式补偿。'})
+  mock.onGet(/\/lab-profiles\/[^/]+\/fixed-route-acquisitions\/[^/]+(?:\/application-preview)?$/)
+    .reply(404,{detail:'页面演示没有该服务器采集记录，不能推断资格或量值'})
+  mock.onPost(/\/lab-profiles\/[^/]+\/fixed-route-acquisitions\/[^/]+\/cancel$/)
+    .reply(404,{detail:'页面演示没有该服务器活动采集；不能伪报已停发'})
 
   // P2-24: TestCase CRUD 的 mock 与 live 契约使用同一 lab_profile_id 形态。
   // testPlanService 复用共享 client，mock 模式下创建/编辑也会走到这里。

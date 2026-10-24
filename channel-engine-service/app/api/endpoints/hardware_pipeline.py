@@ -196,7 +196,7 @@ async def synthesize_hardware_pipeline(
         # -----------------------------------------------------------
         # 计算硬件控制指令
         # -----------------------------------------------------------
-        control = _compute_control_instructions(
+        control = None if request.calibration_application=='waveform' else _compute_control_instructions(
             sim_rules=sim_rules,
             cdl_data=cdl_data,
             cal_entries=cal_data.entries,
@@ -220,6 +220,7 @@ async def synthesize_hardware_pipeline(
 
         return HardwarePipelineResponse(
             status="success",
+            calibration_application=request.calibration_application,
             computation_time_ms=round(elapsed_ms, 1),
             hardware_artifacts=HardwareArtifacts(
                 f64_asc_files_zip_base64=zip_base64,
@@ -518,7 +519,7 @@ def _run_real_synthesis(SimulatorClass, request: HardwarePipelineRequest):
         mode="B",
         duration_s=0.1,
         sample_rate_hz=1000.0,
-    ))
+    ),_waveform_calibration(request))
     base_name = request.cdl_model_data.model_name.replace(" ", "_") or "propsim_export"
     zip_base64 = exporter.export_to_zip_memory(
         sim_result, base_name=base_name, direction="dl"
@@ -549,6 +550,15 @@ def _zip_asc_files_base64(asc_paths: List[str]) -> str:
         for p in asc_paths:
             zf.write(p, arcname=os.path.basename(p))
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _waveform_calibration(request):
+    """显式软件预失真；未选用时保留旧control预算路径，不增加硬件写入。"""
+    if request.calibration_application!='waveform' or not request.calibration_data.entries:
+        return None
+    from mimo_ota_simulator.data_models import CalibrationConfig,CalibrationEntry
+    return CalibrationConfig(entries=[CalibrationEntry(port_id=e.port_id,cable_loss_db=e.cable_loss_db,
+        cable_phase_deg=e.cable_phase_deg,probe_gain_dbi=e.probe_gain_dbi) for e in request.calibration_data.entries])
 
 
 def _safe_asc_base_name(model_name: str) -> str:
@@ -619,15 +629,12 @@ def _run_annotated_bake_synthesis(request: HardwarePipelineRequest):
             filename=os.path.join(tmpdir, f"{base_name}.asc"),
             mode="B", duration_s=0.1, sample_rate_hz=1000.0,
         )
-        # Codex #176 P2 (calibration): calibration_config 省略 (=None) 是**有意保 parity**,
-        # 非丢校准。校准经 endpoint 在路由 if/else 之后无条件计算的 control_instructions
-        # 施加 (cal_entries → external_attenuators_db + baseband power, 见
-        # _compute_control_instructions), legacy 与 annotated 两路同一调用, cal 不丢。两路 exporter 都
-        # calibration_config=None → .asc 都 cal-free; 若这里烘 cal 进 .asc 会与 legacy
-        # 直路分叉, 破坏验收③逐位一致 (test_annotated_b1_endpoint_cal_via_control 证 cal
-        # 经 control 生效)。cal 烘进 .asc 是另一套校准模型, 属未来跨两路的设计决策, 非 S3-1。
+        # 旧control请求不烘校准，保持两脊parity；显式waveform请求只在ASC内补一次，不返回control。
+        # control预算是否下发由调用方负责，返回预算本身不是硬件已应用证据。
+        # 两脊使用同一显式选择；waveform模式不同时返回额外control修正。
         asc_paths = bake_b1_annotated(
             annotated, chamber_cfg, channel_cfg, export_cfg,
+            calibration_config=_waveform_calibration(request),
             synthesis_method=ce_synthesis_method, direction="dl",
         )
         zip_base64 = _zip_asc_files_base64(asc_paths)

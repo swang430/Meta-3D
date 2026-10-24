@@ -19,7 +19,33 @@ import type {
   F64StateRecord,
   FixedRouteRequest,
   FixedRouteRecord,
+  RouteSelection, RouteApplicationPreview, ConfirmRouteApplication, RouteApplicationRecord,
 } from '../types/api'
+
+export async function fetchRouteCalibrationPaths(labId:string,topologyId:string,mode:string):Promise<RouteSelection[]> {
+  const rows=(await apiClient.get<RouteSelection[]>(`/lab-profiles/${labId}/route-calibration-paths`,
+    {params:{topology_id:topologyId,operating_mode:mode}})).data
+  if(rows.some(row=>row.lab_profile_id!==labId || row.topology_id!==topologyId || row.operating_mode!==mode)) throw new Error('路径响应与当前实验室、拓扑或模式不一致')
+  return rows
+}
+export async function fetchRouteApplicationPreview(labId:string,runId:string):Promise<RouteApplicationPreview> {
+  const value=(await apiClient.get<RouteApplicationPreview>(`/lab-profiles/${labId}/fixed-route-acquisitions/${runId}/application-preview`)).data
+  if(value.acquisition_run_id!==runId || value.selection && value.selection.lab_profile_id!==labId) throw new Error('采用预览与所查看记录不一致')
+  return value
+}
+export async function confirmRouteApplication(labId:string,body:ConfirmRouteApplication):Promise<RouteApplicationRecord> {
+  const value=(await apiClient.post<RouteApplicationRecord>(`/lab-profiles/${labId}/route-calibration-applications`,body)).data
+  if(value.selection_snapshot.lab_profile_id!==labId || value.acquisition_run_id!==body.acquisition_run_id ||
+    value.selection_snapshot.route_digest!==body.route_digest) throw new Error('确认响应与本次记录不一致')
+  return value
+}
+export async function fetchRouteApplicationHistory(labId:string,topologyId:string,chainId:string):Promise<RouteApplicationRecord[]> {
+  const rows=(await apiClient.get<RouteApplicationRecord[]>(`/lab-profiles/${labId}/route-calibration-applications`,
+    {params:{topology_id:topologyId,chain_id:chainId}})).data
+  if(rows.some(row=>row.selection_snapshot.lab_profile_id!==labId || row.selection_snapshot.topology_id!==topologyId ||
+    row.selection_snapshot.chain_id!==chainId)) throw new Error('采用历史与所选通路不一致')
+  return rows
+}
 
 function checkedAcquisition(labId: string, value: FixedRouteRecord, runId?: string): FixedRouteRecord {
   if (value.lab_profile_id !== labId || (runId && value.run_id !== runId)) throw new Error('采集响应与所选实验室或记录不一致')

@@ -1075,6 +1075,8 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
         _freeze_instrument_lease(
             db, execution, test_case, include_positioner=True
         )
+        from app.services.mimo_ota.route_calibration_freeze import freeze_execution_route_compensation
+        freeze_execution_route_compensation(db,execution,test_case)
     except ValueError as error:
         db.rollback()
         raise HTTPException(
@@ -1352,6 +1354,8 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
             test_case,
             include_positioner=target_step_type == "MIMO_OTA_MEASURE",
         )
+        from app.services.mimo_ota.route_calibration_freeze import freeze_execution_route_compensation
+        freeze_execution_route_compensation(db,execution,test_case)
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(error)) from error

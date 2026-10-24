@@ -43,8 +43,17 @@ def _fields(value, names):
     return {name: getattr(value, name) for name in names}
 
 
-def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota') -> CalibrationScopeSnapshot:
+def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *, topology_id: UUID | None = None) -> CalibrationScopeSnapshot:
     resolution = resolve_rf_chains(db, lab_id, mode)
+    if topology_id is not None:
+        # 显式选择采集图时使用完整路径；旧执行解析器和旧盘点入口保持原样。
+        from app.services.calibration.route_calibration import list_route_selections
+        from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
+        selected_routes = list_route_selections(db, lab_id, topology_id, mode)
+        selected_topology = db.get(SwitchTopology, topology_id)
+        resolution = RFChainResolution(lab_profile_id=lab_id,chamber_id=selected_topology.chamber_id,
+            topology_id=str(topology_id),topology_name=selected_topology.name,operating_mode=mode,
+            chains=[RFChainSpec(r.chain_id,r.ce_port,r.probe_id,r.polarization) for r in selected_routes])
     lab = db.query(LabProfile).filter(LabProfile.id == lab_id).one()
     chamber = db.query(ChamberConfiguration).filter(ChamberConfiguration.id == resolution.chamber_id).one_or_none()
     if chamber is None:
