@@ -1,0 +1,71 @@
+// 独立临时数据库/全HAL Mock，真实前后端；不拦截响应，不操作现场仪器。
+async page=>{
+  const api='http://127.0.0.1:18080/api/v1',checks=[];
+  page.setDefaultTimeout(12000);
+  await page.setViewportSize({width:1600,height:1100});
+  const status=await(await page.request.get(`${api}/instruments/hal/status`)).json();
+  if(status.mode!=='mock')throw new Error('仅允许独立全Mock环境');
+  const labs=await(await page.request.get(`${api}/lab-profiles`)).json();
+  const lab=labs.find(l=>l.name==='PC04自动采集甲');
+  const listed=await(await page.request.get(`${api}/switch-topologies`,{params:{lab_profile_id:lab.id}})).json();
+  const topologies=listed.items;
+  const topology=topologies.find(t=>t.chamber_id===lab.chamber_config_id);
+  if(!topology)throw new Error(JSON.stringify(topologies));
+  const endpoint=`${api}/switch-topologies/${topology.id}?lab_profile_id=${lab.id}`;
+  // 只在测试数据库布置清晰、可拖动的真实保存节点，不替换浏览器响应。
+  const nodes=topology.nodes.map((n,index)=>({...n,position:{x:index<2?30:540,y:index%2*240+60}}));
+  const setup=await page.request.patch(endpoint,{data:{nodes}});
+  if(!setup.ok())throw new Error(await setup.text());
+  await page.goto('http://127.0.0.1:5187');
+  await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);
+  await page.reload();
+  await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
+  await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
+  await page.locator('.react-flow').first().waitFor();
+  const save=page.getByRole('button',{name:'保存拓扑',exact:true});
+  if(await page.getByTestId('topology-calibration').count()||!await save.count())
+    throw new Error('射频拓扑默认进入替代只读图，原拖动/编辑画布不可直接使用');
+  checks.push('默认直接显示原可编辑拓扑，无替代只读图');
+  const node=page.locator('.react-flow__node[data-id="ce1"]');
+  await node.waitFor();
+  await node.scrollIntoViewIfNeeded();
+  const before=await node.boundingBox();
+  if(!before)throw new Error('节点未显示');
+  await page.mouse.move(before.x+before.width/2,before.y+30);
+  await page.mouse.down();
+  await page.mouse.move(before.x+before.width/2+85,before.y+85,{steps:10});
+  await page.mouse.up();
+  const after=await node.boundingBox();
+  if(!after||Math.abs(after.x-before.x)<25)throw new Error('节点拖动没有生效');
+  await page.getByText('拓扑草稿未保存',{exact:true}).waitFor();
+  checks.push('真实鼠标拖动节点并标记未保存');
+  // 原版连线编辑由单击触发；在标签之外的真实线段操作，不force或派发事件。
+  const edge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
+  const point=await edge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
+  await edge.click({position:point});
+  await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).fill('1.25');
+  await page.getByRole('button',{name:'应用修改',exact:true}).click();
+  checks.push('连线可打开原编辑面板并应用参数修改');
+  const persisted=page.waitForResponse(r=>r.request().method()==='PATCH'&&r.url().includes(`/switch-topologies/${topology.id}`));
+  await save.click();
+  const response=await persisted;
+  if(!response.ok())throw new Error(await response.text());
+  const stored=await(await page.request.get(endpoint)).json();
+  if(stored.connections.find(c=>c.id==='fixed-v')?.cable_loss_db!==1.25)throw new Error('损耗未保存到服务器');
+  const moved=stored.nodes.find(n=>n.id==='ce1').position;
+  if(moved.x===30&&moved.y===60)throw new Error('拖动位置未保存到服务器');
+  checks.push('服务器实际保存节点位置及连接参数');
+  await page.reload();
+  await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
+  await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
+  await page.locator('.react-flow__node[data-id="ce1"]').waitFor();
+  const oldEdge=page.locator('.react-flow__edge[data-id="fixed-v"] .react-flow__edge-interaction');
+  const reloaded=await oldEdge.evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()*0.2),s=el.getScreenCTM(),b=el.getBoundingClientRect();return{x:s.a*p.x+s.c*p.y+s.e-b.x,y:s.b*p.x+s.d*p.y+s.f-b.y}});
+  await oldEdge.click({position:reloaded});
+  if(Number(await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).inputValue())!==1.25)throw new Error('刷新后参数丢失');
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  checks.push('刷新后仍可编辑且持久化参数保持');
+  await page.locator('.react-flow').first().screenshot({path:'output/playwright/restored-topology.png'});
+  return{passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
+}

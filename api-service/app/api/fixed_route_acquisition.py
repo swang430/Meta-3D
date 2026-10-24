@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.lab_profile import LabProfile
 from app.models.diagnostic_run import DiagnosticRun
-from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteRecord, FixedRouteReferenceRequest
+from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteRecord
 from app.services.calibration import fixed_route_jobs as jobs
 
 router = APIRouter(prefix='/lab-profiles', tags=['固定通路自动采集'])
@@ -29,14 +29,10 @@ async def start(lab_profile_id: UUID, request: FixedRouteRequest, db: Session = 
 
 
 @router.get('/{lab_profile_id}/fixed-route-acquisitions', response_model=list[FixedRouteRecord])
-def history(lab_profile_id: UUID, limit: int = Query(20, ge=1, le=100),
-            chain_id: str | None = Query(None, min_length=1, max_length=500), db: Session = Depends(get_db)):
+def history(lab_profile_id: UUID, limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     if db.get(LabProfile, lab_profile_id) is None:
         raise HTTPException(404, '实验室配置不存在')
-    query = db.query(DiagnosticRun).filter_by(lab_profile_id=lab_profile_id, target_name=jobs.TARGET, kind='scpi_sequence')
-    if chain_id is not None:
-        query = query.filter(DiagnosticRun.params['chain_id'].as_string() == chain_id)
-    rows = query.order_by(DiagnosticRun.run_at.desc(), DiagnosticRun.id.desc()).limit(limit).all()
+    rows = db.query(DiagnosticRun).filter_by(lab_profile_id=lab_profile_id, target_name=jobs.TARGET, kind='scpi_sequence').order_by(DiagnosticRun.run_at.desc(), DiagnosticRun.id.desc()).limit(limit).all()
     return [jobs.record(row) for row in rows]
 
 
@@ -53,13 +49,3 @@ async def cancel(lab_profile_id: UUID, run_id: UUID, db: Session = Depends(get_d
     except jobs.AcquisitionBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     return jobs.record(row)
-
-
-@router.post('/{lab_profile_id}/fixed-route-acquisitions/{run_id}/reference', response_model=FixedRouteRecord)
-def select_reference(lab_profile_id: UUID, run_id: UUID, request: FixedRouteReferenceRequest, db: Session = Depends(get_db)):
-    try:
-        return jobs.select_reference(db, _row(db, lab_profile_id, run_id), request)
-    except jobs.AcquisitionBusy as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
