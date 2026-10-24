@@ -14,6 +14,7 @@ export type BatchPlan = import('./api.generated').components['schemas']['BatchPl
 export type BatchContinueRequest = import('./api.generated').components['schemas']['BatchContinueRequest']
 export type BatchJobRecord = import('./api.generated').components['schemas']['BatchJobRecord']
 export type RouteSelection = import('./api.generated').components['schemas']['RouteSelection']
+export type RouteSelectionScope = NonNullable<import('./api.generated').operations['paths_api_v1_lab_profiles__lab_profile_id__route_calibration_paths_get']['parameters']['query']['selection_scope']>
 export type RoutePort = import('./api.generated').components['schemas']['RoutePort']
 export type RouteEligibility = import('./api.generated').components['schemas']['RouteEligibility']
 export type RouteApplicationPreview = import('./api.generated').components['schemas']['RouteApplicationPreview']

@@ -5,6 +5,7 @@ import MockAdapter from 'axios-mock-adapter'
 import client from '../src/api/client.ts'
 import { updateInstrumentCategory } from '../src/api/service.ts'
 import { withoutSynthesizedConnectionParams } from '../src/features/Equipment/invalidStoredFields.ts'
+import { fetchRouteCalibrationPaths } from '../src/api/labProfileService.ts'
 
 const route=(id:string)=>({lab_profile_id:'lab',topology_id:'topo',operating_mode:'mimo_ota',chain_id:id,
   ce_port:'B1.1',probe_id:0,polarization:'V',route_digest:'a'.repeat(64),configuration_digest:'b'.repeat(64),
@@ -194,4 +195,30 @@ test('批清单按item权威scope显示路径：route配置摘要可为null，�
   assert.equal(state.batchItemRoute({...batchItem,configuration_scope:{...batchItem.configuration_scope,payload:{...batchItem.configuration_scope.payload,lab_profile_id:'other'}}} as never),undefined)
   assert.equal(state.batchItemRoute({...batchItem,configuration_scope:{...batchItem.configuration_scope,payload:{...batchItem.configuration_scope.payload,
     topology:{...batchItem.configuration_scope.payload.topology,selected_route_digest:'d'.repeat(64)}}}} as never),undefined)
+})
+test('批候选显式取服务器逐项来源，正式集合请求仍不带放宽参数',async()=>{
+  const adapter=new MockAdapter(client),seen:unknown[]=[]
+  try{
+    adapter.onGet('/lab-profiles/lab/route-calibration-paths').reply(config=>{
+      seen.push(config.params);return [200,paths]
+    })
+    await fetchRouteCalibrationPaths('lab','topo','mimo_ota','individual')
+    await fetchRouteCalibrationPaths('lab','topo','mimo_ota')
+    assert.deepEqual(seen,[{topology_id:'topo',operating_mode:'mimo_ota',selection_scope:'individual'},{topology_id:'topo',operating_mode:'mimo_ota'}])
+  }finally{adapter.restore()}
+})
+test('正式集合无候选时批child仍以冻结保存路径进入原采用门，未释放/模拟/dirty/身份不符仍拒绝',()=>{
+  const route={...paths[0],chamber_id:'chamber',configuration_digest:null}
+  const snapshot={digest:'c'.repeat(64),configuration_complete:true,payload:{lab_profile_id:'lab',chamber_id:'chamber',operating_mode:'mimo_ota',
+    topology:{id:'topo',scope_source:'selected_route',selected_chain_id:'p1',selected_route_digest:'a'.repeat(64)}}}
+  const record=child({result:{version:2,request:{chain_id:'p1',topology_id:'topo',operating_mode:'mimo_ota',route_digest:'a'.repeat(64),configuration_digest:'c'.repeat(64)},
+    configuration:{route_selection:route,snapshot}},batch_context:{job_id:'job',active:false,finalized:true,lease_id:'lease',finalization_id:'final'}})
+  const preview={selection:route,acquisition_run_id:'r1',expected_current_application_id:null,eligibility:{eligible_for_adoption:true,measurement_provenance:'real'}} as never
+  const frozen=state.routeForAdoption(scope as never,record,undefined)
+  assert.equal(frozen?.chain_id,'p1');assert.equal(state.canAdoptRoute(scope as never,frozen,preview,'r1'),true)
+  assert.equal(state.buildRouteConfirmation(scope as never,frozen!,preview,'2099-01-01T00:00:00Z','key').acquisition_run_id,'r1')
+  assert.equal(state.routeForAdoption({...scope,dirty:true} as never,record,undefined),undefined)
+  assert.equal(state.routeForAdoption(scope as never,{...record,batch_context:{active:true,finalized:false}} as never,undefined),undefined)
+  assert.equal(state.canAdoptRoute(scope as never,frozen,{...preview,eligibility:{eligible_for_adoption:false,measurement_provenance:'simulated'}} as never),false)
+  assert.equal(state.canAdoptRoute(scope as never,frozen,preview,'other-run'),false)
 })

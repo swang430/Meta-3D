@@ -23,6 +23,11 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
     return _route_selections(db,lab_id,topology_id,operating_mode)
 
 
+def list_individual_route_selections(db,lab_id: UUID,topology_id: UUID,operating_mode: str) -> list[RouteSelection]:
+    """逐条保存候选，不声明同时兼容；同CE互斥批仍由build_batch_plan核验。"""
+    return _route_selections(db,lab_id,topology_id,operating_mode,individual=True)
+
+
 def resolve_explicit_route_selection(db,lab_id,topology_id,mode,terminal_connection_id,connection_ids):
     """仅解析指定保存终端；允许批串行复用CE，不放宽正式集合门。"""
     routes=_route_selections(db,lab_id,topology_id,mode,terminal_connection_id=terminal_connection_id)
@@ -55,7 +60,7 @@ def route_switch_steps(db,topology,path_nodes,path_edges,lab=None):
         driver_mode=category.driver_mode,instrument_model_id=str(category.selected_model_id)) for step in steps]
 
 
-def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, *, terminal_connection_id=None) -> list[RouteSelection]:
+def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, *, terminal_connection_id=None,individual=False) -> list[RouteSelection]:
     lab = db.get(LabProfile, lab_id)
     topology = db.get(SwitchTopology, topology_id)
     if lab is None or topology is None:
@@ -182,9 +187,9 @@ def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, 
         raise ValueError('探头编号及极化存在重复通路')
     from app.hal.propsim_f64 import RealPropsimF64Driver
     physical_outputs = [RealPropsimF64Driver._ce_port_to_output_num(r.ce_port) for r in selections]
-    if terminal_connection_id is None and len(physical_outputs) != len(set(physical_outputs)):
+    if terminal_connection_id is None and not individual and len(physical_outputs) != len(set(physical_outputs)):
         raise ValueError('同一F64输出口存在多个可达通路，不能确定单条固定接线')
-    if terminal_connection_id is None:
+    if terminal_connection_id is None and not individual:
         from app.services.declared_rf_routes import validate_simultaneous_switch_mappings
         validate_simultaneous_switch_mappings(selected_steps)
     return sorted(selections,key=lambda r:r.chain_id)

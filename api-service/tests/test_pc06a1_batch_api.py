@@ -149,6 +149,29 @@ async def test_serial_http_full_chain_parent_release_guards_child_adoption(api,d
     assert (await api.get(root(configured))).json()[0]['job_id']==ident
 
 
+async def test_individual_saved_candidates_allow_serial_ce_without_relaxing_formal_set(api,db_session,configured,shared_switch):
+    topo,_=serial_graph(db_session,shared_switch)
+    url=f'/api/v1/lab-profiles/{configured.id}/route-calibration-paths'
+    params=dict(topology_id=str(topo.id),operating_mode='mimo_ota')
+    formal=await api.get(url,params=params)
+    assert formal.status_code==422,formal.text
+    candidates=await api.get(url,params={**params,'selection_scope':'individual'})
+    assert candidates.status_code==200,candidates.text
+    rows=candidates.json()
+    assert [(r['chain_id'],r['ce_port']) for r in rows]==[('oh','B1.1'),('ov','B1.1')]
+    body=request_for(topo,chains=tuple(r['chain_id'] for r in rows),frequencies=(2595.,)).model_dump(mode='json')
+    preview=await api.post(root(configured)+'/preview',json=body)
+    assert preview.status_code==200,preview.text
+    for row,item in zip(rows,preview.json()['items'],strict=True):
+        assert row['configuration_digest']==item['configuration_scope']['digest']==item['request']['configuration_digest']
+        assert row['route_digest']==item['route_selection']['route_digest']
+    formal_again=await api.get(url,params=params)
+    assert formal_again.status_code==422
+    assert (await api.get(url,params={**params,'selection_scope':'simultaneous'})).status_code==422
+    assert (await api.get(url,params={**params,'selection_scope':'invalid'})).status_code==422
+    assert db_session.query(DiagnosticRun).count()==0
+
+
 async def test_pending_response_loss_idempotency_is_lab_and_content_scoped(api,db_session,configured,shared_switch,runtime):
     jobs,hal=runtime
     topo,_=shared_switch
@@ -298,6 +321,8 @@ def test_batch_contract_models_live_and_handwritten_openapi_agree():
     import yaml
     live=app.openapi()
     written=yaml.safe_load((Path(__file__).parents[2]/'api/openapi.yaml').read_text())
+    candidate_path='/api/v1/lab-profiles/{lab_profile_id}/route-calibration-paths'
+    assert written['paths'][candidate_path]==live['paths'][candidate_path]
     paths={path for path in live['paths'] if '/route-calibration-batches' in path}
     assert len(paths)==5
     for path in paths:

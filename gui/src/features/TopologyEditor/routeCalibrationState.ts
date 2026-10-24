@@ -85,7 +85,7 @@ export function buildRouteConfirmation(scope:RouteScope,route:RouteSelection,pre
 }
 
 export type BatchReferenceFields={chainId:string;frequency:number;antenna:string;cable:string;cableSource:string}
-export function batchItemRoute(item:BatchPlan['items'][number]|undefined):RouteSelection|undefined {
+export function batchItemRoute(item:Pick<BatchPlan['items'][number],'route_selection'|'request'|'configuration_scope'>|undefined):RouteSelection|undefined {
   if(!item)return undefined
   // 批生产者将选路scope独立冻结，route.configuration_digest允许为空；只在显示适配中引用权威摘要。
   const {route_selection:route,request,configuration_scope:scope}=item,payload=scope.payload,topology=payload.topology
@@ -96,6 +96,13 @@ export function batchItemRoute(item:BatchPlan['items'][number]|undefined):RouteS
     topology.id!==route.topology_id||topology.scope_source!=='selected_route'||topology.selected_chain_id!==route.chain_id||
     topology.selected_route_digest!==route.route_digest)return undefined
   return {...route,configuration_digest:scope.digest}
+}
+export function routeForAdoption(scope:RouteScope,record:FixedRouteRecord|undefined,singleRoute:RouteSelection|undefined):RouteSelection|undefined {
+  if(!record?.batch_context&&!record?.result?.states?.batch_job_id)return routeMatchesSaved(scope,singleRoute)?singleRoute:undefined
+  if(!batchChildReady(record)||!record?.result)return undefined
+  const frozen=runningRouteIdentity(record),snapshot=record.result.configuration.snapshot as BatchPlan['items'][number]['configuration_scope']|undefined
+  const selected=frozen&&snapshot?batchItemRoute({route_selection:frozen,configuration_scope:snapshot,request:record.result.request}):undefined
+  return routeMatchesSaved(scope,selected)?selected:undefined
 }
 export function buildBatchRequest(scope:RouteScope,paths:RouteSelection[],ids:string[],frequencies:number[],references:BatchReferenceFields[],fields:Pick<RouteFields,'power'|'samples'|'fixed'|'safe'>):BatchPlanRequest {
   if(scope.mode!=='mimo_ota'||!ids.length||new Set(ids).size!==ids.length||!frequencies.length||

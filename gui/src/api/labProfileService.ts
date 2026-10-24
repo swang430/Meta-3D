@@ -20,7 +20,7 @@ import type {
   FixedRouteRequest,
   FixedRouteRecord,
   BatchPlanRequest, BatchPlan, BatchContinueRequest, BatchJobRecord,
-  RouteSelection, RouteApplicationPreview, ConfirmRouteApplication, RouteApplicationRecord,
+  RouteSelection, RouteSelectionScope, RouteApplicationPreview, ConfirmRouteApplication, RouteApplicationRecord,
 } from '../types/api'
 
 function checkedBatch(labId:string,value:BatchJobRecord,jobId?:string):BatchJobRecord {
@@ -58,9 +58,9 @@ export async function cancelRouteCalibrationBatch(labId:string,jobId:string):Pro
   return checkedBatch(labId,(await apiClient.post<BatchJobRecord>(`/lab-profiles/${labId}/route-calibration-batches/${jobId}/cancel`)).data,jobId)
 }
 
-export async function fetchRouteCalibrationPaths(labId:string,topologyId:string,mode:string):Promise<RouteSelection[]> {
+export async function fetchRouteCalibrationPaths(labId:string,topologyId:string,mode:string,selectionScope:RouteSelectionScope='simultaneous'):Promise<RouteSelection[]> {
   const rows=(await apiClient.get<RouteSelection[]>(`/lab-profiles/${labId}/route-calibration-paths`,
-    {params:{topology_id:topologyId,operating_mode:mode}})).data
+    {params:{topology_id:topologyId,operating_mode:mode,...(selectionScope==='individual'?{selection_scope:'individual'}:{})}})).data
   if(rows.some(row=>row.lab_profile_id!==labId || row.topology_id!==topologyId || row.operating_mode!==mode)) throw new Error('路径响应与当前实验室、拓扑或模式不一致')
   return rows
 }

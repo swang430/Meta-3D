@@ -6141,6 +6141,7 @@ export interface operations {
             query: {
                 topology_id: string;
                 operating_mode: string;
+                selection_scope?: "simultaneous" | "individual";
             };
             header?: never;
             path: {
