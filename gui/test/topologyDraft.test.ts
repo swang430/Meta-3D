@@ -52,3 +52,26 @@ test('校准器件不能连入正常测试模式',()=>{
   draft.nodes[0].params.connection_scope='calibration';
   assert.throws(()=>addDraftConnection(draft,{id:'ac',source:'a',target:'c',source_pin:'out',target_pin:'in'},'mimo_ota'),/校准/);
 });
+test('历史连接省略端口时只改标签不应被空串拦住',()=>{
+  const draft=fixture();
+  delete draft.connections[0].source_pin;
+  const changed=updateDraftNode(draft,{...draft.nodes[0],label:'只改标签'});
+  assert.equal(changed.nodes[0].label,'只改标签');
+  assert.equal(changed.connections[0].source_pin,undefined);
+});
+test('历史端口命名不一致时只改标签不重写其端口声明',()=>{
+  const draft=fixture();
+  draft.nodes[1]={...draft.nodes[1],type:'probe',params:{}};
+  draft.connections[0].target_pin='V';
+  const changed=updateDraftNode(draft,{...draft.nodes[1],label:'历史探头新标签'},['in']);
+  assert.equal(changed.nodes[1].label,'历史探头新标签');
+  assert.equal(changed.nodes[1].params.ports,undefined);
+  assert.equal(changed.connections[0].target_pin,'V');
+});
+test('明确改端口仍须检查历史全部关联连接，省略端口按既有schema默认解释',()=>{
+  const draft=fixture();
+  delete draft.connections[0].source_pin;
+  const changed=updateDraftNode(draft,{...draft.nodes[0],label:'明确端口'},['out','extra']);
+  assert.deepEqual(changed.nodes[0].params.ports,['out','extra']);
+  assert.throws(()=>updateDraftNode(draft,draft.nodes[0],['in','extra']),/端口/);
+});

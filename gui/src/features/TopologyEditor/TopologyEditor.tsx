@@ -371,7 +371,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
     }
     try {
-      const next=updateDraftNode(draft,{...selectedNode,params:{...selectedNode.params,ports}});
+      const next=updateDraftNode(draft,selectedNode,ports);
       changeDraft(()=>next);
       setNodeDrawerOpen(false);
     } catch(error) { notifications.show({color:'red',message:String(error)}); }

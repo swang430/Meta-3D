@@ -1,5 +1,6 @@
 // 独立临时数据库/全HAL Mock，真实前后端；不拦截响应，不操作现场仪器。
 async page=>{
+  await page.evaluate(()=>{window.__topologyEditingResult=null});
   const api='http://127.0.0.1:18080/api/v1',checks=[];
   page.setDefaultTimeout(12000);
   await page.setViewportSize({width:1600,height:1100});
@@ -133,5 +134,7 @@ async page=>{
   if(edited.nodes.some(n=>n.id===targetId)||edited.connections.some(c=>c.id===nativeEdge.id)||edited.operating_modes.some(m=>(m.active_connections||[]).includes(nativeEdge.id)))throw new Error('删除没有完整清理保存结构');
   checks.push('删除器件清理关联连线与所有模式引用并真实保存');
   await page.locator('.react-flow').first().screenshot({path:'output/playwright/restored-topology.png'});
-  return{passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
+  const result={passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
+  await page.evaluate(result=>{window.__topologyEditingResult=result},result);
+  return result;
 }
