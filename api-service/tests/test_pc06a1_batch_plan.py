@@ -253,3 +253,53 @@ def test_explicit_switch_freeze_checks_physical_mapping_in_both_independent_comp
     actual_error=frozen_route_identity_error(db_session,frozen,resolved_topology=actual)
     if change=='notes': assert db_error is None and actual_error is None
     else: assert db_error is not None and actual_error is not None
+
+
+def test_batch_output_nested_working_copies_cannot_rewrite_frozen_plan(db_session,configured,shared_switch):
+    from app.services.calibration.route_batch_plan import build_batch_plan
+    from app.schemas.route_batch import BatchPlan,BatchPlanItem,BatchSwitchStep
+    topo,_=shared_switch
+    plan=build_batch_plan(db_session,configured.id,request_for(topo),None)
+    original=plan.model_dump(mode='json')
+    item=plan.items[0]
+    mapping=item.switch_steps[0].mapping
+    mapping['output_port']='NC'
+    request=item.request
+    request.frequency_mhz=100.
+    route=item.route_selection
+    route.nodes[0]['params']['ce_port']='B9'
+    route.connection_ids.append('invented')
+    scope=item.configuration_scope
+    scope.payload.resources[0]['driver_mode']='rewritten'
+    scope.payload.chains[0].ce_port='B9'
+    assert plan.model_dump(mode='json')==original
+    assert item.request.frequency_mhz==2595.
+    assert item.switch_steps[0].mapping['output_port']=='NO'
+
+    # 构造输入也须去别名，不能从先前交给输出模型的对象反向改写计划。
+    request=item.request;route=item.route_selection;scope=item.configuration_scope
+    detached=BatchPlanItem(item_id=item.item_id,request=request,route_selection=route,
+        configuration_scope=scope,switch_steps=item.switch_steps)
+    before=detached.model_dump(mode='json')
+    request.frequency_mhz=100.
+    route.nodes[0]['params']['ce_port']='B9'
+    scope.payload.chains[0].ce_port='B9'
+    assert detached.model_dump(mode='json')==before
+
+    step_input=item.switch_steps[0].model_dump()
+    step_input['mapping']['metadata']={'ports':[1]}
+    step=BatchSwitchStep(**step_input)
+    step_input['mapping']['metadata']['ports'].append(2)
+    step.mapping['metadata']['ports'].append(3)
+    assert step.model_dump()['mapping']['metadata']['ports']==[1]
+
+    restored=BatchPlan.model_validate_json(plan.model_dump_json())
+    assert restored.model_dump(mode='json')==original
+    assert restored.preview_digest==plan.preview_digest
+    import hashlib,json
+    body={key:original[key] for key in ('version','lab_profile_id','topology_id','operating_mode','items')}
+    encoded=json.dumps(body,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
+    assert hashlib.sha256(encoded.encode()).hexdigest()==restored.preview_digest
+    restored.items[0].configuration_scope.payload.chains[0].ce_port='B9'
+    restored.items[0].switch_steps[0].mapping['output_port']='NC'
+    assert restored.model_dump(mode='json')==original

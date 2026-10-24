@@ -1,4 +1,5 @@
 """拓扑逐通路清单契约；不接受客户端测量值或正式资格。"""
+import copy
 from typing import Literal
 from uuid import UUID
 
@@ -52,6 +53,7 @@ class BatchPlanRequest(BaseModel):
 
 
 class BatchSwitchStep(BaseModel):
+    """mapping读取为独立工作副本，不能原地改写已冻结的步骤。"""
     model_config=ConfigDict(extra='forbid',frozen=True)
     node_id: str
     path_name: str
@@ -62,8 +64,22 @@ class BatchSwitchStep(BaseModel):
     driver_mode: str
     mapping: dict
 
+    @field_validator('mapping')
+    @classmethod
+    def detach_mapping(cls,value):
+        return copy.deepcopy(value)
+
+    def __getattribute__(self,name):
+        value=super().__getattribute__(name)
+        return copy.deepcopy(value) if name=='mapping' else value
+
 
 class BatchPlanItem(BaseModel):
+    """公共可变schema仅作读取副本；构造和读取均隔离，JSON线形不变。
+
+    Task2/3取得request/route_selection/configuration_scope后可持有工作副本，
+    但修改副本不回写计划；需要新配置时必须重新构造并校验计划摘要。
+    """
     model_config=ConfigDict(extra='forbid',frozen=True)
     item_id: str
     request: FixedRouteRequest
@@ -72,6 +88,17 @@ class BatchPlanItem(BaseModel):
     switch_steps: tuple[BatchSwitchStep,...]=()
     transition_kind: Literal['manual','fixed']='manual'
     transition_reasons: tuple[str,...]=()
+
+    @field_validator('request','route_selection','configuration_scope')
+    @classmethod
+    def detach_snapshots(cls,value):
+        return value.model_copy(deep=True)
+
+    def __getattribute__(self,name):
+        value=super().__getattribute__(name)
+        if name in ('request','route_selection','configuration_scope'):
+            return value.model_copy(deep=True)
+        return value
 
 
 class BatchPlan(BaseModel):
