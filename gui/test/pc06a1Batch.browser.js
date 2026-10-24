@@ -139,8 +139,27 @@ export async function assertBatchRouteHighlight(page, polarization) {
   },polarization)
 }
 
+// R1已完成批的真实API审计；不注入响应或补造回读。
+export async function inspectMockSwitchBatch(page,base,labId,jobId) {
+  const root=`${base}/api/v1/lab-profiles/${labId}`
+  const response=await page.request.get(`${root}/route-calibration-batches/${jobId}`)
+  if(!response.ok())throw Error(await response.text())
+  const final=await response.json(),children=[]
+  if(final.status!=='completed'||final.f64_control_released!==null||!final.finalization_committed)throw Error('模拟父最终状态错误')
+  for(const [index,item] of final.items.entries()){
+    const receipt=item.switch_receipts?.[0]
+    if(item.status!=='simulated'||item.switch_receipts.length!==1||receipt.command!==['1:INT_RELAY_A_NO','1:INT_RELAY_A_NC'][index]||
+      receipt.kind!=='command_preview'||receipt.simulated!==true||receipt.raw!==null||receipt.position!=null||receipt.write_return!=null)throw Error('模拟开关命令缺失或补真')
+    const child=await(await page.request.get(`${root}/fixed-route-acquisitions/${item.run_id}`)).json()
+    const eligibility=await(await page.request.get(`${root}/fixed-route-acquisitions/${item.run_id}/application-preview`)).json()
+    if(eligibility.eligibility.eligible_for_adoption||child.result.net_loss_db!==null)throw Error('模拟错误采用')
+    children.push({child,eligibility})
+  }
+  return {final,children}
+}
+
 // F1：正式同时集合仍422；独立候选与child冻结采用不借用正式集合。
-export async function serialCandidates(page,{base='http://127.0.0.1:5189',output='output/pc06a1-task6'}={}) {
+export async function serialCandidates(page,{base='http://127.0.0.1:5189',output='output/pc06a1-task6',frequency=2595,startStatus=202,evidencePrefix='f1'}={}) {
   page.setDefaultTimeout(8000)
   await page.goto(base)
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click()
@@ -155,29 +174,32 @@ export async function serialCandidates(page,{base='http://127.0.0.1:5189',output
   const formal=await page.request.get(path)
   const candidates=await(await page.request.get(`${path}&selection_scope=individual`)).json()
   if(formal.status()!==422||candidates.length!==2||candidates.some(c=>c.ce_port!=='B1.1'))throw Error('正式门或串行候选不符')
+  await page.waitForFunction(()=>document.querySelector('[data-testid="route-batch-panel"] fieldset')?.disabled===false)
   await panel.locator('.mantine-MultiSelect-root').click()
   for(const c of ['oh','ov'])await page.getByRole('option').filter({hasText:` · ${c}`}).click()
   await page.keyboard.press('Escape')
-  await panel.getByLabel('批量频点（MHz，逗号分隔）',{exact:true}).fill('2595')
+  await panel.getByLabel('批量频点（MHz，逗号分隔）',{exact:true}).fill(String(frequency))
   await panel.getByLabel('批量请求功率（dBm，不作实测值）',{exact:true}).fill('-30')
   await panel.getByLabel('每项采样数（2–10）',{exact:true}).fill('2')
   for(const c of ['oh','ov']){
-    await panel.getByLabel(`参考天线／位置 ${c} @2595`,{exact:true}).fill('REF 中心')
-    await panel.getByLabel(`接收线损（dB） ${c} @2595`,{exact:true}).fill('2')
-    await panel.getByLabel(`接收线依据 ${c} @2595`,{exact:true}).fill('隔离脚本transport非实物证据')
+    await panel.getByLabel(`参考天线／位置 ${c} @${frequency}`,{exact:true}).fill('REF 中心')
+    await panel.getByLabel(`接收线损（dB） ${c} @${frequency}`,{exact:true}).fill('2')
+    await panel.getByLabel(`接收线依据 ${c} @${frequency}`,{exact:true}).fill('隔离软件验证，非实物证据')
   }
   for(const name of ['已核对清单的固定接线条件','已确认请求功率及现场安全条件'])await panel.getByRole('checkbox',{name,exact:true}).check()
   await panel.getByRole('button',{name:'预览完整批清单',exact:true}).click()
   await panel.getByText('服务器完整清单：2项',{exact:true}).waitFor()
-  await page.screenshot({path:`${output}/f1-serial-preview.png`})
+  await page.screenshot({path:`${output}/${evidencePrefix}-serial-preview.png`})
   await panel.getByLabel('接线声明操作员（自述，非认证身份）',{exact:true}).fill('隔离软件验收')
   await panel.getByLabel('接线核对说明',{exact:true}).fill('同CE互斥脚本transport，仅软件证据')
   await panel.getByRole('button',{name:'确认本范围接线声明并重新预览',exact:true}).click()
   const start=page.waitForResponse(r=>r.url().endsWith('/route-calibration-batches')&&r.request().method()==='POST')
   await panel.getByRole('button',{name:'明确开始此批校准',exact:true}).click()
-  const response=await start;if(response.status()!==202)throw Error(await response.text())
+  const response=await start;if(response.status()!==startStatus)throw Error(await response.text())
   const initial=await response.json()
-  return {lab,formal_status:formal.status(),formal_body:await formal.json(),candidates,initial}
+  return {lab,formal_status:formal.status(),formal_body:await formal.json(),candidates,initial,
+    start_status:response.status(),start_request:response.request().postDataJSON(),
+    idempotency_key:response.request().headers()['idempotency-key']}
 }
 
 // 独立测试进程已脚本化全部transport且禁止外连；不称全Mock或实物资格。
