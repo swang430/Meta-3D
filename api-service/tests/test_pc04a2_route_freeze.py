@@ -59,6 +59,40 @@ def entries(execution):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('entrypoint',['runner','session','adhoc'])
+async def test_missing_chamber_creation_freezes_unavailable_and_strict_hardware_stays_blocked(
+        client,configured,db_session,launch,monkeypatch,entrypoint):
+    from app.api import commissioning as api
+    from app.services.test_execution import StepExecutionResult,StepExecutionStatus
+    from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation
+    chamber_id=configured.chamber_config_id
+    configured.chamber_config_id=None;db_session.commit()
+    monkeypatch.setattr(api,'_freeze_instrument_lease',lambda *args,**kwargs:lambda *args:None)
+    async def no_hardware(context):
+        return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+    monkeypatch.setattr(api,'dispatch_step',no_hardware)
+    if entrypoint=='runner':
+        execution=await launch()
+    else:
+        endpoint='/api/v1/commissioning/sessions' if entrypoint=='session' else '/api/v1/commissioning/diagnostic/run-phase'
+        body={'lab_profile_id':str(configured.id)}
+        if entrypoint=='adhoc':body.update(phase_name='analysis',config_overrides={'frequency_hz':2595e6})
+        else:body['frequency_hz']=2595e6
+        response=client.post(endpoint,json=body)
+        assert response.status_code in (200,201),response.text
+        execution=db_session.query(TestExecution).order_by(TestExecution.started_at.desc()).first()
+    frozen=read_execution_route_compensation(execution)
+    assert frozen['chamber_id'] is None and frozen['topology_id'] is None
+    assert frozen['legacy_selection_reason']=='missing_configuration'
+    assert frozen['route_entries']==[] and frozen['source_records']==[] and frozen['warnings']
+    verdict=evaluate_path_loss_preflight(db_session,execution,chamber_id=None,frequency_mhz=2595,
+        operating_mode='mimo_ota',precheck_strict_cal=True,channel_emulator_execution_mode='real')
+    assert verdict.blocker is not None and verdict.application['status']=='not_applied'
+    configured.chamber_config_id=chamber_id;db_session.commit()
+    assert read_execution_route_compensation(execution)==frozen  # 后配暗室不能补填旧执行
+
+
+@pytest.mark.asyncio
 async def test_new_confirmation_does_not_change_already_frozen_execution(client,configured,real_capture,
         legacy,launch,db_session,topology_two_chains):
     first=await launch()

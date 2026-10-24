@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from app.db.migration_helpers import table_exists, index_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +21,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """仅新增空表；不为历史采集回填确认或认证状态。"""
-    op.create_table('route_calibration_applications',
+    # baseline uses current Base.metadata; both fresh and create_all databases
+    # may already contain these tables. Guard each operation, not DB exceptions.
+    if not table_exists('route_calibration_applications'):
+        op.create_table('route_calibration_applications',
         sa.Column('id',sa.UUID(),primary_key=True),
         sa.Column('lab_profile_id',sa.UUID(),sa.ForeignKey('lab_profiles.id'),nullable=False),
         sa.Column('acquisition_run_id',sa.UUID(),sa.ForeignKey('diagnostic_runs.id'),nullable=False),
@@ -30,9 +34,11 @@ def upgrade() -> None:
         sa.Column('request_payload',sa.JSON(),nullable=False),
         sa.Column('record',sa.JSON(),nullable=False),
         sa.UniqueConstraint('lab_profile_id','idempotency_key',name='uq_route_application_idempotency'))
-    op.create_index('ix_route_calibration_applications_lab_profile_id',
-        'route_calibration_applications',['lab_profile_id'])
-    op.create_table('route_calibration_selections',
+    if not index_exists('route_calibration_applications','ix_route_calibration_applications_lab_profile_id'):
+        op.create_index('ix_route_calibration_applications_lab_profile_id',
+            'route_calibration_applications',['lab_profile_id'])
+    if not table_exists('route_calibration_selections'):
+        op.create_table('route_calibration_selections',
         sa.Column('id',sa.UUID(),primary_key=True),
         sa.Column('lab_profile_id',sa.UUID(),sa.ForeignKey('lab_profiles.id'),nullable=False),
         sa.Column('topology_id',sa.UUID(),sa.ForeignKey('switch_topologies.id'),nullable=False),
@@ -48,6 +54,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """仅撤销本revision的两张表。"""
-    op.drop_table('route_calibration_selections')
-    op.drop_index('ix_route_calibration_applications_lab_profile_id',table_name='route_calibration_applications')
-    op.drop_table('route_calibration_applications')
+    if table_exists('route_calibration_selections'):
+        op.drop_table('route_calibration_selections')
+    if index_exists('route_calibration_applications','ix_route_calibration_applications_lab_profile_id'):
+        op.drop_index('ix_route_calibration_applications_lab_profile_id',table_name='route_calibration_applications')
+    if table_exists('route_calibration_applications'):
+        op.drop_table('route_calibration_applications')

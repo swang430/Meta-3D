@@ -165,7 +165,7 @@ async def test_analysis_recomputes_throughput_from_window_trust_not_raw_flags(
     )
     monkeypatch.setattr(analysis_module, "write_phase_result", lambda *_args: None)
     monkeypatch.setattr(
-        analysis_module, "path_loss_application_is_formally_verified", lambda _v: True
+        analysis_module, "path_loss_measurement_is_verified", lambda _v: True
     )
     monkeypatch.setattr(analysis_module, "throughput_scope_is_verified", lambda _v: True)
     monkeypatch.setattr(analysis_module, "rf_kpi_scope_is_verified", lambda _v: True)
@@ -369,7 +369,7 @@ def test_report_even_position_statistics_use_the_arithmetic_median():
 
     with patch(
         "app.services.mimo_ota.executors.report."
-        "path_loss_application_is_formally_verified",
+        "path_loss_measurement_is_verified",
         return_value=True,
     ):
         content = _build_mimo_ota_content_data(execution, datetime(2026, 1, 1))

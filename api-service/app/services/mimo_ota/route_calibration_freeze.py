@@ -41,8 +41,16 @@ def _execution_route(route):
 def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
     """新确认仅精确频点/完整路径适用；旧来源仍沿既有频率/mode政策逐链核对。"""
     lab=db.get(LabProfile,UUID(str(lab_id)))
-    if lab is None or not lab.is_active or lab.chamber_config_id is None:
-        raise ValueError('执行路损冻结需要明确活动实验室及暗室')
+    if lab is None or not lab.is_active:
+        raise ValueError('执行路损冻结需要明确活动实验室')
+    if lab.chamber_config_id is None:
+        # A session can be prepared before chamber configuration. Freeze that
+        # absence now; never fill it from a later current configuration.
+        return dict(version=1,lab_profile_id=str(lab.id),chamber_id=None,topology_id=None,
+            operating_mode=mode,frequency_mhz=frequency_mhz,route_entries=[],source_records=[],
+            selected_at=datetime.now(timezone.utc).isoformat(),
+            warnings=['未绑定暗室，执行校准来源不可用；创建会话不表示可以正式执行硬件'],
+            legacy_selection_reason='missing_configuration',legacy_selected_certificate_id=None)
     resolution=resolve_rf_chains(db,lab.id,mode)
     routes={}
     warnings=list(resolution.warnings)

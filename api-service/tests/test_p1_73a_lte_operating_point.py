@@ -528,7 +528,7 @@ async def test_analysis_uses_lte_absolute_threshold_without_theoretical_peak(mon
     )
     monkeypatch.setattr(analysis_module, "write_phase_result", lambda *_args: None)
     monkeypatch.setattr(
-        analysis_module, "path_loss_application_is_formally_verified", lambda _v: True
+        analysis_module, "path_loss_measurement_is_verified", lambda _v: True
     )
     monkeypatch.setattr(analysis_module, "throughput_scope_is_verified", lambda _v: True)
     monkeypatch.setattr(analysis_module, "rf_kpi_scope_is_verified", lambda _v: True)
