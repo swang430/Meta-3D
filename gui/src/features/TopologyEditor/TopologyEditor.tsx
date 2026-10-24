@@ -47,7 +47,7 @@ import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalL
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
 import { getNodePorts, nodePortsToSelectOptions } from './nodePortHelpers';
-import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, CALIBRATION_MODE } from './topologyDraft';
+import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection, TopologyNode } from '../../api/switchTopologyService';
 import apiClient from '../../api/client';
@@ -120,8 +120,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [dirty, onDirtyChange]);
 
   const initialNodes: Node[] = React.useMemo(() => {
-    const currentMode = draft.operating_modes.find(m => m.id === activeMode);
-    const activeConnectionIds = new Set(currentMode?.active_connections || []);
+    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
 
     // Collect node IDs that have at least one active connection
     const activeNodeIds = new Set<string>();
@@ -151,8 +150,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [draft, activeMode]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
-    const currentMode = draft.operating_modes.find(m => m.id === activeMode);
-    const activeConnectionIds = new Set(currentMode?.active_connections || []);
+    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
 
     return draft.connections
       .filter((c) => activeConnectionIds.has(c.id))

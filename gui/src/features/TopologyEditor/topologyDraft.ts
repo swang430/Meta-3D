@@ -2,6 +2,19 @@ import type { SwitchTopology, TopologyNode, TopologyConnection } from '../../api
 import { getNodePorts } from './nodePortHelpers';
 
 export const CALIBRATION_MODE = 'calibration';
+// 与 TopologyService.resolve_paths/get_mode_connections 一致；空列表仍有历史标签回退语义。
+export function getDraftModeConnectionIds(draft: SwitchTopology, mode: string): string[] {
+  const configured=draft.operating_modes.find(m=>m.id===mode);
+  if (!configured) return [];
+  const active=configured.active_connections;
+  return active?.length ? [...active] : draft.connections.filter(c=>c.modes?.includes(mode)).map(c=>c.id);
+}
+function synchronizeModeDeclarations(draft: SwitchTopology, changed: Set<string>): SwitchTopology {
+  return {...draft,connections:draft.connections.map(connection=>({...connection,modes:[
+    ...(connection.modes||[]).filter(id=>!changed.has(id)),
+    ...draft.operating_modes.filter(m=>changed.has(m.id)&&m.active_connections?.includes(connection.id)).map(m=>m.id),
+  ]}))};
+}
 export function addDraftNode(draft: SwitchTopology, node: TopologyNode, mode: string): SwitchTopology {
   return {...draft, nodes: [...draft.nodes, {...node, params: {...node.params, visible_modes: [mode]}}]};
 }
@@ -12,10 +25,11 @@ export function addDraftConnection(draft: SwitchTopology, connection: TopologyCo
     if (!node || !pin || !getNodePorts(node).includes(pin)) throw new Error('请选择已声明的器件端口');
     if (node.params.connection_scope === 'calibration' && mode !== CALIBRATION_MODE) throw new Error('校准器件只能在校准接线模式中连接');
   }
-  return {...draft, connections:[...draft.connections,{...connection,modes:[mode]}], operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...(m.active_connections||[]),connection.id]}:m)};
+  return synchronizeModeDeclarations({...draft,connections:[...draft.connections,{...connection,modes:[mode]}],operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...getDraftModeConnectionIds(draft,m.id),connection.id]}:m)},new Set([mode]));
 }
 export function removeDraftConnections(draft: SwitchTopology, ids: string[]): SwitchTopology {
   const removed = new Set(ids);
+  const changed = new Set(draft.operating_modes.filter(m=>getDraftModeConnectionIds(draft,m.id).some(id=>removed.has(id))).map(m=>m.id));
   const affected = new Set(draft.connections.filter(c=>removed.has(c.id)).flatMap(c=>[c.source,c.target]));
   const nodes = draft.nodes.map(node=>{
     if (!affected.has(node.id) || Array.isArray(node.params.visible_modes)) return node;
@@ -23,11 +37,11 @@ export function removeDraftConnections(draft: SwitchTopology, ids: string[]): Sw
     const incident = new Set(draft.connections.filter(c=>c.source===node.id||c.target===node.id).map(c=>c.id));
     const visible_modes = draft.operating_modes.filter(mode=>
       (node.params.connection_scope!=='calibration' || mode.id===CALIBRATION_MODE) &&
-      (mode.active_connections||[]).some(id=>incident.has(id))
+      getDraftModeConnectionIds(draft,mode.id).some(id=>incident.has(id))
     ).map(mode=>mode.id);
     return {...node,params:{...node.params,visible_modes}};
   });
-  return {...draft,nodes,connections:draft.connections.filter(c=>!removed.has(c.id)),operating_modes:draft.operating_modes.map(m=>({...m,active_connections:(m.active_connections||[]).filter(id=>!removed.has(id))}))};
+  return synchronizeModeDeclarations({...draft,nodes,connections:draft.connections.filter(c=>!removed.has(c.id)),operating_modes:draft.operating_modes.map(m=>changed.has(m.id)?{...m,active_connections:getDraftModeConnectionIds(draft,m.id).filter(id=>!removed.has(id))}:m)},changed);
 }
 export function removeDraftNodes(draft: SwitchTopology, ids: string[]): SwitchTopology {
   const removed = new Set(ids);

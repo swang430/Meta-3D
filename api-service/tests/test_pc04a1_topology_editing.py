@@ -119,3 +119,22 @@ def test_calibration_only_fallback_remains_available_without_normal_paths(world,
     assert normal_paths.json() == []
     assert normal_matrix.json()['matrix'] == {}
     assert len(calibration_paths.json()) == 1
+
+
+@pytest.mark.parametrize('partial_history', [False, True])
+def test_patch_uses_schema_default_pins_without_accepting_explicit_bad_pin(world, saved, partial_history):
+    connection = {'id': 'ab', 'source': 'a', 'target': 'b'}
+    if partial_history:
+        saved.connections = [connection]
+        world['db'].commit()
+        payload = {'name': '仅改名称'}
+    else:
+        payload = {'connections': [connection]}
+    url = f'/api/v1/switch-topologies/{saved.id}'
+    params = {'lab_profile_id': str(world['lab_a'].id)}
+    response = client.patch(url, params=params, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['connections'][0]['source_pin'] == 'out'
+    assert response.json()['connections'][0]['target_pin'] == 'in'
+    invalid = client.patch(url, params=params, json={'connections': [{**connection, 'source_pin': 'missing'}]})
+    assert invalid.status_code == 422, invalid.text

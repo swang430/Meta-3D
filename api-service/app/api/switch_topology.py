@@ -19,6 +19,7 @@ from app.schemas.switch_topology import (
     SwitchTopologyListResponse,
     SignalPathResponse,
     CalibrationMatrixResponse,
+    TopologyConnection,
 )
 from app.services.topology_service import TopologyService
 from app.services.chamber_resolution import resolve_current_chamber
@@ -55,7 +56,8 @@ def _validate_structure(nodes, connections, modes) -> None:
             if node is None:
                 raise HTTPException(422, detail=f"连线 {conn['id']} 引用了不存在的器件")
             ports = node.get("params", {}).get("ports")
-            if ports is not None and conn.get(f"{end}_pin") not in ports:
+            pin = conn.get(f"{end}_pin", TopologyConnection.model_fields[f"{end}_pin"].default)
+            if ports is not None and pin not in ports:
                 raise HTTPException(422, detail=f"连线 {conn['id']} 引用了未声明的端口")
     for mode in mode_index.values():
         # 与 TopologyService.resolve_paths 的实际消费一致：空活动列表会回退到连线自身的模式声明。

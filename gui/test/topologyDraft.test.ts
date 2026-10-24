@@ -89,3 +89,34 @@ test('删除连接不会放宽校准器件已有或隐含的模式隔离',()=>{
   const changed=removeDraftConnections(draft,['ab']);
   assert.deepEqual(changed.nodes[0].params.visible_modes,['calibration']);
 });
+test('删除显式最后活动边不会经旧标签启用停用边，删节点同样保持',()=>{
+  const draft=fixture();
+  draft.operating_modes=[{id:'mimo_ota',name:'测试',active_connections:['ab']}];
+  draft.connections[1].modes=['mimo_ota'];
+  for(const changed of [removeDraftConnections(draft,['ab']),removeDraftNodes(draft,['a'])]){
+    assert.deepEqual(changed.operating_modes[0].active_connections,[]);
+    assert.deepEqual(changed.connections.filter(c=>c.modes?.includes('mimo_ota')).map(c=>c.id),[]);
+  }
+});
+test('标签回退模式增删保留原有效集合，不意外停用另一边',()=>{
+  const draft=fixture();
+  draft.operating_modes=[{id:'mimo_ota',name:'测试',active_connections:[]}];
+  draft.connections.forEach(c=>{c.modes=['mimo_ota']});
+  const added=addDraftConnection(draft,{id:'ac',source:'a',target:'c',source_pin:'out',target_pin:'in'},'mimo_ota');
+  assert.deepEqual(added.operating_modes[0].active_connections,['ab','bc','ac']);
+  const removed=removeDraftConnections(draft,['ab']);
+  assert.deepEqual(removed.operating_modes[0].active_connections,['bc']);
+  assert.deepEqual(removed.connections.filter(c=>c.modes?.includes('mimo_ota')).map(c=>c.id),['bc']);
+  const nodeRemoved=removeDraftNodes(draft,['a']);
+  assert.deepEqual(nodeRemoved.operating_modes[0].active_connections,['bc']);
+});
+test('编辑当前模式不把无关模式的标签回退改成执行活动声明',()=>{
+  const draft=fixture();
+  draft.operating_modes[0].active_connections=['ab'];
+  draft.operating_modes[1].active_connections=[];
+  draft.connections[1].modes=['calibration'];
+  for(const changed of [addDraftConnection(draft,{id:'ac',source:'a',target:'c',source_pin:'out',target_pin:'in'},'mimo_ota'),removeDraftConnections(draft,['ab'])]){
+    assert.deepEqual(changed.operating_modes[1].active_connections,[]);
+    assert.deepEqual(changed.connections.find(c=>c.id==='bc')?.modes,['calibration']);
+  }
+});
