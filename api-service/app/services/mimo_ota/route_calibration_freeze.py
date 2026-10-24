@@ -77,7 +77,10 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
             snapshot={column.name:_plain(getattr(saved,column.name)) for column in saved.__table__.columns})
     route_entries=[]
     now=datetime.now(timezone.utc)
-    for chain in resolution.chains:
+    # 完整路径的CE端点是身份权威；旧终端绑定可能把中间衰减器标签当端口，甚至丢链。
+    chains={chain.chain_id:chain for chain in resolution.chains}
+    chains.update(routes)
+    for chain in chains.values():
         route=routes.get(chain.chain_id)
         entry=dict(chain_id=chain.chain_id,ce_port=chain.ce_port,probe_id=chain.probe_id,
             polarization=chain.polarization,route_digest=route.route_digest if route else None,
@@ -193,12 +196,16 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
         return None
     try:
         current=resolve_rf_chains(db,UUID(frozen['lab_profile_id']),frozen['operating_mode'])
-        actual={(row.chain_id,row.ce_port,row.probe_id,row.polarization) for row in current.chains}
-        if current.topology_id!=frozen['topology_id'] or actual!=expected:
-            return 'path-loss route identity changed; create a new execution to review the saved route'
+        routes={}
         if any(row['execution_route_identity'] is not None for row in frozen['route_entries']):
             routes={route.chain_id:route for route in list_route_selections(db,UUID(frozen['lab_profile_id']),
                 UUID(frozen['topology_id']),frozen['operating_mode'])}
+        chains={row.chain_id:row for row in current.chains}
+        chains.update(routes)
+        actual={(row.chain_id,row.ce_port,row.probe_id,row.polarization) for row in chains.values()}
+        if current.topology_id!=frozen['topology_id'] or actual!=expected:
+            return 'path-loss route identity changed; create a new execution to review the saved route'
+        if any(row['execution_route_identity'] is not None for row in frozen['route_entries']):
             if any(row['execution_route_identity'] is not None and (row['chain_id'] not in routes or
                 _execution_route(routes[row['chain_id']])!=row['execution_route_identity']) for row in frozen['route_entries']):
                 return 'path-loss route identity changed; create a new execution to review the saved route'

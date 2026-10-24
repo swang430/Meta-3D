@@ -272,3 +272,40 @@ async def test_actual_measure_target_is_checked_even_if_current_database_changes
     # 实际消费对象已指向B3；再读当前DB又是B1.1，不能用后一次查询替它做判定。
     assert frozen_route_identity_error(db_session,execution.config['route_calibration_freeze']) is None
     assert frozen_route_identity_error(db_session,execution.config['route_calibration_freeze'],resolved_topology=actual) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('with_confirmation',[True,False])
+@pytest.mark.parametrize('pad_label',['衰减器','?'])
+async def test_multihop_freeze_uses_complete_route_without_relabelling_actual_target(client,configured,real_capture,
+        legacy,launch,db_session,topology_two_chains,with_confirmation,pad_label):
+    from app.services.mimo_ota.switch_orchestrator import orchestrate_switch_topology
+    from app.services.mimo_ota.route_calibration_freeze import frozen_route_identity_error,read_execution_route_compensation
+    topology_two_chains.nodes=[*topology_two_chains.nodes,
+        {'id':'pad-middle','type':'pad','label':pad_label,'params':{'ports':['in','out']}}]
+    topology_two_chains.connections=[{**edge,**({'source':'pad-middle'} if edge['id']=='conn_p0v' else {})}
+        for edge in topology_two_chains.connections]+[
+        {'id':'feed-pad','source':'ce_b1','target':'pad-middle','source_pin':'out','target_pin':'in'}]
+    topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal',
+        'active_connections':['feed-pad','conn_p0v','conn_p0h']}]
+    db_session.commit()
+    row=real_capture()
+    if with_confirmation:
+        response=confirm(client,configured,payload(client,configured,row))
+        assert response.status_code==201,response.text
+    execution=await launch()
+    selected=entries(execution)
+    assert selected['conn_p0v']['ce_port']=='B1.1'
+    assert selected['conn_p0v']['source_kind']==('confirmed_route' if with_confirmation else 'legacy_certificate')
+    assert selected['conn_p0v']['value_db']==(28 if with_confirmation else 20)
+    assert selected['conn_p0h']['value_db']==30
+    frozen=read_execution_route_compensation(execution)
+    assert frozen_route_identity_error(db_session,frozen) is None
+    if with_confirmation:
+        verdict=evaluate_path_loss_preflight(db_session,execution,chamber_id=configured.chamber_config_id,
+            frequency_mhz=2595,operating_mode='mimo_ota',precheck_strict_cal=True,channel_emulator_execution_mode='real')
+        assert verdict.application['status']=='not_applied' and verdict.application['reason']=='pending_compensation_wiring'
+        assert verdict.applied_certificate is None and verdict.blocker is not None
+    actual=orchestrate_switch_topology(db_session,configured.chamber_config_id,'mimo_ota')
+    assert next(binding.ce_port for binding in actual.probe_bindings if binding.connection_id=='conn_p0v')==pad_label
+    assert frozen_route_identity_error(db_session,frozen,resolved_topology=actual) is not None
