@@ -28,7 +28,7 @@ export function FixedRouteCalibrationCard({ labId }: { labId: string }) {
   const result = !preview.isPending && !preview.isError ? preview.data : undefined
   return <Card withBorder data-testid="fixed-route-calibration">
     <Stack gap="sm">
-      <Title order={4}>固定通路校准方法（PC-02A）</Title>
+      <Title order={4}>人工参考值计算（PC-02A，不连接仪器）</Title>
       <Alert color="yellow">开关固定在一条通路，不自动切换。这里只按人工输入计算，不连接仪器、不保存校准证书、不应用补偿、不改变就绪状态。</Alert>
       <Text size="sm">测量从F64物理输出口到参考天线端口的整条路径，包含开关、功放、线缆和探头。不要再加减这些器件的标称增益。</Text>
       <form onSubmit={event => {

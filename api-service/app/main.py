@@ -151,6 +151,10 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         logger.info("Monitoring broadcaster stopped")
 
+    # PC-04：先等本次单音停止与记录落盘，再关闭HAL，避免采集任务仍占用连接。
+    from app.services.calibration.fixed_route_jobs import shutdown_fixed_route_jobs
+    await shutdown_fixed_route_jobs()
+
     # Shutdown HAL service
     from app.services.instrument_hal_service import shutdown_hal_service
     try:
@@ -282,6 +286,8 @@ app.include_router(diagnostic_run.router, prefix=settings.api_v1_prefix)
 app.include_router(diagnostic_sequence.router, prefix=settings.api_v1_prefix)
 from app.api import f64_calibration_state
 app.include_router(f64_calibration_state.router, prefix=settings.api_v1_prefix)
+from app.api import fixed_route_acquisition
+app.include_router(fixed_route_acquisition.router, prefix=settings.api_v1_prefix)
 
 # Path loss calibration
 app.include_router(path_loss_router, prefix=settings.api_v1_prefix)
