@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Alert, Badge, Button, Card, Code, Group, Stack, Table, Text, Title } from '@mantine/core'
+import { Alert, Badge, Button, Card, Code, Group, Stack, Text, Title } from '@mantine/core'
 import { compareCalibrationScope, fetchCalibrationScope } from '../../api/labProfileService'
 import type { CalibrationScopeSnapshot } from '../../types/api'
 
@@ -47,12 +47,7 @@ export function CalibrationScopeCard({ labId, chamberId }: { labId: string; cham
           <Text size="sm" style={{ overflowWrap: 'anywhere' }}>当前配置摘要：{value.digest}</Text>
           <Text>模式：{value.payload.operating_mode} · {value.payload.chains.length} 条解析链</Text>
           {value.warnings.map((warning, index) => <Text size="sm" c="orange" key={index}>{warning}</Text>)}
-          <Table.ScrollContainer minWidth={520}>
-            <Table><Table.Thead><Table.Tr><Table.Th>链身份</Table.Th><Table.Th>CE 端口</Table.Th><Table.Th>探头</Table.Th><Table.Th>极化</Table.Th><Table.Th>拓扑声明损耗 dB（非本片实测）</Table.Th></Table.Tr></Table.Thead>
-              <Table.Tbody>{value.payload.chains.map((chain, index) => <Table.Tr key={`${chain.chain_id}-${index}`}>
-                <Table.Td>{chain.chain_id}</Table.Td><Table.Td>{chain.ce_port}</Table.Td><Table.Td>{chain.probe_id}</Table.Td><Table.Td>{chain.polarization}</Table.Td><Table.Td>{chain.cable_loss_db}</Table.Td>
-              </Table.Tr>)}</Table.Tbody></Table>
-          </Table.ScrollContainer>
+          <Text size="sm">各条通路请在射频拓扑图中查看；配置变化仅提醒复核，是否重新校准由操作员判断。</Text>
           <details><summary>查看配置明细（几何、器件、保存资源与绑定、探头、拓扑）</summary>
             <Code block style={{ maxHeight: 360, overflow: 'auto' }}>{JSON.stringify(value.payload, null, 2)}</Code>
           </details>
