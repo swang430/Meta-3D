@@ -4,9 +4,7 @@ import { fetchInstrumentCatalog, fetchReadiness } from '../../api/service'
 import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
 import { CalibrationScopeCard } from './CalibrationScopeCard'
-import { FixedRouteCalibrationCard } from './FixedRouteCalibrationCard'
 import { F64CalibrationStateCard } from './F64CalibrationStateCard'
-import { FixedRouteAcquisitionCard } from './FixedRouteAcquisitionCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
 function BindingCard({ title, binding }: {
@@ -70,8 +68,13 @@ export function LabOverview() {
     </Group>
     <Alert color="blue">默认总览不连接仪器、不同步LabProfile。主动点击“读取 F64 状态”会连接本实验室绑定的 F64 并保存诊断记录；不自动校准，不表示正式测试资格。</Alert>
     <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
-    <FixedRouteAcquisitionCard key={`fixed-route-acquisition:${labId}:${chamberId}`} labId={labId} />
-    <FixedRouteCalibrationCard key={`fixed-route:${labId}:${chamberId}`} labId={labId} />
+    <Alert color="blue">固定通路自动采集、历史和确认采用已移至「射频拓扑」原画布侧栏；先保存接线，再选择完整通路。下方人工参考量说明仍保留。</Alert>
+    <Card withBorder data-testid="fixed-route-method"><Stack gap="xs">
+      <Title order={4}>整条通路测量方法与参考面</Title>
+      <Text>整条净损耗 L_NET = P_CE − (P_SA + L_RX)。正值表示损耗，负值表示增益；不再增减功放、开关或探头的标称增益。</Text>
+      <Text size="sm">P_CE来自F64物理输出口实测，P_SA来自分析仪输入口实测；设置功率不是实测读数。L_RX只指参考天线到分析仪的接收线缆，须注明对应频率的资料来源。</Text>
+      <Text size="sm">此页仅保留方法说明。到「射频拓扑」保存接线、选择完整通路后自动采集；确认采用与计量认证资格分开，不能据此宣称DUT功率或正式认证通过。</Text>
+    </Stack></Card>
     <F64CalibrationStateCard key={`f64-state:${labId}`} labId={labId} />
     <Card withBorder>
       <Text>LabProfile：{lab.name}</Text>

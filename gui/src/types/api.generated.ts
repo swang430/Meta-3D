@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Application History */
+        get: operations["application_history_api_v1_lab_profiles__lab_profile_id__route_calibration_applications_get"];
+        put?: never;
+        /** Confirm Application */
+        post: operations["confirm_application_api_v1_lab_profiles__lab_profile_id__route_calibration_applications_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/fixed-route-acquisitions/{run_id}/application-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Application Preview */
+        get: operations["application_preview_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__application_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-paths": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paths */
+        get: operations["paths_api_v1_lab_profiles__lab_profile_id__route_calibration_paths_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lab-profiles/{lab_profile_id}/fixed-route-acquisitions": {
         parameters: {
             query?: never;
@@ -2857,12 +2909,221 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** RoutePort */
+        RoutePort: {
+            /** Connection Id */
+            connection_id: string;
+            /** Source */
+            source: string;
+            /** Source Pin */
+            source_pin: string;
+            /** Target */
+            target: string;
+            /** Target Pin */
+            target_pin: string;
+        };
+        /** RouteSelection */
+        RouteSelection: {
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Chamber Id
+             * Format: uuid
+             */
+            chamber_id: string;
+            /**
+             * Topology Id
+             * Format: uuid
+             */
+            topology_id: string;
+            /** Operating Mode */
+            operating_mode: string;
+            /** Chain Id */
+            chain_id: string;
+            /** Ce Port */
+            ce_port: string;
+            /** Probe Id */
+            probe_id: number;
+            /** Polarization */
+            polarization: string;
+            /** Node Ids */
+            node_ids: string[];
+            /** Connection Ids */
+            connection_ids: string[];
+            /** Ports */
+            ports: components["schemas"]["RoutePort"][];
+            /** Nodes */
+            nodes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Connections */
+            connections: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Calibration Node Ids */
+            calibration_node_ids: string[];
+            /** Calibration Connection Ids */
+            calibration_connection_ids: string[];
+            /** Calibration Nodes */
+            calibration_nodes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Calibration Connections */
+            calibration_connections: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Reference Antenna Id */
+            reference_antenna_id?: string | null;
+            /** Analyzer Category Id */
+            analyzer_category_id?: string | null;
+            /** Route Digest */
+            route_digest: string;
+            /** Configuration Digest */
+            configuration_digest?: string | null;
+        };
+        /** RouteEligibility */
+        RouteEligibility: {
+            /** Eligible For Adoption */
+            eligible_for_adoption: boolean;
+            /** Blockers */
+            blockers: string[];
+            /** Warnings */
+            warnings: string[];
+            /**
+             * Acquisition Run Id
+             * Format: uuid
+             */
+            acquisition_run_id: string;
+            /** Route Digest */
+            route_digest?: string | null;
+            /** Method */
+            method?: string | null;
+            /** Frequency Mhz */
+            frequency_mhz?: number | null;
+            /**
+             * Measurement Provenance
+             * @enum {string}
+             */
+            measurement_provenance: "real" | "simulated" | "unknown";
+            /**
+             * Certification Status
+             * @default unknown
+             * @constant
+             */
+            certification_status: "unknown";
+        };
+        /** RouteApplicationPreview */
+        RouteApplicationPreview: {
+            selection: components["schemas"]["RouteSelection"] | null;
+            /**
+             * Acquisition Run Id
+             * Format: uuid
+             */
+            acquisition_run_id: string;
+            /** Expected Current Application Id */
+            expected_current_application_id?: string | null;
+            /** Old Value Db */
+            old_value_db?: number | null;
+            /** New Net Loss Db */
+            new_net_loss_db?: number | null;
+            /** Delta Db */
+            delta_db?: number | null;
+            eligibility: components["schemas"]["RouteEligibility"];
+        };
+        /** ConfirmRouteApplication */
+        ConfirmRouteApplication: {
+            /**
+             * Acquisition Run Id
+             * Format: uuid
+             */
+            acquisition_run_id: string;
+            /** Route Digest */
+            route_digest: string;
+            /** Expected Current Application Id */
+            expected_current_application_id: string | null;
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Adoption Valid Until
+             * Format: date-time
+             */
+            adoption_valid_until: string;
+        };
+        /** RouteApplicationRecord */
+        RouteApplicationRecord: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Predecessor Id */
+            predecessor_id: string | null;
+            /**
+             * Acquisition Run Id
+             * Format: uuid
+             */
+            acquisition_run_id: string;
+            selection_snapshot: components["schemas"]["RouteSelection"];
+            /** Method */
+            method: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Coverage Snapshot */
+            coverage_snapshot: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Reference Snapshot */
+            reference_snapshot: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Net Loss Db */
+            net_loss_db: number;
+            /** Adoption Evidence Snapshot */
+            adoption_evidence_snapshot: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Operator Confirmed
+             * @constant
+             */
+            operator_confirmed: true;
+            /**
+             * Certification Status
+             * @default unknown
+             * @constant
+             */
+            certification_status: "unknown";
+            /** Confirmed At */
+            confirmed_at: string;
+            /** Confirmed By */
+            confirmed_by: string | null;
+        };
         /** FixedRouteRequest */
         FixedRouteRequest: {
             /** Chain Id */
             chain_id: string;
             /** Configuration Digest */
             configuration_digest: string;
+            /** Topology Id */
+            topology_id?: string | null;
+            /**
+             * Operating Mode
+             * @default mimo_ota
+             */
+            operating_mode: string;
+            /** Route Digest */
+            route_digest?: string | null;
             /** Frequency Mhz */
             frequency_mhz: number;
             /** Requested Power Dbm */
@@ -2898,9 +3159,9 @@ export interface components {
             /**
              * Version
              * @default 1
-             * @constant
+             * @enum {integer}
              */
-            version: 1;
+            version: 1 | 2;
             /**
              * Run Id
              * Format: uuid
@@ -5193,6 +5454,141 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    application_history_api_v1_lab_profiles__lab_profile_id__route_calibration_applications_get: {
+        parameters: {
+            query: {
+                topology_id: string;
+                chain_id: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteApplicationRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_application_api_v1_lab_profiles__lab_profile_id__route_calibration_applications_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRouteApplication"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteApplicationRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    application_preview_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions__run_id__application_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteApplicationPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paths_api_v1_lab_profiles__lab_profile_id__route_calibration_paths_get: {
+        parameters: {
+            query: {
+                topology_id: string;
+                operating_mode: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteSelection"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     history_api_v1_lab_profiles__lab_profile_id__fixed_route_acquisitions_get: {
         parameters: {
             query?: {

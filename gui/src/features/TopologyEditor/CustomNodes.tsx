@@ -1,5 +1,5 @@
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { useEffect } from 'react';
+import { Handle as FlowHandle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { createContext, useContext, useEffect } from 'react';
 import { ThemeIcon, Group, Text, Stack, Badge, Box, Tooltip } from '@mantine/core';
 import { 
   IconServer, 
@@ -14,6 +14,12 @@ import {
 } from '@tabler/icons-react';
 import { formatPortLabel, resolvePortHandles } from './baseStationPorts';
 import { getNodePorts } from './nodePortHelpers';
+
+// A hidden legacy handle with the same ID still wins ReactFlow's geometry lookup.
+// Explicit declarations replace those handles; they must not coexist in the DOM.
+const DeclaredPortsContext = createContext(false);
+const Handle = (props: React.ComponentProps<typeof FlowHandle>) =>
+  useContext(DeclaredPortsContext) ? null : <FlowHandle {...props}/>;
 
 // ==========================================
 // Base Node Style
@@ -316,8 +322,7 @@ function withDeclaredPorts(Component: any) {
     useEffect(()=>updateInternals(props.id),[props.id,signature,updateInternals]);
     if (!Array.isArray(ports)) return <Component {...props}/>;
     return <div className="topology-declared-node" style={{position:'relative'}}>
-      <style>{'.topology-declared-node .react-flow__handle:not(.topology-declared-handle){display:none}'}</style>
-      <Component {...props}/>
+      <DeclaredPortsContext.Provider value={true}><Component {...props}/></DeclaredPortsContext.Provider>
       {getNodePorts({id:props.id,type:props.type,label:'',position:{x:0,y:0},params:props.data.params}).flatMap((port,index,list)=>{
         // 已有基站端口角色仍由原配置决定，不能把上行入口扩成下行出口。
         const role = ['communication_tester','bse_port'].includes(props.type) ? props.data.params?.port_roles?.[port] : undefined;

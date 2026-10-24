@@ -9,6 +9,12 @@ export type F64StateRequest = import('./api.generated').components['schemas']['F
 export type F64StateRecord = import('./api.generated').components['schemas']['F64StateRecord']
 export type FixedRouteRequest = import('./api.generated').components['schemas']['FixedRouteRequest']
 export type FixedRouteRecord = import('./api.generated').components['schemas']['FixedRouteRecord']
+export type RouteSelection = import('./api.generated').components['schemas']['RouteSelection']
+export type RoutePort = import('./api.generated').components['schemas']['RoutePort']
+export type RouteEligibility = import('./api.generated').components['schemas']['RouteEligibility']
+export type RouteApplicationPreview = import('./api.generated').components['schemas']['RouteApplicationPreview']
+export type ConfirmRouteApplication = import('./api.generated').components['schemas']['ConfirmRouteApplication']
+export type RouteApplicationRecord = import('./api.generated').components['schemas']['RouteApplicationRecord']
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }
