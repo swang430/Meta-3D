@@ -28,10 +28,10 @@ def _connection_matches(driver, step):
         and EtslSwitchDriver._TERMINATOR_MAP[terminator]==driver._line_terminator)
 
 
-async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink):
+async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink, *, simulated=False):
     """返回False必须阻止测量；sink先持久化，失败不得继续下发。
 
-    仅允许真实已核验HAL；模拟分支由协调器标明“模拟人工步骤”。
+    真实I/O仅允许已核验HAL；模拟只复用命令builder并落模拟来源，不构造回读或auto资格。
     身份查询复用emcenter_switch_health既有命令，不发探测/复位/清错。
     """
     for step in frozen_steps:
@@ -39,7 +39,7 @@ async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink):
         base = dict(path_name=step.path_name, node_id=step.node_id,
             connection_id=str(step.connection_id), category_id=str(step.category_id),
             instrument_model_id=str(step.instrument_model_id), endpoint=step.endpoint,
-            driver_id=getattr(driver, 'instrument_id', None), simulated=is_mock_driver(driver),
+            driver_id=getattr(driver, 'instrument_id', None), simulated=simulated or is_mock_driver(driver),
             host_time=datetime.now(timezone.utc).isoformat(), error=None, raw=None, command=None)
         def emit(**extra):
             receipt_sink({**base, 'host_time':datetime.now(timezone.utc).isoformat(), **extra})
@@ -49,6 +49,13 @@ async def apply_batch_switch_steps(hal, frozen_steps, receipt_sink):
         target = mapping.get('output_port', mapping.get('position'))
         valid_target = ((kind == 'spdt' and type(target) is str and target in ('NC', 'NO')) or
             (kind == 'sp6t' and type(target) is int and 1 <= target <= 6))
+        if simulated:
+            if not isinstance(relay,str) or not valid_target:
+                emit(error='模拟映射缺少合法命令参数')
+                return False
+            # 复用真实下发侧同一builder（Part #1801188 Rev A p9/p12）；仅预览，不填位置或写成功。
+            emit(kind='command_preview',command=build_emcenter_switch_command(relay,target))
+            continue
         if (type(driver) is not EtslSwitchDriver or is_mock_driver(driver) or step.driver_mode != 'real'
             or driver._connection_config_error or not _connection_matches(driver,step)
             or driver._mappings.get(step.path_name) != mapping

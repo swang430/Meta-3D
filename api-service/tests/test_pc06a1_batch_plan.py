@@ -166,6 +166,34 @@ def test_fixed_direct_plan_has_no_switch_steps(db_session,configured,topology_tw
     assert plan.items[0].switch_steps==()
 
 
+@pytest.mark.parametrize('entry',['explicit','individual','scope','batch'])
+def test_one_route_cannot_require_two_positions_of_the_same_relay(db_session,configured,shared_switch,entry):
+    from app.services.calibration.route_calibration import resolve_explicit_route_selection,list_individual_route_selections
+    from app.services.calibration.configuration_scope import build_selected_route_calibration_scope
+    from app.services.calibration.route_batch_plan import build_batch_plan
+    topo,conn=shared_switch
+    nodes,edges=copy.deepcopy(topo.nodes),copy.deepcopy(topo.connections)
+    nodes.append(dict(id='sw2',type='switch_slot',params=copy.deepcopy(nodes[2]['params'])))
+    nodes[3]['params']['rf_path_selection']={'connection_ids':['iv','between','ov'],
+        'switch_mappings':[dict(node_id='sw',path_name='v'),dict(node_id='sw2',path_name='second')]}
+    edges[2]['source']='sw2';edges[2]['source_pin']='out2'
+    edges.append(dict(id='between',source='sw',source_pin='out1',target='sw2',target_pin='in1'))
+    maps=copy.deepcopy(conn.connection_params)
+    maps['port_maps']['v'].update(relay_type='sp6t',output_port=1)
+    maps['port_maps']['second']={**maps['port_maps']['v'],'output_port':2,'topology_output_pin':'out2'}
+    topo.nodes,topo.connections,conn.connection_params=nodes,edges,maps
+    topo.operating_modes=[dict(id='mimo_ota',active_connections=[e['id'] for e in edges])]
+    db_session.commit()
+    calls={
+        'explicit':lambda:resolve_explicit_route_selection(db_session,configured.id,topo.id,'mimo_ota','ov',['iv','between','ov']),
+        'individual':lambda:list_individual_route_selections(db_session,configured.id,topo.id,'mimo_ota'),
+        'scope':lambda:build_selected_route_calibration_scope(db_session,configured.id,'mimo_ota',topology_id=topo.id,chain_id='ov'),
+        'batch':lambda:build_batch_plan(db_session,configured.id,request_for(topo,chains=('ov',),frequencies=(2595.,)),None),
+    }
+    with pytest.raises(ValueError,match='冲突'):
+        calls[entry]()
+
+
 @pytest.mark.asyncio
 async def test_two_confirmed_switch_routes_reach_local_compensation_once(client,db_session,configured,
         shared_switch,real_capture,monkeypatch,chamber,launch,tmp_path):

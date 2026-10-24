@@ -90,7 +90,7 @@ def record(db,row):
 
 
 def validated_batch_item(db,lab_id,request,context):
-    """内部上下文必须指向本lab已提交的冻结计划，不能传True绕过集合门。"""
+    """内部上下文只读本lab同事务已flush或已提交的服务器冻结计划，不能传True绕过集合门。"""
     if not isinstance(context,BatchItemContext):
         raise ValueError('缺少服务器批项身份')
     row=db.get(DiagnosticRun,context.job_id)
@@ -167,17 +167,21 @@ async def start(db,lab_id,request,*,idempotency_key):
                 status='pending',run_id=None,error=None) for i in plan.items])
         row=DiagnosticRun(id=ident,lab_profile_id=lab_id,target_name=TARGET,kind='scpi_sequence',
             params=request.model_dump(mode='json'),success=False)
-        _save_parent(row,value);db.add(row);db.commit()
-        # 启动核验也消费已提交上下文，来源不是临时客户端对象。
+        _save_parent(row,value);db.add(row);db.flush()
+        # 启动核验消费同事务服务器上下文；通过前不留下无task的running记录。
         for item in plan.items:
             single.resolve_configuration(db,lab_id,item.request,get_hal_service(),
                 batch_item_context=BatchItemContext(ident,item.item_id))
+        db.commit()
         active=RunningBatch()
         _running[ident]=active
         active.task=asyncio.create_task(_execute(ident,token,active))
         return record(db,row)
     except BaseException:
-        release_unsafe_diagnostic(token)
+        try:
+            db.rollback()
+        finally:
+            release_unsafe_diagnostic(token)
         raise
 
 
@@ -229,13 +233,14 @@ async def _prepare_item(ident,value,item,active):
             connection=db.get(InstrumentConnection,step.connection_id)
             if connection is None or snapshot_switch_connection(connection)!=step.connection_config:
                 raise ValueError('保存开关连接/封装配置已变化，请重新预览并确认；未操作旧连接')
-    if item.switch_steps and not simulated:
-        if value['plan'].get('switch_wiring_confirmation') is None:
-            raise ValueError('自动切换缺少本清单范围的操作员接线声明，未开始测量')
-        driver=active.hal.drivers.get('rfSwitch')
-        if active.switch_driver is not None and active.switch_driver is not driver:
-            raise ValueError('本作业开关驱动身份已变化')
-        active.switch_driver=driver
+    if item.switch_steps:
+        if not simulated:
+            if value['plan'].get('switch_wiring_confirmation') is None:
+                raise ValueError('自动切换缺少本清单范围的操作员接线声明，未开始测量')
+            driver=active.hal.drivers.get('rfSwitch')
+            if active.switch_driver is not None and active.switch_driver is not driver:
+                raise ValueError('本作业开关驱动身份已变化')
+            active.switch_driver=driver
         progress=value['items'][value['current_index']]
         def sink(receipt):
             receipt.update(job_id=str(ident),item_id=item.item_id,attempt=1)
@@ -253,7 +258,7 @@ async def _prepare_item(ident,value,item,active):
             if active.cancel.is_set():
                 raise asyncio.CancelledError()
         # VXI-11可能正在线程里写：外层task取消也必须等在途操作落定，不能提前放lease/guard。
-        outcome=await await_completion_despite_cancellation(apply_batch_switch_steps(active.hal,item.switch_steps,sink))
+        outcome=await await_completion_despite_cancellation(apply_batch_switch_steps(active.hal,item.switch_steps,sink,simulated=simulated))
         if outcome.error:
             raise outcome.error
         if outcome.delayed_cancellation:

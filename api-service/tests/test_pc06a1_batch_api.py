@@ -172,6 +172,56 @@ async def test_individual_saved_candidates_allow_serial_ce_without_relaxing_form
     assert db_session.query(DiagnosticRun).count()==0
 
 
+@pytest.mark.parametrize('frequencies',[(1000000.,),(2595.,1000000.)])
+async def test_start_preflight_frequency_rejection_leaves_no_parent_and_key_can_retry(api,db_session,configured,shared_switch,runtime,frequencies):
+    from app.services.execution_exclusion_guard import active_unsafe_diagnostic
+    jobs,_=runtime;topo,_=shared_switch;key=uuid4()
+    body=request_for(topo,frequencies=frequencies).model_dump(mode='json')
+    preview=await api.post(root(configured)+'/preview',json=body)
+    assert preview.status_code==200,preview.text
+    body['preview_digest']=preview.json()['preview_digest']
+    response=await api.post(root(configured),json=body,headers={'Idempotency-Key':str(key)})
+    assert response.status_code==422 and '频段' in response.text
+    assert (await api.get(root(configured))).json()==[]
+    with sessionmaker(bind=db_session.get_bind())() as independent:
+        assert independent.query(DiagnosticRun).count()==0
+    assert not jobs._running and active_unsafe_diagnostic() is None
+    corrected,_=await previewed(api,configured,topo)
+    accepted=await api.post(root(configured),json=corrected,headers={'Idempotency-Key':str(key)})
+    assert accepted.status_code==202,accepted.text
+    await api.post(root(configured)+'/'+accepted.json()['job_id']+'/cancel')
+
+
+@pytest.mark.parametrize('stage',['flush','commit','validation','cancelled_validation'])
+async def test_start_transaction_failure_rolls_back_pending_parent(api,db_session,configured,shared_switch,runtime,monkeypatch,stage):
+    from app.services.calibration.route_batch_plan import build_batch_plan
+    from app.services.calibration import fixed_route_jobs as single
+    from app.services.execution_exclusion_guard import active_unsafe_diagnostic
+    jobs,hal=runtime;topo,_=shared_switch
+    request=request_for(topo,frequencies=(2595.,))
+    plan=build_batch_plan(db_session,configured.id,request,hal)
+    request=request.model_copy(update={'preview_digest':plan.preview_digest})
+    failure=asyncio.CancelledError if stage=='cancelled_validation' else ValueError
+    def rejected(*args,**kwargs):raise failure('启动核验测试失败')
+    with monkeypatch.context() as patch:
+        if stage=='flush':
+            original_flush=db_session.flush
+            def flush_parent(*args,**kwargs):
+                if any(isinstance(row,DiagnosticRun) for row in db_session.new):rejected()
+                return original_flush(*args,**kwargs)
+            patch.setattr(db_session,'flush',flush_parent)
+        elif stage=='commit':
+            patch.setattr(db_session,stage,rejected)
+        else:
+            patch.setattr(single,'resolve_configuration',rejected)
+        with pytest.raises(failure):
+            await jobs.start(db_session,configured.id,request,idempotency_key=uuid4())
+    assert db_session.query(DiagnosticRun).count()==0
+    with sessionmaker(bind=db_session.get_bind())() as independent:
+        assert independent.query(DiagnosticRun).count()==0
+    assert not jobs._running and active_unsafe_diagnostic() is None
+
+
 async def test_pending_response_loss_idempotency_is_lab_and_content_scoped(api,db_session,configured,shared_switch,runtime):
     jobs,hal=runtime
     topo,_=shared_switch
@@ -304,6 +354,44 @@ async def test_mock_batch_finishes_but_never_adopts(api,configured,topology_two_
     assert candidate['eligibility']['eligible_for_adoption'] is False
     assert (await api.post(f'/api/v1/lab-profiles/{configured.id}/route-calibration-applications',
         json=adoption(child))).status_code==422
+
+
+async def test_mock_serial_switch_steps_use_real_builder_without_io_or_position_claim(api,configured,shared_switch,safety_runtime,db_session,monkeypatch):
+    from app.hal.channel_emulator import MockChannelEmulator
+    from app.hal.signal_analyzer import MockSignalAnalyzer
+    from app.models.instrument import InstrumentCategory
+    from app.services.calibration import route_batch_switch as switching
+    jobs,hal,_=safety_runtime
+    topo,conn=serial_graph(db_session,shared_switch)
+    hal.drivers.update(channelEmulator=MockChannelEmulator('ce',{}),signalAnalyzer=MockSignalAnalyzer('sa',{}))
+    configured.instrument_bindings=[{**b,'driver_mode':'mock'} if b['category_id']!=str(topo.switch_category_id) else b for b in configured.instrument_bindings]
+    db_session.query(InstrumentCategory).filter(InstrumentCategory.category_key.in_(['channelEmulator','signalAnalyzer'])).update({'driver_mode':'mock'},synchronize_session=False)
+    db_session.commit()
+    io=[];built=[];builder=switching.build_emcenter_switch_command
+    async def forbidden(command):
+        io.append(command);raise AssertionError('模拟批不得调用真实开关transport')
+    def record_builder(relay,target):
+        built.append((relay,target));return builder(relay,target)
+    monkeypatch.setattr(hal.drivers['rfSwitch'],'_send_command',forbidden)
+    monkeypatch.setattr(switching,'build_emcenter_switch_command',record_builder)
+    body,_=await previewed(api,configured,topo)
+    value=await start(api,configured,body);ident=value['job_id']
+    for index in (0,1):
+        waiting=await state(api,configured,ident,'waiting_manual')
+        assert waiting['current_index']==index
+        assert (await api.post(root(configured)+'/'+ident+'/continue',json=continuation(waiting))).status_code==200
+    final=await state(api,configured,ident,'completed')
+    assert built==[('1:INT_RELAY_A',2),('1:INT_RELAY_A',1)]
+    assert io==[] and final['f64_control_released'] is None
+    for item,command in zip(final['items'],['1:INT_RELAY_A_2','1:INT_RELAY_A_1'],strict=True):
+        assert item['status']=='simulated'
+        receipts=item.get('switch_receipts',[])
+        assert len(receipts)==1 and receipts[0]['command']==command
+        assert receipts[0]['simulated'] is True and receipts[0]['raw'] is None
+        assert receipts[0].get('position') is None and receipts[0].get('write_return') is None
+        candidate=(await api.get(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions/{item["run_id"]}/application-preview')).json()
+        assert candidate['eligibility']['eligible_for_adoption'] is False
+        assert candidate['eligibility']['measurement_provenance']=='simulated'
 
 
 async def test_scope_drift_after_preview_and_missing_idempotency_refuse_start(api,configured,shared_switch,db_session):

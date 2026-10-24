@@ -130,6 +130,8 @@ def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, 
         from app.services.declared_rf_routes import resolve_saved_rf_path
         route_nodes,route_edges=resolve_saved_rf_path(nodes,active,terminals[0]['id'])
         switch_steps=route_switch_steps(db,topology,route_nodes,route_edges,lab)
+        from app.services.declared_rf_routes import validate_simultaneous_switch_mappings
+        validate_simultaneous_switch_mappings(switch_steps)
         selected_steps.extend(switch_steps)
         visited={n['id'] for n in route_nodes}
         ce_port = resolve_declared_calibration_ce_port(route_nodes, route_edges)
