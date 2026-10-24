@@ -200,7 +200,8 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
         target_name=jobs.TARGET,kind='scpi_sequence').one_or_none()
     if row is None:
         raise LookupError('本实验室中没有这条采集记录')
-    record=jobs.record(row)
+    from app.services.calibration.route_batch_jobs import batch_child_context
+    record=jobs.record(row,batch_context=batch_child_context(db,row))
     result=record.result
     selection=None
     warnings=['选用截止时间由确认操作明确填写并校验，不是证书期限']
@@ -304,7 +305,8 @@ def confirm_route_application(db,lab_id: UUID,request: ConfirmRouteApplication,a
         if (not candidate.eligibility.eligible_for_adoption or candidate.selection is None or
             candidate.new_net_loss_db is None or request.route_digest!=candidate.selection.route_digest):
             raise ValueError('采集证据或当前通路不适用于本次采用')
-        result=jobs.record(row).result
+        from app.services.calibration.route_batch_jobs import batch_child_context
+        result=jobs.record(row,batch_context=batch_child_context(db,row)).result
         selection=candidate.selection
         scope,reference=_application_scope(result,selection)
         pointer=db.query(RouteCalibrationSelection).filter_by(**scope).one_or_none()
