@@ -48,4 +48,12 @@
 - 最终`python -m pytest -q --tb=short --color=no`：7140 passed / 17 skipped / 1 failed，176.98s，exit 1。唯一失败为`test_p1_64_quiet_zone_evidence_truth.py::test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown`的固定有效期已过仍期望valid；未改main d324048e单跑同样expired != valid（0.06s）。本片保留真实过期判断，不改生产有效性规则，不声称全量全绿。日志`/tmp/pc03-full-backend-final.log`及`/tmp/pc03-main-known-date.log`。
 - `python -m compileall -q app`、`git diff --check`均exit 0；`python -m alembic heads`唯一head `c1e3f5a7b9d2`，本片无迁移。GUI 177 passed、build 13.50s；真实Mock浏览器最终7项通过。
 
+### R1 功能问题修复
+
+- PR #526 R1 review `5636546375`覆盖73973439，inline `4365785480`指出只读租约在ATE socket已释放后会走普通connect，恢复保存的用户对齐，违背“不修改”承诺。
+- `tests/test_pc_03a_read_only_lease.py`经真实HTTP、真实租约与真实connect，仅替换外部VISA资源，旧实现RED实际发送`USER:SET`。修复为本序列显式传递内部`restore_f64_alignment=False`，F64 acquire/connect仅收窄恢复对齐分支；不改变默认连接、不修改保存配置、不引入共享状态开关、不新增SCPI。释放、取消与重连原逻辑保留。
+- GREEN覆盖连续两次释放后读取均不发送对齐写命令，普通连接仍保留原恢复行为；相关租约/连接/诊断/本片/rule gates `266 passed`（10.19s）。独立增量内审CLEAN，已追全参数链与懒重连路径。
+- 真实前后端Mock浏览器修复后再次7项通过（`browser-r1.log`）；GUI/生成契约输入未变，复用177项与build结果。共享租约/连接代码变化后由主代理重跑最终全后端，不以此前全量代替。
+- R1修复最终`python -m pytest -q --tb=short --color=no`：7142 passed / 17 skipped / 1 failed，176.82s，exit 1，仍仅同一main既有过期日期夹具；日志`/tmp/pc03-r1-full-backend.log`。compileall、diff-check及唯一Alembic head再次通过。当前输入无新增失败，R1修复提交必须由下一轮外审覆盖。
+
 基线：本片开工时旧许可序列+PC02A 48 passed（0.94s）。已知main日期夹具在2026-10-24因固定valid_until过期失败，证据在PC02A记录，本片不得通过放宽生产有效性抹除。

@@ -332,6 +332,8 @@ async def run_diagnostic_sequence(
             )
             if is_f64_p08_gate or is_f64_state:
                 lease_options["validate_before_remote"] = validator
+            if is_f64_state:
+                lease_options["restore_f64_alignment"] = False
             async with instrument_test_lease(
                 f"diagnostic-sequence:{key}",
                 control_f64="channelEmulator" in lease_categories,

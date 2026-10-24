@@ -1910,7 +1910,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # 1. 连接生命周期 (InstrumentDriver 第一层)
     # ===================================================================
 
-    async def connect(self) -> bool:
+    async def connect(self, *, restore_user_alignment: bool = True) -> bool:
         """
         建立与 F64 ATE Server 的 PyVISA TCP/IP Socket 连接。
 
@@ -1919,6 +1919,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           2. 打开 TCP Socket 连接 (端口 3334, 硬件固定)
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
+
+        restore_user_alignment=False 仅用于只读状态采集：不应用保存的用户对齐。
+        默认保留既有连接行为；不临时修改配置或共享实例字段。
         """
         # connect() 无论能否进入外部 I/O，都是一次新的会话尝试。先清掉上一会话的
         # 加载态/回读缓存，避免“缺配置”失败后状态接口继续谎报旧频率或仍在运行。
@@ -2007,14 +2010,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             opts = await self._probe_installed_options()
             await self._apply_discovered_capabilities(opts)
 
-            # User alignment auto-reload (User Reference §17.5):
-            #   "Auto alignment results become obsolete when the emulator
-            #    shuts down" — alignment 文件保留在盘上, 但每次开机后必须调
-            #    SYST:CALIB:USER:SET 1,<name> 重新激活. 当前 active 状态先
-            #    存到 _active_alignment 供 precheck phase 上报.
+            # 查询当前用户对齐，再按既有保存配置决定是否恢复（启用命令见§20.4.2.18）。
+            # PC-03A只读采集不得在连接时改变对齐；§17.5的Auto关机失效也不能
+            # 推导User文件跨重启的自动激活行为。缓存只存实际回读。
             self._active_alignment = await self.get_user_alignment_status()
             self._update_user_alignment_capability()
-            if self._preferred_alignment_name:
+            if restore_user_alignment and self._preferred_alignment_name:
                 current = (
                     self._active_alignment.get("alignment_name")
                     if self._active_alignment else None
@@ -2133,8 +2134,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
             return True
 
-    async def acquire_remote_control(self) -> bool:
-        """由操作员显式重新取得 Remote；失败时继续保护 Local。"""
+    async def acquire_remote_control(self, *, restore_user_alignment: bool = True) -> bool:
+        """显式取得Remote；只读调用禁止连接时应用保存的用户对齐，失败仍保护Local。"""
         async with self._control_lock:
             if (
                 not self._local_control_reserved
@@ -2148,7 +2149,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._local_control_reserved = False
             self._local_release_failed = False
             try:
-                connected = await self.connect()
+                connected = (await self.connect() if restore_user_alignment
+                             else await self.connect(restore_user_alignment=False))
             except asyncio.CancelledError:
                 # acquire 前清过 Local 门；取消若不恢复，后台后续路径会误以为可自动
                 # 连接并重新抢权。
