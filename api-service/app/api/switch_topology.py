@@ -6,6 +6,7 @@ and advanced endpoints for path resolution and calibration matrix.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import Optional, List
 from uuid import UUID
 import logging
@@ -360,30 +361,40 @@ def import_topology_from_template(
     _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
                         topo_data.get('operating_modes', []))
 
+    replaced_ids=[]
     if replace_existing:
         # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
         existing=db.query(SwitchTopology).filter(
             SwitchTopology.switch_category_id == switch_category_id,
             SwitchTopology.chamber_id == chamber.id,
         )
-        _assert_deletable(db,[row.id for row in existing.all()])
-        existing.delete()
+        replaced_ids=[row.id for row in existing.all()]
+        _assert_deletable(db,replaced_ids)
 
-    db.query(SwitchTopology).filter(
-        SwitchTopology.switch_category_id == switch_category_id,
-        SwitchTopology.chamber_id == chamber.id,
-        SwitchTopology.is_default == True
-    ).update({"is_default": False})
+    try:
+        if replace_existing:
+            existing.delete()
+        db.query(SwitchTopology).filter(
+            SwitchTopology.switch_category_id == switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
+            SwitchTopology.is_default == True
+        ).update({"is_default": False})
 
-    topology = SwitchTopology(
-        switch_category_id=switch_category_id,
-        chamber_id=chamber.id,
-        **topo_data
-    )
-    topology.update_statistics()
+        topology = SwitchTopology(
+            switch_category_id=switch_category_id,
+            chamber_id=chamber.id,
+            **topo_data
+        )
+        topology.update_statistics()
 
-    db.add(topology)
-    db.commit()
+        db.add(topology)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # 预检后可能有另一会话确认采用；只据已提交的相关依赖转409。
+        if replace_existing:
+            _assert_deletable(db,replaced_ids)
+        raise
     db.refresh(topology)
     logger.info(
         "Imported topology from template '%s' for switch category %s into chamber %s (replace=%s)",
@@ -469,9 +480,15 @@ def delete_switch_topology(
     chamber = _resolve_scope(db, lab_profile_id)
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
-    _assert_deletable(db,[topology.id])
-    db.delete(topology)
-    db.commit()
+    topology_ids=[topology.id]
+    _assert_deletable(db,topology_ids)
+    try:
+        db.delete(topology)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _assert_deletable(db,topology_ids)
+        raise
     return None
 
 

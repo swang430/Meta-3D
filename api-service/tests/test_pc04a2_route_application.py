@@ -257,3 +257,66 @@ def test_interleaved_idempotent_confirmation_rechecks_after_business_conflict(cl
     else:
         assert response.status_code==409,response.text
     assert counts(db_session)==(1,1)
+
+
+@pytest.mark.parametrize('operation',['delete','replace'])
+@pytest.mark.parametrize('constraint',['adoption_after_precheck','unrelated_dependency'])
+def test_delete_race_and_unrelated_constraint_are_distinguished(client,configured,real_capture,db_session,
+        topology_two_chains,monkeypatch,operation,constraint):
+    from fastapi.testclient import TestClient
+    from app.api import switch_topology as api
+    from app.services.calibration import route_calibration as service
+    from app.schemas.route_calibration import ConfirmRouteApplication
+    from app.models.switch_topology import SwitchTopology
+    row=real_capture();request=payload(client,configured,row)
+    topology_id=topology_two_chains.id
+    category_id=topology_two_chains.switch_category_id
+    lab_id=configured.id
+    # 启用整个临时连接池，避免负例DDL提交换连接后意外关闭外键检查。
+    def foreign_keys_on(connection,record,proxy):
+        connection.execute('PRAGMA foreign_keys=ON')
+    event.listen(db_session.get_bind(),'checkout',foreign_keys_on)
+    db_session.commit()
+    db_session.execute(text('PRAGMA foreign_keys=ON'))
+    assert db_session.execute(text('PRAGMA foreign_keys')).scalar()==1
+    winner=[]
+    if constraint=='adoption_after_precheck':
+        original=api.assert_route_topologies_deletable
+        factory=sessionmaker(bind=db_session.get_bind(),expire_on_commit=False)
+        def interleave(db,ids):
+            original(db,ids)  # 实际预检为空，不mock查询或真实来源评估。
+            assert not winner
+            with factory() as second:
+                second.execute(text('PRAGMA foreign_keys=ON'))
+                record,created=service.confirm_route_application(second,lab_id,
+                    ConfirmRouteApplication.model_validate(request),actor=None)
+                assert created is True
+                winner.append(record.model_dump(mode='json'))
+        monkeypatch.setattr(api,'assert_route_topologies_deletable',interleave)
+    else:
+        # 另一种真实外键约束，不属于采用记录；不得被转成采用冲突。
+        db_session.execute(text('CREATE TABLE other_reference (topology_id UUID REFERENCES switch_topologies(id))'))
+        db_session.execute(text('INSERT INTO other_reference VALUES (:id)'),{'id':topology_id.hex})
+        db_session.commit()
+    http=TestClient(app,raise_server_exceptions=False)
+    try:
+        if operation=='delete':
+            response=http.delete(f'/api/v1/switch-topologies/{topology_id}',params={'lab_profile_id':str(lab_id)})
+        else:
+            response=http.post('/api/v1/switch-topologies/import/from-template',params={
+                'lab_profile_id':str(lab_id),'switch_category_id':str(category_id),
+                'template_id':'caict_v4','replace_existing':True})
+        if constraint=='adoption_after_precheck':
+            assert winner
+            assert response.status_code==409,response.text
+            assert '采用' in response.json()['detail']
+        else:
+            assert response.status_code==500,response.text
+    finally:
+        http.close();db_session.rollback()
+    assert db_session.get(SwitchTopology,topology_id) is not None
+    assert counts(db_session)==((1,1) if winner else (0,0))
+    if winner:
+        history=client.get(f'/api/v1/lab-profiles/{lab_id}/route-calibration-applications',
+            params={'topology_id':str(topology_id),'chain_id':'conn_p0v'})
+        assert history.json()==winner
