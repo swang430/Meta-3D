@@ -19,8 +19,44 @@ import type {
   F64StateRecord,
   FixedRouteRequest,
   FixedRouteRecord,
+  BatchPlanRequest, BatchPlan, BatchContinueRequest, BatchJobRecord,
   RouteSelection, RouteApplicationPreview, ConfirmRouteApplication, RouteApplicationRecord,
 } from '../types/api'
+
+function checkedBatch(labId:string,value:BatchJobRecord,jobId?:string):BatchJobRecord {
+  if(value.lab_id!==labId || jobId && value.job_id!==jobId) throw new Error('批响应与当前实验室或作业不一致')
+  return value
+}
+
+export async function previewRouteCalibrationBatch(labId:string,request:BatchPlanRequest):Promise<BatchPlan> {
+  const value=(await apiClient.post<BatchPlan>(`/lab-profiles/${labId}/route-calibration-batches/preview`,request)).data
+  if(value.lab_profile_id!==labId || value.topology_id!==request.topology_id || value.operating_mode!==(request.operating_mode ?? 'mimo_ota'))
+    throw new Error('批预览与当前实验室、拓扑或模式不一致')
+  return value
+}
+
+/** 网络响应丢失时须复用调用方保存的同一幂等键，不重新生成。 */
+export async function startRouteCalibrationBatch(labId:string,request:BatchPlanRequest,idempotencyKey:string):Promise<BatchJobRecord> {
+  return checkedBatch(labId,(await apiClient.post<BatchJobRecord>(`/lab-profiles/${labId}/route-calibration-batches`,request,
+    {headers:{'Idempotency-Key':idempotencyKey}})).data)
+}
+
+export async function fetchRouteCalibrationBatches(labId:string):Promise<BatchJobRecord[]> {
+  return (await apiClient.get<BatchJobRecord[]>(`/lab-profiles/${labId}/route-calibration-batches`)).data.map(row=>checkedBatch(labId,row))
+}
+
+export async function fetchRouteCalibrationBatch(labId:string,jobId:string):Promise<BatchJobRecord> {
+  return checkedBatch(labId,(await apiClient.get<BatchJobRecord>(`/lab-profiles/${labId}/route-calibration-batches/${jobId}`)).data,jobId)
+}
+
+export async function continueRouteCalibrationBatch(labId:string,jobId:string,request:BatchContinueRequest):Promise<BatchJobRecord> {
+  return checkedBatch(labId,(await apiClient.post<BatchJobRecord>(`/lab-profiles/${labId}/route-calibration-batches/${jobId}/continue`,request)).data,jobId)
+}
+
+/** 仅请求取消；是否已清理/释放必须重新读取服务器记录。 */
+export async function cancelRouteCalibrationBatch(labId:string,jobId:string):Promise<BatchJobRecord> {
+  return checkedBatch(labId,(await apiClient.post<BatchJobRecord>(`/lab-profiles/${labId}/route-calibration-batches/${jobId}/cancel`)).data,jobId)
+}
 
 export async function fetchRouteCalibrationPaths(labId:string,topologyId:string,mode:string):Promise<RouteSelection[]> {
   const rows=(await apiClient.get<RouteSelection[]>(`/lab-profiles/${labId}/route-calibration-paths`,

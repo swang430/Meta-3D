@@ -83,10 +83,19 @@ class FixedRouteResult(BaseModel):
         return self
 
 
+class FixedRouteBatchContext(BaseModel):
+    active: bool
+    finalized: bool
+    job_id: UUID | None=None
+    lease_id: str | None=None
+    finalization_id: str | None=None
+
+
 class FixedRouteRecord(BaseModel):
     run_id: UUID
     lab_profile_id: UUID
     run_at: datetime
     status: str
     result: FixedRouteResult | None = None
+    batch_context: FixedRouteBatchContext | None = None
     formal_eligible: Literal[False] = False

@@ -4,6 +4,92 @@
  */
 
 export interface paths {
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview */
+        post: operations["preview_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** History */
+        get: operations["history_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_get"];
+        put?: never;
+        /** Start */
+        post: operations["start_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress */
+        get: operations["progress_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/{job_id}/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Continue Job */
+        post: operations["continue_job_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__continue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel */
+        post: operations["cancel_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-applications": {
         parameters: {
             query?: never;
@@ -2909,6 +2995,288 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BatchPlanRequest */
+        BatchPlanRequest: {
+            /**
+             * Topology Id
+             * Format: uuid
+             */
+            topology_id: string;
+            /**
+             * Operating Mode
+             * @default mimo_ota
+             * @constant
+             */
+            operating_mode: "mimo_ota";
+            /** Chain Ids */
+            chain_ids: string[];
+            /** Frequencies Mhz */
+            frequencies_mhz: number[];
+            /** References */
+            references: components["schemas"]["BatchReference"][];
+            /** Requested Power Dbm */
+            requested_power_dbm: number;
+            /**
+             * Sample Count
+             * @default 5
+             */
+            sample_count: number;
+            /**
+             * Fixed Route Confirmed
+             * @constant
+             */
+            fixed_route_confirmed: true;
+            /**
+             * Safety Confirmed
+             * @constant
+             */
+            safety_confirmed: true;
+            /** Preview Digest */
+            preview_digest?: string | null;
+            switch_wiring_confirmation?: components["schemas"]["BatchSwitchWiringConfirmation"] | null;
+        };
+        /** BatchPlan */
+        BatchPlan: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Topology Id
+             * Format: uuid
+             */
+            topology_id: string;
+            /**
+             * Operating Mode
+             * @default mimo_ota
+             * @constant
+             */
+            operating_mode: "mimo_ota";
+            /** Items */
+            items: components["schemas"]["BatchPlanItem"][];
+            /** Switch Scope Digest */
+            switch_scope_digest?: string | null;
+            switch_wiring_confirmation?: components["schemas"]["BatchSwitchWiringConfirmation"] | null;
+            /** Preview Digest */
+            preview_digest: string;
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+        };
+        /**
+         * BatchPlanItem
+         * @description 公共可变schema仅作读取副本；构造和读取均隔离，JSON线形不变。
+         *
+         *     Task2/3取得request/route_selection/configuration_scope后可持有工作副本，
+         *     但修改副本不回写计划；需要新配置时必须重新构造并校验计划摘要。
+         */
+        BatchPlanItem: {
+            /** Item Id */
+            item_id: string;
+            request: components["schemas"]["FixedRouteRequest"];
+            route_selection: components["schemas"]["RouteSelection"];
+            configuration_scope: components["schemas"]["CalibrationScopeSnapshot"];
+            /**
+             * Switch Steps
+             * @default []
+             */
+            switch_steps: components["schemas"]["BatchSwitchStep"][];
+            /**
+             * Transition Kind
+             * @default manual
+             * @enum {string}
+             */
+            transition_kind: "manual" | "fixed";
+            /**
+             * Transition Reasons
+             * @default []
+             */
+            transition_reasons: string[];
+        };
+        /** BatchReference */
+        BatchReference: {
+            /** Chain Id */
+            chain_id: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Reference Antenna */
+            reference_antenna: string;
+            /** Receive Cable Loss Db */
+            receive_cable_loss_db: number;
+            /** Receive Cable Source */
+            receive_cable_source: string;
+        };
+        /**
+         * BatchSwitchStep
+         * @description mapping读取为独立工作副本，不能原地改写已冻结的步骤。
+         */
+        BatchSwitchStep: {
+            /** Node Id */
+            node_id: string;
+            /** Path Name */
+            path_name: string;
+            /**
+             * Category Id
+             * Format: uuid
+             */
+            category_id: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * Instrument Model Id
+             * Format: uuid
+             */
+            instrument_model_id: string;
+            /** Driver Mode */
+            driver_mode: string;
+            /** Mapping */
+            mapping: {
+                [key: string]: unknown;
+            };
+            /** Connection Config */
+            connection_config?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * BatchSwitchWiringConfirmation
+         * @description 人工接线声明，不是SCPI验证或RF验收；operator是自述，不能冒称认证身份。
+         */
+        BatchSwitchWiringConfirmation: {
+            /** Operator */
+            operator: string;
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /** Note */
+            note: string;
+            /** Switch Scope Digest */
+            switch_scope_digest: string;
+        };
+        /** BatchContinueRequest */
+        BatchContinueRequest: {
+            /** Item Id */
+            item_id: string;
+            /** Transition Id */
+            transition_id: string;
+            /** Reference Antenna */
+            reference_antenna: string;
+            /**
+             * Manual Confirmed
+             * @constant
+             */
+            manual_confirmed: true;
+            /**
+             * Skip Failed
+             * @default false
+             */
+            skip_failed: boolean;
+        };
+        /** BatchJobItem */
+        BatchJobItem: {
+            /** Item Id */
+            item_id: string;
+            request: components["schemas"]["FixedRouteRequest"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "waiting_manual" | "measuring" | "running" | "completed" | "simulated" | "failed" | "cancelled" | "cleanup_unconfirmed" | "interrupted" | "incomplete";
+            /** Run Id */
+            run_id?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Switch Receipts */
+            switch_receipts?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+        };
+        /**
+         * BatchJobRecord
+         * @description 只序列化服务器审计；缺损父记录不制造计划、释放或最终化事实。
+         */
+        BatchJobRecord: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Lab Id
+             * Format: uuid
+             */
+            lab_id: string;
+            /** Version */
+            version?: 1 | null;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            request?: components["schemas"]["BatchPlanRequest"] | null;
+            plan?: components["schemas"]["BatchPlan"] | null;
+            /** Preview Digest */
+            preview_digest?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "waiting_manual" | "paused_failure" | "completed" | "cancelled" | "failed" | "cleanup_unconfirmed" | "interrupted" | "incomplete";
+            /** Current Index */
+            current_index?: number | null;
+            /** Transition Id */
+            transition_id?: string | null;
+            /**
+             * Cancel Requested
+             * @default false
+             */
+            cancel_requested: boolean;
+            /** Error */
+            error?: string | null;
+            /** Manual Notice */
+            manual_notice?: string | null;
+            /** Lease Id */
+            lease_id?: string | null;
+            /** F64 Control Released */
+            f64_control_released?: boolean | null;
+            /** Finalization Id */
+            finalization_id?: string | null;
+            /** Finalization Committed */
+            finalization_committed: boolean;
+            /** Persistence Failed */
+            persistence_failed?: boolean | null;
+            /** All Started Cleanup Confirmed */
+            all_started_cleanup_confirmed?: boolean | null;
+            /** Items */
+            items: components["schemas"]["BatchJobItem"][];
+        };
+        /** FixedRouteBatchContext */
+        FixedRouteBatchContext: {
+            /** Active */
+            active: boolean;
+            /** Finalized */
+            finalized: boolean;
+            /** Job Id */
+            job_id?: string | null;
+            /** Lease Id */
+            lease_id?: string | null;
+            /** Finalization Id */
+            finalization_id?: string | null;
+        };
         /** RoutePort */
         RoutePort: {
             /** Connection Id */
@@ -2981,6 +3349,13 @@ export interface components {
             analyzer_category_id?: string | null;
             /** Route Digest */
             route_digest: string;
+            /**
+             * Switch Execution Identity
+             * @description 仅新显式开关路径的保存绑定/继电器/端口配对身份；非硬件回读证据
+             */
+            switch_execution_identity?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
             /** Configuration Digest */
             configuration_digest?: string | null;
         };
@@ -3248,6 +3623,7 @@ export interface components {
             /** Status */
             status: string;
             result?: components["schemas"]["FixedRouteResult"] | null;
+            batch_context?: components["schemas"]["FixedRouteBatchContext"] | null;
             /**
              * Formal Eligible
              * @default false
@@ -5454,6 +5830,211 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    preview_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    history_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchJobRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchJobRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    progress_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchJobRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    continue_job_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__continue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchContinueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchJobRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_api_v1_lab_profiles__lab_profile_id__route_calibration_batches__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchJobRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     application_history_api_v1_lab_profiles__lab_profile_id__route_calibration_applications_get: {
         parameters: {
             query: {

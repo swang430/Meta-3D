@@ -3,7 +3,7 @@ import copy
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime,BaseModel,ConfigDict,Field,model_validator,field_validator
+from pydantic import AwareDatetime,BaseModel,ConfigDict,Field,JsonValue,model_validator,field_validator
 from app.schemas.fixed_route_acquisition import FixedRouteRequest,Text,Number
 from app.schemas.route_calibration import RouteSelection
 from app.schemas.calibration_scope import CalibrationScopeSnapshot
@@ -123,3 +123,54 @@ class BatchPlan(BaseModel):
     switch_wiring_confirmation: BatchSwitchWiringConfirmation | None=None
     preview_digest: str=Field(pattern=r'^[a-f0-9]{64}$')
     formal_eligible: Literal[False]=False
+
+
+class BatchContinueRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    item_id: Text
+    transition_id: Text
+    reference_antenna: Text
+    manual_confirmed: Literal[True]
+    skip_failed: bool=Field(default=False,strict=True)
+
+    @field_validator('manual_confirmed',mode='before')
+    @classmethod
+    def explicit_confirmation(cls,value):
+        if value is not True:
+            raise ValueError('必须明确确认当前人工步骤')
+        return value
+
+
+class BatchJobItem(BaseModel):
+    item_id: str
+    request: FixedRouteRequest
+    status: Literal['pending','waiting_manual','measuring','running','completed','simulated',
+        'failed','cancelled','cleanup_unconfirmed','interrupted','incomplete']
+    run_id: UUID | None=None
+    error: str | None=None
+    switch_receipts: list[dict[str,JsonValue]]=Field(default_factory=list)
+
+
+class BatchJobRecord(BaseModel):
+    """只序列化服务器审计；缺损父记录不制造计划、释放或最终化事实。"""
+    job_id: UUID
+    lab_id: UUID
+    version: Literal[1] | None=None
+    idempotency_key: UUID | None=None
+    request: BatchPlanRequest | None=None
+    plan: BatchPlan | None=None
+    preview_digest: str | None=None
+    status: Literal['running','waiting_manual','paused_failure','completed','cancelled','failed',
+        'cleanup_unconfirmed','interrupted','incomplete']
+    current_index: int | None=None
+    transition_id: str | None=None
+    cancel_requested: bool=False
+    error: str | None=None
+    manual_notice: str | None=None
+    lease_id: str | None=None
+    f64_control_released: bool | None=None
+    finalization_id: str | None=None
+    finalization_committed: bool
+    persistence_failed: bool | None=None
+    all_started_cleanup_confirmed: bool | None=None
+    items: list[BatchJobItem]

@@ -46,6 +46,11 @@ def progress(lab_profile_id: UUID, run_id: UUID, db: Session = Depends(get_db)):
 @router.post('/{lab_profile_id}/fixed-route-acquisitions/{run_id}/cancel', response_model=FixedRouteRecord)
 async def cancel(lab_profile_id: UUID, run_id: UUID, db: Session = Depends(get_db)):
     row = _row(db, lab_profile_id, run_id)
+    context = batch_child_context(db,row)
+    if context is not None:
+        parent = context.get('job_id')
+        raise HTTPException(409, '此采集属于批作业，请从所属批入口取消；未确认已停发。'
+            + (f' /api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/{parent}/cancel' if parent else ' 父批关联未核验，请现场核验。'))
     try:
         jobs.request_cancel(run_id)
     except jobs.AcquisitionBusy as exc:

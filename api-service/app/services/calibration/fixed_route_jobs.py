@@ -173,7 +173,8 @@ def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
         value = value.model_copy(update={'status': status, 'cleanup_confirmed': None,
             'net_loss_db': None, 'error': '服务已中断本次采集，未自动续跑；仪器停发状态需现场确认'})
     stamp = row.run_at if row.run_at.tzinfo is not None else row.run_at.replace(tzinfo=timezone.utc)
-    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status, result=value)
+    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status,
+        result=value,batch_context=batch_context if batch_id else None)
 
 
 async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
