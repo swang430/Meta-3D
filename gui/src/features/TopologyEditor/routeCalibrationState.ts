@@ -85,6 +85,18 @@ export function buildRouteConfirmation(scope:RouteScope,route:RouteSelection,pre
 }
 
 export type BatchReferenceFields={chainId:string;frequency:number;antenna:string;cable:string;cableSource:string}
+export function batchItemRoute(item:BatchPlan['items'][number]|undefined):RouteSelection|undefined {
+  if(!item)return undefined
+  // 批生产者将选路scope独立冻结，route.configuration_digest允许为空；只在显示适配中引用权威摘要。
+  const {route_selection:route,request,configuration_scope:scope}=item,payload=scope.payload,topology=payload.topology
+  if(!scope.configuration_complete||!/^[a-f0-9]{64}$/.test(scope.digest)||request.configuration_digest!==scope.digest||
+    route.configuration_digest!=null&&route.configuration_digest!==scope.digest||request.route_digest!==route.route_digest||
+    request.chain_id!==route.chain_id||request.topology_id!==route.topology_id||request.operating_mode!==route.operating_mode||
+    payload.lab_profile_id!==route.lab_profile_id||payload.chamber_id!==route.chamber_id||payload.operating_mode!==route.operating_mode||
+    topology.id!==route.topology_id||topology.scope_source!=='selected_route'||topology.selected_chain_id!==route.chain_id||
+    topology.selected_route_digest!==route.route_digest)return undefined
+  return {...route,configuration_digest:scope.digest}
+}
 export function buildBatchRequest(scope:RouteScope,paths:RouteSelection[],ids:string[],frequencies:number[],references:BatchReferenceFields[],fields:Pick<RouteFields,'power'|'samples'|'fixed'|'safe'>):BatchPlanRequest {
   if(scope.mode!=='mimo_ota'||!ids.length||new Set(ids).size!==ids.length||!frequencies.length||
     new Set(frequencies).size!==frequencies.length||frequencies.some(f=>!Number.isFinite(f)||f<=0))throw new Error('请选择已保存的MIMO完整路径及不重复的正频点。')

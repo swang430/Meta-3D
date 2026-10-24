@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Checkbox, Code, Group, MultiSelect, Stack, Text, TextInput, Title } from '@mantine/core'
 import type { BatchJobRecord, BatchPlan, BatchPlanRequest, FixedRouteRecord, RouteSelection } from '../../types/api'
 import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCalibrationBatches, fetchRouteCalibrationBatch,
   continueRouteCalibrationBatch, cancelRouteCalibrationBatch, fetchFixedRouteAcquisition } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
-import { batchCanRelease, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
+import { batchCanRelease, batchItemRoute, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
 // 未知启动身份与全局工作锁一起跨卸载保存；只读空历史不能删除它。
@@ -45,7 +45,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       void cache.invalidateQueries({queryKey:['fixed-route-acquisitions',scope.labId]})
     }
   },[children.data,children.isError,children.isPaused,cache,scope.labId])
-  const frozen=current?.plan?.items[current.current_index??-1]?.route_selection
+  const frozen=useMemo(()=>batchItemRoute(current?.plan?.items[current.current_index??-1]),[current?.plan,current?.current_index])
   useEffect(()=>{
     if(frozen&&routeMatchesSaved(scope,frozen))onSelectRoute(frozen)
     else if(frozen&&frozen.lab_profile_id===scope.labId&&frozen.topology_id===scope.topologyId&&routeGraphMatchesSaved(scope.graph,frozen))onRunningRoute(frozen)
@@ -156,7 +156,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
         {item.error&&<Text size="xs" c="red">{item.error}</Text>}
         <Text size="xs">所属批{row.job_id}；{row.f64_control_released===true&&row.finalization_committed&&row.finalization_id?'父批外层释放及最终提交已确认，仍需服务器逐项核验采用资格':'外层释放／最终提交未确认，不可采用'}</Text>
         {item.status==='simulated'&&<Text size="xs" c="yellow">模拟项只能结束软件流程，不证明实物停发，不能正式采用。</Text>}
-        {item.run_id&&<Button size="xs" variant="light" onClick={()=>onInspectChild(item.run_id!,activeId?undefined:row.plan?.items.find(i=>i.item_id===item.item_id)?.route_selection)}>查看本项读数及原采用入口</Button>}
+        {item.run_id&&<Button size="xs" variant="light" onClick={()=>onInspectChild(item.run_id!,activeId?undefined:batchItemRoute(row.plan?.items.find(i=>i.item_id===item.item_id)))}>查看本项读数及原采用入口</Button>}
       </Stack></Card>)}
       <details><summary>冻结清单、接线声明与逐开关回执</summary><Code block style={{maxHeight:240,overflow:'auto',whiteSpace:'pre-wrap'}}>{JSON.stringify(row,null,2)}</Code></details>
     </Stack></Card>
@@ -185,9 +185,9 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     </Stack></fieldset>
     {scope.dirty&&<Alert color="yellow">未保存草稿，批预览与开始均禁用。</Alert>}
     {plan&&request&&<Card withBorder data-testid="batch-plan"><Stack gap="xs"><Text fw={600}>服务器完整清单：{plan.items.length}项</Text>
-      {plan.items.map((item,index)=><Card key={item.item_id} padding="xs"><Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
+      {plan.items.map((item,index)=>{const selected=batchItemRoute(item);return <Card key={item.item_id} padding="xs"><Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
         <Text size="xs">正常段{item.route_selection.node_ids.join(' → ')}；参考段{item.route_selection.calibration_node_ids.join(' → ')}；{item.transition_reasons.join('；')}</Text>
-        <Button size="xs" variant="subtle" disabled={Boolean(activeId)||!routeMatchesSaved(scope,item.route_selection)} onClick={()=>onSelectRoute(item.route_selection)}>原图高亮此项正常及参考段</Button></Card>)}
+        <Button size="xs" variant="subtle" disabled={Boolean(activeId)||!routeMatchesSaved(scope,selected)} onClick={()=>onSelectRoute(selected??null)}>原图高亮此项正常及参考段</Button></Card>})}
       {plan.switch_scope_digest&&<Stack gap="xs"><Text size="xs" style={{overflowWrap:'anywhere'}}>开关范围摘要：{plan.switch_scope_digest}</Text>
         <Code block style={{maxHeight:220,overflow:'auto',whiteSpace:'pre-wrap'}}>{JSON.stringify(plan.items.flatMap(i=>i.switch_steps),null,2)}</Code>
         <TextInput label="接线声明操作员（自述，非认证身份）" value={operator} disabled={formBlocked} onChange={e=>{setOperator(e.currentTarget.value);setRequest(old=>old?{...old,switch_wiring_confirmation:null}:null)}}/>

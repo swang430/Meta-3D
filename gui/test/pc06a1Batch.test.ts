@@ -175,3 +175,23 @@ test('真实lease的null不伪造释放：仅完整服务器纯模拟来源与�
   assert.equal(state.batchCanRelease(job({...simulated,items:[]}),[]),false)
   assert.equal(state.batchCanRelease(job({...simulated,items:[{...item,status:'simulated'}, {...item,item_id:'i2',run_id:'real',status:'completed'}]}),[recorded]),false)
 })
+test('批清单按item权威scope显示路径：route配置摘要可为null，但端口或scope/请求身份分叉仍拒绝',()=>{
+  const selected={...paths[0],chamber_id:'chamber',configuration_digest:null}
+  const batchItem={route_selection:selected,request:{chain_id:'p1',topology_id:'topo',operating_mode:'mimo_ota',route_digest:'a'.repeat(64),configuration_digest:'c'.repeat(64)},
+    configuration_scope:{digest:'c'.repeat(64),configuration_complete:true,payload:{lab_profile_id:'lab',chamber_id:'chamber',operating_mode:'mimo_ota',
+      topology:{id:'topo',scope_source:'selected_route',selected_chain_id:'p1',selected_route_digest:'a'.repeat(64)}}}}
+  const route=state.batchItemRoute(batchItem as never)
+  assert.equal(route?.configuration_digest,'c'.repeat(64))
+  assert.equal(state.routeMatchesSaved(scope as never,route),true)
+  assert.equal(selected.configuration_digest,null)
+  assert.equal(state.routeMatchesSaved({...scope,dirty:true} as never,route),false)
+  const changedGraph=structuredClone(scope.graph);changedGraph.connections[0].target_pin='changed-port'
+  assert.equal(state.routeMatchesSaved({...scope,graph:changedGraph} as never,route),false)
+  for(const requestPatch of [{configuration_digest:'d'.repeat(64)},{route_digest:'d'.repeat(64)},{chain_id:'p2'},{operating_mode:'other'},{topology_id:'other'}])
+    assert.equal(state.batchItemRoute({...batchItem,request:{...batchItem.request,...requestPatch}} as never),undefined)
+  assert.equal(state.batchItemRoute({...batchItem,route_selection:{...selected,configuration_digest:'d'.repeat(64)}} as never),undefined)
+  assert.equal(state.batchItemRoute({...batchItem,configuration_scope:{...batchItem.configuration_scope,configuration_complete:false}} as never),undefined)
+  assert.equal(state.batchItemRoute({...batchItem,configuration_scope:{...batchItem.configuration_scope,payload:{...batchItem.configuration_scope.payload,lab_profile_id:'other'}}} as never),undefined)
+  assert.equal(state.batchItemRoute({...batchItem,configuration_scope:{...batchItem.configuration_scope,payload:{...batchItem.configuration_scope.payload,
+    topology:{...batchItem.configuration_scope.payload.topology,selected_route_digest:'d'.repeat(64)}}}} as never),undefined)
+})
