@@ -33,9 +33,10 @@ def _finite(value):
 
 
 def _execution_route(route):
-    # 实际正常通路：器件身份/类型、连接端点与pin。参数备注、显示坐标和校准参考段不驱动正常接线。
-    return dict(nodes=[{'id':node['id'],'type':node['type']} for node in route.nodes],
-        ports=[port.model_dump(mode='json') for port in route.ports])
+    # 新显式路径还须冻结开关物理执行身份，不能只因CE/probe端点相同而套用旧量值。
+    # 旧无声明路径仍仅比较节点/端口；备注、显示坐标和校准参考段均不驱动执行。
+    from app.services.declared_rf_routes import rf_execution_identity
+    return rf_execution_identity(route.nodes,route.connections,route.switch_execution_identity)
 
 
 def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
@@ -201,6 +202,12 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
         if (resolved_topology.topology_id!=frozen['topology_id'] or resolved_topology.mode_id!=frozen['operating_mode'] or
             actual!=expected or len(resolved_topology.probe_bindings)!=len(expected)):
             return 'path-loss actual route target differs from execution freeze; create a new execution to review the saved route'
+        by_chain={row.connection_id:row for row in resolved_topology.probe_bindings}
+        for row in frozen['route_entries']:
+            identity=row.get('execution_route_identity')
+            if isinstance(identity,dict) and identity.get('switch_mappings'):
+                if by_chain[row['chain_id']].execution_route_identity!=identity:
+                    return 'path-loss actual switch route differs from execution freeze; create a new execution to review the saved route'
         return None
     try:
         current=resolve_rf_chains(db,UUID(frozen['lab_profile_id']),frozen['operating_mode'])

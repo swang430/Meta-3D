@@ -115,10 +115,17 @@ def test_legacy_request_still_freezes_a_unique_complete_version2_route(client, c
 
 
 def test_legacy_request_does_not_allow_ambiguous_path(client, configured, graph, db_session):
+    # 先取合法图摘要，再制造歧义；正式集合现在会在普通scope读取时提前拒绝。
+    digest=client.get(f'/api/v1/lab-profiles/{configured.id}/calibration-scope').json()['digest']
     graph.connections=[*graph.connections,{'id':'shortcut','source':'ce1','target':'probe1v'}]
     modes=copy.deepcopy(graph.operating_modes);modes[0]['active_connections'].append('shortcut')
     graph.operating_modes=modes;db_session.commit()
-    response=start(client,configured,chain_id='pad-probe')
+    scope=client.get(f'/api/v1/lab-profiles/{configured.id}/calibration-scope')
+    assert scope.status_code==422,scope.text
+    response=client.post(f'/api/v1/lab-profiles/{configured.id}/fixed-route-acquisitions',json=dict(
+        chain_id='pad-probe',configuration_digest=digest,frequency_mhz=2595,requested_power_dbm=-20,
+        reference_antenna='REF V中心',receive_cable_loss_db=2,receive_cable_source='2595MHz记录',
+        fixed_route_confirmed=True,safety_confirmed=True,sample_count=2))
     assert response.status_code==422,response.text
     assert db_session.query(DiagnosticRun).count()==0
 

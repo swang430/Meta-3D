@@ -46,7 +46,7 @@ def _fields(value, names):
 def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *, topology_id: UUID | None = None) -> CalibrationScopeSnapshot:
     resolution = resolve_rf_chains(db, lab_id, mode)
     if topology_id is not None:
-        # 显式选择采集图时使用完整路径；旧执行解析器和旧盘点入口保持原样。
+        # 普通显式topology仍使用完整正式集合；不借此绕过重复CE门。
         from app.services.calibration.route_calibration import list_route_selections
         from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
         selected_routes = list_route_selections(db, lab_id, topology_id, mode)
@@ -54,6 +54,29 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *
         resolution = RFChainResolution(lab_profile_id=lab_id,chamber_id=selected_topology.chamber_id,
             topology_id=str(topology_id),topology_name=selected_topology.name,operating_mode=mode,
             chains=[RFChainSpec(r.chain_id,r.ce_port,r.probe_id,r.polarization) for r in selected_routes])
+    return _build_scope_payload(db,lab_id,mode,resolution)
+
+
+def build_selected_route_calibration_scope(db: Session,lab_id: UUID,mode: str,*,topology_id: UUID,chain_id: str) -> CalibrationScopeSnapshot:
+    """批服务器指定单项的真实scope；不先经过正式全局集合唯一门。"""
+    from app.services.calibration.route_calibration import resolve_explicit_route_selection
+    from app.services.calibration.rf_chain_resolver import RFChainResolution,RFChainSpec
+    from app.services.declared_rf_routes import resolve_saved_rf_path
+    topology=db.get(SwitchTopology,topology_id)
+    if topology is None:
+        raise LookupError('拓扑不存在')
+    selected_mode=next((m for m in topology.operating_modes or [] if m.get('id')==mode),{})
+    ids=selected_mode.get('active_connections') or [c['id'] for c in topology.connections or [] if mode in c.get('modes',[])]
+    active=[c for c in topology.connections or [] if c.get('id') in ids]
+    _,edges=resolve_saved_rf_path(topology.nodes or [],active,chain_id)
+    route=resolve_explicit_route_selection(db,lab_id,topology_id,mode,chain_id,[e['id'] for e in edges])
+    resolution=RFChainResolution(lab_profile_id=lab_id,chamber_id=topology.chamber_id,
+        topology_id=str(topology.id),topology_name=topology.name,operating_mode=mode,
+        chains=[RFChainSpec(route.chain_id,route.ce_port,route.probe_id,route.polarization)])
+    return _build_scope_payload(db,lab_id,mode,resolution,selected_route=route)
+
+
+def _build_scope_payload(db,lab_id,mode,resolution,*,selected_route=None):
     lab = db.query(LabProfile).filter(LabProfile.id == lab_id).one()
     chamber = db.query(ChamberConfiguration).filter(ChamberConfiguration.id == resolution.chamber_id).one_or_none()
     if chamber is None:
@@ -96,6 +119,14 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *
                 if connection and isinstance(connection.connection_params, dict) else {},
         }
         resources.append(row)
+        if selected_route is not None and connection is not None:
+            from app.services.calibration.route_calibration import route_switch_steps
+            selected_topology=db.get(SwitchTopology,selected_route.topology_id)
+            steps=route_switch_steps(db,selected_topology,selected_route.nodes,selected_route.connections,lab)
+            selected_maps={step['path_name']:step['mapping'] for step in steps
+                if step['category_id']==str(category_id)}
+            if selected_maps:
+                row['saved']['selected_port_maps']=selected_maps
         if category is None:
             warnings.append(f'绑定仪器类别已不存在：{raw_id}')
         elif not category.is_active:
@@ -110,6 +141,10 @@ def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *
         SwitchTopology.id == UUID(str(resolution.topology_id))).one_or_none() if resolution.topology_id else None
     graph = {'id': str(topology.id) if topology else None}
     if topology:
+        if selected_route is not None:
+            graph['scope_source']='selected_route'
+            graph['selected_chain_id']=selected_route.chain_id
+            graph['selected_route_digest']=selected_route.route_digest
         selected_mode = next((m for m in topology.operating_modes or [] if m.get('id') == mode), {})
         active = set(selected_mode.get('active_connections') or [])
         connections = [c for c in topology.connections or [] if c.get('id') in active]

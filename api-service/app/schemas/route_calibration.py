@@ -37,6 +37,8 @@ class RouteSelection(BaseModel):
     reference_antenna_id: str | None = None
     analyzer_category_id: str | None = None
     route_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
+    switch_execution_identity: list[dict[str, JsonValue]] = Field(default_factory=list,
+        description='仅新显式开关路径的保存绑定/继电器/端口配对身份；非硬件回读证据')
     configuration_digest: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
     @model_validator(mode='after')
@@ -65,6 +67,14 @@ class RouteSelection(BaseModel):
             raise ValueError('路径探头身份与快照不一致')
         if set(self.node_ids) & set(self.calibration_node_ids):
             raise ValueError('校准参考接线与正常路径节点混合')
+        declared=params.get('rf_path_selection')
+        if declared and declared.get('switch_mappings'):
+            expected={row['node_id'] for row in declared['switch_mappings']}
+            if ({row.get('node_id') for row in self.switch_execution_identity}!=expected
+                    or len(self.switch_execution_identity)!=len(expected)):
+                raise ValueError('显式开关路径缺少冻结执行身份，不能从当前配置补历史')
+        elif self.switch_execution_identity:
+            raise ValueError('无显式开关声明的历史路径不能携带开关执行身份')
         check_sequence([self.node_ids[-1],*self.calibration_node_ids],
             [self.nodes[-1],*self.calibration_nodes],self.calibration_connection_ids,self.calibration_connections)
         return self
