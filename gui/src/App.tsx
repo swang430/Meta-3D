@@ -2613,8 +2613,8 @@ function EquipmentManager() {
                 {category.key === 'rfSwitch' && (
                   <JsonInput
                     label="端口映射配置 (Option B)"
-                    description="设置业务逻辑侧 Probe/天线 到物理继电器的路由。"
-                    placeholder={'{\n  "port_maps": {\n    "Probe_V_1": {"switch_id": "1:EXT_RELAY_A", "position": 1}\n  }\n}'}
+                    description="由操作员明确填写物理继电器与拓扑端口配对，不按标签推算。拓扑探头rf_path_selection的path_name须匹配此处键；自动切换资格另由服务器核验，声明不是RF认证。"
+                    placeholder={'{\n  "port_maps": {\n    "现场映射名": {"switch_id": "1:INT_RELAY_A", "relay_type": "sp6t", "input_port": 0, "output_port": 1, "topology_input_pin": "实际输入pin", "topology_output_pin": "实际输出pin"}\n  }\n}'}
                     validationError="无效的 JSON 格式"
                     formatOnBlur
                     autosize

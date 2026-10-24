@@ -9,7 +9,8 @@ import { fetchRouteCalibrationPaths, fetchRouteApplicationPreview, confirmRouteA
 import type { FixedRouteRecord, FixedRouteRequest, ConfirmRouteApplication, RouteSelection } from '../../types/api'
 import type { SwitchTopology } from '../../api/switchTopologyService'
 import { buildRouteAcquisitionRequest, buildRouteConfirmation, canAdoptRoute, routePreviewDisplay,
-  routeMatchesSaved, routeGraphMatchesSaved, runningRouteIdentity, canReleaseRouteStart, type RouteFields } from './routeCalibrationState'
+  routeMatchesSaved, routeGraphMatchesSaved, runningRouteIdentity, canReleaseRouteStart, batchChildReady, type RouteFields } from './routeCalibrationState'
+import { RouteBatchPanel } from './RouteBatchPanel'
 
 function failure(error:unknown) {
   const detail=(error as {response?:{data?:{detail?:unknown}}})?.response?.data?.detail
@@ -30,6 +31,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   // Global unfinished work survives unmount; unreadable history cannot clear it.
   const busy=trackingBusy||activeWork.length>0
   const [activeSelection,setActiveSelection]=useState<RouteSelection|undefined>(undefined)
+  const [batchRoute,setBatchRoute]=useState<RouteSelection|null>(null)
   const [inputError,setInputError]=useState(''),[deadline,setDeadline]=useState('')
   const [values,setValues]=useState<RouteFields>({frequency:'',power:'',antenna:'',cable:'',cableSource:'',samples:'5',fixed:false,safe:false})
   const mounted=useRef(true),tracking=useRef<string|null>(null),pendingRelease=useRef<(()=>void)|null>(null)
@@ -47,13 +49,13 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   const result=!progress.isError&&!progress.isPaused?progress.data:undefined
   const activeSnapshot=activeRunId?activeSelection:undefined
   const preview=useQuery({queryKey:['route-application-preview',labId,runId],queryFn:()=>fetchRouteApplicationPreview(labId,runId!),
-    enabled:Boolean(result && result.status!=='running'),retry:false})
+    enabled:Boolean(result && result.status!=='running'&&batchChildReady(result)),retry:false})
   const adoptedHistory=useQuery({queryKey:['route-application-history',labId,topologyId,chainId],
     queryFn:()=>fetchRouteApplicationHistory(labId,topologyId,chainId!),enabled:Boolean(chainId),retry:false})
   useEffect(()=>{onSelectRoute(activeRunId?
     (activeSnapshot&&activeSnapshot.topology_id===topologyId&&activeSnapshot.operating_mode===mode&&routeGraphMatchesSaved(graph,activeSnapshot)?activeSnapshot:null):
-    routeMatchesSaved(scope,route)?route!:null)
-  },[route,activeRunId,activeSnapshot,dirty,saving,mode,labId,topologyId,graph,onSelectRoute])
+    routeMatchesSaved(scope,batchRoute)?batchRoute:!busy&&routeMatchesSaved(scope,route)?route!:null)
+  },[route,batchRoute,busy,activeRunId,activeSnapshot,dirty,saving,mode,labId,topologyId,graph,onSelectRoute])
   useEffect(()=>{setValues(old=>({...old,fixed:false,safe:false}));setDeadline('');confirmAttempt.current=null},[mode,route?.route_digest,runId])
 
   const changeBusy=(value:boolean)=>{setBusy(value);if(value)onBusyChange(true)}
@@ -81,7 +83,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   const recover=async()=>{
     const response=await history.refetch()
     if(response.isSuccess&&!response.isPaused&&!response.isFetching){
-      const running=response.data.find(row=>row.status==='running')
+      const running=response.data.find(row=>row.status==='running'&&!row.batch_context&&!row.result?.states?.batch_job_id)
       if(running)track(running)
       else if(!tracking.current&&canReleaseRouteStart(startPending.current,startFailureStatus.current,response.data)){
         pendingRelease.current?.();pendingRelease.current=null;changeBusy(false)
@@ -89,7 +91,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     }
   }
   useEffect(()=>{
-    const running=history.data?.find(row=>row.status==='running')
+    const running=history.data?.find(row=>row.status==='running'&&!row.batch_context&&!row.result?.states?.batch_job_id)
     if(running&&!tracking.current)track(running)
   },[history.data])
   const start=useMutation({mutationFn:(request:FixedRouteRequest)=>startFixedRouteAcquisition(labId,request),
@@ -104,17 +106,17 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     onSuccess:()=>{void preview.refetch();void adoptedHistory.refetch()}})
   const shown=result?fixedRouteDisplay(result):null, frozen=runningRouteIdentity(result)
   const allowed=canAdoptRoute(scope,route,preview.data,runId??undefined)&&result?.status==='completed'&&
-    !preview.isFetching&&!preview.isError&&!preview.isPaused&&!progress.isError&&!busy
+    batchChildReady(result)&&!preview.isFetching&&!preview.isError&&!preview.isPaused&&!progress.isError&&!busy
   const display=preview.data?routePreviewDisplay(preview.data):null
   return <Card withBorder radius={0} data-testid="route-calibration-panel" style={{height:'100%',overflowY:'auto'}}><Stack gap="sm">
     <Title order={4}>通路采集与确认采用</Title>
-    <Alert color="blue">开关保持固定，不自动换线。采用整条实测损耗后只作用于适用的新执行；既有执行保持冻结。认证资格未知，不代表DUT功率。</Alert>
+    <Alert color="blue">单项入口保持固定接线；同图多项入口按服务器清单逐项切换／等待人工。采用整条实测损耗后只作用于适用的新执行；既有执行保持冻结。认证资格未知，不代表DUT功率。</Alert>
     {dirty&&<Alert color="yellow">拓扑草稿未保存：先保存，再选择服务器完整通路；不会采集旧图而高亮草稿。</Alert>}
     {mode==='calibration'&&<Alert color="blue">此模式用于编辑参考接线。请切回正常测试模式选择完整待测通路；历史记录身份不随模式改变。</Alert>}
     <Select label="完整校准通路" placeholder="选择已保存的CE→探头通路" searchable value={activeRunId?activeSnapshot?.chain_id??null:chainId}
       disabled={busy||dirty||saving||mode==='calibration'||paths.isFetching}
       data={(activeRunId?(activeSnapshot?[activeSnapshot]:[]):paths.data)?.map(row=>({value:row.chain_id,label:`${row.ce_port} → 探头${row.probe_id} ${row.polarization} · ${row.chain_id}${activeSnapshot?'（本次冻结）':''}`}))??[]}
-      onChange={value=>{setChainId(value);adopt.reset();setInputError('')}}/>
+      onChange={value=>{setBatchRoute(null);setChainId(value);adopt.reset();setInputError('')}}/>
     {paths.isError&&<Alert color="red">完整路径读取失败：{failure(paths.error)}</Alert>}
     {route&&!dirty&&!saving&&mode!=='calibration'&&!routeMatchesSaved(scope,route)&&<Alert color="yellow">
       服务器候选通路与当前保存画布的节点、端口或参考接线不一致，未用新候选高亮旧图。请重新加载保存图复核；这不是要求重新校准。
@@ -148,12 +150,16 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
       <Text fw={600}>{shown.label}</Text><Text size="sm">记录：{result.run_id}</Text>
       <Text size="sm">记录模式：{frozen?.operating_mode??result.result?.request.operating_mode??'历史未知'}；路径：{frozen?.node_ids.join(' → ')??'历史无完整路径快照'}</Text>
       <Text>F64实测：{shown.source}；接收实测：{shown.received}</Text><Text>整条净损耗：{shown.loss}</Text><Text>停发：{shown.cleanup}</Text>
+      {Boolean(result.batch_context||result.result?.states?.batch_job_id)&&<Text size="sm" c={!batchChildReady(result)?'yellow':undefined}>
+        所属批：{result.batch_context?.job_id??String(result.result?.states?.batch_job_id??'未知')}；本项tone：{result.status==='simulated'?'模拟，未确认真实停发':result.result?.cleanup_confirmed===true?'清理已确认':'清理未知'}；
+        {batchChildReady(result)?'服务器已确认父批终止、真实lease释放与父子最终提交；仍以原采用资格为准':'父批活动／最终化或外层释放未确认，不可采用'}。
+      </Text>}
       {result.result?.error&&<Text>{result.result.error}</Text>}
       {result.result?.missing_items?.map((text,index)=><Text size="sm" key={index}>{text}</Text>)}
       <details><summary>本次冻结配置、原始回复与读数</summary><Code block style={{maxHeight:300,overflow:'auto',whiteSpace:'pre-wrap'}}>{JSON.stringify(result,null,2)}</Code></details>
     </Alert>}
     {preview.isError&&<Alert color="red">采用资格读取失败：{failure(preview.error)}</Alert>}
-    {display&&preview.data&&<Card withBorder><Stack gap="xs">
+    {display&&preview.data&&batchChildReady(result)&&<Card withBorder><Stack gap="xs">
       <Text fw={600}>服务器采用预览（认证资格未知）</Text>
       <Text>原值：{display.old} · 新值：{display.next} · 差值：{display.delta}</Text>
       <Text size="xs">旧来源与新整条参考面不同的情形由服务器判定；不在页面相减或猜值。</Text>
@@ -175,12 +181,15 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     <Text size="xs">执行支持：MIMO-First ASC以waveform方式只补一次；native GCM、外部ASC、B2没有整条参考面消费者，显示不支持／未应用，严格模式在硬件前拒绝。</Text>
     <Title order={5}>采集历史</Title>
     {history.isError&&<Alert color="red">历史读取失败：{failure(history.error)}</Alert>}
-    {history.data?.map(row=><Group key={row.run_id} justify="space-between" wrap="nowrap"><Text size="xs">{new Date(row.run_at).toLocaleString()} · {row.result?.request.operating_mode??'历史未知'} · {acquisitionStatus[row.status]??'未知'}</Text>
-      <Button size="xs" variant="subtle" disabled={busy} onClick={()=>{setRunId(row.run_id);adopt.reset();setInputError('')}}>查看记录</Button></Group>)}
+    {history.data?.map(row=><Group key={row.run_id} justify="space-between" wrap="nowrap"><Text size="xs">{new Date(row.run_at).toLocaleString()} · {row.result?.request.operating_mode??'历史未知'} · {acquisitionStatus[row.status]??'未知'}
+      {row.batch_context&&` · 所属批${row.batch_context.job_id??'未知'} · ${row.status==='simulated'?'模拟tone':row.result?.cleanup_confirmed===true?'本项tone已清理':'本项tone未知'} · ${batchChildReady(row)?'父批最终化已确认':'外层释放未确认，不可采用'}`}</Text>
+      <Button size="xs" variant="subtle" disabled={Boolean(activeRunId)} onClick={()=>{setRunId(row.run_id);const frozen=runningRouteIdentity(row);if(frozen)setChainId(frozen.chain_id);adopt.reset();setInputError('')}}>查看记录</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无采集记录。</Text>}
     <Title order={5}>所选通路采用历史</Title>
     {adoptedHistory.isError&&<Alert color="red">采用历史读取失败：{failure(adoptedHistory.error)}</Alert>}
     {adoptedHistory.data?.map(row=><Text size="xs" key={row.id} style={{overflowWrap:'anywhere'}}>{new Date(row.confirmed_at).toLocaleString()} · {row.selection_snapshot.operating_mode} / {row.frequency_mhz} MHz · {row.net_loss_db.toFixed(2)} dB · 认证资格未知 · 截止{String(row.coverage_snapshot.adoption_valid_until??'未知')} · 采集{row.acquisition_run_id} · 采用{row.id}</Text>)}
     {!adoptedHistory.data?.length&&<Text size="sm">当前通路暂无确认采用记录。</Text>}
+    <RouteBatchPanel scope={scope} paths={paths.data??[]} blocked={busy} onSelectRoute={setBatchRoute} onRunningRoute={onRunningRoute}
+      onInspectChild={(id,selection)=>{setRunId(id);if(selection){setChainId(selection.chain_id);setBatchRoute(selection)}adopt.reset();setInputError('')}}/>
   </Stack></Card>
 }

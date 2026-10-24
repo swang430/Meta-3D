@@ -47,6 +47,7 @@ import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalL
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
+import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
 import { routeGraphMatchesSaved } from './routeCalibrationState';
 import type { RouteSelection } from '../../types/api';
 import { getNodePorts, nodePortsToSelectOptions } from './nodePortHelpers';
@@ -135,7 +136,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   }, [dirty, onDirtyChange]);
 
   const initialNodes: Node[] = React.useMemo(() => {
-    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
+    const activeConnectionIds = new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
 
     // Collect node IDs that have at least one active connection
     const activeNodeIds = new Set<string>();
@@ -148,6 +149,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
     return draft.nodes
       .filter((n) => {
+        if(highlightedRoute?.calibration_node_ids.includes(n.id)&&activeNodeIds.has(n.id))return true;
         // If node has visible_modes restriction, check if current mode is in the list
         const visibleModes = n.params?.visible_modes;
         if (visibleModes && Array.isArray(visibleModes)) {
@@ -161,12 +163,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         type: n.type,
         position: n.position || { x: 0, y: 0 },
         data: { label: n.label, params: n.params },
-        style:highlightedRoute?.node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-blue-5)',outlineOffset:3}:undefined,
+        style:highlightedRoute?.node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-blue-5)',outlineOffset:3}:
+          highlightedRoute?.calibration_node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-orange-5)',outlineOffset:3}:undefined,
       }));
   }, [draft, activeMode, highlightedRoute]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
-    const activeConnectionIds = new Set(getDraftModeConnectionIds(draft,activeMode));
+    const activeConnectionIds = new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
 
     return draft.connections
       .filter((c) => activeConnectionIds.has(c.id))
@@ -185,7 +188,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           direction: c.direction,
         },
         animated: true,
-        style:highlightedRoute?.connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-blue-5))'}:undefined,
+        style:highlightedRoute?.connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-blue-5))'}:
+          highlightedRoute?.calibration_connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-orange-5))'}:undefined,
         markerEnd: { 
           type: MarkerType.ArrowClosed, 
           color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db ? '#10B981' : ((c as any).pa_gain_db ? '#F59E0B' : '#3B82F6')) 
@@ -386,6 +390,10 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
     }
     try {
+      if(selectedNode.type==='probe'&&selectedNode.params.rf_path_selection){
+        const declaration=selectedNode.params.rf_path_selection;
+        selectedNode.params.rf_path_selection=probePathDeclaration(draft,selectedNode.id,declaration.connection_ids,declaration.switch_mappings);
+      }
       const next=updateDraftNode(draft,selectedNode,ports);
       changeDraft(()=>next);
       setNodeDrawerOpen(false);
@@ -497,6 +505,22 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={editingBlocked} onChange={event=>setPortText(event.currentTarget.value)} />
           <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={editingBlocked || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
           {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={editingBlocked} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
+          {selectedNode.type==='switch_slot'&&<Text size="xs">须关联本图开关类别{draft.switch_category_id}。物理port_maps在原仪器管理→射频开关→端口映射配置中保存；每映射须明确switch_id、relay_type、input_port、output_port及topology_input_pin/output_pin，不能按显示名称猜端口。</Text>}
+          {selectedNode.type==='probe'&&<Stack gap="xs">
+            <NumberInput label="探头编号（从0开始）" min={0} allowDecimal={false} value={selectedNode.params.probe_id??''} disabled={editingBlocked} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,probe_id:value}})}/>
+            <Select label="探头极化" data={['V','H']} value={selectedNode.params.polarization??null} disabled={editingBlocked} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,polarization:value}})}/>
+            <MultiSelect label="显式RF路径：按CE→探头顺序选择连线" description="选择顺序就是保存顺序；需调整顺序时先移除再选。空选保留旧式唯一链解析。" disabled={editingBlocked}
+              value={selectedNode.params.rf_path_selection?.connection_ids??[]}
+              data={draft.connections.filter(c=>getDraftModeConnectionIds(draft,activeMode).includes(c.id)).map(c=>({value:c.id,label:`${c.id} · ${c.source}:${c.source_pin??'?'} → ${c.target}:${c.target_pin??'?'}`}))}
+              onChange={value=>{const params={...selectedNode.params};if(!value.length)delete params.rf_path_selection;else params.rf_path_selection={connection_ids:value,
+                switch_mappings:(params.rf_path_selection?.switch_mappings??[]).filter((m:{node_id:string})=>draft.connections.some(c=>value.includes(c.id)&&(c.source===m.node_id||c.target===m.node_id)))};setSelectedNode({...selectedNode,params})}}/>
+            <Text size="xs">保存顺序：{selectedNode.params.rf_path_selection?.connection_ids.join(' → ')||'未声明，仅服务器唯一链解析'}</Text>
+            {draft.nodes.filter(n=>n.type==='switch_slot'&&draft.connections.some(c=>selectedNode.params.rf_path_selection?.connection_ids.includes(c.id)&&(c.source===n.id||c.target===n.id))).map(node=><TextInput key={node.id}
+              label={`开关映射名 ${node.id}`} description="对应port_maps中的精确键，不是端口显示名。" disabled={editingBlocked}
+              value={selectedNode.params.rf_path_selection.switch_mappings.find((m:{node_id:string})=>m.node_id===node.id)?.path_name??''}
+              onChange={e=>{const declaration=selectedNode.params.rf_path_selection;setSelectedNode({...selectedNode,params:{...selectedNode.params,rf_path_selection:{...declaration,
+                switch_mappings:[...declaration.switch_mappings.filter((m:{node_id:string})=>m.node_id!==node.id),{node_id:node.id,path_name:e.currentTarget.value}]}}})}}/>)}
+          </Stack>}
           <Alert color="blue">此处只声明拓扑接线。自动控制和正式校准资格由采集入口另行核验。</Alert>
           <Group><Button onClick={applyNodeEdit} disabled={editingBlocked}>应用器件修改</Button><Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
         </Stack>}
