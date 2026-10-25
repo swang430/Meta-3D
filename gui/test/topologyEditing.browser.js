@@ -1,7 +1,8 @@
 // 独立临时数据库/全HAL Mock，真实前后端；不拦截响应，不操作现场仪器。
 async page=>{
   await page.evaluate(()=>{window.__topologyEditingResult=null});
-  const api='http://127.0.0.1:18080/api/v1',checks=[];
+  const origin=new URL(page.url()).origin;
+  const api=`${origin}/api/v1`,checks=[];
   page.setDefaultTimeout(12000);
   const clickCurve=async(id)=>{
     await page.getByRole('button',{name:'Fit View',exact:true}).click();
@@ -33,7 +34,7 @@ async page=>{
   const nodes=topology.nodes.map((n,index)=>({...n,position:{x:index<2?30:540,y:index%2*240+60}}));
   const setup=await page.request.patch(endpoint,{data:{nodes}});
   if(!setup.ok())throw new Error(await setup.text());
-  await page.goto('http://127.0.0.1:5187');
+  await page.goto(origin);
   await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);
   await page.reload();
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();

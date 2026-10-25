@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode } from '../src/features/TopologyEditor/topologyDraft.ts';
+import * as draftHelpers from '../src/features/TopologyEditor/topologyDraft.ts';
 import type { SwitchTopology } from '../src/api/switchTopologyService.ts';
 import { getNodePorts, suggestedPassivePorts } from '../src/features/TopologyEditor/nodePortHelpers.ts';
 
@@ -8,6 +9,38 @@ const fixture = (): SwitchTopology => ({ name: '图', switch_category_id: 's', i
   nodes: ['a','b','c'].map(id => ({id, type:'pad',label:id,position:{x:12,y:34},params:{ports:['in','out'],unknown:{keep:1}}})),
   connections: [{id:'ab',source:'a',target:'b',source_pin:'out',target_pin:'in'}, {id:'bc',source:'b',target:'c',source_pin:'out',target_pin:'in'}],
   operating_modes: [{id:'mimo_ota',name:'测试',active_connections:['ab','bc']},{id:'calibration',name:'校准',active_connections:['ab']}],
+});
+test('删除显式路径边或中间节点会指出受影响探头且不改原草稿',()=>{
+  const draft=fixture();
+  draft.nodes[2].type='probe';
+  draft.nodes[2].params.rf_path_selection={connection_ids:['ab','bc'],switch_mappings:[]};
+  const before=structuredClone(draft);
+  assert.throws(()=>removeDraftConnections(draft,['ab']),/c/);
+  assert.throws(()=>removeDraftNodes(draft,['b']),/c/);
+  assert.deepEqual(draft,before);
+});
+test('显式引用的边改pin或端点拒绝，数值损耗编辑允许',()=>{
+  const draft=fixture();
+  draft.nodes[2].type='probe';
+  draft.nodes[2].params.rf_path_selection={connection_ids:['ab','bc'],switch_mappings:[]};
+  const updateDraftConnection=draftHelpers.updateDraftConnection;
+  assert.equal(typeof updateDraftConnection,'function');
+  const before=structuredClone(draft);
+  for(const change of [{target_pin:'out'},{source_pin:'in'},{source:'b'},{target:'a'}])
+    assert.throws(()=>updateDraftConnection(draft,{...draft.connections[0],...change}),/c/);
+  assert.equal(updateDraftConnection(draft,{...draft.connections[0],cable_loss_db:2}).connections[0].cable_loss_db,2);
+  assert.deepEqual(draft,before);
+});
+test('删除自身探头不受自身声明拦截，其他存活探头引用仍原子拒绝',()=>{
+  const draft=fixture();
+  draft.nodes[2].type='probe';
+  draft.nodes[2].params.rf_path_selection={connection_ids:['ab','bc'],switch_mappings:[]};
+  assert.deepEqual(removeDraftNodes(draft,['c']).nodes.map(n=>n.id),['a','b']);
+  draft.nodes.push({id:'other',type:'probe',label:'另一个探头',params:{rf_path_selection:{connection_ids:['bc'],switch_mappings:[]}}});
+  const before=structuredClone(draft);
+  assert.throws(()=>removeDraftNodes(draft,['c']),/other/);
+  assert.deepEqual(draft,before);
+  assert.throws(()=>updateDraftNode(draft,{...draft.nodes[1],params:{...draft.nodes[1].params,ports:['NEW','out']}}),/端口/);
 });
 test('显式空或未知显示模式不能应用，历史隐藏节点可以恢复到明确模式',()=>{
   const draft=fixture();
