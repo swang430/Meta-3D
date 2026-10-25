@@ -39,6 +39,11 @@ export function getNodePorts(node: TopologyNode | undefined): string[] {
   return DEFAULT_PORTS_BY_TYPE[node.type] || ['out', 'in']
 }
 
+/** 仅供新增线缆表单建议，须核对并应用；不是默认端口能力。 */
+export function suggestedPassivePorts(type: string): string[] {
+  return ['cable', 'receive_cable'].includes(type) ? ['A', 'B'] : []
+}
+
 /** Convenience: map node port list to Mantine Select options. */
 export function nodePortsToSelectOptions(node: TopologyNode | undefined) {
   return getNodePorts(node).map((p) => ({ value: p, label: p }))

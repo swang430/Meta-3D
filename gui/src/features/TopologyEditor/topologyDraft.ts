@@ -27,7 +27,26 @@ export function addDraftConnection(draft: SwitchTopology, connection: TopologyCo
   }
   return synchronizeModeDeclarations({...draft,connections:[...draft.connections,{...connection,modes:[mode]}],operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...getDraftModeConnectionIds(draft,m.id),connection.id]}:m)},new Set([mode]));
 }
+function assertUnreferencedConnections(draft: SwitchTopology, ids: string[], removedNodeIds: string[] = []): void {
+  const changed = new Set(ids), removed = new Set(removedNodeIds);
+  const probes = draft.nodes.filter(node=>node.type==='probe' && !removed.has(node.id) &&
+    Array.isArray(node.params.rf_path_selection?.connection_ids) &&
+    node.params.rf_path_selection.connection_ids.some((id: string)=>changed.has(id)));
+  if (probes.length) throw new Error(`探头 ${probes.map(p=>`${p.label}（${p.id}）`).join('、')}` +
+    ` 显式路径引用连线 ${ids.join('、')}，请先在探头属性重新声明路径`);
+}
+export function updateDraftConnection(draft: SwitchTopology, connection: TopologyConnection): SwitchTopology {
+  const old = draft.connections.find(edge=>edge.id===connection.id);
+  if (!old) throw new Error('连线已不存在，请重新选择');
+  if (old.source!==connection.source || old.target!==connection.target ||
+    (old.source_pin??'out')!==(connection.source_pin??'out') ||
+    (old.target_pin??'in')!==(connection.target_pin??'in')) {
+    assertUnreferencedConnections(draft,[connection.id]);
+  }
+  return {...draft,connections:draft.connections.map(edge=>edge.id===connection.id?{...connection}:edge)};
+}
 export function removeDraftConnections(draft: SwitchTopology, ids: string[]): SwitchTopology {
+  assertUnreferencedConnections(draft,ids);
   const removed = new Set(ids);
   const changed = new Set(draft.operating_modes.filter(m=>getDraftModeConnectionIds(draft,m.id).some(id=>removed.has(id))).map(m=>m.id));
   const affected = new Set(draft.connections.filter(c=>removed.has(c.id)).flatMap(c=>[c.source,c.target]));
@@ -45,10 +64,19 @@ export function removeDraftConnections(draft: SwitchTopology, ids: string[]): Sw
 }
 export function removeDraftNodes(draft: SwitchTopology, ids: string[]): SwitchTopology {
   const removed = new Set(ids);
-  const cleaned = removeDraftConnections(draft,draft.connections.filter(c=>removed.has(c.source)||removed.has(c.target)).map(c=>c.id));
-  return {...cleaned,nodes:cleaned.nodes.filter(n=>!removed.has(n.id))};
+  const connectionIds = draft.connections.filter(c=>removed.has(c.source)||removed.has(c.target)).map(c=>c.id);
+  assertUnreferencedConnections(draft,connectionIds,ids);
+  return removeDraftConnections({...draft,nodes:draft.nodes.filter(n=>!removed.has(n.id))},connectionIds);
 }
 export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, declaredPorts?: string[]): SwitchTopology {
+  // 历史未声明模式保持原语义；显式应用必须保留至少一个可恢复的有效入口。
+  const modes=node.params.visible_modes;
+  if (Array.isArray(modes) && (!modes.length || modes.some(mode=>!draft.operating_modes.some(item=>item.id===mode)))) {
+    throw new Error('至少选择一个有效显示模式；可从器件列表恢复隐藏器件');
+  }
+  if (node.params.connection_scope==='calibration' && Array.isArray(modes) && (modes.length!==1 || modes[0]!==CALIBRATION_MODE)) {
+    throw new Error('校准器件只能显示在校准接线模式');
+  }
   const previous=draft.nodes.find(n=>n.id===node.id);
   // 只改名称或显示模式时，不把历史图的默认画布端点写成新的端口声明。
   if (declaredPorts && JSON.stringify(declaredPorts)!==JSON.stringify(getNodePorts(previous))) {

@@ -1,10 +1,12 @@
 // 独立临时数据库/全HAL Mock，真实前后端；不拦截响应，不操作现场仪器。
 async page=>{
   await page.evaluate(()=>{window.__topologyEditingResult=null});
-  const api='http://127.0.0.1:18080/api/v1',checks=[];
+  const origin=new URL(page.url()).origin;
+  const api=`${origin}/api/v1`,checks=[];
   page.setDefaultTimeout(12000);
   const clickCurve=async(id)=>{
     await page.getByRole('button',{name:'Fit View',exact:true}).click();
+    await page.evaluate(()=>new Promise(resolve=>{let previous='',stable=0;const frame=()=>{const current=document.querySelector('.react-flow__viewport')?.getAttribute('style');stable=current===previous?stable+1:0;previous=current;if(stable>=5)resolve(true);else requestAnimationFrame(frame)};requestAnimationFrame(frame)}));
     const located=await page.waitForFunction(id=>{
       const el=document.querySelector(`.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`);
       if(!el)return null;
@@ -33,7 +35,7 @@ async page=>{
   const nodes=topology.nodes.map((n,index)=>({...n,position:{x:index<2?30:540,y:index%2*240+60}}));
   const setup=await page.request.patch(endpoint,{data:{nodes}});
   if(!setup.ok())throw new Error(await setup.text());
-  await page.goto('http://127.0.0.1:5187');
+  await page.goto(origin);
   await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);
   await page.reload();
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
@@ -145,7 +147,7 @@ async page=>{
   edited=await(await page.request.get(endpoint)).json();
   if(edited.nodes.some(n=>n.id===targetId)||edited.connections.some(c=>c.id===nativeEdge.id)||edited.operating_modes.some(m=>(m.active_connections||[]).includes(nativeEdge.id)))throw new Error('删除没有完整清理保存结构');
   checks.push('删除器件清理关联连线与所有模式引用并真实保存');
-  await page.locator('.react-flow').first().screenshot({path:'output/playwright/restored-topology.png'});
+  await page.locator('.react-flow').first().screenshot({path:'output/playwright/pc04a3/restored-topology-regression.png'});
   const result={passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
   await page.evaluate(result=>{window.__topologyEditingResult=result},result);
   return result;

@@ -23,6 +23,7 @@ from app.schemas.switch_topology import (
     TopologyConnection,
 )
 from app.services.topology_service import TopologyService
+from app.services.declared_rf_routes import resolve_saved_rf_path
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
@@ -61,6 +62,28 @@ def _validate_structure(nodes, connections, modes) -> None:
             pin = conn.get(f"{end}_pin", TopologyConnection.model_fields[f"{end}_pin"].default)
             if ports is not None and pin not in ports:
                 raise HTTPException(422, detail=f"连线 {conn['id']} 引用了未声明的端口")
+    for node in nodes:
+        params = node.get('params') or {}
+        if node.get('type') != 'probe' or params.get('rf_path_selection') is None:
+            continue
+        declaration = params['rf_path_selection']
+        try:
+            ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
+            if not isinstance(ids, list) or not ids or any(
+                    not isinstance(ident, str) or ident not in conn_index for ident in ids):
+                raise ValueError('显式路径连接缺失或不存在')
+            mappings = declaration.get('switch_mappings')
+            if not isinstance(mappings, list) or any(not isinstance(item, dict) or
+                    not isinstance(item.get('node_id'), str) or
+                    not isinstance(item.get('path_name'), str) for item in mappings):
+                raise ValueError('显式路径开关映射结构无效')
+            selected = [conn_index[ident] for ident in ids]
+            if selected[-1].get('target') != node['id']:
+                raise ValueError('显式路径终端不属于此探头')
+            # 只解释本声明选中的子图；其他模式分支不影响保存结构校验。
+            resolve_saved_rf_path(nodes, selected, ids[-1])
+        except ValueError as exc:
+            raise HTTPException(422, detail=f"探头 {node['id']} 的显式路径无效：{exc}") from exc
     for mode in mode_index.values():
         # 与 TopologyService.resolve_paths 的实际消费一致：空活动列表会回退到连线自身的模式声明。
         effective_ids = mode.get("active_connections", []) or [
