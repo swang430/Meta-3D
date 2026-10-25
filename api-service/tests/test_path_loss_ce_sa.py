@@ -1032,7 +1032,7 @@ def _seed_lab_with_one_chain(db, chamber, probe_ids=(0,)):
         nodes=(
             [
                 {"id": f"ce_b{index + 1}", "type": "ce_port",
-                 "label": f"B{index + 1}.1", "params": {}}
+                 "label": f"B1.{index + 1}", "params": {}}
                 for index, _probe_id in enumerate(probe_ids)
             ]
             + [

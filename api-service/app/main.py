@@ -153,6 +153,8 @@ async def lifespan(app: FastAPI):
 
     # PC-04：先等本次单音停止与记录落盘，再关闭HAL，避免采集任务仍占用连接。
     from app.services.calibration.fixed_route_jobs import shutdown_fixed_route_jobs
+    from app.services.calibration.route_batch_jobs import shutdown_route_batch_jobs
+    await shutdown_route_batch_jobs()
     await shutdown_fixed_route_jobs()
 
     # Shutdown HAL service
@@ -290,6 +292,8 @@ from app.api import fixed_route_acquisition
 app.include_router(fixed_route_acquisition.router, prefix=settings.api_v1_prefix)
 from app.api import route_calibration
 app.include_router(route_calibration.router, prefix=settings.api_v1_prefix)
+from app.api import route_batch
+app.include_router(route_batch.router, prefix=settings.api_v1_prefix)
 
 # Path loss calibration
 app.include_router(path_loss_router, prefix=settings.api_v1_prefix)

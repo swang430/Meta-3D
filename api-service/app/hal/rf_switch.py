@@ -7,7 +7,8 @@ for RF switch networks.
 
 import asyncio
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Union
 
 from app.hal.base import (
@@ -19,6 +20,17 @@ from app.hal.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def parse_relay_position(raw, relay_type):
+    """Part #1801188 Rev A，p8 SPDT=NC/NO；p12 SP6T=0..6，0仅全开。"""
+    if not isinstance(raw, str):
+        return None
+    if relay_type == 'spdt' and raw in ('NC', 'NO'):
+        return raw
+    if relay_type == 'sp6t' and raw in ('0', '1', '2', '3', '4', '5', '6'):
+        return int(raw)
+    return None
 
 
 def build_emcenter_switch_command(switch_id: str, output_port: Union[int, str]) -> str:
@@ -345,17 +357,42 @@ class EtslSwitchDriver(RfSwitchDriver):
 
     async def get_path(self, switch_id: str) -> int:
         """回读. SP6T -> 位置 1-6 (0=全开); SPDT -> NC=0 / NO=1.
+        Part #1801188 Rev A p8/p12；0/1只是旧应用接口映射，不是SPDT仪器值。
         响应已由 _send_command/_parse_response 去终止符 + 'Read ' 前缀。"""
         resp = await self._send_command(f"{switch_id}?")
-        if resp:
-            try:
-                return int(resp)
-            except ValueError:
-                if "NC" in resp:
-                    return 0
-                if "NO" in resp:
-                    return 1
+        if resp in ('NC', 'NO'):
+            return 0 if resp == 'NC' else 1
+        position = parse_relay_position(resp, 'sp6t')
+        if position is not None:
+            return position
         return -1
+
+    async def read_mapped_path_receipt(self, path_name: str) -> dict:
+        """本次原始位置；不证明物理RF连通，不用旧get_path的0/1猜SPDT。
+
+        Part #1801188 Rev A p8 INT_RELAY_<R>? (A-D), p12 SP6T (A/B)。
+        """
+        mapping = self._mappings.get(path_name) or {}
+        relay = mapping.get('switch_id', mapping.get('relay'))
+        kind = mapping.get('relay_type')
+        receipt = dict(raw=None, relay_type=kind, position=None, error=None,
+            command=None, host_time=datetime.now(timezone.utc).isoformat(), simulated=False,
+            driver_id=self.instrument_id)
+        if not isinstance(relay, str) or not re.fullmatch(r'[1-7]:INT_RELAY_[A-D]', relay):
+            receipt['error'] = '继电器地址不在已核验域'
+            return receipt
+        if kind not in ('spdt', 'sp6t') or (kind == 'sp6t' and relay[-1] not in 'AB'):
+            receipt['error'] = '继电器类型未知或地址不匹配'
+            return receipt
+        receipt['command'] = f'{relay}?'
+        try:
+            receipt['raw'] = await self._send_command(receipt['command'])
+            receipt['position'] = parse_relay_position(receipt['raw'], kind)
+            if receipt['position'] is None:
+                receipt['error'] = '位置回读未知或不在手册严格域'
+        except Exception as exc:
+            receipt['error'] = f'位置查询失败：{exc}'
+        return receipt
 
     async def reset_paths(self) -> bool:
         """复位各继电器到安全默认。

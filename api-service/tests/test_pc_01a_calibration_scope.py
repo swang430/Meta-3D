@@ -236,11 +236,19 @@ def test_probe_physical_declarations_change_scope(client, lab_profile, chamber, 
 
 
 def test_shared_device_change_affects_both_downstream_chains(client, lab_profile, topology_two_chains, db_session):
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    # 同一设备不等于同一物理输出；泛型多端口CE由连接显式声明输出，不猜显示标签。
+    nodes[0]['type'] = 'channel_emulator'
+    nodes[0]['params']['ports'] = ['out1', 'out2']
+    topology_two_chains.nodes = nodes
     edges = copy.deepcopy(topology_two_chains.connections)
-    edges[1]['source'] = 'ce_b1'
+    edges[0].update(source_pin='out1', ce_port='1')
+    edges[1].update(source='ce_b1', source_pin='out2', ce_port='2')
     topology_two_chains.connections = edges
     db_session.commit()
     baseline = snapshot(client, lab_profile)
+    assert [(chain['chain_id'], chain['ce_port']) for chain in baseline['payload']['chains']] == [
+        ('conn_p0h', '2'), ('conn_p0v', '1')]
     nodes = copy.deepcopy(topology_two_chains.nodes)
     nodes[0]['params']['model'] = 'changed-shared-device'
     topology_two_chains.nodes = nodes

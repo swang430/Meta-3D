@@ -154,6 +154,12 @@ def resolve_rf_chains(
         if spec is not None:
             chains.append(spec)
 
+    # 正式同时执行的集合不得复用物理CE输出；串行批校准另走保存单项scope。
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    outputs=[RealPropsimF64Driver._ce_port_to_output_num(c.ce_port) for c in chains]
+    if len(outputs)!=len(set(outputs)):
+        raise ValueError('正式射频通路重复使用同一F64物理输出')
+
     resolution = RFChainResolution(
         lab_profile_id=lab.id,
         chamber_id=lab.chamber_config_id,

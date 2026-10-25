@@ -1,4 +1,4 @@
-"""PC04A2完整路径查询；不改变正常执行解析器，不访问仪器。"""
+"""保存完整路径查询及采用重核；与正式声明解析同源，不访问仪器。"""
 import copy
 import hashlib
 import json
@@ -20,6 +20,47 @@ class RouteScopeConflict(ValueError):
 
 
 def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str) -> list[RouteSelection]:
+    return _route_selections(db,lab_id,topology_id,operating_mode)
+
+
+def list_individual_route_selections(db,lab_id: UUID,topology_id: UUID,operating_mode: str) -> list[RouteSelection]:
+    """逐条保存候选，不声明同时兼容；同CE互斥批仍由build_batch_plan核验。"""
+    return _route_selections(db,lab_id,topology_id,operating_mode,individual=True)
+
+
+def resolve_explicit_route_selection(db,lab_id,topology_id,mode,terminal_connection_id,connection_ids):
+    """仅解析指定保存终端；允许批串行复用CE，不放宽正式集合门。"""
+    routes=_route_selections(db,lab_id,topology_id,mode,terminal_connection_id=terminal_connection_id)
+    if len(routes)!=1 or routes[0].connection_ids!=list(connection_ids):
+        raise ValueError('所选连接与当前保存路径声明不一致')
+    return routes[0]
+
+
+def route_switch_steps(db,topology,path_nodes,path_edges,lab=None):
+    """从保存仪器连接读取映射，返回零I/O快照，不授予自动切换资格。"""
+    from app.models.instrument import InstrumentCategory,InstrumentConnection
+    from app.services.declared_rf_routes import selected_switch_mappings
+    declared=(path_nodes[-1].get('params') or {}).get('rf_path_selection')
+    if not declared or not declared['switch_mappings']:
+        return []
+    category=db.get(InstrumentCategory,topology.switch_category_id)
+    connection=db.query(InstrumentConnection).filter_by(category_id=topology.switch_category_id).one_or_none()
+    if (category is None or not category.is_active or category.category_key!='rfSwitch'
+            or category.selected_model_id is None or connection is None):
+        raise ValueError('保存路径缺少活动开关绑定连接')
+    if lab is not None:
+        bindings=[b for b in lab.instrument_bindings or [] if str(b.get('category_id'))==str(category.id)]
+        if (len(bindings)!=1 or str(bindings[0].get('instrument_model_id'))!=str(category.selected_model_id)
+                or bindings[0].get('connection_endpoint')!=connection.endpoint
+                or bindings[0].get('driver_mode')!=category.driver_mode):
+            raise ValueError('开关当前资源与实验室绑定不一致')
+    steps=selected_switch_mappings(path_nodes,path_edges,(connection.connection_params or {}).get('port_maps'),
+        category_id=category.id)
+    return [dict(**step,connection_id=str(connection.id),endpoint=connection.endpoint,
+        driver_mode=category.driver_mode,instrument_model_id=str(category.selected_model_id)) for step in steps]
+
+
+def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, *, terminal_connection_id=None,individual=False) -> list[RouteSelection]:
     lab = db.get(LabProfile, lab_id)
     topology = db.get(SwitchTopology, topology_id)
     if lab is None or topology is None:
@@ -69,28 +110,30 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
         outgoing.setdefault(c['source'], []).append(c)
 
     selections = []
+    selected_steps=[]
     for probe in nodes.values():
         if probe.get('type') != 'probe' or probe['id'] not in incoming:
             continue
-        route_nodes, route_edges, visited = [probe], [], {probe['id']}
-        current = probe
-        while current.get('type') not in ('ce_port', 'channel_emulator'):
-            predecessors = incoming.get(current['id'], [])
-            if len(predecessors) != 1:
-                raise ValueError('通路存在多个可达分支或缺少唯一F64源端')
-            edge = predecessors[0]
-            parent = nodes[edge['source']]
-            if parent['id'] in visited:
-                raise ValueError('通路存在回路，不能确定采集路径')
-            if parent.get('type') != 'channel_emulator' and len(outgoing.get(parent['id'], [])) != 1:
-                raise ValueError('通路存在多个输出分支，不能确定固定接线')
-            visited.add(parent['id'])
-            route_nodes.insert(0,parent)
-            route_edges.insert(0,edge)
-            current = parent
-        # F64源端存在回接也不是合法固定路径。
-        if incoming.get(current['id']):
-            raise ValueError('F64输出源端存在回接或回路')
+        terminals=incoming[probe['id']]
+        if terminal_connection_id is not None:
+            terminals=[e for e in terminals if e['id']==terminal_connection_id]
+            if not terminals:
+                continue
+        declaration=(probe.get('params') or {}).get('rf_path_selection')
+        if declaration is not None:
+            ids=declaration.get('connection_ids') if isinstance(declaration,dict) else None
+            if not isinstance(ids,list) or not ids:
+                raise ValueError('保存显式路径缺少连接')
+            terminals=[e for e in terminals if e['id']==ids[-1]]
+        if len(terminals)!=1:
+            raise ValueError('探头终端未保存唯一显式路径')
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        route_nodes,route_edges=resolve_saved_rf_path(nodes,active,terminals[0]['id'])
+        switch_steps=route_switch_steps(db,topology,route_nodes,route_edges,lab)
+        from app.services.declared_rf_routes import validate_simultaneous_switch_mappings
+        validate_simultaneous_switch_mappings(switch_steps)
+        selected_steps.extend(switch_steps)
+        visited={n['id'] for n in route_nodes}
         ce_port = resolve_declared_calibration_ce_port(route_nodes, route_edges)
         params = probe.get('params', {})
         probe_id, pol = params.get('probe_id'), params.get('polarization')
@@ -125,11 +168,14 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
                          target=e['target'],target_pin=e.get('target_pin','in')) for e in route_edges]
         identity = dict(lab_profile_id=str(lab.id),topology_id=str(topology.id),mode=operating_mode,
             ce_port=ce_port,nodes=identity_nodes,ports=port_rows,calibration_connections=ref_edges)
+        if switch_steps:
+            identity['switch_steps']=switch_steps
         digest = hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
         antennas = [n for n in refs if n.get('type') == 'reference_antenna']
         analyzers = [n for n in refs if n.get('type') == 'signal_analyzer']
         if len(antennas) > 1 or len(analyzers) > 1:
             raise ValueError('所选通路的参考天线或分析仪不唯一')
+        from app.services.declared_rf_routes import switch_execution_identity
         selections.append(RouteSelection(lab_profile_id=lab.id,chamber_id=lab.chamber_config_id,
             topology_id=topology.id,operating_mode=operating_mode,chain_id=route_edges[-1]['id'],ce_port=ce_port,
             probe_id=probe_id,polarization=pol,node_ids=[n['id'] for n in route_nodes],
@@ -138,13 +184,16 @@ def list_route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: s
             calibration_connection_ids=[e['id'] for e in ref_edges],calibration_nodes=snapshot(refs),
             calibration_connections=snapshot(ref_edges),reference_antenna_id=antennas[0]['id'] if antennas else None,
             analyzer_category_id=analyzers[0].get('params',{}).get('instrument_category_id') if analyzers else None,
-            route_digest=digest))
+            route_digest=digest,switch_execution_identity=switch_execution_identity(switch_steps)))
     if len({(r.probe_id,r.polarization) for r in selections}) != len(selections):
         raise ValueError('探头编号及极化存在重复通路')
     from app.hal.propsim_f64 import RealPropsimF64Driver
     physical_outputs = [RealPropsimF64Driver._ce_port_to_output_num(r.ce_port) for r in selections]
-    if len(physical_outputs) != len(set(physical_outputs)):
+    if terminal_connection_id is None and not individual and len(physical_outputs) != len(set(physical_outputs)):
         raise ValueError('同一F64输出口存在多个可达通路，不能确定单条固定接线')
+    if terminal_connection_id is None and not individual:
+        from app.services.declared_rf_routes import validate_simultaneous_switch_mappings
+        validate_simultaneous_switch_mappings(selected_steps)
     return sorted(selections,key=lambda r:r.chain_id)
 
 
@@ -158,7 +207,8 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
         target_name=jobs.TARGET,kind='scpi_sequence').one_or_none()
     if row is None:
         raise LookupError('本实验室中没有这条采集记录')
-    record=jobs.record(row)
+    from app.services.calibration.route_batch_jobs import batch_child_context
+    record=jobs.record(row,batch_context=batch_child_context(db,row))
     result=record.result
     selection=None
     warnings=['选用截止时间由确认操作明确填写并校验，不是证书期限']
@@ -176,8 +226,9 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
             measured_value=result.net_loss_db
         if selection is not None:
             try:
-                current=list_route_selections(db,lab_id,selection.topology_id,selection.operating_mode)
-                matching=[route for route in current if route.chain_id==selection.chain_id]
+                current=resolve_explicit_route_selection(db,lab_id,selection.topology_id,selection.operating_mode,
+                    selection.chain_id,selection.connection_ids)
+                matching=[current]
                 if len(matching)!=1 or matching[0].route_digest!=selection.route_digest:
                     blockers.append('route_mismatch')
                 elif matching[0].nodes!=selection.nodes or matching[0].calibration_nodes!=selection.calibration_nodes:
@@ -261,7 +312,8 @@ def confirm_route_application(db,lab_id: UUID,request: ConfirmRouteApplication,a
         if (not candidate.eligibility.eligible_for_adoption or candidate.selection is None or
             candidate.new_net_loss_db is None or request.route_digest!=candidate.selection.route_digest):
             raise ValueError('采集证据或当前通路不适用于本次采用')
-        result=jobs.record(row).result
+        from app.services.calibration.route_batch_jobs import batch_child_context
+        result=jobs.record(row,batch_context=batch_child_context(db,row)).result
         selection=candidate.selection
         scope,reference=_application_scope(result,selection)
         pointer=db.query(RouteCalibrationSelection).filter_by(**scope).one_or_none()

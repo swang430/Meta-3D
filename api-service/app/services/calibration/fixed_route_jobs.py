@@ -15,9 +15,9 @@ from app.hal.rs_fsva import RealRsFsvaDriver
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
 from app.models.diagnostic_run import DiagnosticRun
-from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord
+from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteResult, FixedRouteRecord, FixedRouteBatchContext
 from app.schemas.diagnostic_evidence import SequenceEvidence
-from app.services.calibration.configuration_scope import build_calibration_scope
+from app.services.calibration.configuration_scope import build_calibration_scope, build_selected_route_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
 from app.services.calibration.route_calibration import list_route_selections
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
@@ -36,13 +36,19 @@ class AcquisitionBusy(ValueError):
     pass
 
 
-def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest, hal):
+def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest, hal, *, batch_item_context=None):
     """保存、绑定及装载驱动同次核对；零I/O，不将配置声明升级成实物确认。"""
     lab = db.get(LabProfile, lab_id)
     if lab is None or not lab.is_active:
         raise ValueError('实验室配置不存在或已停用')
     try:
-        snapshot = build_calibration_scope(db, lab_id, request.operating_mode, topology_id=request.topology_id)
+        if batch_item_context is not None:
+            from app.services.calibration.route_batch_jobs import validated_batch_item
+            item = validated_batch_item(db, lab_id, request, batch_item_context)
+            snapshot = build_selected_route_calibration_scope(db, lab_id, request.operating_mode,
+                topology_id=item.route_selection.topology_id, chain_id=item.request.chain_id)
+        else:
+            snapshot = build_calibration_scope(db, lab_id, request.operating_mode, topology_id=request.topology_id)
     except LookupError as exc:
         raise ValueError(str(exc)) from exc
     if snapshot.digest != request.configuration_digest:
@@ -51,7 +57,12 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     if topology_id is None:
         raise ValueError('没有可供采集的已保存拓扑')
     try:
-        routes = list_route_selections(db,lab_id,UUID(str(topology_id)),request.operating_mode)
+        if batch_item_context is not None:
+            from app.services.calibration.route_calibration import resolve_explicit_route_selection
+            routes = [resolve_explicit_route_selection(db, lab_id, UUID(str(topology_id)), request.operating_mode,
+                item.request.chain_id, item.route_selection.connection_ids)]
+        else:
+            routes = list_route_selections(db,lab_id,UUID(str(topology_id)),request.operating_mode)
     except LookupError as exc:
         raise ValueError(str(exc)) from exc
     matches = [r for r in routes if r.chain_id == request.chain_id]
@@ -123,7 +134,21 @@ def _sequence_evidence(result: FixedRouteResult, duration_ms: int = 0):
         extra={'verdict': verdict, 'fixed_route_acquisition': result.model_dump(mode='json')}).model_dump(mode='json')
 
 
-def record(row: DiagnosticRun) -> FixedRouteRecord:
+def build_record_row(result: FixedRouteResult) -> DiagnosticRun:
+    """单项与批子项共用审计封套，调用者决定事务边界。"""
+    return DiagnosticRun(id=result.run_id, kind='scpi_sequence', lab_profile_id=result.lab_profile_id,
+        target_name=TARGET, params=result.request.model_dump(mode='json'), success=False,
+        sequence_evidence=_sequence_evidence(result))
+
+
+def save_record_result(row: DiagnosticRun, result: FixedRouteResult, duration_ms: int = 0):
+    row.duration_ms = duration_ms
+    row.sequence_evidence = _sequence_evidence(result, duration_ms)
+    row.success = result.status in ('completed', 'simulated')
+    row.error_message = result.error
+
+
+def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
     value = None
     try:
         envelope = SequenceEvidence.model_validate(row.sequence_evidence)
@@ -133,12 +158,29 @@ def record(row: DiagnosticRun) -> FixedRouteRecord:
     except (ValidationError, TypeError):
         pass  # 缺损历史返回incomplete；不从当前配置或仪器回填。
     status = value.status if value else 'incomplete'
-    if status == 'running' and row.id not in _running:
+    batch_id = value.states.get('batch_job_id') if value else None
+    if batch_id and batch_context is not None:
+        try:
+            batch_context = FixedRouteBatchContext.model_validate(batch_context).model_dump(mode='json')
+        except ValidationError:
+            # 仅收窄读取边界；损坏元数据不转字符串、不补身份，也不能证明父批释放。
+            batch_context = dict(active=False, finalized=False)
+    active = (batch_context or {}).get('active') is True if batch_id else row.id in _running
+    if batch_id and (batch_context or {}).get('finalized') is not True:
+        value = value.model_copy(deep=True)
+        if value.states.get('f64_control_released') is True:
+            value.states['f64_control_released'] = None
+        value.states['batch_finalization_verified'] = False
+    elif batch_id:
+        value = value.model_copy(deep=True)
+        value.states['batch_finalization_verified'] = True
+    if status == 'running' and not active:
         status = 'interrupted'
         value = value.model_copy(update={'status': status, 'cleanup_confirmed': None,
             'net_loss_db': None, 'error': '服务已中断本次采集，未自动续跑；仪器停发状态需现场确认'})
     stamp = row.run_at if row.run_at.tzinfo is not None else row.run_at.replace(tzinfo=timezone.utc)
-    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status, result=value)
+    return FixedRouteRecord(run_id=row.id, lab_profile_id=row.lab_profile_id, run_at=stamp, status=status,
+        result=value,batch_context=batch_context if batch_id else None)
 
 
 async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
@@ -151,8 +193,7 @@ async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
         config, _, _, _ = resolve_configuration(db, lab_id, request, get_hal_service())
         run_id = uuid4()
         result = FixedRouteResult(version=2, run_id=run_id, lab_profile_id=lab_id, request=request, configuration=config)
-        row = DiagnosticRun(id=run_id, kind='scpi_sequence', lab_profile_id=lab_id, target_name=TARGET,
-            params=request.model_dump(mode='json'), success=False, sequence_evidence=_sequence_evidence(result))
+        row = build_record_row(result)
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -209,10 +250,7 @@ async def _execute(result, token, cancel):
                 row = db.get(DiagnosticRun, result.run_id)
                 if row is None:
                     raise RuntimeError('采集审计记录丢失')
-                row.duration_ms = int((perf_counter() - started_at) * 1000)
-                row.sequence_evidence = _sequence_evidence(result, row.duration_ms)
-                row.success = result.status in ('completed', 'simulated')
-                row.error_message = result.error
+                save_record_result(row, result, int((perf_counter() - started_at) * 1000))
                 db.commit()
         except Exception:
             logger.exception('PC-04采集结果保存失败：%s', result.run_id)
