@@ -14,6 +14,7 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react'
 import { ReportList, TemplateList, CreateReportWizard, PendingExecutionsList, SystemLogViewer } from '../components'
+import { ReportViewer } from '../../../components/Report/ReportViewer'
 
 interface ReportsPageProps {
   /**
@@ -31,6 +32,7 @@ export function ReportsPage({
   onPendingLogConsumed,
 }: ReportsPageProps = {}) {
   const [createReportOpened, setCreateReportOpened] = useState(false)
+  const [viewReportId, setViewReportId] = useState<string | null>(null)
   // P1-39: 页签受控 —— 从执行历史「查看日志」跳进来时要落在「系统日志」上。
   // ⚠ 浏览器实测发现的缺口: 只把 execution_id 传给 SystemLogViewer 是**不够**的,
   //   Tabs 仍停在默认的 'pending'，用户落在「报告列表」还得自己点一下,
@@ -90,7 +92,7 @@ export function ReportsPage({
                 创建新报告
               </Button>
 
-              <ReportList />
+              <ReportList onView={setViewReportId} />
             </Stack>
           </Tabs.Panel>
 
@@ -102,6 +104,10 @@ export function ReportsPage({
             <SystemLogViewer initialExecutionFilter={logExecutionFilter} />
           </Tabs.Panel>
         </Tabs>
+
+        <Modal opened={!!viewReportId} onClose={() => setViewReportId(null)} title="报告详情" size="xl">
+          {viewReportId && <ReportViewer reportId={viewReportId} />}
+        </Modal>
 
         {/* Create Report Wizard Modal */}
         <Modal

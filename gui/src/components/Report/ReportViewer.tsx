@@ -202,6 +202,28 @@ function ReportContent({ content, outcome, title }: ReportContentProps) {
         </Group>
       </Card>
 
+      <Card withBorder p="md" data-testid="calibration-traceability">
+        <Text fw={600}>原执行校准来源追溯</Text>
+        {!content.calibration_traceability ? (
+          <Text c="dimmed">历史追溯未生成；不从当前配置补值。</Text>
+        ) : <Stack gap="xs" mt="xs">
+          <Text size="sm">执行频率：{content.calibration_traceability.execution_frequency_mhz ?? '未知'} MHz；来源：{content.calibration_traceability.provenance}；总状态：{content.calibration_traceability.status}</Text>
+          <Text size="sm" c="dimmed">采用不等于认证；执行频率与来源覆盖分开记录。原始读数未内嵌，采集与交换索引仅为追溯指针，不代表附件可下载。</Text>
+          {content.calibration_traceability.routes.map((route, index) => (
+            <Card withBorder p="xs" key={`${route.chain_id}-${index}`}>
+              <Text size="sm" fw={500}>{route.chain_id ?? '未知链'} · {route.application_state === 'applied' ? '已应用' : route.application_state === 'selected' ? '仅选择，未应用' : '应用未知'}</Text>
+              <Text size="sm">来源类型：{route.source_kind ?? '未知'}；来源 ID：{route.source_id ?? '未知'}；认证状态：{route.certification_status ?? 'unknown'}</Text>
+              <Text size="sm">来源频率/覆盖：{String(route.source_snapshot?.frequency_mhz ?? '未知')} MHz（不等同执行频率）</Text>
+              <details>
+                <summary>来源快照（原参考面、采集证据、前序及覆盖按原字段保留）</summary>
+                <Code block>{JSON.stringify(route.source_snapshot ?? { status: 'unknown' }, null, 2)}</Code>
+              </details>
+            </Card>
+          ))}
+          {content.calibration_traceability.routes.length === 0 && <Text c="dimmed">无可关联逐链来源；保持未知。</Text>}
+        </Stack>}
+      </Card>
+
       {/* Tabs for different sections */}
       <Tabs defaultValue="overview">
         <Tabs.List>
@@ -323,10 +345,10 @@ function OverviewTab({ content }: { content: ReportContentData }) {
 
       {/* KPI Summary Table */}
       <Divider label="KPI 指标汇总" labelPosition="center" />
-      <KPISummaryTable kpiSummary={content.kpi_summary} />
+      {content.kpi_summary ? <KPISummaryTable kpiSummary={content.kpi_summary} /> : <Text c="dimmed">此报告未提供通用 KPI 汇总；以下载报告原字段为准。</Text>}
 
       {/* Events */}
-      {content.events.length > 0 && (
+      {content.events && content.events.length > 0 && (
         <>
           <Divider label="关键事件" labelPosition="center" />
           <EventsList events={content.events} />
@@ -538,8 +560,9 @@ function ResultsTab({ content }: { content: ReportContentData }) {
     <Stack gap="md">
       <Divider label="执行阶段" labelPosition="center" />
       <Card withBorder p="md">
-        <Timeline active={content.phases.length} bulletSize={24} lineWidth={2}>
-          {content.phases.map((phase) => {
+        {!content.phases && <Text c="dimmed">此报告未提供通用阶段时间线；以下载报告原字段为准。</Text>}
+        <Timeline active={content.phases?.length ?? 0} bulletSize={24} lineWidth={2}>
+          {content.phases?.map((phase) => {
             const isCompleted = phase.status === 'completed'
             const isFailed = phase.status === 'failed'
 
