@@ -2,7 +2,7 @@
 
 2026-10-25 用户最初要求审查、规划并写入 todo；初始规划轮不实施功能、不恢复开发 automation，审查基线 main `ad843108`。
 
-2026-10-26 当前状态：PC06A2-1 首片已由 [PR #535](https://github.com/swang430/Meta-3D/pull/535) 合并至 `b870e91a`；[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)。PC-04A-3 已由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`；[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`，未发现重大问题。当前唯一 WIP 为其余 PC-06A-2 入口整合的[实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)，待独立计划审查、尚未实施；PC-06A-2 父项不提前完成。
+2026-10-26 当前状态：PC06A2-1 首片已由 [PR #535](https://github.com/swang430/Meta-3D/pull/535) 合并至 `b870e91a`；[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)。PC-04A-3 已由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`；[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`，未发现重大问题。当前唯一 WIP 为其余 PC-06A-2 入口整合：Task1/2 已本地实现并分别通过独立规格/质量审查，Task3 综合证据见[本片验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)；待累计独立内审、PR 外审及合并。父项与下述软件交付清单在合并前均不提前勾选。[实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)。
 
 PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编辑生命周期，相关 GUI 41 项和构建通过；全后端实际为 **7485 passed / 17 skipped / 1 failed**。唯一失败 G8 是基线历史文档路由误报，已独立核实；不改历史、不扩改门，不称全量绿。最终 GUI-only 修复未改变后端生产及已收集 pytest 输入，按[正式验证摘要](../validation/2026-10-25-pc04a3-topology-editing-recovery.md)的输入复用边界保留该结果；只证明软件，不解除现场 B 或正式资格边界。
 
@@ -55,6 +55,8 @@ PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编
 
 推荐架构：**系统校准是管理总入口；射频拓扑是路径校准的唯一操作工作台**。不是维护两个平行路径校准表单，也不是删除旧证书历史。
 
+本地实现已覆盖下述入口全集、同 Lab 原图导航、真实旧档案只读及方法边界；综合验证包含原图完整参考接线、单路、四项批次人工/取消/恢复、completed后跨Lab隔离和管理读取不写改。取消Mock缺真实释放证明仍保留既有保守锁，不把服务端cancelled冒称GUI可解锁。GUI60项/构建、后端相关226项通过，最终全量实际结果及未验证边界见本片验证摘要。清单保留未勾仅表示尚未完成整片审查/合并，不表示功能未实施。
+
 - [x] PC06A2-1 已去掉旧系统校准首页硬编码有效状态/精度，缺证据显示未知，已由 PR #535 合并至 `b870e91a`（[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)）。此勾选仅表示首片软件交付，不代表 PC-06A-2 整项收口。
 - [ ] 枚举 SystemCalibration/CalibrationWizard/CalibrationHistory/CertificateViewer、App 导航和 calibrationService 的入口/API/数据归属；逐项记录保留、跳转、历史只读、方法未验证。
 - [ ] 系统校准保留概览、历史、参考件/证书与适用范围信息；“路径损耗/上下行链校准”导航到同一 LabProfile 的拓扑工作台，携带可验证上下文，不伪造已选路由。
@@ -83,4 +85,4 @@ PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编
 - [ ] 每个 PR 描述带 roadmap 编号、受审 SHA、测试/审查证据；状态以 GitHub PR 为准。合并后不为更新“已合并”向受审分支追加提交；下一正常文档片同步 roadmap 快照。
 - [ ] 新 clone 仅凭仓库文档即可找到待办/设计/验证/安全边界；不得要求访问某个人 memory 才能理解强制规则。
 
-初始规划轮只登记上述两项功能计划及协作治理检查；后续实际进度见本文开头与两项 Todo 状态。PC-04A-3 已由 PR #536 合并，软件片完成；其余入口整合仍在计划审查、未实施，不将其他未批准扩域自动排入执行。
+初始规划轮只登记上述两项功能计划及协作治理检查；后续实际进度见本文开头与两项 Todo 状态。PC-04A-3 已由 PR #536 合并，软件片完成；其余入口整合已本地实现和建立综合证据，待累计内审/外审/合并，不将其他未批准扩域自动排入执行。

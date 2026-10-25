@@ -10,6 +10,8 @@
 
 **Spec:** [总计划 Todo 2](2026-10-25-topology-editor-calibration-consolidation.md)、[拓扑内校准设计](../design/2026-10-24-topology-calibration-integration.md)、[正式队列](../roadmap-first-call.md)。源码基线 `503a5a8d92d2a86845f65471e16bb0577fd33ce7`，分支 `codex/pc06a2-calibration-entry-integration`。
 
+**2026-10-26 实施状态：** Task1/2 分别提交 `5bae8481`/`6380023b`并通过独立规格/质量审查；Task3 综合软件证据、最终全量实际结果及未验边界见[验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)。当前待累计内审及PR外审，尚未合并；下文为原实施步骤，不以本地实现提前关闭PC-06A-2父项。取消Mock无真实释放证明时保留既有锁，不为验收修改安全判据。
+
 ## 全局约束
 
 - WIP=1；本片不解除 PC-01B～07B、PC-09/10 HOLD，也不完成 PC-05/06/07 其余范围。
@@ -23,7 +25,7 @@
 - 参考件/证书信息展示已有字段及缺项；当前没有本片可复用的独立参考件证书注册库，不能做一个假注册表。参考天线、接收线缆来源仍在原拓扑采集表单填写/冻结。
 - NotebookLM：本片不改 HAL/SCPI，不断言仪器能力；只据软件调用链标注“本入口无已验证真实方法”，不据此宣称硬件不支持。
 - memory 已查询，仅用作历史风险提示；下述事实全部按当前源码复核。团队实施不依赖个人 memory。
-- 不动用户未跟踪 `.playwright-cli/`、`.venv`、现有 `output/`；新增证据独立目录保留。此计划尚未实施、未运行验证。
+- 不动用户未跟踪 `.playwright-cli/`、`.venv`、现有 `output/`；新增证据独立目录保留。初始规划时尚未实施或运行验证；后续实际状态以本文开头及验证摘要为准。
 
 ## 最小可交付边界与非目标
 
