@@ -30,8 +30,15 @@ def seed():
         assert categories
         for category in categories:
             category.driver_mode = 'mock'
-            model = db.get(InstrumentModel, category.selected_model_id)
             connection = db.query(InstrumentConnection).filter_by(category_id=category.id).one_or_none()
+            # 默认目录保留空地址/FSW43；本专属全Mock夹具明确选已有首批支持型号，
+            # 并只给测试连接写文档网段端点。生产绑定/资格门保持原样。
+            if category.category_key == 'signalAnalyzer':
+                selected = db.query(InstrumentModel).filter_by(category_id=category.id, model='FSVA3000').one()
+                category.selected_model_id = selected.id
+            if connection is not None and category.category_key in ('channelEmulator', 'signalAnalyzer'):
+                connection.endpoint = '192.0.2.10' if category.category_key == 'channelEmulator' else '192.0.2.11'
+            model = db.get(InstrumentModel, category.selected_model_id)
             if model is not None and connection is not None:
                 bindings.append(dict(category_id=str(category.id), instrument_model_id=str(model.id),
                     connection_endpoint=connection.endpoint, driver_mode='mock'))

@@ -6,6 +6,7 @@ async page=>{
   page.setDefaultTimeout(12000);
   const clickCurve=async(id)=>{
     await page.getByRole('button',{name:'Fit View',exact:true}).click();
+    await page.evaluate(()=>new Promise(resolve=>{let previous='',stable=0;const frame=()=>{const current=document.querySelector('.react-flow__viewport')?.getAttribute('style');stable=current===previous?stable+1:0;previous=current;if(stable>=5)resolve(true);else requestAnimationFrame(frame)};requestAnimationFrame(frame)}));
     const located=await page.waitForFunction(id=>{
       const el=document.querySelector(`.react-flow__edge[data-id="${id}"] .react-flow__edge-interaction`);
       if(!el)return null;
@@ -146,7 +147,7 @@ async page=>{
   edited=await(await page.request.get(endpoint)).json();
   if(edited.nodes.some(n=>n.id===targetId)||edited.connections.some(c=>c.id===nativeEdge.id)||edited.operating_modes.some(m=>(m.active_connections||[]).includes(nativeEdge.id)))throw new Error('删除没有完整清理保存结构');
   checks.push('删除器件清理关联连线与所有模式引用并真实保存');
-  await page.locator('.react-flow').first().screenshot({path:'output/playwright/restored-topology.png'});
+  await page.locator('.react-flow').first().screenshot({path:'output/playwright/pc04a3/restored-topology-regression.png'});
   const result={passed:checks.length,checks,topology_id:topology.id,stored_position:moved};
   await page.evaluate(result=>{window.__topologyEditingResult=result},result);
   return result;

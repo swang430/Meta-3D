@@ -1,16 +1,24 @@
-// Task 1：独立临时SQLite、全HAL Mock、真实API；Task 2另补完整器件/引用矩阵。
+// 独立临时SQLite、全HAL Mock、真实API；恢复流程也在Task2默认bootstrap新库回归。
 async page=>{
-  const api='http://127.0.0.1:18080/api/v1',checks=[];
+  const origin=new URL(page.url()).origin,api=`${origin}/api/v1`,checks=[];
   page.setDefaultTimeout(12000);
   await page.setViewportSize({width:1800,height:1100});
   const read=async path=>{const r=await page.request.get(`${api}${path}`);if(!r.ok())throw new Error(await r.text());return r.json()};
   if((await read('/instruments/hal/status')).mode!=='mock')throw new Error('仅允许独立全Mock环境');
   const labs=await read('/lab-profiles');
-  const lab=labs.find(l=>l.name==='PC04A3 Task1');
+  const lab=labs.find(l=>l.name==='PC04自动采集甲')||labs.find(l=>l.name==='PC04A3 Task1');
   if(!lab)throw new Error('请先在独立数据库建立PC04A3 Task1最小fixture');
-  const topology=(await read(`/switch-topologies?lab_profile_id=${lab.id}`)).items.find(t=>t.name==='PC04A3恢复编辑');
+  const topologies=(await read(`/switch-topologies?lab_profile_id=${lab.id}`)).items;
+  let topology=topologies.find(t=>t.name==='PC04A3恢复编辑')||topologies.find(t=>t.chamber_id===lab.chamber_config_id);
   if(!topology)throw new Error('最小拓扑fixture缺失');
   const endpoint=`/switch-topologies/${topology.id}?lab_profile_id=${lab.id}`;
+  if(lab.name==='PC04自动采集甲'){
+    const other=labs.find(l=>l.name==='PC04自动采集乙');
+    const baseline=(await read(`/switch-topologies?lab_profile_id=${other.id}`)).items[0];
+    const reset=await page.request.patch(`${api}${endpoint}`,{data:{nodes:baseline.nodes,connections:baseline.connections,operating_modes:baseline.operating_modes}});
+    if(!reset.ok())throw new Error(await reset.text());
+    topology=await reset.json();
+  }
   const stored=()=>read(endpoint);
   const find=(graph,id)=>graph.nodes.find(n=>n.id===id);
   const requireEqual=(got,want,message)=>{if(JSON.stringify(got)!==JSON.stringify(want))throw new Error(`${message}: ${JSON.stringify(got)}`)};
@@ -19,7 +27,7 @@ async page=>{
     await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
     await page.locator('.react-flow').first().waitFor();
   };
-  await page.goto('http://127.0.0.1:5187');
+  await page.goto(origin);
   await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);
   await page.reload();await enter();
   const list=page.getByRole('textbox',{name:'器件列表',exact:true});
@@ -117,7 +125,7 @@ async page=>{
   await page.getByRole('button',{name:'应用器件修改',exact:true}).click();await save();
   requireEqual(find(await stored(),'hidden-calibration').params.visible_modes,['calibration'],'缺校准模式恢复扩域');
   checks.push('清空已恢复节点模式会拒绝且画布不丢节点；缺校准模式提示先关闭创建后再恢复');
-  await page.screenshot({path:'output/playwright/pc04a3-task1/recovery-green.png',fullPage:true});
+  await page.screenshot({path:'output/playwright/pc04a3/recovery-resume-green.png',fullPage:true});
   await page.evaluate(result=>{window.__pc04a3Task1Result=result},{checks,labId:lab.id,topologyId:topology.id});
   console.log(JSON.stringify({checks,labId:lab.id,topologyId:topology.id}));
 }

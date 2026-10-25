@@ -17,9 +17,12 @@ import { getNodePorts } from './nodePortHelpers';
 
 // A hidden legacy handle with the same ID still wins ReactFlow's geometry lookup.
 // Explicit declarations replace those handles; they must not coexist in the DOM.
-const DeclaredPortsContext = createContext(false);
-const Handle = (props: React.ComponentProps<typeof FlowHandle>) =>
-  useContext(DeclaredPortsContext) ? null : <FlowHandle {...props}/>;
+const DeclaredPortsContext = createContext({declared:false,isConnectable:true});
+const Handle = (props: React.ComponentProps<typeof FlowHandle>) => {
+  const {declared,isConnectable}=useContext(DeclaredPortsContext);
+  return declared ? null : <FlowHandle {...props} isConnectable={isConnectable}
+    isConnectableStart={isConnectable} isConnectableEnd={isConnectable}/>;
+};
 
 // ==========================================
 // Base Node Style
@@ -319,10 +322,12 @@ function withDeclaredPorts(Component: any) {
     const updateInternals=useUpdateNodeInternals();
     const ports=props.data.params?.ports;
     const signature=JSON.stringify(ports);
+    // 真值来自ReactFlow的NodeProps；旧式与显式端点都必须消费采集/保存时的冻结状态。
+    const isConnectable=props.isConnectable!==false;
     useEffect(()=>updateInternals(props.id),[props.id,signature,updateInternals]);
-    if (!Array.isArray(ports)) return <Component {...props}/>;
-    return <div className="topology-declared-node" style={{position:'relative'}}>
-      <DeclaredPortsContext.Provider value={true}><Component {...props}/></DeclaredPortsContext.Provider>
+    if (!Array.isArray(ports)) return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><Component {...props}/></DeclaredPortsContext.Provider>;
+    return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><div className="topology-declared-node" style={{position:'relative'}}>
+      <DeclaredPortsContext.Provider value={{declared:true,isConnectable}}><Component {...props}/></DeclaredPortsContext.Provider>
       {getNodePorts({id:props.id,type:props.type,label:'',position:{x:0,y:0},params:props.data.params}).flatMap((port,index,list)=>{
         // 已有基站端口角色仍由原配置决定，不能把上行入口扩成下行出口。
         const role = ['communication_tester','bse_port'].includes(props.type) ? props.data.params?.port_roles?.[port] : undefined;
@@ -333,7 +338,7 @@ function withDeclaredPorts(Component: any) {
           role !== 'ul' && <span key={`out-label-${port}`} style={{position:'absolute',left:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',marginLeft:8,whiteSpace:'nowrap',fontSize:10,pointerEvents:'none'}}>{port} · 连出</span>,
         ];
       })}
-    </div>;
+    </div></DeclaredPortsContext.Provider>;
   };
 }
 
