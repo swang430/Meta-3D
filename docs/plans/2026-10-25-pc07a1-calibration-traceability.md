@@ -1,6 +1,6 @@
 # PC-07A-1 最小实际采用追溯实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: 使用 `subagent-driven-development` 按任务执行（用户已授权）。每任务先 RED 后 GREEN，完成独立规格审查与代码内审后才进入下一任务；最终统一全量和 R1/R2。本文保留实施步骤；截至 `107ec2d9` 软件实现、验证与累计独立内审完成，PR 外审和合并尚未完成，状态与证据见[最终验证摘要](2026-10-25-pc07a1-validation.md)。
+> **For agentic workers:** REQUIRED SUB-SKILL: 使用 `subagent-driven-development` 按任务执行（用户已授权）。每任务先 RED 后 GREEN，完成独立规格审查与代码内审后才进入下一任务；最终统一全量和 R1/R2。本文保留实施步骤；截至 `107ec2d9` 软件实现、验证与累计独立内审完成；其后 PR #533 的 R1/R2 覆盖 `e731ef7f` 并已合并至 `ad843108`，状态与证据见[最终验证摘要](2026-10-25-pc07a1-validation.md)。
 
 **Goal:** 报告可读地追溯同次执行实际采用的新记录/旧证书、频率和原始证据来源；生成、读取、重建、下载保持同源。
 
