@@ -2,7 +2,7 @@
 
 ## 结论与版本
 
-实现、软件验证和累计独立内审完成；待创建 PR 并完成 R1/R2 外审，未合并、未关闭 PC-07A-1。基线为已合并 PC-06A-1 `7292f8ed`，最终生产/测试输入为 `107ec2d911013db7b1d9c34fe2ce761f83b80924`，分支 `codex/pc-07a1-calibration-traceability`。本文及同次文档收口不改生产代码、测试、fixture、GUI或构建输入，因此复用该输入的后端结果，不宣称文档提交后重新全跑。
+PC-07A-1 软件切片已完成：[PR #533](https://github.com/swang430/Meta-3D/pull/533) 于2026-10-25 13:26:20（北京时间）合并，merge `ad843108bab3373bed4e296579534e4031e4dd72`。[R1](https://github.com/swang430/Meta-3D/pull/533#issuecomment-6393863418) 与 [R2](https://github.com/swang430/Meta-3D/pull/533#issuecomment-6393902644) 均覆盖 `e731ef7fdf62b3ecce6044537c1bcda12a8caa64`，回执未发现重大问题。完整 PC-07 与现场 B 未关闭。基线为已合并 PC-06A-1 `7292f8ed`，最终生产/测试输入为 `107ec2d911013db7b1d9c34fe2ce761f83b80924`，分支 `codex/pc-07a1-calibration-traceability`。本文及同次文档收口不改生产代码、测试、fixture、GUI或构建输入，因此复用该输入的后端结果，不宣称文档提交后重新全跑。
 
 报告的生成、列表、详情、重建、下载以关联原执行的冻结事实重算追溯；GUI/PDF不查询当前配置补历史。逐链 selected/applied/unknown 与顶层状态分开，执行频率和来源覆盖频率分开，原始读数仅保留 run/indices 指针，`raw_readings_embedded=false`。不增加补偿计算，整条路径仍只补偿一次。
 
@@ -41,8 +41,8 @@ USE_MOCK_INSTRUMENTS=true DATABASE_URL=sqlite:////tmp/pc07a1-final-107ec2d9.db B
 
 ## 审查与未完成边界
 
-主代理交接：Task 1/2/3分别独立规格/质量 Approved；UUID与全量两项有限修复均获独立复核。累计最终独立审查 `pc07a1_final_review` 覆盖 `7292f8ed..107ec2d9`，结论 CLEAN、规格/质量通过。本文执行者只做文档自查，不将自查冒称独立审查；文档增量独立核验由主代理随后安排。GitHub外审尚未发生，没有PR号、R1/R2或合并声明。
+主代理交接：Task 1/2/3分别独立规格/质量 Approved；UUID与全量两项有限修复均获独立复核。累计最终独立审查 `pc07a1_final_review` 覆盖 `7292f8ed..107ec2d9`，结论 CLEAN、规格/质量通过。本文执行者只做文档自查，不将自查冒称独立审查；文档增量随后已获独立核验。GitHub PR #533 的 R1/R2 已完成并合并，覆盖版本及回执见本文开头；此处保留阶段内审的原输入归属。
 
 Task 1未复现v2详情差异：当前合法静区证据不足以构造正式资格正例，未改详情接口、未mock正式门，不声称修复或验证未来正式正例。完整计量预算、撤销制度、原始审计包/附件、实物停发证明、真实仪器/现场测量和认证均未完成。PC-05/06其余、完整PC-07、PC-07B及所有B现场/HOLD保持原状态；软件Mock结果不能解除它们。
 
-后续：文档增量独立核验后创建Ready PR；R1核实本片可执行意见并R2，R2无P1即收口，有P1则修复后续审覆盖最新HEAD，直至无P1。外审与合并前不开始下一片。
+后续：PC-07A-1 已收口，不再创建或重审本片 PR。新工作按 roadmap 获批队列推进；完整 PC-07 的预算、撤销制度、审计包及现场 B 仍未完成。
