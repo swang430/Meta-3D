@@ -172,6 +172,19 @@ const rows = !labError && !history.isError && !history.isPaused && !history.isFe
 
 - [ ] **Step 4：GREEN 与边界。** 保存真实请求日志：管理页无 calibration POST；选择甲从管理入口进入图，API getTopologies 和 paths 请求携带甲 ID，图内未选择候选时没有高亮/采集请求；返回系统校准切乙再进入，ID 为乙且无甲图/记录。没有 Lab 或暗室时按钮不可用。原图单路/批次按钮仍在，不复制第二面板。
 - [ ] **Step 5：回归既有首页用例。** “新建校准”保留按钮名称，Modal 改为方法说明；Tabs 用 keepMounted=false。该用例顺序打开历史/证书后请求白名单加真实只读 GET `/calibration/(trp|tis|repeatability|certificate)` 和 certificate UUID detail，仍严格拒绝 POST、`/history`、`/stats`、`/download`。四项未知、无固定精度/趋势断言逐字保留。
+
+实施时同步修正 `gui/test/pc06a2CalibrationStatusTruth.browser.js` 的两处旧 `5189`：将 `base` 改为本片已验证隔离 GUI origin `http://127.0.0.1:5190`，并将硬编码 `page.goto('http://127.0.0.1:5189')` 改为 `page.goto(base)`。Task 3 若因端口占用选择其他端口，`base` 使用报告中实际验证过的 GUI origin，其代理必须指向本片隔离 API（默认18090）；前置检查和导航必须共用同一 `base`，不能只替换其中一处。保留原有 HAL 为 Mock、证书 HTTP 200 且空数组的前置断言，不为适配后续档案样本删除或放宽它们：
+
+```js
+const base = 'http://127.0.0.1:5190';
+const hal = await page.request.get(`${base}/api/v1/instruments/hal/status`);
+requireValue(hal.ok() && (await hal.json()).mode === 'mock', '必须使用全 HAL Mock 环境');
+const certificate = await page.request.get(`${base}/api/v1/calibration/certificate`);
+requireValue(certificate.status() === 200 && (await certificate.json()).length === 0, '隔离库证书必须为空');
+await page.goto(base);
+```
+
+此回归只在初始 seed 后、`--seed-legacy` 之前的空档案阶段执行。需要重跑时使用新的专用空库，不删除已有档案测试行来满足前置条件；seed后的档案验证由本片集成用例负责。
 - [ ] **Step 6：提交可独立验证的任务。** `git add` 仅列本任务文件；`git commit -m "fix: 统一系统校准到同实验室拓扑入口"`。提交前独立规格/质量审查由主代理安排；不得因为一个任务通过就称整片已合并。
 
 ## Task 2：旧记录和证书使用真实只读数据，不推导正式资格
@@ -349,6 +362,8 @@ env USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true DATABASE_URL="sqlite:///
 cwd=api-service；启动日志与 `/instruments/hal/status` 同时核验全Mock，另只读SQL核验每类别/绑定不存在real override。临时Vite配置由 apply_patch 写到 `$pc06_entry_tmp/vite.config.mjs`，root/React插件/Plotly alias沿[首片实际配置](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)；所有 `/api`（含ws/ota）本次统一指向18090或不访问，绝不误连用户8000/8001；根目录启动用 `gui/node_modules/.bin/vite --configLoader native --config "$pc06_entry_tmp/vite.config.mjs" --host 127.0.0.1 --port 5190 --strictPort`。记录实际配置原文。不开启 main.tsx 的 setupMockServer，不用浏览器 route.fulfill。
 
 - [ ] **Step 3：运行各任务 RED/GREEN 与集成矩阵。** 浏览器按既有技能选择真实工具；脚本返回检查名、请求清单、Lab/记录ID与 formal_acceptance:false，截图保留。CLI若把断言错误包装成exit0，必须检查实际错误段，不以exit0冒称通过。
+
+固定顺序：初始空库→确认5190代理指向本次18090隔离API→运行 Task 1 Step 5 的既有首页回归及空库检查→暂停本次API→`--seed-legacy`→恢复同库API→运行旧档案/分页等集成检查。不得在seed之后运行要求空证书的旧用例，也不得沿用其旧5189地址。
 
 | 场景 | 必须观察到的结果 |
 |---|---|
