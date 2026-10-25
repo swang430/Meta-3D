@@ -4,7 +4,7 @@
 
 管理页统一进入当前 LabProfile 的原射频拓扑；方法说明不再执行旧校准。旧 TRP/TIS、执行指标对齐及证书从真实 API 只读回放，原字段/判词不升级成当前资格。生产后端、HAL/SCPI、采用、补偿、执行冻结及报告逻辑未改。
 
-验证生产输入基准 `6380023bc66c8541e55f176f070c7e75e3c5f425`（Task1 `5bae8481`、Task2 `6380023b`）。本任务新增 `gui/test/pc06a2EntryLifecycle.browser.js`，其余为证据和当前状态文档。Task1/2 已分别独立规格/质量审查通过；整片累计内审及 PR 外审由主代理继续，本文不宣称已合并，PC-06A-2 父项不勾选。
+验证生产输入基准 `6380023bc66c8541e55f176f070c7e75e3c5f425`（Task1 `5bae8481`、Task2 `6380023b`）。本任务新增 `gui/test/pc06a2EntryLifecycle.browser.js`，其余为证据和当前状态文档。各任务及整片累计独立内审完成，[PR #537](https://github.com/swang430/Meta-3D/pull/537)于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`；[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于2026-10-25T18:26:56Z覆盖 `805bddca6e`，未发现重大问题。与首页首片[PR #535](https://github.com/swang430/Meta-3D/pull/535)共同完成PC-06A-2批准软件待办；仅关闭该软件范围，不关闭PC-06其余范围或B/HOLD。下文保留当时实际测试输入、结果与未验边界，合并不等于正式计量/现场验收。
 
 全部为独立 SQLite、真实 HTTP/REST 序列化、全 HAL Mock 的软件验证，`formal_acceptance:false`。不证明仪器能力、实物接线、停发、射频量值或正式计量合格；现场 B、PC-09/10 HOLD 不变。
 
@@ -123,4 +123,4 @@ env DATABASE_URL="sqlite:///$pc06_full_tmp/tests.sqlite" USE_MOCK_INSTRUMENTS=tr
 
 证书fixture仅1条，证书满20再空页仅检查现有分页代码；404为真实只读适配器transport单测边界，不为浏览器404删除旧行。稀疏execution_metrics只测历史形态，不是实际正式执行对齐。无实物射频开关动作、无新正式采用、无PDF生成、无现场验收。
 
-累计独立内审/PR/R1/R2由主代理推进，合并前队列和父项保持未完成。Task3结束只关闭自身新建服务/浏览器，不清证据目录、venv、scratch或用户资料，不释放主claim。
+累计独立内审及R1/R2已完成、PR #537已合并，正式队列中的PC-06A-2批准软件待办关闭；PC-06其余范围、现场B、PC-09/10 HOLD及上述未验边界保留。Task3自身新建服务/浏览器已关闭，证据目录、venv、scratch与用户资料保留；本次仅文档状态同步，没有重新运行测试或操作服务。

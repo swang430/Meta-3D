@@ -2,7 +2,7 @@
 
 2026-10-25 用户最初要求审查、规划并写入 todo；初始规划轮不实施功能、不恢复开发 automation，审查基线 main `ad843108`。
 
-2026-10-26 当前状态：PC06A2-1 首片已由 [PR #535](https://github.com/swang430/Meta-3D/pull/535) 合并至 `b870e91a`；[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)。PC-04A-3 已由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`；[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`，未发现重大问题。当前唯一 WIP 为其余 PC-06A-2 入口整合：Task1/2 已本地实现并分别通过独立规格/质量审查，Task3 综合证据见[本片验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)；待累计独立内审、PR 外审及合并。父项与下述软件交付清单在合并前均不提前勾选。[实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)。
+2026-10-26 当前状态：本计划两项批准软件待办已交付。PC-04A-3 由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于2026-10-25T16:35:00Z合并至 `503a5a8d`，[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`；PC-06A-2 首页首片 [PR #535](https://github.com/swang430/Meta-3D/pull/535)（`b870e91a`）及剩余入口整合 [PR #537](https://github.com/swang430/Meta-3D/pull/537)均已合并，后者于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`，[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于2026-10-25T18:26:56Z覆盖 `805bddca6e`，未发现重大问题。下述Todo 1/2按软件交付关闭；PC-06其余范围、现场B与PC-09/10 HOLD不关闭。[入口实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)与[验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)保留实际测试及未验边界。
 
 PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编辑生命周期，相关 GUI 41 项和构建通过；全后端实际为 **7485 passed / 17 skipped / 1 failed**。唯一失败 G8 是基线历史文档路由误报，已独立核实；不改历史、不扩改门，不称全量绿。最终 GUI-only 修复未改变后端生产及已收集 pytest 输入，按[正式验证摘要](../validation/2026-10-25-pc04a3-topology-editing-recovery.md)的输入复用边界保留该结果；只证明软件，不解除现场 B 或正式资格边界。
 
@@ -55,19 +55,19 @@ PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编
 
 推荐架构：**系统校准是管理总入口；射频拓扑是路径校准的唯一操作工作台**。不是维护两个平行路径校准表单，也不是删除旧证书历史。
 
-本地实现已覆盖下述入口全集、同 Lab 原图导航、真实旧档案只读及方法边界；综合验证包含原图完整参考接线、单路、四项批次人工/取消/恢复、completed后跨Lab隔离和管理读取不写改。取消Mock缺真实释放证明仍保留既有保守锁，不把服务端cancelled冒称GUI可解锁。GUI60项/构建、后端相关226项通过，最终全量实际结果及未验证边界见本片验证摘要。清单保留未勾仅表示尚未完成整片审查/合并，不表示功能未实施。
+已合并实现覆盖下述入口全集、同 Lab 原图导航、真实旧档案只读及方法边界；综合验证包含原图完整参考接线、单路、四项批次人工/取消/恢复、completed后跨Lab隔离和管理读取不写改。取消Mock缺真实释放证明仍保留既有保守锁，不把服务端cancelled冒称GUI可解锁。GUI60项/构建、后端相关226项通过，最终新库全后端 **7485 passed / 17 skipped / 1 failed**（仅G8既有历史引用误报，不称全绿）；实际输出及未验证边界见本片验证摘要。累计内审及R1/R2完成、PR #537已合并，以下按批准软件范围勾选，不表示现场验收。
 
 - [x] PC06A2-1 已去掉旧系统校准首页硬编码有效状态/精度，缺证据显示未知，已由 PR #535 合并至 `b870e91a`（[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)）。此勾选仅表示首片软件交付，不代表 PC-06A-2 整项收口。
-- [ ] 枚举 SystemCalibration/CalibrationWizard/CalibrationHistory/CertificateViewer、App 导航和 calibrationService 的入口/API/数据归属；逐项记录保留、跳转、历史只读、方法未验证。
-- [ ] 系统校准保留概览、历史、参考件/证书与适用范围信息；“路径损耗/上下行链校准”导航到同一 LabProfile 的拓扑工作台，携带可验证上下文，不伪造已选路由。
-- [ ] 拓扑负责接线、选路、单路/批测量、取消/安全清理、结果审阅与采用；复用现有作业和历史服务，不复制引擎。
-- [ ] TRP/TIS/相位/静区等独立方法不冒充路径校准能力；核实原功能后保留真实能力或明确不可用及前置条件，不自动解除 PC-09/10 HOLD。
-- [ ] 旧记录按原来源展示；不迁移成新真实采集，不补认证，不删证书，不重新计算历史正式结论。
-- [ ] 验收双入口导航、LabProfile隔离、历史读取、缺证据 unknown、模拟不正式、唯一采集入口、报告追溯。涉及执行/冻结/安全契约再跑必需全后端。
+- [x] 枚举 SystemCalibration/CalibrationWizard/CalibrationHistory/CertificateViewer、App 导航和 calibrationService 的入口/API/数据归属；逐项记录保留、跳转、历史只读、方法未验证。
+- [x] 系统校准保留概览、历史、参考件/证书与适用范围信息；“路径损耗/上下行链校准”导航到同一 LabProfile 的拓扑工作台，携带可验证上下文，不伪造已选路由。
+- [x] 拓扑负责接线、选路、单路/批测量、取消/安全清理、结果审阅与采用；复用现有作业和历史服务，不复制引擎。
+- [x] TRP/TIS/相位/静区等独立方法不冒充路径校准能力；核实原功能后保留真实能力或明确不可用及前置条件，不自动解除 PC-09/10 HOLD。
+- [x] 旧记录按原来源展示；不迁移成新真实采集，不补认证，不删证书，不重新计算历史正式结论。
+- [x] 验收双入口导航、LabProfile隔离、历史读取、缺证据 unknown、模拟不正式、唯一采集入口、报告追溯。涉及执行/冻结/安全契约再跑必需全后端。
 
 主要文件：`gui/src/components/SystemCalibration/`、`gui/src/App.tsx`、`gui/src/api/calibrationService.ts`、`gui/src/features/TopologyEditor/RouteCalibrationPanel.tsx`，后端沿实际调用链再定最小范围。顺序为状态卡真实性小片→PC-04A-3→入口整合；WIP=1。每个功能片仍需 TDD、适当回归、独立内审、Ready PR 和 R1/R2。
 
-剩余范围已形成[2026-10-26 实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)：同 Lab 跳转、旧向导方法化、旧基线只读、真实全局旧记录/证书档案；不新增后端API，不改拓扑引擎、采用、冻结或报告，不调用会重建PDF的旧下载端点。用户已选择 SDD，独立计划审查后实施，不重复询问执行方式；此处登记计划不等于上述功能已完成。
+上述剩余入口范围按[2026-10-26 实施计划](2026-10-26-pc06a2-calibration-entry-integration.md)经SDD、独立内审和外审交付：同 Lab 跳转、旧向导方法化、旧基线只读、真实全局旧记录/证书档案；不新增后端API，不改拓扑引擎、采用、冻结或报告，不调用会重建PDF的旧下载端点。仅本计划Todo 1/2批准软件范围关闭，其余PC与现场条件不变。
 
 ## 团队共享与规则边界
 
@@ -85,4 +85,4 @@ PC-04A-3 真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编
 - [ ] 每个 PR 描述带 roadmap 编号、受审 SHA、测试/审查证据；状态以 GitHub PR 为准。合并后不为更新“已合并”向受审分支追加提交；下一正常文档片同步 roadmap 快照。
 - [ ] 新 clone 仅凭仓库文档即可找到待办/设计/验证/安全边界；不得要求访问某个人 memory 才能理解强制规则。
 
-初始规划轮只登记上述两项功能计划及协作治理检查；后续实际进度见本文开头与两项 Todo 状态。PC-04A-3 已由 PR #536 合并，软件片完成；其余入口整合已本地实现和建立综合证据，待累计内审/外审/合并，不将其他未批准扩域自动排入执行。
+初始规划轮只登记上述两项功能计划及协作治理检查；后续实际进度见本文开头与两项 Todo 状态。PC-04A-3 由 PR #536、PC-06A-2由 PR #535/#537完成软件交付；两条批准软件待办关闭，不将其他未批准扩域自动排入执行，不关闭PC-06其余范围或现场B/HOLD。

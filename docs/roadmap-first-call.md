@@ -10,12 +10,12 @@
 
 ### 2026-10-26 最新状态与用户新增待办
 
-PC-07A-1 已由 PR #533 合并至 `ad843108`；此前批准的四片 #530～533 软件链已完成，现场 B 和其余 PC/HOLD 范围不变。PC06A2-1 首页状态真实性已由 [PR #535](https://github.com/swang430/Meta-3D/pull/535) 合并至 `b870e91a`。PC-04A-3 已由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`；[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`，未发现重大问题。当前唯一 WIP 为 **PC-06A-2 剩余校准入口整合**：Task1/2 实现及各自独立审查通过，Task3 综合验证记录已建立，待累计独立内审及 PR 外审；尚未合并。
+PC-07A-1 已由 PR #533 合并至 `ad843108`；此前批准的四片 #530～533 软件链已完成，现场 B 和其余 PC/HOLD 范围不变。两项新增批准软件待办均已交付：PC-04A-3 由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`，[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`；PC-06A-2 由首页首片 [PR #535](https://github.com/swang430/Meta-3D/pull/535)（`b870e91a`）与入口整合 [PR #537](https://github.com/swang430/Meta-3D/pull/537)共同完成，后者于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`，[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于18:26:56Z覆盖 `805bddca6e`，未发现重大问题。当前仅做交付状态文档收尾，不启动下一功能；PC-06剩余范围、现场B及HOLD不关闭。
 
 - [x] **PC-04A-3：拓扑编辑/增删完整性**——器件、端口、连线、模式、保存与恢复软件实现、验证及内外审完成，由 PR #536 合并至 `503a5a8d`；PC-04B 现场仍未完成。[本片验证摘要](validation/2026-10-25-pc04a3-topology-editing-recovery.md)。
-- [ ] **PC-06A-2：系统校准与拓扑校准入口整合**——系统校准作为管理总入口，拓扑作为路径校准唯一操作入口；首片 PC06A2-1 已移除首页无来源有效状态与精度，由 PR #535 合并至 `b870e91a`。剩余入口/旧档案真实只读已本地实现，真实 API/全 Mock 综合证据见[本片验证摘要](validation/2026-10-26-pc06a2-entry-integration.md)，待累计内审/外审/合并，不提前关闭父项。[实施计划](plans/2026-10-26-pc06a2-calibration-entry-integration.md)采用 SDD，不再询问执行方式。
+- [x] **PC-06A-2：系统校准与拓扑校准入口整合**——系统校准作为管理总入口，拓扑作为路径校准唯一操作入口；首页状态真实性由 PR #535 交付，剩余入口/旧档案真实只读由 PR #537 合并至 `f632d26c`，累计内审及R1/R2完成。关闭本条批准软件待办，不关闭PC-06其余范围或现场B/HOLD。[验证摘要](validation/2026-10-26-pc06a2-entry-integration.md)；[实施计划](plans/2026-10-26-pc06a2-calibration-entry-integration.md)。
 
-PC-04A-3 软件片已交付，PC-06A-2 父项保持未完成，其余入口整合已本地实施、待审合并。[审查、实施范围、验收与团队同步计划](plans/2026-10-25-topology-editor-calibration-consolidation.md)。PC-04A-3 的真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编辑生命周期；相关 GUI 41 项和构建通过。该旧片全后端实际结果为 **7485 passed / 17 skipped / 1 failed**：唯一 G8 为基线历史文档路由误报，已独立核实，不修改历史或扩改门，不称全量绿。旧片最终 GUI-only 修复按输入复用边界保留该结果，详见其验证摘要；不代表真机或现场验收，也不作为新入口整合的验证结果。本片单独运行的 GUI60项、后端相关226项、综合浏览器及最终全量实际证据见[本片摘要](validation/2026-10-26-pc06a2-entry-integration.md)。实施顺序：旧状态卡真实性小片收口→PC-04A-3→其余入口整合，WIP=1；前两片均已合并，当前第三片待累计审查及合并。本机台账只是交接镜像；正式队列与项目规则随仓库 PR 共享，个人 memory 不充当团队规则真值源。
+PC-04A-3与PC-06A-2两条批准软件待办已交付，PC-06父项其余范围不随之关闭。[审查、实施范围、验收与团队同步计划](plans/2026-10-25-topology-editor-calibration-consolidation.md)。PC-04A-3 的真实 API/隔离 SQLite/全 Mock 浏览器已覆盖 19 类器件及编辑生命周期；相关 GUI 41 项和构建通过。该旧片全后端实际结果为 **7485 passed / 17 skipped / 1 failed**：唯一 G8 为基线历史文档路由误报，已独立核实，不修改历史或扩改门，不称全量绿。旧片最终 GUI-only 修复按输入复用边界保留该结果，详见其验证摘要；不代表真机或现场验收，也不作为新入口整合的验证结果。PC-06A-2另以新库单独运行GUI60项、后端相关226项及综合浏览器，最终全后端同为 **7485 passed / 17 skipped / 1 failed**（G8同一历史引用误报），不是复用旧片结果，见[本片摘要](validation/2026-10-26-pc06a2-entry-integration.md)。实施顺序旧状态卡真实性→PC-04A-3→其余入口整合已按WIP=1全部软件交付；现场B、PC-09/10 HOLD及各方法未验边界保留。本机台账只是交接镜像；正式队列与项目规则随仓库 PR 共享，个人 memory 不充当团队规则真值源。
 
 ### 已交付四片
 
