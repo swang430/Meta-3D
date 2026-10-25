@@ -249,7 +249,8 @@ def test_report_marks_diagnostic_and_hides_every_formal_metric():
     ]
     assert metric["status"] == "diagnostic"
     assert metric["formal_value"] is None
-    assert report_has_provenance_trust(content) is True
+    assert report_has_provenance_trust(content) is False  # 新投影无原执行不能自证可信
+    assert report_has_provenance_trust(content, execution=execution) is True
     assert content["step_results"][-1]["parameters"]["verdict"] == "UNKNOWN"
     for row in content["table_data"]:
         assert row["Throughput (Mbps)"] == "N/A"

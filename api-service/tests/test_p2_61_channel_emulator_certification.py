@@ -304,6 +304,10 @@ def _certification_execution_fixture():
         "ce-runtime", {"ip_address": "192.0.2.59", "port": 3334}
     )
     binding = _frozen_binding_for_driver(driver, execution_mode="real")
+    # 真实连接主键为 UUID；本夹具也不得用 MagicMock 掩盖非法占位身份。
+    binding['instrument_connection_id'] = '22222222-2222-2222-2222-222222222222'
+    binding['resolved_binding']['instrument_connection_id'] = binding['instrument_connection_id']
+    binding['digest'] = canonical_payload_digest({key: value for key, value in binding.items() if key != 'digest'})
     plan = _frozen_plan(driver)
     rebound_receipts = []
     for receipt in receipts:
@@ -1313,14 +1317,14 @@ def test_activate_service_uses_execution_then_locked_resolver_and_commits_once(m
     test_case = SimpleNamespace(id="case-1", lab_profile_id="lab-1")
     lab = SimpleNamespace(id="lab-1")
     connection = SimpleNamespace(
-        id="ce-connection",
+        id=execution.config['channel_emulator_binding_freeze']['instrument_connection_id'],
         channel_emulator_site_certification=None,
     )
     frozen_binding = execution.config["channel_emulator_binding_freeze"]
     frozen_plan = execution.config["channel_emulator_execution_plan_freeze"]
     resolved = SimpleNamespace(
         execution_mode="real",
-        instrument_connection_id="ce-connection",
+        instrument_connection_id=connection.id,
         instrument_model_id="ce-model",
         binding_digest=frozen_binding["binding_digest"],
         manifest=SimpleNamespace(adapter_id=frozen_plan["adapter_id"]),
@@ -1382,7 +1386,7 @@ def test_activate_service_rolls_back_on_any_derivation_error(monkeypatch):
     execution = _certification_execution_fixture()
     execution.test_case_id = "case-1"
     execution.measurements["phases"]["measure"]["frequency_consistency"]["fully_verified"] = False
-    connection = SimpleNamespace(id="ce-connection", channel_emulator_site_certification=None)
+    connection = SimpleNamespace(id=execution.config['channel_emulator_binding_freeze']['instrument_connection_id'], channel_emulator_site_certification=None)
     connection_query = MagicMock()
     connection_query.filter.return_value.scalar.return_value = connection.id
     connection_query.filter.return_value.one.return_value = connection

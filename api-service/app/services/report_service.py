@@ -27,6 +27,7 @@ from app.services.mimo_ota.path_loss_application import (
     parse_path_loss_application,
     path_loss_application_is_formally_verified,
 )
+from app.services.mimo_ota.calibration_traceability import build_calibration_traceability
 from app.services.mimo_ota.rf_kpi_trust import (
     RF_KPI_TRUST_SCHEMA_VERSION,
     parse_rf_kpi_trust,
@@ -78,6 +79,7 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
     "path_loss_application",
+    "calibration_traceability",
     "throughput_trust_schema_version",
     "formal_throughput_verified",
     "throughput_scope",
@@ -191,10 +193,28 @@ def _strip_untrusted_report_attestation(
     }
 
 
-def report_has_provenance_trust(content_data: Any) -> bool:
+def report_has_provenance_trust(content_data: Any, *, execution: Any = None) -> bool:
     """Accept only a complete, internally consistent server trust envelope."""
     if not isinstance(content_data, dict):
         return False
+    if "calibration_traceability" in content_data:
+        # 新投影必须关联原执行，不能只让报告内两个可修改字段互相作证。
+        # 旧报告缺键仍沿原 provenance/lifecycle 门；重建时自动写入新投影。
+        if execution is None:
+            return False
+        measurements = getattr(execution, "measurements", None)
+        phases = measurements.get("phases") if isinstance(measurements, dict) else None
+        measure = phases.get("measure") if isinstance(phases, dict) else None
+        application = measure.get("path_loss_application") if isinstance(measure, dict) else None
+        if content_data["calibration_traceability"] != build_calibration_traceability(application):
+            return False
+        # 正式消费侧的应用镜像也必须来自同一执行。诊断输出沿既有规则降级
+        # unknown，但追溯字段仍保留原事实，不能反过来恢复正式资格。
+        expected_application = parse_path_loss_application(
+            None if execution_evidence_blocks_formal_outputs(execution) else application
+        )
+        if content_data.get("path_loss_application") != expected_application:
+            return False
     calibration_marker = content_data.get("calibration_trust_schema_version")
     throughput_marker = content_data.get(THROUGHPUT_TRUST_FIELD)
     raw_application = content_data.get("path_loss_application")
@@ -672,6 +692,8 @@ class ReportService:
         if not report:
             return None
 
+        if "content_data" in kwargs:
+            kwargs["content_data"] = _strip_untrusted_report_attestation(kwargs["content_data"])
         for key, value in kwargs.items():
             if hasattr(report, key) and value is not None:
                 setattr(report, key, value)

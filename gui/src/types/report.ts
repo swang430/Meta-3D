@@ -185,6 +185,26 @@ export interface CustomConfigHighlight {
  * Used by both test plans and virtual road tests
  */
 export interface ReportContentData {
+  /** 只读原执行冻结投影；不可用当前配置重建。 */
+  calibration_traceability?: {
+    schema_version: number
+    status: string
+    provenance: string
+    reason?: string
+    gate_mode?: string
+    certificate_id?: string | null
+    execution_frequency_mhz?: number | null
+    raw_readings_embedded: boolean
+    routes: Array<{
+      chain_id?: string
+      source_kind?: string
+      source_id?: string
+      application_state: string
+      certification_status?: string
+      source_snapshot?: Record<string, unknown> | null
+      [key: string]: unknown
+    }>
+  }
   // Source identification
   source: 'test_plan' | 'road_test'
   execution_id: string
