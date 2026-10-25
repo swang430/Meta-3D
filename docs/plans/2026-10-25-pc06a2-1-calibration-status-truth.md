@@ -146,10 +146,15 @@ env USE_MOCK_INSTRUMENTS=true DATABASE_URL="sqlite:///$pc06_tmp/browser.db" BOOT
 - [ ] Step 5：明确建立隔离配置。`app/services/bootstrap/__init__.py::ALL_SEEDERS` 不包含 LabProfile 创建，不能假定新库里已有可选实验室。以下命令在隔离 API 启动后执行，仅创建两个各自绑定测试暗室、空仪器绑定的配置；不复制用户库、不创建校准/证书/采集记录、不增加生产 fixture。Payload 来源是 `app/schemas/chamber.py::ChamberConfigurationCreate` 与 `app/api/lab_profile.py::LabProfileCreateRequest/create_lab_profile`，路由分别为 `/chambers` 和 `/lab-profiles`。
 
 ```bash
-python3 - <<'PY'
+python3 - "$pc06_tmp/browser.db" <<'PY'
 import json
+import sqlite3
+import sys
+from pathlib import Path
 from urllib.request import Request, urlopen
 
+db_path = Path(sys.argv[1]).resolve(strict=True)
+assert db_path.parent.name.startswith('pc06a2-status.'), '只核验本次临时目录'
 base = 'http://127.0.0.1:18089/api/v1'
 def api(path, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
@@ -182,17 +187,29 @@ for suffix in ('甲', '乙'):
         'created_by': 'pc06a2-browser-validation',
     })
     assert lab['chamber_config_id'] == chamber['id']
-    assert lab['instrument_bindings'] == []
     created.append(lab)
 assert len(api('/lab-profiles')) == 2
 assert api('/calibration/certificate') == []
+# POST/GET 返回 LabProfileSummary，没有 instrument_bindings 字段。
+# 当前无通用 LabProfile 详情 GET；只读核验本次独立 SQLite 的实际保存值。
+with sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True) as db:
+    rows = db.execute(
+        'SELECT id, name, chamber_config_id, instrument_bindings '
+        'FROM lab_profiles ORDER BY name'
+    ).fetchall()
+assert len(rows) == 2
+for lab in created:
+    row = next(row for row in rows if row[1] == lab['name'])
+    assert row[0].replace('-', '') == lab['id'].replace('-', '')
+    assert row[2].replace('-', '') == lab['chamber_config_id'].replace('-', '')
+    assert json.loads(row[3]) == [], '隔离配置出现仪器绑定，停止'
 print(json.dumps(created, ensure_ascii=False, indent=2))
 PY
 ```
 
-保存这次实际输出的两个 LabProfile ID/暗室 ID。全 Mock 前提不只看 HAL status：启动命令必须显式 `USE_MOCK_INSTRUMENTS=true`、指向本次新建临时 SQLite，保存启动日志；两个新 LabProfile 的 `instrument_bindings=[]` 排除了其中的 real override，测试只读首页/基线状态，绝不点击 quick、drift 或向导开始执行。若发现请求触发连接/采集、配置含真实端点或库非新库立即停止，不用 status 字段替代这些隔离条件。真实 GET `/calibration/certificate` 必须 200、空数组；禁止调用 TRP/TIS/校准/证书生成 POST 来制造验收样本。
+`pc06_tmp` 在执行该命令的 shell 中也须显式设为 Step 2 的实际目录。保存这次实际输出的两个 LabProfile ID/暗室 ID。字段核对：暗室 POST 的字段均在 ChamberConfigurationBase/Create，响应的 id 在 ChamberConfigurationResponse；实验室 POST 字段来自活路由的 LabProfileCreateRequest，响应只使用 LabProfileSummary 的 id/name/chamber_config_id；绑定保存值来自 `app/models/lab_profile.py::LabProfile` 的 `lab_profiles.instrument_bindings` 列，不从摘要猜字段。全 Mock 前提不只看 HAL status：启动命令必须显式 `USE_MOCK_INSTRUMENTS=true`、指向本次新建临时 SQLite，保存启动日志；两个新 LabProfile 的空绑定以以上只读 DB 核验排除其中的 real override，测试只读首页/基线状态，绝不点击 quick、drift 或向导开始执行。若发现请求触发连接/采集、配置含真实端点或库非新库立即停止，不用 status 字段替代这些隔离条件。真实 GET `/calibration/certificate` 必须 200、空数组；禁止调用 TRP/TIS/校准/证书生成 POST 来制造验收样本。
 - [ ] Step 6：运行 Task 1 用例，补充记录所有 `/calibration/` 请求；首页只允许既有 baseline/status 读取，不得新增 stats/history/certificate 请求来推导四项。截图必须只框首页/当前概览，不用隐藏 Tab 文本污染断言。
-- [ ] Step 7：在“当前 LabProfile”选择器显式选择 Step 5 创建的“PC06A2状态测试甲”，再切换“PC06A2状态测试乙”后返回甲、刷新；将实际 ID 与 Step 5 输出逐项核对。四项仍未知，无固定数据回潮；当前 API 校准/证书记录数不增加，两个实验室的 instrument_bindings 仍为空。仅系统首页的未知状态不依赖实验室，不能据此宣称基线组件全部跨实验室竞态已验收。
+- [ ] Step 7：在“当前 LabProfile”选择器显式选择 Step 5 创建的“PC06A2状态测试甲”，再切换“PC06A2状态测试乙”后返回甲、刷新；将实际 ID 与 Step 5 输出逐项核对。四项仍未知，无固定数据回潮；当前 API 校准/证书记录数不增加。重新以 Step 5 的 `sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)` 查询同一临时库 `SELECT name, instrument_bindings FROM lab_profiles ORDER BY name`，断言恰好甲乙两行且每行 `json.loads(instrument_bindings) == []`；不从创建/列表摘要读取该字段。仅系统首页的未知状态不依赖实验室，不能据此宣称基线组件全部跨实验室竞态已验收。
 - [ ] Step 8：用浏览器离线模式造成真实网络失败（不 route.fulfill），在首页检查四项仍未知、没有重新生成数值；恢复在线再刷新。此断言仅针对本片的顶部与新中性概览，不把既有 Baseline 网络错误显示改造偷偷纳入。
 - [ ] Step 9：回读 certificate 列表仍空；保存请求清单、RED/GREEN/变异输出、截图路径、构建输出和受测 SHA。浏览器结束仅停止本次创建的 PTY 服务，保留证据目录供审查。
 
