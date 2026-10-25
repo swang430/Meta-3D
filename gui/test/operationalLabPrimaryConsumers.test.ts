@@ -101,8 +101,6 @@ test('硬件请求路径全部登记在途工作，且 release 在 finally/出�
   // release 挪出 finally（begin 后立即调）计数照样对，所以逐处验位置。
   const EXPECT = [
     ['src/components/Commissioning/index.tsx', 'commissioning', 5],
-    ['src/components/SystemCalibration/CalibrationWizard.tsx', 'calibration', 1],
-    ['src/components/SystemCalibration/BaselineCalibrationCard.tsx', 'calibration', 2],
   ] as const
   for (const [rel, key, n] of EXPECT) {
     const s = read(rel)

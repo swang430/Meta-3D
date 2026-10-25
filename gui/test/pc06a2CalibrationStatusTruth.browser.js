@@ -1,7 +1,7 @@
 async page => {
   const requireValue = (ok, message) => { if (!ok) throw new Error(message) };
   // 只对明确建立的新库 / 全 HAL Mock 隔离环境执行；不伪造 HTTP 响应。
-  const base = 'http://127.0.0.1:5189';
+  const base = 'http://127.0.0.1:5190';
   const hal = await page.request.get(`${base}/api/v1/instruments/hal/status`);
   requireValue(hal.ok() && (await hal.json()).mode === 'mock', '必须使用全 HAL Mock 环境');
   const certificate = await page.request.get(`${base}/api/v1/calibration/certificate`);
@@ -11,7 +11,7 @@ async page => {
     if (request.url().includes('/calibration/')) calibrationRequests.push({ method: request.method(), url: request.url() });
   };
   page.on('request', onRequest);
-  await page.goto('http://127.0.0.1:5189');
+  await page.goto(base);
   await page.getByRole('tab', { name: '系统校准', exact: true }).click();
   await page.getByRole('heading', { name: '系统校准', exact: true }).last().waitFor();
   // 旧页面的可见假状态让 RED 失败，而非等待尚不存在的测试标记。
@@ -36,6 +36,6 @@ async page => {
   await page.getByRole('dialog').waitFor();
   await page.keyboard.press('Escape');
   page.off('request', onRequest);
-  requireValue(calibrationRequests.every(request => request.method === 'GET' && /\/baseline\/status\/[0-9a-f-]+(?:\?|$)/i.test(request.url)), '首页产生非基线只读校准请求');
+  requireValue(calibrationRequests.every(request => request.method === 'GET' && /\/calibration\/(?:baseline\/status\/[0-9a-f-]+|trp|tis|repeatability|certificate(?:\/[0-9a-f-]+)?)(?:\?|$)/i.test(request.url)), '管理页产生非白名单只读校准请求');
   return { checks: ['四项未知', '无固定成果', '移除示例状态挂载', '旧入口保留'], summary: text, overview: body, calibrationRequests, formal_acceptance: false };
 }

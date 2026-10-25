@@ -15,6 +15,7 @@ import {
   Stack,
   Paper,
   ThemeIcon,
+  Alert,
 } from '@mantine/core';
 import {
   IconCertificate,
@@ -27,13 +28,26 @@ import { CalibrationHistory } from './CalibrationHistory';
 import { CertificateViewer } from './CertificateViewer';
 import { CalibrationDashboard } from './CalibrationDashboard';
 import { PathLossCalibrationCard } from './PathLossCalibrationCard';
+import { useOperationalLab } from '../../features/OperationalLab';
 
 // Re-export components for external use
 export { PathLossCalibrationCard };
 
-export function SystemCalibration() {
+interface SystemCalibrationProps { onOpenPathCalibration: () => void }
+
+export function SystemCalibration({ onOpenPathCalibration }: SystemCalibrationProps) {
   const [activeTab, setActiveTab] = useState<string | null>('dashboard');
   const [wizardOpen, setWizardOpen] = useState(false);
+  const lab = useOperationalLab();
+  const pathUnavailableReason = lab.loading ? '正在加载当前实验室'
+    : lab.error ? '当前实验室读取失败'
+    : !lab.selectedLabProfileId ? '请先选择当前 LabProfile'
+    : !lab.chamberId ? '当前 LabProfile 未绑定暗室' : null;
+  const openPath = () => {
+    if (pathUnavailableReason) return;
+    setWizardOpen(false);
+    onOpenPathCalibration();
+  };
 
   return (
     <Container size="xl" py="xl">
@@ -53,6 +67,14 @@ export function SystemCalibration() {
             新建校准
           </Button>
         </Group>
+
+        <Stack gap="xs">
+          <Text size="sm">路径校准在当前实验室原射频拓扑中操作；本页不执行独立校准。</Text>
+          {pathUnavailableReason && <Alert color="yellow">{pathUnavailableReason}</Alert>}
+          <Button disabled={pathUnavailableReason !== null} onClick={openPath}>
+            进入当前实验室射频拓扑
+          </Button>
+        </Stack>
 
         {/* Status Cards */}
         <Grid data-testid="system-calibration-summary">
@@ -142,7 +164,7 @@ export function SystemCalibration() {
         </Grid>
 
         {/* Main Content Tabs */}
-        <Tabs value={activeTab} onChange={setActiveTab}>
+        <Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
           <Tabs.List>
             <Tabs.Tab value="dashboard" leftSection={<IconChartLine size={16} />}>
               概览
@@ -173,6 +195,8 @@ export function SystemCalibration() {
       <CalibrationWizard
         opened={wizardOpen}
         onClose={() => setWizardOpen(false)}
+        onOpenPathCalibration={openPath}
+        pathUnavailableReason={pathUnavailableReason}
       />
     </Container>
   );
