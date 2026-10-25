@@ -1,6 +1,6 @@
 # PC-04A-3 拓扑编辑完整性与恢复实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. 本片沿用已经批准的连续实施授权，按下列复选框逐项执行；WIP=1，不另开并行功能片，不重复要求用户批准。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. 用户已确定采用子代理驱动实施；本片沿用已经批准的连续实施授权，按下列复选框逐项执行；WIP=1，不另开并行功能片，不重复要求用户批准。
 
 **Goal:** 普通操作员能在原画布中恢复隐藏器件、声明双端线缆并接入原路径，安全改接、删除、保存及刷新；显式通路不会因编辑被静默降级为另一条自动推断路径。
 
@@ -19,6 +19,7 @@
 - 保存失败保留草稿；既有位置、未知扩展参数、无关模式及历史数据不重写。读历史图不执行迁移；修复历史隐藏节点是用户明确保存的草稿修改。
 - 线缆节点只是物理接线声明。继续以连线的 `calibrated_loss_db`（非空时）或 `cable_loss_db` 表示该段损耗，不在节点再存一份参与计算的损耗，不把整条实测损耗写入单段。
 - 本片共享保存行为会修改，最终稳定输入须全后端一次；各任务先跑相关回归，GUI production build 必跑。不得把本计划中的预期结果写成已完成验证。
+- 所有后端诊断、RED、GREEN、全量及变异复跑命令，均在app导入前以命令行环境显式设置 `DATABASE_URL` 到该次新建的mktemp文件SQLite，并设置全HAL Mock；各轮目录独立，不依赖其他终端export，不复用浏览器证据数据库。`get_db` override不是默认engine/SessionLocal隔离：现有 `test_pc_04a_fixed_route_api.client` 真实lifespan仍会使用它们，故此约束对复用fixture的测试也适用。
 
 ## 1. 已核验现状与缺口
 
@@ -26,31 +27,31 @@
 
 ### 全器件能力矩阵
 
-图例：`有`表示存在生产入口，尚不代表逐类浏览器通过；`空`表示新增统一 `ports=[]`，应用属性前须声明非空端口；`通用`表示现有名称/端口/模式抽屉。连接用 ReactFlow 拖线；改接仅能在边抽屉改 pin，换源/目标器件须新增边再删旧边，不承诺拖动边端点重连。
+图例：`有`表示存在生产入口，尚不代表逐类浏览器通过；`空`表示新增统一 `ports=[]`，应用属性前须声明非空端口；`通用`表示现有名称/端口/模式抽屉。“候选”只指 `getNodePorts` 在params.ports缺失时提供的编辑候选，与历史实际画布handles分列，不能互相代替。连接列的“有”指声明后可用ReactFlow拖线；无声明历史节点是否可拖线，以实际handles列为准。改接仅能在边抽屉改pin，换源/目标器件须新增边再删旧边，不承诺拖动边端点重连。
 
-| 器件 type | 新增 | 属性 | 新增端口 / 历史无声明回退 | 连接 / 改接 | 删除 | 模式 | 保存 / 重载 |
-|---|---|---|---|---|---|---|---|
-| cable | 有 | 通用 | 空 / out,in | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| receive_cable | 有 | 通用 | 空 / out,in | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
-| pad | 有 | 通用 | 空 / in,out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| amplifier | 有 | 通用 | 空 / in,out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| combiner | 有 | 通用 | 空 / in1..in4,out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| termination | 有 | 通用 | 空 / in | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| probe | 有 | 通用+编号/极化/显式路径 | 空 / in | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| channel_emulator | 有 | 通用+目录关联 | 空 / in1..in4,out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| communication_tester | 有 | 通用+目录关联 | 空 / 无 | 有；角色限制 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| emcenter | 有 | 通用+目录关联 | 空 / switch_in,pa_out,sw_out,pa_in | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| vna | 有 | 通用+目录关联 | 空 / Port1,Port2 | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
-| reference_antenna | 有 | 通用 | 空 / rf | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
-| signal_analyzer | 有 | 通用+目录关联 | 空 / rf_in | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
-| air_path | 有 | 通用 | 空 / out,in | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
-| ce_port | 仅导入/已有图 | 通用+目录关联 | 历史 out | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
-| bse_port | 仅导入/已有图 | 通用+目录关联 | 历史 out | 有；角色限制 / pin或重建边 | 有 | 原模式 | PATCH / GET |
-| switch_slot | 仅导入/已有图 | 通用+目录关联/映射指引 | 历史 P1..P4 | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
-| antenna | 仅导入/已有图 | 通用 | 历史 P1 | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
-| sa_port | 仅导入/已有图 | 通用 | 历史 in | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
+| 器件 type | 新增 | 属性 | 新增端口 / 无声明编辑候选 | 无声明历史画布实际handles | 声明后连接 / 改接 | 删除 | 模式 | 保存 / 重载 |
+|---|---|---|---|---|---|---|---|---|
+| cable | 有 | 通用 | 空 / out,in | 无（PassiveNode） | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| receive_cable | 有 | 通用 | 空 / out,in | 无（PassiveNode） | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
+| pad | 有 | 通用 | 空 / in,out | 无（PassiveNode） | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| amplifier | 有 | 通用 | 空 / in,out | 无（PassiveNode） | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| combiner | 有 | 通用 | 空 / in1..in4,out | 无（PassiveNode） | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| termination | 有 | 通用 | 空 / in | 无（PassiveNode） | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| probe | 有 | 通用+编号/极化/显式路径 | 空 / in | target:in | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| channel_emulator | 有 | 通用+目录关联 | 空 / in1..in4,out | target:in1..in4；source:out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| communication_tester | 有 | 通用+目录关联 | 空 / 无 | 无；resolvePortHandles无ports返回[] | 有；角色限制 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| emcenter | 有 | 通用+目录关联 | 空 / switch_in,pa_out,sw_out,pa_in | target:switch_in,pa_in；source:pa_out,sw_out | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| vna | 有 | 通用+目录关联 | 空 / Port1,Port2 | source:Port1,Port2 | 有 / pin或重建边 | 有 | 当前模式 | PATCH / GET |
+| reference_antenna | 有 | 通用 | 空 / rf | target:rf；source:rf | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
+| signal_analyzer | 有 | 通用+目录关联 | 空 / rf_in | target:rf_in | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
+| air_path | 有 | 通用 | 空 / out,in | 无（PassiveNode） | 有 / pin或重建边 | 有 | 仅 calibration | PATCH / GET |
+| ce_port | 仅导入/已有图 | 通用+目录关联 | 无声明候选out | source:out | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
+| bse_port | 仅导入/已有图 | 通用+目录关联 | 无声明候选out | 无；由CommunicationTesterNode渲染，不存在默认out | 有；角色限制 / pin或重建边 | 有 | 原模式 | PATCH / GET |
+| switch_slot | 仅导入/已有图 | 通用+目录关联/映射指引 | 无声明候选P1..P4 | target:P1,P3；source:P2,P4 | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
+| antenna | 仅导入/已有图 | 通用 | 无声明候选P1 | 无（PassiveNode） | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
+| sa_port | 仅导入/已有图 | 通用 | 无声明候选in | 无（PassiveNode） | 有 / pin或重建边 | 有 | 原模式 | PATCH / GET |
 
-权威锚点：`TopologyEditor.nodeTypeOptions/addNode/applyNodeEdit/applyConnectionEdit`、`CustomNodes.originalNodeTypes/customNodeTypes/withDeclaredPorts`、`nodePortHelpers.getNodePorts`。14 个新增菜单类型、5 个仅导入渲染类型；不为覆盖矩阵擅自给旧类型增加菜单。上表“历史回退”只描述画布，不是物理仪器能力证明。
+权威锚点：`TopologyEditor.nodeTypeOptions/addNode/applyNodeEdit/applyConnectionEdit`、`CustomNodes.originalNodeTypes/customNodeTypes/withDeclaredPorts`、`nodePortHelpers.getNodePorts`、`baseStationPorts.resolvePortHandles`。14个新增菜单类型、5个仅导入渲染类型；不为覆盖矩阵擅自给旧类型增加菜单。`withDeclaredPorts` 在无params.ports时直接返回原组件，不按getNodePorts候选补handles；显式ports=[]时走包装器但也不生成handles。本片不自动给历史节点补ports、不自动保存候选；表中全部端点/候选均不是物理仪器能力证明。
 
 普通器件共同缺口：空 `visible_modes` 可应用后失去全部画布入口；无独立器件列表。校准scope器件的模式选择当前禁用，但历史空数组同样全隐藏，不能靠禁止新空选择解决。所有行共同保护：已连端口从端口集合移除会被 `updateDraftNode` 拒绝，后端也拒绝未声明 pin；删节点清关联边/模式，不删仪器资源/历史。只有 probe 的显式声明可能引用本节点之外的边/节点，需要 Task 2 的引用保护。
 
@@ -70,7 +71,14 @@
 
 另一个必须区分的现状：`mimo_ota/switch_orchestrator._build_probe_binding` 的 `cable_loss_db` 只取探头终端边，并非上述展示路径的逐边求和。本片不改变这份正式补偿契约，浏览器CE→cable→probe示例将2dB填在 `cable→probe`，`CE→cable` 为0；不能据路径/矩阵显示2dB声称任意上游段损耗已自动进入正式补偿。上游分段损耗与正式补偿关系不在本片重构，不以本片编辑功能解除实际校准/采用前置。
 
-诊断启动时先 `from app.main import app`，再 import API/service，避免绕过正式加载顺序形成循环导入。文件 SQLite 的 engine 配置可用，裸 `sqlite:///:memory:` 直接加载默认 engine 因 `max_overflow` 不适用失败；隔离 HTTP 测试沿现有 StaticPool fixture，不修改生产数据库配置掩盖该诊断差异。
+诊断启动时先 `from app.main import app`，再 import API/service，避免绕过正式加载顺序形成循环导入。文件 SQLite 的 engine 配置可用，裸 `sqlite:///:memory:` 直接加载默认 engine 因 `max_overflow` 不适用失败；隔离 HTTP 测试沿现有StaticPool fixture，但默认engine/SessionLocal仍须额外隔离，不修改生产数据库配置掩盖该诊断差异。每次重新跑后端诊断均用新目录，启动形状如下（cwd=`api-service`；实际诊断代码同样放在此显式环境中执行）：
+
+```bash
+task_diagnostic_db_dir=$(mktemp -d /tmp/pc04a3-diagnostic-XXXXXX)
+DATABASE_URL="sqlite:///$task_diagnostic_db_dir/diagnostic.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -c 'from app.main import app; from app.db.database import engine; print(engine.url)'
+```
+
+先确认输出指向本次独立临时目录，再继续诊断；不使用其他shell的export，不以get_db override代替该检查，不指向用户库或浏览器证据库。
 
 ## 2. 全集关系：入口 → 权威 → 消费者 → 可观察断言
 
@@ -218,7 +226,14 @@ test('删除显式路径边或中间节点会指出受影响探头且不改原�
 });
 ```
 
-- [ ] **Step 2：跑 RED。** cwd=`api-service`：`USE_MOCK_INSTRUMENTS=true .venv/bin/python -m pytest tests/test_pc04a3_topology_recovery.py -q`；cwd=`gui`：`npx --yes tsx --test test/topologyDraft.test.ts`。预期基线悬空声明PATCH仍200，前端删除未抛错；记录真实结尾，不将导入错误算成功RED。
+- [ ] **Step 2：跑 RED。** cwd=`api-service`，新建本轮专用SQLite，不复用诊断或浏览器库：
+
+```bash
+task_red_db_dir=$(mktemp -d /tmp/pc04a3-red-XXXXXX)
+DATABASE_URL="sqlite:///$task_red_db_dir/red.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m pytest tests/test_pc04a3_topology_recovery.py -q
+```
+
+cwd=`gui`：`npx --yes tsx --test test/topologyDraft.test.ts`。预期基线悬空声明PATCH仍200，前端删除未抛错；记录真实结尾，不将导入错误算成功RED。每次RED或后端变异复跑均重新执行mktemp与整条显式环境命令，不沿用上一轮变量值。
 - [ ] **Step 3：最小实现后端保存引用检查。** `_validate_structure` 的已存在节点/连线索引之后加入以下形状；不要新增路径解析实现或要求所有尚未接线节点成为可执行图。
 
 ```python
@@ -285,12 +300,9 @@ export function updateDraftConnection(draft:SwitchTopology,connection:TopologyCo
 ```bash
 lsof -nP -iTCP:8000 -iTCP:5187 -sTCP:LISTEN
 task_db_dir=$(mktemp -d /tmp/pc04a3-XXXXXX)
-export DATABASE_URL="sqlite:///$task_db_dir/browser.sqlite"
-export USE_MOCK_INSTRUMENTS=true
-export BOOTSTRAP_ON_STARTUP=true
 cd api-service
-.venv/bin/python -m tests.pc04a3_browser_fixture
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+DATABASE_URL="sqlite:///$task_db_dir/browser.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m tests.pc04a3_browser_fixture
+DATABASE_URL="sqlite:///$task_db_dir/browser.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 另一个终端，cwd=`gui`：`npm run dev -- --host 127.0.0.1 --port 5187 --strictPort`。CLI前置 `command -v npx`；仓库根运行：
@@ -315,16 +327,20 @@ if(incident.length!==2 || incident.reduce((sum,e)=>sum+(e.cable_loss_db??0),0)!=
   throw new Error('该物理线缆的标称损耗未保持单一归属');
 ```
 
-完整浏览器矩阵必须覆盖：14类逐类新增、名称/端口应用、拖动、至少一次真实接线、pin修改/拒绝、无引用删除、保存GET/reload；5类导入节点逐类属性、端口、拖线/改接、删除、保存reload（不要求不存在的新增菜单）。额外正反例：普通/校准历史全隐藏恢复；清空模式拒绝；校准正常模式隔离；被引用删边/删节点/改pin明确拒绝且草稿未变；上述插线及改名替代流程；物理线缆总标称2dB而非4dB；节点未知参数/旧位置保留；无关模式集合不变。
+完整浏览器矩阵必须覆盖：14类逐类新增、名称/端口应用、拖动、至少一次真实接线、pin修改/拒绝、无引用删除、保存GET/reload；5类导入节点逐类属性、端口、拖线/改接、删除、保存reload（不要求不存在的新增菜单）。其中无声明被动节点及bse_port先断言没有画布接点、只打开属性不自动写ports，再由操作员明确声明后验收拖线；不得用getNodePorts候选冒充已存在handles。额外正反例：普通/校准历史全隐藏恢复；清空模式拒绝；校准正常模式隔离；被引用删边/删节点/改pin明确拒绝且草稿未变；上述插线及改名替代流程；物理线缆总标称2dB而非4dB；节点未知参数/旧位置保留；无关模式集合不变。
 
 再跑离线保存失败保留草稿→恢复网络重试→真实GET→reload；dirty切lab拒绝；清洁切到乙读乙图不带甲草稿；实际全Mock采集开始时检查新器件列表、添加、属性/连线、模式、保存全部禁用，结束后可再编辑。采集状态检查复用 `pc04a2RouteCalibration.browser.js` 的开始pending窗口与真实服务，不延迟/伪造响应；模拟结果仍无正式值且不能采用。截图、network/console、结果JSON放 `output/playwright/pc04a3/`，摘要逐行记矩阵实际通过/未通过，不以总数代替。
 
 - [ ] **Step 6：GREEN、同根回归与最终全量。** cwd=`api-service`：
 
 ```bash
-USE_MOCK_INSTRUMENTS=true .venv/bin/python -m pytest tests/test_pc04a3_topology_recovery.py tests/test_pc04a1_topology_editing.py tests/test_p1_57_topology_lab_context.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_gui_contract.py tests/test_pc04a2_route_compensation.py tests/test_pc04a2_route_freeze.py tests/test_pc06a1_batch_plan.py -q
-USE_MOCK_INSTRUMENTS=true .venv/bin/python -m pytest tests -q
+task_green_db_dir=$(mktemp -d /tmp/pc04a3-green-XXXXXX)
+DATABASE_URL="sqlite:///$task_green_db_dir/green.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m pytest tests/test_pc04a3_topology_recovery.py tests/test_pc04a1_topology_editing.py tests/test_p1_57_topology_lab_context.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_gui_contract.py tests/test_pc04a2_route_compensation.py tests/test_pc04a2_route_freeze.py tests/test_pc06a1_batch_plan.py -q
+task_full_db_dir=$(mktemp -d /tmp/pc04a3-full-XXXXXX)
+DATABASE_URL="sqlite:///$task_full_db_dir/full.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m pytest tests -q
 ```
+
+GREEN与全量各自用新文件库；变异后的GREEN或追加后端验证也须重新mktemp并显式设置同样三项环境，不复用浏览器证据库。保留各目录供追溯，禁止用生产默认连接或在失败后通过清理用户数据库重跑。
 
 cwd=`gui`：`npx --yes tsx --test test/topologyDraft.test.ts test/pc04a2RouteCalibration.test.ts test/topologyOperationalLabContext.test.ts src/features/TopologyEditor/baseStationPortsTruth.test.ts`；`npm run build`。补纯 `TopologyService` 断言：CE→cable→probe两边2和0，总损耗/矩阵为2；节点任意未知loss字段不参与；calibrated_loss_db已有优先规则不变。此处不声称该总数自动用于正式补偿，正式补偿仍由既有route_compensation回归证明未受本片影响。
 
