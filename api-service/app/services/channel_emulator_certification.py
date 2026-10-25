@@ -881,6 +881,7 @@ def freeze_channel_emulator_execution_qualification(
     """Freeze current CE certification against the already-frozen scope once."""
 
     from sqlalchemy.orm.attributes import flag_modified
+    from uuid import UUID
 
     from app.models.instrument import InstrumentConnection
     from app.services.base_station_adapter_profile import FREEZE_CONFIG_KEY
@@ -962,7 +963,7 @@ def freeze_channel_emulator_execution_qualification(
     if connection_id is not None:
         connection = (
             db.query(InstrumentConnection)
-            .filter(InstrumentConnection.id == connection_id)
+            .filter(InstrumentConnection.id == UUID(connection_id))
             .with_for_update()
             .one_or_none()
         )
