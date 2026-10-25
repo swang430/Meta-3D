@@ -2,6 +2,8 @@
 
 > **执行者要求：** 使用 executing-plans 技能逐项实施；步骤以复选框跟踪。先由主代理安排独立计划审查，通过后才实施，不因本计划已提交而跳过审查。
 
+> **2026-10-25 执行状态：** Task 1/2 已按隔离 setup→RED→最小实现→GREEN/变异→剩余验收完成，提交 `0740620c3a95f3d7d4e8fb8a827235fc890d1b18`（实施 BASE `e89d1bc6`）。任务级独立规格符合、质量 Approved、无缺陷；待文档增量累计整片内审及 Ready PR/R1/R2，尚未开 PR、未合并。命令、真实统计、临时 DB 与请求/截图位置见[验证摘要](../validation/2026-10-25-pc06a2-1-calibration-status-truth.md)。下列初始方案/代码示例保留；实际同名 heading 使用 last()，Vite 使用 native config loader，请求白名单包含真实暗室 UUID，详见摘要，不改 App 或放宽核心断言。
+
 **Goal:** 无校准证据时，系统校准首页不再显示写死的有效证书、精度、合格率、趋势、路径校准状态或重校准提示。
 
 **Architecture:** 优先删除错误逻辑，不增加聚合 API、状态机或证据判定器。顶部四项明确显示未知；概览移除固定统计与三套本地示例面板的挂载，保留已有真实 API 基线入口及边界说明。不接入拓扑路径损耗充当 TRP/TIS 验证。
@@ -18,7 +20,7 @@
 - 爆炸半径：原来无证据仍可能误认已合格 → 修后首页未知且不产生新判决；不改 DB、补偿、报告、冻结、资格、HAL、旧记录或导航目标。
 - 不修改用户未跟踪的 `.playwright-cli/`、`api-service/.venv`、`output/` 原文件；新证据使用独立临时目录。
 - 本片不涉及仪器语义或 SCPI，NotebookLM 不适用；不可据此断言仪器支持或不支持某方法。
-- 未执行的验证不能写“通过”。本文件是待实施计划，不是真机或认证验收。
+- 未执行的验证不能写“通过”。本文件保留原始实施方案并记录实际勾选进度；已执行的软件验证见摘要，不是真机或认证验收。
 
 ## 来源与消费全集（实际源码核查）
 
@@ -61,7 +63,7 @@ git grep -n -E 'fetchCalibrationStats|fetchCertificates|fetchCalibrationHistory|
 
 **Interfaces:** 消费现有 SystemCalibration/CalibrationDashboard 组件和 useOperationalLab 上下文；不改变 props 或 API 类型。产生两个测试容器 `system-calibration-summary`、`system-calibration-overview`；不产生正式判决。
 
-- [ ] Step 1：先新增浏览器用例。先用现有“系统校准”导航进入页面，以既有标题/概览 Tab 定位，先断言旧的顶部“有效”及固定精度不再可见（此时必须实际失败，不能只因新 testid 不存在而失败）。用下列行为断言作为核心：
+- [x] Step 1：先新增浏览器用例。先用现有“系统校准”导航进入页面，以既有标题/概览 Tab 定位，先断言旧的顶部“有效”及固定精度不再可见（此时必须实际失败，不能只因新 testid 不存在而失败）。用下列行为断言作为核心：
 
 ```javascript
 async page => {
@@ -96,9 +98,9 @@ async page => {
 
 实施时补上请求记录与隔离前置（Task 2）；若导航实际语义不是 tab，以当前 DOM 证据换定位，不能改 App 来迎合用例。
 
-- [ ] Step 2：在隔离环境运行该用例并保存 RED 的错误、受测 SHA、命令与截图。旧页面必须因“无证据仍展示 TRP 精度”失败。
-- [ ] Step 3：修改 index 顶部 Grid，加 `data-testid="system-calibration-summary"`；保留四个原标签，每个值改成 `<Text size="xl" fw={700} mt={4}>未知</Text>`。说明分别为“当前首页未接入可验证的证书来源”“当前首页未接入可验证的 TRP 验证结果”“当前首页未接入可验证的 TIS 验证结果”“当前首页未接入可验证的重复性结果”；图标颜色统一 gray，不使用勾选成功外观。删除日期与三项标准阈值，不以 0 代空。
-- [ ] Step 4：将 Dashboard 最小化为以下结构，删除全部闲置 import、stats、recentTrends 与旧 JSX；不删除三套子组件源文件，不动 Baseline 实现：
+- [x] Step 2：在隔离环境运行该用例并保存 RED 的错误、受测 SHA、命令与截图。旧页面必须因“无证据仍展示 TRP 精度”失败。
+- [x] Step 3：修改 index 顶部 Grid，加 `data-testid="system-calibration-summary"`；保留四个原标签，每个值改成 `<Text size="xl" fw={700} mt={4}>未知</Text>`。说明分别为“当前首页未接入可验证的证书来源”“当前首页未接入可验证的 TRP 验证结果”“当前首页未接入可验证的 TIS 验证结果”“当前首页未接入可验证的重复性结果”；图标颜色统一 gray，不使用勾选成功外观。删除日期与三项标准阈值，不以 0 代空。
+- [x] Step 4：将 Dashboard 最小化为以下结构，删除全部闲置 import、stats、recentTrends 与旧 JSX；不删除三套子组件源文件，不动 Baseline 实现：
 
 ```tsx
 import { Alert, Stack } from '@mantine/core';
@@ -119,8 +121,8 @@ export function CalibrationDashboard() {
 }
 ```
 
-- [ ] Step 5：同一浏览器用例 GREEN，保存 DOM 文本与截图；再暂时恢复顶部旧精度验证用例会红，然后恢复实现并重跑 GREEN。变异仅在这两个已认领文件的自有改动中操作，不使用破坏性 checkout。
-- [ ] Step 6：运行相关现有前端用例与生产构建（cwd=gui）：
+- [x] Step 5：同一浏览器用例 GREEN，保存 DOM 文本与截图；再暂时恢复顶部旧精度验证用例会红，然后恢复实现并重跑 GREEN。变异仅在这两个已认领文件的自有改动中操作，不使用破坏性 checkout。
+- [x] Step 6：运行相关现有前端用例与生产构建（cwd=gui）：
 
 ```bash
 npx --yes tsx --test test/pc01aCalibrationScope.test.ts test/pc04a2RouteCalibration.test.ts
@@ -133,17 +135,17 @@ npm run build
 
 本片不添加后端测试 fixture 或运行整个后端套件：纯 GUI 删除展示、无 API/schema/资格变更，全后端不是自然验收门。以下后端仅为真实浏览器数据环境，不 mock HTTP 响应。
 
-- [ ] Step 1：读取 computer-use / 所选浏览器技能再操作浏览器。先检查 `lsof -nP -iTCP:18089 -sTCP:LISTEN` 与 `lsof -nP -iTCP:5189 -sTCP:LISTEN`；端口被占用则选择另一组空闲端口并同步用例配置，绝不杀用户进程。
-- [ ] Step 2：`pc06_tmp=$(mktemp -d /tmp/pc06a2-status.XXXXXX)`，记录绝对目录；以此目录隔离 DB、日志与截图。检查 `.venv/bin/python` 是否可执行；用户的未跟踪 venv 是依赖，不删除或重建。
-- [ ] Step 3：在 api-service 目录用独立 PTY 启动：
+- [x] Step 1：读取 computer-use / 所选浏览器技能再操作浏览器。先检查 `lsof -nP -iTCP:18089 -sTCP:LISTEN` 与 `lsof -nP -iTCP:5189 -sTCP:LISTEN`；端口被占用则选择另一组空闲端口并同步用例配置，绝不杀用户进程。
+- [x] Step 2：`pc06_tmp=$(mktemp -d /tmp/pc06a2-status.XXXXXX)`，记录绝对目录；以此目录隔离 DB、日志与截图。检查 `.venv/bin/python` 是否可执行；用户的未跟踪 venv 是依赖，不删除或重建。
+- [x] Step 3：在 api-service 目录用独立 PTY 启动：
 
 ```bash
 env USE_MOCK_INSTRUMENTS=true DATABASE_URL="sqlite:///$pc06_tmp/browser.db" BOOTSTRAP_ON_STARTUP=true LOG_DIR="$pc06_tmp/logs" .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18089
 ```
 
 `pc06_tmp` 必须在该启动 shell 中显式设置为 Step 2 的实际绝对值，不能依赖跨会话变量。SQLite 由现有 init_db/create_all 与 bootstrap 初始化，不迁移用户库。
-- [ ] Step 4：用 apply_patch 在临时目录写 Vite 配置，导入当前工作树 gui/node_modules 下 Vite 和 React 插件，root 指向本工作树 gui；复制当前 vite 配置的 Plotly alias，仅将 `/api` 和 `/api/v1/ws` 代理目标设为 18089，其他设置保持一致。用 `gui/node_modules/.bin/vite --config <临时配置绝对路径> --host 127.0.0.1 --port 5189 --strictPort` 启动，不改仓库 vite.config.ts。执行者应将临时配置原文放入验证报告以便复跑。
-- [ ] Step 5：明确建立隔离配置。`app/services/bootstrap/__init__.py::ALL_SEEDERS` 不包含 LabProfile 创建，不能假定新库里已有可选实验室。以下命令在隔离 API 启动后执行，仅创建两个各自绑定测试暗室、空仪器绑定的配置；不复制用户库、不创建校准/证书/采集记录、不增加生产 fixture。Payload 来源是 `app/schemas/chamber.py::ChamberConfigurationCreate` 与 `app/api/lab_profile.py::LabProfileCreateRequest/create_lab_profile`，路由分别为 `/chambers` 和 `/lab-profiles`。
+- [x] Step 4：用 apply_patch 在临时目录写 Vite 配置，导入当前工作树 gui/node_modules 下 Vite 和 React 插件，root 指向本工作树 gui；复制当前 vite 配置的 Plotly alias，仅将 `/api` 和 `/api/v1/ws` 代理目标设为 18089，其他设置保持一致。用 `gui/node_modules/.bin/vite --config <临时配置绝对路径> --host 127.0.0.1 --port 5189 --strictPort` 启动，不改仓库 vite.config.ts。执行者应将临时配置原文放入验证报告以便复跑。
+- [x] Step 5：明确建立隔离配置。`app/services/bootstrap/__init__.py::ALL_SEEDERS` 不包含 LabProfile 创建，不能假定新库里已有可选实验室。以下命令在隔离 API 启动后执行，仅创建两个各自绑定测试暗室、空仪器绑定的配置；不复制用户库、不创建校准/证书/采集记录、不增加生产 fixture。Payload 来源是 `app/schemas/chamber.py::ChamberConfigurationCreate` 与 `app/api/lab_profile.py::LabProfileCreateRequest/create_lab_profile`，路由分别为 `/chambers` 和 `/lab-profiles`。
 
 ```bash
 python3 - "$pc06_tmp/browser.db" <<'PY'
@@ -208,19 +210,19 @@ PY
 ```
 
 `pc06_tmp` 在执行该命令的 shell 中也须显式设为 Step 2 的实际目录。保存这次实际输出的两个 LabProfile ID/暗室 ID。字段核对：暗室 POST 的字段均在 ChamberConfigurationBase/Create，响应的 id 在 ChamberConfigurationResponse；实验室 POST 字段来自活路由的 LabProfileCreateRequest，响应只使用 LabProfileSummary 的 id/name/chamber_config_id；绑定保存值来自 `app/models/lab_profile.py::LabProfile` 的 `lab_profiles.instrument_bindings` 列，不从摘要猜字段。全 Mock 前提不只看 HAL status：启动命令必须显式 `USE_MOCK_INSTRUMENTS=true`、指向本次新建临时 SQLite，保存启动日志；两个新 LabProfile 的空绑定以以上只读 DB 核验排除其中的 real override，测试只读首页/基线状态，绝不点击 quick、drift 或向导开始执行。若发现请求触发连接/采集、配置含真实端点或库非新库立即停止，不用 status 字段替代这些隔离条件。真实 GET `/calibration/certificate` 必须 200、空数组；禁止调用 TRP/TIS/校准/证书生成 POST 来制造验收样本。
-- [ ] Step 6：运行 Task 1 用例，补充记录所有 `/calibration/` 请求；首页只允许既有 baseline/status 读取，不得新增 stats/history/certificate 请求来推导四项。截图必须只框首页/当前概览，不用隐藏 Tab 文本污染断言。
-- [ ] Step 7：在“当前 LabProfile”选择器显式选择 Step 5 创建的“PC06A2状态测试甲”，再切换“PC06A2状态测试乙”后返回甲、刷新；将实际 ID 与 Step 5 输出逐项核对。四项仍未知，无固定数据回潮；当前 API 校准/证书记录数不增加。重新以 Step 5 的 `sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)` 查询同一临时库 `SELECT name, instrument_bindings FROM lab_profiles ORDER BY name`，断言恰好甲乙两行且每行 `json.loads(instrument_bindings) == []`；不从创建/列表摘要读取该字段。仅系统首页的未知状态不依赖实验室，不能据此宣称基线组件全部跨实验室竞态已验收。
-- [ ] Step 8：用浏览器离线模式造成真实网络失败（不 route.fulfill），在首页检查四项仍未知、没有重新生成数值；恢复在线再刷新。此断言仅针对本片的顶部与新中性概览，不把既有 Baseline 网络错误显示改造偷偷纳入。
-- [ ] Step 9：回读 certificate 列表仍空；保存请求清单、RED/GREEN/变异输出、截图路径、构建输出和受测 SHA。浏览器结束仅停止本次创建的 PTY 服务，保留证据目录供审查。
+- [x] Step 6：运行 Task 1 用例，补充记录所有 `/calibration/` 请求；首页只允许既有 baseline/status 读取，不得新增 stats/history/certificate 请求来推导四项。截图必须只框首页/当前概览，不用隐藏 Tab 文本污染断言。
+- [x] Step 7：在“当前 LabProfile”选择器显式选择 Step 5 创建的“PC06A2状态测试甲”，再切换“PC06A2状态测试乙”后返回甲、刷新；将实际 ID 与 Step 5 输出逐项核对。四项仍未知，无固定数据回潮；当前 API 校准/证书记录数不增加。重新以 Step 5 的 `sqlite3.connect(db_path.as_uri() + '?mode=ro', uri=True)` 查询同一临时库 `SELECT name, instrument_bindings FROM lab_profiles ORDER BY name`，断言恰好甲乙两行且每行 `json.loads(instrument_bindings) == []`；不从创建/列表摘要读取该字段。仅系统首页的未知状态不依赖实验室，不能据此宣称基线组件全部跨实验室竞态已验收。
+- [x] Step 8：用浏览器离线模式造成真实网络失败（不 route.fulfill），在首页检查四项仍未知、没有重新生成数值；恢复在线再刷新。此断言仅针对本片的顶部与新中性概览，不把既有 Baseline 网络错误显示改造偷偷纳入。
+- [x] Step 9：回读 certificate 列表仍空；保存请求清单、RED/GREEN/变异输出、截图路径、构建输出和受测 SHA。浏览器结束仅停止本次创建的 PTY 服务，保留证据目录供审查。
 
 ## 收口与后续边界
 
-- [ ] `git diff --check`，检查修改路径仅限本计划允许的三项功能/测试文件；全仓 grep 本片删除的状态声明，区分遗留独立入口和历史记录，不修改历史文档来制造一致性。
-- [ ] 独立内审核对本片“无证据首页不输出假状态”，不把遗留证书页、方法扩展、编辑完整性并入修复。
-- [ ] 提交示例：`git add gui/src/components/SystemCalibration/index.tsx gui/src/components/SystemCalibration/CalibrationDashboard.tsx gui/test/pc06a2CalibrationStatusTruth.browser.js`，`git commit -m "fix: 移除系统校准首页无来源状态"`。本计划阶段只允许提交本计划，不提前执行这条功能提交命令。
+- [x] `git diff --check` 通过，功能提交仅本计划允许的三项功能/测试文件；全仓 grep 已区分遗留独立入口和历史记录，不修改历史文档来制造一致性。
+- [x] Task 1/2 独立规格符合、质量 Approved，确认“无证据首页不输出假状态”；遗留证书页、方法扩展、编辑完整性不并入修复。文档收口后的累计整片内审仍待完成。
+- [x] 功能提交 `0740620c` 已完成，仅包含两 GUI 与浏览器测试。原提交示例与约束：`git add gui/src/components/SystemCalibration/index.tsx gui/src/components/SystemCalibration/CalibrationDashboard.tsx gui/test/pc06a2CalibrationStatusTruth.browser.js`，`git commit -m "fix: 移除系统校准首页无来源状态"`；最初计划审查阶段未提前提交功能。
 - [ ] 按仓库要求推进 Ready PR、R1/R2；R2 无 P1 收口，仍有 P1 则修复后覆盖最新 HEAD 续审。测试建议不扩大为新机制。
 - [ ] 本片完成后再做 PC-04A-3 编辑完整性，再做 PC-06A-2 后续入口整合：真实历史/证书读取、方法可用性、唯一拓扑工作台、LabProfile 上下文隔离均另片审查；PC-09/10 HOLD 不解除。
 
 ### 计划自查
 
-已枚举首页所有固定状态来源并明确删挂载优先；不将 Mock API 或路径数据冒充系统证书；两处生产代码足以修本片故障，无需后端变更。独立历史/证书/向导的已观察问题明确保留，不能用本片结果宣称整个系统校准已可信。所有验证步骤仍未执行，不引用旧测试统计作为本片通过证据。
+已枚举首页所有固定状态来源并明确删挂载优先；不将 Mock API 或路径数据冒充系统证书；两处生产代码足以修本片故障，无需后端变更。独立历史/证书/向导的已观察问题明确保留，不能用本片结果宣称整个系统校准已可信。初始计划提交时所有验证尚未执行；现 Task 1/2 已按勾选完成，真实 RED/GREEN/变异、相关 9 测试和 build 证据见本片验证摘要，不引用旧片统计，不宣称全后端、真机或认证验收。
