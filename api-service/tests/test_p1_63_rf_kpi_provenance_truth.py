@@ -474,7 +474,8 @@ def test_report_rewrites_mismatched_rf_snapshot_to_safe_unknown_envelope():
     assert content["rf_kpi_trust"]["source"] == "unknown"
     assert content["rf_kpi_trust"]["verified_azimuths"] == []
     assert content["overall_result"] == "undetermined"
-    assert report_has_provenance_trust(content) is True
+    assert report_has_provenance_trust(content) is False  # 新投影无原执行不能自证可信
+    assert report_has_provenance_trust(content, execution=execution) is True
 
 
 def test_report_hides_throughput_when_current_measurement_is_simulated():

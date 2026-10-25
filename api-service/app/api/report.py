@@ -461,7 +461,13 @@ def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     if not _is_mimo_report(db, report):
         return True
     _, outcome_matches = _report_execution_outcome_state(db, report)
-    return report_has_provenance_trust(content) and outcome_matches
+    execution = None
+    if "calibration_traceability" in content:
+        execution_ids = normalized_report_execution_ids(report)
+        if len(execution_ids) != 1:
+            return False
+        execution = db.query(TestExecution).filter(TestExecution.id == execution_ids[0]).first()
+    return report_has_provenance_trust(content, execution=execution) and outcome_matches
 
 
 def _reject_untrusted_mimo_report(db: Session, report) -> None:

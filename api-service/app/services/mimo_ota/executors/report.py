@@ -28,6 +28,7 @@ from app.services.mimo_ota.path_loss_application import (
     path_loss_application_message,
     path_loss_measurement_is_verified,
 )
+from app.services.mimo_ota.calibration_traceability import build_calibration_traceability
 from app.services.mimo_ota.rf_kpi_trust import (
     RF_KPI_TRUST_SCHEMA_VERSION,
     build_rf_kpi_trust,
@@ -72,6 +73,26 @@ from app.schemas.mimo_ota.config import MIMOOTAStepType
 from app.utils.human_time import format_human_local_timestamp
 
 logger = logging.getLogger(__name__)
+
+
+def _calibration_traceability_parameters(trace: Dict[str, Any]) -> Dict[str, str]:
+    """从同一个 JSON 投影生成短参数行，避免整份冻结快照撑破 PDF 表格。"""
+    rows = {
+        "校准追溯": f"执行频率: {trace['execution_frequency_mhz']} MHz",
+        "原始读数": "原始读数未内嵌，仅保留采集运行/交换索引指针；历史来源路径不代表文件存在",
+    }
+    for index, route in enumerate(trace['routes'], 1):
+        prefix = f"校准链 {index}"
+        source = route['source_snapshot'] or {}
+        rows[prefix] = (f"{route.get('chain_id')} | {route.get('source_kind')} | "
+                        f"来源 ID: {route.get('source_id')}")
+        rows[f"{prefix} 应用"] = (f"{route['application_state']} | 方法: {route.get('method')} | "
+            f"参考面: {route.get('reference_plane')} | 认证资格: {route.get('certification_status', 'unknown')}")
+        rows[f"{prefix} 来源频率/前序"] = (f"{source.get('frequency_mhz')} MHz | "
+            f"前序 ID: {source.get('predecessor_id')} | 来源: {source.get('source', source.get('sgh_model'))}")
+        rows[f"{prefix} 采集指针"] = (f"运行 ID: {source.get('acquisition_run_id')} | "
+            f"交换索引: {(source.get('adoption_evidence_snapshot') or {}).get('checked_exchange_indices')}")
+    return rows
 
 
 @dataclass(frozen=True)
@@ -673,6 +694,10 @@ def _build_mimo_ota_content_data(
     _path_loss_application_text = path_loss_application_message(
         _path_loss_application
     )
+    # 追溯展示保留原执行事实；诊断降级只影响正式判定，不改写历史来源。
+    _calibration_traceability = build_calibration_traceability(
+        measure.get("path_loss_application")
+    )
     _path_loss_formally_verified = path_loss_measurement_is_verified(measure)
     _path_loss_value_visible = _path_loss_formally_verified
 
@@ -933,6 +958,7 @@ def _build_mimo_ota_content_data(
                  else "—（补偿数值不展示）"
              ),
              "路损应用": _path_loss_application_text,
+             **_calibration_traceability_parameters(_calibration_traceability),
              "逐链补偿": ('; '.join(
                  f"{row['chain_id']}: {row['value_db']} dB ({row['source_kind']}, {row['method']}, {row['reference_plane']})"
                  for row in _path_loss_application['route_compensation']['route_entries'])
@@ -1041,6 +1067,7 @@ def _build_mimo_ota_content_data(
         "calibration_trust_schema_version": 1,
         "formal_path_loss_verified": _path_loss_formally_verified,
         "path_loss_application": _path_loss_application,
+        "calibration_traceability": _calibration_traceability,
         "throughput_trust_schema_version": THROUGHPUT_TRUST_SCHEMA_VERSION,
         "formal_throughput_verified": _throughput_verified is True,
         "base_station_metric_trust_schema_version": 1,

@@ -55,7 +55,8 @@ def test_diagnostic_writer_preserves_missing_mirrors_and_is_readable(metric_keys
     """Reverting the writer's absent-mirror handling rejects its own report."""
     execution = _diagnostic_execution(metric_keys)
     content = _build_mimo_ota_content_data(execution, datetime(2026, 10, 8))
-    assert report_has_provenance_trust(content) is True
+    assert report_has_provenance_trust(content) is False  # 新投影无原执行不能自证可信
+    assert report_has_provenance_trust(content, execution=execution) is True
     assert content["overall_result"] == "undetermined"
     assert content["statistics"] == {}
     row = content["base_station_metric_projection"][0]
