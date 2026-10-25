@@ -10,7 +10,7 @@
 
 **Spec:** [总计划 Todo 2](2026-10-25-topology-editor-calibration-consolidation.md)、[拓扑内校准设计](../design/2026-10-24-topology-calibration-integration.md)、[正式队列](../roadmap-first-call.md)。源码基线 `503a5a8d92d2a86845f65471e16bb0577fd33ce7`，分支 `codex/pc06a2-calibration-entry-integration`。
 
-**2026-10-26 实施状态：** Task1/2 分别提交 `5bae8481`/`6380023b`并通过独立规格/质量审查；Task3 综合软件证据、最终全量实际结果及未验边界见[验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)。当前待累计内审及PR外审，尚未合并；下文为原实施步骤，不以本地实现提前关闭PC-06A-2父项。取消Mock无真实释放证明时保留既有锁，不为验收修改安全判据。
+**2026-10-26 交付状态：** Task1/2/3及累计独立内审完成，[PR #537](https://github.com/swang430/Meta-3D/pull/537)于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`；[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于2026-10-25T18:26:56Z覆盖 `805bddca6e`，未发现重大问题。连同首页首片PR #535，PC-06A-2批准软件待办已交付；不关闭PC-06其余范围、现场B或HOLD。综合证据、最终全量 **7485 passed / 17 skipped / 1 failed**（仅G8历史引用误报）及未验边界见[验证摘要](../validation/2026-10-26-pc06a2-entry-integration.md)，不称全绿。下文保留原实施步骤/规划时复选框，当前完成状态以总计划及验证摘要为准。取消Mock无真实释放证明时仍保留既有锁，不为验收修改安全判据。
 
 ## 全局约束
 
