@@ -12,8 +12,8 @@ async page => {
   const hal = await call('get', '/instruments/hal/status');
   if (hal.body.mode !== 'mock' || hal.body.driver_count !== 4) throw Error('必须为隔离四类全Mock HAL');
   const labs = await call('get', '/lab-profiles');
-  const lab = labs.body.find(row => row.instrument_bindings.length === 4);
-  if (!lab) throw Error('必须先运行专属 prepare-mimo 夹具');
+  if (labs.body.length !== 1) throw Error('必须仅有专属隔离实验室');
+  const lab = labs.body[0];
   const created = await call('post', '/test-plans/cases', {
     name: 'PC07A1 实际全Mock MIMO OTA（非真机认证）', test_type: 'MIMO_OTA',
     lab_profile_id: lab.id, created_by: 'PC07A1-browser',
