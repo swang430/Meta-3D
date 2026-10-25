@@ -19,7 +19,6 @@ import {
 import {
   IconCertificate,
   IconChartLine,
-  IconCheckbox,
   IconFileCheck,
   IconPlus,
 } from '@tabler/icons-react';
@@ -56,7 +55,7 @@ export function SystemCalibration() {
         </Group>
 
         {/* Status Cards */}
-        <Grid>
+        <Grid data-testid="system-calibration-summary">
           <Grid.Col span={3}>
             <Paper p="md" withBorder>
               <Group justify="apart">
@@ -65,15 +64,15 @@ export function SystemCalibration() {
                     最新证书状态
                   </Text>
                   <Text size="xl" fw={700} mt={4}>
-                    有效
+                    未知
                   </Text>
                 </div>
-                <ThemeIcon size={44} radius="md" variant="light" color="green">
+                <ThemeIcon size={44} radius="md" variant="light" color="gray">
                   <IconCertificate size={24} />
                 </ThemeIcon>
               </Group>
               <Text size="xs" color="dimmed" mt="md">
-                有效期至: 2026-11-16
+                当前首页未接入可验证的证书来源
               </Text>
             </Paper>
           </Grid.Col>
@@ -86,15 +85,15 @@ export function SystemCalibration() {
                     TRP 精度
                   </Text>
                   <Text size="xl" fw={700} mt={4}>
-                    ±0.12 dB
+                    未知
                   </Text>
                 </div>
-                <ThemeIcon size={44} radius="md" variant="light" color="blue">
-                  <IconCheckbox size={24} />
+                <ThemeIcon size={44} radius="md" variant="light" color="gray">
+                  <IconChartLine size={24} />
                 </ThemeIcon>
               </Group>
               <Text size="xs" color="dimmed" mt="md">
-                标准: ±0.5 dB
+                当前首页未接入可验证的 TRP 验证结果
               </Text>
             </Paper>
           </Grid.Col>
@@ -107,15 +106,15 @@ export function SystemCalibration() {
                     TIS 精度
                   </Text>
                   <Text size="xl" fw={700} mt={4}>
-                    ±0.35 dB
+                    未知
                   </Text>
                 </div>
-                <ThemeIcon size={44} radius="md" variant="light" color="cyan">
-                  <IconCheckbox size={24} />
+                <ThemeIcon size={44} radius="md" variant="light" color="gray">
+                  <IconChartLine size={24} />
                 </ThemeIcon>
               </Group>
               <Text size="xs" color="dimmed" mt="md">
-                标准: ±1.0 dB
+                当前首页未接入可验证的 TIS 验证结果
               </Text>
             </Paper>
           </Grid.Col>
@@ -128,15 +127,15 @@ export function SystemCalibration() {
                     可重复性
                   </Text>
                   <Text size="xl" fw={700} mt={4}>
-                    σ = 0.18 dB
+                    未知
                   </Text>
                 </div>
-                <ThemeIcon size={44} radius="md" variant="light" color="violet">
+                <ThemeIcon size={44} radius="md" variant="light" color="gray">
                   <IconChartLine size={24} />
                 </ThemeIcon>
               </Group>
               <Text size="xs" color="dimmed" mt="md">
-                标准: &lt; 0.3 dB
+                当前首页未接入可验证的重复性结果
               </Text>
             </Paper>
           </Grid.Col>
