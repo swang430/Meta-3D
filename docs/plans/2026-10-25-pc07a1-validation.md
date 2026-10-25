@@ -2,7 +2,7 @@
 
 ## 结论与版本
 
-实现、软件验证和累计独立内审完成；待创建 PR 并完成 R1/R2 外审，未合并、未关闭 PC-07A-1。基线为已合并 PC-06A-1 `7292f8ed`，最终生产/测试输入为 `107ec2d911013db7b1d9c34fe2ce761f83b80924`，分支 `codex/pc-07a1-calibration-traceability`。本文及同次文档收口不改生产代码、测试、fixture、GUI或构建输入，因此复用该输入的后端结果，不宣称文档提交后重新全跑。
+PC-07A-1 软件切片已完成：[PR #533](https://github.com/swang430/Meta-3D/pull/533) 于2026-10-25 13:26:20（北京时间）合并，merge `ad843108bab3373bed4e296579534e4031e4dd72`。[R1](https://github.com/swang430/Meta-3D/pull/533#issuecomment-6393863418) 与 [R2](https://github.com/swang430/Meta-3D/pull/533#issuecomment-6393902644) 均覆盖 `e731ef7fdf62b3ecce6044537c1bcda12a8caa64`，回执未发现重大问题。完整 PC-07 与现场 B 未关闭。基线为已合并 PC-06A-1 `7292f8ed`，最终生产/测试输入为 `107ec2d911013db7b1d9c34fe2ce761f83b80924`，分支 `codex/pc-07a1-calibration-traceability`。本文及同次文档收口不改生产代码、测试、fixture、GUI或构建输入，因此复用该输入的后端结果，不宣称文档提交后重新全跑。
 
 报告的生成、列表、详情、重建、下载以关联原执行的冻结事实重算追溯；GUI/PDF不查询当前配置补历史。逐链 selected/applied/unknown 与顶层状态分开，执行频率和来源覆盖频率分开，原始读数仅保留 run/indices 指针，`raw_readings_embedded=false`。不增加补偿计算，整条路径仍只补偿一次。
 
