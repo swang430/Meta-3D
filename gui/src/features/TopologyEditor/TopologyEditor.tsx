@@ -50,7 +50,7 @@ import { RouteCalibrationPanel } from './RouteCalibrationPanel';
 import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
 import { routeGraphMatchesSaved } from './routeCalibrationState';
 import type { RouteSelection } from '../../types/api';
-import { getNodePorts, nodePortsToSelectOptions } from './nodePortHelpers';
+import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection, TopologyNode } from '../../api/switchTopologyService';
@@ -200,6 +200,16 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  const openNode = (id: string) => {
+    if (savingRef.current || collectionBusyRef.current) return;
+    const item=draft.nodes.find(node=>node.id===id);
+    if (item) {
+      setSelectedNode({...item,params:{...item.params}});
+      setPortText(getNodePorts(item).join(', '));
+      setNodeDrawerOpen(true);
+    }
+  };
 
   useEffect(() => {
     setNodes(initialNodes);
@@ -379,7 +389,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     changeDraft(()=>next);
     setActiveMode(mode);
     setSelectedNode(next.nodes[next.nodes.length-1]);
-    setPortText('');
+    setPortText(suggestedPassivePorts(newNodeType).join(', '));
     setNodeDrawerOpen(true);
     void setCenter(node.position.x+90,node.position.y+40,{zoom:1,duration:200});
   };
@@ -421,6 +431,15 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             )}
           </Group>
           <Group>
+            <Select aria-label="器件列表" placeholder="搜索全部器件（含隐藏）" searchable value={null} w={260}
+              data={draft.nodes.map(node=>{
+                const activeConnections=new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
+                const connected=draft.connections.some(c=>activeConnections.has(c.id)&&(c.source===node.id||c.target===node.id));
+                const visible=highlightedRoute?.calibration_node_ids.includes(node.id)&&connected ||
+                  (Array.isArray(node.params.visible_modes)?node.params.visible_modes.includes(activeMode):connected);
+                return {value:node.id,label:`${node.label} · ${node.id} · ${visible?'当前模式可见':'当前模式隐藏'}`};
+              })}
+              disabled={editingBlocked} onChange={id=>id&&openNode(id)} />
             <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={editingBlocked} w={150} />
             <Button onClick={addNode} disabled={editingBlocked}>添加器件</Button>
             <Button variant="light" disabled={editingBlocked} onClick={()=>{
@@ -459,11 +478,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           onEdgesChange={handleEdgesChange}
           onConnect={onConnect}
           onEdgeClick={handleEdgeClick}
-          onNodeDoubleClick={(_,node)=>{
-            if (savingRef.current || collectionBusyRef.current) return;
-            const item=draft.nodes.find(n=>n.id===node.id);
-            if (item) {setSelectedNode({...item,params:{...item.params}});setPortText(getNodePorts(item).join(', '));setNodeDrawerOpen(true);}
-          }}
+          onNodeDoubleClick={(_,node)=>openNode(node.id)}
           nodesDraggable={!editingBlocked}
           nodesConnectable={!editingBlocked}
           deleteKeyCode={null}
@@ -503,7 +518,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           <Text size="xs" c="dimmed">{selectedNode.id}</Text>
           <TextInput label="器件名称" value={selectedNode.label} disabled={editingBlocked} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
           <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={editingBlocked} onChange={event=>setPortText(event.currentTarget.value)} />
+          {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。</Text>}
+          <Text size="xs">画布左为连入、右为连出，同名左右接点是同一个物理端口，不是两根线。</Text>
           <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={editingBlocked || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
+          {selectedNode.params.connection_scope==='calibration'&&
+            (draft.operating_modes.some(mode=>mode.id===CALIBRATION_MODE)?
+              <Button variant="light" disabled={editingBlocked} onClick={()=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:[CALIBRATION_MODE]}})}>恢复到校准接线模式</Button>:
+              <Alert color="yellow">请先关闭抽屉，点击“校准接线”创建模式，再从器件列表重新打开；不会自动加入正常模式。</Alert>)}
           {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={editingBlocked} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
           {selectedNode.type==='switch_slot'&&<Text size="xs">须关联本图开关类别{draft.switch_category_id}。物理port_maps在原仪器管理→射频开关→端口映射配置中保存；每映射须明确switch_id、relay_type、input_port、output_port及topology_input_pin/output_pin，不能按显示名称猜端口。</Text>}
           {selectedNode.type==='probe'&&<Stack gap="xs">
@@ -580,6 +601,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             />
 
             <Divider label="电缆参数 (可编辑)" labelPosition="center" />
+            <Text size="xs">线缆节点不另计损耗；同一物理线缆的损耗只填一条相邻连线，另一条保持0。整条实测校准在校准面板采用，不填此处。</Text>
 
             <TextInput
               label="电缆类型"

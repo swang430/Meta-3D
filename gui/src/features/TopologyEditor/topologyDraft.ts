@@ -49,6 +49,14 @@ export function removeDraftNodes(draft: SwitchTopology, ids: string[]): SwitchTo
   return {...cleaned,nodes:cleaned.nodes.filter(n=>!removed.has(n.id))};
 }
 export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, declaredPorts?: string[]): SwitchTopology {
+  // 历史未声明模式保持原语义；显式应用必须保留至少一个可恢复的有效入口。
+  const modes=node.params.visible_modes;
+  if (Array.isArray(modes) && (!modes.length || modes.some(mode=>!draft.operating_modes.some(item=>item.id===mode)))) {
+    throw new Error('至少选择一个有效显示模式；可从器件列表恢复隐藏器件');
+  }
+  if (node.params.connection_scope==='calibration' && Array.isArray(modes) && (modes.length!==1 || modes[0]!==CALIBRATION_MODE)) {
+    throw new Error('校准器件只能显示在校准接线模式');
+  }
   const previous=draft.nodes.find(n=>n.id===node.id);
   // 只改名称或显示模式时，不把历史图的默认画布端点写成新的端口声明。
   if (declaredPorts && JSON.stringify(declaredPorts)!==JSON.stringify(getNodePorts(previous))) {

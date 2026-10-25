@@ -327,8 +327,10 @@ function withDeclaredPorts(Component: any) {
         // 已有基站端口角色仍由原配置决定，不能把上行入口扩成下行出口。
         const role = ['communication_tester','bse_port'].includes(props.type) ? props.data.params?.port_roles?.[port] : undefined;
         return [
-          role !== 'dl' && <Handle key={`in-${port}`} className="topology-declared-handle" type="target" position={Position.Left} id={port} title={`${port}（声明端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
-          role !== 'ul' && <Handle key={`out-${port}`} className="topology-declared-handle" type="source" position={Position.Right} id={port} title={`${port}（声明端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
+          role !== 'dl' && <Handle key={`in-${port}`} className="topology-declared-handle" type="target" position={Position.Left} id={port} title={`${port} · 连入（同一物理端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
+          role !== 'dl' && <span key={`in-label-${port}`} style={{position:'absolute',right:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',marginRight:8,whiteSpace:'nowrap',fontSize:10,pointerEvents:'none'}}>{port} · 连入</span>,
+          role !== 'ul' && <Handle key={`out-${port}`} className="topology-declared-handle" type="source" position={Position.Right} id={port} title={`${port} · 连出（同一物理端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
+          role !== 'ul' && <span key={`out-label-${port}`} style={{position:'absolute',left:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',marginLeft:8,whiteSpace:'nowrap',fontSize:10,pointerEvents:'none'}}>{port} · 连出</span>,
         ];
       })}
     </div>;

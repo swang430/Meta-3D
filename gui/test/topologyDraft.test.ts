@@ -2,12 +2,47 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode } from '../src/features/TopologyEditor/topologyDraft.ts';
 import type { SwitchTopology } from '../src/api/switchTopologyService.ts';
-import { getNodePorts } from '../src/features/TopologyEditor/nodePortHelpers.ts';
+import { getNodePorts, suggestedPassivePorts } from '../src/features/TopologyEditor/nodePortHelpers.ts';
 
 const fixture = (): SwitchTopology => ({ name: '图', switch_category_id: 's', is_active: true, is_default: false,
   nodes: ['a','b','c'].map(id => ({id, type:'pad',label:id,position:{x:12,y:34},params:{ports:['in','out'],unknown:{keep:1}}})),
   connections: [{id:'ab',source:'a',target:'b',source_pin:'out',target_pin:'in'}, {id:'bc',source:'b',target:'c',source_pin:'out',target_pin:'in'}],
   operating_modes: [{id:'mimo_ota',name:'测试',active_connections:['ab','bc']},{id:'calibration',name:'校准',active_connections:['ab']}],
+});
+test('显式空或未知显示模式不能应用，历史隐藏节点可以恢复到明确模式',()=>{
+  const draft=fixture();
+  for(const visible_modes of [[],['missing'],['mimo_ota','missing']]) {
+    assert.throws(()=>updateDraftNode(draft,{...draft.nodes[0],params:{...draft.nodes[0].params,visible_modes}}),/显示模式/);
+  }
+  draft.nodes[0].params.visible_modes=[];
+  const next=updateDraftNode(draft,{...draft.nodes[0],params:{...draft.nodes[0].params,visible_modes:['mimo_ota']}});
+  assert.deepEqual(draft.nodes[0].params.visible_modes,[]);
+  assert.deepEqual(next.nodes[0].params.visible_modes,['mimo_ota']);
+  assert.deepEqual(next.nodes[0].params.unknown,{keep:1});
+  assert.deepEqual(next.nodes[0].position,{x:12,y:34});
+});
+test('校准隐藏器件只能恢复到校准模式，未声明模式的历史读取保持原样',()=>{
+  const draft=fixture();
+  draft.nodes[0].params.connection_scope='calibration';
+  const historical=updateDraftNode(draft,{...draft.nodes[0],label:'历史改名'});
+  assert.equal(historical.nodes[0].params.visible_modes,undefined);
+  for(const visible_modes of [['mimo_ota'],['calibration','mimo_ota']]) {
+    assert.throws(()=>updateDraftNode(draft,{...draft.nodes[0],params:{...draft.nodes[0].params,visible_modes}}),/校准/);
+  }
+  draft.nodes[0].params.visible_modes=[];
+  const next=updateDraftNode(draft,{...draft.nodes[0],params:{...draft.nodes[0].params,visible_modes:['calibration']}});
+  assert.deepEqual(next.nodes[0].params.visible_modes,['calibration']);
+  assert.deepEqual(next.nodes[0].params.unknown,{keep:1});
+  assert.deepEqual(next.nodes[0].position,{x:12,y:34});
+});
+test('只对线缆给双端声明建议，不猜测仪器端口或自动写入新增节点',()=>{
+  assert.deepEqual(suggestedPassivePorts('cable'),['A','B']);
+  assert.deepEqual(suggestedPassivePorts('receive_cable'),['A','B']);
+  assert.deepEqual(suggestedPassivePorts('channel_emulator'),[]);
+  assert.deepEqual(suggestedPassivePorts('communication_tester'),[]);
+  assert.deepEqual(getNodePorts({...fixture().nodes[0],params:{ports:[]}}),[]);
+  const draft=addDraftNode(fixture(),{id:'d',type:'cable',label:'线缆',position:{x:8,y:9},params:{ports:[]}},'mimo_ota');
+  assert.deepEqual(draft.nodes[3].params.ports,[]);
 });
 test('新增未连线节点在当前模式可见且保留其他草稿位置及扩展参数',()=>{
   const draft=addDraftNode(fixture(),{id:'d',type:'pad',label:'线缆',position:{x:8,y:9},params:{ports:['in','out']}},'calibration');
