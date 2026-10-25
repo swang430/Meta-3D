@@ -183,27 +183,12 @@ test('legacy quiet-zone calibration cannot fall back to mock PASS or green resul
     new URL('../src/api/calibrationService.ts', import.meta.url),
     'utf8',
   )
-  const wizardSource = readFileSync(
-    new URL('../src/components/SystemCalibration/CalibrationWizard.tsx', import.meta.url),
-    'utf8',
-  )
-
   const quietZoneFunction = serviceSource.match(
     /export async function executeQuietZoneCalibration[\s\S]*?\n}\n/,
   )?.[0] ?? ''
   assert.doesNotMatch(quietZoneFunction, /USE_MOCK|ALLOW_FALLBACK|generateMockQuietZoneResult/)
   assert.doesNotMatch(serviceSource, /function generateMockQuietZoneResult/)
-  assert.match(wizardSource, /静区校准未判定/)
-  assert.match(wizardSource, /UNKNOWN/)
-  assert.match(wizardSource, /无权威多点场扫描证据/)
-  assert.match(
-    wizardSource,
-    /onChange=\{\(value\) => \{[\s\S]*?setResults\(null\)[\s\S]*?setExecutionProgress\(0\)[\s\S]*?\}\}/,
-  )
-  assert.match(
-    wizardSource,
-    /\{results && !calibrationType\.startsWith\('quiet_zone_'\) && calibrationType !== 'multi_frequency' && \(/,
-  )
+  // 系统校准旧执行UI已撤，其方法边界由真实API浏览器入口用例覆盖。
 })
 
 

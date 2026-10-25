@@ -33,9 +33,8 @@ const OPERATIONAL_CONSUMERS = [
   'components/ChamberConfigCard.tsx',
   'components/Commissioning/index.tsx',
   'features/TopologyEditor/TopologyEditor.tsx',
-  // 外审 R3：这两个是「写死暗室 UUID」型消费者 —— 不拉 lab 列表所以
-  // 原全集 grep 抓不到；systemCalibration 入口可达，必须读全局上下文
-  'components/SystemCalibration/CalibrationWizard.tsx',
+  // 系统校准管理页守同Lab导航；Modal仅方法说明，不再独立执行。
+  'components/SystemCalibration/index.tsx',
   'components/SystemCalibration/BaselineCalibrationCard.tsx',
 ]
 

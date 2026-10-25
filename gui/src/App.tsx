@@ -307,7 +307,7 @@ const sections: Array<{
   {
     key: 'systemCalibration',
     label: '系统校准',
-    description: '执行TRP/TIS校准、重复性测试、实验室间比对，管理校准证书与溯源。',
+    description: '查看校准方法与原记录；路径校准进入当前实验室射频拓扑，独立方法尚未开放。',
   },
   {
     key: 'commissioning',
@@ -962,7 +962,7 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
         />
       )
     case 'systemCalibration':
-      return <SystemCalibration />
+      return <SystemCalibration onOpenPathCalibration={() => payload.setActiveSection('topologyEditor')} />
     case 'commissioning':
       return <CommissioningSandbox />
     case 'diagnostics':

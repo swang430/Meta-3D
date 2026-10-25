@@ -104,13 +104,9 @@ test('multi-frequency response provenance must exactly match the explicit reques
 })
 
 
-test('multi-frequency GUI uses the authoritative endpoint with explicit provenance', () => {
+test('legacy multi-frequency service uses the authoritative endpoint with explicit provenance', () => {
   const serviceSource = readFileSync(
     new URL('../src/api/calibrationService.ts', import.meta.url),
-    'utf8',
-  )
-  const wizardSource = readFileSync(
-    new URL('../src/components/SystemCalibration/CalibrationWizard.tsx', import.meta.url),
     'utf8',
   )
   const builderSource = readFileSync(
@@ -126,18 +122,8 @@ test('multi-frequency GUI uses the authoritative endpoint with explicit provenan
   assert.doesNotMatch(serviceSource, /generateMockMultiFrequencyResult/)
   assert.doesNotMatch(serviceSource, /'\/calibration\/multi-frequency'/)
 
-  assert.match(wizardSource, /multiFrequencyMode/)
-  assert.match(wizardSource, /buildMultiFrequencyPathLossRequest/)
-  assert.match(wizardSource, /mode: multiFrequencyMode/)
   assert.match(builderSource, /use_mock: input\.mode === 'mock'/)
   assert.match(builderSource, /当前 LabProfile 未绑定暗室/)
   assert.match(builderSource, /请选择真实仪表或模拟诊断模式/)
-  assert.match(wizardSource, /真实扫频完成/)
-  assert.match(wizardSource, /模拟诊断完成/)
-  assert.doesNotMatch(
-    wizardSource.match(
-      /calibrationType === 'multi_frequency'[\s\S]*?startMultiFrequencyPathLoss\(request\)/,
-    )?.[0] ?? '',
-    /overall_pass|validation_pass|reference_trp_dbm|reference_tis_dbm/,
-  )
+  // 旧独立向导已撤；当前入口真实浏览器断言只可返回原拓扑。
 })
