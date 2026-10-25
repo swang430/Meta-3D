@@ -86,3 +86,13 @@ npm run build
 ```
 
 本地软件验证不等于独立审查、外审或现场验收。独立任务/累计审查由主代理安排；父项PC04A3及现场HOLD不抢先勾选，无push/PR。
+
+## 累计审查最终修复：Controls交互锁旁路
+
+BASE b29d57e2累计审查无P1，一条P2发现默认Controls按钮直接改ReactFlow store。实跑RED：实际Mock采集POST202/pending中原生连续切换两次，按钮仍禁用但draggable=8/connectable=28，交互锁入口=1；不是手改draft/store。RED新库 `/tmp/pc04a3-v7UmWM/browser.sqlite`及原生记录保留。
+
+生产仅一行改为 `<Controls showInteractive={!editingBlocked} />`：冻结时隐藏交互切换，保留缩放和FitView，不新增状态机。独立新库 `/tmp/pc04a3-f6gf2Y/browser.sqlite` 默认bootstrap/全Mock GREEN exit0：pending draggable=0/connectable=0、交互锁入口=0、缩放按钮2个、FitView保留；解除冻结后按钮恢复，两次原生切换可恢复拖动和接线。真实生命周期11组checks、Mock不可采用及实际取消仍通过。
+
+相关GUI5文件 **41 passed/0 failed**，build **exit0/11.63s**。证据 `controls-red.log`、`controls-green-result.json`、RED/GREEN网络及console、`logs/pc04a3-controls-*.log` 位于原证据根。两个新库分开且保留，所有Python app导入前显式文件SQLite/Mock/bootstrap。
+
+本波仅GUI Controls开关，后端/renderer/草稿算法不变；依主代理明确边界复用此前19类及后端结果，不重复全矩阵/全量，也不把G8基线误报改写为全绿。增量独立复核由原累计reviewer执行；不修改历史或扩改G8，无push/PR。

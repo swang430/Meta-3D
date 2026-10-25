@@ -83,14 +83,20 @@ async page=>{
   // 在开始请求回执前实际尝试切换；不延长/伪造采集、不拦截响应、不固定sleep等DOM。
   const first=await start(async()=>{
     await page.waitForFunction(()=>document.querySelector('input[aria-label="操作模式"]')?.disabled===true);
+    const interactive=page.locator('.react-flow__controls-interactive');
+    // RED原生复现：默认Controls连续两次切换会直接把冻结store重新设为可交互。
+    if(await interactive.count()){await interactive.click();await interactive.click()}
     const frozen=await page.evaluate(()=>({
       inputs:['器件列表','新增器件类型','操作模式'].every(label=>document.querySelector(`input[aria-label="${label}"]`)?.disabled===true),
       buttons:['添加器件','校准接线','保存拓扑'].every(text=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===text)?.disabled===true),
       draggable:document.querySelectorAll('.react-flow__node.draggable').length,
       connectable:document.querySelectorAll('.react-flow__handle.connectablestart, .react-flow__handle.connectableend').length,
       drawers:document.querySelectorAll('[role="dialog"]').length,
+      interactiveButtons:document.querySelectorAll('.react-flow__controls-interactive').length,
+      zoomButtons:document.querySelectorAll('.react-flow__controls-zoomin, .react-flow__controls-zoomout').length,
+      fitView:document.querySelector('.react-flow__controls-fitview')?.disabled===false,
     }));
-    if(!frozen.inputs||!frozen.buttons||frozen.draggable||frozen.connectable||frozen.drawers)throw new Error(`采集pending编辑入口未全部冻结：${JSON.stringify(frozen)}`);
+    if(!frozen.inputs||!frozen.buttons||frozen.draggable||frozen.connectable||frozen.drawers||frozen.interactiveButtons||frozen.zoomButtons!==2||!frozen.fitView)throw new Error(`采集pending编辑入口未全部冻结：${JSON.stringify(frozen)}`);
     checks.push(`真实pending窗口全部编辑冻结：${JSON.stringify(frozen)}`);
     await page.getByRole('textbox',{name:'当前 LabProfile',exact:true}).click();
     await page.getByRole('option').filter({hasText:b.name}).click();
@@ -102,6 +108,10 @@ async page=>{
   await panel.getByText('模拟流程完成（无真实测量）',{exact:true}).first().waitFor();
   await page.getByRole('button',{name:'添加器件',exact:true}).waitFor();
   if(!await page.getByRole('textbox',{name:'器件列表',exact:true}).isEnabled()||!await page.getByRole('button',{name:'保存拓扑',exact:true}).isEnabled())throw new Error('模拟采集结束后未恢复编辑');
+  const interactive=page.locator('.react-flow__controls-interactive');
+  await interactive.waitFor();await interactive.click();await interactive.click();
+  await page.waitForFunction(()=>document.querySelectorAll('.react-flow__node.draggable').length>0&&document.querySelectorAll('.react-flow__handle.connectablestart').length>0);
+  checks.push('冻结时无Controls交互旁路但保留缩放/FitView；解除后原生连续切换可恢复拖动和连接');
   await panel.getByText('服务器采用预览（认证资格未知）',{exact:true}).waitFor();
   if(await panel.getByRole('button',{name:'确认采用此实测记录',exact:true}).isEnabled())throw new Error('Mock可采用');
   const record=await json(await page.request.get(`${historyUrl}/${first.run_id}`));

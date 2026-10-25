@@ -486,7 +486,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           attributionPosition="bottom-right"
         >
           <Background color="#ccc" gap={16} />
-          <Controls />
+          <Controls showInteractive={!editingBlocked} />
           <MiniMap nodeStrokeWidth={3} zoomable pannable />
         </ReactFlow>
       </div>
