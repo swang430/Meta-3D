@@ -77,21 +77,25 @@ logger = logging.getLogger(__name__)
 
 def _calibration_traceability_parameters(trace: Dict[str, Any]) -> Dict[str, str]:
     """从同一个 JSON 投影生成短参数行，避免整份冻结快照撑破 PDF 表格。"""
+    def display(value: Any) -> str:
+        # 只格式化展示缺值；不能用 or 把有效的 0 一并抹掉，也不修改 JSON 真值。
+        return '—' if value is None else str(value)
+
     rows = {
-        "校准追溯": f"执行频率: {trace['execution_frequency_mhz']} MHz",
+        "校准追溯": f"执行频率: {display(trace['execution_frequency_mhz'])} MHz",
         "原始读数": "原始读数未内嵌，仅保留采集运行/交换索引指针；历史来源路径不代表文件存在",
     }
     for index, route in enumerate(trace['routes'], 1):
         prefix = f"校准链 {index}"
         source = route['source_snapshot'] or {}
-        rows[prefix] = (f"{route.get('chain_id')} | {route.get('source_kind')} | "
-                        f"来源 ID: {route.get('source_id')}")
-        rows[f"{prefix} 应用"] = (f"{route['application_state']} | 方法: {route.get('method')} | "
-            f"参考面: {route.get('reference_plane')} | 认证资格: {route.get('certification_status', 'unknown')}")
-        rows[f"{prefix} 来源频率/前序"] = (f"{source.get('frequency_mhz')} MHz | "
-            f"前序 ID: {source.get('predecessor_id')} | 来源: {source.get('source', source.get('sgh_model'))}")
-        rows[f"{prefix} 采集指针"] = (f"运行 ID: {source.get('acquisition_run_id')} | "
-            f"交换索引: {(source.get('adoption_evidence_snapshot') or {}).get('checked_exchange_indices')}")
+        rows[prefix] = (f"{display(route.get('chain_id'))} | {display(route.get('source_kind'))} | "
+                        f"来源 ID: {display(route.get('source_id'))}")
+        rows[f"{prefix} 应用"] = (f"{display(route['application_state'])} | 方法: {display(route.get('method'))} | "
+            f"参考面: {display(route.get('reference_plane'))} | 认证资格: {display(route.get('certification_status', 'unknown'))}")
+        rows[f"{prefix} 来源频率/前序"] = (f"{display(source.get('frequency_mhz'))} MHz | "
+            f"前序 ID: {display(source.get('predecessor_id'))} | 来源: {display(source.get('source', source.get('sgh_model')))}")
+        rows[f"{prefix} 采集指针"] = (f"运行 ID: {display(source.get('acquisition_run_id'))} | "
+            f"交换索引: {display((source.get('adoption_evidence_snapshot') or {}).get('checked_exchange_indices'))}")
     return rows
 
 

@@ -17,6 +17,30 @@ from app.services.report_service import ReportService
 from app.api import report as report_api
 
 
+def test_short_traceability_rows_render_missing_values_without_changing_json_or_zero():
+    from app.services.mimo_ota.executors.report import _calibration_traceability_parameters
+    trace = {'execution_frequency_mhz': None, 'routes': [{
+        'chain_id': None, 'source_kind': None, 'source_id': None,
+        'application_state': None, 'method': None, 'reference_plane': None,
+        'certification_status': None, 'source_snapshot': {
+            'frequency_mhz': None, 'predecessor_id': None, 'source': None,
+            'acquisition_run_id': None, 'adoption_evidence_snapshot': {
+                'checked_exchange_indices': None}}}]}
+    original = copy.deepcopy(trace)
+    rows = _calibration_traceability_parameters(trace)
+    assert all('None' not in value for value in rows.values())
+    assert rows['校准追溯'] == '执行频率: — MHz'
+    assert '—' in rows['校准链 1 采集指针']
+    assert trace == original
+    trace['execution_frequency_mhz'] = 0
+    trace['routes'][0]['source_snapshot']['frequency_mhz'] = 0
+    trace['routes'][0]['source_snapshot']['adoption_evidence_snapshot']['checked_exchange_indices'] = [0]
+    rows = _calibration_traceability_parameters(trace)
+    assert rows['校准追溯'] == '执行频率: 0 MHz'
+    assert rows['校准链 1 来源频率/前序'].startswith('0 MHz')
+    assert '交换索引: [0]' in rows['校准链 1 采集指针']
+
+
 @pytest.fixture
 async def archived(application, launch, db_session):
     execution = await launch()

@@ -10,6 +10,8 @@
 
 **Spec:** [拓扑内校准设计](../design/2026-10-24-topology-calibration-integration.md)、[roadmap PC07](../roadmap-first-call.md#pc-roadmap)、AGENTS.md Code Review Rules、CLAUDE.md 当前架构。
 
+**已归档任务证据：** [Task 1](2026-10-25-pc07a1-validation-evidence/task-1-report.md)、[Task 2](2026-10-25-pc07a1-validation-evidence/task-2-report.md)。本地 `.superpowers/sdd/` 为忽略的工作草稿，不作为仓库验证报告存放位置；原 scratch 副本仍保留本地。
+
 ## 全局约束
 
 - 基线为 PC-06A-1 PR #532 合并 `7292f8ed`，分支 `codex/pc-07a1-calibration-traceability`；实施前核实 HEAD、工作树及共享台账，保留他人修改和未跟踪文件。

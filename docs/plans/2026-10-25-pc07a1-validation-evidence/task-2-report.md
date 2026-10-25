@@ -4,7 +4,7 @@
 
 - DONE；实现提交 `92dcbc712e10a9458600f557af83fda3f1d13009`，未 push。
 - 基线 `cdb760611dc7e196acb3def449fc11f65d265790`，分支 `codex/pc-07a1-calibration-traceability`。
-- 唯一需求输入为同目录 `task-2-brief.md`，未读取全计划。已读 AGENTS 审查规则、CLAUDE、TDD 与测试编写参考；PDF 文本提取与完成前验证按对应技能执行。
+- 唯一需求输入为实施时本地 scratch `.superpowers/sdd/2026-10-25-pc07a1-calibration-traceability/task-2-brief.md`（不随本验证归档发布），未读取全计划。已读 AGENTS 审查规则、CLAUDE、TDD 与测试编写参考；PDF 文本提取与完成前验证按对应技能执行。
 - 实现仅动报告 builder、report_service、api/report，新定点测试，以及主 agent 明确批准适配的 3 个既有测试文件。未改补偿计算、冻结、SCPI、硬件或当前数据库来源选择。
 - 所有运行均在本工作树 `api-service`；全 Mock，显式临时 SQLite，默认 bootstrap 保持开启。真实来源 fixture 仅替换外部 transport 的合成脚本，不是现场硬件证据。
 
