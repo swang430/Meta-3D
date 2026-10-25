@@ -10,7 +10,7 @@ _db = Path(_url.removeprefix('sqlite:///')).resolve()
 if (os.environ.get('USE_MOCK_INSTRUMENTS') != 'true'
         or not _url.startswith('sqlite:////tmp/pc07a1-')
         or _root.parent != Path('/tmp').resolve() or not _root.name.startswith('pc07a1-')
-        or _db.parent != _root or (_db.exists() and os.environ.get('PC07A1_ACTION') != 'forge')
+        or _db.parent != _root or (_db.exists() and os.environ.get('PC07A1_ACTION') not in ('forge', 'prepare-mimo'))
         or os.environ.get('BOOTSTRAP_ON_STARTUP') != 'false'):
     raise RuntimeError('仅允许全Mock、显式新建/tmp/pc07a1-* SQLite及独占输出目录')
 
@@ -27,6 +27,33 @@ if __name__ == '__main__' and os.environ.get('PC07A1_ACTION') == 'forge':
         content.update(path_loss_application=parse_path_loss_application(forged), formal_path_loss_verified=True,
             calibration_traceability=build_calibration_traceability(forged))
         connection.execute('UPDATE test_reports SET content_data=? WHERE id=?', (json.dumps(content), key))
+    raise SystemExit(0)
+
+if __name__ == '__main__' and os.environ.get('PC07A1_ACTION') == 'prepare-mimo':
+    # 仅扩充隔离夹具的实际 Mock 设备，不改已有历史执行或生产门。
+    from uuid import UUID
+    from app.main import app
+    from app.db.database import SessionLocal
+    from app.models.instrument import InstrumentCategory, InstrumentModel, InstrumentConnection
+    from app.models.lab_profile import LabProfile
+    manifest = json.loads((_root / 'manifest.json').read_text())
+    with SessionLocal() as db:
+        assert all(row.driver_mode == 'mock' for row in db.query(InstrumentCategory))
+        lab = db.get(LabProfile, UUID(manifest['lab_profile_id']))
+        bindings = list(lab.instrument_bindings)
+        for key, name in [('baseStation', 'UXM 5G E7515B'), ('positioner', 'EMCenter')]:
+            if db.query(InstrumentCategory).filter_by(category_key=key).first():
+                raise RuntimeError('专属种子不得覆盖已有同类仪器')
+            category = InstrumentCategory(category_key=key, category_name=f'PC07A1 Mock {key}', driver_mode='mock')
+            db.add(category); db.flush()
+            model = InstrumentModel(category_id=category.id, model=name, vendor='隔离Mock', capabilities={})
+            db.add(model); db.flush()
+            category.selected_model_id = model.id
+            db.add(InstrumentConnection(category_id=category.id, endpoint='192.0.2.10', created_by='PC07A1全Mock夹具'))
+            bindings.append(dict(category_id=str(category.id), instrument_model_id=str(model.id),
+                connection_endpoint='192.0.2.10', driver_mode='mock', role=key))
+        lab.instrument_bindings = bindings
+        db.commit()
     raise SystemExit(0)
 
 import pytest
