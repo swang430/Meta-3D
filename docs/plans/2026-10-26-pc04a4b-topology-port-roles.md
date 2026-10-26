@@ -8,9 +8,9 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test；不新增依赖。
 
-**Spec:** [已批准设计](../design/2026-10-26-topology-device-port-contract.md)；[正式队列](../roadmap-first-call.md)。基线 `1207f8c547df3f253430cc8c84694343ff50aa71`，分支 `codex/pc04a4b-topology-port-roles`。PR [#539](https://github.com/swang430/Meta-3D/pull/539) 已于 2026-10-26T14:29:23Z 合并，[R2 回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`、无重大问题。4b 为唯一 WIP，尚未合并；本文为实施计划与执行索引，不代替审查/正式验收。
+**Spec:** [已批准设计](../design/2026-10-26-topology-device-port-contract.md)；[正式队列](../roadmap-first-call.md)。基线 `1207f8c547df3f253430cc8c84694343ff50aa71`，分支 `codex/pc04a4b-topology-port-roles`。PR [#539](https://github.com/swang430/Meta-3D/pull/539) 已于 2026-10-26T14:29:23Z 合并，[R2 回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`、无重大问题。4b 已合并，当前WIP见正式队列；本文保留本片施工与证据索引，不代替现场验收。
 
-**实施状态（2026-10-27）**：Task1（6215e6ac）与Task2（143be900及a7961b91修复）已独立Approved。Task3综合矩阵已实跑，相关后端469/GUI77通过、build成功；唯一最终新库全后端7663 passed/17 skipped/1 failed/7579 warnings（历史G8与基准一致，不称全绿），详见[正式验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。Task3和累计分支独立审查、PR外审尚待完成；4c/4d及B/HOLD不启动或关闭。下方Task1/2原清单保留为施工步骤，完成依据为对应独立任务报告，不从计划文字推断验收。
+**实施状态（2026-10-27）**：Task1（6215e6ac）与Task2（143be900及a7961b91修复）已独立Approved。Task3综合矩阵已实跑，相关后端469/GUI77通过、build成功；唯一最终新库全后端7663 passed/17 skipped/1 failed/7579 warnings（历史G8与基准一致，不称全绿），详见[正式验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。Task3/累计独立审查及R1/R2已完成，[PR #540](https://github.com/swang430/Meta-3D/pull/540)于2026-10-26T17:48:55Z合并至`8d5bc6d48805b6de7be246e4c40940de33534fa8`；[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖`75b4ef9332`无重大问题。下一片仅[4c计划与独立计划审查](2026-10-27-pc04a4c-internal-rf-paths.md)，不把本片全量当4c结果；4d、父项及B/HOLD不关闭。下方原清单保留为施工步骤，完成依据为对应独立任务报告及本段收口事实，不从复选框推断现场验收。
 
 ## 全局约束
 

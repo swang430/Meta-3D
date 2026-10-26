@@ -13,7 +13,7 @@ def _index(rows, label):
     return result
 
 
-def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id):
+def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id, *, check_internal_paths=True):
     """返回保存的有序(nodes, edges)；无声明时只接受旧式唯一链。"""
     nodes = _index(list(nodes.values()) if isinstance(nodes, dict) else nodes, '节点')
     edges = _index(active_connections, '连接')
@@ -73,7 +73,7 @@ def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id):
         for node in path_nodes[1:-1]:
             if node.get('type') in ('ce_port','channel_emulator','probe'):
                 raise ValueError('显式路径存在额外CE源端或探头中转')
-            if node.get('type') != 'switch_slot' and (
+            if node.get('type') != 'switch_slot' and 'internal_paths' not in (node.get('params') or {}) and (
                     len(incoming.get(node['id'],[]))!=1 or len(outgoing.get(node['id'],[]))!=1):
                 raise ValueError('非开关中间器件存在分叉')
         for edge in path_edges:
@@ -81,6 +81,8 @@ def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id):
                 raise ValueError('显式路径必须保存完整端口')
     if incoming.get(path_nodes[0]['id']):
         raise ValueError('CE源端存在回接')
+    if any(node.get('type') in ('probe', 'antenna') for node in path_nodes[1:-1]):
+        raise ValueError('正常路径的探头/天线只能作为终点，不能中转')
     for node in path_nodes:
         if (node.get('params') or {}).get('connection_scope')=='calibration' or node.get('type') in (
                 'reference_antenna','receive_cable','signal_analyzer','air_path'):
@@ -88,6 +90,9 @@ def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id):
     params=probe.get('params') or {}
     if declared is not None and (type(params.get('probe_id')) is not int or params['probe_id']<0 or params.get('polarization') not in ('V','H')):
         raise ValueError('显式路径探头必须明确编号及V/H极化')
+    if check_internal_paths:
+        from app.schemas.topology_internal_paths import validate_internal_traversals
+        validate_internal_traversals(path_nodes, path_edges, active_connections=active_connections)
     return copy.deepcopy(path_nodes),copy.deepcopy(path_edges)
 
 
@@ -95,6 +100,8 @@ def selected_switch_mappings(path_nodes, path_edges, port_maps, *, category_id):
     """校验保存节点/连线与绑定port_maps的精确配对，不解释端口标签。"""
     declared=(path_nodes[-1].get('params') or {}).get('rf_path_selection')
     if declared is None:
+        if any(node.get('type') == 'switch_slot' for node in path_nodes[1:-1]):
+            raise ValueError('开关路径必须保存原开关映射声明')
         return []
     selected=[]
     for ref in declared['switch_mappings']:
@@ -158,4 +165,11 @@ def rf_execution_identity(nodes,edges,switch_identity=()):
             target=e['target'],target_pin=e.get('target_pin','in')) for e in edges])
     if switch_identity:
         identity['switch_mappings']=copy.deepcopy(list(switch_identity))
+    # 只投影各自保存快照的所选穿越，不运行当前严验、不访问当前图。
+    internal = [dict(node_id=node['id'], from_port=edges[index-1].get('target_pin'),
+                     to_port=edges[index].get('source_pin'))
+        for index,node in enumerate(nodes[1:-1], 1)
+        if 'internal_paths' in (node.get('params') or {})]
+    if internal:
+        identity['internal_paths'] = internal
     return identity

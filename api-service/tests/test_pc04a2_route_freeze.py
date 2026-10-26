@@ -317,7 +317,7 @@ async def test_multihop_freeze_uses_complete_route_without_relabelling_actual_ta
     from app.services.mimo_ota.route_calibration_freeze import frozen_route_identity_error,read_execution_route_compensation
     topology_two_chains.nodes=[*topology_two_chains.nodes,
         {'id':'pad-middle','type':'pad','label':pad_label,'params':{'ports':['in','out']}}]
-    topology_two_chains.connections=[{**edge,**({'source':'pad-middle'} if edge['id']=='conn_p0v' else {})}
+    topology_two_chains.connections=[{**edge,**({'source':'pad-middle','source_pin':'out'} if edge['id']=='conn_p0v' else {})}
         for edge in topology_two_chains.connections]+[
         {'id':'feed-pad','source':'ce_b1','target':'pad-middle','source_pin':'out','target_pin':'in'}]
     topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal',

@@ -189,7 +189,8 @@ def orchestrate_switch_topology(
             execution_identity=rf_execution_identity(path_nodes,path_edges,switch_execution_identity(steps))
         binding = _build_probe_binding(conn, nodes_by_id,active_conns)
         if binding is not None:
-            binding.execution_route_identity=execution_identity
+            if execution_identity is not None:
+                binding.execution_route_identity=execution_identity
             result.probe_bindings.append(binding)
 
     from app.services.declared_rf_routes import validate_simultaneous_switch_mappings
@@ -245,6 +246,8 @@ def _build_probe_binding(
         path_nodes,path_edges,seen=[target],[connection],{target_id}
         current=source
         while current.get('type') not in ('ce_port','channel_emulator'):
+            if current.get('type') in ('probe', 'antenna'):
+                raise ValueError('正常路径的探头/天线只能作为终点，不能中转')
             if current['id'] in seen:
                 raise ValueError('正常测试通路存在回路')
             seen.add(current['id']);path_nodes.insert(0,current)
@@ -259,7 +262,18 @@ def _build_probe_binding(
         path_nodes.insert(0,current)
         ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges,allow_incomplete=True)
     elif source is not None:
+        path_nodes, path_edges = [source, target], [connection]
         ce_port_label=resolve_declared_calibration_ce_port([source,target],[connection],allow_incomplete=True)
+
+    if source is not None:
+        from app.schemas.topology_internal_paths import validate_internal_traversals
+        validate_internal_traversals(path_nodes, path_edges, active_connections=active_connections or [])
+        # 复用正常/参考路径边界，只检查正式已选路径；BSE→CE入边不属于CE输出路径。
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        resolve_saved_rf_path(path_nodes, path_edges, connection['id'], check_internal_paths=False)
+        if (target.get('params') or {}).get('rf_path_selection') is None:
+            from app.services.declared_rf_routes import selected_switch_mappings
+            selected_switch_mappings(path_nodes, path_edges, {}, category_id=None)
 
     # Probe binding params (id, polarization) — convention is they live on the
     # probe node's params dict; fall back to parsing the label.
@@ -287,10 +301,14 @@ def _build_probe_binding(
                 polarization = "H"
                 break
 
+    # 保留正式所选路径的完整身份，供冻结核对；普通旧链仍不凭此获得校准资格。
+    from app.services.declared_rf_routes import rf_execution_identity
+    identity = rf_execution_identity(path_nodes, path_edges) if source is not None else {}
     return ProbePortBinding(
         ce_port=str(ce_port_label),
         probe_id=int(probe_id) if probe_id is not None else None,
         polarization=polarization,
         connection_id=connection.get("id"),
         cable_loss_db=connection.get("calibrated_loss_db") or connection.get("cable_loss_db"),
+        execution_route_identity=identity or None,
     )

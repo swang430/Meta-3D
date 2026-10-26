@@ -31,6 +31,7 @@ from app.schemas.topology_nominal import (
 )
 from app.services.declared_rf_routes import resolve_saved_rf_path
 from app.schemas.topology_ports import validate_port_write
+from app.schemas.topology_internal_paths import validate_internal_path_write
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
@@ -81,6 +82,13 @@ def _validate_nominal(nodes, connections, *, previous_nodes=None, previous_conne
 def _validate_ports(nodes, connections, **kwargs):
     try:
         validate_port_write(nodes, connections, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+def _validate_internal_paths(nodes, connections, modes, **kwargs):
+    try:
+        validate_internal_path_write(nodes, connections, modes, **kwargs)
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -143,7 +151,7 @@ def _validate_structure(nodes, connections, modes) -> None:
             if selected[-1].get('target') != node['id']:
                 raise ValueError('显式路径终端不属于此探头')
             # 只解释本声明选中的子图；其他模式分支不影响保存结构校验。
-            resolve_saved_rf_path(nodes, selected, ids[-1])
+            resolve_saved_rf_path(nodes, selected, ids[-1], check_internal_paths=False)
         except ValueError as exc:
             raise HTTPException(422, detail=f"探头 {node['id']} 的显式路径无效：{exc}") from exc
     for mode in mode_index.values():
@@ -347,6 +355,7 @@ def create_switch_topology(
     # 校验最终待存图，不用显示默认端口替代显式路径必须保存的端口声明。
     _validate_structure(nodes_data, connections_data, modes_data)
     _validate_ports(nodes_data, connections_data)
+    _validate_internal_paths(nodes_data, connections_data, modes_data)
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -458,6 +467,8 @@ def import_topology_from_template(
                         topo_data.get('operating_modes', []))
     _validate_ports(topo_data.get('nodes', []), topo_data.get('connections', []),
                     allow_legacy_missing=True)
+    _validate_internal_paths(topo_data.get('nodes', []), topo_data.get('connections', []),
+                             topo_data.get('operating_modes', []), allow_legacy_missing=True)
 
     replaced_ids=[]
     if replace_existing:
@@ -547,6 +558,9 @@ def update_switch_topology(
                         update_data.get('operating_modes', topology.operating_modes))
     _validate_ports(nodes_data, connections_data, previous_nodes=topology.nodes,
                     previous_connections=topology.connections)
+    _validate_internal_paths(nodes_data, connections_data,
+        update_data.get('operating_modes', topology.operating_modes), previous_nodes=topology.nodes,
+        previous_connections=topology.connections, previous_modes=topology.operating_modes)
 
     # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
     # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；
@@ -626,7 +640,10 @@ def resolve_topology_paths(
     if mode not in [m["id"] for m in topology.operating_modes]:
         raise HTTPException(status_code=400, detail=f"Mode '{mode}' not found in topology")
         
-    paths = svc.resolve_paths(mode)
+    try:
+        paths = svc.resolve_paths(mode)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     
     response = []
     for path in paths:
@@ -659,7 +676,10 @@ def get_topology_calibration_matrix(
     if mode not in [m["id"] for m in topology.operating_modes]:
         raise HTTPException(status_code=400, detail=f"Mode '{mode}' not found in topology")
         
-    matrix = svc.get_calibration_matrix(mode)
+    try:
+        matrix = svc.get_calibration_matrix(mode)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     return CalibrationMatrixResponse(mode_id=mode, matrix=matrix)
 
 

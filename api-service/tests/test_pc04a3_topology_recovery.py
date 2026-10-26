@@ -106,6 +106,8 @@ def test_partial_name_patch_validates_merged_history_but_get_stays_readable(worl
 def test_atomic_rewire_and_delete_probe_are_allowed(world):
     row = save_graph(world)
     graph = explicit_graph()
+    # 主动重接候选必须声明内部通路；共享旧图仍保留缺字段兼容覆盖。
+    graph['nodes'][1]['params']['internal_paths'] = [{'from_port': 'A', 'to_port': 'B'}]
     for edge in graph['connections']:
         edge['id'] += '-new'
     graph['nodes'][-1]['params']['rf_path_selection']['connection_ids'] = ['a-new', 'b-new']

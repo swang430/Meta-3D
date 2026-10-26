@@ -48,6 +48,8 @@ import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes, ReadOnlySignalEdge } from './CustomEdges';
 import {NominalPropertyFields} from './NominalPropertyFields';
 import {PortDeclarationFields} from './PortDeclarationFields';
+import {InternalPathFields} from './InternalPathFields';
+import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
 import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
@@ -247,6 +249,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     if (savingRef.current || collectionBusyRef.current) return false;
     try {
       const next = change(draft);
+      validateDraftInternalPaths(next,draft);
       setDraft(next);
       setNumericDeclarations(current=>topologyUpdatePayload(next,current).connection_numeric_declarations??{});
       setDirty(true);
@@ -476,13 +479,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={editingBlocked} w={150} />
             <Button onClick={addNode} disabled={editingBlocked}>添加器件</Button>
             <Button variant="light" disabled={editingBlocked} onClick={()=>{
+              if(savingRef.current||collectionBusyRef.current)return;
               if (!draft.operating_modes.some(m=>m.id===CALIBRATION_MODE)) changeDraft(current=>({...current,operating_modes:[...current.operating_modes,{id:CALIBRATION_MODE,name:'校准接线',active_connections:[]}]}));
               setActiveMode(CALIBRATION_MODE);
             }}>校准接线</Button>
             <Select 
               aria-label="操作模式"
               value={activeMode} 
-              onChange={(v) => v && setActiveMode(v)}
+              onChange={(v) => {if(!savingRef.current&&!collectionBusyRef.current&&v)setActiveMode(v)}}
               data={draft.operating_modes.map(m => ({ value: m.id, label: m.name }))}
               disabled={editingBlocked}
               placeholder="操作模式"
@@ -558,6 +562,11 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
               const params={...selectedNode.params};for(const key of ['ports','port_directions',...(['communication_tester','bse_port'].includes(selectedNode.type)?['port_roles']:[])]){
                 if(Object.hasOwn(original.params,key))params[key]=original.params[key];else delete params[key];
               }setSelectedNode({...selectedNode,params});setPortText(getNodePorts(original).join(', '));setPortsExplicit(false)}}/>
+          <InternalPathFields node={selectedNode} disabled={editingBlocked}
+            onChange={paths=>{if(savingRef.current||collectionBusyRef.current)return;setSelectedNode(current=>current?{...current,params:{...current.params,internal_paths:paths}}:null)}}
+            onRestore={()=>{if(savingRef.current||collectionBusyRef.current)return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
+              const params={...selectedNode.params};if(Object.hasOwn(original.params,'internal_paths'))params.internal_paths=original.params.internal_paths;else delete params.internal_paths;
+              setSelectedNode({...selectedNode,params})}}/>
           {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。损耗仅在相邻连线编辑，不在器件重复计入。</Text>}
           <NominalPropertyFields key={selectedNode.id} fields={nominalFieldsForNode(selectedNode.type)} values={selectedNode.params}
             metadata={selectedNode.params.nominal_metadata} disabled={editingBlocked} onValidityChange={setNodeNominalValid}
