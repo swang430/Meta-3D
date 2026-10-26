@@ -330,10 +330,14 @@ def create_switch_topology(
     chamber = _resolve_scope(db, request.lab_profile_id)
     _assert_chamber_consistent(request.chamber_id, chamber.id)
 
-    _validate_structure([n.model_dump() for n in request.nodes],
-                        [c.model_dump() for c in request.connections],
-                        [m.model_dump() for m in request.operating_modes])
     _validate_nominal(raw_body.get('nodes', []), raw_body.get('connections', []))
+
+    typed = request.model_dump(exclude_unset=True)
+    nodes_data = preserve_graph_rows(raw_body.get('nodes', []), typed.get('nodes', []))
+    connections_data = preserve_connection_rows(raw_body.get('connections', []), typed.get('connections', []), [], {})
+    modes_data = preserve_graph_rows(raw_body.get('operating_modes', []), typed.get('operating_modes', []))
+    # 校验最终待存图，不用显示默认端口替代显式路径必须保存的端口声明。
+    _validate_structure(nodes_data, connections_data, modes_data)
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -343,12 +347,6 @@ def create_switch_topology(
             SwitchTopology.chamber_id == chamber.id,
             SwitchTopology.is_default == True
         ).update({"is_default": False})
-
-    # Dump nested Pydantic models to dicts
-    typed = request.model_dump(exclude_unset=True)
-    nodes_data = preserve_graph_rows(raw_body.get('nodes', []), typed.get('nodes', []))
-    connections_data = preserve_connection_rows(raw_body.get('connections', []), typed.get('connections', []), [], {})
-    modes_data = preserve_graph_rows(raw_body.get('operating_modes', []), typed.get('operating_modes', []))
 
     topology = SwitchTopology(
         switch_category_id=request.switch_category_id,

@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test、真实浏览器；不新增依赖或表迁移。
 
-**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；三个任务已实现并分别通过独立规格/质量审查，Task3真实API浏览器矩阵与相关回归已执行，修后正式全量复验7543通过/17跳过/1失败（已核基线历史G8），不称全绿；首次另3项异常复验未再现、根因未确认。累计F1修复 `ba1ac371` 已经原reviewer增量复审确认ADDRESSED，累计内审Ready、无未解决P1；V1参考PA有效参考段身份/冻结未覆盖，已收窄声明、不扩测。PR/外审及合并仍待主代理，4a不勾交付、4b不启动。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
+**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；三个任务独立规格/质量审查及原累计F1修复 `ba1ac371` 的增量复审已通过。PR #539 的R1覆盖 `a087ed76` 后新增POST最终图校验P1，本轮已最小修复并通过182项相关回归；新库唯一全后端7558通过/17跳过/1失败（同一历史G8，不称全绿），等待原reviewer独立增量及R2。原首轮6失败、原最终7543/17/1及三项异常后续未再现但根因未知记录保留；V1有效参考PA身份/冻结、ASC/CE未执行边界不变。尚未合并，4a不勾交付、4b不启动。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
 
 ## 全局约束
 
@@ -473,7 +473,7 @@ env DATABASE_URL="sqlite:///$pc04a4a_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 
 另跑Task2 GUI命令、`npm run build`、`git diff --check`。若全量出现基线历史文档G8误报，逐项与基线输入核实并报告实际统计，不修改历史记录、不称全绿；新失败必须定位，不能引用旧片的7485统计代替本片结果。保留输入SHA、dirty diff、依赖版本、命令、退出码、末行、日志路径。
 - [x] Task3测试与验证摘要已由 `d2f9187a` 提交且独立审查通过；累计F1由 `ba1ac371` 修复并经原reviewer增量复审通过，累计内审Ready。本片创建的确切PID/会话已停止，临时证据保留，未动用户服务或加入原有venv/output；不将该勾选解释为PR外审/合并完成。
-- [ ] 由主代理创建Ready PR：附设计/本计划/验证摘要及Roadmap=PC-04A-4a；R1处理本片可执行项→R2，最新HEAD无P1后收口；R2仍有P1继续到修复被新一轮覆盖。P2/P3不自动扩入backlog。合并后安全同步main、更新正式roadmap及台账；才允许4b开工。
+- [ ] Ready PR #539 已创建且R1覆盖 `a087ed76`；本轮POST最终图校验P1修复完成独立增量内审后，由主代理push并触发R2，最新HEAD无P1后收口；R2仍有P1继续到修复被新一轮覆盖。P2/P3不自动扩入backlog。合并后安全同步main、更新正式roadmap及台账；才允许4b开工。
 
 ## 自查与交接
 

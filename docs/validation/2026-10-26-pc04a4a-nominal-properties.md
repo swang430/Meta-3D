@@ -2,7 +2,7 @@
 
 ## 状态与边界
 
-本片实现类型化标称写入、原抽屉编辑和 CAICT 旧 PA 边定位；Task1 `690401a6`、Task2 `d4f44bfe`、Task3 `d2f9187a` 已分别通过独立规格/质量审查。Task3 完整浏览器矩阵、相关回归、GUI/build及修后正式全量复验已完成：**7543 passed /17 skipped /1 failed**，唯一失败为已核对基线的历史G8误报，不称全绿。首轮另外三项采集前置异常本轮未再现，根因未确认，不称已修复。累计审查发现的F1已由 `ba1ac371` 修复并经原reviewer增量复审确认 ADDRESSED，累计内审 Ready、无未解决P1；V1非阻塞证据缺口按下节收窄声明。Ready PR、外审和合并仍待主代理完成，PC-04A-4a 尚未作为已合并交付关闭，4b 不启动。
+本片实现类型化标称写入、原抽屉编辑和 CAICT 旧 PA 边定位；Task1 `690401a6`、Task2 `d4f44bfe`、Task3 `d2f9187a` 已分别通过独立规格/质量审查。Task3阶段原正式全量复验为 **7543 passed /17 skipped /1 failed**，唯一失败为已核对基线的历史G8误报，不称全绿。首轮另外三项采集前置异常后续未再现，根因未确认，不称已修复。原累计F1已由 `ba1ac371` 修复并经原reviewer确认ADDRESSED、累计内审Ready；V1非阻塞证据缺口按下节收窄声明。PR #539 的R1覆盖 `a087ed76` 后新增一条POST最终图校验P1，本轮已修复并完成相关/新库全量验证（见R1增量），等待原reviewer独立增量及R2覆盖修复提交；尚未合并交付，4b不启动。
 
 全部结果仅为隔离 SQLite、真实 HTTP、真实浏览器与 Mock／脚本化 transport 的软件证据。不代表真机、物理端口能力、参考件计量认证、现场 B 或 HOLD 解除。标称数据不自动成为采用记录，也不新增补偿。
 
@@ -16,7 +16,16 @@
 - 最终浏览器库 `/tmp/pc04a4a-8AUqR0/browser.sqlite`，两个开关均true且默认bootstrap；全过程未访问用户DB或停止用户服务。专用服务身份与停机记录见本次证据目录，原库和本次库均保留。
 - 本次为影响面明确的局部GUI修复，没有后端生产、契约、测试或fixture变动；原四项后端canonical输入hash仍一致，原浏览器脚本只同步了旧坏值metadata保形断言，并新增本次浏览器脚本。故不重跑全后端，也不将原 **7543/17/1** 改称本修复HEAD的新全量结果。首轮 **7538/17/6**、三项前置异常未知根因、历史G8失败、ASC条件分支/CE未执行及B/HOLD边界全部保留。
 
-## 精确输入与环境
+## PR #539 R1：POST最终待存图校验增量
+
+R1覆盖 `a087ed76ffa63840d14a4c10bd48d5f1dac6789e`，inline `4377906975`：POST在补out/in的完整模型上校验，却保存缺端口的稀疏图；真实HTTP复现201→正式resolver报“显式路径必须保存完整端口”→原样PATCH422。生产最小修复仅将POST原候选构造前移，使用原 `_validate_structure` 校验最终待存图，且早于任何默认位UPDATE；不补缺键、不改resolver/历史/资格。PATCH/import原校验已保留缺键语义，本轮以对称回归确认，不改其生产逻辑。
+
+- 新增三入口×三种缺端口拒绝及三入口×完整显式/普通稀疏消费共15项真实HTTP测试；拒绝时无拓扑INSERT/UPDATE/DELETE、原默认位与行不变；完整显式和普通稀疏保存后由 `resolve_saved_rf_path` / `resolve_rf_chains` 消费，GET原样PATCH仍200。先RED **3 failed /12 passed**，修后相关 **182 passed /665 warnings /75.52s**。
+- 本轮唯一新库全后端：`/tmp/pc04a4a-r1-full-gk69P2/full.sqlite`，应用导入前显式两个true开关、默认bootstrap；命令 `python -m pytest tests -q --tb=short -o log_cli=false`（使用项目.venv）。**7558 passed /17 skipped /1 failed /7438 warnings /596.76s**，exit1；新增15项全部通过。唯一失败仍为同一历史G8，已重核检查器/涉事历史/路由与原基线无差异，不改历史或门、不称全绿；原三项未知原因异常披露保留。
+- 证据在 `output/playwright/pc04a4a-r1/`：`http-red-v2.log`、`repro.log`、`related-green.log`、`backend-full.log`、退出/起止文件；`full-input-head.txt`、两个输入diff和 `full-input-sha256.txt`保存BASE加本轮生产/新测试输入，结束后五项hash全部一致。随后仅更新不改变测试行为的本片状态/验证说明，不把原7543统计替换为本轮结果。
+- GUI、依赖与API镜像相对BASE无变动，复用原GUI49/49和build11.83s，不冒称本轮重跑。V1有效参考PA身份/冻结缺口、ASC/CE未执行、Mock/脚本化transport及B/HOLD边界均未改变；本轮不补足这些未验范围。修复等待独立增量内审及R2，未合并不勾交付。
+
+## 精确输入与环境（原Task3）
 
 - 工作树：`restore-editable-topology/MIMO-First`，分支 `codex/topology-device-contract-design`；Task3 基准 HEAD：`d4f44bfe772000ea8aacd2aa3d477063b8ec7db1`。
 - 后端相关输入修改 `tests/test_pc04a2_route_compensation.py`、`tests/test_pc04a4a_nominal_identity.py`，并经主代理核实对齐 `tests/test_pc04a1_topology_editing.py` 的旧pin响应断言，另扩展独立浏览器 fixture 与原浏览器脚本。没有生产代码、共享DB fixture、依赖、HAL／SCPI、补偿算法或门的变更。
