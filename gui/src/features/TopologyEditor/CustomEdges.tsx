@@ -25,11 +25,12 @@ export const SignalEdge = ({
   // Calculate visual properties
   const calibratedLoss = data?.calibrated_loss_db as number | undefined | null;
   const cableLoss = data?.cable_loss_db as number | undefined;
-  const paGain = data?.pa_gain_db as number | undefined;
+  const paGain = typeof data?.pa_gain_db === 'number' && Number.isFinite(data.pa_gain_db)
+    ? data.pa_gain_db : undefined;
   const direction = data?.direction as string | undefined;
   
   const isCalibrated = calibratedLoss !== undefined && calibratedLoss !== null;
-  const hasPA = paGain !== undefined && paGain !== null && paGain > 0;
+  const hasPA = paGain !== undefined;
   const isUplink = direction === 'UL';
   
   // Custom styles for edge
@@ -49,9 +50,9 @@ export const SignalEdge = ({
     lossLabel = `${calibratedLoss?.toFixed(2)} dB (Cal)`;
     labelColor = 'teal';
   } else if (hasPA) {
-    // Show net gain: PA gain minus cable loss
-    const netGain = (paGain || 0) - (cableLoss || 0);
-    lossLabel = `PA +${paGain}dB | Net +${netGain.toFixed(1)}dB`;
+    // 仅作标称展示，不写回校准值或进入正式补偿。
+    const netGain = paGain - (cableLoss ?? 0);
+    lossLabel = `旧PA ${paGain}dB | 净值 ${netGain.toFixed(1)}dB（标称，非实测）`;
     labelColor = 'orange';
   } else {
     lossLabel = `${cableLoss?.toFixed(1) || 0} dB`;

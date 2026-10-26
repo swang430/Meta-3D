@@ -162,12 +162,13 @@ def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, 
             return copy.deepcopy(values)
 
         identity_nodes = [{k:n[k] for k in ('id','type')} | {'params':{
-            k:v for k,v in n.get('params', {}).items() if k not in ('visible_modes','description','notes')
+            k:v for k,v in n.get('params', {}).items() if k not in ('visible_modes','description','notes','nominal_metadata')
         }} for n in [*route_nodes,*refs]]
         port_rows = [dict(connection_id=e['id'],source=e['source'],source_pin=e.get('source_pin','out'),
                          target=e['target'],target_pin=e.get('target_pin','in')) for e in route_edges]
         identity = dict(lab_profile_id=str(lab.id),topology_id=str(topology.id),mode=operating_mode,
-            ce_port=ce_port,nodes=identity_nodes,ports=port_rows,calibration_connections=ref_edges)
+            ce_port=ce_port,nodes=identity_nodes,ports=port_rows,
+            calibration_connections=[{k:v for k,v in edge.items() if k != 'nominal_metadata'} for edge in ref_edges])
         if switch_steps:
             identity['switch_steps']=switch_steps
         digest = hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
