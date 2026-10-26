@@ -45,7 +45,7 @@ import {
 
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalLab';
 import { customNodeTypes } from './CustomNodes';
-import { customEdgeTypes } from './CustomEdges';
+import { customEdgeTypes, ReadOnlySignalEdge } from './CustomEdges';
 import {NominalPropertyFields} from './NominalPropertyFields';
 import {PortDeclarationFields} from './PortDeclarationFields';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
@@ -53,7 +53,7 @@ import { RouteCalibrationPanel } from './RouteCalibrationPanel';
 import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
 import { routeGraphMatchesSaved } from './routeCalibrationState';
 import type { RouteSelection } from '../../types/api';
-import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts, edgePortPresentation } from './nodePortHelpers';
+import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts, edgePortPresentation, edgeNeedsReadOnlyGeometry } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, updateDraftConnection, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService, topologyUpdatePayload, mergeConnectionDeclarations } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations } from '../../api/switchTopologyService';
@@ -210,6 +210,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           pa_gain_db: c.pa_gain_db,
           direction: c.direction,
           portWarning:portView.warning,
+          readOnlyGeometry:edgeNeedsReadOnlyGeometry(draft.nodes,c),
         },
         animated: true,
         selected:selectedConnectionId===c.id,
@@ -505,7 +506,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       <div style={{ flex: 1, border: '1px solid var(--mantine-color-default-border)' }}>
         <ReactFlow
           nodes={nodes}
-          edges={edges}
+          edges={edges.filter(edge=>!edge.data?.readOnlyGeometry)}
           onNodesChange={handleNodesChange}
           onEdgesChange={handleEdgesChange}
           onConnect={onConnect}
@@ -519,6 +520,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           fitView
           attributionPosition="bottom-right"
         >
+          {edges.filter(edge=>edge.data?.readOnlyGeometry).map(edge=><ReadOnlySignalEdge key={edge.id} edge={edge} onClick={()=>openConnection(edge.id)}/>)}
           <Background color="#ccc" gap={16} />
           <Controls showInteractive={!editingBlocked} />
           <MiniMap nodeStrokeWidth={3} zoomable pannable />

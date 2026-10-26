@@ -3,6 +3,7 @@ import json
 import os
 import re
 from pathlib import Path
+from uuid import UUID
 
 _url = os.environ.get('DATABASE_URL', '')
 _path = Path(_url.removeprefix('sqlite:///'))
@@ -19,6 +20,7 @@ from app.services.bootstrap import run_bootstrap_on_startup
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.instrument import InstrumentCategory, InstrumentConnection, InstrumentModel
 from app.models.lab_profile import LabProfile
+from app.models.switch_topology import SwitchTopology
 
 
 def seed():
@@ -83,6 +85,25 @@ def seed():
         lab['topology_id'] = response.json()['id']
         assert client.get('/api/v1/instruments/hal/status').json()['mode'] == 'mock'
     with SessionLocal() as db:
+        if os.environ.get('PC04A4B_LEGACY_EDGE_FIXTURE') == 'true':
+            # 明确构造历史样本，不能经新写边界创建；只修改本fixture新建的隔离库。
+            row = db.get(SwitchTopology, UUID(manifest['labs'][0]['topology_id']))
+            legacy_nodes = []
+            for index, (ident, direction) in enumerate((('legacy-input-source', 'input'), ('legacy-input-target', 'input'),
+                    ('legacy-output-source', 'output'), ('legacy-output-target', 'output'))):
+                legacy_nodes.append(dict(id=ident, type='pad', label=ident,
+                    position={'x': 80+(index % 2)*500, 'y': 1450+(index//2)*250},
+                    params={'ports': ['P'], 'port_directions': {'P': direction}, 'visible_modes': ['mimo_ota']}))
+            legacy_edges = [dict(id='legacy-source-input', source='legacy-input-source', source_pin='P',
+                                target='legacy-input-target', target_pin='P', cable_loss_db=0),
+                            dict(id='legacy-target-output', source='legacy-output-source', source_pin='P',
+                                target='legacy-output-target', target_pin='P', pa_gain_db=0)]
+            row.nodes = [*row.nodes, *legacy_nodes]
+            row.connections = [*row.connections, *legacy_edges]
+            row.operating_modes = [{**mode, 'active_connections': [*mode['active_connections'], *[e['id'] for e in legacy_edges]]}
+                                   if mode['id'] == 'mimo_ota' else mode for mode in row.operating_modes]
+            db.commit()
+            manifest['legacy_readonly_edges'] = legacy_edges
         assert all(c.driver_mode == 'mock' for c in db.query(InstrumentCategory).all())
         assert all(b['driver_mode'] == 'mock' for lab in db.query(LabProfile).all() for b in lab.instrument_bindings)
     print(json.dumps(manifest, ensure_ascii=False))

@@ -15,6 +15,58 @@ async page=>{
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
   await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
   await page.locator('.react-flow').first().waitFor();
+  if(stage==='legacy-source-input'||stage==='legacy-target-output'){
+    const edge=graph.connections.find(e=>e.id===stage);if(!edge)throw new Error('缺少专用历史方向冲突fixture');
+    const before=JSON.stringify(graph),source=graph.nodes.find(n=>n.id===edge.source),target=graph.nodes.find(n=>n.id===edge.target);
+    await page.locator(`.react-flow__node[data-id="${edge.source}"] .react-flow__handle[data-handleid="P"]`).waitFor();
+    await page.locator(`.react-flow__node[data-id="${edge.target}"] .react-flow__handle[data-handleid="P"]`).waitFor();
+    await page.getByRole('button',{name:'Fit View',exact:true}).click();
+    const path=page.locator(`.react-flow__edge[data-id="${stage}"] .react-flow__edge-path, .topology-readonly-edge[data-id="${stage}"] .react-flow__edge-path`);
+    const available=await path.count();
+    await page.screenshot({path:`output/playwright/pc04a4b-${stage}-${available?'green':'red'}.png`,fullPage:true,animations:'disabled'});
+    // 先确认原节点/同ID可见handle加载；RED只可发生在旧边path缺失。
+    await path.waitFor({state:'attached'});
+    await page.getByText(/旧接线不合法或端口未声明/).first().waitFor();
+    const settle=()=>page.waitForFunction(()=>new Promise(resolve=>{let same=0,last='';const tick=()=>{const now=document.querySelector('.react-flow__viewport')?.getAttribute('style');same=now===last?same+1:0;last=now;if(same>5)resolve(true);else requestAnimationFrame(tick)};tick()}));
+    const verifyAnchors=async()=>{
+      await settle();
+      const ends=await path.evaluate(p=>{const m=p.getScreenCTM(),point=length=>{const v=p.getPointAtLength(length);return{x:m.a*v.x+m.c*v.y+m.e,y:m.b*v.x+m.d*v.y+m.f}};return[point(0),point(p.getTotalLength())]});
+      for(const [index,node] of [source,target].entries()){
+        const kind=node.params.port_directions.P==='input'?'target':'source';
+        const handles=page.locator(`.react-flow__node[data-id="${node.id}"] .react-flow__handle[data-handleid="P"]`);
+        if(await handles.count()!==1)throw new Error('旧几何增加了同ID handle');
+        const box=await handles.boundingBox(),x=kind==='target'?box.x:box.x+box.width,y=box.y+box.height/2;
+        if(Math.hypot(ends[index].x-x,ends[index].y-y)>3)throw new Error(`只读边未对齐可见端点：${JSON.stringify({ends,index,box})}`);
+      }
+      return ends;
+    };
+    const originalAnchors=await verifyAnchors();
+    await page.getByRole('button',{name:'Zoom In',exact:true}).click();await verifyAnchors();
+    // 全图缩放后下排历史样本可能在裁剪区外；用真实画布平移带入视口再拖节点。
+    const frame=await page.locator('.react-flow').first().boundingBox(),currentBox=await page.locator(`.react-flow__node[data-id="${edge.source}"]`).boundingBox();
+    const dy=Math.max(-frame.height/2,Math.min(frame.height/2,frame.y+frame.height/2-currentBox.y-currentBox.height/2));
+    const panY=frame.y+(dy<0?frame.height-25:25);
+    const oldViewport=await page.locator('.react-flow__viewport').getAttribute('style');
+    await page.mouse.move(frame.x+60,panY);await page.mouse.down();await page.mouse.move(frame.x+60,panY+dy,{steps:12});await page.mouse.up();
+    if(Math.abs(dy)>1)await page.waitForFunction(old=>document.querySelector('.react-flow__viewport')?.getAttribute('style')!==old,oldViewport);
+    await verifyAnchors();
+    const nodeBox=await page.locator(`.react-flow__node[data-id="${edge.source}"]`).boundingBox(),oldPath=await path.getAttribute('d');
+    await page.mouse.move(nodeBox.x+nodeBox.width/2,nodeBox.y+15);await page.mouse.down();await page.mouse.move(nodeBox.x+nodeBox.width/2+50,nodeBox.y+40,{steps:12});await page.mouse.up();
+    await page.waitForFunction(({id,old})=>document.querySelector(`.topology-readonly-edge[data-id="${id}"] .react-flow__edge-path`)?.getAttribute('d')!==old,{id:stage,old:oldPath});
+    const movedAnchors=await verifyAnchors();
+    const endpoint=`/switch-topologies/${graph.id}?lab_profile_id=${lab.id}`;
+    if(JSON.stringify(await read(endpoint))!==before)throw new Error('只读渲染改写了存储图');
+    const middle=await path.evaluate(p=>{const v=p.getPointAtLength(p.getTotalLength()/2),m=p.getScreenCTM();return{x:m.a*v.x+m.c*v.y+m.e,y:m.b*v.x+m.d*v.y+m.f}});
+    await page.mouse.click(middle.x,middle.y);await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor();
+    await page.getByText(stage,{exact:true}).waitFor();
+    await page.getByRole('button',{name:'取消',exact:true}).click();
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor({state:'hidden'});await page.locator('.mantine-Drawer-overlay').waitFor({state:'hidden'});
+    const normalMiddle=await page.locator('.react-flow__edge[data-id="fixed-h"] .react-flow__edge-path').evaluate(p=>{const v=p.getPointAtLength(p.getTotalLength()/2),m=p.getScreenCTM();return{x:m.a*v.x+m.c*v.y+m.e,y:m.b*v.x+m.d*v.y+m.f}});
+    await page.mouse.click(normalMiddle.x,normalMiddle.y);
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor();await page.getByText('fixed-h',{exact:true}).waitFor();
+    await page.screenshot({path:`output/playwright/pc04a4b-${stage}-geometry-green.png`,fullPage:true,animations:'disabled'});
+    return {stage,source,target,edge,path:await path.getAttribute('d'),originalAnchors,movedAnchors,readOnly:true,unchangedGet:true,normalEdgeSelectable:true};
+  }
   await page.getByRole('textbox',{name:'器件列表',exact:true}).fill('amplifier');
   await page.getByRole('listbox',{name:'器件列表',exact:true}).getByRole('option').click();
   const drawer=page.getByRole('dialog',{name:'器件属性',exact:true});

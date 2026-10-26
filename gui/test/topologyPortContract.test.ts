@@ -10,6 +10,7 @@ import {addDraftConnection, updateDraftConnection, updateDraftNode} from '../src
 import type {SwitchTopology, TopologyNode} from '../src/api/switchTopologyService.ts';
 import {routeGraphMatchesSaved} from '../src/features/TopologyEditor/routeCalibrationState.ts';
 import {PortDeclarationFields} from '../src/features/TopologyEditor/PortDeclarationFields.tsx';
+import * as edgeRendering from '../src/features/TopologyEditor/CustomEdges.tsx';
 (globalThis as any).React=React;
 
 const node=(id:string,direction?:string,type='pad'):TopologyNode=>({id,type,label:id,position:{x:0,y:0},params:{ports:['RF5'],...(direction?{port_directions:{RF5:direction}}:{})}});
@@ -129,4 +130,21 @@ test('端口表单新输入和每个按钮全部消费既有冻结状态，物�
     for(const element of interactive)assert.equal(/\bdisabled=/.test(element),disabled,element);
     assert.match(markup,/RF3OUT/);assert.doesNotMatch(markup,/<input[^>]*value="RF3OUT"/);
   }
+});
+test('旧方向冲突边只读几何读取已有反端handle，不新增能力或改pin',()=>{
+  assert.equal(typeof ports.edgeNeedsReadOnlyGeometry,'function');
+  assert.equal(typeof edgeRendering.readOnlyHandlePosition,'function');
+  for(const [source,target] of [['input','input'],['output','output']]){
+    const draft=graph();draft.nodes=[node('a',source),node('b',target)];
+    assert.equal(ports.edgeNeedsReadOnlyGeometry(draft.nodes,connection),true);
+    assert.throws(()=>addDraftConnection(draft,connection,'mimo_ota'),/方向/);
+  }
+  assert.equal(ports.edgeNeedsReadOnlyGeometry(graph().nodes,connection),false);
+  assert.equal(ports.edgeNeedsReadOnlyGeometry([],connection),false);
+  assert.equal(ports.edgeNeedsReadOnlyGeometry([node('a','input'),node('b','input')],{...connection,source_pin:undefined}),false);
+  const internal=(type:'source'|'target')=>({id:'a',internals:{positionAbsolute:{x:100,y:200},handleBounds:{[type]:[
+    {id:'RF5',type,position:type==='source'?'right':'left',x:type==='source'?177:-3,y:37,width:6,height:6}]}}}) as any;
+  assert.deepEqual(edgeRendering.readOnlyHandlePosition(internal('target'),'RF5','source'),{x:97,y:240,position:'left'});
+  assert.deepEqual(edgeRendering.readOnlyHandlePosition(internal('source'),'RF5','target'),{x:283,y:240,position:'right'});
+  assert.equal(edgeRendering.readOnlyHandlePosition(internal('source'),'missing','target'),null);
 });

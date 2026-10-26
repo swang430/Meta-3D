@@ -75,6 +75,14 @@ export function edgePortPresentation(nodes:TopologyNode[],edge:TopologyConnectio
   return {arrowEnd:true,arrowStart:source==='bidirectional'&&target==='bidirectional'&&edge.direction==='Bi-Di',warning:null}
 }
 
+/** 只识别已存且端口明确的方向冲突；缺节点/缺pin不作几何兜底。 */
+export function edgeNeedsReadOnlyGeometry(nodes:TopologyNode[],edge:TopologyConnection):boolean {
+  if(!edge.source_pin||!edge.target_pin)return false
+  const source=resolveNodePorts(nodes.find(n=>n.id===edge.source)),target=resolveNodePorts(nodes.find(n=>n.id===edge.target))
+  return source.ports.includes(edge.source_pin)&&target.ports.includes(edge.target_pin)&&
+    (source.effectiveDirections[edge.source_pin]==='input'||target.effectiveDirections[edge.target_pin]==='output')
+}
+
 const DEFAULT_PORTS_BY_TYPE: Record<string, string[]> = {
   ce_port: ['out'],
   bse_port: ['out'],
