@@ -10,7 +10,7 @@
 
 ## R1修复后唯一最终全后端与复用边界（71774b09）
 
-R1唯一P1是兼容旧BSE→CE→probe直连与合法CE→pad→probe中转共存时，冻结身份生成/比较仍依赖整组采集解析，导致合法新执行也无法恢复。71774b09把完整正式所选身份透传到binding，并从同一次正式resolver读取DB-current身份；保留active全集内部严验及所选路径原正常/参考边界，只有刚完成的重复内部检查跳过。无采集route仍无route_digest/confirmed_route，不读取确认指针、不授采集资格；历史只读、actual-target比较、量值/整链补偿/SCPI与资格不变。原reviewer限定增量内审为ADDRESSED、无新增功能缺陷，**不是R2外审通过**。修复原件 `/tmp/pc04a4c-r1-fix-yBcqa6` 的442相关通过及四项核心变异实红恢复是修复证据，不代替本轮全量。
+R1唯一P1是兼容旧BSE→CE→probe直连与合法CE→pad→probe中转共存时，冻结身份生成/比较仍依赖整组采集解析，导致合法新执行也无法恢复。71774b09把完整正式所选身份透传到binding，并从同一次正式resolver读取DB-current身份；保留active全集内部严验及所选路径原正常/参考边界，只有刚完成的重复内部检查跳过。无采集route仍无route_digest/confirmed_route，不读取确认指针、不授采集资格；actual-target仍独立读取实际binding，补齐任一侧开关身份比较；历史只读、量值/整链补偿/SCPI与资格不变。原reviewer限定增量内审为ADDRESSED、无新增功能缺陷，**不是R2外审通过**。修复原件 `/tmp/pc04a4c-r1-fix-yBcqa6` 的442相关通过及四项核心变异实红恢复是修复证据，不代替本轮全量。
 
 ```sh
 cd api-service
