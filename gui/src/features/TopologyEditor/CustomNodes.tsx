@@ -56,8 +56,9 @@ export const ChannelEmulatorNode = ({ data }: any) => {
       <Stack gap={2}>
         <Text size="xs" c="dimmed">{data.params?.vendor} {data.params?.model}</Text>
         <Group gap={4}>
-          <Badge size="xs" variant="light" color="blue">{data.params?.inputs || 4} in</Badge>
-          <Badge size="xs" variant="light" color="cyan">{data.params?.outputs || 32} out</Badge>
+          <Text size="xs" c="dimmed">{data.params?.inputs!=null||data.params?.outputs!=null
+            ? `旧声明：输入 ${data.params?.inputs??'未声明'} / 输出 ${data.params?.outputs??'未声明'}，未核实`
+            : '端口数量未声明'}</Text>
         </Group>
       </Stack>
 
@@ -133,8 +134,10 @@ export const EMCenterNode = ({ data }: any) => {
 
       <Stack gap={2}>
         <Group gap={4}>
-          <Badge size="xs" variant="light" color="green">集成PA ×32</Badge>
-          <Badge size="xs" variant="light" color="orange">Switch</Badge>
+          <Text size="xs" c="dimmed">旧版端口示意，非能力证明</Text>
+          <Text size="xs" c="dimmed">{data.params?.inputs!=null||data.params?.outputs!=null
+            ? `旧声明：输入 ${data.params?.inputs??'未声明'} / 输出 ${data.params?.outputs??'未声明'}，未核实`
+            : '端口数量未声明'}</Text>
         </Group>
         <Text size="xs" c="dimmed">{data.params?.description || ''}</Text>
       </Stack>

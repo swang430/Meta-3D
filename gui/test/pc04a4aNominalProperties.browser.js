@@ -1,0 +1,106 @@
+// 独立临时SQLite、全HAL Mock、真实HTTP；同一缺功能RED由原边抽屉产生。
+async page=>{
+  const origin=new URL(page.url()).origin,api=`${origin}/api/v1`;
+  page.setDefaultTimeout(12000);
+  await page.setViewportSize({width:1800,height:1100});
+  const read=async path=>{const r=await page.request.get(`${api}${path}`);if(!r.ok())throw new Error(await r.text());return r.json()};
+  if((await read('/instruments/hal/status')).mode!=='mock')throw new Error('仅允许隔离全Mock环境');
+  const labs=await read('/lab-profiles'),lab=labs.find(l=>l.name==='PC04A4a标称乙');
+  if(!lab)throw new Error('缺少专用fixture');
+  const topology=(await read(`/switch-topologies?lab_profile_id=${lab.id}`)).items[0];
+  const endpoint=`/switch-topologies/${topology.id}?lab_profile_id=${lab.id}`;
+  const graph=await read(endpoint),edge=graph.connections.find(e=>e.pa_gain_db!==null&&e.pa_gain_db!==undefined);
+  if(!edge)throw new Error('真实GET未返回旧PA边');
+  await page.goto(origin);
+  await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);
+  await page.reload();
+  await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
+  await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
+  await page.locator('.react-flow').first().waitFor();
+  await page.getByRole('button',{name:'Fit View',exact:true}).click();
+  await page.locator(`.react-flow__edge[data-id="${edge.id}"]`).click({force:true});
+  await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor();
+  // 模板边重叠时实点可能选中相邻边；按抽屉精确ID验证它确实来自真实旧PA图。
+  const drawerText=await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).innerText();
+  const opened=graph.connections.find(e=>drawerText.split('\n').includes(e.id));
+  if(!opened||opened.pa_gain_db===null||opened.pa_gain_db===undefined)throw new Error('实际打开的边不是旧PA');
+  await page.evaluate(result=>{window.__pc04a4aBaseline=result},{labId:lab.id,topologyId:topology.id,edge:opened,graph});
+  const hasControl=await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).count();
+  await page.screenshot({path:`output/playwright/pc04a4a/${hasControl?'implemented':'original'}-edge-drawer.png`,fullPage:true});
+  console.log(JSON.stringify({stage:'真实GET及原抽屉已加载',labId:lab.id,topologyId:topology.id,edge,graph}));
+  // RED必须止于缺控件，不把API/fixture/原抽屉打开失败当缺功能。
+  await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).waitFor({state:'visible'});
+  const checks=['真实GET、原画布边点击与标称控件可见'],requests=[];
+  const equal=(a,b,message)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(`${message}: ${JSON.stringify(a)}`)};
+  const save=async id=>{
+    const pending=page.waitForResponse(r=>r.request().method()==='PATCH'&&r.url().includes(`/switch-topologies/${id}`));
+    await page.getByRole('button',{name:'保存拓扑',exact:true}).click();
+    const r=await pending;requests.push(r.request().postDataJSON());if(!r.ok())throw new Error(await r.text());
+    await page.getByTestId('topology-save-stage').filter({hasText:'拓扑已保存到服务器'}).waitFor();
+  };
+  const apply=()=>page.getByRole('button',{name:'应用修改',exact:true}).click();
+  const locate=async id=>{
+    const list=page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true});await list.fill(id);
+    await page.getByRole('option').filter({hasText:id}).click();
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(id,{exact:true}).waitFor();
+  };
+  const gain=page.getByLabel('旧PA标称增益 (dB)',{exact:true});
+  await gain.fill('0');
+  await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill(' 操作员按铭牌录入，未校准 ');
+  await page.getByLabel('旧PA标称增益适用结束频率 (MHz)',{exact:true}).fill('');
+  await page.getByLabel('旧PA标称增益适用起始频率 (MHz)',{exact:true}).fill('2500');
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='应用修改')?.disabled===true);
+  await page.getByLabel('旧PA标称增益适用结束频率 (MHz)',{exact:true}).fill('2700');
+  // 原控件真实事件与原Task1声明map，先改后回同显示值仍保留意图。
+  await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).fill('0.9');
+  await page.getByLabel('标称电缆损耗 (dB)',{exact:true}).fill(String(opened.cable_loss_db));
+  await apply();await save(topology.id);
+  let stored=await read(endpoint),edited=stored.connections.find(e=>e.id===opened.id);
+  equal(edited.pa_gain_db,0,'零未保存');
+  equal(edited.nominal_metadata.pa_gain_db,{unit:'dB',source_note:'操作员按铭牌录入，未校准',frequency_range_mhz:[2500,2700]},'元数据未保存');
+  equal(requests.at(-1).connection_numeric_declarations,{[opened.id]:['cable_loss_db']},'原数值事件声明未随应用保存');
+  equal(stored.nodes,graph.nodes,'元数据保存覆盖了节点或位置');
+  equal(stored.operating_modes,graph.operating_modes,'模式被改写');
+  for(const row of graph.connections.filter(e=>e.id!==opened.id))equal(stored.connections.find(e=>e.id===row.id),row,'误改另一条边');
+  checks.push('PA=0、来源去空白、频段成对；原损耗实际onChange/apply意图；真实PATCH/GET仅修改选中边');
+  await locate(opened.id);await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('取消不应泄漏');
+  await page.getByRole('button',{name:'取消',exact:true}).click();await locate(opened.id);
+  equal(await page.getByLabel('旧PA标称增益来源说明',{exact:true}).inputValue(),'操作员按铭牌录入，未校准','取消浅引用泄漏');
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  const hiddenMode=graph.operating_modes.find(m=>!(m.active_connections??[]).includes(opened.id));
+  if(hiddenMode){
+    await page.getByRole('textbox',{name:'操作模式',exact:true}).click();await page.getByRole('option',{name:hiddenMode.name,exact:true}).click();
+    await locate(opened.id);
+    equal(await page.getByRole('textbox',{name:'操作模式',exact:true}).inputValue(),hiddenMode.name,'定位擅自切换模式');
+    await page.locator(`.react-flow__edge[data-id="${opened.id}"].selected`).waitFor();
+    await page.getByText('当前模式隐藏连线（未切换模式）',{exact:false}).waitFor();
+    checks.push('PA清单含0；非当前模式按精确边ID打开并高亮，不切换模式');
+  }else await locate(opened.id);
+  await gain.fill('');await apply();await save(topology.id);
+  stored=await read(endpoint);equal(stored.connections.find(e=>e.id===opened.id).pa_gain_db,null,'清空未保存null');
+  checks.push('取消未泄漏元数据；PA清空准确保存null');
+  const normal=labs.find(l=>l.name==='PC04A4a标称甲');
+  const normalGraph=(await read(`/switch-topologies?lab_profile_id=${normal.id}`)).items[0];
+  const normalEndpoint=`/switch-topologies/${normalGraph.id}?lab_profile_id=${normal.id}`;
+  await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),normal.id);await page.reload();
+  await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
+  const chooseNode=async()=>{await page.getByRole('textbox',{name:'器件列表',exact:true}).fill('独立PA');await page.getByRole('option').filter({hasText:'独立PA'}).click();await page.getByRole('dialog',{name:'器件属性',exact:true}).waitFor()};
+  await chooseNode();const nodeGain=page.getByLabel('PA标称增益 (dB)',{exact:true});
+  equal(await nodeGain.inputValue(),'','新标称空值被填默认数');
+  await nodeGain.fill('-');
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='应用器件修改')?.disabled===true);
+  await nodeGain.fill('0');await page.getByLabel('PA标称增益来源说明',{exact:true}).fill('声明，非实测');
+  await page.getByRole('button',{name:'应用器件修改',exact:true}).click();await save(normalGraph.id);
+  const normalSaved=await read(normalEndpoint),pa=normalSaved.nodes.find(n=>n.id==='pa');
+  equal(pa.params.gain_db,0,'节点零丢失');equal(pa.params.unknown,{keep:1},'扩展参数丢失');
+  equal(pa.params.nominal_metadata.gain_db,{unit:'dB',source_note:'声明，非实测',frequency_range_mhz:null},'空频段不是null');
+  for(const node of normalGraph.nodes)equal(normalSaved.nodes.find(n=>n.id===node.id).position,node.position,'标称编辑修改了坐标');
+  equal(normalSaved.connections,normalGraph.connections,'保存补齐了稀疏边默认键');
+  await page.reload();await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await chooseNode();
+  equal(await nodeGain.inputValue(),'0','刷新后零未恢复');
+  checks.push('节点中间串拒绝、零与空频段保存/GET/刷新恢复，未知参数、坐标及参考边缺键保持');
+  await page.screenshot({path:'output/playwright/pc04a4a/task2-targeted-green.png',fullPage:true});
+  const result={checks,requests,caict:stored,normal:normalSaved};
+  await page.evaluate(result=>{window.__pc04a4aTask2Result=result},result);
+  console.log(JSON.stringify(result));
+}

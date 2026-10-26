@@ -50,9 +50,9 @@ export const SignalEdge = ({
     lossLabel = `${calibratedLoss?.toFixed(2)} dB (Cal)`;
     labelColor = 'teal';
   } else if (hasPA) {
-    // Show net gain: PA gain minus cable loss
+    // 仅作标称展示，不写回校准值或进入正式补偿。
     const netGain = paGain - (cableLoss ?? 0);
-    lossLabel = `PA ${paGain}dB | 净值 ${netGain.toFixed(1)}dB（标称，非实测）`;
+    lossLabel = `旧PA ${paGain}dB | 净值 ${netGain.toFixed(1)}dB（标称，非实测）`;
     labelColor = 'orange';
   } else {
     lossLabel = `${cableLoss?.toFixed(1) || 0} dB`;
