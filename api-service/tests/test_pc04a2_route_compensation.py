@@ -15,12 +15,12 @@ def test_incomplete_ce_binding_stays_unknown_and_outside_formal_chains(declarati
     from app.services.calibration.rf_chain_resolver import _binding_to_spec,resolve_declared_calibration_ce_port
     ce={'id':'ce','type':'channel_emulator','label':'Display F64','params':{}}
     probe={'id':'probe','type':'probe','params':{'probe_id':0,'polarization':'V'}}
-    pad={'id':'pad','type':'pad','label':'显示名','params':{}}
-    edge={'id':'last','source':'pad' if multihop else 'ce','target':'probe'}
+    pad={'id':'pad','type':'pad','label':'显示名','params':{'ports':['in','out']}}
+    edge={'id':'last','source':'pad' if multihop else 'ce','target':'probe',**({'source_pin':'out'} if multihop else {})}
     if declaration=='connection':edge['ce_port']=''
     if declaration=='params':ce['params']['ce_port']=''
     nodes=[ce,pad,probe] if multihop else [ce,probe]
-    edges=[{'id':'first','source':'ce','target':'pad'},edge] if multihop else [edge]
+    edges=[{'id':'first','source':'ce','target':'pad','target_pin':'in'},edge] if multihop else [edge]
     binding=_build_probe_binding(edge,{node['id']:node for node in nodes},edges)
     assert binding is not None and binding.ce_port==''
     assert _binding_to_spec(binding) is None  # 配置可读，不等于具备正式物理身份
@@ -84,7 +84,7 @@ async def test_declared_ce_port_not_display_label_drives_actual_target(client,co
         for n in topology_two_chains.nodes]
     if multihop:
         topology_two_chains.nodes=[*topology_two_chains.nodes,{'id':'pad','type':'pad','label':'显示衰减器','params':{'ports':['in','out']}}]
-        topology_two_chains.connections=[{**edge,'source':'pad'} if edge['id']=='conn_p0v' else edge
+        topology_two_chains.connections=[{**edge,'source':'pad','source_pin':'out'} if edge['id']=='conn_p0v' else edge
             for edge in topology_two_chains.connections]+[{'id':'feed-pad','source':'ce_b1','target':'pad','source_pin':'out','target_pin':'in','modes':['mimo_ota']}]
         topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal','active_connections':['feed-pad','conn_p0v','conn_p0h']}]
     db_session.commit()
@@ -114,7 +114,7 @@ async def test_real_multihop_mixed_freeze_reaches_compensation_once(client,confi
                 'unit':'dB','source_note':'标称声明，不是实测','frequency_range_mhz':[2500,2700]}}}},
         {'id':'nominal-pa','type':'amplifier','label':'标称PA','params':{'gain_db':20}},
         {'id':'nominal-antenna','type':'antenna','label':'标称天线','params':{'gain_dbi':15}}]
-    topology_two_chains.connections=[{**edge,**({'source':'pad-middle','calibrated_loss_db':3,'pa_gain_db':20} if edge['id']=='conn_p0v' else {})}
+    topology_two_chains.connections=[{**edge,**({'source':'pad-middle','source_pin':'out','calibrated_loss_db':3,'pa_gain_db':20} if edge['id']=='conn_p0v' else {})}
         for edge in topology_two_chains.connections]+[
         {'id':'feed-pad','source':'ce_b1','target':'pad-middle','source_pin':'out','target_pin':'in','modes':['mimo_ota']}]
     topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal',

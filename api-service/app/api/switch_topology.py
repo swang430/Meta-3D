@@ -151,7 +151,7 @@ def _validate_structure(nodes, connections, modes) -> None:
             if selected[-1].get('target') != node['id']:
                 raise ValueError('显式路径终端不属于此探头')
             # 只解释本声明选中的子图；其他模式分支不影响保存结构校验。
-            resolve_saved_rf_path(nodes, selected, ids[-1])
+            resolve_saved_rf_path(nodes, selected, ids[-1], check_internal_paths=False)
         except ValueError as exc:
             raise HTTPException(422, detail=f"探头 {node['id']} 的显式路径无效：{exc}") from exc
     for mode in mode_index.values():
@@ -640,7 +640,10 @@ def resolve_topology_paths(
     if mode not in [m["id"] for m in topology.operating_modes]:
         raise HTTPException(status_code=400, detail=f"Mode '{mode}' not found in topology")
         
-    paths = svc.resolve_paths(mode)
+    try:
+        paths = svc.resolve_paths(mode)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     
     response = []
     for path in paths:
@@ -673,7 +676,10 @@ def get_topology_calibration_matrix(
     if mode not in [m["id"] for m in topology.operating_modes]:
         raise HTTPException(status_code=400, detail=f"Mode '{mode}' not found in topology")
         
-    matrix = svc.get_calibration_matrix(mode)
+    try:
+        matrix = svc.get_calibration_matrix(mode)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     return CalibrationMatrixResponse(mode_id=mode, matrix=matrix)
 
 

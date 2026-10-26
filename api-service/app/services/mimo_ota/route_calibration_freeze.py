@@ -205,14 +205,20 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
         by_chain={row.connection_id:row for row in resolved_topology.probe_bindings}
         for row in frozen['route_entries']:
             identity=row.get('execution_route_identity')
-            if isinstance(identity,dict) and identity.get('switch_mappings'):
-                if by_chain[row['chain_id']].execution_route_identity!=identity:
+            actual_identity = by_chain[row['chain_id']].execution_route_identity
+            if (isinstance(identity,dict) and (identity.get('switch_mappings') or 'internal_paths' in identity) or
+                    isinstance(actual_identity,dict) and 'internal_paths' in actual_identity):
+                if actual_identity!=identity:
                     return 'path-loss actual switch route differs from execution freeze; create a new execution to review the saved route'
         return None
     try:
         current=resolve_rf_chains(db,UUID(frozen['lab_profile_id']),frozen['operating_mode'])
         routes={}
-        if any(row['execution_route_identity'] is not None for row in frozen['route_entries']):
+        from app.models.switch_topology import SwitchTopology
+        topology = db.get(SwitchTopology, UUID(current.topology_id)) if current.topology_id else None
+        has_internal = topology is not None and any('internal_paths' in (node.get('params') or {})
+            for node in topology.nodes or [])
+        if any(row['execution_route_identity'] is not None for row in frozen['route_entries']) or has_internal:
             routes={route.chain_id:route for route in list_route_selections(db,UUID(frozen['lab_profile_id']),
                 UUID(frozen['topology_id']),frozen['operating_mode'])}
         chains={row.chain_id:row for row in current.chains}
@@ -220,9 +226,11 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
         actual={(row.chain_id,row.ce_port,row.probe_id,row.polarization) for row in chains.values()}
         if current.topology_id!=frozen['topology_id'] or actual!=expected:
             return 'path-loss route identity changed; create a new execution to review the saved route'
-        if any(row['execution_route_identity'] is not None for row in frozen['route_entries']):
-            if any(row['execution_route_identity'] is not None and (row['chain_id'] not in routes or
-                _execution_route(routes[row['chain_id']])!=row['execution_route_identity']) for row in frozen['route_entries']):
+        if routes:
+            if any(row['chain_id'] not in routes or (row['execution_route_identity'] is not None or
+                    'internal_paths' in _execution_route(routes[row['chain_id']])) and
+                _execution_route(routes[row['chain_id']])!=row['execution_route_identity']
+                for row in frozen['route_entries']):
                 return 'path-loss route identity changed; create a new execution to review the saved route'
     except (LookupError,ValueError):
         return 'path-loss frozen route is no longer available; create a new execution to review the saved route'

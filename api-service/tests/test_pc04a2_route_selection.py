@@ -17,15 +17,15 @@ def graph(db_session, topology_two_chains):
         {'id':'pad1','type':'pad','label':'不是F64端口','params':{'ports':['in','out']}},
         {'id':'probe1v','type':'probe','label':'探头','params':{'probe_id':1,'polarization':'V'}},
         {'id':'reference1','type':'reference_antenna','label':'参考天线','params':{'connection_scope':'calibration','serial':'REF1'}},
-        {'id':'rx-cable1','type':'receive_cable','label':'接收线','params':{'connection_scope':'calibration','source':'2595MHz记录'}},
+        {'id':'rx-cable1','type':'receive_cable','label':'接收线','params':{'connection_scope':'calibration','source':'2595MHz记录','ports':['in','out']}},
         {'id':'sa1','type':'signal_analyzer','label':'分析仪','params':{'connection_scope':'calibration'}},
     ]
     topology_two_chains.connections = [
         {'id':'ce-pad','source':'ce1','target':'pad1','source_pin':'out','target_pin':'in'},
         {'id':'pad-probe','source':'pad1','target':'probe1v','source_pin':'out','target_pin':'in'},
         {'id':'probe-reference','source':'probe1v','target':'reference1'},
-        {'id':'reference-cable','source':'reference1','target':'rx-cable1'},
-        {'id':'cable-sa','source':'rx-cable1','target':'sa1'},
+        {'id':'reference-cable','source':'reference1','target':'rx-cable1','target_pin':'in'},
+        {'id':'cable-sa','source':'rx-cable1','target':'sa1','source_pin':'out'},
     ]
     topology_two_chains.operating_modes = [
         {'id':'mimo_ota','name':'正常','active_connections':['ce-pad','pad-probe']},

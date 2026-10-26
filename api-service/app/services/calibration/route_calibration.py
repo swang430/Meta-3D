@@ -41,7 +41,10 @@ def route_switch_steps(db,topology,path_nodes,path_edges,lab=None):
     from app.models.instrument import InstrumentCategory,InstrumentConnection
     from app.services.declared_rf_routes import selected_switch_mappings
     declared=(path_nodes[-1].get('params') or {}).get('rf_path_selection')
-    if not declared or not declared['switch_mappings']:
+    switches = [node for node in path_nodes[1:-1] if node.get('type') == 'switch_slot']
+    if switches and (not declared or not declared['switch_mappings']):
+        raise ValueError('开关路径必须保存原开关映射声明')
+    if not switches:
         return []
     category=db.get(InstrumentCategory,topology.switch_category_id)
     connection=db.query(InstrumentConnection).filter_by(category_id=topology.switch_category_id).one_or_none()
@@ -149,6 +152,21 @@ def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, 
             if len(next_edges) > 1:
                 raise ValueError('参考测量段存在多个可达分支，不能确定唯一固定接线')
             for edge in next_edges:
+                if parent_id != probe['id']:
+                    parent = nodes[parent_id]
+                    previous = next(e for e in ref_edges if e['target'] == parent_id)
+                    # 无字段的唯一虚拟参考模型是原模型边界，不扩张物理双端白名单。
+                    params = parent.get('params') or {}
+                    virtual_legacy = (parent.get('type') in ('air_path', 'reference_antenna') and
+                        'internal_paths' not in params and
+                        ('ports' not in params or isinstance(params['ports'], list) and len(params['ports']) <= 2) and
+                        sum(e['target'] == parent_id for e in calibration) == 1)
+                    if not virtual_legacy:
+                        from app.schemas.topology_internal_paths import validate_internal_traversals
+                        validate_internal_traversals([probe, parent, nodes[edge['target']]],
+                            [previous, edge], active_connections=calibration)
+                    if parent.get('type') == 'switch_slot':
+                        raise ValueError('参考段开关缺少原探头路径映射，不能推定选通')
                 target = nodes[edge['target']]
                 if target['id'] in visited or target['id'] in seen:
                     raise ValueError('参考测量段存在回路或回接正常测试通路')

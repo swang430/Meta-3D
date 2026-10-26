@@ -88,6 +88,8 @@ class TopologyService:
                            通常从 SwitchTopology 模型解析而来
         """
         self._raw = topology_data
+        self._raw_connections = {edge['id']: edge for edge in topology_data.get('connections', [])}
+        self._raw_nodes = {node['id']: node for node in topology_data.get('nodes', [])}
 
         # 构建节点索引
         self._nodes: Dict[str, TopologyNode] = {}
@@ -188,8 +190,40 @@ class TopologyService:
                 results=paths,
             )
 
+        # 显式路线只返回选中序列；旧 path_id 不足以表达同端点多路径时拒绝歧义。
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        selected = {}
+        active = [self._raw_connections[ident] for ident in active_conn_ids if ident in self._raw_connections]
+        for node in self._raw_nodes.values():
+            declaration = (node.get('params') or {}).get('rf_path_selection')
+            if node.get('type') == 'probe' and declaration is not None:
+                ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
+                if not isinstance(ids, list) or not ids or any(not isinstance(ident, str) for ident in ids):
+                    raise ValueError(f"探头 {node['id']} 保存显式路径缺少连接")
+                selected[node['id']] = ids
+                if not set(ids) <= active_conn_ids:
+                    continue
+                resolve_saved_rf_path(self._raw_nodes, active, ids[-1])
+        paths = [path for path in paths if path.target_node.id not in selected or
+                 [edge.id for _, edge in path.hops] == selected[path.target_node.id]]
+        if len({path.path_id for path in paths}) != len(paths):
+            raise ValueError('同端点存在多条路径，请保存探头显式路径选择')
         logger.info(f"Resolved {len(paths)} paths for mode '{mode}'")
         return paths
+
+    def _check_transition(self, node_id, incoming_id, outgoing_id, active_ids):
+        """只以原保存边的 pin 核验；展示对象补的 out/in 不是接线证据。"""
+        from app.schemas.topology_internal_paths import validate_internal_traversals
+        node = self._raw_nodes[node_id]
+        if node.get('type') == 'switch_slot' and 'internal_paths' not in (node.get('params') or {}):
+            raise ValueError(f'器件 {node_id} 开关映射未解析，不能推定贯通')
+        incoming, outgoing = self._raw_connections[incoming_id], self._raw_connections[outgoing_id]
+        if incoming['source'] not in self._raw_nodes or outgoing['target'] not in self._raw_nodes:
+            raise ValueError(f'器件 {node_id} 相邻连线引用不存在的节点')
+        validate_internal_traversals([self._raw_nodes[incoming['source']], node,
+            self._raw_nodes[outgoing['target']]], [incoming, outgoing],
+            active_connections=[self._raw_connections[ident] for ident in active_ids
+                                if ident in self._raw_connections])
 
     def _dfs_paths(
         self,
@@ -255,6 +289,11 @@ class TopologyService:
                 neighbor = self._nodes.get(neighbor_id)
                 if not neighbor:
                     continue
+                if path_hops:
+                    try:
+                        self._check_transition(current.id, path_hops[-1][1].id, conn.id, active_conn_ids)
+                    except ValueError:
+                        continue
 
                 path_hops.append((neighbor, conn))
                 self._dfs_paths(
@@ -303,18 +342,46 @@ class TopologyService:
         if source_id not in self._nodes or target_id not in self._nodes:
             return None
 
-        queue = deque([(source_id, [])])
-        visited = {source_id}
+        # 旧接口没有mode参数：分别寻找每个有效模式中的完整路径，不能拼跨模式连线。
+        mode_edges = [frozenset(edge.id for edge in self.get_mode_connections(mode)) for mode in self._modes]
+        if not mode_edges:
+            mode_edges = [frozenset(self._raw_connections)]
+        queue = deque((source_id, [], active_ids) for active_ids in mode_edges)
+        visited = {(source_id, None, active_ids) for active_ids in mode_edges}
+        declaration = (self._raw_nodes[target_id].get('params') or {}).get('rf_path_selection')
+        selected_ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
+        if declaration is not None and (not isinstance(selected_ids, list) or not selected_ids or
+                any(not isinstance(ident, str) for ident in selected_ids)):
+            return None
 
         while queue:
-            current, path = queue.popleft()
+            current, path, active_ids = queue.popleft()
             if current == target_id:
+                declaration = (self._raw_nodes[current].get('params') or {}).get('rf_path_selection')
+                if declaration is not None:
+                    ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
+                    if ids != [edge.id for edge in path]:
+                        continue
                 return path
+            if self._nodes[current].type in {'probe', 'antenna', 'termination'} and path:
+                continue
 
             for conn, neighbor_id in self._adjacency.get(current, []):
-                if neighbor_id not in visited:
-                    visited.add(neighbor_id)
-                    queue.append((neighbor_id, path + [conn]))
+                if conn.id not in active_ids or neighbor_id not in self._nodes:
+                    continue
+                if selected_ids is not None and conn.id not in selected_ids:
+                    continue
+                if path:
+                    try:
+                        self._check_transition(current, path[-1].id, conn.id, active_ids)
+                    except ValueError:
+                        continue
+                raw_pin = self._raw_connections[conn.id].get('target_pin')
+                # 坏pin只合并到不可证明的状态；后续穿越仍按原JSON拒绝，不补in。
+                state = (neighbor_id, raw_pin if isinstance(raw_pin, str) else None, active_ids)
+                if state not in visited:
+                    visited.add(state)
+                    queue.append((neighbor_id, path + [conn], active_ids))
 
         return None
 
@@ -459,6 +526,24 @@ class TopologyService:
                     message=f"连线 '{conn.id}' 的电缆损耗异常高 ({conn.cable_loss_db} dB > 10 dB)",
                 ))
 
+        # 与 DFS/BFS 共用原始 pin 来源；被跳过的局部分支留下节点和原连线定位。
+        for mode_id in self._modes:
+            active_ids = {edge.id for edge in self.get_mode_connections(mode_id)}
+            for node_id, node in self._nodes.items():
+                if node.type in {'probe', 'antenna'}:
+                    continue
+                incoming = [edge for edge in self._connections.values()
+                            if edge.id in active_ids and edge.target == node_id]
+                outgoing = [edge for edge in self._connections.values()
+                            if edge.id in active_ids and edge.source == node_id]
+                for before in incoming:
+                    for after in outgoing:
+                        try:
+                            self._check_transition(node_id, before.id, after.id, active_ids)
+                        except ValueError as exc:
+                            issues.append(ValidationIssue(severity='error', node_id=node_id,
+                                connection_id=after.id,
+                                message=f'模式 {mode_id} 器件 {node_id} 连线 {before.id}/{after.id}：{exc}'))
         return issues
 
     # ============================================================
