@@ -50,7 +50,7 @@ export function CalibrationScopeCard({ labId, chamberId }: { labId: string; cham
           <Table.ScrollContainer minWidth={520}>
             <Table><Table.Thead><Table.Tr><Table.Th>链身份</Table.Th><Table.Th>CE 端口</Table.Th><Table.Th>探头</Table.Th><Table.Th>极化</Table.Th><Table.Th>拓扑声明损耗 dB（非本片实测）</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>{value.payload.chains.map((chain, index) => <Table.Tr key={`${chain.chain_id}-${index}`}>
-                <Table.Td>{chain.chain_id}</Table.Td><Table.Td>{chain.ce_port}</Table.Td><Table.Td>{chain.probe_id}</Table.Td><Table.Td>{chain.polarization}</Table.Td><Table.Td>{chain.cable_loss_db}</Table.Td>
+                <Table.Td>{chain.chain_id}</Table.Td><Table.Td>{chain.ce_port}</Table.Td><Table.Td>{chain.probe_id}</Table.Td><Table.Td>{chain.polarization}</Table.Td><Table.Td>{chain.cable_loss_db ?? '未知'}</Table.Td>
               </Table.Tr>)}</Table.Tbody></Table>
           </Table.ScrollContainer>
           <details><summary>查看配置明细（几何、器件、保存资源与绑定、探头、拓扑）</summary>

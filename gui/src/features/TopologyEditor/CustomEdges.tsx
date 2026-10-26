@@ -25,7 +25,9 @@ export const SignalEdge = ({
 
   // Calculate visual properties
   const calibratedLoss = data?.calibrated_loss_db as number | undefined | null;
-  const cableLoss = data?.cable_loss_db as number | undefined;
+  const cableLoss = typeof data?.cable_loss_db === 'number' && Number.isFinite(data.cable_loss_db)
+    ? data.cable_loss_db : undefined;
+  const owner = data?.loss_owner_connection_id as string | undefined;
   const paGain = typeof data?.pa_gain_db === 'number' && Number.isFinite(data.pa_gain_db)
     ? data.pa_gain_db : undefined;
   const direction = data?.direction as string | undefined;
@@ -47,16 +49,19 @@ export const SignalEdge = ({
   let lossLabel: string;
   let labelColor: string;
 
-  if (isCalibrated) {
+  if (owner) {
+    lossLabel = `旧值保留，不参与本组计算 · 归属 ${owner}`;
+    labelColor = 'gray';
+  } else if (isCalibrated) {
     lossLabel = `${calibratedLoss?.toFixed(2)} dB (Cal)`;
     labelColor = 'teal';
   } else if (hasPA) {
     // 仅作标称展示，不写回校准值或进入正式补偿。
-    const netGain = paGain - (cableLoss ?? 0);
-    lossLabel = `旧PA ${paGain}dB | 净值 ${netGain.toFixed(1)}dB（标称，非实测）`;
+    const netGain = cableLoss === undefined ? '未知' : `${(paGain - cableLoss).toFixed(1)}dB`;
+    lossLabel = `旧PA ${paGain}dB | 净值 ${netGain}（标称，非实测）`;
     labelColor = 'orange';
   } else {
-    lossLabel = `${cableLoss?.toFixed(1) || 0} dB`;
+    lossLabel = cableLoss === undefined ? '损耗未知' : `${cableLoss.toFixed(1)} dB`;
     labelColor = 'blue';
   }
 

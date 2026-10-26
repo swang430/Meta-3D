@@ -46,7 +46,7 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 | `TopologyService.__init__/_dfs_paths/get_end_to_end_loss/get_calibration_matrix/validate/to_dict` | Task1求和改取所选路径中唯一owner集合，缺归属仍原逐边；有效量未知总量None，matrix compensation也None；response同步可空 | 显式同线缆2+2变2而不是4/None；没有声明仍4；calibrated0优先；不影响phase求和 |
 | `switch_orchestrator.py::_build_probe_binding`→`rf_chain_resolver.py::_binding_to_spec` | Task1保留终端边语义，仅当该末边显式引用owner时换到已选路径内owner；不改为多段求和 | owner0不退到alias旧值，owner未知不补alias值；未知chain不drop、不补0 |
 | `api/lab_profile.py::RFChainEntry`→`gui/src/api/labProfileService.ts::RFChainEntry`→`CalibrationScopeCard`、`RFChainDiagramPanel` | Task1后端和实际手写TS均改nullable，生成类型不能替代手写类型 | 列表保留身份，未知数值不崩/不显示0，TS不再误导无条件toFixed |
-| `calibration/configuration_scope.py`与`schemas/calibration_scope.py::ScopeChain` | Task1可空chain，不改scope版本/摘要算法；Task2转换声明按既有params摘要进入current | 旧已知原值摘要不变，null新声明可产生真实差异但只提示复核；历史baseline解析不查当前补值 |
+| `calibration/configuration_scope.py`与`schemas/calibration_scope.py::ScopeChain` | Task1可空chain，不改scope版本/摘要算法；Task2转换声明按既有params摘要进入current | 真实旧量值不因新键投影漂移；下述两类旧scope占位0纠正允许当前差异。null新声明只提示复核；历史baseline解析不查当前补值 |
 | `path_loss_calibration_service.py::start_calibration_for_lab_profile`的chain.cable_loss_db公式/float消费者 | Task1缺量值在硬件lease前返回原失败结果，不生成测量/证书；后续单独参数cable_loss_db与chamber.typical_cable_loss_db不是同一来源 | 未知链不能执行`float(None)`或作为0；已知0照常工作；全部链先核再碰HAL |
 | `route_calibration.py`/`fixed_route_method.py`/`fixed_route_acquisition.py`→`route_batch_plan.py`/jobs | Task1仅将新loss_owner_connection_id排除参考整边身份投影；接收线缆请求仍独立，不读本字段或自动填nominal | 单改量值归属不改变正常/参考route_digest，confirmed整链仍只算一次；实改ports/pair仍沿原门 |
 | `declared_rf_routes.py::rf_execution_identity`→`route_calibration_freeze.py`→path_loss_preflight/measure→channel_engine_client | 身份只读物理所选路径，不加入量值归属字段；Task4回归，不改资格/历史/正式补偿算法 | 原冻结/报告前后逐字一致；声明同一线缆不自动撤证或使confirmed失配；实际端点变更仍拒绝 |
@@ -82,6 +82,10 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 **摘要与失效边界：** 新归属键进入configuration_scope的当前图白名单，比较只提示复核；不要改scope版本或历史payload。它不改物理接线，故不加入rf_execution_identity、不改变正常route_digest；参考route_digest现整边投影应仅额外排除这一个新键（快照本身照存），正常/参考结果对称。已有confirmed整链与证书不被自动撤销/失效；既有执行冻结及报告不追当前owner。新旧per-chain方法创建新测量时使用当前明确owner，新执行confirmed值仍只沿原冻结一次。实际端点/内部pair/开关映射改变仍沿原身份不匹配门，不通过归属豁免。
 
 **错判代价：** 把两条实物误认为同一条会少计损耗，故绝不自动识别，必须操作员逐组明确；漏声明只保留原值与可见重复风险。owner缺失/半组/循环若兜底可能错误功率补偿，故拒绝/未知，不以alias旧值补救。保存“归属”不等于认证这条物理事实，现场B仍未验。
+
+F4裁决：Task1将实际所选正常及参考路径的显式新归属声明纳入当前scope可比较投影，覆盖active_connections为空时按边modes回退。仅投影存在的新键；无声明不新增null键、不因新归属投影漂移旧scope（下述旧占位纠正除外），不扩大全部参考字段。历史baseline按原payload验证，不回填当前声明。
+
+Task1补充裁决（scope旧占位例外）：`build_calibration_scope(topology_id=...)`与`build_selected_route_calibration_scope`原来仅以四身份字段构造RFChainSpec，默认0不是实际量值。两入口必须复用本片所选路径末边/owner helper读取真实值（非零/0/None），不得为维持错误0造兼容算法。因此此两类当前scope允许0→真实量值/None的纠正差异，仅提示复核；“旧已知摘要不变”不适用于原虚假占位。历史baseline原payload/hash不改、不回填；物理route identity/confirmed不变、不自动撤证。错判代价：保留占位会把未知或非零说成零，必须纠正当前声明；代价仅增加真实的配置复核提示，不改变硬件量值或历史。
 
 ### 0.3 明确的null契约
 

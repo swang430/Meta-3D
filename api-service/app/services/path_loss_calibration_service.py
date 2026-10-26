@@ -572,6 +572,10 @@ class ProbePathLossCalibrationService:
             )
 
         warnings: List[str] = list(resolution.warnings)
+        unknown = [chain.chain_id for chain in resolution.chains if chain.cable_loss_db is None]
+        if unknown:
+            return CalibrationResult(success=False,
+                message=f'路径损耗未知，不能开始需要线缆量值的校准：{", ".join(unknown)}', warnings=warnings)
         probe_path_losses: Dict[str, Dict[str, Any]] = {}
         path_loss_db_by_rf_chain: Dict[str, Dict[str, Any]] = {}
         # agent #206 F2: 入口清零防跨轮残留 (同 start_calibration)

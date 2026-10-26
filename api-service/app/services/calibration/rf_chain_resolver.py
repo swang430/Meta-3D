@@ -49,7 +49,7 @@ class RFChainSpec:
     ce_port: str
     probe_id: int
     polarization: str  # "V" / "H"
-    cable_loss_db: float = 0.0  # from connection.calibrated_loss_db or .cable_loss_db
+    cable_loss_db: Optional[float] = None  # 未声明不作为零值
     execution_route_identity: Optional[Dict[str, Any]] = None  # 正式解析所选穿越身份，不扫描全图声明
 
 
@@ -202,6 +202,6 @@ def _binding_to_spec(binding: ProbePortBinding) -> Optional[RFChainSpec]:
         ce_port=ce_port,
         probe_id=int(binding.probe_id),
         polarization=binding.polarization.upper(),
-        cable_loss_db=float(binding.cable_loss_db or 0.0),
+        cable_loss_db=None if binding.cable_loss_db is None else float(binding.cable_loss_db),
         execution_route_identity=binding.execution_route_identity,
     )

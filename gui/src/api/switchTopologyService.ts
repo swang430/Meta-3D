@@ -40,7 +40,8 @@ export interface TopologyConnection {
   target: string;
   target_pin?: string;
   cable_type?: string;
-  cable_loss_db?: number;
+  cable_loss_db?: number | null;
+  loss_owner_connection_id?: string;
   pa_gain_db?: JsonValue;
   nominal_metadata?: JsonValue;
   ce_port?: string;

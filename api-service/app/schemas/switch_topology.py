@@ -38,7 +38,8 @@ class TopologyConnection(BaseModel):
     target: str
     target_pin: str = "in"
     cable_type: str = ""
-    cable_loss_db: float = 0.0
+    cable_loss_db: float | None = Field(default=None, allow_inf_nan=False, description='标称线缆损耗(dB)，null/缺键为未知；显式0为已声明零值，不代表校准实测。新增/变更为有限非负number或null，旧未修改typed字符串沿保形契约。')
+    loss_owner_connection_id: str | None = Field(default=None, description='仅显式同线缆两侧引用另一原边量值；持久化不接受null/self/环/半组，缺键沿旧语义，不授予实物或校准资格。')
     pa_gain_db: JsonValue = Field(default=None, description=(
         '标称PA增益(dB)，非实测。新增/变更只接受有限number或null；'
         'PATCH仅兼容同Lab同ID同键、JSON类型和值均未改变的历史原值。'))
@@ -141,7 +142,7 @@ class SignalPathResponse(BaseModel):
     path_id: str
     source_node: TopologyNode
     target_node: TopologyNode
-    total_loss_db: float
+    total_loss_db: float | None
     total_phase_deg: float
     calibration_status: str
     hop_count: int

@@ -193,7 +193,7 @@ class RFChainEntry(BaseModel):
     ce_port: str = Field(description="Source-side label, e.g. 'B1.1' for the channel emulator port")
     probe_id: int
     polarization: str
-    cable_loss_db: float = Field(description="Per-connection cable loss from the topology")
+    cable_loss_db: float | None = Field(description="拓扑连线损耗，null为未知，不是零")
 
 
 class RFChainResolutionResponse(BaseModel):

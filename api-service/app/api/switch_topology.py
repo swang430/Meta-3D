@@ -27,11 +27,12 @@ from app.schemas.switch_topology import (
 from app.services.topology_service import TopologyService
 from app.schemas.topology_nominal import (
     MISSING, CONNECTION_NUMERIC_FIELDS, same_json, validate_nominal_write,
-    preserve_graph_rows, normalize_nominal_metadata,
+    preserve_graph_rows, normalize_nominal_metadata, validate_number,
 )
 from app.services.declared_rf_routes import resolve_saved_rf_path
 from app.schemas.topology_ports import validate_port_write
 from app.schemas.topology_internal_paths import validate_internal_path_write
+from app.schemas.topology_loss_ownership import validate_loss_owner_write
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
@@ -61,6 +62,11 @@ def preserve_connection_rows(raw_rows, normalized_rows, previous_rows, declarati
             equal_raw = same_json(value, prior)
             equal_display = (key in CONNECTION_NUMERIC_FIELDS and key in old
                              and same_json(value, old_normalized[key]))
+            if key == 'cable_loss_db' and (key in declared or not (equal_raw or equal_display)):
+                try:
+                    validate_number(value, key=key, nonnegative=True)
+                except ValueError as exc:
+                    raise HTTPException(422, detail=str(exc)) from exc
             if key not in declared and (equal_raw or equal_display):
                 result[key] = deepcopy(prior)
             elif key == 'nominal_metadata':
@@ -99,6 +105,13 @@ def _validate_numeric_declarations(declarations, raw_connections):
         if (ident not in by_id or len(keys) != len(set(keys)) or
                 any(key not in CONNECTION_NUMERIC_FIELDS or key not in by_id[ident] for key in keys)):
             raise HTTPException(422, detail='数值声明必须引用本次提交的连线与数值字段，且不得重复')
+
+
+def _validate_loss_owners(nodes, connections, modes, **kwargs):
+    try:
+        validate_loss_owner_write(nodes, connections, modes, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 def _validate_structure(nodes, connections, modes) -> None:
@@ -356,6 +369,7 @@ def create_switch_topology(
     _validate_structure(nodes_data, connections_data, modes_data)
     _validate_ports(nodes_data, connections_data)
     _validate_internal_paths(nodes_data, connections_data, modes_data)
+    _validate_loss_owners(nodes_data, connections_data, modes_data)
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -454,6 +468,15 @@ def import_topology_from_template(
 
     generate = _load_template(template_id)
     topo_data = generate()
+    # 模板沿4a保留typed旧数值字符串；新增非法量值必须早于替换旧行/默认位写入。
+    try:
+        for edge in topo_data.get('connections', []):
+            if 'cable_loss_db' in edge:
+                value = edge['cable_loss_db']
+                validate_number(float(value) if isinstance(value, str) else value,
+                                key='cable_loss_db', nonnegative=True)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
                         topo_data.get('operating_modes', []))
     _validate_nominal(topo_data.get('nodes', []), topo_data.get('connections', []))
@@ -471,6 +494,8 @@ def import_topology_from_template(
                              topo_data.get('operating_modes', []), allow_legacy_missing=True)
 
     replaced_ids=[]
+    _validate_loss_owners(topo_data.get('nodes', []), topo_data.get('connections', []),
+                          topo_data.get('operating_modes', []))
     if replace_existing:
         # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
         existing=db.query(SwitchTopology).filter(
@@ -561,6 +586,8 @@ def update_switch_topology(
     _validate_internal_paths(nodes_data, connections_data,
         update_data.get('operating_modes', topology.operating_modes), previous_nodes=topology.nodes,
         previous_connections=topology.connections, previous_modes=topology.operating_modes)
+    _validate_loss_owners(nodes_data, connections_data,
+        update_data.get('operating_modes', topology.operating_modes), previous_connections=topology.connections)
 
     # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
     # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；

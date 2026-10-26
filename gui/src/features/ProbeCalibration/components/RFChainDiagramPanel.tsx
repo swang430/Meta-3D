@@ -284,7 +284,7 @@ export function RFChainDiagramPanel() {
                     <Code>{c.ce_port}</Code>
                     <IconArrowRight size={14} color="var(--mantine-color-gray-6)" />
                     <Badge color="gray" variant="light" size="sm">
-                      cable {c.cable_loss_db.toFixed(2)} dB
+                      cable {c.cable_loss_db == null ? '未知' : c.cable_loss_db.toFixed(2)} dB
                     </Badge>
                     <IconArrowRight size={14} color="var(--mantine-color-gray-6)" />
                     <Badge

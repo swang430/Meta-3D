@@ -143,7 +143,7 @@ export interface RFChainEntry {
   ce_port: string
   probe_id: number
   polarization: string
-  cable_loss_db: number
+  cable_loss_db: number | null
 }
 
 export interface RFChainResolutionResponse {

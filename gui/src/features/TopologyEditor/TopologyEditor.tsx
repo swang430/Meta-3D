@@ -208,6 +208,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         type: 'signal',
         data: { 
           cable_loss_db: c.cable_loss_db,
+          loss_owner_connection_id: c.loss_owner_connection_id,
           calibrated_loss_db: c.calibrated_loss_db,
           pa_gain_db: c.pa_gain_db,
           direction: c.direction,
@@ -658,7 +659,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             />
 
             <Divider label="电缆参数 (可编辑)" labelPosition="center" />
-            <Text size="xs">线缆节点不另计损耗；同一物理线缆的损耗只填一条相邻连线，另一条保持0。整条实测校准在校准面板采用，不填此处。</Text>
+            <Text size="xs">线缆节点不另计损耗；未知请留空，不用0代替。只有明确声明同一物理线缆归属的两侧才共用owner原值；未声明仍逐边参与。整条实测校准在校准面板采用，不填此处。</Text>
+            {selectedEdge.loss_owner_connection_id && <Group><Text size="xs">旧值保留、不参与本组计算；量值归属：{selectedEdge.loss_owner_connection_id}</Text>
+              <Button size="xs" variant="subtle" onClick={()=>openConnection(selectedEdge.loss_owner_connection_id!)}>定位owner</Button></Group>}
 
             <TextInput
               label="电缆类型"
@@ -668,9 +671,10 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             />
             <NumberInput
               label="标称电缆损耗 (dB)"
-              value={selectedEdge.cable_loss_db ?? 0}
-              disabled={editingBlocked}
-              onChange={(val) => updateConnectionParam('cable_loss_db', val)}
+              value={selectedEdge.cable_loss_db ?? ''}
+              placeholder="未知"
+              disabled={editingBlocked || !!selectedEdge.loss_owner_connection_id}
+              onChange={(val) => updateConnectionParam('cable_loss_db', val === '' ? null : val)}
               decimalScale={2}
               step={0.1}
               min={0}

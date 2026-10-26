@@ -225,6 +225,7 @@ def _build_probe_binding(
 
     source_id = connection.get("source")
     source = nodes_by_id.get(source_id) if source_id else None
+    path_edges = []
     declared_ce_port = connection.get("ce_port")
     ce_port_label = (
         declared_ce_port
@@ -304,11 +305,14 @@ def _build_probe_binding(
     # 保留正式所选路径的完整身份，供冻结核对；普通旧链仍不凭此获得校准资格。
     from app.services.declared_rf_routes import rf_execution_identity
     identity = rf_execution_identity(path_nodes, path_edges) if source is not None else {}
+    from app.services.topology_loss import effective_connection_loss, loss_source_for_terminal
+    loss_source = loss_source_for_terminal(list(nodes_by_id.values()), active_connections or path_edges,
+        [edge['id'] for edge in path_edges]) if path_edges else connection
     return ProbePortBinding(
         ce_port=str(ce_port_label),
         probe_id=int(probe_id) if probe_id is not None else None,
         polarization=polarization,
         connection_id=connection.get("id"),
-        cable_loss_db=connection.get("calibrated_loss_db") or connection.get("cable_loss_db"),
+        cable_loss_db=effective_connection_loss(loss_source),
         execution_route_identity=identity or None,
     )
