@@ -228,7 +228,7 @@ class SwitchTopologyResponse(SwitchTopologyBase):
 - 修改 `TopologyEditor.tsx`、`CustomEdges.tsx`、`CustomNodes.tsx`、`gui/src/api/switchTopologyService.ts`：原入口接线、旧PA定位、标注及类型镜像；不拆其它编辑器功能。
 - 修改 `api/openapi.yaml`、生成 `gui/src/types/api.generated.ts`；测试放任务各自列出的文件。`topologyDraft.ts`只复用，若无必须改动不触碰。
 
-## 2. Task 1：类型化写入、真实往返与元数据身份边界
+## Task 1: 类型化写入、真实往返与元数据身份边界
 
 **Files:** 上述三个后端schema/API文件、`route_calibration.py`；`api/openapi.yaml`、`gui/src/types/api.generated.ts`、`switchTopologyService.ts`；`TopologyEditor.tsx`/`CustomEdges.tsx`仅传输类型收窄与原数值控件意图接线，不新增PA表单；新测试 `api-service/tests/test_pc04a4a_nominal_properties.py`、`api-service/tests/test_pc04a4a_nominal_identity.py`、`gui/test/topologyNominalTransport.test.ts`。
 
@@ -351,7 +351,7 @@ def test_source_metadata_does_not_change_existing_route_identity(client, configu
 - [ ] 变异实跑：临时移除写校验→非法写测试RED；临时恢复新元数据参与身份→元数据正例RED；恢复正确代码后GREEN。仅修改本片代码，用apply_patch还原，保存diff和测试末行，不用reset覆盖用户修改。
 - [ ] 审查Task1后精确`git add`上述文件，提交 `feat: 补齐拓扑标称参数写入契约`；不push，等待整片验证。
 
-## 3. Task 2：原抽屉标称字段、旧PA定位与真实标注
+## Task 2: 原抽屉标称字段、旧PA定位与真实标注
 
 **Files:** 新`nominalProperties.ts`/`NominalPropertyFields.tsx`；修改`TopologyEditor.tsx`/`CustomNodes.tsx`/`CustomEdges.tsx`；新`gui/test/nominalProperties.test.ts`；本任务先建立`api-service/tests/pc04a4a_browser_fixture.py`、`gui/test/pc04a4aNominalProperties.browser.js`、`gui/test/pc04a4a.vite.config.ts`作为浏览器RED前置，Task3沿用而非再创建。
 
@@ -399,7 +399,7 @@ export function parseOptionalNominalNumber(value: number|string): number|null {
 - [ ] GREEN：`npx --yes tsx --test test/nominalProperties.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts test/topologyOperationalLabContext.test.ts test/pc04a2RouteCalibration.test.ts src/features/TopologyEditor/baseStationPortsTruth.test.ts`；`npm run build`。核心变异把null/0处理换成`value || null`应RED；恢复后GREEN。
 - [ ] Task2规格/质量审查后精确提交 `feat: 支持器件标称属性与旧PA边编辑`。不用无关重构消除已有lint/build警告。
 
-## 4. Task 3：真实API浏览器与完整回归收口
+## Task 3: 真实API浏览器与完整回归收口
 
 **Files:** 沿用Task2已建立的 `api-service/tests/pc04a4a_browser_fixture.py`（只造隔离数据）、`gui/test/pc04a4aNominalProperties.browser.js`、`gui/test/pc04a4a.vite.config.ts`（只测试专用代理）；新增 `docs/validation/2026-10-26-pc04a4a-nominal-properties.md` 实际验证摘要；完成后只更新roadmap本片状态/计划复选框。
 
