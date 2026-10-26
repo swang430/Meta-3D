@@ -91,9 +91,14 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
     chains.update(routes)
     for chain in chains.values():
         route=routes.get(chain.chain_id)
+        execution_identity=_execution_route(route) if route else chain.execution_route_identity
+        # 采集解析不可用不抹掉已验证的正式穿越；无新声明的旧兼容链仍保持空身份。
+        if route is None and not (isinstance(execution_identity,dict) and
+                (execution_identity.get('switch_mappings') or 'internal_paths' in execution_identity)):
+            execution_identity=None
         entry=dict(chain_id=chain.chain_id,ce_port=chain.ce_port,probe_id=chain.probe_id,
             polarization=chain.polarization,route_digest=route.route_digest if route else None,
-            execution_route_identity=_execution_route(route) if route else None,
+            execution_route_identity=execution_identity,
             source_kind='unavailable',source_id=None,method=None,reference_plane=None,
             value_db=None,measurement_provenance='unknown',certification_status='unknown',reason='missing_coverage')
         candidates=[]
@@ -207,30 +212,24 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
             identity=row.get('execution_route_identity')
             actual_identity = by_chain[row['chain_id']].execution_route_identity
             if (isinstance(identity,dict) and (identity.get('switch_mappings') or 'internal_paths' in identity) or
-                    isinstance(actual_identity,dict) and 'internal_paths' in actual_identity):
+                    isinstance(actual_identity,dict) and (actual_identity.get('switch_mappings') or 'internal_paths' in actual_identity)):
                 if actual_identity!=identity:
                     return 'path-loss actual switch route differs from execution freeze; create a new execution to review the saved route'
         return None
     try:
         current=resolve_rf_chains(db,UUID(frozen['lab_profile_id']),frozen['operating_mode'])
-        routes={}
-        # 只有正式解析实际选中的中间穿越才能触发新身份核对；源端/断开节点声明不参与。
-        has_internal = any(isinstance(chain.execution_route_identity,dict) and
-            'internal_paths' in chain.execution_route_identity for chain in current.chains)
-        if any(row['execution_route_identity'] is not None for row in frozen['route_entries']) or has_internal:
-            routes={route.chain_id:route for route in list_route_selections(db,UUID(frozen['lab_profile_id']),
-                UUID(frozen['topology_id']),frozen['operating_mode'])}
         chains={row.chain_id:row for row in current.chains}
-        chains.update(routes)
         actual={(row.chain_id,row.ce_port,row.probe_id,row.polarization) for row in chains.values()}
         if current.topology_id!=frozen['topology_id'] or actual!=expected:
             return 'path-loss route identity changed; create a new execution to review the saved route'
-        if routes:
-            if any(row['chain_id'] not in routes or (row['execution_route_identity'] is not None or
-                    'internal_paths' in _execution_route(routes[row['chain_id']])) and
-                _execution_route(routes[row['chain_id']])!=row['execution_route_identity']
-                for row in frozen['route_entries']):
-                return 'path-loss route identity changed; create a new execution to review the saved route'
+        # 正式身份只读同一次解析结果，不借整组采集解析替代或补造执行身份。
+        for row in frozen['route_entries']:
+            identity=row['execution_route_identity']
+            actual_identity=chains[row['chain_id']].execution_route_identity
+            if (identity is not None or isinstance(actual_identity,dict) and
+                    (actual_identity.get('switch_mappings') or 'internal_paths' in actual_identity)):
+                if actual_identity!=identity:
+                    return 'path-loss route identity changed; create a new execution to review the saved route'
     except (LookupError,ValueError):
         return 'path-loss frozen route is no longer available; create a new execution to review the saved route'
     return None

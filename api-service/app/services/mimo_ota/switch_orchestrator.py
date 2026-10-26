@@ -268,6 +268,9 @@ def _build_probe_binding(
     if source is not None:
         from app.schemas.topology_internal_paths import validate_internal_traversals
         validate_internal_traversals(path_nodes, path_edges, active_connections=active_connections or [])
+        # 复用正常/参考路径边界，只检查正式已选路径；BSE→CE入边不属于CE输出路径。
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        resolve_saved_rf_path(path_nodes, path_edges, connection['id'], check_internal_paths=False)
         if (target.get('params') or {}).get('rf_path_selection') is None:
             from app.services.declared_rf_routes import selected_switch_mappings
             selected_switch_mappings(path_nodes, path_edges, {}, category_id=None)
@@ -298,7 +301,7 @@ def _build_probe_binding(
                 polarization = "H"
                 break
 
-    # 无显式探头路线的旧唯一链同样保留明确内部穿越身份；不扩张原CE回接判据。
+    # 保留正式所选路径的完整身份，供冻结核对；普通旧链仍不凭此获得校准资格。
     from app.services.declared_rf_routes import rf_execution_identity
     identity = rf_execution_identity(path_nodes, path_edges) if source is not None else {}
     return ProbePortBinding(
@@ -307,5 +310,5 @@ def _build_probe_binding(
         polarization=polarization,
         connection_id=connection.get("id"),
         cable_loss_db=connection.get("calibrated_loss_db") or connection.get("cable_loss_db"),
-        execution_route_identity=identity if 'internal_paths' in identity else None,
+        execution_route_identity=identity or None,
     )

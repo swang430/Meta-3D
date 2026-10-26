@@ -47,6 +47,94 @@ def legacy_bse_direct_topology(topology):
     topology.operating_modes = modes
 
 
+def mixed_bse_pad_topology(topology, *, explicit):
+    legacy_bse_direct_topology(topology)
+    pad = dict(id='selected-pad', type='pad', label='选中衰减器', params={'ports': ['in', 'out']})
+    if explicit:
+        declared(pad)
+    topology.nodes = [*topology.nodes, pad]
+    topology.connections = [dict(edge, source='selected-pad')
+        if edge['id'] == 'conn_p0h' else edge for edge in topology.connections] + [
+        dict(id='pad-feed', source='ce_b2', source_pin='out', target='selected-pad',
+            target_pin='in', modes=['mimo_ota'])]
+    modes = copy.deepcopy(topology.operating_modes)
+    modes[0]['active_connections'].append('pad-feed')
+    topology.operating_modes = modes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('provenance', ['real', 'simulated', 'unknown', 'missing'])
+async def test_mixed_legacy_and_declared_routes_freeze_formal_identity_without_capture_qualification(
+        client, configured, topology_two_chains, db_session, legacy, launch, provenance):
+    from app.services.calibration.route_calibration import list_route_selections
+    mixed_bse_pad_topology(topology_two_chains, explicit=True)
+    if provenance == 'missing':
+        db_session.delete(legacy)
+    else:
+        legacy.use_mock = {'real': False, 'simulated': True, 'unknown': None}[provenance]
+    db_session.commit()
+    with pytest.raises(ValueError, match='CE源端存在回接'):
+        list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    first = await launch()
+    frozen_before = read_execution_route_compensation(first)
+    for execution in (first, await launch()):
+        frozen = read_execution_route_compensation(execution)
+        actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
+        assert (frozen_route_identity_error(db_session, frozen),
+            frozen_route_identity_error(db_session, frozen, resolved_topology=actual)) == (None, None)
+        assert len(frozen['route_entries']) == len(actual.probe_bindings) == 2
+        selected = next(row for row in frozen['route_entries'] if row['chain_id'] == 'conn_p0h')
+        assert selected['execution_route_identity']['internal_paths'] == [
+            {'node_id': 'selected-pad', 'from_port': 'in', 'to_port': 'out'}]
+        assert all(row['route_digest'] is None for row in frozen['route_entries'])
+        assert all(row['source_kind'] == ('legacy_certificate' if provenance == 'real' else 'unavailable')
+            for row in frozen['route_entries'])
+        assert all(source['source_kind'] != 'confirmed_route' for source in frozen['source_records'])
+        verdict = evaluate_path_loss_preflight(db_session, execution,
+            chamber_id=configured.chamber_config_id, frequency_mhz=2595, operating_mode='mimo_ota',
+            precheck_strict_cal=True, channel_emulator_execution_mode='real')
+        if provenance == 'real':
+            assert verdict.blocker is None and verdict.application['status'] == 'applied'
+            assert [row['value_db'] for row in frozen['route_entries']] == [20, 30]
+        else:
+            assert verdict.blocker is not None and verdict.applied_certificate is None
+            assert all(row['value_db'] is None for row in frozen['route_entries'])
+        assert read_execution_route_compensation(execution) == frozen
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    del next(row for row in nodes if row['id'] == 'selected-pad')['params']['internal_paths']
+    saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
+        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+    assert saved.status_code == 200, saved.text
+    changed_actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
+    assert frozen_route_identity_error(db_session, frozen_before) is not None
+    assert frozen_route_identity_error(db_session, frozen_before, resolved_topology=changed_actual) is not None
+    assert read_execution_route_compensation(first) == frozen_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reference_kind', ['receive_cable', 'reference_antenna', 'scope'])
+async def test_mixed_normal_route_cannot_gain_reference_segment_execution_qualification(
+        client, configured, topology_two_chains, db_session, legacy, launch, reference_kind):
+    mixed_bse_pad_topology(topology_two_chains, explicit=True)
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    selected = next(row for row in nodes if row['id'] == 'selected-pad')
+    if reference_kind == 'scope':
+        selected['params']['connection_scope'] = 'calibration'
+    else:
+        selected['type'] = reference_kind
+    topology_two_chains.nodes = nodes
+    db_session.commit()
+    try:
+        execution = await launch()
+    except ValueError as exc:
+        assert '校准参考接线' in str(exc)
+    else:
+        verdict = evaluate_path_loss_preflight(db_session, execution,
+            chamber_id=configured.chamber_config_id, frequency_mhz=2595, operating_mode='mimo_ota',
+            precheck_strict_cal=True, channel_emulator_execution_mode='real')
+        assert verdict.blocker is not None and verdict.applied_certificate is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('declaration_target', ['unused', 'ce_b1'])
 @pytest.mark.parametrize('use_mock', [False, True, None])
@@ -97,16 +185,7 @@ async def test_unrelated_internal_declaration_preserves_legacy_direct_freeze_and
 @pytest.mark.asyncio
 async def test_absent_frozen_identity_rejects_new_selected_internal_identity_on_both_sides(
         client, configured, topology_two_chains, db_session, legacy, launch):
-    legacy_bse_direct_topology(topology_two_chains)
-    topology_two_chains.nodes = [*topology_two_chains.nodes,
-        dict(id='selected-pad', type='pad', label='选中衰减器', params={'ports': ['in', 'out']})]
-    topology_two_chains.connections = [dict(edge, source='selected-pad')
-        if edge['id'] == 'conn_p0h' else edge for edge in topology_two_chains.connections] + [
-        dict(id='pad-feed', source='ce_b2', source_pin='out', target='selected-pad',
-            target_pin='in', modes=['mimo_ota'])]
-    modes = copy.deepcopy(topology_two_chains.operating_modes)
-    modes[0]['active_connections'].append('pad-feed')
-    topology_two_chains.operating_modes = modes
+    mixed_bse_pad_topology(topology_two_chains, explicit=False)
     db_session.commit()
     execution = await launch()
     frozen = read_execution_route_compensation(execution)
