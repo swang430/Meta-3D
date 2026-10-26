@@ -8,7 +8,18 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test；无新依赖/迁移/SCPI。
 
-**Spec:** [已批准器件与端口设计](../design/2026-10-26-topology-device-port-contract.md)、[正式队列](../roadmap-first-call.md)。分支 `codex/pc04a4c-internal-rf-paths`；基线 `8d5bc6d48805b6de7be246e4c40940de33534fa8`。前片 [PR #540](https://github.com/swang430/Meta-3D/pull/540) 于 `2026-10-26T17:48:55Z` 合并；[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖 `75b4ef9332`，无重大问题。4c仅完成计划编写、尚待主代理独立计划审查，未实现；4d/4e未启动。
+**Spec:** [已批准器件与端口设计](../design/2026-10-26-topology-device-port-contract.md)、[正式队列](../roadmap-first-call.md)。分支 `codex/pc04a4c-internal-rf-paths`；基线 `8d5bc6d48805b6de7be246e4c40940de33534fa8`。前片 [PR #540](https://github.com/swang430/Meta-3D/pull/540) 于 `2026-10-26T17:48:55Z` 合并；[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖 `75b4ef9332`，无重大问题。4c计划与Task1～3独立规格/质量审查均已通过，Task4最终新库矩阵/唯一全后端已完成（7808通过/17跳过/1历史G8失败，不称全绿）；尚未进行Task4独立审查/累计审查或push/PR/merge。4d/4e未启动。
+
+### 实际进度（施工规范的完成状态以此为准）
+
+| 任务 | 已落地输入与独立审查 | 实际验证边界 |
+|---|---|---|
+| Task1 | 01eebe12，规格符合/质量通过 | 写入/引用/四镜像；定点276通过，非最终全后端 |
+| Task2 | 7352d0b6＋89f83f06，规格符合/质量Approved | 三类解析/参考/身份/诊断；阶段14文件366与最终3文件145分别记录，不相互冒充 |
+| Task3 | f67baac9，规格符合/质量Approved | 真实浏览器RED/GREEN/变异恢复，GUI88与build；原RED保留 |
+| Task4 | 综合验证已完成，待本任务与累计独立审查 | 最终新库`/tmp/pc04a4c-tRJ0AF` C01～C16及C13补证完成；相关23文件初次654通过/2旧fixture失败，获准局部补端口后该文件7通过。唯一最终全后端`/tmp/pc04a4c-KxzsaG`：7808通过/17跳过/1历史G8失败/8363 warnings，684.38s，exit1；1174输入起止一致。[正式摘要](../validation/2026-10-27-pc04a4c-internal-rf-paths.md)保留阶段/最终区分，未push/PR/merge |
+
+下方逐步清单保留施工/复现规范，不以原计划空框否定本表已证实的阶段状态；Task4与累计审查未完成前不得Ready PR，合并前不得勾4c或启动4d。
 
 ## Global Constraints
 
@@ -351,8 +362,8 @@ env DATABASE_URL="sqlite:///$pc04a4c_browser_dir/browser.sqlite" USE_MOCK_INSTRU
 | C15 | running/未知取消/释放后第二次采集 | 所有内部端口和原编辑锁一致；两次真实202→Mock终态→可编辑，计数恰两次，无误解锁 |
 | C16 | 内部pair两端unknown/明确方向两组、缺绑定与Mock | unknown组保存草稿成功但路径/采集422且无job；明确组可走原Mock采集但无正式量值、采用拒绝。另明确组缺绑定仍拒绝；旧标称与正式报告判词不变 |
 
-- [ ] **Step 1：独立新库GREEN。** 原Task3 RED原件已存在；Task4新库逐行执行C01～C16，不在共享工作树回退补拍历史RED。缺无法在纯Mock真实验证的硬件结果写未验证，不制造real样本；后端fixture中的real证据测试须注明仅证明拒绝/匹配逻辑。
-- [ ] **Step 2：相关后端与GUI。** Task1/2命令累计运行，加`test_pc04a4b_port_identity.py`、`test_pc04a4a_nominal_identity.py`、`test_pc06a1_batch_jobs.py`、`test_pc_04a_fixed_route_acquisition.py`覆盖；精确记录完整命令/实际数量。GUI命令：
+- [x] **Step 1：独立新库GREEN。** 原Task3 RED原件已存在；Task4新库逐行执行C01～C16，不在共享工作树回退补拍历史RED。缺无法在纯Mock真实验证的硬件结果写未验证，不制造real样本；后端fixture中的real证据测试须注明仅证明拒绝/匹配逻辑。
+- [x] **Step 2：相关后端与GUI。** Task1/2命令累计运行，加`test_pc04a4b_port_identity.py`、`test_pc04a4a_nominal_identity.py`、`test_pc06a1_batch_jobs.py`、`test_pc_04a_fixed_route_acquisition.py`覆盖；精确记录完整命令/实际数量。GUI命令：
 
 ```bash
 cd gui
@@ -360,7 +371,7 @@ npx --yes tsx --test test/topologyInternalPaths.test.ts test/topologyPortContrac
 npm run build
 ```
 
-- [ ] **Step 3：唯一最终全量。** 功能及fixture稳定后本任务实施者执行一次新库全后端；先记录HEAD、tracked diff、未跟踪测试输入、依赖清单及输入散列，结束复核未变。若发生后续功能改动，主代理明确要求其补跑对应验证/必要全量，不让reviewer再跑。命令：
+- [x] **Step 3：唯一最终全量。** 功能及fixture稳定后本任务实施者执行一次新库全后端；先记录HEAD、tracked diff、未跟踪测试输入、依赖清单及输入散列，结束复核未变。若发生后续功能改动，主代理明确要求其补跑对应验证/必要全量，不让reviewer再跑。命令：
 
 ```bash
 cd api-service
