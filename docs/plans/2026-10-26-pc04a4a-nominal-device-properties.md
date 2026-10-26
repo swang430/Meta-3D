@@ -57,10 +57,10 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 
 `params.gain_db/gain_dbi/loss_db/attenuation_db` 的当前拓扑消费者主要是params透传与上述摘要，不存在节点到正式补偿的自动接线。其它域同名不等于同一值。测试、归档、已完成计划和现场日志仅作历史证据，不改成新现状。
 
-### 0.3 两项明确裁决建议（实施前由主代理确认，不擅自扩域）
+### 0.3 两项已接受的范围裁决（2026-10-26 主代理确认）
 
-1. **旧边 cable_loss_db 的空值不是局部表单问题。** 其schema为float默认0，路径求和/校验和正式binding仍依赖数值。建议4a仅让新增节点标称字段与旧PA可空，旧边电缆损耗沿既有非空契约；可给其新增来源/频率元数据，不能新增节点线缆损耗第二份值。旧边可空化/损耗归属统一交给4d的专门审计。本片不得把用户在新字段清空转换为0，也不得宣称已解决所有旧缺测语义。若用户要求本片旧边也可空，先修订设计/计划，不偷偷用`None→0`通过。
-2. **旧标称数值当前参与route_digest，新说明元数据不应参与。** 建议本片只精确排除新`nominal_metadata`（节点与参考边两端），保持没有该键的历史digest逐字节不变；不批量重算旧run，不改旧数值改变后的原有适用性判据。若要求旧标称数值改动也完全不影响旧run适用性，须先明确摘要版本兼容与原历史数值的裁决，不能全量删掉旧gain键让所有存量digest失配。UI明确“数值修改可能触发原通路一致性复核；保存标称不等于采用校准”。
+1. **旧边 cable_loss_db 的空值不是局部表单问题。** 其schema为float默认0，路径求和/校验和正式binding仍依赖数值。已接受4a仅让新增节点标称字段与旧PA可空，旧边电缆损耗沿既有非空契约；可给其新增来源/频率元数据，不能新增节点线缆损耗第二份值。旧边可空化/损耗归属统一交给4d的专门审计。本片不得把用户在新字段清空转换为0，也不得宣称已解决所有旧缺测语义；不再要求用户重复确认。
+2. **旧标称数值当前参与route_digest，新说明元数据不应参与。** 已接受本片只精确排除新`nominal_metadata`（节点与参考边两端），同时按1.2保形读写，保持没有该键的历史digest逐字节不变；不批量重算旧run，不改旧数值改变后的原有适用性判据。不能全量删掉旧gain键让所有存量digest失配。UI明确“数值修改可能触发原通路一致性复核；保存标称不等于采用校准”。
 
 ## 1. 契约与文件职责
 
@@ -72,7 +72,7 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 | pad | `params.attenuation_db` | finite number≥0 或null | 标称衰减(dB) |
 | combiner | `params.loss_db` | finite number≥0 或null | 标称插损(dB) |
 | probe / antenna / reference_antenna | `params.gain_dbi` | finite number 或null，允许负增益 | 标称天线增益(dBi) |
-| 旧PA边 | `connections[i].pa_gain_db` | finite number 或null；0保留 | 连线抽屉“旧PA标称增益(dB)”；可从PA边清单定位 |
+| 旧PA边 | `connections[i].pa_gain_db` | 新增/变更只接受finite number或null；相同作用域旧原值兼容保形，见1.2；0保留 | 连线抽屉“旧PA标称增益(dB)”；可从PA边清单定位 |
 | 旧电缆边 | `connections[i].cable_loss_db` | 沿旧非空契约，不在此片可空化 | 原损耗字段，新增来源/范围说明 |
 
 不把 `max_power_dbm`、通用`frequency_range_mhz`、`inputs/outputs`扩成新的可执行能力配置。非表内已有params字段原样保留，避免按名称自动变成可写“能力”。线缆/接收线缆节点不另建损耗字段；其抽屉引导编辑相邻边，只提醒单一归属，不替用户自动分摊。
@@ -94,11 +94,105 @@ const example = {gain_db: {
 
 元数据unit必须与键匹配；来源去首尾空格后空串存null；频率必须两个有限正数且start≤stop，允许单频[start,start]；两个框全空→null，一个空一个有值→表单拒绝。数字拒绝boolean、字符串、NaN/Infinity；不推测硬件范围。无元数据的旧值仍可读并标“旧版标称/来源未声明”；不能自动写“已核实/实测”。编辑值但未填来源允许保存为未知来源，并持续提示；来源文本永远不是资格证据。
 
-### 1.2 文件分工
+### 1.2 保形读响应、草稿与写入（F1/F2修订后的单一路径）
+
+不创建摘要版本机制或编辑补丁协议，不根据“等于默认值”猜用户意图。存在性来自**存储原始JSON→真实GET原样图字段→草稿原样保留→原始PATCH请求**；类型相同与否在已有作用域内同ID旧对象上判断。
+
+1. `TopologyConnection.pa_gain_db` 改成 `JsonValue = None`（Pydantic），不做before数值拒绝或强转；这是兼容传输类型，不是新值业务许可。schema description明确：POST/import及PATCH新增/变更值只能finite number/null；PATCH仅允许与本Lab旧行同ID同键、JSON类型和值均相同的历史值原样保留。Node的params仍是原始字典；边新增`nominal_metadata: JsonValue = None`，保留原始JSON到写校验，不能在请求模型里先把频率string/bool转float。公开请求/响应schema如实呈现兼容JSON类型；不能手写“只接受number”伪契约。手写TS传输字段对应`JsonValue`，数值展示用`typeof === 'number' && Number.isFinite`收窄。
+2. 本文件所有拓扑读回（GET单条、GET列表、POST、PATCH、import）统一用API局部`_topology_wire_body(row) -> dict`：先完整执行`SwitchTopologyResponse.model_validate(row)`，既有响应结构失败原样暴露，不catch后退回裸dict；顶层按该模型JSON模式序列化，**仅覆盖nodes/connections/operating_modes为存储原始字典的deepcopy**，返回显式`JSONResponse`，避免FastAPI再次给嵌套对象补默认/转float。禁止直接返回`row.__dict__`，不泄露ORM/内部字段。列表在原作用域查询后对每个item调用相同函数；POST保留201，其他保留原状态码。原鉴权/作用域/限页/事务/错误处理均先执行，不由帮助函数接管。现有response_model继续生成公开schema；其中缺省字段本来就是可选，新增PA兼容类型如实描述。此帮助函数只服务拓扑这五个入口，不改全局序列化器。
+3. GUI已核对：`switchTopologyService`直接返回`response.data`，`TopologyFlow`的`useState(topology)/setDraft(topology)`、边/节点抽屉spread、`topologyDraft.ts::updateDraftConnection`均未给边补默认；`initialEdges`的显示对象不写回draft。**唯一额外归一化点是handleSave把ReactFlow默认position写回所有可见节点**，本片收窄为直接保存`draft.nodes`：真实拖动结束已由`handleNodesChange`写入draft，原未声明位置不能因保存标称就补`{x:0,y:0}`。渲染需要默认时只读取，不写回。NumberInput/Select默认显示不是输入事件。用户实际编辑字段时才写键：包括显式0/null/默认端口字符串；只关闭/取消/改名不写缺省字段。旧PA非数值显示“旧值格式未核实（原值只读）”，未编辑则保留原JSON；主动输入新值后严格验证，不自动把字符串转数字。
+4. API新增局部async依赖`_raw_topology_body(request: Request) -> dict`读取`await request.json()`；POST/PATCH原函数保持同步，以`Depends`拿到原始对象，不改变SQLAlchemy执行模型。原请求模型仍验证通用结构，但PA与新metadata不提前做有损转换。PATCH先`_resolve_scope/_load_scoped_topology`，再使用原始body与该旧行逐对象ID比较，调用统一`validate_nominal_write`。POST/import无previous，一律新值严格；错误在任何删/写前422。
+5. 保存使用既有模型`model_dump(exclude_unset=True)`的规范化候选，但经 `_preserve_unchanged_json(raw, normalized, previous)` 恢复原始请求中**与旧值同类型同值**的叶/子树；每层只遍历本次原始请求的键，缺键不从模型默认补回。图数组按`id`关联previous，不能按索引（用户可重排/删除）；原数组顺序沿本次请求。已有扩展键若原样提交则保留，新增/改动不支持的扩展键沿原模型行为，不扩为新可编辑能力。新字段即使等于schema默认也保存，因为previous缺键而不是相同原值；显式删键沿现有整数组替换语义生效，不擅自从previous补回。
+6. JSON严格判等先比存在性，再递归比JSON类型（bool不同number、string不同number；list/dict递归，字典键集合相同），number域允许int/float数学相等；相等时恢复旧数值的原表示，避免0经float解析变0.0进入摘要。显式1→true不相等，转严格新值校验后拒绝；true→1是明确修正成新合法数值，允许。新增/变更metadata**总是**在原始值上严格验证，元数据不存在历史坏值豁免。
+
+最小函数形状（位于`topology_nominal.py`，仅复用本片保存链；`MISSING`是私有sentinel，非JSON值）：
+
+```python
+MISSING = object()
+
+def same_json(left, right):
+    if left is MISSING or right is MISSING:
+        return left is right
+    if type(left) in (int, float) and type(right) in (int, float):
+        return left == right  # bool被精确type排除；调用前拒绝非有限新数值
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(same_json(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(same_json(a,b) for a,b in zip(left,right))
+    return left == right
+
+def validate_changed_number(raw, previous, *, key, nonnegative=False):
+    if raw is MISSING or same_json(raw, previous):
+        return
+    validate_number(raw, key=key, nonnegative=nonnegative)
+
+def _preserve_unchanged_json(raw, normalized, previous=MISSING):
+    from copy import deepcopy
+    if same_json(raw, previous):
+        return deepcopy(previous)
+    if isinstance(raw, dict) and isinstance(normalized, dict):
+        old = previous if isinstance(previous, dict) else {}
+        result = {}
+        for key, value in raw.items():
+            prior = old.get(key, MISSING)
+            if same_json(value, prior):
+                result[key] = deepcopy(prior)
+            elif key in normalized:
+                result[key] = _preserve_unchanged_json(value, normalized[key], prior)
+        return result
+    if isinstance(raw, list) and isinstance(normalized, list):
+        old = previous if isinstance(previous, list) else []
+        return [_preserve_unchanged_json(value, normalized[i], old[i] if i < len(old) else MISSING)
+                for i, value in enumerate(raw)]
+    return deepcopy(normalized)
+
+def preserve_graph_rows(raw_rows, normalized_rows, previous_rows):
+    # 调用前原写结构验证已保证列表/ID有效、唯一及两次解析长度一致。
+    old = {row['id']: row for row in previous_rows or []}
+    return [_preserve_unchanged_json(raw, normalized, old.get(raw['id'], MISSING))
+            for raw, normalized in zip(raw_rows, normalized_rows)]
+```
+
+API接线形状：`raw_body`经依赖得到；`typed = request.model_dump(exclude_unset=True)`；`validate_nominal_write`使用`raw_body`和作用域内previous；`nodes/connections/operating_modes`有提交才分别调用`preserve_graph_rows(raw_body[key], typed[key], getattr(row,key))`。无previous的POST也是同样原始存在性保存；模板通过相同校验后保持其原始字典，不补模型默认。新metadata在原始值严格校验后，按明确键生成规范化对象放入typed候选（source trim/空串→null）；再按上面的保形策略保留未改子树。非法metadata不得因保形而跳过原始校验。
+
+局部响应帮助函数的完整约束形状：
+
+```python
+def _topology_wire_body(row):
+    from copy import deepcopy
+    body = SwitchTopologyResponse.model_validate(row).model_dump(mode='json')
+    for key in ('nodes', 'connections', 'operating_modes'):
+        body[key] = deepcopy(getattr(row, key))
+    return body
+# 每个原端点在原scope/事务成功之后：
+# return JSONResponse(_topology_wire_body(row), status_code=原端点状态码)
+# list：JSONResponse({'total': total, 'items': [_topology_wire_body(row) for row in rows]})
+```
+
+保形断言必须覆盖参考边的全部原有键形态，不只排除metadata；不删除旧摘要键，不重算历史。读响应保形消除了由响应补默认产生的伪修改；写端原始存在性保证真实显式默认修改不被吞。只靠`exclude_unset`而不修GET不成立。
+
+| 原存储 → 原始请求 | 判据与保存策略 |
+|---|---|
+| 缺键→仍缺键 | 不插入模型默认值，保持缺键 |
+| 缺键→显式null（PA）/0/默认端口`out` | 是新增声明，按字段规则严格验证后保存，不能按默认删除 |
+| null→0 / 0→null（PA） | 是实际修改，保存准确值；旧电缆null仍由原契约拒绝 |
+| 数值0→解析后0.0，但原始请求仍为0 | 同一JSON number，保留存储0表示，避免摘要漂移 |
+| 数值1→原始true | boolean不同number，严格校验拒绝，不吞修改 |
+| 旧字符串`"12"`→原样`"12"`，只改名 | 同作用域同ID原值保留；读取也不强转成12 |
+| 旧字符串`"12"`→`"13"` / 新PA=`"12"` | 新坏值422，原行原子不变 |
+| 旧字符串`"12"`→数值12 | 明确修正成合法新值，保存number；旧数值摘要门仍生效 |
+| 旧键→请求删除该键 | 按原全数组替换删除，不从previous复原被删键；真值改变产生的旧身份变化不隐藏 |
+| metadata新增或修改 | 在原始值校验unit/source/range；bool/string频率拒绝；校验后仅用于说明，身份副本排除新键 |
+
+原始请求是**意图/存在性/标称类型**的唯一源；Pydantic结果仅用于原有其它字段的结构验证和规范化，不能反向覆盖意图。previous只允许来自当前请求的Lab作用域及同ID行，不从客户端传入或跨Lab查找。
+
+### 1.3 文件分工
 
 - 新建 `api-service/app/schemas/topology_nominal.py`：`NominalFieldMetadata`、支持键/单位表、纯写校验；不导入ORM/HAL。
-- 修改 `api-service/app/schemas/switch_topology.py`：边元数据模型、写入专用PA finite校验；节点params保留扩展字典以兼容旧记录。
-- 修改 `api-service/app/api/switch_topology.py`：所有写入口调用标称校验，PATCH传旧对象用于未改字段豁免；不把新校验放到GET。
+- 修改 `api-service/app/schemas/switch_topology.py`：PA/新metadata原始JSON传输及准确schema说明；节点params保留扩展字典以兼容旧记录，不设会提前挡旧值的数值validator。
+- 修改 `api-service/app/api/switch_topology.py`：原始请求依赖、局部保形response帮助函数、所有写入口作用域内标称校验与保存保形；不把新校验放到GET。
 - 修改 `api-service/app/services/calibration/route_calibration.py`：只排除新说明元数据，原历史摘要及物理身份校验不变。
 - 新建 `gui/src/features/TopologyEditor/nominalProperties.ts`：字段描述、空值解析、不可变写入与显示标签纯函数；不计算正式补偿。
 - 新建 `gui/src/features/TopologyEditor/NominalPropertyFields.tsx`：可复用标称数值/来源/频段表单，接收`disabled`；不自发PATCH。
@@ -109,7 +203,7 @@ const example = {gain_db: {
 
 **Files:** 上述三个后端schema/API文件、`route_calibration.py`；`api/openapi.yaml`、`gui/src/types/api.generated.ts`、`switchTopologyService.ts`；新测试 `api-service/tests/test_pc04a4a_nominal_properties.py`、`api-service/tests/test_pc04a4a_nominal_identity.py`。
 
-**Interfaces:** `validate_nominal_write(nodes, connections, *, previous_nodes=None, previous_connections=None) -> None`，错误抛`ValueError`由API转422；仅校验支持字段发生变化或新建的字段/元数据，不拒绝未改变的旧标称坏值。`NominalFieldMetadata`作为公开schema；不增加端点。
+**Interfaces:** `validate_nominal_write(nodes, connections, *, previous_nodes=None, previous_connections=None) -> None`消费原始JSON，错误抛`ValueError`由API转422；仅校验新增/变更标称值、所有提交的新metadata，不拒绝未改变的旧标称原值。`same_json`、`_preserve_unchanged_json`、`_raw_topology_body`、`_topology_wire_body`按1.2单一路径接线。`NominalFieldMetadata`为纯写校验模型，不作为请求提前coercion层；公开schema如实说明metadata验证契约，不增加端点。
 
 - [ ] 先写真实POST/PATCH/GET回归。复用现有p1_57的内存DB依赖override，但运行命令仍隔离app导入时的全局DB。以下测试初始应因新元数据被丢弃/非法值未拒绝而RED：
 
@@ -161,13 +255,24 @@ env DATABASE_URL="sqlite:///$pc04a4a_test_dir/test.sqlite" USE_MOCK_INSTRUMENTS=
 ```python
 from math import isfinite
 from typing import Literal
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 class NominalFieldMetadata(BaseModel):
     model_config = ConfigDict(extra='forbid')
     unit: Literal['dB', 'dBi']
     source_note: str | None = None
     frequency_range_mhz: tuple[float, float] | None = None
+
+    @field_validator('frequency_range_mhz', mode='before')
+    @classmethod
+    def strict_range(cls, value):
+        if value is None:
+            return None
+        if (not isinstance(value, (list, tuple)) or len(value) != 2
+                or any(type(v) not in (int, float) or not isfinite(v) or v <= 0 for v in value)
+                or value[0] > value[1]):
+            raise ValueError('频率范围必须为两个有限正数且起点不大于终点')
+        return value
 
 def validate_number(value, *, key, nonnegative=False):
     if value is None:
@@ -178,35 +283,51 @@ def validate_number(value, *, key, nonnegative=False):
         raise ValueError(f'{key} 不得小于0')
 ```
 
-写入专用`TopologyConnectionWrite(TopologyConnection)`对`pa_gain_db`使用`field_validator(mode='before')`，`SwitchTopologyCreate/Update.connections`引用该写入类型，不能让`True/'12'`先被float强转；response仍使用读取模型，不对历史GET追加新限制。模板原始dict由相同纯函数校验。节点保留`Dict[str,Any]`，公开契约通过明确可选属性与additionalProperties表达，不使旧扩展键消失；schema文档的扩展描述必须来自live模型定义，不能只手改yaml伪造类型。新增元数据可选；未涉及标称的PATCH/旧图重保存不注入新元数据空对象；嵌套dump用`exclude_unset=True`保留新增字段的缺省/显式null差异，核对旧source_pin默认仍从现有schema解释。
+`NominalFieldMetadata`只在作用域内纯写校验阶段以原始对象构造，频率before校验在这里拒绝bool/string，不在request模型提前强转；unit/source也在原始对象检查，source只允许str/null。PA模型改`JsonValue`保原类型，**不保留旧计划的TopologyConnectionWrite before数值门**。按1.2实现原始请求依赖、保形响应与保存函数；source_note字符串trim与空串→null属于本次明确编辑的规范化，未改旧值不得因此被重新格式化。
 
-- [ ] 在create/update/import的写前统一调用；旧字段比较用字段存在性加值比较，缺键不同于null。对每个对象只豁免完全没改的旧值，不能豁免新metadata字段中的坏频率或单位。模板导入在删除旧行前完成校验。覆盖：POST合法/非法、PATCH清空、错误单位、半频段、反向/0/负频率、非法元数据键、模板非法且replace=true原行保留、GET/list旧异常值可读、旧异常值改名可存但改成另一个异常值拒绝、跨Lab409。
+- [ ] 在create/update/import写前统一调用；旧字段按1.2严格比较（存在性、JSON类型、值），缺键不同于null、boolean不同number。覆盖：POST合法/非法、PATCH清空、错误单位、半频段/反向/0/负数/bool/string频率、非法元数据键、模板非法且replace=true原行保留、GET/list旧PA原类型保留、旧异常值改名可存但变更异常值拒绝、1→true拒绝、true→1合法修正、跨Lab409。旧坏值fixture只为初始化历史原形可直接入隔离DB；读/改/保存断言必须经真实HTTP，不能在断言阶段直接ORM修改替代生产入口。
 
-- [ ] 先写元数据不影响摘要的真实路径正例，复用 `test_pc04a2_route_selection.py` 的`client/configured/graph/db_session/paths`，覆盖正常节点、参考节点、参考边三条路径：
+- [ ] 先写元数据不影响摘要的真实路径正例，复用 `test_pc04a2_route_selection.py` 的`client/configured/graph/db_session/paths`；先复现GET→原样PATCH默认扩入的RED，再加入以下真实HTTP元数据正例（同样覆盖正常节点、参考节点、参考边三条路径）：
 
 ```python
 def test_source_metadata_does_not_change_existing_route_identity(client, configured, graph, db_session):
     before = paths(client, configured, graph).json()[0]
-    graph.nodes = [{**n, 'params': {**n.get('params', {}), 'nominal_metadata': {
-        'gain_dbi': {'unit': 'dBi', 'source_note': '目录待核', 'frequency_range_mhz': None}
-    }}} if n['id'] == 'reference1' else n for n in graph.nodes]
-    db_session.commit()
+    url = f'/api/v1/switch-topologies/{graph.id}'
+    scope = {'lab_profile_id': str(configured.id)}
+    fetched = client.get(url, params=scope)
+    assert fetched.status_code == 200, fetched.text
+    raw = fetched.json()
+    assert raw['connections'] == graph.connections  # 原始缺键和数值表示另用JSON串断言
+    payload = {k: copy.deepcopy(raw[k]) for k in ('nodes','connections','operating_modes')}
+    ref = next(n for n in payload['nodes'] if n['id'] == 'reference1')
+    ref['params']['nominal_metadata'] = {'gain_dbi': {
+        'unit': 'dBi', 'source_note': '目录待核', 'frequency_range_mhz': None}}
+    saved = client.patch(url, params=scope, json=payload)
+    assert saved.status_code == 200, saved.text
+    reloaded = client.get(url, params=scope)
+    assert reloaded.status_code == 200, reloaded.text
+    assert reloaded.json()['connections'] == raw['connections']
+    assert reloaded.json()['nodes'] == payload['nodes']
     after = paths(client, configured, graph).json()[0]
     assert after['route_digest'] == before['route_digest']
     assert after['calibration_nodes'][0]['params']['nominal_metadata']['gain_dbi']['source_note'] == '目录待核'
 ```
 
+该文件显式导入`copy`与上述fixture/helpers。补三组真实API参数化：①无改动/只改图名→全部图JSON串原样、摘要不变；②显式向原缺键参考边写`source_pin='out'`、`cable_loss_db=0`或`pa_gain_db=None`→键必须存在、不能被保形函数吞掉（该真实声明按旧身份规则允许改变digest）；③删去旧已存在的可选键/重排连接数组→保存准确反映请求，不能按索引复原到错误边。真实GET/list/POST/PATCH/import五端逐个断言相同保形约定；GET字段/作用域错误仍失败，不因JSONResponse掩盖。
+
 - [ ] 只从`identity_nodes`的params与`calibration_connections`的摘要副本删除新`nominal_metadata`键，原`nodes/connections/calibration_nodes/calibration_connections`快照保留原始完整对象；不修改存储数据，不删其它旧键。新增元数据以前的同一图摘要必须不变。对端口/CE映射/参考天线身份变化仍按原门拒绝；运行旧 `test_cosmetic_change_only_warns_but_changed_port_is_incompatible`。
-- [ ] 补checked OpenAPI上述CRUD范围及依赖schemas，保留其它路径原样；隔离环境导入`app.openapi()`提取该闭包，使用apply_patch更新yaml；`gui`运行`npm run openapi:generate`，不要整份live spec覆盖checked文件。新测试逐个比较相关schema/path与live，并验证真实response含字段；手写类型的`pa_gain_db?: number | null`及元数据类型一致。
+- [ ] 补checked OpenAPI上述CRUD范围及依赖schemas，保留其它路径原样；隔离环境导入`app.openapi()`提取该闭包，使用apply_patch更新yaml；`gui`运行`npm run openapi:generate`，不要整份live spec覆盖checked文件。新测试逐个比较相关schema/path与live，并验证真实response含字段；手写传输类型的`pa_gain_db?: JsonValue`及metadata原始JSON契约一致，表单只输出已收窄的number/null与明确metadata。`NominalFieldMetadata`用于校验与形状说明，不因未被直接request引用就伪称已自动出现在live闭包。
 - [ ] GREEN后定点回归 `tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_p1_57_topology_lab_context.py tests/test_pc04a3_topology_recovery.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_route_eligibility.py tests/test_pc04a2_route_application.py tests/test_pc04a2_route_freeze.py tests/test_pc04a2_gui_contract.py`。每次同样显式新临时库/全Mock/default bootstrap。
 - [ ] 变异实跑：临时移除写校验→非法写测试RED；临时恢复新元数据参与身份→元数据正例RED；恢复正确代码后GREEN。仅修改本片代码，用apply_patch还原，保存diff和测试末行，不用reset覆盖用户修改。
 - [ ] 审查Task1后精确`git add`上述文件，提交 `feat: 补齐拓扑标称参数写入契约`；不push，等待整片验证。
 
 ## 3. Task 2：原抽屉标称字段、旧PA定位与真实标注
 
-**Files:** 新`nominalProperties.ts`/`NominalPropertyFields.tsx`；修改`TopologyEditor.tsx`/`CustomNodes.tsx`/`CustomEdges.tsx`；新`gui/test/nominalProperties.test.ts`。
+**Files:** 新`nominalProperties.ts`/`NominalPropertyFields.tsx`；修改`TopologyEditor.tsx`/`CustomNodes.tsx`/`CustomEdges.tsx`；新`gui/test/nominalProperties.test.ts`；本任务先建立`api-service/tests/pc04a4a_browser_fixture.py`、`gui/test/pc04a4aNominalProperties.browser.js`、`gui/test/pc04a4a.vite.config.ts`作为浏览器RED前置，Task3沿用而非再创建。
 
 **Interfaces:** `nominalFieldsForNode(type: string): readonly {key:string,label:string,unit:'dB'|'dBi',nonnegative:boolean}[]`；`parseOptionalNominalNumber(value: number|string): number|null`；`setNodeNominal(node, key, value, metadata): TopologyNode`；`setEdgeNominal(edge, key, value, metadata): TopologyConnection`。组件props为`fields, values, metadata, disabled, onChange(key,value,metadata)`，数值与元数据一次回调、不请求网络。
+
+- [ ] **先于任何Task2生产GUI改动**执行4.0的fixture/代理前置与启动命令，保留Task1完成后的精确SHA与dirty测试文件清单（不是回退到共享旧HEAD）。先用真实GET确认隔离CAICT旧PA边存在、页面已加载，然后浏览器打开原连线抽屉，断言`getByLabel('旧PA标称增益 (dB)', {exact:true})`可见；基线应因该控件不存在RED，留DOM/截图/失败断言。新数值字段只需同一缺功能RED，不把服务/fixture/selector拼错当成功取证。记录退出码及数据manifest，随后关闭本次专用服务或明确保留其PID，再开始下面GUI实现；不修改/回退已完成Task1。Task3只做最终GREEN。
 
 - [ ] 写纯函数RED，文件从现有`gui/test/topologyDraft.test.ts`风格沿用node:test/tsx：
 
@@ -240,6 +361,7 @@ export function parseOptionalNominalNumber(value: number|string): number|null {
 ```
 
 - [ ] 实现表内字段描述，组件用`value={number ?? ''}`、`disabled={editingBlocked}`；来源、频率全空保持null。显示“标称/非实测”，旧值无来源不填典型来源。`setNodeNominal`/`setEdgeNominal`逐层复制params/nominal_metadata，不能mutate旧对象。
+- [ ] 按1.2收窄`handleSave`为发送`draft.nodes`，保留`handleNodesChange`真实拖动落草稿；新增纯函数/浏览器断言“旧节点无position、只编辑元数据后仍无position”及“真实拖动后新position保存”，不把ReactFlow视图默认值写成声明。边和模式不追加默认字段；显示旧PA坏值时数值组件不自动触发onChange重写。
 - [ ] 节点抽屉嵌入组件，仅选中的节点落草稿；连线抽屉新增旧PA字段及元数据。提供“含旧PA标称的连线”清单（`pa_gain_db !== null && !== undefined`，含0），显示边ID与两端标签/端口，点击调用提取的`openConnection(id:string)`并高亮同一条边，不能按节点名猜PA归属。沿现有`handleEdgeClick`同源打开逻辑，隐藏/非当前模式边仍可通过清单定位，明确所属模式；不自动改模式或创建PA节点。
 - [ ] 所有表单控件与定位/应用入口读取`editingBlocked`；打开后进入采集/保存也锁住。原取消行为保留草稿；节点metadata不因关闭抽屉浅引用泄漏。采集失败/取消后锁恢复由原busy链驱动，不另建定时器。
 - [ ] 修正PA显示与箭头颜色的真假判断，0及负数不丢。PA净值只为标称显示，明确非实测；不写回`calibrated_loss_db`。校准字段维持只读、校准值0优先；不改变旧校准采用入口。
@@ -249,12 +371,15 @@ export function parseOptionalNominalNumber(value: number|string): number|null {
 
 ## 4. Task 3：真实API浏览器与完整回归收口
 
-**Files:** 新 `api-service/tests/pc04a4a_browser_fixture.py`（只造隔离数据）、`gui/test/pc04a4aNominalProperties.browser.js`、`gui/test/pc04a4a.vite.config.ts`（只测试专用代理）；新增 `docs/validation/2026-10-26-pc04a4a-nominal-properties.md` 实际验证摘要；完成后只更新roadmap本片状态/计划复选框。
+**Files:** 沿用Task2已建立的 `api-service/tests/pc04a4a_browser_fixture.py`（只造隔离数据）、`gui/test/pc04a4aNominalProperties.browser.js`、`gui/test/pc04a4a.vite.config.ts`（只测试专用代理）；新增 `docs/validation/2026-10-26-pc04a4a-nominal-properties.md` 实际验证摘要；完成后只更新roadmap本片状态/计划复选框。
 
 **Interfaces:** fixture输出`{database,labs:[{name,lab_id,topology_id}],caict_topology_id}`；浏览器脚本沿现有`async page=>{...}`，只发真实HTTP、不伪造APIresponse、不调用前端mockServer。所有证据存本次临时目录，文档只保留可核验摘要/相对归档引用。
 
-- [ ] 用apply_patch创建专用fixture，复用 `tests/pc04a3_browser_fixture.py` 的默认bootstrap类别/全部driver_mode=mock、文档网段、两Lab独立暗室的做法，不导入执行它（其路径防护和seed命名属于旧片）。导入app之前验证`DATABASE_URL`严格匹配`sqlite:////tmp/pc04a4a-[A-Za-z0-9]+/browser.sqlite`、文件不存在、父目录存在、两个环境开关均true；失败立即退出。默认bootstrap仍运行，所有类别和Lab binding再次断言mock。准备一个正常显式两链图及一份经真实模板导入的CAICT旧图；不复制用户数据库、历史证书或实测记录。浏览器操作前后存清单与真实GET。
-- [ ] 确认独占端口（占用则选另一个并同步测试配置，绝不kill占用服务）：
+### 4.0 浏览器前置规范（Task2实现前先执行一次RED，Task3用新库执行GREEN）
+
+Task2用apply_patch创建专用fixture，复用 `tests/pc04a3_browser_fixture.py` 的默认bootstrap类别/全部driver_mode=mock、文档网段、两Lab独立暗室做法，不导入执行旧fixture。导入app之前验证`DATABASE_URL`严格匹配`sqlite:////tmp/pc04a4a-[A-Za-z0-9]+/browser.sqlite`、文件不存在、父目录存在、两个环境开关均true；失败立即退出。默认bootstrap仍运行，所有类别和Lab binding再次断言mock。准备正常显式两链图及经真实模板导入的CAICT旧图，不复制用户库/历史证据；另有缺默认字段的参考边，保证能验保形。浏览器操作前后存manifest和真实GET。
+
+Task2/Task3分别使用全新目录与对应阶段的精确输入SHA，运行同样命令。确认独占端口（占用则选另一个并同步测试配置，绝不kill用户服务）：
 
 ```bash
 lsof -nP -iTCP:18094 -iTCP:5189 -sTCP:LISTEN
@@ -277,7 +402,9 @@ export default mergeConfig(base,defineConfig({server:{host:'127.0.0.1',port:5189
 
 `gui`启动：`npm run dev -- --config test/pc04a4a.vite.config.ts`。该验收不启动CE服务，不请求OTA接口；专用代理不准意外落到用户8000/8001服务。若需要CE真实软件链验证，另走既有隔离回归夹具，不复用用户服务。浏览器实施者先读当前可用browser skill，采用受支持真实浏览器执行脚本；CLI允许时沿已有 `playwright-cli -s=pc04a4a open http://127.0.0.1:5189 --headed` 路径。不要在计划阶段启动服务。
 
-- [ ] 浏览器RED先断言现状缺PA属性/新字段，再实现后逐项GREEN；每行有输入、保存POST/PATCH响应、GET、重载DOM与截图，不以toast作为落库证据：
+### 4.1 最终GREEN及收口
+
+- [ ] 确认Task2已保存缺功能浏览器RED证据，再在最终Task1+Task2输入上用全新隔离库逐项GREEN；不在此时追补基线RED，不回退共享工作树。每行有输入、保存POST/PATCH响应、GET、重载DOM与截图，不以toast作为落库证据：
 
 | 场景 | 操作与真实断言 |
 |---|---|
@@ -321,5 +448,5 @@ env DATABASE_URL="sqlite:///$pc04a4a_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 ## 自查与交接
 
 - [ ] 设计4a覆盖：PA与其他明确标称字段、单位/来源/范围、旧CAICT边定位、固定能力声明清理；4b端口角色、4c内部路径、4d转换及损耗归属不提前施工。
-- [ ] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；两个裁决建议已获主代理确认，否则不能开始相应代码。
+- [ ] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；0.3两项范围裁决已接受，不再重复请求用户确认。F1/F2修订方案仍需原reviewer增量核验后才进入实现。
 - [ ] 纯计划交付不构成实现完成，不勾roadmap父项，不解除现场B/HOLD。
