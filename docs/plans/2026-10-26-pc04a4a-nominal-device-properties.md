@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test、真实浏览器；不新增依赖或表迁移。
 
-**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；三个任务独立规格/质量审查及原累计F1修复 `ba1ac371` 的增量复审已通过。PR #539 的R1覆盖 `a087ed76` 后新增POST最终图校验P1，本轮已最小修复并通过182项相关回归；新库唯一全后端7558通过/17跳过/1失败（同一历史G8，不称全绿），等待原reviewer独立增量及R2。原首轮6失败、原最终7543/17/1及三项异常后续未再现但根因未知记录保留；V1有效参考PA身份/冻结、ASC/CE未执行边界不变。尚未合并，4a不勾交付、4b不启动。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
+**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；三个任务独立规格/质量审查及原累计F1修复 `ba1ac371` 的增量复审已通过。PR #539 的R1覆盖 `a087ed76` 后新增POST最终图校验P1，修复 `111e5126cd` 通过182项相关回归；新库唯一全后端7558通过/17跳过/1失败（同一历史G8，不称全绿）。[R2回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖该修复、无重大问题，PR #539已于2026-10-26T14:29:23Z合并至`1207f8c5`；4a软件交付完成，4b进入计划审查。原首轮6失败、原最终7543/17/1及三项异常后续未再现但根因未知记录保留；V1有效参考PA身份/冻结、ASC/CE未执行边界不变。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
 
 ## 全局约束
 

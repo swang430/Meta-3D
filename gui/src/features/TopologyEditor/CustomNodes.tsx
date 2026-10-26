@@ -1,5 +1,5 @@
 import { Handle as FlowHandle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { createContext, useContext, useEffect } from 'react';
+import { createContext, useContext, useEffect, Fragment as ReactFragment } from 'react';
 import { ThemeIcon, Group, Text, Stack, Badge, Box, Tooltip } from '@mantine/core';
 import { 
   IconServer, 
@@ -13,7 +13,7 @@ import {
   IconAntennaBars5,
 } from '@tabler/icons-react';
 import { formatPortLabel, resolvePortHandles } from './baseStationPorts';
-import { getNodePorts } from './nodePortHelpers';
+import { resolveNodePorts, portCountLabel, directionLabels } from './nodePortHelpers';
 
 // A hidden legacy handle with the same ID still wins ReactFlow's geometry lookup.
 // Explicit declarations replace those handles; they must not coexist in the DOM.
@@ -58,7 +58,7 @@ export const ChannelEmulatorNode = ({ data }: any) => {
         <Group gap={4}>
           <Text size="xs" c="dimmed">{data.params?.inputs!=null||data.params?.outputs!=null
             ? `旧声明：输入 ${data.params?.inputs??'未声明'} / 输出 ${data.params?.outputs??'未声明'}，未核实`
-            : '端口数量未声明'}</Text>
+            : '旧输入/输出数量未声明'}</Text>
         </Group>
       </Stack>
 
@@ -137,7 +137,7 @@ export const EMCenterNode = ({ data }: any) => {
           <Text size="xs" c="dimmed">旧版端口示意，非能力证明</Text>
           <Text size="xs" c="dimmed">{data.params?.inputs!=null||data.params?.outputs!=null
             ? `旧声明：输入 ${data.params?.inputs??'未声明'} / 输出 ${data.params?.outputs??'未声明'}，未核实`
-            : '端口数量未声明'}</Text>
+            : '旧输入/输出数量未声明'}</Text>
         </Group>
         <Text size="xs" c="dimmed">{data.params?.description || ''}</Text>
       </Stack>
@@ -323,23 +323,23 @@ const PassiveNode = ({data}: any) => <Box style={baseNodeStyle}>
 function withDeclaredPorts(Component: any) {
   return function DeclaredPortNode(props: any) {
     const updateInternals=useUpdateNodeInternals();
-    const ports=props.data.params?.ports;
-    const signature=JSON.stringify(ports);
+    const node={id:props.id,type:props.type,label:props.data.label,position:{x:0,y:0},params:props.data.params??{}};
+    const parsed=resolveNodePorts(node);
+    const signature=JSON.stringify([node.params.ports,node.params.port_directions,node.params.port_roles]);
     // 真值来自ReactFlow的NodeProps；旧式与显式端点都必须消费采集/保存时的冻结状态。
     const isConnectable=props.isConnectable!==false;
     useEffect(()=>updateInternals(props.id),[props.id,signature,updateInternals]);
-    if (!Array.isArray(ports)) return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><Component {...props}/></DeclaredPortsContext.Provider>;
+    if (!parsed.declared && !Array.isArray(node.params.ports)) return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><Component {...props}/><Text size="xs" c="dimmed">{portCountLabel(node)}</Text></DeclaredPortsContext.Provider>;
     return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><div className="topology-declared-node" style={{position:'relative'}}>
       <DeclaredPortsContext.Provider value={{declared:true,isConnectable}}><Component {...props}/></DeclaredPortsContext.Provider>
-      {getNodePorts({id:props.id,type:props.type,label:'',position:{x:0,y:0},params:props.data.params}).flatMap((port,index,list)=>{
-        // 已有基站端口角色仍由原配置决定，不能把上行入口扩成下行出口。
-        const role = ['communication_tester','bse_port'].includes(props.type) ? props.data.params?.port_roles?.[port] : undefined;
-        return [
-          role !== 'dl' && <Handle key={`in-${port}`} className="topology-declared-handle" type="target" position={Position.Left} id={port} title={`${port} · 连入（同一物理端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
-          role !== 'dl' && <span key={`in-label-${port}`} style={{position:'absolute',right:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',marginRight:8,whiteSpace:'nowrap',fontSize:10,pointerEvents:'none'}}>{port} · 连入</span>,
-          role !== 'ul' && <Handle key={`out-${port}`} className="topology-declared-handle" type="source" position={Position.Right} id={port} title={`${port} · 连出（同一物理端口）`} style={{top:`${(index+1)*100/(list.length+1)}%`}}/>,
-          role !== 'ul' && <span key={`out-label-${port}`} style={{position:'absolute',left:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',marginLeft:8,whiteSpace:'nowrap',fontSize:10,pointerEvents:'none'}}>{port} · 连出</span>,
-        ];
+      <Text size="xs" c="dimmed">{portCountLabel(node)}</Text>
+      {parsed.ports.flatMap((port,index,list)=>{
+        const direction=parsed.effectiveDirections[port],label=`${port} · ${directionLabels[direction]}`;
+        return (['target','source'] as const).filter(end=>direction!==(end==='source'?'input':'output')).map(end=><ReactFragment key={`${end}-${port}`}>
+          <Handle className="topology-declared-handle" type={end} position={end==='target'?Position.Left:Position.Right} id={port}
+            title={label} style={{top:`${(index+1)*100/(list.length+1)}%`,background:direction==='unknown'?'#868e96':undefined}}/>
+          <span style={{position:'absolute',[end==='target'?'right':'left']:'100%',top:`${(index+1)*100/(list.length+1)}%`,transform:'translateY(-50%)',margin:'0 8px',whiteSpace:'nowrap',fontSize:10,pointerEvents:'none',color:direction==='unknown'?'#868e96':undefined}}>{direction==='unknown'?'? ':''}{label}</span>
+        </ReactFragment>);
       })}
     </div></DeclaredPortsContext.Provider>;
   };

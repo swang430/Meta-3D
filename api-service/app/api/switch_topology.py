@@ -30,6 +30,7 @@ from app.schemas.topology_nominal import (
     preserve_graph_rows, normalize_nominal_metadata,
 )
 from app.services.declared_rf_routes import resolve_saved_rf_path
+from app.schemas.topology_ports import validate_port_write
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
@@ -77,6 +78,13 @@ def _validate_nominal(nodes, connections, *, previous_nodes=None, previous_conne
         raise HTTPException(422, detail=str(exc)) from exc
 
 
+def _validate_ports(nodes, connections, **kwargs):
+    try:
+        validate_port_write(nodes, connections, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
 def _validate_numeric_declarations(declarations, raw_connections):
     by_id = {row['id']: row for row in raw_connections or []}
     for ident, keys in declarations.items():
@@ -115,7 +123,7 @@ def _validate_structure(nodes, connections, modes) -> None:
             ports = node.get("params", {}).get("ports")
             pin = conn.get(f"{end}_pin", TopologyConnection.model_fields[f"{end}_pin"].default)
             if ports is not None and pin not in ports:
-                raise HTTPException(422, detail=f"连线 {conn['id']} 引用了未声明的端口")
+                raise HTTPException(422, detail=f"连线 {conn['id']} 的 {end} 器件 {node['id']} 引用了未声明的端口 {pin}")
     for node in nodes:
         params = node.get('params') or {}
         if node.get('type') != 'probe' or params.get('rf_path_selection') is None:
@@ -338,6 +346,7 @@ def create_switch_topology(
     modes_data = preserve_graph_rows(raw_body.get('operating_modes', []), typed.get('operating_modes', []))
     # 校验最终待存图，不用显示默认端口替代显式路径必须保存的端口声明。
     _validate_structure(nodes_data, connections_data, modes_data)
+    _validate_ports(nodes_data, connections_data)
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -445,6 +454,10 @@ def import_topology_from_template(
     for edge in topo_data.get('connections', []):
         if 'nominal_metadata' in edge:
             edge['nominal_metadata'] = normalize_nominal_metadata(edge['nominal_metadata'])
+    _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
+                        topo_data.get('operating_modes', []))
+    _validate_ports(topo_data.get('nodes', []), topo_data.get('connections', []),
+                    allow_legacy_missing=True)
 
     replaced_ids=[]
     if replace_existing:
@@ -512,21 +525,13 @@ def update_switch_topology(
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     update_data = request.model_dump(exclude_unset=True)
-    _validate_structure(update_data.get('nodes', topology.nodes),
-                        update_data.get('connections', topology.connections),
-                        update_data.get('operating_modes', topology.operating_modes))
+    if any(key in update_data and update_data[key] is None
+           for key in ('nodes', 'connections', 'operating_modes')):
+        raise HTTPException(422, detail='器件、连线、模式必须是列表，不能置空')
     _validate_nominal(raw_body.get('nodes', topology.nodes), raw_body.get('connections', topology.connections),
                       previous_nodes=topology.nodes, previous_connections=topology.connections)
     declarations = update_data.pop('connection_numeric_declarations', {})
     _validate_numeric_declarations(declarations, raw_body.get('connections', []))
-
-    if request.is_default and not topology.is_default:
-        # 默认位让位只在本暗室内 —— 不从 lab A 顺手改 chamber B 的行
-        db.query(SwitchTopology).filter(
-            SwitchTopology.switch_category_id == topology.switch_category_id,
-            SwitchTopology.chamber_id == chamber.id,
-            SwitchTopology.is_default == True
-        ).update({"is_default": False})
 
     for key in ('nodes', 'operating_modes'):
         if key in update_data:
@@ -534,6 +539,14 @@ def update_switch_topology(
     if 'connections' in update_data:
         update_data['connections'] = preserve_connection_rows(raw_body['connections'], update_data['connections'],
                                                               topology.connections, declarations)
+
+    # 保形后再校验最终候选；所有校验均早于默认位让位和 ORM 赋值。
+    nodes_data = update_data.get('nodes', topology.nodes)
+    connections_data = update_data.get('connections', topology.connections)
+    _validate_structure(nodes_data, connections_data,
+                        update_data.get('operating_modes', topology.operating_modes))
+    _validate_ports(nodes_data, connections_data, previous_nodes=topology.nodes,
+                    previous_connections=topology.connections)
 
     # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
     # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；
@@ -546,6 +559,14 @@ def update_switch_topology(
                 f"当前暗室：{chamber.id}，请求值：{update_data['chamber_id']}。"
             ),
         )
+
+    if request.is_default and not topology.is_default:
+        # 默认位让位只在本暗室内 —— 不从 lab A 顺手改 chamber B 的行
+        db.query(SwitchTopology).filter(
+            SwitchTopology.switch_category_id == topology.switch_category_id,
+            SwitchTopology.chamber_id == chamber.id,
+            SwitchTopology.is_default == True
+        ).update({"is_default": False})
 
     for key, value in update_data.items():
         setattr(topology, key, value)

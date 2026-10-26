@@ -10,17 +10,17 @@
 
 ### 2026-10-26 新批准：器件参数与物理端口完整性（WIP=1）
 
-用户要求基于PA不可编辑及同类审计，完善设计、功能列表并按开发流程串行完成。设计见[器件与端口契约](design/2026-10-26-topology-device-port-contract.md)。2026-10-26用户已确认开始：4a三个任务已实现且分别通过独立规格/质量审查，原累计F1已由 `ba1ac371` 修复并经原reviewer确认ADDRESSED、累计内审Ready。PR #539 的R1覆盖 `a087ed76` 后新增POST最终图校验P1；本轮已最小修复，相关182项通过，新库唯一全后端 **7558 passed /17 skipped /1 failed**（同一历史G8，不称全绿），等待独立增量及R2覆盖修复提交。原首轮6失败、三项异常后续未再现但根因未知、V1有效参考PA身份/冻结未覆盖及ASC/CE未执行边界保留。未合并不勾4a交付、4b不启动。[本片验证摘要](validation/2026-10-26-pc04a4a-nominal-properties.md)。旧PC-04A-3完成的是编辑生命周期，不代表各器件参数与物理端口语义完整。本批优先于未启动的软件扩域，不解除现场B/HOLD。
+用户要求基于PA不可编辑及同类审计，完善设计、功能列表并按开发流程串行完成。设计见[器件与端口契约](design/2026-10-26-topology-device-port-contract.md)。4a 已由 [PR #539](https://github.com/swang430/Meta-3D/pull/539) 于2026-10-26T14:29:23Z合并至 `1207f8c547df3f253430cc8c84694343ff50aa71`；[R2回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`，无重大问题。R1修复相关182项通过，新库唯一全后端 **7558 passed /17 skipped /1 failed**（同一历史G8，不称全绿）；原首轮6失败、三项异常后续未再现但根因未知、V1有效参考PA身份/冻结未覆盖及ASC/CE未执行边界保留，见[4a验证摘要](validation/2026-10-26-pc04a4a-nominal-properties.md)。当前唯一WIP为4b：Task1/2实现及独立任务审查已通过，Task3综合真实API浏览器矩阵已完成，相关后端469/GUI77通过、构建成功；唯一最终新库全后端 **7663 passed /17 skipped /1 failed /7579 warnings**（同一基线历史G8，不称全绿）。Task3及累计分支独立审查、PR外审尚待进行，4b未合并，见[4b计划](plans/2026-10-26-pc04a4b-topology-port-roles.md)及[4b验证摘要](validation/2026-10-26-pc04a4b-topology-port-roles.md)。用户已批准按4a～4e串行推进，无需逐片重复确认。旧PC-04A-3完成的是编辑生命周期，不代表各器件参数与物理端口语义完整。本批优先于未启动的软件扩域，不解除现场B/HOLD。
 
-- [ ] **PC-04A-4a**：标称器件参数编辑、来源标注与真实数量显示，含CAICT旧PA边。
-- [ ] **PC-04A-4b**：物理端口/角色统一编辑、画布方向与服务器保存校验；依赖4a合并。
+- [x] **PC-04A-4a**：标称器件参数编辑、来源标注与移除硬编码数量能力徽标，含CAICT旧PA边；PR #539已合并。统一声明数量/方向仍属4b。
+- [ ] **PC-04A-4b（唯一WIP）**：物理端口/角色统一编辑、画布方向与服务器保存校验；实现及综合验证完成，待Task3/累计独立审查及PR外审，未合并。详见4b验证摘要；历史G8保留，不称全绿。
 - [ ] **PC-04A-4c**：器件内部通路规则及原路径解析/开关映射衔接；依赖4b合并。
 - [ ] **PC-04A-4d**：旧配置显式转换、引用保护及损耗归属一致性；依赖4c合并。
 - [ ] **PC-04A-4e**：全器件真实API综合回归与操作文档交付；依赖4d合并。每个前序子片仍须独立验证及内外审。
 
 ### 2026-10-26 最新状态与用户新增待办
 
-PC-07A-1 已由 PR #533 合并至 `ad843108`；此前批准的四片 #530～533 软件链已完成，现场 B 和其余 PC/HOLD 范围不变。两项新增批准软件待办均已交付：PC-04A-3 由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`，[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`；PC-06A-2 由首页首片 [PR #535](https://github.com/swang430/Meta-3D/pull/535)（`b870e91a`）与入口整合 [PR #537](https://github.com/swang430/Meta-3D/pull/537)共同完成，后者于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`，[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于18:26:56Z覆盖 `805bddca6e`，未发现重大问题。这两片的交付状态文档收尾已完成；当前WIP仅为上列PC-04A-4a，PC-06剩余范围、现场B及HOLD不关闭。
+PC-07A-1 已由 PR #533 合并至 `ad843108`；此前批准的四片 #530～533 软件链已完成，现场 B 和其余 PC/HOLD 范围不变。两项新增批准软件待办均已交付：PC-04A-3 由 [PR #536](https://github.com/swang430/Meta-3D/pull/536) 于 2026-10-25T16:35:00Z 合并至 `503a5a8d`，[R2 回执](https://github.com/swang430/Meta-3D/pull/536#issuecomment-6400170137)覆盖 `e4d639782d`；PC-06A-2 由首页首片 [PR #535](https://github.com/swang430/Meta-3D/pull/535)（`b870e91a`）与入口整合 [PR #537](https://github.com/swang430/Meta-3D/pull/537)共同完成，后者于2026-10-25T18:35:05Z合并至 `f632d26c873f0514785946b65c15660a5ead6880`，[R2 回执](https://github.com/swang430/Meta-3D/pull/537#issuecomment-6401459096)于18:26:56Z覆盖 `805bddca6e`，未发现重大问题。这两片的交付状态文档收尾已完成；当前WIP仅为上列PC-04A-4b，PC-06剩余范围、现场B及HOLD不关闭。
 
 - [x] **PC-04A-3：拓扑编辑/增删完整性**——器件、端口、连线、模式、保存与恢复软件实现、验证及内外审完成，由 PR #536 合并至 `503a5a8d`；PC-04B 现场仍未完成。[本片验证摘要](validation/2026-10-25-pc04a3-topology-editing-recovery.md)。
 - [x] **PC-06A-2：系统校准与拓扑校准入口整合**——系统校准作为管理总入口，拓扑作为路径校准唯一操作入口；首页状态真实性由 PR #535 交付，剩余入口/旧档案真实只读由 PR #537 合并至 `f632d26c`，累计内审及R1/R2完成。关闭本条批准软件待办，不关闭PC-06其余范围或现场B/HOLD。[验证摘要](validation/2026-10-26-pc06a2-entry-integration.md)；[实施计划](plans/2026-10-26-pc06a2-calibration-entry-integration.md)。

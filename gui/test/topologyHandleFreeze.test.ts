@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { ReactFlow } from '@xyflow/react';
 import { customNodeTypes } from '../src/features/TopologyEditor/CustomNodes.tsx';
+(globalThis as any).React=React;
 
 // 真实ReactFlow将节点connectable转换为NodeProps.isConnectable；不mock节点或Handle。
 // SSR不运行全局StoreUpdater effect，因此显式给节点连接状态；全局冻结另由真实浏览器验证。
