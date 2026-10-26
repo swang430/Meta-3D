@@ -527,10 +527,53 @@ class TopologyService:
                 ))
 
         # 与 DFS/BFS 共用原始 pin 来源；被跳过的局部分支留下节点和原连线定位。
+        from app.schemas.topology_internal_paths import validate_internal_path_write
+        from app.schemas.topology_ports import resolve_port_direction
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        selected_pairs = set()
+        selected_routes = {}
+        for raw_node in self._raw_nodes.values():
+            declaration = (raw_node.get('params') or {}).get('rf_path_selection')
+            ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
+            if raw_node.get('type') != 'probe' or declaration is None:
+                continue
+            try:
+                if (not isinstance(ids, list) or not ids or
+                        any(not isinstance(ident, str) or ident not in self._raw_connections for ident in ids)):
+                    raise ValueError('显式路径连接为空或缺失')
+                # 即使终端边已删/改接、探头没有活跃入边，保存的结构引用仍须有效。
+                path_nodes, _ = resolve_saved_rf_path(self._raw_nodes,
+                    [self._raw_connections[ident] for ident in ids], ids[-1], check_internal_paths=False)
+                if path_nodes[-1]['id'] != raw_node['id']:
+                    raise ValueError('显式路径终端不属于此探头')
+            except ValueError as exc:
+                issues.append(ValidationIssue(severity='error', node_id=raw_node['id'],
+                    connection_id=None, message=f"探头 {raw_node['id']}：{exc}"))
+                continue
+            selected_routes[raw_node['id']] = ids
+            selected_pairs.update(zip(ids, ids[1:]))
         for mode_id in self._modes:
             active_ids = {edge.id for edge in self.get_mode_connections(mode_id)}
             for node_id, node in self._nodes.items():
-                if node.type in {'probe', 'antenna'}:
+                raw_node = self._raw_nodes[node_id]
+                if node.type == 'probe':
+                    if node_id in selected_routes and any(edge.id in active_ids and edge.target == node_id
+                                                         for edge in self._connections.values()):
+                        try:
+                            resolve_saved_rf_path(self._raw_nodes,
+                                [self._raw_connections[ident] for ident in active_ids], selected_routes[node_id][-1])
+                        except ValueError as exc:
+                            issues.append(ValidationIssue(severity='error', node_id=node_id,
+                                connection_id=None, message=f'模式 {mode_id} 探头 {node_id}：{exc}'))
+                    continue
+                if node.type == 'antenna':
+                    continue
+                # 复用原纯字段校验，不把坏声明的任意ValueError当成有意不连通。
+                try:
+                    validate_internal_path_write([raw_node], [], [])
+                except ValueError as exc:
+                    issues.append(ValidationIssue(severity='error', node_id=node_id,
+                        connection_id=None, message=f'器件 {node_id}：{exc}'))
                     continue
                 incoming = [edge for edge in self._connections.values()
                             if edge.id in active_ids and edge.target == node_id]
@@ -541,7 +584,19 @@ class TopologyService:
                         try:
                             self._check_transition(node_id, before.id, after.id, active_ids)
                         except ValueError as exc:
-                            issues.append(ValidationIssue(severity='error', node_id=node_id,
+                            params = raw_node.get('params') or {}
+                            paths = params.get('internal_paths', [])
+                            pins = (self._raw_connections[before.id].get('target_pin'),
+                                    self._raw_connections[after.id].get('source_pin'))
+                            # 只降低未选、未声明的合法端口对候选；实际穿越仍由原helper拒绝。
+                            unselected_pair = (bool(paths) and (before.id, after.id) not in selected_pairs and
+                                before.source in self._raw_nodes and after.target in self._raw_nodes and
+                                all(isinstance(pin, str) and pin in params['ports'] for pin in pins) and
+                                pins[0] != pins[1] and
+                                resolve_port_direction(raw_node, pins[0])[0] in {'input', 'bidirectional'} and
+                                resolve_port_direction(raw_node, pins[1])[0] in {'output', 'bidirectional'} and
+                                {'from_port': pins[0], 'to_port': pins[1]} not in paths)
+                            issues.append(ValidationIssue(severity='warning' if unselected_pair else 'error', node_id=node_id,
                                 connection_id=after.id,
                                 message=f'模式 {mode_id} 器件 {node_id} 连线 {before.id}/{after.id}：{exc}'))
         return issues

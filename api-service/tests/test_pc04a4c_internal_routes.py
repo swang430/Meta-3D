@@ -16,6 +16,69 @@ def declared(node, pairs=None):
         internal_paths=[{'from_port': 'in', 'to_port': 'out'}] if pairs is None else pairs)
 
 
+@pytest.mark.parametrize('kind', ['switch_slot', 'combiner'])
+@pytest.mark.parametrize('fault', ['none', 'selected_pair', 'bad_declaration', 'missing_pin',
+                                  'unknown_pin', 'direction', 'termination', 'selection_empty',
+                                  'selection_missing_edge', 'selection_wrong_terminal',
+                                  'selection_terminal_removed', 'selection_terminal_retargeted'])
+def test_validate_distinguishes_unselected_cross_pair_from_real_structure_errors(
+        client, configured, shared_switch, db_session, kind, fault):
+    topo, _ = shared_switch
+    nodes, edges = copy.deepcopy(topo.nodes), copy.deepcopy(topo.connections)
+    node = next(row for row in nodes if row['id'] == 'sw')
+    node['type'] = kind
+    node['params'].update(ports=['in1', 'in2', 'out1', 'out2'],
+        port_directions={'in1': 'input', 'in2': 'input', 'out1': 'output', 'out2': 'output'},
+        internal_paths=[{'from_port': 'in1', 'to_port': 'out1'}, {'from_port': 'in2', 'to_port': 'out2'}])
+    if kind == 'combiner':
+        for probe in nodes:
+            if probe['type'] == 'probe':
+                probe['params']['rf_path_selection']['switch_mappings'] = []
+    if fault == 'selected_pair':
+        node['params']['internal_paths'].pop(0)
+    elif fault == 'bad_declaration':
+        node['params']['internal_paths'][0]['gain_db'] = 1
+    elif fault == 'missing_pin':
+        del edges[0]['target_pin']
+    elif fault == 'unknown_pin':
+        edges[0]['target_pin'] = 'not-a-port'
+    elif fault == 'direction':
+        node['params']['port_directions']['in1'] = 'output'
+    elif fault == 'termination':
+        node['type'] = 'termination'
+        node['params']['internal_paths'] = []
+    elif fault == 'selection_terminal_removed':
+        edges.pop(2)
+        modes = copy.deepcopy(topo.operating_modes)
+        modes[0]['active_connections'].remove('ov')
+        topo.operating_modes = modes
+    elif fault == 'selection_terminal_retargeted':
+        edges[2]['target'] = 'ph'
+    elif fault.startswith('selection_'):
+        probe = next(row for row in nodes if row['id'] == 'pv')
+        probe['params']['rf_path_selection']['connection_ids'] = {
+            'selection_empty': [], 'selection_missing_edge': ['missing', 'ov'],
+            'selection_wrong_terminal': ['ih', 'oh']}[fault]
+    topo.nodes, topo.connections = nodes, edges
+    db_session.commit()
+    before = copy.deepcopy(topo.connections)
+    response = client.get(f'/api/v1/switch-topologies/{topo.id}/validate',
+        params={'lab_profile_id': str(configured.id)})
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value['is_valid'] is (fault == 'none'), value
+    errors = [issue for issue in value['issues'] if issue['severity'] == 'error']
+    if fault == 'none':
+        assert errors == []
+        public = client.get(f'/api/v1/switch-topologies/{topo.id}/paths/mimo_ota',
+            params={'lab_profile_id': str(configured.id)})
+        assert public.status_code == 200 and len(public.json()) == 2, public.text
+    else:
+        assert any(issue['node_id'] in ('sw', 'pv') for issue in errors), value
+    db_session.refresh(topo)
+    assert topo.connections == before
+
+
 def complete_reference(graph):
     nodes, edges = copy.deepcopy(graph.nodes), copy.deepcopy(graph.connections)
     nodes[4]['params']['ports'] = ['in', 'out']
