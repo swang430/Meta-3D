@@ -391,7 +391,7 @@ export function parseOptionalNominalNumber(value: number|string): number|null {
 ```
 
 - [ ] 实现表内字段描述，组件用`value={number ?? ''}`、`disabled={editingBlocked}`；来源、频率全空保持null。显示“标称/非实测”，旧值无来源不填典型来源。`setNodeNominal`/`setEdgeNominal`逐层复制params/nominal_metadata，不能mutate旧对象。
-- [ ] 按1.2收窄`handleSave`为发送`draft.nodes`，保留`handleNodesChange`真实拖动落草稿；新增纯函数/浏览器断言“旧节点无position、只编辑元数据后仍无position”及“真实拖动后新position保存”，不把ReactFlow视图默认值写成声明。边和模式不追加默认字段；显示旧PA坏值时数值组件不自动触发onChange重写。
+- [ ] 按1.2收窄`handleSave`为发送`draft.nodes`，保留`handleNodesChange`真实拖动落草稿；验收“仅编辑元数据不从ReactFlow覆盖草稿位置或注入视图坐标”和“真实拖动后新position保存”。节点既有typed响应可给出`position: {}`并随草稿保存，不要求存储缺键继续缺键，不扩展节点序列化范围。边和模式不额外追加前端默认字段；显示旧PA坏值时数值组件不自动触发onChange重写。
 - [ ] 节点抽屉嵌入组件，仅选中的节点落草稿；连线抽屉新增旧PA字段及元数据。提供“含旧PA标称的连线”清单（`pa_gain_db !== null && !== undefined`，含0），显示边ID与两端标签/端口，点击调用提取的`openConnection(id:string)`并高亮同一条边，不能按节点名猜PA归属。沿现有`handleEdgeClick`同源打开逻辑，隐藏/非当前模式边仍可通过清单定位，明确所属模式；不自动改模式或创建PA节点。
 - [ ] 所有表单控件与定位/应用入口读取`editingBlocked`；打开后进入采集/保存也锁住。原取消行为保留草稿；节点metadata不因关闭抽屉浅引用泄漏。采集失败/取消后锁恢复由原busy链驱动，不另建定时器。
 - [ ] 修正PA显示与箭头颜色的真假判断，0及负数不丢。PA净值只为标称显示，明确非实测；不写回`calibrated_loss_db`。校准字段维持只读、校准值0优先；不改变旧校准采用入口。
