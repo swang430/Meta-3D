@@ -13,7 +13,7 @@ export function routeMatchesSaved(scope:RouteScope,route:RouteSelection|null|und
 }
 
 export function routeGraphMatchesSaved(graph:SwitchTopology,route:RouteSelection) {
-  // 比较已有服务器快照，不在客户端重算摘要/校准资格。参数投影沿Task1的非展示声明。
+  // 全params（含internal_paths）与已有服务器快照比较，仅排除原展示字段；不重算摘要/校准资格。
   const sorted=(value:any):any=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?
     Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,sorted(v)])):value
   const equal=(a:unknown,b:unknown)=>JSON.stringify(sorted(a))===JSON.stringify(sorted(b))

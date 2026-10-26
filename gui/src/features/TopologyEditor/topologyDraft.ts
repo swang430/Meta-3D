@@ -1,5 +1,6 @@
 import type { SwitchTopology, TopologyNode, TopologyConnection } from '../../api/switchTopologyService';
 import { resolveNodePorts, validateNodePortDeclaration, validateConnectionPorts, isBaseStation } from './nodePortHelpers';
+import {validateDraftInternalPaths,validateNodeInternalPaths} from './internalPathHelpers';
 
 export const CALIBRATION_MODE = 'calibration';
 // 与 TopologyService.resolve_paths/get_mode_connections 一致；空列表仍有历史标签回退语义。
@@ -26,7 +27,8 @@ export function addDraftConnection(draft: SwitchTopology, connection: TopologyCo
     if (!node || !pin || !resolveNodePorts(node).ports.includes(pin)) throw new Error('请选择已声明的器件端口');
     if (node.params.connection_scope === 'calibration' && mode !== CALIBRATION_MODE) throw new Error('校准器件只能在校准接线模式中连接');
   }
-  return synchronizeModeDeclarations({...draft,connections:[...draft.connections,{...connection,modes:[mode]}],operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...getDraftModeConnectionIds(draft,m.id),connection.id]}:m)},new Set([mode]));
+  const next=synchronizeModeDeclarations({...draft,connections:[...draft.connections,{...connection,modes:[mode]}],operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...getDraftModeConnectionIds(draft,m.id),connection.id]}:m)},new Set([mode]));
+  validateDraftInternalPaths(next,draft);return next;
 }
 function assertUnreferencedConnections(draft: SwitchTopology, ids: string[], removedNodeIds: string[] = []): void {
   const changed = new Set(ids), removed = new Set(removedNodeIds);
@@ -45,7 +47,8 @@ export function updateDraftConnection(draft: SwitchTopology, connection: Topolog
     assertUnreferencedConnections(draft,[connection.id]);
     validateConnectionPorts(draft.nodes,connection);
   }
-  return {...draft,connections:draft.connections.map(edge=>edge.id===connection.id?{...connection}:edge)};
+  const next={...draft,connections:draft.connections.map(edge=>edge.id===connection.id?{...connection}:edge)};
+  validateDraftInternalPaths(next,draft);return next;
 }
 export function removeDraftConnections(draft: SwitchTopology, ids: string[]): SwitchTopology {
   assertUnreferencedConnections(draft,ids);
@@ -84,6 +87,11 @@ export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, decla
   if (declaredPorts !== undefined) {
     node={...node,params:{...node.params,ports:declaredPorts}};
   }
+  try{validateNodeInternalPaths(node)}catch(error){
+    const edges=draft.connections.filter(c=>c.source===node.id||c.target===node.id).map(c=>c.id);
+    const probes=draft.nodes.filter(n=>n.type==='probe'&&n.params.rf_path_selection?.connection_ids?.some((id:string)=>edges.includes(id))).map(n=>n.id);
+    throw new Error(`${String(error)}；所有模式关联连线 ${edges.join('、')||'无'}；显式路径探头 ${probes.join('、')||'无'}，请先核对内部pair及重新声明路径`);
+  }
   const declarationChanged=!previous||previous.type!==node.type||['ports','port_directions',...(isBaseStation(node)?['port_roles']:[])].some(key=>JSON.stringify(previous.params[key])!==JSON.stringify(node.params[key]));
   if (declarationChanged || declaredPorts !== undefined) {
     validateNodePortDeclaration(node);
@@ -98,5 +106,6 @@ export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, decla
       if(c.source===node.id||c.target===node.id)validateConnectionPorts(draft.nodes.map(n=>n.id===node.id?node:n),c);
     }
   }
-  return {...draft,nodes:draft.nodes.map(n=>n.id===node.id?node:n)};
+  const next={...draft,nodes:draft.nodes.map(n=>n.id===node.id?node:n)};
+  validateDraftInternalPaths(next,draft);return next;
 }

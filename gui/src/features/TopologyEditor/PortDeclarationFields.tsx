@@ -46,6 +46,6 @@ export function PortDeclarationFields({node,text,disabled,onTextChange,onChange,
       <Button size="xs" variant="light" disabled={disabled} onClick={()=>{if(!disabled)onChange({ports:ids,port_directions:{}})}}>清空通用方向</Button>
       <Button size="xs" variant="subtle" disabled={disabled} onClick={onRestore}>恢复原端口声明</Button>
     </Group>
-    <Text size="xs" c="dimmed">可直接在清单追加ID新增端口；双向声明不表示内部通路已验证。角色变更应用时核对所有模式关联边。</Text>
+    <Text size="xs" c="dimmed">可直接在清单追加ID新增端口；双向声明不表示内部通路已验证。删口不会自动删除内部pair；应用时核对内部通路和所有模式显式路径/关联边。</Text>
   </Stack>;
 }
