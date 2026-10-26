@@ -56,6 +56,18 @@ CAICT 的 PA 只作为连线 pa_gain_db 显示，编辑抽屉没有对应字段�
 
 ## 实施落点与验证
 
+### 4d 补充裁决：显式物理线缆单一损耗归属
+
+不从数值相等或器件类型推断同一实物。仅当操作员明确逐组确认时，允许同一cable/receive_cable节点一入一出两条相邻外边，以非归属边的`loss_owner_connection_id`引用另一原边。每边至多一组、无循环/级联/跨模式半组；旧图缺声明完全保留。引用字段必要：删值会失去来源，置null是未知而非不参与，置0是编造；只换值或收窄数值条件不能区分同实物与两条相同损耗线缆。因此保存最小关联，不建资产平台或节点数值副本。
+
+owner原calibrated_loss（含0）优先，否则原cable_loss；alias旧数值保留可追溯、关联期间只读，不再参与该组损耗。通用路径按所选owner去重一次，owner未知仍未知；正式旧binding仍只消费末边，末边为alias时只换源到同一所选路径owner，绝不改成多段求和。上游归属组不能偷偷加入正式末边值。整链confirmed补偿仍只一次，不加标称。相位沿原算法，本声明只管损耗。
+
+原图预览必须列原值、采用源和两种消费差异；撤销引用恢复旧两侧参与，明确展示总值变化。设置/撤销均显式确认，保存时校全部模式和引用，运行时半组/失引用拒绝而非借全图边补值。普通无关保存仍兼容，禁止自动转换旧ce_port/bse_port/sa_port或默认补端点。
+
+量值归属不是物理接线变化：进入configuration_scope复核提示，不加入rf_execution_identity；参考整边route_digest投影只排除这个新键以与正常路径对称，快照本身保留。已有confirmed/历史执行/证书不撤销不重算；实际pin/pair/映射变化仍走原失配门。操作员声明不授实物或测量资格，误关联会少计损耗，必须显式操作而非自动猜测。
+
+转换预览只读；确认由同次数据库快照构建候选并单条条件UPDATE原子提交，不能仅检查digest后无条件ORM保存。普通PATCH客户端无需新增digest。完整支持域、nullable消费全集、CAS和TDD矩阵以[4d实施计划](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)为施工规范，仍须独立计划审查后实施。
+
 既有落点：gui/src/features/TopologyEditor/{TopologyEditor.tsx,nodePortHelpers.ts,CustomNodes.tsx,CustomEdges.tsx,topologyDraft.ts}；gui/src/api/switchTopologyService.ts；api-service/app/schemas/switch_topology.py；api-service/app/services/topology_service.py；实际保存端点及路径解析消费方须在各子片计划中枚举后确定。器件专用字段表单从巨型TopologyEditor拆出小组件，仅限本功能。
 
 每片先写可变异为红的正反例，再实现、定点回归、独立规格/质量审查、真实API隔离SQLite全Mock浏览器、build。涉及服务器共享拓扑/路径/冻结契约时最终稳定版本跑全后端。浏览器矩阵至少覆盖已有/新增、未知/明确角色、编辑/取消/保存重载、删除引用、采集中锁、跨Lab、断网失败恢复；逐类验证实际属性，不再只计能添加的类型数。

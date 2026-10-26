@@ -4,7 +4,7 @@
 
 **Goal:** 旧 CAICT 导入图及已有图由操作员明确补充声明并先看变更预览，原子保存时保留身份和引用；未知线缆损耗不再伪装为零，也不新增重复补偿源。
 
-**Architecture:** 保留原拓扑 JSON、节点/边/模式 ID、原 PATCH 与原编辑器；增加局部转换操作清单和只读预览，确认时服务器重建并验证同一候选。损耗仍只存原外部边，节点不新建第二份数值；不拆集成 PA、不自动推物理图、不批量迁移数据库。
+**Architecture:** 保留原拓扑 JSON、节点/边/模式 ID、原 PATCH 与原编辑器；增加局部转换操作清单和只读预览，确认时服务器重建并以数据库条件更新原子保存候选。量值仍取原外部边；操作员可显式将同一线缆两侧表示归属于其中一条边，非归属边原值保留但不重复计数。节点不新建第二份数值，不拆集成 PA、不自动推物理图、不批量迁移数据库。
 
 **Tech Stack:** FastAPI/Pydantic、SQLAlchemy JSON、React/TypeScript/Mantine、pytest/tsx；无新依赖、数据库表、SCPI 或驱动。
 
@@ -18,7 +18,7 @@
 - 图边为外部接线，器件内部连通关系独立声明。多端口器件不得默认全互通。开关继续复用现有 port_maps/switch_id/继电器身份，不新增第二套自动切换配置。
 - 校准来源、原始采集和历史执行冻结保持只读；整链实测只在原采用入口生效一次。禁止额外叠加节点增益；声明、转换确认、标称完整都不是硬件能力或正式资格。
 - 不改变真实端口映射、仪器绑定、certificate、历史 snapshot、confirmed application 或执行结果。配置变化提示复核，不自动撤销证书/强制重校准；当前执行不匹配仍走原门。
-- 一条外部边保留一个损耗来源：已有 calibrated_loss_db（含0）优先，否则原 cable_loss_db；不相加。不增加 cable/receive_cable 节点损耗字段，不按数值相等猜“重复”，不把合成边拆成两条实物线缆。
+- 每组由操作员明确声明为同一线缆的两侧边只取一条原边的量值：owner的calibrated_loss_db（含0）优先，否则owner的cable_loss_db；不相加。无归属声明仍沿原语义。不增加节点损耗字段，不按数值/类型猜“重复”，不把合成边拆成实物线缆。
 - Python app 导入之前创建新临时 SQLite 并设置 `DATABASE_URL`、`USE_MOCK_INSTRUMENTS=true`、`BOOTSTRAP_ON_STARTUP=true`；默认 bootstrap 后显式设置并核查全部 category/Lab binding 的 Mock，不声称 bootstrap 自动全 Mock。不碰默认 DB、用户服务、旧样本；保留 worktree/venv/DB/output/scratch。
 - Task4 是本片唯一最终全后端责任人；Task1～3仅定点相关。稳定共享输入变化才由同一责任位重跑；reviewer不因身份重复全量。历史G8核实后披露，不能改历史/门或称全绿。
 - 每Task先真实生产入口RED，再最小实现/GREEN/核心变异恢复；GUI必须先真实API浏览器RED。完成独立审查后才下一Task。全部内审后 Ready PR，R1/R2覆盖最新SHA无P1才SHA约束合并，同步main保留用户修改。4e尚未启动，现场B/HOLD不解除。
@@ -43,23 +43,45 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 | `api-service/scripts/dev-fixtures/topology-templates/caict_v4.py::generate_topology_record`→原import | Task2/3原样导入后走同一转换；不改模板数值/型号/端点，不借replace删有历史图 | 预览、取消、打开页面不转换原图；旧导入JSON不自动新增ports/internal_paths |
 | `TopologyEditor.tsx`外层加载/重导入与内层draft/handleSave | Task3同一入口，绑定lab/topology/source；转换不得先调用重导入 | dirty草稿先明确保存或取消转换；取消不丢草稿，换Lab/图清预览且旧响应不可覆盖新图 |
 | `topologyDraft.ts`删除/改接；`topology_ports.py`、`topology_internal_paths.py`与`_validate_structure` | Task2/3复用完整最终图引用校验：全部模式、active_connections、边source/target/pins、probe.rf_path_selection.connection_ids/switch_mappings | 不偷删引用，不生成默认in/out；保留全部ID，改声明冲突列全相关边/探头 |
-| `TopologyService.__init__/_dfs_paths/get_end_to_end_loss/get_calibration_matrix/validate/to_dict` | Task1保持原求和算法，边有效量未知则总量None；`SignalPathResponse.total_loss_db`同步可空 | mixed known/unknown不输出部分和；calibrated0优先；所有已知旧数据结果不变 |
-| `switch_orchestrator.py::_build_probe_binding`→`rf_chain_resolver.py::_binding_to_spec` | Task1只替换truthiness/float-or-zero；保留现有终端边来源，不改为多段求和 | calibrated0不退到nominal；未知binding→未知chain，不悄悄drop链或补0 |
-| `api/lab_profile.py::RFChainEntry`→`CalibrationScopeCard`、`RFChainDiagramPanel` | Task1 null序列化和展示“未知”，不调用None.toFixed | 列表保留身份，未知数值不崩/不显示0 |
+| `TopologyService.__init__/_dfs_paths/get_end_to_end_loss/get_calibration_matrix/validate/to_dict` | Task1求和改取所选路径中唯一owner集合，缺归属仍原逐边；有效量未知总量None，matrix compensation也None；response同步可空 | 显式同线缆2+2变2而不是4/None；没有声明仍4；calibrated0优先；不影响phase求和 |
+| `switch_orchestrator.py::_build_probe_binding`→`rf_chain_resolver.py::_binding_to_spec` | Task1保留终端边语义，仅当该末边显式引用owner时换到已选路径内owner；不改为多段求和 | owner0不退到alias旧值，owner未知不补alias值；未知chain不drop、不补0 |
+| `api/lab_profile.py::RFChainEntry`→`gui/src/api/labProfileService.ts::RFChainEntry`→`CalibrationScopeCard`、`RFChainDiagramPanel` | Task1后端和实际手写TS均改nullable，生成类型不能替代手写类型 | 列表保留身份，未知数值不崩/不显示0，TS不再误导无条件toFixed |
 | `calibration/configuration_scope.py`与`schemas/calibration_scope.py::ScopeChain` | Task1可空chain，不改scope版本/摘要算法；Task2转换声明按既有params摘要进入current | 旧已知原值摘要不变，null新声明可产生真实差异但只提示复核；历史baseline解析不查当前补值 |
 | `path_loss_calibration_service.py::start_calibration_for_lab_profile`的chain.cable_loss_db公式/float消费者 | Task1缺量值在硬件lease前返回原失败结果，不生成测量/证书；后续单独参数cable_loss_db与chamber.typical_cable_loss_db不是同一来源 | 未知链不能执行`float(None)`或作为0；已知0照常工作；全部链先核再碰HAL |
-| `route_calibration.py`/`fixed_route_method.py`/`fixed_route_acquisition.py`→`route_batch_plan.py`/jobs | Task1/4回归：request.receive_cable_loss_db仍独立操作员输入，不从拓扑nominal自动填 | 整链Lnet只算一次；已确认整链可用时不因无关nominal未知额外否定资格 |
-| `route_calibration_freeze.py`→path_loss_preflight/measure→channel_engine_client | Task4生产回归，不改其资格/历史/正式补偿算法 | 原执行冻结与报告前后逐字一致；新执行按当前身份拒绝不匹配或沿原confirmed来源，不用标称代替confirmed |
+| `route_calibration.py`/`fixed_route_method.py`/`fixed_route_acquisition.py`→`route_batch_plan.py`/jobs | Task1仅将新loss_owner_connection_id排除参考整边身份投影；接收线缆请求仍独立，不读本字段或自动填nominal | 单改量值归属不改变正常/参考route_digest，confirmed整链仍只算一次；实改ports/pair仍沿原门 |
+| `declared_rf_routes.py::rf_execution_identity`→`route_calibration_freeze.py`→path_loss_preflight/measure→channel_engine_client | 身份只读物理所选路径，不加入量值归属字段；Task4回归，不改资格/历史/正式补偿算法 | 原冻结/报告前后逐字一致；声明同一线缆不自动撤证或使confirmed失配；实际端点变更仍拒绝 |
 | `TopologyEditor`旧number input、`nominalProperties`、`CustomEdges` | Task1/3清空送null，保留数值编辑意图；PA净值任一输入未知显示未知 | 显式0/空/缺键分开；不再`??0`/`||0`伪装缺测 |
 | `topology_nominal.py::preserve_graph_rows`与4a metadata | Task1/2延续缺键/旧opaque保形；来源说明改变不擅改数值；不新增节点线缆数值 | 六类标称和旧PA/参考边只改说明时旧数值与route摘要不被补null |
 | `models/chamber.py`、`channel_engine_client.py`、旧e2e服务的同名cable字段 | 不改独立暗室默认/旧演示数学；只核其入口不消费本次nullable RFChainSpec | 不能把本片扩成全校准算法清洗；若发现新增直接消费Nullable chain需纳入同根修复 |
 | live Pydantic→`api/openapi.yaml`→`gui/src/types/api.generated.ts`→`switchTopologyService.ts`及真实响应 | Task1/2四镜像，生成TS不手改 | POST/PATCH/list/import/path/lab/scope契约均能真实序列化null |
 
-### 0.2 损耗归属：不把转换变成补偿重构
+### 0.2 Ruling：显式同线缆归属，保留原外边为唯一量值源
 
-当前通用路径按多边求和，正式旧binding取终端边；两者不是相同算法。本片保持它们各自原来源，只修未知/零值选择；**不把旧数值迁到任意邻边，不自动累加节点或中间边到正式binding**。已有非空cable_loss_db完整保留；用户显式清空才null，不因为旧0可能是默认就改写成null。
+主代理已裁决维持批准规格，不能退化为提示。最小新增字段为非归属边上的 `loss_owner_connection_id?: string`：操作员明确确认该边与所指owner边是同一物理线缆的两侧表示，量值只取owner原字段。缺键＝沿旧逐边语义；非空字符串＝引用另一已保存边。持久化不接受null/空串/self，不用0/null代表不参与。
 
-“一线缆单一归属”本片实现为：转换只提供原外部边的损耗编辑/来源展示，不提供节点第二份数值，不拆/合边、不复制数值；cable/receive_cable节点提示选择原连线编辑，并展示全部邻边ID/已有量值，提醒同一实物不得重复登记。两边是否同一实物无法从相同数值/节点类型证明，不自动去重或宣称机器已核实实物唯一。已有重复须操作员按实际接线修改原边后再预览；不创造“另一边0”的虚假测量。若要求跨边物理唯一的强制约束，需另行明确物理线缆身份与正式多段策略，不能在本片伪装已经做到。
+选择“加最小引用字段”的必要性：删旧数值会失去来源且None变未知；换值到另一边仍无法表示非归属侧不参与；仅收窄数值条件无法区分两条真实等损耗线缆与同一线缆的两侧表示。因而必须保存操作员明确关联，但无需物理资产表、新测量值或节点损耗副本。字段只是应用归属声明，不证明实物、量值真实性或校准资格。
+
+**支持域与保存规则：**
+- 一组恰含owner与一个alias，两边必须在图中通过同一个`cable/receive_cable`节点相邻（一路入、一路出），仅以此限定可声明范围，绝不因此自动生成归属。每边最多属于一组；owner不再指向别边，无级联、环、自指、第二alias或跨节点合并。旧无声明图不新增任何字段。
+- 每个有效模式按原`active_connections`/空列表回退语义检查：该两侧要么都激活，要么都不激活，不能同线缆一侧在normal另一侧在calibration。所选实际路径含本组时须包含两边且通过这个节点的合法原内部通路；只有半组的查询不产生完整量值，运行拒绝而非借全图别处的owner补数。
+- 预览要求用户勾选“这两条边表示同一条物理线缆”，选择owner并展示两侧原cable_loss/calibrated_loss/来源、最终采用源与非参与旧值。转换只新增/撤销引用，不复制/清空/移动这些原数值。owner未知则整组未知，即使alias保留已知旧值也不兜底；owner calibrated0必须取0。
+- POST/PATCH/import均校验显式新字段；GET/list纯读取。无关旧图编辑无字段时兼容。普通编辑删除owner/alias、改接端点/pins、换节点type、改模式时必须校验所有现存组：不得静默删引用或降回双份计数，返回全部关联边ID。用户要解组须在转换预览明确撤销引用；普通PATCH显式删除已知字段同样代表主动撤销，保留原值并通过全部引用门，不由“端点不存在”自动撤销。
+- alias原数值原样保留作为旧声明，GUI列“旧值保留、不参与本组计算”，不可在alias抽屉直接编辑这些数值，提供定位owner；owner编辑沿原数值意图和元数据契约。直接PATCH同时修改alias数值不是引用失效，但须拒绝并提示先解组或编辑owner，避免写出看似生效的假编辑。
+
+**消费者精确语义：**
+
+| 场景 | 通用路径/矩阵 | 正式旧binding末边 | confirmed整链及历史 |
+|---|---|---|---|
+| 无归属两边各2 | 原求和4 | 原末边2 | 原规则不变 |
+| 用户确认两边同线缆，末边alias→前边owner2 | owner集合只计2一次；alias不是数值0 | 末边换源读取同一已选路径owner2，不求和其他段 | 不读取此字段，不另加/减2 |
+| owner0、alias旧2 | 计0一次 | 末边alias取0 | 不变 |
+| owner未知、alias旧2 | None；matrix compensation None | None，需此值的旧测量入口在lease前拒绝 | 独立confirmed整链仍按原证据可用，不套用nominal门 |
+| 归属组在上游但末边是另一条真实边3 | owner组计一次再加其它边3 | 仍末边3，不扩成多段求和 | 不变；预览明确正式旧binding未消费上游组 |
+| 撤销归属 | 两侧原值重新各自参与，预览清楚显示2→4 | 恢复末边原值 | 不改旧记录 |
+
+**摘要与失效边界：** 新归属键进入configuration_scope的当前图白名单，比较只提示复核；不要改scope版本或历史payload。它不改物理接线，故不加入rf_execution_identity、不改变正常route_digest；参考route_digest现整边投影应仅额外排除这一个新键（快照本身照存），正常/参考结果对称。已有confirmed整链与证书不被自动撤销/失效；既有执行冻结及报告不追当前owner。新旧per-chain方法创建新测量时使用当前明确owner，新执行confirmed值仍只沿原冻结一次。实际端点/内部pair/开关映射改变仍沿原身份不匹配门，不通过归属豁免。
+
+**错判代价：** 把两条实物误认为同一条会少计损耗，故绝不自动识别，必须操作员逐组明确；漏声明只保留原值与可见重复风险。owner缺失/半组/循环若兜底可能错误功率补偿，故拒绝/未知，不以alias旧值补救。保存“归属”不等于认证这条物理事实，现场B仍未验。
 
 ### 0.3 明确的null契约
 
@@ -74,6 +96,10 @@ def effective_connection_loss(connection: dict) -> float | None:
 ```
 
 该helper仅消费已通过现有typed/schema处理的数据，不被拿来放行bool/坏字符串；DB旧坏值在现有诊断/响应边界报告错误而非补零。通用total_loss的任一hop未知则None/calibration_status维持missing；validate给出缺失边ID。正式chain的nullable只传播声明，使用其做旧单段扣除的校准方法在lease前拒绝未知；confirmed整链冻结计算不依赖它，不加额外门。
+
+Task1同模块还提供 `loss_sources_for_path(nodes: list[dict], connections: list[dict], selected_ids: list[str]) -> list[dict]`：connections为本模式实际有效边全集，selected_ids为已解析的有序路径；只返回该路径唯一owner原边集合，不返回伪造0贡献。先检查所选组两边均在路径、相邻且原内部穿越有效，再按owner ID去重；缺失/半组/重复/循环抛ValueError。`loss_source_for_terminal(nodes, connections, selected_ids) -> dict`复用同一完整性检查后只返回末边或其owner，不返回上游其它量值。
+
+新增 `schemas/topology_loss_ownership.py::validate_loss_owner_write(nodes, connections, modes, *, previous_connections=None) -> None`承担0.2的字段、成组/全部模式/引用及alias数值修改保护，由原POST/PATCH/import和新转换最终候选调用。显式归属可存unknown数值但不能返回known；路径坏字段不靠前次保存证明，runtime helper也检查。`TopologyConnection` live/TS/service dataclass及to_dict均保留新引用键，老缺键不补null。phase只沿原原边算法，归属明确只管loss，不自动去重相位。
 
 ## 1. 转换接口与原子性
 
@@ -94,34 +120,72 @@ class ConversionConnectionEdit(BaseModel):
     source_pin: str | None = None
     target_pin: str | None = None
     cable_loss_db: float | None = None
+    loss_owner_connection_id: str | None = None
+    same_physical_cable_confirmed: bool = False
 
 class TopologyConversionRequest(BaseModel):
     nodes: list[ConversionNodeEdit] = []
     connections: list[ConversionConnectionEdit] = []
 
 # model_fields_set区分未提交与明确null；ports/directions/roles/internal_paths/pins/ce_port
-# 明确null拒绝，不允许删除原声明；只有cable_loss_db明确null表示操作员撤销该标称数值。
+# 明确null拒绝；cable_loss_db明确null撤销标称数值，loss_owner_connection_id明确null撤销归属键。
+# 设置/撤销归属必须same_physical_cable_confirmed=True，此确认只在操作请求，不持久化作资格。
 def build_conversion(source: dict, changes: TopologyConversionRequest) -> dict: ...
 def conversion_source_digest(source: dict) -> str: ...
 ```
 
 - `TopologyInternalPath`使用本片schema局部严格二键模型（from_port/to_port），shape与4c一致；不导入不存在的模型。纯builder深复制原nodes/connections/modes，按ID精确替换白名单字段；每ID最多一项，空操作拒绝。所有未指名键原样保留。用户必须显式输入ports；从现存raw pin可展示“原保存声明”，但不自动列成已确认ports。`ports=None`缺省不表示删除。
 - 改type只允许三组旧/新等价类型内切换，不能把PA变CE；保留原node ID/label/position/params。旧ce_port改channel_emulator若仅靠旧label取CE身份，必须显式提交ce_port；不可在服务端从label补。BSE port_roles保留权威；SA不补仪器category或测量能力。普通器件可补声明，不可借target_type改类别。
-- 原source/target、边ID、mode ID/active_connections、probe_id/polarization、rf_path_selection、switch_id/mapping、calibrated_loss/phase/pa_gain、仪器绑定、默认位均不在操作白名单；需要改变这些应取消转换后沿原编辑器处理。预览展示这些保持不变的事实。
+- 原source/target、边ID、mode ID/active_connections、probe_id/polarization、rf_path_selection、switch_id/mapping、calibrated_loss/phase/pa_gain、仪器绑定、默认位均不在操作白名单；需要改变这些应取消转换后沿原编辑器处理。归属设置/撤销只触引用键，不改上述原数值，且本次不能同时改该组两边cable_loss；先归属或先沿原编辑调整量值，避免预览混淆。预览展示全部保留值和实际采用源。
 - 新端点 `POST /switch-topologies/{topology_id}/conversion-preview?lab_profile_id=...`：从同Lab当前原行读取，不从GET已默认化对象重建source；body为上述changes。返回 `{source_digest, changes, candidate:{nodes,connections,operating_modes}, differences:[{object_kind,object_id,field,before_present,before,after}], warnings:[str]}`。differences省略before仅在before_present=false；没有持久化、默认位改变或HAL动作。
 - 预览先builder再用与PATCH相同的最终保形/结构/nominal/port/internal校验。坏输入422（含关联所有模式/边/探头），跨Lab404沿现有loader；warnings区分“未声明/仅操作员声明/配置变化需复核”，不把运行不可用称为非法草稿。
 - 原 `SwitchTopologyUpdate`增加可选 `conversion: {source_digest:str, changes:TopologyConversionRequest}`。有此字段不能同时带其它更新字段（含connection_numeric_declarations），否则422；服务器读取当前原图重新核digest，失配409“原图已变化，请重新预览”，不是覆盖另一会话。digest仅用于本次并发保护，不进入校准摘要或历史身份。
-- 确认阶段重建候选并复用原PATCH最终验证和事务；不信客户端candidate/differences。cable_loss显式意图由服务器根据changes生成原numeric declarations。仅这些数值变更解除4a等价保留；不对所有边一律重申。
+- 确认阶段重建候选并复用原PATCH最终验证，不信客户端candidate/differences。cable_loss显式意图由服务器根据changes生成原numeric declarations；仅这些数值变更解除4a等价保留，不对所有边一律重申。提交必须按§1.1 CAS原子条件写，不能复用普通ORM无条件赋值分支。
 - digest包含topology id、所属chamber、switch category以及原nodes/connections/modes，用现有JSON number规范一致序列化；排序对象键、不重排数组、不把缺键与null合并；预览到确认任何涉及图的变化均要求重预览。普通PATCH不要求digest，保留旧无关保存契约。
 - 不新增HAL锁；转换提交复用既有 `execution_exclusion_guard.active_unsafe_diagnostic()`忙信号拒绝409，预览仍只读；不通过取消请求解除busy。GUI继续复用savingRef/collectionBusyRef及原activeWork跨Lab门。服务器现有普通CRUD没有相同guard，本片仅约束新增conversion路径，不冒称重构了所有编辑锁。
 
+### 1.1 F1：源一致条件与转换写入原子成立
+
+现模型没有version_id；updated_at使用func.now且时间精度不能证明未写过，不用它作唯一CAS。现API同步线程池的读→ORM提交不是串行保证，提交前再次SELECT也不构成保护。采用数据库单条条件UPDATE，不新建表或要求普通PATCH客户端提供digest。
+
+转换确认事务以一次同Lab SELECT同时取ORM图及 `cast(nodes, Text)`、`cast(connections, Text)`、`cast(operating_modes, Text)` 的数据库原始文本快照，避免Python重新序列化的空格/键序造成SQLite误判。使用这一份source校digest、构建和验证候选；不把先前Session identity-map旧对象当新读。最后只在同id/chamber/category及三份图列快照仍相同时写候选与统计值：
+
+```python
+statement = update(SwitchTopology).where(
+    SwitchTopology.id == topology_id,
+    SwitchTopology.chamber_id == chamber.id,
+    SwitchTopology.switch_category_id == saved_category_id,
+    cast(SwitchTopology.nodes, Text) == raw_nodes,
+    cast(SwitchTopology.connections, Text) == raw_connections,
+    cast(SwitchTopology.operating_modes, Text) == raw_modes,
+).values(nodes=candidate['nodes'], connections=candidate['connections'],
+         operating_modes=candidate['operating_modes'], **statistics)
+result = db.execute(statement.execution_options(synchronize_session=False))
+if result.rowcount != 1:
+    db.rollback()
+    raise HTTPException(409, '原图已变化，请重新预览')
+db.commit()
+db.expire_all()
+```
+
+`statistics`只含原update_statistics定义的total_nodes/connections/probes/channels，按候选计算，不在Session给旧ORM对象赋dirty值；否则后续flush可能绕过条件UPDATE。updated_at沿既有onupdate更新；name/default/category/chamber不在SET，因此并发非图字段不被覆盖。确认返回重新加载同Lab真实保存行；CAS失败/SQLite锁冲突先rollback，不让get_db的退出commit提交任何残留。
+
+SQLite相同源被其它连接先写时，条件更新rowcount=0；若SQLite事务快照升级返回SQLITE_BUSY/SQLITE_LOCKED系列（按原dbapi sqlite_errorcode准确识别），返回409并要求重新预览，不自动重试旧候选。其它OperationalError不吞成409，沿原错误处理。PostgreSQL JSONB→Text是DB自身确定表示，UPDATE等待竞争写后重新评估WHERE；不靠Pythonhash函数在SQL中虚构同一性。普通PATCH仍无需客户端digest；本片保证的是转换写不覆盖在它之前已提交的不同图，不宣称修复了所有普通PATCH互相覆盖。
+
+计划阶段已用 `/tmp/pc04a4d-plan-cas-XJbPkU/probe.py` 的独立SQLAlchemy最小表、同JSONB/SQLite JSON变体、两个连接验证：B先写后A旧CAS rowcount0保留B；A新CAS rowcount1落库，exit0。没有app导入/默认DB或服务；PG只编译出JSONB UPDATE WHERE CAST列比较，**未执行PG测试**。此可行性原件不代替Task2真实API并发测试；其需在读快照与UPDATE间用测试屏障让普通PATCH真正提交，且在稳定SQLite文件库验证保存无覆盖，不只跑顺序预览例。
+
 ## 2. 串行任务与验收
 
-### Task 1：未知边损耗贯通真实读写与数值消费者
+### Task 1：显式损耗归属与未知值贯通真实读写和消费者
 
 **Files:** 新增 `api-service/app/services/topology_loss.py`、`api-service/tests/test_pc04a4d_loss_truth.py`；修改 `schemas/switch_topology.py`、`schemas/topology_nominal.py`、`services/topology_service.py`、`services/mimo_ota/switch_orchestrator.py`、`services/calibration/rf_chain_resolver.py`、`schemas/calibration_scope.py`、`api/lab_profile.py`、`services/path_loss_calibration_service.py`（均在api-service/app下）；`api/openapi.yaml`、`gui/src/types/api.generated.ts`、`gui/src/api/switchTopologyService.ts`、`gui/src/features/TopologyEditor/{TopologyEditor.tsx,CustomEdges.tsx}`、`gui/src/features/{LabWorkspace/CalibrationScopeCard.tsx,ProbeCalibration/components/RFChainDiagramPanel.tsx}`。
 
 **Interfaces:** Produces `effective_connection_loss(connection: dict) -> float | None`；现RFChainSpec/ScopeChain/RFChainEntry.cable_loss_db及SignalPath.total_loss_db/response同步nullable。Consumes原4a保形与numeric declarations，不能改为全图raw响应。
+
+**补充Files/Interfaces（F2/F3）：** 新增 `api-service/app/schemas/topology_loss_ownership.py`；修改 `api-service/app/api/switch_topology.py`、`api-service/app/services/calibration/configuration_scope.py`、`api-service/app/services/calibration/route_calibration.py` 和手写 `gui/src/api/labProfileService.ts::RFChainEntry`（`cable_loss_db: number | null`）。产生§0.3两个所选路径量值源helper和`validate_loss_owner_write`，所有POST/PATCH/import最终候选复用；不能只改generated类型。
+
+- [ ] 先真实HTTP RED验证显式owner/alias：两侧各2无声明通用4，声明后通用2且正式末边alias只取owner2；owner0优先、ownerNone为未知、alias原值仍保存；上游组加末边3时正式仍3。覆盖半组、孤立引用、环、跨模式、删除/重接/alias改数值拒绝。先记录现生产不能表达归属的失败，禁止仅以新helper缺失作为唯一RED。
+- [ ] normal/reference各验证仅归属改变时route_digest及执行identity不变、scope变化提示复核、confirmed整链不叠加；改变真实pin/pair仍拒绝。原冻结/证书hash不变。phase仍原算法，不能顺手去重。
 
 - [ ] 先新增真实HTTP/实际resolver测试：建同Lab已知端口的直连/两段图，分别0/null/缺键/已有calibrated0/负calibrated；HTTP GET/list/PATCH/import/path/matrix/lab/scope不得崩或补0。核心断言内容：
 
@@ -160,7 +224,8 @@ assert client.patch(url, params=scope, json={'conversion':{
 assert read_history_hashes() == history_before
 ```
 
-- [ ] 落实§1纯builder及严格模型；preview与commit都验证最终候选，不在默认位更新后才失败。并发测试先preview→另一个PATCH改图→conversion409，原另一个写入保留。
+- [ ] 落实§1纯builder及严格模型；preview与commit都验证最终候选，不在默认位更新后才失败。按§1.1单条CAS UPDATE保存，不给旧ORM对象赋dirty。真实HTTP并发屏障必须卡在转换读取快照后、条件UPDATE前，让普通PATCH在另一连接提交；随后转换409且另一写入保留。另测新快照成功、SQLite BUSY/LOCKED回滚、get_db最终commit不泄漏dirty、并发name变更不被覆盖；普通PATCH不要求新digest。
+- [ ] 设置/撤销owner必须显式same_physical_cable_confirmed，预览展示两侧原值/owner源/通用总值和正式末边分栏。测试同操作改组数值拒绝、解组恢复原值参与、删除owner/相邻线缆/模式半组拒绝；无声明旧图不增加字段。直接PATCH非法归属不能绕过原最终候选校验。
 - [ ] 负例逐项：未知ID/重复操作/额外字段、跨Lab、无CE声明改type、缺pin/孤立pair/方向矛盾、BSE权威冲突、受引用端口删除、全部模式引用、busy、伪造candidate/digest、确认重复旧digest。正例：unknown草稿、取消、仅元数据正常PATCH兼容、全部ID/opaque/损耗原值保留。
 - [ ] 运行 `.venv/bin/python -m pytest tests/test_pc04a4d_conversion.py tests/test_pc04a4a_final_graph_validation.py tests/test_pc04a4b_port_contract.py tests/test_pc04a4c_internal_contract.py tests/test_pc04a3_topology_recovery.py -q`；生成四镜像后build。回退stale比较和原图before保护各一项变异实红恢复。
 - [ ] 提交 `feat: 增加旧拓扑显式转换预览与确认保存`，独立审查，Task3消费最终接口；不跑全后端。
@@ -174,7 +239,8 @@ assert read_history_hashes() == history_before
 - [ ] 先新库bootstrap/显式Mock/真实API及专用代理；真实浏览器观察“转换旧配置”入口不存在为RED并保留DOM/截图/原始请求，不先改UI。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
 - [ ] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。显示raw保存端点/未声明警告、明确type选择、ports/方向/pair、旧损耗；不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
 - [ ] 每个事件处理先查 `savingRef.current || collectionBusyRef.current`；不是只disabled按钮。预览中context变化丢弃迟到响应；外层换Lab/selectedSwitch/重导入同时清会话，保存成功通过原onSaved更新，失败保留输入与原图。
-- [ ] helper测试明确断言取消/换图清预览但不改原draft，序列化未提交键不补null，null仅cable字段：
+- [ ] 原面板新增逐组“同一物理线缆”确认与owner原边选择，不按相等数值自动关联；alias原值只读并能定位owner，解组预览明确恢复参与。无声明保留原样。用户确认不显示实物验证/认证成功。
+- [ ] helper测试明确断言取消/换图清预览但不改原draft，序列化未提交键不补null；null只允许cable清值和owner显式撤销，后者要求确认且落库删除键：
 
 ```ts
 const request = buildConversionRequest([], [{connection_id:'wire',cable_loss_db:null}]);
@@ -197,13 +263,13 @@ assert.notEqual(conversionContextKey('a','g'),conversionContextKey('b','g'));
 | D01 | CAICT原import→预览取消原图不变→逐项显式声明保存；模板文件/hash不变；不是静默全模板转换 |
 | D02 | ce_port/bse_port/sa_port保持ID显式改type；CE身份缺证据拒绝，BSE角色不覆盖，SA不增加测量资格 |
 | D03 | 缺键/null/0/旧非空/typed旧字符串往返，旧calibrated0优先；多hop未知总值None，GUI无None/0假值 |
-| D04 | 六种标称/参考PA只改来源保形；cable节点无第二数值，所有邻边值列明，集成PA边不拆分 |
+| D04 | 六种标称/参考PA只改来源保形；用户明确同线缆两侧各2→选owner→预览通用4变2/正式末边取owner→保存重载→撤销恢复4，alias原值不丢；无声明不变，owner0/unknown、上游组末边3与全部引用反例覆盖，节点无数值副本，集成PA不拆分 |
 | D05 | 多模式、显式probe路径、内部pair、switch mapping引用冲突原子422；默认位与所有历史hash不变 |
-| D06 | preview零DB写零HAL；错误scope404，stale409及同default重导入保护不变 |
+| D06 | preview零DB写零HAL；错误scope404，真实双连接在读后写前交错的CAS409保留普通PATCH结果，新快照可写，name并发不覆盖；同default重导入保护不变 |
 | D07 | 草稿取消/保存失败/断网恢复/换图/换Lab/迟到响应，实际操作对象ID、请求ID、DOM一致 |
 | D08 | 保存pending、单路/批采集running、取消未确认锁定；软件释放后两次编辑保存重入 |
 | D09 | 普通与参考单路/批预览和Mock采集保持；未声明/未知拒绝不授资格；固定直连零switch I/O |
-| D10 | 转换前已有执行冻结/报告读取下载不变；转换后新执行按当前身份校验，原confirmed整链只采用一次 |
+| D10 | 转换前已有执行冻结/报告读取下载不变；仅量值归属改变正常/参考身份不变且scope提醒，confirmed整链仍一次；真实端点/内部pair变更仍按当前身份门拒绝 |
 | D11 | 旧需chain loss方法未知在lease前失败，已知0通过；独立confirmed整链不因无关nominal未知被挡 |
 | D12 | 原编辑器真实鼠标移动、显式应用/保存重载、删除引用拒绝；本片证据独立，不冒称补验4c的C07历史 |
 
