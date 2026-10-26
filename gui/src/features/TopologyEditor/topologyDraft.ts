@@ -88,9 +88,13 @@ export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, decla
   if (declarationChanged || declaredPorts !== undefined) {
     validateNodePortDeclaration(node);
     const ports = resolveNodePorts(node).ports;
+    // 一次列全所有模式引用；拒绝条件不变，不自动改接或删除。
+    const missingPortReferences = draft.connections.filter(c=>
+      (c.source===node.id && !ports.includes(c.source_pin ?? 'out')) ||
+      (c.target===node.id && !ports.includes(c.target_pin ?? 'in')));
+    if (missingPortReferences.length) throw new Error(`器件 ${node.id} 端口仍有连线 ${[...new Set(missingPortReferences.map(c=>c.id))].join('、')}，请先删除或改接连线`);
     for (const c of draft.connections) {
       // 缺省端口沿用 TopologyConnection schema / TopologyService 的 out/in，非新猜设备能力。
-      if ((c.source===node.id && !ports.includes(c.source_pin ?? 'out')) || (c.target===node.id && !ports.includes(c.target_pin ?? 'in'))) throw new Error(`器件 ${node.id} 端口仍有连线 ${c.id}，请先删除或改接连线`);
       if(c.source===node.id||c.target===node.id)validateConnectionPorts(draft.nodes.map(n=>n.id===node.id?node:n),c);
     }
   }

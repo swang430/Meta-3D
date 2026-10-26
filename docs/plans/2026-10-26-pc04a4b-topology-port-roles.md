@@ -8,7 +8,9 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test；不新增依赖。
 
-**Spec:** [已批准设计](../design/2026-10-26-topology-device-port-contract.md)；[正式队列](../roadmap-first-call.md)。基线 `1207f8c547df3f253430cc8c84694343ff50aa71`，分支 `codex/pc04a4b-topology-port-roles`。PR [#539](https://github.com/swang430/Meta-3D/pull/539) 已于 2026-10-26T14:29:23Z 合并，[R2 回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`、无重大问题。4b 为唯一 WIP；本文是待独立审查的计划，不是实现/测试完成证明。
+**Spec:** [已批准设计](../design/2026-10-26-topology-device-port-contract.md)；[正式队列](../roadmap-first-call.md)。基线 `1207f8c547df3f253430cc8c84694343ff50aa71`，分支 `codex/pc04a4b-topology-port-roles`。PR [#539](https://github.com/swang430/Meta-3D/pull/539) 已于 2026-10-26T14:29:23Z 合并，[R2 回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`、无重大问题。4b 为唯一 WIP，尚未合并；本文为实施计划与执行索引，不代替审查/正式验收。
+
+**实施状态（2026-10-27）**：Task1（6215e6ac）与Task2（143be900及a7961b91修复）已独立Approved。Task3综合矩阵已实跑，相关后端469/GUI77通过、build成功；唯一最终新库全后端7663 passed/17 skipped/1 failed/7579 warnings（历史G8与基准一致，不称全绿），详见[正式验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。Task3和累计分支独立审查、PR外审尚待完成；4c/4d及B/HOLD不启动或关闭。下方Task1/2原清单保留为施工步骤，完成依据为对应独立任务报告，不从计划文字推断验收。
 
 ## 全局约束
 
@@ -179,15 +181,15 @@ env DATABASE_URL="sqlite:///$pc04a4b_browser_dir/browser.sqlite" USE_MOCK_INSTRU
 | B12 | 脏图尝试切Lab、正常切Lab后回来，模式切换与隐藏器件列表恢复 | 原保护提示保留；不将Lab A角色或意图写给B；已保存节点/边恢复正确 |
 | B13 | 正常与参考节点的新map、全unknown与全明确两图；已有标称/实测值 | 原损耗和校准矩阵/补偿次数不变；实测/冻结数据不改，报告不凭map出现passed |
 
-- [ ] 确认Task2的缺功能RED已有可核验输入，在最终实现输入上以全新库执行完整GREEN；不回退共享工作树补拍RED。保存三端原始JSON（POST/PATCH、GET、路径响应）与阶段截图/DOM，不用toast证明落库。
-- [ ] 扩充Task1相关后端回归：`test_pc04a2_route_selection.py`、固定采集/批任务/采用/冻结、BSE拓扑与端口映射相关测试，以实际 `rg --files tests` 清单记录命令，不猜不存在的文件。验证普通/参考两端及连续两次释放重入，不连接硬件。
-- [ ] Task3执行最终新库全后端一次（有功能修复后须重跑受影响验证及必要全量），记录真实退出码/结尾统计/日志/SHA/diff/依赖；命令从api-service运行：
+- [x] 确认Task2的缺功能RED已有可核验输入，在最终实现输入上以全新库执行完整GREEN；不回退共享工作树补拍RED。保存三端原始JSON（POST/PATCH、GET、路径响应）与阶段截图/DOM，不用toast证明落库。原RED截图覆盖偏差按主代理裁决披露，不把后补基线截图当原件。
+- [x] 扩充Task1相关后端回归：`test_pc04a2_route_selection.py`、固定采集/批任务/采用/冻结、BSE拓扑与端口映射相关测试，以实际 `rg --files tests` 清单记录命令，不猜不存在的文件。验证普通/参考两端及连续两次释放重入，不连接硬件。
+- [x] Task3执行最终新库全后端一次（有功能修复后须重跑受影响验证及必要全量），记录真实退出码/结尾统计/日志/SHA/diff/依赖；本次退出1、唯一历史G8保留，不能称全绿。命令从api-service运行：
 
 ```bash
 pc04a4b_full_dir=$(mktemp -d /tmp/pc04a4b-XXXXXX)
 env DATABASE_URL="sqlite:///$pc04a4b_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR="$pc04a4b_full_dir/logs" .venv/bin/python -m pytest tests -q
 ```
 
-- [ ] 最终GUI跑Task2命令与 `npm run build`，`git diff --check`。若唯一失败是历史G8，重新核实本次输出与基线归因并如实记失败，不修改历史、不称全绿、不复用4a的7558统计。任何新失败先定位。
+- [x] 最终GUI跑Task2命令与 `npm run build`，`git diff --check`。若唯一失败是历史G8，重新核实本次输出与基线归因并如实记失败，不修改历史、不称全绿、不复用4a的7558统计。任何新失败先定位。
 - [ ] 验证摘要写各矩阵实际状态/证据、范围排除、未验证项、失败/复跑历史和原输入；正式文档不引用唯一存在本机scratch的结论而无摘要。交独立任务审查，再累计分支独立审查；所有修复有增量复审。
 - [ ] 主代理根据最新功能输入核实全量与审查覆盖后再Ready PR/R1/R2；合并且同步主main后才勾选4b、启动4c。保留父项、B/HOLD、4a未覆盖V1/ASC/CE边界；本片不声称其已验证。

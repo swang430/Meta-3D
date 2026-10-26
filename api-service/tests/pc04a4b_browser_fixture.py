@@ -56,11 +56,14 @@ def seed():
         nodes = []
         for index, kind in enumerate(('ce_port', 'probe', 'amplifier', 'pad', 'combiner', 'antenna',
                 'cable', 'receive_cable', 'air_path', 'reference_antenna', 'signal_analyzer', 'vna',
-                'termination', 'channel_emulator', 'emcenter', 'communication_tester')):
+                'termination', 'channel_emulator', 'emcenter', 'communication_tester',
+                'bse_port', 'sa_port', 'switch_slot')):
             params = {'ports': ['in', 'out'], 'unknown': {'keep': kind},
                       'visible_modes': ['mimo_ota', 'calibration']}
             if kind == 'communication_tester':
-                params.update(ports=['RF5', 'DL1'], port_roles={'RF5': 'dl'})
+                params.update(ports=['RF5', 'DL1', 'UL1'], port_roles={'RF5': 'dl', 'UL1': 'ul'})
+            if kind in ('air_path', 'reference_antenna', 'receive_cable', 'signal_analyzer'):
+                params.update(connection_scope='calibration', visible_modes=['calibration'])
             if kind == 'probe':
                 params.update(probe_id=0, polarization='V', rf_path_selection={'connection_ids': ['fixed-v'], 'switch_mappings': []})
             nodes.append(dict(id=kind, type=kind, label=f'端口-{kind}',
@@ -72,10 +75,13 @@ def seed():
                                'rf_path_selection': {'connection_ids': ['fixed-h'], 'switch_mappings': []}})]
         edges = [dict(id='fixed-v', source='ce_port', source_pin='out', target='probe', target_pin='in', cable_loss_db=0),
                  dict(id='fixed-h', source='ce2', source_pin='out', target='probe2', target_pin='in')]
+        edges += [dict(id=f'reference-{index}', source=a, source_pin='out', target=b, target_pin='in')
+                  for index, (a, b) in enumerate((('probe', 'air_path'), ('air_path', 'reference_antenna'),
+                      ('reference_antenna', 'receive_cable'), ('receive_cable', 'signal_analyzer')))]
         response = client.post('/api/v1/switch-topologies', json=dict(name='PC04A4b显式两链',
             switch_category_id=switch_id, lab_profile_id=lab['lab_id'], nodes=nodes, connections=edges,
             operating_modes=[dict(id='mimo_ota', name='MIMO OTA 测试', active_connections=['fixed-v','fixed-h']),
-                             dict(id='calibration', name='校准接线', active_connections=[])]))
+                             dict(id='calibration', name='校准接线', active_connections=[e['id'] for e in edges if e['id'].startswith('reference-')])]))
         assert response.status_code == 201, response.text
         lab['topology_id'] = response.json()['id']
         lab = manifest['labs'][1]
@@ -85,6 +91,13 @@ def seed():
         lab['topology_id'] = response.json()['id']
         assert client.get('/api/v1/instruments/hal/status').json()['mode'] == 'mock'
     with SessionLocal() as db:
+        if os.environ.get('PC04A4B_LEGACY_UNDECLARED_FIXTURE') == 'true':
+            # 专用无边历史缺声明样本：不是CAICT原节点，不自动转换模板。
+            row = db.get(SwitchTopology, UUID(manifest['labs'][0]['topology_id']))
+            row.nodes = [*row.nodes, dict(id='legacy-default-pad', type='pad', label='历史无边衰减器',
+                position={'x': 80, 'y': 1400}, params={'opaque': {'keep': 1}, 'visible_modes': ['mimo_ota']})]
+            db.commit()
+            manifest['legacy_undeclared_node'] = 'legacy-default-pad'
         if os.environ.get('PC04A4B_LEGACY_EDGE_FIXTURE') == 'true':
             # 明确构造历史样本，不能经新写边界创建；只修改本fixture新建的隔离库。
             row = db.get(SwitchTopology, UUID(manifest['labs'][0]['topology_id']))

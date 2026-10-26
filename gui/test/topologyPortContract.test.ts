@@ -69,6 +69,16 @@ test('角色变化检查全模式边与引用端口，拒绝不变更原图；�
   assert.deepEqual(draft,before);
   assert.equal(updateDraftNode(draft,node('a','output')).nodes[0].params.port_directions.RF5,'output');
 });
+test('删除或改名端口一次列出全部跨模式引用边，拒绝时原草稿不变',()=>{
+  const draft=graph();draft.nodes[0].params={ports:['IN','OUT']};
+  draft.connections=[{id:'normal-in',source:'b',source_pin:'RF5',target:'a',target_pin:'IN'},
+    {id:'reference-out',source:'a',source_pin:'OUT',target:'b',target_pin:'RF5'}];
+  draft.operating_modes[0].active_connections=['normal-in'];draft.operating_modes[1].active_connections=['reference-out'];
+  const before=structuredClone(draft);
+  assert.throws(()=>updateDraftNode(draft,{...draft.nodes[0],params:{ports:['NEW']}}),error=>
+    error instanceof Error&&error.message.includes('normal-in')&&error.message.includes('reference-out'));
+  assert.deepEqual(draft,before);
+});
 test('BSE dl/ul与通用方向冲突拒绝，清空通用map不撤销BSE来源',()=>{
   const draft=graph();draft.nodes[0]={...node('a',undefined,'communication_tester'),params:{ports:['RF5'],port_roles:{RF5:'dl'}}};
   assert.throws(()=>updateDraftNode(draft,{...draft.nodes[0],params:{...draft.nodes[0].params,port_directions:{RF5:'bidirectional'}}}),/冲突|RF5/);
