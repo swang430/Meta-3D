@@ -18,7 +18,7 @@ export function routeGraphMatchesSaved(graph:SwitchTopology,route:RouteSelection
     Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,sorted(v)])):value
   const equal=(a:unknown,b:unknown)=>JSON.stringify(sorted(a))===JSON.stringify(sorted(b))
   const params=(node:any)=>Object.fromEntries(Object.entries(node.params??{}).filter(([key])=>
-    !['visible_modes','description','notes','ports','port_roles',...(node.id===route.node_ids[0]?['ce_port']:[])].includes(key)))
+    !['visible_modes','description','notes',...(node.id===route.node_ids[0]?['ce_port']:[])].includes(key)))
   const allNodes=[...route.nodes,...route.calibration_nodes]
   if(allNodes.some(node=>{const view=graph.nodes.find(item=>item.id===node.id);return !view||view.type!==node.type||!equal(params(view),params(node))}))return false
   const normal=new Set(getDraftModeConnectionIds(graph,route.operating_mode)),reference=new Set(getDraftModeConnectionIds(graph,'calibration'))
@@ -27,11 +27,6 @@ export function routeGraphMatchesSaved(graph:SwitchTopology,route:RouteSelection
     const view=graph.connections.find(item=>item.id===edge.id)
     if(!view||!active.has(view.id)||view.source!==edge.source||view.target!==edge.target||
       (view.source_pin??'out')!==(edge.source_pin??'out')||(view.target_pin??'in')!==(edge.target_pin??'in'))return false
-    for(const [id,pin] of [[view.source,view.source_pin??'out'],[view.target,view.target_pin??'in']]){
-      const current=graph.nodes.find(node=>node.id===id)!,snapshot=allNodes.find(node=>node.id===id)!
-      const port=(node:any)=>({declared:Array.isArray(node.params?.ports)?node.params.ports.includes(pin):null,role:node.params?.port_roles?.[pin]??null})
-      if(!equal(port(current),port(snapshot)))return false
-    }
   }
   const declared=route.connection_ids.map(id=>graph.connections.find(edge=>edge.id===id)?.ce_port).filter(value=>value!=null).map(value=>String(value).trim())
   const root=graph.nodes.find(node=>node.id===route.node_ids[0])!

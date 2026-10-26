@@ -15,7 +15,7 @@ export interface ResolvedPortHandle {
 
 export const resolvePortHandles = (
   params: BaseStationPortParams = {},
-): ResolvedPortHandle[] => (params.ports ?? []).flatMap((id) => {
+): ResolvedPortHandle[] => (Array.isArray(params?.ports) ? params.ports : []).flatMap((id) => {
   const role = params.port_roles?.[id]
   if (role !== 'dl' && role !== 'ul') return []
   const physicalPort = params.physical_port_display?.[id]

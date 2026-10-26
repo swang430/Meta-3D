@@ -131,10 +131,12 @@ test('历史端口命名不一致时只改标签不重写其端口声明',()=>{
   const draft=fixture();
   draft.nodes[1]={...draft.nodes[1],type:'probe',params:{}};
   draft.connections[0].target_pin='V';
-  const changed=updateDraftNode(draft,{...draft.nodes[1],label:'历史探头新标签'},['in']);
+  const changed=updateDraftNode(draft,{...draft.nodes[1],label:'历史探头新标签'});
   assert.equal(changed.nodes[1].label,'历史探头新标签');
   assert.equal(changed.nodes[1].params.ports,undefined);
   assert.equal(changed.connections[0].target_pin,'V');
+  // 显式应用默认显示值是新的声明，不能再被误认为“只改标签”。
+  assert.throws(()=>updateDraftNode(draft,draft.nodes[1],['in']),/端口/);
 });
 test('明确改端口仍须检查历史全部关联连接，省略端口按既有schema默认解释',()=>{
   const draft=fixture();

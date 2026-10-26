@@ -12,6 +12,7 @@ export const SignalEdge = ({
   data,
   style,
   markerEnd,
+  markerStart,
 }: EdgeProps) => {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -61,7 +62,7 @@ export const SignalEdge = ({
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={edgeStyle} />
+      <BaseEdge path={edgePath} markerEnd={markerEnd} markerStart={markerStart} style={edgeStyle} />
       
       <EdgeLabelRenderer>
         <Box
@@ -78,7 +79,7 @@ export const SignalEdge = ({
             color={labelColor}
             style={{ cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}
           >
-            {lossLabel}
+            {direction ? `${direction} · ` : ''}{lossLabel}{data?.portWarning ? ` · ${data.portWarning}` : ''}
           </Badge>
         </Box>
       </EdgeLabelRenderer>

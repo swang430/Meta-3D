@@ -1,5 +1,5 @@
 import type { SwitchTopology, TopologyNode, TopologyConnection } from '../../api/switchTopologyService';
-import { getNodePorts } from './nodePortHelpers';
+import { resolveNodePorts, validateNodePortDeclaration, validateConnectionPorts, isBaseStation } from './nodePortHelpers';
 
 export const CALIBRATION_MODE = 'calibration';
 // 与 TopologyService.resolve_paths/get_mode_connections 一致；空列表仍有历史标签回退语义。
@@ -20,9 +20,10 @@ export function addDraftNode(draft: SwitchTopology, node: TopologyNode, mode: st
 }
 export function addDraftConnection(draft: SwitchTopology, connection: TopologyConnection, mode: string): SwitchTopology {
   if (!draft.operating_modes.some(m=>m.id===mode)) throw new Error('请先选择接线模式');
+  validateConnectionPorts(draft.nodes,connection);
   for (const [id, pin] of [[connection.source, connection.source_pin], [connection.target, connection.target_pin]]) {
     const node = draft.nodes.find(n=>n.id===id);
-    if (!node || !pin || !getNodePorts(node).includes(pin)) throw new Error('请选择已声明的器件端口');
+    if (!node || !pin || !resolveNodePorts(node).ports.includes(pin)) throw new Error('请选择已声明的器件端口');
     if (node.params.connection_scope === 'calibration' && mode !== CALIBRATION_MODE) throw new Error('校准器件只能在校准接线模式中连接');
   }
   return synchronizeModeDeclarations({...draft,connections:[...draft.connections,{...connection,modes:[mode]}],operating_modes:draft.operating_modes.map(m=>m.id===mode?{...m,active_connections:[...getDraftModeConnectionIds(draft,m.id),connection.id]}:m)},new Set([mode]));
@@ -42,6 +43,7 @@ export function updateDraftConnection(draft: SwitchTopology, connection: Topolog
     (old.source_pin??'out')!==(connection.source_pin??'out') ||
     (old.target_pin??'in')!==(connection.target_pin??'in')) {
     assertUnreferencedConnections(draft,[connection.id]);
+    validateConnectionPorts(draft.nodes,connection);
   }
   return {...draft,connections:draft.connections.map(edge=>edge.id===connection.id?{...connection}:edge)};
 }
@@ -79,14 +81,17 @@ export function updateDraftNode(draft: SwitchTopology, node: TopologyNode, decla
   }
   const previous=draft.nodes.find(n=>n.id===node.id);
   // 只改名称或显示模式时，不把历史图的默认画布端点写成新的端口声明。
-  if (declaredPorts && JSON.stringify(declaredPorts)!==JSON.stringify(getNodePorts(previous))) {
+  if (declaredPorts !== undefined) {
     node={...node,params:{...node.params,ports:declaredPorts}};
   }
-  if (JSON.stringify(previous?.params.ports)!==JSON.stringify(node.params.ports)) {
-    const ports = getNodePorts(node);
+  const declarationChanged=!previous||previous.type!==node.type||['ports','port_directions',...(isBaseStation(node)?['port_roles']:[])].some(key=>JSON.stringify(previous.params[key])!==JSON.stringify(node.params[key]));
+  if (declarationChanged || declaredPorts !== undefined) {
+    validateNodePortDeclaration(node);
+    const ports = resolveNodePorts(node).ports;
     for (const c of draft.connections) {
       // 缺省端口沿用 TopologyConnection schema / TopologyService 的 out/in，非新猜设备能力。
-      if ((c.source===node.id && !ports.includes(c.source_pin ?? 'out')) || (c.target===node.id && !ports.includes(c.target_pin ?? 'in'))) throw new Error('该端口仍有连线，请先删除或改接连线');
+      if ((c.source===node.id && !ports.includes(c.source_pin ?? 'out')) || (c.target===node.id && !ports.includes(c.target_pin ?? 'in'))) throw new Error(`器件 ${node.id} 端口仍有连线 ${c.id}，请先删除或改接连线`);
+      if(c.source===node.id||c.target===node.id)validateConnectionPorts(draft.nodes.map(n=>n.id===node.id?node:n),c);
     }
   }
   return {...draft,nodes:draft.nodes.map(n=>n.id===node.id?node:n)};

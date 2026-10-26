@@ -47,12 +47,13 @@ import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalL
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
 import {NominalPropertyFields} from './NominalPropertyFields';
+import {PortDeclarationFields} from './PortDeclarationFields';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
 import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
 import { routeGraphMatchesSaved } from './routeCalibrationState';
 import type { RouteSelection } from '../../types/api';
-import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts } from './nodePortHelpers';
+import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts, edgePortPresentation } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, updateDraftConnection, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService, topologyUpdatePayload, mergeConnectionDeclarations } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations } from '../../api/switchTopologyService';
@@ -106,6 +107,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const [nodeDrawerOpen, setNodeDrawerOpen] = useState(false);
   const [newNodeType, setNewNodeType] = useState<string>('pad');
   const [portText, setPortText] = useState('');
+  const [portsExplicit,setPortsExplicit]=useState(false);
   const [nodeNominalValid,setNodeNominalValid]=useState(true);
   const [edgeNominalValid,setEdgeNominalValid]=useState(true);
   const [cableNominalValid,setCableNominalValid]=useState(true);
@@ -140,6 +142,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     setDrawerOpen(false);
     setSelectedEdge(null);
     setSelectedConnectionId(null);
+    setSelectedNode(null);setNodeDrawerOpen(false);setPortText('');setPortsExplicit(false);
+    setHighlightedRoute(null);
   }, [topology.id,labProfileId]);
 
   // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
@@ -190,6 +194,9 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     return draft.connections
       .filter((c) => activeConnectionIds.has(c.id)||c.id===selectedConnectionId)
       .map((c) => {
+      const portView=edgePortPresentation(draft.nodes,c);
+      const marker={type:MarkerType.ArrowClosed,color:c.direction==='UL'?'#D946EF':(c.calibrated_loss_db!=null?'#10B981':
+        (typeof c.pa_gain_db==='number'&&Number.isFinite(c.pa_gain_db)?'#F59E0B':'#3B82F6'))};
       return {
         id: c.id,
         source: c.source,
@@ -202,17 +209,15 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           calibrated_loss_db: c.calibrated_loss_db,
           pa_gain_db: c.pa_gain_db,
           direction: c.direction,
+          portWarning:portView.warning,
         },
         animated: true,
         selected:selectedConnectionId===c.id,
         style:selectedConnectionId===c.id?{filter:'drop-shadow(0 0 5px var(--mantine-color-yellow-5))'}:
           highlightedRoute?.connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-blue-5))'}:
           highlightedRoute?.calibration_connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-orange-5))'}:undefined,
-        markerEnd: { 
-          type: MarkerType.ArrowClosed, 
-          color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db != null ? '#10B981' :
-            (typeof c.pa_gain_db === 'number' && Number.isFinite(c.pa_gain_db) ? '#F59E0B' : '#3B82F6'))
-        },
+        markerEnd:portView.arrowEnd?marker:undefined,
+        markerStart:portView.arrowStart?marker:undefined,
       };
     });
   }, [draft, activeMode, highlightedRoute, selectedConnectionId]);
@@ -227,6 +232,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       setSelectedNode({...item,params:{...item.params}});
       setNodeNominalValid(true);
       setPortText(getNodePorts(item).join(', '));
+      setPortsExplicit(false);
       setNodeDrawerOpen(true);
     }
   };
@@ -346,6 +352,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       setNumericDeclarations({});
       setEdgeNumericDeclarations([]);
       setDirty(false);
+      setHighlightedRoute(null);
       setSaveResult('saved');
       onTopologyUpdated(updated);
 
@@ -400,13 +407,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     setSelectedNode(next.nodes[next.nodes.length-1]);
     setNodeNominalValid(true);
     setPortText(suggestedPassivePorts(newNodeType).join(', '));
+    setPortsExplicit(false);
     setNodeDrawerOpen(true);
     void setCenter(node.position.x+90,node.position.y+40,{zoom:1,duration:200});
   };
   const applyNodeEdit = () => {
     if (!selectedNode || !nodeNominalValid || savingRef.current || collectionBusyRef.current) return;
     const ports = portText.split(/[,，\n]/).map(p=>p.trim()).filter(Boolean);
-    if (!selectedNode.label.trim() || !ports.length || new Set(ports).size!==ports.length) {
+    if (!selectedNode.label.trim() || (portsExplicit&&(!ports.length || new Set(ports).size!==ports.length))) {
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
     }
     try {
@@ -421,7 +429,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             rf_path_selection:probePathDeclaration(draft,selectedNode.id,declaration.connection_ids,declaration.switch_mappings)}};
         }
       }
-      const next=updateDraftNode(draft,editedNode,ports);
+      const next=updateDraftNode(draft,editedNode,portsExplicit?ports:undefined);
       if (changeDraft(()=>next)) setNodeDrawerOpen(false);
     } catch(error) { notifications.show({color:'red',message:String(error)}); }
   };
@@ -541,7 +549,13 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         {nodeDrawerOpen && selectedNode && <Stack>
           <Text size="xs" c="dimmed">{selectedNode.id}</Text>
           <TextInput label="器件名称" value={selectedNode.label} disabled={editingBlocked} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
-          <TextInput label="声明端口" description="用逗号分隔，须按实际接线核对；不是设备能力证明。端口仍有连线时不能移除。" value={portText} disabled={editingBlocked} onChange={event=>setPortText(event.currentTarget.value)} />
+          <PortDeclarationFields node={selectedNode} text={portText} disabled={editingBlocked}
+            onTextChange={value=>{if(!savingRef.current&&!collectionBusyRef.current)setPortText(value)}}
+            onChange={delta=>{if(savingRef.current||collectionBusyRef.current)return;setPortsExplicit(true);setSelectedNode(current=>current?{...current,params:{...current.params,...delta}}:null)}}
+            onRestore={()=>{if(savingRef.current||collectionBusyRef.current)return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
+              const params={...selectedNode.params};for(const key of ['ports','port_directions',...(['communication_tester','bse_port'].includes(selectedNode.type)?['port_roles']:[])]){
+                if(Object.hasOwn(original.params,key))params[key]=original.params[key];else delete params[key];
+              }setSelectedNode({...selectedNode,params});setPortText(getNodePorts(original).join(', '));setPortsExplicit(false)}}/>
           {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。损耗仅在相邻连线编辑，不在器件重复计入。</Text>}
           <NominalPropertyFields key={selectedNode.id} fields={nominalFieldsForNode(selectedNode.type)} values={selectedNode.params}
             metadata={selectedNode.params.nominal_metadata} disabled={editingBlocked} onValidityChange={setNodeNominalValid}
@@ -587,8 +601,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         {drawerOpen && selectedEdge && (() => {
           const sourceNode = draft.nodes.find((n) => n.id === selectedEdge.source);
           const targetNode = draft.nodes.find((n) => n.id === selectedEdge.target);
-          const sourcePinOpts = nodePortsToSelectOptions(sourceNode);
-          const targetPinOpts = nodePortsToSelectOptions(targetNode);
+          const sourcePinOpts = nodePortsToSelectOptions(sourceNode,'source');
+          const targetPinOpts = nodePortsToSelectOptions(targetNode,'target');
           return (
           <Stack gap="md">
             <Paper withBorder p="sm" radius="md" bg="gray.0">
@@ -605,6 +619,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             </Paper>
 
             <Divider label="端口绑定 (可编辑)" labelPosition="center" />
+            {edgePortPresentation(draft.nodes,selectedEdge).warning&&<Alert color="orange">{edgePortPresentation(draft.nodes,selectedEdge).warning}；现有pins保持原值，修改端点时重新核对。</Alert>}
 
             {/* P1: pin Selects driven by node-port helper. Operators picked
                 arbitrary strings before, which silently broke downstream SCPI
