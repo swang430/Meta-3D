@@ -1,5 +1,5 @@
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import List, Dict, Any, Optional, Literal
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer
 from uuid import UUID
 from ._datetime import UTCDateTime
 
@@ -24,7 +24,13 @@ class TopologyConnection(BaseModel):
     target_pin: str = "in"
     cable_type: str = ""
     cable_loss_db: float = 0.0
-    pa_gain_db: Optional[float] = None
+    pa_gain_db: JsonValue = Field(default=None, description=(
+        '标称PA增益(dB)，非实测。新增/变更只接受有限number或null；'
+        'PATCH仅兼容同Lab同ID同键、JSON类型和值均未改变的历史原值。'))
+    nominal_metadata: JsonValue = Field(default=None, description=(
+        '标称说明原始JSON：仅pa_gain_db/cable_loss_db键，值含unit(dB)、'
+        'source_note(string/null)、frequency_range_mhz(两个有限正数且递增或null)。'
+        '写入时严格验证，不授予实测或采用资格。'))
     ce_port: Optional[str] = None
     switch_port: Optional[str] = None
     cable_length_m: float = 0.0
@@ -70,6 +76,9 @@ class SwitchTopologyCreate(SwitchTopologyBase):
 
 
 class SwitchTopologyUpdate(BaseModel):
+    connection_numeric_declarations: Dict[str, List[Literal[
+        'cable_loss_db', 'cable_length_m', 'calibrated_loss_db', 'calibrated_phase_deg'
+    ]]] = Field(default_factory=dict, description='仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。')
     name: Optional[str] = None
     description: Optional[str] = None
     version: Optional[str] = None
@@ -98,6 +107,10 @@ class SwitchTopologyResponse(SwitchTopologyBase):
     created_by: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer('connections', when_used='json')
+    def serialized_connections(self, connections):
+        return [connection.model_dump(mode='json', exclude_unset=True) for connection in connections]
 
 
 class SwitchTopologyListResponse(BaseModel):

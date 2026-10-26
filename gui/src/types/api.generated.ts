@@ -4,6 +4,82 @@
  */
 
 export interface paths {
+    "/api/v1/switch-topologies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Switch Topologies
+         * @description List switch topologies in the current lab's chamber
+         */
+        get: operations["list_switch_topologies_api_v1_switch_topologies_get"];
+        put?: never;
+        /**
+         * Create Switch Topology
+         * @description Create a new switch topology in the current lab's chamber
+         */
+        post: operations["create_switch_topology_api_v1_switch_topologies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Switch Topology
+         * @description Get a specific switch topology by ID (scoped to the current lab's chamber)
+         */
+        get: operations["get_switch_topology_api_v1_switch_topologies__topology_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Switch Topology
+         * @description Update an existing switch topology (scoped to the current lab's chamber)
+         */
+        patch: operations["update_switch_topology_api_v1_switch_topologies__topology_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/import/from-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Topology From Template
+         * @description Import a topology structure from a named template file.
+         *
+         *     导入目标暗室 = lab_profile_id 派生（不再收裸 chamber_id 当真值）。
+         *     解析顺序是硬约束：lab → chamber → 模板全部成功之后才碰任何既有行。
+         *
+         *     Templates are loaded dynamically from
+         *     ``api-service/scripts/dev-fixtures/topology-templates/<template_id>.py``
+         *     by ``importlib`` — commercial deploys that don't ship dev-fixtures will
+         *     see an empty registry and get 404.
+         */
+        post: operations["import_topology_from_template_api_v1_switch_topologies_import_from_template_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-batches/preview": {
         parameters: {
             query?: never;
@@ -2995,6 +3071,254 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** SwitchTopologyListResponse */
+        SwitchTopologyListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["SwitchTopologyResponse"][];
+        };
+        /** SwitchTopologyResponse */
+        SwitchTopologyResponse: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Version
+             * @default 1.0
+             */
+            version: string;
+            /** Site Name */
+            site_name?: string | null;
+            /** System Model */
+            system_model?: string | null;
+            /** Installed Date */
+            installed_date?: string | null;
+            /** Installed By */
+            installed_by?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
+            /** Nodes */
+            nodes?: components["schemas"]["TopologyNode"][];
+            /** Connections */
+            connections?: components["schemas"]["TopologyConnection"][];
+            /** Operating Modes */
+            operating_modes?: components["schemas"]["OperatingMode"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Switch Category Id
+             * Format: uuid
+             */
+            switch_category_id: string;
+            /** Chamber Id */
+            chamber_id?: string | null;
+            /** Total Nodes */
+            total_nodes: number;
+            /** Total Connections */
+            total_connections: number;
+            /** Total Probes */
+            total_probes: number;
+            /** Total Channels */
+            total_channels: number;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
+        };
+        /** TopologyNode */
+        TopologyNode: {
+            /** Id */
+            id: string;
+            /**
+             * Type
+             * @description ce_port|switch_slot|probe|amplifier|combiner|pad|antenna|bse_port|sa_port|termination
+             */
+            type: string;
+            /** Label */
+            label: string;
+            /** Position */
+            position?: {
+                [key: string]: number;
+            };
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        /** TopologyConnection */
+        TopologyConnection: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /**
+             * Source Pin
+             * @default out
+             */
+            source_pin: string;
+            /** Target */
+            target: string;
+            /**
+             * Target Pin
+             * @default in
+             */
+            target_pin: string;
+            /**
+             * Cable Type
+             * @default
+             */
+            cable_type: string;
+            /**
+             * Cable Loss Db
+             * @default 0
+             */
+            cable_loss_db: number;
+            /** @description 标称PA增益(dB)，非实测。新增/变更只接受有限number或null；PATCH仅兼容同Lab同ID同键、JSON类型和值均未改变的历史原值。 */
+            pa_gain_db?: components["schemas"]["JsonValue"];
+            /** @description 标称说明原始JSON：仅pa_gain_db/cable_loss_db键，值含unit(dB)、source_note(string/null)、frequency_range_mhz(两个有限正数且递增或null)。写入时严格验证，不授予实测或采用资格。 */
+            nominal_metadata?: components["schemas"]["JsonValue"];
+            /** Ce Port */
+            ce_port?: string | null;
+            /** Switch Port */
+            switch_port?: string | null;
+            /**
+             * Cable Length M
+             * @default 0
+             */
+            cable_length_m: number;
+            /** Calibrated Loss Db */
+            calibrated_loss_db?: number | null;
+            /** Calibrated Phase Deg */
+            calibrated_phase_deg?: number | null;
+            /**
+             * Direction
+             * @description DL, UL, or Bi-Di
+             * @default DL
+             */
+            direction: string;
+            /** Modes */
+            modes?: string[];
+        };
+        /** OperatingMode */
+        OperatingMode: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Active Connections */
+            active_connections?: string[];
+            /** Required Instruments */
+            required_instruments?: string[];
+            /**
+             * Color
+             * @default #CCCCCC
+             */
+            color: string;
+        };
+        /** SwitchTopologyCreate */
+        SwitchTopologyCreate: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Version
+             * @default 1.0
+             */
+            version: string;
+            /** Site Name */
+            site_name?: string | null;
+            /** System Model */
+            system_model?: string | null;
+            /** Installed Date */
+            installed_date?: string | null;
+            /** Installed By */
+            installed_by?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
+            /** Nodes */
+            nodes?: components["schemas"]["TopologyNode"][];
+            /** Connections */
+            connections?: components["schemas"]["TopologyConnection"][];
+            /** Operating Modes */
+            operating_modes?: components["schemas"]["OperatingMode"][];
+            /**
+             * Switch Category Id
+             * Format: uuid
+             */
+            switch_category_id: string;
+            /** Chamber Id */
+            chamber_id?: string | null;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+        };
+        /** SwitchTopologyUpdate */
+        SwitchTopologyUpdate: {
+            /**
+             * Connection Numeric Declarations
+             * @description 仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。
+             */
+            connection_numeric_declarations?: {
+                [key: string]: ("cable_loss_db" | "cable_length_m" | "calibrated_loss_db" | "calibrated_phase_deg")[];
+            };
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Version */
+            version?: string | null;
+            /** Site Name */
+            site_name?: string | null;
+            /** System Model */
+            system_model?: string | null;
+            /** Installed Date */
+            installed_date?: string | null;
+            /** Installed By */
+            installed_by?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Is Default */
+            is_default?: boolean | null;
+            /** Nodes */
+            nodes?: components["schemas"]["TopologyNode"][] | null;
+            /** Connections */
+            connections?: components["schemas"]["TopologyConnection"][] | null;
+            /** Operating Modes */
+            operating_modes?: components["schemas"]["OperatingMode"][] | null;
+            /** Chamber Id */
+            chamber_id?: string | null;
+        };
         /** BatchPlanRequest */
         BatchPlanRequest: {
             /**
@@ -5830,6 +6154,186 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_switch_topologies_api_v1_switch_topologies_get: {
+        parameters: {
+            query: {
+                /** @description 当前 LabProfile —— 暗室由它派生（P1-57），列表只含该暗室的行。 */
+                lab_profile_id: string;
+                skip?: number;
+                limit?: number;
+                is_active?: boolean | null;
+                switch_category_id?: string | null;
+                /** @description 兼容参数：如提供必须等于 LabProfile 派生的暗室，否则 422。 */
+                chamber_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_switch_topology_api_v1_switch_topologies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchTopologyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_switch_topology_api_v1_switch_topologies__topology_id__get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_switch_topology_api_v1_switch_topologies__topology_id__patch: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchTopologyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_topology_from_template_api_v1_switch_topologies_import_from_template_post: {
+        parameters: {
+            query: {
+                switch_category_id: string;
+                /** @description 当前 LabProfile —— 导入目标暗室由它派生（P1-57）。 */
+                lab_profile_id: string;
+                /** @description Filename (without .py) of a template under scripts/dev-fixtures/topology-templates/. The template must export ``generate_topology_record() -> dict``. */
+                template_id: string;
+                /** @description 兼容参数：如提供必须等于 LabProfile 派生的暗室，否则 422。 */
+                chamber_id?: string | null;
+                /** @description 重导入：先删除同一 (switch_category_id, 派生暗室) 的既有行再导入。已有校准采用历史的拓扑拒绝替换（409），保留原图和历史。P1-57 之前这个删除在 GUI 客户端做（先删后验 —— lab/模板解析失败时行已经没了）；收进服务端后保证完整解析成功才动行。 */
+                replace_existing?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     preview_api_v1_lab_profiles__lab_profile_id__route_calibration_batches_preview_post: {
         parameters: {
             query?: never;

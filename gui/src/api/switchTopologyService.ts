@@ -1,5 +1,25 @@
 import apiClient from './client';
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type ConnectionNumericField = 'cable_loss_db' | 'cable_length_m' | 'calibrated_loss_db' | 'calibrated_phase_deg';
+export type ConnectionNumericDeclarations = Record<string, ConnectionNumericField[]>;
+export type TopologyUpdatePayload = Partial<SwitchTopology> & {
+  connection_numeric_declarations?: ConnectionNumericDeclarations;
+};
+
+export function mergeConnectionDeclarations(current: ConnectionNumericDeclarations, id: string,
+  fields: ConnectionNumericField[]): ConnectionNumericDeclarations {
+  return fields.length ? {...current,[id]:[...new Set([...(current[id]??[]),...fields])]} : current;
+}
+
+export function topologyUpdatePayload(draft: SwitchTopology,
+  declarations: ConnectionNumericDeclarations): TopologyUpdatePayload {
+  const live=new Set(draft.connections.map(edge=>edge.id));
+  const kept=Object.fromEntries(Object.entries(declarations).filter(([id,fields])=>live.has(id)&&fields.length));
+  return {nodes:draft.nodes, connections:draft.connections, operating_modes:draft.operating_modes,
+    ...(Object.keys(kept).length?{connection_numeric_declarations:kept}:{})};
+}
+
 export interface TopologyNode {
   id: string;
   type: string;
@@ -16,7 +36,8 @@ export interface TopologyConnection {
   target_pin?: string;
   cable_type?: string;
   cable_loss_db?: number;
-  pa_gain_db?: number;
+  pa_gain_db?: JsonValue;
+  nominal_metadata?: JsonValue;
   ce_port?: string;
   switch_port?: string;
   cable_length_m?: number;
@@ -78,7 +99,7 @@ export const switchTopologyService = {
     return response.data;
   },
 
-  async updateTopology(id: string, labProfileId: string, data: Partial<SwitchTopology>) {
+  async updateTopology(id: string, labProfileId: string, data: TopologyUpdatePayload) {
     const response = await apiClient.patch(`/switch-topologies/${id}`, data, {
       params: { lab_profile_id: labProfileId },
     });

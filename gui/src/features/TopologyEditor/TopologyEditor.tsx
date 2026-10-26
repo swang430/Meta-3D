@@ -52,8 +52,8 @@ import { routeGraphMatchesSaved } from './routeCalibrationState';
 import type { RouteSelection } from '../../types/api';
 import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, updateDraftConnection, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
-import { switchTopologyService } from '../../api/switchTopologyService';
-import type { SwitchTopology, TopologyConnection, TopologyNode } from '../../api/switchTopologyService';
+import { switchTopologyService, topologyUpdatePayload, mergeConnectionDeclarations } from '../../api/switchTopologyService';
+import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations } from '../../api/switchTopologyService';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
 
@@ -98,6 +98,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const [selectedEdge, setSelectedEdge] = useState<TopologyConnection | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draft, setDraft] = useState(topology);
+  const [numericDeclarations,setNumericDeclarations]=useState<ConnectionNumericDeclarations>({});
+  const [edgeNumericDeclarations,setEdgeNumericDeclarations]=useState<ConnectionNumericField[]>([]);
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
   const [nodeDrawerOpen, setNodeDrawerOpen] = useState(false);
   const [newNodeType, setNewNodeType] = useState<string>('pad');
@@ -110,7 +112,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const editingBlocked=saving||collectionBusy;
   const handleCollectionBusy=useCallback((busy:boolean)=>{
     collectionBusyRef.current=busy;setCollectionBusy(busy);onBusyChange(busy);
-    if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);}
+    if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);setEdgeNumericDeclarations([]);}
   },[onBusyChange]);
   const handleRunningRoute=useCallback((route:RouteSelection)=>{
     if(route.lab_profile_id===labProfileId && route.topology_id===topology.id){setActiveMode(route.operating_mode);setHighlightedRoute(routeGraphMatchesSaved(topology,route)?route:null)}
@@ -127,7 +129,11 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     setDraft(topology);
     setDirty(false);
     setSaveResult('idle');
-  }, [topology.id]);
+    setNumericDeclarations({});
+    setEdgeNumericDeclarations([]);
+    setDrawerOpen(false);
+    setSelectedEdge(null);
+  }, [topology.id,labProfileId]);
 
   // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
   useEffect(() => {
@@ -184,7 +190,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         data: { 
           cable_loss_db: c.cable_loss_db,
           calibrated_loss_db: c.calibrated_loss_db,
-          pa_gain_db: (c as any).pa_gain_db,
+          pa_gain_db: c.pa_gain_db,
           direction: c.direction,
         },
         animated: true,
@@ -192,7 +198,8 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           highlightedRoute?.calibration_connection_ids.includes(c.id)?{filter:'drop-shadow(0 0 5px var(--mantine-color-orange-5))'}:undefined,
         markerEnd: { 
           type: MarkerType.ArrowClosed, 
-          color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db ? '#10B981' : ((c as any).pa_gain_db ? '#F59E0B' : '#3B82F6')) 
+          color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db != null ? '#10B981' :
+            (typeof c.pa_gain_db === 'number' && Number.isFinite(c.pa_gain_db) ? '#F59E0B' : '#3B82F6'))
         },
       };
     });
@@ -221,6 +228,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     try {
       const next = change(draft);
       setDraft(next);
+      setNumericDeclarations(current=>topologyUpdatePayload(next,current).connection_numeric_declarations??{});
       setDirty(true);
       setSaveResult('idle');
       return true;
@@ -274,6 +282,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     const conn = draft.connections.find(c => c.id === edge.id);
     if (conn) {
       setSelectedEdge({ ...conn });
+      setEdgeNumericDeclarations([]);
       setDrawerOpen(true);
     }
   }, [draft]);
@@ -282,11 +291,16 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const updateConnectionParam = useCallback((field: keyof TopologyConnection, value: any) => {
     if (!selectedEdge) return;
     setSelectedEdge(prev => prev ? { ...prev, [field]: value } : null);
+    if(field==='cable_loss_db'||field==='cable_length_m') {
+      setEdgeNumericDeclarations(current=>[...new Set([...current,field])]);
+    }
   }, [selectedEdge]);
 
   const applyConnectionEdit = useCallback(() => {
     if (!selectedEdge) return;
     if (changeDraft(current=>updateDraftConnection(current,selectedEdge))) {
+      setNumericDeclarations(current=>mergeConnectionDeclarations(current,selectedEdge.id,edgeNumericDeclarations));
+      setEdgeNumericDeclarations([]);
       setDrawerOpen(false);
       notifications.show({
         message: `连线 ${selectedEdge.id} 参数已更新`,
@@ -294,7 +308,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
         autoClose: 2000,
       });
     }
-  }, [selectedEdge, changeDraft]);
+  }, [selectedEdge, changeDraft, edgeNumericDeclarations]);
 
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
@@ -307,23 +321,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       // 2. Build update payload with current positions + edited connections.
       // P1-57：不再提交 chamber_id —— 暗室由后端从 lab_profile_id 派生，
       // 客户端提交只会造出"写进错暗室"的口子。
-      const updatedNodes = draft.nodes.map(n => {
-        const rfNode = nodes.find(rn => rn.id === n.id);
-        return {
-          ...n,
-          position: rfNode?.position || n.position,
-        };
-      });
-
-      const payload = {
-        nodes: updatedNodes,
-        connections: draft.connections,
-        operating_modes: draft.operating_modes,
-      };
+      // 实际拖动已经写入draft，ReactFlow的视图默认位置不得反写。
+      const payload = topologyUpdatePayload(draft,numericDeclarations);
 
       // 3. PATCH to backend
       const updated = await switchTopologyService.updateTopology(topology.id, labProfileId, payload);
       setDraft(updated);
+      setNumericDeclarations({});
+      setEdgeNumericDeclarations([]);
       setDirty(false);
       setSaveResult('saved');
       onTopologyUpdated(updated);
@@ -338,7 +343,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       logFrontendEvent({
         action: 'switch_topology.saved',
         component: 'TopologyEditor',
-        message: `topology=${topology.id} lab=${labProfileId} nodes=${updatedNodes.length} conns=${draft.connections.length}`,
+        message: `topology=${topology.id} lab=${labProfileId} nodes=${draft.nodes.length} conns=${draft.connections.length}`,
       });
     } catch (err: any) {
       setSaveResult('failed');
@@ -361,7 +366,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       savingRef.current = false;
       release();
     }
-  }, [topology, draft, nodes, onTopologyUpdated, labProfileId, beginWork]);
+  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork]);
 
   const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
   const addNode = () => {
@@ -548,7 +553,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
       {/* ── Edge Parameter Drawer ── */}
       <Drawer
         opened={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {setDrawerOpen(false);setEdgeNumericDeclarations([]);}}
         title="连线参数编辑"
         position="right"
         size="sm"
@@ -641,7 +646,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             />
 
             <Group justify="flex-end" mt="md">
-              <Button variant="outline" onClick={() => setDrawerOpen(false)}>取消</Button>
+              <Button variant="outline" onClick={() => {setDrawerOpen(false);setEdgeNumericDeclarations([]);}}>取消</Button>
               <Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>{if(changeDraft(current=>removeDraftConnections(current,[selectedEdge.id])))setDrawerOpen(false);}}>删除连线</Button>
               <Button onClick={applyConnectionEdit} disabled={editingBlocked}>应用修改</Button>
             </Group>

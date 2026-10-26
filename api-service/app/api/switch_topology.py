@@ -4,8 +4,10 @@ Switch Topology API endpoints
 CRUD operations for RF Switch Matrix hardware topology configurations,
 and advanced endpoints for path resolution and calibration matrix.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from copy import deepcopy
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 from typing import Optional, List
 from uuid import UUID
@@ -23,12 +25,64 @@ from app.schemas.switch_topology import (
     TopologyConnection,
 )
 from app.services.topology_service import TopologyService
+from app.schemas.topology_nominal import (
+    MISSING, CONNECTION_NUMERIC_FIELDS, same_json, validate_nominal_write,
+    preserve_graph_rows, normalize_nominal_metadata,
+)
 from app.services.declared_rf_routes import resolve_saved_rf_path
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
+
+
+async def _raw_topology_body(request: Request) -> dict:
+    """保留请求的JSON类型与缺键；同步写端点仍沿用原会话模型。"""
+    return await request.json()
+
+
+def preserve_connection_rows(raw_rows, normalized_rows, previous_rows, declarations):
+    old_by_id = {row['id']: row for row in previous_rows or []}
+    saved = []
+    for raw, normalized in zip(raw_rows, normalized_rows):
+        old = old_by_id.get(raw['id'], {})
+        old_normalized = TopologyConnection.model_validate(old).model_dump(exclude_unset=True) if old else {}
+        # 既有键沿存储顺序保留，已知键的显式删除仍生效；opaque只由服务端恢复。
+        result = {key: deepcopy(value) for key, value in old.items()
+                  if key not in TopologyConnection.model_fields or key in raw}
+        declared = set(declarations.get(raw['id'], []))
+        for key, value in raw.items():
+            if key not in normalized:
+                continue
+            prior = old.get(key, MISSING)
+            equal_raw = same_json(value, prior)
+            equal_display = (key in CONNECTION_NUMERIC_FIELDS and key in old
+                             and same_json(value, old_normalized[key]))
+            if key not in declared and (equal_raw or equal_display):
+                result[key] = deepcopy(prior)
+            elif key == 'nominal_metadata':
+                result[key] = normalize_nominal_metadata(value, prior)
+            else:
+                result[key] = deepcopy(normalized[key])
+        saved.append(result)
+    return saved
+
+
+def _validate_nominal(nodes, connections, *, previous_nodes=None, previous_connections=None):
+    try:
+        validate_nominal_write(nodes, connections, previous_nodes=previous_nodes,
+                               previous_connections=previous_connections)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+def _validate_numeric_declarations(declarations, raw_connections):
+    by_id = {row['id']: row for row in raw_connections or []}
+    for ident, keys in declarations.items():
+        if (ident not in by_id or len(keys) != len(set(keys)) or
+                any(key not in CONNECTION_NUMERIC_FIELDS or key not in by_id[ident] for key in keys)):
+            raise HTTPException(422, detail='数值声明必须引用本次提交的连线与数值字段，且不得重复')
 
 
 def _validate_structure(nodes, connections, modes) -> None:
@@ -269,6 +323,7 @@ def list_switch_topologies(
 @router.post("", response_model=SwitchTopologyResponse, status_code=201)
 def create_switch_topology(
     request: SwitchTopologyCreate,
+    raw_body: dict = Depends(_raw_topology_body),
     db: Session = Depends(get_db)
 ):
     """Create a new switch topology in the current lab's chamber"""
@@ -278,6 +333,7 @@ def create_switch_topology(
     _validate_structure([n.model_dump() for n in request.nodes],
                         [c.model_dump() for c in request.connections],
                         [m.model_dump() for m in request.operating_modes])
+    _validate_nominal(raw_body.get('nodes', []), raw_body.get('connections', []))
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -289,9 +345,10 @@ def create_switch_topology(
         ).update({"is_default": False})
 
     # Dump nested Pydantic models to dicts
-    nodes_data = [d.model_dump() for d in request.nodes]
-    connections_data = [d.model_dump() for d in request.connections]
-    modes_data = [d.model_dump() for d in request.operating_modes]
+    typed = request.model_dump(exclude_unset=True)
+    nodes_data = preserve_graph_rows(raw_body.get('nodes', []), typed.get('nodes', []))
+    connections_data = preserve_connection_rows(raw_body.get('connections', []), typed.get('connections', []), [], {})
+    modes_data = preserve_graph_rows(raw_body.get('operating_modes', []), typed.get('operating_modes', []))
 
     topology = SwitchTopology(
         switch_category_id=request.switch_category_id,
@@ -383,6 +440,13 @@ def import_topology_from_template(
     topo_data = generate()
     _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
                         topo_data.get('operating_modes', []))
+    _validate_nominal(topo_data.get('nodes', []), topo_data.get('connections', []))
+    # 模板不补默认；只规范化此次新说明的空白来源。
+    topo_data = deepcopy(topo_data)
+    topo_data['nodes'] = preserve_graph_rows(topo_data.get('nodes', []), topo_data.get('nodes', []))
+    for edge in topo_data.get('connections', []):
+        if 'nominal_metadata' in edge:
+            edge['nominal_metadata'] = normalize_nominal_metadata(edge['nominal_metadata'])
 
     replaced_ids=[]
     if replace_existing:
@@ -442,6 +506,7 @@ def update_switch_topology(
     topology_id: UUID,
     request: SwitchTopologyUpdate,
     lab_profile_id: UUID = Query(...),
+    raw_body: dict = Depends(_raw_topology_body),
     db: Session = Depends(get_db)
 ):
     """Update an existing switch topology (scoped to the current lab's chamber)"""
@@ -452,6 +517,10 @@ def update_switch_topology(
     _validate_structure(update_data.get('nodes', topology.nodes),
                         update_data.get('connections', topology.connections),
                         update_data.get('operating_modes', topology.operating_modes))
+    _validate_nominal(raw_body.get('nodes', topology.nodes), raw_body.get('connections', topology.connections),
+                      previous_nodes=topology.nodes, previous_connections=topology.connections)
+    declarations = update_data.pop('connection_numeric_declarations', {})
+    _validate_numeric_declarations(declarations, raw_body.get('connections', []))
 
     if request.is_default and not topology.is_default:
         # 默认位让位只在本暗室内 —— 不从 lab A 顺手改 chamber B 的行
@@ -461,13 +530,12 @@ def update_switch_topology(
             SwitchTopology.is_default == True
         ).update({"is_default": False})
 
-    # Process Pydantic models if they are in the update
-    if "nodes" in update_data:
-        update_data["nodes"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["nodes"]]
-    if "connections" in update_data:
-        update_data["connections"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["connections"]]
-    if "operating_modes" in update_data:
-        update_data["operating_modes"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["operating_modes"]]
+    for key in ('nodes', 'operating_modes'):
+        if key in update_data:
+            update_data[key] = preserve_graph_rows(raw_body[key], update_data[key], getattr(topology, key))
+    if 'connections' in update_data:
+        update_data['connections'] = preserve_connection_rows(raw_body['connections'], update_data['connections'],
+                                                              topology.connections, declarations)
 
     # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
     # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；
@@ -483,6 +551,9 @@ def update_switch_topology(
 
     for key, value in update_data.items():
         setattr(topology, key, value)
+        if key in ('nodes', 'connections', 'operating_modes'):
+            # ORM的Python相等会把 true→1 当成未变化；JSON写入必须保留类型修正。
+            flag_modified(topology, key)
 
     if any(k in update_data for k in ["nodes", "connections"]):
         topology.update_statistics()
