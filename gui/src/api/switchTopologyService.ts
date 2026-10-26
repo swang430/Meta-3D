@@ -4,6 +4,8 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | { [key:
 // 应用层接线声明，不代表已核验硬件能力；缺键保持缺失，unknown不等于双向。
 export type TopologyPortDirection = 'input' | 'output' | 'bidirectional' | 'unknown';
 export type TopologyPortDirections = Record<string, TopologyPortDirection>;
+// 有向白名单；缺键与[]不同，不携带增益/损耗或开关位置，不证明物理导通。
+export type TopologyInternalPath = { from_port: string; to_port: string };
 export type ConnectionNumericField = 'cable_loss_db' | 'cable_length_m' | 'calibrated_loss_db' | 'calibrated_phase_deg';
 export type ConnectionNumericDeclarations = Record<string, ConnectionNumericField[]>;
 export type TopologyUpdatePayload = Partial<SwitchTopology> & {

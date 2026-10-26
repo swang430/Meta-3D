@@ -3157,7 +3157,7 @@ export interface components {
             };
             /**
              * Params
-             * @description 开放JSON，保留扩展与缺键，不自动补声明。ports为非空、唯一、无首尾空白的字符串ID清单；新节点必须显式声明，旧图仅无关编辑可保留缺失。port_directions可选非null对象，键只能为ports内ID，值严格为input/output/bidirectional/unknown，允许部分map或空对象；unknown不是双向能力。communication_tester/bse_port的port_roles仅dl/ul且键属于ports，dl→output、ul→input为权威，通用方向unknown不覆盖它，同向可保存，反向或bidirectional冲突拒绝。新增/重接边或端口声明变化校验全部关联边：source不得input，target不得output；模板导入仅容旧缺声明，显式错误仍拒绝；端口声明不授予硬件、实测、校准采用或执行资格。
+             * @description 开放JSON，保留扩展与缺键，不自动补声明。ports为非空、唯一、无首尾空白的字符串ID清单；新节点必须显式声明，旧图仅无关编辑可保留缺失。port_directions可选非null对象，键只能为ports内ID，值严格为input/output/bidirectional/unknown，允许部分map或空对象；unknown不是双向能力。communication_tester/bse_port的port_roles仅dl/ul且键属于ports，dl→output、ul→input为权威，通用方向unknown不覆盖它，同向可保存，反向或bidirectional冲突拒绝。新增/重接边或端口声明变化校验全部关联边：source不得input，target不得output；internal_paths可选有向端口对白名单，每行恰含from_port/to_port两个非空、无首尾空白的字符串，均属于显式ports、两端不同、同向pair唯一；不允许额外字段或增益/损耗。缺键为旧未声明，[]为明确无内部贯通，反向必须另列pair；from不得已知output，to不得已知input。unknown方向可存草稿，但新声明运行中转from须input/bidirectional，to须output/bidirectional。amplifier仅两个端口且最多一条单向pair，pad/cable/receive_cable仅两个端口；combiner不默认全互通。termination及CE/BSE/SA/VNA/EMCenter仪器不允许非空内部通路；switch_slot仍须原开关映射。旧缺字段运行兼容仅amplifier/pad/cable/receive_cable的显式两口、保存两pin、单入单出且方向不冲突，不得用模型默认pin补证据；无关旧图编辑不补字段，主动撤销/端口/模式变化检查全部显式路径引用。模板导入仅容旧缺声明，显式错误仍拒绝；声明不授予硬件、实测、校准采用或执行资格。
              */
             params?: {
                 [key: string]: unknown;
