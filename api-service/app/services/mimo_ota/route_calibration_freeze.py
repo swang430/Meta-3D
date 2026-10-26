@@ -214,10 +214,9 @@ def frozen_route_identity_error(db,frozen,*,resolved_topology=None):
     try:
         current=resolve_rf_chains(db,UUID(frozen['lab_profile_id']),frozen['operating_mode'])
         routes={}
-        from app.models.switch_topology import SwitchTopology
-        topology = db.get(SwitchTopology, UUID(current.topology_id)) if current.topology_id else None
-        has_internal = topology is not None and any('internal_paths' in (node.get('params') or {})
-            for node in topology.nodes or [])
+        # 只有正式解析实际选中的中间穿越才能触发新身份核对；源端/断开节点声明不参与。
+        has_internal = any(isinstance(chain.execution_route_identity,dict) and
+            'internal_paths' in chain.execution_route_identity for chain in current.chains)
         if any(row['execution_route_identity'] is not None for row in frozen['route_entries']) or has_internal:
             routes={route.chain_id:route for route in list_route_selections(db,UUID(frozen['lab_profile_id']),
                 UUID(frozen['topology_id']),frozen['operating_mode'])}

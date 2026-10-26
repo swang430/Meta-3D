@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ class RFChainSpec:
     probe_id: int
     polarization: str  # "V" / "H"
     cable_loss_db: float = 0.0  # from connection.calibrated_loss_db or .cable_loss_db
+    execution_route_identity: Optional[Dict[str, Any]] = None  # 正式解析所选穿越身份，不扫描全图声明
 
 
 def normalize_rf_chain_identity(value: object) -> Optional[str]:
@@ -202,4 +203,5 @@ def _binding_to_spec(binding: ProbePortBinding) -> Optional[RFChainSpec]:
         probe_id=int(binding.probe_id),
         polarization=binding.polarization.upper(),
         cable_loss_db=float(binding.cable_loss_db or 0.0),
+        execution_route_identity=binding.execution_route_identity,
     )

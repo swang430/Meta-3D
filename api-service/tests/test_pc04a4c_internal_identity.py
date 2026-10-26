@@ -26,6 +26,111 @@ def insert_pad(topology, *, explicit):
     topology.operating_modes = modes
 
 
+def legacy_bse_direct_topology(topology):
+    # 旧正式解析允许 BSE→CE→probe；采集解析仍应拒绝 CE 入边，不能为修冻结而放宽它。
+    nodes = copy.deepcopy(topology.nodes)
+    for node in nodes:
+        if node['type'] == 'ce_port':
+            node['type'] = 'channel_emulator'
+            node['params'] = {'ports': ['in', 'out'], 'ce_port': node['label']}
+        else:
+            node['params']['ports'] = ['in']
+    nodes += [dict(id='bse', type='communication_tester', label='BSE',
+        params={'ports': ['DL1'], 'port_roles': {'DL1': 'dl'}}),
+        dict(id='unused', type='pad', label='断开衰减器', params={'ports': ['in', 'out']})]
+    topology.nodes = nodes
+    topology.connections = [dict(edge, source_pin='out', target_pin='in')
+        for edge in topology.connections] + [dict(id='bse-feed', source='bse',
+            source_pin='DL1', target='ce_b1', target_pin='in', modes=['mimo_ota'])]
+    modes = copy.deepcopy(topology.operating_modes)
+    modes[0]['active_connections'].append('bse-feed')
+    topology.operating_modes = modes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('declaration_target', ['unused', 'ce_b1'])
+@pytest.mark.parametrize('use_mock', [False, True, None])
+async def test_unrelated_internal_declaration_preserves_legacy_direct_freeze_and_preflight(
+        client, configured, topology_two_chains, db_session, legacy, launch,
+        declaration_target, use_mock):
+    from app.services.calibration.route_calibration import list_route_selections
+    legacy_bse_direct_topology(topology_two_chains)
+    legacy.use_mock = use_mock
+    db_session.commit()
+    execution = await launch()
+    frozen = read_execution_route_compensation(execution)
+    before = copy.deepcopy(frozen)
+    assert all(row['execution_route_identity'] is None for row in frozen['route_entries'])
+    actual_before = orchestrate_switch_topology(db_session, configured.chamber_config_id)
+    assert frozen_route_identity_error(db_session, frozen) is None
+    assert frozen_route_identity_error(db_session, frozen, resolved_topology=actual_before) is None
+
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    next(node for node in nodes if node['id'] == declaration_target)['params']['internal_paths'] = []
+    saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
+        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+    assert saved.status_code == 200, saved.text
+    with pytest.raises(ValueError, match='CE源端存在回接'):
+        list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
+    assert actual.probe_bindings == actual_before.probe_bindings
+    assert frozen_route_identity_error(db_session, frozen, resolved_topology=actual) is None
+    assert frozen_route_identity_error(db_session, frozen) is None
+    fresh = await launch()
+    assert frozen_route_identity_error(db_session, read_execution_route_compensation(fresh)) is None
+    for candidate in (execution, fresh):
+        verdict = evaluate_path_loss_preflight(db_session, candidate,
+            chamber_id=configured.chamber_config_id, frequency_mhz=2595, operating_mode='mimo_ota',
+            precheck_strict_cal=True, channel_emulator_execution_mode='real')
+        if use_mock is False:
+            assert verdict.blocker is None
+            assert verdict.application['status'] == 'applied'
+            assert verdict.applied_certificate.path_loss_db_by_rf_chain['conn_p0v']['total_insertion_loss_db'] == 20
+        else:
+            assert verdict.blocker is not None
+            assert verdict.application['provenance'] == ('simulated' if use_mock else 'unknown')
+            assert verdict.applied_certificate is None
+            assert all(row['value_db'] is None for row in verdict.route_compensation['route_entries'])
+    assert read_execution_route_compensation(execution) == before
+
+
+@pytest.mark.asyncio
+async def test_absent_frozen_identity_rejects_new_selected_internal_identity_on_both_sides(
+        client, configured, topology_two_chains, db_session, legacy, launch):
+    legacy_bse_direct_topology(topology_two_chains)
+    topology_two_chains.nodes = [*topology_two_chains.nodes,
+        dict(id='selected-pad', type='pad', label='选中衰减器', params={'ports': ['in', 'out']})]
+    topology_two_chains.connections = [dict(edge, source='selected-pad')
+        if edge['id'] == 'conn_p0h' else edge for edge in topology_two_chains.connections] + [
+        dict(id='pad-feed', source='ce_b2', source_pin='out', target='selected-pad',
+            target_pin='in', modes=['mimo_ota'])]
+    modes = copy.deepcopy(topology_two_chains.operating_modes)
+    modes[0]['active_connections'].append('pad-feed')
+    topology_two_chains.operating_modes = modes
+    db_session.commit()
+    execution = await launch()
+    frozen = read_execution_route_compensation(execution)
+    before = copy.deepcopy(frozen)
+    assert all(row['execution_route_identity'] is None for row in frozen['route_entries'])
+    assert frozen_route_identity_error(db_session, frozen) is None
+    nodes = copy.deepcopy(topology_two_chains.nodes)
+    declared(next(node for node in nodes if node['id'] == 'selected-pad'))
+    saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
+        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+    assert saved.status_code == 200, saved.text
+    actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
+    assert next(row for row in actual.probe_bindings if row.connection_id == 'conn_p0h').execution_route_identity[
+        'internal_paths'] == [{'node_id': 'selected-pad', 'from_port': 'in', 'to_port': 'out'}]
+    assert frozen_route_identity_error(db_session, frozen) is not None
+    assert frozen_route_identity_error(db_session, frozen, resolved_topology=actual) is not None
+    verdict = evaluate_path_loss_preflight(db_session, execution,
+        chamber_id=configured.chamber_config_id, frequency_mhz=2595, operating_mode='mimo_ota',
+        precheck_strict_cal=True, channel_emulator_execution_mode='real')
+    assert verdict.blocker is not None and verdict.applied_certificate is None
+    assert verdict.application['reason'] == 'route_identity_mismatch'
+    assert read_execution_route_compensation(execution) == before
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('change', ['add', 'delete', 'empty', 'reverse', 'port'])
 async def test_current_internal_change_rejects_old_freeze_without_switch(
