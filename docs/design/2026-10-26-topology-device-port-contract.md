@@ -1,6 +1,6 @@
 # 拓扑器件参数与物理端口完整性设计
 
-状态：2026-10-26 用户已过目并明确“开始吧”，授权按开发流程逐片完成。4a已由PR #539合并至`1207f8c5`；4b由[PR #540](https://github.com/swang430/Meta-3D/pull/540)于2026-10-26T17:48:55Z合并至`8d5bc6d4`，[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖`75b4ef9332`无重大问题，详见[4b验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。当前4c已按[实施计划](../plans/2026-10-27-pc04a4c-internal-rf-paths.md)实现并完成任务级验证；累计唯一P1已由187b3b11修复并独立复核为ADDRESSED；新版唯一全后端7815 passed/17 skipped/1历史G8 failed（8487 warnings，690.58s，exit1，不称全绿），仍待文档增量审查与外审，未Ready PR或合并，4d～4e未启动；WIP=1。4b历史全量7663 passed/17 skipped/1 failed仅属前片证据，不作为4c验证。
+状态：2026-10-26 用户已过目并明确“开始吧”，授权按开发流程逐片完成。4a已由PR #539合并至`1207f8c5`；4b由[PR #540](https://github.com/swang430/Meta-3D/pull/540)于2026-10-26T17:48:55Z合并至`8d5bc6d4`，[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖`75b4ef9332`无重大问题，详见[4b验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。当前4c已按[实施计划](../plans/2026-10-27-pc04a4c-internal-rf-paths.md)实现并完成任务级验证；累计P1已187b3b11修复；PR #541 R1唯一P1已71774b09修复并由原reviewer独立内审ADDRESSED、无新增功能缺陷；71774b09新版唯一全后端7822 passed/17 skipped/1历史G8 failed（8597 warnings，700.70s，exit1，不称全绿），旧7815仅旧输入。待root文档增量核验后push/回复R1 inline并触发覆盖新HEAD的R2；尚未R2/合并，4d～4e未启动；WIP=1。4b历史全量7663 passed/17 skipped/1 failed仅属前片证据，不作为4c验证。
 
 ## 故障与目标
 

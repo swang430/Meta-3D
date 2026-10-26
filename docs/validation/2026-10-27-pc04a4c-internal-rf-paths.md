@@ -2,13 +2,28 @@
 
 ## 结论与边界
 
-本片应用层取证及累计修复后的新版后端验证已完成：执行输入 `187b3b11a5760ddd06646f1876aa598152120bfa` 的唯一最终全后端为 **7815 passed /17 skipped /1 failed /8487 warnings，690.58s，exit1**。唯一失败仍为本次核实的未改动历史G8引用误报，**不称全绿**。Task1～4任务级独立审查已完成（Task4含C07真实鼠标未验证的非阻塞P3），累计唯一P1已由187b3b11修复并独立复核为ADDRESSED、无新增功能缺陷；仍待本轮文档增量审查与PR外审，未宣告Ready或合并。4d/4e、父项、现场B/HOLD不关闭。
+本片应用层取证及PR #541 R1修复后的新版后端验证已完成：执行输入 `71774b0964bb951d7b004c62897dac44d8c3a68c` 的唯一最终全后端为 **7822 passed /17 skipped /1 failed /8597 warnings，700.70s，exit1**。唯一失败仍为本次核实的未改动历史G8引用误报，**不称全绿**。Task1～4任务级独立审查已完成（Task4含C07真实鼠标未验证的非阻塞P3）；累计P1及R1唯一P1分别已由187b3b11、71774b09修复，后者获原reviewer独立内审ADDRESSED、无新增功能缺陷。PR #541已进入R1，修复本地未push；待root文档增量核验后push、回复R1 inline并触发覆盖新HEAD的R2，**R2尚未请求/通过，未合并**。4d/4e、父项、现场B/HOLD不关闭。
 
 本片验证应用层有向端口对白名单、保存原子性、运行解析、原开关身份和冻结匹配，不证明实物内部结构、RF导通、真实量值或正式校准资格。
 
 原Task4浏览器/GUI取证与首轮全后端基准为 `f67baac96458ba2955ae13799a9527f76e753615`，交付提交0cc0d552，分支 `codex/pc04a4c-internal-rf-paths`；该阶段仅增加验证脚本，并获准对旧标称测试局部pad补ports/pins，原2/0断言及R1不变。后续累计P1修复187b3b11仅把DB-current触发源从全图字段存在性换为正式所选身份，并透传该身份；原冻结生成/历史/actual-target/量值/资格未改。本文本轮续验没有新的生产、测试、fixture或依赖修改。
 
-## 新版唯一最终全后端与复用边界（187b3b11）
+## R1修复后唯一最终全后端与复用边界（71774b09）
+
+R1唯一P1是兼容旧BSE→CE→probe直连与合法CE→pad→probe中转共存时，冻结身份生成/比较仍依赖整组采集解析，导致合法新执行也无法恢复。71774b09把完整正式所选身份透传到binding，并从同一次正式resolver读取DB-current身份；保留active全集内部严验及所选路径原正常/参考边界，只有刚完成的重复内部检查跳过。无采集route仍无route_digest/confirmed_route，不读取确认指针、不授采集资格；历史只读、actual-target比较、量值/整链补偿/SCPI与资格不变。原reviewer限定增量内审为ADDRESSED、无新增功能缺陷，**不是R2外审通过**。修复原件 `/tmp/pc04a4c-r1-fix-yBcqa6` 的442相关通过及四项核心变异实红恢复是修复证据，不代替本轮全量。
+
+```sh
+cd api-service
+env DATABASE_URL=sqlite:////tmp/pc04a4c-WSV9eC/full.sqlite USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR=/tmp/pc04a4c-WSV9eC/logs .venv/bin/python -m pytest tests -q
+```
+
+同一Task4唯一责任位新建临时目录，启动前full.sqlite不存在，所有app导入前设置上述环境；没有启动服务或访问默认DB。实际收集7840项，末行 **1 failed, 7822 passed, 17 skipped, 8597 warnings in 700.70s (0:11:40)**，exit.txt=1。完整原件 `/tmp/pc04a4c-WSV9eC/pytest.log` SHA256=`d92d2ab0db6775b5ce1e2128a7dd801d02bb1014cc41cc15285d33cf9b523bcb`。唯一失败仍是下方历史G8同一文件第111行UUID执行URL，门/历史相对8d5bc6d4无diff；无其它失败，不改历史/门，不把8597 warnings未经逐条归因称为全部既有。
+
+1174项输入起止全OK，清单SHA256=`00762a5d6dc84a4f7523e8d6dad2c647793b35d4b029b3fb6acf1853c8745404`；HEAD起止71774b09，tracked/staged diff空，未跟踪测试输入0项；82依赖、HEAD、tracked及未跟踪清单起止cmp均0。依赖清单SHA256=`ba9a0540f4c051a1467bde7d78e17716f8edcd129120ae5731a4ed67fd459ca7`，Python3.13.14/pytest9.1.1/Node26.5.1/npm11.17.0。UTC开始/结束2026-10-26T22:03:42Z/22:15:31Z，session8833/PID64543正常结束；结束18096/5191无监听。本轮未启动API/Vite/browser/CE，未触用户服务。
+
+**复用边界：** e4f14db4→71774b09只有两个后端生产文件及一个身份测试变化；已核gui、OpenAPI、HTTP路由/schema及浏览器fixture/脚本无diff。原GUI88/build12.18s、C01～C16的界面/保存/真实HTTP/Mock生命周期原件按未变输入复用，未重复执行，不冒充新版浏览器或新R1冻结修复证明。新混合路径和正常/参考隔离由新增7例、442相关及本轮全量覆盖；人工real fixture只证应用逻辑，不证实物RF或正式资格。C07真实鼠标仍未验，保留非阻塞P3不扩修。**7815/17/1仅187b3b11旧阶段，7808/17/1仅原Task4阶段，均不是71774b09结果。**
+
+## R1前累计修复全后端与当时复用边界（187b3b11历史）
 
 累计唯一P1为无关断开节点或CE源的声明误触严格采集解析、拒绝合法旧BSE直连；修复已独立ADDRESSED。修复相关集 **435 passed /2137 warnings，328.57s**，核心全图判据回退6红、身份透传回退1红并恢复，由修复报告与增量独立复核分别留证；这些是相关/变异证据，不代替下述新版全量。
 
@@ -59,7 +74,7 @@ env DATABASE_URL=sqlite:////tmp/pc04a4c-GEebeR/full.sqlite USE_MOCK_INSTRUMENTS=
 
 最终两次采集：`a0833ac2-3a00-40f8-89ed-2d30cf6ca4f1` 与 `01294d0f-53be-4638-915a-14924de3feba`。两条原请求摘要分别为 `3a587fda54bf94de67ae91caea9b2e1ee6c74f1d56727b31ab6b73e9d0d841c2` / `25d96b862c4162705000e135fff11341b6b9d0e3089a696f4536c5260b53f1aa`。均 formal_eligible=false、net_loss_db=null、samples=[]。所有源码脚本和日志/截图/库保留，不清理用户资料。
 
-## 原Task4相关与旧版全后端记录（不代表187b3b11输入）
+## 原Task4相关与旧版全后端记录（不代表后续修复输入）
 
 相关23文件首次结果 `/tmp/pc04a4c-3fmW8Q/pytest.log`：exit1，**2 failed /654 passed /2300 warnings，372.99s**。仅旧 `test_nominal_declarations_never_add_another_topology_compensation` 两参数失败：自建中间pad未存 ports/pins，按新R1返回None，未到原标称补偿断言。主代理已批准只补该函数局部端口证据，并保留后续nominal赋值的ports；原2/0期望及全部断言不动。修后新库 `/tmp/pc04a4c-9hMnvf/pytest.log`：**7 passed /90 warnings，5.11s，exit0**；这是该文件定点，不冒称重跑23文件。
 
@@ -94,7 +109,7 @@ env DATABASE_URL=sqlite:////tmp/pc04a4c-KxzsaG/full.sqlite USE_MOCK_INSTRUMENTS=
 
 首阶段API51610已定点停；最终API53789、npm/Vite51647/51670/51696及专用browser pc04a4c-task4均按记录身份关闭。自查C13补验只重启本任务API55124、npm/Vite55132/55155/55181和browser pc04a4c-task4-c13，补验后同样定点关闭；两批targets-after-close均仅表头、18096/5191监听复核为空。关闭日志、原库、venv、output和全部截图/SDD保留，未停止用户服务或删除资料。
 
-Task4任务级已Approved（保留C07非阻塞P3）；累计唯一P1修复后限定独立复核为ADDRESSED。后续由主代理审查本轮文档增量，再按AGENTS外审规则判定是否进入Ready PR；当前未Ready、未push/PR/merge。本摘要不是外审回执，也不是4c合并或现场验收声明。
+Task4任务级已Approved（保留C07非阻塞P3）；累计P1与PR #541 R1唯一P1均已修复并分别独立内审ADDRESSED。本轮仅交root文档增量核验；修复本地未push，尚未回复R1 inline或请求/通过R2，未合并。后续仍按AGENTS外审规则覆盖最新修复HEAD；本摘要不是R2回执、4c合并或现场验收声明。
 
 ## 阶段校正与未验证范围
 
