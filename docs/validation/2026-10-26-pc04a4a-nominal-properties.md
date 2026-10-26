@@ -2,17 +2,17 @@
 
 ## 状态与边界
 
-本片实现类型化标称写入、原抽屉编辑和 CAICT 旧 PA 边定位；Task1 `690401a6`、Task2 `d4f44bfe` 已分别通过独立规格/质量审查。Task3 完整浏览器矩阵、相关回归、GUI/build及修后正式全量复验已完成：**7543 passed /17 skipped /1 failed**，唯一失败为已核对基线的历史G8误报，不称全绿。首轮另外三项采集前置异常本轮未再现，根因未确认，不称已修复。Task3独立审查、整片累计审查、Ready PR、外审和合并由主代理随后完成，PC-04A-4a 尚未作为已合并交付关闭，4b 不启动。
+本片实现类型化标称写入、原抽屉编辑和 CAICT 旧 PA 边定位；Task1 `690401a6`、Task2 `d4f44bfe`、Task3 `d2f9187a` 已分别通过独立规格/质量审查。Task3 完整浏览器矩阵、相关回归、GUI/build及修后正式全量复验已完成：**7543 passed /17 skipped /1 failed**，唯一失败为已核对基线的历史G8误报，不称全绿。首轮另外三项采集前置异常本轮未再现，根因未确认，不称已修复。累计审查发现的F1已由 `ba1ac371` 修复并经原reviewer增量复审确认 ADDRESSED，累计内审 Ready、无未解决P1；V1非阻塞证据缺口按下节收窄声明。Ready PR、外审和合并仍待主代理完成，PC-04A-4a 尚未作为已合并交付关闭，4b 不启动。
 
 全部结果仅为隔离 SQLite、真实 HTTP、真实浏览器与 Mock／脚本化 transport 的软件证据。不代表真机、物理端口能力、参考件计量认证、现场 B 或 HOLD 解除。标称数据不自动成为采用记录，也不新增补偿。
 
 ## 累计内审 F1 修复增量
 
-累计审查输入 `d2f9187a394a6f21e1934ebde704e4483e51f454` 发现一个同根 P1：旧节点缺标称数值键时，仅改来源/频段会补 null，造成原采用失配、新执行从 confirmed_route 28 dB 退回旧证书 20 dB。现沿已有 `numberEdited` 收窄 GUI 写入：未编辑数值只更新 metadata，保留缺键、null、0及旧原值；明确输入/清空仍写 number/null。生产改动仅 `NominalPropertyFields.tsx` 与 `nominalProperties.ts`，不改后端摘要、资格、历史或补偿。等待独立增量复审，不以自查代替 Approved。
+累计审查输入 `d2f9187a394a6f21e1934ebde704e4483e51f454` 发现一个同根 P1：旧节点缺标称数值键时，仅改来源/频段会补 null，造成原采用失配、新执行从 confirmed_route 28 dB 退回旧证书 20 dB。现沿已有 `numberEdited` 收窄 GUI 写入：未编辑数值只更新 metadata，保留缺键、null、0及旧原值；明确输入/清空仍写 number/null。生产改动仅 `NominalPropertyFields.tsx` 与 `nominalProperties.ts`，不改后端摘要、资格、历史或补偿。原reviewer已覆盖修复提交 `ba1ac371de2cca53bb7e0eef5c3e7f4cef52b3be` 确认F1已解决、累计内审Ready；这不等于外审通过或合并交付。
 
 - 新 RED：纯函数回归 **4 pass /1 fail**，失败为缺键被新增；原 Field→草稿→真实 PATCH 的浏览器 RED 明确报 `gain_db=null` 被补入。证据在 `output/playwright/pc04a4a-final-fix/`，不覆盖原证据。
 - 新 GREEN：六类缺键节点分别只改来源、再只改频段，PATCH/GET/重载均保持数值缺键；参考 PA 边只改 metadata 同样保持缺键。节点明确0/清空、参考 PA 明确输入再清空仍为 number/null；旧字符串PA只改metadata仍为原字符串；取消无泄漏、真实离线保存失败保留草稿，恢复重试仍保形。最终全新库 **18 次 PATCH 均200**，`browser-final.log`/`browser-result.json` 保存请求、响应、baseline与最终GET。
-- GUI相关回归 **49/49 pass /678.187625ms**；构建 **11.83s**，既有import/chunk警告保留。后端相关identity/compensation **39 passed /342 warnings /41.48s**。另将真实GUI请求的标称片段映射到原脚本化transport fixture：普通探头和参考PA边原摘要不变、preview可采用、新冻结仍confirmed_route 28 dB、旧冻结/原run/采用历史不改；不是浏览器采集实测，也不是硬件证据。
+- GUI相关回归 **49/49 pass /678.187625ms**；构建 **11.83s**，既有import/chunk警告保留。后端相关identity/compensation **39 passed /342 warnings /41.48s**。将真实GUI请求的标称片段映射到原脚本化transport fixture后，已验证所选普通探头的原摘要不变、preview可采用、新冻结仍confirmed_route 28 dB、旧冻结/原run/采用历史不改。**参考PA边仅有上项真实浏览器缺键/明确null保形验证**：重放fixture未建立calibration模式，`selection_snapshot.calibration_connection_ids=[]`，参考PA未参与所选参考身份，因此没有覆盖有效参考段身份及冻结；日志中的相同摘要/28 dB不能作为该覆盖证明。这是V1非阻塞P2证据缺口，本轮不扩测；以上均不是浏览器采集实测或硬件证据。
 - 最终浏览器库 `/tmp/pc04a4a-8AUqR0/browser.sqlite`，两个开关均true且默认bootstrap；全过程未访问用户DB或停止用户服务。专用服务身份与停机记录见本次证据目录，原库和本次库均保留。
 - 本次为影响面明确的局部GUI修复，没有后端生产、契约、测试或fixture变动；原四项后端canonical输入hash仍一致，原浏览器脚本只同步了旧坏值metadata保形断言，并新增本次浏览器脚本。故不重跑全后端，也不将原 **7543/17/1** 改称本修复HEAD的新全量结果。首轮 **7538/17/6**、三项前置异常未知根因、历史G8失败、ASC条件分支/CE未执行及B/HOLD边界全部保留。
 
@@ -98,6 +98,6 @@ env DATABASE_URL=sqlite:////tmp/pc04a4a-full-final-eMTjE6/full.sqlite USE_MOCK_I
 
 输入存于`task3-final-canonical-input.diff`、`final-canonical-input-sha256.txt`；命令结果存`backend-full-final.log`、`backend-full-final-exit.txt`、`full-final-start.txt`／`full-final-end.txt`，不以诊断plugin的回归替代本次正式全量。
 
-正式复验退出1，**7543 passed /17 skipped /1 failed /7423 warnings /628.35s**。首轮两项pin断言已按批准契约对齐并在full通过；另外三项本轮full均PASSED，未修改其断言、采集资格或共享fixture，仍记为“首轮出现、修后复验未再现、根因未确认”。唯一G8与下述基线同一条。复验结束后五个应用/测试/fixture/浏览器输入SHA256全部检查OK；此后只有不参与后端测试的本片文档状态更新。`node --check`、`git diff --check`均退出0。由主代理安排独立Task3和累计审查，不将本文或作者自查称为Approved。
+正式复验退出1，**7543 passed /17 skipped /1 failed /7423 warnings /628.35s**。首轮两项pin断言已按批准契约对齐并在full通过；另外三项本轮full均PASSED，未修改其断言、采集资格或共享fixture，仍记为“首轮出现、修后复验未再现、根因未确认”。唯一G8与下述基线同一条。复验结束后五个应用/测试/fixture/浏览器输入SHA256全部检查OK；此后只有不参与后端测试的本片文档状态更新。`node --check`、`git diff --check`均退出0。Task3及累计独立审查现已完成，F1修复经增量复审通过；Ready仅指可进入PR/外审，不将本文或作者自查当作独立审查证明。
 
-G8定点 `g8-current.log` 已退出1：旧历史报告 `docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md` 的真实执行UUID路由被当作路由形状未命中。与基线 `710f55a3f65f70c8cc593003e501fcf8e2204739` 比较，检查器、涉事历史、main路由注册及test_plan路由文件均无差异（git diff --quiet退出0）；历史写的就是当时真实422执行，不应改历史或门来造绿。最终如仍仅此失败，将明确报告实际统计，不能称“全绿”。
+G8定点 `g8-current.log` 已退出1：旧历史报告 `docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md` 的真实执行UUID路由被当作路由形状未命中。与基线 `710f55a3f65f70c8cc593003e501fcf8e2204739` 比较，检查器、涉事历史、main路由注册及test_plan路由文件均无差异（git diff --quiet退出0）；历史写的就是当时真实422执行，不应改历史或门来造绿。该次正式复验仍仅此失败，实际统计按上文保留，不能称“全绿”。

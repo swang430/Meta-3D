@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test、真实浏览器；不新增依赖或表迁移。
 
-**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；Task1/Task2已实现并通过独立审查，Task3真实API浏览器矩阵与相关回归已执行，修后正式全量复验7543通过/17跳过/1失败（已核基线历史G8），不称全绿；首次另3项异常复验未再现、根因未确认。Task3及累计独立审查、整片外审/合并仍待主代理。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
+**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；三个任务已实现并分别通过独立规格/质量审查，Task3真实API浏览器矩阵与相关回归已执行，修后正式全量复验7543通过/17跳过/1失败（已核基线历史G8），不称全绿；首次另3项异常复验未再现、根因未确认。累计F1修复 `ba1ac371` 已经原reviewer增量复审确认ADDRESSED，累计内审Ready、无未解决P1；V1参考PA有效参考段身份/冻结未覆盖，已收窄声明、不扩测。PR/外审及合并仍待主代理，4a不勾交付、4b不启动。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
 
 ## 全局约束
 
@@ -472,11 +472,11 @@ env DATABASE_URL="sqlite:///$pc04a4a_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 ```
 
 另跑Task2 GUI命令、`npm run build`、`git diff --check`。若全量出现基线历史文档G8误报，逐项与基线输入核实并报告实际统计，不修改历史记录、不称全绿；新失败必须定位，不能引用旧片的7485统计代替本片结果。保留输入SHA、dirty diff、依赖版本、命令、退出码、末行、日志路径。
-- [ ] Task3审查与整片累计规格/质量审查完成后精确提交测试与验证摘要 `test: 验证标称参数真实保存与校准隔离`。停止本片创建的确切PID/会话，保留临时证据，不动用户服务；检查`git status`不加入原有venv/output。
+- [x] Task3测试与验证摘要已由 `d2f9187a` 提交且独立审查通过；累计F1由 `ba1ac371` 修复并经原reviewer增量复审通过，累计内审Ready。本片创建的确切PID/会话已停止，临时证据保留，未动用户服务或加入原有venv/output；不将该勾选解释为PR外审/合并完成。
 - [ ] 由主代理创建Ready PR：附设计/本计划/验证摘要及Roadmap=PC-04A-4a；R1处理本片可执行项→R2，最新HEAD无P1后收口；R2仍有P1继续到修复被新一轮覆盖。P2/P3不自动扩入backlog。合并后安全同步main、更新正式roadmap及台账；才允许4b开工。
 
 ## 自查与交接
 
 - [x] 设计4a覆盖：PA与其他明确标称字段、单位/来源/范围、旧CAICT边定位、固定能力声明清理；4b端口角色、4c内部路径、4d转换及损耗归属不提前施工。
-- [x] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；0.3两项范围裁决已接受，不再重复请求用户确认。F1/F2修订方案已通过原reviewer增量核验后实施，Task1/Task2独立规格/质量审查通过。
+- [x] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；0.3两项范围裁决已接受，不再重复请求用户确认。F1/F2修订方案已通过原reviewer增量核验后实施，Task1/Task2/Task3独立规格/质量审查及累计F1修复增量复审通过；参考PA有效参考段身份/冻结证据仍未覆盖，不因内审Ready扩称已验。
 - [x] 本片软件实现/验证证据不构成现场验收，不勾roadmap父项，不解除现场B/HOLD。
