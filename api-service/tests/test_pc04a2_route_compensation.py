@@ -109,8 +109,12 @@ async def test_declared_ce_port_not_display_label_drives_actual_target(client,co
 async def test_real_multihop_mixed_freeze_reaches_compensation_once(client,configured,real_capture,legacy,
         launch,db_session,topology_two_chains,chamber,monkeypatch,tmp_path,source,received,want,tag_fallback):
     topology_two_chains.nodes=[*topology_two_chains.nodes,
-        {'id':'pad-middle','type':'pad','label':'衰减器','params':{'ports':['in','out']}}]
-    topology_two_chains.connections=[{**edge,**({'source':'pad-middle','calibrated_loss_db':3} if edge['id']=='conn_p0v' else {})}
+        {'id':'pad-middle','type':'pad','label':'衰减器','params':{'ports':['in','out'],
+            'attenuation_db':3,'nominal_metadata':{'attenuation_db':{
+                'unit':'dB','source_note':'标称声明，不是实测','frequency_range_mhz':[2500,2700]}}}},
+        {'id':'nominal-pa','type':'amplifier','label':'标称PA','params':{'gain_db':20}},
+        {'id':'nominal-antenna','type':'antenna','label':'标称天线','params':{'gain_dbi':15}}]
+    topology_two_chains.connections=[{**edge,**({'source':'pad-middle','calibrated_loss_db':3,'pa_gain_db':20} if edge['id']=='conn_p0v' else {})}
         for edge in topology_two_chains.connections]+[
         {'id':'feed-pad','source':'ce_b1','target':'pad-middle','source_pin':'out','target_pin':'in','modes':['mimo_ota']}]
     topology_two_chains.operating_modes=[{'id':'mimo_ota','name':'normal',
@@ -159,6 +163,51 @@ async def test_real_multihop_mixed_freeze_reaches_compensation_once(client,confi
         assert unsupported.application['status']=='not_applied'
         assert unsupported.application['reason']=='unsupported_compensation_mode'
         assert unsupported.blocker is not None
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_http_edit_preserves_adoption_history_and_execution_freeze(
+        client,configured,real_capture,legacy,launch,db_session,topology_two_chains,chamber):
+    import copy
+    from tests.test_pc04a2_route_eligibility import preview
+    run=real_capture()
+    capture_before=copy.deepcopy(run.sequence_evidence)
+    adopted=confirm(client,configured,payload(client,configured,run))
+    assert adopted.status_code==201,adopted.text
+    adopted_before=adopted.json()
+    first=await launch()
+    frozen_before=copy.deepcopy(first.config['route_calibration_freeze'])
+    url=f'/api/v1/switch-topologies/{topology_two_chains.id}'
+    scope={'lab_profile_id':str(configured.id)}
+    raw=client.get(url,params=scope).json()
+    nodes=copy.deepcopy(raw['nodes'])
+    next(n for n in nodes if n['type']=='probe')['params']['nominal_metadata']={
+        'gain_dbi':{'unit':'dBi','source_note':'新增来源说明，不是实测','frequency_range_mhz':None}}
+    response=client.patch(url,params=scope,json={'nodes':nodes})
+    assert response.status_code==200,response.text
+    candidate=preview(client,configured,run)
+    assert candidate.status_code==200,candidate.text
+    assert candidate.json()['eligibility']['eligible_for_adoption'] is True
+    assert candidate.json()['expected_current_application_id']==adopted_before['id']
+    assert first.config['route_calibration_freeze']==frozen_before
+    assert run.sequence_evidence==capture_before
+    history=client.get(f'/api/v1/lab-profiles/{configured.id}/route-calibration-applications',
+        params={'topology_id':str(topology_two_chains.id),'chain_id':'conn_p0v'})
+    assert adopted_before in history.json()
+    second=await launch()
+    second_freeze=second.config['route_calibration_freeze']
+    assert [(e['chain_id'],e['value_db'],e['source_id']) for e in second_freeze['route_entries']]==[
+        (e['chain_id'],e['value_db'],e['source_id']) for e in frozen_before['route_entries']]
+    actual=orchestrate_switch_topology(db_session,chamber.id,'mimo_ota')
+    assert frozen_route_identity_error(db_session,second_freeze,resolved_topology=actual) is None
+    # 真正接线端口变化仍走原身份拒绝，不因说明元数据豁免而放行。
+    edges=copy.deepcopy(topology_two_chains.connections)
+    edges[0]['source_pin']='changed-physical-port'
+    topology_two_chains.connections=edges;db_session.commit()
+    changed=preview(client,configured,run)
+    assert changed.json()['eligibility']['eligible_for_adoption'] is False
+    assert first.config['route_calibration_freeze']==frozen_before
+    assert run.sequence_evidence==capture_before
 
 
 def test_missing_route_or_unknown_history_cannot_claim_applied():

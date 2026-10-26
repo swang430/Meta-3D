@@ -134,7 +134,16 @@ def test_patch_uses_schema_default_pins_without_accepting_explicit_bad_pin(world
     params = {'lab_profile_id': str(world['lab_a'].id)}
     response = client.patch(url, params=params, json=payload)
     assert response.status_code == 200, response.text
-    assert response.json()['connections'][0]['source_pin'] == 'out'
-    assert response.json()['connections'][0]['target_pin'] == 'in'
+    # 4a稀疏传输契约不补存储缺键；有效结构校验仍采用原schema默认端口。
+    from app.schemas.switch_topology import TopologyConnection
+    fetched = response.json()['connections'][0]
+    assert fetched == connection
+    effective = TopologyConnection.model_validate(fetched)
+    assert (effective.source_pin, effective.target_pin) == ('out', 'in')
+    world['db'].refresh(saved)
+    assert saved.connections == [connection]
+    assert client.get(url, params=params).json()['connections'][0] == connection
     invalid = client.patch(url, params=params, json={'connections': [{**connection, 'source_pin': 'missing'}]})
     assert invalid.status_code == 422, invalid.text
+    world['db'].refresh(saved)
+    assert saved.connections == [connection]

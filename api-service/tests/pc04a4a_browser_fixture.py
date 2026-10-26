@@ -54,17 +54,36 @@ def seed():
             if suffix == '甲':
                 nodes = [dict(id=f'ce{i}', type='ce_port', label=f'B1.{i}', position={'x':30,'y':60+(i-1)*240}, params={'ports':['out']}) for i in (1,2)]
                 nodes += [dict(id=f'probe{i}', type='probe', label=f'探头0{pol}', position={'x':540,'y':60+(i-1)*240},
-                    params={'ports':['in'], 'probe_id':0, 'polarization':pol,
+                    params={'ports':['in','out'], 'probe_id':0, 'polarization':pol,
                         'rf_path_selection':{'connection_ids':[f'fixed-{pol.lower()}'], 'switch_mappings':[]}}) for i,pol in ((1,'V'),(2,'H'))]
                 nodes += [dict(id='pa', type='amplifier', label='独立PA', position={'x':260,'y':460}, params={'ports':['in','out'],'visible_modes':['mimo_ota'],'unknown':{'keep':1}}),
                     dict(id='ref',type='reference_antenna',label='参考天线',position={'x':800,'y':60},params={'ports':['in'],'connection_scope':'calibration','visible_modes':['calibration']})]
+                # 本片完整浏览器矩阵的隔离旧样本；无标称键、旧坏PA及缺数量均不预先清洗。
+                for index, kind in enumerate(('pad','combiner','antenna','cable','receive_cable',
+                                               'channel_emulator','emcenter')):
+                    nodes.append(dict(id=f'matrix-{kind}',type=kind,label=f'矩阵-{kind}',
+                        position={'x':80+index*180,'y':700},params={'ports':['in','out'],
+                            'unknown':{'keep':kind},'visible_modes':['mimo_ota','calibration']}))
+                for kind in ('channel_emulator','emcenter'):
+                    nodes.append(dict(id=f'zero-{kind}',type=kind,label=f'零声明-{kind}',
+                        position={'x':1000,'y':900 if kind=='emcenter' else 1050},
+                        params={'ports':['in','out'],'inputs':0,'outputs':0,'visible_modes':['mimo_ota','calibration']}))
+                for index,(ident,kind) in enumerate((('air','air_path'),('rx','receive_cable'),('sa','signal_analyzer'))):
+                    nodes.append(dict(id=ident,type=kind,label=f'采集-{ident}',
+                        position={'x':700+index*220,'y':300},params={'ports':['in','out'],
+                            'connection_scope':'calibration','visible_modes':['calibration']}))
+                next(n for n in nodes if n['id']=='ref')['params']['ports']=['in','out']
                 edges = [dict(id=f'fixed-{pol}',source=f'ce{i}',source_pin='out',target=f'probe{i}',target_pin='in',cable_loss_db=0) for i,pol in ((1,'v'),(2,'h'))]
                 # 缺默认字段参考边，专门验证无关保存不注入默认键。
-                edges += [dict(id='reference-sparse',source='probe1',source_pin='in',target='ref',target_pin='in')]
+                edges += [dict(id='reference-sparse',source='probe1',source_pin='out',target='air',target_pin='in'),
+                    *[dict(id=f'reference-{i}',source=a,source_pin='out',target=b,target_pin='in')
+                      for i,(a,b) in enumerate((('air','ref'),('ref','rx'),('rx','sa')))],
+                    dict(id='legacy-bad-pa',source='matrix-cable',source_pin='out',
+                         target='matrix-combiner',target_pin='in',pa_gain_db='12')]
                 topology = SwitchTopology(switch_category_id=switch.id,chamber_id=chamber.id,name='PC04A4a显式两链',
                     is_active=True,is_default=True,nodes=nodes,connections=edges,operating_modes=[
                         dict(id='mimo_ota',name='MIMO OTA 测试',active_connections=['fixed-v','fixed-h']),
-                        dict(id='calibration',name='校准接线',active_connections=['reference-sparse'])])
+                        dict(id='calibration',name='校准接线',active_connections=[e['id'] for e in edges if e['id'].startswith('reference-')])])
                 topology.update_statistics();db.add(topology);db.flush()
                 manifest['labs'][-1]['topology_id'] = str(topology.id)
         db.commit()

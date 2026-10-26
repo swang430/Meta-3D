@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test、真实浏览器；不新增依赖或表迁移。
 
-**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；本文件是首片实施计划，尚未实现或验证。
+**Spec:** [已确认设计](../design/2026-10-26-topology-device-port-contract.md)；排班见 [Current Focus](../roadmap-first-call.md)。用户于 2026-10-26 明确开始；Task1/Task2已实现并通过独立审查，Task3真实API浏览器矩阵与相关回归已执行，修后正式全量复验7543通过/17跳过/1失败（已核基线历史G8），不称全绿；首次另3项异常复验未再现、根因未确认。Task3及累计独立审查、整片外审/合并仍待主代理。实际证据见[验证摘要](../validation/2026-10-26-pc04a4a-nominal-properties.md)。
 
 ## 全局约束
 
@@ -234,7 +234,7 @@ class SwitchTopologyResponse(SwitchTopologyBase):
 
 **Interfaces:** `validate_nominal_write(nodes, connections, *, previous_nodes=None, previous_connections=None) -> None`消费原始JSON，错误抛ValueError由API转422；`same_json`、`_preserve_unchanged_json`、`preserve_connection_rows`、`_raw_topology_body`按1.2接线。TS `TopologyUpdatePayload`在原Partial图类型外加 `connection_numeric_declarations?: Record<string, ConnectionNumericField[]>`（四键联合）；不是SwitchTopology存储/响应字段。`NominalFieldMetadata`只在作用域内纯写校验阶段构造，不增加端点。
 
-- [ ] 先写真实POST/PATCH/GET回归。复用现有p1_57的内存DB依赖override，但运行命令仍隔离app导入时的全局DB。以下测试初始应因新元数据被丢弃/非法值未拒绝而RED：
+- [x] 先写真实POST/PATCH/GET回归。复用现有p1_57的内存DB依赖override，但运行命令仍隔离app导入时的全局DB。以下测试初始应因新元数据被丢弃/非法值未拒绝而RED：
 
 ```python
 import copy
@@ -272,14 +272,14 @@ def test_invalid_node_nominal_is_rejected_atomically(world, bad):
     assert row.nodes == before and row.name == 'Row'
 ```
 
-- [ ] cwd=`api-service`，RED与GREEN各新建目录，实际记录命令、退出码、末行与输入SHA/diff：
+- [x] cwd=`api-service`，RED与GREEN各新建目录，实际记录命令、退出码、末行与输入SHA/diff：
 
 ```bash
 pc04a4a_test_dir=$(mktemp -d /tmp/pc04a4a-test-XXXXXX)
 env DATABASE_URL="sqlite:///$pc04a4a_test_dir/test.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true .venv/bin/python -m pytest tests/test_pc04a4a_nominal_properties.py -q
 ```
 
-- [ ] 最小实现写校验：允许缺键与null，拒绝伪数字，不无条件重建params。模型核心形状如下；unit与字段对应/频率校验及旧值比较在同一模块补齐：
+- [x] 最小实现写校验：允许缺键与null，拒绝伪数字，不无条件重建params。模型核心形状如下；unit与字段对应/频率校验及旧值比较在同一模块补齐：
 
 ```python
 from math import isfinite
@@ -314,9 +314,9 @@ def validate_number(value, *, key, nonnegative=False):
 
 `NominalFieldMetadata`只在作用域内纯写校验阶段以原始对象构造，频率before校验在这里拒绝bool/string，不在request模型提前强转；unit/source也在原始对象检查，source只允许str/null。PA模型改`JsonValue`保原类型，**不保留旧计划的TopologyConnectionWrite before数值门**。按1.2实现原始请求依赖、保形响应与保存函数；source_note字符串trim与空串→null属于本次明确编辑的规范化，未改旧值不得因此被重新格式化。
 
-- [ ] 在create/update/import写前统一调用；旧字段按1.2严格比较（存在性、JSON类型、值），缺键不同于null、boolean不同number。覆盖：POST合法/非法、PATCH清空、错误单位、半频段/反向/0/负数/bool/string频率、非法元数据键、模板非法且replace=true原行保留、GET/list旧PA原类型保留、旧异常值改名可存但变更异常值拒绝、1→true拒绝、true→1合法修正、跨Lab409。旧坏值fixture只为初始化历史原形可直接入隔离DB；读/改/保存断言必须经真实HTTP，不能在断言阶段直接ORM修改替代生产入口。
+- [x] 在create/update/import写前统一调用；旧字段按1.2严格比较（存在性、JSON类型、值），缺键不同于null、boolean不同number。覆盖：POST合法/非法、PATCH清空、错误单位、半频段/反向/0/负数/bool/string频率、非法元数据键、模板非法且replace=true原行保留、GET/list旧PA原类型保留、旧异常值改名可存但变更异常值拒绝、1→true拒绝、true→1合法修正、跨Lab409。旧坏值fixture只为初始化历史原形可直接入隔离DB；读/改/保存断言必须经真实HTTP，不能在断言阶段直接ORM修改替代生产入口。
 
-- [ ] 先写元数据不影响摘要的真实路径正例，复用 `test_pc04a2_route_selection.py` 的`client/configured/graph/db_session/paths`；先复现GET→原样PATCH默认扩入的RED，再加入以下真实HTTP元数据正例（同样覆盖正常节点、参考节点、参考边三条路径）：
+- [x] 先写元数据不影响摘要的真实路径正例，复用 `test_pc04a2_route_selection.py` 的`client/configured/graph/db_session/paths`；先复现GET→原样PATCH默认扩入的RED，再加入以下真实HTTP元数据正例（同样覆盖正常节点、参考节点、参考边三条路径）：
 
 ```python
 def test_source_metadata_does_not_change_existing_route_identity(client, configured, graph, db_session):
@@ -344,12 +344,12 @@ def test_source_metadata_does_not_change_existing_route_identity(client, configu
 
 该文件显式导入copy与fixture/helpers。真实API矩阵：①无改动/只改图名→连接存储JSON串保形、旧摘要不变（HTTP返回typed数值，不要求返回旧字符串）；②缺键→显式out/0/null必须保存并允许旧身份变化；③删除已知可选键/重排数组准确反映请求；④旧cable_loss_db="2.5"、calibrated_loss_db="0"→GET/POST/PATCH/import/list响应合法number，无标记回传恢复旧字符串且摘要不变；⑤同显示值带声明标记→保存number，真实0/不同数值不带标记也保存；⑥非法/重复/不存在ID或未提交键的声明清单422；⑦旧opaque扩展不被GET遗漏导致删除或泄露。五端类型/作用域/状态码保留原契约。节点/模式不作全域raw保形承诺，不改既有类型安全默认。
 
-- [ ] 只从`identity_nodes`的params与`calibration_connections`的摘要副本删除新`nominal_metadata`键，原`nodes/connections/calibration_nodes/calibration_connections`快照保留原始完整对象；不修改存储数据，不删其它旧键。新增元数据以前的同一图摘要必须不变。对端口/CE映射/参考天线身份变化仍按原门拒绝；运行旧 `test_cosmetic_change_only_warns_but_changed_port_is_incompatible`。
-- [ ] 补checked OpenAPI上述CRUD范围及依赖schemas，保留其它路径原样；隔离环境导入`app.openapi()`提取该闭包，使用apply_patch更新yaml；`gui`运行`npm run openapi:generate`，不要整份live spec覆盖checked文件。新测试逐个比较相关schema/path与live，并验证真实response含字段；手写传输类型的`pa_gain_db?: JsonValue`及metadata原始JSON契约一致，表单只输出已收窄的number/null与明确metadata。`NominalFieldMetadata`用于校验与形状说明，不因未被直接request引用就伪称已自动出现在live闭包。
-- [ ] Task1同步完成必要消费收窄与build：`CustomEdges`/箭头颜色先用`typeof value==='number' && Number.isFinite(value)`判断PA，不能继续用`as number`冒充运行时判据；非PA损耗仍由既有响应保证number，不扩成宽松显示。两个旧数值输入的真实onChange与取消/应用/保存失败生命周期按1.2意图map接线，清洁回传不生成标记；新PA表单仍留Task2。cwd=gui运行`npx --yes tsx --test test/topologyNominalTransport.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts`与`npm run build`，不能把契约中间态破坏留到Task2。
-- [ ] GREEN后定点回归 `tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_p1_57_topology_lab_context.py tests/test_pc04a3_topology_recovery.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_route_eligibility.py tests/test_pc04a2_route_application.py tests/test_pc04a2_route_freeze.py tests/test_pc04a2_gui_contract.py`。每次同样显式新临时库/全Mock/default bootstrap。
-- [ ] 变异实跑：临时移除写校验→非法写测试RED；临时恢复新元数据参与身份→元数据正例RED；恢复正确代码后GREEN。仅修改本片代码，用apply_patch还原，保存diff和测试末行，不用reset覆盖用户修改。
-- [ ] 审查Task1后精确`git add`上述文件，提交 `feat: 补齐拓扑标称参数写入契约`；不push，等待整片验证。
+- [x] 只从`identity_nodes`的params与`calibration_connections`的摘要副本删除新`nominal_metadata`键，原`nodes/connections/calibration_nodes/calibration_connections`快照保留原始完整对象；不修改存储数据，不删其它旧键。新增元数据以前的同一图摘要必须不变。对端口/CE映射/参考天线身份变化仍按原门拒绝；运行旧 `test_cosmetic_change_only_warns_but_changed_port_is_incompatible`。
+- [x] 补checked OpenAPI上述CRUD范围及依赖schemas，保留其它路径原样；隔离环境导入`app.openapi()`提取该闭包，使用apply_patch更新yaml；`gui`运行`npm run openapi:generate`，不要整份live spec覆盖checked文件。新测试逐个比较相关schema/path与live，并验证真实response含字段；手写传输类型的`pa_gain_db?: JsonValue`及metadata原始JSON契约一致，表单只输出已收窄的number/null与明确metadata。`NominalFieldMetadata`用于校验与形状说明，不因未被直接request引用就伪称已自动出现在live闭包。
+- [x] Task1同步完成必要消费收窄与build：`CustomEdges`/箭头颜色先用`typeof value==='number' && Number.isFinite(value)`判断PA，不能继续用`as number`冒充运行时判据；非PA损耗仍由既有响应保证number，不扩成宽松显示。两个旧数值输入的真实onChange与取消/应用/保存失败生命周期按1.2意图map接线，清洁回传不生成标记；新PA表单仍留Task2。cwd=gui运行`npx --yes tsx --test test/topologyNominalTransport.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts`与`npm run build`，不能把契约中间态破坏留到Task2。
+- [x] GREEN后定点回归 `tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_p1_57_topology_lab_context.py tests/test_pc04a3_topology_recovery.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_route_eligibility.py tests/test_pc04a2_route_application.py tests/test_pc04a2_route_freeze.py tests/test_pc04a2_gui_contract.py`。每次同样显式新临时库/全Mock/default bootstrap。
+- [x] 变异实跑：临时移除写校验→非法写测试RED；临时恢复新元数据参与身份→元数据正例RED；恢复正确代码后GREEN。仅修改本片代码，用apply_patch还原，保存diff和测试末行，不用reset覆盖用户修改。
+- [x] 审查Task1后精确`git add`上述文件，提交 `feat: 补齐拓扑标称参数写入契约`；不push，等待整片验证。
 
 ## Task 2: 原抽屉标称字段、旧PA定位与真实标注
 
@@ -357,9 +357,9 @@ def test_source_metadata_does_not_change_existing_route_identity(client, configu
 
 **Interfaces:** `nominalFieldsForNode(type: string): readonly {key:string,label:string,unit:'dB'|'dBi',nonnegative:boolean}[]`；`parseOptionalNominalNumber(value: number|string): number|null`；`setNodeNominal(node, key, value, metadata): TopologyNode`；`setEdgeNominal(edge, key, value, metadata): TopologyConnection`。组件props为`fields, values, metadata, disabled, onChange(key,value,metadata)`，数值与元数据一次回调、不请求网络。
 
-- [ ] **先于任何Task2生产GUI改动**执行4.0的fixture/代理前置与启动命令，保留Task1完成后的精确SHA与dirty测试文件清单（不是回退到共享旧HEAD）。先用真实GET确认隔离CAICT旧PA边存在、页面已加载，然后浏览器打开原连线抽屉，断言`getByLabel('旧PA标称增益 (dB)', {exact:true})`可见；基线应因该控件不存在RED，留DOM/截图/失败断言。新数值字段只需同一缺功能RED，不把服务/fixture/selector拼错当成功取证。记录退出码及数据manifest，随后关闭本次专用服务或明确保留其PID，再开始下面GUI实现；不修改/回退已完成Task1。Task3只做最终GREEN。
+- [x] **先于任何Task2生产GUI改动**执行4.0的fixture/代理前置与启动命令，保留Task1完成后的精确SHA与dirty测试文件清单（不是回退到共享旧HEAD）。先用真实GET确认隔离CAICT旧PA边存在、页面已加载，然后浏览器打开原连线抽屉，断言`getByLabel('旧PA标称增益 (dB)', {exact:true})`可见；基线应因该控件不存在RED，留DOM/截图/失败断言。新数值字段只需同一缺功能RED，不把服务/fixture/selector拼错当成功取证。记录退出码及数据manifest，随后关闭本次专用服务或明确保留其PID，再开始下面GUI实现；不修改/回退已完成Task1。Task3只做最终GREEN。
 
-- [ ] 写纯函数RED，文件从现有`gui/test/topologyDraft.test.ts`风格沿用node:test/tsx：
+- [x] 写纯函数RED，文件从现有`gui/test/topologyDraft.test.ts`风格沿用node:test/tsx：
 
 ```ts
 import {test} from 'node:test';
@@ -378,7 +378,7 @@ test('清空是null且零不丢，编辑不改原节点或扩展字段',()=>{
 });
 ```
 
-- [ ] cwd=`gui`：`npx --yes tsx --test test/nominalProperties.test.ts`，记录缺实现RED。实现函数最小形状：
+- [x] cwd=`gui`：`npx --yes tsx --test test/nominalProperties.test.ts`，记录缺实现RED。实现函数最小形状：
 
 ```ts
 export function parseOptionalNominalNumber(value: number|string): number|null {
@@ -390,14 +390,14 @@ export function parseOptionalNominalNumber(value: number|string): number|null {
 // 显示错误并禁用应用，不能把中间串自动存0或null。
 ```
 
-- [ ] 实现表内字段描述，组件用`value={number ?? ''}`、`disabled={editingBlocked}`；来源、频率全空保持null。显示“标称/非实测”，旧值无来源不填典型来源。`setNodeNominal`/`setEdgeNominal`逐层复制params/nominal_metadata，不能mutate旧对象。
-- [ ] 按1.2收窄`handleSave`为发送`draft.nodes`，保留`handleNodesChange`真实拖动落草稿；验收“仅编辑元数据不从ReactFlow覆盖草稿位置或注入视图坐标”和“真实拖动后新position保存”。节点既有typed响应可给出`position: {}`并随草稿保存，不要求存储缺键继续缺键，不扩展节点序列化范围。边和模式不额外追加前端默认字段；显示旧PA坏值时数值组件不自动触发onChange重写。
-- [ ] 节点抽屉嵌入组件，仅选中的节点落草稿；连线抽屉新增旧PA字段及元数据。提供“含旧PA标称的连线”清单（`pa_gain_db !== null && !== undefined`，含0），显示边ID与两端标签/端口，点击调用提取的`openConnection(id:string)`并高亮同一条边，不能按节点名猜PA归属。沿现有`handleEdgeClick`同源打开逻辑，隐藏/非当前模式边仍可通过清单定位，明确所属模式；不自动改模式或创建PA节点。
-- [ ] 所有表单控件与定位/应用入口读取`editingBlocked`；打开后进入采集/保存也锁住。原取消行为保留草稿；节点metadata不因关闭抽屉浅引用泄漏。采集失败/取消后锁恢复由原busy链驱动，不另建定时器。
-- [ ] 修正PA显示与箭头颜色的真假判断，0及负数不丢。PA净值只为标称显示，明确非实测；不写回`calibrated_loss_db`。校准字段维持只读、校准值0优先；不改变旧校准采用入口。
-- [ ] 移除`CustomNodes.tsx`的CE默认4/32和EMCenter“集成PA ×32”断言，保留用户label；不把端口handles数当硬件端口数。旧inputs/outputs即便非空也写“旧声明：…，未核实”；缺失写“端口数量未声明”。保留原handles与布局，不在4a加入角色编辑、`num_ports`同步或新端口数量推导。
-- [ ] GREEN：`npx --yes tsx --test test/nominalProperties.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts test/topologyOperationalLabContext.test.ts test/pc04a2RouteCalibration.test.ts src/features/TopologyEditor/baseStationPortsTruth.test.ts`；`npm run build`。核心变异把null/0处理换成`value || null`应RED；恢复后GREEN。
-- [ ] Task2规格/质量审查后精确提交 `feat: 支持器件标称属性与旧PA边编辑`。不用无关重构消除已有lint/build警告。
+- [x] 实现表内字段描述，组件用`value={number ?? ''}`、`disabled={editingBlocked}`；来源、频率全空保持null。显示“标称/非实测”，旧值无来源不填典型来源。`setNodeNominal`/`setEdgeNominal`逐层复制params/nominal_metadata，不能mutate旧对象。
+- [x] 按1.2收窄`handleSave`为发送`draft.nodes`，保留`handleNodesChange`真实拖动落草稿；验收“仅编辑元数据不从ReactFlow覆盖草稿位置或注入视图坐标”和“真实拖动后新position保存”。节点既有typed响应可给出`position: {}`并随草稿保存，不要求存储缺键继续缺键，不扩展节点序列化范围。边和模式不额外追加前端默认字段；显示旧PA坏值时数值组件不自动触发onChange重写。
+- [x] 节点抽屉嵌入组件，仅选中的节点落草稿；连线抽屉新增旧PA字段及元数据。提供“含旧PA标称的连线”清单（`pa_gain_db !== null && !== undefined`，含0），显示边ID与两端标签/端口，点击调用提取的`openConnection(id:string)`并高亮同一条边，不能按节点名猜PA归属。沿现有`handleEdgeClick`同源打开逻辑，隐藏/非当前模式边仍可通过清单定位，明确所属模式；不自动改模式或创建PA节点。
+- [x] 所有表单控件与定位/应用入口读取`editingBlocked`；打开后进入采集/保存也锁住。原取消行为保留草稿；节点metadata不因关闭抽屉浅引用泄漏。采集失败/取消后锁恢复由原busy链驱动，不另建定时器。
+- [x] 修正PA显示与箭头颜色的真假判断，0及负数不丢。PA净值只为标称显示，明确非实测；不写回`calibrated_loss_db`。校准字段维持只读、校准值0优先；不改变旧校准采用入口。
+- [x] 移除`CustomNodes.tsx`的CE默认4/32和EMCenter“集成PA ×32”断言，保留用户label；不把端口handles数当硬件端口数。旧inputs/outputs即便非空也写“旧声明：…，未核实”；缺失写“端口数量未声明”。保留原handles与布局，不在4a加入角色编辑、`num_ports`同步或新端口数量推导。
+- [x] GREEN：`npx --yes tsx --test test/nominalProperties.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts test/topologyOperationalLabContext.test.ts test/pc04a2RouteCalibration.test.ts src/features/TopologyEditor/baseStationPortsTruth.test.ts`；`npm run build`。核心变异把null/0处理换成`value || null`应RED；恢复后GREEN。
+- [x] Task2规格/质量审查后精确提交 `feat: 支持器件标称属性与旧PA边编辑`。不用无关重构消除已有lint/build警告。
 
 ## Task 3: 真实API浏览器与完整回归收口
 
@@ -434,7 +434,7 @@ export default mergeConfig(base,defineConfig({server:{host:'127.0.0.1',port:5189
 
 ### 4.1 最终GREEN及收口
 
-- [ ] 确认Task2已保存缺功能浏览器RED证据，再在最终Task1+Task2输入上用全新隔离库逐项GREEN；不在此时追补基线RED，不回退共享工作树。每行有输入、保存POST/PATCH响应、GET、重载DOM与截图，不以toast作为落库证据：
+- [x] 确认Task2已保存缺功能浏览器RED证据，再在最终Task1+Task2输入上用全新隔离库逐项GREEN；不在此时追补基线RED，不回退共享工作树。每行有输入、保存POST/PATCH响应、GET、重载DOM与截图，不以toast作为落库证据：
 
 | 场景 | 操作与真实断言 |
 |---|---|
@@ -463,8 +463,8 @@ if (pa.params.nominal_metadata.gain_db.source_note !== null) throw new Error('�
 if (pa.params.nominal_metadata.gain_db.frequency_range_mhz !== null) throw new Error('未知频率被伪造');
 ```
 
-- [ ] 后端计算反例：纯`TopologyService`同图边损耗2/0，分别设置节点gain=20、attenuation=3、gain_dbi=15与边PA=20，总损耗/矩阵保持2；已有calibrated_loss=0不能因此变成新标称值。正式链沿`tests/test_pc04a2_route_compensation.py::test_real_multihop_mixed_freeze_reaches_compensation_once`增加标称声明输入，仍精确断言原`want`只应用一次、端口/方法/参考面/来源不变。这些是合成transport测试，不标真机证据。
-- [ ] 定点稳定后主代理唯一安排最终全后端（新输入新库，cwd=`api-service`）：
+- [x] 后端计算反例：纯`TopologyService`同图边损耗2/0，分别设置节点gain=20、attenuation=3、gain_dbi=15与边PA=20，总损耗/矩阵保持2；已有calibrated_loss=0不能因此变成新标称值。正式链沿`tests/test_pc04a2_route_compensation.py::test_real_multihop_mixed_freeze_reaches_compensation_once`增加标称声明输入，仍精确断言原`want`只应用一次、端口/方法/参考面/来源不变。这些是合成transport测试，不标真机证据。
+- [x] 定点稳定后主代理唯一安排最终全后端（新输入新库，cwd=`api-service`）：
 
 ```bash
 pc04a4a_full_dir=$(mktemp -d /tmp/pc04a4a-full-XXXXXX)
@@ -477,6 +477,6 @@ env DATABASE_URL="sqlite:///$pc04a4a_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 
 ## 自查与交接
 
-- [ ] 设计4a覆盖：PA与其他明确标称字段、单位/来源/范围、旧CAICT边定位、固定能力声明清理；4b端口角色、4c内部路径、4d转换及损耗归属不提前施工。
-- [ ] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；0.3两项范围裁决已接受，不再重复请求用户确认。F1/F2修订方案仍需原reviewer增量核验后才进入实现。
-- [ ] 纯计划交付不构成实现完成，不勾roadmap父项，不解除现场B/HOLD。
+- [x] 设计4a覆盖：PA与其他明确标称字段、单位/来源/范围、旧CAICT边定位、固定能力声明清理；4b端口角色、4c内部路径、4d转换及损耗归属不提前施工。
+- [x] 所有新字段的写入/读取/重新保存/模板/历史/冻结消费者已在0.2逐项定责；0.3两项范围裁决已接受，不再重复请求用户确认。F1/F2修订方案已通过原reviewer增量核验后实施，Task1/Task2独立规格/质量审查通过。
+- [x] 本片软件实现/验证证据不构成现场验收，不勾roadmap父项，不解除现场B/HOLD。

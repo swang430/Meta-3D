@@ -1,0 +1,93 @@
+# PC-04A-4a 标称器件属性软件验证
+
+## 状态与边界
+
+本片实现类型化标称写入、原抽屉编辑和 CAICT 旧 PA 边定位；Task1 `690401a6`、Task2 `d4f44bfe` 已分别通过独立规格/质量审查。Task3 完整浏览器矩阵、相关回归、GUI/build及修后正式全量复验已完成：**7543 passed /17 skipped /1 failed**，唯一失败为已核对基线的历史G8误报，不称全绿。首轮另外三项采集前置异常本轮未再现，根因未确认，不称已修复。Task3独立审查、整片累计审查、Ready PR、外审和合并由主代理随后完成，PC-04A-4a 尚未作为已合并交付关闭，4b 不启动。
+
+全部结果仅为隔离 SQLite、真实 HTTP、真实浏览器与 Mock／脚本化 transport 的软件证据。不代表真机、物理端口能力、参考件计量认证、现场 B 或 HOLD 解除。标称数据不自动成为采用记录，也不新增补偿。
+
+## 精确输入与环境
+
+- 工作树：`restore-editable-topology/MIMO-First`，分支 `codex/topology-device-contract-design`；Task3 基准 HEAD：`d4f44bfe772000ea8aacd2aa3d477063b8ec7db1`。
+- 后端相关输入修改 `tests/test_pc04a2_route_compensation.py`、`tests/test_pc04a4a_nominal_identity.py`，并经主代理核实对齐 `tests/test_pc04a1_topology_editing.py` 的旧pin响应断言，另扩展独立浏览器 fixture 与原浏览器脚本。没有生产代码、共享DB fixture、依赖、HAL／SCPI、补偿算法或门的变更。
+- 本机证据根目录：`output/playwright/pc04a4a-task3/`。`task3-final-test-input.diff`、`final-test-input-sha256.txt` 保存全后端启动输入；`input-head.txt` 为基准 SHA。后续只有浏览器证据补充与不作为测试输入的本片文档状态，不把它们冒称原提交内容。
+- 浏览器库：`/tmp/pc04a4a-TUI8rw/browser.sqlite`；后端相关库：`/tmp/pc04a4a-related-krOzw5/related.sqlite`；首轮全后端库：`/tmp/pc04a4a-full-4MECTd/full.sqlite`；契约对齐后正式复验库：`/tmp/pc04a4a-full-final-eMTjE6/full.sqlite`。均由本片新建，未复制用户库；所有库、日志、venv、scratch 保留。
+- Node `v26.5.1`、npm `11.17.0`、Python `3.13.14`；FastAPI `0.141.1`、Pydantic `2.13.4`、SQLAlchemy `2.0.51`、pytest `9.1.1`、pytest-asyncio `1.4.0`。
+
+fixture 在应用导入前检查新 SQLite 路径、文件不存在、父目录存在及 `USE_MOCK_INSTRUMENTS=true`／`BOOTSTRAP_ON_STARTUP=true`；保留默认 bootstrap，随后所有类别与 Lab bindings 再断言 Mock。CAICT 旧图经真实模板导入端点创建。`fixture.log` 保留完整 manifest，两个 Lab 使用独立暗室；没有访问或停止用户 8000/8001 服务，没有启动 CE 服务。
+
+## 真实 API 浏览器矩阵
+
+专用服务为 API `127.0.0.1:18094`、Vite `127.0.0.1:5189`，所有测试代理都指向 18094。执行沿用 Playwright CLI，非前端 mockServer，不伪造 HTTP 响应。分阶段通过 `?nominalStage=<阶段>` 调用同一 `gui/test/pc04a4aNominalProperties.browser.js`；每阶段结果归档完整 request／response、GET、重载 DOM 与截图，不以 toast 当落库证据。
+
+| 场景 | 实际证据与结果 |
+|---|---|
+| 新 PA | 原新增菜单创建、明确 in/out；空→0→21.25→负值；来源 trim／空来源 null、单位 dB、频段 [2500,2700]，每步 PATCH／GET／重载恢复；`node-amplifier.log` |
+| pad／combiner | 0、正值、清空 null 保存；负值、半频段、倒序禁用应用，修正后可保存；`node-pad-v2.log`、`node-combiner.log` |
+| antenna／probe／reference_antenna | 正、负、0、null；原探头编号/极化、连接/显式引用和正常/校准模式均保持；`node-antenna.log`、`node-probe.log`、`node-reference_antenna.log` |
+| CAICT 旧 PA | 精确 `conn_ce_b1_to_hprobe_1v` 原典型20→0→−1→null；每步保存/GET/重载；空来源为 null，未新建 PA、未改其它边/节点/模式或 chamber；`caict-pa.log`。原定点脚本还覆盖0值清单、非当前模式精确ID定位高亮不切模式及数值声明事件 |
+| 旧天线/数量徽标 | 旧15/3 dBi 仍标旧版标称、非实测；CE/EMCenter缺数量不回退4/32、明确0不回退且只称未核实旧声明，无固定PA×32；`legacy-v4.log` |
+| 旧坏 PA | 原字符串 `"12"` 可读；只改来源会要求先明确修正/清空，取消不重写，后续改名/拖动保存仍保形；`legacy-v4.log` |
+| 线缆/接收线缆 | 节点提示去相邻边，无第二数值存储；真实曲线点击参考稀疏边只改来源，GET仍不补 cable_loss/PA 默认键；`legacy-v4.log`、`cable-source.log` |
+| 无关旧图操作 | 未声明标称的线缆只改名与真实鼠标拖动，位置实际落库/重载，params、其它边及模式保持；`legacy-v4.log` |
+| 取消/失败/跨Lab | 来源取消不改草稿/GET；真实离线保存失败保留草稿，恢复后重试/重载准确；dirty切Lab拒绝、手发跨Lab PATCH=409且双图不变、清洁切乙无甲节点；`recovery-v5.log` |
+| 保存/采集锁 | MutationObserver只观察真实保存窗口，定位/器件/保存均禁用；真实采集 pending 窗口全部定位编辑/拖动/保存锁住，结束后恢复；`cable-source.log`、`collection-v5.log` |
+| Mock/取消 | 两次原采集入口真实POST；第一条 simulated、net_loss=null、samples=[]、formal_eligible=false，UI禁用采用且服务器采用POST=422；第二条真实取消POST落库cancelled，新控件/应用恢复，历史两条保留、采用历史为空；`collection-v5.log` |
+| 引用保护 | 删除仍被探头显式路径引用的CE节点，原生确认后拒绝并保留局部输入/草稿/GET；非引用天线原生确认后可删并保存/重载；`references-start-v6.log`→`references-reject-v6.log`→`references-middle-v6.log`→`references-delete-v6.log`→`references-final-v6.log` |
+
+各行成功日志均含 `### Result`，最终引用结果不是“弹出确认即退出0”。截图使用 `animations:'disabled'`；已人工查看新PA 21.25的抽屉渲染。浏览器开始的 Task2 定点重跑 `browser-targeted.log` 退出0，但其函数只 console 输出，完整结构化落库材料以后续上述矩阵日志为准，不将只打印脚本本身的日志当 JSON 返回值。
+
+`matrix-index.jsonl` 是12阶段Result的结构化索引；`browser-final-get.log` 为关闭服务前两个Lab的最终真实回读，`final-storage-index.json`核实甲保留simulated/cancelled两条、net_loss=null/samples=[]/formal_eligible=false，乙历史为空。专用CLI浏览器与API94592/Vite94652/npm94626均已关闭，随后确认18094/5189无监听；`service-identities.log`与`services-stopped-at.txt`保留身份和时点。旧Task2数据、普通用户服务未动。
+
+前期脚本失败均保留：一次内联CLI语法错误、0声明样本缺 visible_modes、Drawer焦点恢复和短ID模糊selector、引用保护最初选了被删探头自身。只修测试输入/selector：旧0样本通过真实PATCH补测试可见模式、不清库；改成精确option value、等Drawer退出；保护场景改选仍被另一节点引用的CE。原生confirm分阶段由CLI接受，不重写window.confirm。这些不作为产品RED，不回退共享代码补造RED。Task2既有缺控件RED与变异证据仍保留在原目录。
+
+已知非本片新增噪声：CAICT旧图 route-calibration-paths 422、开发时 React DevTools提示，以及既有构建动态/静态import和大chunk警告。未借本片改旧图/清警告。
+
+## 校准隔离与回归
+
+后端相关命令（cwd=`api-service`，每次应用导入前显式设置上述新库、两个 true 开关与独立 LOG_DIR）：
+
+```sh
+.venv/bin/python -m pytest tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_route_eligibility.py tests/test_pc04a2_route_application.py tests/test_pc04a2_route_freeze.py tests/test_pc04a2_route_compensation.py tests/test_pc04a3_topology_recovery.py -q
+```
+
+退出0，`backend-related.log`：**172 passed / 1080 warnings / 165.37s**。该轮开始后新增的“采用后元数据”测试另外在新临时库运行，不冒称已被172覆盖；`backend-new-metadata.log`：**3 passed / 57 warnings / 3.14s**，退出0。
+
+- 纯 TopologyService：边损耗2/0与新增gain=20、attenuation=3、gain_dbi=15及旧PA=20，总损耗/矩阵不变；已有calibrated_loss=0仍优先为0。
+- 复用原真实生产采集/parser/builder/确认/冻结/补偿链，只替换外部transport：原 `want` 28或−12保持一次，端口、方法、参考面、来源不变；不把脚本化transport称真机。
+- 本轮未设置 `CHANNEL_ENGINE_PATH`，上述既有测试的条件分支 `assert_final_loaded_asc` 未执行；验证到原补偿 entries/冻结/采用消费者，不宣称本轮实际调用CE服务生成/加载ASC或完成硬件波形验收。
+- 先建立受信transport采集/采用与旧混合证书，真实HTTP仅改metadata后preview仍可采用、新执行冻结同值同来源；旧采用快照、原始run与旧执行冻结不改；真实接线端口变化仍拒绝。
+
+GUI（cwd=`gui`）：
+
+```sh
+env TSX_TSCONFIG_PATH=tsconfig.app.json npx --yes tsx --test test/nominalProperties.test.ts test/topologyDraft.test.ts test/topologyHandleFreeze.test.ts test/topologyOperationalLabContext.test.ts test/pc04a2RouteCalibration.test.ts src/features/TopologyEditor/baseStationPortsTruth.test.ts
+env TSX_TSCONFIG_PATH=tsconfig.app.json npx --yes tsx --test test/topologyNominalTransport.test.ts
+npm run build
+```
+
+分别退出0：**45/45 pass**（716.618292ms）、**3/3 pass**（1272.070041ms）、构建 `built in 15.67s`。日志为 `gui-related.log`、`gui-transport.log`、`build.log`；不把48项GUI称完整浏览器或全后端。
+
+## 最终全后端
+
+唯一责任人 Task3；两轮全量均独立新库、串行执行。先保留首轮实际结果，再按主代理批准的pin契约对齐进行一次正式复验，不无限重跑择绿。首轮命令：
+
+```sh
+env DATABASE_URL=sqlite:////tmp/pc04a4a-full-4MECTd/full.sqlite USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR=/tmp/pc04a4a-full-4MECTd/logs .venv/bin/python -m pytest tests -q
+```
+
+首轮退出1，**7538 passed /17 skipped /6 failed /7419 warnings /774.06s**（7561项）。其中两项旧默认pin响应断言与本片已批准稀疏契约冲突，经主代理独立核实后只对齐该测试：缺键存储/GET保形、schema有效默认out/in、显式坏pin422且原子不改；新库定点 **2 passed /42 warnings /0.47s**。其余三项在原采集fixture开始前失败（两项tuple index out of range，一项Lab不存在/停用，均零exchanges），另有历史G8。采用资格4项、批校准1项独立复现，以及257项full顺序、13项迁移前序、30次采集重复+4迁移共34项诊断均通过；尚不能只凭复跑通过确认根因。只读pool观察证明同一StaticPool DBAPI连接曾同时被两个Session checkout，是否为首轮三项的直接原因仍在核验，不改生产资格/锁。当前不能作为最终通过证据，不能以G8豁免其它失败。
+
+首轮结果保存于 `backend-full.log`、`backend-full-exit.txt`、`full-failure-summary.txt` 与 `full-start.txt`／`full-end.txt`；诊断日志为 `pins-reproduction.log`、`pins-aligned-green.log`、`eligibility-reproduction.log`、`batch-reproduction.log`、`sequence-diagnostics.log`、`migration-order-diagnostics.log`、`repeat-diagnostics.log`、`pool-observation.log`。输入稳定后另起新库最终全量并保留首轮，不引用旧片7485统计。
+
+主代理裁决不改共享fixture：双checkout尚不足以证明首轮三项异常根因；不能写成已修复。仅已批准pin断言对齐后的正式canonical复验，无诊断plugin、不改三项资格断言/生产，命令如下：
+
+```sh
+env DATABASE_URL=sqlite:////tmp/pc04a4a-full-final-eMTjE6/full.sqlite USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR=/tmp/pc04a4a-full-final-eMTjE6/logs .venv/bin/python -m pytest tests -q
+```
+
+输入存于`task3-final-canonical-input.diff`、`final-canonical-input-sha256.txt`；命令结果存`backend-full-final.log`、`backend-full-final-exit.txt`、`full-final-start.txt`／`full-final-end.txt`，不以诊断plugin的回归替代本次正式全量。
+
+正式复验退出1，**7543 passed /17 skipped /1 failed /7423 warnings /628.35s**。首轮两项pin断言已按批准契约对齐并在full通过；另外三项本轮full均PASSED，未修改其断言、采集资格或共享fixture，仍记为“首轮出现、修后复验未再现、根因未确认”。唯一G8与下述基线同一条。复验结束后五个应用/测试/fixture/浏览器输入SHA256全部检查OK；此后只有不参与后端测试的本片文档状态更新。`node --check`、`git diff --check`均退出0。由主代理安排独立Task3和累计审查，不将本文或作者自查称为Approved。
+
+G8定点 `g8-current.log` 已退出1：旧历史报告 `docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md` 的真实执行UUID路由被当作路由形状未命中。与基线 `710f55a3f65f70c8cc593003e501fcf8e2204739` 比较，检查器、涉事历史、main路由注册及test_plan路由文件均无差异（git diff --quiet退出0）；历史写的就是当时真实422执行，不应改历史或门来造绿。最终如仍仅此失败，将明确报告实际统计，不能称“全绿”。

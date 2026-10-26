@@ -9,6 +9,31 @@ from tests.test_pc04a2_route_selection import (
 )
 
 
+@pytest.mark.parametrize('calibrated', [False, True])
+def test_nominal_declarations_never_add_another_topology_compensation(calibrated):
+    from app.services.topology_service import TopologyService
+    graph = {'nodes': [
+        {'id':'ce','type':'ce_port','label':'B1.1'},
+        {'id':'pad','type':'pad','label':'pad'},
+        {'id':'probe','type':'probe','label':'probe'}],
+        'connections': [dict(id='a',source='ce',target='pad',cable_loss_db=2),
+                        dict(id='b',source='pad',target='probe',cable_loss_db=0)],
+        'operating_modes':[dict(id='mimo_ota',active_connections=['a','b'])]}
+    if calibrated:
+        graph['connections'][0]['calibrated_loss_db'] = 0
+    before = TopologyService(graph)
+    expected = 0 if calibrated else 2
+    assert before.get_end_to_end_loss('ce','probe') == expected
+    original_matrix = before.get_calibration_matrix('mimo_ota')
+    graph['nodes'][0]['params'] = {'gain_db':20}
+    graph['nodes'][1]['params'] = {'attenuation_db':3}
+    graph['nodes'][2]['params'] = {'gain_dbi':15}
+    graph['connections'][0]['pa_gain_db'] = 20
+    after = TopologyService(graph)
+    assert after.get_end_to_end_loss('ce','probe') == expected
+    assert after.get_calibration_matrix('mimo_ota') == original_matrix
+
+
 @pytest.mark.parametrize('location', ['normal', 'reference', 'reference_edge', 'none'])
 def test_metadata_and_clean_http_roundtrip_do_not_change_existing_route_identity(
         client, configured, graph, db_session, location):
