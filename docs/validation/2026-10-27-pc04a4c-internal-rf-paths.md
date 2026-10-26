@@ -2,11 +2,26 @@
 
 ## 结论与边界
 
-本片应用层综合验证已完成：真实HTTP/浏览器C01～C16、GUI88项、构建及获准局部fixture修后定点7项通过；唯一最终全后端 **7808 passed /17 skipped /1 failed /8363 warnings，684.38s，exit1**。唯一失败为本次核实的未改动历史G8引用误报，**不称全绿**。Task1～3已独立规格/质量通过；Task4独立审查、累计分支审查及PR外审尚未发生。4c未合并，4d/4e、父项、现场B/HOLD不关闭。
+本片应用层取证及累计修复后的新版后端验证已完成：执行输入 `187b3b11a5760ddd06646f1876aa598152120bfa` 的唯一最终全后端为 **7815 passed /17 skipped /1 failed /8487 warnings，690.58s，exit1**。唯一失败仍为本次核实的未改动历史G8引用误报，**不称全绿**。Task1～4任务级独立审查已完成（Task4含C07真实鼠标未验证的非阻塞P3），累计唯一P1已由187b3b11修复并独立复核为ADDRESSED、无新增功能缺陷；仍待本轮文档增量审查与PR外审，未宣告Ready或合并。4d/4e、父项、现场B/HOLD不关闭。
 
 本片验证应用层有向端口对白名单、保存原子性、运行解析、原开关身份和冻结匹配，不证明实物内部结构、RF导通、真实量值或正式校准资格。
 
-实现基准为 `f67baac96458ba2955ae13799a9527f76e753615`，分支 `codex/pc04a4c-internal-rf-paths`。本任务无生产修改，仅增加验证脚本，并经主代理裁决对一个旧标称测试的局部 pad 补显式 ports 和两边保存 pin，保持原期望 2/0 与全部断言、不增加 internal_paths、不放宽 R1。
+原Task4浏览器/GUI取证与首轮全后端基准为 `f67baac96458ba2955ae13799a9527f76e753615`，交付提交0cc0d552，分支 `codex/pc04a4c-internal-rf-paths`；该阶段仅增加验证脚本，并获准对旧标称测试局部pad补ports/pins，原2/0断言及R1不变。后续累计P1修复187b3b11仅把DB-current触发源从全图字段存在性换为正式所选身份，并透传该身份；原冻结生成/历史/actual-target/量值/资格未改。本文本轮续验没有新的生产、测试、fixture或依赖修改。
+
+## 新版唯一最终全后端与复用边界（187b3b11）
+
+累计唯一P1为无关断开节点或CE源的声明误触严格采集解析、拒绝合法旧BSE直连；修复已独立ADDRESSED。修复相关集 **435 passed /2137 warnings，328.57s**，核心全图判据回退6红、身份透传回退1红并恢复，由修复报告与增量独立复核分别留证；这些是相关/变异证据，不代替下述新版全量。
+
+```sh
+cd api-service
+env DATABASE_URL=sqlite:////tmp/pc04a4c-GEebeR/full.sqlite USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR=/tmp/pc04a4c-GEebeR/logs .venv/bin/python -m pytest tests -q
+```
+
+本轮唯一责任人使用全新临时SQLite，启动前full.sqlite不存在，所有app导入前已设置上述环境；没有启动服务或访问用户默认库。实际收集7833项，末行 **1 failed, 7815 passed, 17 skipped, 8487 warnings in 690.58s (0:11:30)**，exit.txt=1。完整原件 `/tmp/pc04a4c-GEebeR/pytest.log` SHA256=`b2a5b5b1392f06821311349e863ab195cb434e231e9e085d1503947a3a9a3031`；不存在其它失败。唯一G8仍只命中下方旧记录所述同一历史文件第111行UUID执行URL；门/历史相对8d5bc6d4无diff，历史SHA256仍为57aaf7726ffbf697d2ba3e7c21a91f57509b88f0e282ac39b16f56dcdba357c3。不改历史或门，不把8487 warnings未经逐条归因称为全部既有。
+
+1174项后端/GUI/契约/配置输入起止全部OK，清单SHA256=`c9fb66893ff0c4177b76c80d267dab83eedf0552392b429dff5e040d00a47baf`；HEAD起止187b3b11，tracked/staged diff均空、未跟踪测试输入0项，依赖/HEAD/tracked/未跟踪清单起止cmp均0。82条依赖freeze SHA256=`ba9a0540f4c051a1467bde7d78e17716f8edcd129120ae5731a4ed67fd459ca7`，Python3.13.14/pytest9.1.1/Node26.5.1/npm11.17.0。运行后仅同步结果与状态文档，不改上述输入；pytest conftest仍按原隔离覆盖LOG_DIR，完整stdout/stderr保留在pytest.log。
+
+**旧浏览器/GUI复用范围：** 0cc0d552→187b3b11只有两个后端生产文件、一个身份测试和设计状态行变化；gui、OpenAPI、HTTP路由/schema及浏览器fixture/脚本无diff，scope与RF-chain HTTP仍显式序列化原五字段。故原GUI88、build12.18s及本页旧库的界面/保存/原始HTTP/Mock生命周期原件保留复用，未重复浏览器或构建；它们不冒充在187b3b11重跑，新DB-current修复由新增7例、435相关及本轮新版全量覆盖。C07仍只有真实HTTP position PATCH，没有真实鼠标拖动事件证据，保留非阻塞缺项，不扩修。**旧7808/17/1仅为f67baac9→0cc0d552阶段结果，不是本修复输入的全量。**
 
 ## 隔离、源身份与原件
 
@@ -19,7 +34,7 @@
 
 可重跑输入：`tests/pc04a4c_browser_fixture.py`、`tests/pc04a4c_matrix_evidence.py`（cwd api-service），`test/pc04a4cInternalPaths.browser.js`、`test/pc04a4cMatrix.browser.js`、`test/pc04a4cSupplement.browser.js` 和 `test/pc04a4c.vite.config.ts`（cwd gui）。全部 Python 命令先设置本片新库/Mock/bootstrap 环境。浏览器用专用 `pc04a4c-task4` 会话；离线只控制真实浏览器网络，pending 用 MutationObserver 观察真实 PATCH，不造延时响应。
 
-## C01～C16 实际验收
+## C01～C16 既有浏览器/HTTP验收原件（按新版章节边界复用）
 
 下列文件均在最终浏览器目录；截图在 `gui/output/playwright/pc04a4c-task4-*` 和 `pc04a4c-task4-final-*`。普通矩阵 `browser-matrix.log` 包含 260 个真实 HTTP 记录及11行源/展示对象完整 JSON/DOM；截图只是辅助，落库以对应 GET/ORM 为据。
 
@@ -44,7 +59,7 @@
 
 最终两次采集：`a0833ac2-3a00-40f8-89ed-2d30cf6ca4f1` 与 `01294d0f-53be-4638-915a-14924de3feba`。两条原请求摘要分别为 `3a587fda54bf94de67ae91caea9b2e1ee6c74f1d56727b31ab6b73e9d0d841c2` / `25d96b862c4162705000e135fff11341b6b9d0e3089a696f4536c5260b53f1aa`。均 formal_eligible=false、net_loss_db=null、samples=[]。所有源码脚本和日志/截图/库保留，不清理用户资料。
 
-## 相关验证与唯一最终全后端
+## 原Task4相关与旧版全后端记录（不代表187b3b11输入）
 
 相关23文件首次结果 `/tmp/pc04a4c-3fmW8Q/pytest.log`：exit1，**2 failed /654 passed /2300 warnings，372.99s**。仅旧 `test_nominal_declarations_never_add_another_topology_compensation` 两参数失败：自建中间pad未存 ports/pins，按新R1返回None，未到原标称补偿断言。主代理已批准只补该函数局部端口证据，并保留后续nominal赋值的ports；原2/0期望及全部断言不动。修后新库 `/tmp/pc04a4c-9hMnvf/pytest.log`：**7 passed /90 warnings，5.11s，exit0**；这是该文件定点，不冒称重跑23文件。
 
@@ -62,7 +77,7 @@ npx --yes tsx --test test/topologyInternalPaths.test.ts test/topologyPortContrac
 npm run build
 ```
 
-唯一最终全后端在独立新库 `/tmp/pc04a4c-KxzsaG/full.sqlite` 完成；`pytest.log` SHA256=`253fd88e9c2f2876dc3a87f120973ecaf1bcececb1d0812f33d0c98ac91c7856`，`exit.txt`实际为1，末行 **1 failed, 7808 passed, 17 skipped, 8363 warnings in 684.38s**。
+旧版Task4全后端在独立新库 `/tmp/pc04a4c-KxzsaG/full.sqlite` 完成；`pytest.log` SHA256=`253fd88e9c2f2876dc3a87f120973ecaf1bcececb1d0812f33d0c98ac91c7856`，`exit.txt`实际为1，末行 **1 failed, 7808 passed, 17 skipped, 8363 warnings in 684.38s**。以下命令、输入及门复核均是该旧阶段原件，不替代上方新版结果。
 
 ```sh
 cd api-service
@@ -79,7 +94,7 @@ env DATABASE_URL=sqlite:////tmp/pc04a4c-KxzsaG/full.sqlite USE_MOCK_INSTRUMENTS=
 
 首阶段API51610已定点停；最终API53789、npm/Vite51647/51670/51696及专用browser pc04a4c-task4均按记录身份关闭。自查C13补验只重启本任务API55124、npm/Vite55132/55155/55181和browser pc04a4c-task4-c13，补验后同样定点关闭；两批targets-after-close均仅表头、18096/5191监听复核为空。关闭日志、原库、venv、output和全部截图/SDD保留，未停止用户服务或删除资料。
 
-后续由主代理安排Task4独立规格/质量审查，再累计分支审查，按AGENTS外审规则进入PR；本摘要不是审查回执，也不是4c合并或现场验收声明。
+Task4任务级已Approved（保留C07非阻塞P3）；累计唯一P1修复后限定独立复核为ADDRESSED。后续由主代理审查本轮文档增量，再按AGENTS外审规则判定是否进入Ready PR；当前未Ready、未push/PR/merge。本摘要不是外审回执，也不是4c合并或现场验收声明。
 
 ## 阶段校正与未验证范围
 
