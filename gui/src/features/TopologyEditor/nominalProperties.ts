@@ -50,10 +50,10 @@ function metadataMap(value: unknown): Record<string, any> {
 function copyMetadata(metadata: NominalFieldMetadata): NominalFieldMetadata {
   return {...metadata,frequency_range_mhz:metadata.frequency_range_mhz?[...metadata.frequency_range_mhz]:null};
 }
-export function setNodeNominal(node: TopologyNode,key: string,value: number|null,metadata: NominalFieldMetadata): TopologyNode {
-  return {...node,params:{...node.params,[key]:value,nominal_metadata:{
+export function setNodeNominal(node: TopologyNode,key: string,value: number|null|undefined,metadata: NominalFieldMetadata): TopologyNode {
+  return {...node,params:{...node.params,...(value===undefined?{}:{[key]:value}),nominal_metadata:{
     ...metadataMap(node.params.nominal_metadata),[key]:copyMetadata(metadata)}}};
 }
-export function setEdgeNominal(edge: TopologyConnection,key: string,value: number|null,metadata: NominalFieldMetadata): TopologyConnection & {nominal_metadata: Record<string, any>} {
-  return {...edge,[key]:value,nominal_metadata:{...metadataMap(edge.nominal_metadata),[key]:copyMetadata(metadata)}};
+export function setEdgeNominal(edge: TopologyConnection,key: string,value: number|null|undefined,metadata: NominalFieldMetadata): TopologyConnection & {nominal_metadata: Record<string, any>} {
+  return {...edge,...(value===undefined?{}:{[key]:value}),nominal_metadata:{...metadataMap(edge.nominal_metadata),[key]:copyMetadata(metadata)}};
 }

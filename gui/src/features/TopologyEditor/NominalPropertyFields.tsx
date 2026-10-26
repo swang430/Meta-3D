@@ -8,7 +8,8 @@ interface Props {
   values: Record<string, unknown>;
   metadata: unknown;
   disabled: boolean;
-  onChange: (key:string,value:number|null,metadata:NominalFieldMetadata)=>void;
+  /** undefined 仅表示未编辑数值；明确清空仍为 null。 */
+  onChange: (key:string,value:number|null|undefined,metadata:NominalFieldMetadata)=>void;
   /** 中间输入不写入草稿，但必须阻止外层应用旧值。 */
   onValidityChange?: (valid:boolean)=>void;
   metadataOnly?: boolean;
@@ -28,9 +29,8 @@ function Field({field, value, metadata, disabled, onChange, onValidityChange, me
   const badLegacy=value!==null&&value!==undefined&&!finite;
   const commit=(next:number|string,note:string,a:number|string,b:number|string,edited=numberEdited)=>{
     try {
-      if(badLegacy&&!edited)throw new Error('旧值格式未核实；请先明确输入合法标称值或清空，再编辑来源');
-      const parsed=parseOptionalNominalNumber(next);
-      if(field.nonnegative&&parsed!==null&&parsed<0)throw new Error('标称值不能为负数');
+      const parsed=edited?parseOptionalNominalNumber(next):undefined;
+      if(field.nonnegative&&parsed!==null&&parsed!==undefined&&parsed<0)throw new Error('标称值不能为负数');
       const meta=nominalMetadata(field.unit,note,a,b);
       setError(null);onValidityChange(field.key,true);
       onChange(field.key,parsed,meta);

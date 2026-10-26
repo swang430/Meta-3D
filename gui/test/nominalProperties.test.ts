@@ -47,3 +47,23 @@ test('来源空白为null；频率必须成对且有限为正，允许单频',()
   for(const [a,b] of [[2500,''],['',2700],[0,2700],[2800,2700],[NaN,2700],['2500',2700]] as [number|string,number|string][])
     assert.throws(()=>nominalMetadata('dB','来源',a,b));
 });
+
+test('只改来源或频段保留六类旧节点与参考PA边的数值键存在性和原值',()=>{
+  for(const type of ['amplifier','pad','combiner','probe','antenna','reference_antenna']){
+    const field=nominalFieldsForNode(type)[0];
+    for(const params of [{}, {[field.key]:null}, {[field.key]:0}, {[field.key]:'12'}]){
+      const node={id:type,type,label:type,params};
+      const after=setNodeNominal(node,field.key,undefined,nominalMetadata(field.unit,'只改说明',2500,2700));
+      assert.equal(Object.hasOwn(after.params,field.key),Object.hasOwn(params,field.key));
+      assert.equal(after.params[field.key],params[field.key]);
+      assert.equal(Object.hasOwn(node.params,'nominal_metadata'),false);
+    }
+  }
+  for(const prior of [{}, {pa_gain_db:null}, {pa_gain_db:0}, {pa_gain_db:'12'}]){
+    const edge={id:'reference',source:'probe',target:'air',...prior};
+    const after=setEdgeNominal(edge,'pa_gain_db',undefined,nominalMetadata('dB','说明','',''));
+    assert.equal(Object.hasOwn(after,'pa_gain_db'),Object.hasOwn(prior,'pa_gain_db'));
+    assert.equal(after.pa_gain_db,prior.pa_gain_db);
+    assert.equal(setEdgeNominal(edge,'pa_gain_db',null,nominalMetadata('dB','','','')).pa_gain_db,null);
+  }
+});

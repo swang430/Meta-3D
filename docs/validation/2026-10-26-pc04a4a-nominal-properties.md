@@ -6,6 +6,16 @@
 
 全部结果仅为隔离 SQLite、真实 HTTP、真实浏览器与 Mock／脚本化 transport 的软件证据。不代表真机、物理端口能力、参考件计量认证、现场 B 或 HOLD 解除。标称数据不自动成为采用记录，也不新增补偿。
 
+## 累计内审 F1 修复增量
+
+累计审查输入 `d2f9187a394a6f21e1934ebde704e4483e51f454` 发现一个同根 P1：旧节点缺标称数值键时，仅改来源/频段会补 null，造成原采用失配、新执行从 confirmed_route 28 dB 退回旧证书 20 dB。现沿已有 `numberEdited` 收窄 GUI 写入：未编辑数值只更新 metadata，保留缺键、null、0及旧原值；明确输入/清空仍写 number/null。生产改动仅 `NominalPropertyFields.tsx` 与 `nominalProperties.ts`，不改后端摘要、资格、历史或补偿。等待独立增量复审，不以自查代替 Approved。
+
+- 新 RED：纯函数回归 **4 pass /1 fail**，失败为缺键被新增；原 Field→草稿→真实 PATCH 的浏览器 RED 明确报 `gain_db=null` 被补入。证据在 `output/playwright/pc04a4a-final-fix/`，不覆盖原证据。
+- 新 GREEN：六类缺键节点分别只改来源、再只改频段，PATCH/GET/重载均保持数值缺键；参考 PA 边只改 metadata 同样保持缺键。节点明确0/清空、参考 PA 明确输入再清空仍为 number/null；旧字符串PA只改metadata仍为原字符串；取消无泄漏、真实离线保存失败保留草稿，恢复重试仍保形。最终全新库 **18 次 PATCH 均200**，`browser-final.log`/`browser-result.json` 保存请求、响应、baseline与最终GET。
+- GUI相关回归 **49/49 pass /678.187625ms**；构建 **11.83s**，既有import/chunk警告保留。后端相关identity/compensation **39 passed /342 warnings /41.48s**。另将真实GUI请求的标称片段映射到原脚本化transport fixture：普通探头和参考PA边原摘要不变、preview可采用、新冻结仍confirmed_route 28 dB、旧冻结/原run/采用历史不改；不是浏览器采集实测，也不是硬件证据。
+- 最终浏览器库 `/tmp/pc04a4a-8AUqR0/browser.sqlite`，两个开关均true且默认bootstrap；全过程未访问用户DB或停止用户服务。专用服务身份与停机记录见本次证据目录，原库和本次库均保留。
+- 本次为影响面明确的局部GUI修复，没有后端生产、契约、测试或fixture变动；原四项后端canonical输入hash仍一致，原浏览器脚本只同步了旧坏值metadata保形断言，并新增本次浏览器脚本。故不重跑全后端，也不将原 **7543/17/1** 改称本修复HEAD的新全量结果。首轮 **7538/17/6**、三项前置异常未知根因、历史G8失败、ASC条件分支/CE未执行及B/HOLD边界全部保留。
+
 ## 精确输入与环境
 
 - 工作树：`restore-editable-topology/MIMO-First`，分支 `codex/topology-device-contract-design`；Task3 基准 HEAD：`d4f44bfe772000ea8aacd2aa3d477063b8ec7db1`。
@@ -27,7 +37,7 @@ fixture 在应用导入前检查新 SQLite 路径、文件不存在、父目录�
 | antenna／probe／reference_antenna | 正、负、0、null；原探头编号/极化、连接/显式引用和正常/校准模式均保持；`node-antenna.log`、`node-probe.log`、`node-reference_antenna.log` |
 | CAICT 旧 PA | 精确 `conn_ce_b1_to_hprobe_1v` 原典型20→0→−1→null；每步保存/GET/重载；空来源为 null，未新建 PA、未改其它边/节点/模式或 chamber；`caict-pa.log`。原定点脚本还覆盖0值清单、非当前模式精确ID定位高亮不切模式及数值声明事件 |
 | 旧天线/数量徽标 | 旧15/3 dBi 仍标旧版标称、非实测；CE/EMCenter缺数量不回退4/32、明确0不回退且只称未核实旧声明，无固定PA×32；`legacy-v4.log` |
-| 旧坏 PA | 原字符串 `"12"` 可读；只改来源会要求先明确修正/清空，取消不重写，后续改名/拖动保存仍保形；`legacy-v4.log` |
+| 旧坏 PA | 原Task3输入下字符串 `"12"` 可读、来源编辑要求先修正/清空；这是原 `legacy-v4.log` 的历史行为。累计F1修复后仅改metadata允许保留原字符串，新验证见上节；明确改数值仍严格校验 |
 | 线缆/接收线缆 | 节点提示去相邻边，无第二数值存储；真实曲线点击参考稀疏边只改来源，GET仍不补 cable_loss/PA 默认键；`legacy-v4.log`、`cable-source.log` |
 | 无关旧图操作 | 未声明标称的线缆只改名与真实鼠标拖动，位置实际落库/重载，params、其它边及模式保持；`legacy-v4.log` |
 | 取消/失败/跨Lab | 来源取消不改草稿/GET；真实离线保存失败保留草稿，恢复后重试/重载准确；dirty切Lab拒绝、手发跨Lab PATCH=409且双图不变、清洁切乙无甲节点；`recovery-v5.log` |

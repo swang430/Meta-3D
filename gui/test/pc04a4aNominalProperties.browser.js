@@ -172,7 +172,7 @@ async page=>{
       await page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true}).fill('legacy-bad-pa');await page.getByRole('option').filter({hasText:'legacy-bad-pa'}).click();
       await page.getByText('旧值格式未核实（原值只读）："12"；未主动编辑时保留原值。',{exact:true}).waitFor();
       await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('仅改来源');
-      if(await page.getByRole('button',{name:'应用修改',exact:true}).isEnabled())throw new Error('旧坏值被隐式清空');
+      if(!await page.getByRole('button',{name:'应用修改',exact:true}).isEnabled())throw new Error('metadata-only不应要求重写旧数值');
       await shot('bad-unchanged');await page.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor({state:'hidden'});
       for(const id of ['matrix-cable','matrix-receive_cable']){await choose(id);await page.getByText('损耗仅在相邻连线编辑，不在器件重复计入。',{exact:false}).waitFor();if(await nodeDialog().getByLabel(/标称.*\(dB\)/).count())throw new Error('线缆有第二损耗');await closeNode()}
       const before=await read(endpoint);await choose('matrix-cable');await page.getByLabel('器件名称',{exact:true}).fill('线缆仅改名');await applyNode();
