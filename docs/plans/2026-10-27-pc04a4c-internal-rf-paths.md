@@ -45,7 +45,7 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/service
 | `PortDeclarationFields.tsx` / `nodePortHelpers.ts::resolveNodePorts/validateNodePortDeclaration` | 端口及有效方向仍4b真值；Task3新组件只消费，必要时在端口应用前增加内部引用检查 | 清单删除口不能偷偷删除internal_paths；BSE dl/ul不被新编辑器覆盖 |
 | `declared_rf_routes.py::resolve_saved_rf_path` | 当前唯一链以节点级incoming/outgoing判断，显式链拒绝全部非开关分叉；Task2换成选中入/出pin配对检查 | 显式合路/分路只放行已列pair；未选支路不串入；缺pair/反向PA/负载中转拒绝 |
 | `declared_rf_routes.py::selected_switch_mappings/validate_simultaneous_switch_mappings/switch_execution_identity`；`route_calibration.py::route_switch_steps` | 开关配对与物理继电器身份继续唯一来源；Task2仅让内部白名单作为额外结构约束 | internal_paths绝不替代path_name/port_maps；配对缺失/冲突仍拒绝，不能让合路器变自动开关 |
-| `TopologyService.resolve_paths/_dfs_paths/_find_shortest_path/get_end_to_end_loss/get_calibration_matrix/validate` | Task2 DFS/BFS使用同一端口级穿越；路径状态至少包含入pin，不能仅visited节点丢掉合法分支 | 公开`/paths/{mode}`、`/calibration-matrix/{mode}`没有禁止通路；BFS不可借另一输入口穿越；损耗只计原外部边一次；负载可终止不可继续 |
+| `TopologyService.resolve_paths/_dfs_paths/_find_shortest_path/get_end_to_end_loss/get_calibration_matrix/validate` | Task2 DFS/BFS/validate按connection ID从`self._raw`保存连接取pin，不能读已补out/in的连接对象证明端点；同一端口级穿越，路径状态至少包含原始入pin | 公开`/paths/{mode}`、`/calibration-matrix/{mode}`没有禁止或缺端点通路；BFS不可借另一输入口穿越，缺pin时不得输出完整路径损耗；负载可终止不可继续 |
 | `calibration/route_calibration.py::_route_selections` 普通段与参考BFS | Task2正常段复用共享解析；参考段逐相邻边检查同一内部声明，不只normal节点 | ordinary/individual/指定terminal三入口一致；参考receive_cable/参考PA坏pair拒绝；探头→空气参考面是原模型边界，不要求探头新造内部RF转发 |
 | `calibration/configuration_scope.py::build_calibration_scope/build_selected_route_calibration_scope/_build_scope_payload` | 当前完整params摘要和selected_route_digest已经消费新字段；Task2回归，无需另造摘要或排除键 | 声明改变后新scope/digest变化；纯显示改动旧规则保持；不将盘点提醒改成资格撤销 |
 | `fixed_route_jobs.py::resolve_configuration` 及启动后重核；`route_batch_plan.py::build_batch_plan`；`route_batch_jobs.py` | 共用保存路径与scope，Task2读/回归；预览零I/O、start重新核验 | 缺pair/过期route_digest/preview_digest在创建作业或硬件动作前拒绝；同CE非互斥分路仍不当可串行开关 |
@@ -158,6 +158,8 @@ def validate_internal_traversals(path_nodes: list[dict], path_edges: list[dict],
 
 以上省略号仅为接口签名，不是实现步骤；Task1下方给出关键实现顺序与可运行RED。入口/出口计数按当前有效模式（参考段用calibration），不是整张图所有模式混算。相邻端口相同也不是“零长度自动相连”；内部自环拒绝。
 
+`path_edges/active_connections`端口依据必须是原保存JSON，不是经过默认值填充的连接对象。`TopologyService`已有`self._raw`保留输入，按connection ID读取其中原始`source_pin/target_pin`，缺键不填out/in；新声明和R1旧双端兼容共用这个来源。原`TopologyConnection`展示/损耗对象及旧序列化默认可保留，不为此全局改模型；纯穿越helper接收前须拒绝缺键、null、空串或非字符串pin，不能把它们转换成默认字符串。
+
 `resolve_saved_rf_path(nodes, active_connections, terminal_connection_id, *, check_internal_paths=True) -> tuple[list[dict], list[dict]]`保留返回形态；选中路径核验内部穿越。显式合路器分支放行必须同时满足保存的连接序列、每个pair、无环、CE/probe规则及全部既有开关门；无显式选择有多条可达路线仍拒绝。`TopologyService`仅在表示一般路径时枚举允许分支，不以路径可见替代正式集合资格。
 
 `rf_execution_identity(nodes, edges, switch_identity=()) -> dict`保留签名，按R2从保存列表投影所选pair；**投影不得执行运行严验**，否则旧历史读会因新规则坏掉。当前运行先校验再投影，历史读取只做原冻结自洽校验。
@@ -252,7 +254,8 @@ def test_saved_route_cannot_cross_explicitly_disconnected_pad(client, configured
 ```
 
 - [ ] **Step 2：完整正反例。** 真实POST/PATCH产生合法CE→PA→pad→combiner→probe链，显式rf_path_selection选择一个合法支路；路径响应只含该支路/原CE口。缺pair、PA反向、负载中转、声明三口无pair、已存脏声明、环、缺pin/映射、同继电器冲突拒绝。声明combiner IN1→OUT与IN2→OUT不可导出IN1→IN2；splitter同CE两探头仍过原simultaneous重复CE门、batch同CE缺互斥映射仍拒绝。
-- [ ] **Step 3：接三类解析。** `resolve_saved_rf_path`在顺序重建后校验每个中转pair；只对明确内部pair的非开关分叉解除旧一刀切拒绝，缺字段保持R1。`TopologyService` DFS取`path_hops[-1][1].target_pin`作为入pin，与候选边source_pin比较；BFS queue/visited按`(node_id, incoming_pin)`而不是只按node，路径终点负载不可扩展。拒绝某个候选pair时DFS/BFS跳过该分支并由validate列原因，不把局部不通冒成500；已保存显式探头路径只能返回其选中connection_ids。原path_id、损耗/相位累加与calibration_status算法不扩域；若仍有同source→target的多条候选造成旧path_id碰撞，在公共paths/matrix返回422要求显式选择，不让字典最后写入覆盖另一条损耗。API两读取入口捕获该ValueError，不能返回500；测试保留双支路同端点正反例，不新增矩阵格式。
+  补明确反例：隔离fixture保存CE→pad→probe，pad含`ports=['in','out']`、方向input/output及`internal_paths=[{from_port:'in',to_port:'out'}]`，没有探头显式路径；分别删入边`target_pin`、出边`source_pin`及两者。公共paths不得列出该CE→probe完整路径，matrix不得含其path_id，`get_end_to_end_loss`返回None，validate定位缺pin的原连接ID。移除internal_paths后相同稀疏图也不得借R1兼容；补回实际保存pin后对应明确/legacy正例恢复。读API前后原JSON缺键不变；不能仅断言helper拒绝而漏公开查询。
+- [ ] **Step 3：接三类解析。** `resolve_saved_rf_path`在顺序重建后校验每个中转pair；只对明确内部pair的非开关分叉解除旧一刀切拒绝，缺字段保持R1。`TopologyService` DFS以`path_hops[-1][1].id`和候选边id定位`self._raw['connections']`中的原保存连接，分别取原始`target_pin`/`source_pin`；**不得取连接对象的同名属性**，因为`__init__`已给它们补out/in。BFS和validate也只消费同一原始连接索引与缺键判定；R1旧双端兼容不得走已补值对象。进入helper前检查两个键实际存在且为非空字符串，否则跳过该贯通并由validate列出节点/原连接ID，不造完整路径或损耗。BFS queue/visited按`(node_id, 原始incoming_pin)`而不是只按node，路径终点负载不可扩展。原展示/损耗连接对象和旧序列化默认保留，无需全局修改。拒绝某个候选pair时DFS/BFS跳过该分支并由validate列原因，不把局部不通冒成500；已保存显式探头路径只能返回其选中connection_ids。原path_id、损耗/相位累加与calibration_status算法不扩域；若仍有同source→target的多条候选造成旧path_id碰撞，在公共paths/matrix返回422要求显式选择，不让字典最后写入覆盖另一条损耗。API两读取入口捕获该ValueError，不能返回500；测试保留双支路同端点正反例，不新增矩阵格式。
 - [ ] **Step 4：参考段与正式绑定全入口。** `_route_selections`参考BFS对中间参考节点检查前后pin，不把正常probe终点到参考模型起点误作RF穿越；普通/individual/explicit selection同源。`switch_orchestrator`显式、旧中间链、直接CE三分支在生成binding前核验；旧allow_incomplete的CE解释保持原范围。获取path后仍跑绑定port_maps精确配对和互锁，不把internal_paths转换成继电器命令/位置。
 - [ ] **Step 5：按R2最小扩展身份。** `rf_execution_identity`从历史/当前各自保存的nodes/edges投影所选明确pair；无新声明不加键。`frozen_route_identity_error`读取权威actual-target时，冻结端或实际端任一带internal_paths都必须比较完整identity（否则旧冻结无键→新实际有键仍会漏掉），原switch_mappings比较保留；无显式probe声明但有内部声明的binding同样产出identity。DB-current路径同样比较。旧历史`_validate`可重读、不访问当前图、不运行新严验；对新声明删除/反转/改端口的当前执行明确拒绝，不能降为legacy忽略。
 - [ ] **Step 6：真实链生命周期/摘要。** normal和reference两段分别改pair：新route_digest/configuration_digest改变，旧选择POST422、旧batch preview启动拒绝；采集中改保存图由原启动/重核路径拒绝，不从新表单授权限。只改内部列表顺序按现有params摘要规则确实可能需重选，不偷偷canonicalize改历史。未选pair变更可使route_digest变化，但execution identity仅选中pair，说明“重新选择”和“正在执行实际接线变化”不是同一判据。
@@ -338,7 +341,7 @@ env DATABASE_URL="sqlite:///$pc04a4c_browser_dir/browser.sqlite" USE_MOCK_INSTRU
 | C05 | 端口删改/方向改/内部pair删改引用 | 全模式列出相关pair/外边/探头；非法422不丢草稿；正确先改路径解除引用后可存 |
 | C06 | POST default/PATCH部分nodes/模式数组/import replace错误、跨Lab | 原默认/行数/图/历史GET与ORM均不变；跨Lab409，非法Lab422 |
 | C07 | 旧CAICT、新旧稀疏pin、opaque、改名/鼠标移位/4a标称 | 缺internal_paths不自动补；旧模板未转换，未宣称有效；旧无关保存digest及JSON按既有边界不变 |
-| C08 | 公共paths/calibration-matrix/BFS与保存normal/reference链 | 所有消费者排除禁止pair；reference中间PA/接收线同验；参考从probe另起不误拒；损耗投影只原外部边 |
+| C08 | 公共paths/calibration-matrix/BFS与保存normal/reference链；稀疏外边＋明确internal_paths及R1缺字段两组 | 所有消费者排除禁止pair；从原保存JSON取pin，分别缺入pin/出pin/两者均无完整路径、matrix无其path_id、BFS损耗None且validate定位原边；补回保存pin后恢复正例。reference中间PA/接收线同验；参考从probe另起不误拒；损耗投影只原外部边 |
 | C09 | 开关slot映射与合路/分路 | 原port_maps/switch_id/relay身份不变；缺/错映射拒绝；相同继电器冲突仍拒绝；合路器不能变自动开关 |
 | C10 | individual/simultaneous/批preview/start | 合法候选可读但同CE非互斥分路仍拒绝批启动/正式集合；preview零HAL I/O；pair变更旧preview拒绝 |
 | C11 | 普通和参考pair变更、旧单采集选择、采用记录 | 新digest变化，旧请求422；旧run/应用/history冻结逐字不变；资格不由声明提升 |
@@ -374,7 +377,7 @@ env DATABASE_URL="sqlite:///$pc04a4c_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 | 任务对/自身 | 生产→消费接口/共享文件 | 核验结果与需主代理动作 |
 |---|---|---|
 | T1自身 | raw声明→shape/write验证→HTTP/ORM | 写入严格但草稿缺键/unknown可保存；运行不等于保存。R1白名单和端口依据已列，不制造迁移标记 |
-| T2自身 | pure transition→normal/reference/DFS/BFS/actual-target | 三链不可只改一条；历史投影不调用运行严验。R2已获主代理边界裁决，实际接口交独立计划审查 |
+| T2自身 | raw连接ID/pins→pure transition→normal/reference/DFS/BFS/actual-target | 通用链不能用已补默认pin的对象作证；R1与新声明同源，稀疏边无路径/损耗。历史投影不调用运行严验；R2已获主代理边界裁决 |
 | T3自身 | 字段组件→候选draft→校验→PATCH | 缺键/[]有值三态、引用保护与锁一致；代码后补RED不接受 |
 | T4自身 | Task报告→新库矩阵→当前输入全量→摘要 | 唯一全量责任清楚；4b统计不复用，纯文档收尾不能伪称新功能全量 |
 | T1/T2 | topology_internal_paths三函数、switch_topology保存调用 | T1先独立验证声明；T2运行接入后保存`check_internal_paths=False`仅跳新运行规则，最终写门仍严验主动变化 |
