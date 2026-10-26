@@ -39,8 +39,8 @@ def test_checked_crud_and_schema_closure_match_live_contract():
 
 
 def body():
-    return dict(nodes=[dict(id='a', type='amplifier', label='PA', params={}),
-                       dict(id='p', type='probe', label='P', params={})],
+    return dict(nodes=[dict(id='a', type='amplifier', label='PA', params={'ports': ['out']}),
+                       dict(id='p', type='probe', label='P', params={'ports': ['in']})],
                 connections=[dict(id='ap', source='a', target='p')], operating_modes=[])
 
 

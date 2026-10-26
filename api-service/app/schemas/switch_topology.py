@@ -13,7 +13,14 @@ class TopologyNode(BaseModel):
     type: str = Field(description="ce_port|switch_slot|probe|amplifier|combiner|pad|antenna|bse_port|sa_port|termination")
     label: str
     position: Dict[str, float] = Field(default_factory=dict)
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: Dict[str, Any] = Field(default_factory=dict, description=(
+        '开放JSON，保留扩展与缺键，不自动补声明。ports为非空、唯一、无首尾空白的字符串ID清单；'
+        '新节点必须显式声明，旧图仅无关编辑可保留缺失。port_directions可选非null对象，'
+        '键只能为ports内ID，值严格为input/output/bidirectional/unknown，允许部分map或空对象；'
+        'unknown不是双向能力。communication_tester/bse_port的port_roles仅dl/ul且键属于ports，'
+        'dl→output、ul→input为权威，通用方向unknown不覆盖它，同向可保存，反向或bidirectional冲突拒绝。'
+        '新增/重接边或端口声明变化校验全部关联边：source不得input，target不得output；'
+        '模板导入仅容旧缺声明，显式错误仍拒绝；端口声明不授予硬件、实测、校准采用或执行资格。'))
 
 
 class TopologyConnection(BaseModel):
