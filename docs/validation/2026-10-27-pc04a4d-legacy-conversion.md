@@ -18,7 +18,7 @@ GET是可能转型/默认化的展示模型，不是数据库原JSON证明。原
 
 | 项 | 证据入口与本片断言 |
 |---|---|
-| D01 | 新库fixture真实原import；浏览器`api-matrix.log`取消预览GET不变、显式单边转换同ID；模板hash前后核验，未静默整模板转换 |
+| D01 | 新库fixture真实原import；`api-matrix.log`仅证明preview后GET不变及显式单边转换同ID；`source-ui.log`另证明原Modal真实点击取消后GET不变、再次明确预览/保存；模板hash前后核验，未静默整模板转换 |
 | D02 | 浏览器三类节点保持ID显式换type；`test_three_old_types_keep_raw_identity_and_opaque`及invalid/BSE冲突反例；SA转换不新增资格 |
 | D03 | 本片新增`test_task4_raw_sparse_loss_survives_unrelated_conversion`覆盖缺键/null/0/旧非空/typed旧字符串，SQL原行保形；原loss_truth覆盖calibrated0、多hopNone及真实Lab/scope；GUI相关测试和真实转换DOM |
 | D04 | `flow.log`真实owner预览、保存重载、alias只读、撤销；loss_truth覆盖owner0/unknown、上游组末边3及非法引用；新增六类来源/旧集成PA保形真实HTTP，不拆PA、不增加节点数值副本 |
@@ -57,7 +57,7 @@ D01追加真实Modal源图取消/保存：同补充库服务关闭时仅增加�
 
 7条为旧租约/内部可达性测试未声明损耗却假定零：3条Lab-profile租约场景提前被unknown门拒绝，4条内部路由场景实际None而旧断言期待0。主代理核trace/实际输入后批准，仅在`test_p2_30_task_level_lease.py`四个构造及`test_pc04a4c_internal_routes.py`三个测试的本地边明确已知0；原断言、不可达None、共享fixture、MultiFrequency构造及生产未知门不改。另补只读preview禁止访问HAL的实际断言。定点回归后重新冻结，由同一责任位唯一补跑；不是同输入为审查身份重跑。
 
-修订定点在`/tmp/pc04a4d-fix-s7bN71/`结束：lease整文件+loss_truth+preview零HAL/DB写 **65 passed /526 warnings /47.89s，exit0**；4c内部路由整文件+loss_truth **123 passed /1105 warnings /110.37s，exit0**。补跑全部输入重新冻结于`/tmp/pc04a4d-final-ACiV4H/`，最终实际统计待末行；不将前述119项或首轮7934通过冒充新最终输入结果。
+修订定点在`/tmp/pc04a4d-fix-s7bN71/`结束：lease整文件+loss_truth+preview零HAL/DB写 **65 passed /526 warnings /47.89s，exit0**；4c内部路由整文件+loss_truth **123 passed /1105 warnings /110.37s，exit0**。补跑全部输入重新冻结于`/tmp/pc04a4d-final-ACiV4H/`，实际结果见下方最终补跑记录；不将前述119项或首轮7934通过冒充新最终输入结果。
 
 第8条唯一G8仍只命中`docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md`第111行的历史UUID执行URL；该历史文件与门相对39d4bb0b无diff，当前/基线SHA分别为`57aaf7726ffbf697d2ba3e7c21a91f57509b88f0e282ac39b16f56dcdba357c3`和`cb9c219f3380d0e4d0ef200eecaa86aef801107957152d18205e4b2cbf0716ed`。不改历史/门、不称全绿。
 

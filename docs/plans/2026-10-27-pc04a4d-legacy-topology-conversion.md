@@ -242,7 +242,7 @@ assert read_history_hashes() == history_before
 
 **Interfaces:** Consumes Task2 `previewConversion`与PATCH conversion；Produces `conversionContextKey(labId:string, topologyId:string):string`、`buildConversionRequest(nodeEdits,connectionEdits):TopologyConversionRequest`。预览结果只留当前面板会话，不持久化到图params。
 
-- [x] 先新库bootstrap/显式Mock/真实API及专用代理；真实浏览器观察“转换旧配置”入口不存在为RED并保留DOM/截图/原始请求，不先改UI。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
+- [x] 先新库bootstrap/显式Mock/真实API及专用代理；首次接UI前真实浏览器观察“转换旧配置”入口不存在为RED，但首次CLI异常未保留完整DOM，不将勾选理解为首次证据完整。Task3后续仅回退入口按钮重现RED并补录DOM/GET/截图，明确是后补回退重现，不是首次RED；详见Task3报告披露。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
 - [x] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。原保存值/缺键只依据服务器preview差异before/before_present所涉及字段；candidate仅展示为候选原始JSON，不当作原图before。预览前GET节点/边及端点、owner选项统一标“GET展示值，原保存声明待核”，不把默认out/in、0或转换后的数值当原声明，不以GET缺键推断raw缺键；本片不新增raw接口。提供明确type选择、ports/方向/pair、损耗显式输入，不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
 - [x] 每个事件处理先查 `savingRef.current || collectionBusyRef.current`；不是只disabled按钮。预览中context变化丢弃迟到响应；外层换Lab/selectedSwitch/重导入同时清会话，保存成功通过原onSaved更新，失败保留输入与原图。
 - [x] 原面板新增逐组“同一物理线缆”确认与owner原边选择，不按相等数值自动关联；alias原值只读并能定位owner，解组预览明确恢复参与。无声明保留原样。用户确认不显示实物验证/认证成功。
