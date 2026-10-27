@@ -12,6 +12,10 @@
 
 ## Global Constraints
 
+执行状态（2026-10-27）：Task1独立规格/质量通过（历史HTTP缺口由新定点补验）；Task2规格有限通过、质量Approved（首轮同名截图覆盖P2保留）。Task3指南/正式摘要与验证已形成，待任务及累计独立审查、PR外审，不称整体验收PASS。详见[逐分支摘要](../validation/2026-10-27-pc04a4e-device-contract-acceptance.md)与[指南](../guides/topology-device-contract.md)。
+
+范围裁决：E15诊断无专属下载入口不适用，正式报告下载未验；Mock cancelled仅软件编辑恢复，真实cleanup_unconfirmed/interrupted未验；FK哨兵只证引用409，不授采集/confirmed/资格。不可恢复首轮已覆盖截图，不补造原件。任务复选框保留计划文本，实际完成范围以上述摘要和SDD审查为准。未触发共享输入全量条件，本片未跑新版全后端；旧7945/17/1仅前片。
+
 - 旧记录不批量改写；缺角色/参数显示旧版未声明。用户显式转换前提供变更预览；不更改历史执行或已有证书。正常旧图的无关改名/位置保存不得被新契约误伤。
 - params.ports 继续是端口 ID 清单；端口不是左右接点数量。名称不隐式决定方向。角色独立为 input/output/bidirectional/unknown；unknown 不冒充双向能力。
 - 复用基站 port_roles 的 dl/ul 权威关系，不用通用角色覆盖它；新角色与其冲突必须拒绝，而非选一端。
