@@ -1,6 +1,6 @@
 # 拓扑器件参数与物理端口完整性设计
 
-状态：2026-10-26 用户已明确批准4a～4e串行开发；4a PR #539与4b PR #540已交付。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前仅启动4d计划，4e未启动；前片验证不代表4d通过。 4d计划见[旧拓扑显式转换](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)。
+状态：2026-10-26 用户已明确批准4a～4e串行开发；4a PR #539与4b PR #540已交付。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前4d Task1～3已完成并独立批准，Task4综合验证完成，最终全后端7941通过/17跳过/1历史G8失败（799.05s，exit1，不称全绿）；[本片验证摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)分列实际证据与未验边界。尚未Task4/累计审查、外审或合并；4e未启动，前片统计不代表4d通过。 4d计划见[旧拓扑显式转换](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)。
 
 ## 故障与目标
 
@@ -66,7 +66,7 @@ owner原calibrated_loss（含0）优先，否则原cable_loss；alias旧数值�
 
 量值归属不是物理接线变化：进入configuration_scope复核提示，不加入rf_execution_identity；参考整边route_digest投影只排除这个新键以与正常路径对称，快照本身保留。已有confirmed/历史执行/证书不撤销不重算；实际pin/pair/映射变化仍走原失配门。操作员声明不授实物或测量资格，误关联会少计损耗，必须显式操作而非自动猜测。
 
-转换预览只读；确认由同次数据库快照构建候选并单条条件UPDATE原子提交，不能仅检查digest后无条件ORM保存。普通PATCH客户端无需新增digest。完整支持域、nullable消费全集、CAS和TDD矩阵以[4d实施计划](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)为施工规范，仍须独立计划审查后实施。
+转换预览只读；确认由同次数据库快照构建候选并单条条件UPDATE原子提交，不能仅检查digest后无条件ORM保存。普通PATCH客户端无需新增digest。完整支持域、nullable消费全集、CAS和TDD矩阵以[4d实施计划](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)为施工规范；计划与Task1～3已独立批准，Task4验证/审查尚在收尾，不据此宣称合并或现场B通过。
 
 既有落点：gui/src/features/TopologyEditor/{TopologyEditor.tsx,nodePortHelpers.ts,CustomNodes.tsx,CustomEdges.tsx,topologyDraft.ts}；gui/src/api/switchTopologyService.ts；api-service/app/schemas/switch_topology.py；api-service/app/services/topology_service.py；实际保存端点及路径解析消费方须在各子片计划中枚举后确定。器件专用字段表单从巨型TopologyEditor拆出小组件，仅限本功能。
 

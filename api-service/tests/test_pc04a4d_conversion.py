@@ -211,6 +211,91 @@ def test_caict_real_import_preview_no_template_rewrite(world):
     assert sha256(path.read_bytes()).hexdigest()==digest
 
 
+@pytest.mark.parametrize('value', ['missing', None, 0, 2.5, '2.50'])
+def test_task4_raw_sparse_loss_survives_unrelated_conversion(world, value):
+    """GET会转型，保形断言必须读SQL原行；未知多hop不是0。"""
+    from app.models.switch_topology import SwitchTopology
+    db,lab,client=world
+    url,scope=create(world)
+    row=db.get(SwitchTopology,uuid.UUID(url.rsplit('/',1)[1]))
+    edges=copy.deepcopy(row.connections)
+    if value=='missing':
+        edges[0].pop('cable_loss_db')
+    else:
+        edges[0]['cable_loss_db']=value
+    row.connections=edges;db.commit()
+    p=preview(world,url,scope,{'nodes':[{'node_id':'ce','ports':['OUT']}]})
+    assert commit(world,url,scope,p).status_code==200
+    db.expire_all();saved=db.get(SwitchTopology,row.id)
+    assert saved.connections==edges
+    matrix=client.get(url+'/calibration-matrix/mimo_ota',params=scope)
+    assert matrix.status_code==200,matrix.text
+    expected=None if value in ('missing',None) else float(value)+2
+    assert next(iter(matrix.json()['matrix'].values()))['total_loss_db']==expected
+
+
+@pytest.mark.parametrize('kind,field,unit', [('amplifier','gain_db','dB'),('pad','attenuation_db','dB'),
+    ('combiner','loss_db','dB'),('probe','gain_dbi','dBi'),('antenna','gain_dbi','dBi'),
+    ('reference_antenna','gain_dbi','dBi')])
+def test_task4_source_only_preserves_six_legacy_nominals_and_integrated_pa(world,kind,field,unit):
+    from app.models.switch_topology import SwitchTopology
+    db,lab,client=world
+    url,scope=create(world)
+    row=db.get(SwitchTopology,uuid.UUID(url.rsplit('/',1)[1]))
+    row.nodes=[dict(id='legacy',type=kind,label='原声明',params={field:'2.50',
+        'opaque':[None,0]})]
+    row.connections=[];row.operating_modes=[];db.commit()
+    nodes=copy.deepcopy(row.nodes)
+    nodes[0]['params']['nominal_metadata']={field:{'unit':unit,'source_note':'Task4仅补来源待核'}}
+    response=client.patch(url,params=scope,json={'nodes':nodes})
+    assert response.status_code==200,response.text
+    db.expire_all();assert db.get(SwitchTopology,row.id).nodes[0]['params'][field]=='2.50'
+    # 集成PA边不拆成节点，不改原量值/长度/校准零，也不借GET模型做before。
+    row=db.get(SwitchTopology,row.id)
+    row.nodes=graph()['nodes'];row.connections=graph()['connections'];row.operating_modes=graph()['operating_modes']
+    edges=copy.deepcopy(row.connections);edges[0].update(pa_gain_db='12.50',cable_loss_db='2.50',calibrated_loss_db=0)
+    row.connections=edges;db.commit()
+    edges=copy.deepcopy(edges);edges[0]['nominal_metadata']={'pa_gain_db':{'unit':'dB','source_note':'Task4集成PA原声明待核'}}
+    response=client.patch(url,params=scope,json={'connections':edges})
+    assert response.status_code==200,response.text
+    db.expire_all();saved=db.get(SwitchTopology,row.id)
+    assert len(saved.nodes)==3 and saved.connections[0]['pa_gain_db']=='12.50'
+    assert saved.connections[0]['cable_loss_db']=='2.50' and saved.connections[0]['calibrated_loss_db']==0
+
+
+def test_task4_existing_diagnostic_report_read_download_unchanged_by_conversion(world,tmp_path,monkeypatch):
+    """真实报告端点与文件下载；仅Mock诊断，不授予正式测量资格。"""
+    import hashlib
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+    from tests.test_p1_81_diagnostic_report_trust import _diagnostic_execution
+    db,lab,client=world
+    url,scope=create(world)
+    source=_diagnostic_execution({'cqi_index'})
+    execution=TestExecution(id=source.id,status='completed',config=source.config,
+        measurements=source.measurements,duration_sec=source.duration_sec,
+        completed_at=source.completed_at,topology_id=url.rsplit('/',1)[1])
+    report=TestReport(id=uuid.uuid4(),title='Task4 Mock诊断报告',report_type='single_execution',
+        format='pdf',status='completed',generated_by='user',test_execution_ids=[str(execution.id)],
+        content_data={'report_family':'mimo_ota'})
+    db.add_all([execution,report]);db.commit()
+    monkeypatch.chdir(tmp_path)
+    endpoint='/api/v1/reports/'+str(report.id)
+    generated=client.post(endpoint+'/generate')
+    assert generated.status_code==200,generated.text
+    assert generated.json()['execution_evidence_outcome']['formal_eligible'] is False
+    detail=client.get(endpoint);download=client.get(endpoint+'/download')
+    assert detail.status_code==200 and download.status_code==200
+    before=copy.deepcopy(execution.config)
+    p=preview(world,url,scope,{'connections':[{'connection_id':'b','loss_owner_connection_id':'a',
+        'same_physical_cable_confirmed':True}]})
+    assert commit(world,url,scope,p).status_code==200
+    assert client.get(endpoint).json()==detail.json()
+    after=client.get(endpoint+'/download')
+    assert after.status_code==200 and hashlib.sha256(after.content).digest()==hashlib.sha256(download.content).digest()
+    db.expire_all();assert db.get(TestExecution,execution.id).config==before
+
+
 def test_no_default_pin_in_conversion(world):
     from app.models.switch_topology import SwitchTopology
     db,lab,client=world
@@ -252,7 +337,7 @@ def test_final_validation_uses_original_before_not_candidate(world):
     assert raw(world,url)==before
 
 
-def test_preview_zero_sql_writes_and_nonempty_history_immutable(world):
+def test_preview_zero_sql_writes_and_nonempty_history_immutable(world,monkeypatch):
     import datetime
     import hashlib
     import json
@@ -273,6 +358,9 @@ def test_preview_zero_sql_writes_and_nonempty_history_immutable(world):
             for name in ('calibration_certificates','test_executions','route_calibration_applications')}
         return hashlib.sha256(json.dumps(result,sort_keys=True,default=str).encode()).hexdigest()
     before_history=history();before=raw(world,url)
+    def forbidden_hal():
+        raise AssertionError('只读转换预览不得访问HAL')
+    monkeypatch.setattr('app.services.instrument_hal_service.get_hal_service',forbidden_hal)
     statements=[]
     def observe(conn,cursor,statement,params,context,many):
         statements.append(statement.lstrip().split()[0].upper())

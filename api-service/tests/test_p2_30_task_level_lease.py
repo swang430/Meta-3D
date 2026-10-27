@@ -303,8 +303,8 @@ async def test_lab_profile_path_loss_job_holds_one_task_level_lease(
         topology_name="p2-30-topo",
         operating_mode="mimo_4x4",
         chains=[
-            RFChainSpec(chain_id="c0", ce_port="B1.1", probe_id=0, polarization="V"),
-            RFChainSpec(chain_id="c1", ce_port="B1.2", probe_id=0, polarization="H"),
+            RFChainSpec(chain_id="c0", ce_port="B1.1", probe_id=0, polarization="V", cable_loss_db=0),
+            RFChainSpec(chain_id="c1", ce_port="B1.2", probe_id=0, polarization="H", cable_loss_db=0),
         ],
     )
     monkeypatch.setattr(
@@ -467,7 +467,7 @@ async def test_lab_profile_job_lease_release_failure_returns_result(db, chamber,
         topology_name="p2-30-topo",
         operating_mode="mimo_4x4",
         chains=[
-            RFChainSpec(chain_id="c0", ce_port="B1.1", probe_id=0, polarization="V"),
+            RFChainSpec(chain_id="c0", ce_port="B1.1", probe_id=0, polarization="V", cable_loss_db=0),
         ],
     )
     monkeypatch.setattr(
@@ -613,6 +613,7 @@ async def test_lab_profile_path_loss_rejects_all_routes_before_job_lease(
                 ce_port="B33",
                 probe_id=0,
                 polarization="V",
+                cable_loss_db=0,
             ),
         ],
     )

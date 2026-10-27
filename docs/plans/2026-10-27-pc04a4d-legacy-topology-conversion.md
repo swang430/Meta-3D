@@ -1,6 +1,6 @@
 # PC04A4d 旧拓扑显式转换 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL：使用 `subagent-driven-development` 串行执行 Task 1～4，各任务独立规格/质量审查，最后累计审查；实施者不再派子代理。本文目前仅为待独立审查的实施计划，不表示生产已实现。
+> **For agentic workers:** REQUIRED SUB-SKILL：使用 `subagent-driven-development` 串行执行 Task 1～4，各任务独立规格/质量审查，最后累计审查；实施者不再派子代理。计划及Task1～3已独立批准，Task4综合验证/最终全后端与审查尚在收尾；不表示已外审、合并或现场通过。
 
 **Goal:** 旧 CAICT 导入图及已有图由操作员明确补充声明并先看变更预览，原子保存时保留身份和引用；未知线缆损耗不再伪装为零，也不新增重复补偿源。
 
@@ -11,6 +11,8 @@
 **Spec:** [已批准设计](../design/2026-10-26-topology-device-port-contract.md)、[正式队列](../roadmap-first-call.md)、[4a 的 0.3 范围裁决](2026-10-26-pc04a4a-nominal-device-properties.md)。分支 `codex/pc04a4d-legacy-topology-conversion`，基线 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`。前置 PR #541 已于 `2026-10-26T22:31:48Z` 合并；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。4c 的 7822 passed/17 skipped/1 历史 G8 failed 仅属前片证据，不当作本片结果。
 
 ## Global Constraints
+
+实施进度（2026-10-27）：Task1～3已实现并独立批准，最终前置SHA为`3c49bdc8`。Task4独立新库浏览器矩阵与真实HTTP/SQL相关集完成，GUI74项/build通过；首轮7条旧测试输入问题经root裁决只显式本地已知0，65/123项相关回归通过。重新冻结1196项输入后，同一责任位最终全后端 **7941 passed /17 skipped /1历史G8 failed /9618 warnings /799.05s，exit1**，不称全绿；首轮7934/17/8完整保留。见[正式摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)。尚未Task4独立/累计审查、PR外审或合并，4e未启动。
 
 - 旧记录不批量改写；缺角色/参数显示旧版未声明。用户显式转换前提供变更预览；不更改历史执行或已有证书。正常旧图的无关改名/位置保存不得被新契约误伤。
 - params.ports 继续是端口 ID 清单；端口不是左右接点数量。名称不隐式决定方向。角色独立为 input/output/bidirectional/unknown；unknown 不冒充双向能力。
@@ -188,10 +190,10 @@ SQLite相同源被其它连接先写时，条件更新rowcount=0；若SQLite事�
 
 **补充Files/Interfaces（F2/F3）：** 新增 `api-service/app/schemas/topology_loss_ownership.py`；修改 `api-service/app/api/switch_topology.py`、`api-service/app/services/calibration/configuration_scope.py`、`api-service/app/services/calibration/route_calibration.py` 和手写 `gui/src/api/labProfileService.ts::RFChainEntry`（`cable_loss_db: number | null`）。产生§0.3两个所选路径量值源helper和`validate_loss_owner_write`，所有POST/PATCH/import最终候选复用；不能只改generated类型。
 
-- [ ] 先真实HTTP RED验证显式owner/alias：两侧各2无声明通用4，声明后通用2且正式末边alias只取owner2；owner0优先、ownerNone为未知、alias原值仍保存；上游组加末边3时正式仍3。覆盖半组、孤立引用、环、跨模式、删除/重接/alias改数值拒绝。先记录现生产不能表达归属的失败，禁止仅以新helper缺失作为唯一RED。
-- [ ] normal/reference各验证仅归属改变时route_digest及执行identity不变、scope变化提示复核、confirmed整链不叠加；改变真实pin/pair仍拒绝。原冻结/证书hash不变。phase仍原算法，不能顺手去重。
+- [x] 先真实HTTP RED验证显式owner/alias：两侧各2无声明通用4，声明后通用2且正式末边alias只取owner2；owner0优先、ownerNone为未知、alias原值仍保存；上游组加末边3时正式仍3。覆盖半组、孤立引用、环、跨模式、删除/重接/alias改数值拒绝。先记录现生产不能表达归属的失败，禁止仅以新helper缺失作为唯一RED。
+- [x] normal/reference各验证仅归属改变时route_digest及执行identity不变、scope变化提示复核、confirmed整链不叠加；改变真实pin/pair仍拒绝。原冻结/证书hash不变。phase仍原算法，不能顺手去重。
 
-- [ ] 先新增真实HTTP/实际resolver测试：建同Lab已知端口的直连/两段图，分别0/null/缺键/已有calibrated0/负calibrated；HTTP GET/list/PATCH/import/path/matrix/lab/scope不得崩或补0。核心断言内容：
+- [x] 先新增真实HTTP/实际resolver测试：建同Lab已知端口的直连/两段图，分别0/null/缺键/已有calibrated0/负calibrated；HTTP GET/list/PATCH/import/path/matrix/lab/scope不得崩或补0。核心断言内容：
 
 ```python
 assert client.patch(url, json={'connections': cleared}, params=scope).status_code == 200
@@ -202,10 +204,10 @@ assert service.get_end_to_end_loss('ce', 'probe') is None
 # 原测试fixture提供同Lab图/真实client；新增fixture在本测试文件显式实现，不改默认DB。
 ```
 
-- [ ] 使用新目录环境运行 `.venv/bin/python -m pytest tests/test_pc04a4d_loss_truth.py -q`，先保存schema不接受null/零优先失败的RED原件，不接受仅import不存在作为唯一RED。
-- [ ] 按0.3替换各消费方的错误零兜底；旧方法只在其确实需要chain loss的入口一次检查全部chain，返回原CalibrationResult失败，位于lease前；不禁用独立整链方法。GUI未改cable输入之前先真实浏览器清空并保存RED，再改为null和“未知”，PA净值不再扣默认0。
-- [ ] GREEN运行新增测试与 `tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_rf_chain_resolver.py tests/test_pc_01a_calibration_scope.py tests/test_path_loss_calibration.py tests/test_path_loss_ce_sa.py tests/test_pc04a2_route_freeze.py`。`gui`运行 `npm run build`；记录实际命令/统计而非预设通过数。
-- [ ] 分别回退零优先、None兜底两处核心变异应红；恢复后验证输入相同。提交 `fix: 保留拓扑线缆损耗未知与显式零值`，独立规格/质量通过后交Task2，不跑全后端。
+- [x] 使用新目录环境运行 `.venv/bin/python -m pytest tests/test_pc04a4d_loss_truth.py -q`，先保存schema不接受null/零优先失败的RED原件，不接受仅import不存在作为唯一RED。
+- [x] 按0.3替换各消费方的错误零兜底；旧方法只在其确实需要chain loss的入口一次检查全部chain，返回原CalibrationResult失败，位于lease前；不禁用独立整链方法。GUI未改cable输入之前先真实浏览器清空并保存RED，再改为null和“未知”，PA净值不再扣默认0。
+- [x] GREEN运行新增测试与 `tests/test_pc04a4a_nominal_properties.py tests/test_pc04a4a_nominal_identity.py tests/test_rf_chain_resolver.py tests/test_pc_01a_calibration_scope.py tests/test_path_loss_calibration.py tests/test_path_loss_ce_sa.py tests/test_pc04a2_route_freeze.py`。`gui`运行 `npm run build`；记录实际命令/统计而非预设通过数。
+- [x] 分别回退零优先、None兜底两处核心变异应红；恢复后验证输入相同。提交 `fix: 保留拓扑线缆损耗未知与显式零值`，独立规格/质量通过后交Task2，不跑全后端。
 
 ### Task 2：服务器只读转换预览与原PATCH确认
 
@@ -213,7 +215,7 @@ assert service.get_end_to_end_loss('ce', 'probe') is None
 
 **Interfaces:** Consumes `effective_connection_loss(dict)`和既有 `_validate_structure/_validate_nominal/_validate_ports/_validate_internal_paths`；Produces §1请求/响应、`build_conversion(source,changes)`、`conversion_source_digest(source)`及service `previewConversion(id,labId,changes)` / 原`updateTopology`的conversion分支。
 
-- [ ] HTTP RED从旧CAICT真实import、三种旧节点、显式端口合法图各起一组；记录原row/default/history hash。核心请求及断言：
+- [x] HTTP RED从旧CAICT真实import、三种旧节点、显式端口合法图各起一组；记录原row/default/history hash。核心请求及断言：
 
 ```python
 preview = client.post(f'{url}/conversion-preview', params=scope,
@@ -228,11 +230,11 @@ assert client.patch(url, params=scope, json={'conversion':{
 assert read_history_hashes() == history_before
 ```
 
-- [ ] 落实§1纯builder及严格模型；preview与commit都验证最终候选，不在默认位更新后才失败。按§1.1单条CAS UPDATE保存，不给旧ORM对象赋dirty。真实HTTP并发屏障必须卡在转换读取快照后、条件UPDATE前，让普通PATCH在另一连接提交；随后转换409且另一写入保留。另测新快照成功、SQLite BUSY/LOCKED回滚、get_db最终commit不泄漏dirty、并发name变更不被覆盖；普通PATCH不要求新digest。
-- [ ] 设置/撤销owner必须显式same_physical_cable_confirmed，预览展示两侧原值/owner源/通用总值和正式末边分栏。测试同操作改组数值拒绝、解组恢复原值参与、删除owner/相邻线缆/模式半组拒绝；无声明旧图不增加字段。直接PATCH非法归属不能绕过原最终候选校验。
-- [ ] 负例逐项：未知ID/重复操作/额外字段、跨Lab、无CE声明改type、缺pin/孤立pair/方向矛盾、BSE权威冲突、受引用端口删除、全部模式引用、busy、伪造candidate/digest、确认重复旧digest。正例：unknown草稿、取消、仅元数据正常PATCH兼容、全部ID/opaque/损耗原值保留。
-- [ ] 运行 `.venv/bin/python -m pytest tests/test_pc04a4d_conversion.py tests/test_pc04a4a_final_graph_validation.py tests/test_pc04a4b_port_contract.py tests/test_pc04a4c_internal_contract.py tests/test_pc04a3_topology_recovery.py -q`；生成四镜像后build。回退stale比较和原图before保护各一项变异实红恢复。
-- [ ] 提交 `feat: 增加旧拓扑显式转换预览与确认保存`，独立审查，Task3消费最终接口；不跑全后端。
+- [x] 落实§1纯builder及严格模型；preview与commit都验证最终候选，不在默认位更新后才失败。按§1.1单条CAS UPDATE保存，不给旧ORM对象赋dirty。真实HTTP并发屏障必须卡在转换读取快照后、条件UPDATE前，让普通PATCH在另一连接提交；随后转换409且另一写入保留。另测新快照成功、SQLite BUSY/LOCKED回滚、get_db最终commit不泄漏dirty、并发name变更不被覆盖；普通PATCH不要求新digest。
+- [x] 设置/撤销owner必须显式same_physical_cable_confirmed，预览展示两侧原值/owner源/通用总值和正式末边分栏。测试同操作改组数值拒绝、解组恢复原值参与、删除owner/相邻线缆/模式半组拒绝；无声明旧图不增加字段。直接PATCH非法归属不能绕过原最终候选校验。
+- [x] 负例逐项：未知ID/重复操作/额外字段、跨Lab、无CE声明改type、缺pin/孤立pair/方向矛盾、BSE权威冲突、受引用端口删除、全部模式引用、busy、伪造candidate/digest、确认重复旧digest。正例：unknown草稿、取消、仅元数据正常PATCH兼容、全部ID/opaque/损耗原值保留。
+- [x] 运行 `.venv/bin/python -m pytest tests/test_pc04a4d_conversion.py tests/test_pc04a4a_final_graph_validation.py tests/test_pc04a4b_port_contract.py tests/test_pc04a4c_internal_contract.py tests/test_pc04a3_topology_recovery.py -q`；生成四镜像后build。回退stale比较和原图before保护各一项变异实红恢复。
+- [x] 提交 `feat: 增加旧拓扑显式转换预览与确认保存`，独立审查，Task3消费最终接口；不跑全后端。
 
 ### Task 3：原图转换面板与草稿/锁生命周期
 
@@ -240,11 +242,11 @@ assert read_history_hashes() == history_before
 
 **Interfaces:** Consumes Task2 `previewConversion`与PATCH conversion；Produces `conversionContextKey(labId:string, topologyId:string):string`、`buildConversionRequest(nodeEdits,connectionEdits):TopologyConversionRequest`。预览结果只留当前面板会话，不持久化到图params。
 
-- [ ] 先新库bootstrap/显式Mock/真实API及专用代理；真实浏览器观察“转换旧配置”入口不存在为RED并保留DOM/截图/原始请求，不先改UI。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
-- [ ] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。原保存值/缺键只依据服务器preview差异before/before_present所涉及字段；candidate仅展示为候选原始JSON，不当作原图before。预览前GET节点/边及端点、owner选项统一标“GET展示值，原保存声明待核”，不把默认out/in、0或转换后的数值当原声明，不以GET缺键推断raw缺键；本片不新增raw接口。提供明确type选择、ports/方向/pair、损耗显式输入，不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
-- [ ] 每个事件处理先查 `savingRef.current || collectionBusyRef.current`；不是只disabled按钮。预览中context变化丢弃迟到响应；外层换Lab/selectedSwitch/重导入同时清会话，保存成功通过原onSaved更新，失败保留输入与原图。
-- [ ] 原面板新增逐组“同一物理线缆”确认与owner原边选择，不按相等数值自动关联；alias原值只读并能定位owner，解组预览明确恢复参与。无声明保留原样。用户确认不显示实物验证/认证成功。
-- [ ] helper测试明确断言取消/换图清预览但不改原draft，序列化未提交键不补null；null只允许cable清值和owner显式撤销，后者要求确认且落库删除键：
+- [x] 先新库bootstrap/显式Mock/真实API及专用代理；真实浏览器观察“转换旧配置”入口不存在为RED并保留DOM/截图/原始请求，不先改UI。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
+- [x] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。原保存值/缺键只依据服务器preview差异before/before_present所涉及字段；candidate仅展示为候选原始JSON，不当作原图before。预览前GET节点/边及端点、owner选项统一标“GET展示值，原保存声明待核”，不把默认out/in、0或转换后的数值当原声明，不以GET缺键推断raw缺键；本片不新增raw接口。提供明确type选择、ports/方向/pair、损耗显式输入，不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
+- [x] 每个事件处理先查 `savingRef.current || collectionBusyRef.current`；不是只disabled按钮。预览中context变化丢弃迟到响应；外层换Lab/selectedSwitch/重导入同时清会话，保存成功通过原onSaved更新，失败保留输入与原图。
+- [x] 原面板新增逐组“同一物理线缆”确认与owner原边选择，不按相等数值自动关联；alias原值只读并能定位owner，解组预览明确恢复参与。无声明保留原样。用户确认不显示实物验证/认证成功。
+- [x] helper测试明确断言取消/换图清预览但不改原draft，序列化未提交键不补null；null只允许cable清值和owner显式撤销，后者要求确认且落库删除键：
 
 ```ts
 const request = buildConversionRequest([], [{connection_id:'wire',cable_loss_db:null}]);
@@ -253,8 +255,8 @@ assert.equal('source_pin' in request.connections[0],false);
 assert.notEqual(conversionContextKey('a','g'),conversionContextKey('b','g'));
 ```
 
-- [ ] 真浏览器先编辑→取消→预览→保存→GET同ID；再断网→失败→恢复重试、stale409、切Lab迟到响应、保存pending、采集running/取消未确认/终态释放后连续两次重入。采集全Mock只证明软件生命周期，不称实物停发。
-- [ ] 运行 `node --import tsx --test test/legacyConversionState.test.ts` 和 `npm run build`，回退事件层busy保护/缺值null各一项变异RED恢复。提交 `feat: 在原拓扑编辑器预览并确认旧声明转换`，独立任务审查。不用Task3定点证据替代Task4矩阵。
+- [x] 真浏览器先编辑→取消→预览→保存→GET同ID；再断网→失败→恢复重试、stale409、切Lab迟到响应、保存pending、采集running/取消未确认/终态释放后连续两次重入。采集全Mock只证明软件生命周期，不称实物停发。
+- [x] 运行 `node --import tsx --test test/legacyConversionState.test.ts` 和 `npm run build`，回退事件层busy保护/缺值null各一项变异RED恢复。提交 `feat: 在原拓扑编辑器预览并确认旧声明转换`，独立任务审查。不用Task3定点证据替代Task4矩阵。
 
 ### Task 4：综合闭环、最终全后端与正式交付文档
 
@@ -277,8 +279,8 @@ assert.notEqual(conversionContextKey('a','g'),conversionContextKey('b','g'));
 | D11 | 旧需chain loss方法未知在lease前失败，已知0通过；独立confirmed整链不因无关nominal未知被挡 |
 | D12 | 原编辑器真实鼠标移动、显式应用/保存重载、删除引用拒绝；本片证据独立，不冒称补验4c的C07历史 |
 
-- [ ] 新建独立浏览器库，执行D01～D12；每组保存请求/响应/GET、SQL前后、截图与对象身份。客户端不route mock；隔离fixture不是现场数据；模拟不进入正式PASS。
-- [ ] 运行新增两测试及消费者相关集、GUI测试/build，稳定后冻结全部源码/测试/fixture/契约/依赖输入。只有本Task责任位执行以下最终全量：
+- [x] 新建独立浏览器库，执行D01～D12；每组请求/响应/GET、SQL前后、截图与对象身份见正式摘要分栏，非所有反例均由DOM点击。客户端不route mock；隔离fixture不是现场数据；模拟不进入正式PASS。
+- [x] 运行新增两测试及消费者相关集、GUI测试/build，稳定后冻结全部源码/测试/fixture/契约/依赖输入。只有本Task责任位执行以下最终全量：
 
 ```sh
 pc04a4d_run=$(mktemp -d /tmp/pc04a4d-final-XXXXXX)
@@ -286,12 +288,13 @@ cd api-service
 env DATABASE_URL="sqlite:///$pc04a4d_run/full.sqlite" USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR="$pc04a4d_run/logs" .venv/bin/python -m pytest tests -q
 ```
 
-- [ ] 留存stdout/stderr与exit、输入起止hash/依赖/HEAD。若G8仍同历史引用，独立核文件及门基线未变后披露，不改门不称全绿；其它失败定位生产或测试契约，不擅改预期凑绿。修复影响稳定输入则由本责任位唯一补跑。
-- [ ] 更新正式验证摘要并列未验项；服务关闭只用已核PID/session，保留全部证据。提交 `test: 验证旧拓扑显式转换与损耗边界`，独立Task4审查→累计基线至HEAD审查→Ready PR R1/R2；通过merge后才4e。
+- [x] 留存stdout/stderr与exit、输入起止hash/依赖/HEAD。G8同历史引用，已核文件及门基线未变并披露，不改门不称全绿；其它7条经root裁决只修测试本地已知零输入，不改预期。改变稳定输入后由本责任位唯一补跑。
+- [x] 更新正式验证摘要并列未验项；服务关闭只用已核PID/session，保留全部证据。
+- [ ] 提交 `test: 验证旧拓扑显式转换与损耗边界` 后独立Task4审查→累计基线至HEAD审查→Ready PR R1/R2；通过merge后才4e。
 
 ## 3. 计划自查与交接
 
-- [ ] 独立计划审查批准前禁止生产实现；审查重点是nullable所有消费者、原型转型CE来源、最终候选引用原子性、预览stale与busy边界，以及0.2对物理单一归属的真实承诺范围。
+- [x] 独立计划审查批准前禁止生产实现；审查重点是nullable所有消费者、原型转型CE来源、最终候选引用原子性、预览stale与busy边界，以及0.2对物理单一归属的真实承诺范围。
 - [ ] 每任务brief附本文全局约束、exact接口与上一任务最终SHA/report；不只转任务标题。
-- [ ] 模板/旧图显式转换由Task2/3交付；损耗非空迁移与未知由Task1交付；完整矩阵与唯一全量由Task4交付，不推迟给4e。
-- [ ] 本轮仅计划与4c状态文档；没有运行生产测试、没有改模板/生产文件、没有push。正式计划随本片PR共享，本机SDD仅交接镜像。
+- [x] 模板/旧图显式转换由Task2/3交付；损耗非空迁移与未知由Task1交付；完整矩阵与唯一全量由Task4交付，不推迟给4e；本地验证不等于独立审查或合并。
+- [x] 初始计划阶段仅计划与4c状态文档，当时未运行生产测试或改模板/生产文件；该历史事实保留。当前实现/验证进度以上方实施进度与正式摘要为准，仍未push。正式计划随本片PR共享，本机SDD仅交接镜像。

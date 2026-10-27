@@ -41,6 +41,11 @@ with SessionLocal() as db:
             bindings.append(dict(category_id=str(category.id), instrument_model_id=str(category.selected_model_id),
                 connection_endpoint=connection.endpoint, driver_mode='mock'))
     switch_id = str(next(c for c in categories if c.category_key == 'rfSwitch').id)
+    second_switch = InstrumentCategory(category_key='pc04a4dSwitch', category_name='PC04A4d第二射频开关',
+        category_name_en='Task4 second switch', driver_mode='mock', is_active=True, display_order=999)
+    db.add(second_switch); db.flush()
+    second_switch_id = str(second_switch.id)
+    manifest['second_switch_id'] = second_switch_id
     for suffix in ('甲', '乙'):
         chamber = create_chamber_from_preset(ChamberType.TYPE_C.value, name=f'PC04A4d暗室{suffix}')
         db.add(chamber); db.flush()
@@ -75,6 +80,13 @@ with TestClient(app) as client:
                 dict(id='calibration',name='校准接线',active_connections=[f'ref-{i}' for i in range(4)])]))
         assert response.status_code == 201, response.text
         lab['display_topology_id'] = response.json()['id']
+        second = client.post('/api/v1/switch-topologies', json=dict(name=f"PC04A4d第二开关图{lab['name'][-1]}",
+            switch_category_id=second_switch_id, lab_profile_id=lab['lab_id'], is_default=True,
+            nodes=nodes, connections=edges, operating_modes=[dict(id='mimo_ota',name='MIMO OTA 测试',
+                active_connections=['wire-in','wire-out']), dict(id='calibration',name='校准接线',
+                active_connections=[f'ref-{i}' for i in range(4)])]))
+        assert second.status_code == 201, second.text
+        lab['second_topology_id'] = second.json()['id']
         imported = client.post('/api/v1/switch-topologies/import/from-template', params=dict(
             switch_category_id=switch_id, lab_profile_id=lab['lab_id'], template_id='caict_v4'))
         assert imported.status_code in (200, 201), imported.text
