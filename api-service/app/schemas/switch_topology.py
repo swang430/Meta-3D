@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional, Literal
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer, field_validator
+import unicodedata
 from uuid import UUID
 from ._datetime import UTCDateTime
 
@@ -85,6 +86,13 @@ class SwitchTopologyBase(BaseModel):
 
 
 class SwitchTopologyCreate(SwitchTopologyBase):
+    name: str = Field(min_length=1, max_length=200, description='去首尾空白后1–200字符；禁止控制字符，允许重名。')
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def validate_name(cls, value):
+        return validate_topology_name(value)
+
     switch_category_id: UUID
     chamber_id: Optional[UUID] = None
     # P1-57：请求真值。暗室由它派生；chamber_id 只是兼容期一致性断言输入。
@@ -94,12 +102,37 @@ class SwitchTopologyCreate(SwitchTopologyBase):
 from .topology_conversion import TopologyConversionCommit
 
 
+def validate_topology_name(value):
+    """三个写入口共用；不限制可见 Unicode，不将控制字符先 trim 后放行。"""
+    if not isinstance(value, str) or any(unicodedata.category(char) == 'Cc' for char in value):
+        raise ValueError('拓扑名称必须为字符串且不能含控制字符')
+    value = value.strip()
+    if not 1 <= len(value) <= 200:
+        raise ValueError('拓扑名称去首尾空白后必须为1–200字符')
+    return value
+
+
+class SwitchTopologyCopy(BaseModel):
+    name: str = Field(min_length=1, max_length=200, description='复制已保存版本的名称；去首尾空白、禁止控制字符，允许重名。')
+    model_config = ConfigDict(extra='forbid')
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def validate_name(cls, value):
+        return validate_topology_name(value)
+
+
 class SwitchTopologyUpdate(BaseModel):
     conversion: TopologyConversionCommit | None = None
     connection_numeric_declarations: Dict[str, List[Literal[
         'cable_loss_db', 'cable_length_m', 'calibrated_loss_db', 'calibrated_phase_deg'
     ]]] = Field(default_factory=dict, description='仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。')
-    name: Optional[str] = None
+    name: str = Field(default=None, min_length=1, max_length=200, description='仅改名称不改变执行选图更新时间；禁止null/控制字符，允许重名。')
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def validate_name(cls, value):
+        return validate_topology_name(value)
     description: Optional[str] = None
     version: Optional[str] = None
     site_name: Optional[str] = None

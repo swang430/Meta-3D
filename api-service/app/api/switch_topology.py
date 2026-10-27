@@ -6,6 +6,7 @@ and advanced endpoints for path resolution and calibration matrix.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from copy import deepcopy
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +21,7 @@ from app.db.database import get_db
 from app.models.switch_topology import SwitchTopology
 from app.schemas.switch_topology import (
     SwitchTopologyCreate,
+    SwitchTopologyCopy,
     SwitchTopologyUpdate,
     SwitchTopologyResponse,
     SwitchTopologyListResponse,
@@ -453,10 +455,8 @@ def import_topology_from_template(
     replace_existing: bool = Query(
         False,
         description=(
-            "重导入：先删除同一 (switch_category_id, 派生暗室) 的既有行再导入。"
-            "已有校准采用历史的拓扑拒绝替换（409），保留原图和历史。"
-            "P1-57 之前这个删除在 GUI 客户端做（先删后验 —— lab/模板解析失败时"
-            "行已经没了）；收进服务端后保证完整解析成功才动行。"
+            "已有同一 (switch_category_id, 派生暗室) 的行时拒绝覆盖（409）。"
+            "导入只追加inactive、非default草稿，不清旧默认位，不自动用于正式执行。"
         ),
     ),
     db: Session = Depends(get_db),
@@ -464,7 +464,8 @@ def import_topology_from_template(
     """Import a topology structure from a named template file.
 
     导入目标暗室 = lab_profile_id 派生（不再收裸 chamber_id 当真值）。
-    解析顺序是硬约束：lab → chamber → 模板全部成功之后才碰任何既有行。
+    解析顺序是硬约束：lab → chamber → 模板全部成功之后核对已有行。
+    只追加inactive、非default草稿；replace遇已有行409，不删除原图或历史。
 
     Templates are loaded dynamically from
     ``api-service/scripts/dev-fixtures/topology-templates/<template_id>.py``
@@ -501,27 +502,19 @@ def import_topology_from_template(
     _validate_internal_paths(topo_data.get('nodes', []), topo_data.get('connections', []),
                              topo_data.get('operating_modes', []), allow_legacy_missing=True)
 
-    replaced_ids=[]
     _validate_loss_owners(topo_data.get('nodes', []), topo_data.get('connections', []),
                           topo_data.get('operating_modes', []))
     if replace_existing:
-        # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
-        existing=db.query(SwitchTopology).filter(
+        existing = db.query(SwitchTopology.id).filter(
             SwitchTopology.switch_category_id == switch_category_id,
             SwitchTopology.chamber_id == chamber.id,
         )
-        replaced_ids=[row.id for row in existing.all()]
-        _assert_deletable(db,replaced_ids)
+        if existing.first() is not None:
+            raise HTTPException(409, detail='已有拓扑不能覆盖导入；请复制已保存版本，原图和历史保持不变')
 
+    topo_data['is_active'] = False
+    topo_data['is_default'] = False
     try:
-        if replace_existing:
-            existing.delete()
-        db.query(SwitchTopology).filter(
-            SwitchTopology.switch_category_id == switch_category_id,
-            SwitchTopology.chamber_id == chamber.id,
-            SwitchTopology.is_default == True
-        ).update({"is_default": False})
-
         topology = SwitchTopology(
             switch_category_id=switch_category_id,
             chamber_id=chamber.id,
@@ -533,9 +526,6 @@ def import_topology_from_template(
         db.commit()
     except IntegrityError:
         db.rollback()
-        # 预检后可能有另一会话确认采用；只据已提交的相关依赖转409。
-        if replace_existing:
-            _assert_deletable(db,replaced_ids)
         raise
     db.refresh(topology)
     logger.info(
@@ -543,6 +533,47 @@ def import_topology_from_template(
         template_id, switch_category_id, chamber.id, replace_existing,
     )
     return topology
+
+
+@router.post('/{topology_id}/copy', response_model=SwitchTopologyResponse, status_code=201)
+def copy_switch_topology(topology_id: UUID, request: SwitchTopologyCopy,
+                         lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    """复制已保存的原始图为inactive、非default新UUID；不复制采用记录/证书。
+
+    仅副本连线已有calibrated_loss_db/calibrated_phase_deg置null，缺键保留；
+    原图不改，不改变正式执行选择。未来显式激活仍受既有旧证书兼容政策约束。
+    """
+    chamber = _resolve_scope(db, lab_profile_id)
+    source = _load_scoped_topology(db, topology_id, chamber.id)
+    graph = {key: deepcopy(getattr(source, key)) for key in GRAPH_FIELDS}
+    # 旧JSON形态损坏也须422；先拒绝，避免遍历/统计先于响应校验抛500。
+    if any(not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows)
+           for rows in graph.values()):
+        raise HTTPException(422, detail='源拓扑的器件、连线、模式必须为对象列表')
+    for edge in graph['connections']:
+        for key in ('calibrated_loss_db', 'calibrated_phase_deg'):
+            if key in edge:
+                edge[key] = None
+    copied = SwitchTopology(switch_category_id=source.switch_category_id, chamber_id=source.chamber_id,
+        name=request.name, description=source.description, version=source.version,
+        site_name=source.site_name, system_model=source.system_model,
+        installed_date=source.installed_date, installed_by=source.installed_by,
+        is_active=False, is_default=False, **graph)
+    try:
+        copied.update_statistics()
+        db.add(copied)
+        db.flush()
+        # 响应验证早于提交，避免已创建后才响应500的半成功。
+        SwitchTopologyResponse.model_validate(copied).model_dump(mode='json')
+        db.commit()
+    except ValidationError as exc:
+        db.rollback()
+        raise HTTPException(422, detail='源拓扑无法序列化，请先核对已保存图') from exc
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(copied)
+    return copied
 
 
 @router.get("/{topology_id}", response_model=SwitchTopologyResponse)
@@ -716,6 +747,9 @@ def update_switch_topology(
     if any(k in update_data for k in ["nodes", "connections"]):
         topology.update_statistics()
 
+    if set(update_data) == {'name'}:
+        # 列自赋值保留数据库当前时间，不回写可能已过期的Python旧datetime。
+        topology.updated_at = SwitchTopology.updated_at
     db.commit()
     db.refresh(topology)
     logger.info(f"Updated switch topology: {topology_id}")

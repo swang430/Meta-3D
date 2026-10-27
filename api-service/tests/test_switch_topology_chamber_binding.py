@@ -146,6 +146,8 @@ class TestImportFromTemplateRequiresChamber:
         assert resp.status_code == 200
         body = resp.json()
         assert body["chamber_id"] == str(chamber.id)
+        # PC04A5a：首次导入也是库草稿，不自动抢占正式执行。
+        assert body['is_active'] is False and body['is_default'] is False
 
     def test_templates_endpoint_lists_caict_v4(self):
         resp = client.get("/api/v1/switch-topologies/templates")

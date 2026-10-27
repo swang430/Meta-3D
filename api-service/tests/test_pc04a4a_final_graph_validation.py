@@ -98,8 +98,13 @@ def test_saved_complete_explicit_or_sparse_legacy_path_remains_consumable(
     assert [n['id'] for n in path_nodes] == ['ce', 'probe']
     assert path_edges == payload['connections']
     resolved = resolve_rf_chains(world['db'], world['lab_a'].id, 'mimo_ota')
-    assert resolved.success, resolved.warnings
-    assert [(c.chain_id, c.ce_port, c.probe_id, c.polarization) for c in resolved.chains] == [('cp', 'B1.1', 0, 'V')]
+    if entrypoint == 'import':
+        # PC04A5a有意契约：模板保形草稿可读取，但不自动用于正式执行。
+        assert row.is_active is False and row.is_default is False
+        assert not resolved.success
+    else:
+        assert resolved.success, resolved.warnings
+        assert [(c.chain_id, c.ce_port, c.probe_id, c.polarization) for c in resolved.chains] == [('cp', 'B1.1', 0, 'V')]
     repeated = client.patch(f'/api/v1/switch-topologies/{ident}', params=scope, json={
         key: saved[key] for key in ('nodes', 'connections', 'operating_modes')})
     assert repeated.status_code == 200, repeated.text
